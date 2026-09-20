@@ -27,6 +27,7 @@ export {
   catalogModelToAlias,
   catalogProviderModels,
   CatalogFetchError,
+  RegistryImportError,
   DEFAULT_CATALOG_URL,
   fetchCatalog,
   inferWireType,

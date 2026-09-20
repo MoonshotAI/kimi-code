@@ -2112,6 +2112,78 @@ describe('SessionEventBroadcaster', () => {
     });
   });
 
+  it('delivers sub-agent approval events past the agent filter on live fan-out and replay', async () => {
+    const lc = new FakeLifecycle();
+    lc.addAgent('main');
+    lc.addAgent('agent-0');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target, new Set(['main']));
+
+    interactions.enqueue({
+      id: 'a-sub',
+      kind: 'approval',
+      payload: {
+        toolCallId: 'call_sub',
+        toolName: 'Bash',
+        action: 'run',
+        display: { kind: 'command', command: 'ls' },
+      },
+      tags: { agentId: 'agent-0', sessionId: 's1' },
+    });
+    await bc.getCursor('s1');
+
+    expect(
+      envelopes.find((e) => e.type === 'event.approval.requested')?.payload,
+    ).toMatchObject({ agentId: 'agent-0', agent_id: 'agent-0', approval_id: 'a-sub' });
+
+    interactions.respond('a-sub', { decision: 'approved' });
+    await bc.getCursor('s1');
+
+    expect(
+      envelopes.find((e) => e.type === 'event.approval.resolved')?.payload,
+    ).toMatchObject({ agentId: 'agent-0', approval_id: 'a-sub' });
+
+    const replay = await bc.getBufferedSince('s1', { seq: 1 }, new Set(['main']));
+    expect(replay.resyncRequired).toBe(false);
+    expect(replay.events.map((e) => e.envelope.type)).toEqual([
+      'event.approval.requested',
+      'event.approval.resolved',
+      'event.session.work_changed',
+    ]);
+  });
+
+  it('delivers sub-agent question events past the agent filter on live fan-out', async () => {
+    const lc = new FakeLifecycle();
+    lc.addAgent('main');
+    lc.addAgent('agent-0');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target, new Set(['main']));
+
+    interactions.enqueue({
+      id: 'q-sub',
+      kind: 'question',
+      payload: {
+        toolCallId: 'call_q',
+        questions: [{ question: 'Pick', options: [{ label: 'A' }] }],
+      },
+      tags: { agentId: 'agent-0', sessionId: 's1' },
+    });
+    await bc.getCursor('s1');
+
+    expect(
+      envelopes.find((e) => e.type === 'event.question.requested')?.payload,
+    ).toMatchObject({ agentId: 'agent-0', agent_id: 'agent-0', question_id: 'q-sub' });
+
+    interactions.respond('q-sub', { answers: { q_0: 'opt_0_0' } });
+    await bc.getCursor('s1');
+
+    expect(
+      envelopes.find((e) => e.type === 'event.question.answered')?.payload,
+    ).toMatchObject({ agentId: 'agent-0', question_id: 'q-sub' });
+  });
+
   it('fans event.session.work_changed out to every connection, bypassing agent filters', async () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');

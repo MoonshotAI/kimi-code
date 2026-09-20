@@ -39,6 +39,8 @@ import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
 import { ReadTool } from '#/agent/tools/os/read/readTool';
+import type { IAgentProfileService } from '#/agent/profile/profile';
+import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
@@ -1105,6 +1107,11 @@ describe('truncation pipeline', () => {
       { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog,
       truncation,
       readConfig,
+      {
+        getModelCapabilities: () => ({ image_in: true, video_in: true }),
+      } as unknown as IAgentProfileService,
+      { isToolActive: () => true } as unknown as IAgentToolPolicyService,
+      { resolve: () => ({}) } as unknown as IAgentToolRegistryService,
       attachmentStore,
     ));
     registry.register(new GlobTool(binding, stubWorkspaceContext(homeDir), noopTelemetryService));

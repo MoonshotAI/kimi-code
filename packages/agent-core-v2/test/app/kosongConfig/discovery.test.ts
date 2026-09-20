@@ -566,6 +566,96 @@ describe('refreshProviderModels write behavior', () => {
   });
 });
 
+describe('refreshProviderModels api_key_env credentials', () => {
+  it('fails an open-platform provider with conflicting api_key_env and oauth, without affecting others', async () => {
+    const fetchMock = vi.fn(async (input: unknown) => {
+      if (String(input).endsWith('api.json')) {
+        return new Response(
+          JSON.stringify({
+            acme: {
+              id: 'acme',
+              name: 'Acme',
+              api: 'https://acme.example.test/v1',
+              type: 'openai',
+              models: { m1: { id: 'm1', name: 'M1' } },
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          data: [{ id: 'kimi-k2', context_length: 262144, supports_reasoning: true }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { host, discovery, models } = await createHost({
+      providers: {
+        'moonshot-cn': {
+          type: 'kimi',
+          apiKeyEnv: 'KIMI_TEST_OPEN_PLATFORM_KEY',
+          oauth: { storage: 'file', key: 'oauth/moonshot' },
+        },
+        acme: {
+          type: 'openai',
+          apiKey: 'sk-acme',
+          source: { kind: 'apiJson', url: 'https://registry.example.test/api.json', apiKey: 'sk-registry' },
+        },
+      },
+      models: {},
+    });
+    try {
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+      expect(result.failed).toHaveLength(1);
+      expect(result.failed[0]).toMatchObject({ provider: 'moonshot-cn' });
+      expect(result.failed[0]?.reason).toContain('mutually exclusive');
+      expect(result.changed).toEqual([
+        { provider_id: 'acme', provider_name: 'Acme', added: 1, removed: 0 },
+      ]);
+      expect(models.list()['acme/m1']).toBeDefined();
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('refreshes an open-platform provider through api_key_env without persisting the secret', async () => {
+    vi.stubEnv('KIMI_TEST_OPEN_PLATFORM_KEY', 'sk-open-platform');
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ data: [{ id: 'kimi-k2', context_length: 262144 }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { host, discovery, providers } = await createHost({
+      providers: {
+        'moonshot-cn': { type: 'kimi', apiKeyEnv: 'KIMI_TEST_OPEN_PLATFORM_KEY' },
+      },
+      models: {},
+    });
+    try {
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+      expect(result.failed).toEqual([]);
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.moonshot.cn/v1/models',
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer sk-open-platform' }),
+        }),
+      );
+      expect(providers.list()['moonshot-cn']).toEqual({
+        type: 'kimi',
+        baseUrl: 'https://api.moonshot.cn/v1',
+        apiKeyEnv: 'KIMI_TEST_OPEN_PLATFORM_KEY',
+      });
+    } finally {
+      host.dispose();
+    }
+  });
+});
+
 describe('refreshProviderModels defaultModel self-heal', () => {
   const managedProviders = {
     [KIMI_CODE_PROVIDER_NAME]: {

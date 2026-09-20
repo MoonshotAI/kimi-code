@@ -530,7 +530,7 @@ On success, `data` is `{ providers, models_imported }` — an array of provider 
 
 Browses the models.dev directory, proxied by the server with a 10-minute in-memory cache and a built-in snapshot fallback. Items keep the upstream directory order. Entries the server cannot import carry `rejected: true` with a machine-readable `reject_reason`; entries with `needs_base_url: true` require a base URL at import time.
 
-On success, `data.items` is an array of `{ id, name, wire_type, guessed, needs_base_url, rejected, reject_reason, env_key, models }`: `wire_type` is the resolved protocol (nullable, same enum as a provider `type`), `guessed` marks a heuristic resolution, `env_key` is the upstream's conventional API-key environment variable (nullable), and `models` is an array of `{ id, name?, max_context_size, capabilities?, reasoning }`.
+On success, `data.items` is an array of `{ id, name, wire_type, base_url, guessed, needs_base_url, rejected, reject_reason, env_key, models }`: `wire_type` is the resolved protocol (nullable, same enum as a provider `type`), `base_url` is the resolved endpoint (nullable; `null` for entries that need a base URL or were rejected), `guessed` marks a heuristic resolution, `env_key` is the upstream's conventional API-key environment variable (nullable), and `models` is an array of `{ id, name?, max_context_size, capabilities?, reasoning }`.
 
 - `50004`: the directory is unavailable (both the live fetch and the built-in snapshot failed)
 
@@ -1126,7 +1126,7 @@ Lists the session's pending approval requests — the permission prompts raised 
 | `session_id` | path | string | **Required.** Session id |
 | `status` | query | string | **Required.** Must be `pending` |
 
-On success, `data` is `{ items }` where each item is `{ approval_id, session_id, turn_id?, tool_call_id, tool_name, action, tool_input_display, created_at, expires_at }`: `tool_name` / `action` / `tool_input_display` describe the call waiting for permission, and `expires_at` is 24 hours after `created_at`.
+On success, `data` is `{ items }` where each item is `{ approval_id, session_id, agent_id, turn_id?, tool_call_id, tool_name, action, tool_input_display, created_at, expires_at }`: `agent_id` names the agent whose tool call is waiting for permission (`main` for the main agent); `tool_name` / `action` / `tool_input_display` describe the call waiting for permission, and `expires_at` is 24 hours after `created_at`.
 
 - `40001`: `status` missing or not `pending`
 - `40401`: session not found
@@ -1160,7 +1160,7 @@ Lists the session's pending questions.
 | `session_id` | path | string | **Required.** Session id |
 | `status` | query | string | **Required.** Must be `pending` |
 
-On success, `data` is `{ items }` where each item is `{ question_id, session_id, turn_id?, tool_call_id?, questions, created_at }`. `questions` holds 1–4 items `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }`, each with 2–4 `options` of `{ id, label, description? }`; `multi_select` allows several options, `allow_other` a free-text answer.
+On success, `data` is `{ items }` where each item is `{ question_id, session_id, agent_id?, turn_id?, tool_call_id?, questions, created_at }`. `agent_id` names the asking agent when known (`main` for the main agent). `questions` holds 1–4 items `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }`, each with 2–4 `options` of `{ id, label, description? }`; `multi_select` allows several options, `allow_other` a free-text answer.
 
 - `40001`: `status` missing or not `pending`
 - `40401`: session not found

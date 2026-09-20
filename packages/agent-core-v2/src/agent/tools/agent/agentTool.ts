@@ -15,6 +15,7 @@ import {
   type RegisterAgentTaskOptions,
 } from '#/agent/task/task';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import {
   isToolActive as evaluateToolActive,
   resolveActiveToolNames,
@@ -25,6 +26,7 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import {
   ToolAccesses,
+  isMcpToolName,
   type ExecutableToolContext,
   type ExecutableToolResult,
   type ToolExecution,
@@ -67,6 +69,8 @@ import {
   buildSubagentModelDescriptions,
   exposesSubagentModelChoice,
   formatSubagentTimeoutDescription,
+  isSubagentModelForced,
+  resolveSubagentModelPool,
   resolveSubagentTimeoutMs,
   stripSubagentForkParameter,
   stripSubagentModelParameter,
@@ -92,6 +96,12 @@ import AGENT_FORK_DESCRIPTION from './agent-fork.md?raw';
 
 const SUBAGENT_TOOL_PARAMETERS = toInputJsonSchema(SubagentToolInputSchema);
 const SUBAGENT_TOOL_PARAMETERS_NO_MODEL = stripSubagentModelParameter(SUBAGENT_TOOL_PARAMETERS);
+const READ_MEDIA_FILE_TOOL_NAME = 'ReadMediaFile';
+const MCP_GLOB_MAGIC = /[*?[\]{}!@+()]/;
+
+function isToolNamePattern(name: string): boolean {
+  return isMcpToolName(name) && MCP_GLOB_MAGIC.test(name);
+}
 
 export class SubagentTool implements ISubagentTool {
   declare readonly _serviceBrand: undefined;
@@ -118,6 +128,7 @@ export class SubagentTool implements ISubagentTool {
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
@@ -154,12 +165,22 @@ export class SubagentTool implements ISubagentTool {
         ? catalogProfiles
         : catalogProfiles.filter((profile) => allowlist.includes(profile.name));
     const notifyAvailable = this.notify.enabled;
+    const knownTools = this.knownToolReferences();
+    const available = new Set(knownTools.map((ref) => ref.name));
+    const anyMediaModel = this.anyMediaCapableModel();
     const typeLines = buildProfileDescriptions(
       profiles.map((profile) => ({
         ...profile,
-        tools: profile.tools?.filter((name) => name !== NOTIFY_USER_TOOL_NAME || notifyAvailable),
+        tools: profile.tools?.filter(
+          (name) =>
+            (name !== NOTIFY_USER_TOOL_NAME || notifyAvailable) &&
+            (isToolNamePattern(name) ||
+              (name === READ_MEDIA_FILE_TOOL_NAME
+                ? anyMediaModel && this.toolPolicy.isToolActiveForProfile(profile, name, 'builtin')
+                : available.has(name))),
+        ),
       })),
-      this.knownToolReferences(),
+      knownTools,
       (profile, name, source) =>
         this.toolPolicy.isToolActiveForProfile(profile, name, source),
     );
@@ -222,6 +243,31 @@ export class SubagentTool implements ISubagentTool {
       if (!refs.has(ref.name)) refs.set(ref.name, ref);
     }
     return [...refs.values()];
+  }
+
+  private anyMediaCapableModel(): boolean {
+    if (isSubagentModelForced(this.config)) {
+      const forced = resolveSubagentModelPool(this.config)?.defaultModel;
+      if (forced === undefined) return false;
+      try {
+        const capabilities = this.modelCatalog.get(forced).capabilities;
+        return capabilities.image_in || capabilities.video_in;
+      } catch {
+        return false;
+      }
+    }
+    const own = this.profile.getModelCapabilities();
+    if (own.image_in || own.video_in) return true;
+    const pool = resolveSubagentModelPool(this.config);
+    if (pool === undefined) return false;
+    for (const alias of Object.keys(pool.models)) {
+      try {
+        const capabilities = this.modelCatalog.get(alias).capabilities;
+        if (capabilities.image_in || capabilities.video_in) return true;
+      } catch {
+      }
+    }
+    return false;
   }
 
   async resolveExecution(args: SubagentToolInput): Promise<ToolExecution> {

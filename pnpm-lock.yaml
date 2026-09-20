@@ -178,9 +178,9 @@ importers:
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../../packages/agent-core-v2
-      '@moonshot-ai/kap-server':
+      '@moonshot-ai/transcript':
         specifier: workspace:^
-        version: link:../../packages/kap-server
+        version: link:../../packages/transcript
       '@tanstack/react-query':
         specifier: ^5.74.4
         version: 5.99.2(react@19.2.5)

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, mkdir, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -61,6 +61,7 @@ import {
   snapshotToOps,
   TRANSCRIPT_OPS_JOURNAL_CAPACITY,
 } from '../../src/services/transcript/transcriptService';
+import { WireRecordCache, type ContextRecord } from '../../src/services/transcript/wireCache';
 
 _setTowerFeatureAssembledForTests(true);
 
@@ -195,6 +196,75 @@ describe('AgentTranscriptProjector', () => {
       input: { command: 'ls' },
       output: 'file.txt',
       display: { kind: 'command', command: 'ls' },
+    });
+  });
+
+  it('splits a reused or occupied wire turn id into a new export entity', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => {
+      tx.apply(projector.map(event));
+    };
+
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'first' }));
+    feed(ev({ type: 'assistant.delta', turnId: 1, delta: 'old' }));
+    feed(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'second' }));
+    feed(ev({ type: 'assistant.delta', turnId: 1, delta: 'new' }));
+    feed(ev({ type: 'turn.ended', turnId: 1, reason: 'cancelled' }));
+
+    const first = turnOps('t1', tx.getItems());
+    const second = turnOps('t2', tx.getItems());
+    expect(first.prompt).toBe('first');
+    expect(first.state).toBe('completed');
+    expect(first.steps[0]?.frames.find((frame) => frame.kind === 'text')).toMatchObject({ text: 'old' });
+    expect(second.prompt).toBe('second');
+    expect(second.state).toBe('cancelled');
+    expect(second.ordinal).toBe(2);
+    expect(second.steps[0]?.frames.find((frame) => frame.kind === 'text')).toMatchObject({ text: 'new' });
+
+    const store = new Map<string, TranscriptTurn>([
+      [
+        't1',
+        {
+          kind: 'turn',
+          turnId: 't1',
+          ordinal: 1,
+          state: 'completed',
+          origin: { kind: 'user' },
+          prompt: 'cold',
+          steps: [],
+        },
+      ],
+    ]);
+    const cold = new AgentTranscriptProjector('main', TEST_SESSION_ID, {
+      turn: (id) => store.get(id),
+      maxOrdinal: () => 1,
+    });
+    const coldTx = new AgentTranscript('main');
+    coldTx.apply(cold.map(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'live' })));
+    expect(coldTx.getTurn('t1')).toBeUndefined();
+    expect(turnOps('t2', coldTx.getItems())).toMatchObject({ prompt: 'live', ordinal: 2, state: 'running' });
+
+    const tipTurn: TranscriptTurn = {
+      kind: 'turn',
+      turnId: 't0',
+      ordinal: 0,
+      state: 'completed',
+      origin: { kind: 'user' },
+      prompt: 'hi',
+      steps: [],
+    };
+    const tipTx = new AgentTranscript('main');
+    tipTx.apply([{ op: 'turn.upsert', turn: tipTurn }]);
+    const tip = new AgentTranscriptProjector('main', TEST_SESSION_ID, {
+      turn: (id) => tipTx.getTurn(id),
+      maxOrdinal: () => 0,
+    });
+    tipTx.apply(tip.map(ev({ type: 'assistant.delta', turnId: 0, delta: 'world' })));
+    expect(tipTx.getTurn('t1')).toBeUndefined();
+    expect(turnOps('t0', tipTx.getItems()).steps[0]?.frames.find((frame) => frame.kind === 'text')).toMatchObject({
+      text: 'world',
     });
   });
 
@@ -2255,7 +2325,7 @@ describe('AgentTranscriptProjector', () => {
     ]);
   });
 
-  it('projects turn.steer as a user frame at the next step start, pairing promptIds from prompt.steered', () => {
+  it('projects turn.steer as a user frame at the next step start, using promptIds from the steer event', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
@@ -2283,6 +2353,8 @@ describe('AgentTranscriptProjector', () => {
           { type: 'video_url', videoUrl: { url: 'kimi-file://f_vid2', name: 'queued.mp4' } },
         ],
         origin: { kind: 'user' },
+        promptIds: ['p2'],
+        messageId: 'm-steer',
       }),
     );
     expect(turnOps('t3', tx.getItems()).steps).toHaveLength(1);
@@ -2352,6 +2424,8 @@ describe('AgentTranscriptProjector', () => {
             },
           },
         ],
+        promptIds: ['p2', 'p3'],
+        messageId: 'm-look',
         origin: {
           kind: 'user',
           skillActivations: [
@@ -2414,7 +2488,7 @@ describe('AgentTranscriptProjector', () => {
     feed(ev({ type: 'turn.step.started', turnId: 5, step: 1 }));
     feed(ev({ type: 'prompt.steered', activePromptId: 'active', promptIds: ['queued'], content: [{ type: 'text', text: 'queued input' }], steeredAt: '2026-01-01T00:00:02.000Z' }));
     feed(ev({ type: 'turn.steer', input: [{ type: 'text', text: 'User activated the skill' }], origin }));
-    feed(ev({ type: 'turn.steer', input: [{ type: 'text', text: 'queued input' }], origin: { kind: 'user' } }));
+    feed(ev({ type: 'turn.steer', input: [{ type: 'text', text: 'queued input' }], origin: { kind: 'user' }, promptIds: ['queued'] }));
     const frames = turnOps('t5', tx.getItems()).steps[0]!.frames;
     expect(frames[0]).toMatchObject({ role: 'user', text: 'User activated the skill', origin: { kind: 'skill_activation', trigger: 'user-slash', skillName: 'example-skill' } });
     expect((frames[0] as { promptIds?: readonly string[] }).promptIds).toBeUndefined();
@@ -2535,6 +2609,8 @@ describe('AgentTranscriptProjector', () => {
         type: 'turn.steer',
         input: [{ type: 'text', text: 'last word' }],
         origin: { kind: 'user' },
+        promptIds: ['p2'],
+        messageId: 'm-last',
       }),
     );
     feed(ev({ type: 'turn.ended', turnId: 6, reason: 'cancelled', interruptReason: 'user_cancelled' }));
@@ -2576,6 +2652,8 @@ describe('AgentTranscriptProjector', () => {
           kind: 'user',
           skillActivations: [{ activationId: 'a1', skillName: 'review', skillArgs: 'strict' }],
         },
+        promptIds: ['p2'],
+        messageId: 'm-last-2',
       }),
     );
     feed(ev({ type: 'turn.ended', turnId: 7, reason: 'cancelled', interruptReason: 'user_cancelled' }));
@@ -2617,6 +2695,8 @@ describe('AgentTranscriptProjector', () => {
         type: 'turn.steer',
         input: [{ type: 'text', text: 'steered mid-attach' }],
         origin: { kind: 'user' },
+        promptIds: ['p2'],
+        messageId: 'm-mid',
       }),
     );
     expect(ops).toHaveLength(2);
@@ -2956,8 +3036,8 @@ describe('AgentTranscriptProjector', () => {
       const records = [
         { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } }, time: 1000 },
         { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] }, time: 2000 },
-        { type: 'turn.steer', input: [{ type: 'text', text: 'steered in' }], origin: { kind: 'user' }, time: 3000 },
-        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'steered in' }], toolCalls: [], origin: { kind: 'user' } }, time: 3001 },
+        { type: 'context.append_message', message: { id: 'm-steer', role: 'user', content: [{ type: 'text', text: 'steered in' }], toolCalls: [], origin: { kind: 'user' } }, time: 3000 },
+        { type: 'turn.steer', input: [{ type: 'text', text: 'steered in' }], origin: { kind: 'user' }, messageId: 'm-steer', promptIds: ['p2'], time: 3001 },
         { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] }, time: 4000 },
       ];
       await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
@@ -2973,6 +3053,7 @@ describe('AgentTranscriptProjector', () => {
         role: 'user',
         text: 'steered in',
         origin: { kind: 'user' },
+        promptIds: ['p2'],
       });
     } finally {
       await rm(home, { recursive: true, force: true });
@@ -3803,8 +3884,8 @@ describe('bindSessionTranscript', () => {
     expect(frames).toContainEqual(expect.objectContaining({ frameId: 't0.1.call_3', output: 'y' }));
   });
 
-  it('heal keeps the live attachment ids over the snapshot cold ids', () => {
-    const makeTurn = (attachmentIds: string[] | undefined): TranscriptTurn => ({
+  it('heal keeps the live attachment ids and trigger prompt id over the cold header', () => {
+    const byAttachments = (attachmentIds: string[] | undefined): TranscriptTurn => ({
       kind: 'turn',
       turnId: 't0',
       ordinal: 0,
@@ -3813,18 +3894,15 @@ describe('bindSessionTranscript', () => {
       attachmentIds,
       steps: [],
     });
-    const header = healTurnOps(makeTurn(['att_1']), makeTurn(['t0.att1'])).find(
+    const header = healTurnOps(byAttachments(['att_1']), byAttachments(['t0.att1'])).find(
       (op) => op.op === 'turn.upsert',
     );
     expect(header).toMatchObject({ turn: { attachmentIds: ['t0.att1'] } });
-    const fallback = healTurnOps(makeTurn(['att_1']), makeTurn(undefined)).find(
+    const fallback = healTurnOps(byAttachments(['att_1']), byAttachments(undefined)).find(
       (op) => op.op === 'turn.upsert',
     );
     expect(fallback).toMatchObject({ turn: { attachmentIds: ['att_1'] } });
-  });
-
-  it('heal keeps the live trigger prompt id over a cold turn without one', () => {
-    const makeTurn = (triggerPromptId: string | undefined): TranscriptTurn => ({
+    const byPrompt = (triggerPromptId: string | undefined): TranscriptTurn => ({
       kind: 'turn',
       turnId: 't0',
       triggerPromptId,
@@ -3833,10 +3911,9 @@ describe('bindSessionTranscript', () => {
       origin: { kind: 'user' },
       steps: [],
     });
-    const header = healTurnOps(makeTurn(undefined), makeTurn('prompt-1')).find(
-      (op) => op.op === 'turn.upsert',
-    );
-    expect(header).toMatchObject({ turn: { triggerPromptId: 'prompt-1' } });
+    expect(healTurnOps(byPrompt(undefined), byPrompt('prompt-1')).find((op) => op.op === 'turn.upsert')).toMatchObject({
+      turn: { triggerPromptId: 'prompt-1' },
+    });
   });
 
   it('terminal turn.upsert inherits the backfilled header when the projector missed turn.started', () => {
@@ -4362,5 +4439,295 @@ describe('bindSessionTranscript', () => {
       );
       service.dropSession('s1');
     });
+  });
+});
+
+describe('WireRecordCache', () => {
+  const wireText = (records: readonly unknown[]): string =>
+    `${records.map((r) => JSON.stringify(r)).join('\n')}\n`;
+  const userMessage = (text: string, time: number): Record<string, unknown> => ({
+    type: 'context.append_message',
+    message: {
+      role: 'user',
+      content: [{ type: 'text', text }],
+      toolCalls: [],
+      origin: { kind: 'user' },
+    },
+    time,
+  });
+
+  it('serves appended records with results identical to a fresh full read', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-append-'));
+    try {
+      const wirePath = join(home, 'wire.jsonl');
+      const a = userMessage('one', 1);
+      const b = { type: 'turn.ended', turnId: 0, reason: 'completed', time: 2 };
+      await writeFile(wirePath, wireText([a]));
+      const cache = new WireRecordCache();
+      expect(await cache.read(wirePath)).toEqual([a]);
+
+      await appendFile(wirePath, wireText([b]));
+      const grown = await cache.read(wirePath);
+      expect(grown).toEqual([a, b]);
+      expect(await new WireRecordCache().read(wirePath)).toEqual(grown);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('re-reads from scratch after a truncate-rewrite', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-truncate-'));
+    try {
+      const wirePath = join(home, 'wire.jsonl');
+      await writeFile(
+        wirePath,
+        wireText([userMessage('one', 1), userMessage('two', 2), userMessage('three', 3)]),
+      );
+      const cache = new WireRecordCache();
+      expect(await cache.read(wirePath)).toHaveLength(3);
+
+      const rewritten = userMessage('fresh', 4);
+      await writeFile(wirePath, wireText([rewritten]));
+      expect(await cache.read(wirePath)).toEqual([rewritten]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('detects an in-place rewrite of the same size via mtime', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-inplace-'));
+    try {
+      const wirePath = join(home, 'wire.jsonl');
+      await writeFile(wirePath, wireText([{ type: 'aaaaaaaa', value: 1 }]));
+      const cache = new WireRecordCache();
+      expect(await cache.read(wirePath)).toEqual([{ type: 'aaaaaaaa', value: 1 }]);
+
+      await writeFile(wirePath, wireText([{ type: 'bbbbbbbb', value: 2 }]));
+      const bumped = new Date(Date.now() + 5000);
+      await utimes(wirePath, bumped, bumped);
+      expect(await cache.read(wirePath)).toEqual([{ type: 'bbbbbbbb', value: 2 }]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('detects an atomic replace with identical size and mtime via the inode', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-rename-'));
+    try {
+      const wirePath = join(home, 'wire.jsonl');
+      await writeFile(wirePath, wireText([{ type: 'aaaaaaaa', value: 1 }]));
+      const cache = new WireRecordCache();
+      expect(await cache.read(wirePath)).toEqual([{ type: 'aaaaaaaa', value: 1 }]);
+
+      const before = await stat(wirePath);
+      const tmpPath = join(home, 'wire.jsonl.tmp');
+      await writeFile(tmpPath, wireText([{ type: 'bbbbbbbb', value: 2 }]));
+      await utimes(tmpPath, before.atime, before.mtime);
+      await rename(tmpPath, wirePath);
+      expect(await cache.read(wirePath)).toEqual([{ type: 'bbbbbbbb', value: 2 }]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('holds an unterminated trailing fragment until its line completes', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-tail-'));
+    try {
+      const wirePath = join(home, 'wire.jsonl');
+      const a = userMessage('one', 1);
+      await writeFile(wirePath, `${JSON.stringify(a)}\n{"type":"turn.steer"`);
+      const cache = new WireRecordCache();
+      expect(await cache.read(wirePath)).toEqual([a]);
+
+      const completed = { type: 'turn.steer', input: [{ type: 'text', text: 'go' }] };
+      await appendFile(wirePath, `,"input":${JSON.stringify(completed.input)}}\n`);
+      expect(await cache.read(wirePath)).toEqual([a, completed]);
+      expect(await new WireRecordCache().read(wirePath)).toEqual([a, completed]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('includes a valid unterminated final line exactly like a full read', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-tailvalid-'));
+    try {
+      const wirePath = join(home, 'wire.jsonl');
+      const a = userMessage('one', 1);
+      const b = { type: 'turn.ended', turnId: 0, reason: 'completed' };
+      await writeFile(wirePath, `${JSON.stringify(a)}\n${JSON.stringify(b)}`);
+      const cache = new WireRecordCache();
+      expect(await cache.read(wirePath)).toEqual([a, b]);
+      expect(await cache.read(wirePath)).toEqual([a, b]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('skips a corrupt trailing fragment but throws on a corrupt terminated line', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-corrupt-'));
+    try {
+      const a = userMessage('one', 1);
+      const tolerantPath = join(home, 'tolerant.jsonl');
+      await writeFile(tolerantPath, `${JSON.stringify(a)}\n{"type":broken`);
+      const cache = new WireRecordCache();
+      expect(await cache.read(tolerantPath)).toEqual([a]);
+
+      const strictPath = join(home, 'strict.jsonl');
+      await writeFile(
+        strictPath,
+        `${JSON.stringify(a)}\n{"type":broken}\n${JSON.stringify(userMessage('two', 2))}\n`,
+      );
+      await expect(cache.read(strictPath)).rejects.toThrow(/corrupted line 2/);
+      await expect(cache.read(strictPath)).rejects.toThrow(/corrupted line 2/);
+
+      await writeFile(strictPath, wireText([a]));
+      expect(await cache.read(strictPath)).toEqual([a]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('propagates ENOENT and recovers once the file appears', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-enoent-'));
+    try {
+      const wirePath = join(home, 'wire.jsonl');
+      const cache = new WireRecordCache();
+      await expect(cache.read(wirePath)).rejects.toMatchObject({ code: 'ENOENT' });
+
+      const a = userMessage('one', 1);
+      await writeFile(wirePath, wireText([a]));
+      expect(await cache.read(wirePath)).toEqual([a]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('bounds the cache by entry count and stays correct after eviction', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-lru-count-'));
+    try {
+      const cache = new WireRecordCache({ maxEntries: 2 });
+      const paths = [join(home, 'a.jsonl'), join(home, 'b.jsonl'), join(home, 'c.jsonl')];
+      for (const [index, path] of paths.entries()) {
+        await writeFile(path, wireText([userMessage(`m${index}`, index)]));
+      }
+      for (const path of paths) await cache.read(path);
+      expect(cache.size).toBe(2);
+
+      expect(await cache.read(paths[0]!)).toEqual([userMessage('m0', 0)]);
+      expect(cache.size).toBe(2);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('bounds the cache by total bytes and stays correct after eviction', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-lru-bytes-'));
+    try {
+      const a = join(home, 'a.jsonl');
+      const b = join(home, 'b.jsonl');
+      await writeFile(a, wireText([userMessage('x'.repeat(40), 1)]));
+      await writeFile(b, wireText([userMessage('y'.repeat(40), 2)]));
+      const cache = new WireRecordCache({ maxTotalBytes: 200 });
+      await cache.read(a);
+      await cache.read(b);
+      expect(cache.size).toBe(1);
+
+      expect(await cache.read(a)).toEqual([userMessage('x'.repeat(40), 1)]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('readColdSnapshot matches a fresh full read across appended turns and undo', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-heals-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const wirePath = join(wireDir, 'wire.jsonl');
+      const turnRecords = (
+        ordinal: number,
+        prompt: string,
+        t: number,
+      ): Record<string, unknown>[] => [
+        {
+          type: 'context.append_message',
+          message: {
+            id: `msg_${ordinal}`,
+            role: 'user',
+            content: [{ type: 'text', text: prompt }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+          time: t,
+        },
+        {
+          type: 'turn.prompt',
+          input: [{ type: 'text', text: prompt }],
+          origin: { kind: 'user' },
+          promptId: `msg_${ordinal}`,
+          turnId: ordinal,
+          time: t + 1,
+        },
+        {
+          type: 'context.append_message',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: `answer ${ordinal}` }],
+            toolCalls: [],
+          },
+          time: t + 2,
+        },
+        { type: 'turn.ended', turnId: ordinal, reason: 'completed', time: t + 3 },
+      ];
+      const service = coldTranscriptService(home);
+      await writeFile(wirePath, wireText(turnRecords(0, 'first', 1000)));
+      const snap1 = await service.readColdSnapshot('s1', 'main');
+      expect(snap1!.items.filter((item) => item.kind === 'turn')).toHaveLength(1);
+
+      await appendFile(wirePath, wireText(turnRecords(1, 'second', 2000)));
+      const snap2 = await service.readColdSnapshot('s1', 'main');
+      expect(snap2!.items.filter((item) => item.kind === 'turn')).toHaveLength(2);
+      expect(snap2).toEqual(await coldTranscriptService(home).readColdSnapshot('s1', 'main'));
+
+      await appendFile(wirePath, wireText([{ type: 'context.undo', count: 1, time: 3000 }]));
+      const snap3 = await service.readColdSnapshot('s1', 'main');
+      expect(snap3!.items.filter((item) => item.kind === 'turn')).toHaveLength(1);
+      expect(snap3).toEqual(await coldTranscriptService(home).readColdSnapshot('s1', 'main'));
+
+      await appendFile(wirePath, wireText(turnRecords(2, 'third', 4000)));
+      await appendFile(wirePath, wireText(turnRecords(3, 'fourth', 5000)));
+      await appendFile(
+        wirePath,
+        wireText([
+          { type: 'context.apply_compaction', summary: 'dead summary', time: 5004 },
+          {
+            type: 'agent.switched',
+            agentId: 'main',
+            branch: 'b1',
+            reason: 'undo',
+            base: { branch: 'main', line: 13 },
+            turns: 1,
+            legacyUndoLine: 20,
+            time: 5005,
+          },
+          { type: 'context.undo', agentId: 'main', count: 1, time: 5006 },
+          { type: 'context.undone', agentId: 'main', turns: 1, fromTurnId: 3, time: 5007 },
+        ]),
+      );
+      await appendFile(wirePath, wireText(turnRecords(4, 'fifth', 6000)));
+      const snap4 = await service.readColdSnapshot('s1', 'main');
+      const snap4Turns = snap4!.items.filter((item) => item.kind === 'turn');
+      expect(snap4Turns.map((turn) => (turn.kind === 'turn' ? turn.prompt : ''))).toEqual([
+        'first',
+        'third',
+        'fifth',
+      ]);
+      expect(JSON.stringify(snap4!.items)).not.toContain('fourth');
+      expect(JSON.stringify(snap4!.items)).not.toContain('dead summary');
+      expect(snap4).toEqual(await coldTranscriptService(home).readColdSnapshot('s1', 'main'));
+      service.dropSession('s1');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 });

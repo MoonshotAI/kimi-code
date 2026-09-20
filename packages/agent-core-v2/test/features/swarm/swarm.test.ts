@@ -62,6 +62,7 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
@@ -279,6 +280,7 @@ describe('AgentSwarmService', () => {
   let executorEvents: ToolExecutorEventStubs;
   let permissionGateRan: boolean;
   let formatDenyMessage: Mock<(message: string) => string>;
+  let telemetryTrack2: Mock<(event: string, properties?: unknown) => void>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -349,6 +351,8 @@ describe('AgentSwarmService', () => {
     ix.stub(IAgentToolExecutorService, executorEvents.executor);
     formatDenyMessage = vi.fn((message: string) => message);
     ix.stub(IAgentToolApprovalService, { formatDenyMessage });
+    telemetryTrack2 = vi.fn();
+    ix.stub(ITelemetryService, { track2: telemetryTrack2 });
     registerTestAgentWire(ix, testWireScope('wire', 'swarm-test'), {
       log: ix.get(IAppendLogStore),
       eventBus: ix.get(IEventBus),
@@ -389,6 +393,20 @@ describe('AgentSwarmService', () => {
     expect(events).toEqual([
       { type: 'agent.status.updated', swarmMode: true },
       { type: 'agent.status.updated', swarmMode: false },
+    ]);
+  });
+
+  it('tracks swarm_mode_entered / swarm_mode_exited on transitions only', () => {
+    const swarm = ix.get(IAgentSwarmService);
+
+    swarm.enter('manual');
+    swarm.enter('manual');
+    swarm.exit();
+    swarm.exit();
+
+    expect(telemetryTrack2.mock.calls).toEqual([
+      ['swarm_mode_entered', { trigger: 'manual' }],
+      ['swarm_mode_exited', { trigger: 'manual' }],
     ]);
   });
 

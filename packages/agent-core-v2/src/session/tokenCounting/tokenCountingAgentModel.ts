@@ -30,56 +30,52 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
       const length = normalizeAnchorLength(event.length);
       const tokens = Math.max(0, event.tokens);
       const anchor: TokenAnchor = { length, tokens, measured: true };
-      const anchors = [...this.state.anchors.filter((a) => a.length < length), anchor];
-      if (!(this.state.tokens === tokens && anchorsEqual(this.state.anchors, anchors))) {
+      const committed = this._state();
+      const anchors = [...committed.anchors.filter((a) => a.length < length), anchor];
+      if (!(committed.tokens === tokens && anchorsEqual(committed.anchors, anchors))) {
         this.state.anchors = anchors;
         this.state.tokens = tokens;
       }
-      void this.emit(
-        new AgentStatusUpdated({ agentId: event.agentId, contextTokens: this.state.tokens }),
-      );
+      void this.emit(new AgentStatusUpdated({ agentId: event.agentId, contextTokens: tokens }));
     });
     this.on(TokenCountingTruncated, (event) => {
       const length = normalizeAnchorLength(event.length);
       const tokens = Math.max(0, event.tokens);
-      const anchors = this.state.anchors.filter((a) => a.length <= length);
-      if (!(this.state.tokens === tokens && anchorsEqual(this.state.anchors, anchors))) {
+      const committed = this._state();
+      const anchors = committed.anchors.filter((a) => a.length <= length);
+      if (!(committed.tokens === tokens && anchorsEqual(committed.anchors, anchors))) {
         this.state.anchors = anchors;
         this.state.tokens = tokens;
       }
-      void this.emit(
-        new AgentStatusUpdated({ agentId: event.agentId, contextTokens: this.state.tokens }),
-      );
+      void this.emit(new AgentStatusUpdated({ agentId: event.agentId, contextTokens: tokens }));
     });
     this.on(TokenCountingRebased, (event) => {
       const length = normalizeAnchorLength(event.length);
       const tokens = Math.max(0, event.tokens);
+      const committed = this._state();
       const anchors: TokenAnchor[] = [{ length, tokens, measured: event.measured }];
-      if (!(this.state.tokens === tokens && anchorsEqual(this.state.anchors, anchors))) {
+      if (!(committed.tokens === tokens && anchorsEqual(committed.anchors, anchors))) {
         this.state.anchors = anchors;
         this.state.tokens = tokens;
       }
-      void this.emit(
-        new AgentStatusUpdated({ agentId: event.agentId, contextTokens: this.state.tokens }),
-      );
+      void this.emit(new AgentStatusUpdated({ agentId: event.agentId, contextTokens: tokens }));
     });
     this.on(TokenCountingTurnRecorded, (event) => {
       const length = normalizeAnchorLength(event.length);
       const tokens = Math.max(0, event.tokens);
-      const pinned = this.state.anchors.some((anchor) => anchor.length === length);
-      const anchors = pinned
-        ? this.state.anchors
-        : [
-          ...this.state.anchors.filter((anchor) => anchor.length < length),
+      const committed = this._state();
+      if (committed.anchors.some((anchor) => anchor.length === length)) {
+        if (committed.tokens !== tokens) {
+          this.state.tokens = tokens;
+        }
+      } else {
+        this.state.anchors = [
+          ...committed.anchors.filter((anchor) => anchor.length < length),
           { length, tokens, measured: false },
         ];
-      if (!(this.state.tokens === tokens && anchorsEqual(this.state.anchors, anchors))) {
-        this.state.anchors = anchors;
         this.state.tokens = tokens;
       }
-      void this.emit(
-        new AgentStatusUpdated({ agentId: event.agentId, contextTokens: this.state.tokens }),
-      );
+      void this.emit(new AgentStatusUpdated({ agentId: event.agentId, contextTokens: tokens }));
     });
   }
 

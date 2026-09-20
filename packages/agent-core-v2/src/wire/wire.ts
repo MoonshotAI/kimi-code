@@ -6,6 +6,11 @@ import type { RecordDehydrator, WireRecord } from './record';
 export { ForkLineError, type ForkLineFailure } from './tree';
 import type { WireLine } from './tree';
 
+export interface WireRestoreChains {
+  readonly restorable: readonly WireRecord[];
+  readonly journal: readonly WireRecord[];
+}
+
 export interface IWireService extends IAgentJournal {
   readonly _serviceBrand: undefined;
 
@@ -13,6 +18,7 @@ export interface IWireService extends IAgentJournal {
   appendRecord(record: WireRecord, dehydrate?: RecordDehydrator): void;
   readJournal(): AsyncIterable<WireRecord>;
   readRestorable(): AsyncIterable<WireRecord>;
+  readRestoreChains(): Promise<WireRestoreChains>;
   readHumanChain(): readonly WireLine[];
   flush(): Promise<void>;
   drainPersisted(): Promise<void>;

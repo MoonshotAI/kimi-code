@@ -132,10 +132,11 @@ const noopLog = {
   debug: () => {},
 } as unknown as ILogService;
 
-function makeConfig(searchEnabled: boolean): IConfigService {
+function makeConfig(searchEnabled: boolean, extra?: Record<string, unknown>): IConfigService {
   return {
     ready: Promise.resolve(),
-    get: (domain: string) => (domain === DATABASE_SECTION ? { search: searchEnabled } : undefined),
+    get: (domain: string) =>
+      domain === DATABASE_SECTION ? { search: searchEnabled, ...extra } : undefined,
   } as unknown as IConfigService;
 }
 
@@ -3411,5 +3412,150 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     const status = await service.status();
     expect(status.lifecycle.state).toBe('degraded');
     expect(status.degraded).toContain('worker');
+  });
+
+  describe('search index storage maintenance', () => {
+    const cores: SearchIndexCore[] = [];
+
+    afterEach(async () => {
+      for (const core of cores.splice(0)) await core.close();
+    });
+
+    function openCore(bootSalt: string): SearchIndexCore {
+      const core = new SearchIndexCore({
+        indexDir: join(home!, 'search-index'),
+        log: noopLog,
+        bootSalt,
+      });
+      cores.push(core);
+      return core;
+    }
+
+    async function pathExists(path: string): Promise<boolean> {
+      try {
+        await stat(path);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    it('removes interrupted text-build leftovers when opening the index as the writer', async () => {
+      const leftover = join(home!, 'search-index', 'db.text-body.postings.tmpbuild');
+      await mkdir(join(leftover, 'nested'), { recursive: true });
+      await writeFile(join(leftover, 'nested', 'junk.bin'), 'x', 'utf8');
+
+      const core = openCore('writer');
+      await core.ensureOpen();
+
+      expect(core.db?.readOnly).toBe(false);
+      expect(await pathExists(leftover)).toBe(false);
+    });
+
+    it('keeps leftovers when opening read-only and cleans them once the writer lock is held', async () => {
+      const writer = openCore('writer');
+      await writer.ensureOpen();
+
+      const leftover = join(home!, 'search-index', 'db.text-tri.postings.tmpbuild');
+      await mkdir(leftover, { recursive: true });
+
+      const reader = openCore('reader');
+      await reader.ensureOpen();
+      expect(reader.db?.readOnly).toBe(true);
+      expect(await pathExists(leftover)).toBe(true);
+      await reader.close();
+
+      await writer.close();
+      const reopener = openCore('reopener');
+      await reopener.ensureOpen();
+      expect(reopener.db?.readOnly).toBe(false);
+      expect(await pathExists(leftover)).toBe(false);
+    });
+
+    it('skips re-reading session sources while the fingerprint says unchanged', async () => {
+      const s1 = summary('s1', 'cached title', T1);
+      await writeWire(home!, 's1', 'main', [userLine('needle stable', T1)]);
+      await writeTitle(home!, 's1', 'cached title');
+      const service = track(makeInlineService(home!, staticIndex([s1])));
+      await service.reindex();
+      expect((await service.search({ query: 'cached', role: 'title' })).items).toHaveLength(1);
+
+      const stateJson = join(home!, 'sessions', WS, 's1', 'state.json');
+      await chmod(stateJson, 0o000);
+      try {
+        await settleSync(service);
+        expect((await service.search({ query: 'cached', role: 'title' })).items).toHaveLength(1);
+
+        const moved = summary('s1', 'cached title', T2);
+        (service as unknown as { sessionIndex: ISessionIndex }).sessionIndex = staticIndex([moved]);
+        await settleSync(service);
+        expect((await service.search({ query: 'cached', role: 'title' })).items).toEqual([]);
+        expect((await service.search({ query: 'stable' })).items).toHaveLength(1);
+      } finally {
+        await chmod(stateJson, 0o644).catch(() => {});
+      }
+    });
+
+    it('picks up a newly appeared agent wire without waiting for session metadata to move', async () => {
+      const s1 = summary('s1', 't', T1);
+      await writeWire(home!, 's1', 'main', [userLine('needle mainline', T1)]);
+      const service = track(makeInlineService(home!, staticIndex([s1])));
+      await service.reindex();
+
+      await writeWire(home!, 's1', 'sub_1', [userLine('needle subagent', T2)]);
+      await settleSync(service);
+      expect((await service.search({ query: 'subagent' })).items).toHaveLength(1);
+    });
+
+    it('indexes mid-turn wire growth on the next pass even when the summary is unchanged', async () => {
+      const s1 = summary('s1', 't', T1);
+      const wire = await writeWire(home!, 's1', 'main', [userLine('needle first', T1)]);
+      const service = track(makeInlineService(home!, staticIndex([s1])));
+      await service.reindex();
+
+      await appendFile(wire, `${userLine('needle second', T2)}\n`, 'utf8');
+      await settleSync(service);
+      expect((await service.search({ query: 'second' })).items).toHaveLength(1);
+    });
+
+    it('syncs at most syncSessionCap fresh sessions per pass in recency order', async () => {
+      const ids = ['s1', 's2', 's3', 's4', 's5'];
+      const summaries = ids.map((id, i) => summary(id, '', T1 + i));
+      for (const [i, id] of ids.entries()) {
+        await writeWire(home!, id, 'main', [userLine(`needle doc${i}`, T1)]);
+      }
+      const service = track(makeInlineService(home!, staticIndex(summaries)));
+      service.syncDebounceMs = 60_000;
+      await settleBackend(service);
+      (coreOf(service) as unknown as { syncSessionCap: number }).syncSessionCap = 2;
+
+      await syncNow(service);
+      expect((await service.search({ query: 'doc0' })).items).toHaveLength(1);
+      expect((await service.search({ query: 'doc1' })).items).toHaveLength(1);
+      expect((await service.search({ query: 'doc2' })).items).toEqual([]);
+
+      await syncNow(service);
+      expect((await service.search({ query: 'doc2' })).items).toHaveLength(1);
+      expect((await service.search({ query: 'doc3' })).items).toHaveLength(1);
+      expect((await service.search({ query: 'doc4' })).items).toEqual([]);
+
+      await syncNow(service);
+      expect((await service.search({ query: 'doc4' })).items).toHaveLength(1);
+      expect((await service.status()).sessions).toBe(5);
+    });
+
+    it('applies database search sync tuning from config', async () => {
+      const service = track(
+        new GlobalSearchService(
+          staticIndex([]),
+          makeBootstrap(home!),
+          noopLog,
+          makeConfig(false, { searchSyncSessionCap: 7, searchSyncDebounceMs: 12_345 }),
+        ),
+      );
+      await settleBackend(service);
+      expect(service.syncDebounceMs).toBe(12_345);
+      expect((coreOf(service) as unknown as { syncSessionCap: number }).syncSessionCap).toBe(7);
+    });
   });
 });
