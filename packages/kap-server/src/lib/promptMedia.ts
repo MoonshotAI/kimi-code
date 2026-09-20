@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream, type Stats } from 'node:fs';
-import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -174,6 +174,7 @@ interface AttachmentSink {
   prepare(): Promise<void>;
   size(path: string): Promise<number | undefined>;
   write(path: string, data: Uint8Array | AsyncIterable<Uint8Array>): Promise<void>;
+  remove(path: string): Promise<void>;
 }
 
 function localAttachmentSink(dir: string): AttachmentSink {
@@ -191,6 +192,7 @@ function localAttachmentSink(dir: string): AttachmentSink {
       }
       await pipeline(Readable.from(data), createWriteStream(path));
     },
+    remove: (path) => rm(path, { force: true }),
   };
 }
 
@@ -263,6 +265,7 @@ function environmentAttachmentSink(target: PromptAttachmentsTarget): AttachmentS
     },
     size: (path) => target.fs.stat(path).then((info) => info.size, () => undefined),
     write: (path, data) => writeAttachmentChunks(target.fs, path, data),
+    remove: (path) => target.fs.remove(path),
   };
 }
 
@@ -270,6 +273,7 @@ export interface PromptMediaPreparation {
   readonly content: WireContent;
   readonly attachments: readonly PromptFileAttachment[];
   readonly discard: () => Promise<void>;
+  readonly discardStaged: () => Promise<void>;
 }
 
 export async function resolvePromptMediaFiles(
@@ -286,6 +290,15 @@ export async function resolvePromptMediaFiles(
     await Promise.all(
       [...ownedFileIds].map((fileId) => store.delete(fileId).catch(() => undefined)),
     );
+  };
+  let stagedDiscarded = false;
+  const discardStaged = async (): Promise<void> => {
+    await discard();
+    if (stagedDiscarded) return;
+    stagedDiscarded = true;
+    if (attachmentsSink === undefined || stagedPaths.size === 0) return;
+    const sink = attachmentsSink;
+    await Promise.all([...stagedPaths].map((path) => sink.remove(path).catch(() => undefined)));
   };
   let changed = false;
   let originals:
@@ -306,16 +319,22 @@ export async function resolvePromptMediaFiles(
     }
     return originals;
   };
+  const stagedPaths = new Set<string>();
   let attachmentsSink: AttachmentSink | undefined;
   const resolveAttachmentsSink = async (): Promise<AttachmentSink> => {
     if (attachmentsSink !== undefined) return attachmentsSink;
     const target = await options.resolveAttachmentsTarget?.();
-    if (target !== undefined) {
-      attachmentsSink = environmentAttachmentSink(target);
-    } else {
-      const dir = await options.resolveAttachmentsDir?.().catch(() => undefined);
-      attachmentsSink = localAttachmentSink(dir ?? cacheDir);
-    }
+    const base =
+      target !== undefined
+        ? environmentAttachmentSink(target)
+        : localAttachmentSink(await options.resolveAttachmentsDir?.().catch(() => undefined) ?? cacheDir);
+    attachmentsSink = {
+      ...base,
+      write: async (path, data) => {
+        stagedPaths.add(path);
+        await base.write(path, data);
+      },
+    };
     return attachmentsSink;
   };
   const attachments: PromptFileAttachment[] = [];
@@ -615,9 +634,9 @@ export async function resolvePromptMediaFiles(
       });
       changed = true;
     }
-    return { content: changed ? content : input, attachments, discard };
+    return { content: changed ? content : input, attachments, discard, discardStaged };
   } catch (error) {
-    await discard();
+    await discardStaged();
     throw error;
   }
 }

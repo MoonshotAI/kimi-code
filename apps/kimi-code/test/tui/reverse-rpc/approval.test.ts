@@ -1,4 +1,4 @@
-import type { ApprovalRequest } from '@moonshot-ai/kimi-code-sdk';
+import type { ApprovalRequest, ApprovalResponse } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ApprovalController } from '#/tui/reverse-rpc/approval/controller';
@@ -138,5 +138,42 @@ describe('approval reverse-rpc', () => {
       decision: 'cancelled',
       feedback: 'approval handler failed',
     });
+  });
+
+  it('resolves the environment badge for the initiating agent before showing the panel', async () => {
+    const controller = new ApprovalController();
+    const show = vi.spyOn(controller, 'show').mockResolvedValue({ decision: 'approved' });
+    const resolveEnvironment = vi.fn(async (agentId: string | undefined) =>
+      agentId === 'agent-sub' ? 'docker:sub-box' : undefined,
+    );
+    const handler = createApprovalRequestHandler(
+      controller,
+      undefined,
+      resolveEnvironment,
+    ) as (request: ApprovalRequest & { agentId?: string }) => Promise<ApprovalResponse>;
+
+    await handler({ ...approvalEvent(), agentId: 'agent-sub' });
+
+    expect(resolveEnvironment).toHaveBeenCalledWith('agent-sub');
+    expect(show).toHaveBeenCalledWith(
+      expect.objectContaining({ environment: 'docker:sub-box' }),
+    );
+  });
+
+  it('shows the panel without a badge when the environment lookup fails', async () => {
+    const controller = new ApprovalController();
+    const show = vi.spyOn(controller, 'show').mockResolvedValue({ decision: 'approved' });
+    const handler = createApprovalRequestHandler(
+      controller,
+      undefined,
+      vi.fn(async () => {
+        throw new Error('agent gone');
+      }),
+    );
+
+    await expect(handler(approvalEvent())).resolves.toEqual({ decision: 'approved' });
+    expect(show).toHaveBeenCalledWith(
+      expect.not.objectContaining({ environment: expect.anything() }),
+    );
   });
 });

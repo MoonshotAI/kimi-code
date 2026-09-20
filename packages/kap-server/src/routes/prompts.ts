@@ -385,7 +385,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         );
         reply.send(okEnvelope(projectPromptHandle(handle), req.id));
       } catch (error) {
-        if (!enqueued) await preparedMedia?.discard();
+        if (!enqueued) await preparedMedia?.discardStaged();
         sendMappedError(reply, req, error);
       } finally {
         reservation?.dispose();

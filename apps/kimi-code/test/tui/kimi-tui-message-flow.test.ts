@@ -6838,6 +6838,111 @@ command = "vim"
     });
   });
 
+  it('shows the initiating subagent environment badge on the approval panel', async () => {
+    const session = makeSession({
+      getEnvironment: vi.fn(async () => ({
+        workspaceId: 'ws-1',
+        environmentId: 'sub-box',
+        cwd: '/remote/sub',
+      })),
+      listEnvironments: vi.fn(async () => ({
+        environments: [
+          { environmentId: 'main-box', type: 'ssh', status: 'ready', generation: 'g1', capabilities: [] },
+          { environmentId: 'sub-box', type: 'docker', status: 'ready', generation: 'g2', capabilities: [] },
+        ],
+      })),
+    });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.environment = { environmentId: 'main-box', type: 'ssh', status: 'ready' };
+
+    const approvalHandler = vi.mocked(session.setApprovalHandler).mock.calls[0]?.[0] as
+      | ((request: ApprovalRequest & { agentId?: string }) => Promise<ApprovalResponse>)
+      | undefined;
+    if (approvalHandler === undefined) throw new Error('expected approval handler');
+    void approvalHandler({
+      turnId: 1,
+      toolCallId: 'call_bash',
+      toolName: 'Bash',
+      action: 'Run shell command',
+      agentId: 'agent-sub',
+      display: {
+        kind: 'generic',
+        summary: 'Run shell command',
+        detail: { command: 'ls', description: 'List files' },
+      },
+    });
+
+    await vi.waitFor(() => {
+      const approval = stripSgr(driver.state.editorContainer.render(120).join('\n'));
+      expect(approval).toContain('docker:sub-box');
+      expect(approval).not.toContain('ssh:main-box');
+    });
+  });
+
+  it('renders no badge for a locally bound subagent under a remote main binding', async () => {
+    const session = makeSession({
+      getEnvironment: vi.fn(async () => ({ workspaceId: 'ws-1', environmentId: 'local' })),
+      listEnvironments: vi.fn(async () => ({
+        environments: [
+          { environmentId: 'main-box', type: 'ssh', status: 'ready', generation: 'g1', capabilities: [] },
+        ],
+      })),
+    });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.environment = { environmentId: 'main-box', type: 'ssh', status: 'ready' };
+
+    const approvalHandler = vi.mocked(session.setApprovalHandler).mock.calls[0]?.[0] as
+      | ((request: ApprovalRequest & { agentId?: string }) => Promise<ApprovalResponse>)
+      | undefined;
+    if (approvalHandler === undefined) throw new Error('expected approval handler');
+    void approvalHandler({
+      turnId: 1,
+      toolCallId: 'call_bash',
+      toolName: 'Bash',
+      action: 'Run shell command',
+      agentId: 'agent-sub',
+      display: {
+        kind: 'generic',
+        summary: 'Run shell command',
+        detail: { command: 'ls', description: 'List files' },
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(ApprovalPanelComponent);
+    });
+    const approval = stripSgr(driver.state.editorContainer.render(120).join('\n'));
+    expect(approval).not.toContain('ssh:main-box');
+  });
+
+  it('keeps the main session binding as the approval badge for main-agent requests', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.environment = { environmentId: 'main-box', type: 'ssh', status: 'ready' };
+
+    const approvalHandler = vi.mocked(session.setApprovalHandler).mock.calls[0]?.[0] as
+      | ((request: ApprovalRequest & { agentId?: string }) => Promise<ApprovalResponse>)
+      | undefined;
+    if (approvalHandler === undefined) throw new Error('expected approval handler');
+    void approvalHandler({
+      turnId: 1,
+      toolCallId: 'call_bash',
+      toolName: 'Bash',
+      action: 'Run shell command',
+      agentId: 'main',
+      display: {
+        kind: 'generic',
+        summary: 'Run shell command',
+        detail: { command: 'ls', description: 'List files' },
+      },
+    });
+
+    await vi.waitFor(() => {
+      const approval = stripSgr(driver.state.editorContainer.render(120).join('\n'));
+      expect(approval).toContain('ssh:main-box');
+    });
+  });
+
   it('renders /status using the active session runtime status', async () => {
     const session = makeSession({
       getStatus: vi.fn(async () => ({
