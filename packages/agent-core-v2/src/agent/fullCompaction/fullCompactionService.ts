@@ -647,6 +647,13 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       let droppedCount = 0;
       let overflowShrinkCount = 0;
       let requestAttempts = 0;
+      const preShrunkHistory = this.preShrinkHistoryToWindowBudget(
+        historyForModel,
+        instruction,
+        compactionMaxOutputSize,
+      );
+      droppedCount += historyForModel.length - preShrunkHistory.length;
+      historyForModel = preShrunkHistory;
       while (true) {
         const messagesToCompact = historyForModel;
         const messages: Message[] = [...messagesToCompact, createUserMessage(instruction)];
@@ -748,6 +755,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
       const summary = await this.postProcessSummary(attempt.summary);
       const wireLines = await this.captureWireLines();
+      signal.throwIfAborted();
       const recoveryFooter = this.renderRecoveryFooter(wireLines);
       const summaryText = buildCompactionSummaryText(summary);
       const result = this.context.applyCompaction({
@@ -805,6 +813,32 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       }
       throw new Error2(ErrorCodes.COMPACTION_FAILED, String(error), { cause: error });
     }
+  }
+
+  private preShrinkHistoryToWindowBudget(
+    history: readonly ContextMessage[],
+    instruction: string,
+    compactionMaxOutputSize: number | undefined,
+  ): readonly ContextMessage[] {
+    const effectiveMaxTokens = this.getEffectiveMaxContextTokens();
+    if (effectiveMaxTokens <= 0) return history;
+    const outputReserve =
+      compactionMaxOutputSize === undefined
+        ? Math.floor(effectiveMaxTokens / 8)
+        : Math.min(compactionMaxOutputSize, Math.floor(effectiveMaxTokens / 8));
+    const messageBudget =
+      Math.floor((effectiveMaxTokens - outputReserve) * OVERFLOW_CONTEXT_SAFETY_RATIO) -
+      this.requestTokens([]);
+    const estimatedMessagesTokens =
+      this.tokenCounting.estimateMessages(history) +
+      this.tokenCounting.estimateMessage(createUserMessage(instruction));
+    if (messageBudget <= 0 || estimatedMessagesTokens <= messageBudget) return history;
+    const preShrunk = takeRecentMessagesWithinTokenBudget(
+      history,
+      messageBudget,
+      (message) => this.tokenCounting.estimateMessage(message),
+    );
+    return preShrunk.length === 0 ? history : preShrunk;
   }
 
   private async postProcessSummary(summary: string): Promise<string> {

@@ -178,6 +178,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     if (serverUrl === undefined || canonicalMcpOAuthResource(serverUrl) !== event.serverUrl) return;
     if (event.type === 'tokens-invalidated') {
       this.oauthService.forgetProvider(event.serverName, event.serverUrl);
+      if (entry.status === 'needs-auth') return;
     }
     if (entry.status === 'disabled' || entry.status === 'removed') return;
     if (entry.status === 'pending') {

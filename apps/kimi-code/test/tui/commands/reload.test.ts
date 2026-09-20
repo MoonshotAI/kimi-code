@@ -16,6 +16,8 @@ import {
 } from '#/tui/commands/experimental-flags';
 import {
   createMarkdownOptions,
+  getMarkdownMermaidMode,
+  setMarkdownMermaidMode,
   setMarkdownRenderLatex,
 } from '#/tui/utils/markdown-options';
 
@@ -140,6 +142,27 @@ auto_install = false
       expect(latexWhenThemeApplied).toBe(false);
     } finally {
       setMarkdownRenderLatex(true);
+    }
+  });
+
+  it('applies the mermaid mode before theme application rebuilds Markdown', async () => {
+    await writeTuiConfig('[markdown]\nmermaid = "off"\n');
+    const host = makeHost();
+
+    let mermaidWhenThemeApplied: string | undefined;
+    const mutable = host as unknown as { applyTheme: unknown };
+    mutable.applyTheme = vi.fn(() => {
+      mermaidWhenThemeApplied = getMarkdownMermaidMode();
+    });
+
+    try {
+      await handleReloadTuiCommand(host);
+      expect(mermaidWhenThemeApplied).toBe('off');
+      expect(host.setAppState).toHaveBeenCalledWith(
+        expect.objectContaining({ markdown: { mermaid: 'off' } }),
+      );
+    } finally {
+      setMarkdownMermaidMode('final');
     }
   });
 

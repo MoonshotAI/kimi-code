@@ -10,12 +10,15 @@ import {
   registerScopedService,
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
+import { ILogService } from '#/_base/log/log';
 import { encodeWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { ErrorCodes, Error2 } from '#/errors';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IEventService } from '#/app/event/event';
@@ -37,6 +40,7 @@ describe('WorkspaceService (file-backed)', () => {
   let homeDir: string;
   let currentHost: ReturnType<typeof createScopedTestHost> | undefined;
   let published: Array<{ type: string; payload: unknown }>;
+  let appendLogs: AppendLogStore;
 
   beforeEach(async () => {
     _clearScopedRegistryForTests();
@@ -64,11 +68,24 @@ describe('WorkspaceService (file-backed)', () => {
     await fsp.rm(homeDir, { recursive: true, force: true });
   });
 
-  function build(hostFs: IHostFileSystem = new HostFileSystem()): IWorkspaceService {
-    const fileStorage = new FileStorageService(homeDir);
+  const noopLog = {
+    error: () => {},
+    warn: () => {},
+    info: () => {},
+    debug: () => {},
+  } as unknown as ILogService;
+
+  function build(
+    hostFs: IHostFileSystem = new HostFileSystem(),
+    storage?: IFileSystemStorageService,
+  ): IWorkspaceService {
+    const fileStorage = storage ?? new FileStorageService(homeDir);
+    appendLogs = new AppendLogStore(fileStorage);
     const host = createScopedTestHost([
       stubPair(IFileSystemStorageService, fileStorage),
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
+      stubPair(IAppendLogStore, appendLogs),
+      stubPair(ILogService, noopLog),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(IHostFileSystem, hostFs),
       stubPair(IEventService, {
@@ -85,10 +102,10 @@ describe('WorkspaceService (file-backed)', () => {
     return host.app.accessor.get(IWorkspaceService);
   }
 
-  function restart(): IWorkspaceService {
+  function restart(hostFs?: IHostFileSystem, storage?: IFileSystemStorageService): IWorkspaceService {
     currentHost?.dispose();
     currentHost = undefined;
-    return build();
+    return build(hostFs, storage);
   }
 
   function allDirsHostFs(): IHostFileSystem {
@@ -571,6 +588,162 @@ describe('WorkspaceService (file-backed)', () => {
     expect(relisted).toEqual([]);
     const afterMerge = await readWorkspacesJson();
     expect(Object.keys(afterMerge.workspaces)).toEqual([unrelatedId]);
+  });
+
+  function staleEntry(i: number): SessionIndexLine {
+    return {
+      sessionId: `s_stale_${i}`,
+      sessionDir: join(homeDir, 'sessions', `wd_stale_${i}`, `s_stale_${i}`),
+      workDir: join(homeDir, `stale-${i}`),
+    };
+  }
+
+  async function writeSessionIndexLines(lines: readonly unknown[]): Promise<void> {
+    const text = `${lines.map((line) => (typeof line === 'string' ? line : JSON.stringify(line))).join('\n')}\n`;
+    await fsp.writeFile(join(homeDir, 'session_index.jsonl'), text, 'utf8');
+  }
+
+  async function readSessionIndexIds(): Promise<{
+    ids: Set<string>;
+    tombstoned: Set<string>;
+    lines: string[];
+  }> {
+    const raw = await fsp.readFile(join(homeDir, 'session_index.jsonl'), 'utf8');
+    const lines = raw.trim().split('\n');
+    const ids = new Set<string>();
+    const tombstoned = new Set<string>();
+    for (const line of lines) {
+      const parsed = JSON.parse(line) as Record<string, unknown>;
+      if (parsed['deleted'] === true) {
+        tombstoned.add(parsed['sessionId'] as string);
+      } else {
+        ids.add(parsed['sessionId'] as string);
+      }
+    }
+    return { ids, tombstoned, lines };
+  }
+
+  it('drops session-index entries whose session dir is gone, keeping live entries and tombstones', async () => {
+    const fresh: SessionIndexLine[] = [];
+    const lines: unknown[] = [];
+    for (let i = 0; i < 20; i++) lines.push(staleEntry(i));
+    for (let i = 0; i < 8; i++) {
+      const sessionDir = join(homeDir, 'sessions', `wd_fresh_${i}`, `s_fresh_${i}`);
+      await fsp.mkdir(sessionDir, { recursive: true });
+      const entry: SessionIndexLine = {
+        sessionId: `s_fresh_${i}`,
+        sessionDir,
+        workDir: join(homeDir, `fresh-${i}`),
+      };
+      fresh.push(entry);
+      lines.push(entry);
+    }
+    lines.push({ sessionId: 's_gone_0', deleted: true });
+    lines.push({ sessionId: 's_gone_1', deleted: true });
+    lines.push('not-json');
+    await writeSessionIndexLines(lines);
+
+    const list = await build().list();
+    expect(list).toHaveLength(28);
+
+    const { ids, tombstoned, lines: compacted } = await readSessionIndexIds();
+    expect(compacted).toHaveLength(10);
+    expect([...ids].toSorted()).toEqual(fresh.map((entry) => entry.sessionId).toSorted());
+    expect([...tombstoned].toSorted()).toEqual(['s_gone_0', 's_gone_1']);
+
+    const afterRestart = await restart().list();
+    expect(afterRestart).toHaveLength(28);
+  });
+
+  it('leaves a mostly-fresh session index byte-identical', async () => {
+    await seedSessionIndex([staleEntry(0), staleEntry(1), staleEntry(2), staleEntry(3)]);
+    const before = await fsp.readFile(join(homeDir, 'session_index.jsonl'), 'utf8');
+
+    await build().list();
+
+    expect(await fsp.readFile(join(homeDir, 'session_index.jsonl'), 'utf8')).toBe(before);
+  });
+
+  it('keeps entries appended while the compaction scans session dirs', async () => {
+    const lines: unknown[] = [];
+    for (let i = 0; i < 20; i++) lines.push(staleEntry(i));
+    const gateDir = join(homeDir, 'sessions', 'wd_gate', 's_gate');
+    await fsp.mkdir(gateDir, { recursive: true });
+    lines.push({ sessionId: 's_gate', sessionDir: gateDir, workDir: join(homeDir, 'gate') });
+    await writeSessionIndexLines(lines);
+
+    let statEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      statEntered = resolve;
+    });
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    const hostFs = new HostFileSystem();
+    const gated = Object.create(hostFs) as IHostFileSystem;
+    let first = true;
+    gated.stat = async (path: string) => {
+      if (path === gateDir && first) {
+        first = false;
+        statEntered();
+        await gate;
+      }
+      return hostFs.stat(path);
+    };
+
+    const listPromise = build(gated).list();
+    await entered;
+    const appendedDir = join(homeDir, 'sessions', 'wd_new', 's_new');
+    await fsp.mkdir(appendedDir, { recursive: true });
+    appendLogs.append('', 'session_index.jsonl', {
+      sessionId: 's_new',
+      sessionDir: appendedDir,
+      workDir: join(homeDir, 'new'),
+    });
+    await appendLogs.flush();
+    releaseGate();
+    await listPromise;
+
+    const { ids, lines: compacted } = await readSessionIndexIds();
+    expect(ids.has('s_new')).toBe(true);
+    expect(ids.has('s_gate')).toBe(true);
+    expect(compacted).toHaveLength(2);
+  });
+
+  it('keeps the original file when the compaction rewrite fails and compacts on the next startup', async () => {
+    const lines: unknown[] = [];
+    for (let i = 0; i < 20; i++) lines.push(staleEntry(i));
+    const liveDir = join(homeDir, 'sessions', 'wd_live', 's_live');
+    await fsp.mkdir(liveDir, { recursive: true });
+    lines.push({ sessionId: 's_live', sessionDir: liveDir, workDir: join(homeDir, 'live') });
+    await writeSessionIndexLines(lines);
+    const before = await fsp.readFile(join(homeDir, 'session_index.jsonl'), 'utf8');
+
+    let failWrites = true;
+    class FlakyStorage extends FileStorageService {
+      override async write(
+        scope: string,
+        key: string,
+        data: Uint8Array,
+        options?: { readonly atomic?: boolean; readonly signal?: AbortSignal },
+      ): Promise<void> {
+        if (failWrites && key === 'session_index.jsonl') throw new Error('injected write failure');
+        return super.write(scope, key, data, options);
+      }
+    }
+    const flaky = new FlakyStorage(homeDir);
+
+    const list = await build(new HostFileSystem(), flaky).list();
+    expect(list).toHaveLength(21);
+    expect(await fsp.readFile(join(homeDir, 'session_index.jsonl'), 'utf8')).toBe(before);
+
+    failWrites = false;
+    await restart(new HostFileSystem(), flaky).list();
+
+    const { ids, lines: compacted } = await readSessionIndexIds();
+    expect([...ids]).toEqual(['s_live']);
+    expect(compacted).toHaveLength(1);
   });
 });
 

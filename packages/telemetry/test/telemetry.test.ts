@@ -10,12 +10,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   flushTelemetrySync,
   initializeTelemetry,
+  setTelemetryEnabled,
   setTelemetryModel,
   shutdownTelemetry,
   track,
 } from '../src';
 import { isTelemetryDisabledByEnv } from '../src/bootstrap';
-import { TelemetryClient, resetDefaultTelemetryClientForTests } from '../src/client';
+import {
+  getDefaultTelemetryClient,
+  TelemetryClient,
+  resetDefaultTelemetryClientForTests,
+} from '../src/client';
 import { installCrashHandlersForClient, setCrashPhase, uninstallCrashHandlers } from '../src/crash';
 import { EventSink } from '../src/sink';
 import { SystemMetricsCollector } from '../src/systemMetrics';
@@ -158,14 +163,14 @@ describe('TelemetryClient', () => {
     });
   });
 
-  it('forwards directly to the attached sink and can be disabled', async () => {
+  it('forwards directly to the attached sink and stops after teardown', async () => {
     const client = new TelemetryClient();
     const transport = new RecordingTransport();
     client.attachSink(makeSink(transport));
 
-    client.track('before_disable');
-    client.disable();
-    client.track('after_disable');
+    client.track('before_teardown');
+    client.teardown();
+    client.track('after_teardown');
     await client.flush();
 
     expect(transport.sent).toHaveLength(0);
@@ -249,7 +254,7 @@ describe('TelemetryClient', () => {
 
     client.setSystemMetricsCollector(first);
     client.setSystemMetricsCollector(second);
-    client.disable();
+    client.teardown();
 
     expect(first.stop).toHaveBeenCalledTimes(1);
     expect(second.stop).toHaveBeenCalledTimes(1);
@@ -298,6 +303,51 @@ describe('TelemetryClient', () => {
     expect(event?.timestamp).toBeGreaterThanOrEqual(before);
     expect(event?.timestamp).toBeLessThanOrEqual(Date.now() / 1000);
     expect(event?.properties).toEqual({});
+  });
+
+  it('drops buffered and incoming events while disabled, then resumes after re-enable', async () => {
+    const client = new TelemetryClient();
+    const transport = new RecordingTransport();
+    client.attachSink(makeSink(transport));
+    client.track('buffered');
+
+    client.setEnabled(false);
+    client.track('during');
+    client.setEnabled(true);
+    client.track('after');
+    await client.flush();
+
+    expect(transport.sent.flat().map((event) => event.event)).toEqual(['after']);
+  });
+
+  it('tolerates repeated enable and disable calls', async () => {
+    const client = new TelemetryClient();
+    const transport = new RecordingTransport();
+    client.attachSink(makeSink(transport));
+
+    client.setEnabled(false);
+    client.setEnabled(false);
+    client.track('during');
+    client.setEnabled(true);
+    client.setEnabled(true);
+    client.track('after');
+    await client.flush();
+
+    expect(transport.sent.flat().map((event) => event.event)).toEqual(['after']);
+  });
+
+  it('toggles the default client through the module-level setter', async () => {
+    const client = getDefaultTelemetryClient();
+    const transport = new RecordingTransport();
+    client.attachSink(makeSink(transport));
+
+    setTelemetryEnabled(false);
+    track('during');
+    setTelemetryEnabled(true);
+    track('after');
+    await client.flush();
+
+    expect(transport.sent.flat().map((event) => event.event)).toEqual(['after']);
   });
 });
 
@@ -942,6 +992,91 @@ describe('telemetry bootstrap', () => {
     }
 
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('starts paused and skips the disk replay when initiallyEnabled is false', async () => {
+    const homeDir = await tempHome();
+    const telemetryDir = join(homeDir, 'telemetry');
+    mkdirSync(telemetryDir, { recursive: true });
+    const spool = join(telemetryDir, 'failed_retry.jsonl');
+    writeFileSync(spool, `${JSON.stringify(sampleEvent('from_disk'))}\n`);
+    const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    initializeTelemetry({
+      homeDir,
+      deviceId: 'dev',
+      appName: 'kimi-code-cli',
+      version: '1.2.3',
+      initiallyEnabled: false,
+    });
+    track('dropped_while_paused');
+    await shutdownTelemetry();
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(statSync(spool).isFile()).toBe(true);
+  });
+
+  it('drops events queued before initialization when bootstrap starts paused', async () => {
+    const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    track('queued_before_init');
+    initializeTelemetry({
+      homeDir: await tempHome(),
+      deviceId: 'dev',
+      appName: 'kimi-code-cli',
+      version: '1.2.3',
+      initiallyEnabled: false,
+    });
+    await shutdownTelemetry();
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('resumes intake after a paused start without re-initialization', async () => {
+    const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    initializeTelemetry({
+      homeDir: await tempHome(),
+      deviceId: 'dev',
+      appName: 'kimi-code-cli',
+      version: '1.2.3',
+      initiallyEnabled: false,
+    });
+    track('dropped');
+    setTelemetryEnabled(true);
+    track('sent');
+    await shutdownTelemetry();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const init = requestInitFrom(fetchImpl);
+    const payload = JSON.parse(init.body as string) as { events: Array<{ event: string }> };
+    expect(payload.events[0]?.['event']).toBe('kfc_sent');
+  });
+
+  it('replays disk events on bootstrap by default', async () => {
+    const homeDir = await tempHome();
+    const telemetryDir = join(homeDir, 'telemetry');
+    mkdirSync(telemetryDir, { recursive: true });
+    const spool = join(telemetryDir, 'failed_default.jsonl');
+    writeFileSync(spool, `${JSON.stringify(sampleEvent('from_disk'))}\n`);
+    const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    initializeTelemetry({
+      homeDir,
+      deviceId: 'dev',
+      appName: 'kimi-code-cli',
+      version: '1.2.3',
+    });
+    await vi.waitFor(() => {
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+    await shutdownTelemetry();
+
+    expect(() => statSync(spool)).toThrow();
   });
 
   it('queues singleton track calls before initialization, then flushes after bootstrap', async () => {

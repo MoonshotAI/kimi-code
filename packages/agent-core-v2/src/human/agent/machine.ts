@@ -498,11 +498,20 @@ export function createAgentMachine({
           const merged = mergeSteerMessages(
             steered.map((item) => ({ content: item.message.content, origin: item.meta?.origin })),
           );
+          const promptId = steered.length === 1 ? steered[0]?.meta?.promptId : undefined;
           enqueue.assign({
             queue: context.queue.filter((item) => !steered.includes(item)),
             notifications: [
               ...context.notifications,
-              createUserEntry({ role: 'user', content: merged.content }, { source: 'input' }),
+              createUserEntry(
+                { role: 'user', content: merged.content },
+                {
+                  source: 'input',
+                  promptId,
+                  userMessageId: promptId,
+                  origin: { ...merged.origin, inTurn: true },
+                },
+              ),
             ],
           });
           enqueue.emit({

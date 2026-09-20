@@ -1,4 +1,4 @@
-import { produce } from 'immer';
+import { freeze, Immer, produce } from 'immer';
 
 import type { BranchRef, EntryLine } from '#/store/types';
 import { StoreError } from '#/store/types';
@@ -46,6 +46,8 @@ export interface EventStore<SM extends SliceMap> {
 const EVENT_ENTRY_KIND = 'event';
 const DEFAULT_DRAIN_LIMIT = 100;
 
+const replayImmer = new Immer({ autoFreeze: false });
+
 type Listener<SM extends SliceMap> = (state: CombinedState<SM>, cause: Cause<SM>) => void;
 
 export async function createEventStore<SM extends SliceMap>(
@@ -73,6 +75,7 @@ class EventStoreImpl<SM extends SliceMap> implements EventStore<SM> {
   private readonly drainLimit: number;
   private readonly report: (error: unknown) => void;
   private readonly listeners = new Set<Listener<SM>>();
+  private readonly replayFreshSlices = new Set<string>();
 
   constructor(opts: EventStoreOptions<SM>) {
     this.journal = opts.journal;
@@ -192,10 +195,15 @@ class EventStoreImpl<SM extends SliceMap> implements EventStore<SM> {
       seeded[name] = slice.initialState();
     }
     this.state = seeded;
+    this.replayFreshSlices.clear();
     for (const record of records) {
       if (record.kind !== EVENT_ENTRY_KIND) continue;
       this.replayRecord(record);
     }
+    for (const name of this.replayFreshSlices) {
+      this.state[name] = freeze(this.state[name], true);
+    }
+    this.replayFreshSlices.clear();
   }
 
   private replayRecord(record: JournalRecord): void {
@@ -232,7 +240,7 @@ class EventStoreImpl<SM extends SliceMap> implements EventStore<SM> {
       causes.push({ kind: 'event', event, entry }, ...internalCauses);
     }
     this.notify(causes);
-    return entries[entries.length - 1] as EntryLine;
+    return entries.at(-1) as EntryLine;
   }
 
   private applyEvent(
@@ -258,11 +266,14 @@ class EventStoreImpl<SM extends SliceMap> implements EventStore<SM> {
     };
     let changed = false;
     const next: Record<string, unknown> = { ...this.state };
+    const produceFor = replaying ? replayImmer.produce : produce;
     for (const [name, slice] of Object.entries(this.slices)) {
       const reducer = slice.reducers[event.type];
       if (reducer === undefined) continue;
       changed = true;
-      next[name] = produce(next[name], (draft) => reducer(draft, event, ctx));
+      const produced = produceFor(next[name], (draft) => reducer(draft, event, ctx));
+      if (replaying && produced !== next[name]) this.replayFreshSlices.add(name);
+      next[name] = produced;
     }
     if (changed) {
       this.state = next;

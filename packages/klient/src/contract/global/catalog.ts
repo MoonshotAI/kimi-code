@@ -28,6 +28,7 @@ export const providerCatalogItemSchema = z.object({
   type: z.string(),
   base_url: z.string().optional(),
   default_model: z.string().optional(),
+  api_key_env: z.string().optional(),
   has_api_key: z.boolean(),
   status: providerCatalogStatusSchema,
   models: z.array(z.string()).optional(),

@@ -121,19 +121,49 @@ export function lowerMessage(message: Message, lower: OpenAILowerContext): OpenA
     converted = { role: message.role, content: content ?? '' };
   }
   const reasoningDetails: Record<string, unknown>[] = [];
+  const stringFields = new Map<string, string>();
+  let unstamped = '';
+  let hasUnstamped = false;
   for (const part of message.content) {
-    if (part.type !== 'think' || part.detailsIndex === undefined) continue;
-    if (part.think.length > 0) {
-      reasoningDetails.push({ type: 'summary', summary: part.think });
+    if (part.type !== 'think') continue;
+    if (part.detailsIndex !== undefined) {
+      if (part.think.length > 0) {
+        reasoningDetails.push({ type: 'summary', summary: part.think });
+      }
+      if (part.encrypted !== undefined) {
+        reasoningDetails.push({ type: 'encrypted', encrypted: part.encrypted });
+      }
+      continue;
     }
-    if (part.encrypted !== undefined) {
-      reasoningDetails.push({ type: 'encrypted', encrypted: part.encrypted });
+    if (part.reasoningKey !== undefined && part.reasoningKey !== REASONING_DETAILS_KEY) {
+      const current = stringFields.get(part.reasoningKey) ?? '';
+      stringFields.set(
+        part.reasoningKey,
+        part.hidden === true ? current : current + part.think,
+      );
+      continue;
     }
+    hasUnstamped = true;
+    if (part.hidden !== true) {
+      unstamped += part.think;
+    }
+  }
+  if (hasUnstamped) {
+    stringFields.set(reasoningKey, (stringFields.get(reasoningKey) ?? '') + unstamped);
   }
   if (reasoningDetails.length > 0) {
     (converted as Record<string, unknown>)[REASONING_DETAILS_KEY] = reasoningDetails;
-    (converted as Record<string, unknown>)[DEFAULT_REASONING_KEY] = reasoningContent;
-  } else if (hasReasoningPart || (preserveThinking && message.role === 'assistant')) {
+    (converted as Record<string, unknown>)[DEFAULT_REASONING_KEY] =
+      stringFields.get(DEFAULT_REASONING_KEY) ?? reasoningContent;
+  }
+  for (const [key, value] of stringFields) {
+    (converted as Record<string, unknown>)[key] = value;
+  }
+  if (
+    stringFields.size === 0 &&
+    reasoningDetails.length === 0 &&
+    (hasReasoningPart || (preserveThinking && message.role === 'assistant'))
+  ) {
     (converted as Record<string, unknown>)[reasoningKey] = reasoningContent;
   }
   return [converted];

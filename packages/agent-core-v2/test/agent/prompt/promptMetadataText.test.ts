@@ -20,6 +20,18 @@ const CAPTION = buildImageCompressionCaption({
 });
 
 describe('promptMetadataTextFromContentParts', () => {
+  it('uses explicit display text without exposing serialized evidence and keeps redaction', () => {
+    expect(promptMetadataTextFromContentParts([{ type: 'text', text: '<browser_capture>internal evidence</browser_capture>' }], [{ display_text: 'Save button · Rename it\npassword=example-secret' }])).toBe('Save button · Rename it password=[redacted]');
+  });
+
+  it('joins complete display records in order and does not drop an input with missing metadata', () => {
+    const parts = [{ type: 'text' as const, text: 'complete fallback' }];
+    expect(promptMetadataTextFromContentParts(parts, [{ display_text: 'one' }, { display_text: 'two' }])).toBe('one two');
+    expect(promptMetadataTextFromContentParts(parts, [{ display_text: 'one' }, {}])).toBe('complete fallback');
+    expect(promptMetadataTextFromContentParts(parts, [{ display_text: 3 }])).toBe('complete fallback');
+    expect(promptMetadataTextFromContentParts(parts, [{ display_text: 'x'.repeat(5_000) }])?.length).toBeLessThanOrEqual(4_000);
+  });
+
   it('renders text and media placeholders', () => {
     const text = promptMetadataTextFromContentParts([
       { type: 'text', text: 'look at this' },

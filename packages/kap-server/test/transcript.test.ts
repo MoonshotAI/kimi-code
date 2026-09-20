@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { appendFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -12,6 +12,7 @@ import {
   interactions,
   resumeSessionById,
   IModelCatalog,
+  ISessionIndex,
   type ContextMessage,
   type Event2,
   type ScopeSeed,
@@ -350,6 +351,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
         userMessageId: 'p2',
         status: 'queued',
         content: [{ type: 'text', text: 'second' }],
+        clientMetadata: [{ display_text: 'Second display', kimi_code_composer: { version: 1 } }],
         createdAt: '2026-01-01T00:00:01.000Z',
       }),
     );
@@ -363,7 +365,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
         content: [{ type: 'text', text: 'first' }],
       }),
     );
-    expect(body.data.prompts).toContainEqual(expect.objectContaining({ promptId: 'p2', status: 'queued' }));
+    expect(body.data.prompts).toContainEqual(expect.objectContaining({ promptId: 'p2', status: 'queued', clientMetadata: [{ display_text: 'Second display', kimi_code_composer: { version: 1 } }] }));
 
     bus.publish(serverEvent({ type: 'prompt.started', promptId: 'p2' }));
     ({ body } = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`));
@@ -1064,6 +1066,41 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     ]);
 
     expect(byAgent.get('sub-1')!.messages.map((m) => m.prompt)).toEqual(['scan the repo']);
+
+    const summary = await server!.core.accessor.get(ISessionIndex).get(id);
+    const subWirePath = join(
+      home as string,
+      'sessions',
+      summary!.workspaceId,
+      id,
+      'agents',
+      'sub-1',
+      'wire.jsonl',
+    );
+    await appendFile(
+      subWirePath,
+      `${JSON.stringify({
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'scan again' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+        time: 1000,
+      })}\n`,
+    );
+    const warm = await getJson<UserMessagesContract>(
+      `/api/v1/sessions/${id}/transcript/user-messages`,
+    );
+    const warmByAgent = new Map(warm.body.data.agents.map((a) => [a.agent_id, a]));
+    expect(warmByAgent.get('sub-1')!.messages.map((m) => m.prompt)).toEqual([
+      'scan the repo',
+      'scan again',
+    ]);
+    expect(warmByAgent.get('main')!.messages.map((m) => m.prompt)).toEqual(
+      main.messages.map((m) => m.prompt),
+    );
 
     const single = await getJson<UserMessagesContract>(
       `/api/v1/sessions/${id}/transcript/user-messages?agent_id=main`,

@@ -95,6 +95,10 @@ class FakeMcpManager {
 
   reconnectHandler: (name: string) => Promise<void> = async () => {};
 
+  async markNeedsAuth(): Promise<boolean> {
+    return false;
+  }
+
   async reconnect(name: string): Promise<void> {
     await this.reconnectHandler(name);
   }

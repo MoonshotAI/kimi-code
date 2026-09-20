@@ -61,19 +61,22 @@ const watchMockState = vi.hoisted(() => ({
 
 vi.mock('#human/utils/watch', async (importOriginal) => {
   const original = await importOriginal<typeof import('#human/utils/watch')>();
+  const watch = (path: string, options?: WatchOptions) => {
+    watchMockState.calls.push({ path, options });
+    if (watchMockState.factory !== undefined) {
+      return watchMockState.factory(path, options) as ReturnType<typeof original.watch>;
+    }
+    return {
+      ready: Promise.resolve(),
+      onDidChange: () => ({ dispose: () => {} }),
+      dispose: () => {},
+    };
+  };
   return {
     ...original,
-    watch: (path: string, options?: WatchOptions) => {
-      watchMockState.calls.push({ path, options });
-      if (watchMockState.factory !== undefined) {
-        return watchMockState.factory(path, options) as ReturnType<typeof original.watch>;
-      }
-      return {
-        ready: Promise.resolve(),
-        onDidChange: () => ({ dispose: () => {} }),
-        dispose: () => {},
-      };
-    },
+    watch,
+    watchCandidates: (root: string, _candidates: readonly string[], options?: WatchOptions) =>
+      watch(root, options),
   };
 });
 

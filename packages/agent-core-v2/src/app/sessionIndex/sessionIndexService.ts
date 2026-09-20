@@ -7,6 +7,11 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { SessionIndexDegradedEvent } from '#/app/telemetry/events';
+import {
+  SESSION_INDEX_KEY,
+  SESSION_INDEX_SCOPE,
+  readSessionIndexEntries,
+} from '#/app/workspace/workspaceAlias';
 import { isError2 } from '#/errors';
 import { databaseBaseEnabled } from '#/persistence/configSection';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -31,7 +36,7 @@ import {
   type SessionListQuery,
   type SessionSummary,
 } from './sessionIndex';
-import { markSessionDirty } from './sessionIndexDirtyJournal';
+import { markSessionDirty, listDirtyMarks } from './sessionIndexDirtyJournal';
 import {
   PARENT_INDEX_NAME,
   SESSION_INDEX_MANIFEST,
@@ -47,7 +52,6 @@ import {
   listSessionIds,
   listWorkspaceIds,
   readSessionSummary,
-  scanSessionsFreshness,
   summaryMatchesChildOf,
 } from './sessionIndexSource';
 
@@ -186,10 +190,22 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   }
 
   private async manifestFresh(manifest: Checkpoint): Promise<boolean> {
-    if (manifest.sourceSessionCount === undefined) return false;
+    const signals = manifest.workspaceSignals;
+    if (signals === undefined) return false;
     try {
-      const scan = await scanSessionsFreshness(this.storage, this.sessionsScope);
-      return scan.dirtyMarkCount === 0 && scan.sessionCount === manifest.sourceSessionCount;
+      const [marks, workspaceIds] = await Promise.all([
+        listDirtyMarks(this.storage, this.sessionsScope),
+        listWorkspaceIds(this.storage, this.sessionsScope),
+      ]);
+      if (marks.length > 0) return false;
+      if (workspaceIds.length !== Object.keys(signals).length) return false;
+      for (const workspaceId of workspaceIds) {
+        const recorded = signals[workspaceId];
+        if (recorded === undefined) return false;
+        const current = await this.storage.mtime(this.sessionsScope, workspaceId);
+        if (current !== recorded) return false;
+      }
+      return true;
     } catch (error) {
       this.log.warn('session index freshness check failed; treating the index as stale', {
         error: String(error),
@@ -636,13 +652,58 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   }
 
   private async getLegacy(id: string): Promise<SessionSummary | undefined> {
+    const hinted = await this.workspaceHintFor(id);
+    if (hinted !== undefined) {
+      const summary = await readSessionSummary(this.docs, this.sessionsScope, hinted, id);
+      if (summary !== undefined) return summary;
+    }
     for (const workspaceId of await listWorkspaceIds(this.storage, this.sessionsScope)) {
-      const sessionIds = await listSessionIds(this.storage, this.sessionsScope, workspaceId);
-      if (!sessionIds.includes(id)) continue;
+      if (workspaceId === hinted) continue;
       const summary = await readSessionSummary(this.docs, this.sessionsScope, workspaceId, id);
       if (summary !== undefined) return summary;
     }
     return undefined;
+  }
+
+  private sessionIndexHint:
+    | { readonly mtimeMs: number | undefined; readonly byId: ReadonlyMap<string, string> }
+    | undefined;
+
+  private async workspaceHintFor(id: string): Promise<string | undefined> {
+    let mtimeMs: number | undefined;
+    try {
+      mtimeMs = await this.storage.mtime(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY);
+    } catch {
+      return undefined;
+    }
+    const cached = this.sessionIndexHint;
+    if (cached !== undefined && cached.mtimeMs === mtimeMs) return cached.byId.get(id);
+    const byId = new Map<string, string>();
+    if (mtimeMs !== undefined) {
+      let entries;
+      try {
+        entries = await readSessionIndexEntries(this.storage);
+      } catch {
+        return undefined;
+      }
+      for (const entry of entries) {
+        const workspaceId = this.workspaceIdFromSessionDir(entry.sessionDir);
+        if (workspaceId !== undefined) byId.set(entry.sessionId, workspaceId);
+      }
+    }
+    this.sessionIndexHint = { mtimeMs, byId };
+    return byId.get(id);
+  }
+
+  private workspaceIdFromSessionDir(sessionDir: string): string | undefined {
+    const root = this.storage.pathFor(this.sessionsScope, '');
+    if (root === undefined) return undefined;
+    const prefix = root.endsWith('/') ? root : `${root}/`;
+    if (!sessionDir.startsWith(prefix)) return undefined;
+    const rest = sessionDir.slice(prefix.length);
+    const slash = rest.indexOf('/');
+    if (slash <= 0) return undefined;
+    return rest.slice(0, slash);
   }
 
   private async countLegacy(query: SessionCountQuery): Promise<number> {

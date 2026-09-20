@@ -21,6 +21,7 @@ export interface CompletionBudgetParams {
 
 export interface ResolvedModelAuthMaterial {
   readonly apiKey?: string;
+  readonly apiKeyEnv?: string;
   readonly oauth?: OAuthRef;
   readonly oauthProviderKey?: string;
 }

@@ -588,7 +588,21 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         if (queueId !== undefined) loop.cancel({ promptId: queueId }, reason);
       }
       loop.cancel(undefined, reason);
-      await Promise.all([loop.settled(), compactionSettled]);
+      let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+      let settled: boolean;
+      try {
+        settled = await Promise.race([
+          Promise.all([loop.settled(), compactionSettled]).then(() => true),
+          new Promise<false>((resolve) => {
+            deadlineTimer = setTimeout(() => {
+              resolve(false);
+            }, promptIdleDeadline - Date.now());
+          }),
+        ]);
+      } finally {
+        clearTimeout(deadlineTimer);
+      }
+      if (!settled) break;
       let idle = true;
       try {
         const snapshot = loop.snapshot();
