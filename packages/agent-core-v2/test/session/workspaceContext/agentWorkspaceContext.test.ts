@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { Emitter, Event } from '#/_base/event';
 import { createScopedTestHost } from '#/_base/di/test';
@@ -105,6 +105,7 @@ function setup(options: { readonly sessionCwd?: string } = {}) {
 
   return {
     agent,
+    registry,
     sessionState,
   };
 }
@@ -119,7 +120,7 @@ describe('AgentWorkspaceContextService', () => {
 
     main.binding.apply({ workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
     expect(main.shadow.workDir).toBe('/remote/work');
-    expect(main.shadow.additionalDirs).toEqual([]);
+    expect(main.shadow.additionalDirs).toEqual(['/extra']);
 
     expect(sub.shadow.workDir).toBe('/workspace');
     expect(sub.shadow.additionalDirs).toEqual(['/extra']);
@@ -156,6 +157,49 @@ describe('AgentWorkspaceContextService', () => {
     expect(main.shadow.isWithin('/remote/work/src')).toBe(true);
     expect(main.shadow.isWithin('/elsewhere')).toBe(false);
     expect(() => main.shadow.assertAllowed('/elsewhere', 'read')).toThrowError(/outside workspace/);
+  });
+
+  it('resolves remote paths with the bound environment path semantics instead of the host', () => {
+    const { agent, registry } = setup();
+    const remote = registry.current('remote');
+    if (remote === undefined) throw new Error('remote environment missing');
+    const resolveSpy = vi.spyOn(remote.path, 'resolve');
+    const relativeSpy = vi.spyOn(remote.path, 'relative');
+    const main = agent('main', { workspaceId: 'workspace', environmentId: 'remote', cwd: '/srv/work' });
+
+    expect(main.shadow.resolve('src/file.ts')).toBe('/srv/work/src/file.ts');
+    expect(main.shadow.isWithin('/srv/work/src')).toBe(true);
+    expect(resolveSpy).toHaveBeenCalled();
+    expect(relativeSpy).toHaveBeenCalled();
+  });
+
+  it('resolves and guards paths with win32 semantics for a win32 environment binding', () => {
+    const { agent, registry } = setup();
+    registry.register(fakeEnvironment('win-remote', 'win-remote-one', { pathClass: 'win32' }));
+    const main = agent('main', { workspaceId: 'workspace', environmentId: 'win-remote', cwd: 'C:\\work' });
+
+    expect(main.shadow.resolve('src\\file.ts')).toBe('C:\\work\\src\\file.ts');
+    expect(main.shadow.isWithin('C:\\work\\src')).toBe(true);
+    expect(main.shadow.isWithin('D:\\elsewhere')).toBe(false);
+    expect(() => main.shadow.assertAllowed('D:\\elsewhere', 'read')).toThrowError(/outside workspace/);
+  });
+
+  it('allows access under the configured additional dirs for a non-local binding', () => {
+    const { agent } = setup();
+    const main = agent('main', { workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
+
+    expect(main.shadow.additionalDirs).toEqual(['/extra']);
+    expect(main.shadow.isWithin('/extra/file.txt')).toBe(true);
+    expect(main.shadow.assertAllowed('/extra/file.txt', 'write')).toBe('/extra/file.txt');
+  });
+
+  it('falls back to the session roots and host path semantics when the bound environment is missing', () => {
+    const { agent } = setup();
+    const main = agent('main', { workspaceId: 'workspace', environmentId: 'ghost' });
+
+    expect(main.shadow.workDir).toBe('/workspace');
+    expect(main.shadow.resolve('src/file.ts')).toBe('/workspace/src/file.ts');
+    expect(main.shadow.isWithin('/workspace/src')).toBe(true);
   });
 
   it('keeps setWorkDir writing the shared session state', () => {

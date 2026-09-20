@@ -10,7 +10,13 @@ import {
   workspaceContextAdditionalDirsKey,
   workspaceContextWorkDirKey,
 } from './workspaceContextService';
-import { assertWorkspaceAllowed, isWithinWorkspace, resolveWorkspacePath } from './workspacePaths';
+import {
+  assertWorkspaceAllowed,
+  hostWorkspacePathSemantics,
+  isWithinWorkspace,
+  resolveWorkspacePath,
+  type WorkspacePathSemantics,
+} from './workspacePaths';
 
 export class AgentWorkspaceContextService implements ISessionWorkspaceContext {
   declare readonly _serviceBrand: undefined;
@@ -31,6 +37,18 @@ export class AgentWorkspaceContextService implements ISessionWorkspaceContext {
     return environment.workspaceRoots();
   }
 
+  private pathSemantics(): WorkspacePathSemantics {
+    const environment = this.environment.current;
+    if (environment !== undefined) {
+      try {
+        return environment.inspect().path;
+      } catch {
+        return hostWorkspacePathSemantics;
+      }
+    }
+    return hostWorkspacePathSemantics;
+  }
+
   get workDir(): string {
     return this.roots().workDir;
   }
@@ -44,15 +62,15 @@ export class AgentWorkspaceContextService implements ISessionWorkspaceContext {
   }
 
   resolve(rel: string): string {
-    return resolveWorkspacePath(this.workDir, rel);
+    return resolveWorkspacePath(this.pathSemantics(), this.workDir, rel);
   }
 
   isWithin(absPath: string): boolean {
-    return isWithinWorkspace(this.workDir, this.additionalDirs, absPath);
+    return isWithinWorkspace(this.pathSemantics(), this.workDir, this.additionalDirs, absPath);
   }
 
   assertAllowed(absPath: string, op: PathAccessOperation): string {
-    return assertWorkspaceAllowed(this.workDir, this.additionalDirs, absPath, op);
+    return assertWorkspaceAllowed(this.pathSemantics(), this.workDir, this.additionalDirs, absPath, op);
   }
 }
 

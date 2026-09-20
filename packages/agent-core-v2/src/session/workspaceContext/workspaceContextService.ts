@@ -1,5 +1,3 @@
-import { resolve } from 'node:path';
-
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -9,7 +7,12 @@ import { ISessionStateService } from '#/session/state/sessionState';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 
 import { ISessionWorkspaceContext, type PathAccessOperation } from './workspaceContext';
-import { assertWorkspaceAllowed, isWithinWorkspace, resolveWorkspacePath } from './workspacePaths';
+import {
+  assertWorkspaceAllowed,
+  hostWorkspacePathSemantics,
+  isWithinWorkspace,
+  resolveWorkspacePath,
+} from './workspacePaths';
 
 export const workspaceContextWorkDirKey = defineState<string>('workspaceContext.workDir', () => '');
 export const workspaceContextAdditionalDirsKey = defineState<string[]>(
@@ -28,14 +31,12 @@ export class SessionWorkspaceContextService extends Service implements ISessionW
     super();
     this.states.contributeState(workspaceContextWorkDirKey);
     this.states.contributeState(workspaceContextAdditionalDirsKey);
-    this.states.set(workspaceContextWorkDirKey, resolve(ctx.cwd));
-    this.states.set(workspaceContextAdditionalDirsKey, [
-      ...new Set(workspaceInfo.additionalDirs.map((d) => resolve(d))),
-    ]);
+    this.states.set(workspaceContextWorkDirKey, ctx.cwd);
+    this.states.set(workspaceContextAdditionalDirsKey, [...new Set(workspaceInfo.additionalDirs)]);
     this._register(
       workspaceInfo.onDidChange(() => {
         this.states.set(workspaceContextAdditionalDirsKey, [
-          ...new Set(workspaceInfo.additionalDirs.map((d) => resolve(d))),
+          ...new Set(workspaceInfo.additionalDirs),
         ]);
       }),
     );
@@ -62,15 +63,15 @@ export class SessionWorkspaceContextService extends Service implements ISessionW
   }
 
   resolve(rel: string): string {
-    return resolveWorkspacePath(this._workDir, rel);
+    return resolveWorkspacePath(hostWorkspacePathSemantics, this._workDir, rel);
   }
 
   isWithin(absPath: string): boolean {
-    return isWithinWorkspace(this._workDir, this._additionalDirs, absPath);
+    return isWithinWorkspace(hostWorkspacePathSemantics, this._workDir, this._additionalDirs, absPath);
   }
 
   assertAllowed(absPath: string, op: PathAccessOperation): string {
-    return assertWorkspaceAllowed(this._workDir, this._additionalDirs, absPath, op);
+    return assertWorkspaceAllowed(hostWorkspacePathSemantics, this._workDir, this._additionalDirs, absPath, op);
   }
 }
 
