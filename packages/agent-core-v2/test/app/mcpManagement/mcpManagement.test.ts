@@ -103,7 +103,7 @@ describe('McpManagementService', () => {
     const environment = Object.assign(
       new FakeEnvironment(
         { workspaceId: 'test-workspace', environmentId: 'local', generation: 'test-generation' },
-        { capabilities: ['process'] },
+        { capabilities: ['process'], host: { homeDir: home } },
       ),
       { process: hostProcess },
     );
