@@ -1608,6 +1608,43 @@ describe('GrepTool', () => {
     ]);
   });
 
+  it('runs the rg bootstrap probes in the session workspace cwd', async () => {
+    const spawns: Array<{ command: string; cwd: string | undefined }> = [];
+    vi.mocked(ensureRgPath).mockImplementationOnce(async (probe) => {
+      await probe.exec(['rg', '--version']);
+      return { path: 'rg', source: 'system-path' };
+    });
+    const kaos = createFakeKaos();
+    const environment = createTestEnv(kaos);
+    const backend = Object.assign(
+      new FakeEnvironment(
+        { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
+        { capabilities: ['fs', 'process'], pathClass: environment.pathClass },
+      ),
+      {
+        process: {
+          _serviceBrand: undefined,
+          spawn: async (command: string, _args?: readonly string[], options?: { cwd?: string }) => {
+            spawns.push({ command, cwd: options?.cwd });
+            return processWithOutput('');
+          },
+        } as IHostProcessService,
+        fs: createTestFs(kaos),
+        host: environment,
+      },
+    );
+    const tool = new ProductionGrepTool(
+      stubAgentEnvironment(backend, { workDir: '/workspace', additionalDirs: [] }),
+      stubWorkspaceContext('/workspace', []),
+      noopTelemetryService,
+    );
+
+    const result = await executeTool(tool, context({ pattern: 'hit' }));
+
+    expect(result.isError).not.toBe(true);
+    expect(spawns[0]).toEqual({ command: 'rg', cwd: '/workspace' });
+  });
+
   it('returns an install hint when spawning the resolved ripgrep path hits ENOENT', async () => {
     const error = Object.assign(new Error('spawn /mock/rg ENOENT'), { code: 'ENOENT' });
     const exec = vi.fn().mockRejectedValue(error);

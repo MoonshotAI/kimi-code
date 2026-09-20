@@ -141,7 +141,7 @@ export class GrepTool implements IGrepTool {
     const pathClass = env.pathClass;
     let rgPath: string;
     try {
-      const resolution = await ensureRgPath(this.createRgProbe(processService), {
+      const resolution = await ensureRgPath(this.createRgProbe(processService, workspace.workspaceDir), {
         signal,
         allowCachedFallback: true,
         environment,
@@ -301,12 +301,12 @@ export class GrepTool implements IGrepTool {
     return builder.ok();
   }
 
-  private createRgProbe(processService: IHostProcessService): RgProbe {
+  private createRgProbe(processService: IHostProcessService, cwd: string): RgProbe {
     return {
       exec: async (args) => {
         const [command, ...rest] = args;
         if (command === undefined) return { exitCode: -1 };
-        const proc = await processService.spawn(command, rest);
+        const proc = await processService.spawn(command, rest, { cwd });
         try {
           proc.stdin.end();
         } catch {

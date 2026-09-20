@@ -165,7 +165,8 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
 
   private foreignInFlightToolCallCount(): number {
     const activeToolCalls = this.loop.current?.snapshot().turn?.activeToolCalls ?? [];
-    return activeToolCalls.filter((call) => call.name !== CHANGE_ENVIRONMENT_TOOL_NAME).length;
+    const self = activeToolCalls.some((call) => call.name === CHANGE_ENVIRONMENT_TOOL_NAME) ? 1 : 0;
+    return activeToolCalls.length - self;
   }
 
   private applySessionWorkDir(binding: EnvironmentBinding): void {
