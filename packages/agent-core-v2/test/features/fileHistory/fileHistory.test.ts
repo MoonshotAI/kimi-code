@@ -149,7 +149,7 @@ describe('AgentFileHistoryService', () => {
     const workspace = {
       workDir,
       additionalDirs: [],
-      resolve: (rel: string) => resolveWorkspacePath(workDir, rel),
+      resolve: (rel: string) => resolveWorkspacePath(posix, workDir, rel),
     } as unknown as ISessionWorkspaceContext;
     const environmentId = options.environmentId ?? 'local';
     const environmentBinding = {

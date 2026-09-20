@@ -159,10 +159,7 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
     }
     return {
       workDir: workDir ?? this.session.cwd,
-      additionalDirs:
-        binding.environmentId === LOCAL_ENVIRONMENT_ID
-          ? this.sessionState.get(workspaceContextAdditionalDirsKey)
-          : [],
+      additionalDirs: this.sessionState.get(workspaceContextAdditionalDirsKey),
     };
   }
 
