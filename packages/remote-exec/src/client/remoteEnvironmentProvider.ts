@@ -492,15 +492,16 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
               runner: this.options.probeRunner,
             });
           };
-          const handle = record.poolHandle;
-          if (handle !== undefined) {
-            // A reconnect against a live pool lease: the pool invalidates the
-            // shared connection, builds its replacement, and broadcasts the
-            // swap to every workspace view on this fingerprint. A view the
-            // broadcast has not reached yet (still draining its previous
-            // generation) just catches up to the current pooled connection
-            // instead of forcing yet another replacement.
-            const pooled = handle.connection;
+          // A reconnect against a live pool lease: the pool invalidates the
+          // shared connection, builds its replacement, and broadcasts the
+          // swap to every workspace view on this fingerprint. A view the
+          // broadcast has not reached yet (still draining its previous
+          // generation) just catches up to the current pooled connection
+          // instead of forcing yet another replacement. A handle whose entry
+          // died reads back undefined — treat it as no handle and fall
+          // through to the acquire path.
+          const pooled = record.poolHandle?.connection;
+          if (pooled !== undefined) {
             if (pooled.status === 'ready' && record.viewConnection !== pooled) {
               await this.swapPoolConnection(context, record, pooled, log);
               return;

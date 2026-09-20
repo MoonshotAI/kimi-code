@@ -268,11 +268,22 @@ export class RemoteConnectionPool {
     // votes. A false vote means a lease landed in the reap window, so the
     // connection survives — views already dropped rejoin it on their next
     // connect, exactly like a first connect.
-    const votes = await Promise.all([...entry.holders].map(async (holder) => {
+    const voted = new Set(entry.holders);
+    const votes = await Promise.all([...voted].map(async (holder) => {
       if (!holder.active) return true;
       return holder.onPoolDestroy(connection).catch(() => false);
     }));
-    if (votes.includes(false) || entry.dead || entry.connection !== connection) {
+    // A holder that joined mid-vote never voted: invalidating now would
+    // strand its record on a dead entry. Holders that left mid-vote (their
+    // records released them) are fine — only additions abort the reap.
+    let joinedMidVote = false;
+    for (const holder of entry.holders) {
+      if (!voted.has(holder)) {
+        joinedMidVote = true;
+        break;
+      }
+    }
+    if (votes.includes(false) || entry.dead || entry.connection !== connection || joinedMidVote) {
       this.rearmReap(entry);
       return;
     }

@@ -1305,6 +1305,50 @@ describe('RemoteConnectionPool', () => {
     handleC.release();
     await pool.dispose();
   });
+
+  it('aborts the reap when a holder joins mid-vote and reaps cleanly afterwards', async () => {
+    const pool = new RemoteConnectionPool();
+    const connection = pooledEnvironment('connected-1');
+    const factory = vi.fn(async () => connection);
+    let releaseVote!: () => void;
+    let votes = 0;
+    const handleA = await pool.acquire('fingerprint', factory, holder({
+      ttlMs: 100,
+      onPoolDestroy: async () => {
+        votes += 1;
+        if (votes === 1) {
+          await new Promise<void>((resolve) => {
+            releaseVote = resolve;
+          });
+        }
+        return true;
+      },
+    }));
+
+    // The reap fires and blocks on A's vote; B joins mid-vote and resolves
+    // against the still-installed connection.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(votes).toBe(1);
+    const handleB = await pool.acquire('fingerprint', factory, holder());
+    expect(handleB.connection).toBe(connection);
+    releaseVote();
+
+    // B never voted, so this round aborts instead of stranding B on a dead
+    // entry: the connection and every handle survive.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect((connection as unknown as FakeEnvironment).disposed).toBe(false);
+    expect(handleA.connection).toBe(connection);
+    expect(handleB.connection).toBe(connection);
+
+    // With every holder idle again the next round votes everyone and reaps.
+    await vi.waitFor(() => {
+      expect((connection as unknown as FakeEnvironment).disposed).toBe(true);
+    }, { timeout: 5_000 });
+
+    handleA.release();
+    handleB.release();
+    await pool.dispose();
+  });
 });
 
 describe('declaration watch', () => {
