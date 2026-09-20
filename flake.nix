@@ -182,6 +182,13 @@
               pkgs.darwin.sigtool
             ];
 
+            # node-gyp (run by the node-pty source build in the SEA asset
+            # step) downloads the Node headers from nodejs.org unless told
+            # where they live; the sandbox has no network. Point it at the
+            # headers of the same Node the build uses — nodedir is the root
+            # under which include/node sits, not the include dir itself.
+            npm_config_nodedir = "${nodejs}";
+
             # The SEA binary is produced by `postject`-injecting a blob into a
             # plain Node executable. Stripping rewrites section tables and can
             # invalidate the injected blob's offsets, so leave the binary
