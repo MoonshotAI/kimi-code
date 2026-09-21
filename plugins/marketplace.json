@@ -20,6 +20,15 @@
       "source": "./official/kimi-webbridge"
     },
     {
+      "id": "kimi-cu",
+      "tier": "official",
+      "displayName": "Kimi Computer Use",
+      "version": "0.5.11",
+      "description": "macOS GUI automation in the background — click, type, scroll, and drag without taking over your mouse or foregrounding apps. Requires the KimiCU.app runtime (macOS only).",
+      "keywords": ["computer-use", "macos", "accessibility", "automation", "gui"],
+      "source": "./official/kimi-cu"
+    },
+    {
       "id": "superpowers",
       "tier": "curated",
       "displayName": "Superpowers",
