@@ -28,6 +28,10 @@ describe('originHost', () => {
   it('returns undefined for a malformed origin', () => {
     expect(originHost('not a url')).toBeUndefined();
   });
+
+  it('returns undefined for a non-http(s) origin', () => {
+    expect(originHost('file:///etc/passwd')).toBeUndefined();
+  });
 });
 
 describe('isOriginAllowed', () => {
@@ -47,8 +51,16 @@ describe('isOriginAllowed', () => {
     expect(isOriginAllowed(undefined, 'localhost:80', [])).toBe(true);
   });
 
-  it('treats a malformed origin as absent (allowed)', () => {
-    expect(isOriginAllowed('not a url', 'h', [])).toBe(true);
+  it('rejects a malformed origin', () => {
+    expect(isOriginAllowed('not a url', 'h', [])).toBe(false);
+  });
+
+  it('rejects a null origin', () => {
+    expect(isOriginAllowed('null', 'localhost:80', [])).toBe(false);
+  });
+
+  it('rejects a non-http(s) origin scheme', () => {
+    expect(isOriginAllowed('file:///etc/passwd', 'localhost:80', [])).toBe(false);
   });
 
   it('treats localhost origin vs 127.0.0.1 host as same-origin (dev proxy)', () => {
@@ -149,6 +161,16 @@ describe('createOriginHook (onRequest hook)', () => {
       method: 'GET',
       url: '/api/v1/probe',
       headers: { host: 'localhost:80' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['access-control-allow-origin']).toBeUndefined();
+  });
+
+  it('withholds CORS headers for a malformed origin', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/probe',
+      headers: { origin: 'null', host: 'localhost:80' },
     });
     expect(res.statusCode).toBe(200);
     expect(res.headers['access-control-allow-origin']).toBeUndefined();

@@ -25,7 +25,11 @@ export function originHost(origin: string | undefined): string | undefined {
     return undefined;
   }
   try {
-    return new URL(origin).host;
+    const url = new URL(origin);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return undefined;
+    }
+    return url.host;
   } catch {
     return undefined;
   }
@@ -36,9 +40,12 @@ export function isOriginAllowed(
   host: string | undefined,
   allowed: readonly string[],
 ): boolean {
+  if (origin === undefined) {
+    return true;
+  }
   const oh = originHost(origin);
   if (oh === undefined) {
-    return true;
+    return false;
   }
   const ohStripped = stripPort(oh);
   if (host !== undefined) {
@@ -50,7 +57,7 @@ export function isOriginAllowed(
       return true;
     }
   }
-  return allowed.includes(origin as string);
+  return allowed.includes(origin);
 }
 
 function isLoopbackHost(h: string): boolean {
