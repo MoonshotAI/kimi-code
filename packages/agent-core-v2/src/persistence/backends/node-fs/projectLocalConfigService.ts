@@ -70,7 +70,10 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     const additionalDir = await this.resolveAdditionalDir(workDir, inputPath);
     const file = (await this.readProjectLocalToml(configPath)) ?? { raw: {}, parsed: {} };
     const fileAdditionalDirs = file.parsed.workspace?.additional_dir ?? [];
-    const fileExistingDirs = this.resolveExistingAdditionalDirs(projectRoot, fileAdditionalDirs);
+    const fileExistingDirs = await this.resolveExistingAdditionalDirs(
+      projectRoot,
+      fileAdditionalDirs,
+    );
 
     if (this.hasSameAdditionalDir(fileExistingDirs, additionalDir)) {
       return { projectRoot, configPath, additionalDirs: fileExistingDirs };
@@ -158,14 +161,14 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     return resolvedDirs;
   }
 
-  private resolveExistingAdditionalDirs(
+  private async resolveExistingAdditionalDirs(
     projectRoot: string,
     additionalDirs: readonly string[],
-  ): string[] {
+  ): Promise<string[]> {
     const resolvedDirs: string[] = [];
 
     for (const additionalDir of normalizeAdditionalDirs(additionalDirs)) {
-      const resolvedDir = this.resolvePath(projectRoot, additionalDir);
+      const resolvedDir = await this.resolvePath(projectRoot, additionalDir);
       if (this.hasSameAdditionalDir(resolvedDirs, resolvedDir)) continue;
       resolvedDirs.push(resolvedDir);
     }
@@ -178,15 +181,15 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     additionalDir: string,
   ): Promise<string> {
     const normalizedInput = normalizeAdditionalDirInput(additionalDir);
-    const resolvedDir = this.resolvePath(baseDir, normalizedInput);
+    const resolvedDir = await this.resolvePath(baseDir, normalizedInput);
     await this.assertDirectory(resolvedDir);
     return resolvedDir;
   }
 
-  private resolvePath(baseDir: string, additionalDir: string): string {
+  private async resolvePath(baseDir: string, additionalDir: string): Promise<string> {
     const expanded = this.expandHome(additionalDir);
     const resolvedDir = isAbsolute(expanded) ? normalize(expanded) : resolve(baseDir, expanded);
-    if (this.isBroadScopeDir(resolvedDir)) {
+    if (await this.isBroadScopeDir(resolvedDir)) {
       throw new Error2(
         ErrorCodes.CONFIG_INVALID,
         'workspace.additional_dir must not be the user home directory or the filesystem root',
@@ -195,11 +198,21 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     return resolvedDir;
   }
 
-  private isBroadScopeDir(resolvedDir: string): boolean {
-    return (
-      resolvedDir === normalize(this.bootstrap.osHomeDir) ||
-      dirname(resolvedDir) === resolvedDir
-    );
+  private async isBroadScopeDir(resolvedDir: string): Promise<boolean> {
+    const homeDir = normalize(this.bootstrap.osHomeDir);
+    if (resolvedDir === homeDir || dirname(resolvedDir) === resolvedDir) return true;
+    const realDir = await this.realpathOrLexical(resolvedDir);
+    if (realDir === resolvedDir) return false;
+    if (dirname(realDir) === realDir) return true;
+    return realDir === (await this.realpathOrLexical(homeDir));
+  }
+
+  private async realpathOrLexical(path: string): Promise<string> {
+    try {
+      return normalize(await this.fs.realpath(path));
+    } catch {
+      return path;
+    }
   }
 
   private expandHome(value: string): string {

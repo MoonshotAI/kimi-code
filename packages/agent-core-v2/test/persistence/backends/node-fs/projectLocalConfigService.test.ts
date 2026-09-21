@@ -1,5 +1,5 @@
 import { mkdtempSync } from 'node:fs';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 import { join } from 'pathe';
@@ -68,6 +68,38 @@ describe('FileProjectLocalConfigService additional_dir scope', () => {
 
     await expect(createService().readAdditionalDirs(workDir)).resolves.toMatchObject({
       additionalDirs: [shared],
+    });
+  });
+
+  it('rejects an additional_dir that symlinks to the user home directory', async () => {
+    const link = join(workDir, 'home-link');
+    await symlink(homeDir, link);
+    await writeLocalToml([link]);
+
+    await expect(createService().readAdditionalDirs(workDir)).rejects.toMatchObject({
+      code: 'config.invalid',
+    });
+  });
+
+  it('rejects an additional_dir that symlinks to the filesystem root', async () => {
+    const link = join(workDir, 'root-link');
+    await symlink('/', link);
+    await writeLocalToml([link]);
+
+    await expect(createService().readAdditionalDirs(workDir)).rejects.toMatchObject({
+      code: 'config.invalid',
+    });
+  });
+
+  it('still allows a symlink into a subdirectory of the home directory', async () => {
+    const shared = join(homeDir, 'shared');
+    await mkdir(shared, { recursive: true });
+    const link = join(workDir, 'shared-link');
+    await symlink(shared, link);
+    await writeLocalToml([link]);
+
+    await expect(createService().readAdditionalDirs(workDir)).resolves.toMatchObject({
+      additionalDirs: [link],
     });
   });
 });

@@ -121,7 +121,15 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
       );
       this.projectRoot = persisted.projectRoot;
       this.configPath = persisted.configPath;
-      const changed = this.setFileDirs(persisted.additionalDirs);
+      let changed: boolean;
+      if (this.trust.isTrusted()) {
+        changed = this.setFileDirs(persisted.additionalDirs);
+      } else {
+        const explicit = await this.localConfig.resolveAdditionalDirs(this.workspace.cwd, [
+          input.path,
+        ]);
+        changed = this.unionEphemeral(explicit);
+      }
       if (changed) {
         this.onDidChangeEmitter.fire();
       }

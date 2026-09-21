@@ -1,5 +1,5 @@
 import { mkdtempSync } from 'node:fs';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 import { join } from 'pathe';
@@ -174,4 +174,52 @@ describe('WorkspaceDirsService trust gating', () => {
     expect(service.additionalDirs).toEqual([]);
     expect(changes).toBe(0);
   }, 20000);
+
+  it('persists the explicit dir but loads only it while the workspace is untrusted', async () => {
+    const plantedDir = join(homeDir, 'planted');
+    await mkdir(plantedDir, { recursive: true });
+    await writeLocalToml([plantedDir]);
+    trusted = false;
+    const service = createService();
+    await service.ready;
+    expect(service.additionalDirs).toEqual([]);
+
+    const result = await service.addDir({ path: extraDir });
+
+    expect(result.persisted).toBe(true);
+    expect(result.additionalDirs).toEqual([extraDir]);
+    expect(service.additionalDirs).toEqual([extraDir]);
+    const onDisk = await readFile(join(cwd, '.kimi-code', 'local.toml'), 'utf8');
+    expect(onDisk).toContain(plantedDir);
+    expect(onDisk).toContain(extraDir);
+  });
+
+  it('keeps the explicitly added dir after a watched reload while untrusted', async () => {
+    trusted = false;
+    const service = createService();
+    await service.ready;
+    await service.addDir({ path: extraDir });
+    expect(service.additionalDirs).toEqual([extraDir]);
+
+    const file = join(cwd, '.kimi-code', 'local.toml');
+    watchFires.get(cwd)?.fire({ path: file, action: 'modified', kind: 'file' });
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(service.additionalDirs).toEqual([extraDir]);
+  }, 20000);
+
+  it('loads every persisted dir after add-dir when the workspace is trusted', async () => {
+    const plantedDir = join(homeDir, 'planted');
+    await mkdir(plantedDir, { recursive: true });
+    await writeLocalToml([plantedDir]);
+    const service = createService();
+    await service.ready;
+    expect(service.additionalDirs).toEqual([plantedDir]);
+
+    const result = await service.addDir({ path: extraDir });
+
+    expect(result.persisted).toBe(true);
+    expect(result.additionalDirs).toEqual([plantedDir, extraDir]);
+    expect(service.additionalDirs).toEqual([plantedDir, extraDir]);
+  });
 });
