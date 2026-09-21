@@ -14,6 +14,10 @@ export const GIT_CONFIG_ARGS: readonly string[] = [
   'log.showSignature=false',
   '-c',
   'merge.verifySignatures=false',
+  '-c',
+  'core.editor=',
+  '-c',
+  'gpg.program=',
 ];
 
 export const GIT_DIFF_ARGS: readonly string[] = ['--no-ext-diff', '--no-textconv'];
@@ -117,7 +121,7 @@ async function gitConfigStamp(cwd: string): Promise<string | null> {
     const stamps = await Promise.all(configPaths.map(stampConfigPath));
     for (const path of configPaths) {
       const content = await readFile(path, 'utf8').catch(() => null);
-      if (content !== null && content.includes('include')) return null;
+      if (content !== null && content.toLowerCase().includes('include')) return null;
     }
     return stamps.join('|');
   } catch {

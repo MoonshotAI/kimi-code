@@ -143,7 +143,7 @@ describe('collectGitContext', () => {
     for (const call of spawn.mock.calls) {
       expect(call[0]).toBe('git');
       const args = call[1] as readonly string[];
-      expect(args.slice(0, 12)).toEqual([
+      expect(args.slice(0, 16)).toEqual([
         '-c',
         'core.fsmonitor=false',
         '-c',
@@ -154,6 +154,10 @@ describe('collectGitContext', () => {
         'log.showSignature=false',
         '-c',
         'merge.verifySignatures=false',
+        '-c',
+        'core.editor=',
+        '-c',
+        'gpg.program=',
         '-C',
         '/repo',
       ]);

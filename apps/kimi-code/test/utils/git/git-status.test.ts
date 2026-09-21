@@ -371,7 +371,7 @@ describe('git status cache', () => {
     mkdirSync(join(root, '.git'), { recursive: true });
     writeFileSync(
       join(root, '.git', 'config'),
-      '[include]\n\tpath = extra.config\n[filter "evil"]\n\tclean = touch /tmp/m\n',
+      '[Include]\n\tpath = extra.config\n[filter "evil"]\n\tclean = touch /tmp/m\n',
     );
     mocks.execFile.mockImplementation(
       (

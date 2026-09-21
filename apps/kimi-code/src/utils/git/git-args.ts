@@ -15,6 +15,10 @@ export const GIT_CONFIG_ARGS: readonly string[] = [
   'log.showSignature=false',
   '-c',
   'merge.verifySignatures=false',
+  '-c',
+  'core.editor=',
+  '-c',
+  'gpg.program=',
 ];
 
 export const GIT_DIFF_ARGS: readonly string[] = ['--no-ext-diff', '--no-textconv'];
@@ -118,7 +122,7 @@ function gitConfigStamp(workDir: string): string | null {
         content = readFileSync(path, 'utf8');
       } catch {
       }
-      if (content !== null && content.includes('include')) return null;
+      if (content !== null && content.toLowerCase().includes('include')) return null;
     }
     return configPaths.map(stampConfigPath).join('|');
   } catch {
