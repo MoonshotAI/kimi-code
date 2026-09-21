@@ -760,7 +760,7 @@ describe('AgentTranscriptProjector', () => {
       inputCacheCreation: 40,
     });
     expect(step.finishReason).toBe('tool_calls');
-    expect(step.timing).toEqual({
+    expect(step.llmTiming).toEqual({
       llmFirstTokenLatencyMs: 120,
       llmStreamDurationMs: 900,
       llmRequestBuildMs: 10,
