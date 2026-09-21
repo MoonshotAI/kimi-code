@@ -460,6 +460,20 @@ describe('WriteTool symlink escape', () => {
     await expect(readFile(target, 'utf8')).resolves.toBe('original');
   });
 
+  it('rejects writes through a symlink when the path is too deep to verify', async () => {
+    const target = join(outsideDir, 'target.txt');
+    await writeFile(target, 'original');
+    const link = join(wsDir, 'link');
+    await symlink(outsideDir, link);
+    const tool = makeToolWithFs(new HostFileSystem(), stubWorkspaceContext(wsDir));
+
+    const deep = join(link, ...Array.from({ length: 300 }, (_, i) => `d${String(i)}`), 'file.txt');
+    const result = await execute(tool, { path: deep, content: 'pwned' });
+
+    expect(result).toMatchObject({ isError: true });
+    await expect(readFile(target, 'utf8')).resolves.toBe('original');
+  });
+
   it('blocks writes through a symlink that resolves to a sensitive file', async () => {
     const target = join(outsideDir, 'id_rsa');
     await writeFile(target, 'secret-key');

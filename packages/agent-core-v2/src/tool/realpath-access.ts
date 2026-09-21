@@ -47,7 +47,12 @@ async function realpathExistingPrefix(fs: IHostFileSystem, absPath: string): Pro
       current = parent;
     }
   }
-  return absPath;
+  throw new PathSecurityError(
+    'PATH_SYMLINK_ESCAPE',
+    absPath,
+    absPath,
+    `"${absPath}" is too deep to resolve to a real path. Access is blocked.`,
+  );
 }
 
 async function realRoots(
