@@ -30,6 +30,7 @@ function createRecordingExecutor(): {
           toolCallId: toolCall.id,
           toolName: toolCall.name,
           result: { output: `ok:${toolCall.id}` },
+          durationMs: 7,
         } satisfies ToolExecutionResult;
       }
     },
@@ -46,11 +47,13 @@ describe('createMachineTools duplicate tool call ids', () => {
   it('runs one batch per unique id and settles the superseded pending entry', async () => {
     const { toolExecutor, batches } = createRecordingExecutor();
     const onBatchError = vi.fn();
+    const onToolResult = vi.fn();
     const tools = createMachineTools({
       toolExecutor,
       toolInfos: () => toolInfos,
       turnId: () => 1,
       onBatchError,
+      onToolResult,
     });
     tools.sync();
     const bash = tools.tools.find((tool) => tool.name === 'Bash');
@@ -66,6 +69,8 @@ describe('createMachineTools duplicate tool call ids', () => {
 
     expect(batches).toEqual([['t1', 't2']]);
     expect(onBatchError).not.toHaveBeenCalled();
+    expect(onToolResult).toHaveBeenCalledWith('t1', { output: 'ok:t1' }, 7);
+    expect(onToolResult).toHaveBeenCalledWith('t2', { output: 'ok:t2' }, 7);
     expect(firstResult.isError).toBe(true);
     expect(secondResult.content).toEqual([{ type: 'text', text: 'ok:t1' }]);
     expect(secondResult.isError).toBeUndefined();

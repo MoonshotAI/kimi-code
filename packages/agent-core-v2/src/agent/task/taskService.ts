@@ -36,6 +36,7 @@ import {
   type AgentTaskSettlement,
 } from './types';
 import { renderNotificationXml } from './notificationXml';
+import { formatTaskWallTime } from './wallTime';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IConfigService } from '#/app/config/config';
@@ -1540,11 +1541,12 @@ function buildAgentTaskNotificationBody(info: AgentTaskInfo): string {
         : info.stopReason
           ? `${info.description} ${info.status === 'killed' ? 'was stopped' : info.status}. Reason: ${info.stopReason}`
           : `${info.description} ${info.status}.`;
+  const timed = `Wall time: ${formatTaskWallTime(info)}\n${baseLine}`;
 
-  if (info.kind !== 'agent') return baseLine;
-  if (info.status === 'completed') return baseLine;
+  if (info.kind !== 'agent') return timed;
+  if (info.status === 'completed') return timed;
   const agentId = info.agentId;
-  if (agentId === undefined || agentId === info.taskId) return baseLine;
+  if (agentId === undefined || agentId === info.taskId) return timed;
 
   const recovery = [
     '',
@@ -1554,7 +1556,7 @@ function buildAgentTaskNotificationBody(info: AgentTaskInfo): string {
     'The subagent retains its full prior context across the restart, but any in-flight tool call lost its result and may need to be redone.',
   ].join('\n');
 
-  return `${baseLine}${recovery}`;
+  return `${timed}${recovery}`;
 }
 
 function buildAgentTaskNotification(

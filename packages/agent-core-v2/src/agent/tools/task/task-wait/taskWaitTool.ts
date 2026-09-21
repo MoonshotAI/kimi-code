@@ -11,7 +11,7 @@ import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution'
 import { IAgentTaskService } from '#/agent/task/task';
 import type { AgentTaskInfo, AgentTaskOutputSnapshot } from '#/agent/task/task';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
-import { formatPlainObject } from '#/agent/task/tools/format';
+import { formatPlainObject, formatTaskRecord } from '#/agent/task/tools/format';
 import { formatTaskList } from '#/agent/tools/task/task-list/taskListTool';
 import { IFlagService } from '#/app/flag/flag';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -303,7 +303,7 @@ export class WaitForTool implements IWaitForTool {
       lines.push(
         '',
         '[completed_during_wait]',
-        extras.map((extra) => formatPlainObject(extra)).join('\n---\n'),
+        extras.map((extra) => formatTaskRecord(extra)).join('\n---\n'),
         'Use TaskOutput with one of the task_id values above to read the full output.',
       );
     }
@@ -317,7 +317,7 @@ export class WaitForTool implements IWaitForTool {
   private async formatFinishedTask(info: AgentTaskInfo): Promise<string[]> {
     const output = await this.tasks.getOutputSnapshot(info.taskId, OUTPUT_PREVIEW_BYTES);
     const lines = [
-      formatPlainObject({
+      formatTaskRecord({
         ...info,
         outputPath: output.outputPath,
         terminalReason: terminalReason(info),

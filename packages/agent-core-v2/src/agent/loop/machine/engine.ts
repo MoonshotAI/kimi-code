@@ -133,7 +133,7 @@ export interface CreateMachineEngineOptions {
   readonly promptGate?: PromptGate;
   readonly onTrace?: (trace: LLMRequestTrace) => void;
   readonly onEvent?: (event: MachineEngineEvent) => void;
-  readonly onToolResult?: (toolCallId: string, result: AgentToolResult) => void;
+  readonly onToolResult?: (toolCallId: string, result: AgentToolResult, durationMs: number) => void;
 }
 
 export interface MachineEngineRetrySnapshot {
