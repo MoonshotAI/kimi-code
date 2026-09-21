@@ -115,7 +115,7 @@ function fakePlugins(
     installPlugin: async (input: { source: string }) => {
       installs.push(input.source);
       await onInstall?.();
-      const id = input.source.includes('computer-use-windows') ? 'kimi-cu-win' : 'kimi-cu';
+      const id = input.source.includes('kimi-cu-win') ? 'kimi-cu-win' : 'kimi-cu';
       const existing = installed.find((p) => p.id === id);
       if (existing === undefined) {
         installed.push({ id, enabled: true, state: 'ok' });
@@ -371,7 +371,7 @@ describe('kimi-cu entry', () => {
     await entry.install((step, percent) => reports.push([step, percent]));
 
     expect(plugins.installs).toEqual([
-      'https://cdn.kimi.com/kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip',
+      'https://code.kimi.com/kimi-code/plugins/official/kimi-cu-win.zip',
     ]);
     expect(reports).toContainEqual(['plugin', undefined]);
     expect(reports).toContainEqual(['download', 0]);
@@ -444,7 +444,7 @@ describe('kimi-cu entry', () => {
       ),
     ).toBe(true);
     expect(plugins.installs).toEqual([
-      'https://cdn.kimi.com/kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip',
+      'https://code.kimi.com/kimi-code/plugins/official/kimi-cu-win.zip',
     ]);
   });
 
@@ -636,7 +636,7 @@ describe('kimi-cu entry', () => {
     await entry.install(() => undefined);
 
     expect(plugins.installs).toEqual([
-      'https://cdn.kimi.com/kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip',
+      'https://code.kimi.com/kimi-code/plugins/official/kimi-cu-win.zip',
     ]);
     expect(doctorResults).toEqual([]);
   });

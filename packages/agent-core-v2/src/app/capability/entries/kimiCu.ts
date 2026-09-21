@@ -17,6 +17,7 @@ import type { CapabilityEntryContext } from './context';
 
 const MAC_PLUGIN_ID = 'kimi-cu';
 const WINDOWS_PLUGIN_ID = 'kimi-cu-win';
+const WINDOWS_PLUGIN_ZIP_PATH = 'plugins/official/kimi-cu-win.zip';
 const MAC_PLUGIN_ZIP_PATH = 'plugins/official/kimi-cu.zip';
 const APP_BUNDLE = 'KimiCU.app';
 const LAUNCHD_LABEL = 'ai.kimi.cu.service';
@@ -58,7 +59,7 @@ function macPlugin(): PluginLayerConfig {
 function windowsPlugin(): PluginLayerConfig {
   return {
     id: WINDOWS_PLUGIN_ID,
-    zipUrl: () => kimiCdnContentUrl('kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip'),
+    zipUrl: (region) => `${kimiRegionProfile(region).cdnBase}/${WINDOWS_PLUGIN_ZIP_PATH}`,
   };
 }
 
