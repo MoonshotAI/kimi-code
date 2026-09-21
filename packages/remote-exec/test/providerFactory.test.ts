@@ -147,7 +147,6 @@ function fakeHost(services: HostServices, registry: EnvironmentRegistry): Enviro
         remove: () => registration.remove(),
       };
     },
-    onDidChangeEnvironmentIdleness: registry.onDidChangeIdleness,
   } as unknown as EnvironmentProviderHost;
 }
 
@@ -717,223 +716,13 @@ describe('RemoteEnvironmentProviderFactory', () => {
   });
 });
 
-describe('idle connection reaping', () => {
-  function ttlServices(idleTtlSeconds: number): HostServices {
-    return baseServices({
-      config: configService({
-        'dev-box': { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me', idleTtlSeconds },
-      }),
-    });
-  }
-
-  function producingConnect(): {
-    connect: ReturnType<typeof vi.fn<(options: RemoteEnvironmentOptions) => Promise<RemoteEnvironment>>>;
-    produced: FakeEnvironment[];
-  } {
-    const produced: FakeEnvironment[] = [];
-    let generation = 0;
-    const connect = vi.fn<(options: RemoteEnvironmentOptions) => Promise<RemoteEnvironment>>(async (options) => {
-      generation += 1;
-      const environment = connectedEnvironment(options, `connected-${generation}`);
-      produced.push(environment as unknown as FakeEnvironment);
-      return environment;
-    });
-    return { connect, produced };
-  }
-
-  function disposed(environment: FakeEnvironment | undefined): boolean {
-    return (environment as unknown as { disposed: boolean }).disposed;
-  }
-
-  it('reaps the connection once the environment stays idle for its TTL and reconnects on demand', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const { connect, produced } = producingConnect();
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(ttlServices(0.2), registry));
-
-    await registry.current('dev-box')!.connect!();
-    expect(registry.current('dev-box')!.status).toBe('ready');
-
-    await vi.waitFor(() => {
-      expect(registry.current('dev-box')!.status).toBe('pending');
-    }, { timeout: 5_000 });
-    expect(disposed(produced[0])).toBe(true);
-    expect(registry.current('dev-box')!.connectError).toBeUndefined();
-
-    await registry.current('dev-box')!.connect!();
-    expect(connect).toHaveBeenCalledTimes(2);
-    expect(registry.current('dev-box')!.status).toBe('ready');
-    expect(registry.current('dev-box')!.identity.generation).toBe('connected-2');
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
-  it('does not reap while a lease is held and reaps once it releases', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const { connect, produced } = producingConnect();
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(ttlServices(0.2), registry));
-
-    await registry.current('dev-box')!.connect!();
-    const lease = registry.acquire({ workspaceId: 'workspace-1', environmentId: 'dev-box' }, ['fs']);
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    expect(registry.current('dev-box')!.status).toBe('ready');
-    expect(disposed(produced[0])).toBe(false);
-
-    lease.dispose();
-    await vi.waitFor(() => {
-      expect(registry.current('dev-box')!.status).toBe('pending');
-    }, { timeout: 5_000 });
-    expect(disposed(produced[0])).toBe(true);
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
-  it('aborts the reap when a lease lands between the timer and the view swap', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const { connect, produced } = producingConnect();
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
-    const base = fakeHost(ttlServices(0.2), registry);
-    let injectLease = false;
-    let injected: { dispose(): void } | undefined;
-    const host: EnvironmentProviderHost = {
-      ...base,
-      registerEnvironment: (environment: Environment) => {
-        const handle = base.registerEnvironment(environment);
-        return {
-          ...handle,
-          update: async (prepare: () => Environment | Promise<Environment>) => {
-            if (injectLease) {
-              injectLease = false;
-              // A lease lands in the reap window, ahead of the swap's prepare.
-              injected = registry.acquire({ workspaceId: 'workspace-1', environmentId: 'dev-box' }, ['fs']);
-            }
-            return handle.update(prepare);
-          },
-        };
-      },
-    };
-    const attachment = await factory.attach(CONTEXT, host);
-
-    await registry.current('dev-box')!.connect!();
-    const generation = registry.current('dev-box')!.identity.generation;
-    injectLease = true;
-
-    // The reap timer fires, but the injected lease vetoes it: the connection
-    // survives and the view keeps its generation.
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    expect(registry.current('dev-box')!.status).toBe('ready');
-    expect(registry.current('dev-box')!.identity.generation).toBe(generation);
-    expect(disposed(produced[0])).toBe(false);
-
-    // Releasing the lease re-arms the reap, which now goes through.
-    injected!.dispose();
-    await vi.waitFor(() => {
-      expect(registry.current('dev-box')!.status).toBe('pending');
-    }, { timeout: 5_000 });
-    expect(disposed(produced[0])).toBe(true);
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
-  it('does not reap while a tracked resource is alive', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const { connect, produced } = producingConnect();
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(ttlServices(0.2), registry));
-
-    await registry.current('dev-box')!.connect!();
-    const lease = registry.acquire({ workspaceId: 'workspace-1', environmentId: 'dev-box' }, ['fs']);
-    const resource = lease.track({ dispose: () => {} });
-    lease.dispose();
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    expect(registry.current('dev-box')!.status).toBe('ready');
-    expect(disposed(produced[0])).toBe(false);
-
-    resource.dispose();
-    await vi.waitFor(() => {
-      expect(registry.current('dev-box')!.status).toBe('pending');
-    }, { timeout: 5_000 });
-    expect(disposed(produced[0])).toBe(true);
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
-  it('never reaps when the declaration sets idleTtlSeconds to 0', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const { connect, produced } = producingConnect();
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(ttlServices(0), registry));
-
-    await registry.current('dev-box')!.connect!();
-    expect(registry.current('dev-box')!.status).toBe('ready');
-
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    expect(registry.current('dev-box')!.status).toBe('ready');
-    expect(disposed(produced[0])).toBe(false);
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
-  it('does not reap early when the configured TTL exceeds the maximum timer delay', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const { connect, produced } = producingConnect();
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(ttlServices(3_000_000), registry));
-
-    await registry.current('dev-box')!.connect!();
-    expect(registry.current('dev-box')!.status).toBe('ready');
-
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    expect(registry.current('dev-box')!.status).toBe('ready');
-    expect(disposed(produced[0])).toBe(false);
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
-  it('applies an idle TTL change without tearing the connection down', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const config = watchableConfigService({
-      'dev-box': { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me', idleTtlSeconds: 0 },
-    });
-    const { connect, produced } = producingConnect();
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices({ config: config.service }), registry));
-
-    await registry.current('dev-box')!.connect!();
-    const connected = registry.current('dev-box')!;
-    config.setSection({
-      'dev-box': { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me', idleTtlSeconds: 0.2 },
-    });
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(registry.current('dev-box')!.identity.generation).toBe(connected.identity.generation);
-    expect(disposed(produced[0])).toBe(false);
-
-    await vi.waitFor(() => {
-      expect(registry.current('dev-box')!.status).toBe('pending');
-    }, { timeout: 5_000 });
-    expect(disposed(produced[0])).toBe(true);
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-});
-
 describe('remote connection pool', () => {
   const CONTEXT_B: EnvironmentProviderContext = { ...CONTEXT, id: 'workspace-2' };
 
-  function poolServices(idleTtlSeconds?: number): HostServices {
+  function poolServices(): HostServices {
     return baseServices({
       config: configService({
-        'dev-box': idleTtlSeconds === undefined
-          ? { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me' }
-          : { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me', idleTtlSeconds },
+        'dev-box': { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me' },
       }),
     });
   }
@@ -993,69 +782,6 @@ describe('remote connection pool', () => {
 
     await attachmentB.dispose();
     expect(disposed(produced[0])).toBe(true);
-    await registryA.dispose();
-    await registryB.dispose();
-  });
-
-  it('keeps the connection while another workspace uses it and reaps once every workspace is idle', async () => {
-    const registryA = new EnvironmentRegistry('workspace-1');
-    const registryB = new EnvironmentRegistry('workspace-2');
-    const { connect, produced } = producingConnect();
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
-    const attachmentA = await factory.attach(CONTEXT, fakeHost(poolServices(0.2), registryA));
-    const attachmentB = await factory.attach(CONTEXT_B, fakeHost(poolServices(0.6), registryB));
-
-    await registryA.current('dev-box')!.connect!();
-    await registryB.current('dev-box')!.connect!();
-    expect(connect).toHaveBeenCalledTimes(1);
-
-    // A stays idle past its own TTL, but B holds a lease: no reap.
-    const leaseB = registryB.acquire({ workspaceId: 'workspace-2', environmentId: 'dev-box' }, ['fs']);
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    expect(registryA.current('dev-box')!.status).toBe('ready');
-    expect(registryB.current('dev-box')!.status).toBe('ready');
-    expect(disposed(produced[0])).toBe(false);
-
-    // B releases: every holder is idle, so the pool reaps at the min TTL
-    // (0.2s, well under B's 0.6s) and both views swap back to pending.
-    leaseB.dispose();
-    await vi.waitFor(() => {
-      expect(registryA.current('dev-box')!.status).toBe('pending');
-      expect(registryB.current('dev-box')!.status).toBe('pending');
-    }, { timeout: 5_000 });
-    await vi.waitFor(() => {
-      expect(disposed(produced[0])).toBe(true);
-    }, { timeout: 5_000 });
-
-    // A reconnects on demand through its placeholder.
-    await registryA.current('dev-box')!.connect!();
-    expect(connect).toHaveBeenCalledTimes(2);
-    expect(registryA.current('dev-box')!.status).toBe('ready');
-
-    await attachmentA.dispose();
-    await attachmentB.dispose();
-    await registryA.dispose();
-    await registryB.dispose();
-  });
-
-  it('never reaps while any workspace declaration disables the idle TTL', async () => {
-    const registryA = new EnvironmentRegistry('workspace-1');
-    const registryB = new EnvironmentRegistry('workspace-2');
-    const { connect, produced } = producingConnect();
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
-    const attachmentA = await factory.attach(CONTEXT, fakeHost(poolServices(0), registryA));
-    const attachmentB = await factory.attach(CONTEXT_B, fakeHost(poolServices(0.2), registryB));
-
-    await registryA.current('dev-box')!.connect!();
-    await registryB.current('dev-box')!.connect!();
-
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    expect(registryA.current('dev-box')!.status).toBe('ready');
-    expect(registryB.current('dev-box')!.status).toBe('ready');
-    expect(disposed(produced[0])).toBe(false);
-
-    await attachmentA.dispose();
-    await attachmentB.dispose();
     await registryA.dispose();
     await registryB.dispose();
   });
@@ -1177,7 +903,7 @@ describe('RemoteConnectionPool', () => {
   }
 
   function holder(overrides: Partial<RemoteConnectionPoolHolder> = {}): RemoteConnectionPoolHolder {
-    return { idle: true, ttlMs: 1_000, onPoolDestroy: async () => true, onPoolReplace: async () => {}, ...overrides };
+    return { onPoolReplace: async () => {}, ...overrides };
   }
 
   it('disposes a connect that finishes after the pool was disposed instead of installing it', async () => {
@@ -1277,77 +1003,6 @@ describe('RemoteConnectionPool', () => {
   it('rejects a replace for an unknown fingerprint', async () => {
     const pool = new RemoteConnectionPool();
     await expect(pool.replace('nope', vi.fn())).rejects.toBeInstanceOf(RemoteConnectionPoolStaleError);
-  });
-
-  it('keeps the connection when a holder vetoes the reap', async () => {
-    const pool = new RemoteConnectionPool();
-    const connection = pooledEnvironment('connected-1');
-    const factory = vi.fn(async () => connection);
-    const handleA = await pool.acquire('fingerprint', factory, holder({
-      ttlMs: 50,
-      onPoolDestroy: async () => true,
-    }));
-    const handleB = await pool.acquire('fingerprint', factory, holder({
-      ttlMs: 50,
-      onPoolDestroy: async () => false,
-    }));
-
-    // Every holder is idle, so the reap fires — but B's veto keeps the
-    // connection and the entry alive.
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    expect((connection as unknown as FakeEnvironment).disposed).toBe(false);
-    const handleC = await pool.acquire('fingerprint', factory, holder());
-    expect(handleC.connection).toBe(connection);
-    expect(factory).toHaveBeenCalledTimes(1);
-
-    handleA.release();
-    handleB.release();
-    handleC.release();
-    await pool.dispose();
-  });
-
-  it('aborts the reap when a holder joins mid-vote and reaps cleanly afterwards', async () => {
-    const pool = new RemoteConnectionPool();
-    const connection = pooledEnvironment('connected-1');
-    const factory = vi.fn(async () => connection);
-    let releaseVote!: () => void;
-    let votes = 0;
-    const handleA = await pool.acquire('fingerprint', factory, holder({
-      ttlMs: 100,
-      onPoolDestroy: async () => {
-        votes += 1;
-        if (votes === 1) {
-          await new Promise<void>((resolve) => {
-            releaseVote = resolve;
-          });
-        }
-        return true;
-      },
-    }));
-
-    // The reap fires and blocks on A's vote; B joins mid-vote and resolves
-    // against the still-installed connection.
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(votes).toBe(1);
-    const handleB = await pool.acquire('fingerprint', factory, holder());
-    expect(handleB.connection).toBe(connection);
-    releaseVote();
-
-    // B never voted, so this round aborts instead of stranding B on a dead
-    // entry: the connection and every handle survive.
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    expect((connection as unknown as FakeEnvironment).disposed).toBe(false);
-    expect(handleA.connection).toBe(connection);
-    expect(handleB.connection).toBe(connection);
-
-    // With every holder idle again the next round votes everyone and reaps.
-    await vi.waitFor(() => {
-      expect((connection as unknown as FakeEnvironment).disposed).toBe(true);
-    }, { timeout: 5_000 });
-
-    handleA.release();
-    handleB.release();
-    await pool.dispose();
   });
 });
 

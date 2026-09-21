@@ -313,8 +313,7 @@ describe('EnvironmentUnitHost', () => {
       get: true,
       provide: true,
       registerEnvironment: true,
-      onDidChangeEnvironmentIdleness: true,
     };
-    expect(Object.keys(keys).toSorted()).toEqual(['get', 'onDidChangeEnvironmentIdleness', 'provide', 'registerEnvironment']);
+    expect(Object.keys(keys).toSorted()).toEqual(['get', 'provide', 'registerEnvironment']);
   });
 });

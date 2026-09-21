@@ -245,7 +245,6 @@ const declareEnvironmentEntrySchema = z.union([
       host: z.string().min(1),
       remote_bin: z.string().min(1).optional(),
       default_cwd: z.string().min(1).optional(),
-      idle_ttl_seconds: z.number().nonnegative().optional(),
     })
     .strict(),
   z
@@ -255,7 +254,6 @@ const declareEnvironmentEntrySchema = z.union([
       context: z.string().min(1).optional(),
       remote_bin: z.string().min(1).optional(),
       default_cwd: z.string().min(1).optional(),
-      idle_ttl_seconds: z.number().nonnegative().optional(),
     })
     .strict(),
   z
@@ -264,7 +262,6 @@ const declareEnvironmentEntrySchema = z.union([
       args: z.array(z.string()).optional(),
       env: z.record(z.string(), z.string()).optional(),
       default_cwd: z.string().min(1).optional(),
-      idle_ttl_seconds: z.number().nonnegative().optional(),
     })
     .strict(),
 ]);
@@ -283,10 +280,10 @@ const declareEnvironmentResponseSchema = z.object({
 
 function toEngineEnvironmentEntry(entry: z.infer<typeof declareEnvironmentEntrySchema>): RemoteEnvironmentEntry {
   if ('command' in entry) {
-    return definedFields({ command: entry.command, args: entry.args, env: entry.env, defaultCwd: entry.default_cwd, idleTtlSeconds: entry.idle_ttl_seconds });
+    return definedFields({ command: entry.command, args: entry.args, env: entry.env, defaultCwd: entry.default_cwd });
   }
   if (entry.type === 'ssh') {
-    return definedFields({ type: 'ssh', host: entry.host, remoteBin: entry.remote_bin, defaultCwd: entry.default_cwd, idleTtlSeconds: entry.idle_ttl_seconds });
+    return definedFields({ type: 'ssh', host: entry.host, remoteBin: entry.remote_bin, defaultCwd: entry.default_cwd });
   }
   return definedFields({
     type: 'docker',
@@ -294,7 +291,6 @@ function toEngineEnvironmentEntry(entry: z.infer<typeof declareEnvironmentEntryS
     context: entry.context,
     remoteBin: entry.remote_bin,
     defaultCwd: entry.default_cwd,
-    idleTtlSeconds: entry.idle_ttl_seconds,
   });
 }
 

@@ -634,7 +634,7 @@ describe('StdioMcpClient', () => {
     return { client, tracked };
   }
 
-  it('disposes tracked environment resources on close so idle reap is not delayed', async () => {
+  it('disposes tracked environment resources on close', async () => {
     const { client, tracked } = createTrackingClient({
       transport: 'stdio',
       command: process.execPath,

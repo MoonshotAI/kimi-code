@@ -35,11 +35,6 @@ interface Generation {
   releaseDrain?: () => void;
 }
 
-export interface EnvironmentIdlenessChange {
-  readonly environmentId: string;
-  readonly idle: boolean;
-}
-
 export interface EnvironmentRegistryChange {
   readonly environmentId: string;
   readonly current?: Environment;
@@ -116,8 +111,6 @@ export class EnvironmentRegistry {
   private readonly currentGenerations = new Map<string, Generation>();
   private readonly changeEmitter = new Emitter<EnvironmentRegistryChange>();
   readonly onDidChange: Event<EnvironmentRegistryChange> = this.changeEmitter.event;
-  private readonly idlenessEmitter = new Emitter<EnvironmentIdlenessChange>();
-  readonly onDidChangeIdleness: Event<EnvironmentIdlenessChange> = this.idlenessEmitter.event;
   private disposing = false;
 
   constructor(
@@ -217,7 +210,6 @@ export class EnvironmentRegistry {
     }
     for (const generation of generations) {
       this.publish(generation);
-      this.idlenessEmitter.fire({ environmentId: generation.environment.identity.environmentId, idle: true });
     }
     const cleanup = Promise.all(
       prepared.flatMap((item) => item.previous === undefined ? [] : [this.drain(item.previous)]),
@@ -309,7 +301,6 @@ export class EnvironmentRegistry {
     this.currentGenerations.clear();
     for (const generation of generations.toReversed()) await this.drain(generation);
     this.changeEmitter.dispose();
-    this.idlenessEmitter.dispose();
   }
 
   async drainSession(sessionId: string): Promise<void> {
@@ -409,11 +400,7 @@ export class EnvironmentRegistry {
   }
 
   private updateIdleness(generation: Generation): void {
-    const idle = generation.leases === 0 && generation.resources.size === 0;
-    if (generation.idle === idle) return;
-    generation.idle = idle;
-    if (this.currentGenerations.get(generation.environment.identity.environmentId) !== generation) return;
-    this.idlenessEmitter.fire({ environmentId: generation.environment.identity.environmentId, idle });
+    generation.idle = generation.leases === 0 && generation.resources.size === 0;
   }
 
   private drain(generation: Generation): Promise<void> {

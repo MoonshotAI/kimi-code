@@ -343,14 +343,13 @@ describe('server-v2 /api/v1 environment routes', () => {
       const { id } = await createSessionWire();
       const declared = await call<DeclaredWire>('POST', `/api/v1/sessions/${id}/environments`, {
         environment_id: 'rest-box',
-        entry: { type: 'ssh', host: 'rest-box', default_cwd: '/remote/rest', idle_ttl_seconds: 120 },
+        entry: { type: 'ssh', host: 'rest-box', default_cwd: '/remote/rest' },
       });
       expect(declared.body.code).toBe(0);
       expect(declared.body.data).toMatchObject({ environment_id: 'rest-box', scope: 'global' });
       const toml = await readFile(join(home as string, 'config.toml'), 'utf-8');
       expect(toml).toContain('[environments.rest-box]');
       expect(toml).toContain('defaultCwd = "/remote/rest"');
-      expect(toml).toContain('idleTtlSeconds = 120');
       await vi.waitFor(
         async () => {
           const environments = await call<EnvironmentsWire>('GET', `/api/v1/sessions/${id}/environments`);

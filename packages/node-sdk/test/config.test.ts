@@ -76,7 +76,6 @@ api_key_env = "ACME_API_KEY"
 type = "ssh"
 host = "dev-box"
 defaultCwd = "/remote/dev"
-idleTtlSeconds = 120
 
 [environments.sandbox]
 command = "bwrap"
@@ -88,7 +87,6 @@ env = { SANDBOX_TOKEN = "x" }
       type: 'ssh',
       host: 'dev-box',
       defaultCwd: '/remote/dev',
-      idleTtlSeconds: 120,
     });
     expect(config.environments?.['sandbox']).toEqual({
       command: 'bwrap',

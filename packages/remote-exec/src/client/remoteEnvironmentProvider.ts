@@ -5,7 +5,7 @@ import * as posixPath from 'node:path/posix';
 import { Emitter } from '@moonshot-ai/agent-core-v2/_base/event';
 import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
 import { subtreeWatchFilter } from '@moonshot-ai/agent-core-v2/_base/utils/paths';
-import { MAX_TIMER_DELAY_MS, TimeoutTimer } from '@moonshot-ai/agent-core-v2/_base/utils/timer';
+import { TimeoutTimer } from '@moonshot-ai/agent-core-v2/_base/utils/timer';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { watch } from '@moonshot-ai/agent-core-v2/human/utils/watch';
 import type { HostEnvironmentInfo } from '@moonshot-ai/agent-core-v2/os/interface/hostEnvironment';
@@ -179,9 +179,9 @@ export class ManagedRemoteEnvironment implements Environment {
   }
 
   // The executor connection is owned by the app-level connection pool, not by
-  // this view: replacements (reconnect, declaration update, idle reap) drain
-  // views without tearing the connection down, and the pool disposes it once
-  // the last workspace holder lets go.
+  // this view: replacements (reconnect, declaration update) drain views
+  // without tearing the connection down, and the pool disposes it once the
+  // last workspace holder lets go.
   async dispose(): Promise<void> {
     this.statusSubscription?.dispose();
     if (this.currentStatus !== 'disposed') {
@@ -241,19 +241,9 @@ interface DeclaredEnvironmentRecord {
   // A docker declaration's tilde-prefixed remoteBin resolved to the container
   // user's absolute home path (docker exec has no shell expansion), keyed by
   // the declaration fingerprint it was resolved from so a declaration change
-  // re-probes. Reconnects — including after an idle reap — reuse it and skip
-  // both the home probe and the failing tilde handshake.
+  // re-probes. Reconnects reuse it and skip both the home probe and the
+  // failing tilde handshake.
   resolvedRemoteBin?: { readonly fingerprint: string; readonly remoteBin: string };
-  // Mirrors the registry idleness events for this environment: true while it
-  // has zero active leases and zero tracked resources.
-  idle: boolean;
-}
-
-class EnvironmentReapAbortedError extends Error {
-  constructor() {
-    super('environment is no longer idle');
-    this.name = 'EnvironmentReapAbortedError';
-  }
 }
 
 class EnvironmentSwapRedundantError extends Error {
@@ -264,11 +254,6 @@ class EnvironmentSwapRedundantError extends Error {
 }
 
 const PROJECT_DECLARATION_WATCH_DEBOUNCE_MS = 200;
-const DEFAULT_IDLE_TTL_SECONDS = 300;
-
-function idleReapTtlMs(entry: RemoteEnvironmentEntry): number {
-  return Math.min((entry.idleTtlSeconds ?? DEFAULT_IDLE_TTL_SECONDS) * 1000, MAX_TIMER_DELAY_MS);
-}
 
 export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFactory {
   readonly id = 'remote-exec';
@@ -322,22 +307,6 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
     // declarations published before it resolves.
     let disposed = false;
     let tail = Promise.resolve();
-    // Idle connection reaping is pool-level: the registry reports this
-    // workspace's environments with zero active leases and zero tracked
-    // resources, and each record mirrors that into its pool holder. The pool
-    // reaps a shared connection only once every workspace holding it stayed
-    // idle for the TTL (the min over conflicting declaration TTLs), so one
-    // workspace going idle never kills a connection another workspace is
-    // actively using. Each holder then votes on the reap: a view that took a
-    // lease in the reap window vetoes it and the connection survives.
-    // Reaped views swap back to pending placeholders and reconnect on demand,
-    // exactly like the first connect.
-    const idlenessSubscription = host.onDidChangeEnvironmentIdleness((change) => {
-      const record = records.get(change.environmentId);
-      if (record === undefined) return;
-      record.idle = change.idle;
-      record.poolHandle?.update({ idle: record.idle, ttlMs: idleReapTtlMs(record.declaration.entry) });
-    });
     const reconcile = (): Promise<void> => {
       tail = tail.catch(() => {}).then(async () => {
         if (disposed) return;
@@ -384,10 +353,7 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
             continue;
           }
           if (record.fingerprint === fingerprint) {
-            // The connection identity is unchanged; only reap policy (the
-            // idle TTL is excluded from the fingerprint) may have moved.
             record.declaration = declaration;
-            record.poolHandle?.update({ idle: record.idle, ttlMs: idleReapTtlMs(declaration.entry) });
             continue;
           }
           record.declaration = declaration;
@@ -418,7 +384,6 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
         configListener.dispose();
         trustListener.dispose();
         projectWatch.dispose();
-        idlenessSubscription.dispose();
         for (const record of [...records.values()].toReversed()) {
           record.detached = true;
           try {
@@ -444,7 +409,6 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
       declaration,
       fingerprint: declarationFingerprint(declaration.entry),
       detached: false,
-      idle: true,
     };
     record.handle = host.registerEnvironment(this.createPendingEnvironment(context, record, log));
     return record;
@@ -516,9 +480,6 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
             return;
           }
           const acquired = await this.pool.acquire(fingerprint, factory, {
-            idle: record.idle,
-            ttlMs: idleReapTtlMs(declaration.entry),
-            onPoolDestroy: (connection) => this.discardPoolConnection(context, record, connection, log),
             onPoolReplace: (connection) =>
               this.swapPoolConnection(context, record, connection, log).catch((error: unknown) => {
                 log.warn(`remote environment ${declaration.id} pooled connection replacement failed`, { error });
@@ -593,38 +554,6 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
     }
   }
 
-  // The pool asks this record to drop its view of a connection being reaped:
-  // swap back to a pending placeholder so the next use reconnects on demand,
-  // then release the handle. A lease that landed in the reap window vetoes
-  // the reap (false) — the connection survives and the view stays.
-  private async discardPoolConnection(
-    context: EnvironmentProviderContext,
-    record: DeclaredEnvironmentRecord,
-    connection: RemoteEnvironment,
-    log: ILogService,
-  ): Promise<boolean> {
-    if (record.poolHandle?.connection !== connection) return true;
-    const previousView = record.viewConnection;
-    try {
-      await record.handle.update(() => {
-        // Second-chance abort, checked at the last moment: idleness is
-        // mirrored synchronously, so a false here means a lease landed
-        // between the reap timer firing and this swap.
-        if (!record.idle) throw new EnvironmentReapAbortedError();
-        record.viewConnection = undefined;
-        return this.createPendingEnvironment(context, record, log);
-      });
-    } catch (error) {
-      if (error instanceof EnvironmentReapAbortedError) return false;
-      record.viewConnection = previousView;
-      log.warn(`remote environment ${record.declaration.id} idle connection reap failed`, { error });
-      releasePoolHandle(record);
-      return true;
-    }
-    releasePoolHandle(record);
-    return true;
-  }
-
   private async resolveRecordLauncher(
     record: DeclaredEnvironmentRecord,
     launcher: LauncherSpec,
@@ -672,11 +601,7 @@ export function watchProjectDeclarationFile(path: string, onChange: () => void):
 }
 
 function declarationFingerprint(entry: RemoteEnvironmentEntry): string {
-  // The idle TTL is reap policy, not connection identity: changing it must
-  // not tear the connection down, so it stays out of the fingerprint.
-  const connectionIdentity = { ...entry };
-  delete connectionIdentity.idleTtlSeconds;
-  return JSON.stringify(sortKeysDeep(connectionIdentity));
+  return JSON.stringify(sortKeysDeep(entry));
 }
 
 function sortKeysDeep(value: unknown): unknown {

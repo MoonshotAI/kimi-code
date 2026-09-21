@@ -1,24 +1,11 @@
-import { TimeoutTimer } from '@moonshot-ai/agent-core-v2/_base/utils/timer';
-
 import type { RemoteEnvironment } from './remoteEnvironment';
 
-// A workspace's lease on a pooled connection. `idle` mirrors the workspace
-// registry's idleness (zero active leases and zero tracked resources);
-// `ttlMs` is the declaration's idle-reap TTL, where 0 means never reap.
+// A workspace's lease on a pooled connection. `onPoolReplace` is the replace
+// broadcast: the entry's connection was swapped by a reconnect from any
+// workspace (or by a rebuild after a drop). The holder swaps its view to the
+// new connection; turns pinned to the old generation fail explicitly, exactly
+// as on a connection drop.
 export interface RemoteConnectionPoolHolder {
-  readonly idle: boolean;
-  readonly ttlMs: number;
-  // Reap vote: once every holder stayed idle for the TTL the pool asks each
-  // holder to drop its view of the connection. Return true once the view is
-  // dropped (or was never installed); return false to veto the reap — a
-  // lease landed in the reap window and the connection must survive. A veto
-  // keeps the entry alive; views already dropped rejoin the surviving
-  // connection on their next connect.
-  readonly onPoolDestroy: (connection: RemoteEnvironment) => Promise<boolean>;
-  // Replace broadcast: the entry's connection was swapped by a reconnect
-  // from any workspace (or by a rebuild after a drop). The holder swaps its
-  // view to the new connection; turns pinned to the old generation fail
-  // explicitly, exactly as on a connection drop.
   readonly onPoolReplace: (connection: RemoteEnvironment) => Promise<void>;
 }
 
@@ -27,7 +14,6 @@ export interface RemoteConnectionPoolHandle {
   // Live read of the entry's installed connection: a pool-level replace
   // swaps it under existing handles.
   readonly connection: RemoteEnvironment;
-  update(state: { readonly idle: boolean; readonly ttlMs: number }): void;
   release(): void;
 }
 
@@ -39,10 +25,7 @@ export class RemoteConnectionPoolStaleError extends Error {
 }
 
 interface HolderState {
-  idle: boolean;
-  ttlMs: number;
   active: boolean;
-  readonly onPoolDestroy: (connection: RemoteEnvironment) => Promise<boolean>;
   readonly onPoolReplace: (connection: RemoteEnvironment) => Promise<void>;
 }
 
@@ -61,7 +44,6 @@ interface PoolEntry {
   // instead of joining, and the stale run's install is rejected.
   connectInflightVersion?: number;
   readonly holders: Set<HolderState>;
-  readonly reapTimer: TimeoutTimer;
 }
 
 export class RemoteConnectionPool {
@@ -80,19 +62,12 @@ export class RemoteConnectionPool {
         dead: false,
         refs: 0,
         holders: new Set(),
-        reapTimer: new TimeoutTimer(),
       };
       this.entries.set(fingerprint, entry);
     }
-    // Any acquire cancels the idle reap; it re-arms on the next holder update
-    // or connection install if every holder is still idle.
-    entry.reapTimer.cancel();
     entry.refs += 1;
     const state: HolderState = {
-      idle: holder.idle,
-      ttlMs: holder.ttlMs,
       active: true,
-      onPoolDestroy: holder.onPoolDestroy,
       onPoolReplace: holder.onPoolReplace,
     };
     entry.holders.add(state);
@@ -107,12 +82,6 @@ export class RemoteConnectionPool {
       fingerprint,
       get connection() {
         return entry.connection as RemoteEnvironment;
-      },
-      update: (next) => {
-        if (!state.active) return;
-        state.idle = next.idle;
-        state.ttlMs = next.ttlMs;
-        this.rearmReap(entry);
       },
       release: () => {
         if (!state.active) return;
@@ -131,7 +100,6 @@ export class RemoteConnectionPool {
   async replace(fingerprint: string, factory: () => Promise<RemoteEnvironment>): Promise<RemoteEnvironment> {
     const entry = this.entries.get(fingerprint);
     if (entry === undefined || entry.dead) throw new RemoteConnectionPoolStaleError();
-    entry.reapTimer.cancel();
     const inflight = entry.connectInflight;
     if (inflight !== undefined && entry.connectInflightVersion === entry.version) return inflight;
     entry.version += 1;
@@ -192,7 +160,6 @@ export class RemoteConnectionPool {
       throw new RemoteConnectionPoolStaleError();
     }
     entry.connection = connected;
-    this.rearmReap(entry);
     if (previous !== undefined) {
       // The swap broadcasts before the replaced connection dies: every
       // workspace view moves to the new connection first, then the old one
@@ -217,10 +184,7 @@ export class RemoteConnectionPool {
 
   private releaseRef(entry: PoolEntry): void {
     entry.refs -= 1;
-    if (entry.refs > 0) {
-      this.rearmReap(entry);
-      return;
-    }
+    if (entry.refs > 0) return;
     this.invalidate(entry);
     const connection = entry.connection;
     entry.connection = undefined;
@@ -231,68 +195,6 @@ export class RemoteConnectionPool {
     if (entry.dead) return;
     entry.dead = true;
     entry.version += 1;
-    entry.reapTimer.dispose();
     if (this.entries.get(entry.fingerprint) === entry) this.entries.delete(entry.fingerprint);
-  }
-
-  private rearmReap(entry: PoolEntry): void {
-    entry.reapTimer.cancel();
-    if (entry.dead) return;
-    const connection = entry.connection;
-    if (connection === undefined || connection.status !== 'ready') return;
-    let ttlMs: number | undefined;
-    for (const holder of entry.holders) {
-      if (!holder.idle) return;
-      // A never-reap declaration (TTL 0) wins the min over conflicting TTLs.
-      if (holder.ttlMs === 0) return;
-      ttlMs = ttlMs === undefined ? holder.ttlMs : Math.min(ttlMs, holder.ttlMs);
-    }
-    if (ttlMs === undefined) return;
-    entry.reapTimer.cancelAndSet(() => {
-      void this.reap(entry);
-    }, ttlMs);
-  }
-
-  private async reap(entry: PoolEntry): Promise<void> {
-    const connection = entry.connection;
-    if (entry.dead || connection === undefined || connection.status !== 'ready') return;
-    // A connect or replace in flight is activity: skip this round.
-    if (entry.connectInflight !== undefined) {
-      this.rearmReap(entry);
-      return;
-    }
-    for (const holder of entry.holders) {
-      if (!holder.idle) return;
-    }
-    // Two-phase vote: every holder drops its view of the connection and
-    // votes. A false vote means a lease landed in the reap window, so the
-    // connection survives — views already dropped rejoin it on their next
-    // connect, exactly like a first connect.
-    const voted = new Set(entry.holders);
-    const votes = await Promise.all([...voted].map(async (holder) => {
-      if (!holder.active) return true;
-      return holder.onPoolDestroy(connection).catch(() => false);
-    }));
-    // A holder that joined mid-vote never voted: invalidating now would
-    // strand its record on a dead entry. Holders that left mid-vote (their
-    // records released them) are fine — only additions abort the reap.
-    let joinedMidVote = false;
-    for (const holder of entry.holders) {
-      if (!voted.has(holder)) {
-        joinedMidVote = true;
-        break;
-      }
-    }
-    if (votes.includes(false) || entry.dead || entry.connection !== connection || joinedMidVote) {
-      this.rearmReap(entry);
-      return;
-    }
-    this.invalidate(entry);
-    // Every vote dropped its view: deactivate whatever did not release during
-    // the vote so later handle calls no-op, then tear the connection down.
-    for (const holder of entry.holders) holder.active = false;
-    entry.holders.clear();
-    entry.connection = undefined;
-    await connection.dispose();
   }
 }

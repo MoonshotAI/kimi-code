@@ -12,7 +12,6 @@ const sshEnvironmentEntrySchema = z
     host: z.string().min(1),
     remoteBin: z.string().min(1).optional(),
     defaultCwd: z.string().min(1).optional(),
-    idleTtlSeconds: z.number().nonnegative().optional(),
   })
   .strict();
 
@@ -23,7 +22,6 @@ const dockerEnvironmentEntrySchema = z
     context: z.string().min(1).optional(),
     remoteBin: z.string().min(1).optional(),
     defaultCwd: z.string().min(1).optional(),
-    idleTtlSeconds: z.number().nonnegative().optional(),
   })
   .strict();
 
@@ -33,7 +31,6 @@ const commandEnvironmentEntrySchema = z
     args: z.array(z.string()).optional(),
     env: z.record(z.string(), z.string()).optional(),
     defaultCwd: z.string().min(1).optional(),
-    idleTtlSeconds: z.number().nonnegative().optional(),
   })
   .strict();
 

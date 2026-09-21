@@ -94,9 +94,9 @@ Client-surface notes beyond the wire protocol:
   as a `pending` placeholder (`ManagedRemoteEnvironment`) — no connections
   are made at registration.
 - Executor connections are owned by an app-level `RemoteConnectionPool`, not by
-  workspaces: one connection per declaration fingerprint (the full entry minus
-  `idleTtlSeconds`) is shared by every workspace bound to the same target, and
-  the pool destroys it once the last workspace holder lets go. Ephemeral
+  workspaces: one connection per declaration fingerprint is shared by every
+  workspace bound to the same target, and the pool destroys it once the last
+  workspace holder lets go. Ephemeral
   environments (the agent-created `connect` tool) never enter the pool. An
   explicit `connect()` (the binding `connectAndSwitch` flow, or reconnect) goes
   through the pool: a first connect joins or builds the shared connection, and
@@ -108,14 +108,6 @@ Client-surface notes beyond the wire protocol:
   connection, exactly as if the connection had dropped — only the trigger may
   be another workspace. The replaced connection is disposed after every view
   settles, so old-generation leases keep their registry drain grace first.
-- Idle reaping is pool-level: a shared connection is reaped only after every
-  workspace holder stayed idle for the TTL (the min over conflicting
-  declarations, `0` = never wins). Each holder then votes on the reap — a view
-  that took a lease in the reap window (timer fired, swap not yet published)
-  vetoes it and the connection survives; views already swapped to pending
-  rejoin the surviving connection on their next connect. Reaped views swap
-  back to pending placeholders and reconnect on demand, exactly like the first
-  connect.
 
 ## Executor detection and version guidance (spec D8/D9)
 
@@ -129,8 +121,8 @@ commands to run. Before the first exec attempt, a docker launcher whose
 path with one `docker exec … sh -c` probe — `docker exec` passes argv to
 execve without a shell, so the tilde would reach execve literally and every
 connect would open with a failing exit-126 handshake. The provider caches the
-resolved path per declaration fingerprint, so reconnects (including after idle
-reaping) skip both the probe and the failing handshake, and a
+resolved path per declaration fingerprint, so reconnects skip both the probe
+and the failing handshake, and a
 missing-executor classification below means the executor is genuinely absent
 at the resolved path.
 

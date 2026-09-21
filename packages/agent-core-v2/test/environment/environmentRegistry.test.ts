@@ -479,45 +479,6 @@ describe('EnvironmentRegistry', () => {
     expect(registry.idleEnvironments()).toEqual(['local', 'ssh1']);
   });
 
-  it('fires idleness changes as leases and resources come and go', () => {
-    const changes: Array<{ environmentId: string; idle: boolean }> = [];
-    registry.onDidChangeIdleness((change) => changes.push({ environmentId: change.environmentId, idle: change.idle }));
-    registry.register(fakeEnvironment('local', 'one'));
-    expect(changes).toEqual([{ environmentId: 'local', idle: true }]);
-
-    const lease = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
-    const resource = lease.track({ dispose: () => {} });
-    lease.dispose();
-    resource.dispose();
-    expect(changes).toEqual([
-      { environmentId: 'local', idle: true },
-      { environmentId: 'local', idle: false },
-      { environmentId: 'local', idle: true },
-    ]);
-  });
-
-  it('publishes a replacement generation as idle while the drained generation stays silent', async () => {
-    const registration = registry.register(fakeEnvironment('local', 'one'));
-    const changes: Array<{ environmentId: string; idle: boolean }> = [];
-    registry.onDidChangeIdleness((change) => changes.push({ environmentId: change.environmentId, idle: change.idle }));
-
-    const lease = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
-    const replacement = registration.replace(fakeEnvironment('local', 'two'));
-    await Promise.resolve();
-    expect(changes).toEqual([
-      { environmentId: 'local', idle: false },
-      { environmentId: 'local', idle: true },
-    ]);
-    expect(registry.idleEnvironments()).toEqual(['local']);
-
-    lease.dispose();
-    await replacement;
-    expect(changes).toEqual([
-      { environmentId: 'local', idle: false },
-      { environmentId: 'local', idle: true },
-    ]);
-  });
-
   it('reports idleness again after session resources drain', async () => {
     registry.register(fakeEnvironment('local', 'one'));
     const lease = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
