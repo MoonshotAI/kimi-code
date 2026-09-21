@@ -7,6 +7,7 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
   IProjectLocalConfigService,
   type ProjectAdditionalDirsLoadResult,
+  type ProjectAdditionalDirsLocation,
 } from '#/app/projectLocalConfig/projectLocalConfig';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -35,9 +36,13 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     @IHostFileSystem private readonly fs: IHostFileSystem,
   ) {}
 
-  async readAdditionalDirs(workDir: string): Promise<ProjectAdditionalDirsLoadResult> {
+  async locateAdditionalDirsConfig(workDir: string): Promise<ProjectAdditionalDirsLocation> {
     const projectRoot = await this.findProjectRoot(workDir);
-    const configPath = this.getProjectLocalConfigPath(projectRoot);
+    return { projectRoot, configPath: this.getProjectLocalConfigPath(projectRoot) };
+  }
+
+  async readAdditionalDirs(workDir: string): Promise<ProjectAdditionalDirsLoadResult> {
+    const { projectRoot, configPath } = await this.locateAdditionalDirsConfig(workDir);
     const file = await this.readProjectLocalToml(configPath);
 
     const additionalDirs = file?.parsed.workspace?.additional_dir;
@@ -180,7 +185,21 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
 
   private resolvePath(baseDir: string, additionalDir: string): string {
     const expanded = this.expandHome(additionalDir);
-    return isAbsolute(expanded) ? normalize(expanded) : resolve(baseDir, expanded);
+    const resolvedDir = isAbsolute(expanded) ? normalize(expanded) : resolve(baseDir, expanded);
+    if (this.isBroadScopeDir(resolvedDir)) {
+      throw new Error2(
+        ErrorCodes.CONFIG_INVALID,
+        'workspace.additional_dir must not be the user home directory or the filesystem root',
+      );
+    }
+    return resolvedDir;
+  }
+
+  private isBroadScopeDir(resolvedDir: string): boolean {
+    return (
+      resolvedDir === normalize(this.bootstrap.osHomeDir) ||
+      dirname(resolvedDir) === resolvedDir
+    );
   }
 
   private expandHome(value: string): string {

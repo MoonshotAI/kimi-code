@@ -9,7 +9,7 @@ import type {
   PermissionPolicy,
   PermissionPolicyResult,
 } from '#/agent/permissionPolicy/types';
-import { writeFileAccesses } from './path-utils';
+import { isProjectLocalConfigPath, writeFileAccesses } from './path-utils';
 
 export class GitCwdWriteApprovePermissionPolicyService implements PermissionPolicy {
   readonly name = 'git-cwd-write-approve';
@@ -35,6 +35,9 @@ export class GitCwdWriteApprovePermissionPolicyService implements PermissionPoli
 
     const writeAccesses = writeFileAccesses(context);
     if (writeAccesses.length === 0) return undefined;
+    if (writeAccesses.some((access) => isProjectLocalConfigPath(access.path))) {
+      return undefined;
+    }
     if (
       !writeAccesses.every((access) =>
         isWithinWorkspace(

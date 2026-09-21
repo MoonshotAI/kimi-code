@@ -4,10 +4,14 @@ import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
-import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
+import {
+  IProjectLocalConfigService,
+  type ProjectAdditionalDirsLoadResult,
+} from '#/app/projectLocalConfig/projectLocalConfig';
 import type { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 import { watchCandidates } from '#human/utils/watch';
 
 import {
@@ -43,6 +47,7 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
     @IProjectLocalConfigService private readonly localConfig: IProjectLocalConfigService,
     @ILogService private readonly log: ILogService,
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
+    @IWorkspaceTrust private readonly trust: IWorkspaceTrust,
   ) {
     super();
     this.states.contributeState(workspaceDirsFileDirsKey);
@@ -51,6 +56,13 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
     this.configPath = '';
     this.ready = this.enqueue(() => this.reloadFromDisk());
     void this.ready.then(() => this.watchLocalToml());
+    this._register(
+      this.trust.onDidChange(() => {
+        void this.enqueue(() => this.reloadFromDisk()).catch((error) => {
+          this.log.warn(`local.toml trust reload failed: ${String(error)}`);
+        });
+      }),
+    );
   }
 
   private get fileDirs(): readonly string[] {
@@ -140,7 +152,13 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
   }
 
   private async reloadFromDisk(): Promise<void> {
-    const onDisk = await this.localConfig.readAdditionalDirs(this.workspace.cwd);
+    await this.trust.ready;
+    const onDisk: ProjectAdditionalDirsLoadResult = this.trust.isTrusted()
+      ? await this.localConfig.readAdditionalDirs(this.workspace.cwd)
+      : {
+          ...(await this.localConfig.locateAdditionalDirsConfig(this.workspace.cwd)),
+          additionalDirs: [],
+        };
     this.projectRoot = onDisk.projectRoot;
     this.configPath = onDisk.configPath;
     if (this.setFileDirs(onDisk.additionalDirs)) {

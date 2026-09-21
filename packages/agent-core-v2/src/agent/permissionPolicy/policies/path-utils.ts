@@ -43,6 +43,10 @@ export function isGitControlPath(
   );
 }
 
+export function isProjectLocalConfigPath(targetPath: string): boolean {
+  return targetPath.endsWith('/.kimi-code/local.toml');
+}
+
 export function defaultPathClass(): PathClass {
   return process.platform === 'win32' ? 'win32' : 'posix';
 }
