@@ -116,6 +116,7 @@ export interface SessionEventHost {
   restoreEditor(): void;
   restoreInputText(text: string): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
+  moveTranscriptEntryToEnd(entry: TranscriptEntry): boolean;
   handleShellOutput(event: { commandId: string; update: { kind: string; text?: string } }): void;
   handleShellStarted(event: { commandId: string; taskId: string }): void;
   sendNormalUserInput(text: string): void;
@@ -160,6 +161,7 @@ export class SessionEventHandler {
   // Runtime state – owned by this handler, reset between sessions.
   backgroundTasks: Map<string, BackgroundTaskInfo> = new Map();
   backgroundTaskTranscriptedTerminal: Set<string> = new Set();
+  private backgroundTaskTerminalEntries: Map<string, TranscriptEntry> = new Map();
 
   renderedSkillActivationIds: Set<string> = new Set();
   renderedPluginCommandActivationIds: Set<string> = new Set();
@@ -180,6 +182,7 @@ export class SessionEventHandler {
   resetRuntimeState(): void {
     this.backgroundTasks.clear();
     this.backgroundTaskTranscriptedTerminal.clear();
+    this.backgroundTaskTerminalEntries.clear();
     this.subAgentEventHandler.resetRuntimeState();
     this.notifications.reset();
     this.renderedSkillActivationIds.clear();
@@ -336,6 +339,24 @@ export class SessionEventHandler {
     this.currentTurnHasAssistantText = false;
     if (event.origin?.kind === 'plugin_command') {
       this.pluginCommandTurns.set(String(event.turnId), event.origin.pluginId);
+    }
+    // The v2 engine emits task-notification turns with a `task` origin the SDK
+    // union predates, so read it structurally. The turn must open with its own
+    // fold-segment boundary: the terminal card mounted when the task finished
+    // sits at an arbitrary (possibly mid-turn) position and cannot serve as one.
+    const taskOrigin = event.origin as
+      | {
+          readonly kind?: string;
+          readonly taskId?: string;
+          readonly status?: BackgroundTaskInfo['status'];
+        }
+      | undefined;
+    if (
+      taskOrigin?.kind === 'task' &&
+      taskOrigin.taskId !== undefined &&
+      taskOrigin.status !== undefined
+    ) {
+      this.anchorTaskNotificationTurn(taskOrigin.taskId, taskOrigin.status);
     }
     this.clearAgentSwarmProgress();
     this.host.streamingUI.resetToolUi();
@@ -1248,9 +1269,7 @@ export class SessionEventHandler {
         }
       }
       if (!this.backgroundTaskTranscriptedTerminal.has(info.taskId)) {
-        if (info.kind === 'process' || info.kind === 'question') {
-          this.appendBackgroundTaskEntry(info);
-        }
+        this.backgroundTaskTerminalEntries.set(info.taskId, this.appendBackgroundTaskEntry(info));
         this.backgroundTaskTranscriptedTerminal.add(info.taskId);
       }
       this.syncBackgroundTaskBadge();
@@ -1264,7 +1283,7 @@ export class SessionEventHandler {
     this.host.tasksBrowserController.repaint();
   }
 
-  private appendBackgroundTaskEntry(info: BackgroundTaskInfo): void {
+  private appendBackgroundTaskEntry(info: BackgroundTaskInfo): TranscriptEntry {
     const status = formatBackgroundTaskTranscript(info);
     const entry: TranscriptEntry = {
       id: nextTranscriptId(),
@@ -1276,6 +1295,27 @@ export class SessionEventHandler {
       backgroundAgentStatus: status,
     };
     this.host.appendTranscriptEntry(entry);
+    return entry;
+  }
+
+  /**
+   * Give a task-notification turn its own fold-segment boundary at turn start:
+   * move the task's asynchronously mounted terminal card down to the turn,
+   * or mount one now when none is mounted (e.g. it was trimmed). Without an
+   * anchor the turn's end-of-turn fold would extend into the previous turn's
+   * output and collapse its final answer into the step summary.
+   */
+  private anchorTaskNotificationTurn(
+    taskId: string,
+    status: BackgroundTaskInfo['status'],
+  ): void {
+    const mounted = this.backgroundTaskTerminalEntries.get(taskId);
+    if (mounted !== undefined && this.host.moveTranscriptEntryToEnd(mounted)) return;
+    const task = this.backgroundTasks.get(taskId);
+    if (task === undefined) return;
+    const entry = this.appendBackgroundTaskEntry({ ...task, status });
+    this.backgroundTaskTerminalEntries.set(taskId, entry);
+    this.backgroundTaskTranscriptedTerminal.add(taskId);
   }
 
   private syncBackgroundTaskBadge(): void {
