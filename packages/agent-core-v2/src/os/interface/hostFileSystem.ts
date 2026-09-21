@@ -38,6 +38,8 @@ export type HostWalkVisitor = (entry: HostWalkEntry) => void | false | Promise<v
 export interface IHostFileSystem {
   readonly _serviceBrand: undefined;
 
+  readonly strictTextReads?: boolean;
+
   readText(
     path: string,
     options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors; preserveBOM?: boolean },
