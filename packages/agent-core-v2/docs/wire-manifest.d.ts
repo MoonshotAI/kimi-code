@@ -140,7 +140,7 @@ interface ContextAppendMessagePayload {
     toolCallDisplays?: Record<string, ToolInputDisplay>;
     note?: string;
     usage?: TokenUsage;
-    timing?: {
+    llmTiming?: {
       llmFirstTokenLatencyMs?: number;
       llmStreamDurationMs?: number;
     };

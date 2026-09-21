@@ -14,7 +14,7 @@ const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
 
 export interface AssistantSealMeta {
   readonly usage?: TokenUsage;
-  readonly timing?: ContextMessageTiming;
+  readonly llmTiming?: ContextMessageTiming;
 }
 
 export type LoopRecordedEvent =
@@ -316,7 +316,7 @@ function createImmutableFoldSink(initial: readonly ContextMessage[]): ImmutableF
       updateOpen((message) => ({
         ...message,
         usage: meta?.usage,
-        timing: meta?.timing,
+        llmTiming: meta?.llmTiming,
         partial: undefined,
       }));
       openIndex = -1;
@@ -373,5 +373,5 @@ function stepEndSealMeta(
   };
   const hasTiming = Object.values(timing).some((value) => value !== undefined);
   if (event.usage === undefined && !hasTiming) return undefined;
-  return { usage: event.usage, timing: hasTiming ? timing : undefined };
+  return { usage: event.usage, llmTiming: hasTiming ? timing : undefined };
 }

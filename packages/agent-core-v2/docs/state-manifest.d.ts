@@ -932,7 +932,7 @@ export interface AgentStateSnapshot {
       inputCacheCreation: number;
       raw?: Record<string, unknown>;
     };
-    readonly timing?: /* ContextMessageTiming — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+    readonly llmTiming?: /* ContextMessageTiming — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly llmFirstTokenLatencyMs?: number;
       readonly llmStreamDurationMs?: number;
     };

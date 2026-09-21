@@ -390,7 +390,7 @@ describe('contract schemas', () => {
           kind: 'step', stepId: 't1.1', turnId: 't1', ordinal: 1, state: 'interrupted',
           usage,
           finishReason: 'stop',
-          timing: {
+          llmTiming: {
             llmFirstTokenLatencyMs: 120,
             llmStreamDurationMs: 900,
             llmRequestBuildMs: 5,
@@ -541,7 +541,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         content: [{ type: 'text', text: 'done' }],
         toolCalls: [],
         usage: { inputOther: 10, output: 20, inputCacheRead: 30, inputCacheCreation: 40 },
-        timing: { llmFirstTokenLatencyMs: 800, llmStreamDurationMs: 5000 },
+        llmTiming: { llmFirstTokenLatencyMs: 800, llmStreamDurationMs: 5000 },
       },
     ]);
     const turn = snapshot.items[0];
@@ -552,7 +552,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
       inputCacheRead: 30,
       inputCacheCreation: 40,
     });
-    expect(turn.steps[0]?.timing).toEqual({
+    expect(turn.steps[0]?.llmTiming).toEqual({
       llmFirstTokenLatencyMs: 800,
       llmStreamDurationMs: 5000,
     });

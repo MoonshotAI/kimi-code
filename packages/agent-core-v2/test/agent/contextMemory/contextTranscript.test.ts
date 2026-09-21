@@ -168,7 +168,7 @@ describe('reduceContextTranscript', () => {
       inputCacheRead: 30,
       inputCacheCreation: 40,
     });
-    expect(assistant?.timing).toEqual({
+    expect(assistant?.llmTiming).toEqual({
       llmFirstTokenLatencyMs: 800,
       llmStreamDurationMs: 5000,
     });
@@ -181,7 +181,7 @@ describe('reduceContextTranscript', () => {
     ]);
     const assistant = result.entries.find((m) => m.role === 'assistant');
     expect(assistant?.usage).toBeUndefined();
-    expect(assistant?.timing).toBeUndefined();
+    expect(assistant?.llmTiming).toBeUndefined();
   });
 
   it('preserves the pre-compaction assistant reply after a later undo', () => {

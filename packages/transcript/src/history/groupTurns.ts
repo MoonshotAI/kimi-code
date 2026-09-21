@@ -39,7 +39,7 @@ export interface HistoryMessage {
   readonly isError?: boolean;
   readonly origin?: { readonly kind: string };
   readonly usage?: StepUsage;
-  readonly timing?: StepTiming;
+  readonly llmTiming?: StepTiming;
 }
 
 interface TurnDraft {
@@ -57,7 +57,7 @@ interface StepDraft {
   ordinal: number;
   frames: TranscriptFrame[];
   usage?: StepUsage;
-  timing?: StepTiming;
+  llmTiming?: StepTiming;
 }
 
 const HIDDEN_USER_ORIGINS = new Set(['injection', 'system_trigger', 'retry']);
@@ -338,7 +338,7 @@ export function groupMessagesIntoSnapshot(
         ordinal: stepOrdinal,
         frames: [],
         usage: message.usage,
-        timing: message.timing,
+        llmTiming: message.llmTiming,
       };
       current.steps.push(step);
       let frameCount = 0;
@@ -570,7 +570,7 @@ function draftToTurnItem(draft: TurnDraft): TranscriptItem {
       state: 'completed' as const,
       frames: step.frames,
       usage: step.usage,
-      timing: step.timing,
+      llmTiming: step.llmTiming,
     })),
   };
 }

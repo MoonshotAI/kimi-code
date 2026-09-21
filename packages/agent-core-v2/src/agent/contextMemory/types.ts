@@ -138,7 +138,7 @@ export type ContextMessage = Message & {
   toolCallDisplays?: Record<string, ToolInputDisplay>;
   readonly note?: string;
   readonly usage?: TokenUsage;
-  readonly timing?: ContextMessageTiming;
+  readonly llmTiming?: ContextMessageTiming;
 };
 
 export interface UserMessageRecord {

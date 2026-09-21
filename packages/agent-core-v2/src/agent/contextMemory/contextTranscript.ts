@@ -32,7 +32,7 @@ interface MutableMessage {
   note?: string;
   origin?: ContextMessage['origin'];
   usage?: TokenUsage;
-  timing?: ContextMessageTiming;
+  llmTiming?: ContextMessageTiming;
 }
 
 interface MutableEntry {
@@ -79,7 +79,7 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
     sealOpenAssistant: (meta) => {
       if (openEntry !== undefined) {
         openEntry.message.usage = meta?.usage;
-        openEntry.message.timing = meta?.timing;
+        openEntry.message.llmTiming = meta?.llmTiming;
       }
       openEntry = undefined;
     },
@@ -183,7 +183,7 @@ function toMutableEntry(message: ContextMessage, time: number | undefined): Muta
       ...(message.isError !== undefined ? { isError: message.isError } : {}),
       ...(message.origin !== undefined ? { origin: message.origin } : {}),
       usage: message.usage,
-      timing: message.timing,
+      llmTiming: message.llmTiming,
     },
     time,
   };
