@@ -190,6 +190,10 @@ export function isWithinWorkspace(
   return false;
 }
 
+export function isProjectLocalConfigPath(targetPath: string): boolean {
+  return targetPath.endsWith('/.kimi-code/local.toml');
+}
+
 export function extendWorkspaceWithSkillRoots<T extends WorkspaceConfig>(
   workspace: T,
   skillRoots: readonly string[],

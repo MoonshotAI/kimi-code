@@ -1,5 +1,5 @@
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
-import { isWithinWorkspace } from '#/tool/path-access';
+import { isProjectLocalConfigPath, isWithinWorkspace } from '#/tool/path-access';
 import { IGitService } from '#/app/git/git';
 import type { IGitService as GitService } from '#/app/git/git';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
@@ -9,7 +9,7 @@ import type {
   PermissionPolicy,
   PermissionPolicyResult,
 } from '#/agent/permissionPolicy/types';
-import { isProjectLocalConfigPath, writeFileAccesses } from './path-utils';
+import { writeFileAccesses } from './path-utils';
 
 export class GitCwdWriteApprovePermissionPolicyService implements PermissionPolicy {
   readonly name = 'git-cwd-write-approve';

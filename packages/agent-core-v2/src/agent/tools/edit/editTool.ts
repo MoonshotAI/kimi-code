@@ -2,7 +2,7 @@ import {
   resolvePathAccessPath,
   type WorkspaceConfig,
 } from '#/tool/path-access';
-import { checkRealPathWithinWorkspace } from '#/tool/realpath-access';
+import { checkRealPathWriteTarget } from '#/tool/realpath-access';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
 import { IFileEditService } from '#/app/edit/fileEdit';
@@ -78,7 +78,7 @@ export class EditTool implements IEditTool {
           if (lease.runtime.identity.generation !== inspected.identity.generation) {
             return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
           }
-          const accessError = await checkRealPathWithinWorkspace(lease.runtime.fs!, path, workspace, env.pathClass);
+          const accessError = await checkRealPathWriteTarget(lease.runtime.fs!, path, workspace, env.pathClass);
           if (accessError !== undefined) {
             return { isError: true, output: accessError.message };
           }

@@ -511,6 +511,32 @@ describe('WriteTool symlink escape', () => {
     await expect(readFile(file, 'utf8')).resolves.toBe('data');
   });
 
+  it('rejects writes to the project config through a symlink alias', async () => {
+    const configDir = join(wsDir, '.kimi-code');
+    await mkdir(configDir);
+    await writeFile(join(configDir, 'local.toml'), 'original');
+    const alias = join(wsDir, 'config-link');
+    await symlink(configDir, alias);
+    const tool = makeToolWithFs(new HostFileSystem(), stubWorkspaceContext(wsDir));
+
+    const result = await execute(tool, { path: join(alias, 'local.toml'), content: 'pwned' });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(toolContentString(result)).toMatch(/real path/);
+    await expect(readFile(join(configDir, 'local.toml'), 'utf8')).resolves.toBe('original');
+  });
+
+  it('allows writes to the project config through its real path', async () => {
+    const configDir = join(wsDir, '.kimi-code');
+    await mkdir(configDir);
+    const tool = makeToolWithFs(new HostFileSystem(), stubWorkspaceContext(wsDir));
+
+    const result = await execute(tool, { path: join(configDir, 'local.toml'), content: 'updated' });
+
+    expect(result.isError).toBeFalsy();
+    await expect(readFile(join(configDir, 'local.toml'), 'utf8')).resolves.toBe('updated');
+  });
+
   it('allows writes through a symlink that points into an additional dir', async () => {
     const target = join(outsideDir, 'shared.txt');
     await writeFile(target, 'original');

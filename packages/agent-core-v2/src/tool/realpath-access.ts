@@ -4,6 +4,7 @@ import { isError2, unwrapErrorCause } from '#/_base/errors/errors';
 import { OsFsErrors } from '#/os/interface/hostFsErrors';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import {
+  isProjectLocalConfigPath,
   isSensitiveFile,
   isWithinDirectory,
   isWithinWorkspace,
@@ -75,8 +76,8 @@ export async function assertRealPathWithinWorkspace(
   absPath: string,
   workspace: WorkspaceConfig,
   pathClass: PathClass,
-): Promise<void> {
-  if (!isWithinWorkspace(absPath, workspace, pathClass)) return;
+): Promise<string> {
+  if (!isWithinWorkspace(absPath, workspace, pathClass)) return absPath;
   const resolved = await realpathExistingPrefix(fs, absPath);
   if (isSensitiveFile(resolved)) {
     throw new PathSecurityError(
@@ -88,7 +89,7 @@ export async function assertRealPathWithinWorkspace(
     );
   }
   const roots = await realRoots(fs, workspace);
-  if (roots.some((root) => isWithinDirectory(resolved, root, pathClass))) return;
+  if (roots.some((root) => isWithinDirectory(resolved, root, pathClass))) return resolved;
   throw new PathSecurityError(
     'PATH_SYMLINK_ESCAPE',
     absPath,
@@ -96,6 +97,24 @@ export async function assertRealPathWithinWorkspace(
     `"${absPath}" resolves to "${resolved}" through a symbolic link that points outside the working directory. ` +
       'Access is blocked; use the real path directly or add the target directory to the workspace.',
   );
+}
+
+export async function assertRealPathWriteTarget(
+  fs: IHostFileSystem,
+  absPath: string,
+  workspace: WorkspaceConfig,
+  pathClass: PathClass,
+): Promise<void> {
+  const resolved = await assertRealPathWithinWorkspace(fs, absPath, workspace, pathClass);
+  if (resolved !== absPath && isProjectLocalConfigPath(resolved)) {
+    throw new PathSecurityError(
+      'PATH_SYMLINK_ESCAPE',
+      absPath,
+      resolved,
+      `"${absPath}" resolves to the project-local config "${resolved}" through a symbolic link. ` +
+        'Access is blocked; use the real path so the write goes through approval.',
+    );
+  }
 }
 
 export async function checkRealPathWithinWorkspace(
@@ -106,6 +125,21 @@ export async function checkRealPathWithinWorkspace(
 ): Promise<PathSecurityError | undefined> {
   try {
     await assertRealPathWithinWorkspace(fs, absPath, workspace, pathClass);
+    return undefined;
+  } catch (error) {
+    if (error instanceof PathSecurityError) return error;
+    throw error;
+  }
+}
+
+export async function checkRealPathWriteTarget(
+  fs: IHostFileSystem,
+  absPath: string,
+  workspace: WorkspaceConfig,
+  pathClass: PathClass,
+): Promise<PathSecurityError | undefined> {
+  try {
+    await assertRealPathWriteTarget(fs, absPath, workspace, pathClass);
     return undefined;
   } catch (error) {
     if (error instanceof PathSecurityError) return error;
