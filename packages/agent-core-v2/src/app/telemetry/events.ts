@@ -58,6 +58,7 @@ export interface TurnStartedEvent {
   provider_type?: string;
   protocol?: string;
   thinking_effort?: string;
+  enabled_plugins?: string;
 }
 
 export interface TurnInterruptedEvent {
@@ -81,6 +82,7 @@ export interface TurnEndedEvent {
   protocol?: string;
   thinking_effort?: string;
   trace_id?: string;
+  enabled_plugins?: string;
 }
 
 export interface PromptCacheProbeEvent {
@@ -227,6 +229,7 @@ export interface RemoteControlToggleEvent {
 export interface PluginToggleEvent {
   plugin_id: string;
   enabled: boolean;
+  enabled_plugins?: string;
 }
 
 export interface CompactionFinishedEvent {
@@ -612,6 +615,8 @@ export const telemetryEventDefinitions = {
       provider_type: 'Provider protocol type',
       protocol: 'Request protocol',
       thinking_effort: 'Effective thinking effort the turn runs with',
+      enabled_plugins:
+        'Comma-separated sorted ids of enabled, loaded plugins when the turn starts; empty string for a known empty set, absent when no plugin snapshot is available',
     },
   }),
   turn_interrupted: defineAgentTelemetryEvent<TurnInterruptedEvent>({
@@ -643,6 +648,8 @@ export const telemetryEventDefinitions = {
       thinking_effort: 'Effective thinking effort the turn ran with',
       trace_id:
         'Trace id of the most recent LLM request in this turn; absent for non-Kimi protocols',
+      enabled_plugins:
+        'Comma-separated sorted ids of enabled, loaded plugins when the turn ends; empty string for a known empty set, absent when no plugin snapshot is available',
     },
   }),
   prompt_cache_probe: defineAgentTelemetryEvent<PromptCacheProbeEvent>({
@@ -848,6 +855,8 @@ export const telemetryEventDefinitions = {
     properties: {
       plugin_id: 'Id of the toggled plugin',
       enabled: 'Whether the plugin is enabled after the toggle',
+      enabled_plugins:
+        'Comma-separated sorted ids of enabled, loaded plugins after the toggle commits; empty string for a known empty set',
     },
   }),
   compaction_finished: defineAgentTelemetryEvent<CompactionFinishedEvent>({

@@ -18,16 +18,14 @@ import * as pluginStore from '#/app/plugin/store';
 import type { InstalledFile, InstalledRecord } from '#/app/plugin/store';
 import type { PluginMutationSummary, ReloadSummary } from '#/app/plugin/types';
 import { LifecycleScope } from '#/app/scopes';
-import { CloudAppender } from '#/app/telemetry/cloudAppender';
 import {
   ITelemetryService,
   noopTelemetryService,
   type TelemetryAppenderRecord,
 } from '#/app/telemetry/telemetry';
-import { bindTelemetryScope, TelemetryService } from '#/app/telemetry/telemetryService';
+import { TelemetryService } from '#/app/telemetry/telemetryService';
 import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
 import { IProviderService, type ProviderConfig } from '#/llm-adapter/provider/provider';
-import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubProviderService } from '../provider/stubs';
@@ -238,9 +236,9 @@ describe('PluginService (plugin boundary)', () => {
     const host = makeHost(home, stubProviderService(), {}, telemetry);
     try {
       const svc = host.app.accessor.get(IPluginService);
-      expect(telemetry.getContext()).not.toHaveProperty('enabled_plugins');
+      expect(svc.enabledPluginIds()).toBeUndefined();
       await expect(svc.listPlugins()).rejects.toMatchObject({ code: 'plugin.load_failed' });
-      expect(telemetry.getContext()).not.toHaveProperty('enabled_plugins');
+      expect(svc.enabledPluginIds()).toBeUndefined();
 
       const pluginRoot = await makePluginDir('recovery-demo', {});
       createdDirs.push(pluginRoot);
@@ -257,7 +255,7 @@ describe('PluginService (plugin boundary)', () => {
         expect.objectContaining({ id: 'recovery-demo' }),
       ]);
       expect(reloads).toEqual([{ added: ['recovery-demo'], removed: [], errors: [] }]);
-      expect(telemetry.getContext()).toMatchObject({ enabled_plugins: 'recovery-demo' });
+      expect(svc.enabledPluginIds()).toEqual(['recovery-demo']);
     } finally {
       host.dispose();
     }
@@ -328,84 +326,55 @@ describe('PluginService (plugin boundary)', () => {
     try {
       const svc = host.app.accessor.get(IPluginService);
       await svc.installPlugin({ source: pluginRoot });
-      expect(telemetry.getContext()).toMatchObject({ enabled_plugins: 'toggle-demo' });
+      expect(svc.enabledPluginIds()).toEqual(['toggle-demo']);
       writeInstalled.mockRejectedValueOnce(new Error('persist failed'));
       await expect(svc.setPluginEnabled({ id: 'toggle-demo', enabled: false })).rejects.toThrow(
         'persist failed',
       );
-      expect(telemetry.getContext()).toMatchObject({ enabled_plugins: 'toggle-demo' });
+      expect(svc.enabledPluginIds()).toEqual(['toggle-demo']);
       expect(events).toEqual([]);
       await svc.setPluginEnabled({ id: 'toggle-demo', enabled: false });
       await svc.setPluginEnabled({ id: 'toggle-demo', enabled: true });
       await svc.removePlugin({ id: 'toggle-demo' });
 
       expect(events.map((record) => [record.event, record.properties])).toEqual([
-        ['plugin_toggle', { plugin_id: 'toggle-demo', enabled: false }],
-        ['plugin_toggle', { plugin_id: 'toggle-demo', enabled: true }],
+        ['plugin_toggle', { plugin_id: 'toggle-demo', enabled: false, enabled_plugins: '' }],
+        [
+          'plugin_toggle',
+          { plugin_id: 'toggle-demo', enabled: true, enabled_plugins: 'toggle-demo' },
+        ],
       ]);
     } finally {
       host.dispose();
     }
   });
 
-  it('reports committed plugin state on toggles and events from existing agents', async () => {
+  it('reports committed plugin state on toggle events with canonical ids', async () => {
     const home = await makeHome();
     const pluginRoot = await makePluginDir('alpha', {});
     createdDirs.push(pluginRoot);
     await writeInstalledFile(home, JSON.stringify(installedFile('alpha', pluginRoot)));
     const telemetry = new TelemetryService();
-    const session = bindTelemetryScope(telemetry, { session_id: 'session-test' });
-    const agent = bindTelemetryScope(session.telemetry, { agent_id: 'main', mode: 'agent' });
-    const events: Record<string, unknown>[] = [];
-    const appender = new CloudAppender({
-      bootstrap: stubBootstrap(home),
-      storage: new FileStorageService(home),
-      deviceId: 'test-device',
-      appName: 'test-app',
-      endpoint: 'https://example.test/telemetry',
-      fetchImpl: async (_input, init) => {
-        if (typeof init?.body !== 'string') throw new Error('Expected a JSON request body');
-        const payload = JSON.parse(init.body) as { events: Record<string, unknown>[] };
-        events.push(...payload.events);
-        return new Response(null, { status: 200 });
-      },
-    });
-    telemetry.addAppender(appender);
+    const events: TelemetryAppenderRecord[] = [];
+    telemetry.addAppender({ track: (record) => events.push(record) });
     const host = makeHost(home, stubProviderService(), {}, telemetry);
     try {
       const svc = host.app.accessor.get(IPluginService);
       await svc.listPlugins();
-      agent.telemetry.track2('first_launch');
       await svc.setPluginEnabled({ id: 'ALPHA', enabled: false });
-      agent.telemetry.track2('first_launch');
       await svc.setPluginEnabled({ id: 'alpha', enabled: true });
-      agent.telemetry.track2('first_launch');
       await svc.removePlugin({ id: 'alpha' });
-      agent.telemetry.track2('first_launch');
-      await telemetry.flush();
 
-      expect(events.map((event) => [event['event'], event['context_enabled_plugins']])).toEqual([
-        ['kfc_first_launch', 'alpha'],
-        ['kfc_plugin_toggle', ''],
-        ['kfc_first_launch', ''],
-        ['kfc_plugin_toggle', 'alpha'],
-        ['kfc_first_launch', 'alpha'],
-        ['kfc_first_launch', ''],
+      expect(events.map((record) => [record.event, record.properties])).toEqual([
+        ['plugin_toggle', { plugin_id: 'alpha', enabled: false, enabled_plugins: '' }],
+        ['plugin_toggle', { plugin_id: 'alpha', enabled: true, enabled_plugins: 'alpha' }],
       ]);
-      expect(events[1]).toMatchObject({ property_plugin_id: 'alpha', property_enabled: false });
-      expect(events[3]).toMatchObject({ property_plugin_id: 'alpha', property_enabled: true });
-      for (const event of events) {
-        expect(event).not.toHaveProperty('property_enabled_plugins');
-      }
     } finally {
-      await telemetry.shutdown();
-      agent.dispose();
-      session.dispose();
       host.dispose();
     }
   });
 
-  it('keeps telemetry consistent when a persisted toggle cannot reload', async () => {
+  it('emits no toggle and reports committed state when a persisted toggle cannot reload', async () => {
     const home = await makeHome();
     const pluginRoot = await makePluginDir('alpha', {});
     createdDirs.push(pluginRoot);
@@ -426,8 +395,7 @@ describe('PluginService (plugin boundary)', () => {
       await expect(svc.listPlugins()).resolves.toEqual([
         expect.objectContaining({ id: 'alpha', enabled: false }),
       ]);
-      telemetry.track2('first_launch');
-      expect(events[0]?.context).toEqual({ enabled_plugins: '' });
+      expect(svc.enabledPluginIds()).toEqual([]);
     } finally {
       host.dispose();
     }
@@ -447,7 +415,7 @@ describe('PluginService (plugin boundary)', () => {
     try {
       const svc = host.app.accessor.get(IPluginService);
       await svc.listPlugins();
-      expect(telemetry.getContext()).toMatchObject({ enabled_plugins: 'alpha,zeta' });
+      expect(svc.enabledPluginIds()).toEqual(['alpha', 'zeta']);
     } finally {
       host.dispose();
     }
@@ -486,7 +454,7 @@ describe('PluginService (plugin boundary)', () => {
       expect(mutationSettled).toBe(false);
       expect(events.map((record) => [
         record.properties['enabled'],
-        record.context['enabled_plugins'],
+        record.properties['enabled_plugins'],
       ])).toEqual([
         [false, ''],
         [true, 'sequencing-demo'],

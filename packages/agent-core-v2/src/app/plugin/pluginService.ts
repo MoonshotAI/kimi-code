@@ -6,6 +6,7 @@ import { AsyncEmitter, Emitter, type Event } from '#/_base/event';
 import type { HookDef } from '#/features/externalHooks/internal/types';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { LifecycleScope } from '#/app/scopes';
+import type { PluginToggleEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
 import type { SkillRoot } from '#/features/skill/catalog/types';
@@ -111,7 +112,12 @@ export class PluginService extends Service implements IPluginService {
       const notification = await this.reloadAndNotify({
         mutation: { kind: input.enabled ? 'enable' : 'disable', id },
       });
-      this.telemetry.track2('plugin_toggle', { plugin_id: id, enabled: input.enabled });
+      const event: PluginToggleEvent = {
+        plugin_id: id,
+        enabled: input.enabled,
+        enabled_plugins: this.enabledPluginIds()?.join(','),
+      };
+      this.telemetry.track2('plugin_toggle', event);
       return { result: undefined, notification };
     });
   }
@@ -162,13 +168,9 @@ export class PluginService extends Service implements IPluginService {
   private async reloadAndNotify(options?: {
     readonly mutation: PluginMutation;
   }): Promise<PluginReloadNotification> {
-    const summary = await this.manager.reload().catch((error: unknown) => {
-      if (this.snapshotLoaded) this.syncTelemetryContext();
-      throw error;
-    });
+    const summary = await this.manager.reload();
     this.snapshotLoaded = true;
     this.loadError = undefined;
-    this.syncTelemetryContext();
     const delivery = this.onDidReloadEmitter.fireAsyncConcurrent(summary, NO_ABORT);
     if (options?.mutation !== undefined)
       this.onDidMutateEmitter.fire({ ...summary, mutation: options.mutation });
@@ -253,6 +255,15 @@ export class PluginService extends Service implements IPluginService {
     return this.snapshotLoaded;
   }
 
+  enabledPluginIds(): readonly string[] | undefined {
+    if (!this.snapshotLoaded) return undefined;
+    return this.manager
+      .summaries()
+      .filter((plugin) => plugin.enabled && plugin.state === 'ok')
+      .map((plugin) => plugin.id)
+      .toSorted();
+  }
+
   private runSerializedOperation<T>(operation: () => Promise<T>): Promise<T> {
     void this.startInitialLoad();
     return this.enqueueMutation(async () => {
@@ -290,20 +301,9 @@ export class PluginService extends Service implements IPluginService {
       await this.manager.load();
       this.snapshotLoaded = true;
       this.loadError = undefined;
-      this.syncTelemetryContext();
     } catch (error) {
       this.loadError = error instanceof Error ? error : new Error(String(error));
     }
-  }
-
-  private syncTelemetryContext(): void {
-    this.telemetry.setContext({
-      enabled_plugins: this.manager.summaries()
-        .filter((plugin) => plugin.enabled && plugin.state === 'ok')
-        .map((plugin) => plugin.id)
-        .toSorted()
-        .join(','),
-    });
   }
 
   private enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {

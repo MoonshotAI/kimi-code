@@ -122,10 +122,6 @@ export class CloudAppender implements ITelemetryAppender {
     if (typeof ambientModel === 'string' && ambientModel.length > 0) {
       context['model'] = ambientModel;
     }
-    const enabledPlugins = ambient['enabled_plugins'];
-    if (typeof enabledPlugins === 'string') {
-      context['enabled_plugins'] = enabledPlugins;
-    }
     return context;
   }
 

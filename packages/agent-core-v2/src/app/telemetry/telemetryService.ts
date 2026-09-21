@@ -41,7 +41,7 @@ export function composeTelemetryProperties(
 ): TelemetryProperties {
   const properties: MutableContext = {};
   for (const [key, value] of Object.entries(ambient)) {
-    if (key === 'session_id' || key === 'enabled_plugins' || value === undefined) {
+    if (key === 'session_id' || value === undefined) {
       continue;
     }
     properties[key] = value;
@@ -164,8 +164,8 @@ export class TelemetryService
     for (const appender of this.appenders) {
       try {
         appender.track(record);
-      } catch (err) {
-        onUnexpectedError(err);
+      } catch (error) {
+        onUnexpectedError(error);
       }
     }
   }

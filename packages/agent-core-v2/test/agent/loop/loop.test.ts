@@ -35,11 +35,13 @@ import type { ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IEventBus } from '#/app/event/eventBus';
+import { IPluginService } from '#/app/plugin/plugin';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 
 import {
   agentService,
+  appService,
   createTestAgent,
   InMemoryWireRecordPersistence,
   permissionModeServices,
@@ -49,6 +51,7 @@ import {
   type TestAgentContext,
   type TestAgentOptions,
 } from '../../harness';
+import { stubPluginService } from '../../app/plugin/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { submitPromptTurn } from './stubs';
 
@@ -1274,6 +1277,7 @@ describe('turn telemetry', () => {
           provider_type: 'kimi',
           protocol: 'openai',
           thinking_effort: 'off',
+          enabled_plugins: '',
         },
       });
       expect(records).toContainEqual({
@@ -1289,6 +1293,40 @@ describe('turn telemetry', () => {
         }),
       });
       expect(records.some((record) => record.event === 'turn_interrupted')).toBe(false);
+    } finally {
+      await local.dispose();
+    }
+  });
+
+  it('reports enabled plugins on turn_started and turn_ended', async () => {
+    const records: TelemetryRecord[] = [];
+    const local = createTestAgent(
+      { telemetry: recordingTelemetry(records) },
+      appService(
+        IPluginService,
+        stubPluginService({ sessionStarts: [], enabledPluginIds: ['alpha', 'zeta'] }),
+      ),
+    );
+    try {
+      local.get(IAgentProfileService).update({ activeToolNames: [] });
+      local.mockNextResponse({ type: 'text', text: 'hi' });
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+      await local.untilTurnEnd();
+
+      expect(records).toContainEqual({
+        event: 'turn_started',
+        properties: expect.objectContaining({
+          turn_id: 0,
+          enabled_plugins: 'alpha,zeta',
+        }),
+      });
+      expect(records).toContainEqual({
+        event: 'turn_ended',
+        properties: expect.objectContaining({
+          turn_id: 0,
+          enabled_plugins: 'alpha,zeta',
+        }),
+      });
     } finally {
       await local.dispose();
     }
