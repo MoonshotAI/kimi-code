@@ -59,6 +59,7 @@ import {
   IWorkspaceService,
   MAIN_AGENT_ID,
   OsProcessErrors,
+  resumeSessionById,
 } from '@moonshot-ai/agent-core-v2';
 
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
@@ -156,6 +157,29 @@ async function findSessionDir(homeDir: string, sessionId: string): Promise<strin
 }
 
 describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
+  it('loads explicit agent files for native print sessions', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-print-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-print-work-'));
+    tempDirs.push(homeDir, workDir);
+    const agentFile = join(homeDir, 'reviewer.md');
+    await writeFile(agentFile, '---\nname: print-reviewer\ndescription: Reviews code.\n---\n\nReview the project.\n');
+    await writeFile(join(homeDir, 'config.toml'), runtimeConfigToml('/remote/work'));
+    const client = new SDKRpcClientV2({
+      homeDir,
+      identity: TEST_IDENTITY,
+      agentFiles: [agentFile],
+    });
+    try {
+      const session = await client.engineAccessor.get(ISessionManager).create({
+        workDir,
+        mainAgentBinding: { profile: 'print-reviewer' },
+      });
+      expect(await client.getStatus({ sessionId: session.id })).toMatchObject({ model: 'stub' });
+    } finally {
+      await client.close();
+    }
+  });
+
   it('exposes the validated environment binding through Session', async () => {
     const { harness } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
@@ -262,6 +286,38 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       },
     });
   }
+
+  it('creates and resumes native print sessions with their remote binding', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-print-work-'));
+    const remoteDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-print-remote-'));
+    tempDirs.push(workDir, remoteDir);
+    const { harness, client } = await makeEnvironmentHarness({ defaultCwd: remoteDir });
+    const provider = await attachFakeBoxEnvironment(client);
+    try {
+      const sessions = client.engineAccessor.get(ISessionManager);
+      const session = await sessions.create({
+        workDir,
+        environmentId: 'fake-box',
+        mainAgentBinding: { profile: 'agent' },
+      });
+      expect(await client.getEnvironment({ sessionId: session.id })).toMatchObject({
+        environmentId: 'fake-box',
+        cwd: remoteDir,
+      });
+
+      await sessions.close(session.id);
+      await resumeSessionById(client.engineAccessor, session.id);
+
+      expect(await client.getEnvironment({ sessionId: session.id })).toMatchObject({
+        environmentId: 'fake-box',
+        cwd: remoteDir,
+      });
+    } finally {
+      await provider.dispose();
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
 
   it('switches with cwd through connectAndSwitch and reconnects explicitly', async () => {
     const { harness, client } = await makeEnvironmentHarness();

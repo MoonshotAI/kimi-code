@@ -18,10 +18,17 @@ import {
   IConfigService,
   IEventBus,
   IEventDispatcher,
+  IEventService,
   IFileSystemStorageService,
   IHostFileSystem,
+  ILogService,
+  IMcpOAuthService,
+  IModelService,
+  IOAuthService,
   IOAuthToolkit,
+  IProviderService,
   ISessionIndex,
+  ISessionIndexMirror,
   ISessionManager,
   ITelemetryService,
   IWorkspaceInstanceManager,
@@ -30,6 +37,7 @@ import {
   type BootstrapInput,
   type Event2,
 } from '@moonshot-ai/agent-core-v2';
+import { IAppendLogStore } from '@moonshot-ai/agent-core-v2/persistence/interface/appendLogStore';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_USER_AGENT_PRODUCT } from '#/constant/app';
 
@@ -292,6 +300,14 @@ function makeFakeHarness() {
       },
     ],
     [IOAuthToolkit, { getCachedAccessToken: vi.fn(async () => undefined) }],
+    [IOAuthService, { getRegion: () => 'mainland-cn' }],
+    [IModelService, { ready: Promise.resolve() }],
+    [IProviderService, { ready: Promise.resolve() }],
+    [IEventService, { subscribe: vi.fn(() => ({ dispose: vi.fn() })) }],
+    [ILogService, { warn: vi.fn() }],
+    [IMcpOAuthService, { shutdown: vi.fn(async () => {}) }],
+    [ISessionIndexMirror, { drain: vi.fn(async () => {}) }],
+    [IAppendLogStore, { drainRetirements: vi.fn(async () => {}) }],
     [IFileSystemStorageService, {}],
     [IHostFileSystem, {}],
     [
@@ -362,6 +378,23 @@ describe('runV2Print', () => {
     expect(app.dispose).toHaveBeenCalled();
   });
 
+  it('keeps local print usable when remote provider registration fails', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, appServices } = makeFakeHarness();
+    const workspaces = appServices.get(IWorkspaceInstanceManager) as {
+      addProvider: ReturnType<typeof vi.fn>;
+    };
+    workspaces.addProvider.mockRejectedValueOnce(new Error('provider unavailable'));
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+
+    expect(stdout.text()).toContain('hello world');
+    expect(app.dispose).toHaveBeenCalledOnce();
+  });
+
   it('passes explicit skill dirs from --skillsDir into bootstrap args', async () => {
     const stdout = writer();
     const stderr = writer();
@@ -377,6 +410,7 @@ describe('runV2Print', () => {
 
     const input = mocks.bootstrap.mock.calls[0]?.[0] as BootstrapInput;
     expect(input.args?.skillDirs).toEqual(['/skills']);
+    expect(input.args?.nonInteractive).toBe(true);
   });
 
   it('leaves the skill dirs arg unset when --skillsDir is empty', async () => {
@@ -765,7 +799,10 @@ describe('runV2Print', () => {
     expect(app.dispose).toHaveBeenCalled();
   });
 
-  it('cancels and settles the active turn before flushing on a termination signal', async () => {
+  it.each([
+    ['SIGINT', 130],
+    ['SIGTERM', 143],
+  ])('cancels and settles the active turn before flushing on %s', async (signal, exitCode) => {
     const stdout = writer();
     const stderr = writer();
     const { app, agentServices } = makeFakeHarness();
@@ -888,12 +925,12 @@ describe('runV2Print', () => {
       process: fakeProcess as never,
     });
     const outcome = run.catch((error: unknown) => error);
-    for (let i = 0; i < 100 && !handlers.has('SIGINT'); i++) {
+    for (let i = 0; i < 100 && !handlers.has(signal); i++) {
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
-    const onSigint = handlers.get('SIGINT')!;
+    const onTermination = handlers.get(signal)!;
     settleTurn({ type: 'cancelled', steps: 0, reason: new Error('aborted') });
-    const sigintRun = onSigint();
+    const terminationRun = onTermination();
     // The flush must wait for the prompt queue to empty, even with idle loops.
     for (let i = 0; i < 100 && !order.includes('settled'); i++) {
       await new Promise((resolve) => setTimeout(resolve, 5));
@@ -905,9 +942,10 @@ describe('runV2Print', () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(order).toEqual(['stop', 'cancel', 'settled']);
     promptPhase = 'empty';
-    await sigintRun;
+    await terminationRun;
 
-    expect(order).toEqual(['stop', 'cancel', 'settled', 'flush', 'exit:130']);
+    expect(order).toEqual(['stop', 'cancel', 'settled', 'flush', `exit:${exitCode}`]);
+    expect(app.dispose).toHaveBeenCalledOnce();
     // The guard taken during quiesce is only released after app.dispose().
     expect(loop.tryAcquireQuiescence).toHaveBeenCalled();
     const lastGuardRelease = guardDispose.mock.invocationCallOrder.at(-1);
