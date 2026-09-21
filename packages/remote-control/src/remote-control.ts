@@ -9,7 +9,7 @@ import { gzip } from 'node:zlib';
 import {
   createKimiDeviceId,
   FileTokenStorage,
-  KIMI_CODE_PROVIDER_NAME,
+  resolveKimiRemoteControlAuth,
   resolveKimiTokenStorageName,
 } from '@moonshot-ai/kimi-code-oauth';
 import { WebSocket, type RawData } from 'ws';
@@ -100,6 +100,8 @@ export interface RemoteControlOptions {
   readonly localServerToken: string | (() => string);
   readonly clientVersion: string;
   readonly relayOrigin?: string;
+  readonly configuredOAuthKey?: string;
+  readonly configuredOAuthHost?: string;
   readonly stderr?: Pick<NodeJS.WriteStream, 'write'>;
   readonly onStatus?: (status: RemoteControlStatus) => void;
   readonly pingIntervalMs?: number;
@@ -110,6 +112,7 @@ export interface RemoteControlHandle {
   readonly deviceId: string;
   readonly deviceName: string;
   readonly url: string;
+  readonly relayOrigin: string;
   readonly closed: Promise<void>;
   close(): Promise<void>;
 }
@@ -279,14 +282,20 @@ export async function startRemoteControl(
   if (localServerToken().length === 0) {
     throw new Error('Remote Control requires local server authentication.');
   }
+  const auth = resolveKimiRemoteControlAuth({
+    configuredOAuthHost: options.configuredOAuthHost,
+    configuredOAuthKey: options.configuredOAuthKey,
+    homeDir: options.homeDir,
+  });
   const storage = new FileTokenStorage(join(options.homeDir, 'credentials'));
-  const token = await storage.load(
-    resolveKimiTokenStorageName({ providerName: KIMI_CODE_PROVIDER_NAME }),
-  );
+  const token = await storage.load(resolveKimiTokenStorageName({ oauthKey: auth.oauthKey }));
   if (token?.refreshToken === undefined || token.refreshToken.length === 0) {
     throw new Error('Remote Control requires a Kimi login. Run `kimi login` first.');
   }
-  const relayOrigin = options.relayOrigin ?? resolveRemoteControlRelayOrigin();
+  const envRelay = process.env[REMOTE_CONTROL_RELAY_URL_ENV]?.trim();
+  const relayOrigin =
+    options.relayOrigin ??
+    (envRelay !== undefined && envRelay.length > 0 ? envRelay : auth.relayOrigin);
   const deviceId = createKimiDeviceId(options.homeDir);
   const deviceName = hostname();
   const url = buildRemoteControlUrl(deviceId, undefined, relayOrigin);
@@ -315,6 +324,7 @@ export async function startRemoteControl(
     deviceId,
     deviceName,
     url,
+    relayOrigin,
     closed,
     close: async () => {
       await client.close();

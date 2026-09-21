@@ -13,6 +13,7 @@ import {
   kimiRegionProfile,
   kimiRegionSchema,
   resolveKimiRegion,
+  resolveKimiRemoteControlAuth,
 } from '#/region';
 
 import { createTempWorkDir, type TempDirHandle } from './helpers';
@@ -21,10 +22,12 @@ describe('KIMI_REGION_PROFILES', () => {
   it('keeps the mainland-cn profile aligned with the shared defaults', () => {
     expect(KIMI_REGION_PROFILES['mainland-cn'].oauthHost).toBe(DEFAULT_KIMI_CODE_OAUTH_HOST);
     expect(KIMI_REGION_PROFILES['mainland-cn'].baseUrl).toBe(DEFAULT_KIMI_CODE_BASE_URL);
+    expect(KIMI_REGION_PROFILES['mainland-cn'].relayOrigin).toBe('https://code-rc.kimi.com');
   });
 
   it('kimiRegionProfile returns the requested profile', () => {
     expect(kimiRegionProfile('global').oauthHost).toBe('https://auth.kimi.ai');
+    expect(kimiRegionProfile('global').relayOrigin).toBe('https://code-rc.kimi.ai');
     expect(kimiRegionProfile('mainland-cn')).toBe(KIMI_REGION_PROFILES['mainland-cn']);
   });
 });
@@ -147,13 +150,19 @@ describe('resolveKimiRegion', () => {
 
   it('lets an unknown scoped key fall through to the marker', async () => {
     const dir = await markerDir('global');
+    const key = 'oauth/kimi-code-env-0123456789abcdef';
     expect(
       resolveKimiRegion({
         env: {},
-        configuredOAuthKey: 'oauth/kimi-code-env-0123456789abcdef',
+        configuredOAuthKey: key,
         homeDir: dir,
       }),
     ).toBe('global');
+    expect(resolveKimiRemoteControlAuth({ env: {}, configuredOAuthKey: key, homeDir: dir })).toEqual({
+      region: 'global',
+      oauthKey: key,
+      relayOrigin: 'https://code-rc.kimi.ai',
+    });
   });
 
   it('resolves a recognized persisted host before consulting the key', () => {

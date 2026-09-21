@@ -9,6 +9,7 @@ import { gunzipSync } from 'node:zlib';
 import {
   FileTokenStorage,
   KIMI_CODE_PROVIDER_NAME,
+  resolveKimiCodeOAuthRef,
   resolveKimiTokenStorageName,
   type TokenInfo,
 } from '@moonshot-ai/kimi-code-oauth';
@@ -179,7 +180,16 @@ describe('Remote Control tunnel', () => {
   });
 
   it('uses only Authorization when the refresh token is not a valid subprotocol token', async () => {
-    const homeDir = await createRemoteControlHome('invalid/token=');
+    const homeDir = mkdtempSync(join(tmpdir(), 'kimi-rc-auth-'));
+    cleanups.push(() => rmSync(homeDir, { recursive: true, force: true }));
+    const oauthRef = resolveKimiCodeOAuthRef({
+      oauthHost: 'https://auth.kimi.ai',
+      baseUrl: 'https://api.kimi.ai/coding/v1',
+    });
+    await new FileTokenStorage(join(homeDir, 'credentials')).save(
+      resolveKimiTokenStorageName({ oauthKey: oauthRef.key }),
+      { ...TOKEN, refreshToken: 'invalid/token=' },
+    );
     const relay = await startAuthRelay();
     let handle: RemoteControlHandle | undefined;
     cleanups.push(async () => handle?.close());
@@ -189,6 +199,8 @@ describe('Remote Control tunnel', () => {
       localOrigin: 'http://127.0.0.1:1',
       localServerToken: 'local-server-token',
       clientVersion: CLIENT_VERSION,
+      configuredOAuthKey: oauthRef.key,
+      configuredOAuthHost: oauthRef.oauthHost,
       relayOrigin: `http://127.0.0.1:${relay.port}/coding-relay`,
       stderr: { write: () => true },
     });

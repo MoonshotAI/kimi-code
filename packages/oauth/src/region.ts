@@ -4,8 +4,8 @@
  * client belongs to.
  *
  * A region is a bundle of endpoints (OAuth host, managed API base URL, CDN,
- * site, telemetry). The OAuth client_id is shared across regions and stays
- * in `./constants`.
+ * site, telemetry, Remote Control relay). The OAuth client_id is shared
+ * across regions and stays in `./constants`.
  *
  * Resolution order (first match wins):
  *   1. env override (`KIMI_CODE_OAUTH_HOST` / `KIMI_OAUTH_HOST`)
@@ -27,7 +27,12 @@ import { z } from 'zod';
 
 import { DEFAULT_KIMI_CODE_OAUTH_HOST } from './constants';
 import { DEFAULT_KIMI_CODE_BASE_URL } from './managed-usage';
-import { kimiCodeEnvBaseUrl, kimiCodeEnvOAuthHost, KIMI_CODE_OAUTH_KEY } from './managed-kimi-code';
+import {
+  kimiCodeEnvBaseUrl,
+  kimiCodeEnvOAuthHost,
+  KIMI_CODE_OAUTH_KEY,
+  resolveKimiCodeOAuthRef,
+} from './managed-kimi-code';
 
 export type KimiRegion = 'mainland-cn' | 'global';
 
@@ -44,6 +49,8 @@ export interface KimiRegionProfile {
   /** Official site root (docs, console, signup, upgrade pages). */
   readonly siteBase: string;
   readonly telemetryEndpoint: string;
+  /** Remote Control relay origin (`kimi rc` / `/web` public URL). */
+  readonly relayOrigin: string;
 }
 
 export const KIMI_REGION_PROFILES: Record<KimiRegion, KimiRegionProfile> = {
@@ -53,6 +60,7 @@ export const KIMI_REGION_PROFILES: Record<KimiRegion, KimiRegionProfile> = {
     cdnBase: 'https://code.kimi.com/kimi-code',
     siteBase: 'https://www.kimi.com',
     telemetryEndpoint: 'https://telemetry-logs.kimi.com/v1/event',
+    relayOrigin: 'https://code-rc.kimi.com',
   },
   global: {
     oauthHost: 'https://auth.kimi.ai',
@@ -60,6 +68,7 @@ export const KIMI_REGION_PROFILES: Record<KimiRegion, KimiRegionProfile> = {
     cdnBase: 'https://code.kimi.ai/kimi-code',
     siteBase: 'https://www.kimi.ai',
     telemetryEndpoint: 'https://telemetry-logs.kimi.ai/v1/event',
+    relayOrigin: 'https://code-rc.kimi.ai',
   },
 };
 
@@ -184,4 +193,35 @@ export function resolveKimiRegion(options: ResolveKimiRegionOptions = {}): KimiR
     if (markerRegion !== undefined) return markerRegion;
   }
   return 'mainland-cn';
+}
+
+export interface KimiRemoteControlAuth {
+  readonly region: KimiRegion;
+  readonly oauthKey: string;
+  readonly relayOrigin: string;
+}
+
+/**
+ * One region judgment for Remote Control: credential slot + relay origin.
+ *
+ * `oauthKey` is the persisted login slot when `configuredOAuthKey` is set
+ * (including custom `kimi-code-env-*` environments); otherwise the official
+ * slot for the resolved region. `relayOrigin` always follows the resolved
+ * region profile — custom/internal env keys do not flip the relay to `.ai`.
+ */
+export function resolveKimiRemoteControlAuth(
+  options: ResolveKimiRegionOptions = {},
+): KimiRemoteControlAuth {
+  const region = resolveKimiRegion(options);
+  const profile = kimiRegionProfile(region);
+  return {
+    region,
+    oauthKey:
+      options.configuredOAuthKey ??
+      resolveKimiCodeOAuthRef({
+        oauthHost: profile.oauthHost,
+        baseUrl: profile.baseUrl,
+      }).key,
+    relayOrigin: profile.relayOrigin,
+  };
 }

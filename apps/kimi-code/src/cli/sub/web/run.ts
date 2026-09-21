@@ -21,6 +21,7 @@ import { getNativeWebAssetsDir } from '#/native/web-assets';
 import { darkColors } from '#/tui/theme/colors';
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
 import { getDataDir } from '#/utils/paths';
+import { persistedKimiOAuthRef } from '#/utils/region';
 import { generateRemoteControlQr } from '#/utils/remote-control-qr';
 
 import { initializeServerTelemetry } from '../../telemetry';
@@ -213,6 +214,7 @@ export async function handleWebCommand(
       if (opts.remoteControl === true) {
         if (token === undefined) throw new Error('Unable to read the local server token.');
         const dataDir = getDataDir();
+        const persisted = persistedKimiOAuthRef();
         let outputReady = false;
         const pendingStatuses: string[] = [];
         const onStatus = (status: RemoteControlStatus): void => {
@@ -225,6 +227,8 @@ export async function handleWebCommand(
           localOrigin: origin,
           localServerToken: token,
           clientVersion: `kimi-code/${getVersion()}`,
+          configuredOAuthKey: persisted?.key,
+          configuredOAuthHost: persisted?.oauthHost,
           stderr: deps.stderr,
           onStatus,
         });

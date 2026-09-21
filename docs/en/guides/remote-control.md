@@ -20,7 +20,7 @@ Start it on your machine in any of the following ways — they are equivalent: e
 - **`kimi web --remote-control`**: equivalent to `kimi rc` — starts the local web interface and exposes it to the public internet at the same time
 - **`/remote-control`** (alias `/rc`): use while already in a CLI session to hand the current session over to the remote interface
 
-Once started, the terminal prints the access URL (like `https://code-rc.kimi.com/devices/<device ID>/`), a QR code, and the device name (the machine's hostname), and the default browser opens the URL automatically (use `--no-open` to skip). Besides the terminal rendering, the QR code is also saved as a PNG file (the path is printed in the startup output) — if the QR code doesn't render properly in your terminal, open that file instead.
+Once started, the terminal prints the access URL (like `https://code-rc.kimi.com/devices/<device ID>/` for a mainland-cn login, or `https://code-rc.kimi.ai/devices/<device ID>/` after `kimi login --region global`), a QR code, and the device name (the machine's hostname), and the default browser opens the URL automatically (use `--no-open` to skip). Besides the terminal rendering, the QR code is also saved as a PNG file (the path is printed in the startup output) — if the QR code doesn't render properly in your terminal, open that file instead.
 
 ![Terminal output after starting kimi rc: QR code and connection status](../../media/kimi-rc-banner.jpg)
 
