@@ -3855,7 +3855,10 @@ export class KimiTUI {
     } catch {
       return false;
     }
-    if (info.trusted) return false;
+    if (info.trusted) {
+      this.state.footer.setGitTrusted(true);
+      return false;
+    }
     this.startEventLoop();
     const choice = await new Promise<TrustPromptChoice>((resolve) => {
       this.state.activeDialog = 'trust-prompt';
@@ -3884,6 +3887,7 @@ export class KimiTUI {
     } catch {
       // A failed write leaves the workspace untrusted (re-asked next launch).
     }
+    this.state.footer.setGitTrusted(true);
     return true;
   }
 

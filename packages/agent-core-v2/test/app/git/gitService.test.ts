@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -171,6 +171,37 @@ describe('GitService', () => {
         service.diff(repo, 'missing.txt', join(repo, 'missing.txt')),
       ).rejects.toMatchObject({ code: ErrorCodes.FS_PATH_NOT_FOUND });
     });
+  });
+
+  describe('repo-local config hardening', () => {
+    it.skipIf(process.platform === 'win32')(
+      'does not execute fsmonitor or external diff commands from repo config',
+      async () => {
+        const outside = mkdtempSync(join(tmpdir(), 'git-service-evil-'));
+        try {
+          const marker = join(outside, 'ran');
+          const helper = join(outside, 'helper.sh');
+          writeFileSync(helper, `#!/bin/sh\ntouch "${marker}"\n`);
+          chmodSync(helper, 0o755);
+
+          writeFileSync(join(repo, 'a.txt'), 'line1\n');
+          commitAll('init');
+          git(repo, 'config', 'core.fsmonitor', helper);
+          git(repo, 'config', 'diff.external', helper);
+          writeFileSync(join(repo, 'a.txt'), 'line1\nline2\n');
+
+          const status = await service.status(repo);
+          expect(status.entries).toEqual({ 'a.txt': 'modified' });
+          const diff = await service.diff(repo, 'a.txt', join(repo, 'a.txt'));
+          expect(diff.diff).toContain('+line2');
+
+          expect(existsSync(marker)).toBe(false);
+        } finally {
+          rmSync(outside, { recursive: true, force: true });
+        }
+      },
+      15000,
+    );
   });
 
   describe('findWorkTree', () => {

@@ -1,6 +1,7 @@
 import type { Readable } from 'node:stream';
 
 import type { ILogger } from '#/_base/log/log';
+import { GIT_CONFIG_ARGS } from '#/_base/utils/git';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 
 const GIT_TIMEOUT_MS = 5_000;
@@ -172,7 +173,7 @@ async function runGit(
 ): Promise<GitResult> {
   let proc: IHostProcess | undefined;
   try {
-    proc = await process.spawn('git', ['-C', cwd, ...args], { cwd });
+    proc = await process.spawn('git', [...GIT_CONFIG_ARGS, '-C', cwd, ...args], { cwd });
   } catch {
     return { ok: false, kind: 'spawn-error' };
   }

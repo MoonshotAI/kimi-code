@@ -33,7 +33,7 @@ type GitScript = Record<string, { stdout?: string; exitCode?: number; stderr?: s
 
 function gitRunner(script: GitScript): { process: IHostProcessService; spawn: ReturnType<typeof vi.fn> } {
   const spawn = vi.fn(async (_command: string, args: readonly string[]) => {
-    const key = args.slice(2).join(' ');
+    const key = args.slice(args.indexOf('-C') + 2).join(' ');
     const out = script[key];
     if (out === undefined) return processWith('', 1);
     return processWith(out.stdout ?? '', out.exitCode ?? 0, out.stderr ?? '');
@@ -129,6 +129,29 @@ describe('collectGitContext', () => {
       'git context command failed to spawn',
       expect.objectContaining({ command: 'git rev-parse --is-inside-work-tree' }),
     );
+  });
+
+  it('invokes git with repo-local command config disabled', async () => {
+    const { process: hostProcess, spawn } = gitRunner({
+      'rev-parse --is-inside-work-tree': { stdout: 'true' },
+    });
+
+    await collectGitContext(hostProcess, '/repo');
+
+    const nullDevice = process.platform === 'win32' ? 'NUL' : '/dev/null';
+    expect(spawn).toHaveBeenCalled();
+    for (const call of spawn.mock.calls) {
+      expect(call[0]).toBe('git');
+      const args = call[1] as readonly string[];
+      expect(args.slice(0, 6)).toEqual([
+        '-c',
+        'core.fsmonitor=false',
+        '-c',
+        `core.hooksPath=${nullDevice}`,
+        '-C',
+        '/repo',
+      ]);
+    }
   });
 
   it('caps dirty files at 20 and reports the remainder', async () => {

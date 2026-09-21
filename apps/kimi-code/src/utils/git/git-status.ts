@@ -9,6 +9,7 @@
 
 import { execFile, spawnSync } from 'node:child_process';
 
+import { GIT_CONFIG_ARGS, GIT_DIFF_ARGS } from '#/utils/git/git-args';
 import { resolveCommandPath } from '#/utils/process/resolve-command';
 
 const BRANCH_TTL_MS = 5_000;
@@ -35,10 +36,12 @@ export interface PullRequestInfo {
 export interface GitStatusCache {
   /** Returns current status, or `null` when workDir is not a git repo. */
   getStatus(): GitStatus | null;
+  setTrusted(trusted: boolean): void;
 }
 
 export interface GitStatusCacheOptions {
   readonly onChange?: () => void;
+  readonly trusted?: boolean;
 }
 
 interface BranchState {
@@ -73,7 +76,9 @@ export function createGitStatusCache(
   // binary must be resolved through PATH to an absolute path — a bare name
   // would let cmd.exe pick up a `git.exe` planted in the workspace.
   const git = resolveCommandPath('git', workDir);
-  const isRepo = git !== undefined && detectGitRepo(git, workDir);
+  let trusted = options.trusted ?? false;
+  let repoDetected = false;
+  let isRepo = false;
   let branch: BranchState = { value: null, fetchedAt: 0 };
   let status: StatusState = {
     dirty: false,
@@ -93,7 +98,12 @@ export function createGitStatusCache(
 
   return {
     getStatus: () => {
-      if (!isRepo || git === undefined) return null;
+      if (!trusted || git === undefined) return null;
+      if (!repoDetected) {
+        repoDetected = true;
+        isRepo = detectGitRepo(git, workDir);
+      }
+      if (!isRepo) return null;
 
       const now = Date.now();
       if (now - branch.fetchedAt >= BRANCH_TTL_MS) {
@@ -115,6 +125,9 @@ export function createGitStatusCache(
         diffDeleted: status.diffDeleted,
         pullRequest: pullRequest.branch === branch.value ? pullRequest.value : null,
       };
+    },
+    setTrusted: (value: boolean) => {
+      trusted = value;
     },
   };
 
@@ -151,10 +164,14 @@ export function createGitStatusCache(
 
 function detectGitRepo(git: string, workDir: string): boolean {
   try {
-    const result = spawnSync(git, ['-C', workDir, 'rev-parse', '--is-inside-work-tree'], {
-      encoding: 'utf8',
-      timeout: SPAWN_TIMEOUT_MS,
-    });
+    const result = spawnSync(
+      git,
+      [...GIT_CONFIG_ARGS, '-C', workDir, 'rev-parse', '--is-inside-work-tree'],
+      {
+        encoding: 'utf8',
+        timeout: SPAWN_TIMEOUT_MS,
+      },
+    );
     return result.status === 0 && result.stdout.trim() === 'true';
   } catch {
     return false;
@@ -163,7 +180,7 @@ function detectGitRepo(git: string, workDir: string): boolean {
 
 function readBranch(git: string, workDir: string): string | null {
   try {
-    const result = spawnSync(git, ['-C', workDir, 'branch', '--show-current'], {
+    const result = spawnSync(git, [...GIT_CONFIG_ARGS, '-C', workDir, 'branch', '--show-current'], {
       encoding: 'utf8',
       timeout: SPAWN_TIMEOUT_MS,
     });
@@ -186,7 +203,7 @@ function readStatus(
   diffDeleted: number;
 } {
   try {
-    const result = spawnSync(git, ['-C', workDir, 'status', '--porcelain', '-b'], {
+    const result = spawnSync(git, [...GIT_CONFIG_ARGS, '-C', workDir, 'status', '--porcelain', '-b'], {
       encoding: 'utf8',
       timeout: SPAWN_TIMEOUT_MS,
       maxBuffer: 4 * 1024 * 1024,
@@ -224,11 +241,15 @@ function readStatus(
 
 function readDiffStats(git: string, workDir: string): { added: number; deleted: number } {
   try {
-    const result = spawnSync(git, ['-C', workDir, 'diff', '--numstat', 'HEAD', '--'], {
-      encoding: 'utf8',
-      timeout: SPAWN_TIMEOUT_MS,
-      maxBuffer: 4 * 1024 * 1024,
-    });
+    const result = spawnSync(
+      git,
+      [...GIT_CONFIG_ARGS, '-C', workDir, 'diff', ...GIT_DIFF_ARGS, '--numstat', 'HEAD', '--'],
+      {
+        encoding: 'utf8',
+        timeout: SPAWN_TIMEOUT_MS,
+        maxBuffer: 4 * 1024 * 1024,
+      },
+    );
     if (result.status !== 0) return { added: 0, deleted: 0 };
 
     let added = 0;

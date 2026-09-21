@@ -1,11 +1,33 @@
 import chalk from 'chalk';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FooterComponent } from '#/tui/components/chrome/footer';
 import { setRainbowDance, type RainbowDanceController } from '#/tui/easter-eggs/dance';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import type { AppState } from '#/tui/types';
+
+const gitStatusMocks = vi.hoisted(() => ({
+  createGitStatusCache: vi.fn(),
+}));
+
+vi.mock('#/utils/git/git-status', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#/utils/git/git-status')>();
+  return { ...actual, createGitStatusCache: gitStatusMocks.createGitStatusCache };
+});
+
+interface FakeGitCache {
+  getStatus: ReturnType<typeof vi.fn>;
+  setTrusted: ReturnType<typeof vi.fn>;
+}
+
+beforeEach(() => {
+  gitStatusMocks.createGitStatusCache.mockClear();
+  gitStatusMocks.createGitStatusCache.mockImplementation(() => ({
+    getStatus: vi.fn(() => null),
+    setTrusted: vi.fn(),
+  }));
+});
 
 const TRUECOLOR_PATTERN = /\[38;2;(\d+);(\d+);(\d+)m/g;
 
@@ -318,5 +340,36 @@ describe('FooterComponent ctrl+o hint beside an inline tips slot', () => {
     expect(line1.endsWith('ctrl+o expand')).toBe(true);
     expect(line1.length).toBeLessThanOrEqual(width);
     footer.dispose();
+  });
+});
+
+describe('FooterComponent git trust gate', () => {
+  it('creates the git status cache untrusted and arms it via setGitTrusted', () => {
+    const onRefresh = vi.fn();
+    const footer = new FooterComponent(appState, onRefresh);
+
+    expect(gitStatusMocks.createGitStatusCache).toHaveBeenCalledWith(
+      '/tmp/project',
+      expect.objectContaining({ trusted: false }),
+    );
+    const cache = gitStatusMocks.createGitStatusCache.mock.results[0]!.value as FakeGitCache;
+    expect(cache.setTrusted).not.toHaveBeenCalled();
+
+    footer.setGitTrusted(true);
+
+    expect(cache.setTrusted).toHaveBeenCalledWith(true);
+    expect(onRefresh).toHaveBeenCalled();
+  });
+
+  it('keeps the trust flag when the workdir changes', () => {
+    const footer = new FooterComponent(appState);
+    footer.setGitTrusted(true);
+
+    footer.setState({ ...appState, workDir: '/tmp/other' });
+
+    expect(gitStatusMocks.createGitStatusCache).toHaveBeenLastCalledWith(
+      '/tmp/other',
+      expect.objectContaining({ trusted: true }),
+    );
   });
 });

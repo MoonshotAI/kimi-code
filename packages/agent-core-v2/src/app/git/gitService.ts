@@ -1,6 +1,7 @@
 import type { FsDiffResponse, FsGitStatusResponse, FsPullRequest } from './git';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { GIT_CONFIG_ARGS, GIT_DIFF_ARGS } from '#/_base/utils/git';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IRuntimeResolver, IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
@@ -47,7 +48,11 @@ export class GitService implements IGitService {
     if (dirty) {
       const head = await this.runCommand('git', ['rev-parse', '--verify', '--quiet', 'HEAD'], cwd);
       if (head.exitCode === 0) {
-        const numstat = await this.runCommand('git', ['diff', '--no-color', '--numstat', 'HEAD', '--'], cwd);
+        const numstat = await this.runCommand(
+          'git',
+          ['diff', '--no-color', ...GIT_DIFF_ARGS, '--numstat', 'HEAD', '--'],
+          cwd,
+        );
         if (numstat.exitCode === 0) {
           const stats = parseNumstat(numstat.stdout);
           result.additions = stats.additions;
@@ -79,7 +84,7 @@ export class GitService implements IGitService {
     if (untracked || !hasHead) {
       const res = await this.runCommand(
         'git',
-        ['diff', '--no-color', '--no-index', '--', '/dev/null', relPath],
+        ['diff', '--no-color', ...GIT_DIFF_ARGS, '--no-index', '--', '/dev/null', relPath],
         cwd,
       );
       if (res.exitCode !== 0 && res.exitCode !== 1) {
@@ -87,7 +92,11 @@ export class GitService implements IGitService {
       }
       diffStdout = res.stdout;
     } else {
-      const res = await this.runCommand('git', ['diff', '--no-color', 'HEAD', '--', relPath], cwd);
+      const res = await this.runCommand(
+        'git',
+        ['diff', '--no-color', ...GIT_DIFF_ARGS, 'HEAD', '--', relPath],
+        cwd,
+      );
       if (res.exitCode !== 0) {
         throw this.gitUnavailable(cwd, res.stderr.trim() || `git diff exit ${res.exitCode}`);
       }
@@ -146,8 +155,9 @@ export class GitService implements IGitService {
   ): Promise<RunResult> {
     const workspaceId = this.resolveWorkspaceId(cwd);
     const lease = this.resolver.acquire({ workspaceId, runtimeId: 'local' }, ['process']);
+    const argv = cmd === 'git' ? [...GIT_CONFIG_ARGS, ...args] : args;
     const spawned = await lease.runtime.process!
-      .spawn(cmd, args, { cwd, env: options.env })
+      .spawn(cmd, argv, { cwd, env: options.env })
       .then(
         (proc) => ({ ok: true as const, proc }),
         () => ({ ok: false as const }),

@@ -2,6 +2,8 @@ import { execFile } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
+import { GIT_CONFIG_ARGS, GIT_DIFF_ARGS } from '#/_base/utils/git';
+
 const GIT_TIMEOUT_MS = 60_000;
 
 export class GitError extends Error {
@@ -26,7 +28,7 @@ export async function git(
   return new Promise((resolve, reject) => {
     execFile(
       'git',
-      [...args],
+      [...GIT_CONFIG_ARGS, ...args],
       {
         cwd,
         timeout: GIT_TIMEOUT_MS,
@@ -168,6 +170,6 @@ export async function diffNameOnly(
   base: string,
   ref: string,
 ): Promise<readonly string[]> {
-  const out = await git(cwd, ['diff', '--name-only', `${base}...${ref}`]);
+  const out = await git(cwd, ['diff', ...GIT_DIFF_ARGS, '--name-only', `${base}...${ref}`]);
   return out.length === 0 ? [] : out.split('\n').filter((line) => line.trim().length > 0);
 }

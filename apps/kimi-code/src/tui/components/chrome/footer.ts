@@ -197,6 +197,7 @@ export class FooterComponent implements Component {
   private readonly onRefresh: () => void;
   private gitCache: GitStatusCache;
   private gitCacheWorkDir: string;
+  private gitTrusted = false;
   private transientHint: string | null = null;
   private warningHint: string | null = null;
   private expandHintProvider: (() => ToolOutputExpandHint | null) | null = null;
@@ -218,16 +219,29 @@ export class FooterComponent implements Component {
     this.state = state;
     this.onRefresh = onRefresh;
     this.gitCacheWorkDir = state.workDir;
-    this.gitCache = createGitStatusCache(state.workDir, { onChange: this.onRefresh });
+    this.gitCache = createGitStatusCache(state.workDir, {
+      onChange: this.onRefresh,
+      trusted: this.gitTrusted,
+    });
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);
     this.syncStatusLineRunner(state);
   }
 
+  setGitTrusted(trusted: boolean): void {
+    if (trusted === this.gitTrusted) return;
+    this.gitTrusted = trusted;
+    this.gitCache.setTrusted(trusted);
+    this.onRefresh();
+  }
+
   setState(state: AppState): void {
     if (state.workDir !== this.gitCacheWorkDir) {
       this.gitCacheWorkDir = state.workDir;
-      this.gitCache = createGitStatusCache(state.workDir, { onChange: this.onRefresh });
+      this.gitCache = createGitStatusCache(state.workDir, {
+        onChange: this.onRefresh,
+        trusted: this.gitTrusted,
+      });
     }
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);

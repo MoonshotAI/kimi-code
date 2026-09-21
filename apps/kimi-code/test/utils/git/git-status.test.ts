@@ -60,7 +60,7 @@ describe('git status cache', () => {
       return { status: 1, stdout: '' };
     });
 
-    const cache = createGitStatusCache('/tmp/repo');
+    const cache = createGitStatusCache('/tmp/repo', { trusted: true });
 
     expect(cache.getStatus()).toEqual({
       branch: 'main',
@@ -130,7 +130,7 @@ describe('git status cache', () => {
       return { status: 1, stdout: '' };
     });
 
-    const cache = createGitStatusCache('/tmp/repo', { onChange });
+    const cache = createGitStatusCache('/tmp/repo', { onChange, trusted: true });
     expect(cache.getStatus()).toEqual({
       branch: 'feature/footer',
       dirty: true,
@@ -183,7 +183,7 @@ describe('git status cache', () => {
       return { status: 1, stdout: '' };
     });
 
-    const cache = createGitStatusCache('/tmp/repo', { onChange });
+    const cache = createGitStatusCache('/tmp/repo', { onChange, trusted: true });
 
     expect(cache.getStatus()).toEqual({
       branch: 'main',
@@ -211,9 +211,65 @@ describe('git status cache', () => {
 
   it('returns null without spawning when git cannot be resolved to a safe path', () => {
     mocks.resolveCommandPath.mockReturnValue(undefined);
-    expect(createGitStatusCache('/tmp/repo').getStatus()).toBeNull();
+    expect(createGitStatusCache('/tmp/repo', { trusted: true }).getStatus()).toBeNull();
     expect(mocks.spawnSync).not.toHaveBeenCalled();
     expect(mocks.execFile).not.toHaveBeenCalled();
+  });
+
+  it('spawns no git process until the workspace is trusted', () => {
+    mocks.spawnSync.mockReturnValue({ status: 0, stdout: 'true\n' });
+    const cache = createGitStatusCache('/tmp/repo');
+
+    expect(cache.getStatus()).toBeNull();
+    expect(mocks.spawnSync).not.toHaveBeenCalled();
+    expect(mocks.execFile).not.toHaveBeenCalled();
+
+    cache.setTrusted(true);
+    expect(cache.getStatus()).not.toBeNull();
+    expect(mocks.spawnSync).toHaveBeenCalled();
+  });
+
+  it('disables repo-local command config on every git invocation', async () => {
+    mocks.execFile.mockImplementation(
+      (
+        _cmd: string,
+        _args: string[],
+        _options: unknown,
+        callback: (error: Error | null, stdout: string, stderr: string) => void,
+      ) => {
+        callback(new Error('no pull request'), '', '');
+      },
+    );
+    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
+      if (args.includes('rev-parse')) return { status: 0, stdout: 'true\n' };
+      if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
+      if (args.includes('status')) return { status: 0, stdout: '## main...origin/main\n M a.ts\n' };
+      if (args.includes('diff')) return { status: 0, stdout: '1\t1\ta.ts\n' };
+      return { status: 1, stdout: '' };
+    });
+
+    const cache = createGitStatusCache('/tmp/repo', { trusted: true });
+    expect(cache.getStatus()).not.toBeNull();
+    await Promise.resolve();
+
+    const nullDevice = process.platform === 'win32' ? 'NUL' : '/dev/null';
+    expect(mocks.spawnSync).toHaveBeenCalledTimes(4);
+    for (const call of mocks.spawnSync.mock.calls) {
+      const args = call[1] as string[];
+      expect(args.slice(0, 4)).toEqual([
+        '-c',
+        'core.fsmonitor=false',
+        '-c',
+        `core.hooksPath=${nullDevice}`,
+      ]);
+    }
+    const diffCall = mocks.spawnSync.mock.calls.find((call) =>
+      (call[1] as string[]).includes('diff'),
+    );
+    expect(diffCall).toBeDefined();
+    const diffArgs = diffCall![1] as string[];
+    expect(diffArgs).toContain('--no-ext-diff');
+    expect(diffArgs).toContain('--no-textconv');
   });
 
   it('spawns git and gh through their resolved absolute paths', async () => {
@@ -234,7 +290,7 @@ describe('git status cache', () => {
       return { status: 1, stdout: '' };
     });
 
-    const cache = createGitStatusCache('/tmp/repo');
+    const cache = createGitStatusCache('/tmp/repo', { trusted: true });
     expect(cache.getStatus()).not.toBeNull();
     await Promise.resolve();
 
@@ -252,7 +308,7 @@ describe('git status cache', () => {
 
   it('returns null when the working directory is not a git repo and formats badges', () => {
     mocks.spawnSync.mockReturnValue({ status: 1, stdout: '' });
-    expect(createGitStatusCache('/tmp/not-a-repo').getStatus()).toBeNull();
+    expect(createGitStatusCache('/tmp/not-a-repo', { trusted: true }).getStatus()).toBeNull();
     expect(
       formatGitBadge({
         branch: 'main',
