@@ -488,6 +488,19 @@ describe('WriteTool symlink escape', () => {
     await expect(readFile(target, 'utf8')).resolves.toBe('secret-key');
   });
 
+  it('rejects writes through a dangling symlink whose target does not exist', async () => {
+    const target = join(outsideDir, 'missing.txt');
+    const link = join(wsDir, 'dangling.txt');
+    await symlink(target, link);
+    const tool = makeToolWithFs(new HostFileSystem(), stubWorkspaceContext(wsDir));
+
+    const result = await execute(tool, { path: link, content: 'pwned' });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(toolContentString(result)).toMatch(/symbolic link/);
+    await expect(readFile(target, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('allows writes through a symlink that stays inside the workspace', async () => {
     const target = join(wsDir, 'real.txt');
     await writeFile(target, 'original');

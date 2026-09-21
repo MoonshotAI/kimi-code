@@ -166,8 +166,8 @@ describe('collectGitContext', () => {
 
   it('neutralizes repo-configured filter drivers on every git invocation', async () => {
     const { process: hostProcess, spawn } = gitRunner({
-      'config --local --includes --get-regexp ^(filter|merge)\\.': {
-        stdout: 'filter.evil.clean touch /tmp/marker\nfilter.evil.process evil-helper\n',
+      'config --local --includes --get-regexp --name-only ^(filter|merge)\\.': {
+        stdout: 'filter.evil.clean\nfilter.evil.process\n',
       },
       'rev-parse --is-inside-work-tree': { stdout: 'true' },
     });
@@ -185,11 +185,11 @@ describe('collectGitContext', () => {
 
   it('neutralizes filter drivers from both local and worktree config scopes', async () => {
     const { process: hostProcess, spawn } = gitRunner({
-      'config --local --includes --get-regexp ^(filter|merge)\\.': {
-        stdout: 'filter.evil.clean touch /tmp/marker\nfilter.evil.smudge cat\nmerge.evil.driver false\n',
+      'config --local --includes --get-regexp --name-only ^(filter|merge)\\.': {
+        stdout: 'filter.evil.clean\nfilter.evil.smudge\nmerge.evil.driver\n',
       },
-      'config --worktree --includes --get-regexp ^(filter|merge)\\.': {
-        stdout: 'filter.wt.process evil-helper\n',
+      'config --worktree --includes --get-regexp --name-only ^(filter|merge)\\.': {
+        stdout: 'filter.wt.process\n',
       },
       'rev-parse --is-inside-work-tree': { stdout: 'true' },
     });
@@ -231,8 +231,8 @@ describe('collectGitContext', () => {
 
   it('fails closed when a filter driver name contains an equals sign', async () => {
     const { process: hostProcess, spawn } = gitRunner({
-      'config --local --includes --get-regexp ^(filter|merge)\\.': {
-        stdout: 'filter.evil=x.clean touch /tmp/marker\n',
+      'config --local --includes --get-regexp --name-only ^(filter|merge)\\.': {
+        stdout: 'filter.evil=x.clean\n',
       },
       'rev-parse --is-inside-work-tree': { stdout: 'true' },
     });

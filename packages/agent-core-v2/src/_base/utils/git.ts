@@ -61,6 +61,7 @@ async function probeFilterArgs(cwd: string, probe: GitProbe): Promise<readonly s
         scope,
         '--includes',
         '--get-regexp',
+        '--name-only',
         '^(filter|merge)\\.',
       ]).catch(() => null),
     ),
@@ -71,13 +72,13 @@ async function probeFilterArgs(cwd: string, probe: GitProbe): Promise<readonly s
     if (result === null || result.exitCode < 0) return null;
     if (result.exitCode !== 0) continue;
     for (const line of result.stdout.split('\n')) {
-      const filter = /^filter\.(.+)\.(?:clean|process|smudge)(?:\s|$)/.exec(line);
+      const filter = /^filter\.(.+)\.(?:clean|process|smudge)$/.exec(line);
       const filterDriver = filter?.[1];
       if (filterDriver !== undefined) {
         if (filterDriver.includes('=')) return null;
         filterDrivers.add(filterDriver);
       }
-      const merge = /^merge\.(.+)\.driver(?:\s|$)/.exec(line);
+      const merge = /^merge\.(.+)\.driver$/.exec(line);
       const mergeDriver = merge?.[1];
       if (mergeDriver !== undefined) {
         if (mergeDriver.includes('=')) return null;

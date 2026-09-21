@@ -59,6 +59,7 @@ function probeFilterArgs(git: string, workDir: string): readonly string[] | null
           scope,
           '--includes',
           '--get-regexp',
+          '--name-only',
           '^(filter|merge)\\.',
         ],
         { encoding: 'utf8', timeout: FILTER_PROBE_TIMEOUT_MS, maxBuffer: FILTER_PROBE_MAX_BYTES },
@@ -66,13 +67,13 @@ function probeFilterArgs(git: string, workDir: string): readonly string[] | null
       if (result.error !== undefined || result.status === null) return null;
       if (result.status !== 0 || typeof result.stdout !== 'string') continue;
       for (const line of result.stdout.split('\n')) {
-        const filter = /^filter\.(.+)\.(?:clean|process|smudge)(?:\s|$)/.exec(line);
+        const filter = /^filter\.(.+)\.(?:clean|process|smudge)$/.exec(line);
         const filterDriver = filter?.[1];
         if (filterDriver !== undefined) {
           if (filterDriver.includes('=')) return null;
           filterDrivers.add(filterDriver);
         }
-        const merge = /^merge\.(.+)\.driver(?:\s|$)/.exec(line);
+        const merge = /^merge\.(.+)\.driver$/.exec(line);
         const mergeDriver = merge?.[1];
         if (mergeDriver !== undefined) {
           if (mergeDriver.includes('=')) return null;

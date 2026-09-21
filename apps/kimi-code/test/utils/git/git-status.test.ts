@@ -292,8 +292,8 @@ describe('git status cache', () => {
         return {
           status: 0,
           stdout: args.includes('--worktree')
-            ? 'filter.wt.process evil-helper\n'
-            : 'filter.evil.clean touch /tmp/marker\nfilter.evil.process evil-helper\n',
+            ? 'filter.wt.process\n'
+            : 'filter.evil.clean\nfilter.evil.process\n',
         };
       }
       if (args.includes('rev-parse')) return { status: 0, stdout: 'true\n' };
@@ -334,7 +334,7 @@ describe('git status cache', () => {
     );
     mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
       if (args.includes('config')) {
-        return { status: 0, stdout: 'filter.evil.clean touch /tmp/m\n' };
+        return { status: 0, stdout: 'filter.evil.clean\n' };
       }
       if (args.includes('rev-parse')) return { status: 0, stdout: 'true\n' };
       if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
@@ -384,7 +384,7 @@ describe('git status cache', () => {
       },
     );
     mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args.includes('config')) return { status: 0, stdout: 'filter.evil.clean touch /tmp/m\n' };
+      if (args.includes('config')) return { status: 0, stdout: 'filter.evil.clean\n' };
       if (args.includes('rev-parse')) return { status: 0, stdout: 'true\n' };
       if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
       if (args.includes('status')) return { status: 0, stdout: '## main...origin/main\n' };
@@ -419,7 +419,7 @@ describe('git status cache', () => {
     );
     mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
       if (args.includes('config')) {
-        return { status: 0, stdout: 'filter.evil=x.clean touch /tmp/m\n' };
+        return { status: 0, stdout: 'filter.evil=x.clean\n' };
       }
       return { status: 0, stdout: 'true\n' };
     });
@@ -473,7 +473,7 @@ describe('git status cache', () => {
       },
     );
     mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args.includes('config')) return { status: 0, stdout: 'filter.evil.clean touch /tmp/m\n' };
+      if (args.includes('config')) return { status: 0, stdout: 'filter.evil.clean\n' };
       if (args.includes('rev-parse')) return { status: 0, stdout: 'true\n' };
       if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
       if (args.includes('status')) return { status: 0, stdout: '## main...origin/main\n' };

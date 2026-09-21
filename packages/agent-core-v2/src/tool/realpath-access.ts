@@ -42,6 +42,23 @@ async function realpathExistingPrefix(fs: IHostFileSystem, absPath: string): Pro
       return tail.length === 0 ? real : pathe.join(real, ...tail.toReversed());
     } catch (error) {
       if (!isMissingPathError(error)) throw error;
+      const exists = await fs
+        .lstat(current)
+        .then(
+          () => true,
+          (lstatError) => {
+            if (isMissingPathError(lstatError)) return false;
+            throw lstatError;
+          },
+        );
+      if (exists) {
+        throw new PathSecurityError(
+          'PATH_SYMLINK_ESCAPE',
+          absPath,
+          current,
+          `"${current}" is a symbolic link whose target does not exist. Access is blocked.`,
+        );
+      }
       const parent = pathe.dirname(current);
       if (parent === current) return absPath;
       tail.push(pathe.basename(current));
