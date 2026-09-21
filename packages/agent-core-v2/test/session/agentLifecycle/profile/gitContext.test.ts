@@ -143,13 +143,17 @@ describe('collectGitContext', () => {
     for (const call of spawn.mock.calls) {
       expect(call[0]).toBe('git');
       const args = call[1] as readonly string[];
-      expect(args.slice(0, 8)).toEqual([
+      expect(args.slice(0, 12)).toEqual([
         '-c',
         'core.fsmonitor=false',
         '-c',
         `core.hooksPath=${nullDevice}`,
         '-c',
         'commit.gpgSign=false',
+        '-c',
+        'log.showSignature=false',
+        '-c',
+        'merge.verifySignatures=false',
         '-C',
         '/repo',
       ]);
@@ -218,6 +222,20 @@ describe('collectGitContext', () => {
 
     const invocations = spawn.mock.calls.map((call) => call[1] as readonly string[]);
     expect(invocations.length).toBeGreaterThan(0);
+    expect(invocations.every((args) => args.includes('config'))).toBe(true);
+  });
+
+  it('fails closed when a filter driver name contains an equals sign', async () => {
+    const { process: hostProcess, spawn } = gitRunner({
+      'config --local --includes --get-regexp ^(filter|merge)\\.': {
+        stdout: 'filter.evil=x.clean touch /tmp/marker\n',
+      },
+      'rev-parse --is-inside-work-tree': { stdout: 'true' },
+    });
+
+    await expect(collectGitContext(hostProcess, '/repo')).resolves.toBe('');
+
+    const invocations = spawn.mock.calls.map((call) => call[1] as readonly string[]);
     expect(invocations.every((args) => args.includes('config'))).toBe(true);
   });
 

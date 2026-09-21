@@ -10,6 +10,10 @@ export const GIT_CONFIG_ARGS: readonly string[] = [
   `core.hooksPath=${NULL_DEVICE}`,
   '-c',
   'commit.gpgSign=false',
+  '-c',
+  'log.showSignature=false',
+  '-c',
+  'merge.verifySignatures=false',
 ];
 
 export const GIT_DIFF_ARGS: readonly string[] = ['--no-ext-diff', '--no-textconv'];
@@ -65,10 +69,16 @@ async function probeFilterArgs(cwd: string, probe: GitProbe): Promise<readonly s
     for (const line of result.stdout.split('\n')) {
       const filter = /^filter\.(.+)\.(?:clean|process|smudge)(?:\s|$)/.exec(line);
       const filterDriver = filter?.[1];
-      if (filterDriver !== undefined) filterDrivers.add(filterDriver);
+      if (filterDriver !== undefined) {
+        if (filterDriver.includes('=')) return null;
+        filterDrivers.add(filterDriver);
+      }
       const merge = /^merge\.(.+)\.driver(?:\s|$)/.exec(line);
       const mergeDriver = merge?.[1];
-      if (mergeDriver !== undefined) mergeDrivers.add(mergeDriver);
+      if (mergeDriver !== undefined) {
+        if (mergeDriver.includes('=')) return null;
+        mergeDrivers.add(mergeDriver);
+      }
     }
   }
   const args: string[] = [];

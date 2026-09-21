@@ -406,6 +406,31 @@ describe('git status cache', () => {
     }
   });
 
+  it('fails closed when a filter driver name contains an equals sign', () => {
+    mocks.execFile.mockImplementation(
+      (
+        _cmd: string,
+        _args: string[],
+        _options: unknown,
+        callback: (error: Error | null, stdout: string, stderr: string) => void,
+      ) => {
+        callback(new Error('no pull request'), '', '');
+      },
+    );
+    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
+      if (args.includes('config')) {
+        return { status: 0, stdout: 'filter.evil=x.clean touch /tmp/m\n' };
+      }
+      return { status: 0, stdout: 'true\n' };
+    });
+
+    const cache = createGitStatusCache('/tmp/repo', { trusted: true });
+
+    expect(cache.getStatus()).toBeNull();
+    const invocations = mocks.spawnSync.mock.calls.map((call) => call[1] as string[]);
+    expect(invocations.every((args) => args.includes('config'))).toBe(true);
+  });
+
   it('fails closed when the filter config probe errors', () => {
     mocks.execFile.mockImplementation(
       (
