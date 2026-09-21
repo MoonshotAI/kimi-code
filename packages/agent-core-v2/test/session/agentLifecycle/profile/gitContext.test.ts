@@ -158,7 +158,7 @@ describe('collectGitContext', () => {
 
   it('neutralizes repo-configured filter drivers on every git invocation', async () => {
     const { process: hostProcess, spawn } = gitRunner({
-      'config --local --get-regexp ^(filter|merge)\\.': {
+      'config --local --includes --get-regexp ^(filter|merge)\\.': {
         stdout: 'filter.evil.clean touch /tmp/marker\nfilter.evil.process evil-helper\n',
       },
       'rev-parse --is-inside-work-tree': { stdout: 'true' },
@@ -177,10 +177,10 @@ describe('collectGitContext', () => {
 
   it('neutralizes filter drivers from both local and worktree config scopes', async () => {
     const { process: hostProcess, spawn } = gitRunner({
-      'config --local --get-regexp ^(filter|merge)\\.': {
+      'config --local --includes --get-regexp ^(filter|merge)\\.': {
         stdout: 'filter.evil.clean touch /tmp/marker\nfilter.evil.smudge cat\nmerge.evil.driver false\n',
       },
-      'config --worktree --get-regexp ^(filter|merge)\\.': {
+      'config --worktree --includes --get-regexp ^(filter|merge)\\.': {
         stdout: 'filter.wt.process evil-helper\n',
       },
       'rev-parse --is-inside-work-tree': { stdout: 'true' },
@@ -189,6 +189,11 @@ describe('collectGitContext', () => {
     await collectGitContext(hostProcess, '/repo');
 
     const invocations = spawn.mock.calls.map((call) => call[1] as readonly string[]);
+    const probes = invocations.filter((args) => args.includes('config'));
+    expect(probes.length).toBeGreaterThan(0);
+    for (const args of probes) {
+      expect(args).toContain('--includes');
+    }
     const hardened = invocations.filter((args) => !args.includes('config'));
     expect(hardened.length).toBeGreaterThan(0);
     for (const args of hardened) {

@@ -43,7 +43,16 @@ function probeFilterArgs(git: string, workDir: string): readonly string[] | null
     for (const scope of ['--local', '--worktree']) {
       const result = spawnSync(
         git,
-        [...GIT_CONFIG_ARGS, '-C', workDir, 'config', scope, '--get-regexp', '^(filter|merge)\\.'],
+        [
+          ...GIT_CONFIG_ARGS,
+          '-C',
+          workDir,
+          'config',
+          scope,
+          '--includes',
+          '--get-regexp',
+          '^(filter|merge)\\.',
+        ],
         { encoding: 'utf8', timeout: FILTER_PROBE_TIMEOUT_MS, maxBuffer: FILTER_PROBE_MAX_BYTES },
       );
       if (result.error !== undefined || result.status === null) return null;

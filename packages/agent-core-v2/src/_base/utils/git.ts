@@ -51,6 +51,7 @@ async function probeFilterArgs(cwd: string, probe: GitProbe): Promise<readonly s
         cwd,
         'config',
         scope,
+        '--includes',
         '--get-regexp',
         '^(filter|merge)\\.',
       ]).catch(() => null),
