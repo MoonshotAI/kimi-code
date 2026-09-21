@@ -58,6 +58,7 @@ function createPlanFileFakes(
   readonly fakes: PlanFakes;
 } {
   const readText = vi.fn(async (path: string) => files.get(path) ?? '');
+  const readBytes = vi.fn(async (path: string) => Buffer.from(files.get(path) ?? '', 'utf8'));
   const writeText = vi.fn(async (path: string, content: string) => {
     files.set(path, content);
   });
@@ -67,6 +68,7 @@ function createPlanFileFakes(
     writeText,
     fakes: createPlanFakes({
       readText,
+      readBytes,
       writeText,
       ...overrides,
     }),
@@ -752,10 +754,11 @@ describe('Plan service', () => {
       async (toolName) => {
         const files = new Map<string, string>();
         const readText = vi.fn(async (path: string) => files.get(path) ?? '');
+        const readBytes = vi.fn(async (path: string) => Buffer.from(files.get(path) ?? '', 'utf8'));
         const writeText = vi.fn(async (path: string, content: string): Promise<void> => {
           files.set(path, content);
         });
-        useFakes(createPlanFakes({ readText, writeText }));
+        useFakes(createPlanFakes({ readText, readBytes, writeText }));
         useTools([toolName]);
         await plan.enter('test-plan', false);
 

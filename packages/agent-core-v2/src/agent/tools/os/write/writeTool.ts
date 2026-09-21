@@ -1,4 +1,4 @@
-import { dirname } from 'pathe';
+import { dirname, isAbsolute, relative } from 'pathe';
 
 import { type HostFileStat, type IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
@@ -19,8 +19,60 @@ import {
 } from '#/tool/path-access';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
+import {
+  byteOrderMarkBytes,
+  decodeUtfText,
+  encodeUtfText,
+  isStrictlyValidUtf16,
+  isStrictlyValidUtf8,
+  SAMPLE_LOOKAHEAD_BYTES,
+  splitByteOrderMark,
+  type ByteOrderMark,
+} from '#/_base/text/encoding';
+import { dominantLineEnding, normalizeLineEndings } from '#/_base/text/line-endings';
+import { resolveNewFileEditorStyle, type NewFileLineBreak } from './editorconfig';
+import { resolveSiblingStyle } from './siblingStyle';
 import { IWriteTool, WriteInputSchema, type WriteInput } from './write';
 import WRITE_DESCRIPTION from './write.md?raw';
+
+const STYLE_SAMPLE_BYTES = 8 * 1024;
+const BOM_RESERVE_BYTES = 3;
+const STYLE_SAMPLE_LIMIT = STYLE_SAMPLE_BYTES + SAMPLE_LOOKAHEAD_BYTES;
+
+interface ExistingFileStyle {
+  readonly bom: ByteOrderMark | 'none' | undefined;
+  readonly eol: NewFileLineBreak | undefined;
+}
+
+const NO_STYLE: ExistingFileStyle = { bom: undefined, eol: undefined };
+
+function isPathWithin(ancestor: string, descendant: string): boolean {
+  const rel = relative(ancestor, descendant);
+  return (
+    rel === '' ||
+    (rel !== '..' && !rel.startsWith('../') && !rel.startsWith('..\\') && !isAbsolute(rel))
+  );
+}
+
+function styleContent(
+  content: string,
+  style: ExistingFileStyle,
+): { text: string; payload: Uint8Array } {
+  const text = style.eol === undefined ? content : normalizeLineEndings(content, style.eol);
+  if (style.bom === undefined) {
+    return { text, payload: Buffer.from(text, 'utf8') };
+  }
+  if (style.bom === 'none') {
+    const stripped = text.startsWith('\uFEFF') ? text.slice(1) : text;
+    return { text: stripped, payload: Buffer.from(stripped, 'utf8') };
+  }
+  const body = text.startsWith('\uFEFF') ? text.slice(1) : text;
+  const payload = Buffer.concat([
+    Buffer.from(byteOrderMarkBytes(style.bom)),
+    Buffer.from(encodeUtfText(body, style.bom)),
+  ]);
+  return { text, payload };
+}
 
 export class WriteTool implements IWriteTool {
   declare readonly _serviceBrand: undefined;
@@ -54,7 +106,7 @@ export class WriteTool implements IWriteTool {
         execute: async () => {
           const current = await this.planService?.resolveFile(path);
           if (current === undefined || current.path !== path) return { isError: true, output: 'The active plan changed before execution. Retry the tool call.' };
-          return this.execution(current.fs, args, path, current.environmentPath.dirname(path));
+          return this.execution(current.fs, args, path, [current.environmentPath.dirname(path)]);
         },
       };
     }
@@ -94,7 +146,7 @@ export class WriteTool implements IWriteTool {
             if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
               return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
             }
-            return await this.execution(lease.environment.fs!, args, path);
+            return await this.execution(lease.environment.fs!, args, path, view.roots);
           } finally {
             lease.dispose();
           }
@@ -105,21 +157,41 @@ export class WriteTool implements IWriteTool {
     }
   }
 
-  private async execution(fs: IHostFileSystem, args: WriteInput, safePath: string, parent = dirname(safePath)): Promise<ExecutableToolResult> {
+  private async execution(
+    fs: IHostFileSystem,
+    args: WriteInput,
+    safePath: string,
+    workspaceRoots: readonly string[],
+  ): Promise<ExecutableToolResult> {
     const mode = args.mode ?? 'overwrite';
-    const write = () => mode === 'append' ? fs.appendText(safePath, args.content) : fs.writeText(safePath, args.content);
+    const write = async (): Promise<number> => {
+      if (mode === 'append') {
+        if (await this.targetExists(fs, safePath)) {
+          await fs.appendText(safePath, args.content);
+          return Buffer.byteLength(args.content, 'utf8');
+        }
+        const style = await this.resolveNewFileStyle(fs, safePath, workspaceRoots);
+        const { payload } = styleContent(args.content, style);
+        if (await fs.createExclusive(safePath, payload)) {
+          return payload.length;
+        }
+        await fs.appendText(safePath, args.content);
+        return Buffer.byteLength(args.content, 'utf8');
+      }
+      return this.overwrite(fs, safePath, args.content, workspaceRoots);
+    };
     try {
+      let bytesWritten: number;
       try {
-        await write();
+        bytesWritten = await write();
       } catch (error) {
         if (!isHostFsNotFound(error) && !isHostFsNotDirectory(error)) throw error;
-        const parentError = await this.ensureParentDirectory(fs, parent);
+        const parentError = await this.ensureParentDirectory(fs, safePath);
         if (parentError !== undefined) {
           return { isError: true, output: parentError };
         }
-        await write();
+        bytesWritten = await write();
       }
-      const bytesWritten = Buffer.byteLength(args.content, 'utf8');
       return {
         output: `${mode === 'append' ? 'Appended' : 'Wrote'} ${String(bytesWritten)} bytes to ${args.path}`,
         note: '<system>The change is applied; there is no need to Read the file back to check it.</system>',
@@ -138,7 +210,102 @@ export class WriteTool implements IWriteTool {
     }
   }
 
-  private async ensureParentDirectory(fs: IHostFileSystem, parent: string): Promise<string | undefined> {
+  private async overwrite(
+    fs: IHostFileSystem,
+    safePath: string,
+    content: string,
+    workspaceRoots: readonly string[],
+  ): Promise<number> {
+    const style =
+      (await this.sampleExistingStyle(fs, safePath)) ??
+      (await this.resolveNewFileStyle(fs, safePath, workspaceRoots));
+    return this.writeStyled(fs, safePath, content, style);
+  }
+
+  private async targetExists(fs: IHostFileSystem, safePath: string): Promise<boolean> {
+    try {
+      await fs.stat(safePath);
+      return true;
+    } catch (error) {
+      return !isHostFsNotFound(error);
+    }
+  }
+
+  private async writeStyled(
+    fs: IHostFileSystem,
+    safePath: string,
+    content: string,
+    style: ExistingFileStyle,
+  ): Promise<number> {
+    const { text, payload } = styleContent(content, style);
+    if (style.bom === undefined || style.bom === 'none') {
+      await fs.writeText(safePath, text);
+      return payload.length;
+    }
+    await fs.writeBytes(safePath, payload);
+    return payload.length;
+  }
+
+  private async sampleExistingStyle(
+    fs: IHostFileSystem,
+    safePath: string,
+  ): Promise<ExistingFileStyle | undefined> {
+    const readLimit = STYLE_SAMPLE_LIMIT + BOM_RESERVE_BYTES + 1;
+    let head: Uint8Array;
+    try {
+      const stat = await fs.stat(safePath);
+      if (!stat.isFile) {
+        return NO_STYLE;
+      }
+      head = await fs.readBytes(safePath, readLimit);
+    } catch (error) {
+      return isHostFsNotFound(error) ? undefined : NO_STYLE;
+    }
+    const eof = head.length < readLimit;
+    const { bom, body } = splitByteOrderMark(head);
+    if (bom === undefined || bom === 'utf-8') {
+      if (!isStrictlyValidUtf8(body, eof)) {
+        return NO_STYLE;
+      }
+    } else if (!isStrictlyValidUtf16(body, bom, eof)) {
+      return NO_STYLE;
+    }
+    const text = decodeUtfText(body, bom ?? 'utf-8');
+    return { bom: bom ?? 'none', eol: dominantLineEnding(text, eof) };
+  }
+
+  private async resolveNewFileStyle(
+    fs: IHostFileSystem,
+    safePath: string,
+    workspaceRoots: readonly string[],
+  ): Promise<ExistingFileStyle> {
+    const editor = await resolveNewFileEditorStyle(
+      fs,
+      safePath,
+      this.editorConfigStopDir(safePath, workspaceRoots),
+    );
+    if (editor.eol !== undefined && editor.bom !== undefined) {
+      return { bom: editor.bom === false ? 'none' : editor.bom, eol: editor.eol };
+    }
+    const siblings = await resolveSiblingStyle(fs, safePath);
+    return {
+      bom: editor.bom === false ? 'none' : (editor.bom ?? siblings.bom),
+      eol: editor.eol ?? siblings.eol,
+    };
+  }
+
+  private editorConfigStopDir(safePath: string, workspaceRoots: readonly string[]): string {
+    const dir = dirname(safePath);
+    let stop: string | undefined;
+    for (const root of workspaceRoots) {
+      if (!isPathWithin(root, dir)) continue;
+      if (stop === undefined || isPathWithin(root, stop)) stop = root;
+    }
+    return stop ?? dir;
+  }
+
+  private async ensureParentDirectory(fs: IHostFileSystem, safePath: string): Promise<string | undefined> {
+    const parent = dirname(safePath);
     let stat: HostFileStat;
     try {
       stat = await fs.stat(parent);
