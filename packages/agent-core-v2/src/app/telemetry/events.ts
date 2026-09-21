@@ -224,6 +224,11 @@ export interface RemoteControlToggleEvent {
   outcome: 'ok' | 'already_running' | 'rejected' | 'error';
 }
 
+export interface PluginToggleEvent {
+  plugin_id: string;
+  enabled: boolean;
+}
+
 export interface CompactionFinishedEvent {
   turn_id?: number;
   source: 'manual' | 'auto';
@@ -835,6 +840,14 @@ export const telemetryEventDefinitions = {
     properties: {
       enabled: 'Whether the request was to enable or disable the tunnel',
       outcome: 'How the request resolved',
+    },
+  }),
+  plugin_toggle: defineTelemetryEvent<PluginToggleEvent>({
+    owner: 'kimi-code',
+    comment: 'An installed plugin is enabled or disabled.',
+    properties: {
+      plugin_id: 'Id of the toggled plugin',
+      enabled: 'Whether the plugin is enabled after the toggle',
     },
   }),
   compaction_finished: defineAgentTelemetryEvent<CompactionFinishedEvent>({

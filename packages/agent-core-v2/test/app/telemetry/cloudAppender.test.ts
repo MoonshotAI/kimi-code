@@ -4,11 +4,13 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { AsyncEmitter, Emitter } from '#/_base/event';
 import {
   resetUnexpectedErrorHandler,
   setUnexpectedErrorHandler,
 } from '#/_base/errors/unexpectedError';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
+import type { PluginReloadEvent, PluginSummary } from '#/app/plugin/types';
 import { CloudAppender, type CloudAppenderOptions } from '#/app/telemetry/cloudAppender';
 
 import { stubBootstrap, stubClientIdentity } from '../bootstrap/stubs';
@@ -42,6 +44,22 @@ function okResponse(): Response {
 
 function statusResponse(status: number): Response {
   return new Response(null, { status });
+}
+
+function pluginSummary(id: string, enabled: boolean, state: 'ok' | 'error'): PluginSummary {
+  return {
+    id,
+    displayName: id,
+    enabled,
+    state,
+    skillCount: 0,
+    mcpServerCount: 0,
+    enabledMcpServerCount: 0,
+    hookCount: 0,
+    commandCount: 0,
+    hasErrors: state === 'error',
+    source: 'local-path',
+  };
 }
 
 function baseOptions(
@@ -463,5 +481,88 @@ describe('CloudAppender', () => {
     } finally {
       resetUnexpectedErrorHandler();
     }
+  });
+
+  it('includes enabled, healthy plugin ids in the envelope context', async () => {
+    const requests: CapturedRequest[] = [];
+    const appender = new CloudAppender(
+      baseOptions({
+        homeDir,
+        pluginService: {
+          listPlugins: async () => [
+            pluginSummary('zeta', true, 'ok'),
+            pluginSummary('alpha', true, 'ok'),
+            pluginSummary('broken', true, 'error'),
+            pluginSummary('disabled', false, 'ok'),
+          ],
+          onDidReload: new Emitter<PluginReloadEvent>().event,
+        },
+        fetchImpl: makeFetch((req) => {
+          requests.push(req);
+          return okResponse();
+        }),
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    appender.track({ event: 'evt', context: {}, properties: {} });
+    await appender.flush();
+
+    expect(requests[0]?.body.events[0]?.['context_active_plugins']).toBe('alpha,zeta');
+  });
+
+  it('refreshes active plugin ids when the plugin service reloads', async () => {
+    const requests: CapturedRequest[] = [];
+    const reloads = new AsyncEmitter<PluginReloadEvent>();
+    let summaries = [pluginSummary('alpha', true, 'ok')];
+    const appender = new CloudAppender(
+      baseOptions({
+        homeDir,
+        pluginService: {
+          listPlugins: async () => summaries,
+          onDidReload: reloads.event,
+        },
+        fetchImpl: makeFetch((req) => {
+          requests.push(req);
+          return okResponse();
+        }),
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    summaries = [pluginSummary('alpha', true, 'ok'), pluginSummary('beta', true, 'ok')];
+    await reloads.fireAsyncConcurrent(
+      { added: ['beta'], removed: [], errors: [] },
+      new AbortController().signal,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    appender.track({ event: 'evt', context: {}, properties: {} });
+    await appender.flush();
+
+    expect(requests[0]?.body.events[0]?.['context_active_plugins']).toBe('alpha,beta');
+  });
+
+  it('omits active plugins from the envelope context when none are active', async () => {
+    const requests: CapturedRequest[] = [];
+    const appender = new CloudAppender(
+      baseOptions({
+        homeDir,
+        pluginService: {
+          listPlugins: async () => [pluginSummary('disabled', false, 'ok')],
+          onDidReload: new Emitter<PluginReloadEvent>().event,
+        },
+        fetchImpl: makeFetch((req) => {
+          requests.push(req);
+          return okResponse();
+        }),
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    appender.track({ event: 'evt', context: {}, properties: {} });
+    await appender.flush();
+
+    expect(requests[0]?.body.events[0]).not.toHaveProperty('context_active_plugins');
   });
 });

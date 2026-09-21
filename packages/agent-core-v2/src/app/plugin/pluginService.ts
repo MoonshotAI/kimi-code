@@ -6,6 +6,7 @@ import { AsyncEmitter, Emitter, type Event } from '#/_base/event';
 import type { HookDef } from '#/features/externalHooks/internal/types';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { LifecycleScope } from '#/app/scopes';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
 import type { SkillRoot } from '#/features/skill/catalog/types';
 import { BugIndicatingError, Error2, PluginErrors } from '#/errors';
@@ -72,6 +73,7 @@ export class PluginService extends Service implements IPluginService {
     @IBootstrapService bootstrap: IBootstrapService,
     @ISkillDiscovery discovery: ISkillDiscovery,
     @IProviderService private readonly providers: IProviderService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     super();
     this.homeDir = bootstrap.homeDir;
@@ -107,6 +109,7 @@ export class PluginService extends Service implements IPluginService {
       const notification = await this.reloadAndNotify({
         mutation: { kind: input.enabled ? 'enable' : 'disable', id: input.id },
       });
+      this.telemetry.track2('plugin_toggle', { plugin_id: input.id, enabled: input.enabled });
       return { result: undefined, notification };
     });
   }

@@ -18,6 +18,12 @@ import * as pluginStore from '#/app/plugin/store';
 import type { InstalledFile } from '#/app/plugin/store';
 import type { PluginMutationSummary, ReloadSummary } from '#/app/plugin/types';
 import { LifecycleScope } from '#/app/scopes';
+import {
+  ITelemetryService,
+  noopTelemetryService,
+  type TelemetryAppenderRecord,
+} from '#/app/telemetry/telemetry';
+import { TelemetryService } from '#/app/telemetry/telemetryService';
 import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
 import { IProviderService, type ProviderConfig } from '#/llm-adapter/provider/provider';
 
@@ -40,6 +46,7 @@ function makeHost(
   homeDir: string,
   providers = stubProviderService(),
   env: NodeJS.ProcessEnv = {},
+  telemetry: ITelemetryService = noopTelemetryService,
 ): ScopedTestHost {
   return createScopedTestHost([
     stubPair(IBootstrapService, stubBootstrap(homeDir, env)),
@@ -53,6 +60,7 @@ function makeHost(
         scannedDirectories: [],
       }),
     } satisfies ISkillDiscovery),
+    stubPair(ITelemetryService, telemetry),
   ]);
 }
 
@@ -297,6 +305,31 @@ describe('PluginService (plugin boundary)', () => {
 
       await svc.reloadPlugins();
       expect(mutations).toHaveLength(4);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('tracks plugin enable and disable toggles', async () => {
+    const home = await makeHome();
+    await writeValidInstalledFile(home);
+    const pluginRoot = await makePluginDir('toggle-demo', {});
+    createdDirs.push(pluginRoot);
+    const telemetry = new TelemetryService();
+    const events: TelemetryAppenderRecord[] = [];
+    telemetry.addAppender({ track: (record) => events.push(record) });
+    const host = makeHost(home, stubProviderService(), {}, telemetry);
+    try {
+      const svc = host.app.accessor.get(IPluginService);
+      await svc.installPlugin({ source: pluginRoot });
+      await svc.setPluginEnabled({ id: 'toggle-demo', enabled: false });
+      await svc.setPluginEnabled({ id: 'toggle-demo', enabled: true });
+      await svc.removePlugin({ id: 'toggle-demo' });
+
+      expect(events.map((record) => [record.event, record.properties])).toEqual([
+        ['plugin_toggle', { plugin_id: 'toggle-demo', enabled: false }],
+        ['plugin_toggle', { plugin_id: 'toggle-demo', enabled: true }],
+      ]);
     } finally {
       host.dispose();
     }
