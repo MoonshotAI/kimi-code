@@ -29,11 +29,10 @@ export function isOversizedEmptyDeletion(
   newString: string,
   occurrenceCount = 1,
 ): boolean {
-  return (
-    newString.trim().length === 0 &&
-    occurrenceCount > 0 &&
-    countEditLines(oldString) * occurrenceCount >= LARGE_DELETE_MIN_OLD_LINES
-  );
+  if (newString.trim().length > 0 || occurrenceCount <= 0) return false;
+  const linesPerMatch = countEditLines(oldString);
+  if (linesPerMatch <= 1) return false;
+  return linesPerMatch * occurrenceCount >= LARGE_DELETE_MIN_OLD_LINES;
 }
 
 function oversizedDeletionMessage(path: string): string {
@@ -62,26 +61,22 @@ function notUniqueMessage(path: string, count: number): string {
 
 export class EditService {
   apply(model: TextModel, input: EditApplyInput): EditApplyResult {
-    if (input.replace_all) {
-      const count = model.countOccurrences(input.old_string);
-      if (count === 0) return { ok: false, error: notFoundMessage(input.path) };
-      if (
-        input.allow_large_delete !== true &&
-        isOversizedEmptyDeletion(input.old_string, input.new_string, count)
-      ) {
-        return { ok: false, error: oversizedDeletionMessage(input.path) };
-      }
-      const { text } = model.replaceAll(input.old_string, input.new_string);
-      return { ok: true, rawContent: model.materialize(text), count };
+    const count = model.countOccurrences(input.old_string);
+    if (count === 0) return { ok: false, error: notFoundMessage(input.path) };
+    if (!input.replace_all && count > 1) {
+      return { ok: false, error: notUniqueMessage(input.path, count) };
     }
-
-    if (input.allow_large_delete !== true && isOversizedEmptyDeletion(input.old_string, input.new_string)) {
+    if (
+      input.allow_large_delete !== true &&
+      isOversizedEmptyDeletion(input.old_string, input.new_string, count)
+    ) {
       return { ok: false, error: oversizedDeletionMessage(input.path) };
     }
 
-    const count = model.countOccurrences(input.old_string);
-    if (count === 0) return { ok: false, error: notFoundMessage(input.path) };
-    if (count > 1) return { ok: false, error: notUniqueMessage(input.path, count) };
+    if (input.replace_all) {
+      const { text } = model.replaceAll(input.old_string, input.new_string);
+      return { ok: true, rawContent: model.materialize(text), count };
+    }
 
     const text = model.replaceOnce(input.old_string, input.new_string);
     return { ok: true, rawContent: model.materialize(text), count: 1 };
