@@ -29,6 +29,9 @@ export async function git(
   const configArgs = await hardenedGitConfigArgs(cwd, (probeArgs) =>
     probeGitConfig(cwd, probeArgs),
   );
+  if (configArgs === null) {
+    throw new GitError(args, 'git config probe failed');
+  }
   return new Promise((resolve, reject) => {
     execFile(
       'git',
@@ -55,7 +58,7 @@ function probeGitConfig(cwd: string, args: readonly string[]): Promise<GitProbeR
     execFile(
       'git',
       [...args],
-      { cwd, timeout: CONFIG_PROBE_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
+      { cwd, timeout: CONFIG_PROBE_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 },
       (error, stdout) => {
         if (error === null) {
           resolve({ exitCode: 0, stdout });

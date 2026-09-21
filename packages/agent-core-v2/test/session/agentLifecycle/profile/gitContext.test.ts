@@ -122,11 +122,11 @@ describe('collectGitContext', () => {
         throw new Error('spawn failed');
       }),
     } as IHostProcessService;
-    const { logger, warn } = spyLogger();
+    const { logger, debug } = spyLogger();
 
     await expect(collectGitContext(hostProcess, '/repo', logger)).resolves.toBe('');
-    expect(warn).toHaveBeenCalledWith(
-      'git context command failed to spawn',
+    expect(debug).toHaveBeenCalledWith(
+      'git context command failed',
       expect.objectContaining({ command: 'git rev-parse --is-inside-work-tree' }),
     );
   });
@@ -195,6 +195,20 @@ describe('collectGitContext', () => {
       expect(args).toContain('filter.wt.clean=');
       expect(args).toContain('filter.wt.process=');
     }
+  });
+
+  it('fails closed when the filter config probe fails', async () => {
+    const spawn = vi.fn(async (_command: string, args: readonly string[]) => {
+      if (args.includes('config')) throw new Error('spawn failed');
+      return processWith('true\n', 0);
+    });
+    const hostProcess = { _serviceBrand: undefined, spawn } as IHostProcessService;
+
+    await expect(collectGitContext(hostProcess, '/repo')).resolves.toBe('');
+
+    const invocations = spawn.mock.calls.map((call) => call[1] as readonly string[]);
+    expect(invocations.length).toBeGreaterThan(0);
+    expect(invocations.every((args) => args.includes('config'))).toBe(true);
   });
 
   it('caps dirty files at 20 and reports the remainder', async () => {
@@ -333,7 +347,7 @@ describe('collectGitContext', () => {
       }
       await expect(promise).resolves.toBe('');
       expect(debug).toHaveBeenCalledWith(
-        'git context command timed out',
+        'git context command failed',
         expect.objectContaining({ command: 'git rev-parse --is-inside-work-tree' }),
       );
     } finally {

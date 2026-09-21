@@ -174,6 +174,14 @@ async function runGit(
   const configArgs = await hardenedGitConfigArgs(cwd, (probeArgs) =>
     probeGitConfig(process, cwd, probeArgs),
   );
+  if (configArgs === null) {
+    return {
+      ok: false,
+      kind: 'command-failed',
+      exitCode: -1,
+      stderr: 'git config probe failed',
+    };
+  }
   return spawnGit(process, cwd, [...configArgs, '-C', cwd, ...args]);
 }
 

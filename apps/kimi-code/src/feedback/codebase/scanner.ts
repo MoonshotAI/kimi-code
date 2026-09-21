@@ -72,9 +72,11 @@ function resolveLimits(limits: ScanCodebaseOptions['limits']): ScanCodebaseLimit
 }
 
 async function isInsideGitWorkTree(root: string): Promise<boolean> {
+  const configArgs = hardenedGitConfigArgs('git', root);
+  if (configArgs === null) return false;
   try {
     const { stdout } = await execFileAsync('git', [
-      ...hardenedGitConfigArgs('git', root),
+      ...configArgs,
       '-C',
       root,
       'rev-parse',
@@ -91,10 +93,14 @@ async function scanWithGit(
   limits: ScanCodebaseLimits,
   signal?: AbortSignal,
 ): Promise<CollectedFiles> {
+  const configArgs = hardenedGitConfigArgs('git', root);
+  if (configArgs === null) {
+    return { files: [], exceedsLimit: undefined };
+  }
   const { stdout } = await execFileAsync(
     'git',
     [
-      ...hardenedGitConfigArgs('git', root),
+      ...configArgs,
       '-C',
       root,
       'ls-files',

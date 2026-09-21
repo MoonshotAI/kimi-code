@@ -99,20 +99,22 @@ export function createGitStatusCache(
   return {
     getStatus: () => {
       if (!trusted || git === undefined) return null;
+      const configArgs = hardenedGitConfigArgs(git, workDir);
+      if (configArgs === null) return null;
       if (!repoDetected) {
         repoDetected = true;
-        isRepo = detectGitRepo(git, workDir);
+        isRepo = detectGitRepo(git, workDir, configArgs);
       }
       if (!isRepo) return null;
 
       const now = Date.now();
       if (now - branch.fetchedAt >= BRANCH_TTL_MS) {
-        branch = { value: readBranch(git, workDir), fetchedAt: now };
+        branch = { value: readBranch(git, workDir, configArgs), fetchedAt: now };
       }
       if (branch.value === null) return null;
 
       if (now - status.fetchedAt >= STATUS_TTL_MS) {
-        status = { ...readStatus(git, workDir), fetchedAt: now };
+        status = { ...readStatus(git, workDir, configArgs), fetchedAt: now };
       }
       refreshPullRequestIfNeeded(branch.value, now);
 
@@ -162,11 +164,11 @@ export function createGitStatusCache(
   }
 }
 
-function detectGitRepo(git: string, workDir: string): boolean {
+function detectGitRepo(git: string, workDir: string, configArgs: readonly string[]): boolean {
   try {
     const result = spawnSync(
       git,
-      [...hardenedGitConfigArgs(git, workDir), '-C', workDir, 'rev-parse', '--is-inside-work-tree'],
+      [...configArgs, '-C', workDir, 'rev-parse', '--is-inside-work-tree'],
       {
         encoding: 'utf8',
         timeout: SPAWN_TIMEOUT_MS,
@@ -178,11 +180,11 @@ function detectGitRepo(git: string, workDir: string): boolean {
   }
 }
 
-function readBranch(git: string, workDir: string): string | null {
+function readBranch(git: string, workDir: string, configArgs: readonly string[]): string | null {
   try {
     const result = spawnSync(
       git,
-      [...hardenedGitConfigArgs(git, workDir), '-C', workDir, 'branch', '--show-current'],
+      [...configArgs, '-C', workDir, 'branch', '--show-current'],
       {
         encoding: 'utf8',
         timeout: SPAWN_TIMEOUT_MS,
@@ -199,6 +201,7 @@ function readBranch(git: string, workDir: string): string | null {
 function readStatus(
   git: string,
   workDir: string,
+  configArgs: readonly string[],
 ): {
   dirty: boolean;
   ahead: number;
@@ -209,7 +212,7 @@ function readStatus(
   try {
     const result = spawnSync(
       git,
-      [...hardenedGitConfigArgs(git, workDir), '-C', workDir, 'status', '--porcelain', '-b'],
+      [...configArgs, '-C', workDir, 'status', '--porcelain', '-b'],
       {
         encoding: 'utf8',
         timeout: SPAWN_TIMEOUT_MS,
@@ -234,7 +237,7 @@ function readStatus(
         dirty = true;
       }
     }
-    const diff = dirty ? readDiffStats(git, workDir) : { added: 0, deleted: 0 };
+    const diff = dirty ? readDiffStats(git, workDir, configArgs) : { added: 0, deleted: 0 };
     return {
       dirty,
       ahead,
@@ -247,12 +250,16 @@ function readStatus(
   }
 }
 
-function readDiffStats(git: string, workDir: string): { added: number; deleted: number } {
+function readDiffStats(
+  git: string,
+  workDir: string,
+  configArgs: readonly string[],
+): { added: number; deleted: number } {
   try {
     const result = spawnSync(
       git,
       [
-        ...hardenedGitConfigArgs(git, workDir),
+        ...configArgs,
         '-C',
         workDir,
         'diff',

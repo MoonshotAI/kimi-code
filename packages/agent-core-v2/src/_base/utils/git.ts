@@ -1,5 +1,5 @@
 import { readFile, stat } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null';
 
@@ -29,16 +29,18 @@ const filterArgsCache = new Map<string, FilterArgsCacheEntry>();
 export async function hardenedGitConfigArgs(
   cwd: string,
   probe: GitProbe,
-): Promise<readonly string[]> {
+): Promise<readonly string[] | null> {
   const stamp = await gitConfigStamp(cwd);
   const cached = filterArgsCache.get(cwd);
   if (stamp !== null && cached?.stamp === stamp) return cached.args;
-  const args = [...GIT_CONFIG_ARGS, ...(await probeFilterArgs(cwd, probe))];
+  const filterArgs = await probeFilterArgs(cwd, probe);
+  if (filterArgs === null) return null;
+  const args = [...GIT_CONFIG_ARGS, ...filterArgs];
   filterArgsCache.set(cwd, { stamp, args });
   return args;
 }
 
-async function probeFilterArgs(cwd: string, probe: GitProbe): Promise<readonly string[]> {
+async function probeFilterArgs(cwd: string, probe: GitProbe): Promise<readonly string[] | null> {
   const results = await Promise.all(
     ['--local', '--worktree'].map((scope) =>
       probe([
@@ -54,7 +56,8 @@ async function probeFilterArgs(cwd: string, probe: GitProbe): Promise<readonly s
   );
   const drivers = new Set<string>();
   for (const result of results) {
-    if (result === null || result.exitCode !== 0) continue;
+    if (result === null || result.exitCode < 0) return null;
+    if (result.exitCode !== 0) continue;
     for (const line of result.stdout.split('\n')) {
       const match = /^filter\.(.+)\.(?:clean|process)(?:\s|$)/.exec(line);
       const driver = match?.[1];
@@ -70,7 +73,9 @@ async function probeFilterArgs(cwd: string, probe: GitProbe): Promise<readonly s
 
 async function gitConfigStamp(cwd: string): Promise<string | null> {
   try {
-    let gitDir = join(cwd, '.git');
+    const found = await findGitDir(cwd);
+    if (found === null) return null;
+    let gitDir = found;
     if (!(await stat(gitDir)).isDirectory()) {
       const pointer = parseGitDirPointer(await readFile(gitDir, 'utf8'));
       if (pointer === undefined) return null;
@@ -86,6 +91,21 @@ async function gitConfigStamp(cwd: string): Promise<string | null> {
     return stamps.join('|');
   } catch {
     return null;
+  }
+}
+
+async function findGitDir(start: string): Promise<string | null> {
+  let dir = start;
+  for (;;) {
+    const candidate = join(dir, '.git');
+    try {
+      await stat(candidate);
+      return candidate;
+    } catch {
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
   }
 }
 

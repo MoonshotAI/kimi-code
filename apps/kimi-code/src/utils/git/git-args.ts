@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null';
 
@@ -14,6 +14,7 @@ export const GIT_CONFIG_ARGS: readonly string[] = [
 export const GIT_DIFF_ARGS: readonly string[] = ['--no-ext-diff', '--no-textconv'];
 
 const FILTER_PROBE_TIMEOUT_MS = 500;
+const FILTER_PROBE_MAX_BYTES = 16 * 1024 * 1024;
 
 interface FilterArgsCacheEntry {
   readonly stamp: string | null;
@@ -22,24 +23,27 @@ interface FilterArgsCacheEntry {
 
 const filterArgsCache = new Map<string, FilterArgsCacheEntry>();
 
-export function hardenedGitConfigArgs(git: string, workDir: string): readonly string[] {
+export function hardenedGitConfigArgs(git: string, workDir: string): readonly string[] | null {
   const stamp = gitConfigStamp(workDir);
   const cached = filterArgsCache.get(workDir);
   if (stamp !== null && cached?.stamp === stamp) return cached.args;
-  const args = [...GIT_CONFIG_ARGS, ...probeFilterArgs(git, workDir)];
+  const filterArgs = probeFilterArgs(git, workDir);
+  if (filterArgs === null) return null;
+  const args = [...GIT_CONFIG_ARGS, ...filterArgs];
   filterArgsCache.set(workDir, { stamp, args });
   return args;
 }
 
-function probeFilterArgs(git: string, workDir: string): readonly string[] {
+function probeFilterArgs(git: string, workDir: string): readonly string[] | null {
   try {
     const drivers = new Set<string>();
     for (const scope of ['--local', '--worktree']) {
       const result = spawnSync(
         git,
         [...GIT_CONFIG_ARGS, '-C', workDir, 'config', scope, '--get-regexp', '^filter\\.'],
-        { encoding: 'utf8', timeout: FILTER_PROBE_TIMEOUT_MS },
+        { encoding: 'utf8', timeout: FILTER_PROBE_TIMEOUT_MS, maxBuffer: FILTER_PROBE_MAX_BYTES },
       );
+      if (result.error !== undefined || result.status === null) return null;
       if (result.status !== 0 || typeof result.stdout !== 'string') continue;
       for (const line of result.stdout.split('\n')) {
         const match = /^filter\.(.+)\.(?:clean|process)(?:\s|$)/.exec(line);
@@ -53,13 +57,15 @@ function probeFilterArgs(git: string, workDir: string): readonly string[] {
     }
     return args;
   } catch {
-    return [];
+    return null;
   }
 }
 
 function gitConfigStamp(workDir: string): string | null {
   try {
-    let gitDir = join(workDir, '.git');
+    const found = findGitDir(workDir);
+    if (found === null) return null;
+    let gitDir = found;
     if (!statSync(gitDir).isDirectory()) {
       const pointer = parseGitDirPointer(readFileSync(gitDir, 'utf8'));
       if (pointer === undefined) return null;
@@ -74,6 +80,21 @@ function gitConfigStamp(workDir: string): string | null {
     return configPaths.map(stampConfigPath).join('|');
   } catch {
     return null;
+  }
+}
+
+function findGitDir(start: string): string | null {
+  let dir = start;
+  for (;;) {
+    const candidate = join(dir, '.git');
+    try {
+      statSync(candidate);
+      return candidate;
+    } catch {
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
   }
 }
 

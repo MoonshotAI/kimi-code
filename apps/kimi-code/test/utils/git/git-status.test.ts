@@ -84,19 +84,19 @@ describe('git status cache', () => {
       diffDeleted: 1,
       pullRequest: null,
     });
-    expect(mocks.spawnSync).toHaveBeenCalledTimes(12);
+    expect(mocks.spawnSync).toHaveBeenCalledTimes(8);
     expect(mocks.execFile).toHaveBeenCalledTimes(1);
 
     await Promise.resolve();
 
     vi.setSystemTime(new Date('2026-04-24T00:00:06Z'));
     cache.getStatus();
-    expect(mocks.spawnSync).toHaveBeenCalledTimes(15);
+    expect(mocks.spawnSync).toHaveBeenCalledTimes(11);
     expect(mocks.execFile).toHaveBeenCalledTimes(1);
 
     vi.setSystemTime(new Date('2026-04-24T00:00:16Z'));
     cache.getStatus();
-    expect(mocks.spawnSync).toHaveBeenCalledTimes(24);
+    expect(mocks.spawnSync).toHaveBeenCalledTimes(16);
     expect(mocks.execFile).toHaveBeenCalledTimes(1);
   });
 
@@ -257,7 +257,7 @@ describe('git status cache', () => {
     await Promise.resolve();
 
     const nullDevice = process.platform === 'win32' ? 'NUL' : '/dev/null';
-    expect(mocks.spawnSync).toHaveBeenCalledTimes(12);
+    expect(mocks.spawnSync).toHaveBeenCalledTimes(6);
     for (const call of mocks.spawnSync.mock.calls) {
       const args = call[1] as string[];
       expect(args.slice(0, 4)).toEqual([
@@ -361,6 +361,69 @@ describe('git status cache', () => {
       vi.setSystemTime(new Date('2026-04-24T00:00:32Z'));
       cache.getStatus();
       expect(probeCount()).toBe(4);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when the filter config probe errors', () => {
+    mocks.execFile.mockImplementation(
+      (
+        _cmd: string,
+        _args: string[],
+        _options: unknown,
+        callback: (error: Error | null, stdout: string, stderr: string) => void,
+      ) => {
+        callback(new Error('no pull request'), '', '');
+      },
+    );
+    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
+      if (args.includes('config')) {
+        return { status: null, stdout: '', error: new Error('spawnSync ENOBUFS') };
+      }
+      return { status: 0, stdout: 'true\n' };
+    });
+
+    const cache = createGitStatusCache('/tmp/repo', { trusted: true });
+
+    expect(cache.getStatus()).toBeNull();
+    const invocations = mocks.spawnSync.mock.calls.map((call) => call[1] as string[]);
+    expect(invocations.length).toBeGreaterThan(0);
+    expect(invocations.every((args) => args.includes('config'))).toBe(true);
+  });
+
+  it('caches filter probes when the work dir is a repository subdirectory', () => {
+    const root = mkdtempSync(join(tmpdir(), 'git-status-subdir-'));
+    mkdirSync(join(root, '.git'), { recursive: true });
+    mkdirSync(join(root, 'sub'));
+    writeFileSync(join(root, '.git', 'config'), '[filter "evil"]\n\tclean = touch /tmp/m\n');
+    mocks.execFile.mockImplementation(
+      (
+        _cmd: string,
+        _args: string[],
+        _options: unknown,
+        callback: (error: Error | null, stdout: string, stderr: string) => void,
+      ) => {
+        callback(new Error('no pull request'), '', '');
+      },
+    );
+    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
+      if (args.includes('config')) return { status: 0, stdout: 'filter.evil.clean touch /tmp/m\n' };
+      if (args.includes('rev-parse')) return { status: 0, stdout: 'true\n' };
+      if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
+      if (args.includes('status')) return { status: 0, stdout: '## main...origin/main\n' };
+      return { status: 1, stdout: '' };
+    });
+
+    try {
+      const probeCount = () =>
+        mocks.spawnSync.mock.calls.filter((call) => (call[1] as string[]).includes('config'))
+          .length;
+      const cache = createGitStatusCache(join(root, 'sub'), { trusted: true });
+      cache.getStatus();
+      expect(probeCount()).toBe(2);
+      cache.getStatus();
+      expect(probeCount()).toBe(2);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -154,18 +154,18 @@ export class GitService implements IGitService {
     cwd: string,
     options: RunOptions = {},
   ): Promise<RunResult> {
-    const argv =
-      cmd === 'git'
-        ? [
-            ...(await hardenedGitConfigArgs(cwd, (probeArgs) =>
-              this.spawnAndCollect('git', probeArgs, cwd, {
-                timeoutMs: CONFIG_PROBE_TIMEOUT_MS,
-              }),
-            )),
-            ...args,
-          ]
-        : args;
-    return this.spawnAndCollect(cmd, argv, cwd, options);
+    if (cmd === 'git') {
+      const configArgs = await hardenedGitConfigArgs(cwd, (probeArgs) =>
+        this.spawnAndCollect('git', probeArgs, cwd, {
+          timeoutMs: CONFIG_PROBE_TIMEOUT_MS,
+        }),
+      );
+      if (configArgs === null) {
+        return { exitCode: -1, stdout: '', stderr: 'git config probe failed' };
+      }
+      return this.spawnAndCollect(cmd, [...configArgs, ...args], cwd, options);
+    }
+    return this.spawnAndCollect(cmd, args, cwd, options);
   }
 
   private async spawnAndCollect(
