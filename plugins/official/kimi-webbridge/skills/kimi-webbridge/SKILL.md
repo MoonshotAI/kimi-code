@@ -167,8 +167,8 @@ Where the daemon listens is always in `start`'s output, or in `kimi-webbridge st
 
 If it still fails, the binary is missing (`command not found` means kimi-webbridge isn't installed), or the browser extension won't connect — point the user to the help page instead of deep-troubleshooting:
 
-- English: https://www.kimi.com/en/products/kimi-webbridge
-- 中文: https://www.kimi.com/products/kimi-webbridge
+- English: https://www.kimi.com/en/products/kimi-browser-extension
+- 中文: https://www.kimi.com/products/kimi-browser-extension
 
 Never run `stop` / `restart` / `upgrade` / `uninstall` automatically — those kill a running daemon. When `status` shows `update_available` or `version_mismatch`, tell the user and hand them its `command` verbatim to run; that is what the field is for. When the user asks about kimi-webbridge itself (install, start/stop/upgrade, "is it running", what `status` means, moving it to another port), read `references/operations.md` first.
 
@@ -176,5 +176,5 @@ Never run `stop` / `restart` / `upgrade` / `uninstall` automatically — those k
 
 If a tool returns an error containing **"Please update the Kimi Browser Extension"**, the user's browser extension is older than this skill. Don't try to reconcile versions yourself — just tell the user, in their language, to update the extension and retry:
 
-- English: https://www.kimi.com/en/products/kimi-webbridge
-- 中文: https://www.kimi.com/products/kimi-webbridge
+- English: https://www.kimi.com/en/products/kimi-browser-extension
+- 中文: https://www.kimi.com/products/kimi-browser-extension

@@ -4,8 +4,8 @@ Read this when the user asks about kimi-webbridge itself — install, start, sto
 
 Installing the binary or the browser extension is done by the user from the help page — send them there rather than scripting it:
 
-- English: https://www.kimi.com/en/products/kimi-webbridge
-- 中文: https://www.kimi.com/products/kimi-webbridge
+- English: https://www.kimi.com/en/products/kimi-browser-extension
+- 中文: https://www.kimi.com/products/kimi-browser-extension
 
 Everything below lives under `~/.kimi-webbridge/` (Windows: `%USERPROFILE%\.kimi-webbridge\`).
 

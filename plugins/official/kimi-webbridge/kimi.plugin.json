@@ -17,8 +17,8 @@
   "interface": {
     "displayName": "Kimi Browser Extension",
     "shortDescription": "Control your real browser from Kimi Code — navigate, click, type, and screenshot",
-    "longDescription": "Kimi Browser Extension lets AI control the user's real browser — navigate, click, type, read, screenshot, and interact with any website using the user's actual login sessions. The skill talks to the local daemon (http://127.0.0.1:10086 by default), which drives Chrome/Edge through a browser extension over CDP. Everything runs locally; login state and page content never leave the device.\n\nRequires the Kimi Browser Extension daemon and browser extension: https://www.kimi.com/en/products/kimi-webbridge",
+    "longDescription": "Kimi Browser Extension lets AI control the user's real browser — navigate, click, type, read, screenshot, and interact with any website using the user's actual login sessions. The skill talks to the local daemon (http://127.0.0.1:10086 by default), which drives Chrome/Edge through a browser extension over CDP. Everything runs locally; login state and page content never leave the device.\n\nRequires the Kimi Browser Extension daemon and browser extension: https://www.kimi.com/en/products/kimi-browser-extension",
     "developerName": "Moonshot AI",
-    "websiteURL": "https://www.kimi.com/en/products/kimi-webbridge"
+    "websiteURL": "https://www.kimi.com/en/products/kimi-browser-extension"
   }
 }
