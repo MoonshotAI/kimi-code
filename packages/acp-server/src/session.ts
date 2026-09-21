@@ -358,6 +358,15 @@ export class AcpSession {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+    // A session created while `default_plan_mode` is enabled enters plan mode
+    // at create time (`sessionLifecycleService`). Reflect that engine state in
+    // the ACP mode so `session/new` reports `plan` instead of the local
+    // `default` default — otherwise a client that sets an explicit mode right
+    // after creation re-enters plan and trips the engine's "Already in plan
+    // mode" guard.
+    if (await this.isPlanActive()) {
+      this.currentModeId = 'plan';
+    }
     // Awaited: the post-`session/new` `available_commands_update` must already
     // carry the skills (see `activateSession`).
     await this.refreshSkills();
@@ -1102,14 +1111,22 @@ export class AcpSession {
   /** Switch the ACP mode (plan mode + permission mode). */
   async setMode(id: AcpModeId): Promise<void> {
     const { plan, permission } = acpModeToToggles(id);
-    if (plan) {
-      await this.agent.enterPlan();
-    } else {
-      // KLIENT-GAP(plan): `exitPlan` (`planService.exit()`) is not on the
-      // klient surface; `cancelPlan` (`planModeCancel`) has the identical
-      // state effect (see `agent/plan/planOps.ts`) — only the persisted op
-      // name differs.
-      await this.agent.cancelPlan();
+    // Idempotent plan toggle: only enter/cancel when the engine's plan state
+    // differs from the target, so a client re-asserting the active mode (e.g.
+    // `set_mode "plan"` right after `session/new` while the engine already
+    // entered plan mode via `default_plan_mode`) does not trip the engine's
+    // "Already in plan mode" guard.
+    const planActive = await this.isPlanActive();
+    if (plan !== planActive) {
+      if (plan) {
+        await this.agent.enterPlan();
+      } else {
+        // KLIENT-GAP(plan): `exitPlan` (`planService.exit()`) is not on the
+        // klient surface; `cancelPlan` (`planModeCancel`) has the identical
+        // state effect (see `agent/plan/planOps.ts`) — only the persisted op
+        // name differs.
+        await this.agent.cancelPlan();
+      }
     }
     await this.agent.setPermission(permission);
     this.currentModeId = id;
@@ -1119,6 +1136,24 @@ export class AcpSession {
     // observable — klient exposes no permission/plan change event.)
     this.emit(currentModeUpdateNotification(this.sessionId, id));
     await this.emitConfigOptionUpdate();
+  }
+
+  /**
+   * Whether the engine's plan mode is currently active, as reported by the
+   * agent plan service's `status` (non-null while a plan is open). Best-effort:
+   * a transient read failure degrades to `false` so `setMode` falls back to the
+   * unconditional toggle rather than rejecting a call that previously worked.
+   */
+  private async isPlanActive(): Promise<boolean> {
+    try {
+      return (await this.agent.getPlan()) !== null;
+    } catch (error) {
+      log.warn('acp: could not read plan mode state', {
+        sessionId: this.sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
   }
 
   /** Push a fresh `config_option_update` to the client. */
