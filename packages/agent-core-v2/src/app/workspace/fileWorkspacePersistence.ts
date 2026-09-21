@@ -1,4 +1,4 @@
-import { dirname, join, normalize } from 'pathe';
+import { join, normalize } from 'pathe';
 
 import { LifecycleScope } from '#/app/scopes';
 
@@ -8,7 +8,7 @@ import { Emitter, type Event } from '#/_base/event';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { watch } from '#human/utils/watch';
+import { watchCandidates } from '#human/utils/watch';
 
 import type { Workspace } from './workspace';
 import {
@@ -36,7 +36,7 @@ export class FileWorkspacePersistence extends Disposable implements IWorkspacePe
   ) {
     super();
     const catalogFile = join(this.bootstrap.homeDir, WORKSPACE_CATALOG_KEY);
-    const handle = watch(dirname(catalogFile), { depth: 0 });
+    const handle = watchCandidates(this.bootstrap.homeDir, [catalogFile]);
     this._register(handle);
     this._register(
       handle.onDidChange((change) => {

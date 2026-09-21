@@ -1,4 +1,4 @@
-import { isDraft, original } from 'immer';
+import { freeze, isDraft, original } from 'immer';
 
 import type { FinishReason } from '#human/llm/finish-reason';
 import { createToolMessage } from '#/llm-adapter/contract/message';
@@ -277,13 +277,16 @@ function createImmutableFoldSink(initial: readonly ContextMessage[]): ImmutableF
   const updateOpen = (update: (message: ContextMessage) => ContextMessage): void => {
     if (openIndex === -1) return;
     const next = current.slice();
-    next[openIndex] = update(next[openIndex]!);
-    current = next;
+    next[openIndex] = freeze(update(next[openIndex]!), true);
+    current = Object.freeze(next);
   };
   return {
     current: () => current,
     openAssistant: () => {
-      current = [...current, { role: 'assistant', content: [], toolCalls: [], partial: true }];
+      current = Object.freeze([
+        ...current,
+        freeze<ContextMessage>({ role: 'assistant', content: [], toolCalls: [], partial: true }, true),
+      ]);
       openIndex = current.length - 1;
     },
     appendOpenContent: (part) => {
@@ -301,7 +304,7 @@ function createImmutableFoldSink(initial: readonly ContextMessage[]): ImmutableF
     },
     dropOpenAssistant: () => {
       if (openIndex === -1) return;
-      current = [...current.slice(0, openIndex), ...current.slice(openIndex + 1)];
+      current = Object.freeze([...current.slice(0, openIndex), ...current.slice(openIndex + 1)]);
       openIndex = -1;
     },
     sealOpenAssistant: () => {
@@ -309,10 +312,10 @@ function createImmutableFoldSink(initial: readonly ContextMessage[]): ImmutableF
       openIndex = -1;
     },
     pushToolMessage: (message) => {
-      current = [...current, message];
+      current = Object.freeze([...current, freeze(message, true)]);
     },
     pushMessage: (message) => {
-      current = [...current, message];
+      current = Object.freeze([...current, freeze(message, true)]);
     },
   };
 }

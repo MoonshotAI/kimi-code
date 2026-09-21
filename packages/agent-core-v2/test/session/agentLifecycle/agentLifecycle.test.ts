@@ -827,6 +827,24 @@ describe('AgentLifecycleService', () => {
     expect(disposed).toEqual(['main']);
   });
 
+  it('remove finishes once the quiesce deadline passes even if the agent loop never settles', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const main = await svc.create({ agentId: 'main' });
+    const disposed: string[] = [];
+    disposables.add(svc.onDidClose((agent) => disposed.push(agent.agentId)));
+    loopSettled.mockImplementation(() => new Promise<void>(() => {}));
+    vi.useFakeTimers();
+    try {
+      const removal = svc.remove(main);
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(disposed).toEqual(['main']);
+      await removal;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('remove cancels queued turns before waiting for the active turn to settle', async () => {
     loopActiveTurnId = 1;
     loopPendingPromptIds = ['q2', 'q3'];

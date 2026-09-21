@@ -661,6 +661,7 @@ describe('KimiOAuthToolkit', () => {
         JSON.stringify({
           user_id: 'u_123',
           global_id: 'u_123',
+          goods_version: '2',
           nickname: 'moonwalker',
           avatar: 'https://example.com/avatar.png',
           phone: { country_code: '86', number: '176****0000' },
@@ -685,6 +686,7 @@ describe('KimiOAuthToolkit', () => {
       userInfo: {
         userId: 'u_123',
         globalId: 'u_123',
+        goodsVersion: '2',
         nickname: 'moonwalker',
         avatar: 'https://example.com/avatar.png',
         phone: { countryCode: '86', number: '176****0000' },

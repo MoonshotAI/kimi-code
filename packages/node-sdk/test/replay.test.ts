@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { limitAgentReplayByTurns, type AgentReplayRecord } from '#/replay';
+import { v2MetaToSessionMeta } from '#/v2/session-mapper';
 
 function userTurn(text: string, time: number): AgentReplayRecord {
   return {
@@ -124,5 +125,82 @@ describe('limitAgentReplayByTurns', () => {
     const limited = limitAgentReplayByTurns(records, 5);
     expect(JSON.stringify(limited)).toContain('prompt 3');
     expect(JSON.stringify(limited)).not.toContain('prompt 2');
+  });
+});
+
+describe('v2MetaToSessionMeta', () => {
+  it('surfaces the swarm member marker persisted in v2 agent labels', () => {
+    const meta = v2MetaToSessionMeta({
+      id: 'ses_1',
+      createdAt: 1000,
+      updatedAt: 2000,
+      archived: false,
+      agents: {
+        main: { type: 'main' },
+        'agent-swarm': {
+          type: 'sub',
+          parentAgentId: 'main',
+          labels: { parentAgentId: 'main', swarmItem: 'task one' },
+        },
+        'agent-plain': {
+          type: 'sub',
+          parentAgentId: 'main',
+          labels: { parentAgentId: 'main' },
+        },
+        'agent-top-level': { type: 'sub', parentAgentId: 'main', swarmItem: 'top level' },
+      },
+    });
+
+    expect(meta.agents['agent-swarm']?.swarmItem).toBe('task one');
+    expect(meta.agents['agent-plain']?.swarmItem).toBeUndefined();
+    expect(meta.agents['agent-top-level']?.swarmItem).toBe('top level');
+  });
+
+  it('surfaces the spawn profile persisted in v2 agent labels', () => {
+    const meta = v2MetaToSessionMeta({
+      id: 'ses_1',
+      createdAt: 1000,
+      updatedAt: 2000,
+      archived: false,
+      agents: {
+        'agent-tower': {
+          type: 'sub',
+          parentAgentId: 'main',
+          labels: { parentAgentId: 'main', profileName: 'tower-worker' },
+        },
+        'agent-coder': {
+          type: 'sub',
+          parentAgentId: 'main',
+          labels: { parentAgentId: 'main', profileName: 'coder' },
+        },
+      },
+    });
+
+    expect(meta.agents['agent-tower']?.profileName).toBe('tower-worker');
+    expect(meta.agents['agent-coder']?.profileName).toBe('coder');
+  });
+
+  it('surfaces the session-init marker persisted in v2 agent labels', () => {
+    const meta = v2MetaToSessionMeta({
+      id: 'ses_1',
+      createdAt: 1000,
+      updatedAt: 2000,
+      archived: false,
+      agents: {
+        'agent-init': {
+          type: 'sub',
+          parentAgentId: 'main',
+          labels: { profileName: 'coder', sessionInit: 'agents-md' },
+        },
+        'agent-plain': {
+          type: 'sub',
+          parentAgentId: 'main',
+          labels: { profileName: 'coder' },
+        },
+      },
+    });
+
+    expect(meta.agents['agent-init']?.sessionInit).toBe('agents-md');
+    expect(meta.agents['agent-plain']?.sessionInit).toBeUndefined();
   });
 });

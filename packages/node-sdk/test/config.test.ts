@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createKimiConfigRpc } from '#/index';
+import { parseConfigString } from '#/config/index';
 
 const toPosix = (p: string): string => p.replaceAll('\\', '/');
 
@@ -55,5 +56,17 @@ max_context_size = "large"
         ],
       },
     });
+  });
+
+  it('parses a provider api_key_env into camelCase apiKeyEnv', async () => {
+    const rpc = createKimiConfigRpc();
+    const text = `
+[providers.acme]
+type = "openai"
+api_key_env = "ACME_API_KEY"
+`;
+
+    await expect(rpc.validateConfigToml({ text })).resolves.toBeUndefined();
+    expect(parseConfigString(text).providers['acme']?.apiKeyEnv).toBe('ACME_API_KEY');
   });
 });

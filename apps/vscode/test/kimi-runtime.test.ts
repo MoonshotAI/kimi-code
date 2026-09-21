@@ -20,6 +20,7 @@ import type {
   SessionSummary,
   ThinkingEffort,
 } from "@moonshot-ai/kimi-code-sdk";
+import { setTelemetryContext, track, withTelemetryContext } from "@moonshot-ai/kimi-telemetry";
 import { describe, expect, it, vi } from "vitest";
 
 import { Events } from "../shared/bridge";
@@ -278,6 +279,11 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
         platform: "kimi_code_vscode",
       },
       uiMode: "vscode",
+      telemetry: {
+        track,
+        withContext: withTelemetryContext,
+        setContext: setTelemetryContext,
+      },
     });
     expect(runtime.harness).toBe(sdkFactories.harness as unknown as KimiHarness);
     await runtime.dispose();

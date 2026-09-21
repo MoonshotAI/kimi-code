@@ -119,22 +119,39 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   load(names: readonly string[]): LoadToolsResult {
     const loadable = new Set(this.loadableToolNames());
     const loaded = this.activeLoadedToolNames();
+    const registryInfos = this.toolRegistry.list();
     const toLoad: string[] = [];
     const alreadyAvailable: string[] = [];
+    const alreadyCallable: string[] = [];
     const unknown: string[] = [];
     for (const name of new Set(names)) {
       if (loaded.has(name)) {
         alreadyAvailable.push(name);
       } else if (loadable.has(name)) {
         toLoad.push(name);
+      } else if (this.isStaticCallable(name, registryInfos)) {
+        alreadyCallable.push(name);
       } else {
         unknown.push(name);
       }
     }
+    const suggestions: Record<string, readonly string[]> = {};
+    const suggestionPool = [...new Set([...loadable, ...loaded])];
+    for (const name of unknown) {
+      const candidates = suggestToolNames(name, suggestionPool);
+      if (candidates.length > 0) suggestions[name] = candidates;
+    }
     if (toLoad.length > 0) {
       for (const name of toLoad) this.pendingLoaded.add(name);
     }
-    return { toLoad, alreadyAvailable, unknown };
+    return {
+      toLoad,
+      alreadyAvailable,
+      alreadyCallable,
+      unknown,
+      suggestions,
+      loadable: [...loadable].filter((name) => !loaded.has(name)),
+    };
   }
 
   drainPendingToolSchemas(): readonly Tool[] | undefined {
@@ -240,6 +257,12 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     return info.disclosure === 'deferred';
   }
 
+  private isStaticCallable(name: string, registryInfos: readonly ToolInfo[]): boolean {
+    const info = registryInfos.find((entry) => entry.name === name);
+    if (info === undefined) return false;
+    return !this.isDynamicallyLoadable(info) && this.toolPolicy.isToolActive(name, info.source);
+  }
+
   private shapeActiveHistory(messages: readonly ContextMessage[]): readonly ContextMessage[] {
     let shaped: ContextMessage[] | undefined;
     for (let i = 0; i < messages.length; i += 1) {
@@ -312,6 +335,27 @@ function notLoadedToolOutput(name: string): string {
     `Tool "${name}" is available but not loaded. ` +
     `Call select_tools with ["${name}"] first, then call the tool.`
   );
+}
+
+function suggestToolNames(name: string, pool: readonly string[]): string[] {
+  const lower = name.toLowerCase();
+  const caseFix = pool.filter((candidate) => candidate.toLowerCase() === lower);
+  if (caseFix.length > 0) return caseFix.toSorted((a, b) => a.localeCompare(b)).slice(0, 3);
+  const matches = new Set<string>();
+  const stripped = lower.startsWith('mcp__') ? lower.slice('mcp__'.length) : lower;
+  if (stripped.length >= 3) {
+    for (const candidate of pool) {
+      if (candidate.toLowerCase().includes(stripped)) matches.add(candidate);
+    }
+  }
+  if (matches.size === 0) {
+    for (const candidate of pool) {
+      const segments = candidate.split('__');
+      const last = segments.at(-1)!.toLowerCase();
+      if (last.length >= 3 && lower.includes(last)) matches.add(candidate);
+    }
+  }
+  return [...matches].toSorted((a, b) => a.localeCompare(b)).slice(0, 3);
 }
 
 function inactiveLoadedToolOutput(name: string): string {

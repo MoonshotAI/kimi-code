@@ -21,8 +21,7 @@ import { serviceByName } from '../channel';
 import { useConnection } from '../connection';
 import { type AnyService } from '../panels';
 import { fetchAgentRuntimeBinding } from '../snapshots/api';
-import { fetchFullHistory } from '../transcript/api';
-import { projectPlans, type PlanInfo } from '../transcript/plan';
+import { fetchTranscriptPlan, type TranscriptPlanInfo } from '../transcript/api';
 import { ActionButton, Badge, ErrorLine } from '../ui';
 import { ScopePanels } from './ServicePanels';
 
@@ -176,21 +175,20 @@ export function Inspector({
 }
 
 // ---------------------------------------------------------------------------
-// Plan lookup — derived from the message stream (`GET /sessions/{id}/history`
-// full read + client-side `projectPlans`): the reviewed plan of one
-// ExitPlanMode tool call, found by tool_call_id (copy it from a tool frame in
-// the chat view), or every plan of the agent. Read-only, fetched on demand
-// like everything else here.
+// Plan lookup — `GET /api/v1/sessions/{id}/transcript/plan`: the reviewed plan
+// of one ExitPlanMode tool call, queried by tool_call_id (copy it from a tool
+// frame in the chat view). Read-only, fetched on demand like everything else
+// here.
 // ---------------------------------------------------------------------------
 
 function PlanCard({ sessionId, agentId }: { sessionId: string; agentId: string }) {
   const { baseUrl, config } = useConnection();
   const [toolCallId, setToolCallId] = useState('');
-  const [result, setResult] = useState<readonly PlanInfo[] | null>(null);
+  const [result, setResult] = useState<readonly TranscriptPlanInfo[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
 
-  // A plan belongs to one agent's timeline — stale results from another
+  // A plan belongs to one agent's transcript — stale results from another
   // session/agent are misleading, so reset on switch.
   useEffect(() => {
     setResult(null);
@@ -202,14 +200,16 @@ function PlanCard({ sessionId, agentId }: { sessionId: string; agentId: string }
     try {
       setError(null);
       const token = config.token.trim();
-      const messages = await fetchFullHistory({
-        baseUrl,
-        token: token === '' ? undefined : token,
-        sessionId,
-        agentId,
-      });
       const id = toolCallId.trim();
-      setResult(projectPlans(messages, id === '' ? undefined : id));
+      setResult(
+        await fetchTranscriptPlan({
+          baseUrl,
+          token: token === '' ? undefined : token,
+          sessionId,
+          agentId,
+          toolCallId: id === '' ? undefined : id,
+        }),
+      );
     } catch (error) {
       setResult(null);
       setError(error);
@@ -256,7 +256,7 @@ function PlanCard({ sessionId, agentId }: { sessionId: string; agentId: string }
   );
 }
 
-function PlanEntryView({ entry }: { entry: PlanInfo }) {
+function PlanEntryView({ entry }: { entry: TranscriptPlanInfo }) {
   const review = entry.review;
   return (
     <div className="mt-2">

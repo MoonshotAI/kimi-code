@@ -171,11 +171,22 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         }
       }
 
-      const prompt = await this.buildPrompt(args, store, state, mission, reviewTarget);
+      const reviewMission =
+        reviewTarget !== undefined ? resolveMissionByBranch(state, reviewTarget) : undefined;
+      const prompt = await this.buildPrompt(
+        args,
+        store,
+        state,
+        mission,
+        reviewTarget,
+        reviewMission,
+      );
       const description =
         mission !== undefined
-          ? `tower worker ${args.name}: ${mission.title}`
-          : `tower reviewer ${args.name}: ${reviewTarget ?? ''}`;
+          ? `${mission.id} ${args.name}: ${mission.title}`
+          : reviewMission !== undefined
+            ? `${reviewMission.id} review: ${reviewTarget ?? ''}`
+            : `review ${args.name}: ${reviewTarget ?? ''}`;
 
       const gate = this.rateLimit.acquire();
       if (!gate.ok) {
@@ -234,10 +245,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
           kind: args.kind,
           missionId: mission?.id,
           reviewTarget,
-          reviewMissionId:
-            reviewTarget !== undefined
-              ? resolveMissionByBranch(state, reviewTarget)?.id
-              : undefined,
+          reviewMissionId: reviewMission?.id,
           worktree: mission?.worktree,
           branch: mission?.branch,
           spawnedAt: new Date().toISOString(),
@@ -374,6 +382,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     state: TowerState,
     mission: TowerMission | undefined,
     reviewTarget: string | undefined,
+    targetMission: TowerMission | undefined,
   ): Promise<string> {
     const extra =
       args.instructions !== undefined && args.instructions.trim().length > 0
@@ -434,7 +443,6 @@ export class TowerSpawnTool implements ITowerSpawnTool {
       );
     }
     const target = reviewTarget ?? '';
-    const targetMission = resolveMissionByBranch(state, target);
     const author = targetMission?.owner;
     const reviewBase =
       targetMission !== undefined ? await store.diffBase(state, targetMission) : state.base;

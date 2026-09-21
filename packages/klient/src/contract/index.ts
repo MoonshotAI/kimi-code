@@ -28,6 +28,7 @@ import { authContract, authSummaryContract } from './global/auth.js';
 import { capabilitiesContract } from './global/capabilities.js';
 import { catalogContract } from './global/catalog.js';
 import { providerDiscoveryContract } from './global/providerDiscovery.js';
+import { registryImportContract } from './global/registryImport.js';
 import { configContract } from './global/config.js';
 import { envContract } from './global/env.js';
 import { filesContract } from './global/files.js';
@@ -57,6 +58,7 @@ export const globalContract: KlientContract = {
   modelService: modelsContract,
   modelResolver: catalogContract,
   providerDiscovery: providerDiscoveryContract,
+  modelsDevImport: registryImportContract,
   oauthService: authContract,
   authSummaryService: authSummaryContract,
   flagService: flagsContract,

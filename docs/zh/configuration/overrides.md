@@ -26,7 +26,7 @@ Kimi Code CLI 有三个地方可以影响运行参数：配置文件、命令行
 少数环境变量明确覆盖特定配置字段，例如 `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` 的优先级高于 `[background].keep_alive_on_exit`。这类例外在[环境变量](./env-vars.md)和[配置文件](./config-files.md)对应字段里都有标注。
 
 ::: warning
-**普通运行参数不会从 shell 环境变量取后备值。** 供应商的 `api_key` / `base_url` 只从 `config.toml`（包括 `[providers.<name>.env]` 子表）读取，不会回退到 shell 里 `export` 的变量。唯一的例外是显式的 `KIMI_MODEL_*` 通道，详见[用环境变量定义模型](./env-vars.md#用环境变量定义模型kimi_model_)。
+**普通运行参数不会从 shell 环境变量取后备值。** 供应商的 `api_key` / `base_url` 只从 `config.toml`（包括 `[providers.<name>.env]` 子表）读取，不会回退到 shell 里 `export` 的变量。例外有两处：`KIMI_MODEL_*` 系列和供应商的 `api_key_env` 字段，这两个显式通道*确实*会从 shell 读取凭证，详见[用环境变量定义模型](./env-vars.md#用环境变量定义模型kimi_model_)和[供应商凭证](#供应商凭证)。
 :::
 
 目前 CLI 只读取一份用户级配置文件，没有项目级配置文件机制。需要在不同项目间隔离配置时，用 `KIMI_CODE_HOME` 指向不同的数据目录，见下文[典型场景](#典型场景)。
@@ -37,9 +37,14 @@ Kimi Code CLI 有三个地方可以影响运行参数：配置文件、命令行
 
 对单个供应商，凭证按以下顺序解析：
 
-1. `[providers.<name>].api_key`：配置文件里直接写的密钥，优先级最高
-2. `[providers.<name>.env]` 子表里的对应键（`KIMI_API_KEY`、`ANTHROPIC_API_KEY` 等）：`api_key` 为空时才读这里
-3. 两者都缺 → 启动报错，提示该供应商缺少凭证
+1. `[providers.<name>].api_key`：配置文件里直接写的密钥
+2. `[providers.<name>].api_key_env`：指定一个 shell 环境变量名，从该变量读取密钥
+3. `[providers.<name>.env]` 子表里的对应键（`KIMI_API_KEY`、`ANTHROPIC_API_KEY` 等）：上面两个字段都不存在时才读这里
+4. 三者都缺 → 启动报错，提示该供应商缺少凭证
+
+`api_key` 和 `api_key_env` 是互斥的替代项，不是优先级回退链：只能设置其中一个——同时设置会被判为配置冲突，`api_key_env` 与 `oauth` 同设同样会被拒绝。
+
+`api_key_env` 是「不从 shell 环境变量取凭证」唯一有意开放的例外：密钥在每次请求时从进程自身的环境中重新读取，不会被缓存到进程生命周期之外，也不写进 `config.toml`。注意，运行中的进程只能看到它启动时的环境——轮换变量需要重启 kimi / TUI 或 kap-server 进程；在父 shell 里重新 `export` 只影响新启动的进程。声明了 `api_key_env` 但变量未设置或为空时，会快速失败并报错，指明供应商和变量名——会话就绪检查（print 模式、kap-server 会话创建）和请求发送时都会拦截——绝不静默忽略，也不回退到其他凭证来源。
 
 `base_url` 的解析方式相同：先读 `[providers.<name>].base_url`，再读 `[providers.<name>.env]` 里的 `*_BASE_URL` 键。
 

@@ -39,6 +39,8 @@ export type {
   GlobalPluginsFacade,
   GlobalSessionsFacade,
   GlobalWorkspacesFacade,
+  ImportCustomRegistryOptions,
+  ImportCustomRegistryResult,
   KlientEnvInfo,
   ModelCatalogItem,
   OAuthFlowSnapshot,

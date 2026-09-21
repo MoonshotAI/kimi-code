@@ -1,14 +1,17 @@
+import type { UserPromptOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 
 import {
   IAgentLifecycleService,
+  IAgentContextMemoryService,
   IFlagService,
   ISessionIndex,
   ISessionManager,
   ISessionMetadata,
   IAgentLoopService,
   TOWER_FLAG_ID,
+  flattenChain,
   followSessionLifecycles,
   getLiveSessionById,
   isTowerFeatureAssembled,
@@ -28,6 +31,7 @@ import {
   foldWireRecordFacts,
   groupMessagesIntoSnapshot,
   isPlainAgentId,
+  turnId as exportTurnKey,
   type AgentDescriptor,
   type ActivityMeta,
   type AgentTranscript,
@@ -39,7 +43,7 @@ import {
   type TranscriptTurn,
 } from '@moonshot-ai/transcript';
 
-import { readWireRecords, type ContextRecord } from './wireRecords';
+import { WireRecordCache, type ContextRecord } from './wireCache';
 import { toWireQuestion } from '../../protocol/question-wire';
 import { projectPromptContentParts } from '../messages/messageProjection';
 import {
@@ -48,6 +52,7 @@ import {
   type TranscriptBinding,
   type TranscriptBindingLogger,
 } from './coreBinding';
+import { allocateExportTurn } from './coreEventMap';
 
 const SESSIONS_ROOT = 'sessions';
 const AGENTS_DIR = 'agents';
@@ -67,6 +72,7 @@ interface LiveEntry {
   readonly ready: Promise<void>;
   readonly agentBackfills: Map<string, Promise<void>>;
   readonly opsJournals: Map<string, AgentOpsJournal>;
+  readonly undoGenerations: Map<string, number>;
 }
 
 interface AgentOpsJournal {
@@ -89,6 +95,7 @@ export class TranscriptService {
     Set<(event: TranscriptChangeEvent, seq: number) => void>
   >();
   private readonly healTimers = new Map<string, { ordinals: Set<number>; timer: NodeJS.Timeout }>();
+  private readonly wireCache = new WireRecordCache();
 
   constructor(private readonly deps: TranscriptServiceDeps) {
     followSessionLifecycles(deps.core.accessor, (service) => {
@@ -117,8 +124,12 @@ export class TranscriptService {
     const store = new TranscriptStore(sessionId);
     let binding: TranscriptBinding;
     try {
-      binding = bindSessionTranscript(store, session, this.deps.logger, (event) =>
-        this.handleLiveOps(sessionId, event),
+      binding = bindSessionTranscript(
+        store,
+        session,
+        this.deps.logger,
+        (event) => this.handleLiveOps(sessionId, event),
+        (agentId) => this.rebuildAfterUndo(sessionId, agentId),
       );
     } catch (error) {
       if (error instanceof Error && error.message === 'InstantiationService has been disposed') {
@@ -137,6 +148,7 @@ export class TranscriptService {
       })(),
       agentBackfills: new Map(),
       opsJournals: new Map(),
+      undoGenerations: new Map(),
     });
     return store;
   }
@@ -201,6 +213,7 @@ export class TranscriptService {
         this.deps.logger?.warn({ sessionId, agentId, gap: result.gap }, 'transcript: backfill append gap');
       }
       this.dispatchOps(sessionId, { agentId, ops });
+      this.live.get(sessionId)?.binding.syncFromStore(agentId);
     }
     const existing = store.agents().find((d) => d.agentId === agentId);
     const hasContent =
@@ -323,12 +336,49 @@ export class TranscriptService {
     const status = agent?.accessor.get(IAgentLoopService).snapshot();
     if (status?.state !== 'running' || status.activeTurnId === undefined) return undefined;
     const activePromptId = status.activePromptId;
-    const ordinal = status.activeTurnId;
-    const turnId = `t${ordinal}`;
-    const existing = transcript.getTurn(turnId);
-    const snapshotTurn = snapshot.items.find(
-      (item): item is TranscriptTurn => item.kind === 'turn' && item.ordinal === ordinal,
+    const wireId = status.activeTurnId;
+    const candidate = exportTurnKey(wireId);
+    const liveAtWire = transcript.getTurn(candidate);
+    const snapshotAtWire = snapshot.items.find(
+      (item): item is TranscriptTurn => item.kind === 'turn' && item.turnId === candidate,
     );
+    let snapshotTip: TranscriptTurn | undefined;
+    for (const item of snapshot.items) {
+      if (item.kind === 'turn') snapshotTip = item;
+    }
+    let liveRunning: TranscriptTurn | undefined;
+    for (const item of transcript.getItems()) {
+      if (item.kind === 'turn' && item.state === 'running') liveRunning = item;
+    }
+    const tipIsWire = snapshotTip !== undefined && snapshotTip.ordinal === wireId;
+    const adoptLive =
+      liveRunning !== undefined &&
+      (!snapshot.items.some((item) => item.kind === 'turn' && item.turnId === liveRunning.turnId) ||
+        liveRunning.turnId === snapshotTip?.turnId);
+    let turnId: string;
+    let ordinal: number;
+    let header: TranscriptTurn | undefined;
+    if (adoptLive && liveRunning !== undefined) {
+      turnId = liveRunning.turnId;
+      ordinal = liveRunning.ordinal;
+      header = liveRunning;
+    } else if (tipIsWire && snapshotTip !== undefined) {
+      turnId = snapshotTip.turnId;
+      ordinal = snapshotTip.ordinal;
+      header = transcript.getTurn(turnId) ?? snapshotTip;
+    } else {
+      let highWater = -1;
+      for (const item of transcript.getItems()) {
+        if (item.kind === 'turn' && item.ordinal > highWater) highWater = item.ordinal;
+      }
+      for (const item of snapshot.items) {
+        if (item.kind === 'turn' && item.ordinal > highWater) highWater = item.ordinal;
+      }
+      const alloc = allocateExportTurn(wireId, highWater, liveAtWire ?? snapshotAtWire, false);
+      turnId = alloc.turnId;
+      ordinal = alloc.ordinal;
+      header = transcript.getTurn(turnId);
+    }
     return {
       op: 'turn.upsert',
       turn: {
@@ -336,11 +386,11 @@ export class TranscriptService {
         turnId,
         ordinal,
         state: 'running',
-        triggerPromptId: existing?.triggerPromptId ?? snapshotTurn?.triggerPromptId ?? activePromptId,
-        origin: existing?.origin ?? snapshotTurn?.origin ?? { kind: 'other' },
-        prompt: existing?.prompt ?? snapshotTurn?.prompt,
-        attachmentIds: existing?.attachmentIds ?? snapshotTurn?.attachmentIds,
-        startedAt: existing?.startedAt ?? snapshotTurn?.startedAt,
+        triggerPromptId: header?.triggerPromptId ?? activePromptId,
+        origin: header?.origin ?? { kind: 'other' },
+        prompt: header?.prompt,
+        attachmentIds: header?.attachmentIds,
+        startedAt: header?.startedAt,
       },
     };
   }
@@ -358,6 +408,7 @@ export class TranscriptService {
         ? undefined
         : loop.promptHandle(snapshot.activePromptId);
     if (activeHandle !== undefined) {
+      const activeOrigin = activeHandle.message.origin;
       ops.push({
         op: 'prompt.upsert',
         prompt: {
@@ -366,6 +417,7 @@ export class TranscriptService {
           userMessageId: activeHandle.userMessageId,
           content: projectPromptContentParts(activeHandle.message.content),
           createdAt: activeHandle.createdAt,
+          clientMetadata: activeOrigin?.kind === 'user' || activeOrigin?.kind === 'skill_activation' ? activeOrigin.clientMetadata : undefined,
         },
       });
     }
@@ -379,10 +431,50 @@ export class TranscriptService {
           userMessageId: item.meta?.userMessageId ?? '',
           content: projectPromptContentParts(item.message.content),
           createdAt: item.meta?.createdAt ?? '',
+          clientMetadata: (item.meta?.origin as UserPromptOrigin | undefined)?.clientMetadata,
         },
       });
     }
     return ops;
+  }
+
+  private async rebuildAfterUndo(sessionId: string, agentId: string): Promise<void> {
+    const entry = this.live.get(sessionId);
+    if (entry === undefined) return;
+    entry.undoGenerations.set(agentId, (entry.undoGenerations.get(agentId) ?? 0) + 1);
+    const key = `${sessionId}:${agentId}`;
+    const pending = this.healTimers.get(key);
+    if (pending !== undefined) {
+      clearTimeout(pending.timer);
+      this.healTimers.delete(key);
+    }
+    await entry.ready;
+    await entry.agentBackfills.get(agentId);
+    let snapshot: AgentTranscriptSnapshot | undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        snapshot = await this.readColdSnapshot(sessionId, agentId);
+        if (snapshot !== undefined) break;
+      } catch (error) {
+        this.deps.logger?.warn(
+          { sessionId, agentId, err: error instanceof Error ? error.message : error },
+          'transcript: undo history read failed',
+        );
+      }
+    }
+    if (snapshot === undefined) {
+      const agent = getLiveSessionById(this.deps.core.accessor, sessionId)
+        ?.accessor.get(IAgentLifecycleService).handleOf(agentId);
+      if (agent !== undefined) {
+        const current = entry.store.ensureAgent(agentId).snapshot();
+        const retained = groupMessagesIntoSnapshot(agent.accessor.get(IAgentContextMemoryService).get());
+        snapshot = { ...current, items: retained.items, attachments: retained.attachments, prompts: [] };
+      }
+    }
+    if (snapshot === undefined || this.live.get(sessionId) !== entry) return;
+    const ops: TranscriptOperation[] = [{ op: 'reset', agentId, snapshot }];
+    entry.store.ensureAgent(agentId).apply(ops);
+    this.dispatchOps(sessionId, { agentId, ops });
   }
 
   private async healEndedTurns(
@@ -392,6 +484,7 @@ export class TranscriptService {
   ): Promise<void> {
     const entry = this.live.get(sessionId);
     if (entry === undefined) return;
+    const generation = entry.undoGenerations.get(agentId) ?? 0;
     let snapshot: AgentTranscriptSnapshot | undefined;
     try {
       snapshot = await this.readColdSnapshot(sessionId, agentId);
@@ -403,6 +496,7 @@ export class TranscriptService {
       return;
     }
     if (snapshot === undefined || this.live.get(sessionId)?.store !== entry.store) return;
+    if ((entry.undoGenerations.get(agentId) ?? 0) !== generation) return;
     const transcript = entry.store.getAgent(agentId);
     if (transcript === undefined) return;
     const turnOps: TranscriptOperation[] = [];
@@ -461,9 +555,9 @@ export class TranscriptService {
       agentId,
       WIRE_FILE,
     );
-    let records: Awaited<ReturnType<typeof readWireRecords>>;
+    let records: ContextRecord[];
     try {
-      records = await readWireRecords(wirePath);
+      records = flattenChain(await this.wireCache.read(wirePath));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return groupMessagesIntoSnapshot([]);
@@ -473,7 +567,13 @@ export class TranscriptService {
     const messages = [...reduceContextTranscript(records).entries];
     const taskOriginTurnTaskIds = new Set<string>();
     const steeredContents = new Map<string, Map<string, number>>();
-    const anchorStack: { taskIdsSnapshot: Set<string> }[] = [];
+    const pendingSteers = new Map<string, Map<string, number>>();
+    const matchedSteers: (
+      | { messageId: string; promptIds: readonly string[] }
+      | { key: string; kind: string }
+    )[] = [];
+    const turnPromptIds = new Set<string>();
+    const anchorStack: { taskIdsSnapshot: Set<string>; steerCount: number }[] = [];
     let anchorFloor = 0;
     let sawTurnPrompt = false;
     for (const record of records) {
@@ -481,6 +581,7 @@ export class TranscriptService {
         const count = typeof record['count'] === 'number' ? (record['count'] as number) : 0;
         for (let i = 0; i < count && anchorStack.length > anchorFloor; i++) {
           const popped = anchorStack.pop()!;
+          matchedSteers.length = popped.steerCount;
           taskOriginTurnTaskIds.clear();
           for (const id of popped.taskIdsSnapshot) taskOriginTurnTaskIds.add(id);
         }
@@ -493,24 +594,41 @@ export class TranscriptService {
       if (record.type === 'context.append_message') {
         const message = (record as { message?: ContextMessage }).message;
         if (message !== undefined && isUndoAnchor(message)) {
-          anchorStack.push({ taskIdsSnapshot: new Set(taskOriginTurnTaskIds) });
+          anchorStack.push({ taskIdsSnapshot: new Set(taskOriginTurnTaskIds), steerCount: matchedSteers.length });
+        }
+        if (message?.role === 'user') {
+          const key = JSON.stringify(message.content);
+          const kind = message.origin?.kind ?? 'user';
+          const pendingByKind = pendingSteers.get(key);
+          const remaining = pendingByKind?.get(kind) ?? 0;
+          if (remaining > 0) {
+            pendingByKind!.set(kind, remaining - 1);
+            matchedSteers.push({ key, kind });
+          }
         }
         continue;
       }
       if (record.type === 'turn.steer') {
+        const messageId = record['messageId'];
+        if (typeof messageId === 'string' && messageId.length > 0) {
+          matchedSteers.push({ messageId, promptIds: promptIdsFromSteerRecord(record) });
+          continue;
+        }
         const input = record['input'];
         if (Array.isArray(input)) {
           const key = JSON.stringify(input);
           const steerOrigin = (record as { origin?: { kind?: unknown } }).origin?.kind;
           const kind = typeof steerOrigin === 'string' ? steerOrigin : 'user';
-          const byKind = steeredContents.get(key) ?? new Map<string, number>();
+          const byKind = pendingSteers.get(key) ?? new Map<string, number>();
           byKind.set(kind, (byKind.get(kind) ?? 0) + 1);
-          steeredContents.set(key, byKind);
+          pendingSteers.set(key, byKind);
         }
         continue;
       }
       if (record.type !== 'turn.prompt') continue;
       sawTurnPrompt = true;
+      const promptId = (record as { promptId?: unknown }).promptId;
+      if (typeof promptId === 'string') turnPromptIds.add(promptId);
       const origin = (record as { origin?: { kind?: unknown; taskId?: unknown } }).origin;
       if (origin === undefined) continue;
       if (
@@ -520,9 +638,21 @@ export class TranscriptService {
         taskOriginTurnTaskIds.add(origin.taskId);
       }
     }
+    const steeredByMessageId = new Map<string, readonly string[]>();
+    for (const steer of matchedSteers) {
+      if ('messageId' in steer) {
+        steeredByMessageId.set(steer.messageId, steer.promptIds);
+        continue;
+      }
+      const byKind = steeredContents.get(steer.key) ?? new Map<string, number>();
+      byKind.set(steer.kind, (byKind.get(steer.kind) ?? 0) + 1);
+      steeredContents.set(steer.key, byKind);
+    }
     const base = groupMessagesIntoSnapshot(
       messages,
-      sawTurnPrompt || steeredContents.size > 0 ? { taskOriginTurnTaskIds, steeredContents } : undefined,
+      sawTurnPrompt || steeredContents.size > 0 || steeredByMessageId.size > 0
+        ? { taskOriginTurnTaskIds, steeredContents, steeredByMessageId, turnPromptIds }
+        : undefined,
     );
     const folded = foldWireRecordFacts(projectQuestionInteractionRecords(records, sessionId), base, {
       resolvePlanRevisionKey: (key) =>
@@ -754,4 +884,10 @@ export function healTurnOps(
     }
   }
   return ops;
+}
+
+function promptIdsFromSteerRecord(record: ContextRecord): readonly string[] {
+  const value = record['promptIds'];
+  if (!Array.isArray(value)) return [];
+  return value.filter((id): id is string => typeof id === 'string' && id.length > 0);
 }

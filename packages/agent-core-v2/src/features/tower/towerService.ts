@@ -23,6 +23,7 @@ import { IFeatureManager } from '#/app/feature/featureManager';
 import { LifecycleScope } from '#/app/scopes';
 import { IFlagService } from '#/app/flag/flag';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionActivityView } from '#/session/sessionActivity/sessionActivity';
 import { isWithinDirectory } from '#/tool/path-access';
@@ -51,6 +52,7 @@ import {
   TOWER_TOOL_NAMES,
   TOWER_WORKER_PROFILE,
   type TowerEnterResult,
+  type TowerExitReason,
 } from './tower';
 import { isTowerFeatureAssembled } from './towerFeature';
 import { TowerInboxSent, TowerModeEnter, TowerModeExit, towerBaseKey, towerKey, towerOwnerKey } from './towerOps';
@@ -75,6 +77,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @ISessionContext private readonly sessionCtx: ISessionContext,
     @IFlagService private readonly flags: IFlagService,
     @ISessionManager private readonly sessions: ISessionManager,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
     @IFeatureManager featureManager: IFeatureManager,
     @IConfigService config: IConfigService,
     @IAgentReminderService reminder: IAgentReminderService,
@@ -248,6 +251,15 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   }
 
   async enter(base?: string): Promise<TowerEnterResult> {
+    const result = await this.resolveEnter(base);
+    this.telemetry.track2('tower_mode_enter', {
+      outcome: result.entered ? 'entered' : 'rejected',
+      reason: result.entered ? undefined : result.reason,
+    });
+    return result;
+  }
+
+  private async resolveEnter(base?: string): Promise<TowerEnterResult> {
     if (this.agentCtx.agentId !== 'main') return { entered: false, reason: 'not-main-agent' };
     if (!this.flags.enabled(TOWER_FLAG_ID)) return { entered: false, reason: 'experiment-off' };
     if (!isTowerFeatureAssembled(this.flags)) return { entered: false, reason: 'feature-not-assembled' };
@@ -273,7 +285,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
           .get(IAgentLifecycleService)
           .handleOf('main')
           ?.accessor.get(IAgentTowerService)
-          .exit();
+          .exit('takeover');
       }
     }
     await this.adoptTowerRoster();
@@ -352,11 +364,12 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     );
   }
 
-  async exit(): Promise<void> {
+  async exit(reason: TowerExitReason = 'user'): Promise<void> {
     if (!this.agentState.get(towerKey)) return;
     this.lastPublished = false;
     this.dropInboxWake();
     void this.dispatcher.dispatch(new TowerModeExit({ agentId: this.agentCtx.agentId }));
+    this.telemetry.track2('tower_mode_exit', { reason });
     await this.releaseTowerOwnership();
   }
 
@@ -410,11 +423,11 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         this.log.warn(
           `failed to adopt tower workspace roster on restore: ${error instanceof Error ? error.message : String(error)}`,
         );
-        await this.exit();
+        await this.exit('foreign-reconcile');
       }
       return;
     }
-    void this.exit();
+    void this.exit('foreign-reconcile');
   }
 
   private async resolveTowerOwner(): Promise<string | undefined> {
