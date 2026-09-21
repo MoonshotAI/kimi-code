@@ -48,9 +48,19 @@ export async function scanCodebase(
   const root = resolve(rootInput);
   const limits = resolveLimits(options.limits);
   throwIfAborted(options.signal);
-  const usedGitIgnore = await isInsideGitWorkTree(root);
+  const configArgs = hardenedGitConfigArgs('git', root);
+  if (configArgs === null) {
+    return {
+      root,
+      files: [],
+      fingerprint: fingerprintFiles([]),
+      usedGitIgnore: false,
+      exceedsLimit: undefined,
+    };
+  }
+  const usedGitIgnore = await isInsideGitWorkTree(root, configArgs);
   const collected = usedGitIgnore
-    ? await scanWithGit(root, limits, options.signal)
+    ? await scanWithGit(root, configArgs, limits, options.signal)
     : await scanWithoutFilter(root, limits, options.signal);
   const sortedFiles = collected.files.toSorted((a, b) => a.path.localeCompare(b.path));
 
@@ -71,9 +81,10 @@ function resolveLimits(limits: ScanCodebaseOptions['limits']): ScanCodebaseLimit
   };
 }
 
-async function isInsideGitWorkTree(root: string): Promise<boolean> {
-  const configArgs = hardenedGitConfigArgs('git', root);
-  if (configArgs === null) return false;
+async function isInsideGitWorkTree(
+  root: string,
+  configArgs: readonly string[],
+): Promise<boolean> {
   try {
     const { stdout } = await execFileAsync('git', [
       ...configArgs,
@@ -90,13 +101,10 @@ async function isInsideGitWorkTree(root: string): Promise<boolean> {
 
 async function scanWithGit(
   root: string,
+  configArgs: readonly string[],
   limits: ScanCodebaseLimits,
   signal?: AbortSignal,
 ): Promise<CollectedFiles> {
-  const configArgs = hardenedGitConfigArgs('git', root);
-  if (configArgs === null) {
-    return { files: [], exceedsLimit: undefined };
-  }
   const { stdout } = await execFileAsync(
     'git',
     [

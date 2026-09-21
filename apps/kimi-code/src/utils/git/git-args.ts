@@ -102,6 +102,14 @@ function gitConfigStamp(workDir: string): string | null {
       if (commonDir.length > 0) configPaths.push(join(resolve(gitDir, commonDir), 'config'));
     } catch {
     }
+    for (const path of configPaths) {
+      let content: string | null = null;
+      try {
+        content = readFileSync(path, 'utf8');
+      } catch {
+      }
+      if (content !== null && content.includes('include')) return null;
+    }
     return configPaths.map(stampConfigPath).join('|');
   } catch {
     return null;

@@ -1099,4 +1099,21 @@ describe('GlobTool symlink escape', () => {
     expect(result.isError).not.toBe(true);
     expect(spawn).toHaveBeenCalled();
   });
+
+  it('allows searching when the workspace directory has a sensitive name', async () => {
+    const credDir = path.join(tmpDir, 'credentials');
+    await fs.mkdir(credDir);
+    await fs.writeFile(path.join(credDir, 'a.ts'), '');
+    const spawn = execReturning('');
+    const tool = new GlobTool(
+      createRuntime(new HostFileSystem(), createTestEnv(), createTestProcessService(spawn)),
+      stubWorkspaceContext(credDir),
+      noopTelemetryService,
+    );
+
+    const result = await execute(tool, { pattern: '*.ts' });
+
+    expect(result.isError).not.toBe(true);
+    expect(spawn).toHaveBeenCalled();
+  });
 });

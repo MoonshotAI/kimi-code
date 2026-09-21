@@ -105,6 +105,10 @@ async function gitConfigStamp(cwd: string): Promise<string | null> {
     } catch {
     }
     const stamps = await Promise.all(configPaths.map(stampConfigPath));
+    for (const path of configPaths) {
+      const content = await readFile(path, 'utf8').catch(() => null);
+      if (content !== null && content.includes('include')) return null;
+    }
     return stamps.join('|');
   } catch {
     return null;

@@ -366,6 +366,46 @@ describe('git status cache', () => {
     }
   });
 
+  it('does not cache filter probes when the repo config uses includes', () => {
+    const root = mkdtempSync(join(tmpdir(), 'git-status-includes-'));
+    mkdirSync(join(root, '.git'), { recursive: true });
+    writeFileSync(
+      join(root, '.git', 'config'),
+      '[include]\n\tpath = extra.config\n[filter "evil"]\n\tclean = touch /tmp/m\n',
+    );
+    mocks.execFile.mockImplementation(
+      (
+        _cmd: string,
+        _args: string[],
+        _options: unknown,
+        callback: (error: Error | null, stdout: string, stderr: string) => void,
+      ) => {
+        callback(new Error('no pull request'), '', '');
+      },
+    );
+    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
+      if (args.includes('config')) return { status: 0, stdout: 'filter.evil.clean touch /tmp/m\n' };
+      if (args.includes('rev-parse')) return { status: 0, stdout: 'true\n' };
+      if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
+      if (args.includes('status')) return { status: 0, stdout: '## main...origin/main\n' };
+      return { status: 1, stdout: '' };
+    });
+
+    try {
+      const probeCount = () =>
+        mocks.spawnSync.mock.calls.filter((call) => (call[1] as string[]).includes('config'))
+          .length;
+      const cache = createGitStatusCache(root, { trusted: true });
+      cache.getStatus();
+      const afterFirst = probeCount();
+      expect(afterFirst).toBe(2);
+      cache.getStatus();
+      expect(probeCount()).toBe(afterFirst + 2);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('fails closed when the filter config probe errors', () => {
     mocks.execFile.mockImplementation(
       (

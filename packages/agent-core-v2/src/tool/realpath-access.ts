@@ -71,15 +71,20 @@ async function realRoots(
   return roots;
 }
 
+export interface RealPathAccessOptions {
+  readonly checkSensitive?: boolean;
+}
+
 export async function assertRealPathWithinWorkspace(
   fs: IHostFileSystem,
   absPath: string,
   workspace: WorkspaceConfig,
   pathClass: PathClass,
+  options?: RealPathAccessOptions,
 ): Promise<string> {
   if (!isWithinWorkspace(absPath, workspace, pathClass)) return absPath;
   const resolved = await realpathExistingPrefix(fs, absPath);
-  if (isSensitiveFile(resolved)) {
+  if (options?.checkSensitive !== false && isSensitiveFile(resolved)) {
     throw new PathSecurityError(
       'PATH_SENSITIVE',
       absPath,
@@ -122,9 +127,10 @@ export async function checkRealPathWithinWorkspace(
   absPath: string,
   workspace: WorkspaceConfig,
   pathClass: PathClass,
+  options?: RealPathAccessOptions,
 ): Promise<PathSecurityError | undefined> {
   try {
-    await assertRealPathWithinWorkspace(fs, absPath, workspace, pathClass);
+    await assertRealPathWithinWorkspace(fs, absPath, workspace, pathClass, options);
     return undefined;
   } catch (error) {
     if (error instanceof PathSecurityError) return error;
