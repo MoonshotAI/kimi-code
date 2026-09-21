@@ -1,5 +1,5 @@
 import { mkdtempSync } from 'node:fs';
-import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 import { join } from 'pathe';
@@ -56,6 +56,20 @@ describe('FileProjectLocalConfigService additional_dir scope', () => {
     await writeLocalToml(['/']);
 
     await expect(createService().readAdditionalDirs(workDir)).rejects.toMatchObject({
+      code: 'config.invalid',
+    });
+  });
+
+  it('rejects an additional_dir that is the real target of a symlinked home directory', async () => {
+    const realHome = await mkdtemp(join(tmpdir(), 'kimi-local-config-realhome-'));
+    cleanupDirs.push(realHome);
+    const homeLink = join(workDir, 'home-link');
+    await symlink(realHome, homeLink);
+    const bootstrap = { _serviceBrand: undefined, osHomeDir: homeLink } as IBootstrapService;
+    const service = new FileProjectLocalConfigService(bootstrap, new HostFileSystem());
+    await writeLocalToml([realHome]);
+
+    await expect(service.readAdditionalDirs(workDir)).rejects.toMatchObject({
       code: 'config.invalid',
     });
   });

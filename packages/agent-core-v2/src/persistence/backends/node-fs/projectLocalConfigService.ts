@@ -202,7 +202,6 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     const homeDir = normalize(this.bootstrap.osHomeDir);
     if (resolvedDir === homeDir || dirname(resolvedDir) === resolvedDir) return true;
     const realDir = await this.realpathOrLexical(resolvedDir);
-    if (realDir === resolvedDir) return false;
     if (dirname(realDir) === realDir) return true;
     return realDir === (await this.realpathOrLexical(homeDir));
   }

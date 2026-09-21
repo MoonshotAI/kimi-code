@@ -143,11 +143,13 @@ describe('collectGitContext', () => {
     for (const call of spawn.mock.calls) {
       expect(call[0]).toBe('git');
       const args = call[1] as readonly string[];
-      expect(args.slice(0, 6)).toEqual([
+      expect(args.slice(0, 8)).toEqual([
         '-c',
         'core.fsmonitor=false',
         '-c',
         `core.hooksPath=${nullDevice}`,
+        '-c',
+        'commit.gpgSign=false',
         '-C',
         '/repo',
       ]);
@@ -156,7 +158,7 @@ describe('collectGitContext', () => {
 
   it('neutralizes repo-configured filter drivers on every git invocation', async () => {
     const { process: hostProcess, spawn } = gitRunner({
-      'config --local --get-regexp ^filter\\.': {
+      'config --local --get-regexp ^(filter|merge)\\.': {
         stdout: 'filter.evil.clean touch /tmp/marker\nfilter.evil.process evil-helper\n',
       },
       'rev-parse --is-inside-work-tree': { stdout: 'true' },
@@ -175,10 +177,10 @@ describe('collectGitContext', () => {
 
   it('neutralizes filter drivers from both local and worktree config scopes', async () => {
     const { process: hostProcess, spawn } = gitRunner({
-      'config --local --get-regexp ^filter\\.': {
-        stdout: 'filter.evil.clean touch /tmp/marker\n',
+      'config --local --get-regexp ^(filter|merge)\\.': {
+        stdout: 'filter.evil.clean touch /tmp/marker\nfilter.evil.smudge cat\nmerge.evil.driver false\n',
       },
-      'config --worktree --get-regexp ^filter\\.': {
+      'config --worktree --get-regexp ^(filter|merge)\\.': {
         stdout: 'filter.wt.process evil-helper\n',
       },
       'rev-parse --is-inside-work-tree': { stdout: 'true' },
@@ -192,8 +194,11 @@ describe('collectGitContext', () => {
     for (const args of hardened) {
       expect(args).toContain('filter.evil.clean=');
       expect(args).toContain('filter.evil.process=');
+      expect(args).toContain('filter.evil.smudge=');
       expect(args).toContain('filter.wt.clean=');
       expect(args).toContain('filter.wt.process=');
+      expect(args).toContain('filter.wt.smudge=');
+      expect(args).toContain('merge.evil.driver=');
     }
   });
 

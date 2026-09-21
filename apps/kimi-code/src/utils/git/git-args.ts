@@ -9,6 +9,8 @@ export const GIT_CONFIG_ARGS: readonly string[] = [
   'core.fsmonitor=false',
   '-c',
   `core.hooksPath=${NULL_DEVICE}`,
+  '-c',
+  'commit.gpgSign=false',
 ];
 
 export const GIT_DIFF_ARGS: readonly string[] = ['--no-ext-diff', '--no-textconv'];
@@ -36,24 +38,38 @@ export function hardenedGitConfigArgs(git: string, workDir: string): readonly st
 
 function probeFilterArgs(git: string, workDir: string): readonly string[] | null {
   try {
-    const drivers = new Set<string>();
+    const filterDrivers = new Set<string>();
+    const mergeDrivers = new Set<string>();
     for (const scope of ['--local', '--worktree']) {
       const result = spawnSync(
         git,
-        [...GIT_CONFIG_ARGS, '-C', workDir, 'config', scope, '--get-regexp', '^filter\\.'],
+        [...GIT_CONFIG_ARGS, '-C', workDir, 'config', scope, '--get-regexp', '^(filter|merge)\\.'],
         { encoding: 'utf8', timeout: FILTER_PROBE_TIMEOUT_MS, maxBuffer: FILTER_PROBE_MAX_BYTES },
       );
       if (result.error !== undefined || result.status === null) return null;
       if (result.status !== 0 || typeof result.stdout !== 'string') continue;
       for (const line of result.stdout.split('\n')) {
-        const match = /^filter\.(.+)\.(?:clean|process)(?:\s|$)/.exec(line);
-        const driver = match?.[1];
-        if (driver !== undefined) drivers.add(driver);
+        const filter = /^filter\.(.+)\.(?:clean|process|smudge)(?:\s|$)/.exec(line);
+        const filterDriver = filter?.[1];
+        if (filterDriver !== undefined) filterDrivers.add(filterDriver);
+        const merge = /^merge\.(.+)\.driver(?:\s|$)/.exec(line);
+        const mergeDriver = merge?.[1];
+        if (mergeDriver !== undefined) mergeDrivers.add(mergeDriver);
       }
     }
     const args: string[] = [];
-    for (const driver of drivers) {
-      args.push('-c', `filter.${driver}.clean=`, '-c', `filter.${driver}.process=`);
+    for (const driver of filterDrivers) {
+      args.push(
+        '-c',
+        `filter.${driver}.clean=`,
+        '-c',
+        `filter.${driver}.process=`,
+        '-c',
+        `filter.${driver}.smudge=`,
+      );
+    }
+    for (const driver of mergeDrivers) {
+      args.push('-c', `merge.${driver}.driver=`);
     }
     return args;
   } catch {
