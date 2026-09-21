@@ -1,13 +1,14 @@
-import { Markdown, visibleWidth } from '@moonshot-ai/pi-tui';
+import { visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import * as cliHighlight from 'cli-highlight';
 import { describe, expect, it, vi } from 'vitest';
 
+import { Markdown } from '#/tui/components/markdown/markdown';
 import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import { currentTheme } from '#/tui/theme/theme';
-import { setMarkdownRenderLatex } from '#/tui/utils/markdown-options';
+import { setMarkdownAltScreenActive, setMarkdownRenderLatex } from '#/tui/utils/markdown-options';
 
 import { captureProcessWrite } from '../../../helpers/process';
 
@@ -18,6 +19,12 @@ vi.mock('cli-highlight', async () => {
     highlight: vi.fn(actual.highlight),
   };
 });
+
+const clipboardMock = vi.hoisted(() => ({
+  copyTextToClipboard: vi.fn(),
+}));
+
+vi.mock('#/utils/clipboard/clipboard-text', () => clipboardMock);
 
 function strip(text: string): string {
   return text
@@ -169,6 +176,93 @@ describe('AssistantMessageComponent', () => {
       expect(strip(component.render(80).join('\n'))).toContain('$E = mc^2$');
     } finally {
       setMarkdownRenderLatex(true);
+    }
+  });
+
+  it('forwards mouse clicks into the markdown subtree using the render geometry', async () => {
+    const component = new AssistantMessageComponent();
+    clipboardMock.copyTextToClipboard.mockClear();
+    clipboardMock.copyTextToClipboard.mockResolvedValue('native');
+    try {
+      setMarkdownAltScreenActive(true);
+      component.updateContent('```mermaid\nflowchart LR\n  A-->B\n```\n');
+      const lines = component.render(80);
+
+      const press = component.handleMouse({
+        type: 'press',
+        button: 'left',
+        x: 3,
+        y: lines.length - 1,
+        screenX: 3,
+        screenY: lines.length - 1,
+        width: 80,
+        height: lines.length,
+        shift: false,
+        alt: false,
+        ctrl: false,
+      });
+      expect(press?.capture).toBe(true);
+
+      const result = component.handleMouse({
+        type: 'release',
+        button: 'left',
+        x: 3,
+        y: lines.length - 1,
+        screenX: 3,
+        screenY: lines.length - 1,
+        width: 80,
+        height: lines.length,
+        shift: false,
+        alt: false,
+        ctrl: false,
+      });
+
+      expect(result?.handled).toBe(true);
+      await vi.waitFor(() => {
+        expect(clipboardMock.copyTextToClipboard).toHaveBeenCalled();
+      });
+      const copied = String(clipboardMock.copyTextToClipboard.mock.calls[0]?.[0] ?? '');
+      expect(copied).toContain('flowchart LR');
+      expect(copied).not.toContain('```');
+    } finally {
+      setMarkdownAltScreenActive(false);
+    }
+  });
+
+  it('reflects copy-chip state changes through the render cache', async () => {
+    const component = new AssistantMessageComponent();
+    clipboardMock.copyTextToClipboard.mockClear();
+    clipboardMock.copyTextToClipboard.mockResolvedValue('native');
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    try {
+      setMarkdownAltScreenActive(true);
+      component.updateContent('```mermaid\nflowchart LR\n  A-->B\n```\n');
+      const before = component.render(80);
+
+      const mouse = (type: 'press' | 'release') => ({
+        type,
+        button: 'left' as const,
+        x: 3,
+        y: before.length - 1,
+        screenX: 3,
+        screenY: before.length - 1,
+        width: 80,
+        height: before.length,
+        shift: false,
+        alt: false,
+        ctrl: false,
+      });
+      component.handleMouse(mouse('press'));
+      expect(component.render(80).join('\n')).not.toBe(before.join('\n'));
+
+      component.handleMouse(mouse('release'));
+      await vi.waitFor(() => {
+        expect(strip(component.render(80).join('\n'))).toContain('[Copied]');
+      });
+    } finally {
+      chalk.level = previousLevel;
+      setMarkdownAltScreenActive(false);
     }
   });
 });

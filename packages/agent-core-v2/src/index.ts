@@ -571,6 +571,8 @@ export * from '#/persistence/backends/node-fs/blobStoreService';
 export * from '#/persistence/backends/node-fs/projectLocalConfigService';
 export * from '#/persistence/configSection';
 import '#/persistence/configSection';
+export * from '#/app/watch/configSection';
+import '#/app/watch/configSection';
 export * from '#/persistence/backends/minidb/miniDbQueryStore';
 export * from '#/persistence/backends/memory/inMemoryStorageService';
 export * from '#/agent/tools/web-search/web-search';

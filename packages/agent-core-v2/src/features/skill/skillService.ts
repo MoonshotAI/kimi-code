@@ -94,6 +94,7 @@ export class AgentSkillService implements IAgentSkillService {
         skillSource: skill.source,
         skillArgs: input.args,
         attachments: input.attachments,
+        clientMetadata: input.clientMetadata,
       },
       content,
     );
@@ -140,7 +141,7 @@ export class AgentSkillService implements IAgentSkillService {
           eventService: this.eventService,
           sessionId: this.sessionContext.sessionId,
         },
-        promptMetadataTextFromContentParts(input.input),
+        promptMetadataTextFromContentParts(input.input, input.clientMetadata),
       );
     }
     for (const activation of prepared) {
@@ -156,6 +157,7 @@ export class AgentSkillService implements IAgentSkillService {
         origin: {
           kind: 'user',
           skillActivations: prepared.map((activation) => activation.entry),
+          clientMetadata: input.clientMetadata,
           attachments: input.attachments,
         } as PromptOrigin,
         tracked: true,

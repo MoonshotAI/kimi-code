@@ -1,4 +1,5 @@
 import { auth, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
+import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 
 import type { ILogger as Logger } from '#/_base/log/log';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
@@ -500,6 +501,30 @@ export class McpOAuthService {
     return this.getProvider(serverName, serverUrl).clearCredentials(scope);
   }
 
+  invalidateTokensIfCurrent(
+    serverName: string,
+    serverUrl: string | URL,
+    expected: OAuthTokens,
+  ): Promise<boolean> {
+    return this.getProvider(serverName, serverUrl).clearTokensIfCurrent(expected);
+  }
+
+  async peekRejectedGrant(
+    serverName: string,
+    serverUrl: string | URL,
+    connectedAt?: number,
+  ): Promise<{ readonly tokens: StoredMcpOAuthTokens; readonly concurrent: boolean } | undefined> {
+    const tokens = (await this.getProvider(serverName, serverUrl).tokens()) as
+      | StoredMcpOAuthTokens
+      | undefined;
+    if (tokens === undefined) return undefined;
+    return { tokens, concurrent: isConcurrentGrant(tokens, this.scheduler.now(), connectedAt) };
+  }
+
+  now(): number {
+    return this.scheduler.now();
+  }
+
   forgetProvider(serverName: string, serverUrl: string | URL): void {
     this.providers.delete(mcpOAuthStoreKey(serverName, serverUrl));
   }
@@ -652,6 +677,15 @@ async function readStoreMeta(
     return undefined;
   }
   return { serverName, serverUrl };
+}
+
+const CONCURRENT_GRANT_GRACE_MS = 10_000;
+
+function isConcurrentGrant(tokens: StoredMcpOAuthTokens, now: number, connectedAt?: number): boolean {
+  if (typeof tokens.obtained_at !== 'number') return false;
+  const age = now - tokens.obtained_at;
+  if (age < 0 || age >= CONCURRENT_GRANT_GRACE_MS) return false;
+  return connectedAt === undefined || tokens.obtained_at >= connectedAt;
 }
 
 function wrapAuthError(prefix: string, error: unknown): Error2 {

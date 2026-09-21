@@ -28,6 +28,7 @@ import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { type ActionTable, runAction } from './action-dispatch';
+import { interactionAgentId } from './approvals';
 import { parseActionSuffix } from './action-suffix';
 
 interface QuestionRouteHost {
@@ -89,7 +90,7 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
         resolved: false,
         tags: { [INTERACTION_TAG_SESSION_ID]: session_id },
       });
-      const items = pending.map((i) => toWireQuestion(i, session_id));
+      const items = pending.map((i) => toWireQuestion(i, session_id, interactionAgentId(i)));
       reply.send(okEnvelope({ items }, req.id));
     },
   );

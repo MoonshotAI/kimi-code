@@ -45,6 +45,7 @@ describe('server-v2 /api/v1/workspaces', () => {
 
   beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-'));
+    process.env['KIMI_CODE_WATCH'] = '1';
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
@@ -64,6 +65,7 @@ describe('server-v2 /api/v1/workspaces', () => {
       await rm(home, { recursive: true, force: true });
       home = undefined;
     }
+    delete process.env['KIMI_CODE_WATCH'];
   });
 
   async function postJson<T>(

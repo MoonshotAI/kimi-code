@@ -8,7 +8,9 @@ import {
   type PluginSummary,
   type Session,
 } from '@moonshot-ai/kimi-code-sdk';
-import { Markdown, Spacer } from '@moonshot-ai/pi-tui';
+import { Spacer } from '@moonshot-ai/pi-tui';
+
+import { Markdown } from '#/tui/components/markdown/markdown';
 
 import {
   PluginInstallTrustConfirmComponent,
@@ -592,7 +594,10 @@ async function installCapabilityFromPanel(
     host.showNotice(`${label} is installed.`);
     host.state.transcriptContainer.addChild(new Spacer(1));
     host.state.transcriptContainer.addChild(
-      new Markdown(WEBBRIDGE_POST_INSTALL_MARKDOWN, 2, 0, createMarkdownTheme(), undefined, createMarkdownOptions()),
+      new Markdown(WEBBRIDGE_POST_INSTALL_MARKDOWN, 2, 0, createMarkdownTheme(), undefined, {
+        ...createMarkdownOptions(),
+        copySource: true,
+      }),
     );
     host.state.ui.requestRender();
     return;

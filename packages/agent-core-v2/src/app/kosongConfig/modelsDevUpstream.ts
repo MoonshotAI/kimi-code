@@ -85,7 +85,7 @@ async function fetchAndCache(userAgent: string): Promise<ModelsDevCatalog> {
     }
     cache = { catalog: payload as ModelsDevCatalog, fetchedAt: now };
     return cache.catalog;
-  } catch (err) {
+  } catch (error) {
     if (cache !== undefined) return cache.catalog;
     const builtIn = builtInCatalog();
     if (builtIn !== undefined) {
@@ -94,7 +94,7 @@ async function fetchAndCache(userAgent: string): Promise<ModelsDevCatalog> {
     }
     throw new Error2(
       ModelsDevImportErrors.codes.CATALOG_UNAVAILABLE,
-      `models.dev catalog unavailable: ${err instanceof Error ? err.message : String(err)}`,
+      `models.dev catalog unavailable: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }
@@ -150,6 +150,7 @@ export function toModelsDevProviderItem(
       return {
         ...base,
         wire_type: resolution.wire,
+        base_url: resolution.baseUrl ?? null,
         guessed: resolution.guessed,
         needs_base_url: false,
         rejected: false,
@@ -159,6 +160,7 @@ export function toModelsDevProviderItem(
       return {
         ...base,
         wire_type: resolution.wire,
+        base_url: null,
         guessed: resolution.guessed,
         needs_base_url: true,
         rejected: false,
@@ -168,6 +170,7 @@ export function toModelsDevProviderItem(
       return {
         ...base,
         wire_type: null,
+        base_url: null,
         guessed: false,
         needs_base_url: false,
         rejected: true,

@@ -33,7 +33,11 @@ function makeHarness() {
     patchLivePane: vi.fn(),
     setAppState: vi.fn(),
     btwPanelController: { routeEvent: vi.fn(() => false) },
-    surveyController: { notifyToolCallStarted: vi.fn() },
+    surveyController: {
+      notifyToolCallStarted: vi.fn(),
+      notifyToolCallEnded: vi.fn(),
+      notifySubagentSpawned: vi.fn(),
+    },
     updateActivityPane: vi.fn(),
     showStatus: vi.fn(),
   };

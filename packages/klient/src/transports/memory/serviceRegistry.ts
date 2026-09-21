@@ -12,6 +12,7 @@ import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { IModelService } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
 import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
+import { IModelsDevImportService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/modelsDevImport';
 import { IProviderService } from '@moonshot-ai/agent-core-v2/llm-adapter/provider/provider';
 import {
   IAuthSummaryService,
@@ -54,6 +55,7 @@ export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>>
   modelService: IModelService,
   modelResolver: IModelCatalog,
   providerDiscovery: IProviderDiscoveryService,
+  modelsDevImport: IModelsDevImportService,
   providerService: IProviderService,
   oauthService: IOAuthService,
   authSummaryService: IAuthSummaryService,

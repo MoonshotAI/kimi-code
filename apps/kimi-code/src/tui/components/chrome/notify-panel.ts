@@ -14,8 +14,10 @@
  */
 
 import type { Component } from '@moonshot-ai/pi-tui';
-import { Markdown, truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
+import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
+
+import { Markdown } from '#/tui/components/markdown/markdown';
 
 import { MAIN_AGENT_ID } from '#/tui/constant/kimi-tui';
 import { currentTheme } from '#/tui/theme';

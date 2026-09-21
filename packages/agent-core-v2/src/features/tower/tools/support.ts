@@ -5,8 +5,11 @@ import {
   resolveTowerRepoRoot,
   type TowerState,
 } from '#/features/tower/protocol/index';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import type { ExecutableToolResult } from '#/tool/toolContract';
+import { grandTotal } from '#human/llm/usage';
 
 export function newTowerStore(sessionContext: ISessionContext): TowerStore {
   return new TowerStore(resolveTowerRepoRoot(sessionContext.cwd));
@@ -21,6 +24,14 @@ export const TOWER_MODE_USER_ENABLED_ONLY =
 
 export function callerName(agentId: string, store: TowerStore, state: TowerState): string {
   return store.resolveCallerName(state, agentId);
+}
+
+export function callerTokens(
+  usage: ISessionUsageService | undefined,
+  agent: AgentContext,
+): number {
+  const total = usage?.status(agent).total;
+  return total === undefined ? -1 : grandTotal(total);
 }
 
 export async function runTowerTool(

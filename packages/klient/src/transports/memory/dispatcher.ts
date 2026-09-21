@@ -486,6 +486,9 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
         const result = await (member as (...a: unknown[]) => unknown).apply(instance, callArgs);
         return wireClone(result);
       } catch (error) {
+        if (service === 'modelsDevImport' && error instanceof Error2) {
+          throw new RPCError(REQUEST_INVALID, error.message, error.details);
+        }
         if (service === MCP_MANAGEMENT_SERVICE) {
           rethrowMcpManagementErrorAsRpc(error);
         }

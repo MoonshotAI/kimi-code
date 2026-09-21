@@ -103,6 +103,7 @@ timeout = 5
 | `extra_agent_dirs` | `array<string>` | — | 额外自定义 Agent 搜索目录，叠加到默认目录之上 |
 | `builtin_product_skills` | `boolean` | `true` | 是否向模型提供介绍 Kimi Code 自身的内置 Skills |
 | `telemetry` | `boolean` | `true` | 是否启用匿名遥测；显式设为 `false` 时关闭 |
+| `auto_session_title` | `boolean` | `true` | 是否允许客户端自动生成会话标题；显式设为 `false` 时关闭 |
 | [`providers`](#providers) | `table` | `{}` | API 供应商表 |
 | [`models`](#models) | `table` | — | 模型别名表 |
 | [`thinking`](#thinking) | `table` | — | Thinking 模式默认参数 |
@@ -117,12 +118,13 @@ timeout = 5
 
 ## `providers`
 
-`providers` 表的每一项定义一个 API 供应商，以唯一名称为 key。CLI 只从这里读取凭证，**不会**从 shell 环境变量自动取后备值。在终端里 `export KIMI_API_KEY` 不会让供应商自动获得密钥，必须显式写在配置文件里（详见[配置覆盖](./overrides.md#供应商凭证)）。
+`providers` 表的每一项定义一个 API 供应商，以唯一名称为 key。CLI 只从这里读取凭证，**不会**从 shell 环境变量自动取后备值。在终端里 `export KIMI_API_KEY` 不会让供应商自动获得密钥，必须显式写在配置文件里，或者用 `api_key_env` 指定一个变量名（详见[配置覆盖](./overrides.md#供应商凭证)）。
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `type` | `string` | 是 | 供应商类型：`kimi`、`anthropic`、`openai`、`openai_responses`、`google-genai`、`vertexai` |
 | `api_key` | `string` | 否 | API 密钥，明文写在配置文件里 |
+| `api_key_env` | `string` | 否 | 指定一个 shell 环境变量名，从该变量读取 API 密钥，密钥不写入配置文件；每次请求时读取。与 `api_key`、`oauth` 互斥；变量未设置或为空时请求报错并指明变量名 |
 | `base_url` | `string` | 否 | API 基础 URL |
 | `oauth` | `table` | 否 | OAuth 凭据引用（`storage`、`key` 两个字段），由登录流程自动注入，通常无需手写 |
 | `env` | `table<string, string>` | 否 | 供应商凭证的备用来源，见 `env` 子表 |
@@ -136,7 +138,7 @@ KIMI_API_KEY = "sk-xxx"
 KIMI_BASE_URL = "https://api.moonshot.ai/v1"
 ```
 
-优先级：`api_key` 字段 > `env` 子表键 > 两者都缺时启动报错。
+优先级：`api_key` 或 `api_key_env`（互斥替代项，只能设置其中一个）> `env` 子表键（两者都不存在时才读）> 全部缺失时启动报错。刷新 `/models` 时，声明的变量未设置或为空的供应商会被记为失败，不影响其他供应商。
 
 ## `models`
 
@@ -469,6 +471,16 @@ max_chars = 500000
 | `search` | `boolean` | `true` | 在独立 worker 线程中运行全局搜索索引；`false` 在服务器进程内运行 |
 
 `base` 可被环境变量 `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` 覆盖，`search` 可被 `KIMI_CODE_SEARCH_WORKER` 覆盖，优先级均高于配置文件。
+
+## `watch`
+
+`watch` 控制 local.toml、AGENTS.md、skills、MCP 配置以及 `config.toml` 自身的文件系统热更新。默认关闭。把 `enabled` 设为 `true` 后进程内才会挂 watcher；关闭时改文件要重启才会再读。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `enabled` | `boolean` | `false` | 是否挂文件系统 watch；`false` 关闭进程内全部 `watch()` |
+
+`enabled` 可被环境变量 `KIMI_CODE_WATCH` 覆盖，优先级高于配置文件。
 
 <!--
 ## `experimental`

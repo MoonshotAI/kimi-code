@@ -22,6 +22,7 @@ interface Envelope<T> {
 interface ApprovalWire {
   approval_id: string;
   session_id: string;
+  agent_id: string;
   turn_id?: number;
   tool_call_id: string;
   tool_name: string;
@@ -129,6 +130,7 @@ describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
     const item = body.data.items[0]!;
     expect(item.approval_id).toBe(aid);
     expect(item.session_id).toBe(sid);
+    expect(item.agent_id).toBe('main');
     expect(item.tool_call_id).toBe('tc-1');
     expect(item.tool_name).toBe('Bash');
     expect(item.action).toBe('run');
@@ -181,7 +183,7 @@ describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
     expect(first).not.toBe(second);
 
     const { body } = await getJson<ListWire>(`/api/v1/sessions/${sid}/approvals?status=pending`);
-    expect(body.data.items.map((i) => i.approval_id).sort()).toEqual([first, second].sort());
+    expect(body.data.items.map((i) => i.approval_id).toSorted()).toEqual([first, second].toSorted());
     expect(body.data.items.every((i) => i.tool_call_id === 'Bash_0')).toBe(true);
 
     for (const aid of [first, second]) {
@@ -195,5 +197,37 @@ describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
   it('returns 40401 for an unknown session', async () => {
     const { body } = await getJson<null>('/api/v1/sessions/nope/approvals?status=pending');
     expect(body.code).toBe(40401);
+  });
+
+  it('stamps the requesting agent onto wire approvals, defaulting to main', async () => {
+    const sid = await createSession();
+    interactions.enqueue({
+      id: `approval_${randomUUID()}`,
+      kind: 'approval',
+      payload: {
+        toolCallId: 'tc-sub',
+        toolName: 'Bash',
+        action: 'run',
+        display: { kind: 'command', command: 'echo hi' },
+      },
+      tags: { agentId: 'agent-7', sessionId: sid, toolCallId: 'tc-sub' },
+    });
+    interactions.enqueue({
+      id: `approval_${randomUUID()}`,
+      kind: 'approval',
+      payload: {
+        toolCallId: 'tc-untagged',
+        toolName: 'Bash',
+        action: 'run',
+        display: { kind: 'command', command: 'echo hi' },
+      },
+      tags: { sessionId: sid, toolCallId: 'tc-untagged' },
+    });
+
+    const { body } = await getJson<ListWire>(`/api/v1/sessions/${sid}/approvals?status=pending`);
+    expect(body.code).toBe(0);
+    const byToolCall = new Map(body.data.items.map((i) => [i.tool_call_id, i.agent_id]));
+    expect(byToolCall.get('tc-sub')).toBe('agent-7');
+    expect(byToolCall.get('tc-untagged')).toBe('main');
   });
 });

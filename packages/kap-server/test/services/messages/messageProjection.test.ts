@@ -223,4 +223,12 @@ describe('toProtocolMessage', () => {
       'metadata',
     );
   });
+
+  it('retains composer metadata separately from the projected model content', () => {
+    const clientMetadata = [{ composer: { version: 1, refs: ['example-ref'] } }];
+    const msg: ContextMessage = { ...userText('visible'), origin: { kind: 'user', clientMetadata } };
+    const projected = toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT);
+    expect(projected.content).toEqual([{ type: 'text', text: 'visible' }]);
+    expect(projected.metadata).toEqual({ origin: { kind: 'user', clientMetadata } });
+  });
 });
