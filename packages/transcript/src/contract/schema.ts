@@ -171,7 +171,7 @@ export const transcriptStepSchema = z.object({
   endedAt: z.string().optional(),
   usage: stepUsageSchema.optional(),
   finishReason: z.string().optional(),
-  timing: stepTimingSchema.optional(),
+  llmTiming: stepTimingSchema.optional(),
   retry: stepRetrySchema.optional(),
   endReason: z.string().optional(),
   endMessage: z.string().optional(),

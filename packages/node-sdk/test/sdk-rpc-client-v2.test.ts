@@ -1157,6 +1157,21 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('round-trips autoSessionTitle to the auto_session_title config.toml field', async () => {
+    const { harness, homeDir } = await makeHarness();
+    try {
+      await harness.setConfig({ autoSessionTitle: false });
+
+      const toml = await readFile(join(homeDir, 'config.toml'), 'utf-8');
+      expect(toml).toContain('auto_session_title = false');
+
+      const reread = await harness.getConfig({ reload: true });
+      expect(reread.autoSessionTitle).toBe(false);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('deleteSession removes a session and rejects a missing id with session_not_found', async () => {
     const { harness, homeDir } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
