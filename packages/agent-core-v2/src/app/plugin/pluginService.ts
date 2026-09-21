@@ -22,20 +22,20 @@ import {
   type SetPluginEnabledInput,
   type SetPluginMcpServerEnabledInput,
 } from './plugin';
-import {
-  normalizePluginId,
-  type EnabledPluginSessionStart,
-  type EnabledPluginSystemPrompt,
-  type PluginCommandDef,
-  type PluginInfo,
-  type PluginAgentRoot,
-  type PluginMcpServerEntry,
-  type PluginMutation,
-  type PluginMutationSummary,
-  type PluginReloadEvent,
-  type PluginSummary,
-  type PluginUpdateStatus,
-  type ReloadSummary,
+import { normalizePluginId } from './types';
+import type {
+  EnabledPluginSessionStart,
+  EnabledPluginSystemPrompt,
+  PluginCommandDef,
+  PluginInfo,
+  PluginAgentRoot,
+  PluginMcpServerEntry,
+  PluginMutation,
+  PluginMutationSummary,
+  PluginReloadEvent,
+  PluginSummary,
+  PluginUpdateStatus,
+  ReloadSummary,
 } from './types';
 
 const KIMI_CODE_BASE_URL_ENV = 'KIMI_CODE_BASE_URL';
