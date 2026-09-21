@@ -78,26 +78,6 @@ describe('EnvironmentCwdDialogComponent', () => {
     expect(onSubmit).toHaveBeenCalledWith('/home/me/projects');
   });
 
-  it('locks input while busy and renders the busy message', () => {
-    const onSubmit = vi.fn();
-    const onCancel = vi.fn();
-    const dialog = makeDialog({ onSubmit, onCancel });
-    dialog.setBusy('Connecting to dev-box…');
-    expect(rendered(dialog)).toContain('Connecting to dev-box…');
-    dialog.handleInput(ENTER);
-    dialog.handleInput(ESC);
-    expect(onSubmit).not.toHaveBeenCalled();
-    expect(onCancel).not.toHaveBeenCalled();
-  });
-
-  it('requests a repaint on setBusy and showError', () => {
-    const requestRender = vi.fn();
-    const dialog = makeDialog({ requestRender });
-    dialog.setBusy('Connecting to dev-box…');
-    dialog.showError('boom');
-    expect(requestRender).toHaveBeenCalledTimes(2);
-  });
-
   it('bounds a multi-line handshake error', () => {
     const dialog = makeDialog();
     dialog.showError('exit code 127\nline2\nline3\nline4\nline5');

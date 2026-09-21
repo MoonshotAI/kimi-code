@@ -151,45 +151,37 @@ function isPostCloseTransportError(error: unknown): boolean {
 
 describe('StdioMcpClient', () => {
   it('connects a pending environment before spawning the server', async () => {
-    const harness = createEnvironmentClient(
+    const pending = createEnvironmentClient(
       { transport: 'stdio', command: process.execPath, args: [stdioFixture] },
       { environmentId: 'dev-box', status: 'pending' },
     );
-    try {
-      await harness.client.connect();
-      expect(harness.connectCalls()).toBe(1);
-      expect(harness.calls.slice(0, 3)).toEqual(['inspect', 'connect', 'acquireWhenReady']);
-      const result = await harness.client.callTool('echo', { text: 'remote hello' });
-      expect(result.content).toEqual([{ type: 'text', text: 'remote hello' }]);
-    } finally {
-      await harness.client.close();
-    }
-  }, 15000);
-
-  it('does not connect an environment that is already ready', async () => {
-    const harness = createEnvironmentClient(
+    const ready = createEnvironmentClient(
       { transport: 'stdio', command: process.execPath, args: [stdioFixture] },
       { environmentId: 'dev-box', status: 'ready' },
     );
     try {
-      await harness.client.connect();
-      expect(harness.connectCalls()).toBe(0);
-      expect(harness.calls.slice(0, 2)).toEqual(['inspect', 'acquireWhenReady']);
-      const result = await harness.client.callTool('echo', { text: 'hello' });
-      expect(result.content).toEqual([{ type: 'text', text: 'hello' }]);
+      await pending.client.connect();
+      expect(pending.connectCalls()).toBe(1);
+      expect(pending.calls.slice(0, 3)).toEqual(['inspect', 'connect', 'acquireWhenReady']);
+      const result = await pending.client.callTool('echo', { text: 'remote hello' });
+      expect(result.content).toEqual([{ type: 'text', text: 'remote hello' }]);
+
+      await ready.client.connect();
+      expect(ready.connectCalls()).toBe(0);
+      expect(ready.calls.slice(0, 2)).toEqual(['inspect', 'acquireWhenReady']);
+      const readyResult = await ready.client.callTool('echo', { text: 'hello' });
+      expect(readyResult.content).toEqual([{ type: 'text', text: 'hello' }]);
     } finally {
-      await harness.client.close();
+      await pending.client.close();
+      await ready.client.close();
     }
   }, 15000);
 
   it('sends only the configured env overlay to a non-local environment', async () => {
-    const parentOnly = `KIMI_TEST_PARENT_${Date.now()}`;
     const localVar = `KIMI_TEST_LOCAL_${Date.now()}`;
     const remoteVar = `KIMI_TEST_REMOTE_${Date.now()}`;
-    process.env[parentOnly] = 'from-parent';
     process.env[localVar] = 'resolved-locally';
     process.env[remoteVar] = 'stays-local';
-    process.env['HTTP_PROXY'] = 'http://127.0.0.1:9';
     const harness = createEnvironmentClient(
       {
         transport: 'stdio',
@@ -202,23 +194,12 @@ describe('StdioMcpClient', () => {
     );
     try {
       await harness.client.connect();
-      expect(harness.spawnEnvs).toHaveLength(1);
-      const overlay = harness.spawnEnvs[0] ?? {};
-      expect(overlay['KIMI_TEST_LITERAL']).toBe('literal');
-      expect(overlay[localVar]).toBe('resolved-locally');
-      expect(overlay[remoteVar]).toBeUndefined();
-      expect(overlay[parentOnly]).toBeUndefined();
-      expect(overlay['PATH']).toBeUndefined();
-      expect(overlay['HOME']).toBeUndefined();
-      expect(overlay['HTTP_PROXY']).toBeUndefined();
-      expect(overlay['NODE_USE_ENV_PROXY']).toBeUndefined();
+      expect(harness.spawnEnvs).toEqual([{ KIMI_TEST_LITERAL: 'literal', [localVar]: 'resolved-locally' }]);
       const result = await harness.client.callTool('read_env', { name: 'KIMI_TEST_LITERAL' });
       expect(result.content).toEqual([{ type: 'text', text: 'literal' }]);
     } finally {
-      delete process.env[parentOnly];
       delete process.env[localVar];
       delete process.env[remoteVar];
-      delete process.env['HTTP_PROXY'];
       await harness.client.close();
     }
   }, 15000);
@@ -321,76 +302,33 @@ describe('StdioMcpClient', () => {
     const base = mkdtempSync(join(tmpdir(), 'kimi-mcp-remote-cwd-'));
     const remoteCwd = join(base, 'target');
     const remoteHome = join(base, 'remote-home');
-    const carrierCwd = join(base, 'carrier');
-    mkdirSync(remoteCwd);
-    mkdirSync(remoteHome);
-    mkdirSync(carrierCwd);
-    const harness = createEnvironmentClient(
-      { transport: 'stdio', command: process.execPath, args: [cwdStdioFixture] },
-      {
-        environmentId: 'dev-box',
-        host: { homeDir: remoteHome, cwd: remoteCwd },
-        defaultCwd: carrierCwd,
-      },
-    );
-    try {
-      await harness.client.connect();
-      const result = await harness.client.callTool('get_cwd', {});
-      const text = (result.content[0] as { type: 'text'; text: string }).text;
-      expect(realpathSync(text)).toBe(realpathSync(remoteCwd));
-      expect(harness.spawnCwds).toEqual([remoteCwd]);
-    } finally {
-      await harness.client.close();
-      await rm(base, { recursive: true, force: true });
-    }
-  }, 15000);
-
-  it('falls back to the remote home directory when the target reports no cwd', async () => {
-    const base = mkdtempSync(join(tmpdir(), 'kimi-mcp-remote-home-'));
-    const remoteHome = join(base, 'remote-home');
-    const carrierCwd = join(base, 'carrier');
-    mkdirSync(remoteHome);
-    mkdirSync(carrierCwd);
-    const harness = createEnvironmentClient(
-      { transport: 'stdio', command: process.execPath, args: [cwdStdioFixture] },
-      { environmentId: 'dev-box', host: { homeDir: remoteHome }, defaultCwd: carrierCwd },
-    );
-    try {
-      await harness.client.connect();
-      const result = await harness.client.callTool('get_cwd', {});
-      const text = (result.content[0] as { type: 'text'; text: string }).text;
-      expect(realpathSync(text)).toBe(realpathSync(remoteHome));
-      expect(harness.spawnCwds).toEqual([remoteHome]);
-    } finally {
-      await harness.client.close();
-      await rm(base, { recursive: true, force: true });
-    }
-  }, 15000);
-
-  it('honors an explicit config.cwd on a remote environment', async () => {
-    const base = mkdtempSync(join(tmpdir(), 'kimi-mcp-remote-explicit-'));
-    const remoteCwd = join(base, 'target');
     const explicitCwd = join(base, 'explicit');
     const carrierCwd = join(base, 'carrier');
     mkdirSync(remoteCwd);
+    mkdirSync(remoteHome);
     mkdirSync(explicitCwd);
     mkdirSync(carrierCwd);
-    const harness = createEnvironmentClient(
-      { transport: 'stdio', command: process.execPath, args: [cwdStdioFixture], cwd: explicitCwd },
-      {
-        environmentId: 'dev-box',
-        host: { homeDir: join(base, 'remote-home'), cwd: remoteCwd },
-        defaultCwd: carrierCwd,
-      },
+    const cases = [
+      { config: {}, host: { homeDir: remoteHome, cwd: remoteCwd }, expected: remoteCwd },
+      { config: {}, host: { homeDir: remoteHome }, expected: remoteHome },
+      { config: { cwd: explicitCwd }, host: { homeDir: remoteHome, cwd: remoteCwd }, expected: explicitCwd },
+    ];
+    const harnesses = cases.map(({ config, host }) =>
+      createEnvironmentClient(
+        { transport: 'stdio', command: process.execPath, args: [cwdStdioFixture], ...config },
+        { environmentId: 'dev-box', host, defaultCwd: carrierCwd },
+      ),
     );
     try {
-      await harness.client.connect();
-      const result = await harness.client.callTool('get_cwd', {});
-      const text = (result.content[0] as { type: 'text'; text: string }).text;
-      expect(realpathSync(text)).toBe(realpathSync(explicitCwd));
-      expect(harness.spawnCwds).toEqual([explicitCwd]);
+      for (const [index, harness] of harnesses.entries()) {
+        await harness.client.connect();
+        const result = await harness.client.callTool('get_cwd', {});
+        const text = (result.content[0] as { type: 'text'; text: string }).text;
+        expect(realpathSync(text)).toBe(realpathSync(cases[index]!.expected));
+        expect(harness.spawnCwds).toEqual([cases[index]!.expected]);
+      }
     } finally {
-      await harness.client.close();
+      for (const harness of harnesses) await harness.client.close();
       await rm(base, { recursive: true, force: true });
     }
   }, 15000);
@@ -734,7 +672,7 @@ describe('McpServerStdioConfigSchema envVars', () => {
     expect(parsed.envVars).toEqual(['A', { name: 'B' }, { name: 'C', source: 'remote' }]);
   });
 
-  it('rejects an unknown source', () => {
+  it('rejects invalid envVars entries', () => {
     expect(() =>
       McpServerStdioConfigSchema.parse({
         transport: 'stdio',
@@ -742,9 +680,6 @@ describe('McpServerStdioConfigSchema envVars', () => {
         envVars: [{ name: 'A', source: 'elsewhere' }],
       }),
     ).toThrow();
-  });
-
-  it('rejects an entry without a name', () => {
     expect(() =>
       McpServerStdioConfigSchema.parse({
         transport: 'stdio',

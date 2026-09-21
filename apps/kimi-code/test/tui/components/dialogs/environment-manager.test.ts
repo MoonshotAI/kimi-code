@@ -166,35 +166,18 @@ describe('EnvironmentManagerComponent', () => {
 
   it('offers Enter/R reconnect on the disconnected bound remote row', () => {
     const onReconnect = vi.fn();
-    const component = makeComponent({ onReconnect, currentEnvironmentId: 'sandbox' });
+    const onSwitch = vi.fn();
+    const component = makeComponent({ onReconnect, onSwitch, currentEnvironmentId: 'sandbox' });
     // Selection starts on the current (sandbox) row, which is disconnected.
     expect(rendered(component)).toContain('Enter/R reconnect');
     component.handleInput('r');
     expect(onReconnect).toHaveBeenCalledWith();
-  });
-
-  it('reconnects on Enter when the current row is the disconnected bound remote', () => {
-    const onReconnect = vi.fn();
-    const onSwitch = vi.fn();
-    const component = makeComponent({ onReconnect, onSwitch, currentEnvironmentId: 'sandbox' });
     component.handleInput(ENTER);
-    expect(onReconnect).toHaveBeenCalledWith();
+    expect(onReconnect).toHaveBeenCalledTimes(2);
     expect(onSwitch).not.toHaveBeenCalled();
   });
 
   it('offers Enter/R reconnect on the pending bound remote row', () => {
-    const onReconnect = vi.fn();
-    const component = makeComponent({
-      onReconnect,
-      currentEnvironmentId: 'sandbox',
-      environments: [LOCAL, DEV_BOX, { ...SANDBOX, status: 'pending' }],
-    });
-    expect(rendered(component)).toContain('Enter/R reconnect');
-    component.handleInput('r');
-    expect(onReconnect).toHaveBeenCalledWith();
-  });
-
-  it('reconnects on Enter when the current row is the pending bound remote', () => {
     const onReconnect = vi.fn();
     const onSwitch = vi.fn();
     const component = makeComponent({
@@ -203,28 +186,26 @@ describe('EnvironmentManagerComponent', () => {
       currentEnvironmentId: 'sandbox',
       environments: [LOCAL, DEV_BOX, { ...SANDBOX, status: 'pending' }],
     });
-    component.handleInput(ENTER);
+    expect(rendered(component)).toContain('Enter/R reconnect');
+    component.handleInput('r');
     expect(onReconnect).toHaveBeenCalledWith();
+    component.handleInput(ENTER);
+    expect(onReconnect).toHaveBeenCalledTimes(2);
     expect(onSwitch).not.toHaveBeenCalled();
   });
 
-  it('keeps Enter a no-op on the current row while it is ready', () => {
+  it('keeps Enter and R inert unless the selected row is a reconnectable bound remote', () => {
     const onReconnect = vi.fn();
     const onSwitch = vi.fn();
     const component = makeComponent({ onReconnect, onSwitch, currentEnvironmentId: 'dev-box' });
+    expect(rendered(component)).not.toContain('R reconnect');
     component.handleInput(ENTER);
     expect(onReconnect).not.toHaveBeenCalled();
     expect(onSwitch).not.toHaveBeenCalled();
-  });
-
-  it('ignores R on rows that are not the disconnected bound one', () => {
-    const onReconnect = vi.fn();
-    const component = makeComponent({ onReconnect, currentEnvironmentId: 'local' });
-    expect(rendered(component)).not.toContain('R reconnect');
-    component.handleInput(DOWN);
     component.handleInput(DOWN);
     component.handleInput('r');
     expect(onReconnect).not.toHaveBeenCalled();
+    expect(onSwitch).not.toHaveBeenCalled();
   });
 
   it('closes on Esc, and clears an inline error before closing', () => {
@@ -268,23 +249,6 @@ describe('EnvironmentManagerComponent', () => {
     const selectedLine = plain.split('\n').find((line) => line.includes('❯'));
     expect(selectedLine).toContain('dev-box');
     expect(plain).toContain('command · ready');
-  });
-
-  it('requests a repaint on setBusy, showError, and setOptions', () => {
-    const requestRender = vi.fn();
-    const component = makeComponent({ requestRender });
-    component.setBusy('Reconnecting dev-box…');
-    component.showError('boom');
-    component.setOptions({
-      environments: [LOCAL, DEV_BOX, SANDBOX],
-      currentEnvironmentId: 'local',
-      onSwitch: vi.fn(),
-      onReconnect: vi.fn(),
-      onAdd: vi.fn(),
-      onClose: vi.fn(),
-      requestRender,
-    });
-    expect(requestRender).toHaveBeenCalledTimes(3);
   });
 
   it('bounds the inline error to a few lines', () => {

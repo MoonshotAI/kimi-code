@@ -317,6 +317,23 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     });
   }
 
+  function spawnCoderOnEnvironment(svc: ISessionSubagentService, environment: string): Promise<SpawnedSubagent> {
+    return svc.spawn({
+      callerAgentId: CALLER_ID,
+      plan: { profileName: 'coder', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
+      labels: { parentAgentId: 'main' },
+      prompt: 'Review the file',
+      environment,
+    });
+  }
+
+  function stubWorkspaceManager(registry: EnvironmentRegistry): void {
+    ix.stub(IWorkspaceInstanceManager, {
+      _serviceBrand: undefined,
+      get: (workspaceId: string) => (workspaceId === 'w1' ? { environments: registry, root: '/repo' } : undefined),
+    } as unknown as IWorkspaceInstanceManager);
+  }
+
   function gitProcessForRepo(repoCwd: string): { process: IHostProcessService; gitCwds: string[] } {
     const gitCwds: string[] = [];
     const script: Record<string, { stdout?: string; exitCode?: number; stderr?: string }> = {
@@ -646,19 +663,10 @@ describe('SessionSubagentService planSpawn and spawn', () => {
         process: {},
       },
     ));
-    ix.stub(IWorkspaceInstanceManager, {
-      _serviceBrand: undefined,
-      get: (workspaceId: string) => (workspaceId === 'w1' ? { environments: registry, root: '/repo' } : undefined),
-    } as unknown as IWorkspaceInstanceManager);
+    stubWorkspaceManager(registry);
     const svc = service({ [ENVIRONMENTS_SECTION]: { staging: { type: 'ssh', host: 'staging', defaultCwd: '/srv/app' } } });
 
-    await svc.spawn({
-      callerAgentId: CALLER_ID,
-      plan: { profileName: 'coder', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
-      labels: { parentAgentId: 'main' },
-      prompt: 'Review the file',
-      environment: 'staging',
-    });
+    await spawnCoderOnEnvironment(svc, 'staging');
 
     expect(stats).toContain('/srv/app');
     expect(createAgent).toHaveBeenCalledWith(
@@ -670,13 +678,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     callerBinding = { workspaceId: 'w1', environmentId: 'acp:s1', cwd: '/remote/repo' };
     const svc = service();
 
-    await svc.spawn({
-      callerAgentId: CALLER_ID,
-      plan: { profileName: 'coder', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
-      labels: { parentAgentId: 'main' },
-      prompt: 'Review the file',
-      environment: 'acp:s1',
-    });
+    await spawnCoderOnEnvironment(svc, 'acp:s1');
 
     expect(createAgent).toHaveBeenCalledWith(
       expect.objectContaining({ environmentId: 'acp:s1', environmentCwd: '/remote/repo' }),
@@ -686,19 +688,10 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   it('binds the child to local without a cwd when local is requested', async () => {
     const registry = new EnvironmentRegistry('w1');
     registry.register(fakeEnvironment('local', 'local-one', { workspaceId: 'w1' }));
-    ix.stub(IWorkspaceInstanceManager, {
-      _serviceBrand: undefined,
-      get: (workspaceId: string) => (workspaceId === 'w1' ? { environments: registry, root: '/repo' } : undefined),
-    } as unknown as IWorkspaceInstanceManager);
+    stubWorkspaceManager(registry);
     const svc = service();
 
-    await svc.spawn({
-      callerAgentId: CALLER_ID,
-      plan: { profileName: 'coder', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
-      labels: { parentAgentId: 'main' },
-      prompt: 'Review the file',
-      environment: 'local',
-    });
+    await spawnCoderOnEnvironment(svc, 'local');
 
     expect(createAgent).toHaveBeenCalledWith(
       expect.objectContaining({ environmentId: 'local', environmentCwd: undefined }),
@@ -709,19 +702,10 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     const registry = new EnvironmentRegistry('w1');
     registry.register(fakeEnvironment('local', 'local-one', { workspaceId: 'w1' }));
     registry.register(fakeEnvironment('staging', 'staging-one', { workspaceId: 'w1' }));
-    ix.stub(IWorkspaceInstanceManager, {
-      _serviceBrand: undefined,
-      get: (workspaceId: string) => (workspaceId === 'w1' ? { environments: registry, root: '/repo' } : undefined),
-    } as unknown as IWorkspaceInstanceManager);
+    stubWorkspaceManager(registry);
     const svc = service();
 
-    const error = await svc.spawn({
-      callerAgentId: CALLER_ID,
-      plan: { profileName: 'coder', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
-      labels: { parentAgentId: 'main' },
-      prompt: 'Review the file',
-      environment: 'ghost',
-    }).then(
+    const error = await spawnCoderOnEnvironment(svc, 'ghost').then(
       () => {
         throw new Error('spawn did not throw');
       },
@@ -740,47 +724,23 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       workspaceId: 'w1',
       host: { homeDir: '/home/remote', cwd: '/srv/box' },
     }));
-    ix.stub(IWorkspaceInstanceManager, {
-      _serviceBrand: undefined,
-      get: (workspaceId: string) => (workspaceId === 'w1' ? { environments: registry, root: '/repo' } : undefined),
-    } as unknown as IWorkspaceInstanceManager);
+    registry.register(fakeEnvironment('ephemeral-home', 'ephemeral-two', {
+      workspaceId: 'w1',
+      host: { homeDir: '/home/remote' },
+    }));
+    stubWorkspaceManager(registry);
     const svc = service();
 
-    await svc.spawn({
-      callerAgentId: CALLER_ID,
-      plan: { profileName: 'coder', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
-      labels: { parentAgentId: 'main' },
-      prompt: 'Review the file',
-      environment: 'ephemeral-box',
-    });
+    await spawnCoderOnEnvironment(svc, 'ephemeral-box');
 
     expect(createAgent).toHaveBeenCalledWith(
       expect.objectContaining({ environmentId: 'ephemeral-box', environmentCwd: '/srv/box' }),
     );
-  });
 
-  it('falls back to the environment homeDir when the host carries no cwd', async () => {
-    const registry = new EnvironmentRegistry('w1');
-    registry.register(fakeEnvironment('ephemeral-box', 'ephemeral-one', {
-      workspaceId: 'w1',
-      host: { homeDir: '/home/remote' },
-    }));
-    ix.stub(IWorkspaceInstanceManager, {
-      _serviceBrand: undefined,
-      get: (workspaceId: string) => (workspaceId === 'w1' ? { environments: registry, root: '/repo' } : undefined),
-    } as unknown as IWorkspaceInstanceManager);
-    const svc = service();
-
-    await svc.spawn({
-      callerAgentId: CALLER_ID,
-      plan: { profileName: 'coder', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
-      labels: { parentAgentId: 'main' },
-      prompt: 'Review the file',
-      environment: 'ephemeral-box',
-    });
+    await spawnCoderOnEnvironment(svc, 'ephemeral-home');
 
     expect(createAgent).toHaveBeenCalledWith(
-      expect.objectContaining({ environmentId: 'ephemeral-box', environmentCwd: '/home/remote' }),
+      expect.objectContaining({ environmentId: 'ephemeral-home', environmentCwd: '/home/remote' }),
     );
   });
 
@@ -802,19 +762,10 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       process: {},
     });
     registry.register(staging);
-    ix.stub(IWorkspaceInstanceManager, {
-      _serviceBrand: undefined,
-      get: (workspaceId: string) => (workspaceId === 'w1' ? { environments: registry, root: '/repo' } : undefined),
-    } as unknown as IWorkspaceInstanceManager);
+    stubWorkspaceManager(registry);
     const svc = service();
 
-    await svc.spawn({
-      callerAgentId: CALLER_ID,
-      plan: { profileName: 'coder', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
-      labels: { parentAgentId: 'main' },
-      prompt: 'Review the file',
-      environment: 'staging',
-    });
+    await spawnCoderOnEnvironment(svc, 'staging');
 
     expect(connectCalls).toEqual(['connect']);
     expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({ environmentId: 'staging' }));
@@ -838,19 +789,10 @@ describe('SessionSubagentService planSpawn and spawn', () => {
         await registration.replace(connected);
       },
     });
-    ix.stub(IWorkspaceInstanceManager, {
-      _serviceBrand: undefined,
-      get: (workspaceId: string) => (workspaceId === 'w1' ? { environments: registry, root: '/repo' } : undefined),
-    } as unknown as IWorkspaceInstanceManager);
+    stubWorkspaceManager(registry);
     const svc = service();
 
-    await svc.spawn({
-      callerAgentId: CALLER_ID,
-      plan: { profileName: 'coder', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
-      labels: { parentAgentId: 'main' },
-      prompt: 'Review the file',
-      environment: 'staging',
-    });
+    await spawnCoderOnEnvironment(svc, 'staging');
 
     expect(createAgent).toHaveBeenCalledWith(
       expect.objectContaining({ environmentId: 'staging', environmentCwd: '/home/remote' }),
@@ -900,18 +842,16 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(spawned.promptText).toContain('Working directory: /remote/repo');
     expect(spawned.promptText).toContain('Project: owner/repo-only-there');
     expect(spawned.promptText).toContain('Survey the repo');
-  });
 
-  it('collects the explore git context at the session cwd when the caller binding has no cwd', async () => {
-    const git = gitProcessForRepo('/repo');
-    const svc = service();
+    callerBinding = { workspaceId: 'w1', environmentId: 'acp:s1' };
+    const sessionGit = gitProcessForRepo('/repo');
 
-    const spawned = await spawnExploreWithGitContext(svc, git);
+    const sessionSpawned = await spawnExploreWithGitContext(svc, sessionGit);
 
-    expect(git.gitCwds.length).toBeGreaterThan(0);
-    expect(git.gitCwds.every((cwd) => cwd === '/repo')).toBe(true);
-    expect(spawned.promptText).toContain('Working directory: /repo');
-    expect(spawned.promptText).toContain('Project: owner/repo-only-there');
+    expect(sessionGit.gitCwds.length).toBeGreaterThan(0);
+    expect(sessionGit.gitCwds.every((cwd) => cwd === '/repo')).toBe(true);
+    expect(sessionSpawned.promptText).toContain('Working directory: /repo');
+    expect(sessionSpawned.promptText).toContain('Project: owner/repo-only-there');
   });
 
   it('collects the prompt prefix git context on the requested environment instead of the caller one', async () => {
@@ -927,10 +867,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
         process: git.process,
       },
     ));
-    ix.stub(IWorkspaceInstanceManager, {
-      _serviceBrand: undefined,
-      get: (workspaceId: string) => (workspaceId === 'w1' ? { environments: registry, root: '/repo' } : undefined),
-    } as unknown as IWorkspaceInstanceManager);
+    stubWorkspaceManager(registry);
     profiles = [
       normalizeAgentProfile({
         name: 'explore',

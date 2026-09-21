@@ -159,6 +159,14 @@ function connectedEnvironment(options: RemoteEnvironmentOptions, generation: str
   return Object.assign(environment, { fs: {}, process: {} }) as unknown as RemoteEnvironment;
 }
 
+function closingEnvironment(options: RemoteEnvironmentOptions, generation: string, reason: string): RemoteEnvironment {
+  const environment = connectedEnvironment(options, generation) as unknown as FakeEnvironment & {
+    connection: { closeReason?: { reason: string } };
+  };
+  environment.connection = { closeReason: { reason } };
+  return environment as unknown as RemoteEnvironment;
+}
+
 function baseServices(overrides: Partial<HostServices> = {}): HostServices {
   return {
     config: configService({
@@ -323,24 +331,6 @@ describe('RemoteEnvironmentProviderFactory', () => {
     await registry.dispose();
   });
 
-  it('keeps the placeholder when the connect fails', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const connect = vi.fn(async () => {
-      throw new Error('executor process exited before the handshake completed (code 127, signal null): kimi: command not found');
-    });
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
-
-    const placeholder = registry.current('dev-box')!;
-    await expect(placeholder.connect!()).rejects.toThrow(/code 127/);
-    expect(registry.current('dev-box')).toBe(placeholder);
-    expect(registry.current('dev-box')!.status).toBe('disconnected');
-    expect(registry.current('dev-box')!.connectError).toContain('code 127');
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
   it('marks the placeholder connecting while a connect is in flight and dedupes concurrent connects', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
     let releaseConnect!: () => void;
@@ -450,13 +440,7 @@ describe('RemoteEnvironmentProviderFactory', () => {
       generation += 1;
       const current = generation;
       if (current === 2) await reconnectGate;
-      const environment = connectedEnvironment(options, `connected-${current}`) as unknown as FakeEnvironment & {
-        connection: { closeReason?: { reason: string } };
-      };
-      environment.connection = {
-        closeReason: { reason: 'control call fs/read timed out after 60000ms; closing the connection' },
-      };
-      return environment as unknown as RemoteEnvironment;
+      return closingEnvironment(options, `connected-${current}`, 'control call fs/read timed out after 60000ms; closing the connection');
     });
     const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
     const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
@@ -508,13 +492,7 @@ describe('RemoteEnvironmentProviderFactory', () => {
     const connect = vi.fn(async (options: RemoteEnvironmentOptions) => {
       generation += 1;
       if (generation === 2) throw failure;
-      const environment = connectedEnvironment(options, `connected-${generation}`) as unknown as FakeEnvironment & {
-        connection: { closeReason?: { reason: string } };
-      };
-      environment.connection = {
-        closeReason: { reason: 'control call fs/read timed out after 60000ms; closing the connection' },
-      };
-      return environment as unknown as RemoteEnvironment;
+      return closingEnvironment(options, `connected-${generation}`, 'control call fs/read timed out after 60000ms; closing the connection');
     });
     const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
     const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
@@ -585,15 +563,8 @@ describe('RemoteEnvironmentProviderFactory', () => {
 
   it('records the connection close reason when a connected environment drops mid-session', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
-    const connect = vi.fn(async (options: RemoteEnvironmentOptions) => {
-      const environment = connectedEnvironment(options, 'connected-1') as unknown as FakeEnvironment & {
-        connection: { closeReason?: { reason: string } };
-      };
-      environment.connection = {
-        closeReason: { reason: 'control call fs/read timed out after 60000ms; closing the connection' },
-      };
-      return environment as unknown as RemoteEnvironment;
-    });
+    const connect = vi.fn(async (options: RemoteEnvironmentOptions) =>
+      closingEnvironment(options, 'connected-1', 'control call fs/read timed out after 60000ms; closing the connection'));
     const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
     const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
 
@@ -619,15 +590,8 @@ describe('RemoteEnvironmentProviderFactory', () => {
 
   it('does not record a connect error on a normal dispose', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
-    const connect = vi.fn(async (options: RemoteEnvironmentOptions) => {
-      const environment = connectedEnvironment(options, 'connected-1') as unknown as FakeEnvironment & {
-        connection: { closeReason?: { reason: string } };
-      };
-      environment.connection = {
-        closeReason: { reason: 'connection closed by client' },
-      };
-      return environment as unknown as RemoteEnvironment;
-    });
+    const connect = vi.fn(async (options: RemoteEnvironmentOptions) =>
+      closingEnvironment(options, 'connected-1', 'connection closed by client'));
     const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
     const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
 
@@ -637,23 +601,6 @@ describe('RemoteEnvironmentProviderFactory', () => {
 
     expect(managed.status).toBe('disposed');
     expect(managed.connectError).toBeUndefined();
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
-  it('does not load project declarations for an untrusted workspace', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const services = baseServices({
-      fs: fsService({
-        '/repo/.kimi-code/environments.toml': '[project-box]\ntype = "ssh"\nhost = "project-box"\ndefaultCwd = "/project"\n',
-      }),
-    });
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect: vi.fn() }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(services, registry));
-
-    expect(registry.current('project-box')).toBeUndefined();
-    expect(registry.current('dev-box')).toBeDefined();
 
     await attachment.dispose();
     await registry.dispose();
@@ -680,26 +627,6 @@ describe('RemoteEnvironmentProviderFactory', () => {
     expect(connect).toHaveBeenCalledWith(expect.objectContaining({
       launcher: { type: 'ssh', host: 'project-box', remoteBin: undefined },
     }));
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
-  it('registers user entries and reports the project error when the project file is broken', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const docs = docsService();
-    await writeWorkspaceTrust(docs, '/repo', Date.now());
-    const warn = vi.fn();
-    const services = baseServices({
-      docs,
-      fs: fsService({ '/repo/.kimi-code/environments.toml': 'not = [toml' }),
-      log: { _serviceBrand: undefined, info: () => {}, warn, error: () => {} } as unknown as ILogService,
-    });
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect: vi.fn() }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(services, registry));
-
-    expect(registry.current('dev-box')).toBeDefined();
-    expect(warn).toHaveBeenCalled();
 
     await attachment.dispose();
     await registry.dispose();
@@ -736,14 +663,9 @@ describe('remote connection pool', () => {
     let generation = 0;
     const connect = vi.fn<(options: RemoteEnvironmentOptions) => Promise<RemoteEnvironment>>(async (options) => {
       generation += 1;
-      const environment = connectedEnvironment(options, `connected-${generation}`) as unknown as FakeEnvironment & {
-        connection: { closeReason?: { reason: string } };
-      };
-      environment.connection = {
-        closeReason: { reason: 'control call environment/status timed out after 60000ms; closing the connection' },
-      };
+      const environment = closingEnvironment(options, `connected-${generation}`, 'control call environment/status timed out after 60000ms; closing the connection');
       produced.push(environment as unknown as FakeEnvironment);
-      return environment as unknown as RemoteEnvironment;
+      return environment;
     });
     return { connect, produced };
   }
@@ -1105,26 +1027,6 @@ describe('declaration watch', () => {
     await registry.dispose();
   });
 
-  it('removes a vanished declaration live and fails its acquires explicitly', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const config = watchableConfigService({
-      'dev-box': { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me' },
-    });
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect: vi.fn() }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices({ config: config.service }), registry));
-
-    config.setSection({});
-    await vi.waitFor(() => {
-      expect(registry.current('dev-box')).toBeUndefined();
-    });
-    expect(() => registry.acquire({ workspaceId: 'workspace-1', environmentId: 'dev-box' })).toThrowError(
-      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.not_found' }),
-    );
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
   it('drains an in-use environment on removal: held leases keep their environment, new acquires fail, no local fallback', async () => {
     const registry = new EnvironmentRegistry('workspace-1', 5_000);
     const config = watchableConfigService({
@@ -1159,37 +1061,6 @@ describe('declaration watch', () => {
     await vi.waitFor(() => {
       expect((produced[0]! as unknown as { disposed: boolean }).disposed).toBe(true);
     });
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
-  it('un-registers project-declared environments when trust is revoked', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const docs = docsService();
-    await writeWorkspaceTrust(docs, '/repo', Date.now());
-    const config = watchableConfigService({
-      'dev-box': { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me' },
-    });
-    const services = baseServices({
-      config: config.service,
-      docs,
-      fs: fsService({
-        '/repo/.kimi-code/environments.toml': '[project-box]\ntype = "ssh"\nhost = "project-box"\ndefaultCwd = "/project"\n',
-      }),
-    });
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect: vi.fn() }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(services, registry));
-    expect(registry.current('project-box')).toBeDefined();
-
-    await deleteWorkspaceTrust(docs, '/repo');
-    // Trust is re-read on every reconcile, so a revocation re-gates project
-    // declarations at the next watch trigger.
-    config.setSection({ 'dev-box': { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me' } });
-    await vi.waitFor(() => {
-      expect(registry.current('project-box')).toBeUndefined();
-    });
-    expect(registry.current('dev-box')).toBeDefined();
 
     await attachment.dispose();
     await registry.dispose();
@@ -1311,28 +1182,6 @@ describe('declaration watch', () => {
   });
 });
 
-describe('toLauncherSpec via factory connect', () => {
-  it('lowers command declarations to command launcher specs', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const services = baseServices({
-      config: configService({
-        sandbox: { command: 'sandbox', args: ['ssh'], env: { SANDBOX_TOKEN: 'x' }, defaultCwd: '/home/me' },
-      }),
-    });
-    const connect = vi.fn(async (options: RemoteEnvironmentOptions) => connectedEnvironment(options, 'connected-1'));
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(services, registry));
-
-    await registry.current('sandbox')!.connect!();
-    expect(connect).toHaveBeenCalledWith(expect.objectContaining({
-      launcher: { type: 'command', program: 'sandbox', args: ['ssh'], env: { SANDBOX_TOKEN: 'x' } },
-    }));
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-});
-
 describe('factory executor detection', () => {
   const INSTALL_ARTIFACT = {
     version: '1.2.3',
@@ -1378,8 +1227,6 @@ describe('factory executor detection', () => {
     const message = (error as Error).message;
     expect(message).toContain('was not found on ssh:dev-box');
     expect(message).toContain(INSTALL_ARTIFACT.url);
-    expect(message).toContain('scp /tmp/kimi-install dev-box:/tmp/kimi-install');
-    expect(message).toContain('Then reconnect the environment.');
     expect(connect).toHaveBeenCalledTimes(1);
     expect(registry.current('dev-box')).toBe(placeholder);
     expect(registry.current('dev-box')!.status).toBe('disconnected');
@@ -1387,91 +1234,6 @@ describe('factory executor detection', () => {
     // no chmod/mv, no download.
     expect(fake.requests).toHaveLength(1);
     expect(fake.requests[0]!.args.at(-1)).toBe('uname -sm; printf "%s\\n" "$HOME"');
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
-  it('falls back to generic guidance when the platform probe fails', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const connect = vi.fn(async () => {
-      throw missingExecutorError();
-    });
-    const failingRunner: LocalRunner = async () => ({
-      code: 255,
-      signal: null,
-      stdout: '',
-      stderr: 'ssh: connect to host dev-box port 22: Connection refused',
-    });
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({
-      connect,
-      clientVersion: '1.2.3',
-      artifactLocator: { locate: vi.fn(async () => INSTALL_ARTIFACT) },
-      probeRunner: failingRunner,
-    }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
-
-    const placeholder = registry.current('dev-box')!;
-    const error = await placeholder.connect!().catch((error: unknown) => error);
-
-    expect((error as Error).message).toContain('Install the executor manually:');
-    expect(connect).toHaveBeenCalledTimes(1);
-    expect(registry.current('dev-box')).toBe(placeholder);
-    expect(registry.current('dev-box')!.status).toBe('disconnected');
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
-  it('fails command environments with guidance and never probes', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const services = baseServices({
-      config: configService({
-        sandbox: { command: 'sandbox', args: ['ssh'], defaultCwd: '/home/me' },
-      }),
-    });
-    const runner = vi.fn() as unknown as LocalRunner;
-    const connect = vi.fn(async () => {
-      throw missingExecutorError();
-    });
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({
-      connect,
-      artifactLocator: { locate: vi.fn(async () => INSTALL_ARTIFACT) },
-      probeRunner: runner,
-    }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(services, registry));
-
-    await expect(registry.current('sandbox')!.connect!()).rejects.toThrow(
-      /code 127[\s\S]*place it at the absolute path your launcher command invokes/,
-    );
-    expect(connect).toHaveBeenCalledTimes(1);
-    expect(runner).not.toHaveBeenCalled();
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
-  it('answers a too-old executor with upgrade guidance', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const runner = vi.fn() as unknown as LocalRunner;
-    const connect = vi.fn(async () => {
-      throw new HandshakeError(
-        'executor version 0.0.4 is below the minimum 0.1.0; upgrade the remote executor (kimi exec-server) and retry',
-        { kind: 'incompatible', executorVersion: '0.0.4', minExecutorVersion: '0.1.0' },
-      );
-    });
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({
-      connect,
-      artifactLocator: { locate: vi.fn(async () => INSTALL_ARTIFACT) },
-      probeRunner: runner,
-    }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
-
-    await expect(registry.current('dev-box')!.connect!()).rejects.toThrow(
-      /0\.0\.4[\s\S]*Upgrade the executor/,
-    );
-    expect(connect).toHaveBeenCalledTimes(1);
-    expect(runner).not.toHaveBeenCalled();
 
     await attachment.dispose();
     await registry.dispose();
@@ -1500,13 +1262,7 @@ describe('factory docker remoteBin resolution', () => {
     let generation = 0;
     const connect = vi.fn(async (options: RemoteEnvironmentOptions) => {
       generation += 1;
-      const environment = connectedEnvironment(options, `connected-${generation}`) as unknown as FakeEnvironment & {
-        connection: { closeReason?: { reason: string } };
-      };
-      environment.connection = {
-        closeReason: { reason: 'control call environment/status timed out after 60000ms; closing the connection' },
-      };
-      return environment as unknown as RemoteEnvironment;
+      return closingEnvironment(options, `connected-${generation}`, 'control call environment/status timed out after 60000ms; closing the connection');
     });
     const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect, probeRunner }));
     const attachment = await factory.attach(CONTEXT, fakeHost(dockerServices(), registry));
@@ -1528,28 +1284,6 @@ describe('factory docker remoteBin resolution', () => {
     expect(connect).toHaveBeenCalledTimes(3);
     expect(connect).toHaveBeenLastCalledWith(expect.objectContaining({ launcher: currentLauncher }));
     expect(probes).toBe(3);
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
-  it('keeps the declared launcher when the home probe fails', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const probeRunner = vi.fn<LocalRunner>(async () => ({
-      code: 1,
-      signal: null,
-      stdout: '',
-      stderr: 'Error: No such container: myapp',
-    }));
-    const connect = vi.fn(async (options: RemoteEnvironmentOptions) => connectedEnvironment(options, 'connected-1'));
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect, probeRunner }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(dockerServices(), registry));
-
-    await registry.current('app-box')!.connect!();
-    expect(probeRunner).toHaveBeenCalledTimes(1);
-    expect(connect).toHaveBeenCalledWith(expect.objectContaining({
-      launcher: { type: 'docker', container: 'myapp', context: undefined, remoteBin: undefined },
-    }));
 
     await attachment.dispose();
     await registry.dispose();

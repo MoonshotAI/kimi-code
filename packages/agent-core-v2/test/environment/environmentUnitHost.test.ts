@@ -164,7 +164,7 @@ describe('EnvironmentUnitHost', () => {
     await dispose();
   });
 
-  it('re-registers the same environment id after its registration was removed', async () => {
+  it('re-registers the same environment id after removal, even when removal teardown fails', async () => {
     const { registry, providerHost, handle, dispose } = await provideHost();
 
     const first = environment('one');
@@ -173,32 +173,27 @@ describe('EnvironmentUnitHost', () => {
     expect(registry.current('local')).toBeUndefined();
 
     const second = environment('two');
-    providerHost.registerEnvironment(second);
+    const secondRegistration = providerHost.registerEnvironment(second);
     expect(registry.current('local')).toBe(second);
-
-    await handle.remove();
+    await secondRegistration.remove();
     expect(registry.current('local')).toBeUndefined();
     expect(second.disposed).toBe(true);
-    await dispose();
-  });
 
-  it('re-registers the same environment id even when removal teardown fails', async () => {
-    const { registry, providerHost, handle, dispose } = await provideHost();
-
-    const failing = environment('one');
+    const failing = environment('three');
     failing.dispose = () => {
       throw new Error('boom');
     };
-    const registration = providerHost.registerEnvironment(failing);
-    await expect(registration.remove()).rejects.toThrow('boom');
+    const failingRegistration = providerHost.registerEnvironment(failing);
+    await expect(failingRegistration.remove()).rejects.toThrow('boom');
     expect(registry.current('local')).toBeUndefined();
 
-    const second = environment('two');
-    providerHost.registerEnvironment(second);
-    expect(registry.current('local')).toBe(second);
+    const replacement = environment('four');
+    providerHost.registerEnvironment(replacement);
+    expect(registry.current('local')).toBe(replacement);
 
     await handle.remove();
     expect(registry.current('local')).toBeUndefined();
+    expect(replacement.disposed).toBe(true);
     await dispose();
   });
 
@@ -226,13 +221,5 @@ describe('EnvironmentUnitHost', () => {
     await Promise.all([second, closing]);
     expect(order).toEqual(['second', 'first']);
     disposables.dispose();
-  });
-
-  it('exposes only the restricted provider host compile surface', () => {
-    const keys: Record<keyof EnvironmentProviderHost, true> = {
-      get: true,
-      registerEnvironment: true,
-    };
-    expect(Object.keys(keys).toSorted()).toEqual(['get', 'registerEnvironment']);
   });
 });

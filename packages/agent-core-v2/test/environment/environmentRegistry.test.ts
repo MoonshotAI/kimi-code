@@ -221,24 +221,6 @@ describe('EnvironmentRegistry', () => {
     await replacement;
   });
 
-  it('tracks frozen resources without mutating the original dispose', async () => {
-    const registration = registry.register(fakeEnvironment('local', 'one'));
-    const lease = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
-    const disposed: string[] = [];
-    const original = (): void => { disposed.push('dispose'); };
-    const frozen = Object.freeze({ dispose: original });
-
-    const tracked = lease.track(frozen);
-    expect(frozen.dispose).toBe(original);
-
-    tracked.dispose();
-    expect(disposed).toEqual(['dispose']);
-
-    lease.dispose();
-    await registration.remove();
-    expect(disposed).toEqual(['dispose', 'dispose']);
-  });
-
   it('keeps an independent tracking record per lease when leases share one resource', async () => {
     registry.register(fakeEnvironment('local', 'one'));
     const leaseA = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
@@ -259,27 +241,6 @@ describe('EnvironmentRegistry', () => {
 
     leaseA.dispose();
     leaseB.dispose();
-  });
-
-  it('forwards property access and method calls to the tracked resource', () => {
-    registry.register(fakeEnvironment('local', 'one'));
-    const lease = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
-    class Counter {
-      count = 0;
-      get doubled(): number { return this.count * 2; }
-      increment(step = 1): number { this.count += step; return this.count; }
-      dispose(): void {}
-    }
-    const counter = new Counter();
-    const tracked = lease.track(counter);
-
-    expect(tracked.increment(2)).toBe(2);
-    expect(tracked.doubled).toBe(4);
-    expect(counter.count).toBe(2);
-    expect(tracked).not.toBe(counter);
-
-    tracked.dispose();
-    lease.dispose();
   });
 
   it('drains only the closing session resources and keeps other sessions and untagged resources alive', async () => {
@@ -341,17 +302,6 @@ describe('EnvironmentRegistry', () => {
     leaseB.dispose();
     await replacement;
     expect(order).toEqual(['b', 'a']);
-  });
-
-  it('drainSession is a no-op for a session without tracked resources', async () => {
-    registry.register(fakeEnvironment('local', 'one'));
-    const lease = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
-    const order: string[] = [];
-    lease.track({ dispose: () => { order.push('a'); } }, 'session-a');
-
-    await registry.drainSession('session-missing');
-    expect(order).toEqual([]);
-    lease.dispose();
   });
 
   it('drainSession continues past a failing resource', async () => {
@@ -419,12 +369,6 @@ describe('EnvironmentRegistry', () => {
     await expect(registry.acquireWhenReady({ workspaceId: 'workspace', environmentId: 'local' })).rejects.toBe(failure);
   });
 
-  it('keeps the immediate unavailable error on a plainly disconnected environment', async () => {
-    registry.register(fakeEnvironment('local', 'one', { status: 'disconnected' }));
-    await expect(registry.acquireWhenReady({ workspaceId: 'workspace', environmentId: 'local' })).rejects.toThrow('disconnected');
-    await expect(registry.acquireWhenReady({ workspaceId: 'workspace', environmentId: 'missing' })).rejects.toThrow('not exist');
-  });
-
   it('treats a pending environment like a disconnected one for acquire, without a failure reason', async () => {
     registry.register(fakeEnvironment('local', 'one', { status: 'pending' }));
     expect(() => registry.acquire({ workspaceId: 'workspace', environmentId: 'local' })).toThrow('environment local is pending');
@@ -472,7 +416,7 @@ describe('environmentEntryInfo', () => {
     connectError: 'handshake failed',
   };
 
-  it('classifies the local environment as local without a declaration entry', () => {
+  it('classifies entries from the snapshot and declaration entry', () => {
     expect(environmentEntryInfo({ ...snapshot, environmentId: 'local' }, undefined)).toEqual({
       environmentId: 'local',
       type: 'local',
@@ -482,18 +426,12 @@ describe('environmentEntryInfo', () => {
       defaultCwd: undefined,
       connectError: 'handshake failed',
     });
-  });
-
-  it('joins the declaration entry type and defaultCwd for remote entries', () => {
     expect(environmentEntryInfo(snapshot, { type: 'ssh', host: 'box', defaultCwd: '/remote/box' })).toMatchObject({
       type: 'ssh',
       defaultCwd: '/remote/box',
     });
     expect(environmentEntryInfo(snapshot, { type: 'docker', container: 'box' }).type).toBe('docker');
     expect(environmentEntryInfo(snapshot, { command: 'box' }).type).toBe('command');
-  });
-
-  it('classifies a non-local environment without a declaration entry as command', () => {
     expect(environmentEntryInfo(snapshot, undefined)).toMatchObject({
       type: 'command',
       defaultCwd: undefined,

@@ -371,45 +371,34 @@ describe('FooterComponent environment slot', () => {
     return new FooterComponent({ ...appState, workDir: repoDir, environment });
   }
 
-  it('renders no environment identifier for the local environment and keeps the git slot', () => {
-    const footer = footerWith({ environmentId: 'local', type: 'local', status: 'ready' });
-    const rendered = line1(footer);
-    expect(rendered).not.toContain('local');
-    expect(rendered).toContain('main');
-    footer.dispose();
+  it('renders no environment identifier for the local or unsynced environment and keeps the git slot', () => {
+    const local = footerWith({ environmentId: 'local', type: 'local', status: 'ready' });
+    const localRendered = line1(local);
+    expect(localRendered).not.toContain('local');
+    expect(localRendered).toContain('main');
+    local.dispose();
+
+    const unsynced = footerWith(undefined);
+    const unsyncedRendered = line1(unsynced);
+    expect(unsyncedRendered).not.toContain('local');
+    expect(unsyncedRendered).toContain('main');
+    unsynced.dispose();
   });
 
-  it('renders no environment identifier while the environment state is unsynced', () => {
-    const footer = footerWith(undefined);
-    const rendered = line1(footer);
-    expect(rendered).not.toContain('local');
-    expect(rendered).toContain('main');
-    footer.dispose();
-  });
+  it('renders the remote identifier ahead of the cwd without a type prefix and hides the local git slot', () => {
+    const ssh = footerWith({ environmentId: 'dev-box', type: 'ssh', status: 'ready' });
+    const sshRendered = line1(ssh);
+    expect(sshRendered).toContain('dev-box');
+    expect(sshRendered.indexOf('dev-box')).toBeLessThan(sshRendered.indexOf('kimi-footer-environment'));
+    expect(sshRendered).not.toContain('main');
+    ssh.dispose();
 
-  it('shows the remote identifier ahead of the cwd', () => {
-    const footer = footerWith({ environmentId: 'dev-box', type: 'ssh', status: 'ready' });
-    const rendered = line1(footer);
-    expect(rendered).toContain('dev-box');
-    expect(rendered.indexOf('dev-box')).toBeLessThan(rendered.indexOf('kimi-footer-environment'));
-    footer.dispose();
-  });
-
-  it('renders the bare environment id with no type prefix, even for command environments', () => {
-    const footer = footerWith({ environmentId: 'kimi-dev', type: 'command', status: 'ready' });
-    const rendered = line1(footer);
-    expect(rendered).toContain('kimi-dev');
-    expect(rendered).not.toContain('command:kimi-dev');
-    expect(rendered).not.toContain('command:');
-    footer.dispose();
-  });
-
-  it('hides the local git slot for a remote-bound session', () => {
-    const footer = footerWith({ environmentId: 'dev-box', type: 'ssh', status: 'ready' });
-    const rendered = line1(footer);
-    expect(rendered).toContain('dev-box');
-    expect(rendered).not.toContain('main');
-    footer.dispose();
+    const command = footerWith({ environmentId: 'kimi-dev', type: 'command', status: 'ready' });
+    const commandRendered = line1(command);
+    expect(commandRendered).toContain('kimi-dev');
+    expect(commandRendered).not.toContain('command:kimi-dev');
+    expect(commandRendered).not.toContain('command:');
+    command.dispose();
   });
 
   describe('status line command payload', () => {
@@ -549,13 +538,6 @@ describe('FooterComponent environment slot', () => {
     footer.dispose();
   });
 
-  it('renders a spinner frame beside the identifier while connecting', () => {
-    const footer = footerWith({ environmentId: 'dev-box', type: 'ssh', status: 'connecting' });
-    const rendered = line1(footer);
-    expect(rendered).toContain(`${BRAILLE_SPINNER_FRAMES[0] ?? ''} dev-box`);
-    footer.dispose();
-  });
-
   it('ticks the spinner through frames on the shared interval while connecting', () => {
     vi.useFakeTimers();
     const onRefresh = vi.fn();
@@ -567,13 +549,14 @@ describe('FooterComponent environment slot', () => {
       },
       onRefresh,
     );
+    expect(line1(footer)).toContain(`${BRAILLE_SPINNER_FRAMES[0] ?? ''} dev-box`);
     vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 2);
     expect(onRefresh).toHaveBeenCalledTimes(2);
     expect(line1(footer)).toContain(`${BRAILLE_SPINNER_FRAMES[2] ?? ''} dev-box`);
     footer.dispose();
   });
 
-  it('starts the spinner when the environment enters connecting', () => {
+  it('starts and stops the spinner as the environment enters and leaves connecting', () => {
     vi.useFakeTimers();
     const onRefresh = vi.fn();
     const footer = new FooterComponent(
@@ -586,6 +569,7 @@ describe('FooterComponent environment slot', () => {
     );
     vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 5);
     expect(onRefresh).not.toHaveBeenCalled();
+
     footer.setState({
       ...appState,
       workDir: repoDir,
@@ -593,27 +577,14 @@ describe('FooterComponent environment slot', () => {
     });
     vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS);
     expect(onRefresh).toHaveBeenCalledTimes(1);
-    footer.dispose();
-  });
 
-  it('stops the spinner the moment the environment leaves connecting', () => {
-    vi.useFakeTimers();
-    const onRefresh = vi.fn();
-    const footer = new FooterComponent(
-      {
-        ...appState,
-        workDir: repoDir,
-        environment: { environmentId: 'dev-box', type: 'ssh', status: 'connecting' },
-      },
-      onRefresh,
-    );
     footer.setState({
       ...appState,
       workDir: repoDir,
       environment: { environmentId: 'dev-box', type: 'ssh', status: 'ready' },
     });
     vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 5);
-    expect(onRefresh).not.toHaveBeenCalled();
+    expect(onRefresh).toHaveBeenCalledTimes(1);
     const rendered = line1(footer);
     expect(rendered).toContain('dev-box');
     for (const frame of BRAILLE_SPINNER_FRAMES) {

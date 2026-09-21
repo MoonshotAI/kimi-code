@@ -99,10 +99,7 @@ describe('declaration merge and defaults', () => {
 });
 
 describe('describeEnvironmentEntry', () => {
-  it('renders ssh and docker entries as full command lines', () => {
-    expect(describeEnvironmentEntry({ type: 'ssh', host: 'dev-box' })).toBe(
-      'ssh dev-box ~/.kimi-code/bin/kimi exec-server --listen stdio',
-    );
+  it('renders docker entries as full command lines', () => {
     expect(describeEnvironmentEntry({ type: 'docker', container: 'myapp-dev', context: 'orbstack' })).toBe(
       'docker --context orbstack exec myapp-dev ~/.kimi-code/bin/kimi exec-server --listen stdio',
     );

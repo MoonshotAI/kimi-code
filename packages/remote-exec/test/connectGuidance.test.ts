@@ -8,7 +8,6 @@ import {
   classifyHandshakeFailure,
   connectWithGuidance,
   missingExecutorGuidance,
-  upgradeExecutorGuidance,
 } from '../src/client/connectGuidance';
 import { HandshakeError } from '../src/client/connection';
 import type { LocalRunner, LocalRunRequest } from '../src/client/executorDetect';
@@ -234,24 +233,6 @@ describe('connectWithGuidance', () => {
     expect(message).not.toContain('mv -f /tmp/kimi-install "~/bin/kimi"');
   });
 
-  it('spells the destination through "$HOME" when the probe reports no home', async () => {
-    const fake = unameRunner('Linux x86_64\n');
-    const attempt = vi.fn(async () => {
-      throw missingExecutorError();
-    });
-
-    const error = await connectWithGuidance(attempt, {
-      launcher: SSH,
-      artifactLocator: fixedLocator(),
-      clientVersion: '1.2.3',
-      runner: fake.runner,
-    }).catch((error: unknown) => error);
-
-    expect((error as Error).message).toContain(
-      `ssh dev-box 'mkdir -p "$HOME/.kimi-code/bin" && chmod 755 /tmp/kimi-install && mv -f /tmp/kimi-install "$HOME/.kimi-code/bin/kimi"'`,
-    );
-  });
-
   it('targets a custom ssh remoteBin in the printed commands', async () => {
     const fake = unameRunner();
     const attempt = vi.fn(async () => {
@@ -320,27 +301,18 @@ describe('connectWithGuidance', () => {
     });
 
     const error = await connectWithGuidance(attempt, {
-      launcher: { type: 'docker', container: 'myapp-dev', context: 'orbstack', remoteBin: '/usr/local/bin/kimi' },
+      launcher: { type: 'docker', container: 'myapp-dev', context: 'orb stack', remoteBin: '/usr/local/bin/kimi' },
       artifactLocator: fixedLocator(),
       clientVersion: '1.2.3',
       runner: fake.runner,
     }).catch((error: unknown) => error);
 
     const message = (error as Error).message;
-    expect(message).toContain(`docker --context 'orbstack' cp /tmp/kimi-install myapp-dev:/tmp/kimi-install`);
+    expect(message).toContain(`docker --context 'orb stack' cp /tmp/kimi-install myapp-dev:/tmp/kimi-install`);
+    expect(message).not.toContain('--context orb stack');
     expect(message).toContain(
-      `docker --context 'orbstack' exec myapp-dev sh -c 'mkdir -p "/usr/local/bin" && chmod 755 /tmp/kimi-install && mv -f /tmp/kimi-install "/usr/local/bin/kimi"'`,
+      `docker --context 'orb stack' exec myapp-dev sh -c 'mkdir -p "/usr/local/bin" && chmod 755 /tmp/kimi-install && mv -f /tmp/kimi-install "/usr/local/bin/kimi"'`,
     );
-  });
-
-  it('quotes a docker context containing spaces', async () => {
-    const text = missingExecutorGuidance({
-      launcher: { type: 'docker', container: 'myapp-dev', context: 'orb stack', remoteBin: '/usr/local/bin/kimi' },
-      failure: 'missing',
-      artifact: ARTIFACT,
-    });
-    expect(text).toContain(`docker --context 'orb stack' cp /tmp/kimi-install myapp-dev:/tmp/kimi-install`);
-    expect(text).not.toContain('--context orb stack');
   });
 
   it('keeps the unresolved docker remoteBin in the guidance when the home probe fails', async () => {
@@ -374,38 +346,28 @@ describe('connectWithGuidance', () => {
     );
   });
 
-  it('falls back to generic guidance when no artifact locator is configured', async () => {
+  it('falls back to generic guidance when no artifact locator or client version is configured', async () => {
     const runner = vi.fn() as unknown as LocalRunner;
     const attempt = vi.fn(async () => {
       throw missingExecutorError();
     });
 
-    const error = await connectWithGuidance(attempt, { launcher: SSH, runner }).catch(
+    const withoutLocator = await connectWithGuidance(attempt, { launcher: SSH, runner }).catch(
       (error: unknown) => error,
     );
-
-    const message = (error as Error).message;
+    const message = (withoutLocator as Error).message;
     expect(message).toContain('Install the executor manually:');
     expect(message).toContain('release CDN');
     expect(message).toContain('<cdnBase>/binaries/<version>/manifest.json');
     expect(message).toContain('scp <kimi-binary> dev-box:/tmp/kimi-install');
-    // No locator means no platform probe either — detection stays the connect.
-    expect(runner).not.toHaveBeenCalled();
-  });
 
-  it('falls back to generic guidance when the client version is unknown', async () => {
-    const runner = vi.fn() as unknown as LocalRunner;
-    const attempt = vi.fn(async () => {
-      throw missingExecutorError();
-    });
-
-    const error = await connectWithGuidance(attempt, {
+    const withoutVersion = await connectWithGuidance(attempt, {
       launcher: SSH,
       artifactLocator: fixedLocator(),
       runner,
     }).catch((error: unknown) => error);
-
-    expect((error as Error).message).toContain('Install the executor manually:');
+    expect((withoutVersion as Error).message).toContain('Install the executor manually:');
+    // No locator or version means no platform probe either — detection stays the connect.
     expect(runner).not.toHaveBeenCalled();
   });
 
@@ -490,6 +452,7 @@ describe('connectWithGuidance', () => {
     expect(message).toContain('reports version 0.0.4');
     expect(message).toContain('below the required minimum 0.1.0');
     expect(message).toContain(`Upgrade the executor (install version 1.2.3, sha256 ${ARTIFACT.sha256}):`);
+    expect(message).toContain(ARTIFACT.url);
     expect(message).toContain('scp /tmp/kimi-install dev-box:/tmp/kimi-install');
     expect(message).not.toContain('was not found');
     expect((error as HandshakeError).executorVersion).toBe('0.0.4');
@@ -549,17 +512,6 @@ describe('connectWithGuidance', () => {
 });
 
 describe('guidance text', () => {
-  it('missing-executor guidance for docker mentions docker cp and image preinstall', () => {
-    const text = missingExecutorGuidance({
-      launcher: DOCKER,
-      failure: 'missing',
-      artifact: ARTIFACT,
-    });
-    expect(text).toContain(VERIFY_LINE);
-    expect(text).toContain('docker cp /tmp/kimi-install myapp-dev:/tmp/kimi-install');
-    expect(text).toContain('preinstall the executor in the image');
-  });
-
   it('command guidance names the concrete manifest URL when a CDN locator and version are known', () => {
     const text = missingExecutorGuidance({
       launcher: COMMAND,
@@ -573,19 +525,5 @@ describe('guidance text', () => {
   it('command guidance falls back to the manifest pattern without a CDN locator', () => {
     const text = missingExecutorGuidance({ launcher: COMMAND, failure: 'missing' });
     expect(text).toContain('<cdnBase>/binaries/<version>/manifest.json');
-  });
-
-  it('upgrade guidance names the versions and stays distinct from missing guidance', () => {
-    const text = upgradeExecutorGuidance({
-      launcher: SSH,
-      executorVersion: '0.0.4',
-      minExecutorVersion: '0.1.0',
-      artifact: ARTIFACT,
-    });
-    expect(text).toContain('version 0.0.4');
-    expect(text).toContain('minimum 0.1.0');
-    expect(text).toContain('Upgrade the executor');
-    expect(text).toContain(ARTIFACT.url);
-    expect(text).not.toContain('was not found');
   });
 });

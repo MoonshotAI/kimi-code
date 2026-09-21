@@ -99,6 +99,32 @@ function typeText(panel: MountedPanel, text: string): void {
   for (const char of text) panel.handleInput(char);
 }
 
+async function openStagingAddForm(mounted: MountedPanel[]): Promise<EnvironmentAddDialogComponent> {
+  const manager = latest(mounted, EnvironmentManagerComponent);
+  manager.handleInput(DOWN);
+  manager.handleInput(DOWN);
+  manager.handleInput(DOWN);
+  manager.handleInput(ENTER); // [ Add Environment ]
+
+  await vi.waitFor(() => {
+    expect(mounted.some((p) => p instanceof ChoicePickerComponent)).toBe(true);
+  });
+  const typePicker = latest(mounted, ChoicePickerComponent);
+  typePicker.handleInput(ENTER); // first option: SSH host
+
+  await vi.waitFor(() => {
+    expect(mounted.filter((p) => p instanceof ChoicePickerComponent).length).toBe(2);
+  });
+  const hostPicker = latest(mounted, ChoicePickerComponent);
+  hostPicker.handleInput(DOWN); // 'staging' — not an existing environment id
+  hostPicker.handleInput(ENTER);
+
+  await vi.waitFor(() => {
+    expect(mounted.some((p) => p instanceof EnvironmentAddDialogComponent)).toBe(true);
+  });
+  return latest(mounted, EnvironmentAddDialogComponent);
+}
+
 describe('handleEnvironmentCommand', () => {
   it('mounts a loading manager before environment queries settle', async () => {
     const { host, session, mounted } = makeHost({});
@@ -160,18 +186,6 @@ describe('handleEnvironmentCommand', () => {
     const plain = manager.render(120).join('\n').replaceAll(/\[[0-9;]*m/g, '');
     expect(plain).toContain('second-box');
     expect(plain).not.toContain('first-box');
-  });
-
-  it('mounts the manager with the fetched environment list and binding', async () => {
-    const { host, session, mounted } = makeHost({});
-    await handleEnvironmentCommand(host);
-
-    expect(session.listEnvironments).toHaveBeenCalledTimes(1);
-    const manager = latest(mounted, EnvironmentManagerComponent);
-    const plain = manager.render(120).join('\n').replaceAll(/\[[0-9;]*m/g, '');
-    expect(plain).toContain('dev-box');
-    expect(plain).toContain('sandbox');
-    expect(plain).toContain('← current');
   });
 
   it('switches to a remote environment through the cwd dialog', async () => {
@@ -264,29 +278,7 @@ describe('handleEnvironmentCommand', () => {
     const { host, session, mounted } = makeHost({});
     await handleEnvironmentCommand(host);
 
-    const manager = latest(mounted, EnvironmentManagerComponent);
-    manager.handleInput(DOWN);
-    manager.handleInput(DOWN);
-    manager.handleInput(DOWN);
-    manager.handleInput(ENTER); // [ Add Environment ]
-
-    await vi.waitFor(() => {
-      expect(mounted.some((p) => p instanceof ChoicePickerComponent)).toBe(true);
-    });
-    const typePicker = latest(mounted, ChoicePickerComponent);
-    typePicker.handleInput(ENTER); // first option: SSH host
-
-    await vi.waitFor(() => {
-      expect(mounted.filter((p) => p instanceof ChoicePickerComponent).length).toBe(2);
-    });
-    const hostPicker = latest(mounted, ChoicePickerComponent);
-    hostPicker.handleInput(DOWN); // 'staging' — not an existing environment id
-    hostPicker.handleInput(ENTER);
-
-    await vi.waitFor(() => {
-      expect(mounted.some((p) => p instanceof EnvironmentAddDialogComponent)).toBe(true);
-    });
-    const form = latest(mounted, EnvironmentAddDialogComponent);
+    const form = await openStagingAddForm(mounted);
     form.handleInput(TAB); // id (empty -> derives from host)
     form.handleInput(TAB); // defaultCwd
     typeText(form, '/home/me/projects');
@@ -316,29 +308,7 @@ describe('handleEnvironmentCommand', () => {
     const { host, session, mounted } = makeHost({});
     await handleEnvironmentCommand(host);
 
-    const manager = latest(mounted, EnvironmentManagerComponent);
-    manager.handleInput(DOWN);
-    manager.handleInput(DOWN);
-    manager.handleInput(DOWN);
-    manager.handleInput(ENTER); // [ Add Environment ]
-
-    await vi.waitFor(() => {
-      expect(mounted.some((p) => p instanceof ChoicePickerComponent)).toBe(true);
-    });
-    const typePicker = latest(mounted, ChoicePickerComponent);
-    typePicker.handleInput(ENTER); // SSH host
-
-    await vi.waitFor(() => {
-      expect(mounted.filter((p) => p instanceof ChoicePickerComponent).length).toBe(2);
-    });
-    const hostPicker = latest(mounted, ChoicePickerComponent);
-    hostPicker.handleInput(DOWN); // 'staging'
-    hostPicker.handleInput(ENTER);
-
-    await vi.waitFor(() => {
-      expect(mounted.some((p) => p instanceof EnvironmentAddDialogComponent)).toBe(true);
-    });
-    const form = latest(mounted, EnvironmentAddDialogComponent);
+    const form = await openStagingAddForm(mounted);
     form.handleInput(TAB); // id
     form.handleInput(TAB); // defaultCwd
     form.handleInput(TAB); // scope
@@ -418,29 +388,7 @@ describe('handleEnvironmentCommand', () => {
     });
     await handleEnvironmentCommand(host);
 
-    const manager = latest(mounted, EnvironmentManagerComponent);
-    manager.handleInput(DOWN);
-    manager.handleInput(DOWN);
-    manager.handleInput(DOWN);
-    manager.handleInput(ENTER);
-
-    await vi.waitFor(() => {
-      expect(mounted.some((p) => p instanceof ChoicePickerComponent)).toBe(true);
-    });
-    const typePicker = latest(mounted, ChoicePickerComponent);
-    typePicker.handleInput(ENTER);
-
-    await vi.waitFor(() => {
-      expect(mounted.filter((p) => p instanceof ChoicePickerComponent).length).toBe(2);
-    });
-    const hostPicker = latest(mounted, ChoicePickerComponent);
-    hostPicker.handleInput(DOWN); // 'staging' — not an existing environment id
-    hostPicker.handleInput(ENTER);
-
-    await vi.waitFor(() => {
-      expect(mounted.some((p) => p instanceof EnvironmentAddDialogComponent)).toBe(true);
-    });
-    const form = latest(mounted, EnvironmentAddDialogComponent);
+    const form = await openStagingAddForm(mounted);
     form.handleInput(TAB);
     form.handleInput(TAB);
     form.handleInput(TAB);

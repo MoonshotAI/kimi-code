@@ -1,5 +1,3 @@
-import { PassThrough } from 'node:stream';
-
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -10,7 +8,6 @@ import {
   RequestTimeoutError,
 } from '../src/client/connection';
 import type { BytePipe } from '../src/client/execBridge';
-import { LineFrameDecoder } from '../src/protocol/codec';
 import { RpcError } from '../src/protocol/errors';
 import {
   ENVIRONMENT_STATUS_METHOD,
@@ -88,27 +85,17 @@ describe('handshake', () => {
     ).rejects.toThrow();
   });
 
-  it('disconnects on an unknown notification after the handshake', async () => {
+  it.each([
+    ['an unknown notification after the handshake', '{"method":"bogus/notification"}\n'],
+    ['a server-to-client request', '{"id":99,"method":"fs/readFile","params":{}}\n'],
+  ])('disconnects on %s', async (_label, frame) => {
     const { connection, loopback } = await connectInProcess();
     const closed = new Promise<void>((resolve) => {
       connection.onDidClose(() => {
         resolve();
       });
     });
-    loopback.serverOutput.write('{"method":"bogus/notification"}\n');
-    await closed;
-    expect(connection.closed).toBe(true);
-    await loopback.host.done;
-  });
-
-  it('disconnects on a server-to-client request', async () => {
-    const { connection, loopback } = await connectInProcess();
-    const closed = new Promise<void>((resolve) => {
-      connection.onDidClose(() => {
-        resolve();
-      });
-    });
-    loopback.serverOutput.write('{"id":99,"method":"fs/readFile","params":{}}\n');
+    loopback.serverOutput.write(frame);
     await closed;
     expect(connection.closed).toBe(true);
     await loopback.host.done;
@@ -181,27 +168,10 @@ describe('handshake', () => {
   });
 
   it('rejects the handshake with the peer error when initialize is answered with an error', async () => {
-    const clientToServer = new PassThrough();
-    const serverToClient = new PassThrough();
-    const pipe = {
-      write: (chunk: Uint8Array) => {
-        clientToServer.write(chunk);
-      },
-      end: () => {
-        clientToServer.end();
-      },
-      onData: (listener: (chunk: Uint8Array) => void) => {
-        serverToClient.on('data', listener);
-      },
-      onEnd: (listener: () => void) => {
-        serverToClient.on('end', listener);
-      },
-      onError: (listener: (error: Error) => void) => {
-        serverToClient.on('error', listener);
-      },
-    };
-    clientToServer.on('data', () => {
-      serverToClient.write('{"id":1,"error":{"code":-32603,"message":"wrong dialect"}}\n');
+    const pipe = createScriptedServer((frame, reply) => {
+      if (frame.method === INITIALIZE_METHOD) {
+        reply({ id: frame.id, error: { code: -32603, message: 'wrong dialect' } });
+      }
     });
     await expect(
       RemoteExecConnection.connect(pipe, { clientName: 'test', clientVersion: '0.0.0' }),
@@ -355,35 +325,17 @@ describe('request call timeout', () => {
   });
 
   it('settles a stale request when its connection generation is replaced', async () => {
-    const firstToServer = new PassThrough();
-    const firstToClient = new PassThrough();
-    const decoder = new LineFrameDecoder();
-    firstToServer.on('data', (chunk: Buffer) => {
-      for (const frame of decoder.push(chunk)) {
-        const request = frame as ScriptedFrame;
-        if (request.method === INITIALIZE_METHOD) {
-          firstToClient.write(`${JSON.stringify({ id: request.id, result: testInitializeResult() })}\n`);
-        }
-        // process/start is left unanswered: generation 1 stalls on it.
+    let processStartReply!: (value: unknown) => void;
+    const firstPipe = createScriptedServer((frame, reply) => {
+      if (frame.method === INITIALIZE_METHOD) {
+        reply({ id: frame.id, result: testInitializeResult() });
+        return;
+      }
+      // process/start is left unanswered: generation 1 stalls on it.
+      if (frame.method === PROCESS_START_METHOD) {
+        processStartReply = reply;
       }
     });
-    const firstPipe: BytePipe = {
-      write: (chunk) => {
-        firstToServer.write(chunk);
-      },
-      end: () => {
-        firstToServer.end();
-      },
-      onData: (listener) => {
-        firstToClient.on('data', listener);
-      },
-      onEnd: (listener) => {
-        firstToClient.on('end', listener);
-      },
-      onError: (listener) => {
-        firstToClient.on('error', listener);
-      },
-    };
     const first = await RemoteExecConnection.connect(firstPipe, {
       clientName: 'test',
       clientVersion: '0.0.0',
@@ -398,7 +350,7 @@ describe('request call timeout', () => {
     first.close();
     await expect(stale).rejects.toThrow(ConnectionClosedError);
     // A late response on the replaced generation's pipe is inert.
-    firstToClient.write('{"id":2,"result":{"processId":"p1","pid":1}}\n');
+    processStartReply({ id: 2, result: { processId: 'p1', pid: 1 } });
     await new Promise((resolve) => {
       setTimeout(resolve, 50);
     });
