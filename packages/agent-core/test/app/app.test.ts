@@ -5,7 +5,7 @@ import { UNKNOWN_CAPABILITY, type LlmModel } from '#/llm/model';
 import type { LlmRequester } from '#/llm/requester/requester';
 import { openBlobs, type Blobs } from '#/store/blob';
 import { MemoryBackend, Trees } from '#/store/tree';
-import { openSessionStores, type SessionStores } from '#/stores/session';
+import { openSessionStores, type RosterEntry, type SessionStores } from '#/stores/session';
 import { createToken, inject, useExpose, useFire, ref, type Ref, type RuntimeEvent } from '#/kernel/index';
 import { createFeature, useAgentTools, useBlobs, useSession, useSessionStore } from '#/feature/index';
 import { mountApp, type AgentHandle } from '#/app/index';
@@ -43,7 +43,7 @@ const AppCounter = createToken<{ count: Ref<number> }>('test.appCounter');
 const SessionCounter = createToken<{
   count: Ref<number>;
   appCount: Ref<number>;
-  roster(): Record<string, string>;
+  roster(): Record<string, RosterEntry>;
   blobs: Blobs;
 }>('test.sessionCounter');
 
@@ -100,7 +100,9 @@ describe('app-session-agent units', () => {
     const agent = await left.create({ agentId: 'agent-0' });
     agent.setConfig({ model });
     agent.setRequester(createEchoRequester());
-    expect(left.resolve(SessionCounter).roster()).toEqual({ 'agent-0': 'agent-0' });
+    expect(left.resolve(SessionCounter).roster()).toEqual({
+      'agent-0': { branch: 'agent-0', features: ['app-probe', 'session-probe'] },
+    });
     expect(right.resolve(SessionCounter).roster()).toEqual({});
     const done = turnDone(agent);
     expect((await agent.submit(createUserMessage('hello'))).type).toBe('prompt.submitted');
@@ -220,7 +222,7 @@ describe('app-session-agent units', () => {
     await session.close('main');
     expect(session.list()).toEqual(['copy']);
     const sessionLog = env.stores.session;
-    expect(Object.keys(sessionLog.getState().roster.agents)).toEqual(['copy']);
+    expect(Object.keys(sessionLog.getState().roster.agents)).toEqual(['main', 'copy']);
     await app.close('sess');
     expect(app.list()).toEqual([]);
     expect(session.state).toBe('unmounted');

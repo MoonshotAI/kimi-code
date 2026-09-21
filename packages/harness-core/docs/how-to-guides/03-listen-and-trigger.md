@@ -1,10 +1,10 @@
 # 3. 写一个会自动压上下文的 Feature
 
-How-to：自己写 compact。订机器事件、拦 `useBeforeStep`，另开一次 LLM 把 history 压成摘要，再 `switchBranch`。不要 `agent.submit`，也不要把内置 `createCompaction` 引进来当例子。事件形状见 [events](../reference/events.md)。完整产品实现（quiesce / drift / 保留最近 user）对照 `src/features/compaction/`。暴露 facade 见 [4](04-expose-facade.md)。
+How-to：自己写 compact。订机器事件、拦 `useBeforeStep`，另开一次 LLM 把 history 压成摘要，再 `switchBranch`——整条路径在回合缝隙里完成，不经过 prompt 队列。事件形状见 [events](../reference/events.md)。完整产品实现（quiesce / drift / 保留最近 user）对照 `src/features/compaction/`。暴露 facade 见 [4](04-expose-facade.md)。
 
 ## 要听哪一面
 
-自动压缩不能订 `session.on('turn.ended')` 当唯一触发：overflow 发生在机器 `turn.failed` 上，载荷是 `failure`，节点事件只有 `outcome` / `errorMessage`。streaming / retry / tool 中间态同样只在 `agent.on`。
+触发要订 `agent.on` 这一面：overflow 发生在机器 `turn.failed` 上，载荷是 `failure`，节点事件只有 `outcome` / `errorMessage`。streaming / retry / tool 中间态同样只在 `agent.on`。
 
 | 触发 | 订什么 | 然后做什么 |
 |---|---|---|
@@ -88,7 +88,7 @@ const summarize = async (history: readonly HistoryMessage[], signal: AbortSignal
 };
 ```
 
-已经有 `TurnLogic` 时用 `runTurn(logic, input)`。不要手写 `createActor` / `waitFor` / `stop`。
+已经有 `TurnLogic` 时用 `runTurn(logic, input)`：actor 的创建、等待与停止都收在这一条调用里。
 
 ## 3. 自动触发
 
@@ -120,7 +120,7 @@ agent.on('turn.aborting', () => {
 });
 ```
 
-先订再触发。`useBeforeStep` 里不要 `await run`：当前 turn 必须立刻失败，compact 放到微任务。
+先订再触发。`useBeforeStep` 里同步抛错、把 compact 放到微任务：当前 turn 必须立刻失败，在这里 `await run` 等于让超预算的 history 再进一次请求。
 
 ## 4. 压完切分支
 

@@ -1,6 +1,6 @@
 # Unit 树与 EffectScope
 
-Explanation：把 runtime 理解为以 Node 为生命周期和资源归属单位的树，而不是单个 EffectScope 包裹所有业务。
+Explanation：runtime 是一棵以 Node 为生命周期和资源归属单位的树；EffectScope 跟随树的形状，负责停掉节点内的响应式 effects。
 
 ## 三种对象
 
@@ -37,15 +37,15 @@ provider `directory` 仅在根节点按需创建，用来观察整棵树的 prov
 
 ## 职责边界
 
-- EffectScope 管理在其作用域内创建的响应式 effects，不自动管理任意定时器、外部订阅和句柄。
+- EffectScope 管理在其作用域内创建的响应式 effects；定时器、外部订阅和句柄由 Unit 的显式 cleanup 栈管理。
 - Unit 管理显式 cleanup、取消信号、子节点以及就绪条件。
 - `active` 表示同步 setup 与 postSetup 执行完成，不保证异步初始化已完成。
-- `node.unmount()` 会停止 scope；单独 `scope.stop()` 不会反向调用 Unit 卸载，不会自动执行 Unit cleanup 栈。
+- `node.unmount()` 会停止 scope 并执行 cleanup 栈；单独 `scope.stop()` 只停响应式 effects。
 - 父节点卸载时先设置自身状态、abort、停止 scope，再逆序卸载子节点，最后逆序执行自身 cleanup；随后等待已登记操作并断开父子关系。
 
-## 协作不是任意节点寻址
+## 协作沿树的形状寻址
 
-依赖与贡献沿自己和祖先读取；事件只走发出节点的祖先路径。兄弟通信通过共同父级提供的业务契约，或在共同父级注册事件监听。runtime 不提供通用任务依赖图或整树广播。
+依赖与贡献沿自己和祖先读取；事件只走发出节点的祖先路径。兄弟通信通过共同父级提供的业务契约，或在共同父级注册事件监听。寻址面因此始终和树的形状一致，挂上树即得、撤下树即失。
 
 继续阅读：[外部句柄](../reference/node-handle.md)、[资源清理](../how-to-guides/16-cleanup-resources.md)。
 

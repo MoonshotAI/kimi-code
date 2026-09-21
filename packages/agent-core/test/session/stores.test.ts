@@ -98,8 +98,8 @@ describe('SessionStores open/fork', () => {
     expect(forkHeader.parentSeq).toBe(env.tree.openBranch('main').head);
 
     expect(env.stores.session.getState().roster.agents).toEqual({
-      fork: 'fork',
-      main: 'main',
+      fork: { branch: 'fork' },
+      main: { branch: 'main' },
     });
 
     const forkActor = await startAgent(fork, { agentId: 'fork', branchId: env.stores.branch('fork') });
@@ -115,19 +115,22 @@ describe('SessionStores open/fork', () => {
     await actor.disposeAsync();
   });
 
-  it('removes the agent from the roster on close', async () => {
+  it('keeps the agent roster entry on close', async () => {
     const env = await testEnv();
     await env.stores.open('main');
     await env.stores.open('temp');
     expect(env.stores.session.getState().roster.agents).toEqual({
-      main: 'main',
-      temp: 'temp',
+      main: { branch: 'main' },
+      temp: { branch: 'temp' },
     });
 
     await env.stores.close('temp');
 
     expect(env.stores.get('temp')).toBeUndefined();
-    expect(env.stores.session.getState().roster.agents).toEqual({ main: 'main' });
+    expect(env.stores.session.getState().roster.agents).toEqual({
+      main: { branch: 'main' },
+      temp: { branch: 'temp' },
+    });
   });
 });
 
@@ -153,14 +156,14 @@ describe('SessionStores undo', () => {
     const header = env.tree.openBranch('main~2').header;
     expect(header.parentBranch).toBe('main');
     expect(header.parentSeq).toBe((cutStart as { seq: number }).seq - 1);
-    expect(env.stores.session.getState().roster.agents['main']).toBe('main~2');
-    expect(env.tree.openBranch('main').head).toBe(7);
+    expect(env.stores.session.getState().roster.agents['main']?.branch).toBe('main~2');
+    expect(env.tree.openBranch('main').head).toBe(8);
 
     await actor.disposeAsync();
     const resumed = await startAgent(main, { agentId: 'main', branchId: env.stores.branch('main') });
     await runTurn(resumed, main, 'third', 5);
     expect(historyTexts(main)).toEqual(['first', 'echo:first', 'second', 'third', 'echo:third']);
-    expect(env.tree.openBranch('main').head).toBe(7);
+    expect(env.tree.openBranch('main').head).toBe(8);
     expect(main.getState().turnIndex.nextTurnId).toBe(2);
 
     await resumed.disposeAsync();
@@ -198,8 +201,8 @@ describe('SessionStores reopen', () => {
     const restored = await reopen(env);
 
     expect(restored.stores.session.getState().roster.agents).toEqual({
-      fork: 'fork',
-      main: 'main~2',
+      fork: { branch: 'fork' },
+      main: { branch: 'main~2' },
     });
     const restoredMain = await restored.stores.open('main');
     expect(restored.stores.branch('main')).toBe('main~2');
@@ -238,6 +241,8 @@ describe('SessionStores switchBranch', () => {
     const actor = await startAgent(main, { agentId: 'main', branchId: env.stores.branch('main') });
     await runTurn(actor, main, 'first', 2);
     await actor.disposeAsync();
+    const spec = main.getState().spec;
+    expect(spec).toBeDefined();
     const switched: { branch: string; reason?: string; stats?: Record<string, number> }[] = [];
     env.stores.session.onCommit((entry) => {
       if (entry.event.type === 'agent.switched') {
@@ -261,6 +266,7 @@ describe('SessionStores switchBranch', () => {
     expect(result.branchId).toBe('main~2');
     expect(env.stores.branch('main')).toBe('main~2');
     expect(historyTexts(main)).toEqual(['seed-user', 'seed-summary']);
+    expect(main.getState().spec).toEqual(spec);
     expect(main.getState().turnIndex).toEqual({
       turns: [{ turnId: 1, start: { branch: 'main~2', seq: 0 }, end: { branch: 'main~2', seq: 3 } }],
       nextTurnId: 2,

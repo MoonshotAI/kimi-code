@@ -35,11 +35,11 @@ cleanup 后进先出：先取消订阅，再关闭资源。注册完资源就立
 
 ## 退出与提前释放
 
-- 宿主等待 `handle.unmount()`；不要只调用外部 scope.stop。
+- 宿主等待 `handle.unmount()`：`scope.stop()` 只停响应式 effects，cleanup 栈由 unmount 执行。
 - 父节点先递归卸载孩子，再执行自己的 cleanup，因此孩子释放时父资源尚未进入显式 cleanup 阶段。
 - cleanup 可以异步；收集到的清理错误以 AggregateError 报告。
 - 提前释放资源时注意避免卸载时重复释放；可使用幂等释放函数，或用 `removeCleanup` 移除对应登记。removeCleanup 本身不执行释放。
-- setup 返回函数会被当成 cleanup；不要为“导出业务 action”而直接返回一个函数。
+- setup 返回函数会被当成 cleanup；导出业务 action 走 `useExpose` / provide 的面。
 - `signal.aborted` 只表示取消已发出，不表示外部工作已经全部退出。
 
 验收：每项非响应式资源都有明确清理路径；子卸载不会留下父级订阅；宿主确实等待卸载完成。

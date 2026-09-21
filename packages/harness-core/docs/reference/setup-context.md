@@ -20,7 +20,7 @@ Reference：先区分依赖当前 Unit 的 hooks 与不依赖上下文的定义�
 
 `runUnit` 在调用 setup 前压入当前 Node，返回时弹出。setup 同步调用的 helper 可以使用 hooks；不要求代码字面上嵌套在 setup 中。
 
-不要在 `await` 后、定时器、事件处理器或后续 watch 回调里重新调用 hooks。这些回调没有保留原 Node 的上下文；即使碰巧存在当前 Unit，也可能是别的节点。HTTP handler 由 `useHttpRoute` 包在 `asUnit` 里，因此可以同步 `inject` / `useApp` / `useSession` / `useAgent`；按 id 用 `useApp().get(id)`，不要 `useSession(id)`。`await` 之后栈已弹出，不要再调 hooks。`asUnit` 只恢复查找，不要在里面 `useReady` / `useOn` / `useHttpRoute`。
+hooks 只在同步 setup 段有效：`await` 之后、定时器、事件处理器或后续 watch 回调里，原 Node 的上下文已弹出（即使碰巧存在当前 Unit，也可能是别的节点），这些回调里使用 setup 阶段捕获的句柄与服务。HTTP handler 由 `useHttpRoute` 包在 `asUnit` 里，因此可以同步 `inject` / `useApp` / `useSession` / `useAgent`；按 id 用 `useApp().get(id)`。`asUnit` 只恢复查找；`useReady` / `useOn` / `useHttpRoute` 这类登记仍回 setup 段调用。
 
 ```ts
 const Worker = createUnit('worker', () => {
@@ -32,7 +32,7 @@ const Worker = createUnit('worker', () => {
 });
 ```
 
-片段中的 `initialize(signal)` 是调用方提供的异步初始化函数。异步阶段使用捕获的 `node`、`fire`，不要再次调用 hooks。
+片段中的 `initialize(signal)` 是调用方提供的异步初始化函数。异步阶段使用捕获的 `node`、`fire`——它们在进入异步前已经绑定到正确节点。
 
 ## 返回值与后续使用
 
@@ -40,7 +40,7 @@ const Worker = createUnit('worker', () => {
 - `useCollection()` 返回的 computed 可以稍后读取；它不是重新执行 hook。
 - `useChildren()` 只需注册一次，外层通过响应式数据源改变期望子节点。
 - `useReady(promise)` 登记条件；`handle.ready()` 等待条件。两者不是内外版本的同一种操作。
-- 当前 runtime 不等待 async setup 返回的 Promise；不要把 `async setup` 当成初始化契约。
+- 当前 runtime 不等待 async setup 返回的 Promise；异步初始化的契约是显式登记 [useReady](use-ready.md)。
 
 ## EffectScope 上下文不等于 Unit 上下文
 

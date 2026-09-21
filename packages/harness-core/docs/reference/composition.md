@@ -8,7 +8,7 @@
 replay(projection, entries): S
 ```
 
-有 `restore` 用 `restore`，否则 `initial()` 后逐条 `reduce`。打开 store、`project`、`refresh`、`withHistory` 内部都走它。手写一次性重放也用它，不要自己写 reduce 循环。
+有 `restore` 用 `restore`，否则 `initial()` 后逐条 `reduce`。打开 store、`project`、`refresh`、`withHistory` 内部都走它。手写一次性重放也走它：分支选择只有这一份实现。
 
 ## combine：多投影组合
 
@@ -51,11 +51,11 @@ const wireProjection = (journal: WireJournal) => combine({
 | usage / 审计类 | 完整历史 | 已发生的消耗是物理事实，不随 undo 撤销 |
 | turn index | 完整历史 | 记录的是物理提交位置 |
 
-反例（实验里的 negative control）：`replay(withHistory(usage(), journal.activeHistory), all)` 会把被 undo 那轮的 usage 也回滚掉，少算消耗。**不要把一个全局 active history 当成所有 projection 的唯一输入。**
+这张表经过实验验证：negative control 给 `usage` 喂 `activeHistory`（`replay(withHistory(usage(), journal.activeHistory), all)`）会把被 undo 那轮的消耗也回滚掉，少算。所以历史视图按 projection 逐份选择，不存在一份对所有 projection 都正确的流。
 
 class 风格的 projection（方法依赖 `this`）经 `withHistory` 包装后 receiver 保留——`reduce` 是原样转发的。
 
 ## wire 与 tree 的「完整历史」不一样
 
 - wire `read()`：完整物理记录（含 metadata 和 undo triple），`activeHistory` 用真实 `parseTree`/`restorableChain` 选可恢复链。
-- tree `read()`：**当前 branch 的 parent chain**，不是整个 tree 的物理文件。所以 tree 下「usage 读完整历史」= 当前 branch lineage 的完整历史。要跨 branch 的累计事实，用独立 audit journal，不要拼接多分支文件（互斥历史不是连续事实）。
+- tree `read()`：**当前 branch 的 parent chain**，不是整个 tree 的物理文件。所以 tree 下「usage 读完整历史」= 当前 branch lineage 的完整历史。要跨 branch 的累计事实，用独立 audit journal：多分支物理文件互斥，拼起来不是一条连续事实。

@@ -29,7 +29,7 @@ createUnit<P = void>(name: string, setup: UnitSetup<P>): UnitRecipe<P>
 - 同步 setup 完成后节点通常进入 `active`，不表示异步工作已 ready。
 - `handle.update()` 不重跑 setup；初始和新 props 都是对象时，只更新原有浅响应式视图。原始值 props 的 setup 入参不会被替换。
 - 清理函数仅在卸载时自动执行；需要主动提前释放的资源，应自行提供释放入口，并避免后续重复释放，见 [资源清理](../how-to-guides/16-cleanup-resources.md)。
-- `useChildren` 以配方对象 identity 判断是否替换，不比较 `name`；不要在每次 source 求值时重新创建等名配方。
+- `useChildren` 以配方对象 identity 判断是否替换，不比较 `name`；配方对象保持引用稳定（例如模块级常量），等名新配方会被当作替换。
 - 此函数由 `packages/agent-core/src/kernel/index.ts` 重导出；接入位置以 [代码定位](source-map.md) 为准。
 
 源码：见 [代码定位](source-map.md)，`kernel/runtime.ts` 的 `createUnit`。

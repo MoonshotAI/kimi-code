@@ -1,6 +1,6 @@
 # 事件
 
-两套面，不要混用订阅 API。
+两套面，按载荷选订阅 API：
 
 | 面 | 订阅 | 载荷类型 | 何时出现 |
 |---|---|---|---|
@@ -62,7 +62,7 @@ session.on(interaction, 'interaction.requested', (event) => {
 });
 ```
 
-迟到订阅者先 `findAll({ resolved: false })`，不要假设自己赶上了 `requested`。
+迟到订阅者先 `findAll({ resolved: false })` 补齐在订阅之前发出的请求，再开始听新事件。
 
 ## 机器：`AgentEmitted`（`agent.on`）
 
@@ -121,7 +121,7 @@ session.on(interaction, 'interaction.requested', (event) => {
 
 ## 机器输入（只给 `send`，不是订阅面）
 
-`input.submit` / `notify` / `remind` / `steer` / `cancel` / `abort` / `pause` / `continue` / `close`。宿主用 `AgentCommands` 的同名方法，不要自己拼这些 type。这些方法先订再 `send`，再把上表对应回执 `return` 出来。`setConfig` / `setCredentialProvider` / `setRequester` 也在命令面上，但不进机器，仍是同步。
+`input.submit` / `notify` / `remind` / `steer` / `cancel` / `abort` / `pause` / `continue` / `close`。宿主用 `AgentCommands` 的同名方法：方法内部先订回执再 `send`，再把上表对应回执 `return` 出来，type 由命令面封装。`setConfig` / `setCredentialProvider` / `setRequester` 也在命令面上，但不进机器，仍是同步。
 
 ## 相关文档
 

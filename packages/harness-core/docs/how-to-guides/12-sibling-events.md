@@ -8,7 +8,7 @@ How-to：让接收者在共同父节点注册监听，接收发送者冒泡上�
 Sender.fire(event) → Parent 的监听器 → Receiver 注册的业务回调
 ```
 
-不是 `Sender.fire → Receiver.useOn`，也不是 Parent 收到事件后再向下广播。Receiver 自己的 useOn 只注册在 Receiver 上，收不到兄弟的事件。
+事件只沿「发送节点 → 根」的祖先路径传播，所以监听登记在 Parent：Receiver 自己的 useOn 只覆盖发到 Receiver 路径上的事件，兄弟的事件不在其中；Parent 收到事件后也不再向下广播。
 
 ## 实现接收者
 
@@ -31,14 +31,14 @@ const Receiver = createUnit<ReceiverProps>('receiver', (props) => {
 
 1. 先挂载 Receiver，确保监听存在。
 2. Sender 在 setup 中取得 `useFire()`，在后续业务中调用捕获的 fire，发送 `{ type: 'sender.message', ...payload }`。
-3. 有多个来源时，用事件类型和显式上下文字段筛选；可以通过 EventContext 提供来源上下文，不要假设事件自动携带来源 Node。
+3. 有多个来源时，用事件类型和显式上下文字段筛选；来源通过 EventContext 显式提供。
 4. Receiver 卸载时取消 Parent 上的监听，不必卸载仍在工作的 Parent。
 
 ## 边界
 
 - 事件是同步通知，不缓存、不重放；不能补发订阅前发生的事件。
-- 不在 handler 中直接调用 useNode / inject 等 hooks；在 setup 提前捕获需要的依赖。
-- 不在 Parent handler 中无条件重新 `parent.fire` 同一事件，否则可能递归触发自己。
+- handler 里使用 setup 提前捕获的依赖（回调执行时不恢复 setup 上下文）。
+- Parent handler 里重新 `parent.fire` 同一事件要带条件，无条件转发会递归触发自己。
 - handler 抛错会中断当前 fire 调用；异步 handler 的 Promise 不由 fire 等待。
 - Parent 是更广的订阅范围，包含其其他后代的事件；监听类型与 payload 需要业务约束。
 

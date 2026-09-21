@@ -4,7 +4,7 @@ How-to：用 Interaction 的 `AskUserQuestion` 说明怎么 `detach`，让 turn 
 
 ## Interaction 在哪一层
 
-提问表是 session 拥有的内存登记，不是状态机、不是进程单例。session slot `useFire` + `openInteractions`，`useExpose(InteractionRef)`。agent slot 取同一份表、挂工具；卸载只 `cancelAgent(..., 'agent_closed')`。不在 `turn.done` 取消，后台 question 可以跨 turn。
+提问表是 session 拥有的内存登记：随 session 生灭、被本 session 的 agent 共享。session slot `useFire` + `openInteractions`，`useExpose(InteractionRef)`。agent slot 取同一份表、挂工具；卸载只 `cancelAgent(..., 'agent_closed')`。不在 `turn.done` 取消，后台 question 可以跨 turn。
 
 ```ts
 export const interaction = createFeature<InteractionEvent>('interaction', {
@@ -61,7 +61,7 @@ async execute({ toolCall, detach }) {
 - `detach` 只调一次，重复调用被工具机丢掉
 - ack 文案就是模型本步看到的 tool result
 - `task_id` 用 `toolCall.id`，和 WaitFor 的 `task_id` 对齐
-- 不要 detach 之后立刻 `return` 而丢掉 `request()`——答案必须等 `respond` 之后作为 async completion 回来
+- `detach` 之后继续等 `request()`：答案必须等 `respond` 之后作为 async completion 回来，提前 `return` 就把这条 completion 丢了
 - `execute` 里不能 `inject`；`interactions` 在 setup 闭包捕获
 
 前台提问（`background` 省略 / false）不 detach，turn 停在 `acting`，等人答完。

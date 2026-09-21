@@ -28,7 +28,7 @@ useCollection<T>(collection: CollectionToken<T>): ComputedRef<readonly T[]>
 - setup 外需要单次读取时，用已保存节点的 `node.fold(collection)`；它返回当次折叠的普通数组，没有本 hook 的 computed 包装。
 - 在响应式 effect 中调用 `fold()` 仍可能追踪其读取；“快照”指返回数组，不表示底层数据是非响应式的。
 - 读取集合不会登记新的贡献，也没有取消订阅或清空集合的返回接口；释放读取方不等于撤销提供方条目。
-- 同步 setup 中创建的消费 watcher 由节点 scope 停止；不要把仍持有的 computed 当成卸载后继续有效的服务接口。
+- 同步 setup 中创建的消费 watcher 由节点 scope 停止；读取方的服务寿命随节点结束。
 - 贡献的自动清理由 [useContribute](use-contribute.md) 管理；直接 `node.contribute()` 的撤销需要提供方显式负责。
 
 源码：见 [代码定位](source-map.md)，`packages/agent-core/src/kernel/hooks.ts` 的 `useCollection`。

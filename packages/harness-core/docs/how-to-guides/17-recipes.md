@@ -28,7 +28,7 @@ const entry = await store.dispatch({ type: 'my.event', time: Date.now() });
 store.getState();
 ```
 
-Feature 里不要自己 `openStore`。用 `useAgentStore()` / `useSessionStore()`。
+Feature 里用 `useAgentStore()` / `useSessionStore()`：拿到节点上那份已打开的 journal，自有投影随它持久化、随它重放。
 
 ## 后加载一个投影
 
@@ -42,7 +42,7 @@ view.dispose();
 
 Feature：`useAgentStore().fold(todos)` 得到 `ShallowRef`，随节点清理。
 
-## undo / 切分支之后：refresh，不是 dispatch
+## undo / 切分支之后：refresh 重投影
 
 ```ts
 await store.refresh(() => journal.create(freshName, from));
@@ -58,7 +58,7 @@ await store.dispatch({ type: 'plan.revision', planId: 'p1', content: ref });
 const text = new TextDecoder().decode(await stores.blobs.get(ref));
 ```
 
-Feature 里 `const blobs = useBlobs()`。`reduce` 里禁止 `get`。图写 `media://${ref}`，物化在 protocol `lower`。
+Feature 里 `const blobs = useBlobs()`。`reduce` 保持纯函数（不 `get`）；图写 `media://${ref}`，物化在 protocol `lower`。
 
 ## 写自定义 Projection / Journal
 

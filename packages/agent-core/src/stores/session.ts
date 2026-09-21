@@ -10,6 +10,7 @@ export type AgentOpened = {
   readonly time?: number;
   readonly agentId: string;
   readonly branch: string;
+  readonly features?: readonly string[];
 };
 
 export type AgentClosed = {
@@ -46,8 +47,13 @@ export function decodeSession(record: RecordEvent): SessionEvent | undefined {
   return decodeRecord<SessionEvent>(record, sessionTypes);
 }
 
+export interface RosterEntry {
+  readonly branch: string;
+  readonly features?: readonly string[];
+}
+
 export interface SessionLogState {
-  readonly roster: { agents: Record<string, string> };
+  readonly roster: { agents: Record<string, RosterEntry> };
   readonly sessionMeta: { value: unknown };
 }
 
@@ -58,15 +64,29 @@ export function session<C>(): Projection<SessionLogState, RecordEvent, C> {
       const event = decodeSession(record);
       if (event === undefined) return state;
       if (event.type === 'agent.opened') {
-        return { ...state, roster: { agents: { ...state.roster.agents, [event.agentId]: event.branch } } };
+        return {
+          ...state,
+          roster: {
+            agents: {
+              ...state.roster.agents,
+              [event.agentId]: { branch: event.branch, features: event.features },
+            },
+          },
+        };
       }
       if (event.type === 'agent.switched') {
-        return { ...state, roster: { agents: { ...state.roster.agents, [event.agentId]: event.branch } } };
-      }
-      if (event.type === 'agent.closed') {
-        const agents = { ...state.roster.agents };
-        delete agents[event.agentId];
-        return { ...state, roster: { agents } };
+        return {
+          ...state,
+          roster: {
+            agents: {
+              ...state.roster.agents,
+              [event.agentId]: {
+                branch: event.branch,
+                features: state.roster.agents[event.agentId]?.features,
+              },
+            },
+          },
+        };
       }
       if (event.type === 'session.meta_updated') {
         return { ...state, sessionMeta: { value: event.meta } };
@@ -128,7 +148,7 @@ export interface SessionStores {
   readonly session: SessionStore;
   get(agentId: string): AgentStore | undefined;
   branch(agentId: string): string | undefined;
-  open(agentId: string, opts?: { from?: BranchRef }): Promise<AgentStore>;
+  open(agentId: string, opts?: { from?: BranchRef; features?: readonly string[] }): Promise<AgentStore>;
   fork(sourceId: string, agentId: string): Promise<AgentStore>;
   close(agentId: string): Promise<void>;
   undo(agentId: string, turns: number): Promise<{ branchId: string }>;
@@ -148,7 +168,10 @@ export async function openSessionStores(tree: Tree, blobs: Blobs): Promise<Sessi
   const journal = treeJournal(tree, logBranch);
   const session = await openSessionStore(journal);
 
-  const open = async (agentId: string, opts?: { from?: BranchRef }): Promise<AgentStore> => {
+  const open = async (
+    agentId: string,
+    opts?: { from?: BranchRef; features?: readonly string[] },
+  ): Promise<AgentStore> => {
     const existing = agents.get(agentId);
     if (existing !== undefined) {
       return existing.store;
@@ -156,7 +179,7 @@ export async function openSessionStores(tree: Tree, blobs: Blobs): Promise<Sessi
     const registered = session.getState().roster.agents[agentId];
     let branch: Branch;
     if (registered !== undefined) {
-      branch = tree.openBranch(registered);
+      branch = tree.openBranch(registered.branch);
     } else if (tree.has(agentId)) {
       branch = tree.openBranch(agentId);
     } else {
@@ -169,7 +192,12 @@ export async function openSessionStores(tree: Tree, blobs: Blobs): Promise<Sessi
     const store = await openAgentStore(agentJournal);
     agents.set(agentId, { store, journal: agentJournal });
     if (registered === undefined) {
-      await session.dispatch({ type: 'agent.opened', agentId, branch: branch.name });
+      await session.dispatch({
+        type: 'agent.opened',
+        agentId,
+        branch: branch.name,
+        features: opts?.features,
+      });
     }
     return store;
   };
@@ -188,10 +216,10 @@ export async function openSessionStores(tree: Tree, blobs: Blobs): Promise<Sessi
       }
       const sourceBranch = tree.openBranch(source.journal.branch);
       const head = sourceBranch.head;
-      return open(
-        agentId,
-        head === null ? undefined : { from: { branch: sourceBranch.name, seq: head } },
-      );
+      return open(agentId, {
+        from: head === null ? undefined : { branch: sourceBranch.name, seq: head },
+        features: session.getState().roster.agents[sourceId]?.features,
+      });
     },
     close: async (agentId) => {
       const opened = agents.get(agentId);
@@ -227,9 +255,14 @@ export async function openSessionStores(tree: Tree, blobs: Blobs): Promise<Sessi
       if (opened === undefined) {
         throw new StoreError('unknown-agent', `unknown agent '${agentId}'`);
       }
+      const spec = opened.store.getState().spec;
       const branchId = freshBranchName(tree, agentId);
       await opened.store.refresh(() => opened.journal.create(branchId));
-      if (opts.seed.length > 0) await opened.store.dispatch([...opts.seed]);
+      const seed =
+        spec !== undefined && !opts.seed.some((event) => event.type === 'spec.frozen')
+          ? [...opts.seed, { type: 'spec.frozen', spec }]
+          : opts.seed;
+      if (seed.length > 0) await opened.store.dispatch([...seed]);
       await session.dispatch({
         type: 'agent.switched',
         agentId,

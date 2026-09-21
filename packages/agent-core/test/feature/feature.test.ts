@@ -22,6 +22,7 @@ import type { LlmRequester } from '#/llm/requester/requester';
 import { openSessionStores, type SessionStores } from '#/stores/session';
 import { mountAgent, mountApp, type AgentHandle } from '#/app/index';
 import {
+  AgentPort,
   createFeature,
   useAgent,
   useAgentStore,
@@ -84,7 +85,7 @@ describe('feature DSL', () => {
         useExpose(Calls, state);
       },
     });
-    const installed = shallowRef([createFeature('probe', {
+    const probeSpec = createFeature('probe', {
       agent() {
         order.push('child-setup');
         expect(inject(Extra)).toBe('extra-value');
@@ -157,7 +158,8 @@ describe('feature DSL', () => {
           maxActive: () => sideMax,
         });
       },
-    })]);
+    });
+    const installed = shallowRef([probeSpec]);
     const env = await testStores();
     const requests: Array<{ tools: string[]; text: string[]; systemPrompt?: string }> = [];
     const requester: LlmRequester = {
@@ -167,8 +169,12 @@ describe('feature DSL', () => {
           text: content.messages.map((message) => extractText(message)),
           systemPrompt: content.systemPrompt,
         });
-        onEvent?.({ type: 'llm.streaming.part', part: requests.length === 1
-          ? { type: 'function', id: 'call-1', name: 'increment', arguments: '{}' }
+        const last = content.messages.at(-1);
+        const callsIncrement =
+          requests.length === 1 ||
+          (last !== undefined && last.role === 'user' && ['degraded', 'revive'].includes(extractText(last)));
+        onEvent?.({ type: 'llm.streaming.part', part: callsIncrement
+          ? { type: 'function', id: `call-${requests.length}`, name: 'increment', arguments: '{}' }
           : { type: 'text', text: 'done' } });
         onEvent?.({ type: 'llm.done' });
       },
@@ -216,35 +222,82 @@ describe('feature DSL', () => {
     expect(side.calls.value).toBe(2);
     expect(side.maxActive()).toBe(1);
     expect(requests).toHaveLength(2);
-    installed.value = [createFeature('late', {
+    const lateSpec = createFeature('late', {
       agent() {
         useSystemPrompt({ id: 'late', text: 'should-not-appear' });
       },
-    })];
+    });
+    installed.value = [lateSpec];
     await session.ready();
     const second = turnDone(agent);
     await agent.submit(createUserMessage('again'));
     await second;
     await vi.waitFor(() => { expect(requests).toHaveLength(3); });
-    expect(requests[2]?.tools).toEqual([]);
+    expect(requests[2]?.tools).toEqual(['increment']);
     expect(requests[2]?.systemPrompt).toBe(assembledPrompt);
-    expect(requests[2]?.text).not.toContain('resolved');
-    expect(state.steps.value).toBe(2);
-    expect(state.finished.value).toBe(1);
-    expect(state.befores.value).toBe(1);
-    expect(state.afters.value).toBe(1);
-    expect(state.gates.value).toBe(1);
-    const stepError = new Error('step rejected');
-    installed.value = [createFeature('failing-step', {
-      agent() { useBeforeStep(() => { throw stepError; }); },
-    })];
-    await session.ready();
-    const failed = new Promise<unknown>((resolve) => {
-      agent.on('turn.failed', (event) => resolve(event.failure.reason === 'error' ? event.failure.error : undefined));
+    expect(requests[2]?.text).toContain('resolved');
+    expect(state.steps.value).toBe(3);
+    expect(state.finished.value).toBe(2);
+    await session.close('agent-0');
+    expect(() => agent.resolve(Side)).toThrow('no provider');
+    const resumed = await session.create({
+      agentId: 'agent-0',
+      systemPrompt: 'host-text',
+      features: [probeSpec, lateSpec],
+      provide: (node) => {
+        node.provide(Extra, 'extra-value');
+      },
     });
-    await agent.submit(createUserMessage('fail'));
+    resumed.setConfig({ model });
+    resumed.setRequester(requester);
+    const third = turnDone(resumed);
+    await resumed.submit(createUserMessage('resume'));
+    await third;
+    await vi.waitFor(() => { expect(requests).toHaveLength(4); });
+    expect(requests[3]?.tools).toEqual(['increment']);
+    expect(requests[3]?.systemPrompt).toBe(assembledPrompt);
+    expect(requests[3]?.text).toContain('resolved');
+    expect(state.steps.value).toBe(4);
+    const stepError = new Error('step rejected');
+    const failing = await session.create({
+      agentId: 'agent-1',
+      features: [createFeature('failing-step', {
+        agent() { useBeforeStep(() => { throw stepError; }); },
+      })],
+    });
+    failing.setConfig({ model });
+    failing.setRequester(requester);
+    const failed = new Promise<unknown>((resolve) => {
+      failing.on('turn.failed', (event) => resolve(event.failure.reason === 'error' ? event.failure.error : undefined));
+    });
+    await failing.submit(createUserMessage('fail'));
     await expect(failed).resolves.toBe(stepError);
-    expect(requests).toHaveLength(3);
+    expect(requests).toHaveLength(4);
+    const missing: string[] = [];
+    session.on('session.feature_missing', (event) => {
+      missing.push(event['featureName'] as string);
+    });
+    await session.close('agent-0');
+    const degraded = await session.create({ agentId: 'agent-0', systemPrompt: 'host-text' });
+    expect(missing).toEqual(['probe']);
+    degraded.setConfig({ model });
+    degraded.setRequester(requester);
+    const fourth = turnDone(degraded);
+    await degraded.submit(createUserMessage('degraded'));
+    await fourth;
+    await vi.waitFor(() => { expect(requests).toHaveLength(6); });
+    expect(requests[4]?.tools).toEqual(['increment']);
+    expect(requests[4]?.systemPrompt).toBe(assembledPrompt);
+    expect(requests[5]?.text.some((text) => text.includes("tool 'increment' is unavailable"))).toBe(true);
+    degraded.resolve(AgentPort).registerToolExecutor('increment', {
+      execute: async () => ({ content: [{ type: 'text', text: 'revived' }] }),
+    });
+    const fifth = turnDone(degraded);
+    await degraded.submit(createUserMessage('revive'));
+    await fifth;
+    await vi.waitFor(() => { expect(requests).toHaveLength(8); });
+    expect(requests[6]?.tools).toEqual(['increment']);
+    expect(requests[7]?.text.some((text) => text.includes('revived'))).toBe(true);
     await app.disposeAsync();
     await env.stores.dispose();
   });

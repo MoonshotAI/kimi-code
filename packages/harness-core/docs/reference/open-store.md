@@ -24,7 +24,7 @@ const store = await openStore({
 4. 最后触发 `onCommit` 监听器，参数是 `(entry, rootState)`。
 5. resolve 返回 `Entry`（含 journal 分配的 cursor）。
 
-## 错误分类（不要笼统 catch 重试）
+## 错误分类（按失败点决定恢复方式）
 
 | 失败点 | 抛出 | 后果 |
 |---|---|---|
@@ -45,7 +45,7 @@ const store = await openStore({
 
 打开时缓存当前 `history`。`store.attach(projection)` 用这份历史当场 replay 并加入 live slot，不读盘。`phase` 不是 `open` 或已 `failed` 时抛错。Feature setup（含中途加入）走这条路径。
 
-`store.project(projection)` 仍返回 `Promise<View>`，在串行队列里调用同一个 `attach`（不再 `journal.read()`）。窗口外、需要与 in-flight dispatch 排好序时用它。
+`store.project(projection)` 仍返回 `Promise<View>`，在串行队列里调用同一个 `attach`（复用打开时缓存的 `history`，不重新读盘）。窗口外、需要与 in-flight dispatch 排好序时用它。
 
 ## refresh：历史切换后的重投影
 
@@ -59,7 +59,7 @@ const store = await openStore({
 
 - dispatch 的输入事件被 clone + 深度 freeze；journal 返回的 `entry.event` 与 `entry` 本身也 freeze。
 - 投影产出的状态 freeze。
-- **只冻结数组和普通对象**（`Object.getPrototypeOf` 为 `Object.prototype` 或 `null`）：Event2 这类 class 实例事件、typed-array cursor 不被触碰，identity 保留。reducer 不能依赖「状态一定被冻住」来防御，自己也不要原地改状态。
+- **只冻结数组和普通对象**（`Object.getPrototypeOf` 为 `Object.prototype` 或 `null`）：Event2 这类 class 实例事件、typed-array cursor 不被触碰，identity 保留。reducer 自己保证纯函数：返回新状态，不原地改。
 
 ## 不变式速查
 

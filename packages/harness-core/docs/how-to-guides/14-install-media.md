@@ -4,7 +4,7 @@ How-to：给产品树装一个 `createMedia`，让 Agent 在协议 `lower` 里�
 
 ## 选择边界
 
-适用于会话里只存 `media://` / `data:`，真正编进协议报文发生在组包。上传通道写在各 Provider 的 `media` 字段上，不要为每个 requester 再装一份 `createMedia`。
+适用于会话里只存 `media://` / `data:`，真正编进协议报文发生在组包。上传通道写在各 Provider 的 `media` 字段上，一份 `createMedia` 按 `ctx.model.provider` 查找通道。
 
 不装时 `data:` / `https:` 仍会 lower；`media://` 没有 source 会变成 unavailable 文本，也不会登记 degrade。
 
@@ -34,7 +34,7 @@ const app = mountApp({ features: [providerCatalog, media] });
 
 ## 往消息里放媒体
 
-ContentPart 的 `image_url` / `audio_url` / `video_url` 只表达 ref，不要把 file-id 写回去。
+ContentPart 的 `image_url` / `audio_url` / `video_url` 只表达 ref；file-id 留在 upload cache 里，由 lower 在组包时查出。
 
 ```ts
 const ref = await store.put({
@@ -56,7 +56,7 @@ await agent.submit({
 
 ## 物化发生在哪一步
 
-`runLlmRequest` 把 `ports.media` 写入 `content.media` → `composeProtocolRequest` → **`await ports.lower`**。四个 codec 对媒体 part 调用 `materializeMediaPart`，然后才 `assemble` / `encode` / `send`。不要包一层 `LlmRequester`。请求寿命见 [绑定 Provider 并发一次 LLM 请求](15-run-llm-request.md)。
+`runLlmRequest` 把 `ports.media` 写入 `content.media` → `composeProtocolRequest` → **`await ports.lower`**。四个 codec 对媒体 part 调用 `materializeMediaPart`，然后才 `assemble` / `encode` / `send`——物化收在 policy 循环里，requester 保持薄传输。请求寿命见 [绑定 Provider 并发一次 LLM 请求](15-run-llm-request.md)。
 
 - `data:`：内联 base64，不读 source / cache。
 - `media://` 图 / 音频：`source.get` 后内联，不上传。
@@ -64,7 +64,7 @@ await agent.submit({
 
 `providers` 来自 [useCollection](../reference/use-collection.md) 折叠的 `Providers`。要视频上传，同时装 `providerCatalog`，并用 `useProvider` 贡献带 `media` 的 Provider。查找键是 `ctx.model.provider`。目录用法见 [7](07-use-provider-catalog.md)。
 
-`createMedia` 用 `useMediaLower` 登记 `AgentPorts.media`，再用 `useLlmRecovery` 装 degrade。卸载 Feature 会撤 ports 和 degrade。不要再为媒体登记 `useMessageResolver`。
+`createMedia` 用 `useMediaLower` 登记 `AgentPorts.media`，再用 `useLlmRecovery` 装 degrade——媒体进协议的两个缝都在这两个 hook 上。卸载 Feature 会撤 ports 和 degrade。
 
 请求过大或 `image_format` 时，degrade 改的是未 lower 的 ContentPart ref，下一轮再物化。
 

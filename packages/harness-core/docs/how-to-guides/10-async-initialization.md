@@ -33,7 +33,7 @@ const Parent = createUnit<ParentProps>('parent', (props) => {
 3. 在成功回调检查 `signal.aborted`，避免卸载后的迟到结果继续挂载。
 4. 宿主等待 `handle.ready()`；失败后由宿主关闭整棵树。
 
-## 不要混淆三个动作
+## 三个动作各管一段
 
 | 动作 | 负责什么 | 不负责什么 |
 |---|---|---|
@@ -45,7 +45,7 @@ useReady 通过取消竞速避免卸载一直等待原操作，但原操作本�
 
 ## 避免等待环
 
-不要让孩子的 ready 等待包含它自己的 `parent.ready()`。父 ready 本来就等孩子，会形成环。等自己那组 `useChildren()` 返回的 `ready()`，而不是整棵父树。
+孩子的 ready 等待范围收窄到自己那组 `useChildren()` 返回的 `ready()`：`parent.ready()` 本来就等孩子，再让孩子的等待包含它会形成环。
 
 当前产品节点自己挂 feature slot：`SessionUnit.create()` 先 `await node.ready()`（此时还没有 agent 孩子，等于 session slot 就绪），再打开 journal 并挂 `AgentUnit`；`AgentUnit` 用自己的 `useFeatureSlot('agent').ready()` 门控 `actor.start()`。见 [代码定位](../reference/source-map.md)。
 

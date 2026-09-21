@@ -12,7 +12,7 @@ Reference：写 Feature 或改文档前，先对上当前 checkout 的路径。�
 | harness 产品 | `@moonshot-ai/harness-core` |
 | 包内互引 | `#/` → 各包 `src/*.ts` |
 
-不要把 `#/` 抄到包外。单原语文档省略 import，以本表为准。
+`#/` 只在包内有效；包外经包入口导入。单原语文档省略 import，以本表为准。
 
 ## agent-core
 
@@ -55,6 +55,6 @@ Reference：写 Feature 或改文档前，先对上当前 checkout 的路径。�
 
 ## 使用前检查
 
-- 用符号定位最新代码，不要依赖行号。
+- 以符号定位为准：行号随提交漂移。
 - `runtime.ts` 还导出 `mountChild` / `handleFor` / `runUnit`，`kernel/index.ts` 不转导出它们（`asUnit` 除外）。常规代码用 `node.mount()` 和 `UnitHandle`。
 - 契约变了就改对应原子文档和 [README](../README.md)。

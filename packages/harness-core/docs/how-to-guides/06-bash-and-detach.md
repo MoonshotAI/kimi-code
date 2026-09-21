@@ -99,7 +99,7 @@ agent.on('tool.detached', (event) => {
 });
 ```
 
-**产品 facade**（只暴露你想给 UI 的）：`agent.resolve(BashRef).running()`。UI 默认走这一层，不要把 `turnTools` 的 actor ref 传出进程。
+**产品 facade**（只暴露你想给 UI 的）：`agent.resolve(BashRef).running()`。UI 默认走这一层；`turnTools` 的 actor ref 留在进程内，跨进程只传 facade 给的数据。
 
 ## 手动 detach
 

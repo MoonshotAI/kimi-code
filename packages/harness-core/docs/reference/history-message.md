@@ -60,7 +60,7 @@ type StreamedMessagePart = ContentPart | ToolCall | ToolCallPart
 | `llm.streaming.finish` | `finish` |
 | `llm.streaming.message_id` | `messageId` |
 
-不要用 `session.on` 等 Delta。节点事件只有完整 `HistoryMessage`。
+Delta 只出现在机器事件面（`agent.on`）；节点事件只有完整 `HistoryMessage`。
 
 ## 相关文档
 

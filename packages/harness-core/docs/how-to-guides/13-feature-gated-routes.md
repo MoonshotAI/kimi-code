@@ -6,7 +6,7 @@ How-to：Http Feature 观察祖先提供的 `Features` 名单，用 `useChildren
 
 适用于「路由归 Http 所有，只按别的 Feature 在不在名单里开关」。`createHttpServer()` / `server.route()` / `server.close()` 由调用方提供，不是 kernel API。
 
-路由其实属于那个 Feature 时，走下面的「对方贡献路由」。不要在兄弟 slot 上 `useContribute`，再指望 Http 能 `useCollection` 看见。
+路由其实属于那个 Feature 时，走下面的「对方贡献路由」：collection 沿祖先路径折叠，兄弟 slot 上的 `useContribute` 对 Http 不可见。
 
 ```text
 App：useFeatureSlot → provide(Features) → 挂各 Feature slot
@@ -48,7 +48,7 @@ export const http = createFeature('http', {
 1. 同步 setup 里 `inject(Features)` 一次；`useFeatureSlot` 已把名单提供在产品节点上。
 2. `useChildren` 只注册一次，用 getter 读名单；`installFeature` / `uninstallFeature` 改的就是这份 computed。
 3. 路由登记写在孩子 setup，撤销压进孩子；关端口压进 Http 自己。
-4. 不要在 `watch` 回调里再调 hooks。
+4. `watch` 回调里使用 setup 捕获的句柄（hooks 只在同步 setup 段有效）。
 
 ## 边界
 
@@ -58,7 +58,7 @@ export const http = createFeature('http', {
 
 ## 对方贡献路由
 
-当路由属于那个 Feature：Http 提供集合并 `useCollection` + `useChildren`；对方像 `useProvider` 那样贡献到 root，而不是 `useContribute`。
+当路由属于那个 Feature：Http 提供集合并 `useCollection` + `useChildren`；对方像 `useProvider` 那样贡献到 root（共同祖先），Http 这一层才折叠得到。
 
 ```ts
 const Routes = createCollection<HttpRoute>('http.routes');
@@ -87,6 +87,6 @@ export const http = createFeature('http', {
 
 现有实例：`builtin/provider-catalog/feature.ts` 的 `useProvider` / `useCollection(Providers)`。
 
-验收：`installFeature` 写入名单后，观察 `Features` 的孩子挂上；`uninstallFeature` 后孩子卸载且 cleanup 已跑。产品 HTTP 用 harness `createHttp`，不要在本页自造服务器。`createHttp` 自带 `GET /features`：按 app / live session / agent 列出该层已挂 slot 的 Feature。
+验收：`installFeature` 写入名单后，观察 `Features` 的孩子挂上；`uninstallFeature` 后孩子卸载且 cleanup 已跑。产品 HTTP 用 harness `createHttp`，它自带 `GET /features`：按 app / live session / agent 列出该层已挂 slot 的 Feature。
 
 源码：见 [代码定位](../reference/source-map.md)，`feature/hooks.ts` 的 `useFeatureSlot`，`app/appUnit.ts` 的 `installFeature`，`kernel/hooks.ts` 的 `useChildren` / `useCollection`。

@@ -1,10 +1,10 @@
 # 11. 让兄弟节点共享状态或能力
 
-How-to：把共享业务契约提供到共同父级，让兄弟节点注入同一对象，而不是互相查找 Node。
+How-to：把共享业务契约提供到共同父级，让兄弟节点注入同一对象。
 
 ## 选择边界
 
-适用于持续共享状态、读取最新值、调用业务 action。只需一次通知时阅读 [兄弟事件](12-sibling-events.md)；不要用一个可覆盖的 Ref 冒充必须逐条送达的消息队列。
+适用于持续共享状态、读取最新值、调用业务 action。只需一次通知时阅读 [兄弟事件](12-sibling-events.md)：可覆盖的 Ref 只承载最新值，逐条送达的消息走事件面。
 
 ```text
 Parent：provide(Counter, shared)
@@ -44,7 +44,7 @@ const Parent = createUnit('parent', () => {
 
 ## 孩子把契约挂到共同父级
 
-DI 只沿祖先链解析。孩子若要把 face 提供给宿主 `resolve` 和兄弟 `inject`，用 [useExpose](../reference/use-expose.md)，不要手写 `parent.provide` 再自己绑撤销。
+DI 只沿祖先链解析。孩子若要把 face 提供给宿主 `resolve` 和兄弟 `inject`，用 [useExpose](../reference/use-expose.md)：它登记在父节点，并把撤销自动绑到当前节点的清理栈。
 
 ```ts
 const Counter = createToken<CounterService>('counter');
@@ -72,6 +72,6 @@ const Parent = createUnit('parent', () => {
 
 Writer 必须先于 Reader 挂载：`inject` 不等稍后出现的 provider。Feature slot 由产品节点 `provide` 之后再 `useChildren`，同一轮里列表顺序仍要满足「先发布、后消费」。
 
-不要手工向父级 provide 后忘记把 withdraw 绑定到子提供者的清理，否则子节点消失后父级可能仍保留条目。`useExpose` 就是这条规则的原语。
+挂到父级的条目必须随子提供者卸载而撤销，否则子节点消失后父级仍保留条目——`useExpose` 把这条规则做成了原语。
 
 源码与验收依据：`packages/agent-core/src/kernel/hooks.ts` 的 `useExpose`，`test/kernel/runtime.test.ts` 与 `test/feature/feature.test.ts`。

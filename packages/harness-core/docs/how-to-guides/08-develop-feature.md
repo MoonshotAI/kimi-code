@@ -105,7 +105,7 @@ export const interaction = createFeature<InteractionEvent>('interaction', {
 });
 ```
 
-`use*` 贡献点已经 `pushCleanup`。自己开的表、actor、timer 必须显式 `pushCleanup`。不要假定父节点会扫后代资源。
+`use*` 贡献点已经 `pushCleanup`。自己开的表、actor、timer 显式 `pushCleanup` 到自己的节点：卸载只执行各节点登记的 cleanup 栈，资源因此随所属节点一起撤。
 
 ## 6. 推进名单
 

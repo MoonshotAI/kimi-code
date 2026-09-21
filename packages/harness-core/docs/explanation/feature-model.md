@@ -1,6 +1,6 @@
 # Feature 模型
 
-一个产品能力只落地一次 `createFeature`。不恢复 Plugin、DI `Feature` 基类、`registerFeature` 副作用。
+一个产品能力只落地一次 `createFeature`：配方是一份纯定义，挂载与卸载全部由产品树驱动。
 
 ## 配方与实例
 
@@ -34,7 +34,7 @@ export function createCompaction(deps: CreateCompactionDeps): FeatureSpec {
 
 ## 贡献面
 
-agent slot 里不要直接 `inject(AgentUnitRef)`。读命令面用 `useAgent` / `useSession` / `useApp`。绑 generate 用 `useAgent().setConfig` / `setCredentialProvider` / `setRequester`。往回合里加东西用贡献 hook，卸载自动撤回：
+agent slot 里读命令面用 `useAgent` / `useSession` / `useApp`：它们给出收窄后的 Commands 面（提交、配置、订阅），Feature 摸不到节点内部结构。绑 generate 用 `useAgent().setConfig` / `setCredentialProvider` / `setRequester`。往回合里加东西用贡献 hook，卸载自动撤回：
 
 - 工具 / 系统提示：`useAgentTools`、`useSystemPrompt`
 - 拦截缝：`useBeforeStep`、`useBeforeTool`、`useAfterTool`、`usePromptGate`
@@ -47,7 +47,7 @@ system prompt 的 `host` 段留给创建 agent 时的 `systemPrompt`。第一次
 
 ## 对外契约
 
-宿主和兄弟不读你的内部文件。约定是：
+宿主和兄弟只依赖包入口导出的符号，契约因此收窄到一个 token：
 
 1. `createToken` 一个 facade。
 2. slot 里 `useExpose(Token, face)`，挂到父节点，随本节点撤销。
@@ -58,7 +58,7 @@ system prompt 的 `host` 段留给创建 agent 时的 `systemPrompt`。第一次
 
 ## 跨 Feature
 
-只走 token / collection。拥有方导出 collection，贡献方 `useContribute`。禁止 `import` 对方 `feature.ts` 内部实现。宿主端口同样：`host/` 定义 token，Feature `inject`，CLI 在 `mountApp({ provide })` 注入。
+协作只走 token / collection：拥有方导出 collection，贡献方 `useContribute`，依赖方向只剩包入口的导出符号，每个 Feature 才能独立装卸。宿主端口同样：`host/` 定义 token，Feature `inject`，CLI 在 `mountApp({ provide })` 注入。
 
 ## 相关文档
 

@@ -1,6 +1,6 @@
 # Tree journal 与物理容器
 
-源码：`packages/agent-core/src/store/tree.ts`、`store/journal.ts`、`store/node.ts`、`stores/session.ts`。没有 `openWireJournal` / `openTreeJournal`。产品入口是 `Trees` + `treeJournal` + `openSessionStores`。
+源码：`packages/agent-core/src/store/tree.ts`、`store/journal.ts`、`store/node.ts`、`stores/session.ts`。产品入口是 `Trees` + `treeJournal` + `openSessionStores`。
 
 ## 物理层
 
@@ -25,7 +25,7 @@
 - `checkout(name)`
 - `settled()`
 
-`read()` 返回**当前 branch 的 parent chain**（自身 entries + 父链截断点之前），不是整棵 tree 的物理合并。cursor 是 `{ branch, seq }`，内核当 `C` 传，不要解析。
+`read()` 返回**当前 branch 的 parent chain**（自身 entries + 父链截断点之前），不是整棵 tree 的物理合并。cursor 是 `{ branch, seq }`，内核当 opaque `C` 保存和传递，结构只属于 tree 自己。
 
 行内 payload 永远是 `{ kind, size, data }`。大字段由领域 `blobs.put`，事件只带 `ref`。`tree/codec.ts` 只编解码 jsonl 行。
 

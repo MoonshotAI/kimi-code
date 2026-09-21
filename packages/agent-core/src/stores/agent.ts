@@ -1,7 +1,19 @@
-import { createUserEntry, type HistoryMessage, type UserEntry } from '#/llm/message';
+import { createUserEntry, type HistoryMessage, type ToolDescription, type UserEntry } from '#/llm/message';
 import { decodeRecord, type RecordEvent } from '#/store/journal';
 import { openStore, type Journal, type Projection, type Store } from '#/store/store';
 import type { BranchRef } from '#/store/tree';
+
+export interface SystemPromptSection {
+  readonly id: string;
+  readonly text: string;
+  readonly priority?: number;
+}
+
+export interface AgentSpec {
+  readonly version: 1;
+  readonly systemPrompt: readonly SystemPromptSection[];
+  readonly tools: readonly ToolDescription[];
+}
 
 export type MessageAppended = {
   readonly type: 'message.appended';
@@ -30,13 +42,20 @@ export type InputSubmitted = {
   readonly entry: UserEntry;
 };
 
-export type AgentLogEvent = MessageAppended | TurnStarted | TurnEnded | InputSubmitted;
+export type SpecFrozen = {
+  readonly type: 'spec.frozen';
+  readonly time?: number;
+  readonly spec: AgentSpec;
+};
+
+export type AgentLogEvent = MessageAppended | TurnStarted | TurnEnded | InputSubmitted | SpecFrozen;
 
 const agentLogTypes = new Set<AgentLogEvent['type']>([
   'input.submitted',
   'message.appended',
   'turn.started',
   'turn.ended',
+  'spec.frozen',
 ]);
 
 export interface TurnPosition<C> {
@@ -56,6 +75,7 @@ export interface AgentLogState<C> {
   readonly notifications: UserEntry[];
   readonly reminders: HistoryMessage[];
   readonly turnIndex: TurnIndex<C>;
+  readonly spec?: AgentSpec;
 }
 
 export function decodeAgent(record: RecordEvent): AgentLogEvent | undefined {
@@ -90,6 +110,9 @@ export function agent<C>(): Projection<AgentLogState<C>, RecordEvent, C> {
     reduce: (state, record, cursor) => {
       const event = decodeAgent(record);
       if (event === undefined) return state;
+      if (event.type === 'spec.frozen') {
+        return state.spec === undefined ? { ...state, spec: event.spec } : state;
+      }
       if (event.type === 'message.appended') {
         return { ...state, history: [...state.history, event.message] };
       }

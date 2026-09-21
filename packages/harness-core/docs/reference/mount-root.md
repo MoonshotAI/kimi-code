@@ -5,7 +5,7 @@ Reference：需要从宿主启动一棵没有 Unit 父节点的树，并取得�
 ## 使用场景
 
 - 在应用或会话的组合入口挂载根配方，随后显式等待 ready、更新 props 或卸载。
-- 已有 Unit 父节点时优先使用 `node.mount()` 或 [useChildren](use-children.md)，不要用另一个根冒充子节点。
+- 已有 Unit 父节点时使用 `node.mount()` 或 [useChildren](use-children.md)：子节点这才进入父的 scope、setup 上下文与递归卸载。
 - 根节点没有 Unit 父节点，不代表其响应式 scope 一定与外部隔离。
 
 ## 调用契约

@@ -1,6 +1,6 @@
 # Harness 总览
 
-`@moonshot-ai/harness-core` 在 `@moonshot-ai/agent-core` 上实现产品能力。它不是第二套 kernel、Store 或 LLM。宿主同时依赖两个包：
+`@moonshot-ai/harness-core` 在 `@moonshot-ai/agent-core` 上实现产品能力。runtime 原语（kernel / Store / LLM）只在 agent-core 有一份，harness-core 往里装配产品名单。宿主同时依赖两个包：
 
 - agent-core：`mountApp`、`SessionSpace` / `memorySessionSpace`、Unit / Store / LLM / agent-machine、`createFeature`、`waitFor`、`createMedia`、`providerCatalog`
 - harness-core：`fsSessionSpace`、产品 Feature 名单、HTTP Feature
@@ -43,8 +43,8 @@ Feature 不是第四棵树。`createFeature('name', { app?, session?, agent? })`
 - 绑 generate：`agent.setConfig` / `setCredentialProvider` / `setRequester`（不进机器、不落盘；Feature 用 `useAgent()` 上的同名方法）
 - 写回合：`agent.submit` / `notify` / `remind` / `steer` / `cancel` / `abort` / `pause` / `continue`（步骤见 [01](../how-to-guides/01-run-a-turn.md)）
 - 写 Feature 状态：Feature 自己 `useAgentStore().dispatch` 或 `useSessionStore().dispatch`，事件进同一份 journal，`decodeAgent` 不认识的 type 原样留下
-- 读 facade：`handle.resolve(TodoRef)`，不要 `node.resolve`，不要 `featureHost.get`
-- 读活表：`app.get(sessionId)` / `session.get(agentId)` 是同步活表，不是 catalog ensure-open
+- 读 facade：`handle.resolve(TodoRef)`——Handle 是面向宿主的解析面，与 `inject` 同语义（缺失抛错）
+- 读活表：`app.get(sessionId)` / `session.get(agentId)` 是同步活表查找；从 catalog 打开走 `app.open`
 
 ## 相关文档
 

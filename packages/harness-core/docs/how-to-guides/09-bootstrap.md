@@ -38,10 +38,10 @@ setup 或 postSetup 同步失败时，mountRoot 会发起异步清理并重抛�
 
 无外部生命周期容器时直接省略第三个参数。需要把响应式 effects 归入已有 scope 时传 `{ scope }`；Root 仍会新建自己的 scope。
 
-即使外部 scope 已 stop，仍需 unmount Unit。不要以 `scope.stop()` 替代资源关闭。
+即使外部 scope 已 stop，仍需 unmount Unit：`scope.stop()` 只停响应式 effects，cleanup 栈由 `unmount()` 执行。
 
 ## 当前代码中的入口
 
-`app/appUnit.ts` 分离了 `AppUnit` 和 `mountApp`：前者在产品节点上 `useFeatureSlot('app')` 并提供命令，后者调用 mountRoot 并返回 host。Session / Agent 由 `create()` 挂到产品树上，不再另起 FeatureUnit。
+`app/appUnit.ts` 分离了 `AppUnit` 和 `mountApp`：前者在产品节点上 `useFeatureSlot('app')` 并提供命令，后者调用 mountRoot 并返回 host。Session / Agent 由 `create()` 挂到产品树上，Feature slot 随产品节点一起出现。
 
 验收：初始化失败能进入释放路径；动态增删后 ready 可等待；退出后子节点 cleanup 已完成。完整可运行例子见 [计数树教程](../tutorials/counter-tree.md)。

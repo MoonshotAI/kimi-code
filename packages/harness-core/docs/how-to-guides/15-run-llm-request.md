@@ -4,7 +4,7 @@ How-to：先绑定出 `LlmRequester`，再按单次或政策循环发请求。�
 
 ## 选择边界
 
-三层不要混：
+三层各管一段寿命：
 
 | 层 | 入口 | 寿命 |
 |---|---|---|
@@ -41,7 +41,7 @@ const signal = new AbortController().signal;
 
 标准 openai 预设已带 connection，可直接 `import { openaiProvider } from '#/llm/builtin/provider'`，取 `openaiProvider.requesters.openai` 或 `.openai_responses`。
 
-产品 turn 不在这里直接 `runLlmRequest`。把内部类型交给 agent：`setConfig(config)`、`setCredentialProvider(provider)`、`setRequester(requester)`。缺 config 或 requester 的下一次 `generate` 失败。步骤见 [01](01-run-a-turn.md)；按模型再绑 requester 见 [07](07-use-provider-catalog.md)。
+产品 turn 把内部类型交给 agent：`setConfig(config)`、`setCredentialProvider(provider)`、`setRequester(requester)`，`runLlmRequest` 由机器侧发起。缺 config 或 requester 的下一次 `generate` 失败。步骤见 [01](01-run-a-turn.md)；按模型再绑 requester 见 [07](07-use-provider-catalog.md)。
 
 ## 政策循环
 
@@ -75,7 +75,7 @@ const result = await runLlmRequest(
 //       else return failed
 ```
 
-`policy.media?.()` 在 settle 前写入 `content.media`（已有值不覆盖）。不要包一层 `LlmRequester` 去塞 media。
+`policy.media?.()` 在 settle 前写入 `content.media`（已有值不覆盖）——media 属于政策循环的一部分，requester 只做传输。
 
 ## 单次 generate
 
@@ -114,7 +114,7 @@ await requester.generate(config, content, { signal, onEvent });
 ## 边界
 
 - 绑定一次，可以换不同 `LlmPolicy` 反复 `runLlmRequest`。
-- 不把 `resolvers` / `recoveries` / `retry` 传进 `bind` 或 `createProvider`。
+- `resolvers` / `recoveries` / `retry` 归 `runLlmRequest` 的 policy 参数，随每次调用生效。
 - `RequestTrait`（`convertMessage` / `mergeHistory` / `convertTool` / `buildParams`）是绑定方言，不是政策。
 - 包入口不导出 `ComposeProtocolPorts` / `composeProtocolRequest`；产品只认 `LlmRequester.generate`。
 

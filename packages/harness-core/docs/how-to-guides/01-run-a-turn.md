@@ -40,7 +40,7 @@ const app = mountApp({
 await app.ready();
 ```
 
-`space` 是 App 的 catalog。最小路径不要传 `features`；要默认产品名单再写 `features: [...features]`。`config` / 凭证 / 传输不在 `mountApp` 上配，开完 agent 再 set。
+`space` 是 App 的 catalog。最小路径省略 `features`；要默认产品名单再写 `features: [...features]`。`config` / 凭证 / 传输按 agent 绑定：开完 agent 再 `setConfig` / `setCredentialProvider` / `setRequester`。
 
 Anthropic / Google 把 requester 换成 `anthropicProvider.requesters.anthropic` / `googleProvider.requesters['google-genai']`。Kimi 用 `@moonshot-ai/harness-core` 的 `kimiProvider.requesters.openai`（或 `.anthropic` / `.openai_responses`）。协议绑定细节见 [15. 绑定 Provider](15-run-llm-request.md)。按模型再绑一条见 [7. provider-catalog](07-use-provider-catalog.md)。
 
@@ -83,9 +83,9 @@ if (event['outcome'] !== 'done') {
 }
 ```
 
-`submit` 先订再 `send`，等到机器 `prompt.submitted` 才把该事件返回——表示命令已被接收，**不**写 journal 的 `input.submitted`，也**不**等 turn 结束。等 UI 事实用 `session.wait('turn.ended')`，不要订 `agent.on('turn.done')`。`wait` 只等之后发生的事件，先订再 `submit`。本步 assistant 落盘看 `session.on('message.appended')`；一个 turn 可以有多条。
+`submit` 先订再 `send`，等到机器 `prompt.submitted` 才把该事件返回——表示命令已被接收，**不**写 journal 的 `input.submitted`，也**不**等 turn 结束。等 UI 事实用 `session.wait('turn.ended')`：它是已落盘的节点事件（`agent.on('turn.done')` 是机器载荷，区别见「两个 `on`」）。`wait` 只等之后发生的事件，先订再 `submit`。本步 assistant 落盘看 `session.on('message.appended')`；一个 turn 可以有多条。
 
-`get` 失败是 `undefined`。catalog 里有、树还没挂时也是 `undefined`（ensure-open 未做）。agent 用到时再 `session.create({ agentId })`，不要在 `mountApp` 上预备默认值。
+`get` 失败是 `undefined`。catalog 里有、树还没挂时也是 `undefined`（ensure-open 未做）。agent 用到时再 `session.create({ agentId })`：活表按 demand 生长。
 
 ## 流式 Delta
 

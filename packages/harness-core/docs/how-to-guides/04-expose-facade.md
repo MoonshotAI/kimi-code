@@ -1,6 +1,6 @@
 # 4. 把 Feature 的 facade 暴露出去
 
-How-to：接着上一篇写好的 compact，用 token + `useExpose` 给出宿主可调用的面。不要让外部 `node.resolve`，不要把可选 Feature 写进 Session 字段。对照：`src/features/compaction/feature.ts`。
+How-to：接着上一篇写好的 compact，用 token + `useExpose` 给出宿主可调用的面：宿主的依赖收窄到包入口导出的一个 token。对照：`src/features/compaction/feature.ts`。
 
 ## 约定
 

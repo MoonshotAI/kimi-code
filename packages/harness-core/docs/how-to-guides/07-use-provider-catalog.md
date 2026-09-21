@@ -1,6 +1,6 @@
 # 7. 使用 builtin provider-catalog
 
-How-to：装上 `providerCatalog`，用 `useProvider` 贡献 Provider，用 `ProviderCatalogRef` 解析出 `requester`，再 `agent.setRequester`。它为什么是 Feature 而不是状态机见 [provider-catalog](../explanation/provider-catalog.md)。第 1 步是手绑 requester；这一步改成目录。
+How-to：装上 `providerCatalog`，用 `useProvider` 贡献 Provider，用 `ProviderCatalogRef` 解析出 `requester`，再 `agent.setRequester`。它为什么是 app 级 Feature 见 [provider-catalog](../explanation/provider-catalog.md)。第 1 步是手绑 requester；这一步改成目录。
 
 ## 装上
 

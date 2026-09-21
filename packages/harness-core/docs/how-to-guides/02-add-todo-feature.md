@@ -10,7 +10,7 @@ How-to：一个 Todo Feature 由三块组成——自有 store（投影 + `dispa
 | reminder | 列表非空、未全部 done、且两轮没人改过 → `agent.notify` 一条 system reminder | `feature.ts` 里 `agent.on('turn.started')` |
 | tool | 模型读/写列表；写则 `store.dispatch` | `tool.ts` + `todo-list.md` |
 
-不要把列表塞进 Unit 本地变量。恢复时重放事件，不重跑 `execute`。
+列表状态落在事件投影里：恢复时重放事件，不重跑 `execute`——塞进 Unit 本地变量的数据活不过重启。
 
 ## 1. Store：事件 + 投影
 

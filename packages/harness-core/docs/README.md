@@ -73,10 +73,10 @@ HTTP 装配见 [getting-started](getting-started.md)。
 
 ## 交付检查
 
-- Feature 只经 token / collection 协作，不 `import` 对方内部实现。
-- 绑 generate 用 `agent.setConfig` / `setCredentialProvider` / `setRequester`（Feature 用 `useAgent()`），不走 `resolve`，没有 `TurnRequest`。
+- Feature 之间只经 token / collection 协作：协作面收窄到包入口导出的符号，Feature 才能独立装卸。
+- 绑 generate 用 `agent.setConfig` / `setCredentialProvider` / `setRequester`（Feature 用 `useAgent()` 上的同名方法）：它们是命令面上的同步设置，直接决定下一次 `generate`。
 - 宿主取 facade 用 `handle.resolve(token)`，订 Feature 事件用 `session.on(feature, type)`。
 - `app.on` / `session.on` 是已持久化（或 Feature `fire`）的节点事件；`agent.on` 是机器事件。
-- 不把 `subscribe` 当事实流：状态没变 ≠ 事件没提交；要事实用 `onCommit` 或节点 `on`。
-- 不在 await 后重新调用 hooks；当前上下文用 `use*`，按 id 用 `useApp().get` / `session.get`。
-- 不把异步过程放进 XState entry 还指望状态机等它。
+- 事实流用 `onCommit` 或节点 `on`：`subscribe` 只在状态变化时通知，状态没变 ≠ 事件没提交。
+- hooks 只在同步 setup 段调用；await 之后用 setup 里捕获的句柄，按 id 取实例用 `useApp().get` / `session.get`。
+- 需要状态机等待的异步过程建成 invoke + 状态：entry 的 action 不会被 await。

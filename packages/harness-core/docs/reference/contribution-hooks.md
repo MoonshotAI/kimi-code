@@ -10,7 +10,7 @@ Reference：builtin 扩展点。源码 `packages/agent-core/src/feature/contribu
 | `useSession()` | `SessionCommands` | 活 agent 表、`stores` |
 | `useAgent()` | `AgentCommands` | `config` / `setConfig` / `setCredentialProvider` / `setRequester` / `submit` / `notify` / `on`（机器事件） |
 
-不要 `inject(AppUnitRef)` 等 token。按 id 查找不是 hook：`useApp().get(id)` / `session.get(agentId)`，失败是 `undefined`。绑 generate 用 `setConfig` / `setCredentialProvider` / `setRequester`。缺 `config` 或 requester 的下一次 `generate` 失败。
+命令面是收窄后的 Commands——Feature 经这三个 hook 拿到提交、配置、订阅的完整能力，节点内部结构留在产品节点背后。按 id 查找走实例方法：`useApp().get(id)` / `session.get(agentId)`，失败是 `undefined`。绑 generate 用 `setConfig` / `setCredentialProvider` / `setRequester`。缺 `config` 或 requester 的下一次 `generate` 失败。
 
 catalog 在 `useApp()` 上：`app.space` / `app.open` / `app.updateSession`。未配 `space` 时访问会抛错。
 
