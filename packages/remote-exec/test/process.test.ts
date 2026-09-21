@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -124,7 +124,7 @@ describe('process group over a subprocess loopback', () => {
   });
 
   it('spawns in the environment defaultCwd when the call omits cwd', async () => {
-    const envCwd = await mkdtemp(join(tmpdir(), 'kimi-remote-default-cwd-'));
+    const envCwd = await realpath(await mkdtemp(join(tmpdir(), 'kimi-remote-default-cwd-')));
     try {
       expect(envCwd).not.toBe(process.cwd());
       const envProcesses = new RemoteProcessService(connection, envCwd, '/bin/bash');
