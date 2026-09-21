@@ -1,7 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PathSecurityError } from '#/tool/path-access';
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
 import { type WriteInput, WriteInputSchema } from '#/agent/tools/os/write/write';
 import { WriteTool } from '#/agent/tools/os/write/writeTool';
@@ -56,18 +61,18 @@ function createWriteFs(options: WriteFsOptions = {}) {
     options.stat ?? (async () => ({ isFile: false, isDirectory: true, size: 0 })),
   );
   const mkdir = vi.fn(options.mkdir ?? (async () => {}));
-  const fs = { cwd: '/', readText, writeText, appendText, stat, mkdir } as unknown as IHostFileSystem;
+  const realpath = vi.fn(async (path: string) => path);
+  const fs = { cwd: '/', readText, writeText, appendText, stat, mkdir, realpath } as unknown as IHostFileSystem;
   return { fs, readText, writeText, appendText, stat, mkdir };
 }
 
-function makeTool(options: WriteFsOptions = {}, workspace = PERMISSIVE_WORKSPACE) {
-  const fakes = createWriteFs(options);
+function makeToolWithFs(fs: IHostFileSystem, workspace = PERMISSIVE_WORKSPACE) {
   const backend = Object.assign(
     new FakeRuntime(
       { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
       { capabilities: ['fs'] },
     ),
-    { fs: fakes.fs, environment: createTestEnv() },
+    { fs, environment: createTestEnv() },
   );
   const runtime: IAgentRuntimeService = {
     _serviceBrand: undefined,
@@ -76,7 +81,12 @@ function makeTool(options: WriteFsOptions = {}, workspace = PERMISSIVE_WORKSPACE
     inspect: () => backend,
     acquire: () => ({ runtime: backend, track: (resource) => resource, dispose: () => {} }),
   };
-  const tool = new WriteTool(runtime, workspace);
+  return new WriteTool(runtime, workspace);
+}
+
+function makeTool(options: WriteFsOptions = {}, workspace = PERMISSIVE_WORKSPACE) {
+  const fakes = createWriteFs(options);
+  const tool = makeToolWithFs(fakes.fs, workspace);
   return { tool, ...fakes };
 }
 
@@ -401,5 +411,102 @@ describe('WriteTool', () => {
 
     expect(result.isError).toBeFalsy();
     expect(writeText).toHaveBeenCalledWith('/workspace-sneaky/file.txt', 'content');
+  });
+});
+
+describe('WriteTool symlink escape', () => {
+  let tmpDir: string;
+  let wsDir: string;
+  let outsideDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'write-symlink-'));
+    wsDir = join(tmpDir, 'ws');
+    outsideDir = join(tmpDir, 'outside');
+    await mkdir(wsDir);
+    await mkdir(outsideDir);
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('rejects writes through a symlink that points outside the workspace', async () => {
+    const target = join(outsideDir, 'target.txt');
+    await writeFile(target, 'original');
+    const link = join(wsDir, 'link.txt');
+    await symlink(target, link);
+    const tool = makeToolWithFs(new HostFileSystem(), stubWorkspaceContext(wsDir));
+
+    const result = await execute(tool, { path: link, content: 'pwned' });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(toolContentString(result)).toMatch(/symbolic link/);
+    await expect(readFile(target, 'utf8')).resolves.toBe('original');
+  });
+
+  it('rejects writes through a symlinked parent directory that points outside the workspace', async () => {
+    const fakeHome = join(tmpDir, 'fake-home');
+    await mkdir(fakeHome);
+    const target = join(fakeHome, '.bashrc');
+    await writeFile(target, 'original');
+    await symlink(fakeHome, join(wsDir, 'home'));
+    const tool = makeToolWithFs(new HostFileSystem(), stubWorkspaceContext(wsDir));
+
+    const result = await execute(tool, { path: join(wsDir, 'home', '.bashrc'), content: 'pwned' });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(toolContentString(result)).toMatch(/symbolic link/);
+    await expect(readFile(target, 'utf8')).resolves.toBe('original');
+  });
+
+  it('blocks writes through a symlink that resolves to a sensitive file', async () => {
+    const target = join(outsideDir, 'id_rsa');
+    await writeFile(target, 'secret-key');
+    const link = join(wsDir, 'notes.md');
+    await symlink(target, link);
+    const tool = makeToolWithFs(new HostFileSystem(), stubWorkspaceContext(wsDir));
+
+    const result = await execute(tool, { path: link, content: 'x' });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(toolContentString(result)).toContain('sensitive-file pattern');
+    await expect(readFile(target, 'utf8')).resolves.toBe('secret-key');
+  });
+
+  it('allows writes through a symlink that stays inside the workspace', async () => {
+    const target = join(wsDir, 'real.txt');
+    await writeFile(target, 'original');
+    const link = join(wsDir, 'alias.txt');
+    await symlink(target, link);
+    const tool = makeToolWithFs(new HostFileSystem(), stubWorkspaceContext(wsDir));
+
+    const result = await execute(tool, { path: link, content: 'updated' });
+
+    expect(result.isError).toBeFalsy();
+    await expect(readFile(target, 'utf8')).resolves.toBe('updated');
+  });
+
+  it('allows writing a new plain file inside the workspace', async () => {
+    const file = join(wsDir, 'fresh.txt');
+    const tool = makeToolWithFs(new HostFileSystem(), stubWorkspaceContext(wsDir));
+
+    const result = await execute(tool, { path: file, content: 'data' });
+
+    expect(result.isError).toBeFalsy();
+    await expect(readFile(file, 'utf8')).resolves.toBe('data');
+  });
+
+  it('allows writes through a symlink that points into an additional dir', async () => {
+    const target = join(outsideDir, 'shared.txt');
+    await writeFile(target, 'original');
+    const link = join(wsDir, 'shared.txt');
+    await symlink(target, link);
+    const tool = makeToolWithFs(new HostFileSystem(), stubWorkspaceContext(wsDir, [outsideDir]));
+
+    const result = await execute(tool, { path: link, content: 'updated' });
+
+    expect(result.isError).toBeFalsy();
+    await expect(readFile(target, 'utf8')).resolves.toBe('updated');
   });
 });

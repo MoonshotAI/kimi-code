@@ -1,0 +1,109 @@
+import * as pathe from 'pathe';
+
+import { isError2, unwrapErrorCause } from '#/_base/errors/errors';
+import { OsFsErrors } from '#/os/interface/hostFsErrors';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import {
+  isSensitiveFile,
+  isWithinDirectory,
+  isWithinWorkspace,
+  PathSecurityError,
+  type PathClass,
+  type WorkspaceConfig,
+} from '#/tool/path-access';
+
+function errnoCode(error: unknown): string | undefined {
+  const unwrapped = unwrapErrorCause(error);
+  if (typeof unwrapped === 'object' && unwrapped !== null && 'code' in unwrapped) {
+    const code = (unwrapped as { code: unknown }).code;
+    return typeof code === 'string' ? code : undefined;
+  }
+  return undefined;
+}
+
+function isMissingPathError(error: unknown): boolean {
+  if (isError2(error)) {
+    return (
+      error.code === OsFsErrors.codes.OS_FS_NOT_FOUND ||
+      error.code === OsFsErrors.codes.OS_FS_NOT_DIRECTORY
+    );
+  }
+  const code = errnoCode(error);
+  return code === 'ENOENT' || code === 'ENOTDIR';
+}
+
+async function realpathExistingPrefix(fs: IHostFileSystem, absPath: string): Promise<string> {
+  const tail: string[] = [];
+  let current = absPath;
+  for (let i = 0; i < 256; i++) {
+    try {
+      const real = await fs.realpath(current);
+      return tail.length === 0 ? real : pathe.join(real, ...tail.toReversed());
+    } catch (error) {
+      if (!isMissingPathError(error)) throw error;
+      const parent = pathe.dirname(current);
+      if (parent === current) return absPath;
+      tail.push(pathe.basename(current));
+      current = parent;
+    }
+  }
+  return absPath;
+}
+
+async function realRoots(
+  fs: IHostFileSystem,
+  workspace: WorkspaceConfig,
+): Promise<readonly string[]> {
+  const roots: string[] = [];
+  for (const dir of [workspace.workspaceDir, ...workspace.additionalDirs]) {
+    try {
+      roots.push(await fs.realpath(dir));
+    } catch {
+      roots.push(dir);
+    }
+  }
+  return roots;
+}
+
+export async function assertRealPathWithinWorkspace(
+  fs: IHostFileSystem,
+  absPath: string,
+  workspace: WorkspaceConfig,
+  pathClass: PathClass,
+): Promise<void> {
+  if (!isWithinWorkspace(absPath, workspace, pathClass)) return;
+  const resolved = await realpathExistingPrefix(fs, absPath);
+  if (isSensitiveFile(resolved)) {
+    throw new PathSecurityError(
+      'PATH_SENSITIVE',
+      absPath,
+      resolved,
+      `"${absPath}" resolves to "${resolved}" through a symbolic link, which matches a sensitive-file pattern (env / credential / SSH key). ` +
+        'Access is blocked to protect secrets.',
+    );
+  }
+  const roots = await realRoots(fs, workspace);
+  if (roots.some((root) => isWithinDirectory(resolved, root, pathClass))) return;
+  throw new PathSecurityError(
+    'PATH_SYMLINK_ESCAPE',
+    absPath,
+    resolved,
+    `"${absPath}" resolves to "${resolved}" through a symbolic link that points outside the working directory. ` +
+      'Access is blocked; use the real path directly or add the target directory to the workspace.',
+  );
+}
+
+export async function checkRealPathWithinWorkspace(
+  fs: IHostFileSystem,
+  absPath: string,
+  workspace: WorkspaceConfig,
+  pathClass: PathClass,
+): Promise<PathSecurityError | undefined> {
+  try {
+    await assertRealPathWithinWorkspace(fs, absPath, workspace, pathClass);
+    return undefined;
+  } catch (error) {
+    if (error instanceof PathSecurityError) return error;
+    throw error;
+  }
+}

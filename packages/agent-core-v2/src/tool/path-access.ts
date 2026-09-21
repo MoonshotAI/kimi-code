@@ -83,7 +83,7 @@ export function isSensitiveFile(path: string): boolean {
 }
 
 export type PathClass = 'posix' | 'win32';
-export type PathSecurityCode = 'PATH_OUTSIDE_WORKSPACE' | 'PATH_SENSITIVE' | 'PATH_INVALID';
+export type PathSecurityCode = 'PATH_OUTSIDE_WORKSPACE' | 'PATH_SENSITIVE' | 'PATH_INVALID' | 'PATH_SYMLINK_ESCAPE';
 export type PathAccessOperation = 'read' | 'write' | 'search';
 export type WorkspaceGuardMode = 'absolute-outside-allowed' | 'disabled';
 
