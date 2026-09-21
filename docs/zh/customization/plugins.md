@@ -205,7 +205,7 @@ Kimi Browser Extension 让 AI 直接操控你的浏览器，带着你的登录�
 - **竞品分析**：自动在多个 AI 产品间批量发问并采集回答，生成横向对比报告
 - **机票比价**：在多个旅行平台查询同一行程，按价格排序记录航司、起降时间和原始链接，给出推荐方案
 
-### Kimi Computer Use <Badge type="tip" text="v0.5.4" />
+### Kimi Computer Use <Badge type="tip" text="v0.5.11" />
 
 Kimi Computer Use 让 AI 直接操作你的桌面应用，可以完成点击、拖拽、滚动、输入等操作。macOS 版全程在后台静默运行，不抢占你的鼠标；少量弹窗操作仍会唤起前台 App。Windows 版的差异见 [Windows 版注意事项](#windows-版注意事项)。
 

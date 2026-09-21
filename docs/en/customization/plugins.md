@@ -203,7 +203,7 @@ Use this when you can't reach the stores:
 - **Competitive analysis**: Batch-question multiple AI products and collect their answers to build side-by-side comparison reports
 - **Flight price comparison**: Query the same itinerary across multiple travel platforms, record airlines, departure/arrival times, and links sorted by price, and get recommended options
 
-### Kimi Computer Use <Badge type="tip" text="v0.5.4" />
+### Kimi Computer Use <Badge type="tip" text="v0.5.11" />
 
 Kimi Computer Use lets AI operate your desktop apps directly, clicking, dragging, scrolling, and typing. The macOS version works silently in the background without taking over your mouse (a few popup actions may still bring an app to the foreground); see [the notes below](#notes-for-the-windows-version) for how the Windows version differs.
 
