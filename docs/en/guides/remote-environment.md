@@ -100,7 +100,7 @@ The flag is creation-only, like `--agent`: it cannot be combined with `--session
 
 The switches above are driven by you. The agent environment tools instead hand environment switching to the agent itself: the main agent gains two tools, and its system prompt lists the environments available in the session's workspace so it knows which ids exist. Everything else on this page — the binding model, the reminder recorded on every switch, undo restoring the previous binding — applies unchanged.
 
-The tools are on by default. To opt out, set `KIMI_CODE_EXPERIMENTAL_AGENT_ENVIRONMENT_TOOLS=0`, write `[experimental] agent_environment_tools = false` in `config.toml`, or toggle the feature off in `/experiments` before creating the session. Sessions created while it is disabled have neither the tools nor the prompt section.
+The tools are off by default. To opt in, set `KIMI_CODE_EXPERIMENTAL_AGENT_ENVIRONMENT_TOOLS=1`, write `[experimental] agent_environment_tools = true` in `config.toml`, or toggle the feature on in `/experiments` before creating the session. Sessions created while it is disabled have neither the tools nor the prompt section.
 
 The main agent can:
 

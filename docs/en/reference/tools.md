@@ -157,7 +157,7 @@ To prevent all users from firing at the same time on the hour, the scheduler app
 
 Environment tools hand [remote environment](../guides/remote-environment.md) switching to the agent itself: `change_environment` moves the session's binding to another environment, and `connect` creates a temporary environment from a launcher spec. Both tools are main-agent-only — subagents neither see them in their tool list nor can call them. Calls are rejected in Plan mode (exit Plan mode first), and the tool group is not registered while tower mode is active. Switching or connecting asks for confirmation in Always Ask mode only; Ask When Needed and Never Ask modes proceed without asking.
 
-The tools are on by default. To opt out, set `KIMI_CODE_EXPERIMENTAL_AGENT_ENVIRONMENT_TOOLS=0`, write `[experimental] agent_environment_tools = false` in `config.toml`, or toggle the feature off in `/experiments` before creating the session. Sessions created while it is disabled have neither the tools nor the environment list in the system prompt.
+The tools are off by default. To opt in, set `KIMI_CODE_EXPERIMENTAL_AGENT_ENVIRONMENT_TOOLS=1`, write `[experimental] agent_environment_tools = true` in `config.toml`, or toggle the feature on in `/experiments` before creating the session. Sessions created while it is disabled have neither the tools nor the environment list in the system prompt.
 
 | Tool | Default Approval | Description |
 | --- | --- | --- |

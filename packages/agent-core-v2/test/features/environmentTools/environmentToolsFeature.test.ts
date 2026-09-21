@@ -94,7 +94,7 @@ describe('AgentEnvironmentToolsFeature — experimental flag gating', () => {
     host.dispose();
   });
 
-  it('contributes change_environment and connect by default when nothing overrides the flag', () => {
+  it('does not contribute the tools by default when nothing overrides the flag', () => {
     const ix = new TestInstantiationService();
     ix.stub(IBootstrapService, stubBootstrap());
     ix.stub(ILogService, stubLog());
@@ -106,14 +106,11 @@ describe('AgentEnvironmentToolsFeature — experimental flag gating', () => {
     ix.set(IFlagService, new SyncDescriptor(FlagService));
     const flags = ix.get(IFlagService);
     expect(flags.explain(AGENT_ENVIRONMENT_TOOLS_FLAG_ID)?.source).toBe('default');
-    expect(flags.enabled(AGENT_ENVIRONMENT_TOOLS_FLAG_ID)).toBe(true);
+    expect(flags.enabled(AGENT_ENVIRONMENT_TOOLS_FLAG_ID)).toBe(false);
 
     const host = createScopedTestHost([[IFlagService, flags]]);
     const agent = host.child(LifecycleScope.Agent, 'agent-1');
-    const records = collectionViewOf(agent, AgentToolContribution).items;
-    expect(records.map((record) => record.options.name).toSorted()).toEqual(
-      ['change_environment', 'connect'].toSorted(),
-    );
+    expect(collectionViewOf(agent, AgentToolContribution).items).toHaveLength(0);
     host.dispose();
     ix.dispose();
   });

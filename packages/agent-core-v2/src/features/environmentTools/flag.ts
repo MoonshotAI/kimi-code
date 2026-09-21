@@ -9,7 +9,7 @@ export const agentEnvironmentToolsFlag: FlagDefinitionInput = {
   description:
     'Give the main agent the change_environment and connect tools so it can switch the session environment and create temporary environments itself.',
   env: AGENT_ENVIRONMENT_TOOLS_FLAG_ENV,
-  default: true,
+  default: false,
   surface: 'core',
 };
 

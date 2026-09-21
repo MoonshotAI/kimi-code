@@ -157,7 +157,7 @@ Plan 模式是一种受约束的工作状态：进入后 `Write` 与 `Edit` 只�
 
 环境工具把 [远程环境](../guides/remote-environment.md) 的切换交给 Agent 自己：`change_environment` 将会话绑定切换到另一个环境，`connect` 根据启动器规格创建一个临时环境。两个工具都仅 main agent 可用——subagent 的工具列表中看不到它们，也无法调用。Plan 模式下调用会被拒绝（先退出 Plan 模式）；tower 模式激活期间不会注册这组工具。切换或连接只会在「始终询问」模式下请求确认，「必要时询问」和「完全自动」模式都会直接执行。
 
-这些工具默认开启。如需关闭，设置 `KIMI_CODE_EXPERIMENTAL_AGENT_ENVIRONMENT_TOOLS=0`、在 `config.toml` 中写入 `[experimental] agent_environment_tools = false`，或在创建会话前通过 `/experiments` 关闭该功能。在功能关闭时创建的会话既没有这些工具，也没有系统提示词中的环境列表。
+这些工具默认关闭。如需开启，设置 `KIMI_CODE_EXPERIMENTAL_AGENT_ENVIRONMENT_TOOLS=1`、在 `config.toml` 中写入 `[experimental] agent_environment_tools = true`，或在创建会话前通过 `/experiments` 开启该功能。在功能关闭时创建的会话既没有这些工具，也没有系统提示词中的环境列表。
 
 | 工具 | 默认审批 | 说明 |
 | --- | --- | --- |

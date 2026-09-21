@@ -100,7 +100,7 @@ kimi -p --environment dev-box "Run the test suite"
 
 上面的切换都由你手动完成。Agent 环境工具则把环境切换交给 Agent 自己：main agent 会获得两个工具，其系统提示词中会列出会话工作区内可用的环境，让它知道有哪些 id 可用。本页的其他机制——绑定模型、每次切换记录的提醒、undo 恢复上一个绑定——都原样适用。
 
-这些工具默认开启。如需关闭，设置 `KIMI_CODE_EXPERIMENTAL_AGENT_ENVIRONMENT_TOOLS=0`、在 `config.toml` 中写入 `[experimental] agent_environment_tools = false`，或在创建会话前通过 `/experiments` 关闭该功能。在功能关闭时创建的会话既没有这些工具，也没有提示词中的环境列表。
+这些工具默认关闭。如需开启，设置 `KIMI_CODE_EXPERIMENTAL_AGENT_ENVIRONMENT_TOOLS=1`、在 `config.toml` 中写入 `[experimental] agent_environment_tools = true`，或在创建会话前通过 `/experiments` 开启该功能。在功能关闭时创建的会话既没有这些工具，也没有提示词中的环境列表。
 
 main agent 可以：
 
