@@ -29,6 +29,15 @@
       "source": "./official/kimi-cu"
     },
     {
+      "id": "kimi-cu-win",
+      "tier": "official",
+      "displayName": "Kimi Computer Use for Windows",
+      "version": "0.2.17",
+      "description": "Windows GUI automation via screenshot, UI Automation, and real mouse/keyboard input. Requires the KimiCU Windows runtime (Windows x64 only).",
+      "keywords": ["computer-use", "windows", "accessibility", "automation", "gui"],
+      "source": "./official/kimi-cu-win"
+    },
+    {
       "id": "superpowers",
       "tier": "curated",
       "displayName": "Superpowers",

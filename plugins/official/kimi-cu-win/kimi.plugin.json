@@ -1,0 +1,60 @@
+{
+    "$schema":  "https://kimi.com/schemas/kimi.plugin.schema.json",
+    "name":  "kimi-cu-win",
+    "version":  "0.2.17",
+    "description":  "Windows Computer Use：通过截图、UIA 观察与真实鼠标键盘输入，在已解锁的交互式 Windows 桌面上操作本地图形界面。",
+    "keywords":  [
+                     "computer-use",
+                     "windows",
+                     "accessibility",
+                     "automation",
+                     "screenshot",
+                     "gui"
+                 ],
+    "author":  "Moonshot AI",
+    "license":  "Proprietary",
+    "skills":  "./skills/",
+    "interface":  {
+                      "displayName":  "Kimi Computer Use for Windows",
+                      "shortDescription":  "面向已解锁 Windows 桌面的图形界面操作：截图观察，真实点击、输入、滚动和拖拽。",
+                      "longDescription":  "Kimi Computer Use for Windows 让 AI agent 在 Windows 上读取并操作本地图形界面：通过窗口截图 + UI Automation 树观察应用状态，并优先使用真实鼠标、键盘、剪贴板粘贴和 Unicode 输入完成点击、输入、滚动、拖拽等操作。它特别针对 Electron/Web/飞书这类前端应用避免只改 UIA 值的假成功，尽量真实触发前端事件。\n\nWindows 平台不像 macOS 可以稳定做到全程后台输入；执行操作时可能会短暂激活目标窗口并接管鼠标键盘。插件本身保持薄壳设计，和 macOS KimiCU 的使用方式一致：先安装本机 runtime，再由插件 wrapper 启动 %LOCALAPPDATA%\\KimiCU\\kimi-cu.exe mcp。\n\n系统要求：Windows 10 version 1903 (Build 18362) 或更新版本 / Windows 11 x64；Windows Server 需 Desktop Experience 和真实交互式用户会话。使用时必须保持桌面已解锁并处于可交互的 Default 桌面；锁屏、UAC 等安全桌面或远程会话断开时，runtime 会拒绝 GUI 观察和输入，并提示解锁或重新连接后重试。runtime 是已打包二进制，目标机器不需要安装 Rust 或构建工具。企业策略如果禁用桌面自动化、截图或跨权限输入，可能影响截图和真实输入。\n\n前置要求：先安装 Windows runtime。PowerShell 一键安装：\n\npowershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-RestMethod \u0027https://cdn.kimi.com/kimi-computer-use-windows/latest/setup_windows.ps1\u0027 | Invoke-Expression\"\n\nGit Bash 请下载并运行 https://cdn.kimi.com/kimi-computer-use-windows/latest/setup_windows.cmd。随后安装或导入 kimi-cu-win-plugin.zip，插件宿主会自动启动 MCP。",
+                      "developerName":  "Moonshot AI",
+                      "iconUrl":  "https://cdn.kimi.com/kimi-computer-use-windows/assets/icon.png",
+                      "category":  "PRODUCTIVITY",
+                      "hostKind":  "local",
+                      "platforms":  [
+                                        "windows"
+                                    ],
+                      "mcpOverrides":  {
+                                           "win":  {
+                                                       "displayName":  "Kimi Computer Use for Windows",
+                                                       "iconUrl":  "https://cdn.kimi.com/kimi-computer-use-windows/assets/icon.png"
+                                                   }
+                                       }
+                  },
+    "mcpServers":  {
+                       "win":  {
+                                   "command":  "cmd.exe",
+                                   "args":  [
+                                                "/c",
+                                                "bin\\kimi-cu-mcp.cmd"
+                                            ],
+                                   "cwd":  "./",
+                                   "enabledTools":  [
+                                                        "list_apps",
+                                                        "launch_app",
+                                                        "activate_window",
+                                                        "get_app_state",
+                                                        "click",
+                                                        "type_text",
+                                                        "press_key",
+                                                        "scroll",
+                                                        "set_value",
+                                                        "perform_secondary_action",
+                                                        "select_text",
+                                                        "drag",
+                                                        "turn_ended"
+                                                    ]
+                               }
+                   }
+}
