@@ -5,7 +5,6 @@ import {
   DEFAULT_REMOTE_BIN,
   assertLauncherOperand,
   dockerBaseArgs,
-  shQuote,
   sshBaseArgs,
   type LauncherSpec,
 } from './launchers';
