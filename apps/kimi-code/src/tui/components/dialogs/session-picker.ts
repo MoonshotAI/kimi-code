@@ -85,6 +85,7 @@ export class SessionPickerComponent extends Container implements Focusable {
   private onSelect: (session: SessionRow) => void | Promise<void>;
   private onCancel: () => void;
   private onToggleScope?: (selectedSessionId: string) => void;
+  private requestRender?: () => void;
   private maxVisibleSessions: number;
   private pageSize: number;
   private visibleCount: number;
@@ -110,6 +111,7 @@ export class SessionPickerComponent extends Container implements Focusable {
     onCtrlC?: () => void;
     onCtrlD?: () => void;
     onToggleScope?: (selectedSessionId: string) => void;
+    requestRender?: () => void;
     maxVisibleSessions?: number;
     /** More pages exist on the backend (keyset paging). */
     hasMore?: boolean;
@@ -130,6 +132,7 @@ export class SessionPickerComponent extends Container implements Focusable {
     this.onSelect = opts.onSelect;
     this.onCancel = opts.onCancel;
     this.onToggleScope = opts.onToggleScope;
+    this.requestRender = opts.requestRender;
     this.maxVisibleSessions = opts.maxVisibleSessions ?? 4;
     this.pageSize = Math.max(1, opts.pageSize ?? 50);
     this.hasMore = opts.hasMore ?? false;
@@ -258,8 +261,12 @@ export class SessionPickerComponent extends Container implements Focusable {
         const selection = this.onSelect(session);
         if (selection !== undefined) {
           this.selectInFlight = true;
+          this.invalidate();
+          this.requestRender?.();
           const clear = (): void => {
             this.selectInFlight = false;
+            this.invalidate();
+            this.requestRender?.();
           };
           void selection.then(clear, clear);
         }
@@ -380,6 +387,9 @@ export class SessionPickerComponent extends Container implements Focusable {
 
     lines.push(currentTheme.boldFg('primary', title) + titleSuffix);
     lines.push(currentTheme.fg('textMuted', hintParts.join(' · ')));
+    if (this.selectInFlight) {
+      lines.push(currentTheme.fg('textMuted', 'Resuming session…'));
+    }
     lines.push('');
 
     if (view.query.length > 0) {

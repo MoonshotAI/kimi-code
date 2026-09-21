@@ -266,6 +266,40 @@ export interface ConnectWithGuidanceOptions {
   readonly clientVersion?: string;
   readonly minExecutorVersion?: string;
   readonly runner?: LocalRunner;
+  /** Maximum time spent enriching a failed handshake with diagnostics. */
+  readonly diagnosticTimeoutMs?: number;
+}
+
+export const DEFAULT_DIAGNOSTIC_TIMEOUT_MS = 2_000;
+
+class DiagnosticTimeoutError extends Error {
+  constructor() {
+    super('remote executor diagnostics timed out');
+    this.name = 'DiagnosticTimeoutError';
+  }
+}
+
+function diagnosticBudgetMs(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_DIAGNOSTIC_TIMEOUT_MS;
+  if (!Number.isFinite(value) || value < 0) return DEFAULT_DIAGNOSTIC_TIMEOUT_MS;
+  return value;
+}
+
+async function withinDiagnosticBudget<T>(operation: Promise<T>, deadline: number): Promise<T> {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw new DiagnosticTimeoutError();
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new DiagnosticTimeoutError()), remaining);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 // The failure guidance can name a concrete download only when the target
@@ -278,14 +312,24 @@ async function locateGuidanceArtifact(
   launcher: LauncherSpec,
   options: ConnectWithGuidanceOptions,
   runner: LocalRunner,
+  deadline: number,
 ): Promise<{ readonly artifact: ExecutorArtifact; readonly homeDir?: string } | undefined> {
   if (launcher.type === 'command') return undefined;
   if (options.artifactLocator === undefined || options.clientVersion === undefined) return undefined;
-  const probed = await probeExecutorTarget(launcher, runner);
+  const boundedRunner: LocalRunner = (request) => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return Promise.reject(new DiagnosticTimeoutError());
+    return runner({
+      ...request,
+      timeoutMs: request.timeoutMs === undefined ? remaining : Math.min(request.timeoutMs, remaining),
+    });
+  };
+  const probed = await withinDiagnosticBudget(probeExecutorTarget(launcher, boundedRunner), deadline);
   if (probed === undefined) return undefined;
-  const artifact = await options.artifactLocator
-    .locate(probed.target, options.clientVersion)
-    .catch(() => undefined);
+  const artifact = await withinDiagnosticBudget(
+    options.artifactLocator.locate(probed.target, options.clientVersion),
+    deadline,
+  ).catch(() => undefined);
   if (artifact === undefined) return undefined;
   return { artifact, homeDir: probed.homeDir };
 }
@@ -308,7 +352,13 @@ export async function connectWithGuidance<T>(
   } catch (error) {
     const failure = classifyHandshakeFailure(error);
     if (failure === 'other') throw error;
-    const located = await locateGuidanceArtifact(launcher, options, runner);
+    const deadline = Date.now() + diagnosticBudgetMs(options.diagnosticTimeoutMs);
+    let located: { readonly artifact: ExecutorArtifact; readonly homeDir?: string } | undefined;
+    try {
+      located = await locateGuidanceArtifact(launcher, options, runner, deadline);
+    } catch {
+      located = undefined;
+    }
     if (failure === 'incompatible') {
       const handshake = error instanceof HandshakeError ? error : undefined;
       throw withGuidance(

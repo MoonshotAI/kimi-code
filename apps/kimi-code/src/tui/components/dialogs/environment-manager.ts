@@ -107,14 +107,18 @@ export class EnvironmentManagerComponent extends Container implements Focusable 
   }
 
   /** Replace the rendered snapshot (e.g. refreshed statuses after a reconnect). */
-  setOptions(next: EnvironmentManagerOptions): void {
+  setOptions(next: EnvironmentManagerOptions, options: { readonly selectCurrent?: boolean } = {}): void {
     const previousSelected = this.rows[this.selectedIndex];
     const previousId = previousSelected?.kind === 'environment' ? previousSelected.environment.environmentId : undefined;
     this.opts = next;
     this.rows = buildRows(next.environments);
     this.action = undefined;
-    let newIdx = -1;
-    if (previousId !== undefined) {
+    let newIdx = options.selectCurrent === true
+      ? this.rows.findIndex(
+          (row) => row.kind === 'environment' && row.environment.environmentId === next.currentEnvironmentId,
+        )
+      : -1;
+    if (newIdx < 0 && previousId !== undefined) {
       newIdx = this.rows.findIndex(
         (row) => row.kind === 'environment' && row.environment.environmentId === previousId,
       );

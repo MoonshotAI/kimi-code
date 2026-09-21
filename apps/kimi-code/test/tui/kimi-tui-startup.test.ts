@@ -2531,6 +2531,47 @@ describe('KimiTUI startup', () => {
     expect(driver.state.appState.sessionId).toBe('');
   });
 
+  it('starts the event loop and shows progress before a slow startup resume settles', async () => {
+    const session = makeSession({ id: 'ses-target' });
+    let releaseResume!: () => void;
+    const resumeSession = vi.fn(
+      () =>
+        new Promise<typeof session>((resolve) => {
+          releaseResume = () => resolve(session);
+        }),
+    );
+    const harness = makeHarness(session, {
+      getWorkspaceTrustInfo: vi.fn(async () => ({
+        trusted: true,
+        gatedMcpServers: [],
+        gatedEnvironments: [],
+      })),
+      listSessions: vi.fn(async () => [{ id: 'ses-target', workDir: '/tmp/proj-a' }]),
+      resumeSession,
+    });
+    const driver = makeDriver(
+      harness,
+      makeStartupInput({ session: 'ses-target' }),
+    ) as unknown as MigrateExitDriver;
+    const uiStart = vi.spyOn(driver.state.ui, 'start').mockImplementation(() => {});
+    vi.spyOn(driver.state.ui, 'stop').mockImplementation(() => {});
+
+    const startPromise = driver.start();
+    await vi.waitFor(() => {
+      expect(resumeSession).toHaveBeenCalledWith({
+        id: 'ses-target',
+        replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
+      });
+    });
+
+    expect(uiStart).toHaveBeenCalledTimes(1);
+    expect(driver.state.transcriptContainer.render(120).join('\n')).toContain('Restoring session');
+
+    releaseResume();
+    await startPromise;
+    await driver.stop();
+  });
+
   it('disposes terminal focus/theme tracking on the kimi migrate exit', async () => {
     const harness = makeHarness();
     const driver = makeDriver(harness, {

@@ -53,6 +53,14 @@ function missingExecutorError(exitCode: number | null = 127): HandshakeError {
   );
 }
 
+function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 function incompatibleError(): HandshakeError {
   return new HandshakeError(
     'executor version 0.0.4 is below the minimum 0.1.0; upgrade the remote executor (kimi exec-server) and retry',
@@ -86,6 +94,79 @@ describe('classifyHandshakeFailure', () => {
 });
 
 describe('connectWithGuidance', () => {
+  it('falls back to generic guidance when target diagnostics exceed the budget', async () => {
+    vi.useFakeTimers();
+    try {
+      const probe = deferred<Awaited<ReturnType<LocalRunner>>>();
+      const requests: LocalRunRequest[] = [];
+      const runner: LocalRunner = async (request) => {
+        requests.push(request);
+        return probe.promise;
+      };
+      const attempt = vi.fn(async () => {
+        throw missingExecutorError();
+      });
+
+      const pending = connectWithGuidance(attempt, {
+        launcher: SSH,
+        artifactLocator: fixedLocator(),
+        clientVersion: '1.2.3',
+        runner,
+        diagnosticTimeoutMs: 100,
+      });
+      const settled = pending.catch((error: unknown) => error);
+      for (let index = 0; index < 10 && requests.length === 0; index += 1) {
+        await Promise.resolve();
+      }
+      expect(requests).toHaveLength(1);
+
+      await vi.advanceTimersByTimeAsync(100);
+      const error = await settled;
+      expect(error).toBeInstanceOf(HandshakeError);
+      expect((error as Error).message).toContain('Install the executor manually:');
+      expect((error as Error).message).not.toContain('Install the executor (version 1.2.3');
+      expect(requests[0]?.timeoutMs).toBeLessThanOrEqual(100);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('applies the same budget across target probing and manifest lookup', async () => {
+    vi.useFakeTimers();
+    try {
+      const artifact = deferred<ExecutorArtifact>();
+      const fake = unameRunner();
+      const locate = vi.fn(() => artifact.promise);
+      const locator: ExecutorArtifactLocator = {
+        locate,
+      };
+      const attempt = vi.fn(async () => {
+        throw missingExecutorError();
+      });
+
+      const pending = connectWithGuidance(attempt, {
+        launcher: SSH,
+        artifactLocator: locator,
+        clientVersion: '1.2.3',
+        runner: fake.runner,
+        diagnosticTimeoutMs: 100,
+      });
+      const settled = pending.catch((error: unknown) => error);
+      for (let index = 0; index < 10 && locate.mock.calls.length === 0; index += 1) {
+        await Promise.resolve();
+      }
+      expect(locate).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(100);
+      const error = await settled;
+      expect(error).toBeInstanceOf(HandshakeError);
+      expect((error as Error).message).toContain('Install the executor manually:');
+      expect((error as Error).message).not.toContain('Install the executor (version 1.2.3');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('returns immediately when the first attempt succeeds', async () => {
     const runner = vi.fn() as unknown as LocalRunner;
     const attempt = vi.fn(async () => 'connected');

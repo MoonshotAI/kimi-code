@@ -14,6 +14,8 @@ import {
 import { formatErrorMessage } from '../utils/event-payload';
 import type { SlashCommandHost } from './dispatch';
 
+const environmentManagerGenerations = new WeakMap<object, number>();
+
 // ---------------------------------------------------------------------------
 // /environment command
 // ---------------------------------------------------------------------------
@@ -30,27 +32,56 @@ interface ActionFeedback {
 }
 
 async function openEnvironmentManager(host: SlashCommandHost, session: Session): Promise<void> {
-  const [list, binding] = await Promise.all([session.listEnvironments(), session.getEnvironment()]);
-  const manager = new EnvironmentManagerComponent({
-    environments: toManagerEnvironments(list),
-    currentEnvironmentId: binding.environmentId,
+  const generation = (environmentManagerGenerations.get(host) ?? 0) + 1;
+  environmentManagerGenerations.set(host, generation);
+  let list: SessionEnvironmentsInfo | undefined;
+  let currentEnvironmentId = 'local';
+  let manager!: EnvironmentManagerComponent;
+  const managerOptions = {
+    environments: [],
+    currentEnvironmentId,
     onSwitch: (environmentId) => {
-      void switchFlow(host, session, manager, list, binding.environmentId, environmentId);
+      if (list === undefined) return;
+      void switchFlow(host, session, manager, list, currentEnvironmentId, environmentId);
     },
     onReconnect: (environmentId) => {
-      void reconnectFlow(host, session, manager, binding.environmentId, environmentId);
+      if (list === undefined) return;
+      void reconnectFlow(host, session, manager, currentEnvironmentId, environmentId);
     },
     onAdd: () => {
-      void addFlow(host, session, list);
+      if (list !== undefined) void addFlow(host, session, list);
     },
     onClose: () => {
+      if (environmentManagerGenerations.get(host) !== generation) return;
+      environmentManagerGenerations.set(host, generation + 1);
       host.restoreEditor();
     },
     requestRender: () => {
       host.requestRender();
     },
-  });
+  } satisfies ConstructorParameters<typeof EnvironmentManagerComponent>[0];
+  manager = new EnvironmentManagerComponent(managerOptions);
   host.mountEditorReplacement(manager);
+  manager.setBusy('Loading environments…');
+
+  try {
+    const [loadedList, binding] = await Promise.all([
+      session.listEnvironments(),
+      session.getEnvironment(),
+    ]);
+    if (environmentManagerGenerations.get(host) !== generation) return;
+    list = loadedList;
+    currentEnvironmentId = binding.environmentId;
+    manager.setOptions({
+      ...managerOptions,
+      environments: toManagerEnvironments(list),
+      currentEnvironmentId,
+    }, { selectCurrent: true });
+  } catch (error) {
+    if (environmentManagerGenerations.get(host) === generation) {
+      manager.showError(formatErrorMessage(error));
+    }
+  }
 }
 
 function toManagerEnvironments(list: SessionEnvironmentsInfo): readonly EnvironmentManagerEnvironment[] {

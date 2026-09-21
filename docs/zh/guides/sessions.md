@@ -50,6 +50,8 @@ kimi --session abc123
 kimi --session
 ```
 
+恢复会话时，TUI 会在尝试连接会话记录的环境期间显示进度。
+
 ::: warning 注意
 `--continue` 与 `--session` 互斥。
 :::

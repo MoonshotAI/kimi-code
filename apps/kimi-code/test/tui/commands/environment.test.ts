@@ -114,6 +114,68 @@ function typeText(panel: MountedPanel, text: string): void {
 }
 
 describe('handleEnvironmentCommand', () => {
+  it('mounts a loading manager before environment queries settle', async () => {
+    const { host, session, mounted } = makeHost({});
+    let resolveList!: (value: SessionEnvironmentsInfo) => void;
+    session.listEnvironments = vi.fn(
+      () => new Promise<SessionEnvironmentsInfo>((resolve) => {
+        resolveList = resolve;
+      }),
+    );
+
+    const opening = handleEnvironmentCommand(host);
+    expect(mounted).toHaveLength(1);
+    const manager = latest(mounted, EnvironmentManagerComponent);
+    expect(manager.render(120).join('\n')).toContain('Loading environments…');
+
+    resolveList(makeEnvironmentsInfo());
+    await opening;
+    expect(manager.render(120).join('\n')).toContain('dev-box');
+  });
+
+  it('ignores a stale environment query after the manager is reopened', async () => {
+    const { host, session, mounted } = makeHost({});
+    let resolveFirst!: (value: SessionEnvironmentsInfo) => void;
+    let resolveSecond!: (value: SessionEnvironmentsInfo) => void;
+    session.listEnvironments = vi
+      .fn()
+      .mockImplementationOnce(
+        () => new Promise<SessionEnvironmentsInfo>((resolve) => {
+          resolveFirst = resolve;
+        }),
+      )
+      .mockImplementationOnce(
+        () => new Promise<SessionEnvironmentsInfo>((resolve) => {
+          resolveSecond = resolve;
+        }),
+      );
+
+    const firstOpen = handleEnvironmentCommand(host);
+    expect(mounted).toHaveLength(1);
+    const secondOpen = handleEnvironmentCommand(host);
+    expect(mounted).toHaveLength(2);
+
+    const firstList = makeEnvironmentsInfo({
+      environments: [
+        { environmentId: 'first-box', type: 'ssh', status: 'ready', generation: 'g1', capabilities: [] },
+      ],
+    });
+    const secondList = makeEnvironmentsInfo({
+      environments: [
+        { environmentId: 'second-box', type: 'ssh', status: 'ready', generation: 'g2', capabilities: [] },
+      ],
+    });
+    resolveSecond(secondList);
+    await secondOpen;
+    resolveFirst(firstList);
+    await firstOpen;
+
+    const manager = latest(mounted, EnvironmentManagerComponent);
+    const plain = manager.render(120).join('\n').replaceAll(/\[[0-9;]*m/g, '');
+    expect(plain).toContain('second-box');
+    expect(plain).not.toContain('first-box');
+  });
+
   it('mounts the manager with the fetched environment list and binding', async () => {
     const { host, session, mounted } = makeHost({});
     await handleEnvironmentCommand(host);

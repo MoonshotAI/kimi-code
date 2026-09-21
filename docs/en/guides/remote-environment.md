@@ -75,6 +75,8 @@ The model is kept informed about where its tools run: creating a session bound t
 
 The `/environment` slash command opens the environment manager, modeled after the provider manager:
 
+The manager appears immediately with a loading indicator while it fetches the latest environment list, so a slow connection does not leave the TUI blank.
+
 - **List**: the `local` environment plus every declared environment, each row showing its id, type, connection status, and `defaultCwd`. Target OS/arch is not shown yet — it is only known after a connection handshake, so surfacing it in the list is a future enhancement.
 - **Add**: create a new declaration from a minimal form — SSH entries can pick from hosts discovered in `~/.ssh/config`; other types or a custom command can be entered directly. The form's scope control chooses where the entry lands: **Global** (the default) writes it to the user-level `config.toml`, available in every workspace; **Project** writes it to the workspace's `.kimi-code/environments.toml`, ready to commit and share with the team. Either way it takes effect immediately: the new environment appears in the list and can be switched to without a restart.
 - **Switch**: pick an environment, then enter the working directory on the target (prefilled from the entry's `defaultCwd`). The directory is validated against the target's filesystem by the server; failures are reported inline, and a failed connection shows the exit code and a bounded slice of stderr.

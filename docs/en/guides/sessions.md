@@ -50,6 +50,8 @@ kimi --session abc123
 kimi --session
 ```
 
+When a session is being restored, the TUI shows progress while it attempts the session's recorded environment connection.
+
 ::: warning
 `--continue` and `--session` are mutually exclusive.
 :::
