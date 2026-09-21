@@ -433,6 +433,16 @@ export class KimiHarness {
     return this.rpc.trustWorkspace(workDir);
   }
 
+  /**
+   * Additional workspace directories of `workDir` — the persisted
+   * `.kimi-code/local.toml` `workspace.additional_dir` entries plus any
+   * session-merged ones — without creating a session. Lets session-less
+   * hosts reflect the persisted dirs before the first session exists.
+   */
+  async getWorkspaceAdditionalDirs(workDir: string): Promise<readonly string[]> {
+    return this.rpc.getWorkspaceAdditionalDirs(workDir);
+  }
+
   async getConfig(options: GetConfigOptions = {}): Promise<KimiConfig> {
     return this.rpc.getConfig(options);
   }

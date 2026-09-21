@@ -210,6 +210,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
     getExperimentalFeatures: vi.fn(async () => []),
+    getWorkspaceAdditionalDirs: vi.fn(async () => []),
     supportsAtomicSectionReplace: vi.fn(() => false),
     auth: {
       status: vi.fn(async () => ({ providers: [] })),
@@ -387,6 +388,57 @@ describe('KimiTUI startup', () => {
     await expect(driver.init()).resolves.toBe(false);
 
     expect(driver.state.appState.thinkingEffort).toBe('medium');
+  });
+
+  it('hydrates persisted workspace dirs into appState on session-less startup (v2)', async () => {
+    const harness = makeHarness(makeSession(), {
+      getWorkspaceAdditionalDirs: vi.fn(async () => ['/persisted/repo2']),
+    });
+    const driver = makeDriver(harness, { ...makeStartupInput() });
+
+    await expect(driver.init()).resolves.toBe(false);
+
+    expect(harness.getWorkspaceAdditionalDirs).toHaveBeenCalledWith('/tmp/proj-a');
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(driver.state.appState.additionalDirs).toEqual(['/persisted/repo2']);
+  });
+
+  it('unions persisted workspace dirs with --add-dir flags without duplicates', async () => {
+    const harness = makeHarness(makeSession(), {
+      getWorkspaceAdditionalDirs: vi.fn(async () => ['/tmp/repo2', '/persisted/shared']),
+    });
+    const driver = makeDriver(harness, {
+      ...makeStartupInput(),
+      additionalDirs: ['../repo2', '../extra'],
+    });
+
+    await expect(driver.init()).resolves.toBe(false);
+
+    // '../repo2' resolves (against workDir '/tmp/proj-a') to the persisted
+    // '/tmp/repo2' and is not duplicated; the remaining flag keeps its CLI
+    // spelling for the lazy session create.
+    expect(driver.state.appState.additionalDirs).toEqual([
+      '/tmp/repo2',
+      '/persisted/shared',
+      '../extra',
+    ]);
+  });
+
+  it('keeps session-less startup working when the persisted workspace dirs query fails', async () => {
+    const harness = makeHarness(makeSession(), {
+      getWorkspaceAdditionalDirs: vi.fn(async () => {
+        throw new Error('workspace handler exploded');
+      }),
+    });
+    const driver = makeDriver(harness, {
+      ...makeStartupInput(),
+      additionalDirs: ['../extra'],
+    });
+
+    await expect(driver.init()).resolves.toBe(false);
+
+    expect(driver.state.startupState).toBe('ready');
+    expect(driver.state.appState.additionalDirs).toEqual(['../extra']);
   });
 
   it('hydrates permission/plan defaults after a session-less v2 login', async () => {
