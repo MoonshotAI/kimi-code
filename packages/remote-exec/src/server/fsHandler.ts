@@ -219,6 +219,7 @@ export class FsHandler {
           fileName: entry.name,
           isDirectory: entry.isDirectory(),
           isFile: entry.isFile(),
+          isSymlink: entry.isSymbolicLink(),
         })),
         truncated: entries.length > FS_READ_DIRECTORY_MAX_ENTRIES,
       };

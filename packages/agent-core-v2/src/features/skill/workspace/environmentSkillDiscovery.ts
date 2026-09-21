@@ -6,6 +6,7 @@ import { SkillParseError, UnsupportedSkillTypeError, parseSkillText } from '#/fe
 import type { SkillDefinition, SkillRoot, SkippedSkill } from '#/features/skill/catalog/types';
 import { normalizeSkillName } from '#/features/skill/catalog/types';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
 
 const MAX_SKILL_SCAN_DEPTH = 8;
 
@@ -109,7 +110,10 @@ async function discoverEnvironmentSkills(
     let entries;
     try {
       entries = [...await fs.readdir(dirPath)].toSorted((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
-    } catch {
+    } catch (error) {
+      if (!isHostFsNotFound(error) && !isHostFsNotDirectory(error)) {
+        warn?.(`Unable to scan skills in ${dirPath}`, error);
+      }
       return;
     }
     scannedDirectories.push(dirPath);

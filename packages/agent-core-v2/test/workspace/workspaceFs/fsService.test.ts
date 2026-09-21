@@ -1463,6 +1463,27 @@ describe('WorkspaceFsService rg share-bin fallback', () => {
 });
 
 describe('WorkspaceFsService.list', () => {
+  it.each(['list', 'suggest'] as const)('rejects an oversized nested directory during %s', async (operation) => {
+    const backend = fakeFs({ 'huge/hidden.txt': '', 'visible.txt': '' });
+    const readdir = backend.readdir;
+    backend.readdir = async (path) => {
+      if (path === '/repo/huge') {
+        throw new HostFsError('os.fs.directory_too_large', 'Directory /repo/huge exceeds 50000 entries');
+      }
+      return readdir(path);
+    };
+    const fs = makeRemoteSession({}, () => ({ stdout: '', exitCode: 127 }), [], 'ssh-dev', '/home/target', backend);
+
+    const result = operation === 'list'
+      ? fs.list({ path: '.', depth: 2, limit: 200, show_hidden: false, follow_gitignore: false, sort: 'name_asc', include_git_status: false })
+      : fs.suggest({ query: 'hidden', limit: 50, show_hidden: false, follow_gitignore: false });
+
+    await expect(result).rejects.toMatchObject({
+      code: 'fs.too_many_results',
+      message: 'Directory /repo/huge exceeds 50000 entries',
+    });
+  });
+
   it('lists files and directories with kinds', async () => {
     const fs = makeSession(
       { 'src/a.ts': '', 'src/sub/b.ts': '', 'README.md': '' },
@@ -1684,6 +1705,29 @@ describe('WorkspaceFsService.statMany', () => {
 });
 
 describe('WorkspaceFsService.listMany', () => {
+  it('reports an oversized remote directory as too many results', async () => {
+    const backend = fakeFs({});
+    backend.readdir = async () => {
+      throw new HostFsError('os.fs.directory_too_large', 'Directory /repo exceeds 50000 entries', {
+        details: { path: '/repo', op: 'readdir', limit: 50000 },
+      });
+    };
+    const fs = makeRemoteSession({}, emptyHandler, [], 'ssh-dev', '/home/target', backend);
+
+    const result = await fs.listMany({
+      paths: ['.'],
+      depth: 1,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+
+    expect(result.results['.']).toBeUndefined();
+    expect(result.partial_errors?.['.']).toEqual({ code: 41303, msg: 'Directory /repo exceeds 50000 entries' });
+  });
+
   it('returns results per path and partial_errors for failures', async () => {
     const fs = makeSession({ 'a.txt': '' }, emptyHandler);
     const result = await fs.listMany({

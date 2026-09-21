@@ -122,6 +122,7 @@ export interface FsReadDirectoryEntry {
   readonly fileName: string;
   readonly isDirectory: boolean;
   readonly isFile: boolean;
+  readonly isSymlink?: boolean;
 }
 
 export interface FsReadDirectoryResult {

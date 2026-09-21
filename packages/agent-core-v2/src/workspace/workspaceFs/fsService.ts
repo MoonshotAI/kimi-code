@@ -178,7 +178,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       try {
         names = (await this.hostFs.readdir(this.absOf(entry.relPath))).map((e) => e.name);
       } catch (error) {
-        if (entry.relPath === (rel === '.' ? '' : rel)) {
+        if (entry.relPath === (rel === '.' ? '' : rel) ||
+          (error instanceof Error2 && error.code === ErrorCodes.OS_FS_DIRECTORY_TOO_LARGE)) {
           throw mapFsError(error, req.path);
         }
         continue;
@@ -1035,7 +1036,10 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     let entries: readonly HostDirEntry[];
     try {
       entries = await this.hostFs.readdir(rootRel === '' ? baseAbs : this.path.join(baseAbs, rootRel));
-    } catch {
+    } catch (error) {
+      if (error instanceof Error2 && error.code === ErrorCodes.OS_FS_DIRECTORY_TOO_LARGE) {
+        throw mapFsError(error, rootRel);
+      }
       return;
     }
     for (const entry of entries) {
@@ -1362,6 +1366,9 @@ function isInsideOrEqual(path: EnvironmentPath, child: string, parent: string): 
 }
 
 function mapFsError(err: unknown, inputPath: string): Error {
+  if (err instanceof Error2 && err.code === ErrorCodes.OS_FS_DIRECTORY_TOO_LARGE) {
+    return new Error2(ErrorCodes.FS_TOO_MANY_RESULTS, err.message, { details: err.details, cause: err });
+  }
   if (isHostFsNotFound(err) || isHostFsNotDirectory(err)) {
     return new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `path not found: ${inputPath}`, {
       details: { path: inputPath },
@@ -1390,4 +1397,3 @@ function toWireError(err: unknown): { code: number; msg: string } {
     msg: err instanceof Error ? err.message : 'internal error',
   };
 }
-

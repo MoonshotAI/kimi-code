@@ -21,6 +21,7 @@ import {
   FS_CREATE_DIRECTORY_METHOD,
   FS_GET_METADATA_METHOD,
   FS_READ_DIRECTORY_METHOD,
+  FS_READ_DIRECTORY_MAX_ENTRIES,
   FS_READ_FILE_MAX_BYTES,
   FS_READ_FILE_METHOD,
   FS_REMOVE_METHOD,
@@ -238,10 +239,18 @@ export class RemoteFileSystem implements IHostFileSystem {
 
   async readdir(path: string): Promise<readonly HostDirEntry[]> {
     const result = await this.call<FsReadDirectoryResult>(FS_READ_DIRECTORY_METHOD, { path });
+    if (result.truncated) {
+      throw new HostFsError(
+        OsFsErrors.codes.OS_FS_DIRECTORY_TOO_LARGE,
+        `readdir ${path} exceeds the ${FS_READ_DIRECTORY_MAX_ENTRIES}-entry limit`,
+        { details: { path, op: 'readdir', limit: FS_READ_DIRECTORY_MAX_ENTRIES } },
+      );
+    }
     return result.entries.map((entry) => ({
       name: entry.fileName,
       isFile: entry.isFile,
       isDirectory: entry.isDirectory,
+      isSymbolicLink: entry.isSymlink,
     }));
   }
 

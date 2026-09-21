@@ -40,6 +40,9 @@ deviations per the design spec, plus one forced addition:
 - `fs/writeFile` takes `mode: truncate|append|exclusive` (codex only has
   truncate); `exclusive` maps EEXIST to `os.fs.already_exists`, which the
   client maps back to `createExclusive === false`.
+- `fs/readDirectory` preserves the symlink marker on each entry. The client
+  rejects a truncated listing with `os.fs.directory_too_large` rather than
+  exposing an incomplete directory; the current limit is 50,000 entries.
 - Added `fs/rename` and `process/resize` (no codex counterpart).
 - `process/signal` is three-state (`interrupt|terminate|kill`, codex only
   interrupt); signal/terminate act on the whole process group, and group

@@ -6,8 +6,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { HostFsError } from '@moonshot-ai/agent-core-v2/os/interface/hostFsErrors';
 import { persistOriginalImage } from '@moonshot-ai/agent-core-v2/agent/media/image-originals';
+import type { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
+import { EnvironmentSkillDiscovery } from '@moonshot-ai/agent-core-v2/features/skill/workspace/environmentSkillDiscovery';
 
-import type { RemoteExecConnection } from '../src/client/connection';
+import { RemoteExecConnection } from '../src/client/connection';
 import { RemoteFileSystem } from '../src/client/remoteFileSystem';
 import { FS_READ_DIRECTORY_MAX_ENTRIES, FS_READ_FILE_WHOLE_MAX_BYTES } from '../src/protocol/methods';
 import {
@@ -141,6 +143,51 @@ describe('fs group over a subprocess loopback', () => {
     await expect(fs.realpath(link)).resolves.toBe(await fs.realpath(target));
   });
 
+  it('identifies symlinked files and directories in directory entries', async () => {
+    const dir = join(workDir, 'symlink-entries');
+    await fs.mkdir(join(dir, 'target-dir'), { recursive: true });
+    await fs.writeText(join(dir, 'target.txt'), 'data');
+    await symlink(join(dir, 'target-dir'), join(dir, 'linked-dir'));
+    await symlink(join(dir, 'target.txt'), join(dir, 'linked.txt'));
+
+    const entries = await fs.readdir(dir);
+    expect(entries).toEqual(expect.arrayContaining([
+      { name: 'linked-dir', isFile: false, isDirectory: false, isSymbolicLink: true },
+      { name: 'linked.txt', isFile: false, isDirectory: false, isSymbolicLink: true },
+      { name: 'target-dir', isFile: false, isDirectory: true, isSymbolicLink: false },
+      { name: 'target.txt', isFile: true, isDirectory: false, isSymbolicLink: false },
+    ]));
+  });
+
+  it('discovers skills exposed through symlinked remote directories', async () => {
+    const root = join(workDir, 'skill-root');
+    const target = join(workDir, 'shared-skill');
+    await fs.mkdir(root);
+    await fs.mkdir(target);
+    await fs.writeText(join(target, 'SKILL.md'), '---\nname: shared-skill\ndescription: Example skill\n---\nUse this skill.');
+    await symlink(target, join(root, 'shared-skill'));
+    const warnings: string[] = [];
+    const log: ILogService = {
+      _serviceBrand: undefined,
+      level: 'warn',
+      setLevel: () => {},
+      flush: async () => {},
+      error: () => {},
+      warn: (message) => { warnings.push(message); },
+      info: () => {},
+      debug: () => {},
+      child: () => log,
+    };
+    const discovery = new EnvironmentSkillDiscovery(log, fs);
+
+    const result = await discovery.discover([{ path: root, source: 'project' }]);
+
+    expect(result.skills.map(({ name, path }) => ({ name, path }))).toEqual([
+      { name: 'shared-skill', path: join(root, 'shared-skill', 'SKILL.md') },
+    ]);
+    expect(warnings).toEqual([]);
+  });
+
   it('manages directories: mkdir, readdir, rename, remove', async () => {
     const dir = join(workDir, 'a', 'b', 'c');
     await fs.mkdir(dir, { recursive: true });
@@ -149,7 +196,7 @@ describe('fs group over a subprocess loopback', () => {
     const file = join(dir, 'file.txt');
     await fs.writeText(file, 'x');
     const entries = await fs.readdir(dir);
-    expect(entries).toEqual([{ name: 'file.txt', isFile: true, isDirectory: false }]);
+    expect(entries).toEqual([{ name: 'file.txt', isFile: true, isDirectory: false, isSymbolicLink: false }]);
 
     const renamed = join(dir, 'renamed.txt');
     await fs.rename(file, renamed);
@@ -224,7 +271,7 @@ describe('fs group over a subprocess loopback', () => {
 });
 
 describe('fs protocol semantics', () => {
-  it('marks readdir results that exceed the entry cap as truncated', async () => {
+  it('reports capped directory listings on the wire and rejects them through the filesystem interface', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'remote-exec-readdir-cap-'));
     const smallDir = await mkdtemp(join(tmpdir(), 'remote-exec-readdir-small-'));
     try {
@@ -257,6 +304,29 @@ describe('fs protocol semantics', () => {
       expect(complete.truncated).toBe(false);
       loopback.clientInput.end();
       await loopback.host.done;
+
+      const adapterLoopback = createInProcessLoopback();
+      const connection = await RemoteExecConnection.connect(adapterLoopback.clientPipe, {
+        clientName: 'remote-exec-test',
+        clientVersion: '0.0.0',
+      });
+      try {
+        const fs = new RemoteFileSystem(connection);
+        const listing = fs.readdir(dir);
+        await expect(listing).rejects.toBeInstanceOf(HostFsError);
+        await expect(listing).rejects.toMatchObject({
+          code: 'os.fs.directory_too_large',
+          details: { path: dir, op: 'readdir', limit: FS_READ_DIRECTORY_MAX_ENTRIES },
+        });
+        await expect(listing).rejects.toThrow(dir);
+        await expect(listing).rejects.toThrow(String(FS_READ_DIRECTORY_MAX_ENTRIES));
+        await expect(fs.readdir(smallDir)).resolves.toEqual([
+          { name: 'a', isFile: true, isDirectory: false, isSymbolicLink: false },
+        ]);
+      } finally {
+        connection.close();
+        await adapterLoopback.host.done;
+      }
     } finally {
       await rm(dir, { recursive: true, force: true });
       await rm(smallDir, { recursive: true, force: true });

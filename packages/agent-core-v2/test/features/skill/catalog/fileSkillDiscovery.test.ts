@@ -10,6 +10,11 @@ import { ILogService, type LogPayload } from '#/_base/log/log';
 import { FileSkillDiscovery } from '#/features/skill/catalog/fileSkillDiscovery';
 import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
 import type { SkillRoot } from '#/features/skill/catalog/types';
+import { EnvironmentSkillDiscovery } from '#/features/skill/workspace/environmentSkillDiscovery';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
+
+import { stubLog } from '../../../_base/log/stubs';
 
 interface RecordedWarning {
   readonly message: string;
@@ -262,6 +267,47 @@ describe('FileSkillDiscovery', () => {
         reason: 'unsupported skill type "nope"',
       },
     ]);
+    expect(warnings).toEqual([]);
+  });
+});
+
+describe('EnvironmentSkillDiscovery directory failures', () => {
+  it('warns about a failed directory listing instead of silently returning no skills', async () => {
+    const failure = new Error('directory listing exceeds 50000 entries');
+    class UnreadableDirectoryFs extends HostFileSystem {
+      override async readdir(): Promise<never> { throw failure; }
+    }
+    const warnings: RecordedWarning[] = [];
+    const discovery = new EnvironmentSkillDiscovery({
+      ...stubLog(),
+      warn: (message, payload) => { warnings.push({ message, payload }); },
+    }, new UnreadableDirectoryFs());
+
+    const result = await discovery.discover([{ path: '/remote/skills', source: 'project' }]);
+
+    expect(result.skills).toEqual([]);
+    expect(result.scannedDirectories).toEqual([]);
+    expect(warnings).toEqual([{
+      message: 'Unable to scan skills in /remote/skills',
+      payload: failure,
+    }]);
+  });
+
+  it('keeps absent optional skill directories quiet', async () => {
+    class MissingDirectoryFs extends HostFileSystem {
+      override async readdir(): Promise<never> {
+        throw new HostFsError(OsFsErrors.codes.OS_FS_NOT_FOUND, 'path does not exist');
+      }
+    }
+    const warnings: RecordedWarning[] = [];
+    const discovery = new EnvironmentSkillDiscovery({
+      ...stubLog(),
+      warn: (message, payload) => { warnings.push({ message, payload }); },
+    }, new MissingDirectoryFs());
+
+    const result = await discovery.discover([{ path: '/remote/missing', source: 'project' }]);
+
+    expect(result.skills).toEqual([]);
     expect(warnings).toEqual([]);
   });
 });
