@@ -113,14 +113,16 @@ describe('terminal over a subprocess loopback', () => {
 
   it('reports exit when the connection drops', async () => {
     if (skip) return;
-    const terminal = await terminals.spawn({ cwd: '/tmp', shell: '/bin/bash', cols: 80, rows: 24 });
+    const { connection: dropConnection, spawned: dropSpawned } = await connectSubprocess();
+    const dropTerminals = new RemoteTerminalService(dropConnection);
+    const terminal = await dropTerminals.spawn({ cwd: '/tmp', shell: '/bin/bash', cols: 80, rows: 24 });
     const exited = new Promise<number | null>((resolve) => {
       terminal.onProcessExit(({ exitCode }) => {
         resolve(exitCode);
       });
     });
-    connection.close();
-    spawned.bridge.close();
+    dropConnection.close();
+    dropSpawned.bridge.close();
     await expect(exited).resolves.toBe(-1);
   }, 15_000);
 
