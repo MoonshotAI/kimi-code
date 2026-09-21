@@ -46,6 +46,10 @@ export interface AppHandle extends UnitHandle, AppCommands, FeatureHandleOn {
 export const AppUnit = createUnit<AppUnitProps>('app', (props, ctx) => {
   const sessions = new Map<string, SessionHandle>();
   const installed = shallowRef<readonly FeatureSpec[]>([]);
+  const appFeatures = (): readonly FeatureSpec[] => [
+    ...toValue(props.features ?? []),
+    ...installed.value,
+  ];
   const requireSpace = (): SessionSpace => {
     if (props.space === undefined) {
       throw new Error('session space is not configured');
@@ -77,7 +81,10 @@ export const AppUnit = createUnit<AppUnitProps>('app', (props, ctx) => {
       if (sessions.has(createProps.sessionId)) {
         throw new Error(`session '${createProps.sessionId}' already exists`);
       }
-      const handle = ctx.node.mount(SessionUnit, createProps);
+      const handle = ctx.node.mount(SessionUnit, {
+        ...createProps,
+        features: [...appFeatures(), ...toValue(createProps.features ?? [])],
+      });
       const session = sessionHandle(handle);
       sessions.set(createProps.sessionId, session);
       try {
@@ -113,7 +120,7 @@ export const AppUnit = createUnit<AppUnitProps>('app', (props, ctx) => {
   };
   provide(AppUnitRef, commands);
   props.provide?.(ctx.node);
-  useFeatureSlot('app', () => [...toValue(props.features ?? []), ...installed.value]);
+  useFeatureSlot('app', appFeatures);
   return commands;
 });
 

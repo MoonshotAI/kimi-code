@@ -311,9 +311,15 @@ export const AgentUnit = createUnit<AgentUnitProps>('agent', (props) => {
   provide(WaitForTasksRef, createWaitForTasks(actor));
   provide(AgentUnitRef, commands);
   props.provide?.(node);
-  const slots = useFeatureSlot('agent', props.features);
+  const slots = useFeatureSlot('agent', props.features ?? []);
   let started = false;
-  useReady(slots.ready().then(() => {
+  useReady(slots.ready().then(async () => {
+    if (node.signal.aborted) return;
+    const persisted = props.store.getState().spec;
+    const spec = ports.freeze(persisted, props.systemPrompt);
+    if (persisted === undefined) {
+      await props.store.dispatch({ type: 'spec.frozen', spec }).catch(() => {});
+    }
     if (node.signal.aborted) return;
     actor.start();
     started = true;

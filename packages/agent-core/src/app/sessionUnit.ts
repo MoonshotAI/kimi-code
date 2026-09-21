@@ -1,17 +1,18 @@
-import type { MaybeRefOrGetter } from '@vue/reactivity';
+import { toValue, type MaybeRefOrGetter } from '@vue/reactivity';
 
 import {
   createUnit,
   EventContext,
+  inject,
   provide,
   useNode,
   type NodeRef,
   type UnitHandle,
   type UnitNode,
 } from '#/kernel/index';
-import { bindHandleOn, type FeatureHandleOn, type FeatureSpec } from '#/feature/feature';
+import { bindHandleOn, Features, type FeatureHandleOn, type FeatureSpec } from '#/feature/feature';
 import { BlobsRef, SessionStoreRef, SessionUnitRef } from '#/feature/contribution-hooks';
-import { useFeatureSlot } from '#/feature/hooks';
+import { dedupFeatures, useFeatureSlot } from '#/feature/hooks';
 import type { SessionStores } from '#/stores/session';
 import type { BranchRef } from '#/store/tree';
 import { AgentUnit, agentHandle, type AgentHandle, type AgentUnitProps } from './agentUnit';
@@ -55,11 +56,32 @@ export const SessionUnit = createUnit<SessionUnitProps>('session', (props) => {
     if (agents.has(createProps.agentId)) {
       throw new Error(`agent '${createProps.agentId}' already exists`);
     }
-    const store = await props.stores.open(createProps.agentId, { from });
+    const registered = props.stores.session.getState().roster.agents[createProps.agentId];
+    const pool = dedupFeatures([...toValue(available), ...toValue(createProps.features ?? [])]);
+    const features =
+      registered?.features === undefined
+        ? pool
+        : registered.features.flatMap((name) => {
+            const spec = pool.find((feature) => feature.featureName === name);
+            if (spec === undefined) {
+              node.fire({
+                type: 'session.feature_missing',
+                agentId: createProps.agentId,
+                featureName: name,
+              });
+              return [];
+            }
+            return [spec];
+          });
+    const store = await props.stores.open(createProps.agentId, {
+      from,
+      features: features.map((feature) => feature.featureName),
+    });
     let handle: UnitHandle | undefined;
     try {
       handle = node.mount(AgentUnit, {
         ...createProps,
+        features,
         sessionId: props.sessionId,
         store,
         branchId: props.stores.branch(createProps.agentId),
@@ -106,7 +128,8 @@ export const SessionUnit = createUnit<SessionUnitProps>('session', (props) => {
   provide(SessionStoreRef, props.stores.session);
   provide(BlobsRef, props.stores.blobs);
   props.provide?.(node);
-  useFeatureSlot('session', props.features);
+  useFeatureSlot('session', props.features ?? []);
+  const available = inject(Features);
   return commands;
 });
 

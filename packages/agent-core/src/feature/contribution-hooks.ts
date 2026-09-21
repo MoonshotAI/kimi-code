@@ -12,7 +12,7 @@ import {
   type TurnBeforeStep,
   type TurnLogic,
 } from '#/agent-machine/turn';
-import type { AgentStore, AgentStoreState } from '#/stores/agent';
+import type { AgentSpec, AgentStore, AgentStoreState, SystemPromptSection } from '#/stores/agent';
 import {
   createToken,
   currentUnit,
@@ -23,6 +23,7 @@ import {
 } from '#/kernel/index';
 import { credentialsRecovery } from '#/llm/builtin/requester/credentials';
 import type { MediaLowerPorts } from '#/llm/media/materialize';
+import type { ToolDescription } from '#/llm/message';
 import type { MessageResolver } from '#/llm/requester/input';
 import type { LlmPolicy } from '#/llm/requester/policy';
 import type { LlmRecovery } from '#/llm/requester/recovery';
@@ -36,7 +37,7 @@ import type { BranchRef } from '#/store/tree';
 import type { AgentCommands } from '#/app/agentUnit';
 import type { AppCommands } from '#/app/appUnit';
 import type { SessionCommands } from '#/app/sessionUnit';
-import type { ToolDefinition, ToolResult } from '#/tool';
+import type { ToolDefinition, ToolExecutor, ToolResult } from '#/tool';
 
 export type ToolBeforeHook = (
   input: ToolBeforeInput,
@@ -48,14 +49,8 @@ export type ToolAfterHook = (
 
 export const HOST_SYSTEM_PROMPT_ID = 'host';
 
-export interface SystemPromptSection {
-  readonly id: string;
-  readonly text: string;
-  readonly priority?: number;
-}
-
 export interface AgentPorts {
-  readonly tools: readonly ToolDefinition[];
+  readonly toolDescriptions: readonly ToolDescription[];
   readonly systemPrompts: readonly SystemPromptSection[];
   readonly messageResolvers: readonly MessageResolver[];
   readonly recoveries: readonly LlmRecovery[];
@@ -66,8 +61,11 @@ export interface AgentPorts {
   readonly promptGates: readonly PromptGate[];
   readonly media: MediaLowerPorts | undefined;
   registerTools(tools: readonly ToolDefinition[]): () => void;
+  registerToolExecutor(name: string, executor: ToolExecutor): () => void;
+  resolveToolExecutor(name: string): ToolDefinition['execute'] | undefined;
   registerSystemPrompt(sections: readonly SystemPromptSection[]): () => void;
   getSystemPrompt(host?: string): string | undefined;
+  freeze(spec: AgentSpec | undefined, host?: string): AgentSpec;
   registerMessageResolver(resolver: MessageResolver): () => void;
   registerRecovery(recovery: LlmRecovery): () => void;
   registerRetryable(retryable: LlmRetryable): () => void;
@@ -93,16 +91,52 @@ function register<T>(entries: T[], values: readonly T[]): () => void {
   };
 }
 
-function createSystemPromptPort(): Pick<
-  AgentPorts,
-  'systemPrompts' | 'registerSystemPrompt' | 'getSystemPrompt'
-> {
-  const systemPrompts: SystemPromptSection[] = [];
-  let catalog: { id: string; text: string }[] | undefined;
+interface SpecBucket<T> {
+  readonly live: T[];
+  readonly frozen: readonly T[] | undefined;
+  freeze(value: readonly T[]): readonly T[];
+}
+
+function createSpecBucket<T>(): SpecBucket<T> {
+  const live: T[] = [];
+  let frozen: readonly T[] | undefined;
   return {
-    systemPrompts,
+    live,
+    get frozen() {
+      return frozen;
+    },
+    freeze: (value) => {
+      frozen = value;
+      return value;
+    },
+  };
+}
+
+interface SystemPromptPort {
+  readonly systemPrompts: SystemPromptSection[];
+  registerSystemPrompt(sections: readonly SystemPromptSection[]): () => void;
+  getSystemPrompt(host?: string): string | undefined;
+  freezeSystemPrompt(persisted: readonly SystemPromptSection[] | undefined, host?: string): readonly SystemPromptSection[];
+}
+
+function createSystemPromptPort(): SystemPromptPort {
+  const bucket = createSpecBucket<SystemPromptSection>();
+  const assemble = (host?: string): SystemPromptSection[] => {
+    const sections: SystemPromptSection[] = [];
+    if (host !== undefined && host !== '') {
+      sections.push({ id: HOST_SYSTEM_PROMPT_ID, text: host });
+    }
+    for (const section of bucket.live
+      .filter((entry) => entry.text !== '')
+      .toSorted((left, right) => (left.priority ?? 0) - (right.priority ?? 0))) {
+      sections.push({ id: section.id, text: section.text });
+    }
+    return sections;
+  };
+  return {
+    systemPrompts: bucket.live,
     registerSystemPrompt: (values) => {
-      const ids = new Set(systemPrompts.map((section) => section.id));
+      const ids = new Set(bucket.live.map((section) => section.id));
       for (const section of values) {
         if (section.id.trim() === '') throw new Error('system prompt section id must not be empty');
         if (section.id === HOST_SYSTEM_PROMPT_ID) {
@@ -111,29 +145,21 @@ function createSystemPromptPort(): Pick<
         if (ids.has(section.id)) throw new Error(`duplicate system prompt section: '${section.id}'`);
         ids.add(section.id);
       }
-      return register(systemPrompts, values);
+      return register(bucket.live, values);
     },
     getSystemPrompt: (host) => {
-      if (catalog === undefined) {
-        const sections: { id: string; text: string }[] = [];
-        if (host !== undefined && host !== '') {
-          sections.push({ id: HOST_SYSTEM_PROMPT_ID, text: host });
-        }
-        for (const section of systemPrompts
-          .filter((entry) => entry.text !== '')
-          .toSorted((left, right) => (left.priority ?? 0) - (right.priority ?? 0))) {
-          sections.push({ id: section.id, text: section.text });
-        }
-        catalog = sections;
-      }
-      if (catalog.length === 0) return undefined;
-      return catalog.map((section) => section.text).join('\n\n');
+      const sections = bucket.frozen ?? assemble(host);
+      if (sections.length === 0) return undefined;
+      return sections.map((section) => section.text).join('\n\n');
     },
+    freezeSystemPrompt: (persisted, host) =>
+      bucket.freeze(persisted === undefined ? assemble(host) : [...persisted]),
   };
 }
 
 export function createAgentPorts(): AgentPorts {
-  const tools: ToolDefinition[] = [];
+  const descriptions = createSpecBucket<ToolDescription>();
+  const executors = new Map<string, ToolExecutor>();
   const systemPromptPort = createSystemPromptPort();
   const messageResolvers: MessageResolver[] = [];
   const recoveries: LlmRecovery[] = [];
@@ -143,8 +169,14 @@ export function createAgentPorts(): AgentPorts {
   const afterTools: ToolAfterHook[] = [];
   const promptGates: PromptGate[] = [];
   let media: MediaLowerPorts | undefined;
+  const tombstone = (name: string): ToolDefinition['execute'] =>
+    async () => ({
+      content: [{ type: 'text', text: `tool '${name}' is unavailable: contributing feature is not mounted` }],
+    });
   return {
-    tools,
+    get toolDescriptions() {
+      return descriptions.frozen ?? descriptions.live;
+    },
     systemPrompts: systemPromptPort.systemPrompts,
     messageResolvers,
     recoveries,
@@ -157,16 +189,53 @@ export function createAgentPorts(): AgentPorts {
       return media;
     },
     registerTools: (values) => {
-      const names = new Set(tools.map((tool) => tool.name));
+      const names = new Set(descriptions.live.map((tool) => tool.name));
       for (const tool of values) {
         if (tool.name.trim() === '') throw new Error('tool name must not be empty');
         if (names.has(tool.name)) throw new Error(`duplicate tool name: '${tool.name}'`);
+        if (executors.has(tool.name)) throw new Error(`duplicate tool executor: '${tool.name}'`);
         names.add(tool.name);
       }
-      return register(tools, values);
+      const cleanups = values.map(({ execute, ...description }) => {
+        const executor: ToolExecutor = { execute };
+        descriptions.live.push(description);
+        executors.set(description.name, executor);
+        return () => {
+          const index = descriptions.live.indexOf(description);
+          if (index >= 0) descriptions.live.splice(index, 1);
+          if (executors.get(description.name) === executor) executors.delete(description.name);
+        };
+      });
+      return () => {
+        for (const cleanup of cleanups) cleanup();
+      };
+    },
+    registerToolExecutor: (name, executor) => {
+      if (name.trim() === '') throw new Error('tool name must not be empty');
+      if (executors.has(name)) throw new Error(`duplicate tool executor: '${name}'`);
+      executors.set(name, executor);
+      return () => {
+        if (executors.get(name) === executor) executors.delete(name);
+      };
+    },
+    resolveToolExecutor: (name) => {
+      const executor = executors.get(name);
+      if (executor !== undefined) return executor.execute;
+      const known = (descriptions.frozen ?? descriptions.live).some((tool) => tool.name === name);
+      return known ? tombstone(name) : undefined;
     },
     registerSystemPrompt: systemPromptPort.registerSystemPrompt,
     getSystemPrompt: systemPromptPort.getSystemPrompt,
+    freeze: (spec, host) => {
+      if (spec !== undefined) {
+        systemPromptPort.freezeSystemPrompt(spec.systemPrompt, host);
+        descriptions.freeze(spec.tools);
+        return spec;
+      }
+      const systemPrompt = systemPromptPort.freezeSystemPrompt(undefined, host);
+      const tools = descriptions.freeze([...descriptions.live]);
+      return { version: 1, systemPrompt, tools };
+    },
     registerMessageResolver: (resolver) => {
       if (messageResolvers.some((entry) => entry.id === resolver.id)) {
         throw new Error(`duplicate message resolver: '${resolver.id}'`);
@@ -209,11 +278,11 @@ export function bindPromptGate(ports: AgentPorts, host?: PromptGate): PromptGate
 export function bindToolLogic(ports: AgentPorts): ReturnType<typeof createToolMachine> {
   return createToolMachine({
     execute: async (input) => {
-      const tool = ports.tools.find((entry) => entry.name === input.toolCall.name);
-      if (tool === undefined) {
+      const execute = ports.resolveToolExecutor(input.toolCall.name);
+      if (execute === undefined) {
         return { content: [{ type: 'text', text: `unknown tool: ${input.toolCall.name}` }] };
       }
-      return tool.execute(input);
+      return execute(input);
     },
     onBefore: async (input) => {
       let toolCall = input.toolCall;
@@ -252,7 +321,7 @@ export function bindAgentLogics(
   return {
     turnLogic: createTurnMachine(llmActor, {
       abortGraceMs: turnOptions?.abortGraceMs,
-      getTools: () => ports.tools.filter((tool) => tool.deferred !== true),
+      getTools: () => ports.toolDescriptions.filter((tool) => tool.deferred !== true),
       getSystemPrompt: (host) => ports.getSystemPrompt(host),
       getHostPrompt: turnOptions?.getHostPrompt,
       getConfig: turnOptions?.getConfig,
@@ -343,6 +412,10 @@ export function useBlobs(): Blobs {
 
 export function useAgentTools(...tools: readonly ToolDefinition[]): void {
   pushCleanup(currentUnit(), inject(AgentPort).registerTools(tools));
+}
+
+export function useToolExecutor(name: string, executor: ToolExecutor): void {
+  pushCleanup(currentUnit(), inject(AgentPort).registerToolExecutor(name, executor));
 }
 
 export function useSystemPrompt(...sections: readonly SystemPromptSection[]): void {
