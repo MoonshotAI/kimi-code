@@ -28,7 +28,7 @@ import type { Actor, Subscription } from '#human/xstate2';
 
 import { createMachineRequester, type MachineRequester, type MachineRequesterGateDecision } from './requester';
 import { createMachineTools, type MachineTools, type ToolResultExtras } from './tools';
-import { seededStoreJournal } from './storeJournal';
+import { appendedStoreJournal, seededStoreJournal } from './storeJournal';
 
 export type { PromptGateVerdict };
 
@@ -619,9 +619,8 @@ export function engineJournal(base: SyncStoreJournal | undefined, initialTurnId:
     if (initialTurnId <= 0) return memoryJournal();
     return seedRecords([turnEnded({ turnId: initialTurnId - 1, outcome: 'done' })]);
   }
-  if (initialTurnId <= 0 || base.readSync().length > 0) return base;
-  return seededStoreJournal(
-    base,
-    seedRecords([turnEnded({ turnId: initialTurnId - 1, outcome: 'done' })]).readSync(),
-  );
+  if (initialTurnId <= 0) return base;
+  const seed = seedRecords([turnEnded({ turnId: initialTurnId - 1, outcome: 'done' })]).readSync();
+  if (base.readSync().length === 0) return seededStoreJournal(base, seed);
+  return appendedStoreJournal(base, seed);
 }

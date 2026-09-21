@@ -513,7 +513,7 @@ export const WATCH_ENV = 'KIMI_CODE_WATCH';
 const TRUE_WATCH_ENV = new Set(['1', 'true', 'yes', 'on']);
 const FALSE_WATCH_ENV = new Set(['0', 'false', 'no', 'off']);
 
-let watchEnabledFromConfig = true;
+let watchEnabledFromConfig = false;
 
 export function setWatchEnabled(enabled: boolean): void {
   watchEnabledFromConfig = enabled;

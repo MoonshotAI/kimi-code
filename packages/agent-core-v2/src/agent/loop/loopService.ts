@@ -1240,7 +1240,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       nudge.consumed = true;
       if (nudge.contextMessage !== undefined && nudge.contextMessage.content.length > 0) {
         this.materializeMessage(nudge.contextMessage);
-        if (nudge.promptIds !== undefined && nudge.promptIds.length > 0) {
+        if (
+          nudge.promptIds !== undefined &&
+          nudge.promptIds.length > 0 &&
+          nudge.contextMessage.id !== this.active?.prompt.message.id
+        ) {
           void this.dispatcher.dispatch(
             new TurnSteer({
               agentId: this.scopeContext.agentId,

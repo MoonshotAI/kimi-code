@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, stat, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, stat, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -16,9 +16,11 @@ import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { TOWER_TOOL_CONTRIBUTIONS } from '#/features/tower/towerFeature';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
-import { TowerStore } from '#/features/tower/protocol/index';
+import { TowerStore, parseFrontmatter } from '#/features/tower/protocol/index';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import type { ExecutableTool } from '#/tool/toolContract';
+import type { TokenUsage } from '#human/llm/usage';
 
 import { ITowerInitTool } from '#/features/tower/tools/init/init';
 import { TowerInitTool } from '#/features/tower/tools/init/initTool';
@@ -76,6 +78,7 @@ let currentAgentId: string;
 let currentSessionId: string;
 let liveSessionIds: string[];
 let liveAgentTaskIds: string[];
+let usageTotal: TokenUsage | undefined;
 const agentContexts = new Map<string, AgentContext>();
 
 beforeEach(async () => {
@@ -90,6 +93,7 @@ beforeEach(async () => {
   currentAgentId = 'main';
   liveSessionIds = [];
   liveAgentTaskIds = [];
+  usageTotal = undefined;
   currentSessionId = 'session-test';
   agentContexts.clear();
 
@@ -145,6 +149,9 @@ beforeEach(async () => {
       } as unknown as ISessionManager);
       reg.definePartialInstance(ITowerRateLimitService, {
         snapshot: () => ({ budget: 2, inflight: 0, blockedUntil: null }),
+      });
+      reg.definePartialInstance(ISessionUsageService, {
+        status: () => ({ total: usageTotal }),
       });
       reg.definePartialInstance(IAgentTaskService, {
         list: () =>
@@ -406,6 +413,18 @@ describe('TowerPlanTool', () => {
     expect(result.output).toContain('already used by M1 (abandoned)');
     expect((await new TowerStore(repo).load()).missions).toHaveLength(1);
   });
+
+  it('rejects a non-ASCII mission title and tells the tower to re-plan in English', async () => {
+    await initViaTool();
+
+    const result = await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Исправить ошибку входа', scope: ['src/x/**'] }],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('contains non-ASCII characters');
+    expect((await new TowerStore(repo).load()).missions).toHaveLength(0);
+  });
 });
 
 describe('TowerTeardownTool', () => {
@@ -543,6 +562,26 @@ describe('TowerSendTool + TowerInboxTool', () => {
     liveAgentTaskIds.push('agent-w1');
     const busy = await run(ix.get(ITowerSendTool), { to: 'w1', subject: 'wake', body: 'x' });
     expect(busy.output).not.toContain('has no running task');
+  });
+
+  it('stamps the sender token count from the usage service into the message frontmatter', async () => {
+    usageTotal = { inputOther: 100, output: 50, inputCacheRead: 10, inputCacheCreation: 5 };
+
+    await run(ix.get(ITowerSendTool), { to: 'w1', subject: 'metered', body: 'x' });
+
+    const dir = join(repo, '.tower/comms/inbox');
+    const file = (await readdir(dir)).find((name) => name.includes('metered'));
+    const { fields } = parseFrontmatter(await readFile(join(dir, file!), 'utf8'));
+    expect(fields['tokens']).toBe('165');
+  });
+
+  it('records tokens as -1 when the usage service reports nothing', async () => {
+    await run(ix.get(ITowerSendTool), { to: 'w1', subject: 'unmetered', body: 'x' });
+
+    const dir = join(repo, '.tower/comms/inbox');
+    const file = (await readdir(dir)).find((name) => name.includes('unmetered'));
+    const { fields } = parseFrontmatter(await readFile(join(dir, file!), 'utf8'));
+    expect(fields['tokens']).toBe('-1');
   });
 
   it('skips the delivery note for broadcasts and for sends from workers', async () => {

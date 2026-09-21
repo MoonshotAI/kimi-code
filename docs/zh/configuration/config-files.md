@@ -473,11 +473,11 @@ max_chars = 500000
 
 ## `watch`
 
-`watch` 控制 local.toml、AGENTS.md、skills、MCP 配置以及 `config.toml` 自身的文件系统热更新。默认开启。把 `enabled` 设为 `false` 后进程内不再挂任何 watcher；之后改文件要重启才会再读。
+`watch` 控制 local.toml、AGENTS.md、skills、MCP 配置以及 `config.toml` 自身的文件系统热更新。默认关闭。把 `enabled` 设为 `true` 后进程内才会挂 watcher；关闭时改文件要重启才会再读。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `enabled` | `boolean` | `true` | 是否挂文件系统 watch；`false` 关闭进程内全部 `watch()` |
+| `enabled` | `boolean` | `false` | 是否挂文件系统 watch；`false` 关闭进程内全部 `watch()` |
 
 `enabled` 可被环境变量 `KIMI_CODE_WATCH` 覆盖，优先级高于配置文件。
 

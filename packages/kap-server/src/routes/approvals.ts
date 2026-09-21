@@ -1,7 +1,9 @@
 import {
+  INTERACTION_TAG_AGENT_ID,
   INTERACTION_TAG_SESSION_ID,
   INTERACTION_TAG_TURN_ID,
   interactions,
+  MAIN_AGENT_ID,
   resumeSessionById,
   type ApprovalRequest,
   type ApprovalResponse,
@@ -171,9 +173,15 @@ export function registerApprovalsRoutes(app: ApprovalRouteHost, core: Scope): vo
   );
 }
 
+export function interactionAgentId(interaction: Interaction): string {
+  const tag = interaction.tags[INTERACTION_TAG_AGENT_ID];
+  return typeof tag === 'string' ? tag : MAIN_AGENT_ID;
+}
+
 export function toWireApproval(interaction: Interaction, sessionId: string): {
   approval_id: string;
   session_id: string;
+  agent_id: string;
   turn_id?: number;
   tool_call_id: string;
   tool_name: string;
@@ -187,6 +195,7 @@ export function toWireApproval(interaction: Interaction, sessionId: string): {
   return {
     approval_id: interaction.id,
     session_id: sessionId,
+    agent_id: interactionAgentId(interaction),
     turn_id: typeof turnId === 'number' ? turnId : undefined,
     tool_call_id: p.toolCallId ?? interaction.id,
     tool_name: p.toolName,

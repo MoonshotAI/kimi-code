@@ -32,6 +32,7 @@ import {
 } from '#/app/workspace/workspacePersistence';
 import { IWorkspaceAliases } from '#/app/workspaceAliases/workspaceAliases';
 import { WorkspaceAliasesService } from '#/app/workspaceAliases/workspaceAliasesService';
+import { setWatchEnabled } from '#human/utils/watch';
 import { stubBootstrap } from '../bootstrap/stubs';
 
 interface SessionIndexLine {
@@ -68,9 +69,11 @@ describe('WorkspaceAliasesService (file-backed)', () => {
       'workspaceAliases',
     );
     homeDir = await fsp.mkdtemp(join(os.tmpdir(), 'ws-aliases-'));
+    setWatchEnabled(true);
   });
 
   afterEach(async () => {
+    setWatchEnabled(false);
     currentHost?.dispose();
     currentHost = undefined;
     await fsp.rm(homeDir, { recursive: true, force: true });

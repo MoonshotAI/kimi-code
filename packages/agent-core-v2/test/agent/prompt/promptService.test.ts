@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { IEventBus } from '#/app/event/eventBus';
 import { IFileService } from '#/app/file/fileService';
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type PromptHandle } from '#/agent/loop/loop';
 import { TurnSteer } from '#/agent/loop/turnOps';
@@ -296,9 +297,22 @@ describe('prompt queue', () => {
     expect(PromptSteered.schema.parse(steered[0]).promptIds).toEqual([one.id, two.id]);
     hold.release();
     await loop.settled();
-    expect(events[0]?.origin).toMatchObject({ kind: 'user', clientMetadata: [first, second] });
-    expect(events[0]?.input).toEqual([{ type: 'text', text: 'one' }, { type: 'text', text: 'two' }]);
-    expect(events[0]?.messageId).toBe(steered[0]?.messageId);
+    expect(events).toHaveLength(0);
+    const merged = ctx
+      .get(IAgentContextMemoryService)
+      .get()
+      .find(
+        (entry) =>
+          entry.role === 'user' &&
+          entry.content.some((part) => part.type === 'text' && part.text === 'one') &&
+          entry.content.some((part) => part.type === 'text' && part.text === 'two'),
+      );
+    expect(merged?.origin).toMatchObject({ kind: 'user', clientMetadata: [first, second] });
+    expect(merged?.content).toEqual([
+      { type: 'text', text: 'one' },
+      { type: 'text', text: 'two' },
+    ]);
+    expect(merged?.id).toBe(steered[0]?.messageId);
   });
 
   it('keeps plain inputs beside composer metadata in a mixed steer', async () => {
@@ -318,8 +332,17 @@ describe('prompt queue', () => {
     expect(events).toHaveLength(0);
     hold.release();
     await loop.settled();
-    expect(events[0]?.origin).toMatchObject({ clientMetadata: [{ display_text: '[literal](example.md)' }, metadata, { display_text: 'last instruction' }] });
-    expect(events[0]?.input).toEqual([{ type: 'text', text: '[literal](example.md)' }, { type: 'text', text: 'browser wire' }, { type: 'text', text: 'last instruction' }]);
+    expect(events).toHaveLength(0);
+    const merged = ctx
+      .get(IAgentContextMemoryService)
+      .get()
+      .find(
+        (entry) =>
+          entry.role === 'user' &&
+          entry.content.some((part) => part.type === 'text' && part.text === 'browser wire'),
+      );
+    expect(merged?.origin).toMatchObject({ clientMetadata: [{ display_text: '[literal](example.md)' }, metadata, { display_text: 'last instruction' }] });
+    expect(merged?.content).toEqual([{ type: 'text', text: '[literal](example.md)' }, { type: 'text', text: 'browser wire' }, { type: 'text', text: 'last instruction' }]);
   });
 
   it('publishes prompt identities before each steered user message', async () => {
@@ -358,6 +381,33 @@ describe('prompt queue', () => {
     expect(reserved[1]?.messageId).toBe(three.id);
     expect(materialized[1]?.messageId).toBe(three.id);
     expect(materialized[1]?.promptIds).toEqual([three.id]);
+  });
+
+  it('does not publish turn.steer when an unconsumed steer seeds the next turn after cancel', async () => {
+    setup();
+    const hold = holdNextStep();
+    ctx.mockNextResponse({ type: 'text', text: 'seeded turn' });
+    const steerEvents: TurnSteer[] = [];
+    ctx.get(IEventBus).subscribe(TurnSteer, (event) => steerEvents.push(event));
+
+    await enqueue(loop, { message: message('active') });
+    await hold.started;
+    const stop = await enqueue(loop, { message: message('stop') });
+    await loop.steer([stop.id]);
+    loop.cancel();
+    hold.release();
+    await loop.settled();
+
+    expect(steerEvents).toHaveLength(0);
+    const materializedStops = ctx
+      .get(IAgentContextMemoryService)
+      .get()
+      .filter(
+        (entry) =>
+          entry.role === 'user' &&
+          entry.content.some((part) => part.type === 'text' && part.text === 'stop'),
+      );
+    expect(materializedStops).toHaveLength(1);
   });
 
   it('aborts pending prompts and settles completion', async () => {

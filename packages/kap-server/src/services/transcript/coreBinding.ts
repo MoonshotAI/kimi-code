@@ -32,6 +32,7 @@ export interface TranscriptBindingLogger {
 
 export interface TranscriptBinding extends IDisposable {
   seedPendingInteractions(agentId?: string): void;
+  syncFromStore(agentId: string): void;
 }
 
 export function bindSessionTranscript(
@@ -106,6 +107,13 @@ export function bindSessionTranscript(
           return agentHandle === undefined ? [] : legacyApprovalsOf(agentHandle);
         },
         turn: (turnId) => store.getAgent(agentId)?.getTurn(turnId),
+        maxOrdinal: () => {
+          let max = -1;
+          for (const item of store.getAgent(agentId)?.getItems() ?? []) {
+            if (item.kind === 'turn' && item.ordinal > max) max = item.ordinal;
+          }
+          return max;
+        },
         prompt: (promptId) => store.getAgent(agentId)?.getPrompt(promptId),
         resolvePlanRevisionKey: (key) =>
           agents.handleOf(agentId)?.accessor.get(IAgentScopeContext).scope(key) ?? key,
@@ -287,6 +295,9 @@ export function bindSessionTranscript(
 
   return {
     seedPendingInteractions,
+    syncFromStore: (agentId) => {
+      projectors.get(agentId)?.syncFromStore();
+    },
     dispose: () => {
       for (const d of disposables) d.dispose();
       for (const list of agentDisposables.values()) {

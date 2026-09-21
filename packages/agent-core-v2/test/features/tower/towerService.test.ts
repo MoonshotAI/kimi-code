@@ -40,6 +40,7 @@ import { towerKey, TowerInboxSent } from '#/features/tower/towerOps';
 import { TaskTerminatedNotice } from '#/agent/task/taskOps';
 import { IAgentTaskService } from '#/agent/task/task';
 import { SubagentStarted } from '#/session/subagent/mirrorAgentRun';
+import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -2466,6 +2467,7 @@ describe('AgentTowerService', () => {
         makeAgentScopeContext({ agentId, agentScope: testWireScope('wire', 'tower-test'), generation: 0 }),
         bus,
         { list: () => [] } as unknown as IAgentTaskService,
+        undefined as unknown as ISessionUsageService,
       );
       const result = await executeTool(tool, { turnId: 0, toolCallId: 'call_send', args: input, signal });
       expect(result.isError).toBeFalsy();
