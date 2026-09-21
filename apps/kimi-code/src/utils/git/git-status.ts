@@ -9,7 +9,7 @@
 
 import { execFile, spawnSync } from 'node:child_process';
 
-import { GIT_CONFIG_ARGS, GIT_DIFF_ARGS } from '#/utils/git/git-args';
+import { GIT_DIFF_ARGS, hardenedGitConfigArgs } from '#/utils/git/git-args';
 import { resolveCommandPath } from '#/utils/process/resolve-command';
 
 const BRANCH_TTL_MS = 5_000;
@@ -166,7 +166,7 @@ function detectGitRepo(git: string, workDir: string): boolean {
   try {
     const result = spawnSync(
       git,
-      [...GIT_CONFIG_ARGS, '-C', workDir, 'rev-parse', '--is-inside-work-tree'],
+      [...hardenedGitConfigArgs(git, workDir), '-C', workDir, 'rev-parse', '--is-inside-work-tree'],
       {
         encoding: 'utf8',
         timeout: SPAWN_TIMEOUT_MS,
@@ -180,10 +180,14 @@ function detectGitRepo(git: string, workDir: string): boolean {
 
 function readBranch(git: string, workDir: string): string | null {
   try {
-    const result = spawnSync(git, [...GIT_CONFIG_ARGS, '-C', workDir, 'branch', '--show-current'], {
-      encoding: 'utf8',
-      timeout: SPAWN_TIMEOUT_MS,
-    });
+    const result = spawnSync(
+      git,
+      [...hardenedGitConfigArgs(git, workDir), '-C', workDir, 'branch', '--show-current'],
+      {
+        encoding: 'utf8',
+        timeout: SPAWN_TIMEOUT_MS,
+      },
+    );
     if (result.status !== 0) return null;
     const name = result.stdout.trim();
     return name.length > 0 ? name : null;
@@ -203,11 +207,15 @@ function readStatus(
   diffDeleted: number;
 } {
   try {
-    const result = spawnSync(git, [...GIT_CONFIG_ARGS, '-C', workDir, 'status', '--porcelain', '-b'], {
-      encoding: 'utf8',
-      timeout: SPAWN_TIMEOUT_MS,
-      maxBuffer: 4 * 1024 * 1024,
-    });
+    const result = spawnSync(
+      git,
+      [...hardenedGitConfigArgs(git, workDir), '-C', workDir, 'status', '--porcelain', '-b'],
+      {
+        encoding: 'utf8',
+        timeout: SPAWN_TIMEOUT_MS,
+        maxBuffer: 4 * 1024 * 1024,
+      },
+    );
     if (result.status !== 0) {
       return { dirty: false, ahead: 0, behind: 0, diffAdded: 0, diffDeleted: 0 };
     }
@@ -243,7 +251,16 @@ function readDiffStats(git: string, workDir: string): { added: number; deleted: 
   try {
     const result = spawnSync(
       git,
-      [...GIT_CONFIG_ARGS, '-C', workDir, 'diff', ...GIT_DIFF_ARGS, '--numstat', 'HEAD', '--'],
+      [
+        ...hardenedGitConfigArgs(git, workDir),
+        '-C',
+        workDir,
+        'diff',
+        ...GIT_DIFF_ARGS,
+        '--numstat',
+        'HEAD',
+        '--',
+      ],
       {
         encoding: 'utf8',
         timeout: SPAWN_TIMEOUT_MS,

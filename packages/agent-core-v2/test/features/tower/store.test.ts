@@ -354,6 +354,36 @@ describe('git invocation hardening', () => {
     },
   );
 
+  it.skipIf(process.platform === 'win32')(
+    'does not run repo-configured clean filters on status and add',
+    async () => {
+      const outside = await mkdtemp(join(tmpdir(), 'tower-filter-'));
+      try {
+        const marker = join(outside, 'filter-ran');
+        await writeFile(join(repo, '.gitattributes'), '*.txt filter=evil\n');
+        await writeFile(join(repo, 'f.txt'), 'aaaa\n');
+        await git(repo, 'add', '-A');
+        await git(repo, 'commit', '-m', 'add f');
+        await git(repo, 'config', 'filter.evil.clean', `touch "${marker}"`);
+        await git(repo, 'config', 'filter.evil.smudge', 'cat');
+
+        await writeFile(join(repo, 'f.txt'), 'bbbb\n');
+        await git(repo, 'status', '--porcelain');
+        await stat(marker);
+        await rm(marker);
+
+        expect(await isWorktreeDirty(repo)).toBe(true);
+        await expect(stat(marker)).rejects.toThrow();
+
+        await commitPaths(repo, ['f.txt'], 'commit f');
+        expect(await git(repo, 'log', '-1', '--format=%s')).toBe('commit f');
+        await expect(stat(marker)).rejects.toThrow();
+      } finally {
+        await rm(outside, { recursive: true, force: true });
+      }
+    },
+  );
+
   it('falls back to the tower identity when the repository has no committer identity', async () => {
     await git(repo, 'config', '--unset', 'user.name');
     await git(repo, 'config', '--unset', 'user.email');

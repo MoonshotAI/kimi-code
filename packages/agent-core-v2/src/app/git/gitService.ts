@@ -1,7 +1,7 @@
 import type { FsDiffResponse, FsGitStatusResponse, FsPullRequest } from './git';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { GIT_CONFIG_ARGS, GIT_DIFF_ARGS } from '#/_base/utils/git';
+import { GIT_DIFF_ARGS, hardenedGitConfigArgs } from '#/_base/utils/git';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IRuntimeResolver, IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
@@ -12,6 +12,7 @@ import { findGitWorkTree, type GitWorkTree } from './workTree';
 
 const DIFF_MAX_BYTES = 1_048_576;
 
+const CONFIG_PROBE_TIMEOUT_MS = 5_000;
 const PR_SPAWN_TIMEOUT_MS = 5_000;
 const PULL_REQUEST_TTL_MS = 60_000;
 
@@ -153,11 +154,30 @@ export class GitService implements IGitService {
     cwd: string,
     options: RunOptions = {},
   ): Promise<RunResult> {
+    const argv =
+      cmd === 'git'
+        ? [
+            ...(await hardenedGitConfigArgs(cwd, (probeArgs) =>
+              this.spawnAndCollect('git', probeArgs, cwd, {
+                timeoutMs: CONFIG_PROBE_TIMEOUT_MS,
+              }),
+            )),
+            ...args,
+          ]
+        : args;
+    return this.spawnAndCollect(cmd, argv, cwd, options);
+  }
+
+  private async spawnAndCollect(
+    cmd: string,
+    args: readonly string[],
+    cwd: string,
+    options: RunOptions,
+  ): Promise<RunResult> {
     const workspaceId = this.resolveWorkspaceId(cwd);
     const lease = this.resolver.acquire({ workspaceId, runtimeId: 'local' }, ['process']);
-    const argv = cmd === 'git' ? [...GIT_CONFIG_ARGS, ...args] : args;
     const spawned = await lease.runtime.process!
-      .spawn(cmd, argv, { cwd, env: options.env })
+      .spawn(cmd, args, { cwd, env: options.env })
       .then(
         (proc) => ({ ok: true as const, proc }),
         () => ({ ok: false as const }),

@@ -2,9 +2,10 @@ import { execFile } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
-import { GIT_CONFIG_ARGS, GIT_DIFF_ARGS } from '#/_base/utils/git';
+import { GIT_DIFF_ARGS, hardenedGitConfigArgs, type GitProbeResult } from '#/_base/utils/git';
 
 const GIT_TIMEOUT_MS = 60_000;
+const CONFIG_PROBE_TIMEOUT_MS = 5_000;
 
 export class GitError extends Error {
   constructor(
@@ -25,10 +26,13 @@ export async function git(
   args: readonly string[],
   options: GitOptions = {},
 ): Promise<string> {
+  const configArgs = await hardenedGitConfigArgs(cwd, (probeArgs) =>
+    probeGitConfig(cwd, probeArgs),
+  );
   return new Promise((resolve, reject) => {
     execFile(
       'git',
-      [...GIT_CONFIG_ARGS, ...args],
+      [...configArgs, ...args],
       {
         cwd,
         timeout: GIT_TIMEOUT_MS,
@@ -41,6 +45,27 @@ export async function git(
           return;
         }
         resolve(stdout.trimEnd());
+      },
+    );
+  });
+}
+
+function probeGitConfig(cwd: string, args: readonly string[]): Promise<GitProbeResult> {
+  return new Promise((resolve) => {
+    execFile(
+      'git',
+      [...args],
+      { cwd, timeout: CONFIG_PROBE_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
+      (error, stdout) => {
+        if (error === null) {
+          resolve({ exitCode: 0, stdout });
+          return;
+        }
+        const code: unknown = (error as { code?: unknown }).code;
+        resolve({
+          exitCode: typeof code === 'number' ? code : -1,
+          stdout: typeof stdout === 'string' ? stdout : '',
+        });
       },
     );
   });

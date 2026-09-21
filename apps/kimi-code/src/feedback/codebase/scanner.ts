@@ -4,7 +4,7 @@ import { lstat, readdir } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
-import { GIT_CONFIG_ARGS } from '#/utils/git/git-args';
+import { hardenedGitConfigArgs } from '#/utils/git/git-args';
 
 import {
   DEFAULT_MAX_ARCHIVE_SIZE,
@@ -74,7 +74,7 @@ function resolveLimits(limits: ScanCodebaseOptions['limits']): ScanCodebaseLimit
 async function isInsideGitWorkTree(root: string): Promise<boolean> {
   try {
     const { stdout } = await execFileAsync('git', [
-      ...GIT_CONFIG_ARGS,
+      ...hardenedGitConfigArgs('git', root),
       '-C',
       root,
       'rev-parse',
@@ -93,7 +93,15 @@ async function scanWithGit(
 ): Promise<CollectedFiles> {
   const { stdout } = await execFileAsync(
     'git',
-    [...GIT_CONFIG_ARGS, '-C', root, 'ls-files', '-co', '--exclude-standard', '-z'],
+    [
+      ...hardenedGitConfigArgs('git', root),
+      '-C',
+      root,
+      'ls-files',
+      '-co',
+      '--exclude-standard',
+      '-z',
+    ],
     { encoding: 'buffer', maxBuffer: 1024 * 1024 * 64, signal },
   );
 

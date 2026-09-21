@@ -1,7 +1,7 @@
 import type { Readable } from 'node:stream';
 
 import type { ILogger } from '#/_base/log/log';
-import { GIT_CONFIG_ARGS } from '#/_base/utils/git';
+import { hardenedGitConfigArgs, type GitProbeResult } from '#/_base/utils/git';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 
 const GIT_TIMEOUT_MS = 5_000;
@@ -171,9 +171,33 @@ async function runGit(
   cwd: string,
   args: readonly string[],
 ): Promise<GitResult> {
+  const configArgs = await hardenedGitConfigArgs(cwd, (probeArgs) =>
+    probeGitConfig(process, cwd, probeArgs),
+  );
+  return spawnGit(process, cwd, [...configArgs, '-C', cwd, ...args]);
+}
+
+async function probeGitConfig(
+  process: IHostProcessService,
+  cwd: string,
+  args: readonly string[],
+): Promise<GitProbeResult> {
+  const result = await spawnGit(process, cwd, args);
+  if (result.ok) return { exitCode: 0, stdout: result.stdout };
+  return {
+    exitCode: result.kind === 'command-failed' ? (result.exitCode ?? -1) : -1,
+    stdout: '',
+  };
+}
+
+async function spawnGit(
+  process: IHostProcessService,
+  cwd: string,
+  argv: readonly string[],
+): Promise<GitResult> {
   let proc: IHostProcess | undefined;
   try {
-    proc = await process.spawn('git', [...GIT_CONFIG_ARGS, '-C', cwd, ...args], { cwd });
+    proc = await process.spawn('git', argv, { cwd });
   } catch {
     return { ok: false, kind: 'spawn-error' };
   }
@@ -191,7 +215,7 @@ async function runGit(
     const timeout = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
         timedOut = true;
-        reject(new Error(`git ${args.join(' ')} timed out`));
+        reject(new Error(`git ${argv.join(' ')} timed out`));
       }, GIT_TIMEOUT_MS);
     });
     const [stdout, stderr, exitCode] = await Promise.race([work, timeout]);
