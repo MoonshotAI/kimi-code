@@ -335,6 +335,41 @@ describe('PluginService (plugin boundary)', () => {
     }
   });
 
+  it('records plugin_toggle only after reload delivery settles', async () => {
+    const home = await makeHome();
+    const pluginRoot = await makePluginDir('sequencing-demo', {});
+    createdDirs.push(pluginRoot);
+    await writeInstalledFile(home, JSON.stringify(installedFile('sequencing-demo', pluginRoot)));
+    const telemetry = new TelemetryService();
+    const events: TelemetryAppenderRecord[] = [];
+    telemetry.addAppender({ track: (record) => events.push(record) });
+    const host = makeHost(home, stubProviderService(), {}, telemetry);
+    try {
+      const svc = host.app.accessor.get(IPluginService);
+      await expect(svc.listPlugins()).resolves.toHaveLength(1);
+
+      const listenerCalled = deferred<void>();
+      const gate = deferred<void>();
+      svc.onDidReload((event) => {
+        listenerCalled.resolve(undefined);
+        event.waitUntil(gate.promise);
+      });
+
+      const mutation = svc.setPluginEnabled({ id: 'sequencing-demo', enabled: false });
+      await listenerCalled.promise;
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      expect(events).toHaveLength(0);
+
+      gate.resolve(undefined);
+      await mutation;
+      expect(events.map((record) => [record.event, record.properties])).toEqual([
+        ['plugin_toggle', { plugin_id: 'sequencing-demo', enabled: false }],
+      ]);
+    } finally {
+      host.dispose();
+    }
+  });
+
   it('resolves a mutation only after reload listeners settle their waitUntil work', async () => {
     const home = await makeHome();
     const pluginRoot = await makePluginDir('barrier-demo', {});

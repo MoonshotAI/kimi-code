@@ -91,8 +91,8 @@ export class CloudAppender implements ITelemetryAppender {
     if (plugins === undefined) {
       this.pluginSubscription = null;
     } else {
-      this.pluginSubscription = plugins.onDidReload(() => {
-        void this.refreshActivePlugins(plugins).catch(() => {});
+      this.pluginSubscription = plugins.onDidReload((event) => {
+        event.waitUntil(this.refreshActivePlugins(plugins).catch(() => {}));
       });
       void this.refreshActivePlugins(plugins).catch(() => {});
     }

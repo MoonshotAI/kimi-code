@@ -535,12 +535,50 @@ describe('CloudAppender', () => {
       { added: ['beta'], removed: [], errors: [] },
       new AbortController().signal,
     );
-    await new Promise((resolve) => setTimeout(resolve, 0));
 
     appender.track({ event: 'evt', context: {}, properties: {} });
     await appender.flush();
 
     expect(requests[0]?.body.events[0]?.['context_active_plugins']).toBe('alpha,beta');
+  });
+
+  it('holds reload delivery until the active plugin refresh completes', async () => {
+    const requests: CapturedRequest[] = [];
+    const reloads = new AsyncEmitter<PluginReloadEvent>();
+    let release: (summaries: PluginSummary[]) => void = () => {};
+    const appender = new CloudAppender(
+      baseOptions({
+        homeDir,
+        pluginService: {
+          listPlugins: () =>
+            new Promise<PluginSummary[]>((resolve) => {
+              release = resolve;
+            }),
+          onDidReload: reloads.event,
+        },
+        fetchImpl: makeFetch((req) => {
+          requests.push(req);
+          return okResponse();
+        }),
+      }),
+    );
+
+    let delivered = false;
+    const delivery = reloads
+      .fireAsyncConcurrent({ added: [], removed: [], errors: [] }, new AbortController().signal)
+      .then(() => {
+        delivered = true;
+      });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(delivered).toBe(false);
+
+    release([pluginSummary('alpha', true, 'ok')]);
+    await delivery;
+
+    appender.track({ event: 'evt', context: {}, properties: {} });
+    await appender.flush();
+
+    expect(requests[0]?.body.events[0]?.['context_active_plugins']).toBe('alpha');
   });
 
   it('omits active plugins from the envelope context when none are active', async () => {

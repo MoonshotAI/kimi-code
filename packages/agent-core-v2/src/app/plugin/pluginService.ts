@@ -103,15 +103,15 @@ export class PluginService extends Service implements IPluginService {
     });
   }
 
-  setPluginEnabled(input: SetPluginEnabledInput): Promise<void> {
-    return this.runNotifiedMutation(async () => {
+  async setPluginEnabled(input: SetPluginEnabledInput): Promise<void> {
+    await this.runNotifiedMutation(async () => {
       await this.manager.setEnabled(input.id, input.enabled);
       const notification = await this.reloadAndNotify({
         mutation: { kind: input.enabled ? 'enable' : 'disable', id: input.id },
       });
-      this.telemetry.track2('plugin_toggle', { plugin_id: input.id, enabled: input.enabled });
       return { result: undefined, notification };
     });
+    this.telemetry.track2('plugin_toggle', { plugin_id: input.id, enabled: input.enabled });
   }
 
   setPluginMcpServerEnabled(input: SetPluginMcpServerEnabledInput): Promise<void> {
