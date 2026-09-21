@@ -17,10 +17,10 @@ import { dirname, join } from 'node:path';
 
 function nodePtyRoot() {
   const require = createRequire(import.meta.url);
-  // Resolve from packages/services (where node-pty is declared) so we find the
+  // Resolve from packages/remote-exec (where node-pty is declared) so we find the
   // workspace's hoisted copy regardless of where this script runs.
   const entry = require.resolve('node-pty', {
-    paths: [join(process.cwd(), 'packages/services'), process.cwd()],
+    paths: [join(process.cwd(), 'packages/remote-exec'), process.cwd()],
   });
   // .../node-pty/lib/index.js -> .../node-pty
   return dirname(dirname(entry));
@@ -40,7 +40,7 @@ try {
     fixed++;
   }
   if (fixed > 0) console.log(`[fix-node-pty-perms] made ${fixed} spawn-helper binary(ies) executable`);
-} catch (err) {
-  console.warn('[fix-node-pty-perms] skipped:', err instanceof Error ? err.message : String(err));
+} catch (error) {
+  console.warn('[fix-node-pty-perms] skipped:', error instanceof Error ? error.message : String(error));
 }
 process.exit(0);
