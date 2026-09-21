@@ -1,15 +1,10 @@
-import { SyncDescriptor } from '#/_base/di/descriptors';
-import { _util, type IInstantiationService, type ServiceIdentifier } from '#/_base/di/instantiation';
+import { type IInstantiationService, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { ServiceCollection } from '#/_base/di/serviceCollection';
 import type { Environment } from './environment';
 import type { EnvironmentRegistrationHandle, EnvironmentRegistry } from './environmentRegistry';
 
-type EnvironmentUnitConstructor<T> = new (...args: never[]) => T;
-
 export interface EnvironmentUnitImports {
   readonly root: readonly ServiceIdentifier<unknown>[];
-  readonly imports: readonly ServiceIdentifier<unknown>[];
-  readonly local: readonly ServiceIdentifier<unknown>[];
 }
 
 export interface EnvironmentProviderEnvironmentHandle {
@@ -20,15 +15,10 @@ export interface EnvironmentProviderEnvironmentHandle {
 
 export interface EnvironmentProviderHost {
   get<T>(id: ServiceIdentifier<T>): T;
-  provide<T>(id: ServiceIdentifier<T>, ctor: EnvironmentUnitConstructor<T>, ...staticArguments: unknown[]): T;
   registerEnvironment(environment: Environment): EnvironmentProviderEnvironmentHandle;
 }
 
 export interface EnvironmentUnitHandle {
-  update<T extends { dispose(): void | Promise<void> }>(
-    imports: EnvironmentUnitImports,
-    prepare: (host: EnvironmentProviderHost) => Promise<T>,
-  ): Promise<void>;
   remove(): Promise<void>;
   dispose(): Promise<void>;
 }
@@ -38,11 +28,6 @@ export interface EnvironmentUnitHost {
     imports: EnvironmentUnitImports,
     prepare: (host: EnvironmentProviderHost) => Promise<T>,
   ): Promise<EnvironmentUnitHandle>;
-  update<T extends { dispose(): void | Promise<void> }>(
-    handle: EnvironmentUnitHandle,
-    imports: EnvironmentUnitImports,
-    prepare: (host: EnvironmentProviderHost) => Promise<T>,
-  ): Promise<void>;
   remove(handle: EnvironmentUnitHandle): Promise<void>;
   dispose(): Promise<void>;
 }
@@ -57,15 +42,8 @@ export class SharedEnvironmentUnitHostFactory implements EnvironmentUnitHostFact
   }
 }
 
-interface LocalRegistration {
-  readonly id: ServiceIdentifier<unknown>;
-  readonly value: unknown;
-}
-
 interface EnvironmentUnitTransaction {
   readonly host: EnvironmentProviderHost;
-  readonly units: Array<{ dispose(): void | Promise<void> }>;
-  readonly local: LocalRegistration[];
   readonly environments: StagedEnvironment[];
   dispose(): Promise<void>;
   commit(): { readonly cleanup: Promise<void> };
@@ -78,8 +56,8 @@ interface StagedEnvironment {
 }
 
 interface EnvironmentUnitRecord {
-  attachment: { dispose(): void | Promise<void> };
-  transaction: EnvironmentUnitTransaction;
+  readonly attachment: { dispose(): void | Promise<void> };
+  readonly transaction: EnvironmentUnitTransaction;
   active: boolean;
   handle?: EnvironmentUnitHandle;
 }
@@ -87,7 +65,6 @@ interface EnvironmentUnitRecord {
 class SharedEnvironmentUnitHost implements EnvironmentUnitHost {
   private readonly records: EnvironmentUnitRecord[] = [];
   private readonly recordByHandle = new Map<EnvironmentUnitHandle, EnvironmentUnitRecord>();
-  private readonly locals = new Map<ServiceIdentifier<unknown>, LocalRegistration>();
   private tail = Promise.resolve();
   private closing = false;
 
@@ -117,54 +94,6 @@ class SharedEnvironmentUnitHost implements EnvironmentUnitHost {
       this.recordByHandle.set(handle, record);
       await cleanup;
       return handle;
-    });
-  }
-
-  update<T extends { dispose(): void | Promise<void> }>(
-    handle: EnvironmentUnitHandle,
-    imports: EnvironmentUnitImports,
-    prepare: (host: EnvironmentProviderHost) => Promise<T>,
-  ): Promise<void> {
-    if (this.closing) return Promise.reject(new Error('environment unit host is disposed'));
-    return this.enqueue(async () => {
-      this.assertOpen();
-      const record = this.find(handle);
-      if (!record.active) throw new Error('environment unit handle is disposed');
-      const transaction = this.createTransaction(imports, record.transaction);
-      let attachment: T;
-      let cleanup: Promise<void>;
-      try {
-        attachment = await prepare(transaction.host);
-        cleanup = transaction.commit().cleanup;
-      } catch (error) {
-        await transaction.dispose();
-        throw error;
-      }
-      const previousAttachment = record.attachment;
-      const previousTransaction = record.transaction;
-      record.attachment = attachment;
-      record.transaction = transaction;
-      let failure: unknown;
-      let failed = false;
-      try {
-        await cleanup;
-      } catch (error) {
-        failure = error;
-        failed = true;
-      }
-      try {
-        await previousAttachment.dispose();
-      } catch (error) {
-        if (!failed) failure = error;
-        failed = true;
-      }
-      try {
-        await previousTransaction.dispose();
-      } catch (error) {
-        if (!failed) failure = error;
-        failed = true;
-      }
-      if (failed) throw failure;
     });
   }
 
@@ -226,7 +155,6 @@ class SharedEnvironmentUnitHost implements EnvironmentUnitHost {
 
   private handle(_record: EnvironmentUnitRecord): EnvironmentUnitHandle {
     const handle: EnvironmentUnitHandle = {
-      update: (imports, prepare) => this.update(handle, imports, prepare),
       remove: () => this.remove(handle),
       dispose: () => this.remove(handle),
     };
@@ -249,49 +177,23 @@ class SharedEnvironmentUnitHost implements EnvironmentUnitHost {
     if (this.closing) throw new Error('environment unit host is disposed');
   }
 
-  private createTransaction(imports: EnvironmentUnitImports, previous?: EnvironmentUnitTransaction): EnvironmentUnitTransaction {
-    const declared = new Set([...imports.root, ...imports.imports, ...imports.local]);
-    if (declared.size !== imports.root.length + imports.imports.length + imports.local.length) {
+  private createTransaction(imports: EnvironmentUnitImports): EnvironmentUnitTransaction {
+    const declared = new Set(imports.root);
+    if (declared.size !== imports.root.length) {
       throw new Error('environment unit dependency manifest contains duplicate declarations');
     }
     const services = new ServiceCollection();
-    const units: Array<{ dispose(): void | Promise<void> }> = [];
-    const local: LocalRegistration[] = [];
     const environments: StagedEnvironment[] = [];
     let active = true;
     let committed = false;
     for (const id of imports.root) {
       services.set(id, this.root.invokeFunction((accessor) => accessor.get(id)));
     }
-    for (const id of imports.imports) {
-      const registration = this.locals.get(id);
-      if (registration === undefined) throw new Error(`environment unit import is not available ${id.toString()}`);
-      services.set(id, registration.value);
-    }
     const child = this.root.createChild(services);
     const host: EnvironmentProviderHost = {
       get: <T>(id: ServiceIdentifier<T>): T => {
         if (!active || !declared.has(id)) throw new Error(`environment unit dependency is not declared ${id.toString()}`);
-        if (imports.local.includes(id) && !local.some((registration) => registration.id === id)) {
-          throw new Error(`environment unit local dependency is not available ${id.toString()}`);
-        }
         return child.invokeFunction((accessor) => accessor.get(id));
-      },
-      provide: <T>(id: ServiceIdentifier<T>, ctor: EnvironmentUnitConstructor<T>, ...staticArguments: unknown[]): T => {
-        if (!active || !imports.local.includes(id)) throw new Error(`environment unit local registration is not declared ${id.toString()}`);
-        if (local.some((registration) => registration.id === id)) throw new Error(`environment unit local registration already exists ${id.toString()}`);
-        for (const dependency of _util.getInstanceDependencies(ctor as unknown as _util.DI_TARGET_OBJ)) {
-          if (!declared.has(dependency.id)) throw new Error(`environment unit dependency is not declared ${dependency.id.toString()}`);
-          if (imports.local.includes(dependency.id) && !local.some((registration) => registration.id === dependency.id)) {
-            throw new Error(`environment unit local dependency is not available ${dependency.id.toString()}`);
-          }
-        }
-        const unit = child.createInstance(new SyncDescriptor<T>(ctor as never, staticArguments)) as T;
-        services.set(id, unit);
-        local.push({ id, value: unit });
-        const disposable = unit as { dispose?: () => void | Promise<void> };
-        if (typeof disposable.dispose === 'function') units.push(disposable as { dispose(): void | Promise<void> });
-        return unit;
       },
       registerEnvironment: (environment) => {
         if (!active) throw new Error('environment unit transaction is disposed');
@@ -318,47 +220,19 @@ class SharedEnvironmentUnitHost implements EnvironmentUnitHost {
     };
     const transaction: EnvironmentUnitTransaction = {
       host,
-      units,
-      local,
       environments,
       commit: () => {
         if (!active) throw new Error('environment unit transaction is disposed');
-        const previousEnvironments = new Map(
-          previous?.environments.map((staged) => [staged.environment.identity.environmentId, staged]) ?? [],
-        );
-        const previousLocals = new Set(previous?.local.map((registration) => registration.id) ?? []);
         for (const staged of environments) {
-          const current = this.registry.current(staged.environment.identity.environmentId);
-          const previousEnvironment = previousEnvironments.get(staged.environment.identity.environmentId);
-          if (current !== undefined && previousEnvironment === undefined) {
+          if (this.registry.current(staged.environment.identity.environmentId) !== undefined) {
             throw new Error(`environment ${staged.environment.identity.environmentId} already exists`);
           }
-          this.registry.prepare(
-            staged.environment,
-            previousEnvironment === undefined ? undefined : staged.environment.identity.environmentId,
-          );
+          this.registry.prepare(staged.environment);
         }
-        for (const registration of local) {
-          if (this.locals.has(registration.id) && !previousLocals.has(registration.id)) {
-            throw new Error(`environment unit local registration already exists ${registration.id.toString()}`);
-          }
-        }
-        const publication = this.registry.publishBatch(environments.map((staged) => {
-          const previousEnvironment = previousEnvironments.get(staged.environment.identity.environmentId);
-          if (previousEnvironment?.registration === undefined) return { environment: staged.environment };
-          return {
-            environment: staged.environment,
-            current: previousEnvironment.environment,
-            registration: previousEnvironment.registration,
-          };
-        }));
+        const publication = this.registry.publishBatch(environments.map((staged) => ({ environment: staged.environment })));
         for (let index = 0; index < environments.length; index += 1) {
-          const staged = environments[index]!;
-          const previousEnvironment = previousEnvironments.get(staged.environment.identity.environmentId);
-          if (previousEnvironment !== undefined) previousEnvironment.active = false;
-          staged.registration = publication.registrations[index];
+          environments[index]!.registration = publication.registrations[index];
         }
-        for (const registration of local) this.locals.set(registration.id, registration);
         committed = true;
         return { cleanup: publication.cleanup };
       },
@@ -373,17 +247,6 @@ class SharedEnvironmentUnitHost implements EnvironmentUnitHost {
           try {
             if (staged.registration === undefined) await staged.environment.dispose();
             else await staged.registration.remove();
-          } catch (error) {
-            if (!failed) failure = error;
-            failed = true;
-          }
-        }
-        for (const registration of local.toReversed()) {
-          if (this.locals.get(registration.id) === registration) this.locals.delete(registration.id);
-        }
-        for (const unit of units.toReversed()) {
-          try {
-            await unit.dispose();
           } catch (error) {
             if (!failed) failure = error;
             failed = true;

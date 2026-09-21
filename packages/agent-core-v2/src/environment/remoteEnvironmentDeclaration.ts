@@ -41,9 +41,6 @@ export const RemoteEnvironmentEntrySchema = z.union([
 ]);
 
 export type RemoteEnvironmentEntry = z.infer<typeof RemoteEnvironmentEntrySchema>;
-export type SshEnvironmentEntry = z.infer<typeof sshEnvironmentEntrySchema>;
-export type DockerEnvironmentEntry = z.infer<typeof dockerEnvironmentEntrySchema>;
-export type CommandEnvironmentEntry = z.infer<typeof commandEnvironmentEntrySchema>;
 
 export function environmentIdProblem(id: string): string | undefined {
   if (id.length === 0) return 'must not be empty';

@@ -44,9 +44,9 @@ async function openEnvironmentManager(host: SlashCommandHost, session: Session):
       if (list === undefined) return;
       void switchFlow(host, session, manager, list, currentEnvironmentId, environmentId);
     },
-    onReconnect: (environmentId) => {
+    onReconnect: () => {
       if (list === undefined) return;
-      void reconnectFlow(host, session, manager, currentEnvironmentId, environmentId);
+      void reconnectFlow(host, session, manager, currentEnvironmentId);
     },
     onAdd: () => {
       if (list !== undefined) void addFlow(host, session, list);
@@ -164,10 +164,8 @@ async function reconnectFlow(
   session: Session,
   manager: EnvironmentManagerComponent,
   currentEnvironmentId: string,
-  environmentId: string,
 ): Promise<void> {
-  if (environmentId !== currentEnvironmentId) return;
-  manager.setBusy(`Reconnecting ${environmentId}…`);
+  manager.setBusy(`Reconnecting ${currentEnvironmentId}…`);
   try {
     await session.reconnectEnvironment();
   } catch (error) {
@@ -182,8 +180,8 @@ async function reconnectFlow(
     onSwitch: (nextId) => {
       void switchFlow(host, session, manager, list, currentEnvironmentId, nextId);
     },
-    onReconnect: (nextId) => {
-      void reconnectFlow(host, session, manager, currentEnvironmentId, nextId);
+    onReconnect: () => {
+      void reconnectFlow(host, session, manager, currentEnvironmentId);
     },
     onAdd: () => {
       void addFlow(host, session, list);

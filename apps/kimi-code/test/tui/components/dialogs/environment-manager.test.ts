@@ -170,7 +170,7 @@ describe('EnvironmentManagerComponent', () => {
     // Selection starts on the current (sandbox) row, which is disconnected.
     expect(rendered(component)).toContain('Enter/R reconnect');
     component.handleInput('r');
-    expect(onReconnect).toHaveBeenCalledWith('sandbox');
+    expect(onReconnect).toHaveBeenCalledWith();
   });
 
   it('reconnects on Enter when the current row is the disconnected bound remote', () => {
@@ -178,7 +178,7 @@ describe('EnvironmentManagerComponent', () => {
     const onSwitch = vi.fn();
     const component = makeComponent({ onReconnect, onSwitch, currentEnvironmentId: 'sandbox' });
     component.handleInput(ENTER);
-    expect(onReconnect).toHaveBeenCalledWith('sandbox');
+    expect(onReconnect).toHaveBeenCalledWith();
     expect(onSwitch).not.toHaveBeenCalled();
   });
 
@@ -191,7 +191,7 @@ describe('EnvironmentManagerComponent', () => {
     });
     expect(rendered(component)).toContain('Enter/R reconnect');
     component.handleInput('r');
-    expect(onReconnect).toHaveBeenCalledWith('sandbox');
+    expect(onReconnect).toHaveBeenCalledWith();
   });
 
   it('reconnects on Enter when the current row is the pending bound remote', () => {
@@ -204,7 +204,7 @@ describe('EnvironmentManagerComponent', () => {
       environments: [LOCAL, DEV_BOX, { ...SANDBOX, status: 'pending' }],
     });
     component.handleInput(ENTER);
-    expect(onReconnect).toHaveBeenCalledWith('sandbox');
+    expect(onReconnect).toHaveBeenCalledWith();
     expect(onSwitch).not.toHaveBeenCalled();
   });
 

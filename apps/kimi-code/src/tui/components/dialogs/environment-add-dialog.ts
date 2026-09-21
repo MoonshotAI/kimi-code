@@ -66,10 +66,9 @@ type FieldId = 'target' | 'extra' | 'id' | 'defaultCwd' | 'scope';
 interface FieldDef {
   readonly id: FieldId;
   readonly label: string;
-  readonly required: boolean;
 }
 
-const SCOPE_FIELD_DEF: FieldDef = { id: 'scope', label: 'Scope', required: true };
+const SCOPE_FIELD_DEF: FieldDef = { id: 'scope', label: 'Scope' };
 
 const SCOPE_SUBTITLES: Record<EnvironmentAddScope, string> = {
   global: 'Written to [environments] in config.toml.',
@@ -78,21 +77,21 @@ const SCOPE_SUBTITLES: Record<EnvironmentAddScope, string> = {
 
 const FIELD_DEFS: Record<EnvironmentAddType, readonly FieldDef[]> = {
   ssh: [
-    { id: 'target', label: 'Host', required: true },
-    { id: 'id', label: 'Environment id (defaults to host)', required: false },
-    { id: 'defaultCwd', label: 'Default cwd (optional)', required: false },
+    { id: 'target', label: 'Host' },
+    { id: 'id', label: 'Environment id (defaults to host)' },
+    { id: 'defaultCwd', label: 'Default cwd (optional)' },
   ],
   docker: [
-    { id: 'target', label: 'Container', required: true },
-    { id: 'extra', label: 'Context (optional)', required: false },
-    { id: 'id', label: 'Environment id (defaults to container)', required: false },
-    { id: 'defaultCwd', label: 'Default cwd (optional)', required: false },
+    { id: 'target', label: 'Container' },
+    { id: 'extra', label: 'Context (optional)' },
+    { id: 'id', label: 'Environment id (defaults to container)' },
+    { id: 'defaultCwd', label: 'Default cwd (optional)' },
   ],
   command: [
-    { id: 'target', label: 'Command', required: true },
-    { id: 'extra', label: 'Args (space-separated, optional)', required: false },
-    { id: 'id', label: 'Environment id (defaults to command)', required: false },
-    { id: 'defaultCwd', label: 'Default cwd (optional)', required: false },
+    { id: 'target', label: 'Command' },
+    { id: 'extra', label: 'Args (space-separated, optional)' },
+    { id: 'id', label: 'Environment id (defaults to command)' },
+    { id: 'defaultCwd', label: 'Default cwd (optional)' },
   ],
 };
 

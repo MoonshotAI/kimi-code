@@ -19,18 +19,15 @@ interface MountedPanel {
 
 function makeEnvironmentsInfo(overrides: Partial<SessionEnvironmentsInfo> = {}): SessionEnvironmentsInfo {
   return {
-    workspaceId: 'ws-1',
     environments: [
-      { environmentId: 'local', type: 'local', status: 'ready', generation: 'g0', capabilities: ['fs', 'process'] },
+      { environmentId: 'local', type: 'local', status: 'ready' },
       {
         environmentId: 'dev-box',
         type: 'ssh',
         status: 'ready',
-        generation: 'g1',
-        capabilities: ['fs', 'process'],
         defaultCwd: '/home/me/projects',
       },
-      { environmentId: 'sandbox', type: 'command', status: 'disconnected', generation: 'g2', capabilities: [] },
+      { environmentId: 'sandbox', type: 'command', status: 'disconnected' },
     ],
     sshHosts: ['dev-box', 'staging'],
     ...overrides,
@@ -157,12 +154,12 @@ describe('handleEnvironmentCommand', () => {
 
     const firstList = makeEnvironmentsInfo({
       environments: [
-        { environmentId: 'first-box', type: 'ssh', status: 'ready', generation: 'g1', capabilities: [] },
+        { environmentId: 'first-box', type: 'ssh', status: 'ready' },
       ],
     });
     const secondList = makeEnvironmentsInfo({
       environments: [
-        { environmentId: 'second-box', type: 'ssh', status: 'ready', generation: 'g2', capabilities: [] },
+        { environmentId: 'second-box', type: 'ssh', status: 'ready' },
       ],
     });
     resolveSecond(secondList);

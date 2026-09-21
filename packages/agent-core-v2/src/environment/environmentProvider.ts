@@ -1,4 +1,3 @@
-import type { Workspace } from '#/app/workspace/workspace';
 import type { Event, IWaitUntil } from '#/_base/event';
 import type { WorkspaceTrustChange } from '#/workspace/workspaceTrust/workspaceTrust';
 
@@ -11,7 +10,6 @@ export interface EnvironmentProviderAttachment {
 export interface EnvironmentProviderContext {
   readonly id: string;
   readonly root: string;
-  readonly metadata: Workspace;
   readonly onDidChangeTrust: Event<WorkspaceTrustChange & IWaitUntil>;
 }
 

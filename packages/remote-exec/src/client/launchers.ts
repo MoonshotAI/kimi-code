@@ -1,7 +1,5 @@
 import { resolveProgramPath } from '@moonshot-ai/agent-core-v2/environment/programPath';
 
-export { resolveProgramPath };
-
 export const DEFAULT_REMOTE_BIN = '~/.kimi-code/bin/kimi';
 export const EXEC_SERVER_ARGV: readonly string[] = ['exec-server', '--listen', 'stdio'];
 

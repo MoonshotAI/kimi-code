@@ -152,7 +152,6 @@ export class Program {
   get trust(): IWorkspaceTrust { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).trust; }
   get skills(): IWorkspaceSkillCatalog { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).skills; }
   get agentProfiles(): IWorkspaceAgentProfileLoader { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).agentProfiles; }
-  get sessionControllerGeneration(): string { return this.sessionControllerGenerationFor(LOCAL_ENVIRONMENT_ID); }
 
   sessionControllerGenerationFor(environmentId: string, cwd?: string): string {
     return this.requireGeneration(environmentId, cwd).id;

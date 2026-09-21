@@ -144,7 +144,7 @@ describe('server-v2 /api/v1 fs routes', () => {
     const id = await createSession();
     const provider = await server!.core.accessor.get(IWorkspaceInstanceManager).addProvider({
       id: 'remote-test-provider',
-      imports: { root: [], imports: [], local: [] },
+      imports: { root: [] },
       attach: async (context, host) => {
         const environment = Object.assign(
           new FakeEnvironment(
@@ -193,7 +193,7 @@ describe('server-v2 /api/v1 fs routes', () => {
     const id = await createSession();
     const provider = await server!.core.accessor.get(IWorkspaceInstanceManager).addProvider({
       id: 'disconnected-test-provider',
-      imports: { root: [], imports: [], local: [] },
+      imports: { root: [] },
       attach: async (context, host) => {
         const environment = Object.assign(
           new FakeEnvironment(
@@ -811,7 +811,7 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(id).toBeTruthy();
     const provider = await server!.core.accessor.get(IWorkspaceInstanceManager).addProvider({
       id: 'remote-suggest-provider',
-      imports: { root: [], imports: [], local: [] },
+      imports: { root: [] },
       attach: async (context, host) => {
         const environment = Object.assign(
           new FakeEnvironment(

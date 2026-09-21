@@ -404,7 +404,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
 
     const provider = await server!.core.accessor.get(IWorkspaceInstanceManager).addProvider({
       id: 'debug-remote-provider',
-      imports: { root: [], imports: [], local: [] },
+      imports: { root: [] },
       attach: async (context, host) => {
         host.registerEnvironment(Object.assign(new FakeEnvironment({
           workspaceId: context.id,

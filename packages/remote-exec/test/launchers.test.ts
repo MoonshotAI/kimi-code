@@ -4,7 +4,9 @@ import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { commandLauncherEnv, resolveLauncher, resolveProgramPath } from '../src/client/launchers';
+import { resolveProgramPath } from '@moonshot-ai/agent-core-v2/environment/programPath';
+
+import { commandLauncherEnv, resolveLauncher } from '../src/client/launchers';
 
 describe('launcher lowering', () => {
   it('lowers ssh to the fixed argv shape', () => {

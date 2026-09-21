@@ -33,17 +33,9 @@
       "types": "./src/index.ts",
       "default": "./src/index.ts"
     },
-    "./client": {
-      "types": "./src/client/index.ts",
-      "default": "./src/client/index.ts"
-    },
     "./server": {
       "types": "./src/server/index.ts",
       "default": "./src/server/index.ts"
-    },
-    "./protocol": {
-      "types": "./src/protocol/index.ts",
-      "default": "./src/protocol/index.ts"
     },
     "./package.json": {
       "types": "./package.json",

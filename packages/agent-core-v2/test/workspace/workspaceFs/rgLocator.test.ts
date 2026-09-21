@@ -1,12 +1,9 @@
-import { join } from 'node:path';
-
 import { describe, expect, it, vi } from 'vitest';
 
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import {
   ensureRgPath,
   getShareBinRgPath,
-  rgUnavailableMessage,
   type RgProbe,
 } from '#/workspace/workspaceFs/internal/rgLocator';
 import { stubRgProbe } from '../../os/stubs';
@@ -90,46 +87,5 @@ describe('ensureRgPath cached fallback', () => {
     const resolution = await ensureRgPath(probe, { allowCachedFallback: true });
 
     expect(resolution).toEqual({ path: getShareBinRgPath(), source: 'share-bin-cached' });
-  });
-});
-
-describe('rgUnavailableMessage', () => {
-  it('names the environment and the target-side path for a remote environment', () => {
-    const msg = rgUnavailableMessage(new Error('boom'), remoteEnvironment('ssh-dev'));
-
-    expect(msg).toContain('ssh-dev');
-    expect(msg).toContain('boom');
-    expect(msg).toContain('on the target');
-    expect(msg).toContain('brew install ripgrep');
-    expect(msg).toContain('/home/remote/.kimi-code/bin/rg');
-    expect(msg).not.toContain(getShareBinRgPath());
-  });
-
-  it('keeps the local message byte-identical for the local environment and for no environment', () => {
-    const saved = process.env['KIMI_CODE_HOME'];
-    process.env['KIMI_CODE_HOME'] = '/kimi-home-test';
-    try {
-      const shareBin = join('/kimi-home-test', 'bin', process.platform === 'win32' ? 'rg.exe' : 'rg');
-      const expected =
-        'ripgrep (rg) is not available.\n' +
-        '\n' +
-        'Error: boom\n' +
-        '\n' +
-        'Fix options:\n' +
-        '  macOS:   brew install ripgrep\n' +
-        '  Ubuntu:  sudo apt-get install ripgrep\n' +
-        '  Other:   https://github.com/BurntSushi/ripgrep#installation\n' +
-        '\n' +
-        `Alternatively, drop a static rg binary at ${shareBin}`;
-
-      expect(rgUnavailableMessage(new Error('boom'))).toBe(expected);
-      expect(rgUnavailableMessage(new Error('boom'), localEnvironment())).toBe(expected);
-    } finally {
-      if (saved === undefined) {
-        delete process.env['KIMI_CODE_HOME'];
-      } else {
-        process.env['KIMI_CODE_HOME'] = saved;
-      }
-    }
   });
 });

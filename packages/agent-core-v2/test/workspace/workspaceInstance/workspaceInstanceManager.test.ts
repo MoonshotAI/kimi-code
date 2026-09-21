@@ -14,7 +14,7 @@ import type {
 } from '#/environment/environmentUnitHost';
 import { WorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManagerService';
 
-const imports = { root: [], imports: [], local: [] } as const;
+const imports = { root: [] } as const;
 
 function deferred(): { readonly promise: Promise<void>; resolve(): void } {
   let resolve!: () => void;
@@ -42,7 +42,6 @@ class TestEnvironmentUnitHost implements EnvironmentUnitHost {
     const registrations: EnvironmentProviderEnvironmentHandle[] = [];
     const host: EnvironmentProviderHost = {
       get: () => { throw new Error('no imports'); },
-      provide: () => { throw new Error('no local services'); },
       registerEnvironment: (value) => {
         const registration = this.registry.register(value);
         const handle: EnvironmentProviderEnvironmentHandle = {
@@ -71,16 +70,11 @@ class TestEnvironmentUnitHost implements EnvironmentUnitHost {
       if (index >= 0) this.units.splice(index, 1);
     };
     const handle: EnvironmentUnitHandle = {
-      update: async () => { throw new Error('not supported'); },
       remove: dispose,
       dispose,
     };
     this.units.push(handle);
     return handle;
-  }
-
-  async update(): Promise<void> {
-    throw new Error('not supported');
   }
 
   remove(handle: EnvironmentUnitHandle): Promise<void> {

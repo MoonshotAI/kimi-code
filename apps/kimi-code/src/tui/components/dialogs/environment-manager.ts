@@ -54,7 +54,7 @@ export interface EnvironmentManagerOptions {
   readonly environments: readonly EnvironmentManagerEnvironment[];
   readonly currentEnvironmentId: string;
   readonly onSwitch: (environmentId: string) => void;
-  readonly onReconnect: (environmentId: string) => void;
+  readonly onReconnect: () => void;
   readonly onAdd: () => void;
   readonly onClose: () => void;
   /** Triggers a re-render; the host wires this to `ui.requestRender()`. */
@@ -216,14 +216,14 @@ export class EnvironmentManagerComponent extends Container implements Focusable 
         return;
       }
       if (this.reconnectableSelected()) {
-        this.opts.onReconnect(this.opts.currentEnvironmentId);
+        this.opts.onReconnect();
       }
       return;
     }
 
     const ch = printableChar(data);
     if ((ch === 'r' || ch === 'R') && this.reconnectableSelected()) {
-      this.opts.onReconnect(this.opts.currentEnvironmentId);
+      this.opts.onReconnect();
     }
   }
 

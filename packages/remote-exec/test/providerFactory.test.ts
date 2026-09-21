@@ -114,7 +114,6 @@ const NO_ABORT = new AbortController().signal;
 const CONTEXT: EnvironmentProviderContext = {
   id: 'workspace-1',
   root: '/repo',
-  metadata: {} as EnvironmentProviderContext['metadata'],
   onDidChangeTrust: trustChange.event,
 };
 

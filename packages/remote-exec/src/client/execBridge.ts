@@ -12,7 +12,6 @@ export interface ExecBridgeOptions {
   readonly program: string;
   readonly args?: readonly string[];
   readonly env?: Record<string, string>;
-  readonly stderrLimitBytes?: number;
 }
 
 export interface ExecBridgeExit {
@@ -38,10 +37,7 @@ export class ExecBridge implements BytePipe {
   private closeTimer: NodeJS.Timeout | undefined;
   readonly exited: Promise<ExecBridgeExit>;
 
-  private constructor(
-    private readonly child: ChildProcess,
-    stderrLimitBytes: number,
-  ) {
+  private constructor(private readonly child: ChildProcess) {
     this.child.stdout!.on('data', (chunk: Buffer) => {
       for (const listener of this.dataListeners) listener(chunk);
     });
@@ -49,7 +45,7 @@ export class ExecBridge implements BytePipe {
       this.fireEnd();
     });
     this.child.stderr!.on('data', (chunk: Buffer) => {
-      this.stderrTail = (this.stderrTail + chunk.toString('utf8')).slice(-stderrLimitBytes);
+      this.stderrTail = (this.stderrTail + chunk.toString('utf8')).slice(-DEFAULT_STDERR_LIMIT);
     });
     // A write into a dead child's stdin raises EPIPE on the stream; without an
     // 'error' listener Node throws it uncaught and kills the host process.
@@ -85,15 +81,11 @@ export class ExecBridge implements BytePipe {
       env: options.env,
       windowsHide: true,
     });
-    return new ExecBridge(child, options.stderrLimitBytes ?? DEFAULT_STDERR_LIMIT);
+    return new ExecBridge(child);
   }
 
-  static adopt(child: ChildProcess, stderrLimitBytes: number = DEFAULT_STDERR_LIMIT): ExecBridge {
-    return new ExecBridge(child, stderrLimitBytes);
-  }
-
-  get pid(): number | undefined {
-    return this.child.pid;
+  static adopt(child: ChildProcess): ExecBridge {
+    return new ExecBridge(child);
   }
 
   getStderrTail(): string {

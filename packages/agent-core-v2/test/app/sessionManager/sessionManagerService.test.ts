@@ -754,7 +754,7 @@ describe('SessionManager controller retirement', () => {
     expect(controllers).toHaveLength(2);
     expect(manager.get(local.id)).toBe(local);
     expect(manager.get(remote.id)).toBe(remote);
-    expect(program.sessionControllerGeneration).toBe('one');
+    expect(program.sessionControllerGenerationFor('local')).toBe('one');
     expect(program.sessionControllerGenerationFor('remote')).toBe('remote-one');
 
     await manager.close(local.id);

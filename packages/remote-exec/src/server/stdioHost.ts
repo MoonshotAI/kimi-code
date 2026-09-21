@@ -25,7 +25,6 @@ import {
   PROCESS_TERMINATE_METHOD,
   PROCESS_WRITE_METHOD,
   type InitializeResult,
-  type RemoteCapabilities,
   type RemoteEnvironmentInfo,
 } from '#/protocol/methods';
 import { FsHandler } from './fsHandler';
@@ -38,7 +37,6 @@ export interface StdioHostTuning extends ProcessManagerTuning {
 export interface StdioHostOptions {
   readonly version: string;
   readonly environment: RemoteEnvironmentInfo;
-  readonly capabilities?: RemoteCapabilities;
   readonly input: Readable;
   readonly output: Writable;
   readonly log: (line: string) => void;
@@ -273,7 +271,7 @@ export class StdioHost {
     const result: InitializeResult = {
       executorVersion: this.options.version,
       environment: this.options.environment,
-      capabilities: { [PROCESS_FLOW_CAPABILITY]: true, ...this.options.capabilities },
+      capabilities: { [PROCESS_FLOW_CAPABILITY]: true },
     };
     this.respond(message.id, result, 'control');
     this.state = 'awaiting-initialized';

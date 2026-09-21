@@ -259,8 +259,6 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
   readonly id = 'remote-exec';
   readonly imports: EnvironmentUnitImports = {
     root: [IConfigService, IHostFileSystem, IAtomicDocumentStore, ILogService],
-    imports: [],
-    local: [],
   };
 
   // App-level connection pool: one executor connection per declaration

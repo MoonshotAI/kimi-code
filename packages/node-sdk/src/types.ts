@@ -3,10 +3,7 @@ import type {
   ExportSessionManifest,
   ShellEnvironment,
 } from '@moonshot-ai/agent-core-v2/app/sessionExport/sessionExport';
-import type {
-  EnvironmentCapability as SessionEnvironmentCapability,
-  EnvironmentStatus as SessionEnvironmentStatus,
-} from '@moonshot-ai/agent-core-v2/environment/environment';
+import type { EnvironmentStatus as SessionEnvironmentStatus } from '@moonshot-ai/agent-core-v2/environment/environment';
 import type { RemoteEnvironmentEntry } from '@moonshot-ai/agent-core-v2/environment/remoteEnvironmentDeclaration';
 import type { Kaos } from '@moonshot-ai/kaos';
 import type { KimiHostIdentity, OAuthRefreshOutcome } from '@moonshot-ai/kimi-code-oauth';
@@ -34,10 +31,7 @@ export interface AgentEnvironmentBinding {
   readonly cwd?: string;
 }
 
-export type {
-  EnvironmentCapability as SessionEnvironmentCapability,
-  EnvironmentStatus as SessionEnvironmentStatus,
-} from '@moonshot-ai/agent-core-v2/environment/environment';
+export type { EnvironmentStatus as SessionEnvironmentStatus } from '@moonshot-ai/agent-core-v2/environment/environment';
 
 export type SessionEnvironmentType = 'local' | 'ssh' | 'docker' | 'command';
 
@@ -45,14 +39,11 @@ export interface SessionEnvironmentInfo {
   readonly environmentId: string;
   readonly type: SessionEnvironmentType;
   readonly status: SessionEnvironmentStatus;
-  readonly generation: string;
-  readonly capabilities: readonly SessionEnvironmentCapability[];
   readonly defaultCwd?: string;
   readonly connectError?: string;
 }
 
 export interface SessionEnvironmentsInfo {
-  readonly workspaceId: string;
   readonly environments: readonly SessionEnvironmentInfo[];
   readonly sshHosts: readonly string[];
 }

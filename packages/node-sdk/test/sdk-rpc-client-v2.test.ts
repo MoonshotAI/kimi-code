@@ -244,7 +244,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     await attached?.dispose();
     return client.engineAccessor.get(IWorkspaceInstanceManager).addProvider({
       id: 'fake-box-provider',
-      imports: { root: [], imports: [], local: [] },
+      imports: { root: [] },
       attach: async (context, host) => {
         const fake = new FakeEnvironment(
           { workspaceId: context.id, environmentId: 'fake-box', generation: 'fake-generation' },

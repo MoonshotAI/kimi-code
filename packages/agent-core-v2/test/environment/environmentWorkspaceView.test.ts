@@ -97,7 +97,7 @@ describe('EnvironmentWorkspaceView', () => {
     expect(() => view.assertAllowed(view.resolve('/tmp/scratch.txt'))).toThrow('outside environment workspace');
   });
 
-  it('deduplicates roots and preserves generation identity', () => {
+  it('deduplicates roots and exposes the binding', () => {
     const first = new EnvironmentWorkspaceView(environment('one', 'posix'), {
       workDir: '/workspace',
       additionalDirs: ['/shared', '/shared'],
@@ -108,8 +108,6 @@ describe('EnvironmentWorkspaceView', () => {
     });
     expect(first.roots).toEqual(['/workspace', '/shared']);
     expect(first.binding).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
-    expect(first.generation).toBe('one');
-    expect(second.generation).toBe('two');
     expect(second.environment).not.toBe(first.environment);
   });
 });

@@ -2030,7 +2030,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       (await manager.getOrCreate({ root: context.cwd }));
     const declarations = await this.resolveEnvironmentDeclarationEntries(instance.root);
     return {
-      workspaceId: context.workspaceId,
       environments: instance.environments.snapshot().environments.map((environment) =>
         environmentEntryInfo(environment, declarations.get(environment.environmentId)),
       ),

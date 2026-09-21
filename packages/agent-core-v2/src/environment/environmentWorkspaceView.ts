@@ -7,7 +7,6 @@ export type { EnvironmentWorkspaceRoots } from './environment';
 
 export class EnvironmentWorkspaceView {
   readonly binding: EnvironmentBinding;
-  readonly generation: string;
   readonly workDir: string;
   readonly additionalDirs: readonly string[];
   readonly roots: readonly string[];
@@ -20,7 +19,6 @@ export class EnvironmentWorkspaceView {
       workspaceId: environment.identity.workspaceId,
       environmentId: environment.identity.environmentId,
     };
-    this.generation = environment.identity.generation;
     const mapped = environment.workspace.mapRoots(roots);
     this.workDir = environment.path.resolve(mapped.workDir);
     this.additionalDirs = [...new Set((mapped.additionalDirs ?? []).map((root) => environment.path.resolve(root)))];

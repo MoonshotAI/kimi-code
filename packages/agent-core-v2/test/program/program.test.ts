@@ -126,7 +126,7 @@ describe('Program', () => {
     current.setStatus('ready');
     await program.ready;
     expect(create).toHaveBeenCalledTimes(2);
-    expect(program.sessionControllerGeneration).toBe('one');
+    expect(program.sessionControllerGenerationFor('local')).toBe('one');
     expect(program.status).toBe('ready');
     program.dispose();
     await registry.dispose();
@@ -170,7 +170,7 @@ describe('Program', () => {
     const controller = program.createSessionController();
     const replacement = registration.replace(fakeEnvironment('local', 'two'));
     await Promise.resolve();
-    expect(program.sessionControllerGeneration).toBe('two');
+    expect(program.sessionControllerGenerationFor('local')).toBe('two');
     expect(first.disposed).toBe(false);
     controller.dispose();
     await replacement;
@@ -186,20 +186,20 @@ describe('Program', () => {
     const registration = registry.register(first);
     await program.ready;
     const controller = program.createSessionController();
-    expect(program.sessionControllerGeneration).toBe('one');
+    expect(program.sessionControllerGenerationFor('local')).toBe('one');
 
     const second = fakeEnvironment('local', 'two', { status: 'disconnected' });
     await registration.replace(second);
     await Promise.resolve();
 
     expect(create).toHaveBeenCalledTimes(3);
-    expect(() => program.sessionControllerGeneration).toThrow('no available generation for environment local');
+    expect(() => program.sessionControllerGenerationFor('local')).toThrow('no available generation for environment local');
     expect(() => program.createSessionController()).toThrow('no available generation for environment local');
     expect(order).toEqual([]);
 
     second.setStatus('ready');
     await vi.waitFor(() => {
-      expect(program.sessionControllerGeneration).toBe('two');
+      expect(program.sessionControllerGenerationFor('local')).toBe('two');
     });
     const next = program.createSessionController();
     expect(create).toHaveBeenCalledTimes(4);
@@ -215,7 +215,7 @@ describe('Program', () => {
     const { registry, program, create } = setup();
     const registration = registry.register(fakeEnvironment('local', 'one'));
     await program.ready;
-    expect(program.sessionControllerGeneration).toBe('one');
+    expect(program.sessionControllerGenerationFor('local')).toBe('one');
 
     create.mockImplementationOnce(() => {
       throw new Error('boom');
@@ -223,7 +223,7 @@ describe('Program', () => {
     await registration.replace(fakeEnvironment('local', 'two'));
 
     await vi.waitFor(() => {
-      expect(program.sessionControllerGeneration).toBe('two');
+      expect(program.sessionControllerGenerationFor('local')).toBe('two');
     });
     await vi.waitFor(() => {
       expect(program.status).toBe('ready');
@@ -246,7 +246,7 @@ describe('Program', () => {
     await Promise.resolve();
 
     expect(program.status).toBe('degraded');
-    expect(() => program.sessionControllerGeneration).toThrow('no available generation for environment local');
+    expect(() => program.sessionControllerGenerationFor('local')).toThrow('no available generation for environment local');
     expect(() => program.createSessionController()).toThrow('no available generation for environment local');
     program.dispose();
     await registry.dispose();
@@ -314,13 +314,13 @@ describe('Program', () => {
     const replacement = registration.replace(fakeEnvironment('local', 'two'));
     await replacement;
     await Promise.resolve();
-    expect(program.sessionControllerGeneration).toBe('two');
+    expect(program.sessionControllerGenerationFor('local')).toBe('two');
     expect(program.status).toBe('ready');
     expect(order).toEqual(['behavior:one']);
 
     firstReady.resolve();
     await Promise.resolve();
-    expect(program.sessionControllerGeneration).toBe('two');
+    expect(program.sessionControllerGenerationFor('local')).toBe('two');
     expect(program.status).toBe('ready');
     program.dispose();
     expect(order).toEqual(['behavior:one', 'behavior:two']);
@@ -342,7 +342,7 @@ describe('Program', () => {
     expect(create).toHaveBeenCalledTimes(2);
     expect(create.mock.calls[1]?.[0]).toBe('remote');
 
-    expect(program.sessionControllerGeneration).toBe('one');
+    expect(program.sessionControllerGenerationFor('local')).toBe('one');
     expect(program.sessionControllerGenerationFor('remote')).toBe('remote-one');
     expect(controllerInputs).toHaveLength(2);
     expect(controllerInputs[0]?.fs).not.toBe(controllerInputs[1]?.fs);
@@ -369,7 +369,7 @@ describe('Program', () => {
     expect(() => program.sessionControllerGenerationFor('remote')).toThrow(
       'no available generation for environment remote',
     );
-    expect(program.sessionControllerGeneration).toBe('one');
+    expect(program.sessionControllerGenerationFor('local')).toBe('one');
     expect(create).toHaveBeenCalledTimes(2);
 
     program.dispose();

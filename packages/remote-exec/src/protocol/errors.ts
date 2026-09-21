@@ -31,8 +31,8 @@ export class RpcError extends Error {
   }
 }
 
-export function toRpcError(error: unknown, fallbackCode: number = RpcErrorCode.InternalError): RpcError {
+export function toRpcError(error: unknown): RpcError {
   if (error instanceof RpcError) return error;
   const message = error instanceof Error ? error.message : String(error);
-  return new RpcError(fallbackCode, message);
+  return new RpcError(RpcErrorCode.InternalError, message);
 }

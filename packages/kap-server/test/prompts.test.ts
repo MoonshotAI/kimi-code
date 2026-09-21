@@ -1591,7 +1591,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const remoteTempDir = join(remoteRoot, 'remote-tmp');
     const provider = await server!.core.accessor.get(IWorkspaceInstanceManager).addProvider({
       id: 'prompt-remote-provider',
-      imports: { root: [], imports: [], local: [] },
+      imports: { root: [] },
       attach: async (context, host) => {
         const fake = new FakeEnvironment(
           { workspaceId: context.id, environmentId: 'remote-test', generation: 'remote-generation' },

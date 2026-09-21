@@ -13,10 +13,9 @@ import {
   launcherLabel,
   probeExecutorTarget,
   resolveTildeRemoteBin,
-  shQuote,
   type LocalRunner,
 } from './executorDetect';
-import { DEFAULT_REMOTE_BIN, type LauncherSpec } from './launchers';
+import { DEFAULT_REMOTE_BIN, shQuote, type LauncherSpec } from './launchers';
 
 export type HandshakeFailureClass = 'missing' | 'timeout' | 'incompatible' | 'other';
 

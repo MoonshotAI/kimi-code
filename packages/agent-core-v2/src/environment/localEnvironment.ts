@@ -90,8 +90,6 @@ export class LocalEnvironmentProviderFactory implements EnvironmentProviderFacto
       IHostProcessService,
       IHostTerminalService,
     ],
-    imports: [],
-    local: [],
   };
 
   async attach(context: EnvironmentProviderContext, host: EnvironmentProviderHost): Promise<EnvironmentProviderAttachment> {

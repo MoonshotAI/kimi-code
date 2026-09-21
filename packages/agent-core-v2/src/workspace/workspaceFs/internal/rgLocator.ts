@@ -74,36 +74,3 @@ export async function ensureRgPath(
 
   throw new Error2(ErrorCodes.OS_FS_UNAVAILABLE, 'ripgrep (rg) is not available on PATH');
 }
-
-export function rgUnavailableMessage(cause: unknown, environment?: Environment): string {
-  const detail =
-    cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : 'unknown error';
-  if (isRemoteEnvironment(environment)) {
-    const shareBin = shareBinRgPath(environment);
-    return (
-      `ripgrep (rg) is not available on environment "${environment.identity.environmentId}".\n` +
-      `\n` +
-      `Error: ${detail}\n` +
-      `\n` +
-      `Fix options (install on the target):\n` +
-      `  macOS:   brew install ripgrep\n` +
-      `  Ubuntu:  sudo apt-get install ripgrep\n` +
-      `  Other:   https://github.com/BurntSushi/ripgrep#installation\n` +
-      `\n` +
-      `Alternatively, drop a static rg binary at ${shareBin} on the target`
-    );
-  }
-  const shareBin = getShareBinRgPath();
-  return (
-    `ripgrep (rg) is not available.\n` +
-    `\n` +
-    `Error: ${detail}\n` +
-    `\n` +
-    `Fix options:\n` +
-    `  macOS:   brew install ripgrep\n` +
-    `  Ubuntu:  sudo apt-get install ripgrep\n` +
-    `  Other:   https://github.com/BurntSushi/ripgrep#installation\n` +
-    `\n` +
-    `Alternatively, drop a static rg binary at ${shareBin}`
-  );
-}
