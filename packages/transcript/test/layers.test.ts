@@ -1489,6 +1489,34 @@ describe('foldWireRecordFacts (cold facts)', () => {
       },
     ]);
 
+  it('folds terminal subagent outcomes, background promotion, and a reused member generation', () => {
+    const spawned = (subagentId: string, time: number): HistoryWireRecord => ({
+      type: 'subagent.spawned', subagentId, subagentName: 'explore', parentAgentId: 'main',
+      parentToolCallId: 'swarm', runInBackground: false, time,
+    });
+    const folded = foldWireRecordFacts([
+      spawned('failed', 1000),
+      { type: 'subagent.failed', subagentId: 'failed', error: 'offline', time: 2000 },
+      spawned('cancelled', 1000),
+      { type: 'subagent.cancelled', subagentId: 'cancelled', time: 2000 },
+      spawned('reused', 1000),
+      { type: 'subagent.completed', subagentId: 'reused', resultSummary: 'old', time: 2000 },
+      spawned('reused', 3000),
+      { ...spawned('background', 1000), taskId: 'task-1', runInBackground: true },
+      { type: 'subagent.completed', subagentId: 'background', resultSummary: 'done', time: 2000 },
+      { type: 'task.terminated', info: { taskId: 'task-1', kind: 'agent', status: 'completed', agentId: 'background', detached: true, startedAt: 1000, endedAt: 2000 } },
+      { ...spawned('foreign', 1000), parentAgentId: 'other' },
+    ], baseWithMarker(), { agentId: 'main' });
+    expect(folded.tasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ taskId: 'failed', state: 'failed', error: 'offline' }),
+      expect.objectContaining({ taskId: 'cancelled', state: 'killed' }),
+      expect.objectContaining({ taskId: 'reused', state: 'running', startedAt: new Date(3000).toISOString() }),
+      expect.objectContaining({ taskId: 'task-1', state: 'completed', resultSummary: 'done', detached: true }),
+    ]));
+    expect(folded.tasks).toHaveLength(4);
+    expect(folded.tasks.find((task) => task.taskId === 'reused')?.resultSummary).toBeUndefined();
+  });
+
   it('returns the base snapshot unchanged when no fact records exist (old sessions)', () => {
     const base = baseWithMarker();
     const folded = foldWireRecordFacts(

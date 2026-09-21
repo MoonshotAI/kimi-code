@@ -655,16 +655,28 @@ export class TranscriptService {
         : undefined,
     );
     const folded = foldWireRecordFacts(projectQuestionInteractionRecords(records, sessionId), base, {
+      agentId,
       resolvePlanRevisionKey: (key) =>
         join(SESSIONS_ROOT, summary.workspaceId, sessionId, AGENTS_DIR, agentId, key),
     });
-    const status = getLiveSessionById(this.deps.core.accessor, sessionId)
-      ?.accessor.get(IAgentLifecycleService)
-      .handleOf(agentId)
+    const liveAgents = getLiveSessionById(this.deps.core.accessor, sessionId)
+      ?.accessor.get(IAgentLifecycleService);
+    const status = liveAgents
+      ?.handleOf(agentId)
       ?.accessor.get(IAgentLoopService)
       .snapshot();
     const activity: ActivityMeta = status?.state === 'running' ? 'turn' : 'idle';
-    const snapshot = { ...folded, meta: { ...folded.meta, activity } };
+    const snapshot = {
+      ...folded,
+      tasks: folded.tasks.map((task) =>
+        activity === 'idle' && task.kind === 'subagent' && !task.detached && task.state === 'running' &&
+        (task.agentId === undefined ||
+          liveAgents?.handleOf(task.agentId)?.accessor.get(IAgentLoopService).snapshot().state !== 'running')
+          ? { ...task, state: 'lost' as const }
+          : task,
+      ),
+      meta: { ...folded.meta, activity },
+    };
     if (snapshot.meta.modes?.tower === undefined) return snapshot;
     const flags = this.deps.core.accessor.get(IFlagService);
     if (

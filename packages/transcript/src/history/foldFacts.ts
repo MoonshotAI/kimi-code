@@ -1,3 +1,4 @@
+import type { AgentRef } from '../model/frame';
 import type { TranscriptInteraction } from '../model/interaction';
 import type { TranscriptItem, TranscriptMarker, TranscriptTaskRef } from '../model/item';
 import type { GoalMeta, GoalStatus, TranscriptMeta } from '../model/meta';
@@ -223,7 +224,7 @@ function readTodoItems(raw: unknown): TodoItem[] {
 export function foldWireRecordFacts(
   records: Iterable<HistoryWireRecord>,
   base: AgentTranscriptSnapshot,
-  options?: { readonly resolvePlanRevisionKey?: (key: string) => string },
+  options?: { readonly agentId?: string; readonly resolvePlanRevisionKey?: (key: string) => string },
 ): AgentTranscriptSnapshot {
   const tasks = new Map<string, TranscriptTask>();
   const interactions = new Map<string, TranscriptInteraction>();
@@ -276,6 +277,9 @@ export function foldWireRecordFacts(
     appended.push(item);
   };
 
+  const subagentTasks = new Map<string, string>();
+  const subagentRefs = new Map<string, Map<string, { ref: AgentRef; index?: number }>>();
+
   const upsertTask = (record: HistoryWireRecord): void => {
     const info = record['info'] as TaskInfoPayload | undefined;
     if (info === undefined || typeof info.taskId !== 'string') return;
@@ -283,6 +287,7 @@ export function foldWireRecordFacts(
     const prev = tasks.get(taskId);
     const status = info.status;
     const task: TranscriptTask = {
+      ...prev,
       taskId,
       kind: mapTaskKind(info.kind),
       state:
@@ -317,6 +322,52 @@ export function foldWireRecordFacts(
 
   for (const record of records) {
     switch (record.type) {
+      case 'subagent.spawned': {
+        if (options?.agentId !== undefined && record['parentAgentId'] !== options.agentId) break;
+        const agentId = record['subagentId'];
+        const toolCallId = record['parentToolCallId'];
+        if (typeof agentId !== 'string' || typeof toolCallId !== 'string') break;
+        const taskId = typeof record['taskId'] === 'string' ? record['taskId'] : agentId;
+        subagentTasks.set(agentId, taskId);
+        const index = typeof record['swarmIndex'] === 'number' ? record['swarmIndex'] : undefined;
+        const refs = subagentRefs.get(toolCallId) ?? new Map();
+        refs.set(agentId, { ref: { agentId, role: index === undefined ? 'child' : 'member' }, index });
+        subagentRefs.set(toolCallId, refs);
+        tasks.set(taskId, {
+          taskId,
+          kind: 'subagent',
+          state: 'running',
+          detached: record['runInBackground'] === true,
+          agentId,
+          description: typeof record['description'] === 'string' ? record['description'] : undefined,
+          model: typeof record['model'] === 'string' ? record['model'] : undefined,
+          thinkingEffort: typeof record['thinkingEffort'] === 'string' ? record['thinkingEffort'] : undefined,
+          startedAt: recordTimeIso(record),
+          outputTail: '',
+        });
+        break;
+      }
+      case 'subagent.started':
+      case 'subagent.completed':
+      case 'subagent.failed':
+      case 'subagent.cancelled': {
+        const agentId = record['subagentId'];
+        if (typeof agentId !== 'string') break;
+        const taskId = subagentTasks.get(agentId) ?? agentId;
+        const task = tasks.get(taskId);
+        if (task === undefined) break;
+        const state = record.type === 'subagent.completed' ? 'completed'
+          : record.type === 'subagent.failed' ? 'failed'
+            : record.type === 'subagent.cancelled' ? 'killed' : 'running';
+        tasks.set(taskId, {
+          ...task,
+          state,
+          endedAt: state === 'running' ? undefined : recordTimeIso(record),
+          resultSummary: typeof record['resultSummary'] === 'string' ? record['resultSummary'] : task.resultSummary,
+          error: typeof record['error'] === 'string' ? record['error'] : task.error,
+        });
+        break;
+      }
       case 'tools.update_store': {
         const payload = record as UpdateStorePayload;
         if (payload.key !== 'todo') break;
@@ -747,9 +798,33 @@ export function foldWireRecordFacts(
       : base.meta.modes,
   };
 
+  let restoredItems = appended.length > 0 ? [...items, ...appended] : items;
+  if (subagentRefs.size > 0) {
+    restoredItems = restoredItems.map((item) => {
+      if (item.kind !== 'turn') return item;
+      return {
+        ...item,
+        steps: item.steps.map((step) => ({
+          ...step,
+          frames: step.frames.map((frame) => {
+            if (frame.kind !== 'tool') return frame;
+            const refs = subagentRefs.get(frame.toolCallId);
+            if (refs === undefined) return frame;
+            return {
+              ...frame,
+              agentRefs: [...refs.values()]
+                .toSorted((a, b) => (a.index ?? 0) - (b.index ?? 0))
+                .map(({ ref }) => ref),
+            };
+          }),
+        })),
+      };
+    });
+  }
+
   return {
     ...base,
-    items: appended.length > 0 ? [...items, ...appended] : items,
+    items: restoredItems,
     tasks: [...tasks.values()],
     interactions: [...interactions.values()],
     todos: todo !== undefined ? [todo] : base.todos,

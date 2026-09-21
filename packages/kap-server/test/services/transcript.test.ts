@@ -2965,6 +2965,48 @@ describe('AgentTranscriptProjector', () => {
     }
   });
 
+  it('restores interrupted swarm members and exact call associations without starting a session', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-swarm-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'review' }], toolCalls: [] }, time: 1000 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [], toolCalls: [
+          { type: 'function', id: 'swarm-a', name: 'AgentSwarm', arguments: '{}' },
+          { type: 'function', id: 'swarm-b', name: 'AgentSwarm', arguments: '{}' },
+        ] }, time: 2000 },
+        { type: 'subagent.spawned', subagentId: 'child-b', subagentName: 'explore', parentAgentId: 'main', parentToolCallId: 'swarm-a', swarmIndex: 1, runInBackground: false, description: 'second', time: 3000 },
+        { type: 'subagent.spawned', subagentId: 'child-a', subagentName: 'explore', parentAgentId: 'main', parentToolCallId: 'swarm-a', swarmIndex: 0, runInBackground: false, description: 'first', time: 3100 },
+        { type: 'subagent.spawned', subagentId: 'child-c', subagentName: 'explore', parentAgentId: 'main', parentToolCallId: 'swarm-b', swarmIndex: 0, runInBackground: false, time: 3200 },
+        { type: 'subagent.completed', subagentId: 'child-a', resultSummary: 'done', time: 4000 },
+      ];
+      const content = records.map((record) => JSON.stringify(record)).join('\n') + '\n';
+      await writeFile(join(wireDir, 'wire.jsonl'), content);
+      const childDir = join(home, 'sessions', 'ws', 's1', 'agents', 'child-b');
+      await mkdir(childDir, { recursive: true });
+      await writeFile(join(childDir, 'wire.jsonl'), JSON.stringify({ type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'partial review' }], toolCalls: [] }, time: 3500 }) + '\n');
+      const service = coldTranscriptService(home);
+      const snapshot = await service.readColdSnapshot('s1', 'main');
+      expect(snapshot?.tasks).toEqual(expect.arrayContaining([
+        expect.objectContaining({ agentId: 'child-a', state: 'completed', resultSummary: 'done' }),
+        expect.objectContaining({ agentId: 'child-b', state: 'lost', description: 'second' }),
+        expect.objectContaining({ agentId: 'child-c', state: 'lost' }),
+      ]));
+      const frames = snapshot?.items.flatMap((item) => item.kind === 'turn' ? item.steps.flatMap((step) => step.frames) : []);
+      expect(frames).toEqual(expect.arrayContaining([
+        expect.objectContaining({ toolCallId: 'swarm-a', agentRefs: [{ agentId: 'child-a', role: 'member' }, { agentId: 'child-b', role: 'member' }] }),
+        expect.objectContaining({ toolCallId: 'swarm-b', agentRefs: [{ agentId: 'child-c', role: 'member' }] }),
+      ]));
+      expect(await coldTranscriptService(home).readColdSnapshot('s1', 'main')).toEqual(snapshot);
+      expect((await service.readColdSnapshot('s1', 'child-b'))?.items).not.toHaveLength(0);
+      expect(service.forSessionLive('s1')).toBeUndefined();
+      await expect(readFile(join(wireDir, 'wire.jsonl'), 'utf-8')).resolves.toBe(content);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('readColdSnapshot derives meta.activity from the final turn state when no live session exists', async () => {
     const home = await mkdtemp(join(tmpdir(), 'transcript-cold-activity-'));
     try {
