@@ -325,7 +325,10 @@ export class ProcessManager {
   }
 
   private pump(entry: ManagedProcess, stream: ProcessOutputStream, chunk: Buffer): void {
-    if (this.processes.get(entry.processId) !== entry) return;
+    if (this.disposed) return;
+    // An exited entry may have aged out of the map while its streams are still
+    // open (a detached descendant holds the pipes): keep streaming live output.
+    if (entry.exitCode === null && this.processes.get(entry.processId) !== entry) return;
     const seq = entry.nextSeq;
     entry.nextSeq += 1;
     entry.retained.push({ seq, stream, chunk });

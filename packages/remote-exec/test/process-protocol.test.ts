@@ -266,6 +266,32 @@ describe('process protocol semantics', () => {
     await loopback.host.done;
   });
 
+  it('keeps streaming descendant output after the leader entry ages out of the map', async () => {
+    const loopback = createInProcessLoopback({ tuning: { exitedRetentionMs: 300 } });
+    const raw = new RawClient(loopback);
+    await raw.handshake();
+    await startProcess(raw, 1, {
+      processId: 'daemon',
+      argv: ['sh', '-c', 'while true; do echo tick; sleep 0.1; done & exit 0'],
+      cwd: '/tmp',
+      pipeStdin: false,
+    });
+    // Wait past the retention window: the leader's entry is evicted from the
+    // map, but the detached descendant still holds the pipes open and its
+    // output must keep flowing.
+    await new Promise((resolve) => {
+      setTimeout(resolve, 800);
+    });
+    const before = raw.notifications('process/output');
+    expect(before.length).toBeGreaterThan(0);
+    await new Promise((resolve) => {
+      setTimeout(resolve, 500);
+    });
+    expect(raw.notifications('process/output').length).toBeGreaterThan(0);
+    loopback.clientInput.end();
+    await loopback.host.done;
+  }, 15_000);
+
   it('keeps control calls responsive behind a data flood', async () => {
     const loopback = createInProcessLoopback({
       tuning: { dataLaneWatermarkBytes: 32 * 1024 * 1024 },
