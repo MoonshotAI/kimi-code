@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { Emitter, Event } from '#/_base/event';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
+import { Error2, ErrorCodes } from '#/errors';
 import type { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
 import { SessionManager } from '#/app/sessionManager/sessionManagerService';
 import { Program } from '#/program/program';
@@ -44,11 +45,27 @@ function controller(sessionId = 'session-1'): {
     archive: async () => {},
     restore: async () => handle,
     delete: async () => {},
+    beginDeleteIfIdle: () => ({ dispose: () => {} }),
     fork: async () => handle,
     createChild: async () => handle,
     dispose: () => {},
   } as unknown as SessionLifecycleService;
   return { service, handle };
+}
+
+function managerFor(service: SessionLifecycleService): SessionManager {
+  const workspace = {
+    id: 'workspace-1',
+    program: { sessionControllerGeneration: 'generation-1', createSessionController: () => service },
+  } as unknown as WorkspaceInstance;
+  const workspaces = {
+    getOrCreate: async () => workspace,
+    get: () => workspace,
+  } as unknown as IWorkspaceInstanceManager;
+  const index = {
+    get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
+  } as unknown as ISessionIndex;
+  return new SessionManager(workspaces, index);
 }
 
 async function drainMicrotasks(ticks = 50): Promise<void> {
@@ -191,6 +208,90 @@ describe('SessionManager', () => {
     await Promise.all([section, deletePromise]);
     expect(order).toEqual(['section:start', 'section:end', 'delete']);
     manager.dispose();
+  });
+
+  it('disposes the delete guard after close and delete complete', async () => {
+    const order: string[] = [];
+    const fake = controller();
+    const svc = fake.service as unknown as {
+      beginDeleteIfIdle: () => { dispose: () => void };
+      close: (sessionId: string) => Promise<void>;
+      delete: (sessionId: string) => Promise<void>;
+    };
+    svc.beginDeleteIfIdle = () => ({ dispose: () => { order.push('guard:dispose'); } });
+    svc.close = async () => { order.push('close'); };
+    svc.delete = async () => { order.push('delete'); };
+    const manager = managerFor(fake.service);
+
+    await manager.delete('session-1');
+    expect(order).toEqual(['close', 'delete', 'guard:dispose']);
+    manager.dispose();
+  });
+
+  it('rejects delete with SESSION_BUSY from the idle check without closing or deleting', async () => {
+    const fake = controller();
+    const svc = fake.service as unknown as {
+      beginDeleteIfIdle: () => { dispose: () => void };
+      close: (sessionId: string) => Promise<void>;
+      delete: (sessionId: string) => Promise<void>;
+    };
+    svc.beginDeleteIfIdle = () => {
+      throw new Error2(ErrorCodes.SESSION_BUSY, 'Cannot delete while a turn is active or queued.', {
+        details: { reason: 'active_turn' },
+      });
+    };
+    const closeSpy = vi.fn(async () => {});
+    const deleteSpy = vi.fn(async () => {});
+    svc.close = closeSpy;
+    svc.delete = deleteSpy;
+    const manager = managerFor(fake.service);
+
+    await expect(manager.delete('session-1')).rejects.toMatchObject({
+      code: 'session.busy',
+      details: { reason: 'active_turn' },
+    });
+    expect(closeSpy).not.toHaveBeenCalled();
+    expect(deleteSpy).not.toHaveBeenCalled();
+    manager.dispose();
+  });
+
+  it('fails delete with lifecycle_busy when the lifecycle queue does not drain in time', async () => {
+    vi.useFakeTimers();
+    try {
+      const fake = controller();
+      const svc = fake.service as unknown as {
+        beginDeleteIfIdle: () => { dispose: () => void };
+        close: (sessionId: string) => Promise<void>;
+        delete: (sessionId: string) => Promise<void>;
+      };
+      const beginSpy = vi.fn(() => ({ dispose: () => {} }));
+      const closeSpy = vi.fn(async () => {});
+      const deleteSpy = vi.fn(async () => {});
+      svc.beginDeleteIfIdle = beginSpy;
+      svc.close = closeSpy;
+      svc.delete = deleteSpy;
+      const manager = managerFor(fake.service);
+
+      let releaseWedge!: () => void;
+      const wedge = new Promise<void>((resolve) => { releaseWedge = resolve; });
+      const wedged = manager.withLifecycleSerialization('session-1', () => wedge);
+      const deletePromise = manager.delete('session-1');
+      const assertion = expect(deletePromise).rejects.toMatchObject({
+        code: 'session.busy',
+        details: { reason: 'lifecycle_busy' },
+      });
+      await vi.advanceTimersByTimeAsync(10_000);
+      await assertion;
+      releaseWedge();
+      await wedged;
+      await drainMicrotasks();
+      expect(beginSpy).not.toHaveBeenCalled();
+      expect(closeSpy).not.toHaveBeenCalled();
+      expect(deleteSpy).not.toHaveBeenCalled();
+      manager.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('serializes fork of the source session with the lifecycle chain', async () => {
@@ -575,6 +676,7 @@ describe('SessionManager controller retirement', () => {
             },
             restore: async () => undefined,
             delete: async () => {},
+            beginDeleteIfIdle: () => ({ dispose: () => {} }),
             fork: async () => {
               throw new Error('fork not supported');
             },

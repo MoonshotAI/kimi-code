@@ -22,7 +22,7 @@ import { TurnEnded, turnKey } from '#/agent/loop/turnOps';
 import { IAgentTaskService } from '#/agent/task/task';
 import { TaskStarted, TaskTerminatedNotice } from '#/agent/task/taskOps';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
-import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentLifecycleService, MAIN_AGENT_ID, type AgentDeleteGuardResult } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { interactions } from '#/human/interaction/facade';
@@ -203,6 +203,9 @@ class FakeAgentLifecycle implements IAgentLifecycleService {
   }
   remove(): Promise<void> {
     throw new Error('not implemented');
+  }
+  acquireDeleteGuard(): AgentDeleteGuardResult {
+    return { idle: true, guard: { dispose: () => {} } };
   }
   broadcastPermissionMode(): void {
     throw new Error('not implemented');

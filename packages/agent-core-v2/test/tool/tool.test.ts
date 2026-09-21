@@ -451,6 +451,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
     remove: vi.fn(async (agent) => {
       handles.delete(agent.agentId);
     }),
+    acquireDeleteGuard: () => ({ idle: true, guard: { dispose: () => {} } }),
     addHandle: (agentId, profileName, services, context) => {
       profileByAgentId.set(agentId, profileName);
       if (services !== undefined) {

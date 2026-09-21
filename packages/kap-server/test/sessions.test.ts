@@ -1136,6 +1136,29 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
+  it('returns 40901 with details when :delete reports a busy session', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const id = created.body.data.id;
+    const manager = (server as RunningServer).core.accessor.get(ISessionManager);
+    const busy = vi
+      .spyOn(manager, 'delete')
+      .mockRejectedValue(
+        new Error2(ErrorCodes.SESSION_BUSY, 'Cannot delete while a turn is active or queued.', {
+          details: { reason: 'active_turn' },
+        }),
+      );
+
+    try {
+      const response = await postJson<null>(`/api/v1/sessions/${id}:delete`);
+      expect(response.body.code).toBe(40901);
+      expect((response.body as { details?: { reason?: string } }).details?.reason).toBe('active_turn');
+    } finally {
+      busy.mockRestore();
+    }
+  });
+
   it('creates a child session tagged with parent_session_id and child_session_kind', async () => {
     const cwd = home as string;
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });

@@ -2,7 +2,7 @@ import { join } from 'pathe';
 
 import { IInstantiationService } from '#/_base/di/instantiation';
 import type { InstantiationService } from '#/_base/di/instantiationService';
-import { Disposable, toDisposable } from '#/_base/di/lifecycle';
+import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { ILogService } from '#/_base/log/log';
@@ -79,6 +79,8 @@ import {
 
 import { ManagedAgent } from './managedAgent';
 import {
+  type AgentDeleteBusyReason,
+  type AgentDeleteGuardResult,
   type AgentListFilter,
   type AgentScopeCreatedEvent,
   type CreateAgentOptions,
@@ -646,6 +648,30 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     if (this.roster.get(agent.agentId) === managed) this.roster.delete(agent.agentId);
     this.onDidCloseEmitter.fire(agent);
     if (stopError !== undefined) throw stopError;
+  }
+
+  acquireDeleteGuard(): AgentDeleteGuardResult {
+    const guards: IDisposable[] = [];
+    const fail = (reason: AgentDeleteBusyReason): AgentDeleteGuardResult => {
+      for (const guard of guards) guard.dispose();
+      return { idle: false, reason };
+    };
+    if (this.creating.size > 0) return fail('active_turn');
+    for (const managed of this.roster.values()) {
+      if (managed.closing) return fail('active_turn');
+      const accessor = managed.handle.accessor;
+      if (accessor.get(IAgentFullCompactionService).compacting !== null) return fail('compaction');
+      if (accessor.get(IAgentTaskService).list().length > 0) return fail('background_tasks');
+      const guard = accessor.get(IAgentLoopService).tryAcquireQuiescence();
+      if (guard === undefined) return fail('active_turn');
+      guards.push(guard);
+    }
+    return {
+      idle: true,
+      guard: toDisposable(() => {
+        for (const guard of guards) guard.dispose();
+      }),
+    };
   }
 
   private managedFor(agent: AgentContext): ManagedAgent | undefined {

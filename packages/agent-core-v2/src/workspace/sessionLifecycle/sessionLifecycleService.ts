@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'pathe';
 
 import type { IInstantiationService } from '#/_base/di/instantiation';
-import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
+import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import {
   createScopedChildHandle,
   type ISessionScopeHandle,
@@ -456,6 +456,29 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (handle === undefined) return undefined;
     await handle.accessor.get(ISessionMetadata).setArchived(false);
     return handle;
+  }
+
+  beginDeleteIfIdle(sessionId: string): IDisposable {
+    if (this.resuming.has(sessionId)) {
+      throw new Error2(
+        ErrorCodes.SESSION_BUSY,
+        `Cannot delete session ${sessionId} while it is resuming. Wait for it to finish, then retry.`,
+        { details: { reason: 'resume_in_flight' } },
+      );
+    }
+    const handle = this.sessions.get(sessionId);
+    if (handle === undefined) return toDisposable(() => {});
+    const check = handle.accessor.get(IAgentLifecycleService).acquireDeleteGuard();
+    if (!check.idle) {
+      const message =
+        check.reason === 'compaction'
+          ? 'Cannot delete while conversation compaction is running. Wait for it to finish, then retry.'
+          : check.reason === 'background_tasks'
+            ? 'Cannot delete while background tasks are running. Stop them, then retry.'
+            : 'Cannot delete while a turn is active or queued. Wait for it to finish, then retry.';
+      throw new Error2(ErrorCodes.SESSION_BUSY, message, { details: { reason: check.reason } });
+    }
+    return check.guard;
   }
 
   async delete(sessionId: string): Promise<void> {

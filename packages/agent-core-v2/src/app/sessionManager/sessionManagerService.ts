@@ -33,6 +33,8 @@ interface SessionControllerEntry {
   sessionCount: number;
 }
 
+const DELETE_QUEUE_TIMEOUT_MS = 10_000;
+
 export class SessionManager implements ISessionManager {
   declare readonly _serviceBrand: undefined;
   private readonly sessions = new Map<string, ISessionScopeHandle>();
@@ -122,8 +124,39 @@ export class SessionManager implements ISessionManager {
     return this.serializeLifecycle(first, () => this.serializeLifecycleForKeys(rest, work));
   }
 
+  private async serializeLifecycleBounded<T>(sessionId: string, timeoutMs: number, work: () => Promise<T>): Promise<T> {
+    const busy = (): Error2 =>
+      new Error2(
+        ErrorCodes.SESSION_BUSY,
+        `Cannot delete session ${sessionId} while another operation is still in progress. Retry shortly.`,
+        { details: { reason: 'lifecycle_busy' } },
+      );
+    let gaveUp = false;
+    let started = false;
+    const run = this.serializeLifecycle(sessionId, () => {
+      if (gaveUp) throw busy();
+      started = true;
+      return work();
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        run,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            if (started) return;
+            gaveUp = true;
+            reject(busy());
+          }, timeoutMs);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   private lifecycleKeys(...ids: (string | undefined)[]): string[] {
-    return [...new Set(ids.filter((id): id is string => id !== undefined))].sort();
+    return [...new Set(ids.filter((id): id is string => id !== undefined))].toSorted();
   }
 
   withLifecycleSerialization<T>(
@@ -166,26 +199,31 @@ export class SessionManager implements ISessionManager {
   }
 
   async delete(sessionId: string): Promise<void> {
-    await this.serializeLifecycle(sessionId, async () => {
+    await this.serializeLifecycleBounded(sessionId, DELETE_QUEUE_TIMEOUT_MS, async () => {
       const controller = await this.controllerForSession(sessionId);
       if (controller === undefined) {
         throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
       }
-      await controller.close(sessionId);
-      const cleanups: Promise<unknown>[] = [];
-      this.willDeleteEmitter.fire({
-        sessionId,
-        signal: new AbortController().signal,
-        waitUntil: (cleanup) => {
-          if (Object.isFrozen(cleanups)) throw new Error('waitUntil must be called synchronously');
-          cleanups.push(cleanup);
-        },
-      });
-      void Object.freeze(cleanups);
-      const settled = await Promise.allSettled(cleanups);
-      const failed = settled.find((result) => result.status === 'rejected');
-      if (failed?.status === 'rejected') throw failed.reason;
-      await controller.delete(sessionId);
+      const guard = controller.beginDeleteIfIdle(sessionId);
+      try {
+        await controller.close(sessionId);
+        const cleanups: Promise<unknown>[] = [];
+        this.willDeleteEmitter.fire({
+          sessionId,
+          signal: new AbortController().signal,
+          waitUntil: (cleanup) => {
+            if (Object.isFrozen(cleanups)) throw new Error('waitUntil must be called synchronously');
+            cleanups.push(cleanup);
+          },
+        });
+        void Object.freeze(cleanups);
+        const settled = await Promise.allSettled(cleanups);
+        const failed = settled.find((result) => result.status === 'rejected');
+        if (failed?.status === 'rejected') throw failed.reason;
+        await controller.delete(sessionId);
+      } finally {
+        guard.dispose();
+      }
     });
   }
 
@@ -222,7 +260,7 @@ export class SessionManager implements ISessionManager {
   }
 
   dispose(): void {
-    for (const { controller, subscriptions } of [...this.controllerEntries].reverse()) {
+    for (const { controller, subscriptions } of [...this.controllerEntries].toReversed()) {
       subscriptions.dispose();
       controller.dispose();
     }

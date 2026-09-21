@@ -1004,6 +1004,7 @@ function stubAgentLifecycle(agents: readonly IAgentScopeHandle[]): IAgentLifecyc
     broadcastPermissionMode: () => {},
     handleOf: (agentId: string) => agents.find((agent) => agent.id === agentId),
     adopt: (handle: IAgentScopeHandle) => stubAgentContext(handle.id, 1),
+    acquireDeleteGuard: () => ({ idle: true, guard: { dispose: () => {} } }),
   };
 }
 function testManifest(sessionId: string): ExportSessionManifest {

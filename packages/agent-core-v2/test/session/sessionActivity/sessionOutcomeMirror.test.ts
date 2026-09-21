@@ -24,6 +24,7 @@ import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,
+  type AgentDeleteGuardResult,
   type AgentScopeCreatedEvent,
 } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionOutcomeMirror } from '#/session/sessionActivity/sessionOutcomeMirror';
@@ -125,6 +126,9 @@ class FakeAgentLifecycle implements IAgentLifecycleService {
   }
   remove(): Promise<void> {
     throw new Error('not implemented');
+  }
+  acquireDeleteGuard(): AgentDeleteGuardResult {
+    return { idle: true, guard: { dispose: () => {} } };
   }
   broadcastPermissionMode(): void {
     throw new Error('not implemented');

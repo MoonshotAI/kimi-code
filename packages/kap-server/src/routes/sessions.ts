@@ -1170,7 +1170,14 @@ function sendMappedError(
         return;
       case 'session.fork_active_turn':
       case ErrorCodes.SESSION_BUSY:
-        reply.send(errEnvelope(ErrorCode.SESSION_BUSY, err.message, requestId, err.stack));
+        reply.send({
+          code: ErrorCode.SESSION_BUSY,
+          msg: err.message,
+          data: null,
+          request_id: requestId,
+          details: err.details,
+          stack: err.stack,
+        });
         return;
       case 'compaction.unable':
         reply.send(errEnvelope(ErrorCode.COMPACTION_UNABLE, err.message, requestId, err.stack));

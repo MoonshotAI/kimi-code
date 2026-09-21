@@ -264,6 +264,9 @@ describe('AgentLifecycleService', () => {
   let loopPendingPromptIds: string[];
   let loopCancel: ReturnType<typeof vi.fn<IAgentLoopService['cancel']>>;
   let loopSettled: ReturnType<typeof vi.fn<IAgentLoopService['settled']>>;
+  let loopQuiescence: ReturnType<typeof vi.fn>;
+  let taskList: ReturnType<typeof vi.fn>;
+  let compactingTask: unknown;
   let beforeExecuteListeners: number;
   let didExecuteHookIds: string[];
 
@@ -390,6 +393,9 @@ describe('AgentLifecycleService', () => {
     } as unknown as IAgentToolExecutorService);
     loopActiveTurnId = undefined;
     loopPendingPromptIds = [];
+    loopQuiescence = vi.fn(() => ({ dispose: vi.fn() }));
+    taskList = vi.fn(() => []);
+    compactingTask = null;
     loopCancel = vi.fn<IAgentLoopService['cancel']>((target) => {
       if (target?.promptId !== undefined) {
         loopPendingPromptIds = loopPendingPromptIds.filter((id) => id !== target.promptId);
@@ -428,7 +434,7 @@ describe('AgentLifecycleService', () => {
       }),
       cancel: loopCancel,
       settled: loopSettled,
-      tryAcquireQuiescence: vi.fn(() => ({ dispose: vi.fn() })),
+      tryAcquireQuiescence: loopQuiescence,
       buildAttachBundle: () => stubAttachBundle(),
       attachEngine: () => stubAttachEngine(),
     } as unknown as IAgentLoopService);
@@ -526,10 +532,13 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       stopAllOnExit,
       suppressAllTerminalNotifications,
+      list: taskList,
     } as unknown as IAgentTaskService);
     ix.stub(IAgentFullCompactionService, {
       _serviceBrand: undefined,
-      compacting: null,
+      get compacting() {
+        return compactingTask;
+      },
     } as unknown as IAgentFullCompactionService);
     ix.fiberHost.addCollectionRecord(
       ScopeUnits(LifecycleScope.Agent),
@@ -1592,5 +1601,65 @@ describe('AgentLifecycleService', () => {
     interactions.respond(other.id, { decision: 'approved' });
     interactions.purgeSession('sess_test');
     interactions.purgeSession('sess_other');
+  });
+
+  describe('acquireDeleteGuard', () => {
+    it('returns a guard when all agents are idle and disposes quiescence guards on release', async () => {
+      const svc = ix.get(IAgentLifecycleService);
+      await svc.create({ agentId: 'main' });
+      const quiescenceGuard = { dispose: vi.fn() };
+      loopQuiescence.mockReturnValue(quiescenceGuard);
+
+      const result = svc.acquireDeleteGuard();
+
+      expect(result.idle).toBe(true);
+      if (!result.idle) return;
+      result.guard.dispose();
+      expect(quiescenceGuard.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports active_turn when the loop cannot be quiesced', async () => {
+      const svc = ix.get(IAgentLifecycleService);
+      await svc.create({ agentId: 'main' });
+      loopQuiescence.mockReturnValue(undefined);
+
+      expect(svc.acquireDeleteGuard()).toEqual({ idle: false, reason: 'active_turn' });
+    });
+
+    it('reports compaction while compaction is running', async () => {
+      compactingTask = { promise: Promise.resolve(), abortController: new AbortController() };
+      const svc = ix.get(IAgentLifecycleService);
+      await svc.create({ agentId: 'main' });
+
+      expect(svc.acquireDeleteGuard()).toEqual({ idle: false, reason: 'compaction' });
+    });
+
+    it('reports background_tasks while agent tasks are running', async () => {
+      taskList.mockReturnValue([{ id: 'task-1' }]);
+      const svc = ix.get(IAgentLifecycleService);
+      await svc.create({ agentId: 'main' });
+
+      expect(svc.acquireDeleteGuard()).toEqual({ idle: false, reason: 'background_tasks' });
+    });
+
+    it('reports active_turn while an agent is being created', async () => {
+      const svc = ix.get(IAgentLifecycleService);
+      const pending = svc.create({ agentId: 'sub' });
+
+      expect(svc.acquireDeleteGuard()).toEqual({ idle: false, reason: 'active_turn' });
+
+      await pending;
+    });
+
+    it('releases already acquired guards when a later agent is busy', async () => {
+      const svc = ix.get(IAgentLifecycleService);
+      await svc.create({ agentId: 'main' });
+      await svc.create({ agentId: 'sub' });
+      const firstGuard = { dispose: vi.fn() };
+      loopQuiescence.mockReturnValueOnce(firstGuard).mockReturnValueOnce(undefined);
+
+      expect(svc.acquireDeleteGuard()).toEqual({ idle: false, reason: 'active_turn' });
+      expect(firstGuard.dispose).toHaveBeenCalledTimes(1);
+    });
   });
 });
