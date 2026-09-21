@@ -21,18 +21,6 @@ if (exitAfterMs > 0) {
   }, exitAfterMs).unref();
 }
 
-// Simulates a half-open transport: after the delay the executor's event loop
-// is blocked, so the pipe stays open but nothing is ever answered again.
-const blockAfterMs = Number(process.env['EXEC_SERVER_BLOCK_AFTER_MS'] ?? '0');
-if (blockAfterMs > 0) {
-  const blockMs = Number(process.env['EXEC_SERVER_BLOCK_MS'] ?? '10000');
-  setTimeout(() => {
-    const until = Date.now() + blockMs;
-    let spin = 0;
-    while (Date.now() < until) spin += 1;
-  }, blockAfterMs).unref();
-}
-
 const version = process.env['EXEC_SERVER_VERSION'] ?? '0.0.0-test';
 
 try {

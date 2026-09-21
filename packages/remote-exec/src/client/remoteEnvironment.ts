@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import * as posixPath from 'node:path/posix';
 
 import { Emitter } from '@moonshot-ai/agent-core-v2/_base/event';
-import { IntervalTimer } from '@moonshot-ai/agent-core-v2/_base/utils/timer';
 import type {
   HostEnvironmentInfo,
   PathClass,
@@ -16,8 +15,6 @@ import type {
   EnvironmentStatus,
 } from '@moonshot-ai/agent-core-v2/environment/environment';
 
-import { ENVIRONMENT_STATUS_METHOD } from '#/protocol/methods';
-
 import { ExecBridge, type ExecBridgeExit } from './execBridge';
 import { HandshakeError, RemoteExecConnection } from './connection';
 import { resolveLauncher, type LauncherSpec } from './launchers';
@@ -30,8 +27,6 @@ export interface RemoteEnvironmentProbe extends HostEnvironmentInfo {
   readonly tempDir: string;
 }
 
-export const DEFAULT_STATUS_PING_INTERVAL_MS = 30_000;
-
 export interface RemoteEnvironmentOptions {
   readonly workspaceId: string;
   readonly environmentId: string;
@@ -41,13 +36,6 @@ export interface RemoteEnvironmentOptions {
   readonly clientVersion?: string;
   readonly minExecutorVersion?: string;
   readonly initializeTimeoutMs?: number;
-  readonly controlCallTimeoutMs?: number;
-  // Periodic environment/status ping on the control lane: a ping the executor
-  // does not answer inside the control-call timeout closes the connection,
-  // which surfaces as `disconnected`. This is the half-open detection for
-  // launchers without their own keepalive (docker exec, command) — ssh already
-  // has ServerAlive. 0 disables.
-  readonly statusPingIntervalMs?: number;
   readonly onDiagnostic?: (line: string) => void;
 }
 
@@ -64,8 +52,6 @@ export class RemoteEnvironment implements Environment {
   private currentStatus: EnvironmentStatus = 'ready';
   private readonly statusEmitter = new Emitter<EnvironmentStatus>();
   readonly onDidChangeStatus = this.statusEmitter.event;
-  private readonly pingTimer = new IntervalTimer({ unref: true });
-  private pingInflight = false;
 
   static async connect(options: RemoteEnvironmentOptions): Promise<RemoteEnvironment> {
     const resolved = resolveLauncher(options.launcher);
@@ -85,7 +71,6 @@ export class RemoteEnvironment implements Environment {
         clientVersion: options.clientVersion ?? '0.0.0',
         minExecutorVersion: options.minExecutorVersion,
         initializeTimeoutMs: options.initializeTimeoutMs,
-        controlCallTimeoutMs: options.controlCallTimeoutMs,
       });
     } catch (error) {
       bridge.close();
@@ -165,12 +150,6 @@ export class RemoteEnvironment implements Environment {
     connection.onDidClose(() => {
       this.setStatus('disconnected');
     });
-    const pingIntervalMs = options.statusPingIntervalMs ?? DEFAULT_STATUS_PING_INTERVAL_MS;
-    if (pingIntervalMs > 0) {
-      this.pingTimer.cancelAndSet(() => {
-        this.ping();
-      }, pingIntervalMs);
-    }
   }
 
   get status(): EnvironmentStatus {
@@ -183,26 +162,8 @@ export class RemoteEnvironment implements Environment {
     this.statusEmitter.fire(status);
   }
 
-  private ping(): void {
-    if (this.currentStatus !== 'ready' || this.pingInflight) return;
-    this.pingInflight = true;
-    void this.connection.call(ENVIRONMENT_STATUS_METHOD).then(
-      () => {
-        this.pingInflight = false;
-      },
-      () => {
-        this.pingInflight = false;
-        // A stalled ping already closed the connection through the
-        // control-call timeout; an error answer means the peer answers but is
-        // unhealthy — close it to surface the same disconnected transition.
-        this.connection.close();
-      },
-    );
-  }
-
   async dispose(): Promise<void> {
     if (this.currentStatus === 'disposed') return;
-    this.pingTimer.dispose();
     this.setStatus('disposed');
     this.connection.close();
     this.bridge.close();

@@ -122,52 +122,6 @@ describe('RemoteEnvironment over a subprocess loopback', () => {
     await environment.dispose();
   });
 
-  it('detects a half-open executor through the status ping and disconnects', async () => {
-    const environment = await RemoteEnvironment.connect({
-      workspaceId: 'ws-test',
-      environmentId: 'loopback',
-      launcher: loopbackLauncher({ EXEC_SERVER_BLOCK_AFTER_MS: '200', EXEC_SERVER_BLOCK_MS: '10000' }),
-      controlCallTimeoutMs: 200,
-      statusPingIntervalMs: 50,
-    });
-    await vi.waitFor(() => {
-      expect(environment.status).toBe('disconnected');
-    }, { timeout: 5_000 });
-    await environment.dispose();
-  });
-
-  it('keeps a healthy executor connected across status pings', async () => {
-    const environment = await RemoteEnvironment.connect({
-      workspaceId: 'ws-test',
-      environmentId: 'loopback',
-      launcher: loopbackLauncher(),
-      controlCallTimeoutMs: 200,
-      statusPingIntervalMs: 50,
-    });
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    expect(environment.status).toBe('ready');
-    await environment.dispose();
-  });
-
-  it('disconnects when the status ping is answered with an error', async () => {
-    const environment = await RemoteEnvironment.connect({
-      workspaceId: 'ws-test',
-      environmentId: 'loopback',
-      launcher: {
-        type: 'command' as const,
-        program: process.execPath,
-        args: [tsxCli(), join(here, 'fixtures', 'exec-server-status-error-child.ts')],
-        env: { EXEC_SERVER_VERSION: TEST_VERSION },
-      },
-      controlCallTimeoutMs: 200,
-      statusPingIntervalMs: 50,
-    });
-    await vi.waitFor(() => {
-      expect(environment.status).toBe('disconnected');
-    }, { timeout: 5_000 });
-    await environment.dispose();
-  });
-
   it('fails to connect when the executor is missing, with exit diagnostics', async () => {
     await expect(
       RemoteEnvironment.connect({

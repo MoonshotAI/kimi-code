@@ -612,10 +612,6 @@ env = { SANDBOX_TOKEN = "..." }
 defaultCwd = "/home/me/kimi-code"
 ```
 
-### Project-level `environments.toml`
-
-A project can declare its own environments in `<project-root>/.kimi-code/environments.toml`, with the same schema as the `[environments]` section (including an optional `default`). Project declarations are loaded only for trusted workspaces: the startup trust prompt lists each declared environment with its full launch command line, and an untrusted workspace's file is ignored entirely. A project entry with the same id overrides the user-level entry, and a project-level `default` wins over the user-level one. See [Project-declared environments and trust](../guides/remote-environment.md#project-declared-environments-and-trust).
-
 ## `tui.toml`
 
 Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a companion `tui.toml` in the same directory (`~/.kimi-code/tui.toml`, or `$KIMI_CODE_HOME/tui.toml` when overridden). It is created with defaults on first run, and the interactive commands `/config`, `/theme`, and `/editor` write to it for you, so you rarely need to edit it by hand. If the file is malformed, the CLI falls back to defaults and shows a notice instead of failing to start.
@@ -687,7 +683,7 @@ additional_dir = ["/absolute/path/to/shared"]
 
 Because directories are stored as absolute paths, which are specific to your machine, we recommend adding `.kimi-code/local.toml` to your project's `.gitignore` so it is not committed.
 
-Besides `local.toml`, the project `.kimi-code/` directory can also hold `mcp.json` (project MCP servers) and `environments.toml` (project-declared remote environments). Both are gated by workspace trust: they only take effect after you trust the folder in the startup prompt. See [Model Context Protocol](../customization/mcp.md) and [`environments`](#environments).
+Besides `local.toml`, the project `.kimi-code/` directory can also hold `mcp.json` (project MCP servers), which is gated by workspace trust: it only takes effect after you trust the folder in the startup prompt. See [Model Context Protocol](../customization/mcp.md).
 
 ## Next steps
 

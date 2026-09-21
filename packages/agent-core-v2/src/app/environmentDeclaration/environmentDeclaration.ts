@@ -7,15 +7,14 @@ export interface DeclareEnvironmentInput {
   readonly workspaceId: string;
   readonly id: string;
   readonly entry: RemoteEnvironmentEntry;
-  readonly scope?: 'global' | 'project';
 }
 
 export interface IEnvironmentDeclarationService {
   readonly _serviceBrand: undefined;
   declare(input: DeclareEnvironmentInput): Promise<void>;
   registerReconciler(workspaceId: string, reconcile: () => Promise<void>): IDisposable;
-  declarations(root: string): Promise<EnvironmentDeclarationSet | undefined>;
-  declaredDefaultCwd(root: string, environmentId: string): Promise<string | undefined>;
+  declarations(): Promise<EnvironmentDeclarationSet | undefined>;
+  declaredDefaultCwd(environmentId: string): Promise<string | undefined>;
   ensureConnected(workspaceId: string, environmentId: string): Promise<Environment | undefined>;
   assertCwdUsable(workspaceId: string, environmentId: string, cwd: string): Promise<void>;
   readPersistedEnvironmentBinding(workspaceId: string, sessionId: string): Promise<EnvironmentBinding | undefined>;

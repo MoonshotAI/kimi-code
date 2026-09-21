@@ -1,7 +1,6 @@
 export * from './execBridge';
 export * from './launchers';
 export * from './connection';
-export * from './artifactLocator';
 export * from './executorDetect';
 export * from './connectGuidance';
 export * from './remoteFileSystem';

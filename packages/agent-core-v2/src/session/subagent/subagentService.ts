@@ -276,7 +276,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       );
     }
     const connected = (await this.environmentDeclarations.ensureConnected(this.sessionContext.workspaceId, environmentId))!;
-    const declaredDefaultCwd = await this.environmentDeclarations.declaredDefaultCwd(workspace.root, environmentId);
+    const declaredDefaultCwd = await this.environmentDeclarations.declaredDefaultCwd(environmentId);
     if (declaredDefaultCwd !== undefined) {
       if (connected.fs !== undefined) {
         await this.environmentDeclarations.assertCwdUsable(this.sessionContext.workspaceId, environmentId, declaredDefaultCwd);

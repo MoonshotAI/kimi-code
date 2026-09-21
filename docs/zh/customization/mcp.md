@@ -104,7 +104,7 @@ defaultCwd = "/srv/work"
 }
 ```
 
-`environment_id` 引用在 `config.toml` 的 `[environments]` 或 `.kimi-code/environments.toml` 中声明的环境（见 [声明环境](../guides/remote-environment.md#声明环境)）。该字段默认为 `local`，且不跟随会话自身的环境绑定：绑定到 `dev-box` 的会话仍会在本地运行未设置 `environment_id` 的 stdio server。环境尚未连接时，会在 server 启动时按需建立连接。
+`environment_id` 引用在 `config.toml` 的 `[environments]` 中声明的环境（见 [声明环境](../guides/remote-environment.md#声明环境)）。该字段默认为 `local`，且不跟随会话自身的环境绑定：绑定到 `dev-box` 的会话仍会在本地运行未设置 `environment_id` 的 stdio server。环境尚未连接时，会在 server 启动时按需建立连接。
 
 ### 远程 stdio server 的环境变量
 

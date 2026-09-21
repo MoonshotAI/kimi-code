@@ -1,4 +1,4 @@
-Create a temporary environment from a launcher spec — an SSH host, a Docker-compatible container, or a custom launcher command — and connect to it, without writing anything to `config.toml` or `.kimi-code/environments.toml`.
+Create a temporary environment from a launcher spec — an SSH host, a Docker-compatible container, or a custom launcher command — and connect to it, without writing anything to `config.toml`.
 
 Use this when you need an environment that is not declared yet: ad-hoc hosts, throwaway containers, or one-off targets the user named in the conversation. The new environment is registered in the session's workspace so you can switch to it with `change_environment`, or bind a subagent to it via the Agent tool's `environment` parameter.
 

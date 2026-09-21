@@ -280,8 +280,6 @@ function realSubagents(
     workspaces,
     new EnvironmentDeclarationService(
       config,
-      {} as IHostFileSystem,
-      {} as IAtomicDocumentStore,
       { _serviceBrand: undefined, read: async function* () {} } as unknown as IAppendLogStore,
       { _serviceBrand: undefined, scope: (name: string) => name } as unknown as IBootstrapService,
       workspaces,

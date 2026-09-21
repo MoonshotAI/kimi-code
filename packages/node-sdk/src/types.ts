@@ -50,18 +50,9 @@ export interface SessionEnvironmentsInfo {
 
 export type { RemoteEnvironmentEntry };
 
-/**
- * Write target for an environment declaration: `global` merges the entry into the
- * user-level `config.toml` `[environments]` section; `project` merges it into the
- * session workspace's `.kimi-code/environments.toml` (the file a team shares
- * through git). Both register before declaration completes.
- */
-export type EnvironmentDeclarationScope = 'global' | 'project';
-
 export interface DeclareEnvironmentInput {
   readonly id: string;
   readonly entry: RemoteEnvironmentEntry;
-  readonly scope?: EnvironmentDeclarationScope;
 }
 
 export type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
@@ -178,17 +169,10 @@ export interface WorkspaceTrustMcpServerInfo {
   readonly url?: string;
 }
 
-export interface WorkspaceTrustEnvironmentInfo {
-  readonly id: string;
-  readonly commandLine: string;
-}
-
 export interface WorkspaceTrustInfo {
   readonly trusted: boolean;
   /** Safe descriptions of project-level MCP servers that trusting would enable. */
   readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
-  /** Project-declared remote environments that trusting would register, with their full launch command lines. */
-  readonly gatedEnvironments: readonly WorkspaceTrustEnvironmentInfo[];
 }
 
 /**
@@ -304,9 +288,8 @@ export interface CreateSessionOptions {
   readonly drainAgentTasksOnStop?: boolean;
   /**
    * Initial environment binding for the main agent: an environment declared in
-   * the `[environments]` config section or the project's
-   * `.kimi-code/environments.toml`; omit to start on the local environment (or
-   * the configured default).
+   * the `[environments]` config section; omit to start on the local environment
+   * (or the configured default).
    */
   readonly environmentId?: string;
   /**

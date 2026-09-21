@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   defaultLocalRunner,
-  probeExecutorTarget,
   resolveTildeRemoteBin,
   type LocalRunner,
   type LocalRunRequest,
@@ -86,83 +85,6 @@ describe('resolveTildeRemoteBin', () => {
     };
     expect(await resolveTildeRemoteBin(absolute, runner)).toBe(absolute);
     expect(runner).not.toHaveBeenCalled();
-  });
-});
-
-describe('probeExecutorTarget', () => {
-  const UNAME_AND_HOME = 'uname -sm; printf "%s\\n" "$HOME"';
-
-  it('probes uname and the remote home over ssh and parses both', async () => {
-    const requests: LocalRunRequest[] = [];
-    const runner: LocalRunner = async (request: LocalRunRequest) => {
-      requests.push(request);
-      return ok({ stdout: 'Linux x86_64\n/home/test\n' });
-    };
-
-    const probed = await probeExecutorTarget(SSH, runner);
-
-    expect(probed).toEqual({ target: { osKind: 'Linux', osArch: 'x64' }, homeDir: '/home/test' });
-    expect(requests[0]?.program).toBe('ssh');
-    expect(requests[0]?.args.at(-2)).toBe('dev-box');
-    expect(requests[0]?.args.at(-1)).toBe(UNAME_AND_HOME);
-  });
-
-  it('probes uname in the container through docker exec sh -c', async () => {
-    const requests: LocalRunRequest[] = [];
-    const runner: LocalRunner = async (request: LocalRunRequest) => {
-      requests.push(request);
-      return ok({ stdout: 'Linux aarch64\n/root\n' });
-    };
-
-    const probed = await probeExecutorTarget(
-      { type: 'docker', container: 'myapp-dev', context: 'orbstack' },
-      runner,
-    );
-
-    expect(probed).toEqual({ target: { osKind: 'Linux', osArch: 'arm64' }, homeDir: '/root' });
-    expect(requests[0]).toMatchObject({
-      program: 'docker',
-      args: ['--context', 'orbstack', 'exec', 'myapp-dev', 'sh', '-c', UNAME_AND_HOME],
-    });
-  });
-
-  it('parses a macOS target', async () => {
-    const runner: LocalRunner = async () => ok({ stdout: 'Darwin arm64\n' });
-
-    expect(await probeExecutorTarget(SSH, runner)).toEqual({
-      target: { osKind: 'macOS', osArch: 'arm64' },
-      homeDir: undefined,
-    });
-  });
-
-  it('drops a non-absolute home line but keeps the target', async () => {
-    const runner: LocalRunner = async () => ok({ stdout: 'Linux x86_64\nrelative/home\n' });
-
-    expect(await probeExecutorTarget(SSH, runner)).toEqual({
-      target: { osKind: 'Linux', osArch: 'x64' },
-      homeDir: undefined,
-    });
-  });
-
-  it('degrades to undefined when the probe fails or the platform is unsupported', async () => {
-    const failing: LocalRunner = async () => ({
-      code: 255,
-      signal: null,
-      stdout: '',
-      stderr: 'ssh: connect to host dev-box port 22: Connection refused',
-    });
-    expect(await probeExecutorTarget(SSH, failing)).toBeUndefined();
-
-    const throwing: LocalRunner = async () => {
-      throw new Error('spawn ssh ENOENT');
-    };
-    expect(await probeExecutorTarget(SSH, throwing)).toBeUndefined();
-
-    const freebsd: LocalRunner = async () => ok({ stdout: 'FreeBSD x86_64\n' });
-    expect(await probeExecutorTarget(SSH, freebsd)).toBeUndefined();
-
-    const garbage: LocalRunner = async () => ok({ stdout: '' });
-    expect(await probeExecutorTarget(SSH, garbage)).toBeUndefined();
   });
 });
 

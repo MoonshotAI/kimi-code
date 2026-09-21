@@ -134,8 +134,6 @@ function stubAppendLog(records: WireRecord[]): IAppendLogStore {
 function declarationService(registry: EnvironmentRegistry, appendLog: IAppendLogStore): IEnvironmentDeclarationService {
   return new EnvironmentDeclarationService(
     { _serviceBrand: undefined, ready: Promise.resolve(), get: () => undefined } as unknown as IConfigService,
-    { _serviceBrand: undefined } as unknown as IHostFileSystem,
-    { _serviceBrand: undefined, get: async () => undefined } as unknown as IAtomicDocumentStore,
     appendLog,
     stubBootstrap(),
     {

@@ -279,7 +279,6 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     const attachment = await instance.unitHost.provide(provider.imports, (host) => provider.attach({
       id: instance.id,
       root: instance.root,
-      onDidChangeTrust: instance.program.onDidChangeTrust,
     }, host));
     let attachments = this.attachments.get(instance.id);
     if (attachments === undefined) {

@@ -244,8 +244,6 @@ function sessionManagerResuming(sessionId: string): SessionManager {
     { get: async () => summary } as unknown as ISessionIndex,
     new EnvironmentDeclarationService(
       { _serviceBrand: undefined, ready: Promise.resolve(), get: () => undefined } as unknown as IConfigService,
-      { _serviceBrand: undefined } as unknown as IHostFileSystem,
-      { _serviceBrand: undefined, get: async () => undefined } as unknown as IAtomicDocumentStore,
       { _serviceBrand: undefined, read: async function* () {} } as unknown as IAppendLogStore,
       { _serviceBrand: undefined, scope: (name: string) => name } as unknown as IBootstrapService,
       workspaces,

@@ -21,7 +21,7 @@ Kimi Code 把 Agent 循环、模型请求、凭据、审批和会话状态全部
 
 ## 声明环境
 
-环境声明在 `config.toml` 的 `[environments]` 节（user 级），或项目的 `.kimi-code/environments.toml`（project 级）。共有三类条目：SSH 主机、Docker 兼容容器，以及用于其他环境的自定义启动命令（OrbStack 机器、`kubectl exec`、Apple Container、受管沙箱等）。
+环境声明在 `config.toml` 的 `[environments]` 节（user 级）。共有三类条目：SSH 主机、Docker 兼容容器，以及用于其他环境的自定义启动命令（OrbStack 机器、`kubectl exec`、Apple Container、受管沙箱等）。
 
 ```toml
 [environments]
@@ -57,14 +57,6 @@ defaultCwd = "/home/me/kimi-code"
 
 完整字段参考见 [`environments`](../configuration/config-files.md#environments)。
 
-### 项目级声明与信任
-
-项目可以在 `<项目根目录>/.kimi-code/environments.toml` 中自带声明，schema 与 `config.toml` 相同，外加可选的 `default`。这覆盖「代码在远端」的工作流：在本机保留一个 checkout（或空目录）作为声明载体，让在其中创建的每个会话都绑定到远程环境。
-
-项目级声明只为受信任的工作区加载。首次在某个文件夹启动时，Kimi Code 会显示工作区信任提示；选择信任后，其中声明的环境（以及项目级 MCP server）才会启用。提示会列出每个声明的环境及其完整启动命令行，你可以逐项核对将要执行的内容。未信任工作区的 `environments.toml` 会被完全忽略。
-
-同 id 的项目级条目覆盖 user 级条目。两级都设置了 `default` 时，项目级优先；都未设置时，新会话默认使用 `local`。项目级声明始终从**本机**工作区根目录读取——要从远端磁盘读取项目配置，得先有连接。
-
 ## 在会话中切换环境
 
 环境绑定是会话级的：记录该会话的工具在哪个环境上执行，以及在该环境上的工作目录。同一工作区的不同会话可以绑定不同的环境，subagent 继承父 Agent 的绑定。
@@ -78,7 +70,7 @@ defaultCwd = "/home/me/kimi-code"
 管理器会先立即显示加载状态，再获取最新环境列表，因此连接较慢时 TUI 不会显示空白界面。
 
 - **列表**：`local` 环境加上所有已声明的环境，每行显示 id、类型、连接状态和 `defaultCwd`。目标 OS/架构暂不展示——只有连接握手完成后才能获知，将其纳入列表是后续增强。
-- **添加**：通过最简表单新建声明——SSH 条目可从 `~/.ssh/config` 发现的候选主机中选择，其他类型或自定义命令可直接输入。表单的作用域开关决定条目写入位置：**Global**（默认）写入用户级 `config.toml`，所有工作区可用；**Project** 写入当前工作区的 `.kimi-code/environments.toml`，可提交到仓库与团队共享。两种方式都即时生效：新环境立即出现在列表中，无需重启即可切换。
+- **添加**：通过最简表单新建声明——SSH 条目可从 `~/.ssh/config` 发现的候选主机中选择，其他类型或自定义命令可直接输入。条目写入用户级 `config.toml`，即时生效：新环境立即出现在列表中，无需重启即可切换。
 - **切换**：选择环境后输入目标环境上的工作目录（按条目的 `defaultCwd` 预填）。目录由服务端用目标文件系统校验，失败时内联报错；连接失败会显示退出码和一段有界的 stderr。
 - **重连**：处于 `disconnected` 或 `pending` 状态的环境提供显式重连操作。
 
@@ -105,7 +97,7 @@ kimi -p --environment dev-box "Run the test suite"
 main agent 可以：
 
 - **用 `change_environment` 切换**：传入环境 `id`（`local` 或已声明的 id），可选 `cwd`（缺省时回退到声明的 `defaultCwd`）。目标环境会先立即连接——连接或 `cwd` 校验失败会立刻报错且不改变任何状态——切换本身在工具调用完成后立即生效：同一轮次中的下一次工具调用就已在新环境上执行。如果还有其他工具调用在并行执行，调用会直接失败，报错中会给出仍在执行的调用数量——等它们结束后重试即可，正在进行的工作不会被打断。新环境的详情提醒仍随下一轮次到达。
-- **用 `connect` 创建临时环境**：传入启动器规格——`{ type: "ssh", host: "..." }`、`{ type: "docker", container: "..." }` 或 `{ type: "command", command: "...", args: [...] }`，可选 `id`。环境会立即连接并像声明的环境一样注册到工作区，但不会写入 `config.toml` 或 `.kimi-code/environments.toml`：临时环境在进程退出时消失，连接断开后无法重连（重新创建一个即可），恢复会话时也找不到它。
+- **用 `connect` 创建临时环境**：传入启动器规格——`{ type: "ssh", host: "..." }`、`{ type: "docker", container: "..." }` 或 `{ type: "command", command: "...", args: [...] }`，可选 `id`。环境会立即连接并像声明的环境一样注册到工作区，但不会写入 `config.toml`：临时环境在进程退出时消失，连接断开后无法重连（重新创建一个即可），恢复会话时也找不到它。
 - **用 `environment` 参数绑定 subagent**：`Agent` 工具接受可选的 `environment` id；新启动的 subagent 绑定到该环境（工作目录取其 `defaultCwd`），而不是继承父 Agent 的绑定。恢复的 subagent 保留自己的绑定。
 
 两个工具都有两条限制。Plan 模式下会被拒绝——先退出 Plan 模式。它们也遵循权限模式：只有「始终询问」模式会在切换或连接前请求确认，「必要时询问」和「完全自动」模式都会直接执行。tower 模式激活期间不会注册这组工具。
@@ -184,5 +176,5 @@ Kimi Code 不会自动安装执行器。连接在预期路径上找不到执行�
 
 ## 下一步
 
-- [`environments` 配置参考](../configuration/config-files.md#environments)——`[environments]` 节与 `.kimi-code/environments.toml` 的全部字段
+- [`environments` 配置参考](../configuration/config-files.md#environments)——`[environments]` 节的全部字段
 - [远程控制](./remote-control.md)——相反方向：从另一台设备操控本机的会话

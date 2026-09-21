@@ -1,20 +1,13 @@
-import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-
 import { describe, expect, it, vi } from 'vitest';
 
-import { AsyncEmitter, Emitter, type IWaitUntil } from '@moonshot-ai/agent-core-v2/_base/event';
+import { Emitter } from '@moonshot-ai/agent-core-v2/_base/event';
 import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
-import { IOAuthService } from '@moonshot-ai/agent-core-v2/app/auth/auth';
 import { IBootstrapService } from '@moonshot-ai/agent-core-v2/app/bootstrap/bootstrap';
 import { IEnvironmentDeclarationService } from '@moonshot-ai/agent-core-v2/app/environmentDeclaration/environmentDeclaration';
 import { IConfigService, type ConfigSectionChangedEvent } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
 import { HostFsError, OsFsErrors } from '@moonshot-ai/agent-core-v2/os/interface/hostFsErrors';
 import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
-import { setWatchEnabled } from '@moonshot-ai/agent-core-v2/human/utils/watch';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
 import type { Environment } from '@moonshot-ai/agent-core-v2/environment/environment';
 import { EnvironmentError, EnvironmentRegistry } from '@moonshot-ai/agent-core-v2/environment/environmentRegistry';
@@ -24,8 +17,6 @@ import type {
 import type {
   EnvironmentProviderHost,
 } from '@moonshot-ai/agent-core-v2/environment/environmentUnitHost';
-import { deleteWorkspaceTrust, writeWorkspaceTrust } from '@moonshot-ai/agent-core-v2/workspace/workspaceTrust/trustRecord';
-import type { WorkspaceTrustChange } from '@moonshot-ai/agent-core-v2/workspace/workspaceTrust/workspaceTrust';
 
 import { HandshakeError } from '../src/client/connection';
 import { RemoteEphemeralEnvironmentConnector } from '../src/client/ephemeralEnvironmentConnector';
@@ -108,14 +99,11 @@ const NOOP_LOG = {
   error: () => {},
 } as unknown as ILogService;
 
-const trustChange = new AsyncEmitter<WorkspaceTrustChange & IWaitUntil>();
-
 const NO_ABORT = new AbortController().signal;
 
 const CONTEXT: EnvironmentProviderContext = {
   id: 'workspace-1',
   root: '/repo',
-  onDidChangeTrust: trustChange.event,
 };
 
 interface HostServices {
@@ -179,117 +167,11 @@ function baseServices(overrides: Partial<HostServices> = {}): HostServices {
   };
 }
 
-// Tests inject a no-op project-file watcher by default; watch-specific tests
-// override it with a fake (or drop it to exercise the real chokidar watcher).
 function factoryOptions(extra: RemoteEnvironmentProviderFactoryOptions = {}): RemoteEnvironmentProviderFactoryOptions {
-  return { watchProjectDeclarations: () => ({ dispose: () => {} }), ...extra };
+  return { ...extra };
 }
 
 describe('RemoteEnvironmentProviderFactory', () => {
-  it('registers project declarations when workspace trust flips on after an untrusted attach', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const docs = docsService();
-    const services = baseServices({
-      docs,
-      fs: fsService({
-        '/repo/.kimi-code/environments.toml': '[project-box]\ntype = "ssh"\nhost = "project-box"\ndefaultCwd = "/project"\n',
-      }),
-    });
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect: vi.fn() }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(services, registry));
-    expect(registry.current('project-box')).toBeUndefined();
-
-    await writeWorkspaceTrust(docs, '/repo', Date.now());
-    // The trust event awaits the triggered reconcile through waitUntil: once
-    // the event settles the project declarations are already published, so a
-    // caller that awaits trustWorkspace() before creating a session bound to
-    // a project environment cannot win the race against the registry.
-    await trustChange.fireAsync({ trusted: true }, NO_ABORT);
-    expect(registry.current('project-box')).toBeDefined();
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
-  it('settles the trust event without publishing when the project declaration file is broken', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const docs = docsService();
-    const warn = vi.fn();
-    const services = baseServices({
-      docs,
-      fs: fsService({ '/repo/.kimi-code/environments.toml': 'not = [toml' }),
-      log: { _serviceBrand: undefined, info: () => {}, warn, error: () => {} } as unknown as ILogService,
-    });
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect: vi.fn() }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(services, registry));
-
-    await writeWorkspaceTrust(docs, '/repo', Date.now());
-    await trustChange.fireAsync({ trusted: true }, NO_ABORT);
-
-    expect(warn).toHaveBeenCalled();
-    expect(registry.current('project-box')).toBeUndefined();
-    expect(registry.current('dev-box')).toBeDefined();
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
-  it('awaits reconciles queued ahead of the trust trigger before the trust event settles', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const docs = docsService();
-    const config = watchableConfigService({
-      'dev-box': { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me' },
-    });
-    const services = baseServices({
-      config: config.service,
-      docs,
-      fs: fsService({
-        '/repo/.kimi-code/environments.toml': '[project-box]\ntype = "ssh"\nhost = "project-box"\ndefaultCwd = "/project"\n',
-      }),
-    });
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect: vi.fn() }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(services, registry));
-
-    config.setSection({
-      'dev-box': { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me' },
-      staging: { type: 'ssh', host: 'staging', defaultCwd: '/srv' },
-    });
-    await writeWorkspaceTrust(docs, '/repo', Date.now());
-    // The trust reconcile chains behind the config-change reconcile on the
-    // serialized tail; the settled event covers both.
-    await trustChange.fireAsync({ trusted: true }, NO_ABORT);
-    expect(registry.current('staging')).toBeDefined();
-    expect(registry.current('project-box')).toBeDefined();
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
-  it('un-registers project declarations when workspace trust flips off', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const docs = docsService();
-    await writeWorkspaceTrust(docs, '/repo', Date.now());
-    const services = baseServices({
-      docs,
-      fs: fsService({
-        '/repo/.kimi-code/environments.toml': '[project-box]\ntype = "ssh"\nhost = "project-box"\ndefaultCwd = "/project"\n',
-      }),
-    });
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect: vi.fn() }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(services, registry));
-    expect(registry.current('project-box')).toBeDefined();
-
-    await deleteWorkspaceTrust(docs, '/repo');
-    await trustChange.fireAsync({ trusted: false }, NO_ABORT);
-    await vi.waitFor(() => {
-      expect(registry.current('project-box')).toBeUndefined();
-    });
-    expect(registry.current('dev-box')).toBeDefined();
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
   it('registers declared environments as pending placeholders without connecting', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
     const connect = vi.fn(async (options: RemoteEnvironmentOptions) => connectedEnvironment(options, 'connected-1'));
@@ -606,32 +488,6 @@ describe('RemoteEnvironmentProviderFactory', () => {
     await registry.dispose();
   });
 
-  it('loads trusted project declarations and lets them override same-id user entries', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const docs = docsService();
-    await writeWorkspaceTrust(docs, '/repo', Date.now());
-    const services = baseServices({
-      docs,
-      fs: fsService({
-        '/repo/.kimi-code/environments.toml': '[dev-box]\ntype = "ssh"\nhost = "project-box"\ndefaultCwd = "/project"\n\n[extra]\ntype = "ssh"\nhost = "extra"\ndefaultCwd = "/extra"\n',
-      }),
-    });
-    const connect = vi.fn(async (options: RemoteEnvironmentOptions) => connectedEnvironment(options, 'connected-1'));
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(services, registry));
-
-    expect(registry.current('dev-box')).toBeDefined();
-    expect(registry.current('extra')).toBeDefined();
-
-    await registry.current('dev-box')!.connect!();
-    expect(connect).toHaveBeenCalledWith(expect.objectContaining({
-      launcher: { type: 'ssh', host: 'project-box', remoteBin: undefined },
-    }));
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
   it('removes registered environments on dispose', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
     const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect: vi.fn() }));
@@ -798,7 +654,6 @@ describe('remote connection pool', () => {
         _serviceBrand: undefined,
         clientIdentity: { productName: 'Kimi Code CLI', version: '1.2.3', platform: 'kimi_code_cli' },
       } as unknown as IBootstrapService,
-      { _serviceBrand: undefined, getRegion: () => 'global' } as unknown as IOAuthService,
       NOOP_LOG,
       connect,
     );
@@ -1066,39 +921,6 @@ describe('declaration watch', () => {
     await registry.dispose();
   });
 
-  it('re-resolves declarations when the project file watch fires', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const docs = docsService();
-    await writeWorkspaceTrust(docs, '/repo', Date.now());
-    const files: Record<string, string> = {};
-    let fireWatch: () => void = () => {};
-    const watchProjectDeclarations = vi.fn((_path: string, onChange: () => void) => {
-      fireWatch = onChange;
-      return { dispose: () => {} };
-    });
-    const services = baseServices({ docs, fs: fsService(files) });
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect: vi.fn(), watchProjectDeclarations }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(services, registry));
-
-    expect(watchProjectDeclarations).toHaveBeenCalledWith('/repo/.kimi-code/environments.toml', expect.any(Function));
-    expect(registry.current('project-box')).toBeUndefined();
-
-    files['/repo/.kimi-code/environments.toml'] = '[project-box]\ntype = "ssh"\nhost = "project-box"\ndefaultCwd = "/project"\n';
-    fireWatch();
-    await vi.waitFor(() => {
-      expect(registry.current('project-box')).toBeDefined();
-    });
-
-    files['/repo/.kimi-code/environments.toml'] = '';
-    fireWatch();
-    await vi.waitFor(() => {
-      expect(registry.current('project-box')).toBeUndefined();
-    });
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
   it('stops reacting to declaration changes after dispose', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
     const config = watchableConfigService({
@@ -1151,54 +973,9 @@ describe('declaration watch', () => {
     await registry.dispose();
   });
 
-  it('picks up project declarations written to disk through the default file watcher', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'remote-exec-watch-'));
-    // The default watcher rides the global filesystem-watch switch, which is
-    // off by default; this path needs it enabled explicitly.
-    setWatchEnabled(true);
-    try {
-      const registry = new EnvironmentRegistry('workspace-1');
-      const docs = docsService();
-      await writeWorkspaceTrust(docs, root, Date.now());
-      const files: Record<string, string> = {};
-      const services = baseServices({ docs, fs: fsService(files) });
-      const factory = new RemoteEnvironmentProviderFactory({ connect: vi.fn() });
-      const attachment = await factory.attach({ ...CONTEXT, root }, fakeHost(services, registry));
-
-      const filePath = join(root, '.kimi-code', 'environments.toml');
-      await mkdir(dirname(filePath), { recursive: true });
-      files[filePath] = '[project-box]\ntype = "ssh"\nhost = "project-box"\ndefaultCwd = "/project"\n';
-      await writeFile(filePath, files[filePath]);
-      await vi.waitFor(() => {
-        expect(registry.current('project-box')).toBeDefined();
-      }, { timeout: 10_000 });
-
-      await attachment.dispose();
-      await registry.dispose();
-    } finally {
-      setWatchEnabled(false);
-      await rm(root, { recursive: true, force: true });
-    }
-  });
 });
 
 describe('factory executor detection', () => {
-  const INSTALL_ARTIFACT = {
-    version: '1.2.3',
-    filename: 'kimi-code-linux-x64',
-    url: 'https://cdn.example.test/binaries/1.2.3/kimi-code-linux-x64',
-    sha256: createHash('sha256').update('fake-kimi-sea-binary\n').digest('hex'),
-  };
-
-  function unameRunner(): { runner: LocalRunner; requests: LocalRunRequest[] } {
-    const requests: LocalRunRequest[] = [];
-    const runner: LocalRunner = async (request: LocalRunRequest) => {
-      requests.push(request);
-      return { code: 0, signal: null, stdout: 'Linux x86_64\n', stderr: '' };
-    };
-    return { runner, requests };
-  }
-
   function missingExecutorError(): HandshakeError {
     return new HandshakeError(
       'executor process exited before the handshake completed (code 127, signal null): kimi: command not found',
@@ -1206,17 +983,16 @@ describe('factory executor detection', () => {
     );
   }
 
-  it('fails a missing executor with concrete install guidance and never installs', async () => {
+  it('fails a missing executor with static install guidance and never probes', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
     const connect = vi.fn(async () => {
       throw missingExecutorError();
     });
-    const fake = unameRunner();
+    const runner = vi.fn() as unknown as LocalRunner;
     const factory = new RemoteEnvironmentProviderFactory(factoryOptions({
       connect,
       clientVersion: '1.2.3',
-      artifactLocator: { locate: vi.fn(async () => INSTALL_ARTIFACT) },
-      probeRunner: fake.runner,
+      probeRunner: runner,
     }));
     const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
 
@@ -1226,14 +1002,68 @@ describe('factory executor detection', () => {
     expect(error).toBeInstanceOf(HandshakeError);
     const message = (error as Error).message;
     expect(message).toContain('was not found on ssh:dev-box');
-    expect(message).toContain(INSTALL_ARTIFACT.url);
+    expect(message).toContain('Kimi Code release CDN');
+    expect(message).toContain('executor path (~/.kimi-code/bin/kimi)');
+    expect(message).toContain('Then reconnect the environment.');
+    expect(message).not.toContain('curl -fL');
+    expect(message).not.toContain('/tmp/kimi-install');
     expect(connect).toHaveBeenCalledTimes(1);
     expect(registry.current('dev-box')).toBe(placeholder);
     expect(registry.current('dev-box')!.status).toBe('disconnected');
-    // Detection only: the uname probe is the sole remote command — no scp,
-    // no chmod/mv, no download.
-    expect(fake.requests).toHaveLength(1);
-    expect(fake.requests[0]!.args.at(-1)).toBe('uname -sm; printf "%s\\n" "$HOME"');
+    // Detection only: static guidance runs no remote command at all.
+    expect(runner).not.toHaveBeenCalled();
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('fails command environments with guidance and never probes', async () => {
+    const registry = new EnvironmentRegistry('workspace-1');
+    const services = baseServices({
+      config: configService({
+        sandbox: { command: 'sandbox', args: ['ssh'], defaultCwd: '/home/me' },
+      }),
+    });
+    const runner = vi.fn() as unknown as LocalRunner;
+    const connect = vi.fn(async () => {
+      throw missingExecutorError();
+    });
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({
+      connect,
+      probeRunner: runner,
+    }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(services, registry));
+
+    await expect(registry.current('sandbox')!.connect!()).rejects.toThrow(
+      /code 127[\s\S]*the absolute path your launcher command invokes/,
+    );
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(runner).not.toHaveBeenCalled();
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('answers a too-old executor with upgrade guidance', async () => {
+    const registry = new EnvironmentRegistry('workspace-1');
+    const runner = vi.fn() as unknown as LocalRunner;
+    const connect = vi.fn(async () => {
+      throw new HandshakeError(
+        'executor version 0.0.4 is below the minimum 0.1.0; upgrade the remote executor (kimi exec-server) and retry',
+        { kind: 'incompatible', executorVersion: '0.0.4', minExecutorVersion: '0.1.0' },
+      );
+    });
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({
+      connect,
+      probeRunner: runner,
+    }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
+
+    await expect(registry.current('dev-box')!.connect!()).rejects.toThrow(
+      /0\.0\.4[\s\S]*Upgrade the executor/,
+    );
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(runner).not.toHaveBeenCalled();
 
     await attachment.dispose();
     await registry.dispose();

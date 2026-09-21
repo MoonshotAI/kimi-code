@@ -894,18 +894,17 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 
 #### `POST /api/v1/sessions/{session_id}/environments`
 
-为会话工作区声明一个新环境并即时注册——无需重启。`scope` 为 `global`（默认）时，条目深度合并进用户级 `config.toml` 的 `[environments]` 节；为 `project` 时，合并写入工作区的 `.kimi-code/environments.toml`（项目级声明仅对受信任的工作区加载）。
+为会话工作区声明一个新环境并即时注册——无需重启。条目深度合并进用户级 `config.toml` 的 `[environments]` 节。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
 | `environment_id` | body | string | **必填。** 新环境的 id |
-| `scope` | body | string | `global`（默认）或 `project` |
 | `entry` | body | object | **必填。** 环境条目：`{ type: "ssh", host, remote_bin?, default_cwd? }`、`{ type: "docker", container, context?, remote_bin?, default_cwd? }` 或 `{ command, args?, env?, default_cwd? }` |
 
-成功时，`data` 为 `{ workspace_id, environment_id, scope }`。
+成功时，`data` 为 `{ workspace_id, environment_id }`。
 
-- `40001`：条目不合法、id 已声明，或项目文件不可读、内容非法
+- `40001`：条目不合法或 id 已声明
 - `40401`：会话不存在
 
 #### `POST /api/v1/sessions/{session_id}/export`

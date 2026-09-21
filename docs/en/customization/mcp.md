@@ -104,7 +104,7 @@ defaultCwd = "/srv/work"
 }
 ```
 
-`environment_id` references an environment declared in `[environments]` in `config.toml` or in `.kimi-code/environments.toml` (see [Declaring environments](../guides/remote-environment.md#declaring-environments)). The field defaults to `local` and never follows the session's own environment binding: a session bound to `dev-box` still runs stdio servers without `environment_id` locally. A cold environment connects on demand when the server starts.
+`environment_id` references an environment declared in `[environments]` in `config.toml` (see [Declaring environments](../guides/remote-environment.md#declaring-environments)). The field defaults to `local` and never follows the session's own environment binding: a session bound to `dev-box` still runs stdio servers without `environment_id` locally. A cold environment connects on demand when the server starts.
 
 ### Environment variables for remote stdio servers
 

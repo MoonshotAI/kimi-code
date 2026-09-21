@@ -70,7 +70,6 @@ import type {
   SessionSummaryPage,
   SessionEnvironmentsInfo,
   RemoteEnvironmentEntry,
-  EnvironmentDeclarationScope,
   SkillSummary,
   PluginCommandDef,
   SuggestFilesInput,
@@ -164,8 +163,6 @@ export interface SwitchSessionEnvironmentRpcInput extends SessionIdRpcInput {
 export interface DeclareEnvironmentRpcInput extends SessionIdRpcInput {
   readonly id: string;
   readonly entry: RemoteEnvironmentEntry;
-  /** Write target: user-level `config.toml` (default) or the workspace's `.kimi-code/environments.toml`. */
-  readonly scope?: EnvironmentDeclarationScope;
 }
 
 export interface ReconnectMcpServerRpcInput extends SessionIdRpcInput {

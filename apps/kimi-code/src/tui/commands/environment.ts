@@ -196,7 +196,7 @@ async function reconnectFlow(
 }
 
 // ---------------------------------------------------------------------------
-// Add (declare an environment in config.toml [environments] or .kimi-code/environments.toml)
+// Add (declare an environment in config.toml [environments])
 // ---------------------------------------------------------------------------
 
 const ADD_TYPE_OPTIONS = [
@@ -252,11 +252,7 @@ async function addFlow(host: SlashCommandHost, session: Session, list: SessionEn
     await openEnvironmentManager(host, session);
     return;
   }
-  host.showStatus(
-    value.scope === 'project'
-      ? `Environment "${value.id}" added to .kimi-code/environments.toml.`
-      : `Environment "${value.id}" added to config.toml.`,
-  );
+  host.showStatus(`Environment "${value.id}" added to config.toml.`);
   await openEnvironmentManager(host, session);
 }
 
@@ -266,13 +262,11 @@ async function submitAdd(
   value: EnvironmentAddValue,
   resolve: (value: EnvironmentAddValue | undefined) => void,
 ): Promise<void> {
-  feedback.setBusy(
-    value.scope === 'project' ? 'Writing .kimi-code/environments.toml…' : 'Writing config.toml…',
-  );
+  feedback.setBusy('Writing config.toml…');
   try {
-    // The engine deep-merges the entry into the target scope's [environments]
-    // declarations and validates them on write.
-    await session.declareEnvironment({ id: value.id, entry: value.entry, scope: value.scope });
+    // The engine deep-merges the entry into the [environments] declarations
+    // and validates them on write.
+    await session.declareEnvironment({ id: value.id, entry: value.entry });
   } catch (error) {
     feedback.showError(formatErrorMessage(error));
     return;

@@ -7,7 +7,7 @@ import {
   type Focusable,
 } from '@moonshot-ai/pi-tui';
 
-import type { WorkspaceTrustEnvironmentInfo, WorkspaceTrustMcpServerInfo } from '@moonshot-ai/kimi-code-sdk';
+import type { WorkspaceTrustMcpServerInfo } from '@moonshot-ai/kimi-code-sdk';
 
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
@@ -18,8 +18,6 @@ export interface TrustPromptOptions {
   readonly workDir: string;
   /** Project-level MCP servers that trusting would enable; may be empty. */
   readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
-  /** Project-declared environments that trusting would register, with their full launch command lines; may be empty. */
-  readonly gatedEnvironments: readonly WorkspaceTrustEnvironmentInfo[];
   /** Esc resolves to 'distrust' as well. */
   readonly onSelect: (choice: TrustPromptChoice) => void;
 }
@@ -34,7 +32,7 @@ const OPTIONS: readonly TrustPromptOption[] = [
   {
     value: 'trust',
     label: 'Trust this folder',
-    description: 'Enable project MCP servers and declared environments. Remembered for this folder.',
+    description: 'Enable project MCP servers. Remembered for this folder.',
   },
   {
     value: 'distrust',
@@ -83,7 +81,7 @@ export class TrustPromptComponent implements Component, Focusable {
     ];
 
     const notice =
-      'Project-level MCP servers and declared environments are disabled until you explicitly choose Trust. Trust starts the listed project MCP targets and environment launchers, and remembers this folder.';
+      'Project-level MCP servers are disabled until you explicitly choose Trust. Trust starts the listed project MCP targets and remembers this folder.';
     for (const line of wrapTextWithAnsi(notice, Math.max(20, width - 2))) {
       lines.push(` ${currentTheme.fg('textMuted', line)}`);
     }
@@ -91,15 +89,6 @@ export class TrustPromptComponent implements Component, Focusable {
       lines.push(` ${currentTheme.fg('warning', 'Project MCP targets:')}`);
       for (const server of this.opts.gatedMcpServers) {
         const details = formatMcpTarget(server);
-        for (const line of wrapTextWithAnsi(details, Math.max(20, width - 4))) {
-          lines.push(`   ${currentTheme.fg('warning', line)}`);
-        }
-      }
-    }
-    if (this.opts.gatedEnvironments.length > 0) {
-      lines.push(` ${currentTheme.fg('warning', 'Project environment launchers:')}`);
-      for (const environment of this.opts.gatedEnvironments) {
-        const details = sanitizeForDisplay(`${environment.id}: ${environment.commandLine}`);
         for (const line of wrapTextWithAnsi(details, Math.max(20, width - 4))) {
           lines.push(`   ${currentTheme.fg('warning', line)}`);
         }

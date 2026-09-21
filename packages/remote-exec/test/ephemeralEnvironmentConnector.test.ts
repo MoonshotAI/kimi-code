@@ -1,5 +1,4 @@
 import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
-import { IOAuthService } from '@moonshot-ai/agent-core-v2/app/auth/auth';
 import { IBootstrapService } from '@moonshot-ai/agent-core-v2/app/bootstrap/bootstrap';
 import { EnvironmentRegistry } from '@moonshot-ai/agent-core-v2/environment/environmentRegistry';
 import type { EphemeralEnvironmentConnectRequest } from '@moonshot-ai/agent-core-v2/environment/ephemeralEnvironment';
@@ -14,13 +13,6 @@ function bootstrap(): IBootstrapService {
     _serviceBrand: undefined,
     clientIdentity: { productName: 'Kimi Code CLI', version: '1.2.3', platform: 'kimi_code_cli' },
   } as unknown as IBootstrapService;
-}
-
-function oauth(): IOAuthService {
-  return {
-    _serviceBrand: undefined,
-    getRegion: () => 'global',
-  } as unknown as IOAuthService;
 }
 
 function log(): ILogService {
@@ -58,7 +50,6 @@ describe('RemoteEphemeralEnvironmentConnector', () => {
     Object.assign(connected.host, { cwd: '/home/me/work' });
     const connector = new RemoteEphemeralEnvironmentConnector(
       bootstrap(),
-      oauth(),
       log(),
       async (options) => {
         calls.push(options);
@@ -88,7 +79,6 @@ describe('RemoteEphemeralEnvironmentConnector', () => {
     const calls: RemoteEnvironmentOptions[] = [];
     const connector = new RemoteEphemeralEnvironmentConnector(
       bootstrap(),
-      oauth(),
       log(),
       async (options) => {
         calls.push(options);
@@ -131,7 +121,6 @@ describe('RemoteEphemeralEnvironmentConnector', () => {
     const registry = new EnvironmentRegistry('workspace');
     const connector = new RemoteEphemeralEnvironmentConnector(
       bootstrap(),
-      oauth(),
       log(),
       async () => {
         throw new Error(
@@ -158,7 +147,6 @@ describe('RemoteEphemeralEnvironmentConnector', () => {
     });
     const connector = new RemoteEphemeralEnvironmentConnector(
       bootstrap(),
-      oauth(),
       log(),
       async () => connected as unknown as RemoteEnvironment,
     );

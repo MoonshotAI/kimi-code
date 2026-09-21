@@ -21,7 +21,7 @@ Only POSIX targets are supported; Windows targets are not.
 
 ## Declaring environments
 
-Environments are declared in the `[environments]` section of `config.toml` (user level), or in a project's `.kimi-code/environments.toml` (project level). Three kinds of entries are available: SSH hosts, Docker-compatible containers, and custom launcher commands for anything else (OrbStack machines, `kubectl exec`, Apple Container, managed sandboxes, and so on).
+Environments are declared in the `[environments]` section of `config.toml` (user level). Three kinds of entries are available: SSH hosts, Docker-compatible containers, and custom launcher commands for anything else (OrbStack machines, `kubectl exec`, Apple Container, managed sandboxes, and so on).
 
 ```toml
 [environments]
@@ -57,14 +57,6 @@ Environments added through `/environment` are available as soon as the operation
 
 For the full field reference, see [`environments`](../configuration/config-files.md#environments).
 
-### Project-declared environments and trust
-
-A project can ship its own declarations in `<project-root>/.kimi-code/environments.toml`, using the same schema plus an optional `default`. This covers the "code lives on a remote host" workflow: keep a local checkout (or an empty directory) as the declaration carrier, and let every session created in it bind to the remote environment.
-
-Project declarations are only loaded for trusted workspaces. On first launch in a folder, Kimi Code shows the workspace trust prompt; trusting the folder enables its declared environments (alongside any project MCP servers), and the prompt lists each declared environment with its full launch command line so you can review exactly what will be executed. An untrusted workspace's `environments.toml` is ignored entirely.
-
-A project entry with the same id overrides the user-level entry. When both levels set `default`, the project default wins; without any `default`, new sessions start on `local`. Project declarations are always read from the **local** workspace root — reading them from a remote disk would require a connection first.
-
 ## Switching environments in a session
 
 The environment binding is per session: it records which environment the session's tools execute on, plus the working directory on that environment. Different sessions in the same workspace may bind different environments, and subagents inherit their parent agent's binding.
@@ -78,7 +70,7 @@ The `/environment` slash command opens the environment manager, modeled after th
 The manager appears immediately with a loading indicator while it fetches the latest environment list, so a slow connection does not leave the TUI blank.
 
 - **List**: the `local` environment plus every declared environment, each row showing its id, type, connection status, and `defaultCwd`. Target OS/arch is not shown yet — it is only known after a connection handshake, so surfacing it in the list is a future enhancement.
-- **Add**: create a new declaration from a minimal form — SSH entries can pick from hosts discovered in `~/.ssh/config`; other types or a custom command can be entered directly. The form's scope control chooses where the entry lands: **Global** (the default) writes it to the user-level `config.toml`, available in every workspace; **Project** writes it to the workspace's `.kimi-code/environments.toml`, ready to commit and share with the team. Either way it takes effect immediately: the new environment appears in the list and can be switched to without a restart.
+- **Add**: create a new declaration from a minimal form — SSH entries can pick from hosts discovered in `~/.ssh/config`; other types or a custom command can be entered directly. The entry is written to the user-level `config.toml` and takes effect immediately: the new environment appears in the list and can be switched to without a restart.
 - **Switch**: pick an environment, then enter the working directory on the target (prefilled from the entry's `defaultCwd`). The directory is validated against the target's filesystem by the server; failures are reported inline, and a failed connection shows the exit code and a bounded slice of stderr.
 - **Reconnect**: an environment in the disconnected or pending state offers an explicit reconnect action.
 
@@ -105,7 +97,7 @@ The tools are off by default. To opt in, set `KIMI_CODE_EXPERIMENTAL_AGENT_ENVIR
 The main agent can:
 
 - **Switch with `change_environment`**: pass an environment `id` (`local` or a declared id) and optionally a `cwd` (falls back to the declaration's `defaultCwd`). The target connects eagerly — a connection or `cwd` validation failure is reported immediately and changes nothing — and the switch itself takes effect as soon as the tool call completes: the next tool call in the same turn already runs on the new environment. When other tool calls are still executing in parallel, the call instead fails with an error naming the in-flight count — retry once they have finished, and their work is never yanked mid-flight. The reminder with the new environment's details arrives with the next turn.
-- **Create a temporary environment with `connect`**: pass a launcher spec — `{ type: "ssh", host: "..." }`, `{ type: "docker", container: "..." }`, or `{ type: "command", command: "...", args: [...] }`, with an optional `id`. The environment connects right away and is registered in the workspace like a declared one, but nothing is written to `config.toml` or `.kimi-code/environments.toml`: a temporary environment vanishes when the process exits, cannot be reconnected after a connection drop (create a fresh one instead), and a session resumed onto it finds it gone.
+- **Create a temporary environment with `connect`**: pass a launcher spec — `{ type: "ssh", host: "..." }`, `{ type: "docker", container: "..." }`, or `{ type: "command", command: "...", args: [...] }`, with an optional `id`. The environment connects right away and is registered in the workspace like a declared one, but nothing is written to `config.toml`: a temporary environment vanishes when the process exits, cannot be reconnected after a connection drop (create a fresh one instead), and a session resumed onto it finds it gone.
 - **Bind a subagent with the `environment` parameter**: the `Agent` tool accepts an optional `environment` id; the spawned subagent binds to that environment (at its `defaultCwd`) instead of inheriting the parent's binding. Resumed subagents keep their own binding.
 
 Two guardrails apply to both tools. They are rejected in Plan mode — exit plan mode first. And they follow the permission mode: only Always Ask mode asks for confirmation before switching or connecting; Ask When Needed and Never Ask modes proceed without asking. The tool group is not registered while tower mode is active.
@@ -184,5 +176,5 @@ Several behaviors are deliberately scoped. Each of the following is a known limi
 
 ## Next steps
 
-- [`environments` configuration reference](../configuration/config-files.md#environments) — every field of the `[environments]` section and `.kimi-code/environments.toml`
+- [`environments` configuration reference](../configuration/config-files.md#environments) — every field of the `[environments]` section
 - [Remote Control](./remote-control.md) — the reverse direction: steer this machine's sessions from another device

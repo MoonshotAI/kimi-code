@@ -78,7 +78,7 @@ export class SessionManager implements ISessionManager {
         ? { root: options.workDir }
         : { workspaceId: options.workspaceId, root: options.workDir },
     );
-    const declarations = await this.environmentDeclarations.declarations(workspace.root);
+    const declarations = await this.environmentDeclarations.declarations();
     const declared =
       options.environmentId === undefined || options.environmentId === LOCAL_ENVIRONMENT_ID
         ? undefined

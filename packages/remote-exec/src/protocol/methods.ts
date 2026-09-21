@@ -27,14 +27,6 @@ export const SERVER_NOTIFICATION_METHODS: ReadonlySet<string> = new Set([
   PROCESS_CLOSED_METHOD,
 ]);
 
-// Client→server control calls whose stall is treated as a broken connection:
-// an unanswered health check cannot be distinguished from a half-dead peer, so
-// the client closes the connection (the same surface as a transport drop). The
-// handshake has its own initialize window. Every other bounded method is a
-// business call: a stall fails only that request, and a late response to a
-// timed-out request is discarded.
-export const CONTROL_CALL_METHODS: ReadonlySet<string> = new Set([ENVIRONMENT_STATUS_METHOD]);
-
 export interface InitializeParams {
   readonly clientName: string;
   readonly clientVersion: string;
@@ -58,10 +50,6 @@ export interface InitializeResult {
   readonly executorVersion: string;
   readonly environment: RemoteEnvironmentInfo;
   readonly capabilities: RemoteCapabilities;
-}
-
-export interface EnvironmentStatusResult {
-  readonly status: 'ready';
 }
 
 export interface FsReadFileParams {

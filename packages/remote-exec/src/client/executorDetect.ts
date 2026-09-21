@@ -1,11 +1,9 @@
 import { spawn } from 'node:child_process';
 
-import type { ExecutorArtifactTarget } from './artifactLocator';
 import {
   DEFAULT_REMOTE_BIN,
   assertLauncherOperand,
   dockerBaseArgs,
-  sshBaseArgs,
   type LauncherSpec,
 } from './launchers';
 
@@ -135,67 +133,4 @@ async function probeDockerHomeDir(
   if (result.code !== 0) return undefined;
   const homeDir = result.stdout.trim();
   return homeDir.startsWith('/') ? homeDir : undefined;
-}
-
-function parseUname(output: string): ExecutorArtifactTarget | undefined {
-  const line = output.trim().split('\n')[0]?.trim() ?? '';
-  const [kernel, machine] = line.split(/\s+/);
-  const osKind = kernel === 'Linux' ? 'Linux' : kernel === 'Darwin' ? 'macOS' : undefined;
-  const osArch =
-    machine === 'x86_64' ? 'x64' : machine === 'aarch64' || machine === 'arm64' ? 'arm64' : undefined;
-  if (osKind === undefined || osArch === undefined) return undefined;
-  return { osKind, osArch };
-}
-
-export interface ExecutorTargetInfo {
-  readonly target: ExecutorArtifactTarget;
-  // The remote user's absolute home directory, when the probe reported one.
-  // Guidance resolves tilde-prefixed remoteBin values against it.
-  readonly homeDir?: string;
-}
-
-// Best-effort target probe for the failure guidance: a missing or too-old
-// executor still leaves the launcher transport able to run one remote
-// command, and the uname result selects the concrete download the guidance
-// prints. Any failure (transport down, unparseable output, unsupported
-// platform) degrades to undefined — the guidance then falls back to the
-// generic release-CDN wording instead of naming a concrete artifact.
-export async function probeExecutorTarget(
-  launcher: LauncherSpec & { readonly type: 'ssh' | 'docker' },
-  runner: LocalRunner,
-): Promise<ExecutorTargetInfo | undefined> {
-  if (launcher.type === 'ssh') {
-    assertLauncherOperand('ssh host', launcher.host);
-  } else {
-    assertLauncherOperand('docker container', launcher.container);
-  }
-  const unameAndHome = 'uname -sm; printf "%s\\n" "$HOME"';
-  const request: LocalRunRequest =
-    launcher.type === 'ssh'
-      ? {
-          program: 'ssh',
-          args: [...sshBaseArgs(), launcher.host, unameAndHome],
-          timeoutMs: PROBE_TIMEOUT_MS,
-        }
-      : {
-          program: 'docker',
-          args: [...dockerBaseArgs(launcher.context), 'exec', launcher.container, 'sh', '-c', unameAndHome],
-          timeoutMs: PROBE_TIMEOUT_MS,
-        };
-  let result: LocalRunResult;
-  try {
-    result = await runner(request);
-  } catch {
-    return undefined;
-  }
-  if (result.code !== 0) return undefined;
-  const target = parseUname(result.stdout);
-  if (target === undefined) return undefined;
-  const lines = result.stdout
-    .trim()
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-  const homeLine = lines.length > 1 ? lines.at(-1) : undefined;
-  return { target, homeDir: homeLine !== undefined && homeLine.startsWith('/') ? homeLine : undefined };
 }

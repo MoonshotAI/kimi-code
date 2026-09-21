@@ -14,7 +14,6 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import { ToolAccesses, type ExecutableToolResult, type ToolExecution } from '#/tool/toolContract';
-import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
 import DESCRIPTION from './change-environment.md?raw';
 import {
@@ -34,7 +33,6 @@ export class ChangeEnvironmentTool implements IChangeEnvironmentTool {
     @IAgentEnvironmentBindingService private readonly binding: IAgentEnvironmentBindingService,
     @IAgentPlanService private readonly planMode: IAgentPlanService,
     @ISessionContext private readonly session: ISessionContext,
-    @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
     @IEnvironmentDeclarationService private readonly environmentDeclarations: IEnvironmentDeclarationService,
   ) {}
 
@@ -85,8 +83,6 @@ export class ChangeEnvironmentTool implements IChangeEnvironmentTool {
   }
 
   private async declaredDefaultCwd(environmentId: string): Promise<string | undefined> {
-    const workspace = this.workspaces.get(this.session.workspaceId);
-    if (workspace === undefined) return undefined;
-    return this.environmentDeclarations.declaredDefaultCwd(workspace.root, environmentId);
+    return this.environmentDeclarations.declaredDefaultCwd(environmentId);
   }
 }

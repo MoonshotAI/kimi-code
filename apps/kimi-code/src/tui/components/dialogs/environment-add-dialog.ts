@@ -3,14 +3,12 @@
  * environment, per type: ssh (host, optionally prefilled from the discovery
  * candidates), docker (container + optional context), or a
  * custom command (program + space-separated args). The environment id is derived
- * from the target when the id field is left empty. The last field is a
- * segmented scope control (DESIGN.md §8): `Global` writes the user-level
- * `config.toml`, `Project` the workspace's `.kimi-code/environments.toml`; the
- * subtitle states where the current scope lands.
+ * from the target when the id field is left empty. The declaration lands in
+ * the user-level `config.toml` `[environments]` section.
  *
  * Geometry and keyboard mirror the custom-registry import dialog: Tab /
  * Shift-Tab / ↑↓ switch fields, Enter advances to the next field and submits
- * on the last one, Esc cancels; ←→ flips the scope while its row is focused.
+ * on the last one, Esc cancels.
  * Client-side checks stay minimal (required fields, id shape, duplicates) —
  * the engine validates the merged `[environments]` section on write and its error
  * surfaces inline via `showError`.
@@ -30,9 +28,6 @@ import { currentTheme } from '#/tui/theme';
 
 export type EnvironmentAddType = 'ssh' | 'docker' | 'command';
 
-/** Where the new declaration lands: user-level `config.toml` or the workspace's `.kimi-code/environments.toml`. */
-export type EnvironmentAddScope = 'global' | 'project';
-
 export type EnvironmentAddEntry =
   | { readonly type: 'ssh'; readonly host: string; readonly defaultCwd?: string }
   | {
@@ -46,7 +41,6 @@ export type EnvironmentAddEntry =
 export interface EnvironmentAddValue {
   readonly id: string;
   readonly entry: EnvironmentAddEntry;
-  readonly scope: EnvironmentAddScope;
 }
 
 export interface EnvironmentAddDialogOptions {
@@ -61,19 +55,14 @@ export interface EnvironmentAddDialogOptions {
   readonly requestRender: () => void;
 }
 
-type FieldId = 'target' | 'extra' | 'id' | 'defaultCwd' | 'scope';
+type FieldId = 'target' | 'extra' | 'id' | 'defaultCwd';
 
 interface FieldDef {
   readonly id: FieldId;
   readonly label: string;
 }
 
-const SCOPE_FIELD_DEF: FieldDef = { id: 'scope', label: 'Scope' };
-
-const SCOPE_SUBTITLES: Record<EnvironmentAddScope, string> = {
-  global: 'Written to [environments] in config.toml.',
-  project: 'Written to .kimi-code/environments.toml in this workspace.',
-};
+const SUBTITLE = 'Written to [environments] in config.toml.';
 
 const FIELD_DEFS: Record<EnvironmentAddType, readonly FieldDef[]> = {
   ssh: [
@@ -120,15 +109,13 @@ export class EnvironmentAddDialogComponent extends Container implements Focusabl
   private readonly fields: readonly FieldDef[];
   private readonly inputs = new Map<FieldId, Input>();
   private activeIndex = 0;
-  private scope: EnvironmentAddScope = 'global';
   private state: DialogState = { kind: 'idle' };
   private hint: string | undefined;
 
   constructor(private readonly opts: EnvironmentAddDialogOptions) {
     super();
-    this.fields = [...FIELD_DEFS[opts.type], SCOPE_FIELD_DEF];
+    this.fields = FIELD_DEFS[opts.type];
     for (const field of this.fields) {
-      if (field.id === 'scope') continue;
       const input = new Input();
       if (field.id === 'target' && opts.initialTarget !== undefined && opts.initialTarget.length > 0) {
         input.setValue(opts.initialTarget);
@@ -185,14 +172,6 @@ export class EnvironmentAddDialogComponent extends Container implements Focusabl
     }
     if (this.state.kind === 'error') this.state = { kind: 'idle' };
     if (this.hint !== undefined) this.hint = undefined;
-    if (this.fields[this.activeIndex]?.id === 'scope') {
-      if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
-        this.scope = this.scope === 'global' ? 'project' : 'global';
-      } else if (matchesKey(data, Key.enter)) {
-        this.handleSubmit();
-      }
-      return;
-    }
     this.activeInput()?.handleInput(data);
   }
 
@@ -217,7 +196,7 @@ export class EnvironmentAddDialogComponent extends Container implements Focusabl
     const titleStyled = currentTheme.boldFg('textStrong', TITLES[this.opts.type]);
     const subtitleStyled = this.hint !== undefined
       ? currentTheme.fg('error', this.hint)
-      : currentTheme.fg('textDim', SCOPE_SUBTITLES[this.scope]);
+      : currentTheme.fg('textDim', SUBTITLE);
     const isLast = this.activeIndex === this.fields.length - 1;
     const footerStyled = currentTheme.fg('textDim', isLast ? FOOTER_LAST : FOOTER_NOT_LAST);
 
@@ -229,18 +208,12 @@ export class EnvironmentAddDialogComponent extends Container implements Focusabl
     ];
 
     for (const [index, field] of this.fields.entries()) {
-      const isScope = field.id === 'scope';
-      const label = isScope && index === this.activeIndex ? `${field.label}  (←→ to switch)` : field.label;
       const labelStyled =
         index === this.activeIndex
-          ? currentTheme.boldFg('accent', label)
-          : currentTheme.fg('textDim', label);
+          ? currentTheme.boldFg('accent', field.label)
+          : currentTheme.fg('textDim', field.label);
       contentLines.push(truncateToWidth(labelStyled, innerWidth, '…'));
-      contentLines.push(
-        isScope
-          ? truncateToWidth(this.renderScopeControl(), innerWidth, '…')
-          : (this.inputs.get(field.id)?.render(innerWidth)[0] ?? '> '),
-      );
+      contentLines.push(this.inputs.get(field.id)?.render(innerWidth)[0] ?? '> ');
       if (index < this.fields.length - 1) contentLines.push('');
     }
 
@@ -280,14 +253,6 @@ export class EnvironmentAddDialogComponent extends Container implements Focusabl
 
   private activeInput(): Input | undefined {
     return this.inputs.get(this.fields[this.activeIndex]?.id ?? 'target');
-  }
-
-  private renderScopeControl(): string {
-    const segment = (label: string, active: boolean): string =>
-      active
-        ? currentTheme.boldFg('primary', `[ ${label} ]`)
-        : currentTheme.fg('text', `  ${label}  `);
-    return `  ${segment('Global', this.scope === 'global')} ${segment('Project', this.scope === 'project')}`;
   }
 
   private focusField(index: number): void {
@@ -343,7 +308,7 @@ export class EnvironmentAddDialogComponent extends Container implements Focusabl
 
     const defaultCwd = this.fieldValue('defaultCwd');
     const entry = this.buildEntry(target, defaultCwd);
-    this.opts.onSubmit({ id, entry, scope: this.scope });
+    this.opts.onSubmit({ id, entry });
   }
 
   private buildEntry(target: string, defaultCwd: string): EnvironmentAddEntry {

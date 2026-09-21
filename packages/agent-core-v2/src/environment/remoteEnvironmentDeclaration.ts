@@ -91,12 +91,9 @@ export const EnvironmentsSectionSchema = z
 
 export type EnvironmentsSection = z.infer<typeof EnvironmentsSectionSchema>;
 
-export type EnvironmentDeclarationSource = 'user' | 'project';
-
 export interface RemoteEnvironmentDeclaration {
   readonly id: string;
   readonly entry: RemoteEnvironmentEntry;
-  readonly source: EnvironmentDeclarationSource;
 }
 
 export interface EnvironmentDeclarationDefault {
@@ -107,27 +104,15 @@ export interface EnvironmentDeclarationDefault {
 export interface EnvironmentDeclarationSet {
   readonly entries: readonly RemoteEnvironmentDeclaration[];
   readonly default?: EnvironmentDeclarationDefault;
-  readonly projectError?: unknown;
 }
 
 export function sectionEntries(
   section: EnvironmentsSection | undefined,
-  source: EnvironmentDeclarationSource,
 ): readonly RemoteEnvironmentDeclaration[] {
   if (section === undefined) return [];
   return Object.entries(section)
     .filter(([id]) => id !== 'default')
-    .map(([id, entry]) => ({ id, entry: entry as RemoteEnvironmentEntry, source }));
-}
-
-export function mergeEnvironmentDeclarations(
-  user: readonly RemoteEnvironmentDeclaration[],
-  project: readonly RemoteEnvironmentDeclaration[],
-): readonly RemoteEnvironmentDeclaration[] {
-  const merged = new Map<string, RemoteEnvironmentDeclaration>();
-  for (const declaration of user) merged.set(declaration.id, declaration);
-  for (const declaration of project) merged.set(declaration.id, declaration);
-  return [...merged.values()];
+    .map(([id, entry]) => ({ id, entry: entry as RemoteEnvironmentEntry }));
 }
 
 export function describeEnvironmentEntry(

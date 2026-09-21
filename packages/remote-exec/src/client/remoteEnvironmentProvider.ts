@@ -1,22 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { dirname, join } from 'node:path';
 import * as posixPath from 'node:path/posix';
 
 import { Emitter } from '@moonshot-ai/agent-core-v2/_base/event';
 import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
-import { subtreeWatchFilter } from '@moonshot-ai/agent-core-v2/_base/utils/paths';
-import { TimeoutTimer } from '@moonshot-ai/agent-core-v2/_base/utils/timer';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { IEnvironmentDeclarationService } from '@moonshot-ai/agent-core-v2/app/environmentDeclaration/environmentDeclaration';
-import { watch } from '@moonshot-ai/agent-core-v2/human/utils/watch';
 import type { HostEnvironmentInfo } from '@moonshot-ai/agent-core-v2/os/interface/hostEnvironment';
-import { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
-import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
 import { ENVIRONMENTS_SECTION } from '@moonshot-ai/agent-core-v2/environment/configSection';
-import {
-  PROJECT_ENVIRONMENTS_FILE,
-  resolveWorkspaceEnvironmentDeclarations,
-} from '@moonshot-ai/agent-core-v2/environment/environmentDeclarations';
+import { resolveWorkspaceEnvironmentDeclarations } from '@moonshot-ai/agent-core-v2/environment/environmentDeclarations';
 import type {
   RemoteEnvironmentDeclaration,
   RemoteEnvironmentEntry,
@@ -40,7 +31,6 @@ import type {
   EnvironmentUnitImports,
 } from '@moonshot-ai/agent-core-v2/environment/environmentUnitHost';
 
-import type { ExecutorArtifactLocator } from './artifactLocator';
 import { connectWithGuidance } from './connectGuidance';
 import type { LocalRunner } from './executorDetect';
 import type { LauncherSpec } from './launchers';
@@ -200,23 +190,8 @@ export interface RemoteEnvironmentProviderFactoryOptions {
   readonly initializeTimeoutMs?: number;
   readonly onDiagnostic?: (line: string) => void;
   readonly connect?: (options: RemoteEnvironmentOptions) => Promise<RemoteEnvironment>;
-  // Executor detection (spec D8/D9): the locator resolves the release
-  // artifact for the probed target so a missing/too-old executor's failure
-  // guidance can name the concrete download (URL + pinned sha256); inject
-  // `CdnExecutorArtifactLocator` built with the region CDN base
-  // (`kimiRegionProfile(resolveKimiRegion(...)).cdnBase`) from the
-  // composition root. Without a locator the guidance falls back to the
-  // generic release-CDN wording.
-  readonly artifactLocator?: ExecutorArtifactLocator;
-  // Runner for the remote probes (docker tilde resolution, the guidance
-  // platform probe). Injectable test seam.
+  // Runner for the remote probes (docker tilde resolution). Injectable test seam.
   readonly probeRunner?: LocalRunner;
-  // Project declaration watch (spec §4 hot reload): called once per attach
-  // with the absolute path of `<root>/.kimi-code/environments.toml`; `onChange`
-  // must fire when the file appears, changes, or disappears. Injectable for
-  // tests; the default watches the workspace root one level deep, filtered
-  // to the declaration file, debounced.
-  readonly watchProjectDeclarations?: (path: string, onChange: () => void) => { dispose(): void };
 }
 
 interface DeclaredEnvironmentRecord {
@@ -248,12 +223,10 @@ class EnvironmentSwapRedundantError extends Error {
   }
 }
 
-const PROJECT_DECLARATION_WATCH_DEBOUNCE_MS = 200;
-
 export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFactory {
   readonly id = 'remote-exec';
   readonly imports: EnvironmentUnitImports = {
-    root: [IConfigService, IHostFileSystem, IAtomicDocumentStore, ILogService, IEnvironmentDeclarationService],
+    root: [IConfigService, ILogService, IEnvironmentDeclarationService],
   };
 
   // App-level connection pool: one executor connection per declaration
@@ -267,16 +240,11 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
   async attach(context: EnvironmentProviderContext, host: EnvironmentProviderHost): Promise<EnvironmentProviderAttachment> {
     const log = host.get(ILogService);
     const config = host.get(IConfigService);
-    const fs = host.get(IHostFileSystem);
-    const docs = host.get(IAtomicDocumentStore);
     const resolve = () =>
-      resolveWorkspaceEnvironmentDeclarations({ config, fs, docs, root: context.root });
+      resolveWorkspaceEnvironmentDeclarations({ config });
     let initial: EnvironmentDeclarationSet;
     try {
       initial = await resolve();
-      if (initial.projectError !== undefined) {
-        log.warn('project remote environment declarations failed to load', { error: initial.projectError });
-      }
     } catch (error) {
       log.warn('remote environment declarations failed to load', { error });
       return {
@@ -296,9 +264,6 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
         const resolved = await resolve();
         if (disposed) throw new Error('remote environment provider is disposed');
         const failures: unknown[] = [];
-        if (resolved.projectError !== undefined) {
-          log.warn('project remote environment declarations failed to load', { error: resolved.projectError });
-        }
         const next = new Map(resolved.entries.map((declaration) => [declaration.id, declaration]));
         for (const [id, record] of records) {
           if (next.has(id)) continue;
@@ -353,20 +318,11 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
     const configListener = config.onDidSectionChange((event) => {
       if (event.domain === ENVIRONMENTS_SECTION) void refresh();
     });
-    const trustListener = context.onDidChangeTrust((change) => {
-      change.waitUntil(refresh());
-    });
-    const watchProjectDeclarations = this.options.watchProjectDeclarations ?? watchProjectDeclarationFile;
-    const projectWatch = watchProjectDeclarations(join(context.root, PROJECT_ENVIRONMENTS_FILE), () => {
-      void refresh();
-    });
     return {
       dispose: async () => {
         disposed = true;
         reconciliation.dispose();
         configListener.dispose();
-        trustListener.dispose();
-        projectWatch.dispose();
         for (const record of [...records.values()].toReversed()) {
           record.detached = true;
           try {
@@ -432,8 +388,6 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
               });
             return connectWithGuidance(attempt, {
               launcher: toLauncherSpec(declaration.entry),
-              artifactLocator: this.options.artifactLocator,
-              clientVersion: this.options.clientVersion,
               minExecutorVersion: this.options.minExecutorVersion,
               runner: this.options.probeRunner,
             });
@@ -542,27 +496,6 @@ function releasePoolHandle(record: DeclaredEnvironmentRecord): void {
   record.poolHandle = undefined;
   record.viewConnection = undefined;
   handle?.release();
-}
-
-export function watchProjectDeclarationFile(path: string, onChange: () => void): { dispose(): void } {
-  const debounce = new TimeoutTimer();
-  const root = dirname(dirname(path));
-  const handle = watch(root, { depth: 1, ignored: subtreeWatchFilter(root, [path]) });
-  const subscription = handle.onDidChange(() => {
-    debounce.cancelAndSet(onChange, PROJECT_DECLARATION_WATCH_DEBOUNCE_MS);
-  });
-  // The initial scan swallows events for files that appear before the watcher
-  // is ready; one extra change notification on ready catches those edits.
-  void handle.ready.then(() => {
-    onChange();
-  }, () => {});
-  return {
-    dispose: () => {
-      debounce.dispose();
-      subscription.dispose();
-      handle.dispose();
-    },
-  };
 }
 
 function declarationFingerprint(entry: RemoteEnvironmentEntry): string {

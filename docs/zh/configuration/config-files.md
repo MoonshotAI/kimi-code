@@ -611,10 +611,6 @@ env = { SANDBOX_TOKEN = "..." }
 defaultCwd = "/home/me/kimi-code"
 ```
 
-### 项目级 `environments.toml`
-
-项目可以在 `<项目根目录>/.kimi-code/environments.toml` 中声明自己的环境，schema 与 `[environments]` 节相同（含可选的 `default`）。项目级声明只为受信任的工作区加载：启动时的信任提示会列出每个声明的环境及其完整启动命令行，未信任工作区的该文件会被完全忽略。同 id 的项目级条目覆盖 user 级条目，项目级 `default` 优先于 user 级。详见 [项目级声明与信任](../guides/remote-environment.md#项目级声明与信任)。
-
 ## `tui.toml`
 
 除了 `config.toml`，CLI 还在同一目录下用一份配套的 `tui.toml` 保存终端界面与客户端偏好（`~/.kimi-code/tui.toml`，或覆盖后的 `$KIMI_CODE_HOME/tui.toml`）。它在首次运行时以默认值创建，交互式命令 `/config`、`/theme`、`/editor` 会自动写入，通常无需手动编辑。文件格式有误时，CLI 会回退到默认值并给出提示，而不是启动失败。
@@ -686,7 +682,7 @@ additional_dir = ["/absolute/path/to/shared"]
 
 目录以绝对路径存储，与具体机器相关。因此建议把 `.kimi-code/local.toml` 加入项目的 `.gitignore`，避免被提交。
 
-除了 `local.toml`，项目 `.kimi-code/` 目录还可以放 `mcp.json`（项目级 MCP server）和 `environments.toml`（项目级远程环境声明）。两者都受工作区信任门控：在启动提示中选择信任该文件夹后才生效。详见 [Model Context Protocol](../customization/mcp.md) 和 [`environments`](#environments)。
+除了 `local.toml`，项目 `.kimi-code/` 目录还可以放 `mcp.json`（项目级 MCP server），受工作区信任门控：在启动提示中选择信任该文件夹后才生效。详见 [Model Context Protocol](../customization/mcp.md)。
 
 ## 下一步
 

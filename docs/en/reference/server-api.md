@@ -894,18 +894,17 @@ On success, `data` is `{ workspace_id, environments, ssh_hosts }`. Each `environ
 
 #### `POST /api/v1/sessions/{session_id}/environments`
 
-Declares a new environment for the session's workspace and registers it live — no restart. With `scope` `global` (the default) the entry is deep-merged into the user-level `config.toml` `[environments]` section; with `scope` `project` it is merge-written into the workspace's `.kimi-code/environments.toml` (project declarations load only for trusted workspaces).
+Declares a new environment for the session's workspace and registers it live — no restart. The entry is deep-merged into the user-level `config.toml` `[environments]` section.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 | `environment_id` | body | string | **Required.** Id for the new environment |
-| `scope` | body | string | `global` (default) or `project` |
 | `entry` | body | object | **Required.** The environment entry: `{ type: "ssh", host, remote_bin?, default_cwd? }`, `{ type: "docker", container, context?, remote_bin?, default_cwd? }`, or `{ command, args?, env?, default_cwd? }` |
 
-On success, `data` is `{ workspace_id, environment_id, scope }`.
+On success, `data` is `{ workspace_id, environment_id }`.
 
-- `40001`: the entry fails validation, the id is already declared, or the project file is unreadable or invalid
+- `40001`: the entry fails validation or the id is already declared
 - `40401`: session not found
 
 #### `POST /api/v1/sessions/{session_id}/export`

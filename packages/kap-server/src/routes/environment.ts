@@ -156,7 +156,7 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
         }
         const workspaceId = session.accessor.get(ISessionContext).workspaceId;
         const instance = await resolveWorkspaceInstance(core, workspaceId);
-        const declarations = await resolveDeclarations(core, instance.root);
+        const declarations = await resolveDeclarations(core);
         const payload: SessionEnvironmentsResponse = {
           workspace_id: workspaceId,
           environments: instance.environments.snapshot().environments.map((environment) =>
@@ -195,15 +195,13 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
           throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${req.params.session_id} does not exist`);
         }
         const workspaceId = session.accessor.get(ISessionContext).workspaceId;
-        const scope = req.body.scope ?? 'global';
         const entry = toEngineEnvironmentEntry(req.body.entry);
         await core.accessor.get(IEnvironmentDeclarationService).declare({
           workspaceId,
           id: req.body.environment_id,
           entry,
-          scope,
         });
-        reply.send(okEnvelope({ workspace_id: workspaceId, environment_id: req.body.environment_id, scope }, req.id));
+        reply.send(okEnvelope({ workspace_id: workspaceId, environment_id: req.body.environment_id }, req.id));
       } catch (error) {
         sendEnvironmentRouteError(reply, req.id, error);
       }
@@ -242,14 +240,12 @@ const declareEnvironmentEntrySchema = z.union([
 
 const declareEnvironmentRequestSchema = z.object({
   environment_id: z.string().min(1),
-  scope: z.enum(['global', 'project']).optional(),
   entry: declareEnvironmentEntrySchema,
 });
 
 const declareEnvironmentResponseSchema = z.object({
   workspace_id: z.string(),
   environment_id: z.string(),
-  scope: z.enum(['global', 'project']),
 });
 
 function toEngineEnvironmentEntry(entry: z.infer<typeof declareEnvironmentEntrySchema>): RemoteEnvironmentEntry {
@@ -293,9 +289,8 @@ async function resolveWorkspaceInstance(core: Scope, workspaceId: string): Promi
 
 async function resolveDeclarations(
   core: Scope,
-  root: string,
 ): Promise<ReadonlyMap<string, RemoteEnvironmentEntry>> {
-  const declarations = await core.accessor.get(IEnvironmentDeclarationService).declarations(root);
+  const declarations = await core.accessor.get(IEnvironmentDeclarationService).declarations();
   return new Map((declarations?.entries ?? []).map((declaration) => [declaration.id, declaration.entry]));
 }
 

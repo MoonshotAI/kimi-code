@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ConnectionClosedError,
-  ControlCallTimeoutError,
   HandshakeError,
   RemoteExecConnection,
   RequestTimeoutError,
@@ -176,47 +175,6 @@ describe('handshake', () => {
     await expect(
       RemoteExecConnection.connect(pipe, { clientName: 'test', clientVersion: '0.0.0' }),
     ).rejects.toThrow(/wrong dialect/);
-  });
-});
-
-describe('control call timeout', () => {
-  it('fails an unanswered control call within the bound and closes the connection', async () => {
-    const pipe = createScriptedServer((frame, reply) => {
-      if (frame.method === INITIALIZE_METHOD) {
-        reply({ id: frame.id, result: testInitializeResult() });
-      }
-      // Every later call is left unanswered: the executor stalled after the handshake.
-    });
-    const connection = await RemoteExecConnection.connect(pipe, {
-      clientName: 'test',
-      clientVersion: '0.0.0',
-      controlCallTimeoutMs: 100,
-    });
-    const started = Date.now();
-    const call = connection.call(ENVIRONMENT_STATUS_METHOD);
-    await expect(call).rejects.toThrow(ConnectionClosedError);
-    await expect(call).rejects.toThrow(/timed out/);
-    expect(Date.now() - started).toBeLessThan(5_000);
-    expect(connection.closed).toBe(true);
-    expect(connection.closeReason?.error).toBeInstanceOf(ControlCallTimeoutError);
-  });
-
-  it('cancels an outstanding business call when a control call timeout closes the connection', async () => {
-    const pipe = createScriptedServer((frame, reply) => {
-      if (frame.method === INITIALIZE_METHOD) {
-        reply({ id: frame.id, result: testInitializeResult() });
-      }
-    });
-    const connection = await RemoteExecConnection.connect(pipe, {
-      clientName: 'test',
-      clientVersion: '0.0.0',
-      controlCallTimeoutMs: 100,
-    });
-    const pending = connection.call(FS_READ_FILE_METHOD, { path: '/nope' });
-    const control = connection.call(ENVIRONMENT_STATUS_METHOD);
-    await expect(control).rejects.toThrow(ConnectionClosedError);
-    await expect(pending).rejects.toThrow(ConnectionClosedError);
-    expect(connection.closed).toBe(true);
   });
 });
 

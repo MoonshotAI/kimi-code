@@ -54,40 +54,16 @@ describe('EnvironmentAddDialogComponent', () => {
     dialog.handleInput(TAB);
     dialog.handleInput(TAB);
     typeText(dialog, '/home/me/projects');
-    dialog.handleInput(ENTER); // defaultCwd → scope
-    dialog.handleInput(ENTER); // scope → submit
+    dialog.handleInput(ENTER); // submit
     expect(onSubmit).toHaveBeenCalledWith({
       id: 'dev-box',
       entry: { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me/projects' },
-      scope: 'global',
     });
   });
 
-  it('defaults the scope to global and says where the entry lands', () => {
+  it('says where the entry lands', () => {
     const dialog = makeDialog({});
-    expect(rendered(dialog)).toContain('[ Global ]');
     expect(rendered(dialog)).toContain('Written to [environments] in config.toml.');
-  });
-
-  it('toggles the scope to project with the arrow keys and submits it', () => {
-    const onSubmit = vi.fn();
-    const dialog = makeDialog({ onSubmit });
-    typeText(dialog, 'dev-box');
-    dialog.handleInput(TAB);
-    dialog.handleInput(TAB);
-    dialog.handleInput(TAB); // scope
-    expect(rendered(dialog)).toContain('(←→ to switch)');
-    dialog.handleInput('\u001B[C'); // →
-    expect(rendered(dialog)).toContain('[ Project ]');
-    expect(rendered(dialog)).toContain('Written to .kimi-code/environments.toml in this workspace.');
-    dialog.handleInput('\u001B[D'); // ← flips back
-    dialog.handleInput('\u001B[C'); // →
-    dialog.handleInput(ENTER);
-    expect(onSubmit).toHaveBeenCalledWith({
-      id: 'dev-box',
-      entry: { type: 'ssh', host: 'dev-box', defaultCwd: undefined },
-      scope: 'project',
-    });
   });
 
   it('prefills the target field from an ssh host candidate', () => {
@@ -103,12 +79,10 @@ describe('EnvironmentAddDialogComponent', () => {
     typeText(dialog, 'orbstack');
     dialog.handleInput(TAB);
     dialog.handleInput(TAB);
-    dialog.handleInput(ENTER); // defaultCwd → scope
-    dialog.handleInput(ENTER); // scope → submit
+    dialog.handleInput(ENTER); // submit
     expect(onSubmit).toHaveBeenCalledWith({
       id: 'myapp-dev',
       entry: { type: 'docker', container: 'myapp-dev', context: 'orbstack', defaultCwd: undefined },
-      scope: 'global',
     });
   });
 
@@ -120,8 +94,7 @@ describe('EnvironmentAddDialogComponent', () => {
     typeText(dialog, 'ssh i-123 -- /home/me/.kimi-code/bin/kimi exec-server --listen stdio');
     dialog.handleInput(TAB);
     dialog.handleInput(TAB);
-    dialog.handleInput(ENTER); // defaultCwd → scope
-    dialog.handleInput(ENTER); // scope → submit
+    dialog.handleInput(ENTER); // submit
     expect(onSubmit).toHaveBeenCalledWith({
       id: 'sandbox',
       entry: {
@@ -129,14 +102,12 @@ describe('EnvironmentAddDialogComponent', () => {
         args: ['ssh', 'i-123', '--', '/home/me/.kimi-code/bin/kimi', 'exec-server', '--listen', 'stdio'],
         defaultCwd: undefined,
       },
-      scope: 'global',
     });
   });
 
   it('rejects an empty target with an inline hint', () => {
     const onSubmit = vi.fn();
     const dialog = makeDialog({ onSubmit });
-    dialog.handleInput(TAB);
     dialog.handleInput(TAB);
     dialog.handleInput(TAB);
     dialog.handleInput(ENTER);
@@ -148,7 +119,6 @@ describe('EnvironmentAddDialogComponent', () => {
     const onSubmit = vi.fn();
     const dialog = makeDialog({ existingIds: ['local', 'dev-box'], onSubmit });
     typeText(dialog, 'dev-box');
-    dialog.handleInput(TAB);
     dialog.handleInput(TAB);
     dialog.handleInput(TAB);
     dialog.handleInput(ENTER);
@@ -163,7 +133,6 @@ describe('EnvironmentAddDialogComponent', () => {
     dialog.handleInput(TAB);
     typeText(dialog, 'local');
     dialog.handleInput(TAB);
-    dialog.handleInput(TAB);
     dialog.handleInput(ENTER);
     expect(onSubmit).not.toHaveBeenCalled();
     expect(rendered(dialog)).toContain('Environment id "local" is reserved.');
@@ -175,7 +144,6 @@ describe('EnvironmentAddDialogComponent', () => {
     dialog.showError('environments.dev-box.host: required');
     expect(rendered(dialog)).toContain('environments.dev-box.host: required');
     typeText(dialog, 'dev-box');
-    dialog.handleInput(TAB);
     dialog.handleInput(TAB);
     dialog.handleInput(TAB);
     dialog.handleInput(ENTER);

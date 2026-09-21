@@ -6,16 +6,20 @@ import { join } from 'node:path';
 import { dirname as posixDirname } from 'node:path/posix';
 
 import {
-  CdnExecutorArtifactLocator,
   classifyHandshakeFailure,
   connectWithGuidance,
   dockerBaseArgs,
-  probeExecutorTarget,
   RemoteEnvironment,
-  type ExecutorArtifact,
   type LauncherSpec,
   type LocalRunner,
 } from '../../src/client/index';
+
+interface ExecutorArtifact {
+  readonly version: string;
+  readonly filename: string;
+  readonly url: string;
+  readonly sha256: string;
+}
 
 interface Flags {
   target?: string;
@@ -367,7 +371,6 @@ async function scenarioInstall(flags: Flags): Promise<void> {
   if (launcher.type === 'command') {
     throw new Error('--scenario install requires a typed target (ssh or docker)');
   }
-  const locator = new CdnExecutorArtifactLocator({ cdnBaseUrl: cdnBase });
   const onDiagnostic = (line: string): void => {
     process.stdout.write(`  [diag] ${line}\n`);
   };
@@ -400,7 +403,7 @@ async function scenarioInstall(flags: Flags): Promise<void> {
         attempts += 1;
         return RemoteEnvironment.connect({ ...connectBase, launcher: retryLauncher });
       },
-      { launcher, artifactLocator: locator, clientVersion, runner: driverRunner },
+      { launcher, runner: driverRunner },
     ).then(
       () => 'connected' as const,
       (error: unknown) => error,
@@ -412,19 +415,13 @@ async function scenarioInstall(flags: Flags): Promise<void> {
       throw new Error(`expected exactly 1 connect attempt, got ${String(attempts)}`);
     }
     const message = outcome instanceof Error ? outcome.message : String(outcome);
-    const probed = await probeExecutorTarget(launcher, driverRunner);
-    if (probed === undefined) throw new Error('could not probe the target platform');
-    const artifact = await locator.locate(probed.target, clientVersion);
-    for (const expected of [artifact.url, 'curl -fL', '/tmp/kimi-install', '.kimi-code/bin/kimi', 'Then reconnect the environment.']) {
+    for (const expected of ['Kimi Code release CDN', 'executor path', 'Then reconnect the environment.']) {
       if (!message.includes(expected)) {
         throw new Error(`guidance is missing ${JSON.stringify(expected)}:\n${message}`);
       }
     }
-    if (launcher.type === 'ssh' && !message.includes(`scp /tmp/kimi-install ${launcher.host}:/tmp/kimi-install`)) {
-      throw new Error(`guidance is missing the scp command:\n${message}`);
-    }
-    if (launcher.type === 'docker' && !message.includes(`cp /tmp/kimi-install ${launcher.container}:/tmp/kimi-install`)) {
-      throw new Error(`guidance is missing the docker cp command:\n${message}`);
+    if (message.includes('curl -fL') || message.includes('/tmp/kimi-install')) {
+      throw new Error(`guidance fabricates install commands:\n${message}`);
     }
     // Detection only: nothing was installed, so a raw connect still fails as
     // a missing executor.
@@ -442,9 +439,8 @@ async function scenarioInstall(flags: Flags): Promise<void> {
   });
 
   await check('install', 'following the guidance manually yields a working environment', async () => {
-    const probed = await probeExecutorTarget(launcher, driverRunner);
-    if (probed === undefined) throw new Error('could not probe the target platform');
-    const artifact = await locator.locate(probed.target, clientVersion);
+    const probed = await probeTarget(launcher);
+    const artifact = await locateArtifact(cdnBase, clientVersion, probed);
     await manualInstall(launcher, artifact);
     let attempts = 0;
     const environment = await connectWithGuidance(
@@ -452,7 +448,7 @@ async function scenarioInstall(flags: Flags): Promise<void> {
         attempts += 1;
         return RemoteEnvironment.connect({ ...connectBase, launcher: retryLauncher });
       },
-      { launcher, artifactLocator: locator, clientVersion, runner: driverRunner },
+      { launcher, runner: driverRunner },
     );
     try {
       if (attempts !== 1) {
@@ -548,6 +544,53 @@ async function dockerHomeDir(
   const home = result.stdout.trim();
   if (!home.startsWith('/')) throw new Error(`unexpected container home ${JSON.stringify(home)}`);
   return home;
+}
+
+async function probeTarget(
+  launcher: LauncherSpec & { readonly type: 'ssh' | 'docker' },
+): Promise<{ readonly osKind: string; readonly osArch: string }> {
+  const request =
+    launcher.type === 'ssh'
+      ? { program: 'ssh', args: [launcher.host, 'uname -sm'] }
+      : { program: 'docker', args: [...dockerBaseArgs(launcher.context), 'exec', launcher.container, 'sh', '-c', 'uname -sm'] };
+  const result = await driverRunner(request);
+  if (result.code !== 0) {
+    throw new Error(`target probe failed: ${result.stderr.trim() || result.stdout.trim()}`);
+  }
+  const [kernel, machine] = result.stdout.trim().split(/\s+/);
+  const osKind = kernel === 'Linux' ? 'Linux' : kernel === 'Darwin' ? 'macOS' : undefined;
+  const osArch = machine === 'x86_64' ? 'x64' : machine === 'aarch64' || machine === 'arm64' ? 'arm64' : undefined;
+  if (osKind === undefined || osArch === undefined) {
+    throw new Error(`unsupported target platform ${JSON.stringify(result.stdout.trim())}`);
+  }
+  return { osKind, osArch };
+}
+
+async function locateArtifact(
+  cdnBase: string,
+  clientVersion: string,
+  target: { readonly osKind: string; readonly osArch: string },
+): Promise<ExecutorArtifact> {
+  const platform = target.osKind === 'Linux' ? 'linux' : 'darwin';
+  const key = `${platform}-${target.osArch}`;
+  const manifestUrl = `${cdnBase}/binaries/${clientVersion}/manifest.json`;
+  const response = await fetch(manifestUrl);
+  if (!response.ok) {
+    throw new Error(`fetching ${manifestUrl} returned HTTP ${String(response.status)}`);
+  }
+  const manifest = (await response.json()) as {
+    platforms?: Record<string, { filename?: string; checksum?: string }>;
+  };
+  const entry = manifest.platforms?.[key];
+  if (entry?.filename === undefined || entry.checksum === undefined) {
+    throw new Error(`no ${key} artifact in the ${clientVersion} release manifest`);
+  }
+  return {
+    version: clientVersion,
+    filename: entry.filename,
+    url: `${cdnBase}/binaries/${clientVersion}/${entry.filename}`,
+    sha256: entry.checksum,
+  };
 }
 
 async function downloadVerified(artifact: ExecutorArtifact): Promise<string> {

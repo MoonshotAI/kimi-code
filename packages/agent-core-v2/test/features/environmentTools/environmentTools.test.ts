@@ -85,18 +85,9 @@ function configStub(section: unknown): IConfigService {
   } as unknown as IConfigService;
 }
 
-function docsStub(): IAtomicDocumentStore {
-  return {
-    _serviceBrand: undefined,
-    get: async () => undefined,
-  } as unknown as IAtomicDocumentStore;
-}
-
 function declarationService(workspaces: IWorkspaceInstanceManager, config: unknown): EnvironmentDeclarationService {
   return new EnvironmentDeclarationService(
     configStub(config),
-    {} as IHostFileSystem,
-    docsStub(),
     { _serviceBrand: undefined, read: async function* () {} } as never,
     { _serviceBrand: undefined, scope: (name: string) => name } as never,
     workspaces,
@@ -133,7 +124,6 @@ describe('ChangeEnvironmentTool', () => {
       bindingStub(calls, { workspaceId: 'workspace', environmentId: 'local' }),
       planMode(options.plan),
       session(),
-      workspaces,
       declarationService(workspaces, options.config),
     );
     return { tool, calls };
@@ -183,7 +173,6 @@ describe('ChangeEnvironmentTool', () => {
       } as unknown as IAgentEnvironmentBindingService,
       planMode(),
       session(),
-      workspacesStub(registry),
       declarationService(workspacesStub(registry), undefined),
     );
     const execution = await tool.resolveExecution({ id: 'dev-box', cwd: '/srv/app' } as ChangeEnvironmentInput);
@@ -242,7 +231,6 @@ describe('ChangeEnvironmentTool', () => {
       } as unknown as IAgentEnvironmentBindingService,
       planMode(),
       session(),
-      workspacesStub(registry),
       declarationService(workspacesStub(registry), undefined),
     );
     const execution = await tool.resolveExecution({

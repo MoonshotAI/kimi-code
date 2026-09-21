@@ -16,7 +16,6 @@ import {
   ITelemetryService,
   noopTelemetryService,
 } from '@moonshot-ai/agent-core-v2';
-import { CdnExecutorArtifactLocator } from '@moonshot-ai/remote-exec';
 
 import { listLiveServerInstances } from '../src/instanceRegistry';
 import {
@@ -356,10 +355,9 @@ async function allocateAdjacentFreePair(
 }
 
 describe('createRemoteEnvironmentProviderOptions', () => {
-  it('attaches a region CDN artifact locator to the remote environment provider factory', () => {
+  it('passes the client identity and diagnostics through to the provider factory', () => {
     const onDiagnostic = (): void => {};
     const options = createRemoteEnvironmentProviderOptions({
-      region: 'global',
       clientVersion: '9.9.9-test',
       onDiagnostic,
     });
@@ -368,24 +366,6 @@ describe('createRemoteEnvironmentProviderOptions', () => {
     expect(options.clientVersion).toBe('9.9.9-test');
     expect(options.onDiagnostic).toBe(onDiagnostic);
     expect(options.probeRunner).toBeUndefined();
-    expect(options.artifactLocator).toBeInstanceOf(CdnExecutorArtifactLocator);
-    const locator = options.artifactLocator as CdnExecutorArtifactLocator;
-    expect(locator.cdnBaseUrl).toBe('https://code.kimi.ai/kimi-code');
-    expect(locator.manifestUrl('9.9.9-test')).toBe(
-      'https://code.kimi.ai/kimi-code/binaries/9.9.9-test/manifest.json',
-    );
-  });
-
-  it('derives the mainland-cn CDN base from the region profile', () => {
-    const options = createRemoteEnvironmentProviderOptions({
-      region: 'mainland-cn',
-      clientVersion: '9.9.9-test',
-      onDiagnostic: () => {},
-    });
-
-    expect((options.artifactLocator as CdnExecutorArtifactLocator).cdnBaseUrl).toBe(
-      'https://code.kimi.com/kimi-code',
-    );
   });
 });
 

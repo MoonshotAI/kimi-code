@@ -56,7 +56,7 @@ function makeHost(options: {
       return { workspaceId: 'ws-1', environmentId: options.currentEnvironmentId ?? 'local' };
     }),
     declareEnvironment: vi.fn(
-      async (input: { id: string; entry: { type?: string; defaultCwd?: string }; scope?: string }) => {
+      async (input: { id: string; entry: { type?: string; defaultCwd?: string } }) => {
         if (options.declareError !== undefined) throw options.declareError;
         await options.declarationReady;
         const declared = {
@@ -282,14 +282,12 @@ describe('handleEnvironmentCommand', () => {
     form.handleInput(TAB); // id (empty -> derives from host)
     form.handleInput(TAB); // defaultCwd
     typeText(form, '/home/me/projects');
-    form.handleInput(ENTER); // defaultCwd → scope
-    form.handleInput(ENTER); // scope → submit (default: global)
+    form.handleInput(ENTER); // submit
 
     await vi.waitFor(() => {
       expect(session.declareEnvironment).toHaveBeenCalledWith({
         id: 'staging',
         entry: { type: 'ssh', host: 'staging', defaultCwd: '/home/me/projects' },
-        scope: 'global',
       });
     });
     await vi.waitFor(() => {
@@ -297,34 +295,6 @@ describe('handleEnvironmentCommand', () => {
     });
     // The watch-driven registration lands before the manager reopens, so the
     // new environment is listed immediately.
-    await vi.waitFor(() => {
-      const reopened = latest(mounted, EnvironmentManagerComponent);
-      const plain = reopened.render(120).join('\n').replaceAll(/\[[0-9;]*m/g, '');
-      expect(plain).toContain('staging');
-    });
-  });
-
-  it('adds a project-scope environment through the form scope control', async () => {
-    const { host, session, mounted } = makeHost({});
-    await handleEnvironmentCommand(host);
-
-    const form = await openStagingAddForm(mounted);
-    form.handleInput(TAB); // id
-    form.handleInput(TAB); // defaultCwd
-    form.handleInput(TAB); // scope
-    form.handleInput('\u001B[C'); // → project
-    form.handleInput(ENTER); // submit
-
-    await vi.waitFor(() => {
-      expect(session.declareEnvironment).toHaveBeenCalledWith({
-        id: 'staging',
-        entry: { type: 'ssh', host: 'staging', defaultCwd: undefined },
-        scope: 'project',
-      });
-    });
-    await vi.waitFor(() => {
-      expect(host.showStatus).toHaveBeenCalledWith('Environment "staging" added to .kimi-code/environments.toml.');
-    });
     await vi.waitFor(() => {
       const reopened = latest(mounted, EnvironmentManagerComponent);
       const plain = reopened.render(120).join('\n').replaceAll(/\[[0-9;]*m/g, '');
@@ -364,8 +334,7 @@ describe('handleEnvironmentCommand', () => {
     form.handleInput(TAB); // id (empty -> derives from host)
     form.handleInput(TAB); // defaultCwd
     typeText(form, '/home/me/projects');
-    form.handleInput(ENTER); // defaultCwd → scope
-    form.handleInput(ENTER); // scope → submit
+    form.handleInput(ENTER); // submit
 
     await vi.waitFor(() => { expect(session.declareEnvironment).toHaveBeenCalledTimes(1); });
     expect(host.showStatus).not.toHaveBeenCalled();
@@ -389,7 +358,6 @@ describe('handleEnvironmentCommand', () => {
     await handleEnvironmentCommand(host);
 
     const form = await openStagingAddForm(mounted);
-    form.handleInput(TAB);
     form.handleInput(TAB);
     form.handleInput(TAB);
     form.handleInput(ENTER);

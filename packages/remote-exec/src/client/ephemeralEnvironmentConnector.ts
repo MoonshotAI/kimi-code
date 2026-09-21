@@ -1,6 +1,5 @@
 import { ScopeActivation, overrideScopedService } from '@moonshot-ai/agent-core-v2/_base/di/scope';
 import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
-import { IOAuthService } from '@moonshot-ai/agent-core-v2/app/auth/auth';
 import { IBootstrapService } from '@moonshot-ai/agent-core-v2/app/bootstrap/bootstrap';
 import { LifecycleScope } from '@moonshot-ai/agent-core-v2/app/scopes';
 import {
@@ -8,9 +7,7 @@ import {
   type EphemeralEnvironmentConnectRequest,
   type EphemeralEnvironmentConnection,
 } from '@moonshot-ai/agent-core-v2/environment/ephemeralEnvironment';
-import { kimiRegionProfile } from '@moonshot-ai/kimi-code-oauth';
 
-import { CdnExecutorArtifactLocator } from './artifactLocator';
 import { connectWithGuidance } from './connectGuidance';
 import { RemoteEnvironment, type RemoteEnvironmentOptions } from './remoteEnvironment';
 import { toLauncherSpec } from './remoteEnvironmentProvider';
@@ -24,7 +21,6 @@ export class RemoteEphemeralEnvironmentConnector implements IEphemeralEnvironmen
 
   constructor(
     @IBootstrapService private readonly bootstrap: IBootstrapService,
-    @IOAuthService private readonly oauth: IOAuthService,
     @ILogService private readonly log: ILogService,
     private readonly connectFn: EphemeralEnvironmentConnectFn = (options) =>
       RemoteEnvironment.connect(options),
@@ -50,10 +46,6 @@ export class RemoteEphemeralEnvironmentConnector implements IEphemeralEnvironmen
         }),
       {
         launcher,
-        artifactLocator: new CdnExecutorArtifactLocator({
-          cdnBaseUrl: kimiRegionProfile(this.oauth.getRegion()).cdnBase,
-        }),
-        clientVersion,
       },
     );
     try {

@@ -185,7 +185,6 @@ import {
   IAgentToolRegistryService,
   type HostUiCapability,
   IAgentTowerService,
-  IAtomicDocumentStore,
   IBootstrapService,
   IConfigService,
   IEnvironmentDeclarationService,
@@ -196,7 +195,6 @@ import {
   IMcpManagementService,
   IMcpOAuthService,
   IModelService,
-  IOAuthService,
   IProviderService,
   ISessionBtwService,
   ISessionContext,
@@ -218,7 +216,6 @@ import {
   followSessionLifecycles,
   getLiveSessionById,
   isError2,
-  previewProjectEnvironmentDeclarations,
   programForSession,
   readSshConfigHosts,
   environmentEntryInfo,
@@ -261,8 +258,8 @@ import {
 } from '@moonshot-ai/klient';
 import { RegistryImportError } from '#/catalog';
 import { createKlient } from '@moonshot-ai/klient/memory';
-import { assertKimiHostIdentity, createKimiDefaultHeaders, kimiRegionProfile } from '@moonshot-ai/kimi-code-oauth';
-import { CdnExecutorArtifactLocator, RemoteEnvironmentProviderFactory } from '@moonshot-ai/remote-exec';
+import { assertKimiHostIdentity, createKimiDefaultHeaders } from '@moonshot-ai/kimi-code-oauth';
+import { RemoteEnvironmentProviderFactory } from '@moonshot-ai/remote-exec';
 
 import { KimiAuthFacade } from '#/auth';
 import { ensureConfigFile, HookDefSchema } from '#/config/index';
@@ -351,7 +348,6 @@ import type {
   UploadFileOptions,
   WorkspaceEnvironmentDeclarationInfo,
   WorkspaceTrustInfo,
-  WorkspaceTrustEnvironmentInfo,
 } from '#/types';
 import {
   diagnosticsToConfigDiagnostics,
@@ -512,9 +508,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         new RemoteEnvironmentProviderFactory({
           clientName: 'kimi-code',
           clientVersion: identity.version,
-          artifactLocator: new CdnExecutorArtifactLocator({
-            cdnBaseUrl: kimiRegionProfile(app.accessor.get(IOAuthService).getRegion()).cdnBase,
-          }),
           onDiagnostic: (line) => {
             app.accessor.get(ILogService).warn(line.trimEnd());
           },
@@ -769,8 +762,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo> {
     const handler = await this.workspaceHandlerFor('getWorkspaceTrustInfo', workDir);
     const trusted = await handler.program.trust.get();
-    if (trusted) return { trusted: true, gatedMcpServers: [], gatedEnvironments: [] };
-    const gatedEnvironments = await this.previewGatedEnvironments(workDir);
+    if (trusted) return { trusted: true, gatedMcpServers: [] };
     try {
       const fs = this.engineAccessor.get(IHostFileSystem);
       const [paths, loaded] = await Promise.all([
@@ -787,26 +779,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         .filter(([name]) => projectPaths.has(loaded.origins[name] ?? ''))
         .map(([name, config]) => describeWorkspaceMcpServer(name, config))
         .toSorted((a, b) => a.name.localeCompare(b.name));
-      return { trusted: false, gatedMcpServers, gatedEnvironments };
+      return { trusted: false, gatedMcpServers };
     } catch {
-      return { trusted: false, gatedMcpServers: [], gatedEnvironments };
-    }
-  }
-
-  /**
-   * Display-only preview of the project-declared environments trusting would
-   * register (the engine never loads project declarations while untrusted).
-   * An unreadable/invalid project file degrades to an empty list, matching
-   * the MCP preview's best-effort semantics.
-   */
-  private async previewGatedEnvironments(workDir: string): Promise<readonly WorkspaceTrustEnvironmentInfo[]> {
-    try {
-      return await previewProjectEnvironmentDeclarations(
-        this.engineAccessor.get(IHostFileSystem),
-        workDir,
-      );
-    } catch {
-      return [];
+      return { trusted: false, gatedMcpServers: [] };
     }
   }
 
@@ -824,17 +799,14 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   /**
    * Session-less declaration lookup (e.g. validating a `--environment <id>`
    * startup binding before any session exists), composed from the same engine
-   * services the session manager's create-time validation uses. Project
-   * entries resolve only for a trusted folder, matching createSession.
+   * services the session manager's create-time validation uses. Declarations
+   * come from the user-level `[environments]` section.
    */
   override async listEnvironmentDeclarations(
     workDir: string,
   ): Promise<readonly WorkspaceEnvironmentDeclarationInfo[]> {
     const resolved = await resolveWorkspaceEnvironmentDeclarations({
       config: this.engineAccessor.get(IConfigService),
-      fs: this.engineAccessor.get(IHostFileSystem),
-      docs: this.engineAccessor.get(IAtomicDocumentStore),
-      root: workDir,
     });
     return resolved.entries.map((declaration) => ({
       id: declaration.id,
@@ -2010,7 +1982,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const instance =
       manager.get(context.workspaceId) ??
       (await manager.getOrCreate({ root: context.cwd }));
-    const declarations = await this.resolveEnvironmentDeclarationEntries(instance.root);
+    const declarations = await this.resolveEnvironmentDeclarationEntries();
     return {
       environments: instance.environments.snapshot().environments.map((environment) =>
         environmentEntryInfo(environment, declarations.get(environment.environmentId)),
@@ -2026,17 +1998,13 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       workspaceId,
       id: input.id,
       entry: input.entry,
-      scope: input.scope,
     });
   }
 
-  private async resolveEnvironmentDeclarationEntries(root: string): Promise<ReadonlyMap<string, RemoteEnvironmentEntry>> {
+  private async resolveEnvironmentDeclarationEntries(): Promise<ReadonlyMap<string, RemoteEnvironmentEntry>> {
     try {
       const resolved = await resolveWorkspaceEnvironmentDeclarations({
         config: this.engineAccessor.get(IConfigService),
-        fs: this.engineAccessor.get(IHostFileSystem),
-        docs: this.engineAccessor.get(IAtomicDocumentStore),
-        root,
       });
       return new Map(resolved.entries.map((declaration) => [declaration.id, declaration.entry]));
     } catch {

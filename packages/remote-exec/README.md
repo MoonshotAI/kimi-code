@@ -9,7 +9,7 @@ agent-core-v2 `Environment` interface.
 packages/remote-exec/src/
 ├── protocol/   message types, error codes, NDJSON codec (self-contained)
 ├── client/     execBridge, launchers, connection, fs/process/terminal stubs, remoteEnvironment, remoteConnectionPool,
-│               remoteEnvironmentProvider, artifactLocator, executorDetect, connectGuidance (executor detection + guidance, spec D8/D9)
+│               remoteEnvironmentProvider, executorDetect, connectGuidance (executor detection + guidance)
 └── server/     stdioHost, fsHandler, processManager, environment, entry, standalone
 ```
 
@@ -89,10 +89,9 @@ Client-surface notes beyond the wire protocol:
   through `offset`/`maxBytes` range reads.
 - `RemoteEnvironmentProviderFactory` is the workspace composition root for
   declared environments: it attaches via `IWorkspaceInstanceManager.addProvider`,
-  reads the merged declaration set (`config.toml` `[environments]` plus a trusted
-  project-level `.kimi-code/environments.toml`, resolved by agent-core-v2's
-  `resolveWorkspaceEnvironmentDeclarations`), and registers each declared environment
-  as a `pending` placeholder (`ManagedRemoteEnvironment`) — no connections
+  reads the declaration set from `config.toml` `[environments]` (resolved by
+  agent-core-v2's `resolveWorkspaceEnvironmentDeclarations`), and registers
+  each declared environment as a `pending` placeholder (`ManagedRemoteEnvironment`) — no connections
   are made at registration.
 - Executor connections are owned by an app-level `RemoteConnectionPool`, not by
   workspaces: one connection per declaration fingerprint is shared by every
@@ -110,14 +109,14 @@ Client-surface notes beyond the wire protocol:
   be another workspace. The replaced connection is disposed after every view
   settles, so old-generation leases keep their registry drain grace first.
 
-## Executor detection and version guidance (spec D8/D9)
+## Executor detection and version guidance
 
 The connect path (`connectWithGuidance`, wired into the factory) classifies
 handshake failures and attaches per-launcher install/upgrade guidance to the
 error. **The executor is never installed automatically**: a missing or too-old
-executor fails the connect, and the error text tells the user exactly which
-commands to run. Before the first exec attempt, a docker launcher whose
-`remoteBin` is `~`-prefixed (the default
+executor fails the connect, and the error text tells the user where to get the
+binary and where to put it. Before the first exec attempt, a docker launcher
+whose `remoteBin` is `~`-prefixed (the default
 `~/.kimi-code/bin/kimi` is) is resolved to the container user's absolute home
 path with one `docker exec … sh -c` probe — `docker exec` passes argv to
 execve without a shell, so the tilde would reach execve literally and every
@@ -129,54 +128,17 @@ at the resolved path.
 
 - **Missing executor** — the launcher exited 127 (ssh remote shell) or 126
   (docker exec "executable file not found"), or the handshake **timed out**.
-  The error gains install guidance. When an artifact locator and the client
-  version are configured, the failure path probes the target (`uname -sm` and
-  the remote `$HOME` — the launcher transport still runs one remote command
-  after a missing-executor failure), locates the release artifact for the
-  probed platform, and prints directly runnable commands: `curl` the verified
-  build, copy it over (`scp` for ssh, `docker cp` for containers), then
-  `chmod` + `mv -f` it into the executor path. Tilde-prefixed `remoteBin`
-  values (custom ones included) are resolved against the probed `$HOME` so no
-  unexpanded `~` reaches the printed commands; without a probed home they are
-  spelled through `"$HOME"`. Any probe/locate failure — and `command`
-  environments, which have no probe channel — degrades to the generic
-  release-CDN wording (`<cdnBase>/binaries/<version>/manifest.json`, or the
-  concrete manifest URL when the locator is a `CdnExecutorArtifactLocator`).
-  Guidance generation never masks the original handshake failure.
+  The error gains install guidance: download the `kimi` binary for the target
+  platform from the Kimi Code release CDN and install it at the executor path
+  the launcher invokes (named in the message; `command` environments are
+  pointed at the absolute path their command invokes). Guidance generation
+  never masks the original handshake failure.
 - **Too-old executor** — the handshake answered but `executorVersion <
   MIN_EXECUTOR_VERSION`. The client rejects with *upgrade* guidance (current
-  vs minimum version, then the same concrete install commands), deliberately
+  vs minimum version, then the same install wording), deliberately
   distinct from the missing-executor guidance; no auto-upgrade is performed.
 
-### Artifact locator — injection point
-
-`ExecutorArtifactLocator` resolves `(osKind, osArch, version)` to
-`{url, sha256, filename, version}`. The default implementation,
-`CdnExecutorArtifactLocator`, follows the SEA native release chain
-(`apps/kimi-code/scripts/native`): it fetches
-`<cdnBaseUrl>/binaries/<version>/manifest.json`, selects the
-`<platform>-<arch>` platform entry (`linux-x64`, `linux-arm64`, `darwin-x64`,
-`darwin-arm64` — the executor is posix-only), verifies the manifest's own
-`version` matches the request, and derives
-`<cdnBaseUrl>/binaries/<version>/<filename>` pinning the entry's `checksum`
-(SHA-256 of the bare binary).
-
-The CDN base is region-dependent app-layer knowledge, so it is **injected**:
-the composition root (kap-server mission) constructs the factory with
-
-```ts
-new RemoteEnvironmentProviderFactory({
-  artifactLocator: new CdnExecutorArtifactLocator({
-    cdnBaseUrl: kimiRegionProfile(resolveKimiRegion({ configuredOAuthHost, configuredOAuthKey })).cdnBase,
-  }),
-  clientVersion: <the server/CLI version>,
-})
-```
-
-`kimiRegionProfile`/`resolveKimiRegion` come from `@moonshot-ai/kimi-code-oauth`
-(already a kap-server dependency — the same source rgLocator uses). Without a
-locator the guidance falls back to the generic release-CDN wording.
-`probeRunner` is the test seam for the remote probes.
+`probeRunner` is the test seam for the docker home probe.
 
 Wire discipline: NDJSON frames (`\n`-terminated, `\r\n` tolerated, blank lines
 skipped, strict UTF-8), one message capped at 64MiB (disconnect on exceed),

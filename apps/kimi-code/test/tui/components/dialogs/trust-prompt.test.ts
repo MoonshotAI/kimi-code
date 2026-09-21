@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { WorkspaceTrustEnvironmentInfo, WorkspaceTrustMcpServerInfo } from '@moonshot-ai/kimi-code-sdk';
+import type { WorkspaceTrustMcpServerInfo } from '@moonshot-ai/kimi-code-sdk';
 
 import { TrustPromptComponent } from '#/tui/components/dialogs/trust-prompt';
 
@@ -12,12 +12,10 @@ function strip(text: string): string {
 
 function renderLines(
   gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[] = [],
-  gatedEnvironments: readonly WorkspaceTrustEnvironmentInfo[] = [],
 ): string[] {
   const prompt = new TrustPromptComponent({
     workDir: '/tmp/demo-workspace',
     gatedMcpServers,
-    gatedEnvironments,
     onSelect: vi.fn(),
   });
   return prompt.render(100).map(strip);
@@ -59,35 +57,11 @@ describe('TrustPromptComponent', () => {
     expect(text).not.toContain('\u001B]8;;https://evil.test');
   });
 
-  it('lists the gated project environment launchers when present', () => {
-    const lines = renderLines([], [
-      { id: 'dev-box', commandLine: 'ssh dev-box /home/me/.kimi-code/bin/kimi exec-server --listen stdio' },
-      { id: 'sandbox', commandLine: 'sandbox ssh i-1234567890 -- /home/me/.kimi-code/bin/kimi exec-server --listen stdio' },
-    ]);
-    expect(lines.some((l) => l.includes('Project environment launchers'))).toBe(true);
-    expect(lines.some((l) => l.includes('dev-box: ssh dev-box /home/me/.kimi-code/bin/kimi exec-server --listen stdio'))).toBe(true);
-    expect(lines.some((l) => l.includes('sandbox: sandbox ssh i-1234567890'))).toBe(true);
-    expect(renderLines().some((l) => l.includes('Project environment launchers'))).toBe(false);
-  });
-
-  it('strips terminal control characters from workspace-supplied environment launchers', () => {
-    const esc = String.fromCodePoint(27);
-    const bel = String.fromCodePoint(7);
-    const lines = renderLines([], [
-      { id: 'evil', commandLine: `ssh evil${esc}[2J${bel}host /bin/sh` },
-    ]);
-    const text = lines.join('\n');
-    expect(text).toContain('evil: ssh evil[2Jhost /bin/sh');
-    expect(text).not.toContain(esc);
-    expect(text).not.toContain(bel);
-  });
-
   it('defaults to Trust this folder', () => {
     const onSelect = vi.fn();
     const prompt = new TrustPromptComponent({
       workDir: '/tmp/demo-workspace',
       gatedMcpServers: [],
-      gatedEnvironments: [],
       onSelect,
     });
     prompt.handleInput('\r');
@@ -99,7 +73,6 @@ describe('TrustPromptComponent', () => {
     const prompt = new TrustPromptComponent({
       workDir: '/tmp/demo-workspace',
       gatedMcpServers: [],
-      gatedEnvironments: [],
       onSelect,
     });
     prompt.handleInput('\u001B[A');
@@ -112,7 +85,6 @@ describe('TrustPromptComponent', () => {
     const prompt = new TrustPromptComponent({
       workDir: '/tmp/demo-workspace',
       gatedMcpServers: [],
-      gatedEnvironments: [],
       onSelect,
     });
     prompt.handleInput('\u001B[B');
@@ -125,7 +97,6 @@ describe('TrustPromptComponent', () => {
     const prompt = new TrustPromptComponent({
       workDir: '/tmp/demo-workspace',
       gatedMcpServers: [],
-      gatedEnvironments: [],
       onSelect,
     });
     prompt.handleInput('\u001B');

@@ -2,11 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   describeEnvironmentEntry,
-  mergeEnvironmentDeclarations,
   EnvironmentsSectionSchema,
   sectionEntries,
   environmentIdProblem,
-  type RemoteEnvironmentDeclaration,
 } from '#/environment/remoteEnvironmentDeclaration';
 
 function parse(value: unknown) {
@@ -68,31 +66,16 @@ describe('EnvironmentsSectionSchema', () => {
   });
 });
 
-describe('declaration merge and defaults', () => {
-  const user: readonly RemoteEnvironmentDeclaration[] = [
-    { id: 'dev-box', entry: { type: 'ssh', host: 'user-box', defaultCwd: '/user' }, source: 'user' },
-    { id: 'other', entry: { type: 'ssh', host: 'other', defaultCwd: '/other' }, source: 'user' },
-  ];
-  const project: readonly RemoteEnvironmentDeclaration[] = [
-    { id: 'dev-box', entry: { type: 'ssh', host: 'project-box', defaultCwd: '/project' }, source: 'project' },
-  ];
-
-  it('lets project declarations override user declarations with the same id', () => {
-    const merged = mergeEnvironmentDeclarations(user, project);
-    expect(merged).toHaveLength(2);
-    const devBox = merged.find((declaration) => declaration.id === 'dev-box');
-    expect(devBox).toMatchObject({ source: 'project', entry: { host: 'project-box' } });
-  });
-
-  it('lists section entries with their source, skipping the default key', () => {
+describe('sectionEntries', () => {
+  it('lists section entries, skipping the default key', () => {
     const section = parse({
       default: 'dev-box',
       'dev-box': { type: 'ssh', host: 'x', defaultCwd: '/home/me' },
     });
     expect(section.success).toBe(true);
     if (section.success) {
-      expect(sectionEntries(section.data, 'user')).toEqual([
-        { id: 'dev-box', entry: { type: 'ssh', host: 'x', defaultCwd: '/home/me' }, source: 'user' },
+      expect(sectionEntries(section.data)).toEqual([
+        { id: 'dev-box', entry: { type: 'ssh', host: 'x', defaultCwd: '/home/me' } },
       ]);
     }
   });

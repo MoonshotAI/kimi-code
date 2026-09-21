@@ -31,10 +31,8 @@ import {
   createKimiDefaultHeaders,
   kimiRegionProfile,
   type KimiHostIdentity,
-  type KimiRegion,
 } from '@moonshot-ai/kimi-code-oauth';
 import {
-  CdnExecutorArtifactLocator,
   RemoteEnvironmentProviderFactory,
   type RemoteEnvironmentProviderFactoryOptions,
 } from '@moonshot-ai/remote-exec';
@@ -145,7 +143,6 @@ const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 58627;
 
 export interface CreateRemoteEnvironmentProviderOptionsInput {
-  readonly region: KimiRegion;
   readonly clientVersion: string;
   readonly onDiagnostic: (line: string) => void;
 }
@@ -156,9 +153,6 @@ export function createRemoteEnvironmentProviderOptions(
   return {
     clientName: 'kimi-code',
     clientVersion: input.clientVersion,
-    artifactLocator: new CdnExecutorArtifactLocator({
-      cdnBaseUrl: kimiRegionProfile(input.region).cdnBase,
-    }),
     onDiagnostic: input.onDiagnostic,
   };
 }
@@ -250,7 +244,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const remoteEnvironmentProvider = await core.accessor.get(IWorkspaceInstanceManager).addProvider(
     new RemoteEnvironmentProviderFactory(
       createRemoteEnvironmentProviderOptions({
-        region: core.accessor.get(IOAuthService).getRegion(),
         clientVersion: serverVersion,
         onDiagnostic: (line) => {
           logger.warn(line.trimEnd());

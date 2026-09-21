@@ -256,7 +256,7 @@ export function registerSessionsRoutes(
             body.environment_cwd ??
             (await core.accessor
               .get(IEnvironmentDeclarationService)
-              .declaredDefaultCwd(workDir, body.environment_id));
+              .declaredDefaultCwd(body.environment_id));
           await ensureMainAgentContext(handle, {
             environmentId: body.environment_id,
             environmentCwd,

@@ -8,9 +8,7 @@ import type { IConfigService } from '#/app/config/config';
 import type { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
 import { EnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclarationService';
 import { SessionManager } from '#/app/sessionManager/sessionManagerService';
-import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IAppendLogStore } from '#/persistence/interface/appendLogStore';
-import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { Program } from '#/program/program';
 import type { ProgramSessionControllerInput } from '#/program/programDependencies';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
@@ -32,8 +30,6 @@ function makeSessionManager(
   index: ISessionIndex,
   overrides: {
     readonly config?: IConfigService;
-    readonly fs?: IHostFileSystem;
-    readonly docs?: IAtomicDocumentStore;
     readonly appendLogStore?: IAppendLogStore;
     readonly bootstrap?: IBootstrapService;
     readonly log?: ILogService;
@@ -48,8 +44,6 @@ function makeSessionManager(
     new EnvironmentDeclarationService(
       overrides.config ??
         ({ _serviceBrand: undefined, ready: Promise.resolve(), get: () => undefined } as unknown as IConfigService),
-      overrides.fs ?? ({ _serviceBrand: undefined } as unknown as IHostFileSystem),
-      overrides.docs ?? ({ _serviceBrand: undefined, get: async () => undefined } as unknown as IAtomicDocumentStore),
       overrides.appendLogStore ??
         ({ _serviceBrand: undefined, read: async function* () {} } as unknown as IAppendLogStore),
       overrides.bootstrap ?? ({ _serviceBrand: undefined, scope: (name: string) => name } as unknown as IBootstrapService),

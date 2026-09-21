@@ -294,13 +294,11 @@ export class Session {
   }
 
   /**
-   * Declare a new environment for this session's workspace. `scope: 'global'`
-   * (the default) deep-merges the entry into the user-level `config.toml`
-   * `[environments]` section; `scope: 'project'` merge-writes it into the
-   * workspace's `.kimi-code/environments.toml`, preserving existing entries
-   * and file layout. Resolves after the declaration is registered, including
-   * when file watching is disabled. Fails closed: a duplicate id, an invalid
-   * entry, or an unreadable/invalid project file rejects without writing.
+   * Declare a new environment for this session's workspace. The entry is
+   * deep-merged into the user-level `config.toml` `[environments]` section.
+   * Resolves after the declaration is registered, including
+   * when file watching is disabled. Fails closed: a duplicate id or an invalid
+   * entry rejects without writing.
    */
   async declareEnvironment(input: DeclareEnvironmentInput): Promise<void> {
     this.ensureOpen();

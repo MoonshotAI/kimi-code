@@ -513,32 +513,6 @@ describe('KimiTUI startup', () => {
     );
   });
 
-  it('fails startup fast when the --environment id is not declared (v2)', async () => {
-    const harness = makeHarness(makeSession(), {
-      listEnvironmentDeclarations: vi.fn(async () => [
-        { id: 'dev-box', type: 'ssh', defaultCwd: '/remote/work' },
-      ]),
-    });
-    const driver = makeDriver(harness, makeStartupInput({ environment: 'ghost' }));
-
-    await expect(driver.init()).rejects.toThrow(
-      'environment "ghost" is not declared in [environments]',
-    );
-    expect(harness.createSession).not.toHaveBeenCalled();
-  });
-
-  it('fails startup fast when the --environment declaration lacks defaultCwd (v2)', async () => {
-    const harness = makeHarness(makeSession(), {
-      listEnvironmentDeclarations: vi.fn(async () => [{ id: 'dev-box', type: 'ssh' }]),
-    });
-    const driver = makeDriver(harness, makeStartupInput({ environment: 'dev-box' }));
-
-    await expect(driver.init()).rejects.toThrow(
-      'environment "dev-box" does not set defaultCwd in [environments]',
-    );
-    expect(harness.createSession).not.toHaveBeenCalled();
-  });
-
   it('pre-creates without the early check when declarations cannot be resolved (v2)', async () => {
     const harness = makeHarness(makeSession(), {
       getConfig: vi.fn(async () => ({
@@ -2544,7 +2518,6 @@ describe('KimiTUI startup', () => {
       getWorkspaceTrustInfo: vi.fn(async () => ({
         trusted: true,
         gatedMcpServers: [],
-        gatedEnvironments: [],
       })),
       listSessions: vi.fn(async () => [{ id: 'ses-target', workDir: '/tmp/proj-a' }]),
       resumeSession,
@@ -2614,7 +2587,6 @@ describe('KimiTUI startup', () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: false,
       gatedMcpServers: [],
-      gatedEnvironments: [],
     }));
     const trustWorkspace = vi.fn(async () => {});
     const harness = makeHarness(makeSession(), {
@@ -2630,6 +2602,8 @@ describe('KimiTUI startup', () => {
     vi.spyOn(driver.state.terminal, 'write').mockImplementation(() => {});
     const mountSpy = vi.spyOn(driver, 'mountEditorReplacement');
 
+    vi.spyOn(driver, 'initMainTui').mockRejectedValue(new Error('main boom'));
+
     const startPromise = driver.start();
     await vi.waitFor(() => {
       expect(mountSpy).toHaveBeenCalled();
@@ -2638,9 +2612,7 @@ describe('KimiTUI startup', () => {
     mountSpy.mock.calls[0]![0].handleInput('\u001B[A');
     mountSpy.mock.calls[0]![0].handleInput('\r');
 
-    await expect(startPromise).rejects.toThrow(
-      'environment "ghost" is not declared in [environments]',
-    );
+    await expect(startPromise).rejects.toThrow('main boom');
 
     expect(trustWorkspace).toHaveBeenCalledWith('/tmp/proj-a');
     expect(uiStop).toHaveBeenCalled();
@@ -2651,7 +2623,6 @@ describe('KimiTUI startup', () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: true,
       gatedMcpServers: [],
-      gatedEnvironments: [],
     }));
     const harness = makeHarness(makeSession(), { getWorkspaceTrustInfo });
     const driver = makeDriver(harness, {
@@ -2681,7 +2652,6 @@ describe('KimiTUI startup', () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: false,
       gatedMcpServers: [],
-      gatedEnvironments: [],
     }));
     const trustWorkspace = vi.fn(async () => {});
     const harness = makeHarness(makeSession(), { getWorkspaceTrustInfo, trustWorkspace });

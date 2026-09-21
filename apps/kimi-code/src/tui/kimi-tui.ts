@@ -20,7 +20,6 @@ import type {
   TokenUsage,
   TurnEndedEvent,
   TurnStartedEvent,
-  WorkspaceEnvironmentDeclarationInfo,
   WorkspaceTrustInfo,
 } from '@moonshot-ai/kimi-code-sdk';
 import { isTelemetryDisabledByEnv } from '@moonshot-ai/kimi-telemetry';
@@ -315,12 +314,6 @@ interface SendMessageOptions {
    * it — the queue item owns the raw ids and re-leases at dequeue.
    */
   readonly lease?: StagingLease;
-  /**
-   * Set when the caller already appended the user transcript entry and ran
-   * beginSessionRequest (the pre-session announce in sendNormalUserInput):
-   * dispatch skips both and goes straight to the prompt.
-   */
-  readonly announced?: boolean;
 }
 
 /** How long the one-shot "moved to background" footer hint stays visible. */
@@ -1486,55 +1479,9 @@ export class KimiTUI {
     }
     let session = this.session;
     if (session === undefined) {
-      // The lazy create can block on a remote environment connect
-      // (--environment startup). Announce the prompt and enter the waiting
-      // state before awaiting it: the UI keeps rendering (and the footer
-      // shows the connecting spinner), and the prompt is not lost when
-      // creation fails.
-      const announced =
-        this.state.appState.streamingPhase === 'idle' &&
-        !this.deferUserMessages &&
-        !this.state.appState.isCompacting;
-      if (announced) {
-        this.appendTranscriptEntry({
-          id: nextTranscriptId(),
-          kind: 'user',
-          turnId: undefined,
-          renderMode: 'plain',
-          content: text,
-          imageAttachmentIds:
-            extraction.imageAttachmentIds.length > 0
-              ? [...extraction.imageAttachmentIds]
-              : undefined,
-        });
-        this.beginSessionRequest();
-      }
       session = await this.ensureSession();
       if (session === undefined) {
         this.staging.release(stagingLease);
-        if (announced) {
-          // Creation failed with the error already on screen; unwind only the
-          // waiting state — the announced prompt stays in the transcript.
-          this.setAppState({ streamingPhase: 'idle' });
-          this.resetLivePane();
-        }
-        return;
-      }
-      if (announced) {
-        if (extraction.hasMedia) {
-          this.sendMessageInternal(session, text, {
-            hasMedia: true,
-            parts: extraction.parts,
-            imageAttachmentIds: extraction.imageAttachmentIds,
-            videoAttachmentIds: extraction.videoAttachmentIds,
-            lease: stagingLease,
-            announced: true,
-          });
-        } else {
-          this.sendMessageInternal(session, text, { announced: true });
-        }
-        this.updateQueueDisplay();
-        this.state.ui.requestRender();
         return;
       }
     }
@@ -1878,16 +1825,14 @@ export class KimiTUI {
       options?.imageAttachmentIds !== undefined && options.imageAttachmentIds.length > 0
         ? options.imageAttachmentIds
         : undefined;
-    if (options?.announced !== true) {
-      this.appendTranscriptEntry({
-        id: nextTranscriptId(),
-        kind: 'user',
-        turnId: undefined,
-        renderMode: 'plain',
-        content: input,
-        imageAttachmentIds,
-      });
-    }
+    this.appendTranscriptEntry({
+      id: nextTranscriptId(),
+      kind: 'user',
+      turnId: undefined,
+      renderMode: 'plain',
+      content: input,
+      imageAttachmentIds,
+    });
     // A goal-active steer is buffered into the running goal turn — no new
     // turn.started will fire for handleTurnStarted to claim the lease — so
     // bind it to that turn here. The turn context must be read BEFORE
@@ -1898,9 +1843,7 @@ export class KimiTUI {
       this.state.appState.streamingPhase === 'idle' || this.state.appState.streamingPhase === 'shell'
         ? undefined
         : this.streamingUI.getTurnContext().turnId;
-    if (options?.announced !== true) {
-      this.beginSessionRequest();
-    }
+    this.beginSessionRequest();
 
     // Compression captions for pasted images are authored here — not at
     // extraction — because only now is the session (and its media-originals
@@ -2302,30 +2245,21 @@ export class KimiTUI {
   }
 
   /**
-   * `--environment <id>` startup binding: fail fast on an id the merged
-   * [environments] declarations do not know — the engine only rejects it at
-   * createSession, which the lazy startup defers to the first prompt (losing
-   * that prompt). Then pre-create the session in the background so the remote
-   * connect overlaps startup instead of blocking the first prompt.
+   * `--environment <id>` startup binding: resolve the declared type for the
+   * synthetic connecting slot, then pre-create the session in the background
+   * so the remote connect overlaps startup instead of blocking the first
+   * prompt. A bad id surfaces the engine's own createSession error on first
+   * use — no early validation here.
    */
   private async prepareStartupEnvironment(environmentId: string): Promise<void> {
-    let declarations: readonly WorkspaceEnvironmentDeclarationInfo[] | undefined;
     try {
-      declarations = await this.harness.listEnvironmentDeclarations(this.state.appState.workDir);
-    } catch {
-      // Declaration resolution failed (e.g. unreadable config): skip the early
-      // check — the background create surfaces the engine's own error.
-      declarations = undefined;
-    }
-    if (declarations !== undefined) {
+      const declarations = await this.harness.listEnvironmentDeclarations(this.state.appState.workDir);
       const declared = declarations.find((entry) => entry.id === environmentId);
-      if (declared === undefined) {
-        throw new Error(`environment "${environmentId}" is not declared in [environments]`);
-      }
-      if (declared.defaultCwd === undefined) {
-        throw new Error(`environment "${environmentId}" does not set defaultCwd in [environments]`);
-      }
-      this.startupEnvironmentType = declared.type;
+      if (declared !== undefined) this.startupEnvironmentType = declared.type;
+    } catch {
+      // Declaration resolution failed (e.g. unreadable config): the slot
+      // falls back to the generic type and the background create surfaces
+      // the engine's own error.
     }
     void this.ensureSession();
   }
@@ -2830,9 +2764,9 @@ export class KimiTUI {
     this.cacheHint.resetRuntime();
     this.surveyController.reset();
     this.streamingUI.discardPending();
-    // The lazy first creation keeps input queued while it was in flight (a
-    // bash command behind the announced first prompt belongs to the session
-    // being created); every other reset discards the old session's backlog.
+    // The lazy first creation keeps input queued while it was in flight (the
+    // queued messages belong to the session being created); every other
+    // reset discards the old session's backlog.
     if (!preserveQueue) this.clearQueuedMessages();
     this.state.swarmModeEntry = undefined;
     this.streamingUI.resetToolCallState();
@@ -4088,7 +4022,6 @@ export class KimiTUI {
         new TrustPromptComponent({
           workDir,
           gatedMcpServers: info.gatedMcpServers,
-          gatedEnvironments: info.gatedEnvironments,
           onSelect: (c) => {
             resolve(c);
           },
