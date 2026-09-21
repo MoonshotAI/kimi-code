@@ -370,11 +370,6 @@ function stepEndSealMeta(
   const timing: ContextMessageTiming = {
     llmFirstTokenLatencyMs: event.llmFirstTokenLatencyMs,
     llmStreamDurationMs: event.llmStreamDurationMs,
-    llmRequestBuildMs: event.llmRequestBuildMs,
-    llmServerFirstTokenMs: event.llmServerFirstTokenMs,
-    llmServerDecodeMs: event.llmServerDecodeMs,
-    llmClientConsumeMs: event.llmClientConsumeMs,
-    llmClientBlockedMs: event.llmClientBlockedMs,
   };
   const hasTiming = Object.values(timing).some((value) => value !== undefined);
   if (event.usage === undefined && !hasTiming) return undefined;

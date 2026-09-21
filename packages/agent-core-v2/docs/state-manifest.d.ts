@@ -935,11 +935,6 @@ export interface AgentStateSnapshot {
     readonly timing?: /* ContextMessageTiming — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly llmFirstTokenLatencyMs?: number;
       readonly llmStreamDurationMs?: number;
-      readonly llmRequestBuildMs?: number;
-      readonly llmServerFirstTokenMs?: number;
-      readonly llmServerDecodeMs?: number;
-      readonly llmClientConsumeMs?: number;
-      readonly llmClientBlockedMs?: number;
     };
   })[];
   // src/agent/contextProjector/contextProjectorService.ts

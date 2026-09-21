@@ -143,11 +143,6 @@ interface ContextAppendMessagePayload {
     timing?: {
       llmFirstTokenLatencyMs?: number;
       llmStreamDurationMs?: number;
-      llmRequestBuildMs?: number;
-      llmServerFirstTokenMs?: number;
-      llmServerDecodeMs?: number;
-      llmClientConsumeMs?: number;
-      llmClientBlockedMs?: number;
     };
   };
 }

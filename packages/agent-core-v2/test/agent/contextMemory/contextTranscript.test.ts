@@ -159,8 +159,6 @@ describe('reduceContextTranscript', () => {
         usage: { inputOther: 10, output: 20, inputCacheRead: 30, inputCacheCreation: 40 },
         llmFirstTokenLatencyMs: 800,
         llmStreamDurationMs: 5000,
-        llmRequestBuildMs: 100,
-        llmServerFirstTokenMs: 700,
       }),
     ]);
     const assistant = result.entries.find((m) => m.role === 'assistant');
@@ -173,8 +171,6 @@ describe('reduceContextTranscript', () => {
     expect(assistant?.timing).toEqual({
       llmFirstTokenLatencyMs: 800,
       llmStreamDurationMs: 5000,
-      llmRequestBuildMs: 100,
-      llmServerFirstTokenMs: 700,
     });
   });
 

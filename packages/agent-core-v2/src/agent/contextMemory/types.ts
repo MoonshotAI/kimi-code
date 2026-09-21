@@ -128,11 +128,6 @@ export type PromptOrigin =
 export interface ContextMessageTiming {
   readonly llmFirstTokenLatencyMs?: number;
   readonly llmStreamDurationMs?: number;
-  readonly llmRequestBuildMs?: number;
-  readonly llmServerFirstTokenMs?: number;
-  readonly llmServerDecodeMs?: number;
-  readonly llmClientConsumeMs?: number;
-  readonly llmClientBlockedMs?: number;
 }
 
 export type ContextMessage = Message & {
