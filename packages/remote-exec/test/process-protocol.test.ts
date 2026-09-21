@@ -83,7 +83,9 @@ describe('process protocol semantics', () => {
     }
   });
 
-  it('accepts a resize after a terminal has closed its output', async () => {
+  it('accepts a resize after a terminal has closed its output', async (testContext) => {
+    const ptyAvailable = await import('node-pty').then(() => true, () => false);
+    if (!ptyAvailable) testContext.skip();
     const loopback = createInProcessLoopback();
     const raw = new RawClient(loopback);
     try {
