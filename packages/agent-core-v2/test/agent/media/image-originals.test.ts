@@ -14,50 +14,6 @@ interface FakeFile {
 
 const posixPath = { join: (...parts: readonly string[]) => parts.join('/') };
 
-const FRAME_CAP_BYTES = 64 * 1024 * 1024;
-const CHUNK_BYTES = 16 * 1024 * 1024;
-
-interface WriteCall {
-  readonly path: string;
-  readonly mode: 'truncate' | 'append';
-  readonly data: Uint8Array;
-}
-
-function patternedBytes(size: number): Uint8Array {
-  const data = new Uint8Array(size);
-  for (let index = 0; index < size; index += 1) data[index] = index % 251;
-  return data;
-}
-
-function createChunkedFakeFs(files: Map<string, FakeFile>, options: { append: boolean }) {
-  const writes: WriteCall[] = [];
-  const put = (path: string, data: Uint8Array, mode: 'truncate' | 'append'): void => {
-    if (Math.ceil(data.byteLength / 3) * 4 > FRAME_CAP_BYTES) {
-      throw new Error('message exceeds the frame cap');
-    }
-    writes.push({ path, mode, data });
-    const existing = files.get(path);
-    files.set(path, {
-      data: mode === 'append' && existing !== undefined
-        ? Buffer.concat([existing.data, data])
-        : data,
-      mtimeMs: 1_000,
-    });
-  };
-  const fs = {
-    ...createFakeFs(files),
-    writeBytes: async (path: string, data: Uint8Array) => {
-      put(path, data, 'truncate');
-    },
-    appendBytes: options.append
-      ? async (path: string, data: Uint8Array) => {
-        put(path, data, 'append');
-      }
-      : undefined,
-  };
-  return { fs, writes };
-}
-
 function expectStoredBytes(files: ReadonlyMap<string, FakeFile>, path: string, expected: Uint8Array): void {
   const written = files.get(path);
   if (written === undefined) throw new Error(`nothing written to ${path}`);
@@ -65,65 +21,17 @@ function expectStoredBytes(files: ReadonlyMap<string, FakeFile>, path: string, e
   expect(Buffer.compare(Buffer.from(written.data), Buffer.from(expected))).toBe(0);
 }
 
-describe('persistOriginalImage chunking', () => {
-  it('persists an original whose base64 form exceeds the frame cap in truncate-then-append chunks', async () => {
-    const dir = '/remote/tmp/kimi-code/original-images';
-    const size = 48 * 1024 * 1024 + 1;
-    expect(Math.ceil(size / 3) * 4).toBeGreaterThan(FRAME_CAP_BYTES);
-    const bytes = patternedBytes(size);
+describe('persistOriginalImage', () => {
+  it('preserves the bytes of a large original', async () => {
+    const bytes = new Uint8Array(49 * 1024 * 1024).fill(0xab);
     const files = new Map<string, FakeFile>();
-    const { fs, writes } = createChunkedFakeFs(files, { append: true });
-
     const persisted = await persistOriginalImage(bytes, 'image/png', {
-      dir,
-      fs,
+      dir: '/remote/tmp/kimi-code/original-images',
+      fs: createFakeFs(files),
       path: posixPath,
     });
 
     expect(persisted).not.toBeNull();
-    expectStoredBytes(files, persisted!, bytes);
-    expect(writes.length).toBe(Math.ceil(size / CHUNK_BYTES));
-    expect(writes.length).toBeGreaterThan(1);
-    expect(writes[0]!.mode).toBe('truncate');
-    expect(writes.slice(1).every((write) => write.mode === 'append')).toBe(true);
-    for (const write of writes) {
-      expect(write.data.byteLength).toBeLessThanOrEqual(CHUNK_BYTES);
-    }
-  });
-
-  it('writes a small original with a single truncate write on an append-capable fs', async () => {
-    const dir = '/remote/tmp/kimi-code/original-images';
-    const bytes = patternedBytes(1024);
-    const files = new Map<string, FakeFile>();
-    const { fs, writes } = createChunkedFakeFs(files, { append: true });
-
-    const persisted = await persistOriginalImage(bytes, 'image/png', {
-      dir,
-      fs,
-      path: posixPath,
-    });
-
-    expect(persisted).not.toBeNull();
-    expect(writes).toHaveLength(1);
-    expect(writes[0]!.mode).toBe('truncate');
-    expectStoredBytes(files, persisted!, bytes);
-  });
-
-  it('falls back to a single write when the fs lacks appendBytes', async () => {
-    const dir = '/tmp/kimi-code/original-images';
-    const bytes = patternedBytes(CHUNK_BYTES + 1);
-    const files = new Map<string, FakeFile>();
-    const { fs, writes } = createChunkedFakeFs(files, { append: false });
-
-    const persisted = await persistOriginalImage(bytes, 'image/png', {
-      dir,
-      fs,
-      path: posixPath,
-    });
-
-    expect(persisted).not.toBeNull();
-    expect(writes).toHaveLength(1);
-    expect(writes[0]!.mode).toBe('truncate');
     expectStoredBytes(files, persisted!, bytes);
   });
 });
@@ -131,8 +39,11 @@ describe('persistOriginalImage chunking', () => {
 function createFakeFs(files: Map<string, FakeFile>) {
   return {
     mkdir: async () => {},
-    writeBytes: async (path: string, data: Uint8Array) => {
-      files.set(path, { data, mtimeMs: 1_000 });
+    writeBytes: async (path: string, data: Uint8Array | AsyncIterable<Uint8Array>) => {
+      const chunks: Uint8Array[] = [];
+      if (data instanceof Uint8Array) chunks.push(data);
+      else for await (const chunk of data) chunks.push(chunk);
+      files.set(path, { data: Buffer.concat(chunks), mtimeMs: 1_000 });
     },
     stat: async (path: string) => {
       const file = files.get(path);

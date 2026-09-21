@@ -36,7 +36,6 @@ export interface StdioHostOptions {
   readonly input: Readable;
   readonly output: Writable;
   readonly log: (line: string) => void;
-  readonly exitedRetentionMs?: number;
 }
 
 type Lane = 'control' | 'data';
@@ -140,14 +139,11 @@ export class StdioHost {
   private resolveDone!: () => void;
 
   constructor(private readonly options: StdioHostOptions) {
-    this.processManager = new ProcessManager(
-      {
-        notify: (method, params) => {
-          this.sendNotification(method, params);
-        },
+    this.processManager = new ProcessManager({
+      notify: (method, params) => {
+        this.sendNotification(method, params);
       },
-      options.exitedRetentionMs,
-    );
+    });
     this.writer = new OutboundWriter(
       options.output,
       8 * 1024 * 1024,

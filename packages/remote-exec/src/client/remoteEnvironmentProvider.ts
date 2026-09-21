@@ -7,6 +7,7 @@ import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
 import { subtreeWatchFilter } from '@moonshot-ai/agent-core-v2/_base/utils/paths';
 import { TimeoutTimer } from '@moonshot-ai/agent-core-v2/_base/utils/timer';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
+import { IEnvironmentDeclarationService } from '@moonshot-ai/agent-core-v2/app/environmentDeclaration/environmentDeclaration';
 import { watch } from '@moonshot-ai/agent-core-v2/human/utils/watch';
 import type { HostEnvironmentInfo } from '@moonshot-ai/agent-core-v2/os/interface/hostEnvironment';
 import { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
@@ -41,7 +42,7 @@ import type {
 
 import type { ExecutorArtifactLocator } from './artifactLocator';
 import { connectWithGuidance } from './connectGuidance';
-import { defaultLocalRunner, resolveTildeRemoteBin, type LocalRunner } from './executorDetect';
+import type { LocalRunner } from './executorDetect';
 import type { LauncherSpec } from './launchers';
 import { RemoteConnectionPool, type RemoteConnectionPoolHandle } from './remoteConnectionPool';
 import { RemoteEnvironment, type RemoteEnvironmentOptions } from './remoteEnvironment';
@@ -238,12 +239,6 @@ interface DeclaredEnvironmentRecord {
   // connection marks this view stale: it catches up to the pooled connection
   // instead of forcing another replacement.
   viewConnection?: RemoteEnvironment;
-  // A docker declaration's tilde-prefixed remoteBin resolved to the container
-  // user's absolute home path (docker exec has no shell expansion), keyed by
-  // the declaration fingerprint it was resolved from so a declaration change
-  // re-probes. Reconnects reuse it and skip both the home probe and the
-  // failing tilde handshake.
-  resolvedRemoteBin?: { readonly fingerprint: string; readonly remoteBin: string };
 }
 
 class EnvironmentSwapRedundantError extends Error {
@@ -258,7 +253,7 @@ const PROJECT_DECLARATION_WATCH_DEBOUNCE_MS = 200;
 export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFactory {
   readonly id = 'remote-exec';
   readonly imports: EnvironmentUnitImports = {
-    root: [IConfigService, IHostFileSystem, IAtomicDocumentStore, ILogService],
+    root: [IConfigService, IHostFileSystem, IAtomicDocumentStore, ILogService, IEnvironmentDeclarationService],
   };
 
   // App-level connection pool: one executor connection per declaration
@@ -293,32 +288,17 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
       records.set(declaration.id, this.registerDeclaredEnvironment(context, host, declaration, log));
     }
 
-    // Live declaration watch: user-level changes arrive through the config
-    // service's section event; project-level changes through a file watch on
-    // `.kimi-code/environments.toml`. Each trigger re-resolves declarations —
-    // trust is re-read on every resolve, so trust flips re-gate project
-    // declarations at the next trigger — and diffs them against the
-    // registered records. Reconciles are serialized on `tail`; the returned
-    // promise settles once this trigger's reconcile has landed in the
-    // registry. The trust trigger hands it to the event's waitUntil, so a
-    // caller awaiting the trust change (trustWorkspace) observes project
-    // declarations published before it resolves.
     let disposed = false;
     let tail = Promise.resolve();
     const reconcile = (): Promise<void> => {
       tail = tail.catch(() => {}).then(async () => {
-        if (disposed) return;
-        let resolved: EnvironmentDeclarationSet;
-        try {
-          resolved = await resolve();
-        } catch (error) {
-          log.warn('remote environment declarations failed to reload', { error });
-          return;
-        }
+        if (disposed) throw new Error('remote environment provider is disposed');
+        const resolved = await resolve();
+        if (disposed) throw new Error('remote environment provider is disposed');
+        const failures: unknown[] = [];
         if (resolved.projectError !== undefined) {
           log.warn('project remote environment declarations failed to load', { error: resolved.projectError });
         }
-        if (disposed) return;
         const next = new Map(resolved.entries.map((declaration) => [declaration.id, declaration]));
         for (const [id, record] of records) {
           if (next.has(id)) continue;
@@ -329,24 +309,23 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
           // (bounded by the registry drain timeout). Bindings to the removed
           // environment keep failing explicitly — no silent local fallback (D3).
           record.detached = true;
-          void record.handle.remove()
-            .then(() => {
-              releasePoolHandle(record);
-            })
-            .catch((error: unknown) => {
-              log.warn(`remote environment ${id} removal failed`, { error });
-            });
+          try {
+            await record.handle.remove();
+          } catch (error) {
+            failures.push(error);
+          } finally {
+            releasePoolHandle(record);
+          }
         }
         for (const declaration of resolved.entries) {
-          if (disposed) return;
+          if (disposed) throw new Error('remote environment provider is disposed');
           const fingerprint = declarationFingerprint(declaration.entry);
           const record = records.get(declaration.id);
           if (record === undefined) {
             try {
               records.set(declaration.id, this.registerDeclaredEnvironment(context, host, declaration, log));
             } catch (error) {
-              // A failed entry keeps no record, so the next trigger retries it.
-              log.warn(`remote environment ${declaration.id} registration failed`, { error });
+              failures.push(error);
             }
             continue;
           }
@@ -360,25 +339,31 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
             record.fingerprint = fingerprint;
             releasePoolHandle(record);
           } catch (error) {
-            log.warn(`remote environment ${declaration.id} update failed`, { error });
+            failures.push(error);
           }
         }
+        if (failures.length > 0) throw new AggregateError(failures, 'remote environment declarations failed to reconcile');
       });
       return tail;
     };
+    const reconciliation = host.get(IEnvironmentDeclarationService).registerReconciler(context.id, reconcile);
+    const refresh = (): Promise<void> => reconcile().catch((error: unknown) => {
+      log.warn('remote environment declarations failed to reload', { error });
+    });
     const configListener = config.onDidSectionChange((event) => {
-      if (event.domain === ENVIRONMENTS_SECTION) void reconcile();
+      if (event.domain === ENVIRONMENTS_SECTION) void refresh();
     });
     const trustListener = context.onDidChangeTrust((change) => {
-      change.waitUntil(reconcile());
+      change.waitUntil(refresh());
     });
     const watchProjectDeclarations = this.options.watchProjectDeclarations ?? watchProjectDeclarationFile;
     const projectWatch = watchProjectDeclarations(join(context.root, PROJECT_ENVIRONMENTS_FILE), () => {
-      void reconcile();
+      void refresh();
     });
     return {
       dispose: async () => {
         disposed = true;
+        reconciliation.dispose();
         configListener.dispose();
         trustListener.dispose();
         projectWatch.dispose();
@@ -445,9 +430,8 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
                 initializeTimeoutMs: this.options.initializeTimeoutMs,
                 onDiagnostic: this.options.onDiagnostic,
               });
-            const launcher = await this.resolveRecordLauncher(record, toLauncherSpec(declaration.entry), fingerprint);
             return connectWithGuidance(attempt, {
-              launcher,
+              launcher: toLauncherSpec(declaration.entry),
               artifactLocator: this.options.artifactLocator,
               clientVersion: this.options.clientVersion,
               minExecutorVersion: this.options.minExecutorVersion,
@@ -550,23 +534,6 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
       record.viewConnection = previousView;
       throw error;
     }
-  }
-
-  private async resolveRecordLauncher(
-    record: DeclaredEnvironmentRecord,
-    launcher: LauncherSpec,
-    fingerprint: string,
-  ): Promise<LauncherSpec> {
-    if (launcher.type !== 'docker') return launcher;
-    const cached = record.resolvedRemoteBin;
-    if (cached !== undefined && cached.fingerprint === fingerprint) {
-      return { ...launcher, remoteBin: cached.remoteBin };
-    }
-    const resolved = await resolveTildeRemoteBin(launcher, this.options.probeRunner ?? defaultLocalRunner);
-    if (resolved !== launcher && resolved.type === 'docker' && resolved.remoteBin !== undefined) {
-      record.resolvedRemoteBin = { fingerprint, remoteBin: resolved.remoteBin };
-    }
-    return resolved;
   }
 }
 

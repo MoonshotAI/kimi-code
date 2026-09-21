@@ -3,7 +3,7 @@ import { rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   createInProcessLoopback,
@@ -55,6 +55,70 @@ async function startProcess(
 }
 
 describe('process protocol semantics', () => {
+  it('rejects reusing a finished process id while its group is being terminated', async () => {
+    const loopback = createInProcessLoopback();
+    const raw = new RawClient(loopback);
+    let childPid: number | undefined;
+    try {
+      await raw.handshake();
+      await startProcess(raw, 1, {
+        processId: 'finished-group',
+        argv: ['sh', '-c', 'trap "" TERM; sleep 300 </dev/null >/dev/null 2>&1 & echo $!; exit 0'],
+        cwd: '/tmp',
+      });
+      await vi.waitFor(() => {
+        expect(raw.notifications('process/closed')).toHaveLength(1);
+      });
+      childPid = Number(raw.notifications('process/output').map((event) => fromB64(event['chunkBase64'] as string)).join('').trim());
+      expect(childPid).toBeGreaterThan(0);
+      raw.send({ id: 2, method: 'process/terminate', params: { processId: 'finished-group' } });
+      expect((await raw.nextResponse(2))['result']).toEqual({ running: false });
+      const reused = await startProcess(raw, 3, { processId: 'finished-group', argv: ['true'], cwd: '/tmp' });
+      expect(reused['error']).toMatchObject({ code: -32600, message: 'duplicate process id finished-group' });
+      await waitForDeath(childPid);
+    } finally {
+      loopback.clientInput.end();
+      await loopback.host.done;
+      if (childPid !== undefined && childPid > 0 && isAlive(childPid)) process.kill(childPid, 'SIGKILL');
+    }
+  });
+
+  it('accepts a resize after a terminal has closed its output', async () => {
+    const loopback = createInProcessLoopback();
+    const raw = new RawClient(loopback);
+    try {
+      await raw.handshake();
+      const started = await startProcess(raw, 1, {
+        processId: 'finished-tty',
+        argv: ['sh', '-c', 'exit 0'],
+        cwd: '/tmp',
+        tty: true,
+      });
+      expect(started['error']).toBeUndefined();
+      await vi.waitFor(() => {
+        expect(raw.notifications('process/closed')).toHaveLength(1);
+      });
+      raw.send({ id: 2, method: 'process/resize', params: { processId: 'finished-tty', cols: 100, rows: 40 } });
+      expect((await raw.nextResponse(2))['result']).toEqual({});
+    } finally {
+      loopback.clientInput.end();
+      await loopback.host.done;
+    }
+  });
+
+  it('rejects the unused process replay method', async () => {
+    const loopback = createInProcessLoopback();
+    const raw = new RawClient(loopback);
+    try {
+      await raw.handshake();
+      raw.send({ id: 1, method: 'process/read', params: { processId: 'unused' } });
+      expect((await raw.nextResponse(1))['error']).toMatchObject({ code: -32601 });
+    } finally {
+      loopback.clientInput.end();
+      await loopback.host.done;
+    }
+  });
+
   it('rejects a spawn cwd that does not exist with an explicit cwd error', async () => {
     const loopback = createInProcessLoopback();
     const raw = new RawClient(loopback);
@@ -130,19 +194,10 @@ describe('process protocol semantics', () => {
     expect((await raw.nextResponse(3))['result']).toEqual({ status: 'accepted' });
     raw.send({ id: 4, method: 'process/write', params: { processId: 'cat', chunkBase64: '', writeId: 'w2', eof: true } });
     expect((await raw.nextResponse(4))['result']).toEqual({ status: 'accepted' });
-    let text = '';
-    const deadline = Date.now() + 5_000;
-    while (text.length < 3 && Date.now() < deadline) {
-      for (const output of raw.notifications('process/output')) {
-        text += fromB64(output['chunkBase64'] as string);
-      }
-      if (text.length < 3) {
-        await new Promise((resolve) => {
-          setTimeout(resolve, 50);
-        });
-      }
-    }
-    expect(text).toBe('abc');
+    await vi.waitFor(() => {
+      expect(raw.notifications('process/closed')).toHaveLength(1);
+    });
+    expect(raw.notifications('process/output').map((chunk) => fromB64(chunk['chunkBase64'] as string)).join('')).toBe('abc');
     loopback.clientInput.end();
     await loopback.host.done;
   });
@@ -162,24 +217,8 @@ describe('process protocol semantics', () => {
     await loopback.host.done;
   });
 
-  it('removes the process entry after the exited retention window', async () => {
-    const loopback = createInProcessLoopback({ exitedRetentionMs: 300 });
-    const raw = new RawClient(loopback);
-    await raw.handshake();
-    await startProcess(raw, 1, { processId: 'quick', argv: ['true'], cwd: '/tmp', pipeStdin: false });
-    raw.send({ id: 2, method: 'process/write', params: { processId: 'quick', chunkBase64: '', writeId: 'w1' } });
-    expect((await raw.nextResponse(2))['result']).toEqual({ status: 'stdinClosed' });
-    await new Promise((resolve) => {
-      setTimeout(resolve, 800);
-    });
-    raw.send({ id: 3, method: 'process/write', params: { processId: 'quick', chunkBase64: '', writeId: 'w2' } });
-    expect((await raw.nextResponse(3))['result']).toEqual({ status: 'unknownProcess' });
-    loopback.clientInput.end();
-    await loopback.host.done;
-  });
-
-  it('keeps streaming descendant output after the leader entry ages out of the map', async () => {
-    const loopback = createInProcessLoopback({ exitedRetentionMs: 300 });
+  it('keeps streaming descendant output after the leader exits', async () => {
+    const loopback = createInProcessLoopback();
     const raw = new RawClient(loopback);
     await raw.handshake();
     await startProcess(raw, 1, {
@@ -188,9 +227,6 @@ describe('process protocol semantics', () => {
       cwd: '/tmp',
       pipeStdin: false,
     });
-    // Wait past the retention window: the leader's entry is evicted from the
-    // map, but the detached descendant still holds the pipes open and its
-    // output must keep flowing.
     await new Promise((resolve) => {
       setTimeout(resolve, 800);
     });
@@ -333,13 +369,13 @@ describe('process protocol semantics', () => {
     await loopback.host.done;
   });
 
-  it('terminateAll kills detached descendants whose leader aged out of the map', async () => {
-    const loopback = createInProcessLoopback({ exitedRetentionMs: 300 });
+  it('terminateAll kills detached descendants after the leader closes its output', async () => {
+    const loopback = createInProcessLoopback();
     const raw = new RawClient(loopback);
     await raw.handshake();
     await startProcess(raw, 1, {
       processId: 'daemonizer',
-      argv: ['sh', '-c', 'sleep 300 & echo $!; exit 0'],
+      argv: ['sh', '-c', 'sleep 300 </dev/null >/dev/null 2>&1 & echo $!; exit 0'],
       cwd: '/tmp',
       pipeStdin: false,
     });
@@ -358,10 +394,8 @@ describe('process protocol semantics', () => {
       }
     }
     expect(childPid).toBeGreaterThan(0);
-    // Wait past the retention window: the leader's entry is gone from the map,
-    // but the detached descendant still carries its process group.
-    await new Promise((resolve) => {
-      setTimeout(resolve, 800);
+    await vi.waitFor(() => {
+      expect(raw.notifications('process/closed')).toHaveLength(1);
     });
     expect(isAlive(childPid)).toBe(true);
     loopback.clientInput.end();

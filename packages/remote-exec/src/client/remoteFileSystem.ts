@@ -149,12 +149,31 @@ export class RemoteFileSystem implements IHostFileSystem {
     return out;
   }
 
-  async writeBytes(path: string, data: Uint8Array): Promise<void> {
-    await this.writeChunked(path, data, 'truncate');
-  }
-
-  async appendBytes(path: string, data: Uint8Array): Promise<void> {
-    await this.writeChunked(path, data, 'append');
+  async writeBytes(path: string, data: Uint8Array | AsyncIterable<Uint8Array>): Promise<void> {
+    if (data instanceof Uint8Array) {
+      await this.writeChunked(path, data, 'truncate');
+      return;
+    }
+    let mode: FsWriteMode = 'truncate';
+    const pending = new Uint8Array(FS_WRITE_FILE_CHUNK_BYTES);
+    let pendingBytes = 0;
+    for await (const chunk of data) {
+      let offset = 0;
+      while (offset < chunk.byteLength) {
+        const length = Math.min(pending.byteLength - pendingBytes, chunk.byteLength - offset);
+        pending.set(chunk.subarray(offset, offset + length), pendingBytes);
+        pendingBytes += length;
+        offset += length;
+        if (pendingBytes === pending.byteLength) {
+          await this.writeMode(path, pending, mode);
+          mode = 'append';
+          pendingBytes = 0;
+        }
+      }
+    }
+    if (pendingBytes > 0 || mode === 'truncate') {
+      await this.writeMode(path, pending.subarray(0, pendingBytes), mode);
+    }
   }
 
   async *readLines(

@@ -1857,16 +1857,30 @@ describe('server-v2 /api/v1 prompts', () => {
     expect((submitted.body as { stack?: string }).stack).toBeUndefined();
   });
 
-  it('exposes change_environment and connect to the main agent by default through the production bind-then-activate path', async () => {
-    const id = await createSession(home as string);
-    const session = getLiveSessionById(server!.core.accessor, id)!;
-    await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main', binding: { profile: 'agent' } });
-    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+  it('exposes change_environment and connect when enabled at startup through the production bind-then-activate path', async () => {
+    const enabledHome = await mkdtemp(join(tmpdir(), 'kimi-server-environment-tools-'));
+    await writeConfigToml(enabledHome, `${PROMPT_TOML}\n[experimental]\nagent_environment_tools = true\n`);
+    const enabledServer = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: enabledHome, logLevel: 'silent' });
+    try {
+      const response = await fetch(`http://127.0.0.1:${enabledServer.port}/api/v1/sessions`, {
+        method: 'POST',
+        headers: authHeaders(enabledServer, { 'content-type': 'application/json' }),
+        body: JSON.stringify({ metadata: { cwd: enabledHome } }),
+      });
+      const body = await response.json() as Envelope<{ id: string }>;
+      expect(body.code).toBe(0);
+      const session = getLiveSessionById(enabledServer.core.accessor, body.data.id)!;
+      await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main', binding: { profile: 'agent' } });
+      const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
 
-    const names = agent.accessor.get(IAgentToolRegistryService).list().map((tool) => tool.name);
-    expect(names).toContain('change_environment');
-    expect(names).toContain('connect');
-    expect(agent.accessor.get(IAgentProfileService).data().systemPrompt).toContain('## Available environments');
+      const names = agent.accessor.get(IAgentToolRegistryService).list().map((tool) => tool.name);
+      expect(names).toContain('change_environment');
+      expect(names).toContain('connect');
+      expect(agent.accessor.get(IAgentProfileService).data().systemPrompt).toContain('## Available environments');
+    } finally {
+      await enabledServer.close();
+      await rm(enabledHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
+    }
   });
 
   it('hides the environment tools and the environments prompt section when the agent_environment_tools flag is off', async () => {

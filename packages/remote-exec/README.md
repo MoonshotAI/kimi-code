@@ -60,13 +60,11 @@ deviations per the design spec, plus one forced addition:
 - No ws transport, no `resumeSessionId`, no sandbox parameter family, no
   `fs/walk`/`fs/copy`/`capabilityRoots/discoverV1`/`environmentConfig/read`.
 
-Reserved dialect surface: `process/read` (the `afterSeq`/`maxBytes`/`waitMs`
-long-poll) and the executor-side output replay behind it (up to 1MiB / 50k
-retained chunks per process, plus a 30s exited-process retention window) are
-kept for codex exec-server dialect compatibility. No client in this repo calls
-`process/read` — output delivery is notification-driven (`process/output`,
-`process/exited`, `process/closed`) — so treat the method and its buffering as
-compatibility surface, not a feature with a live consumer.
+Process output is delivered through notifications (`process/output`,
+`process/exited`, `process/closed`). The executor retains process handles until
+both the leader has exited and its output streams have closed, then keeps only
+a bounded set of process-group identities for late signals and shutdown cleanup.
+It does not retain output for replay or expose `process/read`.
 
 Client-surface notes beyond the wire protocol:
 
@@ -82,7 +80,7 @@ Client-surface notes beyond the wire protocol:
   its generation survive. Control calls (`environment/status`) keep the
   kill-the-connection timeout: an unanswered control call closes the connection
   (`ControlCallTimeoutError`), marking the environment disconnected exactly
-  like a transport drop. `process/read` long-polls stay unbounded.
+  like a transport drop.
 - Whole-file reads without `maxBytes` are rejected server-side above 32MiB
   (base64 of the response must fit the 64MiB frame cap); larger files are read
   through `offset`/`maxBytes` range reads.

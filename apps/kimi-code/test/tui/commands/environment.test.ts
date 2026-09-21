@@ -40,24 +40,12 @@ function makeHost(options: {
   switchError?: Error;
   reconnectError?: Error;
   declareError?: Error;
-  registrationDelayCalls?: number;
+  declarationReady?: Promise<void>;
 }) {
   let currentList = options.list ?? makeEnvironmentsInfo();
-  // Simulate the engine's declaration watch: once declareEnvironment writes a
-  // [environments] entry, listEnvironments includes the new environment — after
-  // `registrationDelayCalls` polls, to mimic the async reconcile.
-  let callsAfterAdd = -1;
-  let pending: SessionEnvironmentsInfo['environments'][number] | undefined;
   const session = {
     id: 'ses-1',
-    listEnvironments: vi.fn(async () => {
-      if (callsAfterAdd >= 0) callsAfterAdd += 1;
-      if (pending !== undefined && callsAfterAdd > (options.registrationDelayCalls ?? 0)) {
-        currentList = { ...currentList, environments: [...currentList.environments, pending] };
-        pending = undefined;
-      }
-      return currentList;
-    }),
+    listEnvironments: vi.fn(async () => currentList),
     getEnvironment: vi.fn(async () => ({ workspaceId: 'ws-1', environmentId: options.currentEnvironmentId ?? 'local' })),
     switchEnvironment: vi.fn(async (environmentId: string, opts?: { cwd?: string }) => {
       if (options.switchError !== undefined) throw options.switchError;
@@ -70,8 +58,8 @@ function makeHost(options: {
     declareEnvironment: vi.fn(
       async (input: { id: string; entry: { type?: string; defaultCwd?: string }; scope?: string }) => {
         if (options.declareError !== undefined) throw options.declareError;
-        callsAfterAdd = 0;
-        pending = {
+        await options.declarationReady;
+        const declared = {
           environmentId: input.id,
           type: input.entry.type ?? 'command',
           status: 'pending',
@@ -79,6 +67,7 @@ function makeHost(options: {
           capabilities: [],
           defaultCwd: input.entry.defaultCwd,
         } as unknown as SessionEnvironmentsInfo['environments'][number];
+        currentList = { ...currentList, environments: [...currentList.environments, declared] };
       },
     ),
   };
@@ -373,8 +362,10 @@ describe('handleEnvironmentCommand', () => {
     });
   });
 
-  it('waits for a delayed watch registration before reopening the manager', async () => {
-    const { host, mounted } = makeHost({ registrationDelayCalls: 2 });
+  it('waits for declaration completion before reopening the manager', async () => {
+    let finishDeclaration!: () => void;
+    const declarationReady = new Promise<void>((resolve) => { finishDeclaration = resolve; });
+    const { host, session, mounted } = makeHost({ declarationReady });
     await handleEnvironmentCommand(host);
 
     const manager = latest(mounted, EnvironmentManagerComponent);
@@ -405,6 +396,11 @@ describe('handleEnvironmentCommand', () => {
     typeText(form, '/home/me/projects');
     form.handleInput(ENTER); // defaultCwd → scope
     form.handleInput(ENTER); // scope → submit
+
+    await vi.waitFor(() => { expect(session.declareEnvironment).toHaveBeenCalledTimes(1); });
+    expect(host.showStatus).not.toHaveBeenCalled();
+    expect(session.listEnvironments).toHaveBeenCalledTimes(1);
+    finishDeclaration();
 
     await vi.waitFor(() => {
       expect(host.showStatus).toHaveBeenCalledWith('Environment "staging" added to config.toml.');

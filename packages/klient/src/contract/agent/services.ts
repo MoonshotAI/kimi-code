@@ -63,7 +63,11 @@ export const agentCommandContract = {
 export const agentEnvironmentBindingContract = {
   get: { input: z.tuple([]), output: environmentBindingSchema },
   set: { input: z.tuple([environmentBindingSchema]), output: environmentBindingSchema },
-  switch: { input: z.tuple([z.string()]), output: environmentBindingSchema },
+  connectAndSwitch: { input: z.tuple([z.string(), z.string().optional()]), output: environmentBindingSchema },
+} satisfies ServiceContract;
+
+export const agentEnvironmentContract = {
+  reconnect: { input: z.tuple([]), output: noResult },
 } satisfies ServiceContract;
 
 /** `history` items are full `ContextMessage`s, mirrored as `unknown`. */

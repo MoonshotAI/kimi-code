@@ -76,7 +76,6 @@ export interface InProcessLoopback {
 export function createInProcessLoopback(options?: {
   readonly environment?: RemoteEnvironmentInfo;
   readonly version?: string;
-  readonly exitedRetentionMs?: number;
 }): InProcessLoopback {
   const clientToServer = new PassThrough();
   const serverToClient = new PassThrough();
@@ -89,7 +88,6 @@ export function createInProcessLoopback(options?: {
     log: (line) => {
       logs.push(line);
     },
-    exitedRetentionMs: options?.exitedRetentionMs,
   });
   const clientPipe: BytePipe = {
     write: (chunk) => {
@@ -117,7 +115,6 @@ export async function connectInProcess(
   options?: {
     environment?: RemoteEnvironmentInfo;
     version?: string;
-    exitedRetentionMs?: number;
     connect?: Partial<ConnectOptions>;
   },
 ): Promise<{ connection: RemoteExecConnection; loopback: InProcessLoopback }> {

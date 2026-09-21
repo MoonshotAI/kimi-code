@@ -8,8 +8,6 @@ import type { EnvironmentPath } from '#/environment/environment';
 
 const DEFAULT_MAX_TOTAL_BYTES = 1024 * 1024 * 1024;
 
-const ORIGINAL_WRITE_CHUNK_BYTES = 16 * 1024 * 1024;
-
 const MIME_EXTENSION: Readonly<Record<string, string>> = {
   'image/png': 'png',
   'image/jpeg': 'jpg',
@@ -20,9 +18,7 @@ const MIME_EXTENSION: Readonly<Record<string, string>> = {
   'image/tiff': 'tif',
 };
 
-type OriginalsFs = Pick<IHostFileSystem, 'mkdir' | 'writeBytes' | 'stat' | 'readdir' | 'remove'> & {
-  appendBytes?(path: string, data: Uint8Array): Promise<void>;
-};
+type OriginalsFs = Pick<IHostFileSystem, 'mkdir' | 'writeBytes' | 'stat' | 'readdir' | 'remove'>;
 
 const nodeFs: OriginalsFs = {
   mkdir: async (path, options) => {
@@ -82,7 +78,7 @@ export async function persistOriginalImage(
 
     const existing = await fs.stat(filePath).catch(() => null);
     if (existing === null || existing.size !== bytes.length) {
-      await writeOriginalBytes(fs, filePath, bytes);
+      await fs.writeBytes(filePath, bytes);
     }
 
     await sweepCache(fs, dir, maxTotalBytes, pathClass);
@@ -90,26 +86,6 @@ export async function persistOriginalImage(
     return persisted === null ? null : filePath;
   } catch {
     return null;
-  }
-}
-
-async function writeOriginalBytes(
-  fs: OriginalsFs,
-  path: string,
-  data: Uint8Array,
-): Promise<void> {
-  if (typeof fs.appendBytes !== 'function' || data.byteLength <= ORIGINAL_WRITE_CHUNK_BYTES) {
-    await fs.writeBytes(path, data);
-    return;
-  }
-  const appendBytes = fs.appendBytes.bind(fs);
-  await fs.writeBytes(path, data.subarray(0, ORIGINAL_WRITE_CHUNK_BYTES));
-  for (
-    let offset = ORIGINAL_WRITE_CHUNK_BYTES;
-    offset < data.byteLength;
-    offset += ORIGINAL_WRITE_CHUNK_BYTES
-  ) {
-    await appendBytes(path, data.subarray(offset, offset + ORIGINAL_WRITE_CHUNK_BYTES));
   }
 }
 

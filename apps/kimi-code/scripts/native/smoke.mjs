@@ -103,15 +103,16 @@ async function runExecServerSmoke() {
         ? ['cmd.exe', '/c', 'echo tty-smoke-ok']
         : ['sh', '-c', 'echo tty-smoke-ok'];
     let output = '';
-    let exited = false;
+    let closed = false;
     let exitCode;
     notificationTap = (frame) => {
       if (frame.params?.processId !== 'smoke-tty') return;
       if (frame.method === 'process/output') {
         output += Buffer.from(frame.params.chunkBase64, 'base64').toString('utf8');
       } else if (frame.method === 'process/exited') {
-        exited = true;
         exitCode = frame.params.exitCode;
+      } else if (frame.method === 'process/closed') {
+        closed = true;
       }
     };
     send({
@@ -124,13 +125,13 @@ async function runExecServerSmoke() {
       fail(`exec-server tty spawn failed: ${JSON.stringify(started)}`);
     }
     const deadline = Date.now() + 30_000;
-    while (!exited && Date.now() < deadline) {
+    while ((!closed || !output.includes('tty-smoke-ok')) && Date.now() < deadline) {
       await new Promise((resolve) => {
         setTimeout(resolve, 100);
       });
     }
     notificationTap = undefined;
-    if (!exited) {
+    if (!closed) {
       send({ method: 'process/terminate', id: 100, params: { processId: 'smoke-tty' } });
       fail(`exec-server tty process did not exit in time; output so far: ${JSON.stringify(output)}`);
     }

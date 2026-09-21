@@ -84,6 +84,7 @@ export interface ProgramSnapshot {
 
 interface ProgramGeneration {
   readonly id: string;
+  readonly profileContextKey: string;
   lease?: EnvironmentLease;
   readonly state: IWorkspaceStateService;
   readonly dirs: IWorkspaceDirs;
@@ -106,6 +107,21 @@ interface ProgramGeneration {
   retired: boolean;
 }
 
+interface ProgramShared {
+  readonly mcpConfig: IWorkspaceMcpConfigService;
+  readonly mcp: IWorkspaceMcpService;
+  readonly trust: IWorkspaceTrust;
+  readonly userAgentProfiles: IUserAgentProfileLoader;
+  readonly pluginAgentProfiles: IPluginAgentProfileLoader;
+  readonly explicitAgentProfiles: IExplicitAgentProfileLoader;
+  readonly extraAgentProfiles: IExtraAgentProfileLoader;
+  readonly explicitSkills: ExplicitFileSkillSource;
+  readonly extraSkills: ExtraFileSkillSource;
+  readonly pluginSkills: PluginSkillSource;
+  readonly disposables: readonly { dispose(): void | Promise<void> }[];
+  references: number;
+}
+
 const PROGRAM_CAPABILITIES = ['fs', 'process'] as const;
 
 export class Program {
@@ -120,6 +136,7 @@ export class Program {
   private readonly generations = new Map<string, ProgramGeneration>();
   private readonly failedGenerations = new Set<string>();
   private readonly reconciledGenerations = new Map<string, { readonly environmentId: string; readonly cwd?: string }>();
+  private shared: ProgramShared | undefined;
   private disposed = false;
   private resolveReady?: () => void;
   readonly ready = new Promise<void>((resolve) => { this.resolveReady = resolve; });
@@ -195,6 +212,7 @@ export class Program {
     try {
       return this.dependencies.createSessionController({
         context: this.context,
+        profileContextKey: generation.profileContextKey,
         environments: this.environments,
         workspaceAgentProfiles: generation.agentProfiles,
         extraAgentProfiles: generation.extraAgentProfiles,
@@ -221,7 +239,10 @@ export class Program {
       skillsBySource.set(skill.source, (skillsBySource.get(skill.source) ?? 0) + 1);
     }
     const agentProfiles = this.dependencies.agentProfiles.entries()
-      .filter((entry) => entry.workspaceKey === undefined || entry.workspaceKey === this.workspaceId)
+      .filter((entry) =>
+        (entry.workspaceKey === undefined || entry.workspaceKey === this.workspaceId) &&
+        (entry.contextKey === undefined || entry.contextKey === generation?.profileContextKey),
+      )
       .map((entry) => ({
         sourceId: entry.sourceId,
         priority: entry.priority,
@@ -262,6 +283,7 @@ export class Program {
     const generations = [...this.generations.values()];
     this.generations.clear();
     for (const generation of generations) this.retireGeneration(generation);
+    if (this.shared !== undefined) this.releaseShared(this.shared);
     this.changeEmitter.dispose();
     this.trustChangeEmitter.dispose();
   }
@@ -336,6 +358,9 @@ export class Program {
       }
       const localFs = localEnvironment.fs;
       const targetFs = environment.fs!;
+      const shared = this.shared ??= this.createShared(localEnvironment);
+      shared.references += 1;
+      own({ dispose: () => { this.releaseShared(shared); } });
       const root = cwd ?? this.context.cwd;
       const context: IWorkspaceContext = root === this.context.cwd ? this.context : { ...this.context, cwd: root };
       const state = own(new WorkspaceStateService(this.dependencies.appState));
@@ -357,30 +382,17 @@ export class Program {
             onDidChange: Event.None as Event<void>,
           });
       const fs = new WorkspaceFsService(context, dirs, targetFs, this.resolver, this.dependencies.telemetry, git, environmentId);
-      const instructions = own(new WorkspaceInstructionsService(context, workspaceRoutingFs(root, targetFs, localFs), localEnvironment.host, this.dependencies.bootstrap, this.dependencies.log, state));
-      const trust = own(new WorkspaceTrustService(this.context, this.dependencies.docs, state, this.dependencies.telemetry));
-      if (environmentId === LOCAL_ENVIRONMENT_ID) {
-        own(trust.onDidChange((change) => {
-          change.waitUntil(this.trustChangeEmitter.fireAsync({ trusted: change.trusted }, change.signal));
-        }));
-      }
-      const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, localFs, trust, this.dependencies.configStore));
-      const mcp = own(new WorkspaceMcpService(this.context, this.resolver, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager));
-      const userAgentProfiles = own(new UserAgentProfileLoaderService(this.dependencies.bootstrap, localFs, this.dependencies.log, this.dependencies.builtinAgentProfiles, this.context, this.dependencies.agentProfiles));
-      const pluginAgentProfiles = own(new PluginAgentProfileLoaderService(this.dependencies.plugins, localFs, this.dependencies.log, userAgentProfiles, this.context, this.dependencies.agentProfiles));
-      const explicitAgentProfiles = own(new ExplicitAgentProfileLoaderService(this.context, this.dependencies.bootstrap, localFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
-      const extraAgentProfiles = own(new ExtraAgentProfileLoaderService(this.dependencies.config, this.context, this.dependencies.bootstrap, localFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
-      const agentProfiles = own(new WorkspaceAgentProfileLoaderService(context, targetFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
-      const localSkillDiscovery = new EnvironmentSkillDiscovery(this.dependencies.log, localFs);
+      const instructions = own(new WorkspaceInstructionsService(context, targetFs, localEnvironment.host, this.dependencies.bootstrap, this.dependencies.log, state, localFs));
+      const { trust, mcpConfig, mcp, userAgentProfiles, pluginAgentProfiles, explicitAgentProfiles, extraAgentProfiles, explicitSkills, extraSkills, pluginSkills } = shared;
+      const profileContextKey = JSON.stringify([environmentId, root, environment.identity.generation]);
+      const agentProfiles = own(new WorkspaceAgentProfileLoaderService(context, targetFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles, profileContextKey));
       const targetSkillDiscovery = new EnvironmentSkillDiscovery(this.dependencies.log, targetFs);
       const userSkills = this.dependencies.userSkills;
-      const explicitSkills = new ExplicitFileSkillSource(localSkillDiscovery, this.context, this.dependencies.bootstrap, localFs);
-      const extraSkills = own(new ExtraFileSkillSource(localSkillDiscovery, this.dependencies.config, this.context, this.dependencies.bootstrap, localFs));
       const workspaceSkills = own(new WorkspaceRootSkillSource(targetSkillDiscovery, context, this.dependencies.config, this.dependencies.bootstrap, targetFs));
-      const pluginSkills = new PluginSkillSource(localSkillDiscovery, this.dependencies.plugins);
       const skills = own(new WorkspaceSkillCatalogService(this.dependencies.builtinSkills, userSkills, explicitSkills, extraSkills, workspaceSkills, pluginSkills, state));
       return {
         id: environment.identity.generation,
+        profileContextKey,
         state,
         dirs,
         fs,
@@ -407,6 +419,42 @@ export class Program {
     } finally {
       lease.dispose();
     }
+  }
+
+  private createShared(local: Environment): ProgramShared {
+    const disposables: { dispose(): void | Promise<void> }[] = [];
+    const own = <T extends { dispose(): void | Promise<void> }>(value: T): T => {
+      disposables.push(value);
+      return value;
+    };
+    try {
+      const fs = local.fs!;
+      const state = own(new WorkspaceStateService(this.dependencies.appState));
+      const trust = own(new WorkspaceTrustService(this.context, this.dependencies.docs, state, this.dependencies.telemetry));
+      own(trust.onDidChange((change) => {
+        change.waitUntil(this.trustChangeEmitter.fireAsync({ trusted: change.trusted }, change.signal));
+      }));
+      const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, fs, trust, this.dependencies.configStore));
+      const mcp = own(new WorkspaceMcpService(this.context, this.resolver, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager));
+      const userAgentProfiles = own(new UserAgentProfileLoaderService(this.dependencies.bootstrap, fs, this.dependencies.log, this.dependencies.builtinAgentProfiles, this.context, this.dependencies.agentProfiles));
+      const pluginAgentProfiles = own(new PluginAgentProfileLoaderService(this.dependencies.plugins, fs, this.dependencies.log, userAgentProfiles, this.context, this.dependencies.agentProfiles));
+      const explicitAgentProfiles = own(new ExplicitAgentProfileLoaderService(this.context, this.dependencies.bootstrap, fs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
+      const extraAgentProfiles = own(new ExtraAgentProfileLoaderService(this.dependencies.config, this.context, this.dependencies.bootstrap, fs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
+      const discovery = new EnvironmentSkillDiscovery(this.dependencies.log, fs);
+      const explicitSkills = new ExplicitFileSkillSource(discovery, this.context, this.dependencies.bootstrap, fs);
+      const extraSkills = own(new ExtraFileSkillSource(discovery, this.dependencies.config, this.context, this.dependencies.bootstrap, fs));
+      const pluginSkills = new PluginSkillSource(discovery, this.dependencies.plugins);
+      return { trust, mcpConfig, mcp, userAgentProfiles, pluginAgentProfiles, explicitAgentProfiles, extraAgentProfiles, explicitSkills, extraSkills, pluginSkills, disposables, references: 1 };
+    } catch (error) {
+      for (const disposable of disposables.toReversed()) void disposable.dispose();
+      throw error;
+    }
+  }
+
+  private releaseShared(shared: ProgramShared): void {
+    shared.references -= 1;
+    if (shared.references !== 0) return;
+    for (const disposable of shared.disposables.toReversed()) void disposable.dispose();
   }
 
   private observeReadiness(key: string, generation: ProgramGeneration): void {
@@ -471,29 +519,6 @@ export class Program {
 
 function generationKey(environmentId: string, cwd?: string): string {
   return cwd === undefined ? environmentId : `${environmentId}\0${cwd}`;
-}
-
-function workspaceRoutingFs(root: string, workspaceFs: NonNullable<Environment['fs']>, localFs: NonNullable<Environment['fs']>): NonNullable<Environment['fs']> {
-  const base = root.length > 1 && root.endsWith('/') ? root.slice(0, -1) : root;
-  const onTarget = (path: string): boolean =>
-    base === '/' || path === base || path.startsWith(`${base}/`) || base.startsWith(path.endsWith('/') ? path : `${path}/`);
-  const route = (path: string): NonNullable<Environment['fs']> => (onTarget(path) ? workspaceFs : localFs);
-  return {
-    _serviceBrand: undefined,
-    readText: (path, options) => route(path).readText(path, options),
-    writeText: (path, data) => route(path).writeText(path, data),
-    appendText: (path, data) => route(path).appendText(path, data),
-    readBytes: (path, n, offset) => route(path).readBytes(path, n, offset),
-    writeBytes: (path, data) => route(path).writeBytes(path, data),
-    readLines: (path, options) => route(path).readLines(path, options),
-    createExclusive: (path, data) => route(path).createExclusive(path, data),
-    stat: (path) => route(path).stat(path),
-    lstat: (path) => route(path).lstat(path),
-    readdir: (path) => route(path).readdir(path),
-    mkdir: (path, options) => route(path).mkdir(path, options),
-    remove: (path) => route(path).remove(path),
-    realpath: (path) => route(path).realpath(path),
-  };
 }
 
 function readiness(value: unknown): Promise<void> {

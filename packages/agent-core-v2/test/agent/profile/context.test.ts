@@ -10,6 +10,7 @@ import {
   extractAgentsMdPathsFromSystemPrompt,
   loadAgentsMd,
   loadAgentsMdDetailed,
+  loadAgentsMdForRoots,
   prepareSystemPromptContext,
 } from '#/agent/profile/context';
 
@@ -36,6 +37,20 @@ afterEach(async () => {
 });
 
 describe('loadAgentsMd user-level discovery', () => {
+  it('keeps personal and remote project instructions when their absolute paths are identical', async () => {
+    const path = join(homeDir, '.kimi-code', 'AGENTS.md');
+    await mkdir(join(homeDir, '.kimi-code'));
+    await writeFile(path, 'personal instructions');
+    const targetFs = new HostFileSystem();
+    targetFs.readText = async (file, options) => file === path ? 'remote project instructions' : fs.readText(file, options);
+
+    const result = await loadAgentsMdForRoots({ fs: targetFs, homeDir }, undefined, [homeDir], fs);
+
+    expect(result.content).toContain('personal instructions');
+    expect(result.content).toContain('remote project instructions');
+    expect(result.content.indexOf('personal instructions')).toBeLessThan(result.content.indexOf('remote project instructions'));
+  });
+
   it('loads user-level branded and generic files before project-level', async () => {
     await mkdir(join(homeDir, '.kimi-code'), { recursive: true });
     await writeFile(join(homeDir, '.kimi-code', 'AGENTS.md'), 'user branded', 'utf-8');

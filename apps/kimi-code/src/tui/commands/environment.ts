@@ -252,31 +252,12 @@ async function addFlow(host: SlashCommandHost, session: Session, list: SessionEn
     await openEnvironmentManager(host, session);
     return;
   }
-  // The engine watches the [environments] config section and the workspace's
-  // .kimi-code/environments.toml, registering new declarations live at either
-  // scope; wait for the registration to land so the reopened manager lists
-  // the new environment immediately.
   host.showStatus(
     value.scope === 'project'
       ? `Environment "${value.id}" added to .kimi-code/environments.toml.`
       : `Environment "${value.id}" added to config.toml.`,
   );
-  await waitForEnvironmentRegistration(session, value.id);
   await openEnvironmentManager(host, session);
-}
-
-const REGISTRATION_WAIT_TIMEOUT_MS = 2_000;
-const REGISTRATION_WAIT_INTERVAL_MS = 50;
-
-async function waitForEnvironmentRegistration(session: Session, environmentId: string): Promise<void> {
-  const deadline = Date.now() + REGISTRATION_WAIT_TIMEOUT_MS;
-  for (;;) {
-    const list = await session.listEnvironments();
-    if (list.environments.some((environment) => environment.environmentId === environmentId) || Date.now() >= deadline) return;
-    await new Promise((resolve) => {
-      setTimeout(resolve, REGISTRATION_WAIT_INTERVAL_MS);
-    });
-  }
 }
 
 async function submitAdd(

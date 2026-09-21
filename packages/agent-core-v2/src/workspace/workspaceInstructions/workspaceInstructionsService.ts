@@ -46,6 +46,7 @@ export class WorkspaceInstructionsService
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ILogService private readonly log: ILogService,
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
+    private readonly personalFs?: IHostFileSystem,
   ) {
     super();
     this.states.contributeState(workspaceInstructionsCurrentKey);
@@ -71,6 +72,7 @@ export class WorkspaceInstructionsService
         { fs: this.fs, homeDir: this.env.homeDir },
         this.bootstrap.homeDir,
         [this.workspace.cwd],
+        this.personalFs,
       );
       const next: WorkspaceInstructionsSnapshot = {
         agentsMd: result.content,

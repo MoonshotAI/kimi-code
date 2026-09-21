@@ -4,17 +4,14 @@ import {
   IAgentEnvironmentBindingService,
   IAgentEnvironmentService,
   IBootstrapService,
-  IConfigService,
   IEnvironmentDeclarationService,
   IHostFileSystem,
   ISessionContext,
   IWorkspaceInstanceManager,
   IWorkspaceService,
-  ENVIRONMENTS_SECTION,
   environmentEntryInfo,
   readSshConfigHosts,
   resumeSessionById,
-  writeProjectEnvironmentDeclaration,
   EnvironmentError,
   isError2,
   type IAgentScopeHandle,
@@ -186,6 +183,7 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
         [ErrorCode.VALIDATION_FAILED]: {},
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
       description: 'Declare an environment for the session workspace',
       tags: ['sessions'],
@@ -199,36 +197,12 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
         const workspaceId = session.accessor.get(ISessionContext).workspaceId;
         const scope = req.body.scope ?? 'global';
         const entry = toEngineEnvironmentEntry(req.body.entry);
-        if (scope === 'project') {
-          const instance = await resolveWorkspaceInstance(core, workspaceId);
-          if (!(await instance.program.trust.get())) {
-            throw new Error2(
-              ErrorCodes.CONFIG_INVALID,
-              `Workspace "${instance.root}" is not trusted; trust the workspace before declaring a project environment.`,
-            );
-          }
-          await writeProjectEnvironmentDeclaration(
-            core.accessor.get(IHostFileSystem),
-            instance.root,
-            req.body.environment_id,
-            entry,
-          );
-        } else {
-          const config = core.accessor.get(IConfigService);
-          await config.ready;
-          const declared = config.get<Record<string, unknown>>(ENVIRONMENTS_SECTION);
-          if (declared?.[req.body.environment_id] !== undefined) {
-            throw new Error2(
-              ErrorCodes.CONFIG_INVALID,
-              `Environment id "${req.body.environment_id}" is already declared in ${core.accessor.get(IBootstrapService).configPath}.`,
-            );
-          }
-          await config.replaceSections(
-            { [ENVIRONMENTS_SECTION]: { ...declared, [req.body.environment_id]: entry } },
-            undefined,
-            { expectedValues: { [ENVIRONMENTS_SECTION]: declared ?? null } },
-          );
-        }
+        await core.accessor.get(IEnvironmentDeclarationService).declare({
+          workspaceId,
+          id: req.body.environment_id,
+          entry,
+          scope,
+        });
         reply.send(okEnvelope({ workspace_id: workspaceId, environment_id: req.body.environment_id, scope }, req.id));
       } catch (error) {
         sendEnvironmentRouteError(reply, req.id, error);

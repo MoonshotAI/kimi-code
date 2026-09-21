@@ -94,7 +94,7 @@ export class HostFileSystem implements IHostFileSystem {
     }
   }
 
-  async writeBytes(path: string, data: Uint8Array): Promise<void> {
+  async writeBytes(path: string, data: Uint8Array | AsyncIterable<Uint8Array>): Promise<void> {
     try {
       await writeFile(path, data);
     } catch (error) {

@@ -53,7 +53,7 @@ Key rules:
 - The optional top-level `default` names the environment new sessions bind to initially; the entry it points at must set `defaultCwd`. Without a `default`, new sessions start on the `local` environment.
 - The environment id is the entry's key: at most 64 characters, no leading or trailing whitespace; `local` and `default` are reserved words.
 
-Declarations are picked up live: adding, editing, or removing an entry registers, replaces, or unregisters the environment without a restart. A removed environment drains rather than vanishing from under a session that still uses it — the session keeps its connection until in-flight work releases it (bounded to a few seconds), new tool calls fail with `environment.not_found`, and nothing silently falls back to `local`.
+Environments added through `/environment` are available as soon as the operation completes, even when [file watching](../configuration/config-files.md#watch) is disabled. With file watching enabled, editing declaration files also registers, replaces, or unregisters environments without a restart. A removed environment drains rather than vanishing from under a session that still uses it — the session keeps its connection until in-flight work releases it (bounded to a few seconds), new tool calls fail with `environment.not_found`, and nothing silently falls back to `local`.
 
 For the full field reference, see [`environments`](../configuration/config-files.md#environments).
 

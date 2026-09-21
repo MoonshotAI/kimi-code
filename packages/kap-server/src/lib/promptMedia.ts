@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto';
-import { createReadStream, createWriteStream, type Stats } from 'node:fs';
+import { createReadStream, type Stats } from 'node:fs';
 import { mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join } from 'node:path';
 import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
 
 import {
   buildDaemonFileUrl,
@@ -185,75 +184,9 @@ function localAttachmentSink(dir: string): AttachmentSink {
       await mkdir(dir, { recursive: true });
     },
     size: (path) => stat(path).then((info) => info.size, () => undefined),
-    write: async (path, data) => {
-      if (data instanceof Uint8Array) {
-        await writeFile(path, data);
-        return;
-      }
-      await pipeline(Readable.from(data), createWriteStream(path));
-    },
+    write: (path, data) => writeFile(path, data),
     remove: (path) => rm(path, { force: true }),
   };
-}
-
-const ATTACHMENT_WRITE_CHUNK_BYTES = 16 * 1024 * 1024;
-
-interface AppendBytesFileSystem extends IHostFileSystem {
-  appendBytes?(path: string, data: Uint8Array): Promise<void>;
-}
-
-async function writeAttachmentChunks(
-  fs: AppendBytesFileSystem,
-  path: string,
-  data: Uint8Array | AsyncIterable<Uint8Array>,
-): Promise<void> {
-  if (typeof fs.appendBytes !== 'function') {
-    if (data instanceof Uint8Array) {
-      await fs.writeBytes(path, data);
-      return;
-    }
-    const chunks: Uint8Array[] = [];
-    for await (const chunk of data) {
-      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
-    }
-    await fs.writeBytes(path, chunks.length === 1 ? chunks[0]! : Buffer.concat(chunks));
-    return;
-  }
-  const appendBytes = fs.appendBytes.bind(fs);
-  let truncated = false;
-  const writeChunk = async (chunk: Uint8Array): Promise<void> => {
-    if (truncated) {
-      await appendBytes(path, chunk);
-    } else {
-      await fs.writeBytes(path, chunk);
-      truncated = true;
-    }
-  };
-  if (data instanceof Uint8Array) {
-    for (let offset = 0; offset < data.byteLength; offset += ATTACHMENT_WRITE_CHUNK_BYTES) {
-      await writeChunk(data.subarray(offset, offset + ATTACHMENT_WRITE_CHUNK_BYTES));
-    }
-    if (!truncated) await writeChunk(new Uint8Array(0));
-    return;
-  }
-  let pending: Uint8Array[] = [];
-  let pendingBytes = 0;
-  const flush = async (): Promise<void> => {
-    const merged = pending.length === 1 ? pending[0]! : Buffer.concat(pending, pendingBytes);
-    pending = [];
-    pendingBytes = 0;
-    for (let offset = 0; offset < merged.byteLength; offset += ATTACHMENT_WRITE_CHUNK_BYTES) {
-      await writeChunk(merged.subarray(offset, offset + ATTACHMENT_WRITE_CHUNK_BYTES));
-    }
-  };
-  for await (const chunk of data) {
-    const bytes = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
-    pending.push(bytes);
-    pendingBytes += bytes.byteLength;
-    if (pendingBytes >= ATTACHMENT_WRITE_CHUNK_BYTES) await flush();
-  }
-  if (pendingBytes > 0) await flush();
-  if (!truncated) await writeChunk(new Uint8Array(0));
 }
 
 function environmentAttachmentSink(target: PromptAttachmentsTarget): AttachmentSink {
@@ -264,7 +197,7 @@ function environmentAttachmentSink(target: PromptAttachmentsTarget): AttachmentS
       await target.fs.mkdir(target.dir, { recursive: true });
     },
     size: (path) => target.fs.stat(path).then((info) => info.size, () => undefined),
-    write: (path, data) => writeAttachmentChunks(target.fs, path, data),
+    write: (path, data) => target.fs.writeBytes(path, data),
     remove: (path) => target.fs.remove(path),
   };
 }

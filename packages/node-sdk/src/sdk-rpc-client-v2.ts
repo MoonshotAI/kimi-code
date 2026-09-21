@@ -55,12 +55,8 @@
  *   the engine has no import capability of its own. `createSession`'s
  *   `model` / `thinking` / `permission` options are applied in this batch
  *   too (default-profile bind + permission mode).
- * - `getEnvironment` / `switchEnvironment` / `reconnectEnvironment` / `listEnvironments` →
- *   agent-scope services (`IAgentEnvironmentBindingService` /
- *   `IAgentEnvironmentService`) and the workspace instance's environment registry —
- *   the klient contract's `environmentBindingSchema` predates the binding `cwd`
- *   and would strip it over the wire. `switchEnvironment` is the engine's
- *   `connectAndSwitch` (explicit connect + target-fs cwd validation).
+ * - `getEnvironment` / `switchEnvironment` / `reconnectEnvironment` use the
+ *   klient agent facade; `listEnvironments` reads the workspace registry.
  *   `createSession`'s `environmentId` / `environmentCwd` options ride the
  *   engine's own `mainAgentBinding` + environment seed path. The constructor
  *   attaches the `remote-exec` environment provider with the region CDN
@@ -181,7 +177,6 @@ import {
   IAgentProfileService,
   IAgentReminderService,
   IAgentEnvironmentBindingService,
-  IAgentEnvironmentService,
   IAgentSkillService,
   IAgentSwarmService,
   IAgentTaskService,
@@ -193,6 +188,7 @@ import {
   IAtomicDocumentStore,
   IBootstrapService,
   IConfigService,
+  IEnvironmentDeclarationService,
   IEventService,
   IFlagService,
   IHostEnvironment,
@@ -225,13 +221,11 @@ import {
   previewProjectEnvironmentDeclarations,
   programForSession,
   readSshConfigHosts,
-  ENVIRONMENTS_SECTION,
   environmentEntryInfo,
   resolveWorkspaceEnvironmentDeclarations,
   resumeSessionById,
   sessionDirOf,
   workspacePersistenceScope,
-  writeProjectEnvironmentDeclaration,
   logSeed,
   MAIN_AGENT_ID,
   prepareSystemPromptContext,
@@ -1985,35 +1979,19 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return agent.runCommand({ name: input.name, args: input.args });
   }
 
-  /**
-   * Through the agent scope (`IAgentEnvironmentBindingService.get`) — the klient
-   * contract's `environmentBindingSchema` predates the binding `cwd` and would
-   * strip it over the wire.
-   */
   override async getEnvironment(input: SessionIdRpcInput): Promise<AgentEnvironmentBinding> {
-    const agent = await this.agentScope(input.sessionId);
-    return agent.accessor.get(IAgentEnvironmentBindingService).get();
+    const agent = await this.agentFacade(input.sessionId);
+    return agent.getEnvironment();
   }
 
-  /**
-   * Agent scope (`IAgentEnvironmentBindingService`) — the engine's
-   * `connectAndSwitch`: explicit connect plus target-fs cwd validation, so a
-   * failed switch keeps the previous binding.
-   */
   override async switchEnvironment(input: SwitchSessionEnvironmentRpcInput): Promise<AgentEnvironmentBinding> {
-    const agent = await this.agentScope(input.sessionId);
-    const service = agent.accessor.get(IAgentEnvironmentBindingService);
-    return service.connectAndSwitch(input.environmentId, input.cwd);
+    const agent = await this.agentFacade(input.sessionId);
+    return agent.switchEnvironment(input.environmentId, { cwd: input.cwd });
   }
 
-  /**
-   * Agent scope (`IAgentEnvironmentService.reconnect`) — no klient facade exists.
-   * The engine rejects environments without a connect path (local, disposed).
-   */
   override async reconnectEnvironment(input: SessionIdRpcInput): Promise<AgentEnvironmentBinding> {
-    const agent = await this.agentScope(input.sessionId);
-    await agent.accessor.get(IAgentEnvironmentService).reconnect();
-    return agent.accessor.get(IAgentEnvironmentBindingService).get();
+    const agent = await this.agentFacade(input.sessionId);
+    return agent.reconnectEnvironment();
   }
 
   /**
@@ -2037,60 +2015,15 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     };
   }
 
-  /**
-   * Declare an environment for the session's workspace. The `global` scope (the
-   * default) writes the merged `[environments]` section through the config
-   * service's compare-and-swap (`replaceSections` with `expectedValues`), so a
-   * concurrent declare fails instead of silently overwriting another writer —
-   * and the persisted bytes still match a `setConfig({ environments: ... })`
-   * call. The `project` scope merge-writes the workspace's
-   * `.kimi-code/environments.toml` on the host (declarations must exist before
-   * any remote connection, so the project file always lives on the local
-   * disk); a project write requires a trusted workspace, since the declaration
-   * activates the moment trust is granted and the trust prompt is the only
-   * confirmation step. Both register through the engine's live declaration
-   * watch. Both scopes fail closed on a duplicate id, rejecting before any
-   * write so an existing entry is never half-merged.
-   */
   override async declareEnvironment(input: DeclareEnvironmentRpcInput): Promise<void> {
     const session = this.requireLiveSession(input.sessionId);
-    const context = session.accessor.get(ISessionContext);
-    if ((input.scope ?? 'global') === 'project') {
-      const manager = this.engineAccessor.get(IWorkspaceInstanceManager);
-      const instance =
-        manager.get(context.workspaceId) ??
-        (await manager.getOrCreate({ root: context.cwd }));
-      if (!(await instance.program.trust.get())) {
-        throw new KimiError(
-          ErrorCodes.REQUEST_INVALID,
-          `Workspace "${instance.root}" is not trusted; trust it before declaring a project environment.`,
-        );
-      }
-      await writeProjectEnvironmentDeclaration(
-        this.engineAccessor.get(IHostFileSystem),
-        instance.root,
-        input.id,
-        input.entry,
-      );
-      return;
-    }
-    await this.configReady;
-    const config = this.engineAccessor.get(IConfigService);
-    const declared = config.get<Record<string, unknown>>(ENVIRONMENTS_SECTION);
-    if (declared?.[input.id] !== undefined) {
-      throw new KimiError(
-        ErrorCodes.CONFIG_INVALID,
-        `Environment id "${input.id}" is already declared in ${this.engineAccessor.get(IBootstrapService).configPath}.`,
-      );
-    }
-    const entry = Object.fromEntries(
-      Object.entries(input.entry).filter(([, value]) => value !== undefined),
-    ) as RemoteEnvironmentEntry;
-    await config.replaceSections(
-      { [ENVIRONMENTS_SECTION]: { ...declared, [input.id]: entry } },
-      undefined,
-      { expectedValues: { [ENVIRONMENTS_SECTION]: declared ?? null } },
-    );
+    const { workspaceId } = session.accessor.get(ISessionContext);
+    await this.engineAccessor.get(IEnvironmentDeclarationService).declare({
+      workspaceId,
+      id: input.id,
+      entry: input.entry,
+      scope: input.scope,
+    });
   }
 
   private async resolveEnvironmentDeclarationEntries(root: string): Promise<ReadonlyMap<string, RemoteEnvironmentEntry>> {

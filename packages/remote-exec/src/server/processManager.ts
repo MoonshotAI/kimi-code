@@ -6,7 +6,6 @@ import { OsProcessErrors } from '@moonshot-ai/agent-core-v2/os/interface/hostPro
 
 import { RpcError, RpcErrorCode } from '#/protocol/errors';
 import {
-  PROCESS_EXITED_RETENTION_MS,
   PROCESS_OUTPUT_METHOD,
   PROCESS_EXITED_METHOD,
   PROCESS_CLOSED_METHOD,
@@ -23,6 +22,12 @@ import {
   requireParams,
   requireString,
 } from './fsHandler';
+
+interface ExitedProcessGroup {
+  readonly pid: number;
+  readonly tty: boolean;
+  killTimer: NodeJS.Timeout | undefined;
+}
 
 interface AcceptedWriteIds {
   readonly ids: Set<string>;
@@ -45,7 +50,6 @@ interface ManagedProcess {
   openStreams: number;
   readonly writeIds: AcceptedWriteIds;
   readonly stdinWaiters: Set<() => void>;
-  removalTimer: NodeJS.Timeout | undefined;
   killTimer: NodeJS.Timeout | undefined;
 }
 
@@ -87,17 +91,11 @@ export class ProcessManager {
   // start because terminate rides the control lane): the late start is
   // refused instead of spawning an orphan without a handle.
   private readonly terminatedIds = new Set<string>();
-  // Process-group ids (leader pids) whose entries aged out of the map after
-  // exit. Detached descendants keep the leader's pgid, so terminateAll must
-  // still target these groups or daemonized children escape the shutdown.
-  private readonly exitedGroupLeaders = new Set<number>();
+  private readonly exitedGroups = new Map<string, ExitedProcessGroup>();
   private outputPaused = false;
   private disposed = false;
 
-  constructor(
-    private readonly host: ProcessManagerHost,
-    private readonly exitedRetentionMs = PROCESS_EXITED_RETENTION_MS,
-  ) {}
+  constructor(private readonly host: ProcessManagerHost) {}
 
   async start(rawParams: unknown): Promise<ProcessStartResult> {
     const params = requireParams(rawParams);
@@ -142,7 +140,7 @@ export class ProcessManager {
     if (arg0 !== undefined && typeof arg0 !== 'string') {
       throw new RpcError(RpcErrorCode.InvalidParams, 'arg0 must be a string');
     }
-    if (this.processes.has(processId)) {
+    if (this.processes.has(processId) || this.exitedGroups.has(processId)) {
       throw new RpcError(RpcErrorCode.InvalidRequest, `duplicate process id ${processId}`);
     }
     // From here to processes.set there is no await, so a terminate can only
@@ -170,7 +168,6 @@ export class ProcessManager {
       openStreams: tty ? 1 : 2,
       writeIds: { ids: new Set(), order: [] },
       stdinWaiters: new Set(),
-      removalTimer: undefined,
       killTimer: undefined,
     };
     this.processes.set(processId, entry);
@@ -302,10 +299,7 @@ export class ProcessManager {
   }
 
   private pump(entry: ManagedProcess, stream: ProcessOutputStream, chunk: Buffer): void {
-    if (this.disposed) return;
-    // An exited entry may have aged out of the map while its streams are still
-    // open (a detached descendant holds the pipes): keep streaming live output.
-    if (entry.exitCode === null && this.processes.get(entry.processId) !== entry) return;
+    if (this.disposed || this.processes.get(entry.processId) !== entry) return;
     this.host.notify(PROCESS_OUTPUT_METHOD, {
       processId: entry.processId,
       stream,
@@ -325,13 +319,6 @@ export class ProcessManager {
     this.breakStdin(entry);
     this.host.notify(PROCESS_EXITED_METHOD, { processId: entry.processId, exitCode });
     this.maybeClose(entry);
-    entry.removalTimer = setTimeout(() => {
-      this.processes.delete(entry.processId);
-      if (entry.pid > 0) {
-        rememberBounded(this.exitedGroupLeaders, entry.pid, EXITED_GROUP_CACHE_SIZE);
-      }
-    }, this.exitedRetentionMs);
-    entry.removalTimer.unref?.();
   }
 
   private breakStdin(entry: ManagedProcess): void {
@@ -342,20 +329,21 @@ export class ProcessManager {
   }
 
   private maybeClose(entry: ManagedProcess): void {
-    if (entry.closed || entry.exitCode === null || entry.openStreams !== 0) return;
+    if (this.disposed || entry.closed || entry.exitCode === null || entry.openStreams !== 0) return;
     entry.closed = true;
     this.host.notify(PROCESS_CLOSED_METHOD, { processId: entry.processId });
-  }
-
-  private requireProcess(processId: string): ManagedProcess {
-    const entry = this.processes.get(processId);
-    if (entry === undefined) {
-      throw new RpcError(RpcErrorCode.InvalidRequest, `unknown process id ${processId}`);
+    this.processes.delete(entry.processId);
+    this.exitedGroups.set(entry.processId, { pid: entry.pid, tty: entry.tty, killTimer: entry.killTimer });
+    while (this.exitedGroups.size > EXITED_GROUP_CACHE_SIZE) {
+      const oldest = this.exitedGroups.entries().next();
+      if (oldest.done) break;
+      const [id, group] = oldest.value;
+      if (group.killTimer !== undefined) {
+        clearTimeout(group.killTimer);
+        this.killOrphanedGroup(group.pid, 'SIGKILL');
+      }
+      this.exitedGroups.delete(id);
     }
-    if (entry.state !== 'running') {
-      throw new RpcError(RpcErrorCode.InvalidRequest, `process id ${processId} is starting`);
-    }
-    return entry;
   }
 
   async write(rawParams: unknown): Promise<ProcessWriteResult> {
@@ -372,7 +360,7 @@ export class ProcessManager {
     }
     const entry = this.processes.get(processId);
     if (entry === undefined) {
-      return { status: 'unknownProcess' };
+      return { status: this.exitedGroups.has(processId) ? 'stdinClosed' : 'unknownProcess' };
     }
     if (entry.state !== 'running') {
       return { status: 'starting' };
@@ -443,14 +431,19 @@ export class ProcessManager {
     if (signal !== 'interrupt' && signal !== 'terminate' && signal !== 'kill') {
       throw new RpcError(RpcErrorCode.InvalidParams, 'signal must be interrupt, terminate or kill');
     }
+    const nodeSignal = signal === 'interrupt' ? 'SIGINT' : signal === 'terminate' ? 'SIGTERM' : 'SIGKILL';
     const entry = this.processes.get(processId);
     if (entry === undefined) {
-      throw new RpcError(RpcErrorCode.InvalidRequest, `unknown process id ${processId}`);
+      const group = this.exitedGroups.get(processId);
+      if (group === undefined) {
+        throw new RpcError(RpcErrorCode.InvalidRequest, `unknown process id ${processId}`);
+      }
+      this.killOrphanedGroup(group.pid, nodeSignal);
+      return EMPTY;
     }
     if (entry.state !== 'running') {
       throw new RpcError(RpcErrorCode.InvalidRequest, `process id ${processId} is starting`);
     }
-    const nodeSignal = signal === 'interrupt' ? 'SIGINT' : signal === 'terminate' ? 'SIGTERM' : 'SIGKILL';
     this.killGroup(entry, nodeSignal);
     return EMPTY;
   }
@@ -460,6 +453,18 @@ export class ProcessManager {
     const processId = requireString(params, 'processId');
     const entry = this.processes.get(processId);
     if (entry === undefined) {
+      const group = this.exitedGroups.get(processId);
+      if (group !== undefined) {
+        this.killOrphanedGroup(group.pid, 'SIGTERM');
+        if (group.killTimer === undefined) {
+          group.killTimer = setTimeout(() => {
+            this.killOrphanedGroup(group.pid, 'SIGKILL');
+            group.killTimer = undefined;
+          }, 1_000);
+          group.killTimer.unref?.();
+        }
+        return { running: false };
+      }
       // The start may not have run yet (terminate overtook it on the control
       // lane): remember the id so the late start is refused instead of
       // spawning an unmanaged orphan.
@@ -500,6 +505,11 @@ export class ProcessManager {
     }
     const entry = this.processes.get(processId);
     if (entry === undefined) {
+      const group = this.exitedGroups.get(processId);
+      if (group?.tty === true) return EMPTY;
+      if (group !== undefined) {
+        throw new RpcError(RpcErrorCode.InvalidRequest, `process id ${processId} has no tty`);
+      }
       throw new RpcError(RpcErrorCode.InvalidRequest, `unknown process id ${processId}`);
     }
     if (!entry.tty || entry.pty === undefined) {
@@ -586,12 +596,9 @@ export class ProcessManager {
       } catch {
       }
     }
-    // Groups whose leader exited and aged out of the map: detached descendants
-    // still carry the leader's pgid and would otherwise survive the shutdown.
-    const orphanedGroups = [...this.exitedGroupLeaders];
-    this.exitedGroupLeaders.clear();
-    for (const pgid of orphanedGroups) {
-      this.killOrphanedGroup(pgid, 'SIGTERM');
+    const orphanedGroups = [...this.exitedGroups.values()];
+    for (const group of orphanedGroups) {
+      this.killOrphanedGroup(group.pid, 'SIGTERM');
     }
     if (entries.some((entry) => entry.exitCode === null)) {
       const deadline = Date.now() + 1_000;
@@ -608,8 +615,8 @@ export class ProcessManager {
       } catch {
       }
     }
-    for (const pgid of orphanedGroups) {
-      this.killOrphanedGroup(pgid, 'SIGKILL');
+    for (const group of [...orphanedGroups, ...this.exitedGroups.values()]) {
+      this.killOrphanedGroup(group.pid, 'SIGKILL');
     }
     this.dispose();
   }
@@ -618,12 +625,14 @@ export class ProcessManager {
     if (this.disposed) return;
     this.disposed = true;
     for (const entry of this.processes.values()) {
-      if (entry.removalTimer !== undefined) clearTimeout(entry.removalTimer);
       if (entry.killTimer !== undefined) clearTimeout(entry.killTimer);
       this.breakStdin(entry);
     }
     this.processes.clear();
     this.terminatedIds.clear();
-    this.exitedGroupLeaders.clear();
+    for (const group of this.exitedGroups.values()) {
+      if (group.killTimer !== undefined) clearTimeout(group.killTimer);
+    }
+    this.exitedGroups.clear();
   }
 }

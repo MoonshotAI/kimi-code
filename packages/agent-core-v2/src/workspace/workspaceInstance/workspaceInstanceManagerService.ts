@@ -251,6 +251,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
           this.modelProviders,
           input.environments,
           input.onDispose,
+          input.profileContextKey,
         ),
       },
     );

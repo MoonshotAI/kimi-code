@@ -11,21 +11,8 @@ import {
   type PromptAttachmentsTarget,
 } from '../../src/lib/promptMedia';
 
-const FRAME_CAP_BYTES = 64 * 1024 * 1024;
-
-interface WriteCall {
-  readonly path: string;
-  readonly mode: 'truncate' | 'append';
-  readonly data: Uint8Array;
-}
-
-function framePayloadBytes(data: Uint8Array): number {
-  return Math.ceil(data.byteLength / 3) * 4;
-}
-
 function fakeEnvironmentFs(options: { failAfterOps?: { path: string; ops: number } } = {}) {
   const files = new Map<string, Uint8Array>();
-  const writes: WriteCall[] = [];
   const removed: string[] = [];
   const opsPerPath = new Map<string, number>();
   const put = (path: string, data: Uint8Array, mode: 'truncate' | 'append'): void => {
@@ -35,10 +22,6 @@ function fakeEnvironmentFs(options: { failAfterOps?: { path: string; ops: number
     if (fail !== undefined && fail.path === path && ops > fail.ops) {
       throw new Error('injected staging failure');
     }
-    if (framePayloadBytes(data) > FRAME_CAP_BYTES) {
-      throw new Error('message exceeds the frame cap');
-    }
-    writes.push({ path, mode, data });
     const existing = files.get(path);
     files.set(
       path,
@@ -52,18 +35,20 @@ function fakeEnvironmentFs(options: { failAfterOps?: { path: string; ops: number
       if (data === undefined) throw new Error(`no such file: ${path}`);
       return { isFile: true, isDirectory: false, size: data.byteLength };
     },
-    writeBytes: async (path: string, data: Uint8Array) => {
-      put(path, data, 'truncate');
-    },
-    appendBytes: async (path: string, data: Uint8Array) => {
-      put(path, data, 'append');
+    writeBytes: async (path: string, data: Uint8Array | AsyncIterable<Uint8Array>) => {
+      if (data instanceof Uint8Array) {
+        put(path, data, 'truncate');
+        return;
+      }
+      files.set(path, new Uint8Array(0));
+      for await (const chunk of data) put(path, chunk, 'append');
     },
     remove: async (path: string) => {
       removed.push(path);
       files.delete(path);
     },
   } as unknown as IHostFileSystem;
-  return { files, writes, removed, fs };
+  return { files, removed, fs };
 }
 
 const environmentPath: EnvironmentPath = {
@@ -79,7 +64,7 @@ const environmentPath: EnvironmentPath = {
 
 interface FakeFileEntry {
   readonly meta: FileMeta;
-  readonly chunks: readonly (string | Uint8Array)[];
+  readonly chunks: readonly Uint8Array[] | AsyncIterable<Uint8Array>;
 }
 
 function fakeFileStore(entries: ReadonlyMap<string, FakeFileEntry>): IFileService {
@@ -112,12 +97,6 @@ function targetFor(fs: IHostFileSystem): PromptAttachmentsTarget {
   return { dir: '/remote/tmp/kimi-code/attachments', fs, path: environmentPath };
 }
 
-function expectFrameSafe(writes: readonly WriteCall[]): void {
-  for (const write of writes) {
-    expect(framePayloadBytes(write.data)).toBeLessThanOrEqual(FRAME_CAP_BYTES);
-  }
-}
-
 function expectStoredBytes(files: ReadonlyMap<string, Uint8Array>, path: string, expected: Uint8Array): void {
   const written = files.get(path);
   if (written === undefined) throw new Error(`nothing written to ${path}`);
@@ -126,7 +105,30 @@ function expectStoredBytes(files: ReadonlyMap<string, Uint8Array>, path: string,
 }
 
 describe('resolvePromptMediaFiles with an environment attachments target', () => {
-  it('streams a large attachment in frame-safe chunks: first truncate, then append', async () => {
+  it('starts writing a streaming attachment before consuming its complete input', async () => {
+    const fake = fakeEnvironmentFs();
+    const target = '/remote/tmp/kimi-code/attachments/f_stream-stream.bin';
+    async function* chunks(): AsyncGenerator<Uint8Array> {
+      for (let index = 0; index < 32; index += 1) {
+        if (index === 16) expect((await fake.fs.stat(target)).size).toBeGreaterThan(0);
+        yield new Uint8Array(64 * 1024).fill(index);
+      }
+    }
+    const size = 2 * 1024 * 1024;
+    const store = fakeFileStore(new Map([
+      ['f_stream', { meta: meta('f_stream', 'stream.bin', size), chunks: chunks() }],
+    ]));
+    const result = await resolvePromptMediaFiles(
+      [{ type: 'file', file_id: 'f_stream', name: 'stream.bin', media_type: 'application/octet-stream', size }],
+      store,
+      '/cache',
+      { resolveAttachmentsTarget: async () => targetFor(fake.fs) },
+    );
+    expect(result.attachments[0]!.path).toBe(target);
+    expect((await fake.fs.stat(target)).size).toBe(size);
+  });
+
+  it('preserves the contents of a large attachment', async () => {
     const size = 50 * 1024 * 1024;
     const data = patternedBytes(size);
     const chunks: Uint8Array[] = [];
@@ -155,18 +157,14 @@ describe('resolvePromptMediaFiles with an environment attachments target', () =>
     const target = result.attachments[0]!.path;
     expect(target).toBe('/remote/tmp/kimi-code/attachments/f_big-big.bin');
     expectStoredBytes(fake.files, target, data);
-    expect(fake.writes.length).toBeGreaterThan(1);
-    expect(fake.writes[0]!.mode).toBe('truncate');
-    expect(fake.writes.slice(1).every((write) => write.mode === 'append')).toBe(true);
-    expectFrameSafe(fake.writes);
     expect(result.content[0]).toEqual({
       type: 'text',
       text: `Attached file "big.bin" (application/octet-stream, ${String(size)} bytes): ${target} — open it with the Read tool`,
     });
   });
 
-  it('writes a small attachment with a single truncate write, bytes unchanged', async () => {
-    const chunks: (string | Uint8Array)[] = ['hello ', new Uint8Array([119, 111, 114, 108, 100])];
+  it('preserves the contents of a small attachment', async () => {
+    const chunks = [Buffer.from('hello '), new Uint8Array([119, 111, 114, 108, 100])];
     const expected = Buffer.concat([Buffer.from('hello '), Buffer.from([119, 111, 114, 108, 100])]);
     const store = fakeFileStore(
       new Map([['f_small', { meta: meta('f_small', 'small.txt', expected.byteLength), chunks }]]),
@@ -187,12 +185,10 @@ describe('resolvePromptMediaFiles with an environment attachments target', () =>
       { resolveAttachmentsTarget: async () => targetFor(fake.fs) },
     );
     const target = result.attachments[0]!.path;
-    expect(fake.writes).toHaveLength(1);
-    expect(fake.writes[0]!.mode).toBe('truncate');
     expectStoredBytes(fake.files, target, expected);
   });
 
-  it('persists a large unsupported inline image in frame-safe chunks', async () => {
+  it('persists a large unsupported inline image', async () => {
     const size = 20 * 1024 * 1024;
     const bytes = patternedBytes(size);
     bytes.fill(0x61, 0, 4096);
@@ -213,10 +209,6 @@ describe('resolvePromptMediaFiles with an environment attachments target', () =>
     expect(result.attachments).toHaveLength(1);
     const target = result.attachments[0]!.path;
     expectStoredBytes(fake.files, target, bytes);
-    expect(fake.writes.length).toBeGreaterThan(1);
-    expect(fake.writes[0]!.mode).toBe('truncate');
-    expect(fake.writes.slice(1).every((write) => write.mode === 'append')).toBe(true);
-    expectFrameSafe(fake.writes);
   });
 
   it('removes staged remote files when a later part fails to stage', async () => {
@@ -245,7 +237,7 @@ describe('resolvePromptMediaFiles with an environment attachments target', () =>
     const size = 20 * 1024 * 1024;
     const data = patternedBytes(size);
     const store = fakeFileStore(
-      new Map([['f_big', { meta: meta('f_big', 'big.bin', size), chunks: [data] }]]),
+      new Map([['f_big', { meta: meta('f_big', 'big.bin', size), chunks: [data.subarray(0, size / 2), data.subarray(size / 2)] }]]),
     );
     const target = '/remote/tmp/kimi-code/attachments/f_big-big.bin';
     const fake = fakeEnvironmentFs({ failAfterOps: { path: target, ops: 1 } });

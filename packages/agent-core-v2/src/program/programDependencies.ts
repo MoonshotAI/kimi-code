@@ -30,6 +30,7 @@ import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspac
 
 export interface ProgramSessionControllerInput {
   readonly context: IWorkspaceContext;
+  readonly profileContextKey: string;
   readonly environments: EnvironmentRegistry;
   readonly workspaceAgentProfiles: IWorkspaceAgentProfileLoader;
   readonly extraAgentProfiles: IExtraAgentProfileLoader;

@@ -41,6 +41,8 @@ export abstract class AgentProfileLoaderBase extends Service {
     return undefined;
   }
 
+  protected readonly contextKey?: string;
+
   private enqueue(): Promise<void> {
     const current = this.tail.catch(() => undefined).then(() => this.loadAndContribute());
     this.tail = current;
@@ -54,6 +56,7 @@ export abstract class AgentProfileLoaderBase extends Service {
         sourceId: this.sourceId,
         priority: this.priority,
         workspaceKey: this.workspaceKey,
+        contextKey: this.contextKey,
         contribution,
       };
       if (this.registry !== undefined) {

@@ -53,7 +53,7 @@ defaultCwd = "/home/me/kimi-code"
 - 可选的顶层 `default` 指定新会话初始绑定的环境，指向的条目必须设置 `defaultCwd`。未设置 `default` 时，新会话默认使用 `local` 环境。
 - 环境 id 即条目的键名：不超过 64 个字符，首尾不能有空白；`local` 和 `default` 是保留字。
 
-声明会被实时感知：新增、编辑或删除条目会即时注册、替换或注销对应环境，无需重启。被删除的环境不会立刻从仍在使用它的会话下消失——会话保留连接直至在执行的工作释放（有界等待，上限数秒），随后连接关闭；新的工具调用以 `environment.not_found` 失败，绝不会静默回退到 `local`。
+通过 `/environment` 添加的环境在操作完成后即可选择，即使关闭了[文件监听](../configuration/config-files.md#watch)也会立即生效。启用文件监听时，手动编辑声明文件也会注册、替换或注销对应环境，无需重启。被删除的环境不会立刻从仍在使用它的会话下消失——会话保留连接直至在执行的工作释放（有界等待，上限数秒），随后连接关闭；新的工具调用以 `environment.not_found` 失败，绝不会静默回退到 `local`。
 
 完整字段参考见 [`environments`](../configuration/config-files.md#environments)。
 

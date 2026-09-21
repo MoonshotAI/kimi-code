@@ -1,13 +1,16 @@
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import type { IDisposable } from '#/_base/di/lifecycle';
 import { ILogService } from '#/_base/log/log';
 import { EnvironmentSetBinding } from '#/agent/environmentBinding/environmentBindingOps';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { LifecycleScope } from '#/app/scopes';
 import type { Environment, EnvironmentBinding } from '#/environment/environment';
-import { resolveWorkspaceEnvironmentDeclarations } from '#/environment/environmentDeclarations';
+import { ENVIRONMENTS_SECTION } from '#/environment/configSection';
+import { resolveWorkspaceEnvironmentDeclarations, writeProjectEnvironmentDeclaration } from '#/environment/environmentDeclarations';
 import { EnvironmentError, environmentStatusAllows } from '#/environment/environmentRegistry';
 import type { EnvironmentDeclarationSet } from '#/environment/remoteEnvironmentDeclaration';
+import { Error2, ErrorCodes } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -21,10 +24,11 @@ import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspa
 import { AGENT_WIRE_RECORD_KEY, isWireRecord, type WireRecord } from '#/wire/record';
 import { parseTree, restorableChain, type WireLine } from '#/wire/tree/index';
 
-import { IEnvironmentDeclarationService } from './environmentDeclaration';
+import { IEnvironmentDeclarationService, type DeclareEnvironmentInput } from './environmentDeclaration';
 
 export class EnvironmentDeclarationService implements IEnvironmentDeclarationService {
   declare readonly _serviceBrand: undefined;
+  private readonly reconcilers = new Map<string, () => Promise<void>>();
 
   constructor(
     @IConfigService private readonly config: IConfigService,
@@ -35,6 +39,51 @@ export class EnvironmentDeclarationService implements IEnvironmentDeclarationSer
     @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
     @ILogService private readonly log: ILogService,
   ) {}
+
+  registerReconciler(workspaceId: string, reconcile: () => Promise<void>): IDisposable {
+    if (this.reconcilers.has(workspaceId)) throw new Error(`workspace ${workspaceId} already has an environment reconciler`);
+    this.reconcilers.set(workspaceId, reconcile);
+    return { dispose: () => {
+      if (this.reconcilers.get(workspaceId) === reconcile) this.reconcilers.delete(workspaceId);
+    } };
+  }
+
+  async declare(input: DeclareEnvironmentInput): Promise<void> {
+    const workspace = await this.workspaces.getOrCreate({ workspaceId: input.workspaceId });
+    const reconcile = this.reconcilers.get(workspace.id);
+    if (reconcile === undefined) {
+      throw new EnvironmentError('environment.unavailable', `workspace ${workspace.id} has no remote environment provider`);
+    }
+    const scope = input.scope ?? 'global';
+    if (scope === 'project') {
+      if (!(await workspace.program.trust.get())) {
+        throw new Error2(ErrorCodes.CONFIG_INVALID, `Workspace "${workspace.root}" is not trusted; trust it before declaring a project environment.`);
+      }
+      await writeProjectEnvironmentDeclaration(this.fs, workspace.root, input.id, input.entry);
+    } else {
+      await this.config.ready;
+      const declared = this.config.get<Record<string, unknown>>(ENVIRONMENTS_SECTION);
+      if (declared?.[input.id] !== undefined) {
+        throw new Error2(ErrorCodes.CONFIG_INVALID, `Environment id "${input.id}" is already declared in ${this.bootstrap.configPath}.`);
+      }
+      const entry = Object.fromEntries(Object.entries(input.entry).filter(([, value]) => value !== undefined));
+      await this.config.replaceSections(
+        { [ENVIRONMENTS_SECTION]: { ...declared, [input.id]: entry } },
+        undefined,
+        { expectedValues: { [ENVIRONMENTS_SECTION]: declared ?? null } },
+      );
+    }
+    const refreshes = scope === 'project' ? [reconcile] : [...new Set([reconcile, ...this.reconcilers.values()])];
+    const results = await Promise.allSettled(refreshes.map((refresh) => refresh()));
+    const failure = results.find((result) => result.status === 'rejected');
+    if (failure?.status === 'rejected') {
+      throw new EnvironmentError(
+        'environment.unavailable',
+        `Environment "${input.id}" was saved, but registration failed: ${failure.reason instanceof Error ? failure.reason.message : String(failure.reason)}`,
+        { cause: failure.reason },
+      );
+    }
+  }
 
   async declarations(root: string): Promise<EnvironmentDeclarationSet | undefined> {
     try {

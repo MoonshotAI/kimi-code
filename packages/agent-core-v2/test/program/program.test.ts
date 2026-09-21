@@ -4,9 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Event } from '#/_base/event';
+import { InstantiationService } from '#/_base/di/instantiationService';
+import { ServiceCollection } from '#/_base/di/serviceCollection';
+import { AgentProfileRegistryService } from '#/app/agentProfileCatalog/agentProfileRegistryService';
+import { SessionAgentProfileCatalogService } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalogService';
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
@@ -30,6 +34,9 @@ import type { IWorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/
 import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
+
+beforeEach(() => { vi.stubEnv('KIMI_CODE_WATCH', 'false'); });
+afterEach(() => { vi.unstubAllEnvs(); });
 
 function deferred(): { readonly promise: Promise<void>; resolve(): void; reject(error: Error): void } {
   let resolve!: () => void;
@@ -493,6 +500,7 @@ interface LocalityFixture {
   readonly program: Program;
   readonly generations: Map<string, GenerationAccess>;
   readonly controllerInputs: ProgramSessionControllerInput[];
+  readonly profileRegistry: AgentProfileRegistryService;
   readonly profileRegistrations: { readonly sourceId: string; readonly profiles: readonly string[] }[];
   readonly localGitCalls: string[];
   readonly localRoot: string;
@@ -507,9 +515,9 @@ function generationKey(environmentId: string, cwd?: string): string {
   return cwd === undefined ? environmentId : `${environmentId}\0${cwd}`;
 }
 
-function scopedFs(base: string, realBase: string, inner: IHostFileSystem): IHostFileSystem {
+function scopedFs(base: string, realBase: string, inner: IHostFileSystem, additionalRoots: readonly string[] = []): IHostFileSystem {
   const within = (path: string): boolean =>
-    path === base || path.startsWith(`${base}/`) || path === realBase || path.startsWith(`${realBase}/`);
+    [base, realBase, ...additionalRoots].some((root) => path === root || path.startsWith(`${root}/`));
   const assert = (path: string): void => {
     if (!within(path)) throw new HostFsError(OsFsErrors.codes.OS_FS_NOT_FOUND, `not found: ${path}`);
   };
@@ -566,6 +574,7 @@ async function localityFixture(options: { readonly remoteCwd?: string; readonly 
   };
   await writeAgent(join(localRoot, '.kimi-code', 'agents'), 'local-agent');
   await writeAgent(join(remoteRoot, '.kimi-code', 'agents'), 'target-agent');
+  await writeAgent(join(remoteAltRoot, '.kimi-code', 'agents'), 'alt-agent');
   await writeAgent(join(kimiHome, 'agents'), 'user-agent');
 
   await mkdir(join(localRoot, 'localextra'), { recursive: true });
@@ -606,6 +615,8 @@ async function localityFixture(options: { readonly remoteCwd?: string; readonly 
 
   const registry = new EnvironmentRegistry('workspace', options.drainTimeoutMs ?? 50);
   const controllerInputs: ProgramSessionControllerInput[] = [];
+  const profileContainer = new InstantiationService(new ServiceCollection(), true);
+  const profileRegistry = profileContainer.createInstance(AgentProfileRegistryService);
   const profileRegistrations: { readonly sourceId: string; readonly profiles: readonly string[] }[] = [];
   const bootstrap = { _serviceBrand: undefined, homeDir: kimiHome, osHomeDir: homeDir, args: {} };
   const config = {
@@ -645,14 +656,14 @@ async function localityFixture(options: { readonly remoteCwd?: string; readonly 
       sessionManager: { current: undefined, onDidChange: Event.None },
       agentProfiles: {
         _serviceBrand: undefined,
-        onDidChange: Event.None,
-        entries: () => [],
-        register: (registration: { sourceId: string; contribution: { profiles: { name: string }[] } }) => {
+        onDidChange: profileRegistry.onDidChange,
+        entries: () => profileRegistry.entries(),
+        register: (registration: Parameters<AgentProfileRegistryService['register']>[0]) => {
           profileRegistrations.push({
             sourceId: registration.sourceId,
             profiles: registration.contribution.profiles.map((profile) => profile.name),
           });
-          return { dispose: () => {} };
+          return profileRegistry.register(registration);
         },
       },
       builtinAgentProfiles: { getDefault: () => ({ renderSystemPrompt: () => 'default profile' }) },
@@ -668,12 +679,13 @@ async function localityFixture(options: { readonly remoteCwd?: string; readonly 
   );
 
   const realFs = new HostFileSystem();
+  const localFs = scopedFs(localRoot, await realpath(localRoot), realFs, [homeDir, await realpath(homeDir)]);
   const localRegistration = registry.register(Object.assign(
     new FakeEnvironment(
       { workspaceId: 'workspace', environmentId: 'local', generation: 'local-one' },
       { capabilities: ['fs', 'process'], host: { homeDir } },
     ),
-    { fs: realFs, process: new HostProcessService() },
+    { fs: localFs, process: new HostProcessService() },
   ) as FakeEnvironment);
   const remoteRegistration = registry.register(Object.assign(
     new FakeEnvironment(
@@ -691,6 +703,7 @@ async function localityFixture(options: { readonly remoteCwd?: string; readonly 
     program,
     generations,
     controllerInputs,
+    profileRegistry,
     profileRegistrations,
     localGitCalls,
     localRoot,
@@ -715,8 +728,10 @@ async function localityFixture(options: { readonly remoteCwd?: string; readonly 
       ) as FakeEnvironment);
     },
     cleanup: async () => {
+      await Promise.allSettled([...generations.values()].map((generation) => awaitLocality(generation)));
       program.dispose();
       userSkills.dispose();
+      profileContainer.dispose();
       await registry.dispose();
       await rm(base, { recursive: true, force: true });
     },
@@ -788,9 +803,7 @@ describe('Program.createGeneration workspace and user locality', () => {
       expect(remoteProfiles.filter((entry) => entry.sourceId === 'workspace')).toEqual([
         { sourceId: 'workspace', profiles: ['target-agent'] },
       ]);
-      expect(remoteProfiles.filter((entry) => entry.sourceId === 'user')).toEqual([
-        { sourceId: 'user', profiles: ['user-agent'] },
-      ]);
+      expect(remoteProfiles.filter((entry) => entry.sourceId === 'user')).toEqual([]);
 
       const status = await remote.git.status();
       expect(status.branch).toBe('main');
@@ -805,6 +818,82 @@ describe('Program.createGeneration workspace and user locality', () => {
 });
 
 describe('Program remote generation activation', () => {
+  it('loads remote parent project instructions alongside local personal instructions from a subdirectory', async () => {
+    const fixture = await localityFixture();
+    const cwd = join(fixture.remoteRoot, 'src');
+    let controller;
+    try {
+      await mkdir(cwd);
+      controller = fixture.program.createSessionController('remote', cwd);
+      const input = fixture.controllerInputs[0]!;
+      await Promise.all([input.instructions.ready, input.dirs.ready, input.skills.ready, input.workspaceAgentProfiles.ready]);
+      const instructions = input.instructions.sessionProvider();
+      expect(instructions.agentsMd).toContain('target project instructions');
+      expect(instructions.agentsMd).toContain('user instructions');
+      expect(instructions.agentsMd).not.toContain('local project instructions');
+      expect(instructions.agentsMdPaths).toContain(join(fixture.remoteRoot, 'AGENTS.md'));
+    } finally {
+      controller?.dispose();
+      await fixture.cleanup();
+    }
+  });
+
+  it('keeps personal instructions local when the remote working directory is the filesystem root', async () => {
+    const fixture = await localityFixture();
+    const controller = fixture.program.createSessionController('remote', '/');
+    try {
+      const input = fixture.controllerInputs[0]!;
+      await input.instructions.ready;
+      expect(input.instructions.sessionProvider().agentsMd).toContain('user instructions');
+    } finally {
+      controller.dispose();
+      await fixture.cleanup();
+    }
+  });
+
+  it('gives local and remote sessions their own project profiles while sharing personal profiles', async () => {
+    const fixture = await localityFixture({ remoteCwd: undefined });
+    const catalogs: SessionAgentProfileCatalogService[] = [];
+    const controllers = [];
+    try {
+      controllers.push(fixture.program.createSessionController());
+      controllers.push(fixture.program.createSessionController('remote', fixture.remoteRoot));
+      controllers.push(fixture.program.createSessionController('remote', fixture.remoteAltRoot));
+      for (const input of fixture.controllerInputs) {
+        await Promise.all([input.workspaceAgentProfiles.ready, input.userAgentProfiles.ready]);
+        catalogs.push(new SessionAgentProfileCatalogService(
+          fixture.profileRegistry,
+          { _serviceBrand: undefined, workspaceKey: 'workspace', contextKey: input.profileContextKey },
+          noopLogger,
+        ));
+      }
+      expect(catalogs[0]!.list().map((profile) => profile.name).toSorted()).toEqual(['local-agent', 'user-agent']);
+      expect(catalogs[1]!.list().map((profile) => profile.name).toSorted()).toEqual(['target-agent', 'user-agent']);
+      expect(catalogs[2]!.list().map((profile) => profile.name).toSorted()).toEqual(['alt-agent', 'user-agent']);
+      expect(fixture.controllerInputs[0]!.mcp.connectionManager()).toBe(fixture.controllerInputs[1]!.mcp.connectionManager());
+      expect(fixture.controllerInputs[0]!.mcp.connectionManager()).toBe(fixture.controllerInputs[2]!.mcp.connectionManager());
+      await fixture.replaceRemote('remote-two', fixture.remoteRoot);
+      controllers.push(fixture.program.createSessionController('remote', fixture.remoteRoot));
+      const replacement = fixture.controllerInputs[3]!;
+      await replacement.workspaceAgentProfiles.ready;
+      const reconnected = new SessionAgentProfileCatalogService(
+        fixture.profileRegistry,
+        { _serviceBrand: undefined, workspaceKey: 'workspace', contextKey: replacement.profileContextKey },
+        noopLogger,
+      );
+      catalogs.push(reconnected);
+      controllers[1]!.dispose();
+      expect(reconnected.list().map((profile) => profile.name).toSorted()).toEqual(['target-agent', 'user-agent']);
+      expect(catalogs[0]!.get('local-agent')).toBeDefined();
+      expect(catalogs[2]!.get('alt-agent')).toBeDefined();
+      expect(replacement.mcp.connectionManager()).toBe(fixture.controllerInputs[0]!.mcp.connectionManager());
+    } finally {
+      for (const catalog of catalogs) catalog.dispose();
+      for (const controller of controllers) controller.dispose();
+      await fixture.cleanup();
+    }
+  });
+
   it('keeps same-environment generations rooted per session cwd', async () => {
     const fixture = await localityFixture({ remoteCwd: undefined });
     try {

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { HostFsError } from '@moonshot-ai/agent-core-v2/os/interface/hostFsErrors';
+import { persistOriginalImage } from '@moonshot-ai/agent-core-v2/agent/media/image-originals';
 
 import type { RemoteExecConnection } from '../src/client/connection';
 import { RemoteFileSystem } from '../src/client/remoteFileSystem';
@@ -52,12 +53,25 @@ describe('fs group over a subprocess loopback', () => {
     await expect(fs.readText(path)).resolves.toBe('abc');
   });
 
-  it('appends bytes', async () => {
-    const path = join(workDir, 'append.bin');
-    await fs.writeBytes(path, new Uint8Array([1, 2]));
-    await fs.appendBytes(path, new Uint8Array([3, 4]));
-    await fs.appendBytes(path, new Uint8Array([5]));
-    await expect(fs.readBytes(path)).resolves.toEqual(new Uint8Array([1, 2, 3, 4, 5]));
+  it('writes a byte stream progressively without retaining the complete input', async () => {
+    const path = join(workDir, 'stream.bin');
+    await fs.writeText(path, 'old content');
+    const chunkSize = 2 * 1024 * 1024 + 3;
+    async function* input(): AsyncGenerator<Uint8Array> {
+      for (let index = 1; index <= 3; index += 1) {
+        yield new Uint8Array(chunkSize).fill(index);
+        expect((await fs.stat(path)).size).toBeGreaterThanOrEqual((index - 1) * chunkSize);
+      }
+    }
+    await fs.writeBytes(path, input());
+
+    const data = await fs.readBytes(path);
+    expect(data.byteLength).toBe(3 * chunkSize);
+    expect(Buffer.from(data).equals(Buffer.concat([
+      Buffer.alloc(chunkSize, 1),
+      Buffer.alloc(chunkSize, 2),
+      Buffer.alloc(chunkSize, 3),
+    ]))).toBe(true);
   });
 
   it('reads byte ranges', async () => {
@@ -175,31 +189,30 @@ describe('fs group over a subprocess loopback', () => {
     await expect(fs.readText(workDir)).rejects.toMatchObject({ code: 'os.fs.is_directory' });
   });
 
-  it('writes files larger than the frame cap in bounded chunks', async () => {
-    const path = join(workDir, 'huge.bin');
+  it('persists original images larger than the frame cap without changing their contents', async () => {
     // base64 of 49MiB would exceed the 64MiB frame cap as a single write.
     const size = 49 * 1024 * 1024;
     const data = new Uint8Array(size);
     for (let i = 0; i < size; i += 1) data[i] = i % 251;
-    await fs.writeBytes(path, data);
+    const path = await persistOriginalImage(data, 'image/png', { dir: workDir, fs });
+    expect(path).not.toBeNull();
 
-    const read = await fs.readBytes(path);
+    const read = await fs.readBytes(path!);
     expect(read.byteLength).toBe(size);
     expect(Buffer.from(read).equals(Buffer.from(data))).toBe(true);
   }, 60_000);
 
-  it('chunks a large appendBytes onto existing content', async () => {
-    const path = join(workDir, 'chunked-append.bin');
-    const first = new Uint8Array(1024 * 1024).map((_, index) => index % 253);
-    const second = new Uint8Array(2 * 1024 * 1024 + 7).map((_, index) => index % 251);
-    await fs.writeBytes(path, first);
-    await fs.appendBytes(path, second);
+  it.each([false, true])('writes an empty stream when the destination exists: %s', async (exists) => {
+    const path = join(workDir, `empty-${exists}.bin`);
+    if (exists) await fs.writeText(path, 'old content');
+    async function* input(): AsyncGenerator<Uint8Array> {
+      yield* [];
+    }
+    await fs.writeBytes(path, input());
 
-    const read = await fs.readBytes(path);
-    expect(read.byteLength).toBe(first.byteLength + second.byteLength);
-    expect(Buffer.from(read.subarray(0, first.byteLength)).equals(Buffer.from(first))).toBe(true);
-    expect(Buffer.from(read.subarray(first.byteLength)).equals(Buffer.from(second))).toBe(true);
-  }, 30_000);
+    expect((await fs.stat(path)).size).toBe(0);
+    await expect(fs.readBytes(path)).resolves.toEqual(new Uint8Array(0));
+  });
 
   it('creates exclusively with a payload larger than a chunk', async () => {
     const path = join(workDir, 'chunked-exclusive.bin');

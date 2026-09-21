@@ -81,7 +81,8 @@ export interface AgentFacade {
   listCommands(): Promise<readonly AgentCommandInfo[]>;
   runCommand(input: { name: string; args?: string }): Promise<void>;
   getEnvironment(): Promise<EnvironmentBinding>;
-  switchEnvironment(environmentId: string): Promise<EnvironmentBinding>;
+  switchEnvironment(environmentId: string, options?: { cwd?: string }): Promise<EnvironmentBinding>;
+  reconnectEnvironment(): Promise<EnvironmentBinding>;
   getPlan(): Promise<PlanData>;
   enterPlan(): Promise<void>;
   clearPlan(): Promise<void>;
@@ -151,8 +152,17 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
       ) as Promise<void>,
     getEnvironment: () =>
       call(scope, 'agentEnvironmentBindingService', 'get', []) as Promise<EnvironmentBinding>,
-    switchEnvironment: (environmentId) =>
-      call(scope, 'agentEnvironmentBindingService', 'switch', [environmentId]) as Promise<EnvironmentBinding>,
+    switchEnvironment: (environmentId, options) =>
+      call(
+        scope,
+        'agentEnvironmentBindingService',
+        'connectAndSwitch',
+        options?.cwd === undefined ? [environmentId] : [environmentId, options.cwd],
+      ) as Promise<EnvironmentBinding>,
+    reconnectEnvironment: async () => {
+      await call(scope, 'agentEnvironmentService', 'reconnect', []);
+      return call(scope, 'agentEnvironmentBindingService', 'get', []) as Promise<EnvironmentBinding>;
+    },
     getPlan: () => call(scope, 'agentPlanService', 'status', []) as Promise<PlanData>,
     enterPlan: () => call(scope, 'agentPlanService', 'enter', []) as Promise<void>,
     clearPlan: () => call(scope, 'agentPlanService', 'clear', []) as Promise<void>,

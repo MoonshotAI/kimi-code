@@ -193,6 +193,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IProviderService private readonly providers: IProviderService,
     private readonly environments: EnvironmentRegistry,
     onDispose?: () => void,
+    private readonly profileContextKey?: string,
   ) {
     super();
     if (onDispose !== undefined) this._register({ dispose: onDispose });
@@ -280,6 +281,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             ...sessionAgentProfileCatalogSeed({
               _serviceBrand: undefined,
               workspaceKey: workspaceId,
+              contextKey: this.profileContextKey,
             }),
             [ISessionSkillCatalogData, this.workspaceSkillCatalog.sessionData()],
             [ISessionInstructionsProvider, this.workspaceInstructions.sessionProvider()],

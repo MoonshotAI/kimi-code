@@ -54,7 +54,7 @@ export type { RemoteEnvironmentEntry };
  * Write target for an environment declaration: `global` merges the entry into the
  * user-level `config.toml` `[environments]` section; `project` merges it into the
  * session workspace's `.kimi-code/environments.toml` (the file a team shares
- * through git). Both register live through the engine's declaration watch.
+ * through git). Both register before declaration completes.
  */
 export type EnvironmentDeclarationScope = 'global' | 'project';
 

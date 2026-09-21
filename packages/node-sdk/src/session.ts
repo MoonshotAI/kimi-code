@@ -298,8 +298,8 @@ export class Session {
    * (the default) deep-merges the entry into the user-level `config.toml`
    * `[environments]` section; `scope: 'project'` merge-writes it into the
    * workspace's `.kimi-code/environments.toml`, preserving existing entries
-   * and file layout. Either way the engine's declaration watch registers the
-   * environment live — no restart. Fails closed: a duplicate id, an invalid
+   * and file layout. Resolves after the declaration is registered, including
+   * when file watching is disabled. Fails closed: a duplicate id, an invalid
    * entry, or an unreadable/invalid project file rejects without writing.
    */
   async declareEnvironment(input: DeclareEnvironmentInput): Promise<void> {

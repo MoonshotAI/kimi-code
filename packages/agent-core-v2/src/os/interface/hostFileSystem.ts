@@ -28,7 +28,7 @@ export interface IHostFileSystem {
   writeText(path: string, data: string): Promise<void>;
   appendText(path: string, data: string): Promise<void>;
   readBytes(path: string, n?: number, offset?: number): Promise<Uint8Array>;
-  writeBytes(path: string, data: Uint8Array): Promise<void>;
+  writeBytes(path: string, data: Uint8Array | AsyncIterable<Uint8Array>): Promise<void>;
   readLines(
     path: string,
     options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
