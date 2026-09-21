@@ -3,7 +3,8 @@ import { access, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { kimiCdnContentUrl } from '@moonshot-ai/kimi-code-oauth';
+import { kimiCdnContentUrl, kimiRegionProfile, resolveKimiRegion } from '@moonshot-ai/kimi-code-oauth';
+import type { KimiRegion } from '@moonshot-ai/kimi-code-oauth';
 
 import { downloadToFile, runCommand } from '../host';
 import type {
@@ -16,6 +17,7 @@ import type { CapabilityEntryContext } from './context';
 
 const MAC_PLUGIN_ID = 'kimi-cu';
 const WINDOWS_PLUGIN_ID = 'kimi-cu-win';
+const MAC_PLUGIN_ZIP_PATH = 'plugins/official/kimi-cu.zip';
 const APP_BUNDLE = 'KimiCU.app';
 const LAUNCHD_LABEL = 'ai.kimi.cu.service';
 const COMMAND_TIMEOUT_MS = 30_000;
@@ -43,20 +45,20 @@ const WINDOWS_DOCTOR_SCRIPT =
 
 interface PluginLayerConfig {
   readonly id: string;
-  readonly zipUrl: string;
+  readonly zipUrl: (region: KimiRegion) => string;
 }
 
 function macPlugin(): PluginLayerConfig {
   return {
     id: MAC_PLUGIN_ID,
-    zipUrl: kimiCdnContentUrl('kimi-computer-use/latest/kimi-cu-plugin.zip'),
+    zipUrl: (region) => `${kimiRegionProfile(region).cdnBase}/${MAC_PLUGIN_ZIP_PATH}`,
   };
 }
 
 function windowsPlugin(): PluginLayerConfig {
   return {
     id: WINDOWS_PLUGIN_ID,
-    zipUrl: kimiCdnContentUrl('kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip'),
+    zipUrl: () => kimiCdnContentUrl('kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip'),
   };
 }
 
@@ -178,7 +180,8 @@ async function installPluginLayer(
   ctx: CapabilityEntryContext,
   config: PluginLayerConfig,
 ): Promise<void> {
-  const summary = await ctx.plugins.installPlugin({ source: config.zipUrl });
+  const region = (await ctx.resolveRegion?.()) ?? resolveKimiRegion();
+  const summary = await ctx.plugins.installPlugin({ source: config.zipUrl(region) });
   if (!summary.enabled) {
     await ctx.plugins.setPluginEnabled({ id: config.id, enabled: true });
   }

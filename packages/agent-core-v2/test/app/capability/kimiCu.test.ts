@@ -939,7 +939,7 @@ describe('kimi-cu entry', () => {
     await entry.install(() => {});
 
     expect(plugins.installs).toEqual([
-      'https://cdn.kimi.com/kimi-computer-use/latest/kimi-cu-plugin.zip',
+      'https://code.kimi.com/kimi-code/plugins/official/kimi-cu.zip',
     ]);
   });
 
