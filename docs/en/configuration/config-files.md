@@ -297,6 +297,25 @@ Configuration errors fail loudly instead of falling back silently. Session creat
 - `force` is set without `default_model`, or combined with a `models` table.
 :::
 
+## `modelOverrides`
+
+The `modelOverrides` table overrides request parameters for the active model, applying to every request sent to it (chat turns, compaction, and so on); unset fields keep their defaults.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `temperature` | `number` | Sampling temperature for every request |
+| `topP` | `number` | Nucleus-sampling `top_p` for every request |
+| `thinkingKeep` | `string` | Preserved-thinking policy for subsequent requests; overrides `[thinking] keep` |
+| `maxCompletionTokens` | `integer` | Hard cap on completion tokens per request |
+| `stream` | `boolean` | Set to `false` to request the model without streaming (one complete response per request); streaming by default |
+
+```toml
+[modelOverrides]
+stream = false
+```
+
+Each field also has an environment-variable counterpart (`stream` maps to `KIMI_CODE_MODEL_STREAM`, the rest to the `KIMI_MODEL_*` series) with higher priority than the config file — see [Environment variables](./env-vars.md#runtime-switches).
+
 ## `thinking`
 
 `thinking` sets the global default behavior for Thinking mode.
@@ -429,6 +448,8 @@ Name matching follows the same rules as the same-named fields in an agent file: 
 [tools]
 disabled = ["EnterPlanMode", "ExitPlanMode", "mcp__github__*"]
 ```
+
+`disabled` can also be set via the `KIMI_CODE_TOOLS_DISABLED` environment variable (comma-separated, same semantics); when set it replaces this field wholesale and is never written back to the config file — handy for containers and CI where editing config is inconvenient. See [Environment variables](./env-vars.md#runtime-switches).
 
 ::: warning Note
 Like the `tools` / `disallowedTools` fields of an agent file, this section shapes the tools shown to the model and is enforced again before execution. [Permission rules](#permission) remain a separate control for operations that require approval.

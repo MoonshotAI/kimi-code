@@ -200,6 +200,7 @@ export function applyGoogleGenAIResponseFormat(
 export interface GoogleGenAIRequestParams {
   readonly params: GenerateContentParameters;
   readonly headers?: Record<string, string>;
+  readonly stream: boolean;
 }
 
 export interface GoogleGenAIRequestParts {
@@ -225,8 +226,9 @@ export function assembleGoogleGenAIRequest(
 
 export function encodeGoogleGenAIRequest(
   params: Record<string, unknown>,
+  stream: boolean,
 ): GoogleGenAIRequestParams {
-  return { params: params as unknown as GenerateContentParameters };
+  return { params: params as unknown as GenerateContentParameters, stream };
 }
 
 export function createGoogleGenAIFormat(): ProtocolFormat {
