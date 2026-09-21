@@ -84,19 +84,19 @@ describe('git status cache', () => {
       diffDeleted: 1,
       pullRequest: null,
     });
-    expect(mocks.spawnSync).toHaveBeenCalledTimes(8);
+    expect(mocks.spawnSync).toHaveBeenCalledTimes(12);
     expect(mocks.execFile).toHaveBeenCalledTimes(1);
 
     await Promise.resolve();
 
     vi.setSystemTime(new Date('2026-04-24T00:00:06Z'));
     cache.getStatus();
-    expect(mocks.spawnSync).toHaveBeenCalledTimes(10);
+    expect(mocks.spawnSync).toHaveBeenCalledTimes(15);
     expect(mocks.execFile).toHaveBeenCalledTimes(1);
 
     vi.setSystemTime(new Date('2026-04-24T00:00:16Z'));
     cache.getStatus();
-    expect(mocks.spawnSync).toHaveBeenCalledTimes(16);
+    expect(mocks.spawnSync).toHaveBeenCalledTimes(24);
     expect(mocks.execFile).toHaveBeenCalledTimes(1);
   });
 
@@ -257,7 +257,7 @@ describe('git status cache', () => {
     await Promise.resolve();
 
     const nullDevice = process.platform === 'win32' ? 'NUL' : '/dev/null';
-    expect(mocks.spawnSync).toHaveBeenCalledTimes(8);
+    expect(mocks.spawnSync).toHaveBeenCalledTimes(12);
     for (const call of mocks.spawnSync.mock.calls) {
       const args = call[1] as string[];
       expect(args.slice(0, 4)).toEqual([
@@ -291,7 +291,9 @@ describe('git status cache', () => {
       if (args.includes('config')) {
         return {
           status: 0,
-          stdout: 'filter.evil.clean touch /tmp/marker\nfilter.evil.process evil-helper\n',
+          stdout: args.includes('--worktree')
+            ? 'filter.wt.process evil-helper\n'
+            : 'filter.evil.clean touch /tmp/marker\nfilter.evil.process evil-helper\n',
         };
       }
       if (args.includes('rev-parse')) return { status: 0, stdout: 'true\n' };
@@ -311,6 +313,8 @@ describe('git status cache', () => {
     for (const args of hardened) {
       expect(args).toContain('filter.evil.clean=');
       expect(args).toContain('filter.evil.process=');
+      expect(args).toContain('filter.wt.clean=');
+      expect(args).toContain('filter.wt.process=');
     }
   });
 
@@ -347,16 +351,16 @@ describe('git status cache', () => {
 
       const cache = createGitStatusCache(root, { trusted: true });
       cache.getStatus();
-      expect(probeCount()).toBe(1);
+      expect(probeCount()).toBe(2);
 
       vi.setSystemTime(new Date('2026-04-24T00:00:16Z'));
       cache.getStatus();
-      expect(probeCount()).toBe(1);
+      expect(probeCount()).toBe(2);
 
       writeFileSync(join(root, '.git', 'config'), '[filter "evil"]\n\tclean = touch /tmp/marker\n');
       vi.setSystemTime(new Date('2026-04-24T00:00:32Z'));
       cache.getStatus();
-      expect(probeCount()).toBe(2);
+      expect(probeCount()).toBe(4);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

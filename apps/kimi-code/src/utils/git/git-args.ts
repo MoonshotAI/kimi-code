@@ -33,17 +33,19 @@ export function hardenedGitConfigArgs(git: string, workDir: string): readonly st
 
 function probeFilterArgs(git: string, workDir: string): readonly string[] {
   try {
-    const result = spawnSync(
-      git,
-      [...GIT_CONFIG_ARGS, '-C', workDir, 'config', '--local', '--get-regexp', '^filter\\.'],
-      { encoding: 'utf8', timeout: FILTER_PROBE_TIMEOUT_MS },
-    );
-    if (result.status !== 0 || typeof result.stdout !== 'string') return [];
     const drivers = new Set<string>();
-    for (const line of result.stdout.split('\n')) {
-      const match = /^filter\.(.+)\.(?:clean|process)(?:\s|$)/.exec(line);
-      const driver = match?.[1];
-      if (driver !== undefined) drivers.add(driver);
+    for (const scope of ['--local', '--worktree']) {
+      const result = spawnSync(
+        git,
+        [...GIT_CONFIG_ARGS, '-C', workDir, 'config', scope, '--get-regexp', '^filter\\.'],
+        { encoding: 'utf8', timeout: FILTER_PROBE_TIMEOUT_MS },
+      );
+      if (result.status !== 0 || typeof result.stdout !== 'string') continue;
+      for (const line of result.stdout.split('\n')) {
+        const match = /^filter\.(.+)\.(?:clean|process)(?:\s|$)/.exec(line);
+        const driver = match?.[1];
+        if (driver !== undefined) drivers.add(driver);
+      }
     }
     const args: string[] = [];
     for (const driver of drivers) {
@@ -63,7 +65,7 @@ function gitConfigStamp(workDir: string): string | null {
       if (pointer === undefined) return null;
       gitDir = resolve(workDir, pointer);
     }
-    const configPaths = [join(gitDir, 'config')];
+    const configPaths = [join(gitDir, 'config'), join(gitDir, 'config.worktree')];
     try {
       const commonDir = readFileSync(join(gitDir, 'commondir'), 'utf8').trim();
       if (commonDir.length > 0) configPaths.push(join(resolve(gitDir, commonDir), 'config'));

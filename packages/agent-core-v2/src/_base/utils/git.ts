@@ -39,21 +39,27 @@ export async function hardenedGitConfigArgs(
 }
 
 async function probeFilterArgs(cwd: string, probe: GitProbe): Promise<readonly string[]> {
-  const result = await probe([
-    ...GIT_CONFIG_ARGS,
-    '-C',
-    cwd,
-    'config',
-    '--local',
-    '--get-regexp',
-    '^filter\\.',
-  ]).catch(() => null);
-  if (result === null || result.exitCode !== 0) return [];
+  const results = await Promise.all(
+    ['--local', '--worktree'].map((scope) =>
+      probe([
+        ...GIT_CONFIG_ARGS,
+        '-C',
+        cwd,
+        'config',
+        scope,
+        '--get-regexp',
+        '^filter\\.',
+      ]).catch(() => null),
+    ),
+  );
   const drivers = new Set<string>();
-  for (const line of result.stdout.split('\n')) {
-    const match = /^filter\.(.+)\.(?:clean|process)(?:\s|$)/.exec(line);
-    const driver = match?.[1];
-    if (driver !== undefined) drivers.add(driver);
+  for (const result of results) {
+    if (result === null || result.exitCode !== 0) continue;
+    for (const line of result.stdout.split('\n')) {
+      const match = /^filter\.(.+)\.(?:clean|process)(?:\s|$)/.exec(line);
+      const driver = match?.[1];
+      if (driver !== undefined) drivers.add(driver);
+    }
   }
   const args: string[] = [];
   for (const driver of drivers) {
@@ -70,7 +76,7 @@ async function gitConfigStamp(cwd: string): Promise<string | null> {
       if (pointer === undefined) return null;
       gitDir = resolve(cwd, pointer);
     }
-    const configPaths = [join(gitDir, 'config')];
+    const configPaths = [join(gitDir, 'config'), join(gitDir, 'config.worktree')];
     try {
       const commonDir = (await readFile(join(gitDir, 'commondir'), 'utf8')).trim();
       if (commonDir.length > 0) configPaths.push(join(resolve(gitDir, commonDir), 'config'));
