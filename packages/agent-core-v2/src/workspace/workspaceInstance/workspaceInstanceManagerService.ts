@@ -29,6 +29,7 @@ import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStor
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { Error2, ErrorCodes } from '#/errors';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { LocalEnvironmentProviderFactory } from '#/environment/localEnvironment';
 import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
 import type { Environment, EnvironmentBinding, EnvironmentCapability, EnvironmentLease } from '#/environment/environment';
@@ -56,6 +57,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IWorkspaceService private readonly workspaces: IWorkspaceService,
     @IHostEnvironment private readonly environment: IHostEnvironment,
+    @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IAppStateService private readonly appState: IAppStateService,
     @IConfigService private readonly config: IConfigService,
     @IEventService private readonly event: IEventService,
@@ -232,7 +234,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
           this.docs,
           this.storage,
           this.log,
-          input.fs,
+          this.hostFs,
           this.event,
           this.telemetry,
           this.flags,

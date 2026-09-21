@@ -193,10 +193,8 @@ export class Program {
       this.releaseGeneration(generation);
     };
     try {
-      const environment = generation.lease.environment;
       return this.dependencies.createSessionController({
         context: this.context,
-        fs: environment.fs!,
         environments: this.environments,
         workspaceAgentProfiles: generation.agentProfiles,
         extraAgentProfiles: generation.extraAgentProfiles,

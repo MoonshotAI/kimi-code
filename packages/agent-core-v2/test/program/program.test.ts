@@ -345,9 +345,8 @@ describe('Program', () => {
     expect(program.sessionControllerGenerationFor('local')).toBe('one');
     expect(program.sessionControllerGenerationFor('remote')).toBe('remote-one');
     expect(controllerInputs).toHaveLength(2);
-    expect(controllerInputs[0]?.fs).not.toBe(controllerInputs[1]?.fs);
-    expect(controllerInputs[0]?.fs).toBe(create.mock.results[0]?.value.lease.environment.fs);
-    expect(controllerInputs[1]?.fs).toBe(create.mock.results[1]?.value.lease.environment.fs);
+    expect(controllerInputs[0]).not.toHaveProperty('fs');
+    expect(controllerInputs[1]).not.toHaveProperty('fs');
 
     expect(() => program.sessionControllerGenerationFor('missing')).toThrow(
       'no available generation for environment missing',

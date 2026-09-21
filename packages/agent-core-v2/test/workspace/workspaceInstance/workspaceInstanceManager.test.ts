@@ -13,6 +13,7 @@ import type {
   EnvironmentUnitHostFactory,
 } from '#/environment/environmentUnitHost';
 import { WorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManagerService';
+import { sessionDirOf } from '#/workspace/sessionLifecycle/internal/addressing';
 
 const imports = { root: [] } as const;
 
@@ -114,6 +115,7 @@ function manager(
   values: readonly Workspace[],
   ready: Promise<void> = Promise.resolve(),
   events: string[] = [],
+  customize?: (args: unknown[]) => void,
 ): WorkspaceInstanceManager {
   const byId = new Map(values.map((value) => [value.id, value]));
   const workspaces: IWorkspaceService = {
@@ -133,10 +135,11 @@ function manager(
     { scope: () => 'sessions' },
     workspaces,
     { ready },
-    ...Array.from({ length: 23 }, () => undefined),
+    ...Array.from({ length: 24 }, () => undefined),
     new TestEnvironmentUnitHostFactory(),
   ];
-  args[18] = { entries: () => [] };
+  args[19] = { entries: () => [] };
+  customize?.(args);
   const value = Reflect.construct(WorkspaceInstanceManager, args) as WorkspaceInstanceManager;
   const providers = (value as unknown as { providers: Map<string, EnvironmentProviderFactory> }).providers;
   providers.clear();
@@ -213,6 +216,90 @@ describe('WorkspaceInstanceManager', () => {
     const three = workspace('three');
     await value.dispose();
     expect(three.id).toBe('three');
+  });
+
+  it('session controllers operate on the local session dir even when bound to a remote environment', async () => {
+    const removed: string[] = [];
+    const remoteRemoved: string[] = [];
+    const value = manager([workspace('one')], Promise.resolve(), [], (args) => {
+      args[1] = { scope: () => 'sessions', homeDir: '/home/test' };
+      args[4] = { remove: async (path: string) => { removed.push(path); } };
+      args[7] = { publish: () => {} };
+      args[10] = { get: async () => undefined, remove: async () => {} };
+      args[11] = { drain: async () => {} };
+      args[23] = { withContext: () => ({ track2: () => {} }) };
+      args[25] = { append: () => {}, flush: async () => {}, drainRetirements: async () => {} };
+      args[26] = { get: async () => undefined };
+    });
+    const one = await value.getOrCreate({ workspaceId: 'one' });
+    await value.addProvider({
+      id: 'remote-provider',
+      imports,
+      attach: async (context, host) => {
+        const remote = new FakeEnvironment(
+          { workspaceId: context.id, environmentId: 'remote', generation: 'remote-one' },
+          { status: 'ready', capabilities: ['fs', 'process'] },
+        );
+        Object.assign(remote, {
+          fs: { remove: async (path: string) => { remoteRemoved.push(path); } },
+          process: {},
+        });
+        host.registerEnvironment(remote);
+        return { dispose: () => {} };
+      },
+    });
+
+    const program = one.program as unknown as {
+      createGeneration: (environmentId: string, cwd?: string) => unknown;
+    };
+    program.createGeneration = (environmentId: string) => {
+      const lease = one.environments.acquire({ workspaceId: 'one', environmentId }, ['fs', 'process']);
+      const behavior = { ready: Promise.resolve(), dispose: () => {} };
+      const catalog = {
+        listSkills: () => [],
+        listInvocableSkills: () => [],
+        getSkippedByPolicy: () => [],
+        getSkillRoots: () => [],
+      };
+      return {
+        id: lease.environment.identity.generation,
+        lease,
+        state: behavior,
+        dirs: behavior,
+        fs: behavior,
+        watch: behavior,
+        git: behavior,
+        instructions: { ...behavior, snapshot: {} },
+        mcpConfig: { ...behavior, servers: () => ({}) },
+        mcp: behavior,
+        trust: { ...behavior, isTrusted: () => false },
+        skills: { ...behavior, catalog },
+        agentProfiles: behavior,
+        userAgentProfiles: behavior,
+        pluginAgentProfiles: behavior,
+        explicitAgentProfiles: behavior,
+        extraAgentProfiles: behavior,
+        disposables: [behavior],
+        ready: false,
+        failed: false,
+        references: 1,
+        retired: false,
+      };
+    };
+
+    const controller = one.program.createSessionController('remote');
+    (controller as unknown as { sessions: Map<string, unknown> }).sessions.set('session-x', {
+      id: 'session-x',
+      kind: 'session',
+      accessor: { get: () => ({ list: () => [], setArchived: async () => {} }) },
+      dispose: () => {},
+    });
+    await controller.delete('session-x');
+
+    expect(removed).toEqual([sessionDirOf('/home/test', 'sessions/one', 'session-x')]);
+    expect(remoteRemoved).toEqual([]);
+    controller.dispose();
+    await value.dispose();
   });
 
   it('materializes once required local structure exists without waiting for ready status', async () => {
