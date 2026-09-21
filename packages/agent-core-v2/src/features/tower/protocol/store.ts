@@ -41,6 +41,7 @@ import {
   isReservedTowerAgentName,
   dateDash,
   findingFileName,
+  hasNonAsciiCharacters,
   inboxFileName,
   missionFileName,
   reviewFileName,
@@ -91,6 +92,7 @@ export interface TowerSendInput {
   readonly scope?: string;
   readonly action?: string;
   readonly consentRef?: string;
+  readonly tokens?: number;
 }
 
 export interface TowerFindingInput {
@@ -101,6 +103,7 @@ export interface TowerFindingInput {
   readonly location?: string;
   readonly details: string;
   readonly suggestedFix: string;
+  readonly tokens?: number;
 }
 
 export interface TowerReviewInput {
@@ -110,6 +113,7 @@ export interface TowerReviewInput {
   readonly findings: string;
   readonly checks?: readonly string[];
   readonly decision: string;
+  readonly tokens?: number;
 }
 
 export interface TowerMissionPatch {
@@ -497,6 +501,14 @@ export class TowerStore {
     if (input.length === 0) {
       throw new TowerProtocolError('TowerPlan needs at least one mission');
     }
+    for (const item of input) {
+      if (hasNonAsciiCharacters(item.title)) {
+        const offending = /[^\u0020-\u007E]/.exec(item.title)![0];
+        throw new TowerProtocolError(
+          `mission title "${item.title}" contains non-ASCII characters (first: "${offending}") — titles must be printable ASCII English: the title becomes the branch/worktree slug, and non-ASCII text slugs to a generic word like "item" that collides across missions; rewrite the title in English with a unique identifier word (e.g. a business code like B010100) and plan again`,
+        );
+      }
+    }
     const state = await this.load();
     const startIndex = state.missions.length;
 
@@ -733,11 +745,17 @@ export class TowerStore {
       scope: input.scope,
       action: input.action,
       consent_ref: input.consentRef,
+      tokens: String(input.tokens ?? -1),
     });
     const content = `${frontmatter}\n\n${input.body.trim()}\n`;
     const baseName = inboxFileName({ from: callerName, to, subject: input.subject });
     const rel = await this.writeUnique(join(INBOX_DIR, baseName), content);
-    await this.appendLog(callerName, 'inbox.send', { to, subject: slugify(input.subject) }, rel);
+    await this.appendLog(
+      callerName,
+      'inbox.send',
+      { to, subject: slugify(input.subject), tokens: input.tokens ?? -1 },
+      rel,
+    );
     return rel;
   }
 
@@ -798,6 +816,7 @@ export class TowerStore {
       `**Type**: ${input.type}`,
       `**Severity**: ${input.severity ?? 'medium'}`,
       `**Mission**: ${mission === undefined ? '(none)' : `${mission.id} — ${mission.title}`}`,
+      `**Tokens**: ${String(input.tokens ?? -1)}`,
       '',
       '---',
       '',
@@ -829,7 +848,12 @@ export class TowerStore {
       slug: input.title,
     });
     const rel = await this.writeUnique(join(FINDINGS_DIR, baseName), lines.join('\n'));
-    await this.appendLog(callerName, 'finding.file', { type: input.type, slug: slugify(input.title) }, rel);
+    await this.appendLog(
+      callerName,
+      'finding.file',
+      { type: input.type, slug: slugify(input.title), tokens: input.tokens ?? -1 },
+      rel,
+    );
     return rel;
   }
 
@@ -875,6 +899,7 @@ export class TowerStore {
       merge: input.merge,
       reviewed_commit: reviewedCommit,
       mission: reviewMissionId,
+      tokens: String(input.tokens ?? -1),
     });
     const checks = (input.checks ?? []).map((c) => `- [x] ${c}`).join('\n');
     const content = [
@@ -899,7 +924,13 @@ export class TowerStore {
     await this.appendLog(
       callerName,
       'review.write',
-      { target: input.target, round, verdict: input.status, reviewed: reviewedCommit.slice(0, 7) },
+      {
+        target: input.target,
+        round,
+        verdict: input.status,
+        reviewed: reviewedCommit.slice(0, 7),
+        tokens: input.tokens ?? -1,
+      },
       rel,
     );
     return rel;

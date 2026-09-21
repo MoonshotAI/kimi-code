@@ -21,4 +21,5 @@ export const CUSTOM_THEME_SKILL: SkillDefinition = {
     disableModelInvocation: true,
   },
   productSpecific: true,
+  scopes: ['tui'],
 };

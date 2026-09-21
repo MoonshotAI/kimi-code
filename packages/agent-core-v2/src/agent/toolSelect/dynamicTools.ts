@@ -93,7 +93,10 @@ export function renderLoadableToolsAnnouncement(
     sections.push(`<tools_removed>\n${removed.join('\n')}\n</tools_removed>`);
   }
   sections.push(
-    'Use the select_tools tool with exact names to load full tool definitions before calling them. ' +
+    'Use the select_tools tool with exact names to load full definitions of the ' +
+      'announced tools before calling them. ' +
+      'Only the announced names are loadable — tools you already have available are called ' +
+      'directly, never passed to select_tools; plugin, skill, or category names do not work. ' +
       'Names listed as removed are no longer loadable — do not select them. ' +
       'Fold all announcements in this conversation in order to get the current list.',
   );

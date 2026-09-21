@@ -27,7 +27,7 @@ import {
 } from '../services/legacyStatus/legacyStatus';
 import { loadMessageHistory } from '../services/messages/messageHistory';
 import { type SessionEventBroadcaster } from '../transport/ws/v1/sessionEventBroadcaster';
-import { toWireApproval } from './approvals';
+import { interactionAgentId, toWireApproval } from './approvals';
 import { toWireQuestion } from '../protocol/question-wire';
 import { resolveSessionFacts, toWireSession } from './sessions';
 
@@ -82,12 +82,12 @@ export function registerSnapshotRoutes(app: SnapshotRouteHost, deps: SnapshotRou
       try {
         const data = await assembleSnapshot(core, broadcaster, session_id);
         reply.send(okEnvelope(data, req.id));
-      } catch (err) {
-        if (err instanceof SnapshotNotFoundError) {
-          reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, req.id, err.stack));
+      } catch (error) {
+        if (error instanceof SnapshotNotFoundError) {
+          reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, error.message, req.id, error.stack));
           return;
         }
-        throw err;
+        throw error;
       }
     },
   );
@@ -143,7 +143,7 @@ async function assembleSnapshot(
       resolved: false,
       tags: { [INTERACTION_TAG_SESSION_ID]: sessionId },
     })
-    .map((i) => toWireQuestion(i, sessionId));
+    .map((i) => toWireQuestion(i, sessionId, interactionAgentId(i)));
 
   return {
     as_of_seq: snapState.seq,

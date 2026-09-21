@@ -139,6 +139,11 @@ interface ContextAppendMessagePayload {
     isError?: boolean;
     toolCallDisplays?: Record<string, ToolInputDisplay>;
     note?: string;
+    usage?: TokenUsage;
+    llmTiming?: {
+      llmFirstTokenLatencyMs?: number;
+      llmStreamDurationMs?: number;
+    };
   };
 }
 
@@ -556,6 +561,7 @@ interface PromptSteeredPayload {
   promptIds: string[];
   content: ContentPart[];
   steeredAt: string;
+  messageId?: string;
 }
 
 /**
@@ -808,6 +814,7 @@ interface TurnEndedPayload {
   };
   durationMs?: number;
   stopReason?: string;
+  traceId?: string;
 }
 
 /**
@@ -834,6 +841,9 @@ interface TurnSteerPayload {
   input: readonly ContentPart[];
   /** PromptOrigin */
   origin: 'user' | 'skill_activation' | 'plugin_command' | 'injection' | 'shell_command' | 'compaction_summary' | 'system_trigger' | 'task' | 'cron_job' | 'cron_missed' | 'hook_result' | 'retry';
+  messageId?: string;
+  promptIds?: string[];
+  turnId?: number;
 }
 
 /**

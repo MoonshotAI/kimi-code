@@ -1,3 +1,4 @@
+import type { UserPromptOrigin } from '#/agent/contextMemory/types';
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
@@ -73,6 +74,7 @@ export interface PromptSteeredEvent {
   readonly promptIds: readonly string[];
   readonly content: readonly MessageContent[];
   readonly steeredAt: string;
+  readonly messageId?: string;
 }
 
 export interface PromptSteeredPayload {
@@ -81,6 +83,7 @@ export interface PromptSteeredPayload {
   readonly promptIds: string[];
   readonly content: ContentPart[];
   readonly steeredAt: string;
+  readonly messageId?: string;
 }
 
 const promptSteeredSchema = z.object({
@@ -89,6 +92,7 @@ const promptSteeredSchema = z.object({
   promptIds: z.array(z.string()),
   content: z.custom<ContentPart[]>(),
   steeredAt: z.string(),
+  messageId: z.string().optional(),
 });
 
 export class PromptSteered extends AgentEvent2<z.infer<typeof promptSteeredSchema>> {
@@ -104,6 +108,7 @@ export interface PromptQueuedPayload {
   readonly promptId: string;
   readonly content: ContentPart[];
   readonly queueLength: number;
+  readonly clientMetadata?: UserPromptOrigin['clientMetadata'];
 }
 
 export class PromptQueued extends AgentEvent2<PromptQueuedPayload> {
@@ -119,6 +124,7 @@ export interface PromptSubmittedPayload {
   readonly status: 'running' | 'queued';
   readonly content: ContentPart[];
   readonly createdAt: string;
+  readonly clientMetadata?: UserPromptOrigin['clientMetadata'];
 }
 
 export class PromptSubmitted extends AgentEvent2<PromptSubmittedPayload> {

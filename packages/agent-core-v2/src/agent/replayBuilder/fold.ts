@@ -29,6 +29,39 @@ export interface WireReplayFold {
   readonly toolStore: Readonly<Record<string, unknown>>;
 }
 
+export const FOLD_RELEVANT_WIRE_TYPES: ReadonlySet<string> = new Set([
+  'context.append_message',
+  'context.append_loop_event',
+  'context.undo',
+  'context.clear',
+  'context.apply_compaction',
+  'full_compaction.begin',
+  'full_compaction.cancel',
+  'goal.create',
+  'goal.update',
+  'goal.clear',
+  'goal.account_usage',
+  'goal.continuation',
+  'forked',
+  'plan_mode.enter',
+  'plan_mode.cancel',
+  'plan_mode.exit',
+  'config.update',
+  'permission.set_mode',
+  'permission.record_approval_result',
+  'tools.update_store',
+]);
+
+export const FOLD_CARRYOVER_WIRE_TYPES: ReadonlySet<string> = new Set([
+  'tools.update_store',
+  'goal.create',
+  'goal.update',
+  'goal.clear',
+  'goal.account_usage',
+  'goal.continuation',
+  'forked',
+]);
+
 const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
   'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
 

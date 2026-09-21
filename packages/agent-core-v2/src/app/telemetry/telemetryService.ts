@@ -164,8 +164,8 @@ export class TelemetryService
     for (const appender of this.appenders) {
       try {
         appender.track(record);
-      } catch (err) {
-        onUnexpectedError(err);
+      } catch (error) {
+        onUnexpectedError(error);
       }
     }
   }

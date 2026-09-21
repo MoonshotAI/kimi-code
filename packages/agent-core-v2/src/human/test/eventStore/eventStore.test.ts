@@ -67,6 +67,19 @@ describe('createEventStore', () => {
     expect(reopened.getState()).toEqual({ counter: 3, notes: ['a'] });
   });
 
+  it('freezes refolded slice state on reopen', async () => {
+    const tree = await openTree();
+    const store = await openStore(tree);
+    await store.dispatch(noteTagged({ tag: 'a' }));
+    await store.dispatch(noteTagged({ tag: 'b' }));
+    await store.flush();
+
+    const reopened = await openStore(tree);
+    const notes = reopened.slice('notes');
+    expect(notes).toEqual(['a', 'b']);
+    expect(Object.isFrozen(notes)).toBe(true);
+  });
+
   it('ignores legacy snapshot entries when folding', async () => {
     const tree = await openTree();
     const journal = await openJournal(tree);

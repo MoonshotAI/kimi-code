@@ -21,6 +21,7 @@ import { DEFAULT_INIT_PROMPT, initCompletionReminder } from './profile/init';
 const INIT_PROFILE_NAME = 'coder';
 const INIT_PARENT_TOOL_CALL_ID = 'generate-agents-md';
 const INIT_DESCRIPTION = 'Initialize AGENTS.md';
+const INIT_LABELS: Readonly<Record<string, string>> = { sessionInit: 'agents-md' };
 
 export class SessionInitService implements ISessionInitService {
   declare readonly _serviceBrand: undefined;
@@ -61,6 +62,7 @@ export class SessionInitService implements ISessionInitService {
           model: own.modelAlias,
           thinking: own.thinkingLevel,
         },
+        labels: INIT_LABELS,
       });
       const child = this.agentLifecycle.handleOf(childContext.agentId)!;
       child.accessor.get(IAgentPermissionModeService).setMode(permissionMode);

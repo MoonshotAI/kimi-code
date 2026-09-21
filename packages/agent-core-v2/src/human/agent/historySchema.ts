@@ -10,6 +10,7 @@ const thinkPartSchema = z.object({
   encrypted: z.string().optional(),
   detailsIndex: z.number().optional(),
   hidden: z.boolean().optional(),
+  reasoningKey: z.string().optional(),
 });
 const imageUrlPartSchema = z.object({
   type: z.literal('image_url'),

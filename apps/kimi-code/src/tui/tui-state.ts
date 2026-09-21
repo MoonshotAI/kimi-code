@@ -17,11 +17,11 @@ import { NotifyPanelComponent } from './components/chrome/notify-panel';
 import { TodoPanelComponent } from './components/chrome/todo-panel';
 import type { SessionRow } from './components/dialogs/session-picker';
 import { CustomEditor } from './components/editor/custom-editor';
-import { DEFAULT_TUI_CONFIG } from './config';
+import { DEFAULT_MARKDOWN_CONFIG, DEFAULT_TUI_CONFIG } from './config';
 import { CHROME_GUTTER } from './constant/rendering';
 import type { TasksBrowserState } from './controllers/tasks-browser';
 import { currentTheme, type Theme } from './theme';
-import { setMarkdownRenderLatex } from './utils/markdown-options';
+import { setMarkdownAltScreenActive, setMarkdownMermaidMode, setMarkdownRenderLatex, setMarkdownRenderRequester } from './utils/markdown-options';
 import { createTerminalState, type TerminalState } from './utils/terminal-state';
 import {
   INITIAL_LIVE_PANE,
@@ -95,6 +95,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
 
   const terminal = new ProcessTerminal();
   setMarkdownRenderLatex(initialAppState.renderLatex ?? DEFAULT_TUI_CONFIG.renderLatex ?? true);
+  setMarkdownMermaidMode(initialAppState.markdown?.mermaid ?? DEFAULT_MARKDOWN_CONFIG.mermaid);
   // Fullscreen is experimental and env-gated for now: KIMI_CODE_TUI_FULL_SCREEN=1.
   const fullscreen = process.env['KIMI_CODE_TUI_FULL_SCREEN'] === '1';
   const ui =
@@ -113,13 +114,18 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
               .getText()
               .then((text) => {
                 if (!text || ui.getFocusedComponent() !== target) return;
-                target.handleInput?.(`\x1b[200~${text}\x1b[201~`);
+                target.handleInput?.(`\u001B[200~${text}\u001B[201~`);
                 ui.requestRender();
               })
               .catch(() => {});
           },
         })
       : new TuiMainScreen(terminal);
+
+  setMarkdownAltScreenActive(ui instanceof TuiAltScreen);
+  setMarkdownRenderRequester(() => {
+    ui.requestRender(true);
+  });
 
   const transcriptContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const activityContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);

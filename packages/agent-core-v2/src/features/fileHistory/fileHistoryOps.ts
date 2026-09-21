@@ -1,4 +1,5 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+import { isDraft, original, type Draft } from 'immer';
 import { z } from 'zod';
 
 import { AgentEvent2 } from '#/app/event/event2';
@@ -7,6 +8,7 @@ import { defineState } from '#/state/state';
 import type {
   FileBackupEntry,
   FileHistoryCheckpointPhase,
+  FileHistoryCheckpointRecord,
   FileHistoryState,
 } from './fileHistory';
 
@@ -76,7 +78,7 @@ export function displacedCheckpoints<
       ...checkpoints.filter((c) => checkpointPhaseOf(c) === 'end').map((c) => c.turnId),
       ...(completingTurnId === undefined ? [] : [completingTurnId]),
     ]),
-  ].sort((a, b) => b - a);
+  ].toSorted((a, b) => b - a);
   if (completedIds.length <= FILE_HISTORY_TURN_WINDOW) return [];
   const keep = new Set(completedIds.slice(0, FILE_HISTORY_TURN_WINDOW));
   return checkpoints.filter((c) => !keep.has(c.turnId) && c.turnId <= completedIds[0]!);
@@ -93,6 +95,44 @@ function cloneEntries(
   return clone;
 }
 
+const trackedFoldIndex = new WeakMap<readonly string[], ReadonlySet<string>>();
+const checkpointFoldIndex = new WeakMap<
+  readonly FileHistoryCheckpointRecord[],
+  ReadonlyMap<string, number>
+>();
+
+function baseOf<T>(value: T): T {
+  return isDraft(value) ? original(value as Draft<T>) : value;
+}
+
+function trackedSetOf(tracked: readonly string[]): ReadonlySet<string> {
+  const key = baseOf(tracked);
+  let index = trackedFoldIndex.get(key);
+  if (index === undefined) {
+    index = new Set(key);
+    trackedFoldIndex.set(key, index);
+  }
+  return index;
+}
+
+function checkpointIndexOf(
+  checkpoints: readonly FileHistoryCheckpointRecord[],
+): ReadonlyMap<string, number> {
+  const key = baseOf(checkpoints);
+  let index = checkpointFoldIndex.get(key);
+  if (index === undefined) {
+    const built = new Map<string, number>();
+    for (let position = 0; position < key.length; position += 1) {
+      const record = key[position]!;
+      const id = `${record.turnId}:${checkpointPhaseOf(record)}`;
+      if (!built.has(id)) built.set(id, position);
+    }
+    index = built;
+    checkpointFoldIndex.set(key, index);
+  }
+  return index;
+}
+
 export const fileHistoryKey = defineState(
   'fileHistory',
   (): FileHistoryState => ({ checkpoints: [], tracked: [] }),
@@ -100,9 +140,8 @@ export const fileHistoryKey = defineState(
   .replayable({ schema: z.custom<FileHistoryState>() })
   .on(FileHistoryCheckpointed, (s, e) => {
     const phase = checkpointPhaseOf(e);
-    const existing = s.checkpoints.find(
-      (c) => c.turnId === e.turnId && checkpointPhaseOf(c) === phase,
-    );
+    const existingIndex = checkpointIndexOf(s.checkpoints).get(`${e.turnId}:${phase}`);
+    const existing = existingIndex === undefined ? undefined : s.checkpoints[existingIndex];
     if (existing !== undefined) {
       existing.entries = cloneEntries(e.entries);
       return;
@@ -119,10 +158,9 @@ export const fileHistoryKey = defineState(
     }
   })
   .on(FileHistoryTracked, (s, e) => {
-    if (!s.tracked.includes(e.path)) s.tracked.push(e.path);
-    let checkpoint = s.checkpoints.find(
-      (c) => c.turnId === e.turnId && checkpointPhaseOf(c) === 'start',
-    );
+    if (!trackedSetOf(s.tracked).has(e.path)) s.tracked.push(e.path);
+    const startIndex = checkpointIndexOf(s.checkpoints).get(`${e.turnId}:start`);
+    let checkpoint = startIndex === undefined ? undefined : s.checkpoints[startIndex];
     if (checkpoint === undefined) {
       s.checkpoints.push({ turnId: e.turnId, phase: 'start', entries: {} });
       checkpoint = s.checkpoints.at(-1);

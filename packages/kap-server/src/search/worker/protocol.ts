@@ -14,6 +14,7 @@ export interface SearchWorkerData {
   readonly dir: string;
   readonly bootSalt: string;
   readonly textBuildWorkerPath?: string;
+  readonly syncSessionCap?: number;
 }
 
 export type SearchWorkerCall =

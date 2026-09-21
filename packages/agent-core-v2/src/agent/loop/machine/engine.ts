@@ -28,7 +28,7 @@ import type { Actor, Subscription } from '#human/xstate2';
 
 import { createMachineRequester, type MachineRequester, type MachineRequesterGateDecision } from './requester';
 import { createMachineTools, type MachineTools, type ToolResultExtras } from './tools';
-import { seededStoreJournal } from './storeJournal';
+import { appendedStoreJournal, seededStoreJournal } from './storeJournal';
 
 export type { PromptGateVerdict };
 
@@ -40,6 +40,7 @@ export type MachineEngineDelta =
       readonly encrypted?: string;
       readonly detailsIndex?: number;
       readonly hidden?: boolean;
+      readonly reasoningKey?: string;
     }
   | {
       readonly kind: 'toolCall';
@@ -227,6 +228,7 @@ function createDeltaSplitter(): (part: StreamedMessagePart) => MachineEngineDelt
           encrypted: part.encrypted,
           detailsIndex: part.detailsIndex,
           hidden: part.hidden,
+          reasoningKey: part.reasoningKey,
         };
       case 'image_url':
       case 'audio_url':
@@ -617,9 +619,8 @@ export function engineJournal(base: SyncStoreJournal | undefined, initialTurnId:
     if (initialTurnId <= 0) return memoryJournal();
     return seedRecords([turnEnded({ turnId: initialTurnId - 1, outcome: 'done' })]);
   }
-  if (initialTurnId <= 0 || base.readSync().length > 0) return base;
-  return seededStoreJournal(
-    base,
-    seedRecords([turnEnded({ turnId: initialTurnId - 1, outcome: 'done' })]).readSync(),
-  );
+  if (initialTurnId <= 0) return base;
+  const seed = seedRecords([turnEnded({ turnId: initialTurnId - 1, outcome: 'done' })]).readSync();
+  if (base.readSync().length === 0) return seededStoreJournal(base, seed);
+  return appendedStoreJournal(base, seed);
 }

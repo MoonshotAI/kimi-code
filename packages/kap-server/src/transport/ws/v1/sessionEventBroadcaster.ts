@@ -17,7 +17,6 @@ import {
   IAgentLoopService,
   IEventBus,
   IEventService,
-  INTERACTION_TAG_AGENT_ID,
   INTERACTION_TAG_SESSION_ID,
   ISessionActivityView,
   ISessionIndex,
@@ -58,7 +57,7 @@ import {
   type TranscriptStore,
 } from '@moonshot-ai/transcript';
 
-import { toWireApproval } from '../../../routes/approvals';
+import { interactionAgentId, toWireApproval } from '../../../routes/approvals';
 import { toWireQuestion } from '../../../protocol/question-wire';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import { projectPromptContentParts } from '../../../services/messages/messageProjection';
@@ -1203,10 +1202,15 @@ function isAgentLifecycleEvent(type: string): boolean {
   return type === 'agent.created' || type === 'agent.disposed';
 }
 
+function isInteractionEvent(type: string): boolean {
+  return type.startsWith('event.approval.') || type.startsWith('event.question.');
+}
+
 function matchesAgentFilter(envelope: EventEnvelope, filter: AgentFilter): boolean {
   if (filter === undefined) return true;
   if (isGlobalEvent(envelope.type)) return true;
   if (isAgentLifecycleEvent(envelope.type)) return true;
+  if (isInteractionEvent(envelope.type)) return true;
   const payload = envelope.payload;
   const agentId =
     typeof payload === 'object' && payload !== null
@@ -1287,11 +1291,6 @@ function suppressedByTranscript(
   return TRANSCRIPT_PROJECTED_EVENT_TYPES.has(envelope.type);
 }
 
-function interactionAgentId(interaction: Interaction): string {
-  const tag = interaction.tags[INTERACTION_TAG_AGENT_ID];
-  return typeof tag === 'string' ? tag : MAIN_AGENT_ID;
-}
-
 function interactionRequestedEvent(interaction: Interaction, sessionId: string): Event | undefined {
   const agentId = interactionAgentId(interaction);
   switch (interaction.kind) {
@@ -1300,7 +1299,7 @@ function interactionRequestedEvent(interaction: Interaction, sessionId: string):
         type: 'event.question.requested',
         agentId,
         sessionId,
-        ...toWireQuestion(interaction, sessionId),
+        ...toWireQuestion(interaction, sessionId, agentId),
       } as unknown as Event;
     case 'approval':
       return {
