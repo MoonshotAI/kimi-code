@@ -11,6 +11,7 @@ import { RemoteExecConnection } from '../src/client/connection';
 import { RemoteProcessService } from '../src/client/remoteProcess';
 import {
   INITIALIZE_METHOD,
+  PROCESS_EXITED_METHOD,
   PROCESS_FLOW_METHOD,
   PROCESS_OUTPUT_METHOD,
   PROCESS_START_METHOD,
@@ -242,22 +243,26 @@ describe('process group over a subprocess loopback', () => {
       pipeStdin: false,
     });
     const started = Date.now();
+    const exited = new Promise<{ exitCode?: number }>((resolve) => {
+      const unsubscribe = connection.onNotification(PROCESS_EXITED_METHOD, (params) => {
+        const event = params as { processId: string; exitCode: number };
+        if (event.processId !== processId) return;
+        unsubscribe();
+        resolve({ exitCode: event.exitCode });
+      });
+    });
     await expect(connection.call('process/terminate', { processId })).resolves.toEqual({
       running: true,
     });
-    let exitCode: number | undefined;
-    let exited = false;
-    const deadline = Date.now() + 10_000;
-    while (!exited && Date.now() < deadline) {
-      const read = (await connection.call('process/read', { processId, waitMs: 1000 })) as {
-        exited: boolean;
-        exitCode?: number;
-      };
-      exited = read.exited;
-      exitCode = read.exitCode;
-    }
-    expect(exited).toBe(true);
-    expect(exitCode).not.toBe(0);
+    const result = await Promise.race([
+      exited,
+      new Promise<never>((_resolve, reject) => {
+        setTimeout(() => {
+          reject(new Error('process never exited after terminate'));
+        }, 10_000);
+      }),
+    ]);
+    expect(result.exitCode).not.toBe(0);
     expect(Date.now() - started).toBeLessThan(8_000);
   });
 

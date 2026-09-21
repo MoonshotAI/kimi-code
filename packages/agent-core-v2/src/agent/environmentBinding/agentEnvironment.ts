@@ -4,8 +4,6 @@ import { Emitter, type Event } from '#/_base/event';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { ISessionEventBus } from '#/app/event/eventBus';
 import { LifecycleScope } from '#/app/scopes';
-import { TurnStarted } from '#/agent/loop/turnEvents';
-import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { Environment, EnvironmentBinding, EnvironmentCapability, EnvironmentLease, EnvironmentWorkspaceRoots } from '#/environment/environment';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
@@ -83,21 +81,13 @@ export function snapshotAgentEnvironmentBinding(
   }
 }
 
-interface TurnEnvironmentSnapshot {
-  readonly binding: EnvironmentBinding;
-  readonly generation?: string;
-}
-
 export class AgentEnvironmentService implements IAgentEnvironmentService {
   declare readonly _serviceBrand: undefined;
   private readonly changeEmitter = new Emitter<void>();
   readonly onDidChange = this.changeEmitter.event;
   private readonly bindingSubscription: IDisposable;
   private readonly workspaceSubscription: IDisposable;
-  private readonly turnSubscriptions: readonly IDisposable[];
   private registrySubscription: IDisposable | undefined;
-  private turnSnapshot: TurnEnvironmentSnapshot | undefined;
-  private turnLease: EnvironmentLease | undefined;
 
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
@@ -112,22 +102,6 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
     this.workspaceSubscription = this.workspaces.onDidChange((change) => {
       if (change.workspaceId === this.binding.current.workspaceId) this.rebind();
     });
-    this.turnSubscriptions = [
-      this.eventBus.subscribe(TurnStarted, (event) => {
-        if (event.agentId !== this.scopeContext.agentId) return;
-        const binding = this.binding.current;
-        this.turnSnapshot = {
-          binding,
-          generation: this.readyGeneration(binding),
-        };
-        this.holdTurnLease();
-      }),
-      this.eventBus.subscribe(TurnEnded, (event) => {
-        if (event.agentId !== this.scopeContext.agentId) return;
-        this.turnSnapshot = undefined;
-        this.releaseTurnLease();
-      }),
-    ];
     this.bindRegistry();
   }
 
@@ -147,7 +121,7 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
   }
 
   workspaceRoots(): EnvironmentWorkspaceRoots {
-    const binding = this.turnSnapshot?.binding ?? this.binding.current;
+    const binding = this.binding.current;
     let workDir = binding.cwd;
     if (workDir === undefined && binding.environmentId !== LOCAL_ENVIRONMENT_ID) {
       try {
@@ -173,89 +147,27 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
   }
 
   acquire(required: readonly EnvironmentCapability[] = []): EnvironmentLease {
-    const snapshot = this.turnSnapshot;
-    if (snapshot === undefined) {
-      return this.resolver.acquire(this.binding.current, required);
-    }
-    this.assertPinnedGeneration(snapshot);
-    const lease = this.resolver.acquire(snapshot.binding, required);
-    if (snapshot.generation === undefined) {
-      this.turnSnapshot = { binding: snapshot.binding, generation: this.currentGeneration(snapshot.binding) };
-    }
-    this.holdTurnLease();
-    return lease;
+    return this.resolver.acquire(this.binding.current, required);
   }
 
   async acquireWhenReady(required: readonly EnvironmentCapability[] = []): Promise<EnvironmentLease> {
-    const snapshot = this.turnSnapshot;
-    const binding = snapshot?.binding ?? this.binding.current;
-    if (snapshot !== undefined) this.assertPinnedGeneration(snapshot);
-    let connected = false;
+    const binding = this.binding.current;
     const environment = this.resolver.inspect(binding);
     if (!environmentStatusAllows(environment, required) && typeof environment.connect === 'function') {
       await environment.connect();
-      connected = true;
     }
-    const lease = await this.resolver.acquireWhenReady(binding, required);
-    if (snapshot !== undefined && (snapshot.generation === undefined || connected)) {
-      this.turnSnapshot = { binding, generation: this.currentGeneration(binding) };
-    }
-    this.holdTurnLease();
-    return lease;
+    return this.resolver.acquireWhenReady(binding, required);
   }
 
   dispose(): void {
-    for (const subscription of this.turnSubscriptions) subscription.dispose();
     this.registrySubscription?.dispose();
     this.workspaceSubscription.dispose();
     this.bindingSubscription.dispose();
-    this.releaseTurnLease();
     this.changeEmitter.dispose();
-  }
-
-  private holdTurnLease(): void {
-    const snapshot = this.turnSnapshot;
-    if (snapshot === undefined || this.turnLease !== undefined) return;
-    try {
-      this.turnLease = this.resolver.acquire(snapshot.binding);
-    } catch {
-      this.turnLease = undefined;
-    }
-  }
-
-  private releaseTurnLease(): void {
-    this.turnLease?.dispose();
-    this.turnLease = undefined;
-  }
-
-  private currentGeneration(binding: EnvironmentBinding): string | undefined {
-    return this.workspaces.get(binding.workspaceId)?.environments.current(binding.environmentId)?.identity.generation;
-  }
-
-  private readyGeneration(binding: EnvironmentBinding): string | undefined {
-    const environment = this.workspaces.get(binding.workspaceId)?.environments.current(binding.environmentId);
-    if (environment === undefined || !environmentStatusAllows(environment, [])) return undefined;
-    return environment.identity.generation;
-  }
-
-  private assertPinnedGeneration(snapshot: TurnEnvironmentSnapshot): void {
-    if (snapshot.generation === undefined) return;
-    if (this.currentGeneration(snapshot.binding) !== snapshot.generation) {
-      throw new EnvironmentError(
-        'environment.unavailable',
-        `environment ${snapshot.binding.environmentId} generation changed during the active turn`,
-      );
-    }
   }
 
   private rebind(): void {
     this.bindRegistry();
-    if (this.turnSnapshot !== undefined) {
-      const binding = this.binding.current;
-      this.turnSnapshot = { binding, generation: this.readyGeneration(binding) };
-      this.releaseTurnLease();
-      this.holdTurnLease();
-    }
     this.changeEmitter.fire();
   }
 
@@ -269,7 +181,6 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
       if (change.current !== undefined && change.current !== current) return;
       this.changeEmitter.fire();
       this.publishEnvironmentStatus(change);
-      this.holdTurnLease();
     });
   }
 

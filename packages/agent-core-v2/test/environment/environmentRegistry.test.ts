@@ -259,7 +259,6 @@ describe('EnvironmentRegistry', () => {
 
     leaseA.dispose();
     leaseB.dispose();
-    expect(registry.idleEnvironments()).toEqual(['local']);
   });
 
   it('forwards property access and method calls to the tracked resource', () => {
@@ -461,33 +460,6 @@ describe('EnvironmentRegistry', () => {
       status: 'disconnected',
       connectError: 'ssh: connect failed (code 255)',
     });
-  });
-
-  it('reports environments with zero leases and zero tracked resources as idle', () => {
-    registry.register(fakeEnvironment('local', 'one'));
-    registry.register(fakeEnvironment('ssh1', 'one'));
-    expect(registry.idleEnvironments()).toEqual(['local', 'ssh1']);
-
-    const lease = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
-    expect(registry.idleEnvironments()).toEqual(['ssh1']);
-
-    const resource = lease.track({ dispose: () => {} });
-    lease.dispose();
-    expect(registry.idleEnvironments()).toEqual(['ssh1']);
-
-    resource.dispose();
-    expect(registry.idleEnvironments()).toEqual(['local', 'ssh1']);
-  });
-
-  it('reports idleness again after session resources drain', async () => {
-    registry.register(fakeEnvironment('local', 'one'));
-    const lease = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
-    lease.track({ dispose: () => {} }, 'session-a');
-    lease.dispose();
-    expect(registry.idleEnvironments()).toEqual([]);
-
-    await registry.drainSession('session-a');
-    expect(registry.idleEnvironments()).toEqual(['local']);
   });
 });
 

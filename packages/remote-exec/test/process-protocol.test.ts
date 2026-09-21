@@ -1,3 +1,8 @@
+import { randomUUID } from 'node:crypto';
+import { rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -125,12 +130,18 @@ describe('process protocol semantics', () => {
     expect((await raw.nextResponse(3))['result']).toEqual({ status: 'accepted' });
     raw.send({ id: 4, method: 'process/write', params: { processId: 'cat', chunkBase64: '', writeId: 'w2', eof: true } });
     expect((await raw.nextResponse(4))['result']).toEqual({ status: 'accepted' });
-    raw.send({ id: 5, method: 'process/read', params: { processId: 'cat', waitMs: 3000 } });
-    const read = (await raw.nextResponse(5))['result'] as {
-      chunks: { chunkBase64: string }[];
-      closed: boolean;
-    };
-    const text = read.chunks.map((chunk) => fromB64(chunk.chunkBase64)).join('');
+    let text = '';
+    const deadline = Date.now() + 5_000;
+    while (text.length < 3 && Date.now() < deadline) {
+      for (const output of raw.notifications('process/output')) {
+        text += fromB64(output['chunkBase64'] as string);
+      }
+      if (text.length < 3) {
+        await new Promise((resolve) => {
+          setTimeout(resolve, 50);
+        });
+      }
+    }
     expect(text).toBe('abc');
     loopback.clientInput.end();
     await loopback.host.done;
@@ -151,123 +162,24 @@ describe('process protocol semantics', () => {
     await loopback.host.done;
   });
 
-  it('reads with long-poll, seq paging and a byte budget that always delivers the first chunk', async () => {
-    const loopback = createInProcessLoopback();
-    const raw = new RawClient(loopback);
-    await raw.handshake();
-    await startProcess(raw, 1, {
-      processId: 'emitter',
-      argv: ['bash', '-c', 'printf aaa; sleep 0.3; printf bbbb; sleep 0.3; printf cc'],
-      cwd: '/tmp',
-      pipeStdin: false,
-    });
-
-    raw.send({ id: 2, method: 'process/read', params: { processId: 'emitter', afterSeq: 0, waitMs: 2000 } });
-    const first = (await raw.nextResponse(2))['result'] as {
-      chunks: { seq: number; chunkBase64: string }[];
-      nextSeq: number;
-      exited: boolean;
-      closed: boolean;
-    };
-    expect(first.chunks.length).toBeGreaterThan(0);
-    expect(first.chunks[0]!.seq).toBe(1);
-    expect(fromB64(first.chunks[0]!.chunkBase64)).toBe('aaa');
-
-    const lastSeq = first.chunks.at(-1)!.seq;
-    raw.send({ id: 3, method: 'process/read', params: { processId: 'emitter', afterSeq: lastSeq, maxBytes: 2, waitMs: 2000 } });
-    const budgeted = (await raw.nextResponse(3))['result'] as {
-      chunks: { seq: number; chunkBase64: string }[];
-      nextSeq: number;
-    };
-    expect(budgeted.chunks.length).toBe(1);
-    expect(budgeted.chunks[0]!.chunkBase64.length).toBeGreaterThan(0);
-
-    const collected: { seq: number; chunkBase64: string }[] = [];
-    let afterSeq = 0;
-    let closed = false;
-    let exitCode: number | undefined;
-    for (let call = 10; !closed; call += 1) {
-      raw.send({
-        id: call,
-        method: 'process/read',
-        params: { processId: 'emitter', afterSeq, waitMs: 2000 },
-      });
-      const page = (await raw.nextResponse(call))['result'] as {
-        chunks: { seq: number; chunkBase64: string }[];
-        nextSeq: number;
-        exited: boolean;
-        exitCode?: number;
-        closed: boolean;
-      };
-      collected.push(...page.chunks);
-      afterSeq = page.nextSeq - 1;
-      closed = page.closed;
-      exitCode = page.exitCode;
-    }
-    expect(collected.map((chunk) => fromB64(chunk.chunkBase64)).join('')).toBe('aaabbbbcc');
-    expect(exitCode).toBe(0);
-
-    raw.send({ id: 99, method: 'process/read', params: { processId: 'emitter', afterSeq, waitMs: 100 } });
-    const empty = (await raw.nextResponse(99))['result'] as { chunks: unknown[]; exited: boolean };
-    expect(empty.chunks).toEqual([]);
-    expect(empty.exited).toBe(true);
-
-    raw.send({ id: 6, method: 'process/read', params: { processId: 'ghost' } });
-    expect(((await raw.nextResponse(6))['error'] as { code: number }).code).toBe(-32600);
-    loopback.clientInput.end();
-    await loopback.host.done;
-  });
-
-  it('truncates the replay buffer at 1MiB while live push continues', async () => {
-    const loopback = createInProcessLoopback();
-    const raw = new RawClient(loopback);
-    await raw.handshake();
-    await startProcess(raw, 1, {
-      processId: 'flood',
-      argv: ['seq', '1', '400000'],
-      cwd: '/tmp',
-      pipeStdin: false,
-    });
-    const deadline = Date.now() + 15_000;
-    let closed = false;
-    while (!closed && Date.now() < deadline) {
-      const frame = (await raw.nextFrame()) as Record<string, unknown>;
-      if (frame['method'] === 'process/closed') closed = true;
-    }
-    expect(closed).toBe(true);
-    raw.send({ id: 2, method: 'process/read', params: { processId: 'flood', afterSeq: 0 } });
-    const replay = (await raw.nextResponse(2))['result'] as {
-      chunks: { seq: number; chunkBase64: string }[];
-      exited: boolean;
-    };
-    expect(replay.exited).toBe(true);
-    expect(replay.chunks.length).toBeGreaterThan(0);
-    expect(replay.chunks[0]!.seq).toBeGreaterThan(1);
-    const retainedBytes = replay.chunks.reduce(
-      (total, chunk) => total + Buffer.from(chunk.chunkBase64, 'base64').length,
-      0,
-    );
-    expect(retainedBytes).toBeLessThanOrEqual(1024 * 1024);
-    loopback.clientInput.end();
-    await loopback.host.done;
-  });
-
   it('removes the process entry after the exited retention window', async () => {
-    const loopback = createInProcessLoopback({ tuning: { exitedRetentionMs: 300 } });
+    const loopback = createInProcessLoopback({ exitedRetentionMs: 300 });
     const raw = new RawClient(loopback);
     await raw.handshake();
     await startProcess(raw, 1, { processId: 'quick', argv: ['true'], cwd: '/tmp', pipeStdin: false });
+    raw.send({ id: 2, method: 'process/write', params: { processId: 'quick', chunkBase64: '', writeId: 'w1' } });
+    expect((await raw.nextResponse(2))['result']).toEqual({ status: 'stdinClosed' });
     await new Promise((resolve) => {
       setTimeout(resolve, 800);
     });
-    raw.send({ id: 2, method: 'process/read', params: { processId: 'quick' } });
-    expect(((await raw.nextResponse(2))['error'] as { code: number }).code).toBe(-32600);
+    raw.send({ id: 3, method: 'process/write', params: { processId: 'quick', chunkBase64: '', writeId: 'w2' } });
+    expect((await raw.nextResponse(3))['result']).toEqual({ status: 'unknownProcess' });
     loopback.clientInput.end();
     await loopback.host.done;
   });
 
   it('keeps streaming descendant output after the leader entry ages out of the map', async () => {
-    const loopback = createInProcessLoopback({ tuning: { exitedRetentionMs: 300 } });
+    const loopback = createInProcessLoopback({ exitedRetentionMs: 300 });
     const raw = new RawClient(loopback);
     await raw.handshake();
     await startProcess(raw, 1, {
@@ -293,9 +205,7 @@ describe('process protocol semantics', () => {
   }, 15_000);
 
   it('keeps control calls responsive behind a data flood', async () => {
-    const loopback = createInProcessLoopback({
-      tuning: { dataLaneWatermarkBytes: 32 * 1024 * 1024 },
-    });
+    const loopback = createInProcessLoopback();
     const throttled = throttleClientPipe(loopback, { bytesPerTick: 64 * 1024, tickMs: 25 });
     const connection = await RemoteExecConnection.connect(throttled.pipe, {
       clientName: 'remote-exec-test',
@@ -336,13 +246,17 @@ describe('process protocol semantics', () => {
   });
 
   it('disconnects when the pending outbound bytes breach the fuse', async () => {
-    const loopback = createInProcessLoopback({
-      tuning: { dataLaneWatermarkBytes: 1_000_000_000 },
-    });
+    const loopback = createInProcessLoopback();
     const raw = new RawClient(loopback);
     await raw.handshake();
-    await startProcess(raw, 1, { processId: 'flood', argv: ['yes'], cwd: '/tmp', pipeStdin: false });
+    const bigFile = join(tmpdir(), `remote-exec-fuse-${randomUUID()}`);
+    await writeFile(bigFile, 'A'.repeat(1024 * 1024));
     loopback.serverOutput.pause();
+    // Each 1MiB read answers with a ~1.4MB frame; with the consumer stalled
+    // the outbound queue passes the 64MiB fuse after ~46 responses.
+    for (let i = 0; i < 70; i += 1) {
+      raw.send({ id: 1000 + i, method: 'fs/readFile', params: { path: bigFile, maxBytes: 1024 * 1024 } });
+    }
     const done = await Promise.race([
       loopback.host.done.then(() => 'shutdown' as const),
       new Promise<'timeout'>((resolve) => {
@@ -353,6 +267,7 @@ describe('process protocol semantics', () => {
     ]);
     expect(done).toBe('shutdown');
     expect(loopback.logs.some((line) => line.includes('fuse'))).toBe(true);
+    await rm(bigFile, { force: true });
   });
 
   it('disconnects when a single message exceeds the 64MiB frame cap', async () => {
@@ -400,84 +315,26 @@ describe('process protocol semantics', () => {
     await loopback.host.done;
   });
 
-  it('queues ordinary calls beyond the in-flight cap while control calls proceed', async () => {    const loopback = createInProcessLoopback();
-    const raw = new RawClient(loopback);
-    await raw.handshake();
-    await startProcess(raw, 1, { processId: 'idle', argv: ['sleep', '5'], cwd: '/tmp', pipeStdin: true });
-
-    const total = 300;
-    for (let i = 0; i < total; i += 1) {
-      raw.send({
-        id: 1000 + i,
-        method: 'process/read',
-        params: { processId: 'idle', waitMs: 400 },
-      });
-    }
-    await new Promise((resolve) => {
-      setTimeout(resolve, 150);
-    });
-    raw.send({
-      id: 2,
-      method: 'process/write',
-      params: { processId: 'idle', chunkBase64: b64('x'), writeId: 'control-1' },
-    });
-    const control = (await raw.nextResponse(2, 2_000))['result'] as { status: string };
-    expect(control.status).toBe('accepted');
-
-    let answered = 0;
-    const deadline = Date.now() + 15_000;
-    while (answered < total && Date.now() < deadline) {
-      const frame = (await raw.nextFrame()) as Record<string, unknown>;
-      if (typeof frame['id'] === 'number' && frame['id'] >= 1000) {
-        expect(frame['error']).toBeUndefined();
-        answered += 1;
-      }
-    }
-    expect(answered).toBe(total);
-    loopback.clientInput.end();
-    await loopback.host.done;
-  });
-
-  it('refuses a start that was cancelled while queued behind the in-flight cap', async () => {
+  it('refuses a start whose id was terminated before it ran', async () => {
     const loopback = createInProcessLoopback();
     const raw = new RawClient(loopback);
     await raw.handshake();
-    await startProcess(raw, 1, { processId: 'waker', argv: ['cat'], cwd: '/tmp', pipeStdin: true });
-    // Park the in-flight budget in long-poll reads so the next ordinary call queues.
-    for (let i = 0; i < 256; i += 1) {
-      raw.send({ id: 1000 + i, method: 'process/read', params: { processId: 'waker', waitMs: 60_000 } });
-    }
-    await new Promise((resolve) => {
-      setTimeout(resolve, 150);
-    });
+    raw.send({ id: 1, method: 'process/terminate', params: { processId: 'late' } });
+    expect((await raw.nextResponse(1))['result']).toEqual({ running: false });
     raw.send({
       id: 2,
       method: 'process/start',
       params: { processId: 'late', argv: ['sleep', '300'], cwd: '/tmp', pipeStdin: false },
     });
-    raw.send({ id: 3, method: 'process/terminate', params: { processId: 'late' } });
-    // terminate rides the control lane and lands while the start is still queued.
-    expect((await raw.nextResponse(3))['result']).toEqual({ running: false });
-    // Wake the parked reads so the queued start finally runs.
-    raw.send({
-      id: 4,
-      method: 'process/write',
-      params: { processId: 'waker', chunkBase64: b64('x'), writeId: 'wake-1' },
-    });
-    expect((await raw.nextResponse(4))['result']).toEqual({ status: 'accepted' });
-    const startResponse = await raw.nextResponse(2, 10_000);
-    const error = startResponse['error'] as { code: number; message: string };
+    const error = (await raw.nextResponse(2))['error'] as { code: number; message: string };
     expect(error.code).toBe(-32600);
     expect(error.message).toContain('terminated before it started');
-    // Nothing was ever spawned under that id.
-    raw.send({ id: 5, method: 'process/read', params: { processId: 'late' } });
-    expect(((await raw.nextResponse(5))['error'] as { code: number }).code).toBe(-32600);
     loopback.clientInput.end();
     await loopback.host.done;
   });
 
   it('terminateAll kills detached descendants whose leader aged out of the map', async () => {
-    const loopback = createInProcessLoopback({ tuning: { exitedRetentionMs: 300 } });
+    const loopback = createInProcessLoopback({ exitedRetentionMs: 300 });
     const raw = new RawClient(loopback);
     await raw.handshake();
     await startProcess(raw, 1, {

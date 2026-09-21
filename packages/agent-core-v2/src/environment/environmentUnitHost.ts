@@ -107,7 +107,7 @@ class SharedEnvironmentUnitHost implements EnvironmentUnitHost {
       try {
         await record.attachment.dispose();
       } catch (error) {
-        failure = error;
+        if (!failed) failure = error;
         failed = true;
       }
       try {
@@ -231,7 +231,7 @@ class SharedEnvironmentUnitHost implements EnvironmentUnitHost {
         }
         const publication = this.registry.publishBatch(environments.map((staged) => ({ environment: staged.environment })));
         for (let index = 0; index < environments.length; index += 1) {
-          environments[index]!.registration = publication.registrations[index];
+          environments[index]!.registration = publication.registrations[index]!;
         }
         committed = true;
         return { cleanup: publication.cleanup };
@@ -254,8 +254,7 @@ class SharedEnvironmentUnitHost implements EnvironmentUnitHost {
         }
         try {
           child.dispose();
-        } catch (error) {
-          if (!failed) failure = error;
+        } catch (error) {          if (!failed) failure = error;
           failed = true;
         }
         if (failed) throw failure;

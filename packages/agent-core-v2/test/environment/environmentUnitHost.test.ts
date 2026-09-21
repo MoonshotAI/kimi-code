@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createDecorator } from '#/_base/di/instantiation';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
+import type { Environment } from '#/environment/environment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { EnvironmentRegistry } from '#/environment/environmentRegistry';
 import { fakeEnvironment } from './stubs';
@@ -81,6 +82,36 @@ describe('EnvironmentUnitHost', () => {
     })).rejects.toThrow('prepare failed');
     expect(registry.current('local')).toBeUndefined();
     expect(failed.disposed).toBe(true);
+    await host.dispose();
+    disposables.dispose();
+  });
+
+  it('publishes a replacement before reporting the previous generation cleanup failure', async () => {
+    const { disposables, host, registry } = setup();
+    const first = environment('one');
+    Object.assign(first, {
+      dispose: async () => {
+        first.disposed = true;
+        throw new Error('cleanup failed');
+      },
+    });
+    let registration!: { update(prepare: () => Environment | Promise<Environment>): Promise<void>; remove(): Promise<void> };
+    const handle = await host.provide(emptyImports(), async (provider) => {
+      registration = provider.registerEnvironment(first);
+      return { dispose: () => {} };
+    });
+    const second = environment('two');
+
+    await expect(registration.update(() => second)).rejects.toThrow('cleanup failed');
+
+    expect(registry.current('local')).toBe(second);
+    const lease = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
+    expect(lease.environment).toBe(second);
+    expect(second.disposed).toBe(false);
+    expect(first.disposed).toBe(true);
+    lease.dispose();
+    await handle.remove();
+    expect(second.disposed).toBe(true);
     await host.dispose();
     disposables.dispose();
   });
@@ -171,7 +202,7 @@ describe('EnvironmentUnitHost', () => {
     await dispose();
   });
 
-  it('waits for in-flight prepare, rejects new transactions, and tears down in reverse order', async () => {
+  it('waits for in-flight prepare, rejects new transactions, and tears down the attachment', async () => {
     const { disposables, host } = setup();
     const order: string[] = [];
     let release: (() => void) | undefined;

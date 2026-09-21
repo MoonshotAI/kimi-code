@@ -8,7 +8,7 @@ import type { BytePipe, ExecBridge } from '../../src/client/execBridge';
 import { RemoteExecConnection, type ConnectOptions } from '../../src/client/connection';
 import { LineFrameDecoder } from '../../src/protocol/codec';
 import type { InitializeResult, RemoteEnvironmentInfo } from '../../src/protocol/methods';
-import { StdioHost, type StdioHostTuning } from '../../src/server/stdioHost';
+import { StdioHost } from '../../src/server/stdioHost';
 
 export const TEST_VERSION = '9.9.9-test';
 
@@ -76,7 +76,7 @@ export interface InProcessLoopback {
 export function createInProcessLoopback(options?: {
   readonly environment?: RemoteEnvironmentInfo;
   readonly version?: string;
-  readonly tuning?: StdioHostTuning;
+  readonly exitedRetentionMs?: number;
 }): InProcessLoopback {
   const clientToServer = new PassThrough();
   const serverToClient = new PassThrough();
@@ -89,7 +89,7 @@ export function createInProcessLoopback(options?: {
     log: (line) => {
       logs.push(line);
     },
-    tuning: options?.tuning,
+    exitedRetentionMs: options?.exitedRetentionMs,
   });
   const clientPipe: BytePipe = {
     write: (chunk) => {
@@ -117,7 +117,7 @@ export async function connectInProcess(
   options?: {
     environment?: RemoteEnvironmentInfo;
     version?: string;
-    tuning?: StdioHostTuning;
+    exitedRetentionMs?: number;
     connect?: Partial<ConnectOptions>;
   },
 ): Promise<{ connection: RemoteExecConnection; loopback: InProcessLoopback }> {

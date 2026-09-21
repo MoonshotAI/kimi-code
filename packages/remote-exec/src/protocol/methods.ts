@@ -15,7 +15,6 @@ export const PROCESS_START_METHOD = 'process/start';
 export const PROCESS_OUTPUT_METHOD = 'process/output';
 export const PROCESS_EXITED_METHOD = 'process/exited';
 export const PROCESS_CLOSED_METHOD = 'process/closed';
-export const PROCESS_READ_METHOD = 'process/read';
 export const PROCESS_WRITE_METHOD = 'process/write';
 export const PROCESS_SIGNAL_METHOD = 'process/signal';
 export const PROCESS_TERMINATE_METHOD = 'process/terminate';
@@ -27,36 +26,6 @@ export const SERVER_NOTIFICATION_METHODS: ReadonlySet<string> = new Set([
   PROCESS_EXITED_METHOD,
   PROCESS_CLOSED_METHOD,
 ]);
-
-// Field-level check for server→client notifications: the client casts params
-// to the notification interfaces and decodes chunkBase64 eagerly, so a
-// malformed frame (chunkBase64 null, a numeric processId) would throw
-// synchronously inside the handler. Only the fields the client consumes are
-// checked.
-export function isValidServerNotificationParams(method: string, params: unknown): boolean {
-  if (params === null || typeof params !== 'object') return false;
-  const record = params as Record<string, unknown>;
-  if (typeof record['processId'] !== 'string' || record['processId'].length === 0) return false;
-  switch (method) {
-    case PROCESS_OUTPUT_METHOD:
-      return (
-        (record['stream'] === 'stdout' || record['stream'] === 'stderr' || record['stream'] === 'pty') &&
-        typeof record['chunkBase64'] === 'string'
-      );
-    case PROCESS_EXITED_METHOD:
-      return typeof record['exitCode'] === 'number';
-    case PROCESS_CLOSED_METHOD:
-      return true;
-    default:
-      return false;
-  }
-}
-
-// Client→server request methods that are intentionally unbounded: process/read
-// long-polls server-side until output arrives or waitMs elapses, so a per-call
-// timeout would kill healthy polling. (Terminal streams ride server→client
-// notifications, not calls.)
-export const LONG_POLL_METHODS: ReadonlySet<string> = new Set([PROCESS_READ_METHOD]);
 
 // Client→server control calls whose stall is treated as a broken connection:
 // an unanswered health check cannot be distinguished from a half-dead peer, so
@@ -192,41 +161,17 @@ export type ProcessOutputStream = 'stdout' | 'stderr' | 'pty';
 
 export interface ProcessOutputNotification {
   readonly processId: string;
-  readonly seq: number;
   readonly stream: ProcessOutputStream;
   readonly chunkBase64: string;
 }
 
 export interface ProcessExitedNotification {
   readonly processId: string;
-  readonly seq: number;
   readonly exitCode: number;
 }
 
 export interface ProcessClosedNotification {
   readonly processId: string;
-  readonly seq: number;
-}
-
-export interface ProcessReadParams {
-  readonly processId: string;
-  readonly afterSeq?: number;
-  readonly maxBytes?: number;
-  readonly waitMs?: number;
-}
-
-export interface ProcessReadChunk {
-  readonly seq: number;
-  readonly stream: ProcessOutputStream;
-  readonly chunkBase64: string;
-}
-
-export interface ProcessReadResult {
-  readonly chunks: ProcessReadChunk[];
-  readonly nextSeq: number;
-  readonly exited: boolean;
-  readonly exitCode?: number;
-  readonly closed: boolean;
 }
 
 export interface ProcessWriteParams {
@@ -293,8 +238,6 @@ export const FS_READ_FILE_MAX_BYTES = 1024 * 1024;
 export const FS_READ_FILE_WHOLE_MAX_BYTES = 32 * 1024 * 1024;
 export const FS_WRITE_FILE_CHUNK_BYTES = 1024 * 1024;
 export const FS_READ_DIRECTORY_MAX_ENTRIES = 50_000;
-export const PROCESS_REPLAY_MAX_BYTES = 1024 * 1024;
-export const PROCESS_REPLAY_MAX_CHUNKS = 50_000;
 export const PROCESS_WRITE_ID_CACHE_SIZE = 4096;
 export const PROCESS_EXITED_RETENTION_MS = 30_000;
 export const MAX_IN_FLIGHT_CALLS = 256;

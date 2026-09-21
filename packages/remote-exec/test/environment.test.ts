@@ -115,19 +115,8 @@ describe('RemoteEnvironment over a subprocess loopback', () => {
       });
     });
     const proc = await environment.process.spawn('sleep', ['300']);
-    await environment.connection.call('process/start', {
-      processId: 'drain-test',
-      argv: ['sleep', '300'],
-      cwd: workDir,
-      pipeStdin: false,
-    });
-    const longPoll = environment.connection.call('process/read', {
-      processId: 'drain-test',
-      waitMs: 30_000,
-    });
     await disconnected;
     expect(environment.status).toBe('disconnected');
-    await expect(longPoll).rejects.toThrow(ConnectionClosedError);
     await expect(proc.wait()).resolves.toBe(-1);
     await expect(environment.fs.readText('/etc/hostname')).rejects.toThrow(ConnectionClosedError);
     await environment.dispose();

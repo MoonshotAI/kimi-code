@@ -28,11 +28,7 @@ import {
   type RemoteEnvironmentInfo,
 } from '#/protocol/methods';
 import { FsHandler } from './fsHandler';
-import { ProcessManager, type ProcessManagerTuning } from './processManager';
-
-export interface StdioHostTuning extends ProcessManagerTuning {
-  readonly dataLaneWatermarkBytes?: number;
-}
+import { ProcessManager } from './processManager';
 
 export interface StdioHostOptions {
   readonly version: string;
@@ -40,7 +36,7 @@ export interface StdioHostOptions {
   readonly input: Readable;
   readonly output: Writable;
   readonly log: (line: string) => void;
-  readonly tuning?: StdioHostTuning;
+  readonly exitedRetentionMs?: number;
 }
 
 type Lane = 'control' | 'data';
@@ -150,11 +146,11 @@ export class StdioHost {
           this.sendNotification(method, params);
         },
       },
-      options.tuning ?? {},
+      options.exitedRetentionMs,
     );
     this.writer = new OutboundWriter(
       options.output,
-      options.tuning?.dataLaneWatermarkBytes ?? 8 * 1024 * 1024,
+      8 * 1024 * 1024,
       () => {
         this.options.log('outbound pending frame fuse breached');
         void this.shutdown('send buffer fuse');
@@ -176,7 +172,6 @@ export class StdioHost {
       ['fs/remove', (p) => fs.remove(p)],
       ['fs/rename', (p) => fs.rename(p)],
       ['process/start', (p) => pm.start(p)],
-      ['process/read', (p) => pm.read(p)],
       ['process/write', (p) => pm.write(p)],
       ['process/signal', (p) => pm.signal(p)],
       ['process/terminate', (p) => pm.terminate(p)],

@@ -10,12 +10,8 @@ import {
   PROCESS_OUTPUT_METHOD,
   PROCESS_EXITED_METHOD,
   PROCESS_CLOSED_METHOD,
-  PROCESS_REPLAY_MAX_BYTES,
-  PROCESS_REPLAY_MAX_CHUNKS,
   PROCESS_WRITE_ID_CACHE_SIZE,
   type ProcessOutputStream,
-  type ProcessReadChunk,
-  type ProcessReadResult,
   type ProcessStartResult,
   type ProcessTerminateResult,
   type ProcessWriteResult,
@@ -27,17 +23,6 @@ import {
   requireParams,
   requireString,
 } from './fsHandler';
-
-export interface ProcessManagerTuning {
-  readonly exitedRetentionMs?: number;
-  readonly terminateEscalationMs?: number;
-}
-
-interface RetainedChunk {
-  readonly seq: number;
-  readonly stream: ProcessOutputStream;
-  readonly chunk: Buffer;
-}
 
 interface AcceptedWriteIds {
   readonly ids: Set<string>;
@@ -55,14 +40,10 @@ interface ManagedProcess {
   stdinOpen: boolean;
   terminateAfterStart: boolean;
   clientPaused: boolean;
-  nextSeq: number;
-  readonly retained: RetainedChunk[];
-  retainedBytes: number;
   exitCode: number | null;
   closed: boolean;
   openStreams: number;
   readonly writeIds: AcceptedWriteIds;
-  readonly waiters: Set<() => void>;
   readonly stdinWaiters: Set<() => void>;
   removalTimer: NodeJS.Timeout | undefined;
   killTimer: NodeJS.Timeout | undefined;
@@ -89,7 +70,7 @@ function rememberWriteId(writeIds: AcceptedWriteIds, writeId: string): void {
 }
 
 // Sets iterate in insertion order, so evicting the first entry keeps the
-// registry bounded at capacity (same idiom as the client's expiredIds).
+// registry bounded at capacity.
 function rememberBounded<T>(set: Set<T>, value: T, capacity: number): void {
   if (set.has(value)) return;
   set.add(value);
@@ -115,7 +96,7 @@ export class ProcessManager {
 
   constructor(
     private readonly host: ProcessManagerHost,
-    private readonly tuning: ProcessManagerTuning = {},
+    private readonly exitedRetentionMs = PROCESS_EXITED_RETENTION_MS,
   ) {}
 
   async start(rawParams: unknown): Promise<ProcessStartResult> {
@@ -184,14 +165,10 @@ export class ProcessManager {
       stdinOpen: tty || pipeStdin,
       terminateAfterStart: false,
       clientPaused: false,
-      nextSeq: 1,
-      retained: [],
-      retainedBytes: 0,
       exitCode: null,
       closed: false,
       openStreams: tty ? 1 : 2,
       writeIds: { ids: new Set(), order: [] },
-      waiters: new Set(),
       stdinWaiters: new Set(),
       removalTimer: undefined,
       killTimer: undefined,
@@ -329,22 +306,8 @@ export class ProcessManager {
     // An exited entry may have aged out of the map while its streams are still
     // open (a detached descendant holds the pipes): keep streaming live output.
     if (entry.exitCode === null && this.processes.get(entry.processId) !== entry) return;
-    const seq = entry.nextSeq;
-    entry.nextSeq += 1;
-    entry.retained.push({ seq, stream, chunk });
-    entry.retainedBytes += chunk.length;
-    while (
-      entry.retainedBytes > PROCESS_REPLAY_MAX_BYTES ||
-      entry.retained.length > PROCESS_REPLAY_MAX_CHUNKS
-    ) {
-      const evicted = entry.retained.shift();
-      if (evicted === undefined) break;
-      entry.retainedBytes = Math.max(0, entry.retainedBytes - evicted.chunk.length);
-    }
-    this.wake(entry);
     this.host.notify(PROCESS_OUTPUT_METHOD, {
       processId: entry.processId,
-      seq,
       stream,
       chunkBase64: chunk.toString('base64'),
     });
@@ -360,18 +323,14 @@ export class ProcessManager {
     if (entry.exitCode !== null) return;
     entry.exitCode = exitCode;
     this.breakStdin(entry);
-    const seq = entry.nextSeq;
-    entry.nextSeq += 1;
-    this.wake(entry);
-    this.host.notify(PROCESS_EXITED_METHOD, { processId: entry.processId, seq, exitCode });
+    this.host.notify(PROCESS_EXITED_METHOD, { processId: entry.processId, exitCode });
     this.maybeClose(entry);
     entry.removalTimer = setTimeout(() => {
       this.processes.delete(entry.processId);
       if (entry.pid > 0) {
         rememberBounded(this.exitedGroupLeaders, entry.pid, EXITED_GROUP_CACHE_SIZE);
       }
-      this.wake(entry);
-    }, this.tuning.exitedRetentionMs ?? PROCESS_EXITED_RETENTION_MS);
+    }, this.exitedRetentionMs);
     entry.removalTimer.unref?.();
   }
 
@@ -385,16 +344,7 @@ export class ProcessManager {
   private maybeClose(entry: ManagedProcess): void {
     if (entry.closed || entry.exitCode === null || entry.openStreams !== 0) return;
     entry.closed = true;
-    const seq = entry.nextSeq;
-    entry.nextSeq += 1;
-    this.wake(entry);
-    this.host.notify(PROCESS_CLOSED_METHOD, { processId: entry.processId, seq });
-  }
-
-  private wake(entry: ManagedProcess): void {
-    const waiters = [...entry.waiters];
-    entry.waiters.clear();
-    for (const resolve of waiters) resolve();
+    this.host.notify(PROCESS_CLOSED_METHOD, { processId: entry.processId });
   }
 
   private requireProcess(processId: string): ManagedProcess {
@@ -406,63 +356,6 @@ export class ProcessManager {
       throw new RpcError(RpcErrorCode.InvalidRequest, `process id ${processId} is starting`);
     }
     return entry;
-  }
-
-  async read(rawParams: unknown): Promise<ProcessReadResult> {
-    const params = requireParams(rawParams);
-    const processId = requireString(params, 'processId');
-    const afterSeq = optionalInteger(params, 'afterSeq', 0, Number.MAX_SAFE_INTEGER) ?? 0;
-    const maxBytes = optionalInteger(params, 'maxBytes', 1, Number.MAX_SAFE_INTEGER);
-    const budget = maxBytes ?? Number.MAX_SAFE_INTEGER;
-    const waitMs = optionalInteger(params, 'waitMs', 0, 60_000) ?? 0;
-    const deadline = Date.now() + waitMs;
-
-    for (;;) {
-      const entry = this.requireProcess(processId);
-      const chunks: ProcessReadChunk[] = [];
-      let totalBytes = 0;
-      let nextSeq = entry.nextSeq;
-      for (const retained of entry.retained) {
-        if (retained.seq <= afterSeq) continue;
-        if (chunks.length > 0 && totalBytes + retained.chunk.length > budget) break;
-        totalBytes += retained.chunk.length;
-        chunks.push({
-          seq: retained.seq,
-          stream: retained.stream,
-          chunkBase64: retained.chunk.toString('base64'),
-        });
-        nextSeq = retained.seq + 1;
-        if (totalBytes >= budget) break;
-      }
-      if (maxBytes === undefined) {
-        nextSeq = entry.nextSeq;
-      }
-      const exited = entry.exitCode !== null;
-      const response: ProcessReadResult = {
-        chunks,
-        nextSeq,
-        exited,
-        exitCode: entry.exitCode ?? undefined,
-        closed: entry.closed,
-      };
-      const hasNewTerminalEvent = exited && afterSeq < nextSeq - 1;
-      if (chunks.length > 0 || entry.closed || hasNewTerminalEvent || Date.now() >= deadline) {
-        return response;
-      }
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) return response;
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(() => {
-          entry.waiters.delete(done);
-          resolve();
-        }, remaining);
-        const done = (): void => {
-          clearTimeout(timer);
-          resolve();
-        };
-        entry.waiters.add(done);
-      });
-    }
   }
 
   async write(rawParams: unknown): Promise<ProcessWriteResult> {
@@ -593,7 +486,7 @@ export class ProcessManager {
         this.killGroup(entry, 'SIGKILL');
       } catch {
       }
-    }, this.tuning.terminateEscalationMs ?? 1_000);
+    }, 1_000);
     entry.killTimer.unref?.();
   }
 
@@ -701,7 +594,7 @@ export class ProcessManager {
       this.killOrphanedGroup(pgid, 'SIGTERM');
     }
     if (entries.some((entry) => entry.exitCode === null)) {
-      const deadline = Date.now() + (this.tuning.terminateEscalationMs ?? 1_000);
+      const deadline = Date.now() + 1_000;
       while (Date.now() < deadline) {
         if (entries.every((entry) => entry.exitCode !== null)) break;
         await new Promise((resolve) => {
@@ -727,7 +620,6 @@ export class ProcessManager {
     for (const entry of this.processes.values()) {
       if (entry.removalTimer !== undefined) clearTimeout(entry.removalTimer);
       if (entry.killTimer !== undefined) clearTimeout(entry.killTimer);
-      this.wake(entry);
       this.breakStdin(entry);
     }
     this.processes.clear();

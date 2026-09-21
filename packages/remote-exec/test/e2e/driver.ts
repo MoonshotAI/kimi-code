@@ -226,20 +226,28 @@ async function scenarioTermIgnore(environment: RemoteEnvironment, cwd: string): 
       cwd,
       pipeStdin: false,
     });
+    const exited = new Promise<number>((resolve) => {
+      const unsubscribe = environment.connection.onNotification('process/exited', (params) => {
+        const event = params as { processId: string; exitCode: number };
+        if (event.processId !== processId) return;
+        unsubscribe();
+        resolve(event.exitCode);
+      });
+    });
     const started = Date.now();
     const terminate = (await environment.connection.call('process/terminate', { processId })) as {
       running: boolean;
     };
     expectEqual(terminate.running, true, 'terminate.running');
-    let exited = false;
-    const deadline = Date.now() + 10_000;
-    while (!exited && Date.now() < deadline) {
-      const read = (await environment.connection.call('process/read', { processId, waitMs: 1000 })) as {
-        exited: boolean;
-      };
-      exited = read.exited;
-    }
-    if (!exited) throw new Error('process never exited after terminate');
+    const exitCode = await Promise.race([
+      exited,
+      new Promise<never>((_resolve, reject) => {
+        setTimeout(() => {
+          reject(new Error('process never exited after terminate'));
+        }, 10_000);
+      }),
+    ]);
+    expectEqual(typeof exitCode, 'number', 'exit code observed');
     if (Date.now() - started > 8_000) throw new Error('escalation took too long');
   });
 }

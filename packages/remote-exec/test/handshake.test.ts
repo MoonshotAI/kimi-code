@@ -20,7 +20,6 @@ import {
   PROCESS_EXITED_METHOD,
   PROCESS_FLOW_CAPABILITY,
   PROCESS_OUTPUT_METHOD,
-  PROCESS_READ_METHOD,
   PROCESS_START_METHOD,
   PROCESS_TERMINATE_METHOD,
 } from '../src/protocol/methods';
@@ -115,16 +114,12 @@ describe('handshake', () => {
     await loopback.host.done;
   });
 
-  it('disconnects on a response with an unknown id', async () => {
+  it('discards a response with an unknown id without disconnecting', async () => {
     const { connection, loopback } = await connectInProcess();
-    const closed = new Promise<void>((resolve) => {
-      connection.onDidClose(() => {
-        resolve();
-      });
-    });
     loopback.serverOutput.write('{"id":12345,"result":{}}\n');
-    await closed;
-    expect(connection.closed).toBe(true);
+    await expect(connection.call(ENVIRONMENT_STATUS_METHOD)).resolves.toEqual({ status: 'ready' });
+    expect(connection.closed).toBe(false);
+    connection.close();
     await loopback.host.done;
   });
 
@@ -150,33 +145,39 @@ describe('handshake', () => {
   });
 
   it('fails pending calls when the connection drops', async () => {
-    const { connection, loopback } = await connectInProcess();
-    const pending = connection.call('process/read', { processId: 'nope', waitMs: 0 });
-    await expect(pending).rejects.toThrow(RpcError);
-    const slow = connection.call('process/read', { processId: 'nope2', waitMs: 10_000 });
+    const pipe = createScriptedServer((frame, reply) => {
+      if (frame.method === INITIALIZE_METHOD) {
+        reply({ id: frame.id, result: testInitializeResult() });
+      }
+    });
+    const connection = await RemoteExecConnection.connect(pipe, {
+      clientName: 'test',
+      clientVersion: '0.0.0',
+    });
+    const pending = connection.call(FS_READ_FILE_METHOD, { path: '/nope' });
     connection.close();
-    await expect(slow).rejects.toThrow(ConnectionClosedError);
-    await loopback.host.done;
+    await expect(pending).rejects.toThrow(ConnectionClosedError);
   });
 
   it('settles queued calls beyond the in-flight cap when the connection closes', async () => {
-    const { connection, loopback } = await connectInProcess();
-    await connection.call('process/start', {
-      processId: 'idle',
-      argv: ['sleep', '5'],
-      cwd: '/tmp',
-      pipeStdin: false,
+    const pipe = createScriptedServer((frame, reply) => {
+      if (frame.method === INITIALIZE_METHOD) {
+        reply({ id: frame.id, result: testInitializeResult() });
+      }
+    });
+    const connection = await RemoteExecConnection.connect(pipe, {
+      clientName: 'test',
+      clientVersion: '0.0.0',
     });
     const total = 260;
     const calls: Promise<unknown>[] = [];
     for (let i = 0; i < total; i += 1) {
-      calls.push(connection.call('process/read', { processId: 'idle', waitMs: 30_000 }));
+      calls.push(connection.call(FS_READ_FILE_METHOD, { path: `/nope-${i}` }));
     }
     connection.close();
     const settled = await Promise.allSettled(calls);
     expect(settled).toHaveLength(total);
     expect(settled.every((result) => result.status === 'rejected')).toBe(true);
-    await loopback.host.done;
   });
 
   it('rejects the handshake with the peer error when initialize is answered with an error', async () => {
@@ -230,7 +231,7 @@ describe('control call timeout', () => {
     expect(connection.closeReason?.error).toBeInstanceOf(ControlCallTimeoutError);
   });
 
-  it('cancels an outstanding long-poll when a control call timeout closes the connection', async () => {
+  it('cancels an outstanding business call when a control call timeout closes the connection', async () => {
     const pipe = createScriptedServer((frame, reply) => {
       if (frame.method === INITIALIZE_METHOD) {
         reply({ id: frame.id, result: testInitializeResult() });
@@ -241,34 +242,11 @@ describe('control call timeout', () => {
       clientVersion: '0.0.0',
       controlCallTimeoutMs: 100,
     });
-    const longPoll = connection.call(PROCESS_READ_METHOD, { processId: 'p1', waitMs: 30_000 });
+    const pending = connection.call(FS_READ_FILE_METHOD, { path: '/nope' });
     const control = connection.call(ENVIRONMENT_STATUS_METHOD);
     await expect(control).rejects.toThrow(ConnectionClosedError);
-    await expect(longPoll).rejects.toThrow(ConnectionClosedError);
+    await expect(pending).rejects.toThrow(ConnectionClosedError);
     expect(connection.closed).toBe(true);
-  });
-
-  it('lets a long-poll process/read outlive the control call timeout', async () => {
-    const pipe = createScriptedServer((frame, reply) => {
-      if (frame.method === INITIALIZE_METHOD) {
-        reply({ id: frame.id, result: testInitializeResult() });
-        return;
-      }
-      if (frame.method === PROCESS_READ_METHOD) {
-        setTimeout(() => {
-          reply({ id: frame.id, result: { chunks: [], nextSeq: 0, exited: false, closed: false } });
-        }, 300);
-      }
-    });
-    const connection = await RemoteExecConnection.connect(pipe, {
-      clientName: 'test',
-      clientVersion: '0.0.0',
-      controlCallTimeoutMs: 100,
-    });
-    const result = await connection.call(PROCESS_READ_METHOD, { processId: 'p1', waitMs: 30_000 });
-    expect(result).toEqual({ chunks: [], nextSeq: 0, exited: false, closed: false });
-    expect(connection.closed).toBe(false);
-    connection.close();
   });
 });
 

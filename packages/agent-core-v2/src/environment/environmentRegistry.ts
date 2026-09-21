@@ -28,7 +28,6 @@ interface Generation {
   readonly resources: Set<TrackedResource>;
   readonly statusSubscription: { dispose(): void };
   leases: number;
-  idle: boolean;
   draining: boolean;
   disposed: boolean;
   drainPromise?: Promise<void>;
@@ -120,12 +119,6 @@ export class EnvironmentRegistry {
 
   list(): readonly Environment[] {
     return [...this.currentGenerations.values()].map((value) => value.environment);
-  }
-
-  idleEnvironments(): readonly string[] {
-    return [...this.currentGenerations.values()]
-      .filter((generation) => generation.idle)
-      .map((generation) => generation.environment.identity.environmentId);
   }
 
   snapshot(): EnvironmentRegistrySnapshot {
@@ -250,14 +243,12 @@ export class EnvironmentRegistry {
       }
     }
     generation.leases += 1;
-    this.updateIdleness(generation);
     let active = true;
     const release = (): void => {
       if (!active) return;
       active = false;
       generation.leases -= 1;
       if (generation.leases === 0) generation.releaseDrain?.();
-      this.updateIdleness(generation);
     };
     return {
       environment: generation.environment,
@@ -271,12 +262,10 @@ export class EnvironmentRegistry {
             if (disposed) return;
             disposed = true;
             generation.resources.delete(record);
-            this.updateIdleness(generation);
             return originalDispose();
           },
         };
         generation.resources.add(record);
-        this.updateIdleness(generation);
         return new Proxy(resource, {
           get: (target, property) => {
             if (property === 'dispose') {
@@ -369,7 +358,6 @@ export class EnvironmentRegistry {
       environment,
       resources: new Set<TrackedResource>(),
       leases: 0,
-      idle: true,
       draining: false,
       disposed: false,
       statusSubscription: undefined as unknown as { dispose(): void },
@@ -397,10 +385,6 @@ export class EnvironmentRegistry {
     for (const capability of environment.capabilities) {
       if (environment[capability] === undefined) throw new EnvironmentError('environment.capability_unavailable', `environment ${environment.identity.environmentId} declares ${capability} without an implementation`);
     }
-  }
-
-  private updateIdleness(generation: Generation): void {
-    generation.idle = generation.leases === 0 && generation.resources.size === 0;
   }
 
   private drain(generation: Generation): Promise<void> {

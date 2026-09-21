@@ -14,11 +14,9 @@ import {
   CONTROL_CALL_METHODS,
   INITIALIZE_METHOD,
   INITIALIZED_METHOD,
-  LONG_POLL_METHODS,
   MAX_IN_FLIGHT_CALLS,
   MIN_EXECUTOR_VERSION,
   SERVER_NOTIFICATION_METHODS,
-  isValidServerNotificationParams,
   type InitializeResult,
   type RemoteCapabilities,
   type RemoteEnvironmentInfo,
@@ -125,11 +123,6 @@ export class RemoteExecConnection {
   private controlCallTimeoutMs = DEFAULT_CONTROL_CALL_TIMEOUT_MS;
   private requestCallTimeoutMs = DEFAULT_REQUEST_CALL_TIMEOUT_MS;
   private closeInfo: ConnectionCloseInfo | undefined;
-  // Ids of requests that timed out and whose late response must be discarded.
-  // Bounded like the in-flight cap: ids are consumed by the late response, and
-  // the oldest is evicted beyond the cap so a long-lived connection cannot
-  // grow the set without limit.
-  private readonly expiredIds = new Set<RequestId>();
 
   private constructor(private readonly pipe: BytePipe) {}
 
@@ -324,7 +317,7 @@ export class RemoteExecConnection {
           this.fail(new ControlCallTimeoutError(method, this.controlCallTimeoutMs));
         }, this.controlCallTimeoutMs);
         pending.timer.unref?.();
-      } else if (!LONG_POLL_METHODS.has(method)) {
+      } else {
         pending.timer = setTimeout(() => {
           this.expireRequest(id, method);
         }, this.requestCallTimeoutMs);
@@ -390,11 +383,6 @@ export class RemoteExecConnection {
     if (isResponse(message) || isErrorResponse(message)) {
       const pending = this.pending.get(message.id);
       if (pending === undefined) {
-        // A response to a request that already timed out is stale: discard it
-        // instead of faulting the connection it arrived on.
-        if (!this.expiredIds.delete(message.id)) {
-          this.fail(new ProtocolViolationError(`response for unknown id ${String(message.id)}`));
-        }
         return;
       }
       this.pending.delete(message.id);
@@ -420,9 +408,6 @@ export class RemoteExecConnection {
         this.fail(new ProtocolViolationError(`unknown notification ${message.method}`));
         return;
       }
-      // A malformed notification is dropped, not faulted: one bad frame from
-      // a misbehaving peer must not kill an otherwise healthy connection.
-      if (!isValidServerNotificationParams(message.method, message.params)) return;
       const handlers = this.notificationHandlers.get(message.method);
       if (handlers !== undefined) {
         for (const handler of handlers) {
@@ -448,11 +433,6 @@ export class RemoteExecConnection {
     const pending = this.pending.get(id);
     if (pending === undefined) return;
     this.pending.delete(id);
-    this.expiredIds.add(id);
-    if (this.expiredIds.size > MAX_IN_FLIGHT_CALLS) {
-      const oldest = this.expiredIds.values().next();
-      if (!oldest.done) this.expiredIds.delete(oldest.value);
-    }
     this.releaseSlot();
     pending.reject(new RequestTimeoutError(method, this.requestCallTimeoutMs));
   }

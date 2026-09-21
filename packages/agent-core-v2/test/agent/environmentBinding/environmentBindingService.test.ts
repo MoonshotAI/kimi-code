@@ -590,20 +590,6 @@ describe('AgentEnvironmentBindingService', () => {
     next.dispose();
   });
 
-  it('moves the turn lease to the new environment when the binding switches mid-turn', () => {
-    const { registry, binding, publishBus } = setup();
-    publishBus('turn.started', { agentId: 'main' });
-    expect(registry.idleEnvironments()).not.toContain('local');
-    expect(registry.idleEnvironments()).toContain('remote');
-
-    binding.switch('remote');
-    expect(registry.idleEnvironments()).toContain('local');
-    expect(registry.idleEnvironments()).not.toContain('remote');
-
-    publishBus('turn.ended', { agentId: 'main' });
-    expect(registry.idleEnvironments()).toContain('remote');
-  });
-
   it('runs the next tool call of the same turn on the new environment after a change_environment commit', async () => {
     const { registry, binding, agentEnvironment, loopState, publishBus } = setup();
     connectableEnvironment(registry, { environmentId: 'connectable' });
@@ -648,42 +634,6 @@ describe('AgentEnvironmentBindingService', () => {
     publishBus('turn.ended', { agentId: 'main' });
     await Promise.resolve();
     expect(binding.current.environmentId).toBe('local');
-  });
-
-  it('leases the pinned environment for the turn duration so it never reports idle', () => {
-    const { registry, publishBus } = setup();
-    expect(registry.idleEnvironments()).toContain('local');
-
-    publishBus('turn.started', { agentId: 'main' });
-    expect(registry.idleEnvironments()).not.toContain('local');
-
-    publishBus('turn.ended', { agentId: 'main' });
-    expect(registry.idleEnvironments()).toContain('local');
-  });
-
-  it('releases the turn lease when the service is disposed mid-turn', () => {
-    const { registry, agentEnvironment, publishBus } = setup();
-    publishBus('turn.started', { agentId: 'main' });
-    expect(registry.idleEnvironments()).not.toContain('local');
-
-    agentEnvironment.dispose();
-    expect(registry.idleEnvironments()).toContain('local');
-  });
-
-  it('fails turn acquires when the pinned environment generation changes mid-turn', async () => {
-    const { agentEnvironment, localRegistration, publishBus } = setup();
-    publishBus('turn.started', { agentId: 'main' });
-
-    await localRegistration.replace(environment('local', 'local-two', 'ready', ['fs', 'process']));
-
-    expect(() => agentEnvironment.acquire()).toThrowError(
-      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.unavailable' }),
-    );
-
-    publishBus('turn.ended', { agentId: 'main' });
-    const lease = agentEnvironment.acquire();
-    expect(lease.environment.identity.generation).toBe('local-two');
-    lease.dispose();
   });
 
   it('keeps turn acquires working when another session switches cwd on the pinned environment', async () => {
@@ -1548,21 +1498,6 @@ describe('AgentEnvironmentService.acquireWhenReady', () => {
     expect(lease.environment.status).toBe('ready');
     lease.dispose();
   });
-
-  it('fails when the pinned turn generation changes mid-turn', async () => {
-    const { agentEnvironment, localRegistration, publishBus } = setup();
-    publishBus('turn.started', { agentId: 'main' });
-    await localRegistration.replace(environment('local', 'local-two', 'ready', ['fs', 'process']));
-
-    await expect(agentEnvironment.acquireWhenReady()).rejects.toThrowError(
-      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.unavailable' }),
-    );
-
-    publishBus('turn.ended', { agentId: 'main' });
-    const lease = await agentEnvironment.acquireWhenReady();
-    expect(lease.environment.identity.generation).toBe('local-two');
-    lease.dispose();
-  });
 });
 
 describe('acquireOrWhenReady', () => {
@@ -1672,22 +1607,6 @@ describe('AgentEnvironmentService on-demand connect', () => {
     publishBus('turn.ended', { agentId: 'main' });
   });
 
-  it('takes the turn lease once the pinned environment connects mid-turn', async () => {
-    const { registry, state, restoreHooks, agentEnvironment, publishBus } = setup();
-    connectSwappingEnvironment(registry, 'remote-x');
-    state.set(environmentBindingKey, { workspaceId: 'workspace', environmentId: 'remote-x', cwd: '/remote/x' });
-    await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
-    publishBus('turn.started', { agentId: 'main' });
-    expect(registry.idleEnvironments()).toContain('remote-x');
-
-    const lease = await agentEnvironment.acquireWhenReady(['fs']);
-    lease.dispose();
-    expect(registry.idleEnvironments()).not.toContain('remote-x');
-
-    publishBus('turn.ended', { agentId: 'main' });
-    expect(registry.idleEnvironments()).toContain('remote-x');
-  });
-
   it('connects on demand without an active turn', async () => {
     const { registry, state, restoreHooks, agentEnvironment } = setup();
     const { calls } = connectSwappingEnvironment(registry, 'remote-x');
@@ -1718,30 +1637,6 @@ describe('AgentEnvironmentService on-demand connect', () => {
     const next = agentEnvironment.acquire(['fs']);
     expect(next.environment.identity.generation).toBe('remote-x-ready');
     next.dispose();
-    publishBus('turn.ended', { agentId: 'main' });
-  });
-
-  it('rejects turn acquires once the on-demand-connected generation is replaced mid-turn', async () => {
-    const { registry, state, restoreHooks, agentEnvironment, publishBus } = setup();
-    const { registration } = connectSwappingEnvironment(registry, 'remote-x');
-    state.set(environmentBindingKey, { workspaceId: 'workspace', environmentId: 'remote-x', cwd: '/remote/x' });
-    await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
-    publishBus('turn.started', { agentId: 'main' });
-
-    const lease = await agentEnvironment.acquireWhenReady(['fs']);
-    lease.dispose();
-
-    await registration.replace(Object.assign(new FakeEnvironment(
-      { workspaceId: 'workspace', environmentId: 'remote-x', generation: 'remote-x-two' },
-      { status: 'ready', capabilities: ['fs', 'process'] },
-    ), { fs: {}, process: {} }));
-
-    expect(() => agentEnvironment.acquire(['fs'])).toThrowError(
-      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.unavailable' }),
-    );
-    await expect(agentEnvironment.acquireWhenReady(['fs'])).rejects.toThrowError(
-      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.unavailable' }),
-    );
     publishBus('turn.ended', { agentId: 'main' });
   });
 

@@ -91,12 +91,6 @@ class PushReadable extends Readable {
   }
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
 export class RemoteProcess implements IHostProcess {
   declare readonly _serviceBrand: undefined;
 
@@ -175,7 +169,7 @@ export class RemoteProcess implements IHostProcess {
   private async sendWriteWithRetry(chunk: Buffer, eof: boolean, writeId: string): Promise<void> {
     for (let timeouts = 0; ; timeouts += 1) {
       try {
-        await this.sendWrite(chunk, eof, writeId, 0);
+        await this.sendWrite(chunk, eof, writeId);
         return;
       } catch (error) {
         // A timed-out write may or may not have landed; replaying the same
@@ -187,7 +181,7 @@ export class RemoteProcess implements IHostProcess {
     }
   }
 
-  private async sendWrite(chunk: Buffer, eof: boolean, writeId: string, attempt: number): Promise<void> {
+  private async sendWrite(chunk: Buffer, eof: boolean, writeId: string): Promise<void> {
     const result = (await this.connection.call(PROCESS_WRITE_METHOD, {
       processId: this.processId,
       chunkBase64: chunk.toString('base64'),
@@ -197,13 +191,8 @@ export class RemoteProcess implements IHostProcess {
     switch (result.status) {
       case 'accepted':
         return;
-      case 'starting': {
-        if (attempt >= 100) {
-          throw new Error('process did not reach running state');
-        }
-        await delay(50);
-        return this.sendWrite(chunk, eof, writeId, attempt + 1);
-      }
+      case 'starting':
+        throw new Error('process did not reach running state');
       // The process is gone or its stdin is closed: the bytes have nowhere to
       // go, so the write becomes a no-op instead of an EPIPE-style crash.
       case 'stdinClosed':
