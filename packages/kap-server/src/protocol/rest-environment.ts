@@ -18,7 +18,7 @@ export const sessionEnvironmentParamsSchema = z.object({
 export const sessionEnvironmentEntrySchema = z.object({
   environment_id: z.string(),
   type: z.enum(['local', 'ssh', 'docker', 'command']),
-  status: z.enum(['pending', 'connecting', 'ready', 'degraded', 'disconnected', 'draining', 'disposed']),
+  status: z.enum(['pending', 'connecting', 'ready', 'disconnected', 'disposed']),
   generation: z.string(),
   capabilities: z.array(z.enum(['fs', 'process', 'terminal'])),
   default_cwd: z.string().optional(),

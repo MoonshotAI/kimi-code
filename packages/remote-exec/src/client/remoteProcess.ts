@@ -14,7 +14,6 @@ import { RpcError } from '#/protocol/errors';
 import {
   PROCESS_CLOSED_METHOD,
   PROCESS_EXITED_METHOD,
-  PROCESS_FLOW_CAPABILITY,
   PROCESS_FLOW_METHOD,
   PROCESS_OUTPUT_METHOD,
   PROCESS_SIGNAL_METHOD,
@@ -212,9 +211,6 @@ export class RemoteProcess implements IHostProcess {
   private updateOutputFlow(): void {
     const stalled = this.stdoutStalled || this.stderrStalled;
     if (stalled === this.outputFlowPaused) return;
-    // Only executors that advertise the capability honor process/flow — older
-    // ones fault unknown notifications, so an unadvertised stall just buffers.
-    if (this.connection.capabilities[PROCESS_FLOW_CAPABILITY] !== true) return;
     this.outputFlowPaused = stalled;
     // Per-process flow control: the executor pauses just this child's
     // stdout/stderr while the consumer is behind, so an unread flood stays

@@ -888,7 +888,7 @@ Lists the environments registered for the session's workspace, plus the SSH host
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 
-On success, `data` is `{ workspace_id, environments, ssh_hosts }`. Each `environments` entry is `{ environment_id, type, status, generation, capabilities, default_cwd?, connect_error? }` with `type` one of `local` / `ssh` / `docker` / `command`, `status` one of `pending` / `connecting` / `ready` / `degraded` / `disconnected` / `draining` / `disposed`, and `capabilities` drawn from `fs` / `process` / `terminal`; `pending` means no live connection and no observed failure (never connected), and `connect_error` carries the recorded failure reason for a `disconnected` entry. `ssh_hosts` is a list of host names.
+On success, `data` is `{ workspace_id, environments, ssh_hosts }`. Each `environments` entry is `{ environment_id, type, status, generation, capabilities, default_cwd?, connect_error? }` with `type` one of `local` / `ssh` / `docker` / `command`, `status` one of `pending` / `connecting` / `ready` / `disconnected` / `disposed`, and `capabilities` drawn from `fs` / `process` / `terminal`; `pending` means no live connection and no observed failure (never connected), and `connect_error` carries the recorded failure reason for a `disconnected` entry. `ssh_hosts` is a list of host names.
 
 - `40401`: session not found
 

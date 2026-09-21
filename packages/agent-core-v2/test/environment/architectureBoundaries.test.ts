@@ -52,24 +52,20 @@ describe('environment architecture boundaries', () => {
     expect(workspaceSources).not.toMatch(/registerScopedService\(\s*['"]program['"]/);
   });
 
-  it('restricts environment provider attachment to context and declared imports', () => {
+  it('attaches environment providers through context and the provider host', () => {
     const provider = source('environment/environmentProvider.ts');
     const local = source('environment/localEnvironment.ts');
-    const host = source('environment/environmentUnitHost.ts');
     const workspaceInstance = source('workspace/workspaceInstance/workspaceInstance.ts');
     const manager = source('workspace/workspaceInstance/workspaceInstanceManagerService.ts');
     expect(provider).toContain('EnvironmentProviderContext');
-    expect(provider).toContain('readonly imports: EnvironmentUnitImports');
+    expect(provider).toContain('registerEnvironment');
     expect(provider).not.toContain('WorkspaceInstance');
     expect(provider).not.toContain('EnvironmentProviderRegistry');
     expect(provider).not.toContain('readonly environments');
     expect(local).not.toContain('ServicesAccessor');
-    expect(host).toContain('EnvironmentUnitHostFactory');
-    expect(host).toContain('SharedEnvironmentUnitHostFactory');
-    expect(workspaceInstance).not.toContain('new EnvironmentUnitHost');
     expect(workspaceInstance).not.toContain('IInstantiationService');
-    expect(manager).toContain('this.unitHostFactory.create');
-    expect(manager).toContain('instance.unitHost.provide(provider.imports');
+    expect(manager).toContain('provider.attach(');
+    expect(manager).toContain('this.providerHost(instance, handles)');
   });
 
   it('builds every agent OS execution from an environment lease and workspace view', () => {

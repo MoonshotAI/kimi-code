@@ -23,13 +23,10 @@ import type {
 import type {
   EnvironmentProviderAttachment,
   EnvironmentProviderContext,
-  EnvironmentProviderFactory,
-} from '@moonshot-ai/agent-core-v2/environment/environmentProvider';
-import type {
-  EnvironmentProviderHost,
   EnvironmentProviderEnvironmentHandle,
-  EnvironmentUnitImports,
-} from '@moonshot-ai/agent-core-v2/environment/environmentUnitHost';
+  EnvironmentProviderFactory,
+  EnvironmentProviderHost,
+} from '@moonshot-ai/agent-core-v2/environment/environmentProvider';
 
 import { connectWithGuidance } from './connectGuidance';
 import type { LocalRunner } from './executorDetect';
@@ -70,50 +67,55 @@ const PENDING_PATH: EnvironmentPath = {
   dirname: (path) => posixPath.dirname(path),
 };
 
+const PENDING_WORKSPACE: Environment['workspace'] = {
+  mapRoots: (roots) => ({
+    workDir: posixPath.resolve(roots.workDir),
+    additionalDirs: roots.additionalDirs?.map((root) => posixPath.resolve(root)),
+  }),
+};
+
+const EMPTY_CAPABILITIES: ReadonlySet<EnvironmentCapability> = new Set();
+
 export class ManagedRemoteEnvironment implements Environment {
   readonly identity: EnvironmentIdentity;
-  readonly capabilities: ReadonlySet<EnvironmentCapability>;
-  readonly host: HostEnvironmentInfo;
-  readonly path: EnvironmentPath;
-  readonly workspace: Environment['workspace'];
+  private inner: RemoteEnvironment | undefined;
+  private readonly connectCallback: () => Promise<void>;
+  private readonly ownsInner: boolean;
   private currentStatus: EnvironmentStatus;
   private readonly statusEmitter = new Emitter<EnvironmentStatus>();
   readonly onDidChangeStatus = this.statusEmitter.event;
-  private readonly statusSubscription?: { dispose(): void };
+  private statusSubscription?: { dispose(): void };
   private connectInflight?: Promise<void>;
   private lastConnectError?: string;
 
   constructor(
-    private readonly inner: RemoteEnvironment | undefined,
-    private readonly connectCallback: () => Promise<void>,
+    inner: RemoteEnvironment | undefined,
+    connectCallback: () => Promise<void>,
     identity: EnvironmentIdentity,
+    options: { readonly ownsInner?: boolean } = {},
   ) {
+    this.inner = inner;
+    this.connectCallback = connectCallback;
     this.identity = identity;
-    if (inner === undefined) {
-      this.capabilities = new Set();
-      this.host = PENDING_ENVIRONMENT;
-      this.path = PENDING_PATH;
-      this.workspace = {
-        mapRoots: (roots) => ({
-          workDir: posixPath.resolve(roots.workDir),
-          additionalDirs: roots.additionalDirs?.map((root) => posixPath.resolve(root)),
-        }),
-      };
-      this.currentStatus = 'pending';
-    } else {
-      this.capabilities = inner.capabilities;
-      this.host = inner.host;
-      this.path = inner.path;
-      this.workspace = inner.workspace;
-      this.currentStatus = inner.status;
-      this.statusSubscription = inner.onDidChangeStatus((status) => {
-        if (status === 'disconnected') {
-          const closeReason = inner.connection.closeReason;
-          if (closeReason !== undefined) this.lastConnectError = closeReason.reason;
-        }
-        this.setStatus(status);
-      });
-    }
+    this.ownsInner = options.ownsInner === true;
+    this.currentStatus = inner === undefined ? 'pending' : inner.status;
+    this.bindInner(inner);
+  }
+
+  get capabilities(): ReadonlySet<EnvironmentCapability> {
+    return this.inner?.capabilities ?? EMPTY_CAPABILITIES;
+  }
+
+  get host(): HostEnvironmentInfo {
+    return this.inner?.host ?? PENDING_ENVIRONMENT;
+  }
+
+  get path(): EnvironmentPath {
+    return this.inner?.path ?? PENDING_PATH;
+  }
+
+  get workspace(): Environment['workspace'] {
+    return this.inner?.workspace ?? PENDING_WORKSPACE;
   }
 
   get fs() {
@@ -140,17 +142,26 @@ export class ManagedRemoteEnvironment implements Environment {
     return this.lastConnectError;
   }
 
+  adopt(inner: RemoteEnvironment): void {
+    if (this.currentStatus === 'disposed') {
+      void inner.dispose();
+      return;
+    }
+    if (this.inner === inner) return;
+    const previous = this.inner;
+    this.bindInner(inner);
+    this.inner = inner;
+    this.lastConnectError = undefined;
+    this.setStatus(inner.status);
+    if (this.ownsInner && previous !== undefined) void previous.dispose();
+  }
+
   connect(): Promise<void> {
     this.connectInflight ??= (async () => {
       this.lastConnectError = undefined;
       this.setStatus('connecting');
       try {
         await this.connectCallback();
-        // When this view's own connection was replaced, the inner's dispose
-        // already settled the view through the status subscription. Syncing
-        // with the inner covers a connect started by another view wrapping
-        // the same live connection: this view stays usable. Pending views
-        // have no inner and return to pending — no failure was observed.
         if (this.currentStatus === 'connecting') this.setStatus(this.inner?.status ?? 'pending');
       } catch (error) {
         this.lastConnectError = error instanceof Error ? error.message : String(error);
@@ -163,23 +174,37 @@ export class ManagedRemoteEnvironment implements Environment {
     return this.connectInflight;
   }
 
+  private bindInner(inner: RemoteEnvironment | undefined): void {
+    this.statusSubscription?.dispose();
+    this.statusSubscription = undefined;
+    if (inner === undefined) return;
+    this.statusSubscription = inner.onDidChangeStatus((status) => {
+      if (this.inner !== inner) return;
+      if (status === 'disconnected') {
+        const closeReason = inner.connection.closeReason;
+        if (closeReason !== undefined) this.lastConnectError = closeReason.reason;
+      }
+      this.setStatus(status);
+    });
+  }
+
   private setStatus(status: EnvironmentStatus): void {
     if (this.currentStatus === status || this.currentStatus === 'disposed') return;
     this.currentStatus = status;
     this.statusEmitter.fire(status);
   }
 
-  // The executor connection is owned by the app-level connection pool, not by
-  // this view: replacements (reconnect, declaration update) drain views
-  // without tearing the connection down, and the pool disposes it once the
-  // last workspace holder lets go.
   async dispose(): Promise<void> {
     this.statusSubscription?.dispose();
+    this.statusSubscription = undefined;
+    const inner = this.inner;
+    this.inner = undefined;
     if (this.currentStatus !== 'disposed') {
       this.currentStatus = 'disposed';
       this.statusEmitter.fire('disposed');
     }
     this.statusEmitter.dispose();
+    if (this.ownsInner) await inner?.dispose();
   }
 }
 
@@ -196,38 +221,16 @@ export interface RemoteEnvironmentProviderFactoryOptions {
 
 interface DeclaredEnvironmentRecord {
   handle: EnvironmentProviderEnvironmentHandle;
+  view: ManagedRemoteEnvironment;
   declaration: RemoteEnvironmentDeclaration;
   fingerprint: string;
-  // Set when the record is torn down (declaration removed or attachment
-  // disposed). An in-flight connect settling afterwards releases its pool
-  // handle instead of swapping a view built from a stale declaration into the
-  // registry; a declaration replace is caught by the fingerprint comparison.
   detached: boolean;
-  // The lease on the pooled connection backing this record's live view,
-  // owned by the app-level pool: managed views share it and never dispose it.
-  // The record releases it on update and removal; the pool destroys the
-  // connection once the last workspace holder lets go.
   poolHandle?: RemoteConnectionPoolHandle;
-  // The pooled connection the record's live registry view wraps, undefined
-  // while the view is a pending placeholder. The pool broadcasts every
-  // replacement to all holders, so a mismatch against the handle's live
-  // connection marks this view stale: it catches up to the pooled connection
-  // instead of forcing another replacement.
   viewConnection?: RemoteEnvironment;
-}
-
-class EnvironmentSwapRedundantError extends Error {
-  constructor() {
-    super('view already wraps the pooled connection');
-    this.name = 'EnvironmentSwapRedundantError';
-  }
 }
 
 export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFactory {
   readonly id = 'remote-exec';
-  readonly imports: EnvironmentUnitImports = {
-    root: [IConfigService, ILogService, IEnvironmentDeclarationService],
-  };
 
   // App-level connection pool: one executor connection per declaration
   // fingerprint, shared by every workspace this factory attaches to. The pool
@@ -300,7 +303,9 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
           }
           record.declaration = declaration;
           try {
-            await record.handle.update(() => this.createPendingEnvironment(context, record, log));
+            const next = this.createPendingEnvironment(context, record, log);
+            await record.handle.update(() => next);
+            record.view = next;
             record.fingerprint = fingerprint;
             releasePoolHandle(record);
           } catch (error) {
@@ -345,11 +350,14 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
   ): DeclaredEnvironmentRecord {
     const record: DeclaredEnvironmentRecord = {
       handle: undefined as unknown as EnvironmentProviderEnvironmentHandle,
+      view: undefined as unknown as ManagedRemoteEnvironment,
       declaration,
       fingerprint: declarationFingerprint(declaration.entry),
       detached: false,
     };
-    record.handle = host.registerEnvironment(this.createPendingEnvironment(context, record, log));
+    const view = this.createPendingEnvironment(context, record, log);
+    record.view = view;
+    record.handle = host.registerEnvironment(view);
     return record;
   }
 
@@ -403,42 +411,30 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
           const pooled = record.poolHandle?.connection;
           if (pooled !== undefined) {
             if (pooled.status === 'ready' && record.viewConnection !== pooled) {
-              await this.swapPoolConnection(context, record, pooled, log);
+              this.swapPoolConnection(record, pooled);
               return;
             }
             const replaced = await this.pool.replace(fingerprint, factory);
-            // Stale guards: the record was torn down, or its declaration
-            // moved to a different fingerprint, while the replace was in
-            // flight. The view swap must not happen; the pool handle is
-            // owned (and released) by the reconcile path.
             if (record.detached || declarationFingerprint(record.declaration.entry) !== fingerprint) return;
-            await this.swapPoolConnection(context, record, replaced, log);
+            this.swapPoolConnection(record, replaced);
             return;
           }
           const acquired = await this.pool.acquire(fingerprint, factory, {
-            onPoolReplace: (connection) =>
-              this.swapPoolConnection(context, record, connection, log).catch((error: unknown) => {
+            onPoolReplace: (connection) => {
+              try {
+                this.swapPoolConnection(record, connection);
+              } catch (error: unknown) {
                 log.warn(`remote environment ${declaration.id} pooled connection replacement failed`, { error });
-              }),
+              }
+            },
           });
-          // Stale guards: the record was torn down, or its declaration moved
-          // to a different fingerprint, while the acquire was in flight. The
-          // handle goes straight back; the view swap must not happen.
           if (record.detached || declarationFingerprint(record.declaration.entry) !== fingerprint) {
             acquired.release();
             return;
           }
           record.poolHandle = acquired;
           try {
-            await record.handle.update(() => {
-              const connection = acquired.connection;
-              record.viewConnection = connection;
-              return new ManagedRemoteEnvironment(connection, connectEnvironment, {
-                workspaceId: context.id,
-                environmentId: declaration.id,
-                generation: connection.identity.generation,
-              });
-            });
+            this.swapPoolConnection(record, acquired.connection);
           } catch (error) {
             record.poolHandle = undefined;
             record.viewConnection = undefined;
@@ -459,35 +455,13 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
   // broadcast has not reached yet. Superseded broadcasts (the entry moved on
   // again, or the record's declaration changed fingerprint) and views already
   // wrapping the connection are no-ops.
-  private async swapPoolConnection(
-    context: EnvironmentProviderContext,
-    record: DeclaredEnvironmentRecord,
-    connection: RemoteEnvironment,
-    log: ILogService,
-  ): Promise<void> {
+  private swapPoolConnection(record: DeclaredEnvironmentRecord, connection: RemoteEnvironment): void {
     if (record.detached) return;
     const handle = record.poolHandle;
     if (handle?.connection !== connection || record.viewConnection === connection) return;
     if (handle.fingerprint !== declarationFingerprint(record.declaration.entry)) return;
-    const connectEnvironment = this.createConnectCallback(context, record, record.declaration, log);
-    const previousView = record.viewConnection;
-    try {
-      await record.handle.update(() => {
-        // A concurrent swap for the same connection (this record's own
-        // reconnect racing the pool broadcast) already landed.
-        if (record.viewConnection === connection) throw new EnvironmentSwapRedundantError();
-        record.viewConnection = connection;
-        return new ManagedRemoteEnvironment(connection, connectEnvironment, {
-          workspaceId: context.id,
-          environmentId: record.declaration.id,
-          generation: connection.identity.generation,
-        });
-      });
-    } catch (error) {
-      if (error instanceof EnvironmentSwapRedundantError) return;
-      record.viewConnection = previousView;
-      throw error;
-    }
+    record.view.adopt(connection);
+    record.viewConnection = connection;
   }
 }
 

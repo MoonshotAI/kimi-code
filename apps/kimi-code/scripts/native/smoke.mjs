@@ -156,10 +156,10 @@ async function runExecServerSmoke() {
       fail(`exec-server reported a non-posix environment: ${JSON.stringify(result.environment)}`);
     }
     send({ method: 'initialized' });
-    send({ method: 'environment/status', id: 2 });
-    const status = await nextFrame();
-    if (status.id !== 2 || status.result?.status !== 'ready') {
-      fail(`exec-server environment/status mismatch: ${JSON.stringify(status)}`);
+    send({ method: 'fs/getMetadata', id: 2, params: { path: '/' } });
+    const metadata = await nextFrame();
+    if (metadata.id !== 2 || metadata.result?.isDirectory !== true) {
+      fail(`exec-server fs/getMetadata mismatch: ${JSON.stringify(metadata)}`);
     }
     await runTtySmoke();
     child.stdin.end();

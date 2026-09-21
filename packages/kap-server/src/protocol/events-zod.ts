@@ -624,9 +624,7 @@ export const environmentStatusSchema = z.enum([
   'pending',
   'connecting',
   'ready',
-  'degraded',
   'disconnected',
-  'draining',
   'disposed',
 ]) satisfies z.ZodType<EnvironmentStatus>;
 

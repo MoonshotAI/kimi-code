@@ -9,19 +9,10 @@ import { HostProcessError } from '@moonshot-ai/agent-core-v2/os/interface/hostPr
 
 import { RemoteExecConnection } from '../src/client/connection';
 import { RemoteProcessService } from '../src/client/remoteProcess';
-import {
-  INITIALIZE_METHOD,
-  PROCESS_EXITED_METHOD,
-  PROCESS_FLOW_METHOD,
-  PROCESS_OUTPUT_METHOD,
-  PROCESS_START_METHOD,
-} from '../src/protocol/methods';
+import { PROCESS_EXITED_METHOD } from '../src/protocol/methods';
 import {
   connectInProcess,
   connectSubprocess,
-  createScriptedServer,
-  testInitializeResult,
-  type ScriptedFrame,
   type SpawnedExecutor,
 } from './helpers/loopback';
 
@@ -326,50 +317,6 @@ describe('process output backpressure', () => {
     expect(text).toBe('y\n'.repeat(text.length / 2));
   }, 15_000);
 
-  it('does not send process/flow to an executor that does not advertise it', async () => {
-    const seen: ScriptedFrame[] = [];
-    let notify: (value: unknown) => void = () => {};
-    const pipe = createScriptedServer((frame, reply) => {
-      if (frame.method === INITIALIZE_METHOD) {
-        // capabilities: {} — a pre-flow-control executor.
-        reply({ id: frame.id, result: testInitializeResult() });
-        return;
-      }
-      if (frame.method === 'initialized') {
-        notify = (value) => {
-          reply(value);
-        };
-        return;
-      }
-      seen.push(frame);
-      if (frame.method === PROCESS_START_METHOD) {
-        const processId = (frame.params as { processId: string }).processId;
-        reply({ id: frame.id, result: { processId, pid: 4321 } });
-        setTimeout(() => {
-          const chunkBase64 = Buffer.alloc(64 * 1024, 0x61).toString('base64');
-          for (let seq = 1; seq <= 8; seq += 1) {
-            notify({
-              method: PROCESS_OUTPUT_METHOD,
-              params: { processId, seq, stream: 'stdout', chunkBase64 },
-            });
-          }
-        }, 50);
-      }
-    });
-    const connection = await RemoteExecConnection.connect(pipe, {
-      clientName: 'test',
-      clientVersion: '0.0.0',
-    });
-    const processes = new RemoteProcessService(connection, '/tmp', '/bin/bash');
-    const proc = await processes.spawn('yes', []);
-    await vi.waitFor(() => {
-      expect(proc.stdout.readableLength).toBeGreaterThan(0);
-    });
-    await delay(300);
-    expect(seen.some((frame) => frame.method === PROCESS_FLOW_METHOD)).toBe(false);
-    expect(connection.closed).toBe(false);
-    connection.close();
-  });
 });
 
 describe('stdin write chain recovery', () => {

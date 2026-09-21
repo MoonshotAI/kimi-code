@@ -1,6 +1,5 @@
 export const INITIALIZE_METHOD = 'initialize';
 export const INITIALIZED_METHOD = 'initialized';
-export const ENVIRONMENT_STATUS_METHOD = 'environment/status';
 
 export const FS_READ_FILE_METHOD = 'fs/readFile';
 export const FS_WRITE_FILE_METHOD = 'fs/writeFile';
@@ -138,7 +137,6 @@ export interface ProcessStartParams {
   readonly env?: Record<string, string>;
   readonly tty?: boolean;
   readonly pipeStdin?: boolean;
-  readonly arg0?: string;
 }
 
 export interface ProcessStartResult {
@@ -206,12 +204,6 @@ export interface ProcessFlowParams {
 }
 
 export const MIN_EXECUTOR_VERSION = '0.1.0';
-
-// Advertised in the initialize result when the executor honors process/flow
-// flow-control notifications. Clients must not send process/flow to an
-// executor that does not advertise it (older executors fault unknown
-// notifications).
-export const PROCESS_FLOW_CAPABILITY = 'processFlow';
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map((part) => Number.parseInt(part, 10) || 0);

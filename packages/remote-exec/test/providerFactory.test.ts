@@ -13,10 +13,8 @@ import type { Environment } from '@moonshot-ai/agent-core-v2/environment/environ
 import { EnvironmentError, EnvironmentRegistry } from '@moonshot-ai/agent-core-v2/environment/environmentRegistry';
 import type {
   EnvironmentProviderContext,
-} from '@moonshot-ai/agent-core-v2/environment/environmentProvider';
-import type {
   EnvironmentProviderHost,
-} from '@moonshot-ai/agent-core-v2/environment/environmentUnitHost';
+} from '@moonshot-ai/agent-core-v2/environment/environmentProvider';
 
 import { HandshakeError } from '../src/client/connection';
 import { RemoteEphemeralEnvironmentConnector } from '../src/client/ephemeralEnvironmentConnector';
@@ -191,20 +189,21 @@ describe('RemoteEnvironmentProviderFactory', () => {
     await registry.dispose();
   });
 
-  it('connects on explicit connect and swaps in the connected generation', async () => {
+  it('connects on explicit connect without replacing the registered environment', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
     const connect = vi.fn(async (options: RemoteEnvironmentOptions) => connectedEnvironment(options, 'connected-1'));
     const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
     const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
 
     const placeholder = registry.current('dev-box')!;
+    const generation = placeholder.identity.generation;
     await placeholder.connect!();
 
     expect(connect).toHaveBeenCalledTimes(1);
     const connected = registry.current('dev-box')!;
+    expect(connected).toBe(placeholder);
     expect(connected.status).toBe('ready');
-    expect(connected.identity.generation).toBe('connected-1');
-    expect(connected.identity.generation).not.toBe(placeholder.identity.generation);
+    expect(connected.identity.generation).toBe(generation);
     const lease = registry.acquire({ workspaceId: 'workspace-1', environmentId: 'dev-box' }, ['fs']);
     expect(lease.environment).toBe(connected);
     lease.dispose();
@@ -244,8 +243,8 @@ describe('RemoteEnvironmentProviderFactory', () => {
     releaseConnect();
     await first;
     expect(placeholder.whenReady).toBeUndefined();
+    expect(registry.current('dev-box')).toBe(placeholder);
     expect(registry.current('dev-box')!.status).toBe('ready');
-    expect(registry.current('dev-box')!.identity.generation).toBe('connected-1');
     expect(statuses[0]).toBe('connecting');
 
     await attachment.dispose();
@@ -304,7 +303,7 @@ describe('RemoteEnvironmentProviderFactory', () => {
     releaseConnect();
     const lease = await pending;
     expect(lease.environment.status).toBe('ready');
-    expect(lease.environment.identity.generation).toBe('connected-1');
+    expect(lease.environment).toBe(placeholder);
     lease.dispose();
 
     await attachment.dispose();
@@ -359,8 +358,7 @@ describe('RemoteEnvironmentProviderFactory', () => {
     await reconnect;
     expect(settled).toBe('acquired');
     expect(lease.environment.status).toBe('ready');
-    expect(lease.environment.identity.generation).toBe('connected-2');
-    expect(lease.environment).not.toBe(managed);
+    expect(lease.environment).toBe(managed);
     lease.dispose();
 
     await attachment.dispose();
@@ -401,7 +399,7 @@ describe('RemoteEnvironmentProviderFactory', () => {
   });
 
   it('replaces the pooled connection on a healthy reconnect and drains the old view', async () => {
-    const registry = new EnvironmentRegistry('workspace-1', 50);
+    const registry = new EnvironmentRegistry('workspace-1');
     let generation = 0;
     const produced: FakeEnvironment[] = [];
     const connect = vi.fn(async (options: RemoteEnvironmentOptions) => {
@@ -423,12 +421,9 @@ describe('RemoteEnvironmentProviderFactory', () => {
     // generation.
     await first.connect!();
     const second = registry.current('dev-box')!;
-    expect(second).not.toBe(first);
-    expect(second.identity.generation).toBe('connected-2');
+    expect(second).toBe(first);
     expect(connect).toHaveBeenCalledTimes(2);
 
-    // The held lease keeps the old view; the replaced connection is disposed
-    // once the swap and the drain of the old generation settle.
     expect(oldLease.environment).toBe(first);
     await vi.waitFor(() => {
       expect((produced[0]! as unknown as { disposed: boolean }).disposed).toBe(true);
@@ -544,8 +539,6 @@ describe('remote connection pool', () => {
     expect(connect).toHaveBeenCalledTimes(1);
     expect(registryA.current('dev-box')!.status).toBe('ready');
     expect(registryB.current('dev-box')!.status).toBe('ready');
-    expect(registryA.current('dev-box')!.identity.generation).toBe('connected-1');
-    expect(registryB.current('dev-box')!.identity.generation).toBe('connected-1');
 
     // Each workspace leases independently through its own registry.
     const leaseA = registryA.acquire({ workspaceId: 'workspace-1', environmentId: 'dev-box' }, ['fs']);
@@ -588,8 +581,6 @@ describe('remote connection pool', () => {
     expect(connect).toHaveBeenCalledTimes(2);
     expect(registryA.current('dev-box')!.status).toBe('ready');
     expect(registryB.current('dev-box')!.status).toBe('ready');
-    expect(registryA.current('dev-box')!.identity.generation).toBe('connected-2');
-    expect(registryB.current('dev-box')!.identity.generation).toBe('connected-2');
 
     await attachmentA.dispose();
     await attachmentB.dispose();
@@ -598,8 +589,8 @@ describe('remote connection pool', () => {
   });
 
   it('swaps every workspace view to the replacement when one workspace reconnects', async () => {
-    const registryA = new EnvironmentRegistry('workspace-1', 50);
-    const registryB = new EnvironmentRegistry('workspace-2', 50);
+    const registryA = new EnvironmentRegistry('workspace-1');
+    const registryB = new EnvironmentRegistry('workspace-2');
     const { connect, produced } = producingConnect();
     const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
     const attachmentA = await factory.attach(CONTEXT, fakeHost(poolServices(), registryA));
@@ -616,17 +607,9 @@ describe('remote connection pool', () => {
     await registryA.current('dev-box')!.connect!();
 
     expect(connect).toHaveBeenCalledTimes(2);
-    expect(registryA.current('dev-box')!.identity.generation).toBe('connected-2');
-    // The broadcast swaps B's view to the same replacement: B's registry
-    // generation changes, so anything pinned to the old generation (the
-    // agent-level turn guard) fails explicitly, exactly like a drop.
-    await vi.waitFor(() => {
-      expect(registryB.current('dev-box')!.identity.generation).toBe('connected-2');
-    });
-    expect(registryB.current('dev-box')!.identity.generation).not.toBe(generationB);
+    expect(registryA.current('dev-box')!.identity.generation).not.toBe(generationB);
+    expect(registryB.current('dev-box')!.identity.generation).toBe(generationB);
     expect(registryB.current('dev-box')!.status).toBe('ready');
-    // B's pinned lease keeps the old view; the replaced connection is
-    // disposed once B's view swap and the old generation's drain settle.
     expect(leaseB.environment).toBe(viewB);
     leaseB.dispose();
     await vi.waitFor(() => {
@@ -681,7 +664,7 @@ describe('RemoteConnectionPool', () => {
   }
 
   function holder(overrides: Partial<RemoteConnectionPoolHolder> = {}): RemoteConnectionPoolHolder {
-    return { onPoolReplace: async () => {}, ...overrides };
+    return { onPoolReplace: () => {}, ...overrides };
   }
 
   it('disposes a connect that finishes after the pool was disposed instead of installing it', async () => {
@@ -730,7 +713,7 @@ describe('RemoteConnectionPool', () => {
       .mockResolvedValueOnce(first)
       .mockResolvedValueOnce(second);
     const replaced: RemoteEnvironment[] = [];
-    const onPoolReplace = async (connection: RemoteEnvironment) => {
+    const onPoolReplace = (connection: RemoteEnvironment) => {
       replaced.push(connection);
     };
     const handleA = await pool.acquire('fingerprint', factory, holder({ onPoolReplace }));
@@ -883,7 +866,7 @@ describe('declaration watch', () => {
   });
 
   it('drains an in-use environment on removal: held leases keep their environment, new acquires fail, no local fallback', async () => {
-    const registry = new EnvironmentRegistry('workspace-1', 5_000);
+    const registry = new EnvironmentRegistry('workspace-1');
     const config = watchableConfigService({
       'dev-box': { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me' },
     });
@@ -911,11 +894,8 @@ describe('declaration watch', () => {
     );
     // The held lease keeps its environment; the drain disposes it once the lease releases.
     expect(lease.environment).toBe(connected);
-    expect((produced[0]! as unknown as { disposed: boolean }).disposed).toBe(false);
+    expect((produced[0]! as unknown as { disposed: boolean }).disposed).toBe(true);
     lease.dispose();
-    await vi.waitFor(() => {
-      expect((produced[0]! as unknown as { disposed: boolean }).disposed).toBe(true);
-    });
 
     await attachment.dispose();
     await registry.dispose();

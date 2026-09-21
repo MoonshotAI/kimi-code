@@ -247,7 +247,6 @@ class AcpWorkspaceEnvironmentAttachment implements EnvironmentProviderAttachment
 
 export class AcpEnvironmentProviderFactory implements EnvironmentProviderFactory {
   readonly id = 'acp';
-  readonly imports = { root: [] };
   private readonly attachments = new Map<string, AcpWorkspaceEnvironmentAttachment>();
 
   constructor(

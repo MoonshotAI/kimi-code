@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { ScopeActivation, overrideScopedService } from '@moonshot-ai/agent-core-v2/_base/di/scope';
 import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
 import { IBootstrapService } from '@moonshot-ai/agent-core-v2/app/bootstrap/bootstrap';
@@ -9,6 +11,7 @@ import {
 } from '@moonshot-ai/agent-core-v2/environment/ephemeralEnvironment';
 
 import { connectWithGuidance } from './connectGuidance';
+import { ManagedRemoteEnvironment } from './remoteEnvironmentProvider';
 import { RemoteEnvironment, type RemoteEnvironmentOptions } from './remoteEnvironment';
 import { toLauncherSpec } from './remoteEnvironmentProvider';
 
@@ -34,27 +37,40 @@ export class RemoteEphemeralEnvironmentConnector implements IEphemeralEnvironmen
     const onDiagnostic = (line: string): void => {
       this.log.warn(line.trimEnd());
     };
-    const connected = await connectWithGuidance(
-      (spec) =>
-        this.connectFn({
-          workspaceId: request.workspaceId,
-          environmentId: request.environmentId,
-          launcher: spec,
-          clientName: 'kimi-code',
-          clientVersion,
-          onDiagnostic,
-        }),
-      {
-        launcher,
+    const connectInner = async (): Promise<RemoteEnvironment> =>
+      connectWithGuidance(
+        (spec) =>
+          this.connectFn({
+            workspaceId: request.workspaceId,
+            environmentId: request.environmentId,
+            launcher: spec,
+            clientName: 'kimi-code',
+            clientVersion,
+            onDiagnostic,
+          }),
+        { launcher },
+      );
+    const inner = await connectInner();
+    let environment!: ManagedRemoteEnvironment;
+    environment = new ManagedRemoteEnvironment(
+      inner,
+      async () => {
+        environment.adopt(await connectInner());
       },
+      {
+        workspaceId: request.workspaceId,
+        environmentId: request.environmentId,
+        generation: `${request.environmentId}-${randomUUID()}`,
+      },
+      { ownsInner: true },
     );
     try {
-      request.registry.register(connected);
+      request.registry.register(environment);
     } catch (error) {
-      await connected.dispose();
+      await environment.dispose();
       throw error;
     }
-    return { environment: connected, initialCwd: connected.host.cwd };
+    return { environment, initialCwd: environment.host.cwd };
   }
 }
 

@@ -288,7 +288,7 @@ async function runExecServerHandshake(
     send({ method: 'initialize', id: 1, params: { clientName: 'vitest', clientVersion: '0.0.0' } });
     const initialize = await nextLine();
     send({ method: 'initialized' });
-    send({ method: 'environment/status', id: 2 });
+    send({ method: 'fs/getMetadata', id: 2, params: { path: '/' } });
     const status = await nextLine();
     child.stdin.end();
     const exitCode = await new Promise<number | null>((resolveExit) => {
@@ -336,7 +336,8 @@ describe('exec-server stdio handshake (source entry)', () => {
       expect(initializeResult.environment.cwd).toBe(appRoot);
       expect(initializeResult.capabilities).toBeTypeOf('object');
 
-      expect(result.status).toEqual({ id: 2, result: { status: 'ready' } });
+      expect(result.status['id']).toBe(2);
+      expect((result.status['result'] as { isDirectory: boolean }).isDirectory).toBe(true);
       expect(result.exitCode).toBe(0);
     },
   );

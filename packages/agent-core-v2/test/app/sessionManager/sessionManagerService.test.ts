@@ -547,12 +547,12 @@ describe('SessionManager controller retirement', () => {
     ) as FakeEnvironment;
   }
 
-  function liveProgram(drainTimeoutMs: number): {
+  function liveProgram(): {
     readonly registry: EnvironmentRegistry;
     readonly program: Program;
     readonly controllers: { readonly service: SessionLifecycleService; readonly dispose: ReturnType<typeof vi.fn> }[];
   } {
-    const registry = new EnvironmentRegistry('workspace', drainTimeoutMs);
+    const registry = new EnvironmentRegistry('workspace');
     const controllers: { readonly service: SessionLifecycleService; readonly dispose: ReturnType<typeof vi.fn> }[] = [];
     let nextSession = 0;
     const program = new Program(
@@ -679,25 +679,22 @@ describe('SessionManager controller retirement', () => {
     );
   }
 
-  it('releases the superseded program generation once its last session closes, before the drain timeout', async () => {
-    const { registry, program, controllers } = liveProgram(60_000);
+  it('keeps the superseded session controller until its last session closes', async () => {
+    const { registry, program, controllers } = liveProgram();
     const first = fakeEnvironment('local', 'one');
     const registration = registry.register(first);
     await program.ready;
     const manager = managerFor(program, registry);
 
     const handleOne = await manager.create({ workDir: '/workspace' });
-    const replacement = registration.replace(fakeEnvironment('local', 'two'));
-    await Promise.resolve();
+    await registration.replace(fakeEnvironment('local', 'two'));
     const handleTwo = await manager.create({ workDir: '/workspace' });
     expect(manager.list()).toEqual([handleOne, handleTwo]);
-    expect(first.disposed).toBe(false);
+    expect(first.disposed).toBe(true);
 
     await manager.close(handleOne.id);
     expect(controllers[0]!.dispose).toHaveBeenCalledTimes(1);
     expect(controllers[1]!.dispose).not.toHaveBeenCalled();
-    await replacement;
-    expect(first.disposed).toBe(true);
     expect(manager.get(handleTwo.id)).toBe(handleTwo);
 
     manager.dispose();
@@ -708,7 +705,7 @@ describe('SessionManager controller retirement', () => {
   });
 
   it('retires an idle current-generation controller and rebuilds it for the next session', async () => {
-    const { registry, program, controllers } = liveProgram(50);
+    const { registry, program, controllers } = liveProgram();
     registry.register(fakeEnvironment('local', 'one'));
     await program.ready;
     const manager = managerFor(program, registry);
@@ -729,7 +726,7 @@ describe('SessionManager controller retirement', () => {
   });
 
   it('keeps per-environment controllers isolated for same-workspace sessions on different environments', async () => {
-    const { registry, program, controllers } = liveProgram(50);
+    const { registry, program, controllers } = liveProgram();
     registry.register(fakeEnvironment('local', 'one'));
     registry.register(remoteEnvironment('remote-one'));
     await program.ready;

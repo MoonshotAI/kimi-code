@@ -69,9 +69,34 @@ describe('RemoteEphemeralEnvironmentConnector', () => {
       clientName: 'kimi-code',
       clientVersion: '1.2.3',
     });
-    expect(registry.current('eph-test')).toBe(connected);
-    expect(result.environment).toBe(connected);
+    expect(registry.current('eph-test')).toBe(result.environment);
+    expect(result.environment.identity.environmentId).toBe('eph-test');
+    expect(result.environment.status).toBe('ready');
     expect(result.initialCwd).toBe('/home/me/work');
+  });
+
+  it('reconnects a temporary environment in process without changing its identity', async () => {
+    const registry = new EnvironmentRegistry('workspace');
+    const calls: RemoteEnvironmentOptions[] = [];
+    const connector = new RemoteEphemeralEnvironmentConnector(
+      bootstrap(),
+      log(),
+      async (options) => {
+        calls.push(options);
+        const connected = fakeConnected(options.environmentId, '/home/me');
+        Object.assign(connected.host, { cwd: `/home/me/work-${calls.length}` });
+        return connected as unknown as RemoteEnvironment;
+      },
+    );
+
+    const result = await connector.connect(request(registry, { type: 'ssh', host: 'dev-box' }));
+    const generation = result.environment.identity.generation;
+    await result.environment.connect?.();
+
+    expect(calls).toHaveLength(2);
+    expect(registry.current('eph-test')).toBe(result.environment);
+    expect(result.environment.identity.generation).toBe(generation);
+    expect(result.environment.host.cwd).toBe('/home/me/work-2');
   });
 
   it('maps docker and command entries to launcher specs', async () => {

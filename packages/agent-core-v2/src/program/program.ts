@@ -384,7 +384,7 @@ export class Program {
       const fs = new WorkspaceFsService(context, dirs, targetFs, this.resolver, this.dependencies.telemetry, git, environmentId);
       const instructions = own(new WorkspaceInstructionsService(context, targetFs, localEnvironment.host, this.dependencies.bootstrap, this.dependencies.log, state, localFs));
       const { trust, mcpConfig, mcp, userAgentProfiles, pluginAgentProfiles, explicitAgentProfiles, extraAgentProfiles, explicitSkills, extraSkills, pluginSkills } = shared;
-      const profileContextKey = JSON.stringify([environmentId, root, environment.identity.generation]);
+      const profileContextKey = JSON.stringify([environmentId, root]);
       const agentProfiles = own(new WorkspaceAgentProfileLoaderService(context, targetFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles, profileContextKey));
       const targetSkillDiscovery = new EnvironmentSkillDiscovery(this.dependencies.log, targetFs);
       const userSkills = this.dependencies.userSkills;

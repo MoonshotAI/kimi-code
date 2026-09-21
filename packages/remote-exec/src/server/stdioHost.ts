@@ -12,13 +12,11 @@ import {
   type RequestId,
 } from '#/protocol/messages';
 import {
-  ENVIRONMENT_STATUS_METHOD,
   FS_READ_FILE_METHOD,
   INITIALIZE_METHOD,
   INITIALIZED_METHOD,
   MAX_IN_FLIGHT_CALLS,
   MAX_PENDING_SEND_BYTES,
-  PROCESS_FLOW_CAPABILITY,
   PROCESS_FLOW_METHOD,
   PROCESS_RESIZE_METHOD,
   PROCESS_SIGNAL_METHOD,
@@ -43,7 +41,6 @@ type Lane = 'control' | 'data';
 type Handler = (params: unknown) => Promise<unknown>;
 
 const CONTROL_METHODS: ReadonlySet<string> = new Set([
-  ENVIRONMENT_STATUS_METHOD,
   PROCESS_WRITE_METHOD,
   PROCESS_SIGNAL_METHOD,
   PROCESS_TERMINATE_METHOD,
@@ -158,7 +155,6 @@ export class StdioHost {
     const fs = this.fsHandler;
     const pm = this.processManager;
     this.handlers = new Map<string, Handler>([
-      [ENVIRONMENT_STATUS_METHOD, () => Promise.resolve({ status: 'ready' })],
       ['fs/readFile', (p) => fs.readFile(p)],
       ['fs/writeFile', (p) => fs.writeFile(p)],
       ['fs/createDirectory', (p) => fs.createDirectory(p)],
@@ -262,7 +258,7 @@ export class StdioHost {
     const result: InitializeResult = {
       executorVersion: this.options.version,
       environment: this.options.environment,
-      capabilities: { [PROCESS_FLOW_CAPABILITY]: true },
+      capabilities: {},
     };
     this.respond(message.id, result, 'control');
     this.state = 'awaiting-initialized';
@@ -282,7 +278,7 @@ export class StdioHost {
       this.respondError(message.id, new RpcError(RpcErrorCode.InvalidRequest, 'already initialized'));
       return;
     }
-    if (this.state !== 'ready' && message.method !== ENVIRONMENT_STATUS_METHOD) {
+    if (this.state !== 'ready') {
       this.respondError(
         message.id,
         new RpcError(RpcErrorCode.InvalidRequest, 'connection is not initialized'),

@@ -269,7 +269,6 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     await attached?.dispose();
     return client.engineAccessor.get(IWorkspaceInstanceManager).addProvider({
       id: 'fake-box-provider',
-      imports: { root: [] },
       attach: async (context, host) => {
         const fake = new FakeEnvironment(
           { workspaceId: context.id, environmentId: 'fake-box', generation: 'fake-generation' },
@@ -1409,7 +1408,6 @@ key = "${titleOAuthRef.key}"
     tempDirs.push(workDir);
     const provider = await client.engineAccessor.get(IWorkspaceInstanceManager).addProvider({
       id: 'conflicting-environment',
-      imports: { root: [] },
       attach: async (context, host) => {
         const registration = host.registerEnvironment(new FakeEnvironment({
           workspaceId: context.id,

@@ -4,18 +4,8 @@ import type { Workspace, IWorkspaceService } from '#/app/workspace/workspace';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { Environment } from '#/environment/environment';
 import type { EnvironmentProviderFactory } from '#/environment/environmentProvider';
-import type { EnvironmentRegistry } from '#/environment/environmentRegistry';
-import type {
-  EnvironmentProviderHost,
-  EnvironmentProviderEnvironmentHandle,
-  EnvironmentUnitHandle,
-  EnvironmentUnitHost,
-  EnvironmentUnitHostFactory,
-} from '#/environment/environmentUnitHost';
 import { WorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManagerService';
 import { sessionDirOf } from '#/workspace/sessionLifecycle/internal/addressing';
-
-const imports = { root: [] } as const;
 
 function deferred(): { readonly promise: Promise<void>; resolve(): void } {
   let resolve!: () => void;
@@ -31,68 +21,6 @@ function environment(workspaceId: string, environmentId: string, status: Environ
   return new FakeEnvironment({ workspaceId, environmentId, generation: `${environmentId}-one` }, { status });
 }
 
-class TestEnvironmentUnitHost implements EnvironmentUnitHost {
-  private readonly units: EnvironmentUnitHandle[] = [];
-
-  constructor(private readonly registry: EnvironmentRegistry) {}
-
-  async provide<T extends { dispose(): void | Promise<void> }>(
-    _imports: typeof imports,
-    prepare: (host: EnvironmentProviderHost) => Promise<T>,
-  ): Promise<EnvironmentUnitHandle> {
-    const registrations: EnvironmentProviderEnvironmentHandle[] = [];
-    const host: EnvironmentProviderHost = {
-      get: () => { throw new Error('no imports'); },
-      registerEnvironment: (value) => {
-        const registration = this.registry.register(value);
-        const handle: EnvironmentProviderEnvironmentHandle = {
-          environmentId: value.identity.environmentId,
-          update: async (next) => { await registration.replace(await next()); },
-          remove: () => registration.remove(),
-        };
-        registrations.push(handle);
-        return handle;
-      },
-    };
-    let attachment: T;
-    try {
-      attachment = await prepare(host);
-    } catch (error) {
-      for (const registration of registrations.toReversed()) await registration.remove();
-      throw error;
-    }
-    let active = true;
-    const dispose = async (): Promise<void> => {
-      if (!active) return;
-      active = false;
-      await attachment.dispose();
-      for (const registration of registrations.toReversed()) await registration.remove();
-      const index = this.units.indexOf(handle);
-      if (index >= 0) this.units.splice(index, 1);
-    };
-    const handle: EnvironmentUnitHandle = {
-      remove: dispose,
-      dispose,
-    };
-    this.units.push(handle);
-    return handle;
-  }
-
-  remove(handle: EnvironmentUnitHandle): Promise<void> {
-    return handle.dispose();
-  }
-
-  async dispose(): Promise<void> {
-    for (const unit of [...this.units].toReversed()) await unit.dispose();
-  }
-}
-
-class TestEnvironmentUnitHostFactory implements EnvironmentUnitHostFactory {
-  create(_root: never, registry: EnvironmentRegistry): EnvironmentUnitHost {
-    return new TestEnvironmentUnitHost(registry);
-  }
-}
-
 function provider(
   id: string,
   environmentId: string,
@@ -101,7 +29,6 @@ function provider(
 ): EnvironmentProviderFactory {
   return {
     id,
-    imports,
     attach: async (context, host) => {
       events.push(`attach:${id}:${context.id}`);
       if (options.failWorkspace === context.id) throw new Error(`attach failed ${context.id}`);
@@ -136,7 +63,6 @@ function manager(
     workspaces,
     { ready },
     ...Array.from({ length: 24 }, () => undefined),
-    new TestEnvironmentUnitHostFactory(),
   ];
   args[19] = { entries: () => [] };
   customize?.(args);
@@ -234,7 +160,6 @@ describe('WorkspaceInstanceManager', () => {
     const one = await value.getOrCreate({ workspaceId: 'one' });
     await value.addProvider({
       id: 'remote-provider',
-      imports,
       attach: async (context, host) => {
         const remote = new FakeEnvironment(
           { workspaceId: context.id, environmentId: 'remote', generation: 'remote-one' },

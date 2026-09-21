@@ -2,11 +2,10 @@ import type { RemoteEnvironment } from './remoteEnvironment';
 
 // A workspace's lease on a pooled connection. `onPoolReplace` is the replace
 // broadcast: the entry's connection was swapped by a reconnect from any
-// workspace (or by a rebuild after a drop). The holder swaps its view to the
-// new connection; turns pinned to the old generation fail explicitly, exactly
-// as on a connection drop.
+// workspace (or by a rebuild after a drop). The holder adopts the new
+// connection in place.
 export interface RemoteConnectionPoolHolder {
-  readonly onPoolReplace: (connection: RemoteEnvironment) => Promise<void>;
+  readonly onPoolReplace: (connection: RemoteEnvironment) => void;
 }
 
 export interface RemoteConnectionPoolHandle {
@@ -26,7 +25,7 @@ export class RemoteConnectionPoolStaleError extends Error {
 
 interface HolderState {
   active: boolean;
-  readonly onPoolReplace: (connection: RemoteEnvironment) => Promise<void>;
+  readonly onPoolReplace: (connection: RemoteEnvironment) => void;
 }
 
 interface PoolEntry {
@@ -161,25 +160,19 @@ export class RemoteConnectionPool {
     }
     entry.connection = connected;
     if (previous !== undefined) {
-      // The swap broadcasts before the replaced connection dies: every
-      // workspace view moves to the new connection first, then the old one
-      // is disposed. Leases pinned to an old generation fail through the
-      // registry drain and their dead connection, exactly like a drop.
-      void this.broadcastReplace(entry, connected).then(
-        () => previous.dispose(),
-        () => previous.dispose(),
-      );
+      this.broadcastReplace(entry, connected);
+      void previous.dispose();
     }
     return connected;
   }
 
-  private async broadcastReplace(entry: PoolEntry, connection: RemoteEnvironment): Promise<void> {
-    await Promise.all([...entry.holders].map(async (holder) => {
-      if (!holder.active) return;
+  private broadcastReplace(entry: PoolEntry, connection: RemoteEnvironment): void {
+    for (const holder of entry.holders) {
+      if (!holder.active) continue;
       try {
-        await holder.onPoolReplace(connection);
+        holder.onPoolReplace(connection);
       } catch {}
-    }));
+    }
   }
 
   private releaseRef(entry: PoolEntry): void {

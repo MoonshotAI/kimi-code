@@ -199,7 +199,7 @@ interface RestoreHook {
 }
 
 function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: EnvironmentBinding } = {}) {
-  const registry = new EnvironmentRegistry('workspace', 50);
+  const registry = new EnvironmentRegistry('workspace');
   const local = environment('local', 'local-one', 'ready', ['fs', 'process'], LOCAL_HOST);
   const remote = environment('remote', 'remote-one', 'ready', ['process'], REMOTE_HOST);
   const localRegistration = registry.register(local);
@@ -477,10 +477,6 @@ describe('AgentEnvironmentBindingService', () => {
     const { local, agentEnvironment } = setup();
 
     local.setStatus('connecting');
-    expect(agentEnvironment.isAvailable(['fs'])).toBe(false);
-    local.setStatus('degraded');
-    expect(agentEnvironment.isAvailable(['fs', 'process'])).toBe(true);
-    local.setStatus('draining');
     expect(agentEnvironment.isAvailable(['fs'])).toBe(false);
     local.setStatus('disconnected');
     expect(agentEnvironment.isAvailable(['fs'])).toBe(false);

@@ -79,11 +79,8 @@ Client-surface notes beyond the wire protocol:
   not cover).
 - Bounded business calls (fs/*, process/start, process/write, …) carry a
   per-request timeout (default 60s): a stall fails only that request with
-  `RequestTimeoutError`, and a late response is discarded — the connection and
-  its generation survive. Control calls (`environment/status`) keep the
-  kill-the-connection timeout: an unanswered control call closes the connection
-  (`ControlCallTimeoutError`), marking the environment disconnected exactly
-  like a transport drop.
+  `RequestTimeoutError`, and a late response is discarded — the connection
+  survives.
 - Whole-file reads without `maxBytes` are rejected server-side above 32MiB
   (base64 of the response must fit the 64MiB frame cap); larger files are read
   through `offset`/`maxBytes` range reads.

@@ -2,7 +2,6 @@ import type { Workspace } from '#/app/workspace/workspace';
 import { Program, type ProgramSnapshot } from '#/program/program';
 import type { ProgramDependencies } from '#/program/programDependencies';
 import type { EnvironmentRegistry, EnvironmentRegistrySnapshot } from '#/environment/environmentRegistry';
-import type { EnvironmentUnitHost } from '#/environment/environmentUnitHost';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 
 export type WorkspaceInstanceLifecycle = 'materializing' | 'active' | 'closing' | 'disposed';
@@ -16,19 +15,16 @@ export interface WorkspaceInstanceSnapshot {
 
 export class WorkspaceInstance {
   readonly environments: EnvironmentRegistry;
-  readonly unitHost: EnvironmentUnitHost;
   readonly program: Program;
   private lifecycle: WorkspaceInstanceLifecycle = 'materializing';
 
   constructor(
     readonly metadata: Workspace,
     environments: EnvironmentRegistry,
-    unitHost: EnvironmentUnitHost,
     context: IWorkspaceContext,
     dependencies: ProgramDependencies,
   ) {
     this.environments = environments;
-    this.unitHost = unitHost;
     this.program = new Program(metadata.id, this.environments, context, dependencies);
   }
 
@@ -57,7 +53,6 @@ export class WorkspaceInstance {
     if (this.lifecycle === 'disposed') return;
     this.lifecycle = 'closing';
     this.program.dispose();
-    await this.unitHost.dispose();
     await this.environments.dispose();
     this.lifecycle = 'disposed';
   }

@@ -562,7 +562,6 @@ export function defineKlientConformance(
       let connections = 0;
       const provider = await target.app.accessor.get(IWorkspaceInstanceManager).addProvider({
         id: 'conformance-environment',
-        imports: { root: [] },
         attach: async (context, host) => {
           const environment = new FakeEnvironment(
             { workspaceId: context.id, environmentId: 'remote-box', generation: 'conformance' },

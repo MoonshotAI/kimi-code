@@ -136,10 +136,6 @@ export class ProcessManager {
     }
     const tty = optionalBoolean(params, 'tty') ?? false;
     const pipeStdin = optionalBoolean(params, 'pipeStdin') ?? false;
-    const arg0 = params['arg0'];
-    if (arg0 !== undefined && typeof arg0 !== 'string') {
-      throw new RpcError(RpcErrorCode.InvalidParams, 'arg0 must be a string');
-    }
     if (this.processes.has(processId) || this.exitedGroups.has(processId)) {
       throw new RpcError(RpcErrorCode.InvalidRequest, `duplicate process id ${processId}`);
     }
@@ -180,7 +176,7 @@ export class ProcessManager {
     if (tty) {
       await this.startPty(entry, argv as string[], cwd, spawnEnv);
     } else {
-      await this.startPipe(entry, argv as string[], cwd, spawnEnv, pipeStdin, arg0);
+      await this.startPipe(entry, argv as string[], cwd, spawnEnv, pipeStdin);
     }
     if (this.disposed) {
       // Shutdown raced the spawn: the entry was dropped with the map, so kill
@@ -237,13 +233,11 @@ export class ProcessManager {
     cwd: string,
     spawnEnv: Record<string, string> | undefined,
     pipeStdin: boolean,
-    arg0: string | undefined,
   ): Promise<void> {
     const child = spawn(argv[0]!, argv.slice(1), {
       cwd,
       env: spawnEnv,
       detached: true,
-      argv0: arg0,
       windowsHide: true,
       stdio: [pipeStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
     });

@@ -9,12 +9,11 @@ import {
 import type { BytePipe } from '../src/client/execBridge';
 import { RpcError } from '../src/protocol/errors';
 import {
-  ENVIRONMENT_STATUS_METHOD,
+  FS_GET_METADATA_METHOD,
   FS_READ_FILE_METHOD,
   INITIALIZE_METHOD,
   PROCESS_CLOSED_METHOD,
   PROCESS_EXITED_METHOD,
-  PROCESS_FLOW_CAPABILITY,
   PROCESS_OUTPUT_METHOD,
   PROCESS_START_METHOD,
   PROCESS_TERMINATE_METHOD,
@@ -33,12 +32,14 @@ import {
 } from './helpers/loopback';
 
 describe('handshake', () => {
-  it('completes initialize/initialized and answers environment/status', async () => {
+  it('completes initialize/initialized and answers fs/getMetadata', async () => {
     const { connection, loopback } = await connectInProcess();
     expect(connection.executorVersion).toBe('9.9.9-test');
     expect(connection.environment).toEqual(TEST_ENVIRONMENT);
-    expect(connection.capabilities).toEqual({ [PROCESS_FLOW_CAPABILITY]: true });
-    await expect(connection.call('environment/status')).resolves.toEqual({ status: 'ready' });
+    expect(connection.capabilities).toEqual({});
+    await expect(connection.call(FS_GET_METADATA_METHOD, { path: '/' })).resolves.toMatchObject({
+      isDirectory: true,
+    });
     connection.close();
     await loopback.host.done;
   });
@@ -103,7 +104,7 @@ describe('handshake', () => {
   it('discards a response with an unknown id without disconnecting', async () => {
     const { connection, loopback } = await connectInProcess();
     loopback.serverOutput.write('{"id":12345,"result":{}}\n');
-    await expect(connection.call(ENVIRONMENT_STATUS_METHOD)).resolves.toEqual({ status: 'ready' });
+    await expect(connection.call(FS_GET_METADATA_METHOD, { path: '/' })).resolves.toMatchObject({ isDirectory: true });
     expect(connection.closed).toBe(false);
     connection.close();
     await loopback.host.done;
@@ -185,8 +186,8 @@ describe('request call timeout', () => {
         reply({ id: frame.id, result: testInitializeResult() });
         return;
       }
-      if (frame.method === ENVIRONMENT_STATUS_METHOD) {
-        reply({ id: frame.id, result: { status: 'ready' } });
+      if (frame.method === FS_GET_METADATA_METHOD) {
+        reply({ id: frame.id, result: { isDirectory: true } });
       }
       // process/start is left unanswered: the executor stalled on one request.
     });
@@ -205,7 +206,7 @@ describe('request call timeout', () => {
     await expect(call).rejects.toThrow(/timed out after 100ms/);
     expect(Date.now() - started).toBeLessThan(5_000);
     expect(connection.closed).toBe(false);
-    await expect(connection.call(ENVIRONMENT_STATUS_METHOD)).resolves.toEqual({ status: 'ready' });
+    await expect(connection.call(FS_GET_METADATA_METHOD, { path: '/' })).resolves.toMatchObject({ isDirectory: true });
     connection.close();
   });
 
@@ -216,8 +217,8 @@ describe('request call timeout', () => {
         reply({ id: frame.id, result: testInitializeResult() });
         return;
       }
-      if (frame.method === ENVIRONMENT_STATUS_METHOD) {
-        reply({ id: frame.id, result: { status: 'ready' } });
+      if (frame.method === FS_GET_METADATA_METHOD) {
+        reply({ id: frame.id, result: { isDirectory: true } });
         return;
       }
       seen.push(frame);
@@ -245,7 +246,7 @@ describe('request call timeout', () => {
       );
     });
     expect(connection.closed).toBe(false);
-    await expect(connection.call(ENVIRONMENT_STATUS_METHOD)).resolves.toEqual({ status: 'ready' });
+    await expect(connection.call(FS_GET_METADATA_METHOD, { path: '/' })).resolves.toMatchObject({ isDirectory: true });
     connection.close();
   });
 
@@ -255,8 +256,8 @@ describe('request call timeout', () => {
         reply({ id: frame.id, result: testInitializeResult() });
         return;
       }
-      if (frame.method === ENVIRONMENT_STATUS_METHOD) {
-        reply({ id: frame.id, result: { status: 'ready' } });
+      if (frame.method === FS_GET_METADATA_METHOD) {
+        reply({ id: frame.id, result: { isDirectory: true } });
         return;
       }
       if (frame.method === FS_READ_FILE_METHOD) {
@@ -278,7 +279,7 @@ describe('request call timeout', () => {
       setTimeout(resolve, 600);
     });
     expect(connection.closed).toBe(false);
-    await expect(connection.call(ENVIRONMENT_STATUS_METHOD)).resolves.toEqual({ status: 'ready' });
+    await expect(connection.call(FS_GET_METADATA_METHOD, { path: '/' })).resolves.toMatchObject({ isDirectory: true });
     connection.close();
   });
 
@@ -318,15 +319,15 @@ describe('request call timeout', () => {
         reply({ id: frame.id, result: testInitializeResult() });
         return;
       }
-      if (frame.method === ENVIRONMENT_STATUS_METHOD) {
-        reply({ id: frame.id, result: { status: 'ready' } });
+      if (frame.method === FS_GET_METADATA_METHOD) {
+        reply({ id: frame.id, result: { isDirectory: true } });
       }
     });
     const second = await RemoteExecConnection.connect(secondPipe, {
       clientName: 'test',
       clientVersion: '0.0.0',
     });
-    await expect(second.call(ENVIRONMENT_STATUS_METHOD)).resolves.toEqual({ status: 'ready' });
+    await expect(second.call(FS_GET_METADATA_METHOD, { path: '/' })).resolves.toMatchObject({ isDirectory: true });
     second.close();
   });
 });
@@ -377,8 +378,8 @@ describe('notification dispatch', () => {
         });
         return;
       }
-      if (frame.method === ENVIRONMENT_STATUS_METHOD) {
-        reply({ id: frame.id, result: { status: 'ready' } });
+      if (frame.method === FS_GET_METADATA_METHOD) {
+        reply({ id: frame.id, result: { isDirectory: true } });
       }
     });
   }
@@ -401,7 +402,7 @@ describe('notification dispatch', () => {
     void processService;
     await settleDispatch();
     expect(connection.closed).toBe(false);
-    await expect(connection.call(ENVIRONMENT_STATUS_METHOD)).resolves.toEqual({ status: 'ready' });
+    await expect(connection.call(FS_GET_METADATA_METHOD, { path: '/' })).resolves.toMatchObject({ isDirectory: true });
     connection.close();
   });
 
@@ -418,7 +419,7 @@ describe('notification dispatch', () => {
     });
     await settleDispatch();
     expect(connection.closed).toBe(false);
-    await expect(connection.call(ENVIRONMENT_STATUS_METHOD)).resolves.toEqual({ status: 'ready' });
+    await expect(connection.call(FS_GET_METADATA_METHOD, { path: '/' })).resolves.toMatchObject({ isDirectory: true });
     connection.close();
   });
 });

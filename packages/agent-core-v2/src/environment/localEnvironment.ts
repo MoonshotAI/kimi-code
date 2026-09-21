@@ -8,8 +8,7 @@ import { IHostProcessService } from '#/os/interface/hostProcess';
 import { IHostTerminalService } from '#/os/interface/terminal';
 
 import type { Environment, EnvironmentCapability, EnvironmentPath, EnvironmentStatus } from './environment';
-import type { EnvironmentProviderAttachment, EnvironmentProviderContext, EnvironmentProviderFactory } from './environmentProvider';
-import type { EnvironmentProviderHost } from './environmentUnitHost';
+import type { EnvironmentProviderAttachment, EnvironmentProviderContext, EnvironmentProviderFactory, EnvironmentProviderHost } from './environmentProvider';
 
 let nextGeneration = 1;
 
@@ -83,14 +82,6 @@ export class LocalEnvironment implements Environment {
 
 export class LocalEnvironmentProviderFactory implements EnvironmentProviderFactory {
   readonly id = 'local';
-  readonly imports = {
-    root: [
-      IHostEnvironment,
-      IHostFileSystem,
-      IHostProcessService,
-      IHostTerminalService,
-    ],
-  };
 
   async attach(context: EnvironmentProviderContext, host: EnvironmentProviderHost): Promise<EnvironmentProviderAttachment> {
     const handle = host.registerEnvironment(new LocalEnvironment(

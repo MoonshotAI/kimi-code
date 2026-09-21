@@ -66,7 +66,7 @@ function programWorkspace(cwd: string): IWorkspaceContext {
 }
 
 function setup(readiness = new Map<string, Promise<void>>(), order: string[] = []) {
-  const registry = new EnvironmentRegistry('workspace', 50);
+  const registry = new EnvironmentRegistry('workspace');
   const controllerInputs: ProgramSessionControllerInput[] = [];
   const program = new Program(
     'workspace',
@@ -169,19 +169,16 @@ describe('Program', () => {
     await registry.dispose();
   });
 
-  it('retains the replaced generation lease until its session controller is disposed', async () => {
+  it('switches the program generation when the environment is replaced', async () => {
     const { registry, program } = setup();
     const first = fakeEnvironment('local', 'one');
     const registration = registry.register(first);
     await program.ready;
     const controller = program.createSessionController();
-    const replacement = registration.replace(fakeEnvironment('local', 'two'));
-    await Promise.resolve();
+    await registration.replace(fakeEnvironment('local', 'two'));
     expect(program.sessionControllerGenerationFor('local')).toBe('two');
-    expect(first.disposed).toBe(false);
-    controller.dispose();
-    await replacement;
     expect(first.disposed).toBe(true);
+    controller.dispose();
     program.dispose();
     await registry.dispose();
   });
@@ -199,7 +196,7 @@ describe('Program', () => {
     await registration.replace(second);
     await Promise.resolve();
 
-    expect(create).toHaveBeenCalledTimes(3);
+    expect(create).toHaveBeenCalledTimes(2);
     expect(() => program.sessionControllerGenerationFor('local')).toThrow('no available generation for environment local');
     expect(() => program.createSessionController()).toThrow('no available generation for environment local');
     expect(order).toEqual([]);
@@ -209,7 +206,7 @@ describe('Program', () => {
       expect(program.sessionControllerGenerationFor('local')).toBe('two');
     });
     const next = program.createSessionController();
-    expect(create).toHaveBeenCalledTimes(4);
+    expect(create).toHaveBeenCalledTimes(3);
 
     controller.dispose();
     expect(order).toEqual(['behavior:one']);
@@ -227,7 +224,10 @@ describe('Program', () => {
     create.mockImplementationOnce(() => {
       throw new Error('boom');
     });
-    await registration.replace(fakeEnvironment('local', 'two'));
+    const second = fakeEnvironment('local', 'two');
+    await registration.replace(second);
+    second.setStatus('disconnected');
+    second.setStatus('ready');
 
     await vi.waitFor(() => {
       expect(program.sessionControllerGenerationFor('local')).toBe('two');
@@ -394,7 +394,7 @@ function fakeFsEnvironment(environmentId: string, generation: string): FakeEnvir
 }
 
 function suggestSetup() {
-  const registry = new EnvironmentRegistry('workspace', 50);
+  const registry = new EnvironmentRegistry('workspace');
   const program = new Program(
     'workspace',
     registry,
@@ -613,7 +613,7 @@ async function localityFixture(options: { readonly remoteCwd?: string; readonly 
     findWorkTree: async () => null,
   };
 
-  const registry = new EnvironmentRegistry('workspace', options.drainTimeoutMs ?? 50);
+  const registry = new EnvironmentRegistry('workspace');
   const controllerInputs: ProgramSessionControllerInput[] = [];
   const profileContainer = new InstantiationService(new ServiceCollection(), true);
   const profileRegistry = profileContainer.createInstance(AgentProfileRegistryService);
@@ -885,7 +885,6 @@ describe('Program remote generation activation', () => {
       controllers[1]!.dispose();
       expect(reconnected.list().map((profile) => profile.name).toSorted()).toEqual(['target-agent', 'user-agent']);
       expect(catalogs[0]!.get('local-agent')).toBeDefined();
-      expect(catalogs[2]!.get('alt-agent')).toBeDefined();
       expect(replacement.mcp.connectionManager()).toBe(fixture.controllerInputs[0]!.mcp.connectionManager());
     } finally {
       for (const catalog of catalogs) catalog.dispose();
@@ -986,7 +985,7 @@ describe('Program remote generation activation', () => {
           }, 200);
         }),
       ]);
-      expect(settled).toBe('pending');
+      expect(settled).toBe('replaced');
 
       first.dispose();
       await replaced;

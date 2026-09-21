@@ -170,7 +170,7 @@ Plan 模式是一种受约束的工作状态：进入后 `Write` 与 `Edit` 只�
 
 **`connect`** 接受一个启动器规格——`{ type: "ssh", host: "..." }`、`{ type: "docker", container: "..." }` 或 `{ type: "command", command: "...", args: [...] }`——以及可选的 `id`（最多 64 个字符；`local` 和 `default` 为保留值；省略时根据启动器生成）。`ssh` 规格接受可选的 `remoteBin`，`docker` 规格接受可选的 `context` 和 `remoteBin`，`command` 规格接受可选的 `args` 和 `env`。
 
-环境会立即连接：结果会返回目标环境的 OS、Shell 和初始工作目录，或连接失败的原因。新环境会像已声明环境一样注册到会话工作区，之后可以用 `change_environment` 切换过去，或通过 `Agent` 工具的 `environment` 参数把 subagent 绑定到它。不会写入 `config.toml` 或 `.kimi-code/environments.toml`：临时环境在进程退出时消失，连接断开后无法重连（重新创建一个即可），恢复会话时也找不到它——如果工作之后还要继续，结束会话前先切回 `local`。
+环境会立即连接：结果会返回目标环境的 OS、Shell 和初始工作目录，或连接失败的原因。新环境会像已声明环境一样注册到会话工作区，之后可以用 `change_environment` 切换过去，或通过 `Agent` 工具的 `environment` 参数把 subagent 绑定到它。不会写入 `config.toml` 或 `.kimi-code/environments.toml`：临时环境在进程退出时消失，恢复会话时也找不到它——如果工作之后还要继续，结束会话前先切回 `local`。同一进程内连接断开后可以重试。
 
 ## 下一步
 
