@@ -4,13 +4,11 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { AsyncEmitter, Emitter } from '#/_base/event';
 import {
   resetUnexpectedErrorHandler,
   setUnexpectedErrorHandler,
 } from '#/_base/errors/unexpectedError';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
-import type { PluginReloadEvent, PluginSummary } from '#/app/plugin/types';
 import { CloudAppender, type CloudAppenderOptions } from '#/app/telemetry/cloudAppender';
 
 import { stubBootstrap, stubClientIdentity } from '../bootstrap/stubs';
@@ -44,22 +42,6 @@ function okResponse(): Response {
 
 function statusResponse(status: number): Response {
   return new Response(null, { status });
-}
-
-function pluginSummary(id: string, enabled: boolean, state: 'ok' | 'error'): PluginSummary {
-  return {
-    id,
-    displayName: id,
-    enabled,
-    state,
-    skillCount: 0,
-    mcpServerCount: 0,
-    enabledMcpServerCount: 0,
-    hookCount: 0,
-    commandCount: 0,
-    hasErrors: state === 'error',
-    source: 'local-path',
-  };
 }
 
 function baseOptions(
@@ -483,79 +465,45 @@ describe('CloudAppender', () => {
     }
   });
 
-  it('includes enabled, healthy plugin ids in the envelope context', async () => {
+  it('maps enabled plugin ids from the record context into the envelope', async () => {
     const requests: CapturedRequest[] = [];
     const appender = new CloudAppender(
       baseOptions({
         homeDir,
-        pluginService: {
-          listPlugins: async () => [
-            pluginSummary('zeta', true, 'ok'),
-            pluginSummary('alpha', true, 'ok'),
-            pluginSummary('broken', true, 'error'),
-            pluginSummary('disabled', false, 'ok'),
-          ],
-          onDidReload: new Emitter<PluginReloadEvent>().event,
-        },
         fetchImpl: makeFetch((req) => {
           requests.push(req);
           return okResponse();
         }),
       }),
     );
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    appender.track({ event: 'evt', context: {}, properties: {} });
+    appender.track({ event: 'evt', context: { enabled_plugins: 'alpha,zeta' }, properties: {} });
     await appender.flush();
 
-    expect(requests[0]?.body.events[0]?.['context_active_plugins']).toBe('alpha,zeta');
+    expect(requests[0]?.body.events[0]?.['context_enabled_plugins']).toBe('alpha,zeta');
   });
 
-  it('refreshes active plugin ids when the plugin service reloads', async () => {
+  it('preserves an empty enabled plugin set in the envelope context', async () => {
     const requests: CapturedRequest[] = [];
-    const reloads = new AsyncEmitter<PluginReloadEvent>();
-    let summaries = [pluginSummary('alpha', true, 'ok')];
     const appender = new CloudAppender(
       baseOptions({
         homeDir,
-        pluginService: {
-          listPlugins: async () => summaries,
-          onDidReload: reloads.event,
-        },
         fetchImpl: makeFetch((req) => {
           requests.push(req);
           return okResponse();
         }),
       }),
     );
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    summaries = [pluginSummary('alpha', true, 'ok'), pluginSummary('beta', true, 'ok')];
-    await reloads.fireAsyncConcurrent(
-      { added: ['beta'], removed: [], errors: [] },
-      new AbortController().signal,
-    );
-
-    appender.track({ event: 'evt', context: {}, properties: {} });
+    appender.track({ event: 'evt', context: { enabled_plugins: '' }, properties: {} });
     await appender.flush();
 
-    expect(requests[0]?.body.events[0]?.['context_active_plugins']).toBe('alpha,beta');
+    expect(requests[0]?.body.events[0]?.['context_enabled_plugins']).toBe('');
   });
 
-  it('holds reload delivery until the active plugin refresh completes', async () => {
+  it('keeps each event enabled plugin context unchanged until flush', async () => {
     const requests: CapturedRequest[] = [];
-    const reloads = new AsyncEmitter<PluginReloadEvent>();
-    let release: (summaries: PluginSummary[]) => void = () => {};
     const appender = new CloudAppender(
       baseOptions({
         homeDir,
-        pluginService: {
-          listPlugins: () =>
-            new Promise<PluginSummary[]>((resolve) => {
-              release = resolve;
-            }),
-          onDidReload: reloads.event,
-        },
         fetchImpl: makeFetch((req) => {
           requests.push(req);
           return okResponse();
@@ -563,44 +511,33 @@ describe('CloudAppender', () => {
       }),
     );
 
-    let delivered = false;
-    const delivery = reloads
-      .fireAsyncConcurrent({ added: [], removed: [], errors: [] }, new AbortController().signal)
-      .then(() => {
-        delivered = true;
-      });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(delivered).toBe(false);
-
-    release([pluginSummary('alpha', true, 'ok')]);
-    await delivery;
-
-    appender.track({ event: 'evt', context: {}, properties: {} });
+    const context = { enabled_plugins: 'alpha' };
+    appender.track({ event: 'before', context, properties: {} });
+    context.enabled_plugins = 'alpha,beta';
+    appender.track({ event: 'after', context, properties: {} });
+    context.enabled_plugins = '';
     await appender.flush();
 
-    expect(requests[0]?.body.events[0]?.['context_active_plugins']).toBe('alpha');
+    expect(requests[0]?.body.events.map((event) => event['context_enabled_plugins'])).toEqual([
+      'alpha',
+      'alpha,beta',
+    ]);
   });
 
-  it('omits active plugins from the envelope context when none are active', async () => {
+  it('omits enabled plugins from the envelope when the record has no plugin context', async () => {
     const requests: CapturedRequest[] = [];
     const appender = new CloudAppender(
       baseOptions({
         homeDir,
-        pluginService: {
-          listPlugins: async () => [pluginSummary('disabled', false, 'ok')],
-          onDidReload: new Emitter<PluginReloadEvent>().event,
-        },
         fetchImpl: makeFetch((req) => {
           requests.push(req);
           return okResponse();
         }),
       }),
     );
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
     appender.track({ event: 'evt', context: {}, properties: {} });
     await appender.flush();
 
-    expect(requests[0]?.body.events[0]).not.toHaveProperty('context_active_plugins');
+    expect(requests[0]?.body.events[0]).not.toHaveProperty('context_enabled_plugins');
   });
 });

@@ -2,10 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { release } from 'node:os';
 
 import type { ServicesAccessor } from '#/_base/di/instantiation';
-import type { IDisposable } from '#/_base/di/lifecycle';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IPluginService } from '#/app/plugin/plugin';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
 import type { ITelemetryAppender, TelemetryAppenderRecord } from './telemetry';
@@ -33,7 +31,6 @@ export interface CloudAppenderOptions {
   readonly terminal?: string;
   readonly locale?: string;
   readonly getAccessToken?: () => string | null | Promise<string | null>;
-  readonly pluginService?: Pick<IPluginService, 'listPlugins' | 'onDidReload'>;
   readonly endpoint?: string;
   readonly flushThreshold?: number;
   readonly flushIntervalMs?: number;
@@ -61,7 +58,6 @@ export function createCloudAppender(
   return new CloudAppender({
     storage: accessor.get(IFileSystemStorageService),
     bootstrap: accessor.get(IBootstrapService),
-    pluginService: accessor.get(IPluginService),
     ...host,
   });
 }
@@ -74,10 +70,8 @@ export class CloudAppender implements ITelemetryAppender {
   private readonly context: CloudContext;
   private readonly flushThreshold: number;
   private readonly flushIntervalMs: number;
-  private readonly pluginSubscription: IDisposable | null;
   private deviceId: string;
   private sessionId: string | null;
-  private activePlugins = '';
   private buffer: EnrichedCloudEvent[] = [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -87,15 +81,6 @@ export class CloudAppender implements ITelemetryAppender {
     this.flushThreshold = options.flushThreshold ?? DEFAULT_FLUSH_THRESHOLD;
     this.flushIntervalMs = options.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
     this.context = buildContext(options);
-    const plugins = options.pluginService;
-    if (plugins === undefined) {
-      this.pluginSubscription = null;
-    } else {
-      this.pluginSubscription = plugins.onDidReload((event) => {
-        event.waitUntil(this.refreshActivePlugins(plugins).catch(() => {}));
-      });
-      void this.refreshActivePlugins(plugins).catch(() => {});
-    }
     this.transport = new CloudTransport({
       storage: options.storage,
       deviceId: options.deviceId,
@@ -137,21 +122,11 @@ export class CloudAppender implements ITelemetryAppender {
     if (typeof ambientModel === 'string' && ambientModel.length > 0) {
       context['model'] = ambientModel;
     }
-    if (this.activePlugins.length > 0) {
-      context['active_plugins'] = this.activePlugins;
+    const enabledPlugins = ambient['enabled_plugins'];
+    if (typeof enabledPlugins === 'string') {
+      context['enabled_plugins'] = enabledPlugins;
     }
     return context;
-  }
-
-  private async refreshActivePlugins(
-    plugins: Pick<IPluginService, 'listPlugins'>,
-  ): Promise<void> {
-    const summaries = await plugins.listPlugins();
-    this.activePlugins = summaries
-      .filter((summary) => summary.enabled && summary.state === 'ok')
-      .map((summary) => summary.id)
-      .toSorted()
-      .join(',');
   }
 
   async flush(): Promise<void> {
@@ -163,7 +138,6 @@ export class CloudAppender implements ITelemetryAppender {
 
   async shutdown(): Promise<void> {
     this.stopPeriodicFlush();
-    this.pluginSubscription?.dispose();
     await this.flush();
   }
 

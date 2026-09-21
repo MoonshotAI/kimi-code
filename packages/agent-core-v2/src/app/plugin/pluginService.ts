@@ -22,19 +22,20 @@ import {
   type SetPluginEnabledInput,
   type SetPluginMcpServerEnabledInput,
 } from './plugin';
-import type {
-  EnabledPluginSessionStart,
-  EnabledPluginSystemPrompt,
-  PluginCommandDef,
-  PluginInfo,
-  PluginAgentRoot,
-  PluginMcpServerEntry,
-  PluginMutation,
-  PluginMutationSummary,
-  PluginReloadEvent,
-  PluginSummary,
-  PluginUpdateStatus,
-  ReloadSummary,
+import {
+  normalizePluginId,
+  type EnabledPluginSessionStart,
+  type EnabledPluginSystemPrompt,
+  type PluginCommandDef,
+  type PluginInfo,
+  type PluginAgentRoot,
+  type PluginMcpServerEntry,
+  type PluginMutation,
+  type PluginMutationSummary,
+  type PluginReloadEvent,
+  type PluginSummary,
+  type PluginUpdateStatus,
+  type ReloadSummary,
 } from './types';
 
 const KIMI_CODE_BASE_URL_ENV = 'KIMI_CODE_BASE_URL';
@@ -103,15 +104,16 @@ export class PluginService extends Service implements IPluginService {
     });
   }
 
-  async setPluginEnabled(input: SetPluginEnabledInput): Promise<void> {
-    await this.runNotifiedMutation(async () => {
-      await this.manager.setEnabled(input.id, input.enabled);
+  setPluginEnabled(input: SetPluginEnabledInput): Promise<void> {
+    return this.runNotifiedMutation(async () => {
+      const id = normalizePluginId(input.id);
+      await this.manager.setEnabled(id, input.enabled);
       const notification = await this.reloadAndNotify({
-        mutation: { kind: input.enabled ? 'enable' : 'disable', id: input.id },
+        mutation: { kind: input.enabled ? 'enable' : 'disable', id },
       });
+      this.telemetry.track2('plugin_toggle', { plugin_id: id, enabled: input.enabled });
       return { result: undefined, notification };
     });
-    this.telemetry.track2('plugin_toggle', { plugin_id: input.id, enabled: input.enabled });
   }
 
   setPluginMcpServerEnabled(input: SetPluginMcpServerEnabledInput): Promise<void> {
@@ -160,9 +162,13 @@ export class PluginService extends Service implements IPluginService {
   private async reloadAndNotify(options?: {
     readonly mutation: PluginMutation;
   }): Promise<PluginReloadNotification> {
-    const summary = await this.manager.reload();
+    const summary = await this.manager.reload().catch((error: unknown) => {
+      if (this.snapshotLoaded) this.syncTelemetryContext();
+      throw error;
+    });
     this.snapshotLoaded = true;
     this.loadError = undefined;
+    this.syncTelemetryContext();
     const delivery = this.onDidReloadEmitter.fireAsyncConcurrent(summary, NO_ABORT);
     if (options?.mutation !== undefined)
       this.onDidMutateEmitter.fire({ ...summary, mutation: options.mutation });
@@ -284,9 +290,20 @@ export class PluginService extends Service implements IPluginService {
       await this.manager.load();
       this.snapshotLoaded = true;
       this.loadError = undefined;
+      this.syncTelemetryContext();
     } catch (error) {
       this.loadError = error instanceof Error ? error : new Error(String(error));
     }
+  }
+
+  private syncTelemetryContext(): void {
+    this.telemetry.setContext({
+      enabled_plugins: this.manager.summaries()
+        .filter((plugin) => plugin.enabled && plugin.state === 'ok')
+        .map((plugin) => plugin.id)
+        .toSorted()
+        .join(','),
+    });
   }
 
   private enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {

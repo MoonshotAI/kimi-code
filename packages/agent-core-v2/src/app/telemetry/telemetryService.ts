@@ -41,7 +41,7 @@ export function composeTelemetryProperties(
 ): TelemetryProperties {
   const properties: MutableContext = {};
   for (const [key, value] of Object.entries(ambient)) {
-    if (key === 'session_id' || value === undefined) {
+    if (key === 'session_id' || key === 'enabled_plugins' || value === undefined) {
       continue;
     }
     properties[key] = value;

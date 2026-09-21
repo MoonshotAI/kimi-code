@@ -21,7 +21,6 @@ import {
   IFileSystemStorageService,
   IHostFileSystem,
   IOAuthToolkit,
-  IPluginService,
   ISessionIndex,
   ISessionManager,
   ITelemetryService,
@@ -294,13 +293,6 @@ function makeFakeHarness() {
     [IOAuthToolkit, { getCachedAccessToken: vi.fn(async () => undefined) }],
     [IFileSystemStorageService, {}],
     [IHostFileSystem, {}],
-    [
-      IPluginService,
-      {
-        listPlugins: vi.fn(async () => []),
-        onDidReload: vi.fn(() => ({ dispose: vi.fn() })),
-      },
-    ],
     [
       IWorkspaceInstanceManager,
       {

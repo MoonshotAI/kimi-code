@@ -24,4 +24,5 @@ export interface TelemetryContextPatch
     Partial<AgentTelemetryContext>,
     Partial<TurnTelemetryContext> {
   readonly model?: string;
+  readonly enabled_plugins?: string;
 }
