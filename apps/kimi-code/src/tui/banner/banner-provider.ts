@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto';
-
 import { eq, gte, lt, valid } from 'semver';
 
 import type { BannerDisplay, BannerState } from '#/tui/types';
@@ -36,27 +34,13 @@ interface BannerTipsJson {
   banner_tips?: unknown;
 }
 
-interface BannerHashInput {
-  tag: string | null;
-  mainText: string | null;
-  subText: string | null;
-  startTime: string | null;
-  endTime: string | null;
-  display: BannerDisplay;
-  ttlHours?: number;
-  audience?: KfcAudience | null;
-}
-
 interface BannerCandidateInput {
-  id?: string | null;
+  key: string;
   tag: string | null;
   mainText: string | null;
   subText?: string | null;
   display: BannerDisplay;
   ttlHours?: number;
-  startTime?: string | null;
-  endTime?: string | null;
-  audience?: KfcAudience | null;
 }
 
 export interface SelectBannerStateArgs {
@@ -186,48 +170,14 @@ function normalizeBannerId(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function hashBannerIdentity(input: BannerHashInput): string {
-  const raw = JSON.stringify([
-    input.tag ?? '',
-    input.mainText ?? '',
-    input.subText ?? '',
-    input.startTime ?? '',
-    input.endTime ?? '',
-    input.display,
-    input.ttlHours ?? '',
-    input.audience ?? null,
-  ]);
-  return createHash('sha256').update(raw).digest('hex').slice(0, 32);
-}
-
-function getBannerKey(rawBannerId: unknown, input: BannerHashInput): string {
-  return normalizeBannerId(rawBannerId) ?? hashBannerIdentity(input);
-}
-
 function toBannerState(input: BannerCandidateInput): BannerState {
-  const subText = normalizeText(input.subText);
-  const display = input.display;
-  const ttlHours = display === 'cooldown' ? parseBannerDisplayTtlHours(input.ttlHours) : undefined;
-  const startTime = normalizeText(input.startTime);
-  const endTime = normalizeText(input.endTime);
-  const key = getBannerKey(input.id, {
-    tag: input.tag,
-    mainText: input.mainText,
-    subText,
-    startTime,
-    endTime,
-    display,
-    ttlHours,
-    audience: input.audience,
-  });
-
   return {
-    key,
+    key: input.key,
     tag: input.tag,
     mainText: input.mainText,
-    subText,
-    display,
-    ttlHours,
+    subText: normalizeText(input.subText),
+    display: input.display,
+    ttlHours: input.display === 'cooldown' ? parseBannerDisplayTtlHours(input.ttlHours) : undefined,
   };
 }
 
@@ -244,6 +194,8 @@ function pickCandidates(
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) continue;
     const item = raw as BannerTipItem;
     if (item.banner_enabled !== true) continue;
+    const key = normalizeBannerId(item.banner_id);
+    if (key === null) continue;
     if (!meetsVersion(item, clientVersion)) continue;
     if (!meetsPlatform(item.banner_platform)) continue;
     if (!meetsBannerSystem(item.banner_system, system)) continue;
@@ -257,16 +209,13 @@ function pickCandidates(
     const display = parseBannerDisplay(item.banner_display);
     candidates.push(
       toBannerState({
-        id: item.banner_id,
+        key,
         tag,
         mainText,
         subText: item.banner_subtext,
         display,
         ttlHours:
           display === 'cooldown' ? parseBannerDisplayTtlHours(item.banner_display_ttl_hours) : undefined,
-        startTime: item.banner_start_time,
-        endTime: item.banner_end_time,
-        audience: item.kfc_audience,
       }),
     );
   }

@@ -18,7 +18,7 @@ const audience: BannerAudienceContext = {
 };
 
 function tip(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return { banner_enabled: true, banner_maintext: 'Main', ...overrides };
+  return { banner_id: 'test-banner', banner_enabled: true, banner_maintext: 'Main', ...overrides };
 }
 
 function select(json: unknown, random: () => number = () => 0): BannerState | null {
@@ -218,26 +218,21 @@ describe('selectBannerState', () => {
     expect(result).toMatchObject({ mainText: 'Mine' });
   });
 
-  it('uses banner_id as the banner key when present', () => {
+  it('uses banner_id as the banner key', () => {
     const result = select({ banner_tips: [tip({ banner_id: 'active-1' })] });
     expect(result).toMatchObject({ key: 'active-1' });
   });
 
-  it('generates a stable hash key when banner_id is missing', () => {
-    const json = { banner_tips: [tip({ banner_title: 'New', banner_subtext: 'Details' })] };
-    const first = select(json);
-    const second = select(json);
-    expect(first?.key).toMatch(/^[0-9a-f]{32}$/);
-    expect(second?.key).toBe(first?.key);
-  });
-
-  it('hashes the audience into the fallback key', () => {
-    const base = tip({ banner_maintext: 'Active' });
-    const withoutAudience = select({ banner_tips: [base] });
-    const withAudience = select({
-      banner_tips: [{ ...base, kfc_audience: { login: 'all', tiers: [], region: 'all' } }],
+  it('skips entries without a valid banner_id', () => {
+    const result = select({
+      banner_tips: [
+        tip({ banner_id: '', banner_maintext: 'Empty id' }),
+        tip({ banner_id: '  ', banner_maintext: 'Blank id' }),
+        tip({ banner_id: null, banner_maintext: 'Missing id' }),
+        tip({ banner_id: 'kept', banner_maintext: 'Kept' }),
+      ],
     });
-    expect(withoutAudience?.key).not.toBe(withAudience?.key);
+    expect(result).toMatchObject({ key: 'kept' });
   });
 
   it('parses cooldown display and ttl hours per entry', () => {
