@@ -270,4 +270,15 @@ describe('BannerComponent', () => {
       expect(visibleWidth(line)).toBeLessThanOrEqual(width);
     }
   });
+
+  it('drops the subtext indent when a title-only banner cannot fit it', () => {
+    for (const width of [1, 2]) {
+      const lines = new BannerComponent(
+        makeBannerState({ tag: 'Big news', mainText: null, subText: 'Details here' }),
+      ).render(width);
+      for (const line of lines) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
+  });
 });

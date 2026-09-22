@@ -55,12 +55,13 @@ export class BannerComponent implements Component {
     // width instead of being dropped when too long.
     const titleOnly = mainSegments.length === 0;
     const tagRendered = titleOnly ? tagStyled.length > 0 : showTag;
-    // Descriptive subtext lines (the second line in the design) start at the
-    // column after the leading star + space, aligning with the tag text itself.
-    const descIndent = tagRendered ? ' '.repeat(hangingWidth) : '';
     const bodyContentWidth =
       width - (inlineTag ? tagWidth : tagOnOwnLine ? hangingWidth : 0);
     const descContentWidth = width - (tagRendered ? hangingWidth : 0);
+    // Descriptive subtext lines (the second line in the design) start at the
+    // column after the leading star + space, aligning with the tag text itself.
+    // When even the indent does not fit, the subtext uses the full width instead.
+    const descIndent = tagRendered && descContentWidth > 0 ? ' '.repeat(hangingWidth) : '';
 
     if (bodyContentWidth <= 0) {
       return [''];
