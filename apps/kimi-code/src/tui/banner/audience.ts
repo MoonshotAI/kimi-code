@@ -10,12 +10,14 @@ export interface BannerAudienceContext {
 }
 
 /** The wire shape of a banner's `kfc_audience` targeting block. Every field
-    is optional; absent means "no constraint on this dimension". */
+    is optional; absent means "no constraint on this dimension". The enums
+    are the server contract — the meets* validators still reject out-of-contract
+    values at runtime, since a mis-edited config can violate them at any time. */
 export interface KfcAudience {
-  login?: string | null;
+  login?: 'all' | 'logged_in' | 'anonymous' | null;
   tiers?: number[] | null;
-  goods_version?: number | null;
-  region?: string | null;
+  goods_version?: 1 | 2 | null;
+  region?: 'all' | 'cn' | 'oversea' | null;
 }
 
 function normalizeEnumValue(value: unknown): string | null {
