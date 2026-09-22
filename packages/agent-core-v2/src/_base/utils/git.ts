@@ -119,7 +119,7 @@ async function gitConfigStamp(cwd: string, found: string | null): Promise<string
     if (!(await stat(gitDir)).isDirectory()) {
       const pointer = parseGitDirPointer(await readFile(gitDir, 'utf8'));
       if (pointer === undefined) return null;
-      gitDir = resolve(cwd, pointer);
+      gitDir = resolve(dirname(found), pointer);
     }
     const commondir = await readFile(join(gitDir, 'commondir'), 'utf8').catch(() => undefined);
     const configPaths = resolveConfigPaths(gitDir, commondir);

@@ -109,7 +109,7 @@ function gitConfigStamp(workDir: string, found: string | null): string | null {
     if (!statSync(gitDir).isDirectory()) {
       const pointer = parseGitDirPointer(readFileSync(gitDir, 'utf8'));
       if (pointer === undefined) return null;
-      gitDir = resolve(workDir, pointer);
+      gitDir = resolve(dirname(found), pointer);
     }
     let commondir: string | undefined;
     try {

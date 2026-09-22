@@ -633,6 +633,49 @@ describe('git status cache', () => {
     }
   });
 
+  it('rebusts the probe cache when a .git file pointer target config changes', () => {
+    const root = mkdtempSync(join(tmpdir(), 'git-status-gitfile-'));
+    const gitDir = join(root, 'actual-git');
+    mkdirSync(gitDir, { recursive: true });
+    mkdirSync(join(root, 'sub'));
+    writeFileSync(join(root, '.git'), 'gitdir: actual-git\n');
+    writeFileSync(join(gitDir, 'config'), '[filter "evil"]\n\tclean = touch /tmp/m\n');
+    mocks.execFile.mockImplementation(
+      (
+        _cmd: string,
+        _args: string[],
+        _options: unknown,
+        callback: (error: Error | null, stdout: string, stderr: string) => void,
+      ) => {
+        callback(new Error('no pull request'), '', '');
+      },
+    );
+    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
+      if (args.includes('core.worktree')) return { status: 1, stdout: '' };
+      if (args.includes('config')) return { status: 0, stdout: 'filter.evil.clean\n' };
+      if (args.includes('rev-parse')) return { status: 0, stdout: 'true\n' };
+      if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
+      if (args.includes('status')) return { status: 0, stdout: '## main...origin/main\n' };
+      return { status: 1, stdout: '' };
+    });
+
+    try {
+      const probeCount = () =>
+        mocks.spawnSync.mock.calls.filter((call) => (call[1] as string[]).includes('config'))
+          .length;
+      const cache = createGitStatusCache(join(root, 'sub'), { trusted: true });
+      cache.getStatus();
+      expect(probeCount()).toBe(4);
+      cache.getStatus();
+      expect(probeCount()).toBe(4);
+      writeFileSync(join(gitDir, 'config'), '[filter "evil"]\n\tclean = touch /tmp/pwned\n');
+      cache.getStatus();
+      expect(probeCount()).toBe(8);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('spawns git and gh through their resolved absolute paths', async () => {
     mocks.execFile.mockImplementation(
       (

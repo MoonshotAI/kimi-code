@@ -23,7 +23,7 @@ export const GIT_CONFIG_ARGS: readonly string[] = [
 
 export const GIT_DIFF_ARGS: readonly string[] = ['--no-ext-diff', '--no-textconv'];
 
-export const INCLUDE_SECTION_RE = /^\s*\[\s*include(?:\.|\s|\])/im;
+export const INCLUDE_SECTION_RE = /^\s*\[\s*include(?:\.|\s|\]|if)/im;
 
 export function parseGitDirPointer(content: string): string | undefined {
   const stripped = content.codePointAt(0) === 0xfeff ? content.slice(1) : content;

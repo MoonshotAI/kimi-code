@@ -1,5 +1,5 @@
 import { Readable, type Writable } from 'node:stream';
-import { mkdtemp, mkdir, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -240,6 +240,39 @@ describe('collectGitContext', () => {
     } finally {
       await rm(root, { recursive: true, force: true });
       await rm(admin, { recursive: true, force: true });
+    }
+  });
+
+  it('rebusts cached probe args when a .git file pointer target config changes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'git-context-gitfile-'));
+    try {
+      const gitDir = join(root, 'actual-git');
+      await mkdir(gitDir, { recursive: true });
+      await mkdir(join(root, 'sub'));
+      await writeFile(join(root, '.git'), 'gitdir: actual-git\n');
+      await writeFile(join(gitDir, 'config'), '[filter "evil"]\n\tclean = touch /tmp/m\n');
+      const { process: hostProcess, spawn } = gitRunner({
+        'config --local --includes --get core.worktree': { exitCode: 1 },
+        'config --worktree --includes --get core.worktree': { exitCode: 1 },
+        'config --local --includes --get-regexp --name-only ^(filter|merge)\\.': {
+          stdout: 'filter.evil.clean\n',
+        },
+        'config --worktree --includes --get-regexp --name-only ^(filter|merge)\\.': { exitCode: 1 },
+        'rev-parse --is-inside-work-tree': { stdout: 'true\n' },
+      });
+
+      const probeCount = () =>
+        spawn.mock.calls.filter((call) => (call[1] as readonly string[]).includes('config')).length;
+      await collectGitContext(hostProcess, join(root, 'sub'));
+      const initial = probeCount();
+      expect(initial).toBeGreaterThan(0);
+      await collectGitContext(hostProcess, join(root, 'sub'));
+      expect(probeCount()).toBe(initial);
+      await writeFile(join(gitDir, 'config'), '[filter "evil"]\n\tclean = touch /tmp/pwned\n');
+      await collectGitContext(hostProcess, join(root, 'sub'));
+      expect(probeCount()).toBeGreaterThan(initial);
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
 
