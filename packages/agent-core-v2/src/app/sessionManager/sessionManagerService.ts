@@ -131,11 +131,10 @@ export class SessionManager implements ISessionManager {
         `Cannot delete session ${sessionId} while another operation is still in progress. Retry shortly.`,
         { details: { reason: 'lifecycle_busy' } },
       );
-    let gaveUp = false;
-    let started = false;
+    let state: 'queued' | 'started' | 'timed_out' = 'queued';
     const run = this.serializeLifecycle(sessionId, () => {
-      if (gaveUp) throw busyError();
-      started = true;
+      if (state === 'timed_out') throw busyError();
+      state = 'started';
       return work();
     });
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -144,8 +143,8 @@ export class SessionManager implements ISessionManager {
         run,
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => {
-            if (started) return;
-            gaveUp = true;
+            if (state !== 'queued') return;
+            state = 'timed_out';
             reject(busyError());
           }, timeoutMs);
         }),
