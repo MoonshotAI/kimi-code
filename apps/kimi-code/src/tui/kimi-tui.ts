@@ -35,7 +35,7 @@ import {
 import { resolve } from 'pathe';
 
 import type { CLIOptions } from '#/cli/options';
-import { MigrationScreenComponent, type MigrationScreenResult } from '#/migration/index';
+import { MigrationScreenComponent, type MigrationScreenResult } from '#/migration/migration-screen';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { appendInputHistory, loadInputHistory } from '#/utils/history/input-history';
 import { openUrl } from '#/utils/open-url';

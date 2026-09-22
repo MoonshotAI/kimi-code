@@ -3,6 +3,7 @@ import { builtinModules } from 'node:module';
 import { resolve } from 'node:path';
 
 import { nativeIntermediatesDir, nativeJsBundlePath } from './paths.mjs';
+import { checkStartupGraph } from './startup-graph.mjs';
 
 const builtins = new Set([
   ...builtinModules,
@@ -65,6 +66,9 @@ function checkBundle(bundlePath, { worker = false } = {}) {
       if (sideEffect) checkSpecifier(sideEffect[1], 'import');
     }
   }
+  // The main bundle also has to keep the web server and the terminal UI off
+  // the startup path; a single stray static import re-hoists all of it.
+  if (!worker) errors.push(...checkStartupGraph(text));
   return errors;
 }
 

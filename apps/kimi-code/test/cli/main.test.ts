@@ -5,7 +5,6 @@ import { validateOptions } from '#/cli/options';
 import type { CLIOptions } from '#/cli/options';
 import type * as OptionsModule from '#/cli/options';
 import { runPrompt } from '#/cli/run-prompt';
-import { runShell } from '#/cli/run-shell';
 import { formatStartupError } from '#/cli/startup-error';
 import { runUpdatePreflight } from '#/cli/update/preflight';
 import { handleMainCommand, handleUpgradeCommand, main } from '#/main';
@@ -19,6 +18,7 @@ const mocks = vi.hoisted(() => {
     validateOptions: vi.fn(),
     runUpdatePreflight: vi.fn(),
     runShell: vi.fn(),
+    runShellModuleEvaluated: false,
     runPrompt: vi.fn(),
     installCrashHandlers: vi.fn(),
     track: vi.fn(),
@@ -132,9 +132,10 @@ vi.mock('../../src/cli/sub/update-download', () => ({
   runUpdateDownloadCommand: mocks.runUpdateDownloadCommand,
 }));
 
-vi.mock('../../src/cli/run-shell', () => ({
-  runShell: mocks.runShell,
-}));
+vi.mock('../../src/cli/run-shell', () => {
+  mocks.runShellModuleEvaluated = true;
+  return { runShell: mocks.runShell };
+});
 
 vi.mock('../../src/cli/run-prompt', () => ({
   runPrompt: mocks.runPrompt,
@@ -240,6 +241,23 @@ describe('main entry command handling', () => {
     mocks.flushDiagnosticLogs.mockResolvedValue(undefined);
   });
 
+  it('loads the shell runner only when an interactive session starts', async () => {
+    // Deliberately the first test in this file: the flag flips the moment the
+    // (mocked) shell runner module is evaluated. Importing the entry must not
+    // do that — `kimi -p` would otherwise pay for the whole terminal UI.
+    expect(mocks.runShellModuleEvaluated).toBe(false);
+
+    const opts = defaultOpts();
+    mocks.validateOptions.mockReturnValue({ options: opts, uiMode: 'shell' });
+    mocks.runUpdatePreflight.mockResolvedValue('continue');
+    mocks.runShell.mockResolvedValue(void 0);
+
+    await runHandleMainCommand(opts);
+
+    expect(mocks.runShellModuleEvaluated).toBe(true);
+    expect(mocks.runShell).toHaveBeenCalledWith(opts, '0.0.1-alpha.2');
+  });
+
   it('runs update preflight before starting the shell', async () => {
     const opts = defaultOpts();
     mocks.validateOptions.mockReturnValue({ options: opts, uiMode: 'shell' });
@@ -254,7 +272,7 @@ describe('main entry command handling', () => {
     expect(mocks.runUpdatePreflight.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.runShell.mock.invocationCallOrder[0]!,
     );
-    expect(runShell).toHaveBeenCalledWith(opts, '0.0.1-alpha.2');
+    expect(mocks.runShell).toHaveBeenCalledWith(opts, '0.0.1-alpha.2');
   });
 
   it('runs prompt mode without interactive update preflight', async () => {
@@ -274,7 +292,7 @@ describe('main entry command handling', () => {
       isTTY: false,
     });
     expect(runPrompt).toHaveBeenCalledWith(opts, '0.0.1-alpha.2');
-    expect(runShell).not.toHaveBeenCalled();
+    expect(mocks.runShell).not.toHaveBeenCalled();
   });
 
   it('does not force-exit from the reusable handler in print mode', async () => {
@@ -364,7 +382,7 @@ describe('main entry command handling', () => {
     expect(runUpdatePreflight).toHaveBeenCalledWith('0.0.1-alpha.2', {
       track: expect.any(Function),
     });
-    expect(runShell).toHaveBeenCalledWith(opts, '0.0.1-alpha.2');
+    expect(mocks.runShell).toHaveBeenCalledWith(opts, '0.0.1-alpha.2');
   });
 
   it('installs crash handlers before parsing CLI arguments', async () => {
@@ -428,7 +446,7 @@ describe('main entry command handling', () => {
     const exitCode = await runHandleMainCommand(opts);
 
     expect(exitCode).toBe(0);
-    expect(runShell).not.toHaveBeenCalled();
+    expect(mocks.runShell).not.toHaveBeenCalled();
   });
 
   it('initializes and flushes telemetry around the upgrade command', async () => {
