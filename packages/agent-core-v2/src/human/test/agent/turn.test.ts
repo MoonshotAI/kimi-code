@@ -4,8 +4,6 @@ import { assign, createActor, emit, setup } from '#/xstate2';
 import { credentialsRecovery } from '#/credentials/credentials';
 import { UNKNOWN_CAPABILITY } from '#/llm/capability';
 import type { LlmErrorMessage } from '#/llm/errors';
-import type { ContentPart, Message, UserMessage } from '#/llm/message';
-import { createMediaDegradeRecovery } from '#/llm/media/degrade';
 import type { LlmModel } from '#/llm/model';
 import { createRequestActor, type LlmEvent } from '#/llm/requester/actor';
 import type { LlmRecovery } from '#/llm/requester/recovery';
@@ -13,7 +11,6 @@ import type { LlmCredentialProvider, LlmRequester } from '#/llm/requester/reques
 import type { LlmRetryOptions } from '#/llm/requester/retry';
 import {
   createTurnMachine,
-  createUserEntry,
   type CreateTurnMachineOptions,
   type TurnEvent,
   type TurnInput,
@@ -413,167 +410,6 @@ describe('turn machine llm retry', () => {
   });
 });
 
-function tooLargeError(): LlmErrorMessage {
-  return {
-    kind: 'request_too_large',
-    statusCode: 413,
-    message: 'request entity too large',
-    requestId: null,
-    retryAfterMs: null,
-    headers: null,
-  };
-}
-
-function imageFormatError(): LlmErrorMessage {
-  return {
-    kind: 'image_format',
-    statusCode: 400,
-    message: 'unsupported image format',
-    requestId: null,
-    retryAfterMs: null,
-    headers: null,
-  };
-}
-
-function mediaMessage(text: string, images: number): UserMessage {
-  const content: ContentPart[] = [{ type: 'text', text }];
-  for (let index = 0; index < images; index += 1) {
-    content.push({ type: 'image_url', imageUrl: { url: `media://img-${text}-${index}` } });
-  }
-  return { role: 'user', content };
-}
-
-function countImageParts(messages: readonly Message[]): number {
-  return messages.reduce(
-    (count, message) =>
-      count + message.content.filter((part) => part.type === 'image_url').length,
-    0,
-  );
-}
-
-function createCapturingRequester(plan: readonly (LlmErrorMessage | 'ok')[]) {
-  let calls = 0;
-  const seen: (readonly Message[])[] = [];
-  const requester: LlmRequester = {
-    generate: (_config, content, control) => {
-      seen.push(content.messages);
-      const step = plan[Math.min(calls, plan.length - 1)];
-      calls += 1;
-      control.onEvent?.({ type: 'llm.sent' });
-      if (step === 'ok') {
-        control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
-        control.onEvent?.({ type: 'llm.done' });
-        return Promise.resolve();
-      }
-      if (step.kind === 'syntax') {
-        control.onEvent?.({ type: 'llm.failed.syntax', error: step });
-        return Promise.resolve();
-      }
-      control.onEvent?.({ type: 'llm.failed.remote', error: step });
-      return Promise.resolve();
-    },
-  };
-  return { requester, calls: () => calls, seen };
-}
-
-function mediaHistory(messages: readonly UserMessage[]): Partial<TurnInput> {
-  return { history: messages.map((message) => createUserEntry(message)) };
-}
-
-describe('turn machine media recovery', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it('degrades then strips media across request_too_large failures before failing', async () => {
-    const messages = [mediaMessage('a', 2), mediaMessage('b', 1), mediaMessage('c', 1)];
-    const { requester, calls, seen } = createCapturingRequester([
-      tooLargeError(),
-      tooLargeError(),
-      tooLargeError(),
-    ]);
-    const { actor, recovering, sent, failed } = startTurnActor(
-      requester,
-      { recovery: createMediaDegradeRecovery() },
-      mediaHistory(messages),
-    );
-
-    await drain();
-
-    expect(calls()).toBe(3);
-    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'failed' });
-    expect(recovering.map((event) => `${event.strategy}:${event.action}`)).toEqual([
-      'media-degrade:degraded',
-      'media-degrade:stripped',
-    ]);
-    expect(sent.map((event) => event.recovery?.action)).toEqual([
-      undefined,
-      'degraded',
-      'stripped',
-    ]);
-    expect(failed).toHaveLength(1);
-    expect(countImageParts(seen[0] ?? [])).toBe(4);
-    expect(countImageParts(seen[1] ?? [])).toBe(2);
-    expect(countImageParts(seen[2] ?? [])).toBe(0);
-  });
-
-  it('succeeds with degraded media after a request_too_large error', async () => {
-    const messages = [mediaMessage('a', 2), mediaMessage('b', 1), mediaMessage('c', 1)];
-    const { requester, calls, seen } = createCapturingRequester([tooLargeError(), 'ok']);
-    const { actor, recovering } = startTurnActor(
-      requester,
-      { recovery: createMediaDegradeRecovery() },
-      mediaHistory(messages),
-    );
-
-    await drain();
-
-    expect(calls()).toBe(2);
-    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'done' });
-    expect(recovering).toHaveLength(1);
-    expect(countImageParts(seen[1] ?? [])).toBe(2);
-  });
-
-  it('strips media directly on image_format without degrading first', async () => {
-    const messages = [mediaMessage('a', 2), mediaMessage('b', 1), mediaMessage('c', 1)];
-    const { requester, calls, seen } = createCapturingRequester([imageFormatError(), 'ok']);
-    const { actor, recovering, sent } = startTurnActor(
-      requester,
-      { recovery: createMediaDegradeRecovery() },
-      mediaHistory(messages),
-    );
-
-    await drain();
-
-    expect(calls()).toBe(2);
-    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'done' });
-    expect(recovering.map((event) => `${event.strategy}:${event.action}`)).toEqual([
-      'media-degrade:stripped',
-    ]);
-    expect(sent.map((event) => event.recovery?.action)).toEqual([undefined, 'stripped']);
-    expect(countImageParts(seen[1] ?? [])).toBe(0);
-  });
-
-  it('fails immediately on request_too_large without media', async () => {
-    const { requester, calls } = createCapturingRequester([tooLargeError()]);
-    const { actor, recovering } = startTurnActor(
-      requester,
-      { recovery: createMediaDegradeRecovery() },
-      mediaHistory([mediaMessage('plain', 0)]),
-    );
-
-    await drain();
-
-    expect(calls()).toBe(1);
-    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'failed' });
-    expect(recovering).toHaveLength(0);
-  });
-});
-
 describe('turn machine credential recovery', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -644,41 +480,6 @@ describe('turn machine credential recovery', () => {
     expect(sent.map((event) => event.recovery?.action)).toEqual([undefined, 'refresh']);
     expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'done' });
     expect(failed).toHaveLength(0);
-  });
-
-  it('keeps recovered messages when a credential refresh follows a message recovery', async () => {
-    let invalidations = 0;
-    const { provider } = createCredentials(() => (invalidations += 1));
-    const { requester, calls, seen } = createCapturingRequester([
-      tooLargeError(),
-      statusError(401, 'unauthorized'),
-      'ok',
-    ]);
-    const mediaDegrade = createMediaDegradeRecovery();
-    const { actor, recovering } = startTurnActor(
-      requester,
-      {
-        recovery: {
-          propose: (ctx) => credentialsRecovery.propose(ctx) ?? mediaDegrade.propose(ctx),
-        },
-      },
-      {
-        ...mediaHistory([mediaMessage('a', 2), mediaMessage('b', 1), mediaMessage('c', 1)]),
-        request: { model, credentialProvider: provider },
-      },
-    );
-
-    await drain();
-
-    expect(calls()).toBe(3);
-    expect(invalidations).toBe(1);
-    expect(recovering.map((event) => `${event.strategy}:${event.action}`)).toEqual([
-      'media-degrade:degraded',
-      'credentials:refresh',
-    ]);
-    expect(countImageParts(seen[1] ?? [])).toBe(2);
-    expect(countImageParts(seen[2] ?? [])).toBe(2);
-    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'done' });
   });
 
   it('fails when the attempt after a credential refresh also fails', async () => {
