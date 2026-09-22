@@ -1,10 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { IDisposable } from '#/_base/di/lifecycle';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
-import {
-  IAgentLifecycleService,
-  type AgentDeleteGuardResult,
-} from '#/session/agentLifecycle/agentLifecycle';
+import { Error2, ErrorCodes } from '#/errors';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 
 type Internals = {
@@ -22,12 +21,12 @@ function service(opts: { resuming?: boolean; handle?: ISessionScopeHandle }): Se
   return svc;
 }
 
-function handleWith(check: AgentDeleteGuardResult): ISessionScopeHandle {
+function handleWith(checkAgentsBusy: () => IDisposable): ISessionScopeHandle {
   return {
     id: 'session-1',
     accessor: {
       get: (id: unknown) => {
-        if (id === IAgentLifecycleService) return { acquireDeleteGuard: () => check };
+        if (id === IAgentLifecycleService) return { checkAgentsBusy };
         throw new Error(`unexpected service request: ${String(id)}`);
       },
     },
@@ -43,10 +42,10 @@ function thrown(fn: () => unknown): unknown {
   throw new Error('expected the call to throw');
 }
 
-describe('SessionLifecycleService.beginDeleteIfIdle', () => {
-  it('rejects with resume_in_flight while a resume is in flight', () => {
+describe('SessionLifecycleService.checkSessionBusy', () => {
+  it('throws resume_in_flight while a resume is in flight', () => {
     const svc = service({ resuming: true });
-    expect(thrown(() => svc.beginDeleteIfIdle('session-1'))).toMatchObject({
+    expect(thrown(() => svc.checkSessionBusy('session-1'))).toMatchObject({
       code: 'session.busy',
       details: { reason: 'resume_in_flight' },
     });
@@ -54,28 +53,27 @@ describe('SessionLifecycleService.beginDeleteIfIdle', () => {
 
   it('returns a no-op guard when the session is not loaded', () => {
     const svc = service({});
-    const guard = svc.beginDeleteIfIdle('session-1');
+    const guard = svc.checkSessionBusy('session-1');
     expect(() => guard.dispose()).not.toThrow();
   });
 
   it('returns the agent guard when all agents are idle', () => {
     const agentGuard = { dispose: vi.fn() };
-    const svc = service({ handle: handleWith({ idle: true, guard: agentGuard }) });
-    const guard = svc.beginDeleteIfIdle('session-1');
+    const svc = service({ handle: handleWith(() => agentGuard) });
+    const guard = svc.checkSessionBusy('session-1');
     guard.dispose();
     expect(agentGuard.dispose).toHaveBeenCalledTimes(1);
   });
 
-  it.each([
-    ['active_turn', 'turn is active or queued'],
-    ['background_tasks', 'background tasks are running'],
-    ['compaction', 'compaction is running'],
-  ] as const)('maps agent busy reason %s to SESSION_BUSY details', (reason, messagePart) => {
-    const svc = service({ handle: handleWith({ idle: false, reason }) });
-    expect(thrown(() => svc.beginDeleteIfIdle('session-1'))).toMatchObject({
-      code: 'session.busy',
-      details: { reason },
-      message: expect.stringContaining(messagePart),
+  it('passes the agent busy error through unchanged', () => {
+    const busy = new Error2(ErrorCodes.SESSION_BUSY, 'Cannot delete while a turn is active or queued.', {
+      details: { reason: 'active_turn' },
     });
+    const svc = service({
+      handle: handleWith(() => {
+        throw busy;
+      }),
+    });
+    expect(thrown(() => svc.checkSessionBusy('session-1'))).toBe(busy);
   });
 });

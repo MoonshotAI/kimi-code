@@ -79,8 +79,6 @@ import {
 
 import { ManagedAgent } from './managedAgent';
 import {
-  type AgentDeleteBusyReason,
-  type AgentDeleteGuardResult,
   type AgentListFilter,
   type AgentScopeCreatedEvent,
   type CreateAgentOptions,
@@ -650,28 +648,40 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     if (stopError !== undefined) throw stopError;
   }
 
-  acquireDeleteGuard(): AgentDeleteGuardResult {
+  checkAgentsBusy(): IDisposable {
     const guards: IDisposable[] = [];
-    const fail = (reason: AgentDeleteBusyReason): AgentDeleteGuardResult => {
+    try {
+      if (this.creating.size > 0) throw this.deleteBusyError('active_turn');
+      for (const managed of this.roster.values()) {
+        if (managed.closing) throw this.deleteBusyError('active_turn');
+        const accessor = managed.handle.accessor;
+        if (accessor.get(IAgentFullCompactionService).compacting !== null) {
+          throw this.deleteBusyError('compaction');
+        }
+        if (accessor.get(IAgentTaskService).list().length > 0) {
+          throw this.deleteBusyError('background_tasks');
+        }
+        const guard = accessor.get(IAgentLoopService).tryAcquireQuiescence();
+        if (guard === undefined) throw this.deleteBusyError('active_turn');
+        guards.push(guard);
+      }
+    } catch (error) {
       for (const guard of guards) guard.dispose();
-      return { idle: false, reason };
-    };
-    if (this.creating.size > 0) return fail('active_turn');
-    for (const managed of this.roster.values()) {
-      if (managed.closing) return fail('active_turn');
-      const accessor = managed.handle.accessor;
-      if (accessor.get(IAgentFullCompactionService).compacting !== null) return fail('compaction');
-      if (accessor.get(IAgentTaskService).list().length > 0) return fail('background_tasks');
-      const guard = accessor.get(IAgentLoopService).tryAcquireQuiescence();
-      if (guard === undefined) return fail('active_turn');
-      guards.push(guard);
+      throw error;
     }
-    return {
-      idle: true,
-      guard: toDisposable(() => {
-        for (const guard of guards) guard.dispose();
-      }),
-    };
+    return toDisposable(() => {
+      for (const guard of guards) guard.dispose();
+    });
+  }
+
+  private deleteBusyError(reason: 'active_turn' | 'background_tasks' | 'compaction'): Error2 {
+    const message =
+      reason === 'compaction'
+        ? 'Cannot delete while conversation compaction is running. Wait for it to finish, then retry.'
+        : reason === 'background_tasks'
+          ? 'Cannot delete while background tasks are running. Stop them, then retry.'
+          : 'Cannot delete while a turn is active or queued. Wait for it to finish, then retry.';
+    return new Error2(ErrorCodes.SESSION_BUSY, message, { details: { reason } });
   }
 
   private managedFor(agent: AgentContext): ManagedAgent | undefined {

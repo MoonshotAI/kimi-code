@@ -2156,7 +2156,7 @@ function lifecycleStub(
     },
     broadcastPermissionMode: () => {},
     adopt: (handle: IAgentScopeHandle) => stubAgentContext(handle.id, 1),
-    acquireDeleteGuard: () => ({ idle: true, guard: { dispose: () => {} } }),
+    checkAgentsBusy: () => ({ dispose: () => {} }),
   };
   return lifecycle as IAgentLifecycleService;
 }

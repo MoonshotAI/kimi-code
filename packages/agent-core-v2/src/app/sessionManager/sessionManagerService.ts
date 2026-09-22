@@ -124,8 +124,8 @@ export class SessionManager implements ISessionManager {
     return this.serializeLifecycle(first, () => this.serializeLifecycleForKeys(rest, work));
   }
 
-  private async serializeLifecycleBounded<T>(sessionId: string, timeoutMs: number, work: () => Promise<T>): Promise<T> {
-    const busy = (): Error2 =>
+  private async serializeLifecycleWithTimeout<T>(sessionId: string, timeoutMs: number, work: () => Promise<T>): Promise<T> {
+    const busyError = (): Error2 =>
       new Error2(
         ErrorCodes.SESSION_BUSY,
         `Cannot delete session ${sessionId} while another operation is still in progress. Retry shortly.`,
@@ -134,7 +134,7 @@ export class SessionManager implements ISessionManager {
     let gaveUp = false;
     let started = false;
     const run = this.serializeLifecycle(sessionId, () => {
-      if (gaveUp) throw busy();
+      if (gaveUp) throw busyError();
       started = true;
       return work();
     });
@@ -146,7 +146,7 @@ export class SessionManager implements ISessionManager {
           timer = setTimeout(() => {
             if (started) return;
             gaveUp = true;
-            reject(busy());
+            reject(busyError());
           }, timeoutMs);
         }),
       ]);
@@ -199,12 +199,12 @@ export class SessionManager implements ISessionManager {
   }
 
   async delete(sessionId: string): Promise<void> {
-    await this.serializeLifecycleBounded(sessionId, DELETE_QUEUE_TIMEOUT_MS, async () => {
+    await this.serializeLifecycleWithTimeout(sessionId, DELETE_QUEUE_TIMEOUT_MS, async () => {
       const controller = await this.controllerForSession(sessionId);
       if (controller === undefined) {
         throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
       }
-      const guard = controller.beginDeleteIfIdle(sessionId);
+      const guard = controller.checkSessionBusy(sessionId);
       try {
         await controller.close(sessionId);
         const cleanups: Promise<unknown>[] = [];

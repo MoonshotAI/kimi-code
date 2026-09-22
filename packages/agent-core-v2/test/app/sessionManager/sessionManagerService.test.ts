@@ -45,7 +45,7 @@ function controller(sessionId = 'session-1'): {
     archive: async () => {},
     restore: async () => handle,
     delete: async () => {},
-    beginDeleteIfIdle: () => ({ dispose: () => {} }),
+    checkSessionBusy: () => ({ dispose: () => {} }),
     fork: async () => handle,
     createChild: async () => handle,
     dispose: () => {},
@@ -214,11 +214,11 @@ describe('SessionManager', () => {
     const order: string[] = [];
     const fake = controller();
     const svc = fake.service as unknown as {
-      beginDeleteIfIdle: () => { dispose: () => void };
+      checkSessionBusy: () => { dispose: () => void };
       close: (sessionId: string) => Promise<void>;
       delete: (sessionId: string) => Promise<void>;
     };
-    svc.beginDeleteIfIdle = () => ({ dispose: () => { order.push('guard:dispose'); } });
+    svc.checkSessionBusy = () => ({ dispose: () => { order.push('guard:dispose'); } });
     svc.close = async () => { order.push('close'); };
     svc.delete = async () => { order.push('delete'); };
     const manager = managerFor(fake.service);
@@ -231,11 +231,11 @@ describe('SessionManager', () => {
   it('rejects delete with SESSION_BUSY from the idle check without closing or deleting', async () => {
     const fake = controller();
     const svc = fake.service as unknown as {
-      beginDeleteIfIdle: () => { dispose: () => void };
+      checkSessionBusy: () => { dispose: () => void };
       close: (sessionId: string) => Promise<void>;
       delete: (sessionId: string) => Promise<void>;
     };
-    svc.beginDeleteIfIdle = () => {
+    svc.checkSessionBusy = () => {
       throw new Error2(ErrorCodes.SESSION_BUSY, 'Cannot delete while a turn is active or queued.', {
         details: { reason: 'active_turn' },
       });
@@ -260,14 +260,14 @@ describe('SessionManager', () => {
     try {
       const fake = controller();
       const svc = fake.service as unknown as {
-        beginDeleteIfIdle: () => { dispose: () => void };
+        checkSessionBusy: () => { dispose: () => void };
         close: (sessionId: string) => Promise<void>;
         delete: (sessionId: string) => Promise<void>;
       };
       const beginSpy = vi.fn(() => ({ dispose: () => {} }));
       const closeSpy = vi.fn(async () => {});
       const deleteSpy = vi.fn(async () => {});
-      svc.beginDeleteIfIdle = beginSpy;
+      svc.checkSessionBusy = beginSpy;
       svc.close = closeSpy;
       svc.delete = deleteSpy;
       const manager = managerFor(fake.service);
@@ -676,7 +676,7 @@ describe('SessionManager controller retirement', () => {
             },
             restore: async () => undefined,
             delete: async () => {},
-            beginDeleteIfIdle: () => ({ dispose: () => {} }),
+            checkSessionBusy: () => ({ dispose: () => {} }),
             fork: async () => {
               throw new Error('fork not supported');
             },

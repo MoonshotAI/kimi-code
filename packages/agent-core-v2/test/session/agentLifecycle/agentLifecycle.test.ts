@@ -1603,50 +1603,69 @@ describe('AgentLifecycleService', () => {
     interactions.purgeSession('sess_other');
   });
 
-  describe('acquireDeleteGuard', () => {
+  describe('checkAgentsBusy', () => {
+    function thrown(fn: () => unknown): unknown {
+      try {
+        fn();
+      } catch (error) {
+        return error;
+      }
+      throw new Error('expected the call to throw');
+    }
+
     it('returns a guard when all agents are idle and disposes quiescence guards on release', async () => {
       const svc = ix.get(IAgentLifecycleService);
       await svc.create({ agentId: 'main' });
       const quiescenceGuard = { dispose: vi.fn() };
       loopQuiescence.mockReturnValue(quiescenceGuard);
 
-      const result = svc.acquireDeleteGuard();
+      const guard = svc.checkAgentsBusy();
 
-      expect(result.idle).toBe(true);
-      if (!result.idle) return;
-      result.guard.dispose();
+      guard.dispose();
       expect(quiescenceGuard.dispose).toHaveBeenCalledTimes(1);
     });
 
-    it('reports active_turn when the loop cannot be quiesced', async () => {
+    it('throws active_turn when the loop cannot be quiesced', async () => {
       const svc = ix.get(IAgentLifecycleService);
       await svc.create({ agentId: 'main' });
       loopQuiescence.mockReturnValue(undefined);
 
-      expect(svc.acquireDeleteGuard()).toEqual({ idle: false, reason: 'active_turn' });
+      expect(thrown(() => svc.checkAgentsBusy())).toMatchObject({
+        code: 'session.busy',
+        details: { reason: 'active_turn' },
+      });
     });
 
-    it('reports compaction while compaction is running', async () => {
+    it('throws compaction while compaction is running', async () => {
       compactingTask = { promise: Promise.resolve(), abortController: new AbortController() };
       const svc = ix.get(IAgentLifecycleService);
       await svc.create({ agentId: 'main' });
 
-      expect(svc.acquireDeleteGuard()).toEqual({ idle: false, reason: 'compaction' });
+      expect(thrown(() => svc.checkAgentsBusy())).toMatchObject({
+        code: 'session.busy',
+        details: { reason: 'compaction' },
+      });
     });
 
-    it('reports background_tasks while agent tasks are running', async () => {
+    it('throws background_tasks while agent tasks are running', async () => {
       taskList.mockReturnValue([{ id: 'task-1' }]);
       const svc = ix.get(IAgentLifecycleService);
       await svc.create({ agentId: 'main' });
 
-      expect(svc.acquireDeleteGuard()).toEqual({ idle: false, reason: 'background_tasks' });
+      expect(thrown(() => svc.checkAgentsBusy())).toMatchObject({
+        code: 'session.busy',
+        details: { reason: 'background_tasks' },
+      });
     });
 
-    it('reports active_turn while an agent is being created', async () => {
+    it('throws active_turn while an agent is being created', async () => {
       const svc = ix.get(IAgentLifecycleService);
       const pending = svc.create({ agentId: 'sub' });
 
-      expect(svc.acquireDeleteGuard()).toEqual({ idle: false, reason: 'active_turn' });
+      expect(thrown(() => svc.checkAgentsBusy())).toMatchObject({
+        code: 'session.busy',
+        details: { reason: 'active_turn' },
+      });
 
       await pending;
     });
@@ -1658,7 +1677,10 @@ describe('AgentLifecycleService', () => {
       const firstGuard = { dispose: vi.fn() };
       loopQuiescence.mockReturnValueOnce(firstGuard).mockReturnValueOnce(undefined);
 
-      expect(svc.acquireDeleteGuard()).toEqual({ idle: false, reason: 'active_turn' });
+      expect(thrown(() => svc.checkAgentsBusy())).toMatchObject({
+        code: 'session.busy',
+        details: { reason: 'active_turn' },
+      });
       expect(firstGuard.dispose).toHaveBeenCalledTimes(1);
     });
   });

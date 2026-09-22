@@ -2260,7 +2260,7 @@ function parkedLifecycleStub(): IAgentLifecycleService {
     remove: () => Promise.resolve(),
     handleOf: () => undefined,
     adopt: (handle) => agentContextOf(handle),
-    acquireDeleteGuard: () => ({ idle: true, guard: { dispose: () => {} } }),
+    checkAgentsBusy: () => ({ dispose: () => {} }),
   };
 }
 

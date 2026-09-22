@@ -458,7 +458,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return handle;
   }
 
-  beginDeleteIfIdle(sessionId: string): IDisposable {
+  checkSessionBusy(sessionId: string): IDisposable {
     if (this.resuming.has(sessionId)) {
       throw new Error2(
         ErrorCodes.SESSION_BUSY,
@@ -468,17 +468,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     }
     const handle = this.sessions.get(sessionId);
     if (handle === undefined) return toDisposable(() => {});
-    const check = handle.accessor.get(IAgentLifecycleService).acquireDeleteGuard();
-    if (!check.idle) {
-      const message =
-        check.reason === 'compaction'
-          ? 'Cannot delete while conversation compaction is running. Wait for it to finish, then retry.'
-          : check.reason === 'background_tasks'
-            ? 'Cannot delete while background tasks are running. Stop them, then retry.'
-            : 'Cannot delete while a turn is active or queued. Wait for it to finish, then retry.';
-      throw new Error2(ErrorCodes.SESSION_BUSY, message, { details: { reason: check.reason } });
-    }
-    return check.guard;
+    return handle.accessor.get(IAgentLifecycleService).checkAgentsBusy();
   }
 
   async delete(sessionId: string): Promise<void> {

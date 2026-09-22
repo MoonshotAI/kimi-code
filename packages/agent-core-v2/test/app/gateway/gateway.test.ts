@@ -76,7 +76,7 @@ describe('RestGateway', () => {
       broadcastPermissionMode: () => {},
       handleOf: (agentId: string) => (agentId === 'main' ? agentHandle : undefined),
       adopt: () => agentContext,
-      acquireDeleteGuard: () => ({ idle: true, guard: { dispose: () => {} } }),
+      checkAgentsBusy: () => ({ dispose: () => {} }),
     };
     const sessionHandle: ISessionScopeHandle = {
       id: 's1',

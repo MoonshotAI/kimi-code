@@ -31,12 +31,6 @@ export interface AgentListFilter {
   readonly prefix?: string;
 }
 
-export type AgentDeleteBusyReason = 'active_turn' | 'background_tasks' | 'compaction';
-
-export type AgentDeleteGuardResult =
-  | { readonly idle: true; readonly guard: IDisposable }
-  | { readonly idle: false; readonly reason: AgentDeleteBusyReason };
-
 export interface IAgentLifecycleService {
   readonly _serviceBrand: undefined;
 
@@ -53,7 +47,7 @@ export interface IAgentLifecycleService {
   list(filter?: AgentListFilter): readonly AgentContext[];
   broadcastPermissionMode(mode: PermissionMode): void;
   remove(agent: AgentContext): Promise<void>;
-  acquireDeleteGuard(): AgentDeleteGuardResult;
+  checkAgentsBusy(): IDisposable;
 
   handleOf(agentId: string): IAgentScopeHandle | undefined;
 
