@@ -39,11 +39,17 @@ export function hardenedGitConfigArgs(git: string, workDir: string): readonly st
 
 function coreWorktreeSafe(git: string, workDir: string, gitDir: string | null): boolean {
   if (gitDir === null) return true;
-  let resolvedGitDir = gitDir;
-  if (!statSync(gitDir).isDirectory()) {
-    const pointer = parseGitDirPointer(readFileSync(gitDir, 'utf8'));
-    if (pointer === undefined) return true;
-    resolvedGitDir = resolve(workDir, pointer);
+  let resolvedGitDir: string;
+  try {
+    if (statSync(gitDir).isDirectory()) {
+      resolvedGitDir = gitDir;
+    } else {
+      const pointer = parseGitDirPointer(readFileSync(gitDir, 'utf8'));
+      if (pointer === undefined) return true;
+      resolvedGitDir = resolve(workDir, pointer);
+    }
+  } catch {
+    return false;
   }
   const workTreeRoot = dirname(gitDir);
   for (const scope of ['--local', '--worktree']) {

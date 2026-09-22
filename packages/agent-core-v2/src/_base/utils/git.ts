@@ -49,11 +49,17 @@ async function coreWorktreeSafe(
   gitDir: string | null,
 ): Promise<boolean> {
   if (gitDir === null) return true;
-  let resolvedGitDir = gitDir;
-  if (!(await stat(gitDir)).isDirectory()) {
-    const pointer = parseGitDirPointer(await readFile(gitDir, 'utf8'));
-    if (pointer === undefined) return true;
-    resolvedGitDir = resolve(cwd, pointer);
+  let resolvedGitDir: string;
+  try {
+    if ((await stat(gitDir)).isDirectory()) {
+      resolvedGitDir = gitDir;
+    } else {
+      const pointer = parseGitDirPointer(await readFile(gitDir, 'utf8'));
+      if (pointer === undefined) return true;
+      resolvedGitDir = resolve(cwd, pointer);
+    }
+  } catch {
+    return false;
   }
   const workTreeRoot = dirname(gitDir);
   const results = await Promise.all(
