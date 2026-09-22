@@ -1148,6 +1148,27 @@ describe('SessionManager remote environment wiring', () => {
     expect(byEnvironment.has('remote')).toBe(true);
   });
 
+  it('opens a remote-bound session without waiting for an in-flight connect', async () => {
+    const { manager, byEnvironment, remoteConnect } = restoreSetup({
+      remoteStatus: 'disconnected',
+    });
+    remoteConnect.mockImplementation(() => new Promise<void>(() => {}));
+
+    const handle = await Promise.race([
+      manager.resume('session-1'),
+      new Promise<undefined>((_resolve, reject) => {
+        setTimeout(() => {
+          reject(new Error('resume blocked on connect'));
+        }, 200);
+      }),
+    ]);
+
+    expect(handle).toBeDefined();
+    expect(remoteConnect).toHaveBeenCalledTimes(1);
+    expect(byEnvironment.has('local')).toBe(true);
+    expect(byEnvironment.has('remote')).toBe(false);
+  });
+
   it('leaves a local restored binding untouched', async () => {
     const { manager, byEnvironment, registry, remoteConnect } = restoreSetup({
       remoteStatus: 'disconnected',

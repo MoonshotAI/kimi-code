@@ -9388,7 +9388,7 @@ describe('KimiTUI environment slot', () => {
     });
   });
 
-  it('shows a one-shot disconnect notice with reconnect guidance', async () => {
+  it('shows a one-shot disconnect notice without asking for a manual reconnect', async () => {
     const session = environmentSession({
       listEnvironments: vi.fn(async () => ({
         workspaceId: 'ws-1',
@@ -9404,7 +9404,7 @@ describe('KimiTUI environment slot', () => {
 
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('Environment ssh:dev-box disconnected');
-    expect(transcript).toContain('Use /environment to reconnect.');
+    expect(transcript).not.toContain('/environment');
 
     await driver.refreshEnvironmentSlot();
     const after = stripSgr(renderTranscript(driver));
@@ -9500,7 +9500,7 @@ describe('KimiTUI environment slot', () => {
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('Environment ssh:dev-box disconnected');
     expect(transcript).toContain('initialize timed out after 10000ms; executor stderr: Password:');
-    expect(transcript).toContain('Use /environment to reconnect.');
+    expect(transcript).not.toContain('/environment');
     expect(transcript).not.toContain('second line stays out');
   });
 

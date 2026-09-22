@@ -110,7 +110,7 @@ There is **no silent fallback to the local environment** after a drop: a command
 
 Reconnecting replaces the **shared** connection, so it reaches every workspace bound to the same target: whichever workspace triggers it — the `/environment` dialog, the REST API, or an automatic retry — Kimi Code builds a fresh connection and switches every workspace's view to it. A turn still in flight on the old connection fails with `environment.unavailable`, exactly as if the connection had dropped.
 
-Resuming a session works the same way: the restored binding is tried once at load, and when the target is unreachable the session still opens with the binding kept and the environment left `disconnected`. The first tool call retries the connection, and there is never a silent fallback to `local`.
+Resuming a session works the same way: the restored binding is connected in the background and does not delay opening the session. When the target is unreachable, or the handshake is still in progress, the session opens immediately with the binding kept and the environment left `connecting` or `disconnected`. The first tool call waits for that attempt or retries it, and there is never a silent fallback to `local`.
 
 Every connect attempt is bounded to 10 seconds: a target that never answers the handshake fails with an `initialize timed out` error instead of hanging silently, and when the launcher wrote anything to stderr — a stuck password prompt, an `npx` download's progress — the error includes that tail, so the cause is visible.
 
