@@ -10,7 +10,7 @@ import {
   isCoreWorktreeSafe,
   parseGitDirPointer,
   resolveConfigPaths,
-} from '@moonshot-ai/agent-core-v2/_base/utils/gitHardening';
+} from '@moonshot-ai/git-hardening';
 
 export { GIT_CONFIG_ARGS, GIT_DIFF_ARGS };
 
