@@ -9,6 +9,18 @@ export function parseBooleanEnv(value: string | undefined): boolean | undefined 
   return undefined;
 }
 
+export function parseNonNegativeIntEnv(value: string | undefined): number | undefined {
+  const normalized = value?.trim();
+  if (normalized === undefined || !/^\d+$/.test(normalized)) return undefined;
+  const n = Number(normalized);
+  return Number.isSafeInteger(n) ? n : undefined;
+}
+
+export function parsePositiveIntEnv(value: string | undefined): number | undefined {
+  const n = parseNonNegativeIntEnv(value);
+  return n !== undefined && n > 0 ? n : undefined;
+}
+
 export function parseNumberEnv(value: string | undefined): number | undefined {
   const normalized = value?.trim();
   if (normalized === undefined || normalized.length === 0) return undefined;
