@@ -1,6 +1,13 @@
-import type { FsDiffResponse, FsGitStatusResponse, FsPullRequest } from './git';
+import type {
+  FsDiffResponse,
+  FsGitStatusResponse,
+  FsPullRequest,
+  RunGitOptions,
+  RunGitResult,
+} from './git';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { GIT_DIFF_ARGS, hardenedGitConfigArgs } from '#/app/git/hardening';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IRuntimeResolver, IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
@@ -11,6 +18,7 @@ import { findGitWorkTree, type GitWorkTree } from './workTree';
 
 const DIFF_MAX_BYTES = 1_048_576;
 
+const CONFIG_PROBE_TIMEOUT_MS = 5_000;
 const PR_SPAWN_TIMEOUT_MS = 5_000;
 const PULL_REQUEST_TTL_MS = 60_000;
 
@@ -47,7 +55,11 @@ export class GitService implements IGitService {
     if (dirty) {
       const head = await this.runCommand('git', ['rev-parse', '--verify', '--quiet', 'HEAD'], cwd);
       if (head.exitCode === 0) {
-        const numstat = await this.runCommand('git', ['diff', '--no-color', '--numstat', 'HEAD', '--'], cwd);
+        const numstat = await this.runCommand(
+          'git',
+          ['diff', '--no-color', ...GIT_DIFF_ARGS, '--numstat', 'HEAD', '--'],
+          cwd,
+        );
         if (numstat.exitCode === 0) {
           const stats = parseNumstat(numstat.stdout);
           result.additions = stats.additions;
@@ -79,7 +91,7 @@ export class GitService implements IGitService {
     if (untracked || !hasHead) {
       const res = await this.runCommand(
         'git',
-        ['diff', '--no-color', '--no-index', '--', '/dev/null', relPath],
+        ['diff', '--no-color', ...GIT_DIFF_ARGS, '--no-index', '--', '/dev/null', relPath],
         cwd,
       );
       if (res.exitCode !== 0 && res.exitCode !== 1) {
@@ -87,7 +99,11 @@ export class GitService implements IGitService {
       }
       diffStdout = res.stdout;
     } else {
-      const res = await this.runCommand('git', ['diff', '--no-color', 'HEAD', '--', relPath], cwd);
+      const res = await this.runCommand(
+        'git',
+        ['diff', '--no-color', ...GIT_DIFF_ARGS, 'HEAD', '--', relPath],
+        cwd,
+      );
       if (res.exitCode !== 0) {
         throw this.gitUnavailable(cwd, res.stderr.trim() || `git diff exit ${res.exitCode}`);
       }
@@ -117,6 +133,30 @@ export class GitService implements IGitService {
     return findGitWorkTree(this.fs, cwd);
   }
 
+  async runGit(
+    cwd: string,
+    args: readonly string[],
+    options: RunGitOptions = {},
+  ): Promise<RunGitResult> {
+    try {
+      const configArgs = await hardenedGitConfigArgs(cwd, (probeArgs) =>
+        this.spawnAndCollect('git', probeArgs, cwd, {
+          timeoutMs: CONFIG_PROBE_TIMEOUT_MS,
+        }),
+      );
+      if (configArgs === null) {
+        return { exitCode: -1, stdout: '', stderr: 'git config probe failed' };
+      }
+      return await this.spawnAndCollect('git', [...configArgs, ...args], cwd, options);
+    } catch (error) {
+      return {
+        exitCode: -1,
+        stdout: '',
+        stderr: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
   private async readPullRequest(cwd: string): Promise<FsPullRequest | null> {
     const cached = this.pullRequestCache.get(cwd);
     const now = Date.now();
@@ -142,8 +182,20 @@ export class GitService implements IGitService {
     cmd: string,
     args: readonly string[],
     cwd: string,
-    options: RunOptions = {},
-  ): Promise<RunResult> {
+    options: RunGitOptions = {},
+  ): Promise<RunGitResult> {
+    if (cmd === 'git') {
+      return this.runGit(cwd, args, options);
+    }
+    return this.spawnAndCollect(cmd, args, cwd, options);
+  }
+
+  private async spawnAndCollect(
+    cmd: string,
+    args: readonly string[],
+    cwd: string,
+    options: RunGitOptions,
+  ): Promise<RunGitResult> {
     const workspaceId = this.resolveWorkspaceId(cwd);
     const lease = this.resolver.acquire({ workspaceId, runtimeId: 'local' }, ['process']);
     const spawned = await lease.runtime.process!
@@ -209,17 +261,6 @@ export class GitService implements IGitService {
       details: { cwd, detail },
     });
   }
-}
-
-interface RunResult {
-  readonly exitCode: number;
-  readonly stdout: string;
-  readonly stderr: string;
-}
-
-interface RunOptions {
-  readonly timeoutMs?: number;
-  readonly env?: Record<string, string>;
 }
 
 async function collect(stream: AsyncIterable<Uint8Array | string>): Promise<string> {

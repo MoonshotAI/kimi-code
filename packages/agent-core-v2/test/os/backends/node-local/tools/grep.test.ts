@@ -1,6 +1,9 @@
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Readable, type Writable } from 'node:stream';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
@@ -33,6 +36,7 @@ import {
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { IHostProcessService, type IHostProcess } from '#/os/interface/hostProcess';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { Event } from '#/_base/event';
@@ -160,7 +164,7 @@ function createTestFs(kaos: FakeKaos): IHostFileSystem {
     readdir: () => notImplemented('readdir'),
     mkdir: () => notImplemented('mkdir'),
     remove: () => notImplemented('remove'),
-    realpath: () => notImplemented('realpath'),
+    realpath: (path) => Promise.resolve(path),
   };
 }
 
@@ -1659,7 +1663,9 @@ describe('GrepTool', () => {
     const tool = new GrepTool(createFakeKaos({ exec }), workspace);
 
     const resultPromise = executeTool(tool, context({ pattern: 'hit' }, controller.signal));
-    controller.abort();
+    setTimeout(() => {
+      controller.abort();
+    }, 0);
     const result = await Promise.race([
       resultPromise,
       new Promise<'timed out'>((resolve) => {
@@ -2129,4 +2135,59 @@ describe('GrepTool', () => {
     expect(result).toEqual({ isError: true, output: 'Aborted before search started' });
     expect(exec).not.toHaveBeenCalled();
   });
+});
+
+describe('GrepTool symlink escape', () => {
+  let tmpDir: string;
+  let wsDir: string;
+  let outsideDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'grep-symlink-'));
+    wsDir = join(tmpDir, 'ws');
+    outsideDir = join(tmpDir, 'outside');
+    await mkdir(wsDir);
+    await mkdir(outsideDir);
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeRealFsTool(spawn: ReturnType<typeof vi.fn>) {
+    const environment = createTestEnv(createFakeKaos());
+    const backend = Object.assign(
+      new FakeRuntime(
+        { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+        { capabilities: ['fs', 'process'], pathClass: environment.pathClass },
+      ),
+      {
+        process: { _serviceBrand: undefined, spawn } as unknown as IHostProcessService,
+        fs: new HostFileSystem(),
+        environment,
+      },
+    );
+    const runtime: IAgentRuntimeService = {
+      _serviceBrand: undefined,
+      onDidChange: () => ({ dispose: () => {} }),
+      isAvailable: () => true,
+      inspect: () => backend,
+      acquire: () => ({ runtime: backend, track: (resource) => resource, dispose: () => {} }),
+    };
+    return new ProductionGrepTool(runtime, stubWorkspaceContext(wsDir), noopTelemetryService);
+  }
+
+  it('rejects a search root symlink that points outside the workspace', async () => {
+    await writeFile(join(outsideDir, 'secret.txt'), 'hit');
+    await symlink(outsideDir, join(wsDir, 'external'));
+    const spawn = vi.fn();
+    const tool = makeRealFsTool(spawn);
+
+    const result = await executeTool(tool, context({ pattern: 'hit', path: join(wsDir, 'external') }));
+
+    expect(result).toMatchObject({ isError: true });
+    expect(toolContentString(result)).toMatch(/symbolic link/);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
 });
