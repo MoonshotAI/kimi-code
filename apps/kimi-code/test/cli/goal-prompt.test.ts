@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   GOAL_EXIT_CODES,
@@ -7,6 +7,15 @@ import {
   goalSummaryJson,
   parseHeadlessGoalCreate,
 } from '#/cli/goal-prompt';
+
+// `kimi -p "/goal …"` shares the `/goal` grammar with the TUI slash command;
+// it must not drag the whole TUI command layer (dialogs, panels, pi-tui) into
+// the headless process to parse it.
+const tuiCommandLayer = vi.hoisted(() => ({ evaluated: false }));
+vi.mock('#/tui/commands/index', async (importOriginal) => {
+  tuiCommandLayer.evaluated = true;
+  return importOriginal();
+});
 
 function snapshot(overrides: Record<string, unknown> = {}) {
   return {
@@ -72,5 +81,15 @@ describe('goal summary', () => {
   it('renders a null goal', () => {
     expect(goalSummaryJson(null).status).toBeNull();
     expect(formatGoalSummaryText(null)).toContain('no goal');
+  });
+});
+
+describe('headless goal parsing import graph', () => {
+  it('parses /goal without evaluating the TUI command layer', () => {
+    expect(parseHeadlessGoalCreate('/goal Ship feature X')).toEqual({
+      objective: 'Ship feature X',
+      replace: false,
+    });
+    expect(tuiCommandLayer.evaluated).toBe(false);
   });
 });

@@ -11,7 +11,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { createServerLogger, startServer, type ServerLogger } from '@moonshot-ai/kap-server';
+import type { ServerLogger } from '@moonshot-ai/kap-server';
 import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
 import chalk from 'chalk';
 import { type Command, Option } from 'commander';
@@ -21,7 +21,6 @@ import { getNativeWebAssetsDir } from '#/native/web-assets';
 import { darkColors } from '#/tui/theme/colors';
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
 import { getDataDir } from '#/utils/paths';
-import { generateRemoteControlQr } from '#/utils/remote-control-qr';
 
 import { initializeServerTelemetry } from '../../telemetry';
 import {
@@ -228,6 +227,9 @@ export async function handleWebCommand(
           stderr: deps.stderr,
           onStatus,
         });
+        // The QR helper brings pi-tui and qrcode along; load it only for
+        // Remote Control rather than on every CLI start.
+        const { generateRemoteControlQr } = await import('#/utils/remote-control-qr');
         const qrCode = await generateRemoteControlQr(remoteControl.url, dataDir);
         deps.stdout.write(
           formatRemoteControlOutput({
@@ -341,10 +343,13 @@ async function runServerInProcess(
     process.exit(0);
   }
 
-  // kap-server (the DI × Scope engine server) is the only server flavor. Its
-  // `startServer` returns `{ host, port, close }` rather than `{ address,
-  // logger, close }`, so adapt it to the `RoutedServer` surface the rest of
-  // this runner consumes.
+  // kap-server (the DI × Scope engine server) is the only server flavor. It is
+  // imported here rather than at module load: the CLI registers `kimi web` on
+  // every invocation, and the server (fastify, its routes and protocol
+  // schemas) must not be paid for by `kimi -p`. Its `startServer` returns
+  // `{ host, port, close }` rather than `{ address, logger, close }`, so adapt
+  // it to the `RoutedServer` surface the rest of this runner consumes.
+  const { createServerLogger, startServer } = await import('@moonshot-ai/kap-server');
   const logger = createServerLogger({ level: options.logLevel });
   const webAssetsDir = serverWebAssetsDir();
   if (webAssetsDir === undefined) {

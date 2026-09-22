@@ -28,7 +28,6 @@ import { startupTrace } from './utils/startup-trace';
 import type { CLIOptions } from './cli/options';
 import { OptionConflictError, validateOptions } from './cli/options';
 import { runPrompt } from './cli/run-prompt';
-import { runShell } from './cli/run-shell';
 import { formatStartupError } from './cli/startup-error';
 import { runPluginNodeEntry } from './cli/sub/plugin-run-node';
 import { runUpdateDownloadCommand } from './cli/sub/update-download';
@@ -89,6 +88,9 @@ export async function handleMainCommand(
     return { headlessCompleted: true };
   }
 
+  // The shell runner pulls in the whole terminal UI; load it only once we know
+  // this is an interactive session so `kimi -p` never pays for it.
+  const { runShell } = await import('./cli/run-shell');
   startupTrace('runShell:begin');
   await runShell(validated.options, version);
   return { headlessCompleted: false };
@@ -111,6 +113,7 @@ async function handleMigrateCommand(
     process.exitCode = await runHeadlessMigrate({ configOnly: options.configOnly });
     return;
   }
+  const { runShell } = await import('./cli/run-shell');
   await runShell(MIGRATE_CLI_OPTIONS, version, { migrateOnly: true });
 }
 
