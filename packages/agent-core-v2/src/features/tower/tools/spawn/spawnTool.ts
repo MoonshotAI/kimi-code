@@ -56,7 +56,7 @@ type SubagentBinding = ReturnType<typeof resolveSubagentBinding>;
 
 const REVIEW_REQUEST_SCAN_LIMIT = 50;
 const REVIEW_HISTORY_ROUNDS = 5;
-const REVIEW_EXCERPT_MAX_CHARS = 4000;
+const REVIEW_EXCERPT_MAX_CHARS = 8000;
 
 function truncateSection(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
@@ -460,7 +460,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         '- Keep your mission current with TowerMission: task_done as you finish tasks, note for decisions, blocker when stuck.\n' +
         '- Ambiguity is escalated, not guessed: if the mission and its Context leave substantive doubt about what to build, TowerSend(to="tower", subject="clarify-request", body=what needs pinning down) BEFORE acting — the tower relays to the human; you never ask the user directly.\n\n' +
         `# When the mission is done\n` +
-        "1. `git add` + `git commit` your mission's changes in the worktree (source files only — no build outputs or generated artifacts).\n" +
+        "1. `git add` + `git commit` your mission's changes in the worktree (source files only — no build outputs).\n" +
         `2. Mark the mission completed: TowerMission(id="${mission.id}", status="completed").\n` +
         '3. Request review: TowerSend(to="tower", subject="review-request", body=what you changed and why, reconciled against the mission tasks item by item — the reviewer maps each task to your diff).\n' +
         '4. Finish with a structured final summary: files changed, key decisions, open follow-ups.' +
