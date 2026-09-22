@@ -11,15 +11,58 @@ import { currentTheme } from '#/tui/theme';
 // ESC [ <params> <intermediates> <final> — colours, cursor moves, clear, and
 // private modes such as ESC[?1049h (alt screen) / ESC[?25l (hide cursor).
 const CSI_PATTERN = /\u001B\[[0-9:;<=>?]*[ -/]*[@-~]/g;
+const ERASE_IN_LINE_PATTERN = /\u001B\[[0-9:;<=>?]*[ -/]*K/g;
+const ERASE_IN_LINE_MARKER = '\uE000';
 // ESC ] … <BEL>  or  ESC ] … ESC \ — window titles and OSC 8 hyperlinks.
 const OSC_PATTERN = /\u001B\][\s\S]*?(?:\u0007|\u001B\\)/g;
 // ESC <char> (and ESC <intermediate> <char>) — charset/keypad selection,
 // save/restore cursor (ESC 7 / ESC 8), full reset (ESC c), etc. Runs after the
 // CSI/OSC patterns, so it only catches sequences they didn't already consume.
 const ESC_SINGLE_PATTERN = /\u001B(?:[ -/][0-~]|[0-~])/g;
-// C0 control characters except \n (0x0A) and \t (0x09): NUL, BEL, \b, \r, …
-// plus a lone ESC (0x1B) that wasn't part of a sequence recognised above.
-const C0_CONTROL_PATTERN = /[\u0000-\u0008\u000B-\u001B\u001C-\u001F]/g;
+// C0 control characters except \n (0x0A), \t (0x09), and \r (0x0D): NUL,
+// BEL, \b, … plus a lone ESC (0x1B) that wasn't part of a sequence recognised
+// above. Carriage returns are resolved separately because command progress
+// redraws use them to overwrite the current line.
+const C0_CONTROL_PATTERN = /[\u0000-\u0008\u000B-\u000C\u000E-\u001B\u001C-\u001F]/g;
+
+function resolveCarriageReturns(text: string): string {
+  if (!text.includes('\r') && !text.includes(ERASE_IN_LINE_MARKER)) return text;
+  return text
+    .split('\n')
+    .map((line) => {
+      if (!line.includes('\r') && !line.includes(ERASE_IN_LINE_MARKER)) return line;
+      let out = '';
+      let cursor = 0;
+      for (let i = 0; i < line.length;) {
+        const char = line[i];
+        if (char === '\r') {
+          cursor = 0;
+          i++;
+          continue;
+        }
+        if (char === ERASE_IN_LINE_MARKER) {
+          out = out.slice(0, cursor);
+          i++;
+          continue;
+        }
+        const nextControl = nextControlIndex(line, i);
+        const chunk = line.slice(i, nextControl);
+        out = out.slice(0, cursor) + chunk + out.slice(cursor + chunk.length);
+        cursor += chunk.length;
+        i = nextControl;
+      }
+      return out;
+    })
+    .join('\n');
+}
+
+function nextControlIndex(line: string, start: number): number {
+  let index = start;
+  while (index < line.length && line[index] !== '\r' && line[index] !== ERASE_IN_LINE_MARKER) {
+    index++;
+  }
+  return index;
+}
 
 /**
  * Strip every terminal control sequence from captured command output so it is
@@ -32,13 +75,16 @@ export function sanitizeShellOutput(text: string): string {
   if (typeof text !== 'string') return '';
   if (text.length === 0) return text;
   try {
-    return text
+    const withoutEscapes = text
       .replace(OSC_PATTERN, '')
+      .replace(ERASE_IN_LINE_PATTERN, ERASE_IN_LINE_MARKER)
       .replace(CSI_PATTERN, '')
-      .replace(ESC_SINGLE_PATTERN, '')
-      .replace(C0_CONTROL_PATTERN, '');
+      .replace(ESC_SINGLE_PATTERN, '');
+    return resolveCarriageReturns(withoutEscapes)
+      .replace(C0_CONTROL_PATTERN, '')
+      .replaceAll(ERASE_IN_LINE_MARKER, '');
   } catch {
-    return text.replace(C0_CONTROL_PATTERN, '');
+    return resolveCarriageReturns(text).replace(C0_CONTROL_PATTERN, '').replaceAll(ERASE_IN_LINE_MARKER, '');
   }
 }
 
