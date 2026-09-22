@@ -235,11 +235,11 @@ export interface KimiTUIStartupInput {
 }
 
 type EffectiveActivityPaneMode = ActivityPaneMode | 'idle' | 'session';
-type LoadingTipKind = 'moon' | 'composing';
+type LoadingTipKind = 'moon' | 'braille';
 
 function loadingTipKind(mode: EffectiveActivityPaneMode): LoadingTipKind | undefined {
   if (mode === 'waiting' || mode === 'tool') return 'moon';
-  if (mode === 'composing') return 'composing';
+  if (mode === 'composing' || mode === 'thinking') return 'braille';
   return undefined;
 }
 
@@ -3323,10 +3323,10 @@ export class KimiTUI {
   updateActivityPane(): void {
     const effectiveMode = this.resolveActivityPaneMode();
     const tipKind = loadingTipKind(effectiveMode);
-    // Pick a fresh loading tip when the loading kind changes. The same kind
-    // covers waiting/tool (both moon spinners) and any intermediate thinking
-    // phase, so a continuous burst of tool calls does not flip tips. Clear the
-    // cache only when there is no loading UI at all.
+    // Pick a fresh loading tip when the loading kind changes: waiting/tool
+    // share the moon kind and thinking/composing share the braille kind, so a
+    // burst of tool calls or thinking/composing alternation does not flip
+    // tips. Clear the cache only when there is no loading UI at all.
     if (effectiveMode === 'idle' || effectiveMode === 'session' || effectiveMode === 'hidden') {
       this.currentLoadingTip = undefined;
     } else if (
@@ -3384,12 +3384,21 @@ export class KimiTUI {
         break;
       }
       case 'thinking': {
-        this.stopActivitySpinner();
+        const spinner = this.ensureActivitySpinner('braille', 'Thinking…', (s) =>
+          currentTheme.fg('primary', s),
+        );
         this.syncAgentSwarmActivitySpinner(undefined);
+        this.state.activityContainer.addChild(
+          new ActivityPaneComponent({
+            mode: 'thinking',
+            spinner,
+            tip: this.currentLoadingTip?.tip,
+          }),
+        );
         break;
       }
       case 'composing': {
-        const spinner = this.ensureActivitySpinner('braille', 'working…', (s) =>
+        const spinner = this.ensureActivitySpinner('braille', 'Working…', (s) =>
           currentTheme.fg('primary', s),
         );
         this.syncAgentSwarmActivitySpinner(undefined);
@@ -3419,9 +3428,9 @@ export class KimiTUI {
       case 'session': {
         this.stopActivitySpinner();
         this.syncAgentSwarmActivitySpinner(undefined);
-        // Keep a placeholder row so the activity area does not fully shrink
-        // when the spinner is removed at the end of streaming; combined with
-        // pi-tui's clamp, this avoids a destructive full redraw (viewport jump).
+        // Working modes occupy two rows (a spacer above the loader); idle
+        // keeps a one-row placeholder so the dock only shifts once at turn
+        // boundaries instead of on every intra-turn mode flip.
         this.state.activityContainer.addChild(new Spacer(1));
         break;
       }
