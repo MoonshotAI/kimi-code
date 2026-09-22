@@ -408,6 +408,46 @@ describe('git status cache', () => {
     }
   });
 
+  it('caches filter probes when the config merely mentions include in values', () => {
+    const root = mkdtempSync(join(tmpdir(), 'git-status-include-url-'));
+    mkdirSync(join(root, '.git'), { recursive: true });
+    writeFileSync(
+      join(root, '.git', 'config'),
+      '[remote "origin"]\n\turl = git@example.com:team/include.git\n[filter "evil"]\n\tclean = touch /tmp/m\n',
+    );
+    mocks.execFile.mockImplementation(
+      (
+        _cmd: string,
+        _args: string[],
+        _options: unknown,
+        callback: (error: Error | null, stdout: string, stderr: string) => void,
+      ) => {
+        callback(new Error('no pull request'), '', '');
+      },
+    );
+    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
+      if (args.includes('core.worktree')) return { status: 1, stdout: '' };
+      if (args.includes('config')) return { status: 0, stdout: 'filter.evil.clean\n' };
+      if (args.includes('rev-parse')) return { status: 0, stdout: 'true\n' };
+      if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
+      if (args.includes('status')) return { status: 0, stdout: '## main...origin/main\n' };
+      return { status: 1, stdout: '' };
+    });
+
+    try {
+      const probeCount = () =>
+        mocks.spawnSync.mock.calls.filter((call) => (call[1] as string[]).includes('config'))
+          .length;
+      const cache = createGitStatusCache(root, { trusted: true });
+      cache.getStatus();
+      expect(probeCount()).toBe(4);
+      cache.getStatus();
+      expect(probeCount()).toBe(4);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('fails closed when core.worktree points outside the repository', () => {
     const root = mkdtempSync(join(tmpdir(), 'git-status-worktree-'));
     mkdirSync(join(root, '.git'), { recursive: true });

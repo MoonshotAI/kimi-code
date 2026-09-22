@@ -143,6 +143,8 @@ async function probeFilterArgs(cwd: string, probe: GitProbe): Promise<readonly s
   return args;
 }
 
+const INCLUDE_SECTION_RE = /^\s*\[\s*include(?:\.|\s|\])/im;
+
 async function gitConfigStamp(cwd: string, found: string | null): Promise<string | null> {
   try {
     if (found === null) return null;
@@ -161,7 +163,7 @@ async function gitConfigStamp(cwd: string, found: string | null): Promise<string
     const stamps = await Promise.all(configPaths.map(stampConfigPath));
     for (const path of configPaths) {
       const content = await readFile(path, 'utf8').catch(() => null);
-      if (content !== null && content.toLowerCase().includes('include')) return null;
+      if (content !== null && INCLUDE_SECTION_RE.test(content)) return null;
     }
     return stamps.join('|');
   } catch {

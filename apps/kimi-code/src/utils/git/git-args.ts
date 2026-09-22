@@ -133,6 +133,8 @@ function probeFilterArgs(git: string, workDir: string): readonly string[] | null
   }
 }
 
+const INCLUDE_SECTION_RE = /^\s*\[\s*include(?:\.|\s|\])/im;
+
 function gitConfigStamp(workDir: string, found: string | null): string | null {
   try {
     if (found === null) return null;
@@ -154,7 +156,7 @@ function gitConfigStamp(workDir: string, found: string | null): string | null {
         content = readFileSync(path, 'utf8');
       } catch {
       }
-      if (content !== null && content.toLowerCase().includes('include')) return null;
+      if (content !== null && INCLUDE_SECTION_RE.test(content)) return null;
     }
     return configPaths.map(stampConfigPath).join('|');
   } catch {
