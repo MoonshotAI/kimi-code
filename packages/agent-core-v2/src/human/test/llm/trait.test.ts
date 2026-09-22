@@ -820,7 +820,7 @@ describe('withMaxCompletionTokens', () => {
       { messages },
       { signal: new AbortController().signal },
     );
-    expect(client.body()['max_tokens']).toBe(128000);
+    expect(client.body()['max_tokens']).toBe(64000);
 
     const sonnet35 = { ...model, model: 'claude-3-5-sonnet-20241022' };
     await requester.generate(
@@ -1491,7 +1491,7 @@ describe('anthropic thinking kwargs', () => {
     expect(body['output_config']).toEqual({ effort: 'high' });
     expect(body['betaFeatures']).toBeUndefined();
     expect(body['betas']).toEqual(['context-management-2025-06-27']);
-    expect(body['max_tokens']).toBe(128000);
+    expect(body['max_tokens']).toBe(64000);
     expect(client.betaCalled()).toBe(true);
     let bodyMessages = body['messages'] as Record<string, unknown>[];
     expect(bodyMessages[0]?.['content']).toEqual([
