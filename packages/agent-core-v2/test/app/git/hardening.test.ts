@@ -6,7 +6,7 @@ import {
   isCoreWorktreeSafe,
   parseGitDirPointer,
   resolveConfigPaths,
-} from '#/_base/utils/git';
+} from '#/app/git/hardening';
 
 describe('buildDriverOverrides', () => {
   it('neutralizes filter and merge drivers found in probe output', () => {

@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
-import { GIT_DIFF_ARGS, hardenedGitConfigArgs, type GitProbeResult } from '#/_base/utils/git';
+import { GIT_DIFF_ARGS, hardenedGitConfigArgs, type GitProbeResult } from '#/app/git/hardening';
 
 const GIT_TIMEOUT_MS = 60_000;
 const CONFIG_PROBE_TIMEOUT_MS = 5_000;

@@ -7,7 +7,7 @@ import type {
 } from './git';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { GIT_DIFF_ARGS, hardenedGitConfigArgs } from '#/_base/utils/git';
+import { GIT_DIFF_ARGS, hardenedGitConfigArgs } from '#/app/git/hardening';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IRuntimeResolver, IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
