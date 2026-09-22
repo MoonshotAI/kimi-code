@@ -6,6 +6,7 @@ import {
   IAgentLifecycleService,
   IAgentContextMemoryService,
   IFlagService,
+  IWireService,
   ISessionIndex,
   ISessionManager,
   ISessionMetadata,
@@ -556,6 +557,9 @@ export class TranscriptService {
       agentId,
       WIRE_FILE,
     );
+    const liveAgents = getLiveSessionById(this.deps.core.accessor, sessionId)
+      ?.accessor.get(IAgentLifecycleService);
+    await this.drainLiveWire(liveAgents, sessionId, agentId);
     let records: ContextRecord[];
     try {
       records = flattenChain(await this.wireCache.read(wirePath));
@@ -660,8 +664,6 @@ export class TranscriptService {
       resolvePlanRevisionKey: (key) =>
         join(SESSIONS_ROOT, summary.workspaceId, sessionId, AGENTS_DIR, agentId, key),
     });
-    const liveAgents = getLiveSessionById(this.deps.core.accessor, sessionId)
-      ?.accessor.get(IAgentLifecycleService);
     const status = liveAgents
       ?.handleOf(agentId)
       ?.accessor.get(IAgentLoopService)
@@ -688,6 +690,23 @@ export class TranscriptService {
     const modes = { ...snapshot.meta.modes, tower: undefined };
     const cleared = modes.plan === undefined && modes.swarm === undefined && modes.tower === undefined;
     return { ...snapshot, meta: { ...snapshot.meta, modes: cleared ? undefined : modes } };
+  }
+
+  private async drainLiveWire(
+    agents: IAgentLifecycleService | undefined,
+    sessionId: string,
+    agentId: string,
+  ): Promise<void> {
+    const wire = agents?.handleOf(agentId)?.accessor.get(IWireService);
+    if (wire === undefined) return;
+    try {
+      await wire.flush();
+    } catch (error) {
+      this.deps.logger?.warn(
+        { sessionId, agentId, err: error instanceof Error ? error.message : error },
+        'transcript: draining the live wire before a cold read failed',
+      );
+    }
   }
 
   private async coldTowerOwnedHere(sessionId: string, cwd: string | undefined): Promise<boolean> {
