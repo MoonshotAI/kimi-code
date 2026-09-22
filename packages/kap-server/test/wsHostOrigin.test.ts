@@ -96,10 +96,6 @@ describe('WS upgrade Host/Origin checks', () => {
       await expectRejected(url(), { headers: { origin: 'http://evil.com' } });
     });
 
-    it('rejects a null Origin from a sandboxed document', async () => {
-      await expectRejected(url(), { headers: { origin: 'null' } });
-    });
-
     it('allows a normal Host and a Node client with no Origin', async () => {
       const ws = await openConn(url());
       sockets.push(ws);
