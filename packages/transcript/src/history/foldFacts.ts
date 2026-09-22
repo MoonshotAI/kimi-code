@@ -4,7 +4,7 @@ import type { TranscriptItem, TranscriptMarker, TranscriptTaskRef } from '../mod
 import type { GoalMeta, GoalStatus, TranscriptMeta } from '../model/meta';
 import type { TranscriptTask } from '../model/task';
 import type { TodoItem, TranscriptTodo } from '../model/todo';
-import type { TranscriptTurn } from '../model/turn';
+import type { StepUsage, TranscriptTurn } from '../model/turn';
 import type { AgentTranscriptSnapshot } from '../ops/operation';
 
 export interface HistoryWireRecord {
@@ -197,6 +197,28 @@ function recordTimeIso(record: HistoryWireRecord): string | undefined {
   return undefined;
 }
 
+function readFiniteNumber(raw: unknown): number | undefined {
+  return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
+}
+
+function readStepUsage(raw: unknown): StepUsage | undefined {
+  if (raw === null || typeof raw !== 'object') return undefined;
+  const usage = raw as Record<string, unknown>;
+  const inputOther = readFiniteNumber(usage['inputOther']);
+  const output = readFiniteNumber(usage['output']);
+  const inputCacheRead = readFiniteNumber(usage['inputCacheRead']);
+  const inputCacheCreation = readFiniteNumber(usage['inputCacheCreation']);
+  if (
+    inputOther === undefined ||
+    output === undefined ||
+    inputCacheRead === undefined ||
+    inputCacheCreation === undefined
+  ) {
+    return undefined;
+  }
+  return { inputOther, output, inputCacheRead, inputCacheCreation };
+}
+
 function epochMsToIso(value: unknown): string | undefined {
   return typeof value === 'number' && Number.isFinite(value)
     ? new Date(value).toISOString()
@@ -368,6 +390,7 @@ export function foldWireRecordFacts(
             state,
             endedAt: state === 'running' ? undefined : recordTimeIso(record),
             resultSummary: typeof record['resultSummary'] === 'string' ? record['resultSummary'] : task.resultSummary,
+            usage: readStepUsage(record['usage']) ?? task.usage,
             error: typeof record['error'] === 'string' ? record['error'] : task.error,
           });
         };

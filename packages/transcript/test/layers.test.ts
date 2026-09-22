@@ -1503,7 +1503,7 @@ describe('foldWireRecordFacts (cold facts)', () => {
       { type: 'subagent.completed', subagentId: 'reused', resultSummary: 'old', time: 2000 },
       spawned('reused', 3000),
       { ...spawned('background', 1000), taskId: 'task-1', runInBackground: true },
-      { type: 'subagent.completed', subagentId: 'background', resultSummary: 'done', time: 2000 },
+      { type: 'subagent.completed', subagentId: 'background', resultSummary: 'done', usage: { inputOther: 5, output: 7, inputCacheRead: 1, inputCacheCreation: 2 }, time: 2000 },
       { type: 'task.terminated', info: { taskId: 'task-1', kind: 'agent', status: 'completed', agentId: 'background', detached: true, startedAt: 1000, endedAt: 2000 } },
       { ...spawned('foreign', 1000), parentAgentId: 'other' },
     ], baseWithMarker(), { agentId: 'main' });
@@ -1511,20 +1511,21 @@ describe('foldWireRecordFacts (cold facts)', () => {
       expect.objectContaining({ taskId: 'failed', state: 'failed', error: 'offline' }),
       expect.objectContaining({ taskId: 'cancelled', state: 'killed' }),
       expect.objectContaining({ taskId: 'reused', state: 'running', startedAt: new Date(3000).toISOString() }),
-      expect.objectContaining({ taskId: 'task-1', state: 'completed', resultSummary: 'done', detached: true }),
+      expect.objectContaining({ taskId: 'task-1', state: 'completed', resultSummary: 'done', detached: true, usage: { inputOther: 5, output: 7, inputCacheRead: 1, inputCacheCreation: 2 } }),
     ]));
     expect(folded.tasks).toHaveLength(4);
     expect(folded.tasks.find((task) => task.taskId === 'reused')?.resultSummary).toBeUndefined();
+    expect(folded.tasks.find((task) => task.taskId === 'failed')?.usage).toBeUndefined();
   });
 
   it('adopts the task registered after a spawn and keeps both task representations in sync', () => {
     const folded = foldWireRecordFacts([
       { type: 'subagent.spawned', subagentId: 'child', subagentName: 'explore', parentAgentId: 'main', parentToolCallId: 'tower', runInBackground: false, time: 1000 },
       { type: 'task.started', info: { taskId: 'task-9', kind: 'agent', status: 'running', agentId: 'child', detached: false, startedAt: 1100 }, time: 1100 },
-      { type: 'subagent.completed', subagentId: 'child', resultSummary: 'done', time: 2000 },
+      { type: 'subagent.completed', subagentId: 'child', resultSummary: 'done', usage: { inputOther: 3, output: 4, inputCacheRead: 0, inputCacheCreation: 0 }, time: 2000 },
     ], baseWithMarker(), { agentId: 'main' });
     expect(folded.tasks).toEqual(expect.arrayContaining([
-      expect.objectContaining({ taskId: 'task-9', agentId: 'child', state: 'completed', resultSummary: 'done' }),
+      expect.objectContaining({ taskId: 'task-9', agentId: 'child', state: 'completed', resultSummary: 'done', usage: { inputOther: 3, output: 4, inputCacheRead: 0, inputCacheCreation: 0 } }),
       expect.objectContaining({ taskId: 'child', agentId: 'child', state: 'completed', resultSummary: 'done' }),
     ]));
     expect(folded.tasks.every((task) => task.state === 'completed')).toBe(true);
