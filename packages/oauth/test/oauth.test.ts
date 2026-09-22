@@ -264,6 +264,22 @@ describe('requestDeviceAuthorization', () => {
     expect(auth.interval).toBe(5);
   });
 
+  it('normalizes invalid timing fields from device authorization responses', async () => {
+    server.enqueue('/api/oauth/device_authorization', {
+      status: 200,
+      body: {
+        user_code: 'U',
+        device_code: 'D',
+        verification_uri_complete: 'https://x/y',
+        expires_in: true,
+        interval: 'soon',
+      },
+    });
+    const auth = await requestAuth();
+    expect(auth.expiresIn).toBeNull();
+    expect(auth.interval).toBe(5);
+  });
+
   it('throws OAuthError on non-200 response', async () => {
     server.enqueue('/api/oauth/device_authorization', {
       status: 500,
