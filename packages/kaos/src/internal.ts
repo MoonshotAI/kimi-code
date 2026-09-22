@@ -190,6 +190,11 @@ export function globPatternToRegex(pattern: string, caseSensitive: boolean): Reg
     if (ch === undefined) break;
     switch (ch) {
       case '*':
+        if (pattern[i + 1] === '*' && pattern[i + 2] === '/') {
+          regex += '(?:[^/]+/)*';
+          i += 2;
+          break;
+        }
         regex += '[^/]*';
         break;
       case '?':
