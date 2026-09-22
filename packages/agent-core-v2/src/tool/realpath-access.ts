@@ -140,7 +140,11 @@ export async function assertRealPathWriteTarget(
   pathClass: PathClass,
 ): Promise<void> {
   const resolved = await assertRealPathWithinWorkspace(fs, absPath, workspace, pathClass);
-  if (resolved !== absPath && isProjectLocalConfigPath(resolved)) {
+  const normalizedResolved = pathe.normalize(resolved);
+  const normalizedAbsPath = pathe.normalize(absPath);
+  const comparableResolved = pathClass === 'win32' ? normalizedResolved.toLowerCase() : normalizedResolved;
+  const comparableAbsPath = pathClass === 'win32' ? normalizedAbsPath.toLowerCase() : normalizedAbsPath;
+  if (comparableResolved !== comparableAbsPath && isProjectLocalConfigPath(resolved)) {
     throw new PathSecurityError(
       'PATH_SYMLINK_ESCAPE',
       absPath,

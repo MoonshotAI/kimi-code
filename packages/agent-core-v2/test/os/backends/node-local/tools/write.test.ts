@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PathSecurityError } from '#/tool/path-access';
+import { assertRealPathWriteTarget } from '#/tool/realpath-access';
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
@@ -548,6 +549,22 @@ describe('WriteTool symlink escape', () => {
 
     expect(result.isError).toBeFalsy();
     await expect(readFile(join(configDir, 'local.toml'), 'utf8')).resolves.toBe('updated');
+  });
+
+  it('compares resolved config paths with Windows semantics', async () => {
+    const realpath = vi.fn(async (path: string) => {
+      if (path === 'C:/ws/alias/local.toml') return 'C:\\ws\\.kimi-code\\local.toml';
+      return path.replaceAll('/', '\\');
+    });
+    const fs = { realpath } as unknown as IHostFileSystem;
+    const workspace = { workspaceDir: 'C:/ws', additionalDirs: [] };
+
+    await expect(
+      assertRealPathWriteTarget(fs, 'C:/ws/.kimi-code/local.toml', workspace, 'win32'),
+    ).resolves.toBeUndefined();
+    await expect(
+      assertRealPathWriteTarget(fs, 'C:/ws/alias/local.toml', workspace, 'win32'),
+    ).rejects.toThrow(/project-local config/);
   });
 
   it('allows writes through a symlink that points into an additional dir', async () => {
