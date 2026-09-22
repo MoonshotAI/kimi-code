@@ -68,7 +68,9 @@ const cacheFileEnvelopeSchema = z.object({
 function cacheFileFor(name: string, options: ClientConfigFetchOptions): string | undefined {
   if (options.cacheFile === null) return undefined;
   if (options.cacheFile !== undefined) return options.cacheFile;
-  return join(getCacheDir(), 'client-configs', `${cacheKeyFor(name, options.path).replaceAll(/[^a-zA-Z0-9_-]/g, '_')}.json`);
+  // encodeURIComponent keeps the mapping collision-free: a lossy sanitize
+  // would fold distinct keys (e.g. '/a/b' vs '/a:b') onto one file.
+  return join(getCacheDir(), 'client-configs', `${encodeURIComponent(cacheKeyFor(name, options.path))}.json`);
 }
 
 /** Fresh disk entry, or undefined when missing/stale/invalid. */

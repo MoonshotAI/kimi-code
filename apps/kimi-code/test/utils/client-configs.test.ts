@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -405,6 +405,32 @@ describe('getClientConfig disk cache', () => {
     });
 
     expect(result).toEqual(CONFIG);
+  });
+
+  it('writes paths that sanitize alike to distinct cache files', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'client-configs-home-'));
+    vi.stubEnv('KIMI_CODE_HOME', home);
+    try {
+      const fetchImpl = vi.fn(async () => jsonResponse(ENVELOPE));
+      const now = Date.now();
+
+      await getClientConfig('estimated_cache_duration', configSchema, {
+        fetchImpl: fetchImpl as typeof fetch,
+        now,
+        path: '/client_configs',
+      });
+      await getClientConfig('estimated_cache_duration', configSchema, {
+        fetchImpl: fetchImpl as typeof fetch,
+        now,
+        path: '/client:configs',
+      });
+
+      const files = await readdir(join(home, 'cache', 'client-configs'));
+      expect(files.length).toBe(2);
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(home, { recursive: true, force: true });
+    }
   });
 });
 
