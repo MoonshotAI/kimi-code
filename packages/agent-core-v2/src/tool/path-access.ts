@@ -191,7 +191,7 @@ export function isWithinWorkspace(
 }
 
 export function isProjectLocalConfigPath(targetPath: string): boolean {
-  return targetPath.endsWith('/.kimi-code/local.toml');
+  return targetPath.replaceAll('\\', '/').toLowerCase().endsWith('/.kimi-code/local.toml');
 }
 
 export function extendWorkspaceWithSkillRoots<T extends WorkspaceConfig>(

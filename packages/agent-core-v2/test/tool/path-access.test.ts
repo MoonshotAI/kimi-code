@@ -4,10 +4,21 @@ import type { ShellPathBridge } from '#/_base/execEnv/shellPathBridge';
 import {
   DEFAULT_WORKSPACE_ACCESS_POLICY,
   extendWorkspaceWithSkillRoots,
+  isProjectLocalConfigPath,
   isSensitiveFile,
   resolvePathAccess,
   resolvePathAccessPath,
 } from '#/tool/path-access';
+
+describe('isProjectLocalConfigPath', () => {
+  it('matches posix, Windows, and case variants of the project-local config', () => {
+    expect(isProjectLocalConfigPath('/repo/.kimi-code/local.toml')).toBe(true);
+    expect(isProjectLocalConfigPath('C:\\repo\\.kimi-code\\local.toml')).toBe(true);
+    expect(isProjectLocalConfigPath('/repo/.KIMI-CODE/LOCAL.TOML')).toBe(true);
+    expect(isProjectLocalConfigPath('/repo/.kimi-code/local.toml.bak')).toBe(false);
+    expect(isProjectLocalConfigPath('/repo/other/local.toml')).toBe(false);
+  });
+});
 
 describe('isSensitiveFile', () => {
   it('flags base .env files in any directory', () => {
