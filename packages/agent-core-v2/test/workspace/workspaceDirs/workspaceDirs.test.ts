@@ -154,12 +154,7 @@ describe('WorkspaceDirsService trust gating', () => {
     trusted = false;
     trustFlips.fire({ trusted: false });
 
-    await vi.waitFor(
-      () => {
-        expect(service.additionalDirs).toEqual([]);
-      },
-      { timeout: 10000, interval: 50 },
-    );
+    expect(service.additionalDirs).toEqual([]);
   }, 20000);
 
   it('ignores watched local.toml changes while the workspace is untrusted', async () => {

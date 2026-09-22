@@ -58,6 +58,9 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
     void this.ready.then(() => this.watchLocalToml());
     this._register(
       this.trust.onDidChange(() => {
+        if (!this.trust.isTrusted() && this.setFileDirs([])) {
+          this.onDidChangeEmitter.fire();
+        }
         void this.enqueue(() => this.reloadFromDisk()).catch((error) => {
           this.log.warn(`local.toml trust reload failed: ${String(error)}`);
         });
