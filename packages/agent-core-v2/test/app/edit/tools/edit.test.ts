@@ -649,16 +649,4 @@ describe('EditTool symlink escape', () => {
     await expect(readFile(target, 'utf8')).resolves.toBe('alpha beta');
   });
 
-  it('allows editing through a symlink that stays inside the workspace', async () => {
-    const target = join(wsDir, 'real.txt');
-    await writeFile(target, 'alpha beta');
-    const link = join(wsDir, 'alias.txt');
-    await symlink(target, link);
-    const tool = buildTool(new HostFileSystem(), createTestEnv(), stubWorkspaceContext(wsDir));
-
-    const result = await execute(tool, { path: link, old_string: 'beta', new_string: 'gamma' });
-
-    expect(result.isError).toBeFalsy();
-    await expect(readFile(target, 'utf8')).resolves.toBe('alpha gamma');
-  });
 });

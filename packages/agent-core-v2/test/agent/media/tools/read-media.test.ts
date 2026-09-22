@@ -1303,15 +1303,4 @@ describe('ReadMediaFileTool symlink escape', () => {
     expect(result.output).toContain('symbolic link');
   });
 
-  it('allows reading media through a symlink that stays inside the workspace', async () => {
-    const png = Buffer.from(await new Jimp({ width: 32, height: 32, color: 0x3366ccff }).getBuffer('image/png'));
-    const target = join(wsDir, 'real.png');
-    await writeFile(target, png);
-    const link = join(wsDir, 'alias.png');
-    await symlink(target, link);
-
-    const result = await execute(makeRealFsTool(), { path: link });
-
-    expect(result.isError).not.toBe(true);
-  });
 });

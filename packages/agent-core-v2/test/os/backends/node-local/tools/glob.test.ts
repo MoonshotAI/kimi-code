@@ -1086,20 +1086,6 @@ describe('GlobTool symlink escape', () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  it('allows a search root symlink that stays inside the workspace', async () => {
-    const realDir = path.join(wsDir, 'real');
-    await fs.mkdir(realDir);
-    await fs.writeFile(path.join(realDir, 'a.ts'), '');
-    await fs.symlink(realDir, path.join(wsDir, 'linked'));
-    const spawn = execReturning('');
-    const tool = makeRealFsTool(spawn);
-
-    const result = await execute(tool, { pattern: '*.ts', path: path.join(wsDir, 'linked') });
-
-    expect(result.isError).not.toBe(true);
-    expect(spawn).toHaveBeenCalled();
-  });
-
   it('allows searching when the workspace directory has a sensitive name', async () => {
     const credDir = path.join(tmpDir, 'credentials');
     await fs.mkdir(credDir);

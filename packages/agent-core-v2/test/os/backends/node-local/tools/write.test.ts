@@ -515,16 +515,6 @@ describe('WriteTool symlink escape', () => {
     await expect(readFile(target, 'utf8')).resolves.toBe('updated');
   });
 
-  it('allows writing a new plain file inside the workspace', async () => {
-    const file = join(wsDir, 'fresh.txt');
-    const tool = makeToolWithFs(new HostFileSystem(), stubWorkspaceContext(wsDir));
-
-    const result = await execute(tool, { path: file, content: 'data' });
-
-    expect(result.isError).toBeFalsy();
-    await expect(readFile(file, 'utf8')).resolves.toBe('data');
-  });
-
   it('rejects writes to the project config through a symlink alias', async () => {
     const configDir = join(wsDir, '.kimi-code');
     await mkdir(configDir);

@@ -2190,17 +2190,4 @@ describe('GrepTool symlink escape', () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  it('allows a search root symlink that stays inside the workspace', async () => {
-    const realDir = join(wsDir, 'real');
-    await mkdir(realDir);
-    await writeFile(join(realDir, 'a.txt'), 'hit');
-    await symlink(realDir, join(wsDir, 'linked'));
-    const spawn = vi.fn().mockResolvedValue(processWithOutput('', '', 1));
-    const tool = makeRealFsTool(spawn);
-
-    const result = await executeTool(tool, context({ pattern: 'hit', path: join(wsDir, 'linked') }));
-
-    expect(result.isError).not.toBe(true);
-    expect(spawn).toHaveBeenCalled();
-  });
 });

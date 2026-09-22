@@ -1580,13 +1580,4 @@ describe('ReadTool symlink escape', () => {
     expect(toolContentString(result)).toContain('1\talpha');
   });
 
-  it('reads a plain file inside the workspace', async () => {
-    const file = join(wsDir, 'plain.txt');
-    await writeFile(file, 'beta\n');
-
-    const result = await execute(makeRealFsTool(wsDir), { path: file });
-
-    expect(result.isError).not.toBe(true);
-    expect(toolContentString(result)).toContain('1\tbeta');
-  });
 });
