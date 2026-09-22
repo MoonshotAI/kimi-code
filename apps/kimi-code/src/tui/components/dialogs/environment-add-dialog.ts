@@ -25,6 +25,7 @@ import {
 } from '@moonshot-ai/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
+import { SpinnerTicker } from '#/tui/utils/spinner-ticker';
 
 export type EnvironmentAddType = 'ssh' | 'docker' | 'command';
 
@@ -111,6 +112,10 @@ export class EnvironmentAddDialogComponent extends Container implements Focusabl
   private activeIndex = 0;
   private state: DialogState = { kind: 'idle' };
   private hint: string | undefined;
+  private readonly spinner = new SpinnerTicker(() => {
+    this.invalidate();
+    this.opts.requestRender();
+  });
 
   constructor(private readonly opts: EnvironmentAddDialogOptions) {
     super();
@@ -133,15 +138,21 @@ export class EnvironmentAddDialogComponent extends Container implements Focusabl
   /** Lock the dialog while the config write is in flight. */
   setBusy(message: string): void {
     this.state = { kind: 'busy', message };
+    this.spinner.start();
     this.invalidate();
     this.opts.requestRender();
   }
 
   /** Show an engine-side validation failure inline; the form stays editable. */
   showError(message: string): void {
+    this.spinner.stop();
     this.state = { kind: 'error', message };
     this.invalidate();
     this.opts.requestRender();
+  }
+
+  dispose(): void {
+    this.spinner.dispose();
   }
 
   handleInput(data: string): void {
@@ -220,7 +231,7 @@ export class EnvironmentAddDialogComponent extends Container implements Focusabl
     contentLines.push('', truncateToWidth(footerStyled, innerWidth, '…'));
 
     if (this.state.kind === 'busy') {
-      contentLines.push('', truncateToWidth(currentTheme.fg('textMuted', this.state.message), innerWidth, '…'));
+      contentLines.push('', truncateToWidth(currentTheme.fg('textMuted', `${this.spinner.current} ${this.state.message}`), innerWidth, '…'));
     } else if (this.state.kind === 'error') {
       contentLines.push('');
       for (const line of this.state.message.split('\n').slice(0, MAX_ERROR_LINES)) {

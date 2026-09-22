@@ -9592,3 +9592,69 @@ describe('KimiTUI environment slot', () => {
     expect(driver.state.appState.streamingPhase).toBe('idle');
   });
 });
+
+describe('KimiTUI editor replacement disposal', () => {
+  interface FakePanel {
+    focused: boolean;
+    dispose: ReturnType<typeof vi.fn>;
+    handleInput: ReturnType<typeof vi.fn>;
+    invalidate: ReturnType<typeof vi.fn>;
+    render: ReturnType<typeof vi.fn>;
+  }
+
+  function makePanel(): FakePanel {
+    return {
+      focused: false,
+      dispose: vi.fn(),
+      handleInput: vi.fn(),
+      invalidate: vi.fn(),
+      render: vi.fn(() => ['panel']),
+    };
+  }
+
+  function mountDriver(driver: MessageDriver): MessageDriver & {
+    mountEditorReplacement(panel: FakePanel): void;
+    restoreEditor(): void;
+  } {
+    return driver as unknown as MessageDriver & {
+      mountEditorReplacement(panel: FakePanel): void;
+      restoreEditor(): void;
+    };
+  }
+
+  it('disposes the mounted replacement panel on restoreEditor', async () => {
+    const { driver } = await makeDriver();
+    const mounted = mountDriver(driver);
+    const panel = makePanel();
+    mounted.mountEditorReplacement(panel);
+    expect(driver.state.editorContainer.children).toContain(panel);
+    mounted.restoreEditor();
+    expect(panel.dispose).toHaveBeenCalledOnce();
+  });
+
+  it('disposes the previous replacement when another panel mounts', async () => {
+    const { driver } = await makeDriver();
+    const mounted = mountDriver(driver);
+    const first = makePanel();
+    const second = makePanel();
+    mounted.mountEditorReplacement(first);
+    mounted.mountEditorReplacement(second);
+    expect(first.dispose).toHaveBeenCalledOnce();
+    expect(second.dispose).not.toHaveBeenCalled();
+    expect(driver.state.editorContainer.children).toContain(second);
+  });
+
+  it('closes a panel without dispose without failing', async () => {
+    const { driver } = await makeDriver();
+    const mounted = mountDriver(driver);
+    const panel = {
+      focused: false,
+      handleInput: vi.fn(),
+      invalidate: vi.fn(),
+      render: vi.fn(() => ['panel']),
+    };
+    mounted.mountEditorReplacement(panel as never);
+    mounted.restoreEditor();
+    expect(driver.state.editorContainer.children).not.toContain(panel);
+  });
+});

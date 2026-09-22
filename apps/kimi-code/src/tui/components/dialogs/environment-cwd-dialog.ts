@@ -20,6 +20,7 @@ import {
 } from '@moonshot-ai/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
+import { SpinnerTicker } from '#/tui/utils/spinner-ticker';
 
 export interface EnvironmentCwdDialogOptions {
   /** Dialog title, e.g. `Switch to ssh:dev-box`. */
@@ -48,6 +49,10 @@ export class EnvironmentCwdDialogComponent extends Container implements Focusabl
   private readonly input = new Input();
   private state: DialogState = { kind: 'idle' };
   private hint: 'none' | 'empty' = 'none';
+  private readonly spinner = new SpinnerTicker(() => {
+    this.invalidate();
+    this.opts.requestRender();
+  });
 
   constructor(private readonly opts: EnvironmentCwdDialogOptions) {
     super();
@@ -63,15 +68,21 @@ export class EnvironmentCwdDialogComponent extends Container implements Focusabl
   /** Lock the dialog while the switch (connect + cwd validation) is in flight. */
   setBusy(message: string): void {
     this.state = { kind: 'busy', message };
+    this.spinner.start();
     this.invalidate();
     this.opts.requestRender();
   }
 
   /** Show a server-side failure inline (validation, handshake exit code + stderr). */
   showError(message: string): void {
+    this.spinner.stop();
     this.state = { kind: 'error', message };
     this.invalidate();
     this.opts.requestRender();
+  }
+
+  dispose(): void {
+    this.spinner.dispose();
   }
 
   handleInput(data: string): void {
@@ -117,7 +128,7 @@ export class EnvironmentCwdDialogComponent extends Container implements Focusabl
     const contentLines: string[] = [titleLine, '', subtitleLine, '', inputLine, '', footerLine];
 
     if (this.state.kind === 'busy') {
-      contentLines.push('', truncateToWidth(currentTheme.fg('textMuted', this.state.message), innerWidth, '…'));
+      contentLines.push('', truncateToWidth(currentTheme.fg('textMuted', `${this.spinner.current} ${this.state.message}`), innerWidth, '…'));
     } else if (this.state.kind === 'error') {
       contentLines.push('');
       for (const line of this.state.message.split('\n').slice(0, MAX_ERROR_LINES)) {

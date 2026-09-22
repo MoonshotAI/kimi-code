@@ -41,6 +41,7 @@ import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { printableChar } from '#/tui/utils/printable-key';
 import { pageView, type PageView } from '#/tui/utils/paging';
+import { SpinnerTicker } from '#/tui/utils/spinner-ticker';
 
 export interface EnvironmentManagerEnvironment {
   readonly environmentId: string;
@@ -94,6 +95,10 @@ export class EnvironmentManagerComponent extends Container implements Focusable 
   private rows: readonly Row[];
   private selectedIndex: number;
   private action: ActionState;
+  private readonly spinner = new SpinnerTicker(() => {
+    this.invalidate();
+    this.opts.requestRender();
+  });
 
   constructor(opts: EnvironmentManagerOptions) {
     super();
@@ -112,6 +117,7 @@ export class EnvironmentManagerComponent extends Container implements Focusable 
     const previousId = previousSelected?.kind === 'environment' ? previousSelected.environment.environmentId : undefined;
     this.opts = next;
     this.rows = buildRows(next.environments);
+    this.spinner.stop();
     this.action = undefined;
     let newIdx = options.selectCurrent === true
       ? this.rows.findIndex(
@@ -132,20 +138,27 @@ export class EnvironmentManagerComponent extends Container implements Focusable 
   /** Lock the dialog while a connect / reconnect is in flight. */
   setBusy(message: string): void {
     this.action = { kind: 'busy', message };
+    this.spinner.start();
     this.invalidate();
     this.opts.requestRender();
   }
 
   /** Show a failure inline (handshake exit code + bounded stderr, cwd validation). */
   showError(message: string): void {
+    this.spinner.stop();
     this.action = { kind: 'error', message };
     this.invalidate();
     this.opts.requestRender();
   }
 
   clearAction(): void {
+    this.spinner.stop();
     this.action = undefined;
     this.invalidate();
+  }
+
+  dispose(): void {
+    this.spinner.dispose();
   }
 
   private page(): PageView {
@@ -257,7 +270,7 @@ export class EnvironmentManagerComponent extends Container implements Focusable 
     lines.push('');
 
     if (this.action?.kind === 'busy') {
-      lines.push(currentTheme.fg('textMuted', ` ${this.action.message}`));
+      lines.push(currentTheme.fg('textMuted', ` ${this.spinner.current} ${this.action.message}`));
     } else if (this.action?.kind === 'error') {
       for (const line of this.action.message.split('\n').slice(0, MAX_ERROR_LINES)) {
         lines.push(currentTheme.fg('error', ` ${line}`));

@@ -1060,6 +1060,7 @@ export class KimiTUI {
     this.editorKeyboard.dispose();
     this.surveyController.dispose();
     this.state.footer.dispose();
+    this.disposeEditorReplacement();
     for (const dispose of this.reverseRpcDisposers) {
       dispose();
     }
@@ -3921,9 +3922,15 @@ export class KimiTUI {
   // Dialogs / Selectors
   // =========================================================================
 
+  // Tracked so a dropped panel's `dispose()` runs on replacement / editor
+  // return — a busy dialog's spinner timer must not tick after removal.
+  private editorReplacementPanel: (Component & Focusable) | undefined;
+
   mountEditorReplacement(panel: Component & Focusable): void {
     this.surveyController.notifyDisplaced();
+    this.disposeEditorReplacement();
     this.state.editorReplacementMounted = true;
+    this.editorReplacementPanel = panel;
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(panel);
     this.state.ui.setFocus(panel);
@@ -3931,6 +3938,7 @@ export class KimiTUI {
   }
 
   restoreEditor(): void {
+    this.disposeEditorReplacement();
     this.state.editorReplacementMounted = false;
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(this.state.editor);
@@ -3939,6 +3947,12 @@ export class KimiTUI {
     // rows above the bottom (blank tail) until the next append, but avoids a
     // destructive full redraw on every dialog close.
     this.state.ui.requestRender();
+  }
+
+  private disposeEditorReplacement(): void {
+    const panel = this.editorReplacementPanel;
+    this.editorReplacementPanel = undefined;
+    if (panel !== undefined && hasDispose(panel)) panel.dispose();
   }
 
   restoreInputText(text: string): void {

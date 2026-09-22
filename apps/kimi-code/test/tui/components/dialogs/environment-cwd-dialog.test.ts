@@ -5,6 +5,7 @@ import {
   EnvironmentCwdDialogComponent,
   type EnvironmentCwdDialogOptions,
 } from '#/tui/components/dialogs/environment-cwd-dialog';
+import { BRAILLE_SPINNER_FRAMES, BRAILLE_SPINNER_INTERVAL_MS } from '#/tui/constant/rendering';
 
 const ESC = String.fromCodePoint(27);
 const ENTER = '\r';
@@ -84,5 +85,46 @@ describe('EnvironmentCwdDialogComponent', () => {
     const plain = rendered(dialog);
     expect(plain).toContain('line4');
     expect(plain).not.toContain('line5');
+  });
+
+  it('animates the busy line with a braille frame until the state clears', () => {
+    vi.useFakeTimers();
+    try {
+      const requestRender = vi.fn();
+      const dialog = makeDialog({ requestRender });
+      dialog.setBusy('Connecting to dev-box…');
+      const busyLine = () =>
+        dialog
+          .render(80)
+          .map((line) => line.replaceAll(SGR, ''))
+          .find((line) => line.includes('Connecting to dev-box…'));
+      const first = busyLine();
+      expect(first).toBeDefined();
+      expect(BRAILLE_SPINNER_FRAMES.some((frame) => first?.includes(frame))).toBe(true);
+      vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS);
+      expect(requestRender).toHaveBeenCalled();
+      expect(busyLine()).not.toBe(first);
+      dialog.showError('boom');
+      requestRender.mockClear();
+      vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 5);
+      expect(requestRender).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops the busy spinner on dispose', () => {
+    vi.useFakeTimers();
+    try {
+      const requestRender = vi.fn();
+      const dialog = makeDialog({ requestRender });
+      dialog.setBusy('Connecting to dev-box…');
+      requestRender.mockClear();
+      dialog.dispose();
+      vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 5);
+      expect(requestRender).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

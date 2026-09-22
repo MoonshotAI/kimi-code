@@ -6,6 +6,7 @@ import {
   type EnvironmentManagerOptions,
   type EnvironmentManagerEnvironment,
 } from '#/tui/components/dialogs/environment-manager';
+import { BRAILLE_SPINNER_FRAMES, BRAILLE_SPINNER_INTERVAL_MS } from '#/tui/constant/rendering';
 
 const ESC = String.fromCodePoint(27);
 const ENTER = '\r';
@@ -257,5 +258,46 @@ describe('EnvironmentManagerComponent', () => {
     const plain = rendered(component);
     expect(plain).toContain('line4');
     expect(plain).not.toContain('line5');
+  });
+
+  it('animates the busy line with a braille frame until the action clears', () => {
+    vi.useFakeTimers();
+    try {
+      const requestRender = vi.fn();
+      const component = makeComponent({ requestRender });
+      component.setBusy('Connecting to dev-box…');
+      const busyLine = () =>
+        component
+          .render(120)
+          .map((line) => line.replaceAll(SGR, ''))
+          .find((line) => line.includes('Connecting to dev-box…'));
+      const first = busyLine();
+      expect(first).toBeDefined();
+      expect(BRAILLE_SPINNER_FRAMES.some((frame) => first?.includes(frame))).toBe(true);
+      vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS);
+      expect(requestRender).toHaveBeenCalled();
+      expect(busyLine()).not.toBe(first);
+      component.showError('boom');
+      requestRender.mockClear();
+      vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 5);
+      expect(requestRender).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops the busy spinner on dispose', () => {
+    vi.useFakeTimers();
+    try {
+      const requestRender = vi.fn();
+      const component = makeComponent({ requestRender });
+      component.setBusy('Connecting to dev-box…');
+      requestRender.mockClear();
+      component.dispose();
+      vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 5);
+      expect(requestRender).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

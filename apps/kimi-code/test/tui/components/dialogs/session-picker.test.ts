@@ -2,6 +2,7 @@ import { visibleWidth } from '@moonshot-ai/pi-tui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SessionPickerComponent } from '#/tui/components/dialogs/session-picker';
+import { BRAILLE_SPINNER_FRAMES, BRAILLE_SPINNER_INTERVAL_MS } from '#/tui/constant/rendering';
 
 function stripAnsi(text: string): string {
   return text.replaceAll(/\[[0-?]*[ -/]*[@-~]/g, '');
@@ -1169,5 +1170,72 @@ describe('SessionPickerComponent', () => {
         expect(renderPlain(component, width)).toContain('? [y/N]');
       }
     });
+  });
+
+  it('animates a braille spinner while a selection is in flight and stops when it settles', async () => {
+    vi.useFakeTimers();
+    try {
+      const requestRender = vi.fn();
+      let settleSelection: () => void = () => undefined;
+      const onSelect = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            settleSelection = resolve;
+          }),
+      );
+      const component = new SessionPickerComponent({
+        sessions: [{ id: 'ses_1', title: 'one', work_dir: '/tmp/project', updated_at: 0 }],
+        loading: false,
+        currentSessionId: '',
+        onSelect,
+        onCancel: vi.fn(),
+        requestRender,
+      });
+
+      component.handleInput('\r');
+      const busyLine = () =>
+        renderPlain(component)
+          .split('\n')
+          .find((line) => line.includes('Resuming session…'));
+      const first = busyLine();
+      expect(first).toBeDefined();
+      expect(BRAILLE_SPINNER_FRAMES.some((frame) => first?.includes(frame))).toBe(true);
+
+      vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS);
+      expect(requestRender).toHaveBeenCalled();
+      expect(busyLine()).not.toBe(first);
+
+      settleSelection();
+      await vi.advanceTimersByTimeAsync(0);
+      requestRender.mockClear();
+      vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 5);
+      expect(requestRender).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops the in-flight spinner on dispose', () => {
+    vi.useFakeTimers();
+    try {
+      const requestRender = vi.fn();
+      const onSelect = vi.fn(() => new Promise<void>(() => {}));
+      const component = new SessionPickerComponent({
+        sessions: [{ id: 'ses_1', title: 'one', work_dir: '/tmp/project', updated_at: 0 }],
+        loading: false,
+        currentSessionId: '',
+        onSelect,
+        onCancel: vi.fn(),
+        requestRender,
+      });
+
+      component.handleInput('\r');
+      requestRender.mockClear();
+      component.dispose();
+      vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 5);
+      expect(requestRender).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
