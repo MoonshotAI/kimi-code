@@ -116,25 +116,28 @@ function turnInputIndicesThrough(
   records: readonly WireRecord[],
   turnIndex: number,
 ): ReadonlySet<number> {
-  const pending: number[] = [];
-  const retained = new Set<number>();
+  const inputIndices: number[] = [];
+  const appends: { readonly record: WireRecord; readonly visibleTurnIndex: number }[] = [];
   let visibleTurnIndex = 0;
   for (let index = 0; index < records.length; index += 1) {
     const record = records[index]!;
     if (isUserVisibleTurnInputRecord(record)) {
-      pending.push(index);
+      inputIndices.push(index);
       continue;
     }
     if (!isUserVisibleTurnRecord(record)) continue;
-
-    const matchAt = findMatchingTurnInput(records, pending, record);
-    if (matchAt !== -1) {
-      const [inputIndex] = pending.splice(matchAt, 1);
-      if (visibleTurnIndex <= turnIndex && inputIndex !== undefined) {
-        retained.add(inputIndex);
-      }
-    }
+    appends.push({ record, visibleTurnIndex });
     visibleTurnIndex += 1;
+  }
+  const unused = [...inputIndices];
+  const retained = new Set<number>();
+  for (const append of appends) {
+    const matchAt = findMatchingTurnInput(records, unused, append.record);
+    if (matchAt === -1) continue;
+    const [inputIndex] = unused.splice(matchAt, 1);
+    if (append.visibleTurnIndex <= turnIndex && inputIndex !== undefined) {
+      retained.add(inputIndex);
+    }
   }
   return retained;
 }
@@ -165,6 +168,21 @@ function turnInputMatchesRecord(
   const messageKind = asRecord(message['origin'])?.['kind'];
   if (messageKind !== undefined && typeof messageKind !== 'string') return false;
   if (!sameTurnOrigin(inputKind, messageKind)) return false;
+  const messageId = typeof message['id'] === 'string' ? message['id'] : undefined;
+  const steerMessageId =
+    inputRecord.type === 'turn.steer' && typeof inputRecord['messageId'] === 'string'
+      ? inputRecord['messageId']
+      : undefined;
+  if (steerMessageId !== undefined && messageId !== undefined) {
+    return steerMessageId === messageId;
+  }
+  const promptId =
+    inputRecord.type === 'turn.prompt' && typeof inputRecord['promptId'] === 'string'
+      ? inputRecord['promptId']
+      : undefined;
+  if (promptId !== undefined && messageId !== undefined) {
+    return promptId === messageId;
+  }
   return (
     !compareContent ||
     JSON.stringify(inputRecord['input']) === JSON.stringify(message['content'])

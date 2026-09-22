@@ -11,6 +11,7 @@ import {
   ISessionMetadata,
   IAgentLoopService,
   TOWER_FLAG_ID,
+  flattenChain,
   followSessionLifecycles,
   getLiveSessionById,
   isTowerFeatureAssembled,
@@ -30,6 +31,7 @@ import {
   foldWireRecordFacts,
   groupMessagesIntoSnapshot,
   isPlainAgentId,
+  turnId as exportTurnKey,
   type AgentDescriptor,
   type ActivityMeta,
   type AgentTranscript,
@@ -41,7 +43,7 @@ import {
   type TranscriptTurn,
 } from '@moonshot-ai/transcript';
 
-import { readWireRecords, type ContextRecord } from './wireRecords';
+import { WireRecordCache, type ContextRecord } from './wireCache';
 import { toWireQuestion } from '../../protocol/question-wire';
 import { projectPromptContentParts } from '../messages/messageProjection';
 import {
@@ -50,6 +52,7 @@ import {
   type TranscriptBinding,
   type TranscriptBindingLogger,
 } from './coreBinding';
+import { allocateExportTurn } from './coreEventMap';
 
 const SESSIONS_ROOT = 'sessions';
 const AGENTS_DIR = 'agents';
@@ -92,6 +95,7 @@ export class TranscriptService {
     Set<(event: TranscriptChangeEvent, seq: number) => void>
   >();
   private readonly healTimers = new Map<string, { ordinals: Set<number>; timer: NodeJS.Timeout }>();
+  private readonly wireCache = new WireRecordCache();
 
   constructor(private readonly deps: TranscriptServiceDeps) {
     followSessionLifecycles(deps.core.accessor, (service) => {
@@ -209,6 +213,7 @@ export class TranscriptService {
         this.deps.logger?.warn({ sessionId, agentId, gap: result.gap }, 'transcript: backfill append gap');
       }
       this.dispatchOps(sessionId, { agentId, ops });
+      this.live.get(sessionId)?.binding.syncFromStore(agentId);
     }
     const existing = store.agents().find((d) => d.agentId === agentId);
     const hasContent =
@@ -331,12 +336,49 @@ export class TranscriptService {
     const status = agent?.accessor.get(IAgentLoopService).snapshot();
     if (status?.state !== 'running' || status.activeTurnId === undefined) return undefined;
     const activePromptId = status.activePromptId;
-    const ordinal = status.activeTurnId;
-    const turnId = `t${ordinal}`;
-    const existing = transcript.getTurn(turnId);
-    const snapshotTurn = snapshot.items.find(
-      (item): item is TranscriptTurn => item.kind === 'turn' && item.ordinal === ordinal,
+    const wireId = status.activeTurnId;
+    const candidate = exportTurnKey(wireId);
+    const liveAtWire = transcript.getTurn(candidate);
+    const snapshotAtWire = snapshot.items.find(
+      (item): item is TranscriptTurn => item.kind === 'turn' && item.turnId === candidate,
     );
+    let snapshotTip: TranscriptTurn | undefined;
+    for (const item of snapshot.items) {
+      if (item.kind === 'turn') snapshotTip = item;
+    }
+    let liveRunning: TranscriptTurn | undefined;
+    for (const item of transcript.getItems()) {
+      if (item.kind === 'turn' && item.state === 'running') liveRunning = item;
+    }
+    const tipIsWire = snapshotTip !== undefined && snapshotTip.ordinal === wireId;
+    const adoptLive =
+      liveRunning !== undefined &&
+      (!snapshot.items.some((item) => item.kind === 'turn' && item.turnId === liveRunning.turnId) ||
+        liveRunning.turnId === snapshotTip?.turnId);
+    let turnId: string;
+    let ordinal: number;
+    let header: TranscriptTurn | undefined;
+    if (adoptLive && liveRunning !== undefined) {
+      turnId = liveRunning.turnId;
+      ordinal = liveRunning.ordinal;
+      header = liveRunning;
+    } else if (tipIsWire && snapshotTip !== undefined) {
+      turnId = snapshotTip.turnId;
+      ordinal = snapshotTip.ordinal;
+      header = transcript.getTurn(turnId) ?? snapshotTip;
+    } else {
+      let highWater = -1;
+      for (const item of transcript.getItems()) {
+        if (item.kind === 'turn' && item.ordinal > highWater) highWater = item.ordinal;
+      }
+      for (const item of snapshot.items) {
+        if (item.kind === 'turn' && item.ordinal > highWater) highWater = item.ordinal;
+      }
+      const alloc = allocateExportTurn(wireId, highWater, liveAtWire ?? snapshotAtWire, false);
+      turnId = alloc.turnId;
+      ordinal = alloc.ordinal;
+      header = transcript.getTurn(turnId);
+    }
     return {
       op: 'turn.upsert',
       turn: {
@@ -344,11 +386,11 @@ export class TranscriptService {
         turnId,
         ordinal,
         state: 'running',
-        triggerPromptId: existing?.triggerPromptId ?? snapshotTurn?.triggerPromptId ?? activePromptId,
-        origin: existing?.origin ?? snapshotTurn?.origin ?? { kind: 'other' },
-        prompt: existing?.prompt ?? snapshotTurn?.prompt,
-        attachmentIds: existing?.attachmentIds ?? snapshotTurn?.attachmentIds,
-        startedAt: existing?.startedAt ?? snapshotTurn?.startedAt,
+        triggerPromptId: header?.triggerPromptId ?? activePromptId,
+        origin: header?.origin ?? { kind: 'other' },
+        prompt: header?.prompt,
+        attachmentIds: header?.attachmentIds,
+        startedAt: header?.startedAt,
       },
     };
   }
@@ -513,9 +555,9 @@ export class TranscriptService {
       agentId,
       WIRE_FILE,
     );
-    let records: Awaited<ReturnType<typeof readWireRecords>>;
+    let records: ContextRecord[];
     try {
-      records = await readWireRecords(wirePath);
+      records = flattenChain(await this.wireCache.read(wirePath));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return groupMessagesIntoSnapshot([]);
@@ -526,7 +568,10 @@ export class TranscriptService {
     const taskOriginTurnTaskIds = new Set<string>();
     const steeredContents = new Map<string, Map<string, number>>();
     const pendingSteers = new Map<string, Map<string, number>>();
-    const matchedSteers: { key: string; kind: string }[] = [];
+    const matchedSteers: (
+      | { messageId: string; promptIds: readonly string[] }
+      | { key: string; kind: string }
+    )[] = [];
     const turnPromptIds = new Set<string>();
     const anchorStack: { taskIdsSnapshot: Set<string>; steerCount: number }[] = [];
     let anchorFloor = 0;
@@ -564,6 +609,11 @@ export class TranscriptService {
         continue;
       }
       if (record.type === 'turn.steer') {
+        const messageId = record['messageId'];
+        if (typeof messageId === 'string' && messageId.length > 0) {
+          matchedSteers.push({ messageId, promptIds: promptIdsFromSteerRecord(record) });
+          continue;
+        }
         const input = record['input'];
         if (Array.isArray(input)) {
           const key = JSON.stringify(input);
@@ -588,15 +638,20 @@ export class TranscriptService {
         taskOriginTurnTaskIds.add(origin.taskId);
       }
     }
+    const steeredByMessageId = new Map<string, readonly string[]>();
     for (const steer of matchedSteers) {
+      if ('messageId' in steer) {
+        steeredByMessageId.set(steer.messageId, steer.promptIds);
+        continue;
+      }
       const byKind = steeredContents.get(steer.key) ?? new Map<string, number>();
       byKind.set(steer.kind, (byKind.get(steer.kind) ?? 0) + 1);
       steeredContents.set(steer.key, byKind);
     }
     const base = groupMessagesIntoSnapshot(
       messages,
-      sawTurnPrompt || steeredContents.size > 0
-        ? { taskOriginTurnTaskIds, steeredContents, turnPromptIds }
+      sawTurnPrompt || steeredContents.size > 0 || steeredByMessageId.size > 0
+        ? { taskOriginTurnTaskIds, steeredContents, steeredByMessageId, turnPromptIds }
         : undefined,
     );
     const folded = foldWireRecordFacts(projectQuestionInteractionRecords(records, sessionId), base, {
@@ -829,4 +884,10 @@ export function healTurnOps(
     }
   }
   return ops;
+}
+
+function promptIdsFromSteerRecord(record: ContextRecord): readonly string[] {
+  const value = record['promptIds'];
+  if (!Array.isArray(value)) return [];
+  return value.filter((id): id is string => typeof id === 'string' && id.length > 0);
 }

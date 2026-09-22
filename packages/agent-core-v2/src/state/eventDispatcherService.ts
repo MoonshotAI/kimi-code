@@ -1,4 +1,4 @@
-import { produce } from 'immer';
+import { freeze, Immer, produce } from 'immer';
 
 import { BugIndicatingError } from '#/_base/errors/errors';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
@@ -25,7 +25,7 @@ import { IWireService } from '#/wire/wire';
 import { WireError, WireErrors } from '#/wire/errors';
 import { isHumanRecordType } from '#/wire/human';
 import { AGENT_SWITCHED_TYPE } from '#/wire/tree/index';
-import type { PartsTransformer } from '#/wire/record';
+import type { PartsTransformer, WireRecord } from '#/wire/record';
 
 import {
   AgentModelContribution,
@@ -51,6 +51,8 @@ import {
 } from './stateContribution';
 
 const MAX_DRAIN = 100;
+
+const replayImmer = new Immer({ autoFreeze: false });
 
 const UNREPORTED_WIRE_RECORD_TYPES: ReadonlySet<string> = new Set([
   'staleGuard.recorded',
@@ -109,6 +111,11 @@ interface PreparedParticipant {
   readonly next: any;
 }
 
+interface ResolvedRecord {
+  readonly cls: Event2Class<any, any> | undefined;
+  readonly event: Event2<any> | undefined;
+}
+
 class FoldContextImpl implements FoldContext {
   pendingCheckpoint = false;
   pendingClear = false;
@@ -159,6 +166,8 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
   };
 
   private readonly metas = new Map<ReplayableStateKey<any>, StateMeta>();
+  private readonly replayFreshKeys = new Set<ReplayableStateKey<any>>();
+  private readonly replayFreshAttachments = new Set<ParticipantAttachment>();
   private folded: FoldedEventStateRegistry;
 
   private activeModelDefs = new Map<string, AgentModelDefinition<any, any>>();
@@ -553,6 +562,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
   }
 
   private executeEvent(event: Event2<any>, silent: boolean, replayUndoable?: boolean): void {
+    const produceFor = silent ? replayImmer.produce : produce;
     const folds = this.folded.folds.get(event.type);
     const prepared: PreparedFold[] = [];
     if (folds !== undefined) {
@@ -565,7 +575,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
         }
         const meta = this.ensureMeta(key);
         const ctx = new FoldContextImpl(this, silent);
-        const next = produce(
+        const next = produceFor(
           this.agentState.get(key),
           (draft: any) => fold(draft, event, ctx),
         );
@@ -593,7 +603,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
         const applier = attachment.appliers.get(event.constructor as Event2Class);
         if (applier === undefined) continue;
         const ctx = new FoldContextImpl(this, silent);
-        const next = produce(
+        const next = produceFor(
           attachment.getState(),
           (draft: any) => applier(draft, event, ctx),
         );
@@ -644,9 +654,12 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     if (ctx.pendingUndo !== undefined) {
       const targetIndex = meta.checkpoints.length - ctx.pendingUndo;
       const snapshot = meta.checkpoints[targetIndex]!;
-      this.agentState.set(key, snapshot);
+      this.agentState.set(key, freeze(snapshot, true));
       meta.checkpoints.length = targetIndex;
       return;
+    }
+    if (ctx.silent && next !== this.agentState.get(key)) {
+      this.replayFreshKeys.add(key);
     }
     this.agentState.set(key, next);
     if (ctx.pendingClear) {
@@ -666,9 +679,12 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     if (ctx.pendingUndo !== undefined) {
       const targetIndex = meta.checkpoints.length - ctx.pendingUndo;
       const snapshot = meta.checkpoints[targetIndex]!;
-      attachment.commit(snapshot);
+      attachment.commit(freeze(snapshot, true));
       meta.checkpoints.length = targetIndex;
       return;
+    }
+    if (ctx.silent && next !== attachment.getState()) {
+      this.replayFreshAttachments.add(attachment);
     }
     attachment.commit(next);
     if (ctx.pendingClear) {
@@ -702,8 +718,8 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
         await this.wire.flush();
         this.resetReplayState();
       }
-      await this.replayRecords(true);
-      await this.replayRecords(false);
+      await this.replayRecords();
+      this.freezeReplayedStates();
       await this.rehydrateStates();
       this.restorePhase = 'ready';
       if (!this.didRunRestoreHooks) {
@@ -751,48 +767,78 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     this.metas.clear();
   }
 
-  private async replayRecords(undoable: boolean): Promise<void> {
-    const stream = undoable ? this.wire.readRestorable() : this.wire.readJournal();
+  private async replayRecords(): Promise<void> {
+    const chains = await this.wire.readRestoreChains();
+    const resolved = new Map<WireRecord, ResolvedRecord>();
+    this.replayFreshKeys.clear();
+    this.replayFreshAttachments.clear();
+    this.replayPass(chains.restorable, true, resolved);
+    this.replayPass(chains.journal, false, resolved);
+  }
+
+  private replayPass(
+    records: readonly WireRecord[],
+    undoable: boolean,
+    resolved: Map<WireRecord, ResolvedRecord>,
+  ): void {
     let recordIndex = 0;
-    for await (const record of stream) {
+    for (const record of records) {
       if (record.type === 'metadata') continue;
-      const cls = this.folded.events.get(record.type);
-      if (cls === undefined) {
-        if (
-          !undoable &&
-          !UNREPORTED_WIRE_RECORD_TYPES.has(record.type) &&
-          !isHumanRecordType(record.type)
-        ) {
-          this.reportSkippedRecord(record.type, recordIndex, false);
+      let entry = resolved.get(record);
+      if (entry === undefined) {
+        entry = this.resolveRecord(record);
+        resolved.set(record, entry);
+      }
+      if (entry.event === undefined) {
+        if (!undoable) {
+          if (entry.cls === undefined) {
+            if (
+              !UNREPORTED_WIRE_RECORD_TYPES.has(record.type) &&
+              !isHumanRecordType(record.type)
+            ) {
+              this.reportSkippedRecord(record.type, recordIndex, false);
+            }
+          } else {
+            this.reportSkippedRecord(record.type, recordIndex, true);
+          }
         }
         recordIndex++;
         continue;
       }
-      let eventRecord = record;
-      if (cls.agentDomain) {
-        if (this.agentScope === undefined) {
-          if (!undoable) this.reportSkippedRecord(record.type, recordIndex, true);
-          recordIndex++;
-          continue;
-        }
-        const recordAgentId = record['agentId'];
-        if (recordAgentId === undefined) {
-          eventRecord = { ...record, agentId: this.agentScope.agentId };
-        } else if (recordAgentId !== this.agentScope.agentId) {
-          if (!undoable) this.reportSkippedRecord(record.type, recordIndex, true);
-          recordIndex++;
-          continue;
-        }
-      }
-      const event = event2FromRecord(cls, eventRecord);
-      if (event === undefined) {
-        if (!undoable) this.reportSkippedRecord(record.type, recordIndex, true);
-        recordIndex++;
-        continue;
-      }
-      this.executeEvent(event, true, undoable);
+      this.executeEvent(entry.event, true, undoable);
       recordIndex++;
     }
+  }
+
+  private resolveRecord(record: WireRecord): ResolvedRecord {
+    const cls = this.folded.events.get(record.type);
+    if (cls === undefined) {
+      return { cls: undefined, event: undefined };
+    }
+    let eventRecord = record;
+    if (cls.agentDomain) {
+      if (this.agentScope === undefined) {
+        return { cls, event: undefined };
+      }
+      const recordAgentId = record['agentId'];
+      if (recordAgentId === undefined) {
+        eventRecord = { ...record, agentId: this.agentScope.agentId };
+      } else if (recordAgentId !== this.agentScope.agentId) {
+        return { cls, event: undefined };
+      }
+    }
+    return { cls, event: event2FromRecord(cls, eventRecord) };
+  }
+
+  private freezeReplayedStates(): void {
+    for (const key of this.replayFreshKeys) {
+      this.agentState.set(key, freeze(this.agentState.get(key), true));
+    }
+    this.replayFreshKeys.clear();
+    for (const attachment of this.replayFreshAttachments) {
+      attachment.commit(freeze(attachment.getState(), true));
+    }
+    this.replayFreshAttachments.clear();
   }
 
   private reportSkippedRecord(type: string, index: number, malformed: boolean): void {

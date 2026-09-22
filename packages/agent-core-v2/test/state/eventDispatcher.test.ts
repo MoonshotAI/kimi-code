@@ -49,6 +49,7 @@ function stubWireJournal(journal: WireRecord[]): IWireService {
     readRestorable: async function* () {
       for (const record of journal) yield record;
     },
+    readRestoreChains: async () => ({ restorable: [...journal], journal: [...journal] }),
     readHumanChain: () => [],
     read: async function* () {
       for (const record of journal) yield record;
@@ -400,6 +401,40 @@ describe('EventDispatcherService', () => {
     expect(replayedState.get(checkpointedKey).items).toEqual(['x', 'y']);
     expect(seen).toEqual([]);
     expect(replayJournal).toEqual(records);
+  });
+
+  it('freezes replayed and undo-restored state after restore while leaving untouched keys unfrozen', async () => {
+    journal.push(
+      new ItemAdd({ item: 'a' }).serialize(),
+      new AnchorEvent({}).serialize(),
+      new ItemAdd({ item: 'b' }).serialize(),
+      new AnchorEvent({}).serialize(),
+      new ItemAdd({ item: 'c' }).serialize(),
+      new UndoEvent({ count: 1 }).serialize(),
+      new UndoEvent({ count: 1 }).serialize(),
+    );
+
+    const ix2 = disposables.add(new TestInstantiationService());
+    ix2.set(IEventBus, new SyncDescriptor(EventBusService));
+    ix2.set(IAgentBlobService, noopBlob);
+    ix2.set(IWireService, stubWireJournal([...journal]));
+    ix2.set(IAgentStateService, new AgentStateService());
+    ix2.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
+    const replayed = ix2.get(IEventDispatcher);
+    const replayedState = ix2.get(IAgentStateService);
+    replayedState.contributeState(counterKey);
+    replayedState.contributeState(otherKey);
+    replayedState.contributeState(checkpointedKey);
+
+    await replayed.restore();
+
+    const state = replayedState.get(checkpointedKey);
+    expect(state.items).toEqual(['a']);
+    expect(Object.isFrozen(state)).toBe(true);
+    expect(Object.isFrozen(state.items)).toBe(true);
+    const other = replayedState.get(otherKey);
+    expect(Object.isFrozen(other)).toBe(true);
+    expect(Object.isFrozen(other.seen)).toBe(false);
   });
 
   it('skips unknown and malformed records during restore and reports them', async () => {

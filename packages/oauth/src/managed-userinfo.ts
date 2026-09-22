@@ -140,7 +140,7 @@ function intField(record: Record<string, unknown>, key: string): number | undefi
   if (typeof value === 'number') {
     return Number.isFinite(value) ? Math.trunc(value) : undefined;
   }
-  if (typeof value === 'string') {
+  if (typeof value === 'string' && value.trim().length > 0) {
     const n = Number(value);
     return Number.isFinite(n) ? Math.trunc(n) : undefined;
   }

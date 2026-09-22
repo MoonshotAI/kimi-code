@@ -390,7 +390,7 @@ describe('contract schemas', () => {
           kind: 'step', stepId: 't1.1', turnId: 't1', ordinal: 1, state: 'interrupted',
           usage,
           finishReason: 'stop',
-          timing: {
+          llmTiming: {
             llmFirstTokenLatencyMs: 120,
             llmStreamDurationMs: 900,
             llmRequestBuildMs: 5,
@@ -533,6 +533,31 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(marker?.kind === 'marker' && marker.marker).toBe('compaction');
   });
 
+  it('carries assistant message usage and timing onto the step', () => {
+    const snapshot = groupMessagesIntoSnapshot([
+      { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [], origin: { kind: 'user' } },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'done' }],
+        toolCalls: [],
+        usage: { inputOther: 10, output: 20, inputCacheRead: 30, inputCacheCreation: 40 },
+        llmTiming: { llmFirstTokenLatencyMs: 800, llmStreamDurationMs: 5000 },
+      },
+    ]);
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps[0]?.usage).toEqual({
+      inputOther: 10,
+      output: 20,
+      inputCacheRead: 30,
+      inputCacheCreation: 40,
+    });
+    expect(turn.steps[0]?.llmTiming).toEqual({
+      llmFirstTokenLatencyMs: 800,
+      llmStreamDurationMs: 5000,
+    });
+  });
+
   it('folds task-notification user messages into the current turn instead of opening their own', () => {
     const snapshot = groupMessagesIntoSnapshot(
       [
@@ -593,10 +618,10 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
       [
         { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } },
         { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
-        { role: 'user', content: [{ type: 'text', text: 'steered in' }], toolCalls: [], origin: { kind: 'user' } },
+        { id: 'm-steer', role: 'user', content: [{ type: 'text', text: 'steered in' }], toolCalls: [], origin: { kind: 'user' } },
         { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
       ],
-      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), new Map([['user', 1]])]]) },
+      { steeredByMessageId: new Map([['m-steer', ['p2']]]) },
     );
 
     expect(snapshot.items.map((i) => i.kind)).toEqual(['turn']);
@@ -607,6 +632,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
       kind: 'text',
       role: 'user',
       text: 'steered in',
+      promptIds: ['p2'],
     });
   });
 

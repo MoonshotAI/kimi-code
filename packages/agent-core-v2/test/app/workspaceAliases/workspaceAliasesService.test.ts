@@ -10,6 +10,7 @@ import {
   registerScopedService,
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
+import { ILogService } from '#/_base/log/log';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -31,6 +32,7 @@ import {
 } from '#/app/workspace/workspacePersistence';
 import { IWorkspaceAliases } from '#/app/workspaceAliases/workspaceAliases';
 import { WorkspaceAliasesService } from '#/app/workspaceAliases/workspaceAliasesService';
+import { setWatchEnabled } from '#human/utils/watch';
 import { stubBootstrap } from '../bootstrap/stubs';
 
 interface SessionIndexLine {
@@ -67,9 +69,11 @@ describe('WorkspaceAliasesService (file-backed)', () => {
       'workspaceAliases',
     );
     homeDir = await fsp.mkdtemp(join(os.tmpdir(), 'ws-aliases-'));
+    setWatchEnabled(true);
   });
 
   afterEach(async () => {
+    setWatchEnabled(false);
     currentHost?.dispose();
     currentHost = undefined;
     await fsp.rm(homeDir, { recursive: true, force: true });
@@ -93,6 +97,12 @@ describe('WorkspaceAliasesService (file-backed)', () => {
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(IAppendLogStore, new AppendLogStore(fileStorage)),
+      stubPair(ILogService, {
+        error: () => {},
+        warn: () => {},
+        info: () => {},
+        debug: () => {},
+      } as unknown as ILogService),
       ...(persistence !== undefined ? [stubPair(IWorkspacePersistence, persistence)] : []),
       stubPair(IHostFileSystem, hostFs),
       stubPair(IEventService, {

@@ -76,7 +76,7 @@ export interface TranscriptStep {
   readonly endedAt?: string;
   readonly usage?: StepUsage;
   readonly finishReason?: string;
-  readonly timing?: StepTiming;
+  readonly llmTiming?: StepTiming;
   readonly retry?: StepRetry;
   readonly endReason?: string;
   readonly endMessage?: string;

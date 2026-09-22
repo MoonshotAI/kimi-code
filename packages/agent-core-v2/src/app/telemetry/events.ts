@@ -58,6 +58,7 @@ export interface TurnStartedEvent {
   provider_type?: string;
   protocol?: string;
   thinking_effort?: string;
+  enabled_plugins?: string;
 }
 
 export interface TurnInterruptedEvent {
@@ -81,6 +82,7 @@ export interface TurnEndedEvent {
   protocol?: string;
   thinking_effort?: string;
   trace_id?: string;
+  enabled_plugins?: string;
 }
 
 export interface PromptCacheProbeEvent {
@@ -197,6 +199,37 @@ export interface PlanResolvedEvent {
 
 export interface PlanEnterResolvedEvent {
   outcome: 'auto_approved';
+}
+
+export interface TowerModeEnterEvent {
+  outcome: 'entered' | 'rejected';
+  reason?: 'not-main-agent' | 'experiment-off' | 'feature-not-assembled' | 'owned-by-live-session';
+}
+
+export interface TowerModeExitEvent {
+  reason: 'user' | 'takeover' | 'foreign-reconcile';
+}
+
+export interface SwarmModeTransitionEvent {
+  trigger: 'manual' | 'task' | 'tool';
+}
+
+export interface ExternalHookResolvedEvent {
+  event: string;
+  action: 'allow' | 'block';
+  matched_count: number;
+  failed_count: number;
+}
+
+export interface RemoteControlToggleEvent {
+  enabled: boolean;
+  outcome: 'ok' | 'already_running' | 'rejected' | 'error';
+}
+
+export interface PluginToggleEvent {
+  plugin_id: string;
+  enabled: boolean;
+  enabled_plugins?: string;
 }
 
 export interface CompactionFinishedEvent {
@@ -582,6 +615,8 @@ export const telemetryEventDefinitions = {
       provider_type: 'Provider protocol type',
       protocol: 'Request protocol',
       thinking_effort: 'Effective thinking effort the turn runs with',
+      enabled_plugins:
+        'Comma-separated sorted ids of enabled, loaded plugins when the turn starts; empty string for a known empty set, absent when no plugin snapshot is available',
     },
   }),
   turn_interrupted: defineAgentTelemetryEvent<TurnInterruptedEvent>({
@@ -613,6 +648,8 @@ export const telemetryEventDefinitions = {
       thinking_effort: 'Effective thinking effort the turn ran with',
       trace_id:
         'Trace id of the most recent LLM request in this turn; absent for non-Kimi protocols',
+      enabled_plugins:
+        'Comma-separated sorted ids of enabled, loaded plugins when the turn ends; empty string for a known empty set, absent when no plugin snapshot is available',
     },
   }),
   prompt_cache_probe: defineAgentTelemetryEvent<PromptCacheProbeEvent>({
@@ -762,6 +799,64 @@ export const telemetryEventDefinitions = {
     comment: 'A request to enter plan mode is resolved.',
     properties: {
       outcome: 'How the request was resolved',
+    },
+  }),
+  tower_mode_enter: defineAgentTelemetryEvent<TowerModeEnterEvent>({
+    owner: 'kimi-code',
+    comment: 'A request to enter tower mode resolves.',
+    properties: {
+      outcome: 'Whether tower mode was entered or the request was rejected',
+      reason: 'Why the request was rejected; omitted when tower mode was entered',
+    },
+  }),
+  tower_mode_exit: defineAgentTelemetryEvent<TowerModeExitEvent>({
+    owner: 'kimi-code',
+    comment: 'Tower mode is exited.',
+    properties: {
+      reason:
+        'Why tower mode was exited: the user turned it off, another session took the tower over, or a foreign tower was reconciled away',
+    },
+  }),
+  swarm_mode_entered: defineAgentTelemetryEvent<SwarmModeTransitionEvent>({
+    owner: 'kimi-code',
+    comment: 'Swarm mode is entered.',
+    properties: {
+      trigger: 'What triggered swarm mode',
+    },
+  }),
+  swarm_mode_exited: defineAgentTelemetryEvent<SwarmModeTransitionEvent>({
+    owner: 'kimi-code',
+    comment: 'Swarm mode is exited.',
+    properties: {
+      trigger: 'What originally triggered the swarm mode being exited',
+    },
+  }),
+  external_hook_resolved: defineTelemetryEvent<ExternalHookResolvedEvent>({
+    owner: 'kimi-code',
+    comment: 'An external hook trigger finishes running its matched hooks.',
+    properties: {
+      event: 'Hook event type (e.g. PreToolUse, UserPromptSubmit, Stop)',
+      action: 'Whether the trigger resolved to allow or block',
+      matched_count: 'Number of hooks that ran for the trigger',
+      failed_count: 'Number of hooks that failed (timeout, spawn error, or a non-zero exit code other than 2)',
+    },
+  }),
+  remote_control_toggle: defineTelemetryEvent<RemoteControlToggleEvent>({
+    owner: 'kimi-code',
+    comment: 'A request to toggle the Remote Control tunnel resolves.',
+    properties: {
+      enabled: 'Whether the request was to enable or disable the tunnel',
+      outcome: 'How the request resolved',
+    },
+  }),
+  plugin_toggle: defineTelemetryEvent<PluginToggleEvent>({
+    owner: 'kimi-code',
+    comment: 'An installed plugin is enabled or disabled.',
+    properties: {
+      plugin_id: 'Id of the toggled plugin',
+      enabled: 'Whether the plugin is enabled after the toggle',
+      enabled_plugins:
+        'Comma-separated sorted ids of enabled, loaded plugins after the toggle commits; empty string for a known empty set',
     },
   }),
   compaction_finished: defineAgentTelemetryEvent<CompactionFinishedEvent>({

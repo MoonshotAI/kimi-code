@@ -159,6 +159,7 @@ export function stubAgentWire(
     appendRecord: () => {},
     readJournal: async function* () {},
     readRestorable: async function* () {},
+    readRestoreChains: async () => ({ restorable: [], journal: [] }),
     readHumanChain: () => [],
     flush,
     drainPersisted: async () => {},
@@ -193,6 +194,7 @@ export function stubWireJournal(journal: WireRecord[]): AgentWire {
     readRestorable: async function* () {
       for (const record of journal) yield record;
     },
+    readRestoreChains: async () => ({ restorable: [...journal], journal: [...journal] }),
     read: async function* () {
       for (const record of journal) yield record;
     },

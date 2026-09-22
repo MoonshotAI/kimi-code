@@ -35,6 +35,8 @@ export type TowerEnterFailure =
 
 export type TowerEnterResult = { readonly entered: true } | TowerEnterFailure;
 
+export type TowerExitReason = 'user' | 'takeover' | 'foreign-reconcile';
+
 export function towerEnterFailureMessage(failure: TowerEnterFailure): string {
   switch (failure.reason) {
     case 'not-main-agent':
@@ -59,7 +61,7 @@ export interface IAgentTowerService {
   readonly isActive: boolean;
   readonly requestedBase: string | undefined;
   enter(base?: string): Promise<TowerEnterResult>;
-  exit(): Promise<void>;
+  exit(reason?: TowerExitReason): Promise<void>;
 }
 
 export const IAgentTowerService = createDecorator<IAgentTowerService>('agentTowerService');

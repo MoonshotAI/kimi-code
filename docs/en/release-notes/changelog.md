@@ -6,6 +6,33 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.0.2 (2026-09-19)
+
+### Polish
+
+- The agent no longer assumes the current working directory is the project root.
+
+### Bug Fixes
+
+- Fix compaction failing after switching to a model with a smaller context window.
+- Fix new messages occasionally landing at an old position in the conversation after resuming a session.
+- Fix a message sent while the agent was running sometimes appearing twice in the chat.
+- web: Improved interactions and fixed known bugs.
+
+## 2.0.1 (2026-09-18)
+
+### Polish
+
+- Remove the system-prompt rule that forbade all file access outside the working directory.
+- Providers can read their API key from a named environment variable via [`api_key_env`](../configuration/providers.md) in `config.toml`.
+- Stop workspace file watchers from scanning an unbounded project root, and add `[watch] enabled` / `KIMI_CODE_WATCH` to disable watching entirely. See [`watch`](../configuration/config-files.md#watch) for details.
+- Stop asking for approval of bash commands that cannot be statically analyzed in Ask When Needed permission mode.
+- Rename the `kimi install-app` subcommand to `kimi install-desktop`; the old name keeps working as a hidden alias.
+
+### Bug Fixes
+
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
 ## 2.0.0 (2026-09-17)
 
 ### Features

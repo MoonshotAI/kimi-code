@@ -608,6 +608,7 @@ async function runNativeTurn(
           now: () => Date.now(),
           goalActive: () => goalService.getGoal().goal?.status === 'active',
           cronNextFireAt: () => cronService.getNextFireTime(),
+          turnActive: () => loop.snapshot().state === 'running',
         });
       } catch (error) {
         // A steered turn that fails fails the run (v1 parity). Anything else
@@ -828,12 +829,28 @@ export interface PrintBackgroundPolicyInput {
    * `exit`/`drain` too (v1 parity). Omitted = no cron waiting.
    */
   readonly cronNextFireAt?: () => number | null;
+  /**
+   * Reports whether the agent loop has a turn in flight. A turn steered by a
+   * cron fire is pending work the schedule alone cannot see: a fired
+   * one-shot task disappears from `cronNextFireAt` at once, and a recurring
+   * one keeps reporting the same past fire time until the tick can run
+   * again. While this returns true the policy waits the turn out instead of
+   * reading either signal as quiescence or a wedged tick. Omitted = no
+   * in-flight turn is ever observed.
+   */
+  readonly turnActive?: () => boolean;
 }
 
 /**
  * Apply the print-mode (`kimi -p`) background-resource policy after the main
  * turn completes. A single loop re-evaluates the Session's live resources in
  * order on every round and stays alive while any of them is pending:
+ *  - turn    : while the loop has a turn in flight (e.g. steered by a cron
+ *              fire), wait it out — the schedule cannot represent it: a fired
+ *              one-shot task vanishes from `cronNextFireAt` at once, and a
+ *              recurring one reports the same past fire time until the tick
+ *              runs again, so neither signal may be read as quiescence or a
+ *              wedged tick mid-turn.
  *  - goal    : while a goal is `active`, keep waiting for its continuation
  *              turns (bounded by `ceilingS` as a safety net), regardless of
  *              the background mode; the goal summary drives the exit code.
@@ -866,6 +883,23 @@ export async function applyPrintBackgroundPolicy(
   let lastPastFireAt: number | undefined;
   let cronWedged = false;
   for (;;) {
+    // (0) turn: an in-flight turn (e.g. steered by a cron fire) is pending
+    // work the schedule cannot represent — a fired one-shot task is gone
+    // from `cronNextFireAt`, and a recurring one reports a frozen past fire
+    // time while the tick waits for the loop to go idle. Wait the turn out
+    // before reading either signal as quiescence or a wedged tick.
+    if (input.turnActive?.() === true) {
+      const ended = await input.turnEndings.next(deadline - input.now(), input.skipTurnId);
+      if (ended !== null && ended.reason !== 'completed') {
+        throw new PrintSteeredTurnFailedError(formatTurnEndingFailure(ended));
+      }
+      if (ended === null) {
+        input.warn(`print turn wait ceiling reached (${input.ceilingS}s), finishing`);
+        return;
+      }
+      continue;
+    }
+
     // (a) goal: while a goal is `active`, keep waiting for its continuation
     // turns. Also wake on a short poll: a goal can leave `active` without any
     // further turn.ended (budget block at a turn boundary, or a pause after a

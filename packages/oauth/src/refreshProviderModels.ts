@@ -1,7 +1,11 @@
 import {
   applyCustomRegistryProvider,
   fetchCustomRegistry,
+  isReservedProviderId,
+  oauthManagedProviderMessage,
+  readCustomRegistrySource,
   removeCustomRegistryProvider,
+  reservedProviderIdMessage,
   type CustomRegistrySource,
 } from './custom-registry';
 import {
@@ -23,6 +27,12 @@ import {
   getOpenPlatformById,
   isOpenPlatformId,
 } from './open-platform';
+import {
+  declaredProviderCredential,
+  apiKeyEnvMissingMessage,
+  credentialConflictMessage,
+  nonEmptyString,
+} from './provider-credential';
 import { isRecord } from './utils';
 
 /**
@@ -76,23 +86,48 @@ interface ProviderView {
   readonly type?: string;
   readonly baseUrl?: string;
   readonly apiKey?: string;
+  readonly apiKeyEnv?: unknown;
   readonly oauth?: ManagedKimiOAuthRef;
   readonly source?: unknown;
   readonly env?: unknown;
 }
 
 /**
- * Mirrors the runtime credential resolution for `type: 'kimi'` providers:
- * the inline `apiKey`
- * wins, with `env.KIMI_API_KEY` as the documented config-file fallback.
+ * Resolves the Bearer key for `type: 'kimi'` providers: the inline `apiKey`
+ * wins, then a declared `apiKeyEnv` naming an environment variable (read from
+ * `process.env` at refresh time), with `env.KIMI_API_KEY` as the documented
+ * config-file fallback. A declared `apiKeyEnv` whose variable is unset or
+ * empty throws — silently falling through to another key source could send
+ * requests (and bill) under the wrong account.
+ *
+ * Credential conflicts (`apiKey`+`apiKeyEnv`, `apiKeyEnv`+`oauth`,
+ * `apiKey`+`oauth`) throw here too: refresh must not honor a configuration the
+ * chat path would refuse, and the open-platform rewrite must never pick one
+ * side of a conflict to persist.
  */
-function resolveProviderApiKey(provider: ProviderView): string | undefined {
-  if (typeof provider.apiKey === 'string' && provider.apiKey.length > 0) {
-    return provider.apiKey;
+function resolveProviderApiKey(provider: ProviderView, providerName: string): string | undefined {
+  const declared = declaredProviderCredential(provider, providerName);
+  if (declared.kind === 'conflict') {
+    throw new Error(declared.message);
+  }
+  if (declared.kind === 'inline') {
+    return declared.apiKey;
+  }
+  if (declared.kind === 'env') {
+    const value = nonEmptyString(process.env[declared.apiKeyEnv]);
+    if (value === undefined) {
+      throw new Error(apiKeyEnvMissingMessage(providerName, declared.apiKeyEnv));
+    }
+    return value;
   }
   if (isRecord(provider.env)) {
-    const fromEnv = provider.env['KIMI_API_KEY'];
-    if (typeof fromEnv === 'string' && fromEnv.length > 0) return fromEnv;
+    const fromEnv = nonEmptyString(provider.env['KIMI_API_KEY']);
+    if (fromEnv !== undefined) {
+      if (provider.oauth !== undefined) {
+        throw new Error(credentialConflictMessage('Provider', providerName, 'apiKey', 'oauth'));
+      }
+      return fromEnv;
+    }
   }
   return undefined;
 }
@@ -113,18 +148,6 @@ function readModel(
   const model = config.models?.[alias];
   if (model === undefined) return undefined;
   return model as ManagedKimiModelAlias;
-}
-
-function readCustomRegistrySource(provider: ProviderView): CustomRegistrySource | undefined {
-  const source = provider.source;
-  if (typeof source !== 'object' || source === null) return undefined;
-  const candidate = source as Record<string, unknown>;
-  if (candidate['kind'] !== 'apiJson') return undefined;
-  const url = candidate['url'];
-  const apiKey = candidate['apiKey'];
-  if (typeof url !== 'string' || url.length === 0) return undefined;
-  if (typeof apiKey !== 'string') return undefined;
-  return { kind: 'apiJson', url, apiKey };
 }
 
 function customRegistrySourceKey(source: CustomRegistrySource): string {
@@ -407,6 +430,10 @@ export async function refreshProviderModels(
     managedProvider.oauth !== undefined
   ) {
     try {
+      const declared = declaredProviderCredential(managedProvider, KIMI_CODE_PROVIDER_NAME);
+      if (declared.kind === 'conflict') {
+        throw new Error(declared.message);
+      }
       const auth = resolveKimiCodeRuntimeAuth({
         configuredBaseUrl: managedProvider.baseUrl,
         configuredOAuthRef: managedProvider.oauth,
@@ -481,7 +508,11 @@ export async function refreshProviderModels(
   // ---------------------------------------------------------------------------
   // 2. Open Platforms (moonshot-cn, moonshot-ai, …)
   // ---------------------------------------------------------------------------
-  const openPlatformIds = Object.keys(config.providers).filter((id) => isOpenPlatformId(id));
+  const openPlatformIds = Object.keys(config.providers).filter((id) => {
+    if (!isOpenPlatformId(id)) return false;
+    const provider = readProvider(config, id);
+    return provider !== undefined && readCustomRegistrySource(provider) === undefined;
+  });
   for (const providerId of openPlatformIds) {
     if (targetId !== undefined && targetId !== providerId) continue;
     const platform = getOpenPlatformById(providerId);
@@ -489,10 +520,11 @@ export async function refreshProviderModels(
 
     const providerConfig = readProvider(config, providerId);
     if (providerConfig === undefined) continue;
-    const apiKey = providerConfig.apiKey;
-    if (typeof apiKey !== 'string' || apiKey.length === 0) continue;
 
     try {
+      const declared = declaredProviderCredential(providerConfig, providerId);
+      const apiKey = resolveProviderApiKey(providerConfig, providerId);
+      if (apiKey === undefined) continue;
       let models = await fetchOpenPlatformModels(platform, apiKey);
       models = filterModelsByPrefix(models, platform);
       if (models.length === 0) continue;
@@ -507,7 +539,7 @@ export async function refreshProviderModels(
         models,
         selectedModel,
         thinking: false,
-        apiKey,
+        credential: declared.kind === 'env' ? { apiKeyEnv: declared.apiKeyEnv } : { apiKey },
       });
       const refreshedAliasKeys = providerRefreshAliasKeys(
         config,
@@ -553,9 +585,9 @@ export async function refreshProviderModels(
   // 2.5. Managed-endpoint API-key providers (hand-configured distributed keys)
   // ---------------------------------------------------------------------------
   // A hand-written `type: 'kimi'` provider whose baseUrl is exactly the managed
-  // Kimi Code endpoint, carrying an API key (inline or via `env.KIMI_API_KEY`)
-  // instead of an oauth ref, gets its model list refreshed from
-  // `{baseUrl}/models` just like the OAuth branch. Strict baseUrl matching
+  // Kimi Code endpoint, carrying an API key (inline, via `apiKeyEnv`, or via
+  // `env.KIMI_API_KEY`) instead of an oauth ref, gets its model list refreshed
+  // from `{baseUrl}/models` just like the OAuth branch. Strict baseUrl matching
   // keeps proxies / gateways with an untrusted `/models` schema out.
   for (const providerId of Object.keys(config.providers)) {
     if (isOpenPlatformId(providerId)) continue;
@@ -563,13 +595,20 @@ export async function refreshProviderModels(
     const provider = readProvider(config, providerId);
     if (provider === undefined) continue;
     if (provider.type !== 'kimi') continue;
+    const earlyDeclared = declaredProviderCredential(provider, providerId);
+    if (earlyDeclared.kind === 'conflict') {
+      if (providerId !== KIMI_CODE_PROVIDER_NAME || provider.oauth === undefined) {
+        failed.push({ provider: providerId, reason: earlyDeclared.message });
+      }
+      continue;
+    }
     if (provider.oauth !== undefined) continue;
     if (readCustomRegistrySource(provider) !== undefined) continue;
     if (!isManagedKimiCodeBaseUrl(provider.baseUrl)) continue;
-    const apiKey = resolveProviderApiKey(provider);
-    if (apiKey === undefined) continue;
 
     try {
+      const apiKey = resolveProviderApiKey(provider, providerId);
+      if (apiKey === undefined) continue;
       const models = await fetchManagedKimiCodeModels({
         accessToken: apiKey,
         baseUrl: provider.baseUrl,
@@ -639,10 +678,9 @@ export async function refreshProviderModels(
     }
   >();
   for (const providerId of Object.keys(config.providers)) {
-    if (providerId === KIMI_CODE_PROVIDER_NAME) continue;
-    if (isOpenPlatformId(providerId)) continue;
     const provider = readProvider(config, providerId);
     if (provider === undefined) continue;
+    if (provider.oauth !== undefined) continue;
     const source = readCustomRegistrySource(provider);
     if (source === undefined) continue;
     const key = customRegistrySourceKey(source);
@@ -670,6 +708,9 @@ export async function refreshProviderModels(
     if (targetId !== undefined && !providerIds.includes(targetId)) continue;
     try {
       const { entries, source } = await fetchCustomRegistryFromSources(sources, host.userAgent);
+      if (Object.keys(entries).length === 0) {
+        throw new Error(`Custom registry at ${source.url} contained no usable providers.`);
+      }
       config = await rebaseSelectionAfterFetch(host, config);
       // Build the whole batch on one clone so that several changed providers
       // from the same source do not overwrite each other's aliases, and so the
@@ -688,16 +729,44 @@ export async function refreshProviderModels(
         remoteEntries.map((entry) => [entry.id, entry]),
       );
       const providerIdsToSync = new Set(providerIds);
+      const rejectedProviderIds = new Set<string>();
       // Only pull in newly-appeared providers from the registry when running an
       // unscoped refresh; a scoped refresh must not add siblings.
       if (targetId === undefined) {
-        for (const entry of remoteEntries) providerIdsToSync.add(entry.id);
+        for (const entry of remoteEntries) {
+          if (isReservedProviderId(entry.id)) {
+            rejectedProviderIds.add(entry.id);
+            failed.push({
+              provider: entry.id,
+              reason: reservedProviderIdMessage(entry.id),
+            });
+            continue;
+          }
+          const existing = readProvider(config, entry.id);
+          if (existing?.oauth !== undefined) {
+            rejectedProviderIds.add(entry.id);
+            failed.push({
+              provider: entry.id,
+              reason: oauthManagedProviderMessage(entry.id),
+            });
+            continue;
+          }
+          providerIdsToSync.add(entry.id);
+        }
       }
 
       for (const providerId of providerIdsToSync) {
+        if (rejectedProviderIds.has(providerId)) continue;
         if (targetId !== undefined && providerId !== targetId) continue;
         const entry = remoteEntriesByProviderId.get(providerId);
         if (entry === undefined) {
+          if (isReservedProviderId(providerId)) {
+            failed.push({
+              provider: providerId,
+              reason: reservedProviderIdMessage(providerId),
+            });
+            continue;
+          }
           const oldIds = collectModelIdsForAliases(config, providerAliasKeys(config, providerId));
           removeCustomRegistryProvider(next, providerId);
           changedProviders.push({
@@ -710,8 +779,29 @@ export async function refreshProviderModels(
           continue;
         }
 
-        const existed = config.providers[providerId] !== undefined;
-        applyCustomRegistryProvider(next, entry, source);
+        const existingProvider = readProvider(config, providerId);
+        if (existingProvider?.oauth !== undefined) {
+          failed.push({
+            provider: providerId,
+            reason: oauthManagedProviderMessage(providerId),
+          });
+          continue;
+        }
+        const declared = declaredProviderCredential(existingProvider ?? {}, providerId);
+        if (declared.kind === 'conflict') {
+          failed.push({ provider: providerId, reason: declared.message });
+          continue;
+        }
+        const existed = existingProvider !== undefined;
+        try {
+          applyCustomRegistryProvider(next, entry, source);
+        } catch (error) {
+          failed.push({
+            provider: providerId,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+          continue;
+        }
         const refreshedAliasKeys = providerRefreshAliasKeys(config, next, providerId, `${providerId}/`);
         if (existed) {
           restoreProviderAliases(next, preserveUserProviderAliases(config, providerId, refreshedAliasKeys));

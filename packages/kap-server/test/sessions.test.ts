@@ -26,6 +26,7 @@ import {
   IEventDispatcher,
   IEventService,
   ISessionManager,
+  ISessionMetadata,
   IWireService,
   IWorkspaceService,
   MAIN_AGENT_ID,
@@ -1230,10 +1231,62 @@ describe('server-v2 /api/v1/sessions', () => {
   });
 
   it.each([
-    { count: 1, texts: ['answer before steer', 'steered prompt', 'answer after steer'] },
-    { count: 2, texts: ['answer before steer'] },
-    { count: 3, texts: [] },
-  ])('keeps the correct messages when undoing $count anchors in a steered turn', async ({ count, texts }) => {
+    {
+      kind: 'generated',
+      title: 'Generated title',
+      apply: (metadata: ISessionMetadata) =>
+        metadata.setGeneratedTitleIfUncustomized('Generated title', { force: true }),
+    },
+    {
+      kind: 'custom',
+      title: 'Custom title',
+      apply: (metadata: ISessionMetadata) => metadata.setTitle('Custom title'),
+    },
+    {
+      kind: 'replaceable',
+      title: 'Replaceable title',
+      apply: (metadata: ISessionMetadata) =>
+        metadata.update({ title: 'Replaceable title', titleKind: 'replaceable' }),
+    },
+  ])('fork with a default title inherits the source titleKind "$kind"', async ({ kind, title, apply }) => {
+    const cwd = home as string;
+    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const parentId = parent.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, parentId);
+    expect(session).toBeDefined();
+    await apply(session!.accessor.get(ISessionMetadata));
+
+    const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
+    expect(forked.body.code).toBe(0);
+
+    const forkedDir = join(home as string, 'sessions', parent.body.data.workspace_id, forked.body.data.id);
+    const forkedState = JSON.parse(await readFile(join(forkedDir, 'state.json'), 'utf8'));
+    expect(forkedState.title).toBe(`Fork: ${title}`);
+    expect(forkedState.titleKind).toBe(kind);
+  });
+
+  it('marks a fork with an explicit title as custom regardless of the source titleKind', async () => {
+    const cwd = home as string;
+    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const parentId = parent.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, parentId);
+    expect(session).toBeDefined();
+    await session!.accessor.get(ISessionMetadata).setGeneratedTitleIfUncustomized('Generated title', { force: true });
+
+    const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, { title: 'Named fork' });
+    expect(forked.body.code).toBe(0);
+
+    const forkedDir = join(home as string, 'sessions', parent.body.data.workspace_id, forked.body.data.id);
+    const forkedState = JSON.parse(await readFile(join(forkedDir, 'state.json'), 'utf8'));
+    expect(forkedState.title).toBe('Named fork');
+    expect(forkedState.titleKind).toBe('custom');
+  });
+
+  it.each([
+    { count: 1, code: 0, prompts: [] as string[], texts: [] as string[] },
+    { count: 2, code: 40911, prompts: ['original prompt'], texts: ['answer before steer', 'steered prompt', 'answer after steer', 'second steer', 'answer after second steer'] },
+    { count: 3, code: 40911, prompts: ['original prompt'], texts: ['answer before steer', 'steered prompt', 'answer after steer', 'second steer', 'answer after second steer'] },
+  ])('keeps the correct messages when undoing $count anchors in a steered turn', async ({ count, code, prompts, texts }) => {
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
     const id = created.body.data.id;
     const session = getLiveSessionById((server as RunningServer).core.accessor, id)!;
@@ -1247,19 +1300,19 @@ describe('server-v2 /api/v1/sessions', () => {
     await agent.accessor.get(IEventDispatcher).dispatch(new TurnSteer({
       agentId: MAIN_AGENT_ID,
       input: [{ type: 'text', text: 'steered prompt' }],
-      origin: { kind: 'user' },
+      origin: { kind: 'user', inTurn: true },
     }));
     context.append(
-      { role: 'user', content: [{ type: 'text', text: 'steered prompt' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'user', content: [{ type: 'text', text: 'steered prompt' }], toolCalls: [], origin: { kind: 'user', inTurn: true } },
       { role: 'assistant', content: [{ type: 'text', text: 'answer after steer' }], toolCalls: [] },
     );
     await agent.accessor.get(IEventDispatcher).dispatch(new TurnSteer({
       agentId: MAIN_AGENT_ID,
       input: [{ type: 'text', text: 'second steer' }],
-      origin: { kind: 'user' },
+      origin: { kind: 'user', inTurn: true },
     }));
     context.append(
-      { role: 'user', content: [{ type: 'text', text: 'second steer' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'user', content: [{ type: 'text', text: 'second steer' }], toolCalls: [], origin: { kind: 'user', inTurn: true } },
       { role: 'assistant', content: [{ type: 'text', text: 'answer after second steer' }], toolCalls: [] },
     );
     await agent.accessor.get(IWireService).flush();
@@ -1268,10 +1321,10 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(before.body.code).toBe(0);
     expect(before.body.data.items.filter((item) => item.kind === 'turn')).toHaveLength(1);
     const undone = await postJson(`/api/v1/sessions/${id}:undo`, { count });
-    expect(undone.body.code).toBe(0);
+    expect(undone.body.code).toBe(code);
     const after = await getJson<AgentTranscriptSnapshot>(path);
     const turns = after.body.data.items.filter((item) => item.kind === 'turn');
-    expect(turns.map((turn) => turn.prompt)).toEqual(count === 3 ? [] : ['original prompt']);
+    expect(turns.map((turn) => turn.prompt)).toEqual(prompts);
     expect(turns.flatMap((turn) => turn.steps).flatMap((step) => step.frames).filter((frame) => frame.kind === 'text').map((frame) => frame.text)).toEqual(texts);
     expect(after.body.data.prompts).toEqual([]);
   });
@@ -1511,6 +1564,7 @@ describe('server-v2 /api/v1/sessions', () => {
     const forkedDir = join(home as string, 'sessions', parentWire.workspace_id, forkedId);
     const forkedState = JSON.parse(await readFile(join(forkedDir, 'state.json'), 'utf8'));
     expect(forkedState.title).toBe(`Fork: ${parentWire.title || parentId}`);
+    expect(forkedState.titleKind).toBeUndefined();
     expect(forkedState.forkedFrom).toBe(parentId);
     expect(forkedState.custom).toEqual({ origin: 'large-test' });
     expect(Object.keys(forkedState.agents)).toHaveLength(subagentCount + 1);

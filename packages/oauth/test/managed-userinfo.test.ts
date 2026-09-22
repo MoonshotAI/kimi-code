@@ -46,6 +46,7 @@ describe('parseManagedUserInfoPayload', () => {
       user_level_name: 'Vivace',
       domain: 1,
       domain_name: 'DOMAIN_EXAMPLE',
+      goods_version: 2,
       phone: { country_code: '86', number: '176****0000' },
       status: 'USER_STATUS_NORMAL',
       region: 'REGION_CN',
@@ -64,6 +65,7 @@ describe('parseManagedUserInfoPayload', () => {
       userLevelName: 'Vivace',
       domain: 1,
       domainName: 'DOMAIN_EXAMPLE',
+      goodsVersion: 2,
       phone: { countryCode: '86', number: '176****0000' },
       status: 'USER_STATUS_NORMAL',
       region: 'REGION_CN',
@@ -92,6 +94,7 @@ describe('parseManagedUserInfoPayload', () => {
       userLevelName: 'Vivace',
       domain: 1,
       domainName: 'DOMAIN_EXAMPLE',
+      goodsVersion: undefined,
       globalId: undefined,
       bio: undefined,
       avatar: undefined,
@@ -169,6 +172,15 @@ describe('parseManagedUserInfoPayload', () => {
     expect(parseManagedUserInfoPayload({ user_id: 'u_1', email: '' })?.email).toBeUndefined();
     expect(parseManagedUserInfoPayload({ user_id: 'u_1', email: 42 })?.email).toBeUndefined();
   });
+
+  it('accepts a numeric-string goods_version', () => {
+    expect(
+      parseManagedUserInfoPayload({ user_id: 'u_1', goods_version: '2' })?.goodsVersion,
+    ).toBe(2);
+    expect(
+      parseManagedUserInfoPayload({ user_id: 'u_1', goods_version: '' })?.goodsVersion,
+    ).toBeUndefined();
+  });
 });
 
 describe('fetchManagedUserInfo', () => {
@@ -202,6 +214,7 @@ describe('fetchManagedUserInfo', () => {
         userLevelName: 'Vivace',
         domain: 1,
         domainName: 'DOMAIN_EXAMPLE',
+        goodsVersion: undefined,
         globalId: undefined,
         bio: undefined,
         avatar: undefined,
@@ -323,6 +336,7 @@ describe('managedUserInfoResultSchema', () => {
     userLevelName: 'Vivace',
     domain: 1,
     domainName: 'DOMAIN_EXAMPLE',
+    goodsVersion: 2,
     globalId: 'u_123',
     avatar: 'https://example.com/avatar.png',
     username: 'moonwalker2333',

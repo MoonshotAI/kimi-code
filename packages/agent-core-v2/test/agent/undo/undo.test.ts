@@ -355,17 +355,17 @@ describe('AgentConversationUndoService', () => {
 
     expect(ctx.agentState.get(turnKey).nextTurnId).toBe(2);
 
-    await expect(runTurn(ctx, 'u3')).resolves.toBe(1);
+    await expect(runTurn(ctx, 'u3')).resolves.toBe(2);
 
     const persisted = await ctx.persistedWireRecords();
     expect(
       persisted.filter((record) => record.type === 'turn.prompt').map((record) => record['turnId']),
-    ).toEqual([0, 1, 1]);
+    ).toEqual([0, 1, 2]);
     expect(
       persisted
         .filter((record) => record.type === 'agent.turn.started')
         .map((record) => record['turnId']),
-    ).toEqual([0, 1, 1]);
+    ).toEqual([0, 1, 2]);
 
     const resumed = createTestAgent(
       { autoConfigure: false, persistence: new InMemoryWireRecordPersistence(persisted) },
@@ -375,14 +375,14 @@ describe('AgentConversationUndoService', () => {
     try {
       resumed.get(IAgentContextMemoryService);
       await resumed.restorePersisted();
-      expect(resumed.agentState.get(turnKey).nextTurnId).toBe(2);
-      await expect(runTurn(resumed, 'u4')).resolves.toBe(2);
+      expect(resumed.agentState.get(turnKey).nextTurnId).toBe(3);
+      await expect(runTurn(resumed, 'u4')).resolves.toBe(3);
       const repersisted = await resumed.persistedWireRecords();
       expect(
         repersisted
           .filter((record) => record.type === 'agent.turn.started')
           .map((record) => record['turnId']),
-      ).toEqual([0, 1, 1, 2]);
+      ).toEqual([0, 1, 2, 3]);
     } finally {
       await resumed.dispose();
     }

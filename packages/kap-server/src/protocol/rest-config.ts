@@ -4,6 +4,7 @@ export const providerConfigResponseSchema = z.object({
   type: z.string(),
   base_url: z.string().optional(),
   default_model: z.string().optional(),
+  api_key_env: z.string().optional(),
   has_api_key: z.boolean(),
 });
 export type ProviderConfigResponse = z.infer<typeof providerConfigResponseSchema>;
@@ -19,6 +20,7 @@ export const configResponseSchema = z
     yolo: z.boolean().optional(),
     default_permission_mode: z.string().optional(),
     default_plan_mode: z.boolean().optional(),
+    auto_session_title: z.boolean().optional(),
     permission: z.unknown().optional(),
     hooks: z.array(z.unknown()).optional(),
     services: z.unknown().optional(),
@@ -45,6 +47,7 @@ export const patchConfigRequestSchema = z.object({
   yolo: z.boolean().optional(),
   default_permission_mode: z.string().optional(),
   default_plan_mode: z.boolean().optional(),
+  auto_session_title: z.boolean().optional(),
   permission: z.unknown().optional(),
   hooks: z.array(z.unknown()).optional(),
   services: z.unknown().optional(),

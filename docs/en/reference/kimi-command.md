@@ -319,18 +319,21 @@ Five actions are available:
 
 #### `kimi provider add <url>`
 
-Bulk-import all providers from a custom registry (`api.json`). The command fetches the registry, creates a `[providers.<id>]` and `[models.<alias>]` entry for each item, and writes `source` metadata so the TUI refreshes providers and models from the same registry URL automatically on next startup.
+Bulk-import all providers from a custom registry (`api.json`). The command fetches the registry, creates a `[providers.<id>]` and `[models.<alias>]` entry for each item, and writes `source` metadata so the TUI refreshes providers and models from the same registry URL automatically on next startup. When a registry entry declares the `env` field, the command prints a hint naming the declared variable — set `api_key_env` in `config.toml` to use it; see [Providers and models](../configuration/providers.md).
 
 | Parameter / Option | Description |
 | --- | --- |
 | `<url>` | Registry URL |
-| `--api-key <key>` | Bearer token for accessing the registry. Falls back to the `KIMI_REGISTRY_API_KEY` environment variable if not provided; required |
+| `--api-key <key>` | Bearer token for accessing the registry. Falls back to the `KIMI_REGISTRY_API_KEY` environment variable if not provided; optional — omit both for public registries |
 
 ```sh
 kimi provider add https://registry.example.com/v1/models/api.json --api-key YOUR_KEY
 
 # Or via environment variable (suitable for CI / .envrc)
 KIMI_REGISTRY_API_KEY=YOUR_KEY kimi provider add https://registry.example.com/v1/models/api.json
+
+# Public registry: no key needed
+kimi provider add https://registry.example.com/v1/models/api.json
 ```
 
 If a provider ID already exists, it is removed and re-created. The default model is not set automatically; you can select one later with `-m` or `/model` in the TUI.

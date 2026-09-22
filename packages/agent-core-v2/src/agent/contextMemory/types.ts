@@ -1,5 +1,6 @@
 import type { Message } from '#/llm-adapter/contract/message';
 import type { ContentPart } from '#human/llm/message';
+import type { TokenUsage } from '#human/llm/usage';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import type { AgentTaskStatus } from '#/agent/task/task';
@@ -15,6 +16,7 @@ export interface PromptFileAttachment {
 
 export interface UserPromptOrigin {
   readonly kind: 'user';
+  readonly inTurn?: true;
   readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
   readonly skillActivations?: readonly BundledSkillActivation[];
   readonly attachments?: readonly PromptFileAttachment[];
@@ -33,6 +35,7 @@ export interface BundledSkillActivation {
 
 export interface SkillActivationOrigin {
   readonly kind: 'skill_activation';
+  readonly inTurn?: true;
   readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
   readonly activationId: string;
   readonly skillName: string;
@@ -46,6 +49,7 @@ export interface SkillActivationOrigin {
 
 export interface PluginCommandOrigin {
   readonly kind: 'plugin_command';
+  readonly inTurn?: true;
   readonly activationId: string;
   readonly pluginId: string;
   readonly commandName: string;
@@ -121,6 +125,11 @@ export type PromptOrigin =
   | HookResultOrigin
   | RetryOrigin;
 
+export interface ContextMessageTiming {
+  readonly llmFirstTokenLatencyMs?: number;
+  readonly llmStreamDurationMs?: number;
+}
+
 export type ContextMessage = Message & {
   readonly id?: string;
   readonly providerMessageId?: string;
@@ -128,6 +137,9 @@ export type ContextMessage = Message & {
   readonly isError?: boolean;
   toolCallDisplays?: Record<string, ToolInputDisplay>;
   readonly note?: string;
+  readonly usage?: TokenUsage;
+  readonly llmTiming?: ContextMessageTiming;
+  readonly durationMs?: number;
 };
 
 export interface UserMessageRecord {
