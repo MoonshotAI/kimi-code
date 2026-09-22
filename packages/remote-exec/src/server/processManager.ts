@@ -107,9 +107,10 @@ export class ProcessManager {
     if (
       !Array.isArray(argv) ||
       argv.length === 0 ||
-      argv.some((item) => typeof item !== 'string' || item.length === 0)
+      argv.some((item) => typeof item !== 'string') ||
+      argv[0].length === 0
     ) {
-      throw new RpcError(RpcErrorCode.InvalidParams, 'argv must be a non-empty string array');
+      throw new RpcError(RpcErrorCode.InvalidParams, 'argv must be a string array with a non-empty first element');
     }
     const cwd = requireAbsolutePath(params, 'cwd');
     const cwdStat = await stat(cwd).catch(() => undefined);

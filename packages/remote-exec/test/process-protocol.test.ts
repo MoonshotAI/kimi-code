@@ -83,6 +83,28 @@ describe('process protocol semantics', () => {
     }
   });
 
+  it('allows empty arguments after argv[0] but rejects an empty argv[0]', async () => {
+    const loopback = createInProcessLoopback();
+    const raw = new RawClient(loopback);
+    try {
+      await raw.handshake();
+      const started = await startProcess(raw, 1, {
+        processId: 'empty-arg',
+        argv: ['sh', '-c', 'test "$1" = ""', 'sh', ''],
+        cwd: '/tmp',
+      });
+      expect(started['error']).toBeUndefined();
+      await vi.waitFor(() => {
+        expect(raw.notifications('process/closed')).toHaveLength(1);
+      });
+      const rejected = await startProcess(raw, 2, { processId: 'empty-argv0', argv: [''], cwd: '/tmp' });
+      expect(rejected['error']).toMatchObject({ code: -32602 });
+    } finally {
+      loopback.clientInput.end();
+      await loopback.host.done;
+    }
+  });
+
   it('accepts a resize after a terminal has closed its output', async (testContext) => {
     const ptyAvailable = await import('node-pty').then(() => true, () => false);
     if (!ptyAvailable) testContext.skip();
