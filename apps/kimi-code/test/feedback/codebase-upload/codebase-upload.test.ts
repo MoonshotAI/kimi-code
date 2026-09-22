@@ -10,12 +10,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { removeStaleFeedbackUploads } from '../../../src/feedback/archive';
 import { packageCodebase, scanCodebase } from '../../../src/feedback/codebase';
 import { uploadArchive } from '../../../src/feedback/upload';
-import { hardenedGitConfigArgs } from '../../../src/utils/git/git-args';
-
-vi.mock('../../../src/utils/git/git-args', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../src/utils/git/git-args')>();
-  return { ...actual, hardenedGitConfigArgs: vi.fn(actual.hardenedGitConfigArgs) };
-});
 
 const execFileAsync = promisify(execFile);
 
@@ -270,22 +264,6 @@ describe('scanCodebase filtering', () => {
       const scan = await scanCodebase(root);
       expect(scan.usedGitIgnore).toBe(false);
       expect(scan.files.map((file) => file.path)).toEqual(['keep.ts']);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  it('returns no files when the git config probe fails', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'feedback-scan-probe-fail-'));
-    try {
-      await writeFile(join(root, 'keep.ts'), 'export const keep = 1;\n');
-      await execFileAsync('git', ['init'], { cwd: root });
-      vi.mocked(hardenedGitConfigArgs).mockReturnValueOnce(null);
-
-      const scan = await scanCodebase(root);
-
-      expect(scan.files).toEqual([]);
-      expect(scan.usedGitIgnore).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

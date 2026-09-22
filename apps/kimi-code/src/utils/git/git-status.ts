@@ -9,7 +9,7 @@
 
 import { execFile, spawnSync } from 'node:child_process';
 
-import { GIT_DIFF_ARGS, hardenedGitConfigArgs } from '#/utils/git/git-args';
+import { GIT_CONFIG_ARGS, GIT_DIFF_ARGS } from '#/utils/git/git-args';
 import { resolveCommandPath } from '#/utils/process/resolve-command';
 
 const BRANCH_TTL_MS = 5_000;
@@ -36,12 +36,10 @@ export interface PullRequestInfo {
 export interface GitStatusCache {
   /** Returns current status, or `null` when workDir is not a git repo. */
   getStatus(): GitStatus | null;
-  setTrusted(trusted: boolean): void;
 }
 
 export interface GitStatusCacheOptions {
   readonly onChange?: () => void;
-  readonly trusted?: boolean;
 }
 
 interface BranchState {
@@ -72,11 +70,9 @@ export function createGitStatusCache(
   workDir: string,
   options: GitStatusCacheOptions = {},
 ): GitStatusCache {
-  // This cache is constructed before the workspace trust gate, so the git
-  // binary must be resolved through PATH to an absolute path — a bare name
-  // would let cmd.exe pick up a `git.exe` planted in the workspace.
+  // Resolve through PATH to an absolute path — a bare name would let cmd.exe
+  // pick up a `git.exe` planted in the workspace.
   const git = resolveCommandPath('git', workDir);
-  let trusted = options.trusted ?? false;
   let repoDetected = false;
   let isRepo = false;
   let branch: BranchState = { value: null, fetchedAt: 0 };
@@ -98,24 +94,22 @@ export function createGitStatusCache(
 
   return {
     getStatus: () => {
-      if (!trusted || git === undefined) return null;
+      if (git === undefined) return null;
       if (repoDetected && !isRepo) return null;
-      const configArgs = hardenedGitConfigArgs(git, workDir);
-      if (configArgs === null) return null;
       if (!repoDetected) {
         repoDetected = true;
-        isRepo = detectGitRepo(git, workDir, configArgs);
+        isRepo = detectGitRepo(git, workDir, GIT_CONFIG_ARGS);
       }
       if (!isRepo) return null;
 
       const now = Date.now();
       if (now - branch.fetchedAt >= BRANCH_TTL_MS) {
-        branch = { value: readBranch(git, workDir, configArgs), fetchedAt: now };
+        branch = { value: readBranch(git, workDir, GIT_CONFIG_ARGS), fetchedAt: now };
       }
       if (branch.value === null) return null;
 
       if (now - status.fetchedAt >= STATUS_TTL_MS) {
-        status = { ...readStatus(git, workDir, configArgs), fetchedAt: now };
+        status = { ...readStatus(git, workDir, GIT_CONFIG_ARGS), fetchedAt: now };
       }
       refreshPullRequestIfNeeded(branch.value, now);
 
@@ -128,9 +122,6 @@ export function createGitStatusCache(
         diffDeleted: status.diffDeleted,
         pullRequest: pullRequest.branch === branch.value ? pullRequest.value : null,
       };
-    },
-    setTrusted: (value: boolean) => {
-      trusted = value;
     },
   };
 

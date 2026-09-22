@@ -4,7 +4,7 @@ import { lstat, readdir } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
-import { hardenedGitConfigArgs } from '#/utils/git/git-args';
+import { GIT_CONFIG_ARGS } from '#/utils/git/git-args';
 
 import {
   DEFAULT_MAX_ARCHIVE_SIZE,
@@ -48,19 +48,9 @@ export async function scanCodebase(
   const root = resolve(rootInput);
   const limits = resolveLimits(options.limits);
   throwIfAborted(options.signal);
-  const configArgs = hardenedGitConfigArgs('git', root);
-  if (configArgs === null) {
-    return {
-      root,
-      files: [],
-      fingerprint: fingerprintFiles([]),
-      usedGitIgnore: false,
-      exceedsLimit: undefined,
-    };
-  }
-  const usedGitIgnore = await isInsideGitWorkTree(root, configArgs);
+  const usedGitIgnore = await isInsideGitWorkTree(root, GIT_CONFIG_ARGS);
   const collected = usedGitIgnore
-    ? await scanWithGit(root, configArgs, limits, options.signal)
+    ? await scanWithGit(root, GIT_CONFIG_ARGS, limits, options.signal)
     : await scanWithoutFilter(root, limits, options.signal);
   const sortedFiles = collected.files.toSorted((a, b) => a.path.localeCompare(b.path));
 

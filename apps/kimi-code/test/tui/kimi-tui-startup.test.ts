@@ -210,6 +210,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
     getExperimentalFeatures: vi.fn(async () => []),
+    getWorkspaceTrustInfo: vi.fn(async () => ({ trusted: true, gatedMcpServers: [] })),
     supportsAtomicSectionReplace: vi.fn(() => false),
     auth: {
       status: vi.fn(async () => ({ providers: [] })),
@@ -2492,36 +2493,10 @@ describe('KimiTUI startup', () => {
     expect(onExit).toHaveBeenCalledWith(0);
   });
 
-  it('arms the footer git status when the workspace is already trusted', async () => {
-    const getWorkspaceTrustInfo = vi.fn(async () => ({
-      trusted: true,
-      gatedMcpServers: [],
-    }));
-    const harness = makeHarness(makeSession(), { getWorkspaceTrustInfo });
-    const driver = makeDriver(harness, {
-      ...makeStartupInput(),
-      migrationPlan: MIGRATION_PLAN,
-      migrateOnly: true,
-    }) as unknown as MigrateExitDriver;
-    vi.spyOn(driver.state.ui, 'start').mockImplementation(() => {});
-    vi.spyOn(driver.state.ui, 'stop').mockImplementation(() => {});
-    vi.spyOn(driver.state.terminal, 'write').mockImplementation(() => {});
-    vi.spyOn(driver, 'runMigrationScreen').mockResolvedValue({ decision: 'later' });
-    const setGitTrusted = vi.spyOn(driver.state.footer, 'setGitTrusted');
-    const onExit = vi.fn(async () => {});
-    driver.onExit = onExit;
-
-    await driver.start();
-
-    expect(setGitTrusted).toHaveBeenCalledWith(true);
-    expect(onExit).toHaveBeenCalledWith(0);
-  });
-
-  it('arms the footer git status after the user trusts the workspace', async () => {
-    const getWorkspaceTrustInfo = vi.fn(async () => ({
-      trusted: false,
-      gatedMcpServers: [],
-    }));
+  it('prompts for workspace trust when trust info cannot be read', async () => {
+    const getWorkspaceTrustInfo = vi.fn(async () => {
+      throw new Error('unavailable');
+    });
     const trustWorkspace = vi.fn(async () => {});
     const harness = makeHarness(makeSession(), { getWorkspaceTrustInfo, trustWorkspace });
     const driver = makeDriver(harness, {
@@ -2536,7 +2511,6 @@ describe('KimiTUI startup', () => {
     vi.spyOn(driver.state.terminal, 'write').mockImplementation(() => {});
     vi.spyOn(driver, 'runMigrationScreen').mockResolvedValue({ decision: 'later' });
     const mountSpy = vi.spyOn(driver, 'mountEditorReplacement');
-    const setGitTrusted = vi.spyOn(driver.state.footer, 'setGitTrusted');
     const onExit = vi.fn(async () => {});
     driver.onExit = onExit;
 
@@ -2544,16 +2518,15 @@ describe('KimiTUI startup', () => {
     await vi.waitFor(() => {
       expect(mountSpy).toHaveBeenCalled();
     });
-    expect(setGitTrusted).not.toHaveBeenCalledWith(true);
     mountSpy.mock.calls[0]![0].handleInput('\u001B[A');
     mountSpy.mock.calls[0]![0].handleInput('\r');
     await startPromise;
 
-    expect(setGitTrusted).toHaveBeenCalledWith(true);
+    expect(trustWorkspace).toHaveBeenCalledWith('/tmp/proj-a');
     expect(onExit).toHaveBeenCalledWith(0);
   });
 
-  it('keeps the footer git status disarmed when persisting trust fails', async () => {
+  it('continues startup when persisting trust fails', async () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: false,
       gatedMcpServers: [],
@@ -2572,9 +2545,10 @@ describe('KimiTUI startup', () => {
     vi.spyOn(driver.state.ui, 'start').mockImplementation(() => {});
     vi.spyOn(driver.state.ui, 'stop').mockImplementation(() => {});
     vi.spyOn(driver.state.terminal, 'write').mockImplementation(() => {});
-    vi.spyOn(driver, 'runMigrationScreen').mockResolvedValue({ decision: 'later' });
+    const migrationSpy = vi
+      .spyOn(driver, 'runMigrationScreen')
+      .mockResolvedValue({ decision: 'later' });
     const mountSpy = vi.spyOn(driver, 'mountEditorReplacement');
-    const setGitTrusted = vi.spyOn(driver.state.footer, 'setGitTrusted');
     const onExit = vi.fn(async () => {});
     driver.onExit = onExit;
 
@@ -2586,7 +2560,8 @@ describe('KimiTUI startup', () => {
     mountSpy.mock.calls[0]![0].handleInput('\r');
     await startPromise;
 
-    expect(setGitTrusted).not.toHaveBeenCalledWith(true);
+    expect(trustWorkspace).toHaveBeenCalledWith('/tmp/proj-a');
+    expect(migrationSpy).toHaveBeenCalled();
     expect(onExit).toHaveBeenCalledWith(0);
   });
 

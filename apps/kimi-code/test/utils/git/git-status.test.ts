@@ -1,8 +1,4 @@
 /* eslint-disable import/first -- vi.mock setup must run before the imports it stubs out. */
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -64,7 +60,7 @@ describe('git status cache', () => {
       return { status: 1, stdout: '' };
     });
 
-    const cache = createGitStatusCache('/tmp/repo', { trusted: true });
+    const cache = createGitStatusCache('/tmp/repo');
 
     expect(cache.getStatus()).toEqual({
       branch: 'main',
@@ -84,19 +80,19 @@ describe('git status cache', () => {
       diffDeleted: 1,
       pullRequest: null,
     });
-    expect(mocks.spawnSync).toHaveBeenCalledTimes(8);
+    expect(mocks.spawnSync).toHaveBeenCalledTimes(4);
     expect(mocks.execFile).toHaveBeenCalledTimes(1);
 
     await Promise.resolve();
 
     vi.setSystemTime(new Date('2026-04-24T00:00:06Z'));
     cache.getStatus();
-    expect(mocks.spawnSync).toHaveBeenCalledTimes(11);
+    expect(mocks.spawnSync).toHaveBeenCalledTimes(5);
     expect(mocks.execFile).toHaveBeenCalledTimes(1);
 
     vi.setSystemTime(new Date('2026-04-24T00:00:16Z'));
     cache.getStatus();
-    expect(mocks.spawnSync).toHaveBeenCalledTimes(16);
+    expect(mocks.spawnSync).toHaveBeenCalledTimes(8);
     expect(mocks.execFile).toHaveBeenCalledTimes(1);
   });
 
@@ -134,7 +130,7 @@ describe('git status cache', () => {
       return { status: 1, stdout: '' };
     });
 
-    const cache = createGitStatusCache('/tmp/repo', { onChange, trusted: true });
+    const cache = createGitStatusCache('/tmp/repo', { onChange });
     expect(cache.getStatus()).toEqual({
       branch: 'feature/footer',
       dirty: true,
@@ -187,7 +183,7 @@ describe('git status cache', () => {
       return { status: 1, stdout: '' };
     });
 
-    const cache = createGitStatusCache('/tmp/repo', { onChange, trusted: true });
+    const cache = createGitStatusCache('/tmp/repo', { onChange });
 
     expect(cache.getStatus()).toEqual({
       branch: 'main',
@@ -215,22 +211,9 @@ describe('git status cache', () => {
 
   it('returns null without spawning when git cannot be resolved to a safe path', () => {
     mocks.resolveCommandPath.mockReturnValue(undefined);
-    expect(createGitStatusCache('/tmp/repo', { trusted: true }).getStatus()).toBeNull();
+    expect(createGitStatusCache('/tmp/repo').getStatus()).toBeNull();
     expect(mocks.spawnSync).not.toHaveBeenCalled();
     expect(mocks.execFile).not.toHaveBeenCalled();
-  });
-
-  it('spawns no git process until the workspace is trusted', () => {
-    mocks.spawnSync.mockReturnValue({ status: 0, stdout: 'true\n' });
-    const cache = createGitStatusCache('/tmp/repo');
-
-    expect(cache.getStatus()).toBeNull();
-    expect(mocks.spawnSync).not.toHaveBeenCalled();
-    expect(mocks.execFile).not.toHaveBeenCalled();
-
-    cache.setTrusted(true);
-    expect(cache.getStatus()).not.toBeNull();
-    expect(mocks.spawnSync).toHaveBeenCalled();
   });
 
   it('disables repo-local command config on every git invocation', async () => {
@@ -252,12 +235,12 @@ describe('git status cache', () => {
       return { status: 1, stdout: '' };
     });
 
-    const cache = createGitStatusCache('/tmp/repo', { trusted: true });
+    const cache = createGitStatusCache('/tmp/repo');
     expect(cache.getStatus()).not.toBeNull();
     await Promise.resolve();
 
     const nullDevice = process.platform === 'win32' ? 'NUL' : '/dev/null';
-    expect(mocks.spawnSync).toHaveBeenCalledTimes(6);
+    expect(mocks.spawnSync).toHaveBeenCalledTimes(4);
     for (const call of mocks.spawnSync.mock.calls) {
       const args = call[1] as string[];
       expect(args.slice(0, 4)).toEqual([
@@ -274,371 +257,6 @@ describe('git status cache', () => {
     const diffArgs = diffCall![1] as string[];
     expect(diffArgs).toContain('--no-ext-diff');
     expect(diffArgs).toContain('--no-textconv');
-  });
-
-  it('neutralizes repo-configured filter drivers on every git invocation', async () => {
-    mocks.execFile.mockImplementation(
-      (
-        _cmd: string,
-        _args: string[],
-        _options: unknown,
-        callback: (error: Error | null, stdout: string, stderr: string) => void,
-      ) => {
-        callback(new Error('no pull request'), '', '');
-      },
-    );
-    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args.includes('config')) {
-        return {
-          status: 0,
-          stdout: args.includes('--worktree')
-            ? 'filter.wt.process\n'
-            : 'filter.evil.clean\nfilter.evil.process\n',
-        };
-      }
-      if (args.includes('rev-parse')) return { status: 0, stdout: 'true\n' };
-      if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
-      if (args.includes('status')) return { status: 0, stdout: '## main...origin/main\n M a.ts\n' };
-      if (args.includes('diff')) return { status: 0, stdout: '1\t1\ta.ts\n' };
-      return { status: 1, stdout: '' };
-    });
-
-    const cache = createGitStatusCache('/tmp/repo', { trusted: true });
-    expect(cache.getStatus()).not.toBeNull();
-    await Promise.resolve();
-
-    const invocations = mocks.spawnSync.mock.calls.map((call) => call[1] as string[]);
-    const hardened = invocations.filter((args) => !args.includes('config'));
-    expect(hardened.length).toBeGreaterThan(0);
-    for (const args of hardened) {
-      expect(args).toContain('filter.evil.clean=');
-      expect(args).toContain('filter.evil.process=');
-      expect(args).toContain('filter.wt.clean=');
-      expect(args).toContain('filter.wt.process=');
-    }
-  });
-
-  it('caches filter driver probes until the repo config changes', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'git-status-filters-'));
-    mkdirSync(join(root, '.git'), { recursive: true });
-    writeFileSync(join(root, '.git', 'config'), '[filter "evil"]\n\tclean = touch /tmp/m\n');
-    mocks.execFile.mockImplementation(
-      (
-        _cmd: string,
-        _args: string[],
-        _options: unknown,
-        callback: (error: Error | null, stdout: string, stderr: string) => void,
-      ) => {
-        callback(new Error('no pull request'), '', '');
-      },
-    );
-    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args.includes('core.worktree')) return { status: 1, stdout: '' };
-      if (args.includes('config')) {
-        return { status: 0, stdout: 'filter.evil.clean\n' };
-      }
-      if (args.includes('rev-parse')) return { status: 0, stdout: 'true\n' };
-      if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
-      if (args.includes('status')) return { status: 0, stdout: '## main...origin/main\n' };
-      return { status: 1, stdout: '' };
-    });
-
-    try {
-      vi.useFakeTimers();
-      vi.setSystemTime(new Date('2026-04-24T00:00:00Z'));
-      const probeCount = () =>
-        mocks.spawnSync.mock.calls.filter((call) => (call[1] as string[]).includes('config'))
-          .length;
-
-      const cache = createGitStatusCache(root, { trusted: true });
-      cache.getStatus();
-      expect(probeCount()).toBe(4);
-
-      vi.setSystemTime(new Date('2026-04-24T00:00:16Z'));
-      cache.getStatus();
-      expect(probeCount()).toBe(4);
-
-      writeFileSync(join(root, '.git', 'config'), '[filter "evil"]\n\tclean = touch /tmp/marker\n');
-      vi.setSystemTime(new Date('2026-04-24T00:00:32Z'));
-      cache.getStatus();
-      expect(probeCount()).toBe(8);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it('does not cache filter probes when the repo config uses includes', () => {
-    const root = mkdtempSync(join(tmpdir(), 'git-status-includes-'));
-    mkdirSync(join(root, '.git'), { recursive: true });
-    writeFileSync(
-      join(root, '.git', 'config'),
-      '[Include]\n\tpath = extra.config\n[filter "evil"]\n\tclean = touch /tmp/m\n',
-    );
-    mocks.execFile.mockImplementation(
-      (
-        _cmd: string,
-        _args: string[],
-        _options: unknown,
-        callback: (error: Error | null, stdout: string, stderr: string) => void,
-      ) => {
-        callback(new Error('no pull request'), '', '');
-      },
-    );
-    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args.includes('core.worktree')) return { status: 1, stdout: '' };
-      if (args.includes('config')) return { status: 0, stdout: 'filter.evil.clean\n' };
-      if (args.includes('rev-parse')) return { status: 0, stdout: 'true\n' };
-      if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
-      if (args.includes('status')) return { status: 0, stdout: '## main...origin/main\n' };
-      return { status: 1, stdout: '' };
-    });
-
-    try {
-      const probeCount = () =>
-        mocks.spawnSync.mock.calls.filter((call) => (call[1] as string[]).includes('config'))
-          .length;
-      const cache = createGitStatusCache(root, { trusted: true });
-      cache.getStatus();
-      const afterFirst = probeCount();
-      expect(afterFirst).toBe(4);
-      cache.getStatus();
-      expect(probeCount()).toBe(afterFirst + 4);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it('caches filter probes when the config merely mentions include in values', () => {
-    const root = mkdtempSync(join(tmpdir(), 'git-status-include-url-'));
-    mkdirSync(join(root, '.git'), { recursive: true });
-    writeFileSync(
-      join(root, '.git', 'config'),
-      '[remote "origin"]\n\turl = git@example.com:team/include.git\n[filter "evil"]\n\tclean = touch /tmp/m\n',
-    );
-    mocks.execFile.mockImplementation(
-      (
-        _cmd: string,
-        _args: string[],
-        _options: unknown,
-        callback: (error: Error | null, stdout: string, stderr: string) => void,
-      ) => {
-        callback(new Error('no pull request'), '', '');
-      },
-    );
-    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args.includes('core.worktree')) return { status: 1, stdout: '' };
-      if (args.includes('config')) return { status: 0, stdout: 'filter.evil.clean\n' };
-      if (args.includes('rev-parse')) return { status: 0, stdout: 'true\n' };
-      if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
-      if (args.includes('status')) return { status: 0, stdout: '## main...origin/main\n' };
-      return { status: 1, stdout: '' };
-    });
-
-    try {
-      const probeCount = () =>
-        mocks.spawnSync.mock.calls.filter((call) => (call[1] as string[]).includes('config'))
-          .length;
-      const cache = createGitStatusCache(root, { trusted: true });
-      cache.getStatus();
-      expect(probeCount()).toBe(4);
-      cache.getStatus();
-      expect(probeCount()).toBe(4);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it('fails closed when core.worktree points outside the repository', () => {
-    const root = mkdtempSync(join(tmpdir(), 'git-status-worktree-'));
-    mkdirSync(join(root, '.git'), { recursive: true });
-    writeFileSync(join(root, '.git', 'config'), '[core]\n\tworktree = /outside\n');
-    mocks.execFile.mockImplementation(
-      (
-        _cmd: string,
-        _args: string[],
-        _options: unknown,
-        callback: (error: Error | null, stdout: string, stderr: string) => void,
-      ) => {
-        callback(new Error('no pull request'), '', '');
-      },
-    );
-    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args.includes('core.worktree')) return { status: 0, stdout: '/outside\n' };
-      if (args.includes('config')) return { status: 1, stdout: '' };
-      return { status: 0, stdout: 'true\n' };
-    });
-
-    try {
-      const cache = createGitStatusCache(root, { trusted: true });
-      expect(cache.getStatus()).toBeNull();
-      const invocations = mocks.spawnSync.mock.calls.map((call) => call[1] as string[]);
-      expect(invocations.length).toBeGreaterThan(0);
-      expect(invocations.every((args) => args.includes('config'))).toBe(true);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it('fails closed when .git is a symlink and core.worktree is relative', () => {
-    const root = mkdtempSync(join(tmpdir(), 'git-status-symlink-'));
-    const admin = mkdtempSync(join(tmpdir(), 'git-status-admin-'));
-    mkdirSync(join(admin, '.git'), { recursive: true });
-    symlinkSync(join(admin, '.git'), join(root, '.git'));
-    mocks.execFile.mockImplementation(
-      (
-        _cmd: string,
-        _args: string[],
-        _options: unknown,
-        callback: (error: Error | null, stdout: string, stderr: string) => void,
-      ) => {
-        callback(new Error('no pull request'), '', '');
-      },
-    );
-    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args.includes('core.worktree')) return { status: 0, stdout: '..\n' };
-      if (args.includes('config')) return { status: 1, stdout: '' };
-      return { status: 0, stdout: 'true\n' };
-    });
-
-    try {
-      const cache = createGitStatusCache(root, { trusted: true });
-      expect(cache.getStatus()).toBeNull();
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-      rmSync(admin, { recursive: true, force: true });
-    }
-  });
-
-  it('fails closed when a filter driver name contains an equals sign', () => {
-    mocks.execFile.mockImplementation(
-      (
-        _cmd: string,
-        _args: string[],
-        _options: unknown,
-        callback: (error: Error | null, stdout: string, stderr: string) => void,
-      ) => {
-        callback(new Error('no pull request'), '', '');
-      },
-    );
-    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args.includes('config')) {
-        return { status: 0, stdout: 'filter.evil=x.clean\n' };
-      }
-      return { status: 0, stdout: 'true\n' };
-    });
-
-    const cache = createGitStatusCache('/tmp/repo', { trusted: true });
-
-    expect(cache.getStatus()).toBeNull();
-    const invocations = mocks.spawnSync.mock.calls.map((call) => call[1] as string[]);
-    expect(invocations.every((args) => args.includes('config'))).toBe(true);
-  });
-
-  it('fails closed when the filter config probe errors', () => {
-    mocks.execFile.mockImplementation(
-      (
-        _cmd: string,
-        _args: string[],
-        _options: unknown,
-        callback: (error: Error | null, stdout: string, stderr: string) => void,
-      ) => {
-        callback(new Error('no pull request'), '', '');
-      },
-    );
-    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args.includes('config')) {
-        return { status: null, stdout: '', error: new Error('spawnSync ENOBUFS') };
-      }
-      return { status: 0, stdout: 'true\n' };
-    });
-
-    const cache = createGitStatusCache('/tmp/repo', { trusted: true });
-
-    expect(cache.getStatus()).toBeNull();
-    const invocations = mocks.spawnSync.mock.calls.map((call) => call[1] as string[]);
-    expect(invocations.length).toBeGreaterThan(0);
-    expect(invocations.every((args) => args.includes('config'))).toBe(true);
-  });
-
-  it('caches filter probes when the work dir is a repository subdirectory', () => {
-    const root = mkdtempSync(join(tmpdir(), 'git-status-subdir-'));
-    mkdirSync(join(root, '.git'), { recursive: true });
-    mkdirSync(join(root, 'sub'));
-    writeFileSync(join(root, '.git', 'config'), '[filter "evil"]\n\tclean = touch /tmp/m\n');
-    mocks.execFile.mockImplementation(
-      (
-        _cmd: string,
-        _args: string[],
-        _options: unknown,
-        callback: (error: Error | null, stdout: string, stderr: string) => void,
-      ) => {
-        callback(new Error('no pull request'), '', '');
-      },
-    );
-    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args.includes('core.worktree')) return { status: 1, stdout: '' };
-      if (args.includes('config')) return { status: 0, stdout: 'filter.evil.clean\n' };
-      if (args.includes('rev-parse')) return { status: 0, stdout: 'true\n' };
-      if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
-      if (args.includes('status')) return { status: 0, stdout: '## main...origin/main\n' };
-      return { status: 1, stdout: '' };
-    });
-
-    try {
-      const probeCount = () =>
-        mocks.spawnSync.mock.calls.filter((call) => (call[1] as string[]).includes('config'))
-          .length;
-      const cache = createGitStatusCache(join(root, 'sub'), { trusted: true });
-      cache.getStatus();
-      expect(probeCount()).toBe(4);
-      cache.getStatus();
-      expect(probeCount()).toBe(4);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it('rebusts the probe cache when a .git file pointer target config changes', () => {
-    const root = mkdtempSync(join(tmpdir(), 'git-status-gitfile-'));
-    const gitDir = join(root, 'actual-git');
-    mkdirSync(gitDir, { recursive: true });
-    mkdirSync(join(root, 'sub'));
-    writeFileSync(join(root, '.git'), 'gitdir: actual-git\n');
-    writeFileSync(join(gitDir, 'config'), '[filter "evil"]\n\tclean = touch /tmp/m\n');
-    mocks.execFile.mockImplementation(
-      (
-        _cmd: string,
-        _args: string[],
-        _options: unknown,
-        callback: (error: Error | null, stdout: string, stderr: string) => void,
-      ) => {
-        callback(new Error('no pull request'), '', '');
-      },
-    );
-    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args.includes('core.worktree')) return { status: 1, stdout: '' };
-      if (args.includes('config')) return { status: 0, stdout: 'filter.evil.clean\n' };
-      if (args.includes('rev-parse')) return { status: 0, stdout: 'true\n' };
-      if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
-      if (args.includes('status')) return { status: 0, stdout: '## main...origin/main\n' };
-      return { status: 1, stdout: '' };
-    });
-
-    try {
-      const probeCount = () =>
-        mocks.spawnSync.mock.calls.filter((call) => (call[1] as string[]).includes('config'))
-          .length;
-      const cache = createGitStatusCache(join(root, 'sub'), { trusted: true });
-      cache.getStatus();
-      expect(probeCount()).toBe(4);
-      cache.getStatus();
-      expect(probeCount()).toBe(4);
-      writeFileSync(join(gitDir, 'config'), '[filter "evil"]\n\tclean = touch /tmp/pwned\n');
-      cache.getStatus();
-      expect(probeCount()).toBe(8);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
   });
 
   it('spawns git and gh through their resolved absolute paths', async () => {
@@ -659,7 +277,7 @@ describe('git status cache', () => {
       return { status: 1, stdout: '' };
     });
 
-    const cache = createGitStatusCache('/tmp/repo', { trusted: true });
+    const cache = createGitStatusCache('/tmp/repo');
     expect(cache.getStatus()).not.toBeNull();
     await Promise.resolve();
 
@@ -677,7 +295,7 @@ describe('git status cache', () => {
 
   it('returns null when the working directory is not a git repo and formats badges', () => {
     mocks.spawnSync.mockReturnValue({ status: 1, stdout: '' });
-    expect(createGitStatusCache('/tmp/not-a-repo', { trusted: true }).getStatus()).toBeNull();
+    expect(createGitStatusCache('/tmp/not-a-repo').getStatus()).toBeNull();
     expect(
       formatGitBadge({
         branch: 'main',
@@ -702,13 +320,13 @@ describe('git status cache', () => {
     ).toBe('main [±]');
   });
 
-  it('skips config probes on later renders once the directory is known to be a non-repo', () => {
+  it('skips git on later renders once the directory is known to be a non-repo', () => {
     mocks.spawnSync.mockReturnValue({ status: 1, stdout: '' });
-    const cache = createGitStatusCache('/tmp/not-a-repo', { trusted: true });
+    const cache = createGitStatusCache('/tmp/not-a-repo');
 
     expect(cache.getStatus()).toBeNull();
     const probeCalls = mocks.spawnSync.mock.calls.length;
-    expect(probeCalls).toBeGreaterThan(0);
+    expect(probeCalls).toBe(1);
 
     expect(cache.getStatus()).toBeNull();
     expect(mocks.spawnSync.mock.calls.length).toBe(probeCalls);
