@@ -1555,6 +1555,19 @@ describe('ReadTool symlink escape', () => {
     expect(toolContentString(result)).not.toContain('secret-key');
   });
 
+  it('blocks reading an absolute outside symlink that resolves to a sensitive file', async () => {
+    const target = join(outsideDir, 'id_rsa');
+    await writeFile(target, 'secret-key');
+    const link = join(outsideDir, 'notes.md');
+    await symlink(target, link);
+
+    const result = await execute(makeRealFsTool(wsDir), { path: link });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(toolContentString(result)).toContain('sensitive-file pattern');
+    expect(toolContentString(result)).not.toContain('secret-key');
+  });
+
   it('allows reading through a symlink that stays inside the workspace', async () => {
     const target = join(wsDir, 'real.txt');
     await writeFile(target, 'alpha\n');

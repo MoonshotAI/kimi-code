@@ -99,7 +99,19 @@ export async function assertRealPathWithinWorkspace(
   pathClass: PathClass,
   options?: RealPathAccessOptions,
 ): Promise<string> {
-  if (!isWithinWorkspace(absPath, workspace, pathClass)) return absPath;
+  if (!isWithinWorkspace(absPath, workspace, pathClass)) {
+    const resolved = await realpathExistingPrefix(fs, absPath);
+    if (options?.checkSensitive !== false && isSensitiveFile(resolved)) {
+      throw new PathSecurityError(
+        'PATH_SENSITIVE',
+        absPath,
+        resolved,
+        `"${absPath}" resolves to "${resolved}" through a symbolic link, which matches a sensitive-file pattern (env / credential / SSH key). ` +
+          'Access is blocked to protect secrets.',
+      );
+    }
+    return absPath;
+  }
   const resolved = await realpathExistingPrefix(fs, absPath);
   if (options?.checkSensitive !== false && isSensitiveFile(resolved)) {
     throw new PathSecurityError(
