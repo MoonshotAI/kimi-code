@@ -1313,6 +1313,61 @@ export const WIRE_RENDERERS: RendererMap = {
     }),
   },
 
+  'subagent.spawned': {
+    tone: 'subagent',
+    label: 'sub+',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Pill tone="subagent" variant="soft">
+            {r.swarmIndex === undefined ? 'child' : `member ${r.swarmIndex}`}
+          </Pill>
+          <Mono>{r.subagentId}</Mono>
+          <Dim>{r.subagentName}</Dim>
+        </span>
+      ),
+      right: r.runInBackground ? <Dim>background</Dim> : undefined,
+    }),
+  },
+
+  'subagent.started': {
+    tone: 'subagent',
+    label: 'sub↻',
+    headline: (r) => ({ main: <Mono>{r.subagentId}</Mono> }),
+  },
+
+  'subagent.completed': {
+    tone: 'subagent',
+    label: 'sub✓',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>{r.subagentId}</Mono>
+          <span className="truncate text-fg-1">{truncate(r.resultSummary, 120)}</span>
+        </span>
+      ),
+    }),
+  },
+
+  'subagent.failed': {
+    tone: 'subagent',
+    label: 'sub✗',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>{r.subagentId}</Mono>
+          <span className="truncate text-fg-1">{truncate(r.error, 120)}</span>
+        </span>
+      ),
+    }),
+  },
+
+  'subagent.cancelled': {
+    tone: 'subagent',
+    label: 'sub⊘',
+    headline: (r) => ({ main: <Mono>{r.subagentId}</Mono> }),
+  },
+
   'token_counting.measured': {
     tone: 'meta',
     label: 'tokens',
