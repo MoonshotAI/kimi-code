@@ -225,7 +225,7 @@ describe('Agent config', () => {
     expect(ctx.newEvents()).toMatchInlineSnapshot(`
       [wire] config.update            { "agentId": "main", "profileName": "test-profile", "systemPrompt": "Profile system prompt.", "environmentDisclosure": { "cwd": "<cwd>" }, "agentsMdPaths": [], "disallowedTools": [], "time": "<time>" }
       [emit] agent.status.updated     { "time": "<time>", "agentId": "main", "model": "mock-model", "maxContextTokens": 1000000 }
-      [wire] tools.set_active_tools   { "agentId": "main", "names": [ "Read", "change_environment", "connect" ], "time": "<time>" }
+      [wire] tools.set_active_tools   { "agentId": "main", "names": [ "Read" ], "time": "<time>" }
     `);
   });
 
