@@ -84,5 +84,8 @@ export function isCoreWorktreeSafe(
   workTreeRoot: string,
 ): boolean {
   const configured = isAbsolute(raw) ? normalize(raw) : resolve(resolvedGitDir, raw);
+  if (process.platform === 'win32') {
+    return normalize(configured).toLowerCase() === normalize(workTreeRoot).toLowerCase();
+  }
   return normalize(configured) === normalize(workTreeRoot);
 }
