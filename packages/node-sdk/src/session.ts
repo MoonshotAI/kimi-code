@@ -116,6 +116,25 @@ export class Session {
     return summary;
   }
 
+  /**
+   * Re-read this live session's persisted replay without reloading it, so the
+   * state returned by {@link getResumeState} reflects everything the engine
+   * has recorded so far. Unlike {@link reloadSession} this is safe while a
+   * turn is running: it folds the on-disk wire and leaves the runtime alone.
+   */
+  async refreshResumeState(options?: {
+    readonly replayTurnLimit?: number;
+  }): Promise<ResumedSessionState | undefined> {
+    this.ensureOpen();
+    const summary = await this.rpc.resumeSession({
+      id: this.id,
+      replayTurnLimit: options?.replayTurnLimit,
+    });
+    this.summary = summary;
+    this.resumeState = resumeStateFromSummary(summary);
+    return this.resumeState;
+  }
+
   onEvent(listener: (event: Event) => void): Unsubscribe {
     this.ensureOpen();
     return this.rpc.onEvent((event) => {

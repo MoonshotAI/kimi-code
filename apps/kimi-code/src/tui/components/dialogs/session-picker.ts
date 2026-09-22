@@ -121,6 +121,8 @@ export class SessionPickerComponent extends Container implements Focusable {
     onSearchDrain?: () => void;
     /** Fired after the user confirms deletion with `y`; the picker clears its delete state once the request settles. */
     onDeleteRequest?: (session: SessionRow) => Promise<void>;
+    /** Ctrl+T: open the selected session in a new tab (experimental tabs); absent hides the binding. */
+    onOpenInTab?: (session: SessionRow) => void | Promise<void>;
   }) {
     super();
     this.sessions = opts.sessions;
@@ -149,6 +151,7 @@ export class SessionPickerComponent extends Container implements Focusable {
     this.onCtrlC = opts.onCtrlC;
     this.onCtrlD = opts.onCtrlD;
     this.onDeleteRequest = opts.onDeleteRequest;
+    this.onOpenInTab = opts.onOpenInTab;
   }
 
   private readonly onCtrlC?: () => void;
@@ -156,6 +159,7 @@ export class SessionPickerComponent extends Container implements Focusable {
   private readonly onLoadMore?: () => void;
   private readonly onSearchDrain?: () => void;
   private readonly onDeleteRequest?: (session: SessionRow) => Promise<void>;
+  private readonly onOpenInTab?: (session: SessionRow) => void | Promise<void>;
 
   /** Appends a freshly fetched page, keeping the cursor and active query. */
   appendSessions(rows: SessionRow[]): void {
@@ -236,6 +240,11 @@ export class SessionPickerComponent extends Container implements Focusable {
       this.onToggleScope?.(this.list.selected()?.id ?? this.currentSessionId);
       return;
     }
+    if (matchesKey(data, Key.ctrl('t')) && this.onOpenInTab !== undefined) {
+      const session = this.list.selected();
+      if (session) this.runSelection(this.onOpenInTab(session));
+      return;
+    }
     if (matchesKey(data, Key.ctrl('x'))) {
       const selected = this.list.selected();
       if (selected !== undefined && this.onDeleteRequest !== undefined) {
@@ -254,16 +263,7 @@ export class SessionPickerComponent extends Container implements Focusable {
     }
     if (matchesKey(data, Key.enter)) {
       const session = this.list.selected();
-      if (session) {
-        const selection = this.onSelect(session);
-        if (selection !== undefined) {
-          this.selectInFlight = true;
-          const clear = (): void => {
-            this.selectInFlight = false;
-          };
-          void selection.then(clear, clear);
-        }
-      }
+      if (session) this.runSelection(this.onSelect(session));
       return;
     }
 
@@ -271,6 +271,16 @@ export class SessionPickerComponent extends Container implements Focusable {
     if (this.list.handleKey(data)) {
       this.syncVisibleCount(previousQuery);
     }
+  }
+
+  /** Lock input while an async selection (resume / open in tab) runs, so keys cannot race the session swap. */
+  private runSelection(selection: void | Promise<void>): void {
+    if (selection === undefined) return;
+    this.selectInFlight = true;
+    const clear = (): void => {
+      this.selectInFlight = false;
+    };
+    void selection.then(clear, clear);
   }
 
   private handleDeleteInput(data: string): void {
@@ -375,6 +385,7 @@ export class SessionPickerComponent extends Container implements Focusable {
       scopeHint,
       ...(this.onDeleteRequest !== undefined ? ['Ctrl+X delete'] : []),
       'Enter select',
+      ...(this.onOpenInTab !== undefined ? ['Ctrl+T open in tab'] : []),
       'Esc cancel',
     ].filter((item): item is string => item !== undefined);
 

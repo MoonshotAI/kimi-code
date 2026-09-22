@@ -7,6 +7,8 @@ import type { ColorToken, ThemeName } from '#/tui/theme';
 import { LLM_NOT_SET_MESSAGE } from '../constant/kimi-tui';
 import type { AuthFlowController } from '../controllers/auth-flow';
 import type { BtwPanelController } from '../controllers/btw-panel';
+import type { SessionOpenMode, SessionTab, SessionTabsController } from '../controllers/session-tabs';
+import type { SessionTabView } from '../utils/session-tab-label';
 import type { StreamingUIController } from '../controllers/streaming-ui';
 import type { TasksBrowserController } from '../controllers/tasks-browser';
 import { tryHandleDanceCommand } from '../easter-eggs/dance';
@@ -49,6 +51,7 @@ import { handlePluginsCommand } from './plugins';
 import { handleProviderCommand } from './provider';
 import {
   findBuiltInSlashCommand,
+  isNewInTabArgument,
   resolveSlashCommandAvailability,
   type BuiltinSlashCommandName,
 } from './registry';
@@ -68,6 +71,7 @@ import {
   handleTitleCommand,
 } from './session';
 import { handleSwarmCommand } from './swarm';
+import { handleTabCommand } from './tab';
 import { handleTowerCommand } from './tower';
 import { handleUndoCommand } from './undo';
 import { handleRemoteControlCommand, handleWebCommand } from './web';
@@ -191,8 +195,17 @@ export interface SlashCommandHost {
    */
   setExitForegroundTask(task: (exitCode: number) => Promise<void>): void;
   showHelpPanel(): void;
-  createNewSession(): Promise<void>;
+  createNewSession(mode?: SessionOpenMode): Promise<void>;
   showSessionPicker(): Promise<void>;
+
+  // Session tabs (experimental)
+  readonly tabs: SessionTabsController;
+  tabsEnabled(): boolean;
+  tabViews(): SessionTabView[];
+  activateTabAt(index: number): Promise<boolean>;
+  switchTab(delta: 1 | -1): Promise<boolean>;
+  closeTab(tab: SessionTab, options?: { readonly force?: boolean }): Promise<boolean>;
+  closeActiveTab(options?: { readonly force?: boolean }): Promise<boolean>;
   sendNormalUserInput(text: string): void;
   /**
    * Submit a prompt that explicitly activates one or more skills inline
@@ -464,25 +477,36 @@ async function handleBuiltInSlashCommand(
       host.showStatus(`Kimi Code v${host.state.appState.version}`);
       return;
     case 'new': {
+      const inNewTab = isNewInTabArgument(args);
+      if (inNewTab && !host.tabsEnabled()) {
+        host.showError(
+          'Session tabs are experimental: enable KIMI_CODE_EXPERIMENTAL_TUI_TABS first.',
+        );
+        return;
+      }
       // A first-use lazy creation may still be in flight: wait it out so /new
       // never races a second createSession against the pending prompt.
       await host.waitForLazyCreation();
-      // The waited-out prompt may have started a turn meanwhile; /new is
-      // idle-only, so re-run the busy gate resolved before the await.
+      // The waited-out prompt may have started a turn meanwhile; a plain /new
+      // is idle-only, so re-run the busy gate resolved before the await. A
+      // new tab leaves the running session alone and needs no gate.
       const busyReason = slashCommandBusyReason({
         isStreaming: host.state.appState.streamingPhase !== 'idle',
         isCompacting: host.state.appState.isCompacting,
       });
-      if (busyReason !== undefined) {
+      if (busyReason !== undefined && !inNewTab) {
         host.showError(slashBusyMessage(name, busyReason));
         return;
       }
-      await host.createNewSession();
+      await host.createNewSession(inNewTab ? 'tab' : 'replace');
       host.state.ui.requestRender();
       return;
     }
     case 'sessions':
       void host.showSessionPicker();
+      return;
+    case 'tab':
+      await handleTabCommand(host, args);
       return;
     case 'tasks':
       void host.tasksBrowserController.show();

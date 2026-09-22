@@ -122,3 +122,40 @@ describe('ReverseRpcController', () => {
     expect(hidePanel).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('ReverseRpcController UI attach/detach (session tabs)', () => {
+  it('keeps a request pending across detach and shows it again when the UI re-attaches', async () => {
+    const controller = new TestController();
+    const first = { showPanel: vi.fn(), hidePanel: vi.fn() };
+    controller.setUIHooks(first);
+    const pending = controller.show('payload');
+    expect(first.showPanel).toHaveBeenCalledWith('payload');
+
+    controller.detachUIHooks();
+    expect(first.hidePanel).toHaveBeenCalledOnce();
+    expect(controller.hasPending()).toBe(true);
+
+    // A request arriving while detached queues silently.
+    const later = controller.show('later');
+    expect(first.showPanel).toHaveBeenCalledTimes(1);
+
+    const second = { showPanel: vi.fn(), hidePanel: vi.fn() };
+    controller.setUIHooks(second);
+    expect(second.showPanel).toHaveBeenCalledWith('payload');
+
+    controller.respond('approved');
+    await expect(pending).resolves.toBe('approved');
+    expect(second.showPanel).toHaveBeenLastCalledWith('later');
+    controller.respond('rejected');
+    await expect(later).resolves.toBe('rejected');
+    expect(controller.hasPending()).toBe(false);
+  });
+
+  it('does not hide anything on detach when nothing is pending', () => {
+    const controller = new TestController();
+    const hooks = { showPanel: vi.fn(), hidePanel: vi.fn() };
+    controller.setUIHooks(hooks);
+    controller.detachUIHooks();
+    expect(hooks.hidePanel).not.toHaveBeenCalled();
+  });
+});

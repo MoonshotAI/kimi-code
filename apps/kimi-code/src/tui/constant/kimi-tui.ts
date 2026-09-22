@@ -15,6 +15,10 @@ export const TOWER_STATUS_PROMPT =
 export const TOWER_TEARDOWN_PROMPT =
   'Tear down the tower: call TowerTeardown and report what it did. It refuses to destroy dirty worktrees unless forced.';
 export const EXIT_CONFIRM_WINDOW_MS = 1500;
+/** Experimental flag id gating session tabs (KIMI_CODE_EXPERIMENTAL_TUI_TABS). */
+export const TUI_TABS_FLAG = 'tui_tabs';
+/** A second close request for the same running tab within this window closes it without --force. */
+export const TAB_CLOSE_CONFIRM_WINDOW_MS = 5000;
 // Time window for treating two consecutive Esc presses as a double-Esc, which
 // opens the undo selector. Kept short (double-click feel) so two deliberate
 // presses far apart don't accidentally trigger undo.

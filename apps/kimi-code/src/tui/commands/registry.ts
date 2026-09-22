@@ -5,6 +5,7 @@ import { basename, dirname, join, relative, resolve } from 'pathe';
 import type { AutocompleteItem } from '@moonshot-ai/pi-tui';
 
 import { completeLeadingArg, type ArgCompletionSpec } from './complete-args';
+import { isExperimentalFlagEnabled } from './experimental-flags';
 import type { KimiSlashCommand, SlashCommandAvailability } from './types';
 
 /** Subcommands offered when autocompleting `/goal <…>`. */
@@ -33,6 +34,18 @@ const TOWER_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
   { value: 'off', description: 'Turn tower mode off' },
 ];
 
+const TAB_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
+  { value: 'list', description: 'List open tabs' },
+  { value: 'new', description: 'Open a new session in a new tab' },
+  { value: 'next', description: 'Switch to the next tab' },
+  { value: 'prev', description: 'Switch to the previous tab' },
+  { value: 'close', description: 'Close the current tab (add --force to stop a running session)' },
+];
+
+const NEW_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
+  { value: 'tab', description: 'Start the session in a new tab (experimental tabs)' },
+];
+
 const ADD_DIR_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
   { value: 'list', description: 'Show configured additional workspace directories' },
 ];
@@ -59,6 +72,22 @@ export function swarmArgumentCompletions(argumentPrefix: string): AutocompleteIt
 /** Argument autocompletion for the `/tower` command (subcommands). */
 export function towerArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
   return completeLeadingArg(TOWER_ARG_COMPLETIONS, argumentPrefix);
+}
+
+/** Argument autocompletion for the `/tab` command (subcommands). */
+export function tabArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
+  return completeLeadingArg(TAB_ARG_COMPLETIONS, argumentPrefix);
+}
+
+/** `/new tab` (or `/new --tab`) opens the session in a new tab instead of replacing the current one. */
+export function isNewInTabArgument(args: string): boolean {
+  const trimmed = args.trim().toLowerCase();
+  return trimmed === 'tab' || trimmed === '--tab';
+}
+
+/** Argument autocompletion for the `/new` command. */
+export function newArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
+  return completeLeadingArg(NEW_ARG_COMPLETIONS, argumentPrefix);
 }
 
 /** Argument autocompletion for the `/add-dir` command. */
@@ -247,14 +276,31 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'new',
     aliases: ['clear'],
-    description: 'Start a fresh session in the current workspace',
+    description: 'Start a fresh session in the current workspace (`/new tab` opens it in a new tab)',
     priority: 80,
+    // Opening a new tab leaves the current session running, so it needs no
+    // idle gate; a plain /new replaces the session and stays idle-only.
+    availability: (args: string) => (isNewInTabArgument(args) ? 'always' : 'idle-only'),
+    completeArgs: newArgumentCompletions,
   },
   {
     name: 'sessions',
     aliases: ['resume'],
     description: 'Browse and resume sessions',
     priority: 80,
+    // With session tabs a running session can be left alone while another
+    // one is opened in a new tab (Ctrl+T in the picker); resuming in place
+    // stays gated on idle inside the picker flow itself.
+    availability: () => (isExperimentalFlagEnabled('tui_tabs') ? 'always' : 'idle-only'),
+  },
+  {
+    name: 'tab',
+    aliases: ['tabs'],
+    description: 'Switch, open, list or close session tabs',
+    priority: 80,
+    availability: 'always',
+    experimentalFlag: 'tui_tabs',
+    completeArgs: tabArgumentCompletions,
   },
   {
     name: 'tasks',

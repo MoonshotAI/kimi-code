@@ -24,8 +24,28 @@ export abstract class ReverseRpcController<TPayload, TResponse> {
   private current: Pending<TPayload, TResponse> | null = null;
   private queue: Array<Pending<TPayload, TResponse>> = [];
 
+  /**
+   * Attach the UI. A request that arrived while no UI was attached (the
+   * owning session tab was in the background) is still `current`, so it is
+   * shown right away instead of waiting for the next request.
+   */
   setUIHooks(hooks: ReverseRpcUIHooks<TPayload>): void {
     this.uiHooks = hooks;
+    if (this.current !== null) {
+      hooks.showPanel(this.current.payload);
+    }
+  }
+
+  /**
+   * Detach the UI without resolving anything: pending requests stay queued
+   * until the UI is re-attached (a tab switch) or `cancelAll` runs (a close).
+   */
+  detachUIHooks(): void {
+    const hooks = this.uiHooks;
+    this.uiHooks = null;
+    if (this.current !== null) {
+      hooks?.hidePanel();
+    }
   }
 
   /**

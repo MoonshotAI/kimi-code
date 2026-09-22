@@ -14,6 +14,7 @@ import { openUrl } from '#/utils/open-url';
 import { FooterComponent } from './components/chrome/footer';import { GutterContainer } from './components/chrome/gutter-container';
 import type { MoonLoader, SpinnerStyle } from './components/chrome/moon-loader';
 import { NotifyPanelComponent } from './components/chrome/notify-panel';
+import { SessionTabStripComponent } from './components/chrome/tab-strip';
 import { TodoPanelComponent } from './components/chrome/todo-panel';
 import type { SessionRow } from './components/dialogs/session-picker';
 import { CustomEditor } from './components/editor/custom-editor';
@@ -46,6 +47,9 @@ export interface TUIState {
   btwPanelContainer: Container;
   surveyContainer: Container;
   editorContainer: Container;
+  /** Session tab strip slot between the editor and the footer (experimental tabs); renders nothing with fewer than two tabs. */
+  tabStripContainer: Container;
+  tabStrip: SessionTabStripComponent;
   /**
    * Fullscreen mode only: the bottom dock (activity/todo/notify/queue/btw/editor +
    * footer) stacked under the transcript ScrollView. Undefined in regular
@@ -136,6 +140,9 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
   const queueContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const btwPanelContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const surveyContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
+  const tabStripContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
+  const tabStrip = new SessionTabStripComponent();
+  tabStripContainer.addChild(tabStrip);
   const editorContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const editor = new CustomEditor(ui, {
     disablePasteBurst: initialAppState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
@@ -167,6 +174,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     dockContainer.addChild(btwPanelContainer, { shrink: 1, minSize: 0 });
     dockContainer.addChild(surveyContainer, { shrink: 0, minSize: 0 });
     dockContainer.addChild(editorContainer, { shrink: 1, minSize: 3 });
+    dockContainer.addChild(tabStripContainer, { shrink: 0, minSize: 0 });
     const root = new VStack();
     root.addChild(scrollView, { basis: 0, grow: 1, shrink: 1, minSize: 1 });
     root.addChild(dockContainer, { basis: 'auto', grow: 0, shrink: 1, minSize: 1 });
@@ -185,6 +193,8 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     queueContainer,
     btwPanelContainer,
     surveyContainer,
+    tabStripContainer,
+    tabStrip,
     editorContainer,
     dockContainer,
     editor,

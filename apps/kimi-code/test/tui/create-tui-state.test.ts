@@ -135,6 +135,7 @@ describe('createTUIState', () => {
       state.btwPanelContainer,
       state.surveyContainer,
       state.editorContainer,
+      state.tabStripContainer,
     ]);
 
     // The layout root is mounted and the root children list stays empty.
