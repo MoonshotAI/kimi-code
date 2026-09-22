@@ -27,6 +27,7 @@ interface ExitedProcessGroup {
   readonly pid: number;
   readonly tty: boolean;
   killTimer: NodeJS.Timeout | undefined;
+  expiryTimer: NodeJS.Timeout | undefined;
 }
 
 interface AcceptedWriteIds {
@@ -61,6 +62,7 @@ const EMPTY: Record<string, never> = {};
 
 const TERMINATED_ID_CACHE_SIZE = 4096;
 const EXITED_GROUP_CACHE_SIZE = 4096;
+const EXITED_GROUP_RETENTION_MS = 5_000;
 
 function rememberWriteId(writeIds: AcceptedWriteIds, writeId: string): void {
   if (writeIds.ids.has(writeId)) return;
@@ -328,7 +330,18 @@ export class ProcessManager {
     entry.closed = true;
     this.host.notify(PROCESS_CLOSED_METHOD, { processId: entry.processId });
     this.processes.delete(entry.processId);
-    this.exitedGroups.set(entry.processId, { pid: entry.pid, tty: entry.tty, killTimer: entry.killTimer });
+    const group: ExitedProcessGroup = {
+      pid: entry.pid,
+      tty: entry.tty,
+      killTimer: entry.killTimer,
+      expiryTimer: undefined,
+    };
+    group.expiryTimer = setTimeout(() => {
+      if (this.exitedGroups.get(entry.processId) !== group) return;
+      this.exitedGroups.delete(entry.processId);
+    }, EXITED_GROUP_RETENTION_MS);
+    group.expiryTimer.unref?.();
+    this.exitedGroups.set(entry.processId, group);
     while (this.exitedGroups.size > EXITED_GROUP_CACHE_SIZE) {
       const oldest = this.exitedGroups.entries().next();
       if (oldest.done) break;
@@ -337,6 +350,7 @@ export class ProcessManager {
         clearTimeout(group.killTimer);
         this.killOrphanedGroup(group.pid, 'SIGKILL');
       }
+      if (group.expiryTimer !== undefined) clearTimeout(group.expiryTimer);
       this.exitedGroups.delete(id);
     }
   }
@@ -627,6 +641,7 @@ export class ProcessManager {
     this.terminatedIds.clear();
     for (const group of this.exitedGroups.values()) {
       if (group.killTimer !== undefined) clearTimeout(group.killTimer);
+      if (group.expiryTimer !== undefined) clearTimeout(group.expiryTimer);
     }
     this.exitedGroups.clear();
   }
