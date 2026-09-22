@@ -240,7 +240,7 @@ function formatText(text: string): string {
   if (text.includes('You are about to run out of context.')) {
     return '<compaction-instruction>';
   }
-  return JSON.stringify(text);
+  return JSON.stringify(normalizeWallTime(text));
 }
 
 function formatToolCall(call: Message['toolCalls'][number]): string {
@@ -273,7 +273,7 @@ function normalizeValue(value: unknown, labels: SnapshotLabels): unknown {
     }
     if (isUuid(value)) return labelFor(value, labels.uuidLabels, 'uuid');
     if (isMessageId(value)) return labelFor(value, labels.msgLabels, 'msg');
-    return value;
+    return normalizeWallTime(value);
   }
 
   if (Array.isArray(value)) {
@@ -346,6 +346,10 @@ function labelFor(value: string, labels: Map<string, string>, kind: string): str
     labels.set(value, label);
   }
   return label;
+}
+
+function normalizeWallTime(value: string): string {
+  return value.replaceAll(/Wall time: \d+\.\d{3} seconds/g, 'Wall time: <duration> seconds');
 }
 
 function isVolatileDurationKey(key: string): boolean {
