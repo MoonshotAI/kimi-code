@@ -45,7 +45,11 @@ import {
   forkSessionRequestSchema,
   getSessionGoalResponseSchema,
   listSessionChildrenResponseSchema,
+  liveSessionsResponseSchema,
+  resumeSessionsRequestSchema,
+  resumeSessionsResponseSchema,
   sessionAbortResponseSchema,
+  type ResumeSessionResult,
   sessionStatusResponseSchema,
   sessionWarningsResponseSchema,
   startBtwSessionResponseSchema,
@@ -66,6 +70,7 @@ import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { readLegacyStatus } from '../services/legacyStatus/legacyStatus';
+import type { LiveSessionRegistry } from '../services/liveSessions/liveSessionRegistry';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, dispatchAction } from './action-dispatch';
 import { applySessionAgentConfig } from './sessionAgentConfig';
@@ -169,6 +174,7 @@ const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }
 
 export interface SessionsRoutesDeps {
   readonly sessionEventCursor: (sessionId: string) => Promise<{ seq: number; epoch: string }>;
+  readonly liveSessions: LiveSessionRegistry;
 }
 
 export function registerSessionsRoutes(
@@ -593,6 +599,62 @@ export function registerSessionsRoutes(
     generateTitleRoute.handler as Parameters<SessionRouteHost['post']>[2],
   );
 
+  const resumeSessionsRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/sessions/resume',
+      body: resumeSessionsRequestSchema,
+      success: { data: resumeSessionsResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+      },
+      description: 'Resume several sessions in one call so a client can subscribe to all of them',
+      tags: ['sessions'],
+      operationId: 'resumeSessions',
+    },
+    async (req, reply) => {
+      try {
+        const sessionIds = [...new Set(req.body.session_ids)];
+        const results: ResumeSessionResult[] = [];
+        for (const sessionId of sessionIds) {
+          results.push(await resumeOne(core, deps.liveSessions, sessionId));
+        }
+        reply.send(okEnvelope({ results }, req.id));
+      } catch (error) {
+        sendMappedError(reply, req, error);
+      }
+    },
+  );
+  app.post(
+    resumeSessionsRoute.path,
+    resumeSessionsRoute.options,
+    resumeSessionsRoute.handler as Parameters<SessionRouteHost['post']>[2],
+  );
+
+  const liveSessionsRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/sessions/live',
+      success: { data: liveSessionsResponseSchema },
+      description: 'List the sessions currently loaded in memory with their activity and idle state',
+      tags: ['sessions'],
+      operationId: 'listLiveSessions',
+    },
+    async (req, reply) => {
+      reply.send(
+        okEnvelope(
+          { items: deps.liveSessions.snapshot(), limits: deps.liveSessions.wireLimits() },
+          req.id,
+        ),
+      );
+    },
+  );
+  app.get(
+    liveSessionsRoute.path,
+    liveSessionsRoute.options,
+    liveSessionsRoute.handler as Parameters<SessionRouteHost['get']>[2],
+  );
+
   const sessionActionRoute = defineRoute(
     {
       method: 'POST',
@@ -627,7 +689,7 @@ export function registerSessionsRoutes(
           tail: req.params.tail,
           actions: sessionActions,
           resourceLabel: 'session',
-          extra: { core, req, reply },
+          extra: { core, liveSessions: deps.liveSessions, req, reply },
           body: req.body,
           onUnsupported: (message) => {
             reply.send(buildValidationEnvelope([{ path: 'session_id', message }], req.id));
@@ -868,6 +930,7 @@ type SessionAction =
 
 interface SessionActionExtra {
   readonly core: Scope;
+  readonly liveSessions: LiveSessionRegistry;
   readonly req: { readonly id: string };
   readonly reply: { readonly send: (payload: unknown) => unknown };
 }
@@ -1003,7 +1066,7 @@ async function archiveSessionAction(ctx: SessionActionCtx): Promise<void> {
 
 async function deleteSessionAction(ctx: SessionActionCtx): Promise<void> {
   const { core, req, reply, id } = ctx;
-  await core.accessor.get(ISessionManager).delete(id);
+  await ctx.liveSessions.whileDeleting(id, () => core.accessor.get(ISessionManager).delete(id));
   requestLog(req)?.info({ session_id: id, action: 'delete' }, 'session action completed');
   reply.send(okEnvelope({ deleted: true }, req.id));
 }
@@ -1081,6 +1144,32 @@ function readLiveSessionModel(session: ISessionScopeHandle): string | undefined 
   const main = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
   if (main === undefined) return undefined;
   return readLegacyStatus(main)?.model;
+}
+
+async function resumeOne(
+  core: Scope,
+  liveSessions: LiveSessionRegistry,
+  sessionId: string,
+): Promise<ResumeSessionResult> {
+  if (getLiveSessionById(core.accessor, sessionId) !== undefined) {
+    return { session_id: sessionId, status: 'already_live' };
+  }
+  if ((await core.accessor.get(ISessionIndex).get(sessionId)) === undefined) {
+    return { session_id: sessionId, status: 'not_found' };
+  }
+  const release = await liveSessions.ensureCapacity();
+  try {
+    const handle = await resumeSessionById(core.accessor, sessionId);
+    return { session_id: sessionId, status: handle === undefined ? 'not_found' : 'resumed' };
+  } catch (error) {
+    return {
+      session_id: sessionId,
+      status: 'failed',
+      msg: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    release();
+  }
 }
 
 async function resolveMainAgent(core: Scope, sessionId: string): Promise<IAgentScopeHandle> {

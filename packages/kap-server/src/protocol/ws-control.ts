@@ -84,9 +84,18 @@ export const clientHelloMessageSchema = z.object({
 
 export type ClientHelloMessage = z.infer<typeof clientHelloMessageSchema>;
 
+export const subscribeFailureSchema = z.object({
+  session_id: z.string().min(1),
+  msg: z.string(),
+});
+
+export type SubscribeFailure = z.infer<typeof subscribeFailureSchema>;
+
 export const clientHelloAckPayloadSchema = z.object({
   accepted_subscriptions: z.array(z.string()),
   resync_required: z.array(z.string()),
+  resumed: z.array(z.string()).optional(),
+  failed: z.array(subscribeFailureSchema).optional(),
   cursors: cursorsBySessionSchema.optional(),
 });
 
@@ -139,6 +148,8 @@ export const subscribeAckPayloadSchema = z.object({
   accepted: z.array(z.string()),
   not_found: z.array(z.string()),
   resync_required: z.array(z.string()),
+  resumed: z.array(z.string()).optional(),
+  failed: z.array(subscribeFailureSchema).optional(),
   cursors: cursorsBySessionSchema.optional(),
 });
 

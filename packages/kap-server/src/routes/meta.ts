@@ -34,6 +34,12 @@ export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void 
       mcp: true as const,
       tasks: true as const,
       terminal: true as const,
+      multi_session: Object.freeze({
+        auto_resume: true as const,
+        batch_resume: true as const,
+        live_list: true as const,
+        idle_reaper: true as const,
+      }),
     }),
     server_id: opts.serverId,
     started_at: opts.startedAt,

@@ -23,11 +23,13 @@ import {
   IModelCatalog,
   IModelService,
   ISessionActivityView,
+  ISessionIndex,
   ISessionMetadata,
   ISessionLifecycleService,
   ISessionManager,
   ISessionTokenCountingService,
   ISessionUsageService,
+  ITelemetryService,
   IWorkspaceInstanceManager,
   IWorkspaceSessions,
   MAIN_AGENT_ID,
@@ -364,10 +366,75 @@ class FakeSessionActivityView {
   }
 }
 
+class FakeSessionManager {
+  readonly cold = new Map<string, FakeLifecycle>();
+  resumeError: Error | undefined;
+  resumes = 0;
+  private readonly closeHandlers: Array<(e: { sessionId: string }) => void> = [];
+  private readonly archiveHandlers: Array<(e: { sessionId: string }) => void> = [];
+  private readonly createHandlers: Array<(e: { sessionId: string; handle: IScopeHandle }) => void> = [];
+
+  constructor(
+    private readonly sessions: Map<string, FakeLifecycle>,
+    private readonly sessionFor: (sid: string) => IScopeHandle | undefined,
+  ) {}
+
+  get(sid: string): IScopeHandle | undefined {
+    return this.sessionFor(sid);
+  }
+
+  list(): IScopeHandle[] {
+    return [...this.sessions.keys()].map((sid) => this.sessionFor(sid)!);
+  }
+
+  async resume(sid: string): Promise<IScopeHandle | undefined> {
+    this.resumes += 1;
+    if (this.resumeError !== undefined) throw this.resumeError;
+    const live = this.sessionFor(sid);
+    if (live !== undefined) return live;
+    const lifecycle = this.cold.get(sid);
+    if (lifecycle === undefined) return undefined;
+    this.cold.delete(sid);
+    this.sessions.set(sid, lifecycle);
+    const handle = this.sessionFor(sid)!;
+    for (const h of [...this.createHandlers]) h({ sessionId: sid, handle });
+    return handle;
+  }
+
+  onDidCreateSession = (h: (e: { sessionId: string; handle: IScopeHandle }) => void) => {
+    this.createHandlers.push(h);
+    return { dispose: () => {} };
+  };
+
+  onDidCloseSession = (h: (e: { sessionId: string }) => void) => {
+    this.closeHandlers.push(h);
+    return { dispose: () => {} };
+  };
+
+  onDidArchiveSession = (h: (e: { sessionId: string }) => void) => {
+    this.archiveHandlers.push(h);
+    return { dispose: () => {} };
+  };
+
+  close(sid: string): void {
+    const lifecycle = this.sessions.get(sid);
+    if (lifecycle === undefined) return;
+    this.sessions.delete(sid);
+    this.cold.set(sid, lifecycle);
+    for (const h of [...this.closeHandlers]) h({ sessionId: sid });
+  }
+
+  archive(sid: string): void {
+    this.sessions.delete(sid);
+    for (const h of [...this.archiveHandlers]) h({ sessionId: sid });
+  }
+}
+
 function makeCore(
   sessions: Map<string, FakeLifecycle>,
   eventBus = new FakeEventBus(),
   metaAgents: Record<string, { type?: string; parentAgentId?: string }> = {},
+  manager?: (sessionFor: (sid: string) => IScopeHandle | undefined) => FakeSessionManager,
 ): Scope {
   const handles = new WeakMap<FakeLifecycle, IScopeHandle>();
   const sessionFor = (sid: string) => {
@@ -400,14 +467,22 @@ function makeCore(
     },
     dispose: () => {},
   };
+  const sessionManager = manager?.(sessionFor);
   const accessor = {
     get(token: unknown): unknown {
       if (token === IEventService) return eventBus;
+      if (token === ITelemetryService) {
+        return { withContext: () => ({ track2: () => {} }) };
+      }
+      if (token === ISessionIndex) return { get: async () => undefined };
       if (token === ISessionManager) {
-        return {
-          get: sessionFor,
-          list: () => [...sessions.keys()].map((sessionId) => sessionFor(sessionId)),
-        };
+        return (
+          sessionManager ?? {
+            get: sessionFor,
+            resume: async (sessionId: string) => sessionFor(sessionId),
+            list: () => [...sessions.keys()].map((sessionId) => sessionFor(sessionId)),
+          }
+        );
       }
       if (token === IWorkspaceInstanceManager) {
         return {
@@ -489,8 +564,8 @@ describe('SessionEventBroadcaster', () => {
       await entered;
       sessions.delete('s1');
       release();
-      expect(await subscription).toBe(false);
-      expect(await bc.subscribe('s1', collectingTarget().target)).toBe(false);
+      expect(await subscription).toEqual({ ok: false, reason: 'not_found' });
+      expect(await bc.subscribe('s1', collectingTarget().target)).toEqual({ ok: false, reason: 'not_found' });
     } finally {
       release();
       opening.mockRestore();
@@ -529,7 +604,7 @@ describe('SessionEventBroadcaster', () => {
     sessions.set('s1', lc);
 
     const { target, envelopes, deliveries } = collectingTarget();
-    expect(await bc.subscribe('s1', target)).toBe(true);
+    expect(await bc.subscribe('s1', target)).toEqual({ ok: true, resumed: false });
 
     main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
     await bc.getCursor('s1');
@@ -1128,9 +1203,9 @@ describe('SessionEventBroadcaster', () => {
     expect(next.subagents).toEqual([]);
   });
 
-  it('subscribe returns false for an unknown session', async () => {
+  it('subscribe reports not_found for an unknown session', async () => {
     const { target } = collectingTarget();
-    expect(await bc.subscribe('nope', target)).toBe(false);
+    expect(await bc.subscribe('nope', target)).toEqual({ ok: false, reason: 'not_found' });
   });
 
   it('broadcasts session.meta.updated under the real session id and fans out to every connection', async () => {
@@ -3209,5 +3284,192 @@ describe('sessionEventMessageSchema', () => {
         }),
       ).success,
     ).toBe(false);
+  });
+});
+
+describe('SessionEventBroadcaster multi-session', () => {
+  let dir: string;
+  let sessions: Map<string, FakeLifecycle>;
+  let eventBus: FakeEventBus;
+  let manager: FakeSessionManager;
+  let bc: SessionEventBroadcaster;
+  let touched: string[];
+  let capacityChecks: number;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'kimi-broadcaster-multi-'));
+    sessions = new Map();
+    eventBus = new FakeEventBus();
+    touched = [];
+    capacityChecks = 0;
+    bc = new SessionEventBroadcaster({
+      eventsDir: dir,
+      core: makeCore(sessions, eventBus, {}, (sessionFor) => {
+        manager = new FakeSessionManager(sessions, sessionFor);
+        return manager;
+      }),
+      maxBufferSize: 3,
+      ensureCapacity: async () => {
+        capacityChecks += 1;
+        return () => {
+          capacityChecks -= 1;
+        };
+      },
+      onSessionTouched: (sessionId) => touched.push(sessionId),
+    });
+  });
+
+  afterEach(async () => {
+    await bc.close();
+    for (const sessionId of [...sessions.keys(), ...manager.cold.keys()]) interactions.purgeSession(sessionId);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('resumes a cold session on subscribe and streams its events', async () => {
+    const lc = new FakeLifecycle('cold-1');
+    const main = lc.addAgent('main');
+    manager.cold.set('cold-1', lc);
+
+    const { target, envelopes } = collectingTarget();
+    expect(await bc.subscribe('cold-1', target)).toEqual({ ok: true, resumed: true });
+    expect(manager.resumes).toBe(1);
+    expect(capacityChecks).toBe(0);
+    expect(touched).toEqual(['cold-1']);
+    expect(sessions.has('cold-1')).toBe(true);
+
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    await bc.getCursor('cold-1');
+    expect(envelopes.some((e) => e.type === 'turn.started')).toBe(true);
+    expect(bc.subscriberCount('cold-1')).toBe(1);
+  });
+
+  it('shares one resume between concurrent subscribers of the same cold session', async () => {
+    const lc = new FakeLifecycle('cold-2');
+    lc.addAgent('main');
+    manager.cold.set('cold-2', lc);
+
+    const first = collectingTarget();
+    const second = collectingTarget();
+    const results = await Promise.all([
+      bc.subscribe('cold-2', first.target),
+      bc.subscribe('cold-2', second.target),
+    ]);
+    expect(results.every((r) => r.ok)).toBe(true);
+    expect(manager.resumes).toBe(1);
+    expect(bc.subscriberCount('cold-2')).toBe(2);
+  });
+
+  it('reports resume_failed when the engine throws while resuming', async () => {
+    manager.cold.set('broken', new FakeLifecycle('broken'));
+    manager.resumeError = new Error('disk on fire');
+    const { target } = collectingTarget();
+    expect(await bc.subscribe('broken', target)).toEqual({
+      ok: false,
+      reason: 'resume_failed',
+      msg: 'disk on fire',
+    });
+    expect(bc.subscriberCount('broken')).toBe(0);
+  });
+
+  it('getCursor does not resume a cold session', async () => {
+    manager.cold.set('cold-3', new FakeLifecycle('cold-3'));
+    expect(await bc.getCursor('cold-3')).toEqual({ seq: 0, epoch: '' });
+    expect(manager.resumes).toBe(0);
+    expect(sessions.has('cold-3')).toBe(false);
+  });
+
+  it('retires the session state when the engine closes it and re-attaches on the next subscribe', async () => {
+    const lc = new FakeLifecycle('s-close');
+    const main = lc.addAgent('main');
+    sessions.set('s-close', lc);
+
+    const retired: string[] = [];
+    const { target, envelopes } = collectingTarget();
+    target.onSessionRetired = (sessionId) => retired.push(sessionId);
+    expect(await bc.subscribe('s-close', target)).toEqual({ ok: true, resumed: false });
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    await bc.getCursor('s-close');
+    const before = envelopes.length;
+
+    manager.close('s-close');
+    await vi.waitFor(() => expect(retired).toEqual(['s-close']));
+    expect(bc.subscriberCount('s-close')).toBe(0);
+
+    main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
+    expect(envelopes).toHaveLength(before);
+
+    const again = collectingTarget();
+    expect(await bc.subscribe('s-close', again.target)).toEqual({ ok: true, resumed: true });
+    main.bus.emit(agentEvent('turn.started', { turnId: 2 }));
+    await bc.getCursor('s-close');
+    expect(again.envelopes.some((e) => e.type === 'turn.started')).toBe(true);
+  });
+
+  it('keeps the state when the session is resumed again under the same handle before retire runs', async () => {
+    const lc = new FakeLifecycle('s-race');
+    const main = lc.addAgent('main');
+    sessions.set('s-race', lc);
+    const journal = await SessionEventJournal.open(join(dir, 's-race.jsonl'));
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const opening = vi.spyOn(SessionEventJournal, 'open').mockImplementationOnce(async () => {
+      enter();
+      await gate;
+      return journal;
+    });
+    try {
+      const retired: string[] = [];
+      const { target, envelopes } = collectingTarget();
+      target.onSessionRetired = (sessionId) => retired.push(sessionId);
+      const subscription = bc.subscribe('s-race', target);
+      await entered;
+      manager.close('s-race');
+      release();
+      expect(await subscription).toEqual({ ok: true, resumed: false });
+      expect(manager.resumes).toBe(1);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(retired).toEqual([]);
+      expect(bc.subscriberCount('s-race')).toBe(1);
+      main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+      await bc.getCursor('s-race');
+      expect(envelopes.some((e) => e.type === 'turn.started')).toBe(true);
+    } finally {
+      release();
+      opening.mockRestore();
+    }
+  });
+
+  it('retires the session state when the engine archives it', async () => {
+    const lc = new FakeLifecycle('s-archive');
+    lc.addAgent('main');
+    sessions.set('s-archive', lc);
+    const { target } = collectingTarget();
+    expect(await bc.subscribe('s-archive', target)).toEqual({ ok: true, resumed: false });
+
+    manager.archive('s-archive');
+    await vi.waitFor(() => expect(bc.subscriberCount('s-archive')).toBe(0));
+  });
+
+  it('announceSessionClosed fans out a global event.session.closed', async () => {
+    const globalView = collectingTarget();
+    bc.addGlobalTarget(globalView.target);
+
+    bc.announceSessionClosed('s-gone', 'wd_a', 'idle_timeout');
+
+    await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+    expect(globalView.envelopes[0]).toMatchObject({
+      type: 'event.session.closed',
+      session_id: '__global__',
+      payload: {
+        type: 'event.session.closed',
+        agentId: 'main',
+        sessionId: 's-gone',
+        workspace_id: 'wd_a',
+        reason: 'idle_timeout',
+      },
+    });
+    expect(globalView.deliveries).toEqual(['immediate']);
   });
 });

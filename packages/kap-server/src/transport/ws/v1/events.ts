@@ -53,6 +53,14 @@ export interface SessionDeletedEvent {
   readonly workspace_id: string;
 }
 
+export type SessionClosedReason = 'idle_timeout' | 'quota' | 'exit';
+
+export interface SessionClosedEvent {
+  readonly type: 'event.session.closed';
+  readonly workspace_id: string;
+  readonly reason: SessionClosedReason;
+}
+
 export interface WorkspaceCreatedEvent {
   readonly type: 'event.workspace.created';
   readonly workspace: Workspace;
@@ -224,6 +232,7 @@ export type AgentEvent =
   | SessionCreatedEvent
   | SessionArchivedEvent
   | SessionDeletedEvent
+  | SessionClosedEvent
   | WorkspaceCreatedEvent
   | WorkspaceUpdatedEvent
   | WorkspaceDeletedEvent

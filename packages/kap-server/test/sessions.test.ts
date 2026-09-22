@@ -76,6 +76,19 @@ interface SessionWire {
   last_seq: number;
 }
 
+interface LiveSessionWire {
+  session_id: string;
+  workspace_id: string;
+  cwd: string;
+  busy: boolean;
+  main_turn_active: boolean;
+  pending_interaction: 'none' | 'approval' | 'question';
+  subscriber_count: number;
+  resumed_at: string;
+  last_activity_at: string;
+  idle_ms: number;
+}
+
 interface PageWire {
   items: SessionWire[];
   has_more: boolean;
@@ -130,7 +143,10 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
-  async function restartWithFreshHome(): Promise<void> {
+  async function restartWithFreshHome(opts?: {
+    toml?: string;
+    sessionSweepIntervalMs?: number;
+  }): Promise<void> {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -140,6 +156,7 @@ describe('server-v2 /api/v1/sessions', () => {
       await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as never);
     }
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-'));
+    if (opts?.toml !== undefined) await writeFile(join(home, 'config.toml'), opts.toml, 'utf-8');
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
@@ -147,6 +164,7 @@ describe('server-v2 /api/v1/sessions', () => {
       homeDir: home,
       logLevel: 'silent',
       debugEndpoints: true,
+      sessionSweepIntervalMs: opts?.sessionSweepIntervalMs,
     });
     base = `http://127.0.0.1:${server.port}`;
   }
@@ -1016,6 +1034,124 @@ describe('server-v2 /api/v1/sessions', () => {
     } finally {
       sub.dispose();
     }
+  });
+
+  it('POST /sessions/resume reports already_live, resumed and not_found per session', async () => {
+    const cwd = home as string;
+    const live = (await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } })).body.data.id;
+    const cold = (await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } })).body.data.id;
+    await closeSessionById((server as RunningServer).core.accessor, cold);
+    expect(getLiveSessionById((server as RunningServer).core.accessor, cold)).toBeUndefined();
+
+    const { status, body } = await postJson<{ results: Array<{ session_id: string; status: string }> }>(
+      '/api/v1/sessions/resume',
+      { session_ids: [live, cold, cold, 'nope'] },
+    );
+    expect(status).toBe(200);
+    expect(body.code).toBe(0);
+    expect(body.data.results).toEqual([
+      { session_id: live, status: 'already_live' },
+      { session_id: cold, status: 'resumed' },
+      { session_id: 'nope', status: 'not_found' },
+    ]);
+    expect(getLiveSessionById((server as RunningServer).core.accessor, cold)).toBeDefined();
+  });
+
+  it('POST /sessions/resume rejects an empty id list (40001)', async () => {
+    const { body } = await postJson<null>('/api/v1/sessions/resume', { session_ids: [] });
+    expect(body.code).toBe(40001);
+  });
+
+  it('GET /sessions/live lists loaded sessions with activity, idle time and limits', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const id = created.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, id);
+    if (session === undefined) throw new Error('expected a live session');
+    const agents = session.accessor.get(IAgentLifecycleService);
+    if (agents.handleOf(MAIN_AGENT_ID) === undefined) await agents.create({ agentId: MAIN_AGENT_ID });
+
+    const before = await getJson<{ items: LiveSessionWire[]; limits: Record<string, number> }>('/api/v1/sessions/live');
+    expect(before.body.code).toBe(0);
+    expect(before.body.data.limits).toEqual({ max_live_sessions: 16, session_idle_timeout_ms: 30 * 60_000 });
+    const idle = before.body.data.items.find((item) => item.session_id === id);
+    expect(idle).toMatchObject({
+      workspace_id: created.body.data.workspace_id,
+      cwd,
+      busy: false,
+      main_turn_active: false,
+      pending_interaction: 'none',
+      subscriber_count: 0,
+    });
+    expect(Number.isNaN(Date.parse(idle!.resumed_at))).toBe(false);
+    expect(Number.isNaN(Date.parse(idle!.last_activity_at))).toBe(false);
+    expect(idle!.idle_ms).toBeGreaterThanOrEqual(0);
+
+    agents
+      .handleOf(MAIN_AGENT_ID)!
+      .accessor.get(IEventBus)
+      .publish(new TurnStarted({ agentId: MAIN_AGENT_ID, turnId: 7, origin: { kind: 'user' } }));
+    await vi.waitFor(async () => {
+      const after = await getJson<{ items: LiveSessionWire[] }>('/api/v1/sessions/live');
+      const busy = after.body.data.items.find((item) => item.session_id === id);
+      expect(busy).toMatchObject({ busy: true, main_turn_active: true });
+    });
+  });
+
+  it('closes the oldest idle session beyond max_live_sessions and never a busy one', async () => {
+    await restartWithFreshHome({
+      toml: ['[server]', 'max_live_sessions = 1', 'session_idle_timeout_ms = 0', ''].join('\n'),
+      sessionSweepIntervalMs: 20,
+    });
+    const cwd = home as string;
+    const accessor = (server as RunningServer).core.accessor;
+    const limits = await getJson<{ limits: Record<string, number> }>('/api/v1/sessions/live');
+    expect(limits.body.data.limits).toEqual({ max_live_sessions: 1, session_idle_timeout_ms: 0 });
+
+    const first = (await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } })).body.data.id;
+    const second = (await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } })).body.data.id;
+    await vi.waitFor(() => expect(getLiveSessionById(accessor, first)).toBeUndefined());
+    expect(getLiveSessionById(accessor, second)).toBeDefined();
+
+    const busySession = getLiveSessionById(accessor, second)!;
+    const agents = busySession.accessor.get(IAgentLifecycleService);
+    if (agents.handleOf(MAIN_AGENT_ID) === undefined) await agents.create({ agentId: MAIN_AGENT_ID });
+    agents
+      .handleOf(MAIN_AGENT_ID)!
+      .accessor.get(IEventBus)
+      .publish(new TurnStarted({ agentId: MAIN_AGENT_ID, turnId: 1, origin: { kind: 'user' } }));
+
+    const third = (await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } })).body.data.id;
+    await vi.waitFor(() => expect(getLiveSessionById(accessor, third)).toBeUndefined());
+    expect(getLiveSessionById(accessor, second)).toBe(busySession);
+
+    const resumed = await postJson<{ results: Array<{ session_id: string; status: string }> }>(
+      '/api/v1/sessions/resume',
+      { session_ids: [first] },
+    );
+    expect(resumed.body.data.results).toEqual([{ session_id: first, status: 'resumed' }]);
+    expect(getLiveSessionById(accessor, first)).toBeDefined();
+    expect(getLiveSessionById(accessor, second)).toBe(busySession);
+
+    await vi.waitFor(() => expect(getLiveSessionById(accessor, first)).toBeUndefined());
+    expect(getLiveSessionById(accessor, second)).toBe(busySession);
+    const live = await getJson<{ items: LiveSessionWire[] }>('/api/v1/sessions/live');
+    expect(live.body.data.items.map((item) => item.session_id)).toEqual([second]);
+    expect(live.body.data.items[0]).toMatchObject({ busy: true, main_turn_active: true });
+  });
+
+  it('closes sessions that stay idle past session_idle_timeout_ms', async () => {
+    await restartWithFreshHome({
+      toml: ['[server]', 'max_live_sessions = 0', 'session_idle_timeout_ms = 1', ''].join('\n'),
+      sessionSweepIntervalMs: 20,
+    });
+    const cwd = home as string;
+    const accessor = (server as RunningServer).core.accessor;
+    const id = (await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } })).body.data.id;
+    await vi.waitFor(() => expect(getLiveSessionById(accessor, id)).toBeUndefined());
+    const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
+    expect(got.body.code).toBe(0);
+    expect(got.body.data.id).toBe(id);
   });
 
   it('keeps failed journal cleanup retriable without publishing deletion', async () => {

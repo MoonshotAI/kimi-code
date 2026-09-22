@@ -30,6 +30,8 @@ describe('server-v2 OpenAPI', () => {
     expect(paths['/api/v1/sessions']).toBeDefined();
     expect(paths['/api/v1/files']).toBeDefined();
     expect(paths['/api/v1/sessions/{session_id}/fs/{*}']).toBeDefined();
+    expect(asRecord(paths['/api/v1/sessions/resume'])['post']).toBeDefined();
+    expect(asRecord(paths['/api/v1/sessions/live'])['get']).toBeDefined();
   });
 
   it('projects the session-action dispatcher into archive and delete only', async () => {

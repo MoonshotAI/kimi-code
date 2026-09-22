@@ -483,6 +483,17 @@ Both values must be positive integers. A call's `max_chars` overrides the defaul
 
 `enabled` can be overridden by the `KIMI_CODE_WATCH` environment variable, which takes higher priority than `config.toml`.
 
+## `server`
+
+`server` controls how many sessions the local server started by `kimi web` keeps loaded in memory at once. A session that a client subscribes to is loaded on demand; sessions that stay idle are unloaded again. A session with a running turn or a pending approval is never unloaded. Set a field to `0` to turn that limit off.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `max_live_sessions` | `integer` | `16` | Upper bound on sessions kept loaded at once; when exceeded, the idle session that was used least recently is unloaded |
+| `session_idle_timeout_ms` | `integer` | `1800000` (30 minutes) | Unload a session nobody is subscribed to after it has been idle for this long |
+
+Both fields can be overridden by the `KIMI_CODE_SERVER_MAX_LIVE_SESSIONS` and `KIMI_CODE_SERVER_SESSION_IDLE_TIMEOUT_MS` environment variables, which take higher priority than `config.toml`.
+
 <!--
 ## `experimental`
 

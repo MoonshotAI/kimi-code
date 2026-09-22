@@ -78,6 +78,7 @@ import {
   shutdownServerTelemetry,
 } from './services/telemetry';
 import { TranscriptService } from './services/transcript/transcriptService';
+import { LiveSessionRegistry } from './services/liveSessions/liveSessionRegistry';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
@@ -122,6 +123,7 @@ export interface ServerStartOptions {
   readonly webAssetsDir?: string;
   readonly serverVersion?: string;
   readonly telemetry?: boolean;
+  readonly sessionSweepIntervalMs?: number;
 }
 
 export interface RunningServer {
@@ -136,6 +138,7 @@ export interface RunningServer {
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 58627;
+const SESSION_REQUEST_PATTERN = /^\/api\/v[12]\/sessions\/([^/?#]+)/;
 
 export async function startServer(opts: ServerStartOptions): Promise<RunningServer> {
   const host = opts.host ?? DEFAULT_HOST;
@@ -315,6 +318,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     capabilityInstallSubscription.dispose();
     authFailureLimiter?.dispose();
     modelCatalogRefreshScheduler.dispose();
+    await liveSessions.dispose();
     try {
       await shutdownServerTelemetry(telemetry);
     } catch (error) {
@@ -348,11 +352,26 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const connectionRegistry = new ConnectionRegistry();
   const transcriptService = new TranscriptService({ homeDir, core, logger });
   core.accessor.get(IGlobalSearchService).setLiveTranscriptSource(transcriptService);
-  const broadcaster = new SessionEventBroadcaster({
+  const broadcaster: SessionEventBroadcaster = new SessionEventBroadcaster({
     eventsDir: join(homeDir, 'server', 'events'),
     core,
     logger,
     transcriptService,
+    ensureCapacity: (): Promise<() => void> => liveSessions.ensureCapacity(),
+    onSessionTouched: (sessionId): void => liveSessions.touch(sessionId),
+  });
+  const liveSessions: LiveSessionRegistry = new LiveSessionRegistry({
+    core,
+    logger,
+    subscriberCount: (sessionId): number => broadcaster.subscriberCount(sessionId),
+    announceClosed: (sessionId, workspaceId, reason): void =>
+      broadcaster.announceSessionClosed(sessionId, workspaceId, reason),
+    sweepIntervalMs: opts.sessionSweepIntervalMs,
+  });
+  app.addHook('onRequest', (req, _reply, done) => {
+    const match = SESSION_REQUEST_PATTERN.exec(req.url);
+    if (match?.[1] !== undefined) liveSessions.touch(decodeURIComponent(match[1]));
+    done();
   });
 
   const configService = core.accessor.get(IConfigService);
@@ -460,11 +479,12 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
             : undefined,
     },
     onShutdown: () => {
-      void close().catch((err: unknown) => logger.error({ err }, 'server close failed'));
+      void close().catch((error: unknown) => logger.error({ error }, 'server close failed'));
     },
     connectionRegistry,
     broadcaster,
     transcriptService,
+    liveSessions,
     dangerousBypassAuth: opts.disableAuth === true,
     webTitle: opts.webTitle,
   });
@@ -599,6 +619,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   boundPort = typeof address === 'object' && address !== null ? address.port : port;
   await registration.update({ port: boundPort });
 
+  liveSessions.start();
   void modelCatalogRefreshScheduler.start().catch((error) => {
     logger.warn(
       { err: error instanceof Error ? error.message : String(error) },
