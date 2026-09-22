@@ -329,7 +329,7 @@ function emitTsDict(lines: string[], dict: SketchDict, indent: string): void {
     lines.push(`${indent}${fieldKey}${optional ? '?' : ''}: ${typeLines[0]}${typeLines.length === 1 ? ';' : ''}`);
     if (typeLines.length > 1) {
       lines.push(...typeLines.slice(1, -1));
-      lines.push(`${typeLines.at(-1)};`);
+      lines.push(`${typeLines[typeLines.length - 1]};`);
     }
   }
 }
@@ -371,7 +371,7 @@ function renderPayloadDecl(
       ...header,
       `type ${name} = { ${nameField} } & (${lines[0]}`,
       ...lines.slice(1, -1),
-      `${lines.at(-1)});`,
+      `${lines[lines.length - 1]});`,
       '',
     ];
   }
@@ -449,7 +449,7 @@ function splitObjectFields(body: string): Map<string, string> {
   for (const part of splitTopLevel(body)) {
     const keyMatch = /^([$\w]+|'[^']+'|"[^"]+")\s*:/.exec(part);
     if (keyMatch?.[1] !== undefined) {
-      const key = keyMatch[1].replaceAll(/^['"]|['"]$/g, '');
+      const key = keyMatch[1].replace(/^['"]|['"]$/g, '');
       fields.set(key, part.slice(keyMatch[0].length).trim());
     } else if (part.startsWith('...')) {
       fields.set(part, '');
@@ -551,7 +551,7 @@ function splitTsTypeFields(body: string): Map<string, TsField> {
   for (const part of splitTopLevel(body, [';', ','])) {
     const m = /^(?:readonly\s+)?([$\w]+|'[^']+'|"[^"]+")\s*(\?)?\s*:\s*(.+)$/.exec(part);
     if (m?.[1] !== undefined && m[3] !== undefined) {
-      fields.set(m[1].replaceAll(/^['"]|['"]$/g, ''), {
+      fields.set(m[1].replace(/^['"]|['"]$/g, ''), {
         type: m[3].trim(),
         optional: m[2] !== undefined,
       });
