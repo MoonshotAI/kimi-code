@@ -541,6 +541,47 @@ describe('Session.prompt events', () => {
     }
   });
 
+  it('refreshes the resume state of a live session without reloading it', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      await configureFakeProvider(harness);
+      const created = await harness.createSession({ id: 'ses_refresh_resume', workDir });
+      await runPrompt(created, 'first question', 'first answer');
+      await harness.closeSession(created.id);
+      const session = await harness.resumeSession({ id: created.id });
+      const replayOf = () =>
+        visibleReplayText(session.getResumeState()?.agents['main']?.replay ?? []);
+      expect(replayOf()).toEqual(['user:first question', 'assistant:first answer']);
+
+      await runPrompt(session, 'second question', 'second answer');
+      // The facade's resume state is the snapshot taken at resume time.
+      expect(replayOf()).toEqual(['user:first question', 'assistant:first answer']);
+
+      // No wait for the write: the refresh flushes what the live agent appended.
+      const refreshed = await session.refreshResumeState({ replayTurnLimit: 1 });
+      expect(refreshed).toBe(session.getResumeState());
+      expect(replayOf()).toEqual(['user:second question', 'assistant:second answer']);
+      expect(session.isClosed).toBe(false);
+
+      // Still the same live session: it keeps taking turns.
+      await runPrompt(session, 'third question', 'third answer');
+      await session.refreshResumeState();
+      expect(replayOf()).toEqual([
+        'user:first question',
+        'assistant:first answer',
+        'user:second question',
+        'assistant:second answer',
+        'user:third question',
+        'assistant:third answer',
+      ]);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('persists only conversation through the selected turn across resume', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();

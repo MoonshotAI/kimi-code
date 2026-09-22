@@ -189,6 +189,7 @@ describe('built-in slash command registry', () => {
         'sessions',
         'settings',
         'status',
+        'tab',
         'theme',
         'title',
         'tower',

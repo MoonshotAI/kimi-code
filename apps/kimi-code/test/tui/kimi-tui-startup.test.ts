@@ -301,8 +301,9 @@ describe('KimiTUI startup', () => {
     await expect(driver.init()).resolves.toBe(false);
     (driver as unknown as { mountFooter(): void }).mountFooter();
 
-    // Dock = 7 chrome containers + footer wrap, below the transcript viewport.
-    expect(driver.state.dockContainer?.children).toHaveLength(8);
+    // Dock = 8 chrome containers (incl. the session tab strip) + footer wrap,
+    // below the transcript viewport.
+    expect(driver.state.dockContainer?.children).toHaveLength(9);
   });
 
   it('shows a session-less notice on v2 startup', async () => {

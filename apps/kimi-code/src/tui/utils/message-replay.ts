@@ -4,6 +4,7 @@ import type {
   BackgroundTaskStatus,
   ContentPart,
   ContextMessage,
+  Event,
   PromptOrigin,
   ResumedAgentState,
   ToolCall,
@@ -166,6 +167,65 @@ export function limitReplayRecordsByTurn(
   // `replayTurnLimit` on resume; the boundary predicate lives in the SDK
   // (`limitAgentReplayByTurns`).
   return limitAgentReplayByTurns(records, maxTurns);
+}
+
+/**
+ * Drop the in-progress step from a replay whose step is rendered from its
+ * live events instead (a session tab re-attached mid-step). The step opens
+ * with an assistant record that fills in as the engine persists it — its
+ * text once the model finished streaming, each tool call once it starts,
+ * each result once it ends, plus a synthetic "interrupted" result for every
+ * call still running when the replay was folded. That record is the last
+ * assistant record, unless the step start had not reached the replay yet: it
+ * only matches when its tool calls and text are a prefix of what the events
+ * streamed, otherwise the replay is returned unchanged.
+ */
+export function omitInProgressStepRecords(
+  records: readonly AgentReplayRecord[],
+  stepEvents: readonly Event[],
+): readonly AgentReplayRecord[] {
+  if (stepEvents.length === 0) return records;
+  const streamedToolCallIds = new Set<string>();
+  let streamedText = '';
+  for (const event of stepEvents) {
+    if (
+      event.type === 'tool.call.delta' ||
+      event.type === 'tool.call.started' ||
+      event.type === 'tool.result'
+    ) {
+      if (event.toolCallId.length > 0) streamedToolCallIds.add(event.toolCallId);
+    } else if (event.type === 'assistant.delta') {
+      streamedText += event.delta;
+    }
+  }
+  const index = records.findLastIndex(
+    (record) =>
+      record.type === 'message' &&
+      record.message.role === 'assistant' &&
+      record.message.origin?.kind !== 'hook_result',
+  );
+  const step = records[index];
+  if (step?.type !== 'message') return records;
+  const { content, toolCalls } = step.message;
+  if (!toolCalls.every((call) => streamedToolCallIds.has(call.id))) return records;
+  const persistedText = content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+  if (!squashWhitespace(streamedText).startsWith(squashWhitespace(persistedText))) return records;
+  const stepToolCallIds = new Set([...streamedToolCallIds, ...toolCalls.map((call) => call.id)]);
+  return records.filter(
+    (record, position) =>
+      position < index ||
+      (position > index &&
+        !(
+          record.type === 'message' &&
+          record.message.role === 'tool' &&
+          record.message.toolCallId !== undefined &&
+          stepToolCallIds.has(record.message.toolCallId)
+        )),
+  );
+}
+
+function squashWhitespace(text: string): string {
+  return text.replaceAll(/\s+/g, '');
 }
 
 export function replayEntry(

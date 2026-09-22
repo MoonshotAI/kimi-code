@@ -141,6 +141,7 @@ import { fsSuggestRequestSchema } from '@moonshot-ai/agent-core-v2/workspace/wor
 import { IAppendLogStore } from '@moonshot-ai/agent-core-v2/persistence/interface/appendLogStore';
 import type { McpServerConfig as WorkspaceMcpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
 import {
+  AGENT_WIRE_RECORD_KEY,
   bootstrap,
   DEFAULT_AGENT_PROFILE_NAME,
   drainLogCloses,
@@ -157,6 +158,7 @@ import {
   IAgentPluginService,
   IAgentLifecycleService,
   IAgentLoopService,
+  IAgentScopeContext,
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
   IAgentPluginCommandService,
@@ -193,6 +195,7 @@ import {
   IAgentTodoService,
   ISessionWorkspaceContext,
   ITelemetryService,
+  IWireService,
   IWorkspaceAliases,
   ISessionActivityView,
   IWorkspaceInstanceManager,
@@ -1561,9 +1564,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const live = this.liveSession(sessionId);
     if (live !== undefined) {
       const sessionDir = live.accessor.get(ISessionContext).sessionDir;
-      return foldAgentWireReplay(
-        join(sessionDir, 'agents', MAIN_AGENT_ID, 'wire.jsonl'),
-        replayTurnLimit,
+      const wirePath = join(sessionDir, 'agents', MAIN_AGENT_ID, 'wire.jsonl');
+      return this.flushLiveMainWire(live).then(() =>
+        foldAgentWireReplay(wirePath, replayTurnLimit),
       );
     }
     const bootstrap = this.engineAccessor.get(IBootstrapService);
@@ -1583,6 +1586,26 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         );
       })
       .catch(() => undefined);
+  }
+
+  /**
+   * Waits until the records a live main agent already appended reach its
+   * `wire.jsonl`. The engine writes the file asynchronously, so an event can
+   * arrive before the records behind it are on disk, and a fold reading the
+   * file right after would miss them. Never rejects: a failed write stays the
+   * engine's to report (unlike `IWireService.flush`, this does not consume it).
+   */
+  private async flushLiveMainWire(live: ISessionScopeHandle): Promise<void> {
+    const main = live.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
+    if (main === undefined) return;
+    try {
+      await main.accessor.get(IWireService).drainPersisted();
+      await main.accessor
+        .get(IAppendLogStore)
+        .flushLog(main.accessor.get(IAgentScopeContext).scope(), AGENT_WIRE_RECORD_KEY);
+    } catch {
+      // Fold whatever reached the file.
+    }
   }
 
   /**

@@ -211,9 +211,17 @@ export class SessionEventHandler {
     this.subAgentEventHandler.syncAgentSwarmActivitySpinner(spinner);
   }
 
-  startSubscription(): void {
+  /**
+   * Follow `session`'s live events. `backlog` holds events that already
+   * happened but are not in the rendered transcript yet (the in-progress step
+   * of a re-attached session tab); they are handled right after subscribing,
+   * in the same tick, so no live event can slip in between or ahead of them.
+   */
+  startSubscription(
+    session: Session = this.host.requireSession(),
+    backlog: readonly Event[] = [],
+  ): void {
     const { host } = this;
-    const session = host.requireSession();
     const sendQueued = (item: QueuedMessage): void => {
       host.sendQueuedMessage(session, item);
     };
@@ -228,6 +236,12 @@ export class SessionEventHandler {
       }
       this.handleEvent(event, sendQueued);
     });
+    // Past events only rebuild the view: an OAuth URL they carried was
+    // already handled (or deliberately not opened) when it arrived.
+    for (const event of backlog) {
+      if (host.aborted) break;
+      if (event.sessionId === sessionId) this.handleEvent(event, sendQueued);
+    }
     void this.syncMcpServerStatusSnapshot(session);
   }
 

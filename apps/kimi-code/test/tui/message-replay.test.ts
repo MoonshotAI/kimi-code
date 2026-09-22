@@ -4,6 +4,7 @@ import type {
   AgentReplayRecord,
   BackgroundTaskInfo,
   ContentPart,
+  Event,
   GoalSnapshot,
   PromptOrigin,
   ResumedAgentState,
@@ -25,7 +26,7 @@ import {
 } from '#/tui/utils/transcript-window';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import { ReadGroupComponent } from '#/tui/components/messages/read-group';
-import { replayBackgroundProjection } from '#/tui/utils/message-replay';
+import { omitInProgressStepRecords, replayBackgroundProjection } from '#/tui/utils/message-replay';
 import type { TaskNotificationOrigin } from '#/tui/utils/message-replay';
 
 vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
@@ -1524,5 +1525,78 @@ describe('replayBackgroundProjection', () => {
     const meta = projection.backgroundAgentMetadata.get('agent-1');
     expect(meta?.model).toBeUndefined();
     expect(meta?.effort).toBeUndefined();
+  });
+});
+
+describe('omitInProgressStepRecords', () => {
+  const userRecord = (text: string): AgentReplayRecord =>
+    ({
+      type: 'message',
+      time: REPLAY_TIME,
+      message: { role: 'user', content: [{ type: 'text', text }], toolCalls: [] },
+    }) as unknown as AgentReplayRecord;
+  const assistantRecord = (text: string, toolCallIds: readonly string[] = []): AgentReplayRecord =>
+    ({
+      type: 'message',
+      time: REPLAY_TIME,
+      message: {
+        role: 'assistant',
+        content: text.length > 0 ? [{ type: 'text', text }] : [],
+        toolCalls: toolCallIds.map((id) => ({ type: 'function', id, name: 'Bash', arguments: '{}' })),
+      },
+    }) as unknown as AgentReplayRecord;
+  const toolRecord = (toolCallId: string, text: string): AgentReplayRecord =>
+    ({
+      type: 'message',
+      time: REPLAY_TIME,
+      message: { role: 'tool', content: [{ type: 'text', text }], toolCalls: [], toolCallId },
+    }) as unknown as AgentReplayRecord;
+  const step = (...events: Array<Record<string, unknown>>): Event[] =>
+    [{ type: 'turn.step.started', step: 2 }, ...events].map(
+      (event) => ({ agentId: 'main', sessionId: 's', turnId: 1, ...event }) as unknown as Event,
+    );
+
+  const previousStep = [
+    userRecord('go'),
+    assistantRecord('Looking.', ['call-1']),
+    toolRecord('call-1', 'ok'),
+  ];
+
+  it('keeps the replay when no step is in progress', () => {
+    expect(omitInProgressStepRecords(previousStep, [])).toBe(previousStep);
+  });
+
+  it('drops a step whose text is still streaming', () => {
+    const replay = [...previousStep, assistantRecord('')];
+    const events = step({ type: 'assistant.delta', delta: 'Half a sen' });
+    expect(omitInProgressStepRecords(replay, events)).toEqual(previousStep);
+  });
+
+  it('drops a persisted step and the results of its calls, keeping later unrelated records', () => {
+    const plan = { type: 'plan_updated', enabled: true, time: REPLAY_TIME } as AgentReplayRecord;
+    const replay = [
+      ...previousStep,
+      assistantRecord('Running  it now.', ['call-2']),
+      toolRecord('call-2', 'interrupted'),
+      plan,
+    ];
+    const events = step(
+      { type: 'assistant.delta', delta: 'Running it ' },
+      { type: 'assistant.delta', delta: 'now.' },
+      { type: 'tool.call.delta', toolCallId: 'call-2', name: 'Bash', argumentsPart: '{}' },
+    );
+    expect(omitInProgressStepRecords(replay, events)).toEqual([...previousStep, plan]);
+  });
+
+  it('keeps the replay when the step start has not been persisted yet', () => {
+    const events = step(
+      { type: 'assistant.delta', delta: 'Next.' },
+      { type: 'tool.call.started', toolCallId: 'call-9', name: 'Bash', args: {} },
+    );
+    expect(omitInProgressStepRecords(previousStep, events)).toBe(previousStep);
+    // A text-only previous step does not match text the new step streamed either.
+    const textOnly = [userRecord('go'), assistantRecord('All done.')];
+    const nextStep = step({ type: 'assistant.delta', delta: 'Next.' });
+    expect(omitInProgressStepRecords(textOnly, nextStep)).toBe(textOnly);
   });
 });

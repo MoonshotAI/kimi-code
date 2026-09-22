@@ -10,6 +10,7 @@ import {
   setCapabilities,
 } from '@moonshot-ai/pi-tui';
 import type {
+  AgentReplayRecord,
   ApprovalRequest,
   ApprovalResponse,
   Event,
@@ -140,6 +141,9 @@ interface MessageDriver {
   setSession(session: unknown): Promise<void>;
   syncRuntimeState(session?: unknown): Promise<void>;
   getCurrentSessionId(): string;
+  tabs: import('#/tui/controllers/session-tabs').SessionTabsController;
+  tabViews(): import('#/tui/components/chrome/tab-strip').SessionTabView[];
+  activateTabAt(index: number): Promise<boolean>;
 }
 
 interface FeedbackDriver extends MessageDriver {
@@ -266,6 +270,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     removePlugin: vi.fn(async () => {}),
     reloadPlugins: vi.fn(async () => ({ added: [], removed: [], errors: [] })),
     reloadSession: vi.fn(async () => ({})),
+    refreshResumeState: vi.fn(async () => undefined),
     activateSkill: vi.fn(async () => {}),
     promptWithSkills: vi.fn(async () => {}),
     getPluginInfo: vi.fn(async (id: string) => ({
@@ -9225,5 +9230,502 @@ describe('KimiTUI session rating survey', () => {
       vi.useRealTimers();
       vi.restoreAllMocks();
     }
+  });
+});
+
+describe('KimiTUI session tabs', () => {
+  const tabsEnabled = () => ({
+    getExperimentalFeatures: vi.fn(async () => [{ id: 'tui_tabs', enabled: true }]),
+  });
+
+  async function openSecondTab(
+    first: ReturnType<typeof makeSession>,
+    second: ReturnType<typeof makeSession>,
+  ): Promise<MessageDriver> {
+    const { driver } = await makeDriver(first, {
+      ...tabsEnabled(),
+      createSession: vi.fn(async () => second),
+    });
+    driver.handleUserInput('/new tab');
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-2');
+    });
+    return driver;
+  }
+
+  it('refuses /new tab while the tabs flag is off', async () => {
+    const first = makeSession({ id: 'ses-1' });
+    const createSession = vi.fn(async () => makeSession({ id: 'ses-2' }));
+    const { driver } = await makeDriver(first, { createSession });
+
+    driver.handleUserInput('/new tab');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('Session tabs are experimental');
+    });
+    expect(createSession).not.toHaveBeenCalled();
+    expect(driver.getCurrentSessionId()).toBe('ses-1');
+  });
+
+  it('opens a new session in a new tab, keeps the old one alive and restores its draft on return', async () => {
+    const first = makeSession({ id: 'ses-1', summary: { title: 'First task' } });
+    const second = makeSession({ id: 'ses-2', summary: { title: 'Second task' } });
+    const { driver } = await makeDriver(first, {
+      ...tabsEnabled(),
+      createSession: vi.fn(async () => second),
+    });
+    driver.state.editor.setText('draft for the first tab');
+
+    driver.handleUserInput('/new tab');
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-2');
+    });
+    expect(first.close).not.toHaveBeenCalled();
+    expect(driver.tabs.size).toBe(2);
+    expect(driver.tabs.activeTabIndex).toBe(1);
+    expect(driver.state.editor.getText()).toBe('');
+    expect(driver.tabViews().map((view) => view.title)).toEqual(['First task', 'Second task']);
+    const strip = stripSgr(driver.state.tabStripContainer.render(80).join('\n'));
+    expect(strip).toContain('1 First task');
+    expect(strip).toContain('2 Second task');
+    expect(stripSgr(renderTranscript(driver))).toContain('Started a new session in tab 2 (ses-2).');
+
+    driver.handleUserInput('/tab 1');
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-1');
+    });
+    expect(second.close).not.toHaveBeenCalled();
+    expect(first.refreshResumeState).toHaveBeenCalledOnce();
+    expect(driver.state.editor.getText()).toBe('draft for the first tab');
+    expect(driver.tabs.activeTabIndex).toBe(0);
+  });
+
+  it('leaves a streaming session running in the background and shows its state', async () => {
+    const first = makeSession({ id: 'ses-1' });
+    const second = makeSession({ id: 'ses-2' });
+    const { driver } = await makeDriver(first, {
+      ...tabsEnabled(),
+      createSession: vi.fn(async () => second),
+    });
+    driver.sessionEventHandler.startSubscription();
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.started', agentId: 'main', sessionId: 'ses-1', turnId: 1, origin: { kind: 'user' } } as Event,
+      () => {},
+    );
+    expect(driver.state.appState.streamingPhase).not.toBe('idle');
+
+    driver.handleUserInput('/new tab');
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-2');
+    });
+    expect(first.cancel).not.toHaveBeenCalled();
+    expect(first.close).not.toHaveBeenCalled();
+    expect(driver.state.appState.streamingPhase).toBe('idle');
+    expect(driver.tabViews()[0]?.status).toBe('running');
+
+    // The background watcher is the last onEvent subscriber of the first session.
+    const onEventCalls = (first.onEvent as unknown as { mock: { calls: Array<[(event: Event) => void]> } })
+      .mock.calls;
+    const watcher = onEventCalls.at(-1)?.[0];
+    if (watcher === undefined) throw new Error('expected a background watcher');
+    watcher({ type: 'assistant.delta', agentId: 'main', sessionId: 'ses-1', turnId: 1, delta: 'done' } as Event);
+    watcher({ type: 'turn.ended', agentId: 'main', sessionId: 'ses-1', turnId: 1, reason: 'completed' } as Event);
+    expect(driver.tabViews()[0]).toMatchObject({ status: 'done', unread: true });
+    const strip = stripSgr(driver.state.tabStripContainer.render(80).join('\n'));
+    expect(strip).toContain('1✓ ses-1 •');
+
+    driver.handleUserInput('/tab 1');
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-1');
+    });
+    expect(driver.tabViews()[0]).toMatchObject({ status: 'idle', unread: false });
+  });
+
+  it('queues a background tab\'s approval and shows it once that tab is active', async () => {
+    const first = makeSession({ id: 'ses-1' });
+    const second = makeSession({ id: 'ses-2' });
+    const driver = await openSecondTab(first, second);
+    const approvalHandler = vi.mocked(first.setApprovalHandler).mock.calls.at(-1)?.[0] as
+      | ((request: ApprovalRequest) => Promise<ApprovalResponse>)
+      | undefined;
+    if (approvalHandler === undefined) throw new Error('expected approval handler');
+
+    const response = approvalHandler({
+      turnId: 1,
+      toolCallId: 'call_bg',
+      toolName: 'Bash',
+      action: 'Run shell command',
+      display: {
+        kind: 'generic',
+        summary: 'Run shell command',
+        detail: { command: 'echo ok', description: 'Run a shell command' },
+      },
+    });
+    await Promise.resolve();
+    // Not shown over the active tab; the owning tab is flagged as waiting.
+    expect(driver.state.livePane.pendingApproval).toBeNull();
+    expect(driver.state.editorContainer.children[0]).not.toBeInstanceOf(ApprovalPanelComponent);
+    expect(driver.tabViews()[0]).toMatchObject({ status: 'waiting', unread: true });
+
+    driver.handleUserInput('/tab 1');
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(ApprovalPanelComponent);
+    });
+    expect(driver.state.livePane.pendingApproval?.data.tool_call_id).toBe('call_bg');
+    (driver.state.editorContainer.children[0] as ApprovalPanelComponent).handleInput('1');
+    await expect(response).resolves.toMatchObject({ decision: 'approved' });
+  });
+
+  it('closes the active tab and falls back to its neighbour, confirming for a running one', async () => {
+    const first = makeSession({ id: 'ses-1' });
+    const second = makeSession({ id: 'ses-2' });
+    const driver = await openSecondTab(first, second);
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.started', agentId: 'main', sessionId: 'ses-2', turnId: 1, origin: { kind: 'user' } } as Event,
+      () => {},
+    );
+
+    driver.handleUserInput('/tab close');
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('is still running');
+    });
+    expect(second.close).not.toHaveBeenCalled();
+    expect(driver.tabs.size).toBe(2);
+
+    driver.handleUserInput('/tab close --force');
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-1');
+    });
+    expect(second.close).toHaveBeenCalledOnce();
+    expect(first.close).not.toHaveBeenCalled();
+    expect(driver.tabs.size).toBe(1);
+    expect(driver.state.tabStripContainer.render(80)).toEqual([]);
+  });
+
+  it('re-attaches a still-running tab in the waiting state and follows its live events', async () => {
+    const first = makeSession({ id: 'ses-1' });
+    const second = makeSession({ id: 'ses-2' });
+    const { driver } = await makeDriver(first, {
+      ...tabsEnabled(),
+      createSession: vi.fn(async () => second),
+    });
+    driver.sessionEventHandler.startSubscription();
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.started', agentId: 'main', sessionId: 'ses-1', turnId: 1, origin: { kind: 'user' } } as Event,
+      () => {},
+    );
+    driver.handleUserInput('/new tab');
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-2');
+    });
+
+    driver.handleUserInput('/tab 1');
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-1');
+    });
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+    expect(driver.state.appState.sessionId).toBe('ses-1');
+
+    const onEventCalls = (first.onEvent as unknown as { mock: { calls: Array<[(event: Event) => void]> } })
+      .mock.calls;
+    const live = onEventCalls.at(-1)?.[0];
+    if (live === undefined) throw new Error('expected a live subscription');
+    live({ type: 'turn.ended', agentId: 'main', sessionId: 'ses-1', turnId: 1, reason: 'completed' } as Event);
+    await vi.waitFor(() => {
+      expect(driver.state.appState.streamingPhase).toBe('idle');
+    });
+    expect(driver.tabViews()[0]?.status).toBe('idle');
+  });
+
+  it('drops the streaming state when a running active tab is force-closed', async () => {
+    const first = makeSession({ id: 'ses-1' });
+    const second = makeSession({ id: 'ses-2' });
+    const driver = await openSecondTab(first, second);
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.started', agentId: 'main', sessionId: 'ses-2', turnId: 1, origin: { kind: 'user' } } as Event,
+      () => {},
+    );
+
+    driver.handleUserInput('/tab close --force');
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-1');
+    });
+    expect(driver.state.appState.streamingPhase).toBe('idle');
+    expect(driver.state.livePane.mode).toBe('idle');
+  });
+
+  it('refuses to close the only tab', async () => {
+    const first = makeSession({ id: 'ses-1' });
+    const { driver } = await makeDriver(first, tabsEnabled());
+
+    driver.handleUserInput('/tab close');
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('This is the only tab');
+    });
+    expect(first.close).not.toHaveBeenCalled();
+    expect(driver.tabs.size).toBe(1);
+  });
+
+  it('stashes queued messages with their tab and drains them when the tab comes back idle', async () => {
+    const first = makeSession({ id: 'ses-1' });
+    const second = makeSession({ id: 'ses-2' });
+    const driver = await openSecondTab(first, second);
+    driver.state.queuedMessages = [{ text: 'queued for two', agentId: 'main', mode: 'prompt' }];
+
+    driver.handleUserInput('/tab 1');
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-1');
+    });
+    expect(driver.state.queuedMessages).toEqual([]);
+    expect(driver.tabs.at(1)?.queuedMessages).toHaveLength(1);
+
+    driver.handleUserInput('/tab 2');
+    await vi.waitFor(() => {
+      expect(second.prompt).toHaveBeenCalledWith('queued for two', { promptId: undefined });
+    });
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('picks a session already open in another tab by bringing that tab forward', async () => {
+    const first = makeSession({ id: 'ses-1' });
+    const second = makeSession({ id: 'ses-2' });
+    const { driver, harness } = await makeDriver(first, {
+      ...tabsEnabled(),
+      createSession: vi.fn(async () => second),
+      listSessions: vi.fn(async () => [
+        { id: 'ses-1', title: 'First', workDir: '/tmp/proj-a', updatedAt: Date.now() },
+      ]),
+    });
+    driver.handleUserInput('/new tab');
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-2');
+    });
+    driver.state.editor.setText('draft in tab two');
+
+    await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    picker.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-1');
+    });
+    expect(driver.state.activeDialog).toBeNull();
+    expect(harness.resumeSession).not.toHaveBeenCalled();
+    expect(driver.state.editor.getText()).toBe('');
+    expect(driver.tabs.at(1)?.draft).toBe('draft in tab two');
+  });
+
+  function makeEmittingSession(id: string, overrides: Record<string, unknown> = {}) {
+    const listeners = new Set<(event: Event) => void>();
+    const session = makeSession({
+      id,
+      onEvent: vi.fn((listener: (event: Event) => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      }),
+      ...overrides,
+    });
+    const emit = (event: Record<string, unknown>): void => {
+      for (const listener of [...listeners]) {
+        listener({ agentId: 'main', sessionId: id, ...event } as unknown as Event);
+      }
+    };
+    return { session, emit };
+  }
+
+  /** Feed raw terminal input to the TUI-level input listeners, where the tab shortcuts live. */
+  function pressKeys(driver: MessageDriver, data: string): void {
+    const listeners = (driver.state.ui as unknown as { inputListeners: Set<(data: string) => unknown> })
+      .inputListeners;
+    for (const listener of listeners) listener(data);
+  }
+
+  function countOccurrences(text: string, needle: string): number {
+    return text.split(needle).length - 1;
+  }
+
+  it('refuses tab switches while a picker resume replaces the active tab session', async () => {
+    const first = makeSession({ id: 'ses-1' });
+    const second = makeSession({ id: 'ses-2' });
+    const third = makeSession({ id: 'ses-3' });
+    let finishResume: ((session: unknown) => void) | undefined;
+    const resumeSession = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          finishResume = resolve;
+        }),
+    );
+    const { driver } = await makeDriver(first, {
+      ...tabsEnabled(),
+      createSession: vi.fn(async () => second),
+      resumeSession,
+      listSessions: vi.fn(async () => [
+        { id: 'ses-3', title: 'Third', workDir: '/tmp/proj-a', updatedAt: Date.now() },
+      ]),
+    });
+    driver.handleUserInput('/new tab');
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-2');
+    });
+
+    await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    picker.handleInput('\r');
+    await vi.waitFor(() => {
+      expect(resumeSession).toHaveBeenCalledOnce();
+    });
+
+    // Alt+1 and /tab 1 while the in-place resume is in flight.
+    pressKeys(driver, `${ESC}1`);
+    driver.handleUserInput('/tab 1');
+    await vi.waitFor(() => {
+      expect(
+        countOccurrences(stripSgr(renderTranscript(driver)), 'A session switch is already in progress.'),
+      ).toBe(2);
+    });
+    expect(driver.getCurrentSessionId()).toBe('ses-2');
+    expect(first.refreshResumeState).not.toHaveBeenCalled();
+
+    finishResume?.(third);
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-3');
+    });
+    // The resume replaced the tab it started from; the other tab is untouched.
+    expect(second.close).toHaveBeenCalledOnce();
+    expect(first.close).not.toHaveBeenCalled();
+    expect(driver.tabs.all.map((tab) => tab.session.id)).toEqual(['ses-1', 'ses-3']);
+    expect(driver.tabs.activeTabIndex).toBe(1);
+
+    // With the resume settled, switching works again.
+    pressKeys(driver, `${ESC}1`);
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-1');
+    });
+    expect(third.close).not.toHaveBeenCalled();
+  });
+
+  it('rebuilds the in-progress step of a background tab from its events on switching back', async () => {
+    const interrupted =
+      'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
+    let persisted: AgentReplayRecord[] = [];
+    const { session: first, emit } = makeEmittingSession('ses-1', {
+      getResumeState: vi.fn(() => ({
+        sessionMetadata: {},
+        agents: {
+          main: {
+            config: { modelAlias: 'k2' },
+            context: { history: [], tokenCount: 0 },
+            permission: { mode: 'manual', rules: [] },
+            plan: null,
+            background: [],
+            replay: persisted,
+          },
+        },
+      })),
+    });
+    const second = makeSession({ id: 'ses-2' });
+    const { driver } = await makeDriver(first, {
+      ...tabsEnabled(),
+      createSession: vi.fn(async () => second),
+    });
+    driver.sessionEventHandler.startSubscription();
+
+    emit({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } });
+    emit({ type: 'turn.step.started', turnId: 1, step: 1, stepId: 'step-1' });
+    emit({ type: 'assistant.delta', turnId: 1, delta: 'Streaming the first ' });
+
+    driver.handleUserInput('/new tab');
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-2');
+    });
+
+    // The step keeps streaming in the background, then starts a tool.
+    emit({ type: 'assistant.delta', turnId: 1, delta: 'half of the answer.' });
+    emit({
+      type: 'tool.call.started',
+      turnId: 1,
+      toolCallId: 'call-1',
+      name: 'Bash',
+      args: { command: 'echo step-marker' },
+    });
+    // What a fold of the on-disk wire holds at this point: the step's
+    // persisted text and tool call, plus the synthetic result the fold adds
+    // for a call that is still running.
+    persisted = [
+      {
+        type: 'message',
+        time: 1,
+        message: { role: 'user', content: [{ type: 'text', text: 'Run it' }], toolCalls: [] },
+      },
+      {
+        type: 'message',
+        time: 2,
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Streaming the first half of the answer.' }],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'call-1',
+              name: 'Bash',
+              arguments: JSON.stringify({ command: 'echo step-marker' }),
+            },
+          ],
+        },
+      },
+      {
+        type: 'message',
+        time: 3,
+        message: {
+          role: 'tool',
+          content: [{ type: 'text', text: interrupted }],
+          toolCalls: [],
+          toolCallId: 'call-1',
+          isError: true,
+        },
+      },
+    ] as unknown as AgentReplayRecord[];
+
+    driver.handleUserInput('/tab 1');
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-1');
+    });
+    const switched = stripSgr(renderTranscript(driver));
+    expect(switched).toContain('Run it');
+    expect(countOccurrences(switched, 'Streaming the first half of the answer.')).toBe(1);
+    expect(countOccurrences(switched, 'echo step-marker')).toBe(1);
+    expect(switched).not.toContain('interrupted before its result');
+    expect(driver.state.appState.streamingPhase).not.toBe('idle');
+
+    // Live events continue the rebuilt step without a gap or a repeat.
+    emit({ type: 'tool.result', turnId: 1, toolCallId: 'call-1', output: 'step-output-ok', isError: false });
+    emit({ type: 'turn.step.started', turnId: 1, step: 2, stepId: 'step-2' });
+    emit({ type: 'assistant.delta', turnId: 1, delta: 'Final words.' });
+    emit({ type: 'turn.ended', turnId: 1, reason: 'completed' });
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('Final words.');
+    });
+    const finished = stripSgr(renderTranscript(driver));
+    expect(countOccurrences(finished, 'Streaming the first half of the answer.')).toBe(1);
+    expect(countOccurrences(finished, 'Final words.')).toBe(1);
+    expect(countOccurrences(finished, 'echo step-marker')).toBe(1);
+    expect(driver.state.appState.streamingPhase).toBe('idle');
+  });
+
+  it('closes every hosted session on shutdown', async () => {
+    const first = makeSession({ id: 'ses-1' });
+    const second = makeSession({ id: 'ses-2' });
+    const driver = await openSecondTab(first, second);
+
+    await driver.closeSession('test');
+    expect(second.close).toHaveBeenCalledOnce();
+    expect(first.close).not.toHaveBeenCalled();
+    expect(driver.tabs.size).toBe(1);
+
+    await (driver as unknown as { closeAllSessions(reason: string): Promise<void> }).closeAllSessions('test');
+    expect(first.close).toHaveBeenCalledOnce();
+    expect(driver.tabs.size).toBe(0);
   });
 });
