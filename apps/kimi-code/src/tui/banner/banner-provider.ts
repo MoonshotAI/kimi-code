@@ -4,7 +4,7 @@ import { eq, gte, lt, valid } from 'semver';
 
 import type { BannerDisplay, BannerState } from '#/tui/types';
 
-import { meetsBannerAudience, type BannerAudienceContext } from './audience';
+import { meetsBannerAudience, type BannerAudienceContext, type KfcAudience } from './audience';
 import { getBannerConfig } from './banner-config';
 import type { BannerDisplayState } from './state';
 
@@ -14,19 +14,22 @@ interface BannerVersionFields {
   banner_version?: string | null;
 }
 
+/** One entry of the remote `banner_tips` array. The types are the server
+    contract; the runtime parsers still normalize every field defensively,
+    since a mis-edited config can violate the contract at any time. */
 interface BannerTipItem extends BannerVersionFields {
-  banner_id?: unknown;
-  banner_enabled?: unknown;
-  banner_title?: unknown;
-  banner_maintext?: unknown;
-  banner_subtext?: unknown;
-  banner_start_time?: unknown;
-  banner_end_time?: unknown;
-  banner_display?: unknown;
-  banner_display_ttl_hours?: unknown;
-  banner_platform?: unknown;
-  banner_system?: unknown;
-  kfc_audience?: unknown;
+  banner_id?: string | null;
+  banner_enabled?: boolean | null;
+  banner_title?: string | null;
+  banner_maintext?: string | null;
+  banner_subtext?: string | null;
+  banner_start_time?: string | null;
+  banner_end_time?: string | null;
+  banner_display?: string | null;
+  banner_display_ttl_hours?: number | null;
+  banner_platform?: string | null;
+  banner_system?: string[] | null;
+  kfc_audience?: KfcAudience | null;
 }
 
 interface BannerTipsJson {
@@ -41,19 +44,19 @@ interface BannerHashInput {
   endTime: string | null;
   display: BannerDisplay;
   ttlHours?: number;
-  audience: unknown;
+  audience?: KfcAudience | null;
 }
 
 interface BannerCandidateInput {
-  id: unknown;
+  id?: string | null;
   tag: string | null;
   mainText: string | null;
-  subText: unknown;
+  subText?: string | null;
   display: BannerDisplay;
   ttlHours?: number;
-  startTime?: unknown;
-  endTime?: unknown;
-  audience: unknown;
+  startTime?: string | null;
+  endTime?: string | null;
+  audience?: KfcAudience | null;
 }
 
 export interface SelectBannerStateArgs {

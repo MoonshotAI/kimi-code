@@ -9,11 +9,13 @@ export interface BannerAudienceContext {
   accountRegion?: 'cn' | 'oversea';
 }
 
-interface BannerAudienceFields {
-  login?: unknown;
-  tiers?: unknown;
-  goods_version?: unknown;
-  region?: unknown;
+/** The wire shape of a banner's `kfc_audience` targeting block. Every field
+    is optional; absent means "no constraint on this dimension". */
+export interface KfcAudience {
+  login?: string | null;
+  tiers?: number[] | null;
+  goods_version?: number | null;
+  region?: string | null;
 }
 
 function normalizeEnumValue(value: unknown): string | null {
@@ -60,7 +62,7 @@ function meetsRegion(value: unknown, ctx: BannerAudienceContext): boolean {
 export function meetsBannerAudience(raw: unknown, ctx: BannerAudienceContext): boolean {
   if (raw === undefined || raw === null) return true;
   if (typeof raw !== 'object' || Array.isArray(raw)) return false;
-  const audience = raw as BannerAudienceFields;
+  const audience = raw as KfcAudience;
   return (
     meetsLogin(audience.login, ctx) &&
     meetsTiers(audience.tiers, ctx) &&
