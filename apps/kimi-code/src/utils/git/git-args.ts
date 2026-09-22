@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 import {
@@ -41,12 +41,13 @@ function coreWorktreeSafe(git: string, workDir: string, gitDir: string | null): 
   if (gitDir === null) return true;
   let resolvedGitDir: string;
   try {
-    if (statSync(gitDir).isDirectory()) {
-      resolvedGitDir = gitDir;
+    const realGitPath = realpathSync(gitDir);
+    if (statSync(realGitPath).isDirectory()) {
+      resolvedGitDir = realGitPath;
     } else {
-      const pointer = parseGitDirPointer(readFileSync(gitDir, 'utf8'));
+      const pointer = parseGitDirPointer(readFileSync(realGitPath, 'utf8'));
       if (pointer === undefined) return true;
-      resolvedGitDir = resolve(workDir, pointer);
+      resolvedGitDir = resolve(dirname(realGitPath), pointer);
     }
   } catch {
     return false;

@@ -17,6 +17,8 @@ export const GIT_CONFIG_ARGS: readonly string[] = [
   'core.editor=',
   '-c',
   'gpg.program=',
+  '-c',
+  'submodule.recurse=false',
 ];
 
 export const GIT_DIFF_ARGS: readonly string[] = ['--no-ext-diff', '--no-textconv'];

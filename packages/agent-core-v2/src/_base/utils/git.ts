@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
 import {
@@ -51,12 +51,13 @@ async function coreWorktreeSafe(
   if (gitDir === null) return true;
   let resolvedGitDir: string;
   try {
-    if ((await stat(gitDir)).isDirectory()) {
-      resolvedGitDir = gitDir;
+    const realGitPath = await realpath(gitDir);
+    if ((await stat(realGitPath)).isDirectory()) {
+      resolvedGitDir = realGitPath;
     } else {
-      const pointer = parseGitDirPointer(await readFile(gitDir, 'utf8'));
+      const pointer = parseGitDirPointer(await readFile(realGitPath, 'utf8'));
       if (pointer === undefined) return true;
-      resolvedGitDir = resolve(cwd, pointer);
+      resolvedGitDir = resolve(dirname(realGitPath), pointer);
     }
   } catch {
     return false;

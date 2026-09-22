@@ -1,5 +1,5 @@
 /* eslint-disable import/first -- vi.mock setup must run before the imports it stubs out. */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -476,6 +476,36 @@ describe('git status cache', () => {
       expect(invocations.every((args) => args.includes('config'))).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when .git is a symlink and core.worktree is relative', () => {
+    const root = mkdtempSync(join(tmpdir(), 'git-status-symlink-'));
+    const admin = mkdtempSync(join(tmpdir(), 'git-status-admin-'));
+    mkdirSync(join(admin, '.git'), { recursive: true });
+    symlinkSync(join(admin, '.git'), join(root, '.git'));
+    mocks.execFile.mockImplementation(
+      (
+        _cmd: string,
+        _args: string[],
+        _options: unknown,
+        callback: (error: Error | null, stdout: string, stderr: string) => void,
+      ) => {
+        callback(new Error('no pull request'), '', '');
+      },
+    );
+    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
+      if (args.includes('core.worktree')) return { status: 0, stdout: '..\n' };
+      if (args.includes('config')) return { status: 1, stdout: '' };
+      return { status: 0, stdout: 'true\n' };
+    });
+
+    try {
+      const cache = createGitStatusCache(root, { trusted: true });
+      expect(cache.getStatus()).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(admin, { recursive: true, force: true });
     }
   });
 

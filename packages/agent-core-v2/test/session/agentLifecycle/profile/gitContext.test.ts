@@ -1,5 +1,5 @@
 import { Readable, type Writable } from 'node:stream';
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -146,7 +146,7 @@ describe('collectGitContext', () => {
     for (const call of spawn.mock.calls) {
       expect(call[0]).toBe('git');
       const args = call[1] as readonly string[];
-      expect(args.slice(0, 16)).toEqual([
+      expect(args.slice(0, 18)).toEqual([
         '-c',
         'core.fsmonitor=false',
         '-c',
@@ -161,6 +161,8 @@ describe('collectGitContext', () => {
         'core.editor=',
         '-c',
         'gpg.program=',
+        '-c',
+        'submodule.recurse=false',
         '-C',
         '/repo',
       ]);
@@ -215,6 +217,29 @@ describe('collectGitContext', () => {
       expect(args).toContain('filter.wt.process=');
       expect(args).toContain('filter.wt.smudge=');
       expect(args).toContain('merge.evil.driver=');
+    }
+  });
+
+  it('fails closed when .git is a symlink and core.worktree is relative', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'git-context-symlink-'));
+    const admin = await mkdtemp(join(tmpdir(), 'git-context-admin-'));
+    try {
+      await mkdir(join(admin, '.git'), { recursive: true });
+      await symlink(join(admin, '.git'), join(root, '.git'));
+      const { process: hostProcess, spawn } = gitRunner({
+        'config --local --includes --get core.worktree': { stdout: '..\n' },
+        'config --worktree --includes --get core.worktree': { stdout: '..\n' },
+        'rev-parse --is-inside-work-tree': { stdout: 'true\n' },
+      });
+
+      await expect(collectGitContext(hostProcess, root)).resolves.toBe('');
+
+      const invocations = spawn.mock.calls.map((call) => call[1] as readonly string[]);
+      expect(invocations.length).toBeGreaterThan(0);
+      expect(invocations.every((args) => args.includes('config'))).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(admin, { recursive: true, force: true });
     }
   });
 
