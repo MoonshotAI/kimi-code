@@ -1,27 +1,18 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync, statSync } from 'node:fs';
-import { dirname, isAbsolute, join, normalize, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
-const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null';
+import {
+  buildDriverOverrides,
+  GIT_CONFIG_ARGS,
+  GIT_DIFF_ARGS,
+  INCLUDE_SECTION_RE,
+  isCoreWorktreeSafe,
+  parseGitDirPointer,
+  resolveConfigPaths,
+} from '@moonshot-ai/agent-core-v2/_base/utils/gitHardening';
 
-export const GIT_CONFIG_ARGS: readonly string[] = [
-  '-c',
-  'core.fsmonitor=false',
-  '-c',
-  `core.hooksPath=${NULL_DEVICE}`,
-  '-c',
-  'commit.gpgSign=false',
-  '-c',
-  'log.showSignature=false',
-  '-c',
-  'merge.verifySignatures=false',
-  '-c',
-  'core.editor=',
-  '-c',
-  'gpg.program=',
-];
-
-export const GIT_DIFF_ARGS: readonly string[] = ['--no-ext-diff', '--no-textconv'];
+export { GIT_CONFIG_ARGS, GIT_DIFF_ARGS };
 
 const FILTER_PROBE_TIMEOUT_MS = 500;
 const FILTER_PROBE_MAX_BYTES = 16 * 1024 * 1024;
@@ -69,17 +60,15 @@ function coreWorktreeSafe(git: string, workDir: string, gitDir: string | null): 
     if (result.error !== undefined || result.status === null) return false;
     if (result.status !== 0 || typeof result.stdout !== 'string') continue;
     const raw = result.stdout.trim();
-    if (raw === '') continue;
-    const configured = isAbsolute(raw) ? normalize(raw) : resolve(resolvedGitDir, raw);
-    if (normalize(configured) !== normalize(workTreeRoot)) return false;
+    if (raw === '' || isCoreWorktreeSafe(raw, resolvedGitDir, workTreeRoot)) continue;
+    return false;
   }
   return true;
 }
 
 function probeFilterArgs(git: string, workDir: string): readonly string[] | null {
   try {
-    const filterDrivers = new Set<string>();
-    const mergeDrivers = new Set<string>();
+    const outputs: string[] = [];
     for (const scope of ['--local', '--worktree']) {
       const result = spawnSync(
         git,
@@ -98,42 +87,13 @@ function probeFilterArgs(git: string, workDir: string): readonly string[] | null
       );
       if (result.error !== undefined || result.status === null) return null;
       if (result.status !== 0 || typeof result.stdout !== 'string') continue;
-      for (const line of result.stdout.split('\n')) {
-        const filter = /^filter\.(.+)\.(?:clean|process|smudge)$/.exec(line);
-        const filterDriver = filter?.[1];
-        if (filterDriver !== undefined) {
-          if (filterDriver.includes('=')) return null;
-          filterDrivers.add(filterDriver);
-        }
-        const merge = /^merge\.(.+)\.driver$/.exec(line);
-        const mergeDriver = merge?.[1];
-        if (mergeDriver !== undefined) {
-          if (mergeDriver.includes('=')) return null;
-          mergeDrivers.add(mergeDriver);
-        }
-      }
+      outputs.push(result.stdout);
     }
-    const args: string[] = [];
-    for (const driver of filterDrivers) {
-      args.push(
-        '-c',
-        `filter.${driver}.clean=`,
-        '-c',
-        `filter.${driver}.process=`,
-        '-c',
-        `filter.${driver}.smudge=`,
-      );
-    }
-    for (const driver of mergeDrivers) {
-      args.push('-c', `merge.${driver}.driver=`);
-    }
-    return args;
+    return buildDriverOverrides(outputs);
   } catch {
     return null;
   }
 }
-
-const INCLUDE_SECTION_RE = /^\s*\[\s*include(?:\.|\s|\])/im;
 
 function gitConfigStamp(workDir: string, found: string | null): string | null {
   try {
@@ -144,12 +104,12 @@ function gitConfigStamp(workDir: string, found: string | null): string | null {
       if (pointer === undefined) return null;
       gitDir = resolve(workDir, pointer);
     }
-    const configPaths = [join(gitDir, 'config'), join(gitDir, 'config.worktree')];
+    let commondir: string | undefined;
     try {
-      const commonDir = readFileSync(join(gitDir, 'commondir'), 'utf8').trim();
-      if (commonDir.length > 0) configPaths.push(join(resolve(gitDir, commonDir), 'config'));
+      commondir = readFileSync(join(gitDir, 'commondir'), 'utf8');
     } catch {
     }
+    const configPaths = resolveConfigPaths(gitDir, commondir);
     for (const path of configPaths) {
       let content: string | null = null;
       try {
@@ -177,14 +137,6 @@ function findGitDir(start: string): string | null {
     if (parent === dir) return null;
     dir = parent;
   }
-}
-
-function parseGitDirPointer(content: string): string | undefined {
-  const stripped = content.codePointAt(0) === 0xfeff ? content.slice(1) : content;
-  const line = stripped.trimStart().split(/\r?\n/, 1)[0]?.trim();
-  if (line === undefined || !line.startsWith('gitdir:')) return undefined;
-  const rawPath = line.slice('gitdir:'.length).trim();
-  return rawPath.length > 0 ? rawPath : undefined;
 }
 
 function stampConfigPath(path: string): string {
