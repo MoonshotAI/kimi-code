@@ -12,6 +12,7 @@ import {
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { StorageError, StorageErrors, toStorageIoError } from '#/persistence/interface/storage';
+import { isWithinDirectory } from '#/tool/path-access';
 
 const ProjectLocalTomlSchema = z.object({
   workspace: z
@@ -200,10 +201,11 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
 
   private async isBroadScopeDir(resolvedDir: string): Promise<boolean> {
     const homeDir = normalize(this.bootstrap.osHomeDir);
-    if (resolvedDir === homeDir || dirname(resolvedDir) === resolvedDir) return true;
+    if (dirname(resolvedDir) === resolvedDir) return true;
     const realDir = await this.realpathOrLexical(resolvedDir);
     if (dirname(realDir) === realDir) return true;
-    return realDir === (await this.realpathOrLexical(homeDir));
+    const realHome = await this.realpathOrLexical(homeDir);
+    return isWithinDirectory(homeDir, resolvedDir) || isWithinDirectory(realHome, realDir);
   }
 
   private async realpathOrLexical(path: string): Promise<string> {

@@ -2,7 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
-import { join } from 'pathe';
+import { dirname, join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -54,6 +54,14 @@ describe('FileProjectLocalConfigService additional_dir scope', () => {
 
   it('rejects an additional_dir that resolves to the filesystem root', async () => {
     await writeLocalToml(['/']);
+
+    await expect(createService().readAdditionalDirs(workDir)).rejects.toMatchObject({
+      code: 'config.invalid',
+    });
+  });
+
+  it('rejects an additional_dir that is an ancestor of the user home directory', async () => {
+    await writeLocalToml([dirname(homeDir)]);
 
     await expect(createService().readAdditionalDirs(workDir)).rejects.toMatchObject({
       code: 'config.invalid',
