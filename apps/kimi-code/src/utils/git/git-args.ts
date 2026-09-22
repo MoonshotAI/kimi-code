@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync, statSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, normalize, resolve } from 'node:path';
 
 const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null';
 
@@ -34,14 +34,46 @@ interface FilterArgsCacheEntry {
 const filterArgsCache = new Map<string, FilterArgsCacheEntry>();
 
 export function hardenedGitConfigArgs(git: string, workDir: string): readonly string[] | null {
-  const stamp = gitConfigStamp(workDir);
+  const gitDir = findGitDir(workDir);
+  const stamp = gitConfigStamp(workDir, gitDir);
   const cached = filterArgsCache.get(workDir);
   if (stamp !== null && cached?.stamp === stamp) return cached.args;
+  if (!coreWorktreeSafe(git, workDir, gitDir)) return null;
   const filterArgs = probeFilterArgs(git, workDir);
   if (filterArgs === null) return null;
   const args = [...GIT_CONFIG_ARGS, ...filterArgs];
   filterArgsCache.set(workDir, { stamp, args });
   return args;
+}
+
+function coreWorktreeSafe(git: string, workDir: string, gitDir: string | null): boolean {
+  if (gitDir === null) return true;
+  let resolvedGitDir = gitDir;
+  if (!statSync(gitDir).isDirectory()) {
+    const pointer = parseGitDirPointer(readFileSync(gitDir, 'utf8'));
+    if (pointer === undefined) return true;
+    resolvedGitDir = resolve(workDir, pointer);
+  }
+  const workTreeRoot = dirname(gitDir);
+  for (const scope of ['--local', '--worktree']) {
+    let result: ReturnType<typeof spawnSync>;
+    try {
+      result = spawnSync(
+        git,
+        [...GIT_CONFIG_ARGS, '-C', workDir, 'config', scope, '--includes', '--get', 'core.worktree'],
+        { encoding: 'utf8', timeout: FILTER_PROBE_TIMEOUT_MS, maxBuffer: FILTER_PROBE_MAX_BYTES },
+      );
+    } catch {
+      return false;
+    }
+    if (result.error !== undefined || result.status === null) return false;
+    if (result.status !== 0 || typeof result.stdout !== 'string') continue;
+    const raw = result.stdout.trim();
+    if (raw === '') continue;
+    const configured = isAbsolute(raw) ? normalize(raw) : resolve(resolvedGitDir, raw);
+    if (normalize(configured) !== normalize(workTreeRoot)) return false;
+  }
+  return true;
 }
 
 function probeFilterArgs(git: string, workDir: string): readonly string[] | null {
@@ -101,9 +133,8 @@ function probeFilterArgs(git: string, workDir: string): readonly string[] | null
   }
 }
 
-function gitConfigStamp(workDir: string): string | null {
+function gitConfigStamp(workDir: string, found: string | null): string | null {
   try {
-    const found = findGitDir(workDir);
     if (found === null) return null;
     let gitDir = found;
     if (!statSync(gitDir).isDirectory()) {

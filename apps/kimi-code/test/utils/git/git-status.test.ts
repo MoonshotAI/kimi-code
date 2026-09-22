@@ -333,6 +333,7 @@ describe('git status cache', () => {
       },
     );
     mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
+      if (args.includes('core.worktree')) return { status: 1, stdout: '' };
       if (args.includes('config')) {
         return { status: 0, stdout: 'filter.evil.clean\n' };
       }
@@ -351,16 +352,16 @@ describe('git status cache', () => {
 
       const cache = createGitStatusCache(root, { trusted: true });
       cache.getStatus();
-      expect(probeCount()).toBe(2);
+      expect(probeCount()).toBe(4);
 
       vi.setSystemTime(new Date('2026-04-24T00:00:16Z'));
       cache.getStatus();
-      expect(probeCount()).toBe(2);
+      expect(probeCount()).toBe(4);
 
       writeFileSync(join(root, '.git', 'config'), '[filter "evil"]\n\tclean = touch /tmp/marker\n');
       vi.setSystemTime(new Date('2026-04-24T00:00:32Z'));
       cache.getStatus();
-      expect(probeCount()).toBe(4);
+      expect(probeCount()).toBe(8);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -384,6 +385,7 @@ describe('git status cache', () => {
       },
     );
     mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
+      if (args.includes('core.worktree')) return { status: 1, stdout: '' };
       if (args.includes('config')) return { status: 0, stdout: 'filter.evil.clean\n' };
       if (args.includes('rev-parse')) return { status: 0, stdout: 'true\n' };
       if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
@@ -398,9 +400,40 @@ describe('git status cache', () => {
       const cache = createGitStatusCache(root, { trusted: true });
       cache.getStatus();
       const afterFirst = probeCount();
-      expect(afterFirst).toBe(2);
+      expect(afterFirst).toBe(4);
       cache.getStatus();
-      expect(probeCount()).toBe(afterFirst + 2);
+      expect(probeCount()).toBe(afterFirst + 4);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when core.worktree points outside the repository', () => {
+    const root = mkdtempSync(join(tmpdir(), 'git-status-worktree-'));
+    mkdirSync(join(root, '.git'), { recursive: true });
+    writeFileSync(join(root, '.git', 'config'), '[core]\n\tworktree = /outside\n');
+    mocks.execFile.mockImplementation(
+      (
+        _cmd: string,
+        _args: string[],
+        _options: unknown,
+        callback: (error: Error | null, stdout: string, stderr: string) => void,
+      ) => {
+        callback(new Error('no pull request'), '', '');
+      },
+    );
+    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
+      if (args.includes('core.worktree')) return { status: 0, stdout: '/outside\n' };
+      if (args.includes('config')) return { status: 1, stdout: '' };
+      return { status: 0, stdout: 'true\n' };
+    });
+
+    try {
+      const cache = createGitStatusCache(root, { trusted: true });
+      expect(cache.getStatus()).toBeNull();
+      const invocations = mocks.spawnSync.mock.calls.map((call) => call[1] as string[]);
+      expect(invocations.length).toBeGreaterThan(0);
+      expect(invocations.every((args) => args.includes('config'))).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -473,6 +506,7 @@ describe('git status cache', () => {
       },
     );
     mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
+      if (args.includes('core.worktree')) return { status: 1, stdout: '' };
       if (args.includes('config')) return { status: 0, stdout: 'filter.evil.clean\n' };
       if (args.includes('rev-parse')) return { status: 0, stdout: 'true\n' };
       if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
@@ -486,9 +520,9 @@ describe('git status cache', () => {
           .length;
       const cache = createGitStatusCache(join(root, 'sub'), { trusted: true });
       cache.getStatus();
-      expect(probeCount()).toBe(2);
+      expect(probeCount()).toBe(4);
       cache.getStatus();
-      expect(probeCount()).toBe(2);
+      expect(probeCount()).toBe(4);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

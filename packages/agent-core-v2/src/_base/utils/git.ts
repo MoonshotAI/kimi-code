@@ -1,5 +1,5 @@
 import { readFile, stat } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, normalize, resolve } from 'node:path';
 
 const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null';
 
@@ -40,14 +40,54 @@ export async function hardenedGitConfigArgs(
   cwd: string,
   probe: GitProbe,
 ): Promise<readonly string[] | null> {
-  const stamp = await gitConfigStamp(cwd);
+  const gitDir = await findGitDir(cwd);
+  const stamp = await gitConfigStamp(cwd, gitDir);
   const cached = filterArgsCache.get(cwd);
   if (stamp !== null && cached?.stamp === stamp) return cached.args;
+  if (!(await coreWorktreeSafe(cwd, probe, gitDir))) return null;
   const filterArgs = await probeFilterArgs(cwd, probe);
   if (filterArgs === null) return null;
   const args = [...GIT_CONFIG_ARGS, ...filterArgs];
   filterArgsCache.set(cwd, { stamp, args });
   return args;
+}
+
+async function coreWorktreeSafe(
+  cwd: string,
+  probe: GitProbe,
+  gitDir: string | null,
+): Promise<boolean> {
+  if (gitDir === null) return true;
+  let resolvedGitDir = gitDir;
+  if (!(await stat(gitDir)).isDirectory()) {
+    const pointer = parseGitDirPointer(await readFile(gitDir, 'utf8'));
+    if (pointer === undefined) return true;
+    resolvedGitDir = resolve(cwd, pointer);
+  }
+  const workTreeRoot = dirname(gitDir);
+  const results = await Promise.all(
+    ['--local', '--worktree'].map((scope) =>
+      probe([
+        ...GIT_CONFIG_ARGS,
+        '-C',
+        cwd,
+        'config',
+        scope,
+        '--includes',
+        '--get',
+        'core.worktree',
+      ]).catch(() => null),
+    ),
+  );
+  for (const result of results) {
+    if (result === null || result.exitCode < 0) return false;
+    if (result.exitCode !== 0) continue;
+    const raw = result.stdout.trim();
+    if (raw === '') continue;
+    const configured = isAbsolute(raw) ? normalize(raw) : resolve(resolvedGitDir, raw);
+    if (normalize(configured) !== normalize(workTreeRoot)) return false;
+  }
+  return true;
 }
 
 async function probeFilterArgs(cwd: string, probe: GitProbe): Promise<readonly string[] | null> {
@@ -103,9 +143,8 @@ async function probeFilterArgs(cwd: string, probe: GitProbe): Promise<readonly s
   return args;
 }
 
-async function gitConfigStamp(cwd: string): Promise<string | null> {
+async function gitConfigStamp(cwd: string, found: string | null): Promise<string | null> {
   try {
-    const found = await findGitDir(cwd);
     if (found === null) return null;
     let gitDir = found;
     if (!(await stat(gitDir)).isDirectory()) {

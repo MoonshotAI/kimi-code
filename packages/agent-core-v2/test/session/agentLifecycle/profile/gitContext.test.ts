@@ -1,4 +1,7 @@
 import { Readable, type Writable } from 'node:stream';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -243,6 +246,26 @@ describe('collectGitContext', () => {
     expect(invocations.every((args) => args.includes('config'))).toBe(true);
   });
 
+  it('fails closed when core.worktree points outside the repository', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'git-context-worktree-'));
+    try {
+      await mkdir(join(root, '.git'), { recursive: true });
+      const { process: hostProcess, spawn } = gitRunner({
+        'config --local --includes --get core.worktree': { stdout: '/outside\n' },
+        'config --worktree --includes --get core.worktree': { exitCode: 1 },
+        'rev-parse --is-inside-work-tree': { stdout: 'true' },
+      });
+
+      await expect(collectGitContext(hostProcess, root)).resolves.toBe('');
+
+      const invocations = spawn.mock.calls.map((call) => call[1] as readonly string[]);
+      expect(invocations.length).toBeGreaterThan(0);
+      expect(invocations.every((args) => args.includes('config'))).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('caps dirty files at 20 and reports the remainder', async () => {
     const dirty = Array.from({ length: 25 }, (_, i) => ` M src/f${String(i)}.ts`).join('\n');
     const { process: hostProcess } = gitRunner({
@@ -374,7 +397,7 @@ describe('collectGitContext', () => {
       const { logger, debug } = spyLogger();
 
       const promise = collectGitContext(hostProcess, '/repo', logger);
-      for (let i = 0; i < 5; i += 1) {
+      for (let i = 0; i < 10; i += 1) {
         await vi.advanceTimersByTimeAsync(6_000);
       }
       await expect(promise).resolves.toBe('');
