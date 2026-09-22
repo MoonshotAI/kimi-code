@@ -357,6 +357,7 @@ function defaultGitStub(): IGitService {
     }),
     diff: async () => ({ path: '', diff: '', truncated: false }),
     findWorkTree: async () => null,
+    runGit: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
   };
 }
 
@@ -423,6 +424,7 @@ describe('WorkspaceFsService.gitStatus', () => {
       },
       diff: async () => ({ path: '', diff: '', truncated: false }),
       findWorkTree: async () => null,
+      runGit: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     };
     const fs = makeSession({}, emptyHandler, [], git);
     const result = await fs.gitStatus({ paths: ['src/a.ts'] });
@@ -442,6 +444,7 @@ describe('WorkspaceFsService.gitStatus', () => {
       },
       diff: async () => ({ path: '', diff: '', truncated: false }),
       findWorkTree: async () => null,
+      runGit: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     };
     const fs = makeSession({}, emptyHandler, [], git);
     await expect(fs.gitStatus({})).rejects.toMatchObject({ code: 'fs.git_unavailable' });
@@ -467,6 +470,7 @@ describe('WorkspaceFsService.diff', () => {
         return { path: rel, diff: '-old\n+new\n', truncated: false };
       },
       findWorkTree: async () => null,
+      runGit: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     };
     const fs = makeSession({ 'src/a.ts': 'content' }, emptyHandler, [], git);
     const result = await fs.diff({ path: 'src/a.ts' });
@@ -1335,7 +1339,7 @@ describe('WorkspaceFsService.list', () => {
       sort: 'name_asc',
       include_git_status: false,
     });
-    const names = result.items.map((i) => i.name).sort();
+    const names = result.items.map((i) => i.name).toSorted();
     expect(names).toEqual(['README.md', 'src']);
     expect(result.items.find((i) => i.name === 'src')?.kind).toBe('directory');
   });
@@ -1351,7 +1355,7 @@ describe('WorkspaceFsService.list', () => {
       sort: 'name_asc',
       include_git_status: false,
     });
-    expect(result.children_by_path?.['src']?.map((i) => i.name).sort()).toEqual([
+    expect(result.children_by_path?.['src']?.map((i) => i.name).toSorted()).toEqual([
       'a.ts',
       'sub',
     ]);
@@ -1399,15 +1403,15 @@ describe('WorkspaceFsService.read', () => {
   });
 
   it('returns base64 for binary content in auto mode', async () => {
-    const fs = makeSession({ 'bin.dat': 'abc\x00def' }, emptyHandler);
+    const fs = makeSession({ 'bin.dat': 'abc\u0000def' }, emptyHandler);
     const result = await fs.read({ path: 'bin.dat', offset: 0, length: 1024, encoding: 'auto' });
     expect(result.encoding).toBe('base64');
     expect(result.is_binary).toBe(true);
-    expect(result.content).toBe(Buffer.from('abc\x00def').toString('base64'));
+    expect(result.content).toBe(Buffer.from('abc\u0000def').toString('base64'));
   });
 
   it('throws fs.is_binary for binary content in utf-8 mode', async () => {
-    const fs = makeSession({ 'bin.dat': 'abc\x00def' }, emptyHandler);
+    const fs = makeSession({ 'bin.dat': 'abc\u0000def' }, emptyHandler);
     await expect(
       fs.read({ path: 'bin.dat', offset: 0, length: 1024, encoding: 'utf-8' }),
     ).rejects.toMatchObject({ code: 'fs.is_binary' });

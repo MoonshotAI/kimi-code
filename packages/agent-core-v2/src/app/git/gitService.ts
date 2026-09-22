@@ -1,4 +1,10 @@
-import type { FsDiffResponse, FsGitStatusResponse, FsPullRequest } from './git';
+import type {
+  FsDiffResponse,
+  FsGitStatusResponse,
+  FsPullRequest,
+  RunGitOptions,
+  RunGitResult,
+} from './git';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { GIT_DIFF_ARGS, hardenedGitConfigArgs } from '#/_base/utils/git';
@@ -127,6 +133,30 @@ export class GitService implements IGitService {
     return findGitWorkTree(this.fs, cwd);
   }
 
+  async runGit(
+    cwd: string,
+    args: readonly string[],
+    options: RunGitOptions = {},
+  ): Promise<RunGitResult> {
+    try {
+      const configArgs = await hardenedGitConfigArgs(cwd, (probeArgs) =>
+        this.spawnAndCollect('git', probeArgs, cwd, {
+          timeoutMs: CONFIG_PROBE_TIMEOUT_MS,
+        }),
+      );
+      if (configArgs === null) {
+        return { exitCode: -1, stdout: '', stderr: 'git config probe failed' };
+      }
+      return await this.spawnAndCollect('git', [...configArgs, ...args], cwd, options);
+    } catch (error) {
+      return {
+        exitCode: -1,
+        stdout: '',
+        stderr: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
   private async readPullRequest(cwd: string): Promise<FsPullRequest | null> {
     const cached = this.pullRequestCache.get(cwd);
     const now = Date.now();
@@ -152,18 +182,10 @@ export class GitService implements IGitService {
     cmd: string,
     args: readonly string[],
     cwd: string,
-    options: RunOptions = {},
-  ): Promise<RunResult> {
+    options: RunGitOptions = {},
+  ): Promise<RunGitResult> {
     if (cmd === 'git') {
-      const configArgs = await hardenedGitConfigArgs(cwd, (probeArgs) =>
-        this.spawnAndCollect('git', probeArgs, cwd, {
-          timeoutMs: CONFIG_PROBE_TIMEOUT_MS,
-        }),
-      );
-      if (configArgs === null) {
-        return { exitCode: -1, stdout: '', stderr: 'git config probe failed' };
-      }
-      return this.spawnAndCollect(cmd, [...configArgs, ...args], cwd, options);
+      return this.runGit(cwd, args, options);
     }
     return this.spawnAndCollect(cmd, args, cwd, options);
   }
@@ -172,8 +194,8 @@ export class GitService implements IGitService {
     cmd: string,
     args: readonly string[],
     cwd: string,
-    options: RunOptions,
-  ): Promise<RunResult> {
+    options: RunGitOptions,
+  ): Promise<RunGitResult> {
     const workspaceId = this.resolveWorkspaceId(cwd);
     const lease = this.resolver.acquire({ workspaceId, runtimeId: 'local' }, ['process']);
     const spawned = await lease.runtime.process!
@@ -239,17 +261,6 @@ export class GitService implements IGitService {
       details: { cwd, detail },
     });
   }
-}
-
-interface RunResult {
-  readonly exitCode: number;
-  readonly stdout: string;
-  readonly stderr: string;
-}
-
-interface RunOptions {
-  readonly timeoutMs?: number;
-  readonly env?: Record<string, string>;
 }
 
 async function collect(stream: AsyncIterable<Uint8Array | string>): Promise<string> {
