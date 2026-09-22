@@ -46,7 +46,7 @@ describe('parseManagedUserInfoPayload', () => {
       user_level_name: 'Vivace',
       domain: 1,
       domain_name: 'DOMAIN_EXAMPLE',
-      goods_version: '2',
+      goods_version: 2,
       phone: { country_code: '86', number: '176****0000' },
       status: 'USER_STATUS_NORMAL',
       region: 'REGION_CN',
@@ -65,7 +65,7 @@ describe('parseManagedUserInfoPayload', () => {
       userLevelName: 'Vivace',
       domain: 1,
       domainName: 'DOMAIN_EXAMPLE',
-      goodsVersion: '2',
+      goodsVersion: 2,
       phone: { countryCode: '86', number: '176****0000' },
       status: 'USER_STATUS_NORMAL',
       region: 'REGION_CN',
@@ -161,15 +161,15 @@ describe('parseManagedUserInfoPayload', () => {
     expect(parseManagedUserInfoPayload({ user_id: 'u_1', email: 42 })?.email).toBeUndefined();
   });
 
-  it('keeps goods_version only when it is a non-empty string', () => {
-    expect(
-      parseManagedUserInfoPayload({ user_id: 'u_1', goods_version: '2' })?.goodsVersion,
-    ).toBe('2');
-    expect(
-      parseManagedUserInfoPayload({ user_id: 'u_1', goods_version: '' })?.goodsVersion,
-    ).toBeUndefined();
+  it('keeps goods_version only when it is an int (or a numeric string)', () => {
     expect(
       parseManagedUserInfoPayload({ user_id: 'u_1', goods_version: 2 })?.goodsVersion,
+    ).toBe(2);
+    expect(
+      parseManagedUserInfoPayload({ user_id: 'u_1', goods_version: '2' })?.goodsVersion,
+    ).toBe(2);
+    expect(
+      parseManagedUserInfoPayload({ user_id: 'u_1', goods_version: 'two' })?.goodsVersion,
     ).toBeUndefined();
   });
 });
@@ -327,7 +327,7 @@ describe('managedUserInfoResultSchema', () => {
     userLevelName: 'Vivace',
     domain: 1,
     domainName: 'DOMAIN_EXAMPLE',
-    goodsVersion: '2',
+    goodsVersion: 2,
     globalId: 'u_123',
     avatar: 'https://example.com/avatar.png',
     username: 'moonwalker2333',
