@@ -188,8 +188,17 @@ describe('resolveBannerAudienceContext', () => {
     expect(ctx).toEqual({ login: 'logged_in', userLevel: 10, goodsVersion: undefined, accountRegion: undefined });
   });
 
-  it('treats 401 and 402 as anonymous', async () => {
-    for (const status of [401, 402]) {
+  it('maps REGION_OVERSEA to the oversea account region', async () => {
+    const fetchUserInfo = fetcherReturning({
+      kind: 'ok',
+      userInfo: { userLevel: 10, region: 'REGION_OVERSEA' },
+    });
+    const ctx = await resolveBannerAudienceContext('token', { fetchUserInfo, baseUrl: 'https://example.com' });
+    expect(ctx).toMatchObject({ login: 'logged_in', accountRegion: 'oversea' });
+  });
+
+  it('treats 401, 402, and 403 as anonymous', async () => {
+    for (const status of [401, 402, 403]) {
       const fetchUserInfo = fetcherReturning({ kind: 'error', status, message: 'denied' });
       const ctx = await resolveBannerAudienceContext('token', { fetchUserInfo, baseUrl: 'https://example.com' });
       expect(ctx).toEqual({ login: 'anonymous' });

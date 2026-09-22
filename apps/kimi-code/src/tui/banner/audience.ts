@@ -91,7 +91,9 @@ function bannerApiBaseUrl(): string {
 }
 
 function mapAccountRegion(region: string): 'cn' | 'oversea' | undefined {
-  if (region.trim().toUpperCase() === 'REGION_CN') return 'cn';
+  const normalized = region.trim().toUpperCase();
+  if (normalized === 'REGION_CN') return 'cn';
+  if (normalized === 'REGION_OVERSEA') return 'oversea';
   return undefined;
 }
 
@@ -109,7 +111,7 @@ export async function resolveBannerAudienceContext(
     return { login: 'unknown' };
   }
   if (result.kind === 'error') {
-    const rejected = result.status === 401 || result.status === 402;
+    const rejected = result.status === 401 || result.status === 402 || result.status === 403;
     return { login: rejected ? 'anonymous' : 'unknown' };
   }
   const { userLevel, goodsVersion, region } = result.userInfo;
