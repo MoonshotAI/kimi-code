@@ -2,10 +2,12 @@ import { randomUUID } from 'node:crypto';
 import * as posixPath from 'node:path/posix';
 
 import { Emitter } from '@moonshot-ai/agent-core-v2/_base/event';
+import type { TextDecodeErrors } from '@moonshot-ai/agent-core-v2/_base/execEnv/decodeText';
 import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { IEnvironmentDeclarationService } from '@moonshot-ai/agent-core-v2/app/environmentDeclaration/environmentDeclaration';
 import type { HostEnvironmentInfo } from '@moonshot-ai/agent-core-v2/os/interface/hostEnvironment';
+import type { HostDirEntry, HostFileStat, IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
 import { ENVIRONMENTS_SECTION } from '@moonshot-ai/agent-core-v2/environment/configSection';
 import { resolveWorkspaceEnvironmentDeclarations } from '@moonshot-ai/agent-core-v2/environment/environmentDeclarations';
 import type {
@@ -76,9 +78,82 @@ const PENDING_WORKSPACE: Environment['workspace'] = {
 
 const EMPTY_CAPABILITIES: ReadonlySet<EnvironmentCapability> = new Set();
 
+// Keeps one stable IHostFileSystem identity for the lifetime of a managed
+// environment: every call resolves the current inner connection, so services
+// that captured `environment.fs` before a reconnect keep working on the new
+// connection instead of holding a dead one.
+class InnerForwardingFileSystem implements IHostFileSystem {
+  declare readonly _serviceBrand: undefined;
+
+  constructor(private readonly resolve: () => IHostFileSystem | undefined) {}
+
+  private fs(): IHostFileSystem {
+    const fs = this.resolve();
+    if (fs === undefined) throw new Error('remote environment is not connected');
+    return fs;
+  }
+
+  async readText(path: string, options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors }): Promise<string> {
+    return this.fs().readText(path, options);
+  }
+
+  async writeText(path: string, data: string): Promise<void> {
+    return this.fs().writeText(path, data);
+  }
+
+  async appendText(path: string, data: string): Promise<void> {
+    return this.fs().appendText(path, data);
+  }
+
+  async readBytes(path: string, n?: number, offset?: number): Promise<Uint8Array> {
+    return this.fs().readBytes(path, n, offset);
+  }
+
+  async writeBytes(path: string, data: Uint8Array | AsyncIterable<Uint8Array>): Promise<void> {
+    return this.fs().writeBytes(path, data);
+  }
+
+  async *readLines(path: string, options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors }): AsyncGenerator<string> {
+    yield* this.fs().readLines(path, options);
+  }
+
+  async createExclusive(path: string, data: Uint8Array): Promise<boolean> {
+    return this.fs().createExclusive(path, data);
+  }
+
+  async stat(path: string): Promise<HostFileStat> {
+    return this.fs().stat(path);
+  }
+
+  async lstat(path: string): Promise<HostFileStat> {
+    return this.fs().lstat(path);
+  }
+
+  async readdir(path: string): Promise<readonly HostDirEntry[]> {
+    return this.fs().readdir(path);
+  }
+
+  async mkdir(path: string, options?: { readonly recursive?: boolean; readonly mode?: number }): Promise<void> {
+    return this.fs().mkdir(path, options);
+  }
+
+  async remove(path: string): Promise<void> {
+    return this.fs().remove(path);
+  }
+
+  async rename(from: string, to: string): Promise<void> {
+    return this.fs().rename!(from, to);
+  }
+
+  async realpath(path: string): Promise<string> {
+    return this.fs().realpath(path);
+  }
+}
+
 export class ManagedRemoteEnvironment implements Environment {
   readonly identity: EnvironmentIdentity;
   private inner: RemoteEnvironment | undefined;
+  private readonly fsForwarder: IHostFileSystem;
   private readonly connectCallback: () => Promise<void>;
   private readonly ownsInner: boolean;
   private currentStatus: EnvironmentStatus;
@@ -98,6 +173,7 @@ export class ManagedRemoteEnvironment implements Environment {
     this.connectCallback = connectCallback;
     this.identity = identity;
     this.ownsInner = options.ownsInner === true;
+    this.fsForwarder = new InnerForwardingFileSystem(() => this.inner?.fs);
     this.currentStatus = inner === undefined ? 'pending' : inner.status;
     this.bindInner(inner);
   }
@@ -118,8 +194,8 @@ export class ManagedRemoteEnvironment implements Environment {
     return this.inner?.workspace ?? PENDING_WORKSPACE;
   }
 
-  get fs() {
-    return this.inner?.fs;
+  get fs(): IHostFileSystem | undefined {
+    return this.inner?.fs === undefined ? undefined : this.fsForwarder;
   }
 
   get process() {

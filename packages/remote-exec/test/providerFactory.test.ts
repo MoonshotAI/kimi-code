@@ -438,6 +438,33 @@ describe('RemoteEnvironmentProviderFactory', () => {
     await registry.dispose();
   });
 
+  it('forwards a captured fs to the replacement connection after reconnect', async () => {
+    const registry = new EnvironmentRegistry('workspace-1');
+    let generation = 0;
+    const connect = vi.fn(async (options: RemoteEnvironmentOptions) => {
+      generation += 1;
+      const environment = connectedEnvironment(options, `connected-${generation}`);
+      (environment as unknown as { fs: unknown }).fs = fsService({ '/etc/motd': `connection-${generation}` });
+      return environment;
+    });
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
+
+    await registry.current('dev-box')!.connect!();
+    const managed = registry.current('dev-box')!;
+    const captured = managed.fs;
+    await expect(captured!.readText('/etc/motd')).resolves.toBe('connection-1');
+
+    await managed.connect!();
+    await expect(captured!.readText('/etc/motd')).resolves.toBe('connection-2');
+
+    await managed.dispose();
+    await expect(captured!.readText('/etc/motd')).rejects.toThrow('remote environment is not connected');
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
   it('records the connection close reason when a connected environment drops mid-session', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
     const connect = vi.fn(async (options: RemoteEnvironmentOptions) =>
