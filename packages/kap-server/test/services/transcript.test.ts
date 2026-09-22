@@ -81,13 +81,36 @@ function turnOps(turnId: string, items: ReturnType<AgentTranscript['getItems']>)
   return turn;
 }
 
-function coldTranscriptService(home: string): TranscriptService {
+function fakeLoopStates(states: Readonly<Record<string, 'idle' | 'running'>>): unknown {
+  return {
+    handleOf: (id: string) =>
+      states[id] === undefined
+        ? undefined
+        : {
+            accessor: {
+              get: (token: unknown) =>
+                token === IAgentLoopService ? { snapshot: () => ({ state: states[id] }) } : undefined,
+            },
+          },
+  };
+}
+
+function coldTranscriptService(home: string, liveAgents?: unknown): TranscriptService {
+  const liveSession =
+    liveAgents === undefined
+      ? undefined
+      : {
+          id: 's1',
+          accessor: {
+            get: (token: unknown) => (token === IAgentLifecycleService ? liveAgents : undefined),
+          },
+        };
   return new TranscriptService({
     homeDir: home,
     core: {
       accessor: {
         get: (token: unknown) => {
-          if (token === ISessionManager) return { get: () => undefined, list: () => [] };
+          if (token === ISessionManager) return { get: () => liveSession, list: () => [] };
           if (token === IWorkspaceInstanceManager) {
             return { list: () => [], onDidChange: () => ({ dispose: () => undefined }) };
           }
@@ -3002,6 +3025,61 @@ describe('AgentTranscriptProjector', () => {
       expect((await service.readColdSnapshot('s1', 'child-b'))?.items).not.toHaveLength(0);
       expect(service.forSessionLive('s1')).toBeUndefined();
       await expect(readFile(join(wireDir, 'wire.jsonl'), 'utf-8')).resolves.toBe(content);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('loses a member whose spawning turn ended even while the parent runs a later turn', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-stale-member-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        { type: 'turn.prompt', turnId: 0, origin: { kind: 'user' }, time: 1000 },
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'review' }], toolCalls: [], origin: { kind: 'user' } }, time: 1000 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [], toolCalls: [
+          { type: 'function', id: 'swarm-a', name: 'AgentSwarm', arguments: '{}' },
+        ] }, time: 2000 },
+        { type: 'subagent.spawned', subagentId: 'child-a', subagentName: 'explore', parentAgentId: 'main', parentToolCallId: 'swarm-a', swarmIndex: 0, runInBackground: false, time: 3000 },
+        { type: 'turn.ended', turnId: 0, reason: 'interrupted', time: 4000 },
+        { type: 'turn.prompt', turnId: 1, origin: { kind: 'user' }, time: 5000 },
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'anything new?' }], toolCalls: [], origin: { kind: 'user' } }, time: 5000 },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), records.map((record) => JSON.stringify(record)).join('\n') + '\n');
+      const busy = await coldTranscriptService(home, fakeLoopStates({ main: 'running' })).readColdSnapshot('s1', 'main');
+      expect(busy?.meta.activity).toBe('turn');
+      expect(busy?.tasks).toEqual([expect.objectContaining({ agentId: 'child-a', state: 'lost' })]);
+
+      const stillRunning = await coldTranscriptService(
+        home,
+        fakeLoopStates({ main: 'running', 'child-a': 'running' }),
+      ).readColdSnapshot('s1', 'main');
+      expect(stillRunning?.tasks).toEqual([expect.objectContaining({ agentId: 'child-a', state: 'running' })]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a member spawned by the parent\'s current turn running while that turn is active', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-live-member-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        { type: 'turn.prompt', turnId: 0, origin: { kind: 'user' }, time: 1000 },
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'review' }], toolCalls: [], origin: { kind: 'user' } }, time: 1000 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [], toolCalls: [
+          { type: 'function', id: 'swarm-a', name: 'AgentSwarm', arguments: '{}' },
+        ] }, time: 2000 },
+        { type: 'subagent.spawned', subagentId: 'child-a', subagentName: 'explore', parentAgentId: 'main', parentToolCallId: 'swarm-a', swarmIndex: 0, runInBackground: false, time: 3000 },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), records.map((record) => JSON.stringify(record)).join('\n') + '\n');
+      const busy = await coldTranscriptService(home, fakeLoopStates({ main: 'running' })).readColdSnapshot('s1', 'main');
+      expect(busy?.tasks).toEqual([expect.objectContaining({ agentId: 'child-a', state: 'running' })]);
+
+      const idle = await coldTranscriptService(home, fakeLoopStates({ main: 'idle' })).readColdSnapshot('s1', 'main');
+      expect(idle?.tasks).toEqual([expect.objectContaining({ agentId: 'child-a', state: 'lost' })]);
     } finally {
       await rm(home, { recursive: true, force: true });
     }

@@ -39,6 +39,7 @@ import {
   type TranscriptChangeEvent,
   type TranscriptMarker,
   type TranscriptOperation,
+  type TranscriptTask,
   type TranscriptTaskRef,
   type TranscriptTurn,
 } from '@moonshot-ai/transcript';
@@ -668,12 +669,9 @@ export class TranscriptService {
     const activity: ActivityMeta = status?.state === 'running' ? 'turn' : 'idle';
     const snapshot = {
       ...folded,
-      tasks: folded.tasks.map((task) =>
-        activity === 'idle' && task.kind === 'subagent' && !task.detached && task.state === 'running' &&
-        (task.agentId === undefined ||
-          liveAgents?.handleOf(task.agentId)?.accessor.get(IAgentLoopService).snapshot().state !== 'running')
-          ? { ...task, state: 'lost' as const }
-          : task,
+      tasks: markLostSubagentTasks(folded, activity, (memberId) =>
+        liveAgents?.handleOf(memberId)?.accessor.get(IAgentLoopService).snapshot().state ===
+        'running',
       ),
       meta: { ...folded.meta, activity },
     };
@@ -773,6 +771,48 @@ const TERMINAL_TURN_STATES: ReadonlySet<TranscriptTurn['state']> = new Set([
   'failed',
   'cancelled',
 ]);
+
+function memberTurnOrdinals(snapshot: AgentTranscriptSnapshot): ReadonlyMap<string, number> {
+  const ordinals = new Map<string, number>();
+  for (const item of snapshot.items) {
+    if (item.kind !== 'turn') continue;
+    for (const step of item.steps) {
+      for (const frame of step.frames) {
+        if (frame.kind !== 'tool') continue;
+        for (const ref of frame.agentRefs ?? []) ordinals.set(ref.agentId, item.ordinal);
+      }
+    }
+  }
+  return ordinals;
+}
+
+function latestTurnOrdinal(snapshot: AgentTranscriptSnapshot): number | undefined {
+  let latest: number | undefined;
+  for (const item of snapshot.items) {
+    if (item.kind !== 'turn') continue;
+    if (latest === undefined || item.ordinal > latest) latest = item.ordinal;
+  }
+  return latest;
+}
+
+function markLostSubagentTasks(
+  snapshot: AgentTranscriptSnapshot,
+  activity: ActivityMeta,
+  isMemberRunning: (memberId: string) => boolean,
+): readonly TranscriptTask[] {
+  const ordinals = memberTurnOrdinals(snapshot);
+  const latest = latestTurnOrdinal(snapshot);
+  const interrupted = (task: TranscriptTask): boolean => {
+    if (task.kind !== 'subagent' || task.detached || task.state !== 'running') return false;
+    if (task.agentId !== undefined && isMemberRunning(task.agentId)) return false;
+    if (activity !== 'turn') return true;
+    const owner = task.agentId === undefined ? undefined : ordinals.get(task.agentId);
+    return owner !== undefined && owner !== latest;
+  };
+  return snapshot.tasks.map((task) =>
+    interrupted(task) ? { ...task, state: 'lost' as const } : task,
+  );
+}
 
 function projectQuestionInteractionRecords(
   records: readonly ContextRecord[],
