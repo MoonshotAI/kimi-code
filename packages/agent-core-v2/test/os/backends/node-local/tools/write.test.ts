@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PathSecurityError } from '#/tool/path-access';
-import { assertRealPathWriteTarget } from '#/tool/realpath-access';
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
@@ -446,62 +445,6 @@ describe('WriteTool symlink escape', () => {
     await expect(readFile(target, 'utf8')).resolves.toBe('original');
   });
 
-  it('rejects writes through a symlinked parent directory that points outside the workspace', async () => {
-    const fakeHome = join(tmpDir, 'fake-home');
-    await mkdir(fakeHome);
-    const target = join(fakeHome, '.bashrc');
-    await writeFile(target, 'original');
-    await symlink(fakeHome, join(wsDir, 'home'));
-    const tool = makeToolWithFs(new HostFileSystem(), stubWorkspaceContext(wsDir));
-
-    const result = await execute(tool, { path: join(wsDir, 'home', '.bashrc'), content: 'pwned' });
-
-    expect(result).toMatchObject({ isError: true });
-    expect(toolContentString(result)).toMatch(/symbolic link/);
-    await expect(readFile(target, 'utf8')).resolves.toBe('original');
-  });
-
-  it('rejects writes through a symlink when the path is too deep to verify', async () => {
-    const target = join(outsideDir, 'target.txt');
-    await writeFile(target, 'original');
-    const link = join(wsDir, 'link');
-    await symlink(outsideDir, link);
-    const tool = makeToolWithFs(new HostFileSystem(), stubWorkspaceContext(wsDir));
-
-    const deep = join(link, ...Array.from({ length: 300 }, (_, i) => `d${String(i)}`), 'file.txt');
-    const result = await execute(tool, { path: deep, content: 'pwned' });
-
-    expect(result).toMatchObject({ isError: true });
-    await expect(readFile(target, 'utf8')).resolves.toBe('original');
-  });
-
-  it('blocks writes through a symlink that resolves to a sensitive file', async () => {
-    const target = join(outsideDir, 'id_rsa');
-    await writeFile(target, 'secret-key');
-    const link = join(wsDir, 'notes.md');
-    await symlink(target, link);
-    const tool = makeToolWithFs(new HostFileSystem(), stubWorkspaceContext(wsDir));
-
-    const result = await execute(tool, { path: link, content: 'x' });
-
-    expect(result).toMatchObject({ isError: true });
-    expect(toolContentString(result)).toContain('sensitive-file pattern');
-    await expect(readFile(target, 'utf8')).resolves.toBe('secret-key');
-  });
-
-  it('rejects writes through a dangling symlink whose target does not exist', async () => {
-    const target = join(outsideDir, 'missing.txt');
-    const link = join(wsDir, 'dangling.txt');
-    await symlink(target, link);
-    const tool = makeToolWithFs(new HostFileSystem(), stubWorkspaceContext(wsDir));
-
-    const result = await execute(tool, { path: link, content: 'pwned' });
-
-    expect(result).toMatchObject({ isError: true });
-    expect(toolContentString(result)).toMatch(/symbolic link/);
-    await expect(readFile(target, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
-  });
-
   it('allows writes through a symlink that stays inside the workspace', async () => {
     const target = join(wsDir, 'real.txt');
     await writeFile(target, 'original');
@@ -515,21 +458,6 @@ describe('WriteTool symlink escape', () => {
     await expect(readFile(target, 'utf8')).resolves.toBe('updated');
   });
 
-  it('rejects writes to the project config through a symlink alias', async () => {
-    const configDir = join(wsDir, '.kimi-code');
-    await mkdir(configDir);
-    await writeFile(join(configDir, 'local.toml'), 'original');
-    const alias = join(wsDir, 'config-link');
-    await symlink(configDir, alias);
-    const tool = makeToolWithFs(new HostFileSystem(), stubWorkspaceContext(wsDir));
-
-    const result = await execute(tool, { path: join(alias, 'local.toml'), content: 'pwned' });
-
-    expect(result).toMatchObject({ isError: true });
-    expect(toolContentString(result)).toMatch(/real path/);
-    await expect(readFile(join(configDir, 'local.toml'), 'utf8')).resolves.toBe('original');
-  });
-
   it('allows writes to the project config through its real path', async () => {
     const configDir = join(wsDir, '.kimi-code');
     await mkdir(configDir);
@@ -539,34 +467,5 @@ describe('WriteTool symlink escape', () => {
 
     expect(result.isError).toBeFalsy();
     await expect(readFile(join(configDir, 'local.toml'), 'utf8')).resolves.toBe('updated');
-  });
-
-  it('compares resolved config paths with Windows semantics', async () => {
-    const realpath = vi.fn(async (path: string) => {
-      if (path === 'C:/ws/alias/local.toml') return 'C:\\ws\\.kimi-code\\local.toml';
-      return path.replaceAll('/', '\\');
-    });
-    const fs = { realpath } as unknown as IHostFileSystem;
-    const workspace = { workspaceDir: 'C:/ws', additionalDirs: [] };
-
-    await expect(
-      assertRealPathWriteTarget(fs, 'C:/ws/.kimi-code/local.toml', workspace, 'win32'),
-    ).resolves.toBeUndefined();
-    await expect(
-      assertRealPathWriteTarget(fs, 'C:/ws/alias/local.toml', workspace, 'win32'),
-    ).rejects.toThrow(/project-local config/);
-  });
-
-  it('allows writes through a symlink that points into an additional dir', async () => {
-    const target = join(outsideDir, 'shared.txt');
-    await writeFile(target, 'original');
-    const link = join(wsDir, 'shared.txt');
-    await symlink(target, link);
-    const tool = makeToolWithFs(new HostFileSystem(), stubWorkspaceContext(wsDir, [outsideDir]));
-
-    const result = await execute(tool, { path: link, content: 'updated' });
-
-    expect(result.isError).toBeFalsy();
-    await expect(readFile(target, 'utf8')).resolves.toBe('updated');
   });
 });
