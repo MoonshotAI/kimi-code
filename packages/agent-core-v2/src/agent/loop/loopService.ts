@@ -83,7 +83,7 @@ import {
   type TurnResult,
 } from './loop';
 import { mergeSteerMessages, stripBundledSkillBlocks } from '#human/agent/origin';
-import { createUserEntry, type UserEntry } from '#human/agent/turn';
+import { createUserEntry, type UserEntry } from '#human/agent/historyEntry';
 import {
   AssistantDelta,
   isDisplayablePromptOrigin,
