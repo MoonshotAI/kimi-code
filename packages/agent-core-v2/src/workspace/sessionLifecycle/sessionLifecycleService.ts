@@ -646,7 +646,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         updatedAt: toEpochMs(sourceMeta?.updatedAt) || now,
         archived: false,
         title,
-        titleKind: opts.title !== undefined ? 'custom' : 'replaceable',
+        titleKind: opts.title !== undefined ? 'custom' : sourceMeta?.titleKind,
         forkedFrom: sourceId,
         agents,
         custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
