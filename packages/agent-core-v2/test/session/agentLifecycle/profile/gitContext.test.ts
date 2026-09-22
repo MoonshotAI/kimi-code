@@ -290,20 +290,6 @@ describe('collectGitContext', () => {
     expect(invocations.every((args) => args.includes('config'))).toBe(true);
   });
 
-  it('fails closed when a filter driver name contains an equals sign', async () => {
-    const { process: hostProcess, spawn } = gitRunner({
-      'config --local --includes --get-regexp --name-only ^(filter|merge)\\.': {
-        stdout: 'filter.evil=x.clean\n',
-      },
-      'rev-parse --is-inside-work-tree': { stdout: 'true' },
-    });
-
-    await expect(collectGitContext(hostProcess, '/repo')).resolves.toBe('');
-
-    const invocations = spawn.mock.calls.map((call) => call[1] as readonly string[]);
-    expect(invocations.every((args) => args.includes('config'))).toBe(true);
-  });
-
   it('fails closed when core.worktree points outside the repository', async () => {
     const root = await mkdtemp(join(tmpdir(), 'git-context-worktree-'));
     try {

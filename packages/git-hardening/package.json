@@ -23,6 +23,7 @@
   },
   "scripts": {
     "build": "tsdown",
+    "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist"
   }

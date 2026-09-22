@@ -1,5 +1,5 @@
 /* eslint-disable import/first -- vi.mock setup must run before the imports it stubs out. */
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -475,41 +475,6 @@ describe('git status cache', () => {
       expect(invocations.length).toBeGreaterThan(0);
       expect(invocations.every((args) => args.includes('config'))).toBe(true);
     } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it('accepts a differently-cased core.worktree on Windows', () => {
-    const root = mkdtempSync(join(tmpdir(), 'git-status-win-case-'));
-    mkdirSync(join(root, '.git'), { recursive: true });
-    const originalPlatform = process.platform;
-    Object.defineProperty(process, 'platform', { value: 'win32' });
-    mocks.execFile.mockImplementation(
-      (
-        _cmd: string,
-        _args: string[],
-        _options: unknown,
-        callback: (error: Error | null, stdout: string, stderr: string) => void,
-      ) => {
-        callback(new Error('no pull request'), '', '');
-      },
-    );
-    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args.includes('core.worktree')) {
-        return { status: 0, stdout: `${realpathSync(root).toUpperCase()}\n` };
-      }
-      if (args.includes('config')) return { status: 1, stdout: '' };
-      if (args.includes('rev-parse')) return { status: 0, stdout: 'true\n' };
-      if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
-      if (args.includes('status')) return { status: 0, stdout: '## main\n' };
-      return { status: 1, stdout: '' };
-    });
-
-    try {
-      const cache = createGitStatusCache(root, { trusted: true });
-      expect(cache.getStatus()).not.toBeNull();
-    } finally {
-      Object.defineProperty(process, 'platform', { value: originalPlatform });
       rmSync(root, { recursive: true, force: true });
     }
   });
