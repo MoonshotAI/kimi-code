@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { open, readFile, readdir, stat } from 'node:fs/promises';
+import { open, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 
 import {
@@ -37,6 +37,7 @@ import { analyzeWireLine, type StepEffect, type TurnEffect } from './wireExtract
 const TEXT_INDEX_NAME = 'body';
 const TRI_INDEX_NAME = 'tri';
 const WIRE_FILENAME = 'wire.jsonl';
+const TEXT_BUILD_TMP_SUFFIX = '.tmpbuild';
 
 const FILE_META_PREFIX = '\0meta\\file\\';
 const SESSION_META_PREFIX = '\0meta\\session\\';
@@ -65,6 +66,7 @@ const SYNC_ROUND_TIME_BUDGET_MS = 30_000;
 const SYNC_FAILURE_ESCALATION_LIMIT = 5;
 const SESSION_SYNC_FAILURE_SKIP_LIMIT = 5;
 const SESSION_SYNC_SKIP_COOLDOWN_MS = 300_000;
+const SYNC_SESSION_CAP_DEFAULT = 500;
 const EMPTY_BUFFER = Buffer.alloc(0);
 
 interface SyncRoundBudget {
@@ -90,6 +92,52 @@ async function sessionDirectoryIdentity(dir: string): Promise<string | undefined
     if (code === 'ENOENT' || code === 'ENOTDIR') return undefined;
     throw error;
   }
+}
+
+interface SessionSourceProbe {
+  readonly dirMtimeMs: number;
+  readonly agentsMtimeMs?: number;
+  readonly stateMtimeMs?: number;
+}
+
+async function statMtimeMs(path: string): Promise<number | undefined> {
+  try {
+    return (await stat(path)).mtimeMs;
+  } catch {
+    return undefined;
+  }
+}
+
+async function probeSessionSource(dir: string): Promise<SessionSourceProbe | undefined> {
+  let dirStat: Awaited<ReturnType<typeof stat>>;
+  try {
+    dirStat = await stat(dir);
+  } catch {
+    return undefined;
+  }
+  if (!dirStat.isDirectory()) return undefined;
+  const agentsMtimeMs = await statMtimeMs(join(dir, 'agents'));
+  const stateMtimeMs =
+    (await statMtimeMs(join(dir, 'state.json'))) ??
+    (await statMtimeMs(join(dir, 'session-meta', 'state.json')));
+  return { dirMtimeMs: dirStat.mtimeMs, agentsMtimeMs, stateMtimeMs };
+}
+
+function formatSessionSourceProbe(probe: SessionSourceProbe): string {
+  return `${probe.dirMtimeMs}|${probe.agentsMtimeMs ?? 'x'}|${probe.stateMtimeMs ?? 'x'}`;
+}
+
+async function wireFileUnchanged(meta: FileMetaDoc): Promise<boolean> {
+  if (meta.mtimeMs === undefined) return false;
+  let st: Awaited<ReturnType<typeof stat>>;
+  try {
+    st = await stat(meta.path);
+  } catch {
+    return false;
+  }
+  if (st.size !== meta.size || st.mtimeMs !== meta.mtimeMs) return false;
+  if (meta.ino !== undefined && st.ino !== meta.ino) return false;
+  return true;
 }
 
 const querySourceChecks = { running: false, waiters: new Set<() => void>() };
@@ -219,6 +267,7 @@ export interface SyncSessionInput {
 interface SessionSyncResult {
   readonly truncated: boolean;
   readonly failed: boolean;
+  readonly skipped?: boolean;
   readonly error?: string;
 }
 
@@ -308,6 +357,7 @@ export class SearchIndexCore {
   syncRoundBytes = SYNC_ROUND_BYTE_BUDGET;
   syncRoundMs = SYNC_ROUND_TIME_BUDGET_MS;
   syncSkipCooldownMs = SESSION_SYNC_SKIP_COOLDOWN_MS;
+  syncSessionCap = SYNC_SESSION_CAP_DEFAULT;
 
   constructor(private readonly options: SearchCoreOptions) {}
 
@@ -344,6 +394,25 @@ export class SearchIndexCore {
       throw new GlobalSearchError('index_unavailable', 'search service is disposed');
     }
     await this.publishDb(db, null);
+    if (!db.readOnly) await this.cleanInterruptedTextBuilds();
+  }
+
+  private async cleanInterruptedTextBuilds(): Promise<void> {
+    const entries = await readdir(this.indexDir, { withFileTypes: true }).catch(() => undefined);
+    if (entries === undefined) return;
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !entry.name.endsWith(TEXT_BUILD_TMP_SUFFIX)) continue;
+      const path = join(this.indexDir, entry.name);
+      try {
+        await rm(path, { recursive: true, force: true });
+        this.log.info('global search: removed an interrupted text-build leftover', { dir: path });
+      } catch (error) {
+        this.log.warn('global search: cannot remove an interrupted text-build leftover', {
+          dir: path,
+          error: errorMessage(error),
+        });
+      }
+    }
   }
 
   private tokenGeneration(): string {
@@ -567,6 +636,7 @@ export class SearchIndexCore {
       deadline: Date.now() + this.syncRoundMs,
     };
     let indexed = 0;
+    let syncedFresh = 0;
     let truncated = false;
     let failures = 0;
     for (const summary of sessions) {
@@ -584,8 +654,13 @@ export class SearchIndexCore {
         truncated = true;
         break;
       }
+      if (syncedFresh >= this.syncSessionCap) {
+        truncated = true;
+        break;
+      }
       const result = await this.syncSession(db, summary, budget);
       if (result === undefined) continue;
+      if (result.skipped !== true) syncedFresh++;
       if (result.truncated) truncated = true;
       if (result.failed) {
         const count = (this.sessionSyncFailures.get(summary.id) ?? 0) + 1;
@@ -657,6 +732,11 @@ export class SearchIndexCore {
     summary: SyncSessionInput,
     budget: SyncRoundBudget,
   ): Promise<SessionSyncResult | undefined> {
+    const metaKey = SESSION_META_PREFIX + summary.id;
+    const previous = db.get(metaKey);
+    if (await this.sessionSourceUnchanged(db, summary, previous)) {
+      return { truncated: false, failed: false, skipped: true };
+    }
     let identity: string | undefined;
     try {
       identity = await sessionDirectoryIdentity(summary.dir);
@@ -672,8 +752,6 @@ export class SearchIndexCore {
       return undefined;
     }
     const title = await sessionDirectoryTitle(summary.dir, this.log);
-    const metaKey = SESSION_META_PREFIX + summary.id;
-    const previous = db.get(metaKey);
     if (previous?.kind !== 'sessionMeta' || previous.identity !== identity || previous.dir !== summary.dir) {
       await this.deleteSessionDocs(db, summary.id);
       if (previous !== undefined) this.syncReplaced = true;
@@ -726,7 +804,46 @@ export class SearchIndexCore {
     } else if (existing !== undefined) {
       await db.del(titleKey);
     }
+    if (!truncated && !failed) {
+      await this.stampSessionSource(db, metaKey, meta, summary);
+    }
     return { truncated, failed, error };
+  }
+
+  private async sessionSourceUnchanged(
+    db: MiniDb<SearchDoc>,
+    summary: SyncSessionInput,
+    previous: SearchDoc | undefined,
+  ): Promise<boolean> {
+    if (previous?.kind !== 'sessionMeta') return false;
+    if (previous.dir !== summary.dir) return false;
+    if (previous.sourceUpdatedAt !== summary.updatedAt) return false;
+    if ((previous.title ?? '') !== (summary.title ?? '')) return false;
+    const syncSource = previous.syncSource;
+    if (syncSource === undefined) return false;
+    const probe = await probeSessionSource(summary.dir);
+    if (probe === undefined || formatSessionSourceProbe(probe) !== syncSource) return false;
+    for (const row of db.query({ key: { prefix: fileMetaPrefixFor(summary.id) } })) {
+      const meta = row.value;
+      if (meta.kind !== 'fileMeta') continue;
+      if (!(await wireFileUnchanged(meta))) return false;
+    }
+    return true;
+  }
+
+  private async stampSessionSource(
+    db: MiniDb<SearchDoc>,
+    metaKey: string,
+    meta: SessionMetaDoc,
+    summary: SyncSessionInput,
+  ): Promise<void> {
+    const probe = await probeSessionSource(summary.dir);
+    if (probe === undefined) return;
+    await db.set(metaKey, {
+      ...meta,
+      sourceUpdatedAt: summary.updatedAt,
+      syncSource: formatSessionSourceProbe(probe),
+    });
   }
 
   private async deleteFileDocs(db: MiniDb<SearchDoc>, meta: FileMetaDoc): Promise<void> {

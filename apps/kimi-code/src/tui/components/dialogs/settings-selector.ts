@@ -3,6 +3,7 @@ import { ChoicePickerComponent, type ChoiceOption } from './choice-picker';
 export type SettingsSelection =
   | 'model'
   | 'theme'
+  | 'mermaid'
   | 'editor'
   | 'permission'
   | 'survey'
@@ -25,6 +26,11 @@ const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
     value: 'theme',
     label: 'Theme',
     description: 'Change the terminal UI theme.',
+  },
+  {
+    value: 'mermaid',
+    label: 'Mermaid diagrams',
+    description: 'Draw mermaid code blocks as diagrams, or keep them as source.',
   },
   {
     value: 'editor',
@@ -57,6 +63,7 @@ function isSettingsSelection(value: string): value is SettingsSelection {
   return (
     value === 'model' ||
     value === 'theme' ||
+    value === 'mermaid' ||
     value === 'editor' ||
     value === 'permission' ||
     value === 'survey' ||

@@ -27,7 +27,7 @@ import {
 } from '../services/legacyStatus/legacyStatus';
 import { loadMessageHistory } from '../services/messages/messageHistory';
 import { type SessionEventBroadcaster } from '../transport/ws/v1/sessionEventBroadcaster';
-import { toWireApproval } from './approvals';
+import { interactionAgentId, toWireApproval } from './approvals';
 import { toWireQuestion } from '../protocol/question-wire';
 import { resolveSessionFacts, toWireSession } from './sessions';
 
@@ -143,7 +143,7 @@ async function assembleSnapshot(
       resolved: false,
       tags: { [INTERACTION_TAG_SESSION_ID]: sessionId },
     })
-    .map((i) => toWireQuestion(i, sessionId));
+    .map((i) => toWireQuestion(i, sessionId, interactionAgentId(i)));
 
   return {
     as_of_seq: snapState.seq,

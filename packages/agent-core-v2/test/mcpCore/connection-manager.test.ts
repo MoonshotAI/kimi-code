@@ -11,6 +11,7 @@ import { join } from 'pathe';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import type {
   OAuthClientInformationFull,
   OAuthTokens,
@@ -22,6 +23,7 @@ import { Error2 } from '#/errors';
 import { KIMI_MCP_CLIENT_NAME } from '#/mcpCore/client-shared';
 import { McpConnectionManager, type McpConnectionManagerOptions, type McpServerEntry } from '#/mcpCore/connection-manager';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
+import type { StoredMcpOAuthTokens } from '#/mcpCore/oauth/provider';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import type { RuntimeBinding } from '#/runtime/runtime';
@@ -62,6 +64,7 @@ import {
   hangingListStdioFixture,
   slowStdioFixture,
   slowToolStdioFixture,
+  startAnonymousDiscoveryHttpMcpServer,
   stderrThenExitFixture,
   stdioFixture,
 } from './stubs';
@@ -986,6 +989,129 @@ describe('McpConnectionManager', () => {
     } finally {
       await cm.shutdown();
       await closeServer(server);
+    }
+  }, 15000);
+
+  it('flips a connected server into needs-auth when a tool call fails with 401', async () => {
+    const server = await startAnonymousDiscoveryHttpMcpServer();
+    const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    const cm = createManager({ oauthService });
+    const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];
+    cm.onStatusChange((e) => seen.push({ name: e.name, status: e.status }));
+    try {
+      await cm.connectAll({
+        hyper: { transport: 'http', url: server.url, startupTimeoutMs: 5_000 },
+      });
+      expect(cm.get('hyper')?.status).toBe('connected');
+      const client = cm.resolved('hyper')?.client;
+      if (client === undefined) throw new Error('expected a connected client');
+      const callError = await client.callTool('echo', { text: 'hi' }).then(
+        () => {
+          throw new Error('expected the call to fail with 401');
+        },
+        (error: unknown) => error,
+      );
+
+      await expect(cm.markNeedsAuth('hyper', callError)).resolves.toBe(true);
+      const entry = cm.get('hyper');
+      expect(entry?.status).toBe('needs-auth');
+      expect(entry?.error).toContain('run /mcp-config login hyper');
+      expect(cm.resolved('hyper')).toBeUndefined();
+      expect(seen.filter((s) => s.name === 'hyper').map((s) => s.status)).toEqual([
+        'pending',
+        'connected',
+        'needs-auth',
+      ]);
+
+      await expect(cm.markNeedsAuth('hyper', callError)).resolves.toBe(true);
+      expect(seen.filter((s) => s.name === 'hyper').map((s) => s.status)).toEqual([
+        'pending',
+        'connected',
+        'needs-auth',
+      ]);
+    } finally {
+      await cm.shutdown();
+      await server.close();
+    }
+  }, 15000);
+
+  it('invalidates stored OAuth tokens when a runtime 401 flips the server into needs-auth', async () => {
+    const server = await startAnonymousDiscoveryHttpMcpServer({ tokenEndpoint: 'invalid_grant' });
+    const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    const provider = oauthService.getProvider('hyper', server.url);
+    await provider.saveDiscoveryState({
+      authorizationServerUrl: server.origin,
+      authorizationServerMetadata: {
+        issuer: server.origin,
+        authorization_endpoint: `${server.origin}/authorize`,
+        token_endpoint: `${server.origin}/token`,
+        response_types_supported: ['code'],
+        grant_types_supported: ['authorization_code', 'refresh_token'],
+        token_endpoint_auth_methods_supported: ['none'],
+      },
+    });
+    await provider.saveClientInformation({
+      client_id: 'cached-client',
+      redirect_uris: ['http://127.0.0.1:45678/callback'],
+      token_endpoint_auth_method: 'none',
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+    } satisfies OAuthClientInformationFull);
+    const revokedTokens: StoredMcpOAuthTokens = {
+      access_token: 'revoked-access-token',
+      refresh_token: 'revoked-refresh-token',
+      token_type: 'Bearer',
+      obtained_at: Date.now() - 60_000,
+    };
+    await provider.saveTokens(revokedTokens);
+    const cm = createManager({ oauthService });
+    try {
+      expect(await oauthService.hasTokens('hyper', server.url)).toBe(true);
+      await cm.connectAll({
+        hyper: { transport: 'http', url: server.url, startupTimeoutMs: 5_000 },
+      });
+      expect(cm.get('hyper')?.status).toBe('connected');
+      const client = cm.resolved('hyper')?.client;
+      if (client === undefined) throw new Error('expected a connected client');
+      const callError = await client.callTool('echo', { text: 'hi' }).then(
+        () => {
+          throw new Error('expected the call to fail with 401');
+        },
+        (error: unknown) => error,
+      );
+      await expect(cm.markNeedsAuth('hyper', callError, client)).resolves.toBe(true);
+      expect(cm.get('hyper')?.status).toBe('needs-auth');
+      expect(await oauthService.hasTokens('hyper', server.url)).toBe(false);
+    } finally {
+      await cm.shutdown();
+      await server.close();
+    }
+  }, 15000);
+
+  it('ignores application-level errors that merely mention unauthorized', async () => {
+    const server = await startAnonymousDiscoveryHttpMcpServer();
+    const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    const cm = createManager({ oauthService });
+    try {
+      await cm.connectAll({
+        hyper: { transport: 'http', url: server.url, startupTimeoutMs: 5_000 },
+      });
+      expect(cm.get('hyper')?.status).toBe('connected');
+      await oauthService.getProvider('hyper', server.url).saveTokens({
+        access_token: 'valid-access-token',
+        token_type: 'Bearer',
+        obtained_at: Date.now() - 60_000,
+      } as StoredMcpOAuthTokens);
+      const client = cm.resolved('hyper')?.client;
+      if (client === undefined) throw new Error('expected a connected client');
+      const appError = new McpError(ErrorCode.InvalidRequest, 'Unauthorized to edit this project');
+      await expect(cm.markNeedsAuth('hyper', appError, client)).resolves.toBe(false);
+      expect(cm.get('hyper')?.status).toBe('connected');
+      expect(await oauthService.hasTokens('hyper', server.url)).toBe(true);
+      expect(cm.resolved('hyper')?.client).toBe(client);
+    } finally {
+      await cm.shutdown();
+      await server.close();
     }
   }, 15000);
 });

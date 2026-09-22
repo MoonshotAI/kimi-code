@@ -134,6 +134,7 @@ export function QuestionDialog() {
                 value={customInput}
                 onChange={(e) => setCustomInput(e.target.value)}
                 onKeyDown={(e) => {
+                  if (e.nativeEvent.isComposing) return;
                   if (e.key === "Enter") void handleCustomSubmit();
                   if (e.key === "Escape") setShowCustom(false);
                 }}

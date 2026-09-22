@@ -19,7 +19,7 @@ interface Harness {
     readonly handlePreInput: ReturnType<typeof vi.fn<(data: string) => boolean>>;
     readonly handleSubmit: ReturnType<typeof vi.fn<(text: string) => boolean>>;
     readonly handleEditorChange: ReturnType<typeof vi.fn<(text: string) => void>>;
-    readonly closeSilently: ReturnType<typeof vi.fn<() => void>>;
+    readonly notifyDisplaced: ReturnType<typeof vi.fn<() => void>>;
   };
 }
 
@@ -39,7 +39,7 @@ function createHarness(options: { streamingPhase?: string; isCompacting?: boolea
     handlePreInput: vi.fn<(data: string) => boolean>(() => false),
     handleSubmit: vi.fn<(text: string) => boolean>(() => false),
     handleEditorChange: vi.fn<(text: string) => void>(() => {}),
-    closeSilently: vi.fn<() => void>(() => {}),
+    notifyDisplaced: vi.fn<() => void>(() => {}),
   };
   const session = { cancel: vi.fn(async () => {}), cancelCompaction };
 
@@ -728,7 +728,7 @@ describe('EditorKeyboardController survey wiring', () => {
     expect(host.handleUserInput).toHaveBeenCalledWith('hello');
   });
 
-  it('closes the survey silently when the external editor opens', () => {
+  it('displaces the survey when the external editor opens', () => {
     vi.stubEnv('VISUAL', '');
     vi.stubEnv('EDITOR', '');
     try {
@@ -737,7 +737,7 @@ describe('EditorKeyboardController survey wiring', () => {
 
       onOpenExternalEditor();
 
-      expect(survey.closeSilently).toHaveBeenCalled();
+      expect(survey.notifyDisplaced).toHaveBeenCalled();
     } finally {
       vi.unstubAllEnvs();
     }

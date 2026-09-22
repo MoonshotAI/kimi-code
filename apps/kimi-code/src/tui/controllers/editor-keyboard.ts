@@ -285,7 +285,7 @@ export class EditorKeyboardController {
     };
 
     editor.onOpenExternalEditor = () => {
-      host.surveyController.closeSilently();
+      host.surveyController.notifyDisplaced();
       host.track('shortcut_editor');
       void this.openExternalEditor();
     };

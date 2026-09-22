@@ -119,11 +119,12 @@ export const turnIndexSlice = createSlice({
   reducers: {
     [turnStarted.type]: (draft, event: TurnStarted, ctx) => {
       draft.turns.push({ turnId: event.turnId, start: ctx.ref });
+      if (event.turnId >= draft.nextTurnId) draft.nextTurnId = event.turnId + 1;
     },
     [turnEnded.type]: (draft, event: TurnEnded, ctx) => {
       const entry = draft.turns.findLast((turn) => turn.turnId === event.turnId);
       if (entry !== undefined) entry.end = ctx.ref;
-      draft.nextTurnId = event.turnId + 1;
+      if (event.turnId >= draft.nextTurnId) draft.nextTurnId = event.turnId + 1;
     },
   },
 });

@@ -49,12 +49,15 @@ describe('CustomRegistryImportDialogComponent', () => {
     expect(plain(dialog)).toContain('next field');
   });
 
-  it('requires a non-empty Bearer token before submitting', () => {
+  it('submits with an empty Bearer token for public registries', () => {
     const { dialog, onDone } = makeDialog();
     dialog.handleInput('\r'); // url -> token
-    dialog.handleInput('\r'); // attempt submit with an empty token
-    expect(onDone).not.toHaveBeenCalled();
-    expect(plain(dialog)).toContain('Bearer token cannot be empty');
+    dialog.handleInput('\r'); // submit with an empty token
+
+    expect(onDone).toHaveBeenCalledWith({
+      kind: 'ok',
+      value: { url: 'https://example.com/api.json', apiKey: undefined },
+    });
   });
 
   it('submits the url and token once both are provided', () => {

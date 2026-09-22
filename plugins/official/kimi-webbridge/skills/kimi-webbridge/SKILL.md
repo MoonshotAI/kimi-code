@@ -1,14 +1,14 @@
 ---
 name: kimi-webbridge
 description: |
-  Kimi Browser Extension lets AI control the user's real browser — navigate, click, type, read, screenshot, and interact with any website using the user's actual login sessions. Use this skill whenever the user wants to interact with websites, automate browser tasks, scrape web content, or perform any action requiring a real browser. Also use when the user mentions "browser", "webpage", "open URL", "screenshot", or asks to read/interact with any website. Use even for simple-sounding browser requests — the daemon handles all complexity.
+  Kimi Browser Extension（Kimi 浏览器扩展，原 Kimi WebBridge）lets AI control the user's real browser — navigate, click, type, read, screenshot, and interact with any website using the user's actual login sessions. Use this skill whenever the user wants to interact with websites, automate browser tasks, scrape web content, or perform any action requiring a real browser. Also use when the user mentions "browser", "webpage", "open URL", "screenshot", or asks to read/interact with any website. Use even for simple-sounding browser requests — the daemon handles all complexity.
 metadata:
-  version: "1.11.4"
+  version: "2.0.11"
 ---
 
-# Kimi Browser Extension
+# Kimi Browser Extension (formerly Kimi WebBridge)
 
-Control the user's real browser (with their login sessions) via a local daemon at `http://127.0.0.1:10086`.
+Control the user's real browser (with their login sessions) via a local daemon at `http://127.0.0.1:10086` (the default address — see [If a tool call fails](#if-a-tool-call-fails-daemon-or-extension-not-ready) for when it differs).
 
 ## Tools
 
@@ -45,7 +45,7 @@ curl -s -X POST http://127.0.0.1:10086/command \
 
 ### Call Format
 
-Every command carries a top-level `session` naming the current task — see [Sessions](#sessions) below. The examples in later sections omit it only for brevity; in real calls always include it. The command format depends on the user's OS.
+Every command carries a top-level `session` naming the current task — see [Sessions](#sessions) below. The examples in later sections omit it only for brevity; in real calls always include it. Every reply is an envelope: `{"ok":true,"data":…}` on success (the **Returns** column above describes `data`) or `{"ok":false,"error":{"code","message"}}` on failure. The command format depends on the user's OS.
 
 **macOS / Linux** — inline JSON is fine:
 
@@ -54,6 +54,17 @@ curl -s -X POST http://127.0.0.1:10086/command \
   -H 'Content-Type: application/json' \
   -d '{"action":"navigate","args":{"url":"https://example.com","newTab":true,"group_title":"My task"},"session":"my-task"}'
 ```
+
+If the inline call fails — a shell quoting/syntax error from bash, or an HTTP 400 from the daemon — do **not** retry the same command unchanged. Resend the request as a file body:
+
+1. Write the JSON body to a **uniquely-named** temp file with your own file-write tool — never with shell `echo`/heredoc, which mangles the JSON the same way. Use a fresh name per request (e.g. `/tmp/webbridge-req-<random>.json`).
+2. POST the file:
+
+```bash
+curl -s -X POST http://127.0.0.1:10086/command -H 'Content-Type: application/json' --data-binary @/tmp/webbridge-req-<random>.json
+```
+
+3. Delete the temp file as soon as the request returns.
 
 **Windows (PowerShell / cmd)** — the shell corrupts non-ASCII characters (Chinese etc.) carried inline in command arguments or pipes; they reach the daemon as `?` and the text is unrecoverable. Send **every** request as a file body instead:
 
@@ -148,11 +159,22 @@ Decoded PDF cap is 100 MB. Above that the daemon refuses; reduce `scale` or spli
 
 ## If a tool call fails (daemon or extension not ready)
 
-Read [operations.md](references/operations.md) when the daemon or extension is unavailable, or when the user asks to install, start, or troubleshoot WebBridge. Follow its recovery order and never stop, restart, or uninstall the daemon automatically.
+**If a tool call can't reach the daemon (connection refused), or the reply isn't the `ok` envelope above (another program is answering on that port), run `start` yourself, don't ask the user. It is safe anytime: it no-ops if the daemon is already up.** The binary is not on PATH: `~/.kimi-webbridge/bin/kimi-webbridge` (Windows: `%USERPROFILE%\.kimi-webbridge\bin\kimi-webbridge.exe`).
+
+Where the daemon listens is always in `start`'s output, or in `kimi-webbridge status` (`port` when it is running, `addr` when it is not). If it isn't `127.0.0.1:10086`, use that address for every call in this task. The config file is only for moving the daemon, never for finding it. Then retry the tool call.
+
+**`start` fails with "did not come up … held by another program"** → another program owns the port. Move the daemon: write `{"addr":"127.0.0.1:<port>"}` (a free port of your choice) to the config file the error names, run `start` again, then ask the user to point the extension at the new port once (Kimi side panel → Settings → Local agent remote control → Connection address → `ws://127.0.0.1:<port>/ws`; it remembers).
+
+If it still fails, the binary is missing (`command not found` means kimi-webbridge isn't installed), or the browser extension won't connect — point the user to the help page instead of deep-troubleshooting:
+
+- English: https://www.kimi.com/en/products/kimi-browser-extension
+- 中文: https://www.kimi.com/products/kimi-browser-extension
+
+Never run `stop` / `restart` / `upgrade` / `uninstall` automatically — those kill a running daemon. When `status` shows `update_available` or `version_mismatch`, tell the user and hand them its `command` verbatim to run; that is what the field is for. When the user asks about kimi-webbridge itself (install, start/stop/upgrade, "is it running", what `status` means, moving it to another port), read `references/operations.md` first.
 
 ## Version mismatches
 
-If a tool returns an error containing **"Please update the Kimi Browser Extension"** or the older **"Please update the Kimi WebBridge extension"**, the user's browser extension is older than this skill. Don't try to reconcile versions yourself — just tell the user, in their language, to update the extension and retry:
+If a tool returns an error containing **"Please update the Kimi Browser Extension"**, the user's browser extension is older than this skill. Don't try to reconcile versions yourself — just tell the user, in their language, to update the extension and retry:
 
-- English: https://www.kimi.com/features/webbridge
-- 中文: https://www.kimi.com/zh-cn/features/webbridge
+- English: https://www.kimi.com/en/products/kimi-browser-extension
+- 中文: https://www.kimi.com/products/kimi-browser-extension

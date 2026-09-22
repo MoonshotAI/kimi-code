@@ -430,6 +430,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'desktop',
+    aliases: ['install-desktop'],
+    description: 'Open the Kimi Code desktop app page in your browser',
+    priority: 40,
+    availability: 'always',
+  },
+  {
     name: 'remote-control',
     aliases: ['rc'],
     description: 'Open the current session through Kimi Remote Control',
