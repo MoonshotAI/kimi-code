@@ -36,7 +36,7 @@ import {
 export interface TUIState {
   ui: TUI;
   terminal: ProcessTerminal;
-  transcriptContainer: Container;
+  transcriptContainer: GutterContainer;
   activityContainer: Container;
   todoPanelContainer: Container;
   todoPanel: TodoPanelComponent;
