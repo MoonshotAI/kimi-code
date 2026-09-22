@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.1
+
+### Patch Changes
+
+- [#3915](https://github.com/MoonshotAI/kimi-code/pull/3915) [`02d829e`](https://github.com/MoonshotAI/kimi-code/commit/02d829e13120781dfd2f7aa5e78b9ce56cfc013a) Thanks [@Grapedge](https://github.com/Grapedge)! - Fix the VS Code question dialog submitting unfinished custom answers when pressing Enter to confirm IME input.
+
 ## 0.8.0
 
 ### Minor Changes

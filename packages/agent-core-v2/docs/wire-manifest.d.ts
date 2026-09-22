@@ -12,7 +12,7 @@
 // type syntax; when a named type is expanded inline, its name appears as a doc
 // comment (`/** ContextMessage */`). Bare type names (ContentPart,
 // ContextMessage, …) refer to the real types in src/ — they are intentionally
-// not resolved here. `// …` marks a capped field list. On disk (wire.jsonl)
+// not resolved here. On disk (wire.jsonl)
 // the journal opens with a metadata line {"type": "metadata",
 // "protocol_version", "created_at"}; each record is {"type", ...payload,
 // "time"} — object payloads spread at the top level.
@@ -139,6 +139,12 @@ interface ContextAppendMessagePayload {
     isError?: boolean;
     toolCallDisplays?: Record<string, ToolInputDisplay>;
     note?: string;
+    usage?: TokenUsage;
+    llmTiming?: {
+      llmFirstTokenLatencyMs?: number;
+      llmStreamDurationMs?: number;
+    };
+    durationMs?: number;
   };
 }
 

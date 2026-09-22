@@ -46,6 +46,8 @@ import { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileL
 import { IExtraAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoader';
 import { IExplicitAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoader';
 
+import { setWatchEnabled } from '#human/utils/watch';
+
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 
 const watchMockState = vi.hoisted(() => ({ mode: 'inert' as 'inert' | 'real' }));
@@ -206,6 +208,7 @@ function pluginStub(
     mcpServerEntries: async () => [],
     enabledHooks: async () => [],
     hasLoadedSnapshot: () => true,
+    enabledPluginIds: () => undefined,
   };
 }
 
@@ -334,6 +337,7 @@ async function withStack(
 describe('agent profile loaders + session catalog', () => {
   beforeEach(() => {
     watchMockState.mode = 'inert';
+    setWatchEnabled(false);
     _clearAgentProfileContributionsForTests();
     const builtinDefault: AgentProfile = normalizeAgentProfile({
       name: DEFAULT_AGENT_PROFILE_NAME,
@@ -757,6 +761,7 @@ describe('agent profile loaders + session catalog', () => {
 
   it('rescans the workspace source when a project agent file changes on disk', async () => {
     watchMockState.mode = 'real';
+    setWatchEnabled(true);
     await withFixture(async (fixture) => {
       await mkdir(join(fixture.workDir, '.kimi-code', 'agents'), { recursive: true });
       await withStack(fixture, undefined, async (stack) => {

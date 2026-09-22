@@ -40,6 +40,10 @@ export function slugify(text: string, maxLength = 60): string {
   return slug.length > 0 ? slug : 'item';
 }
 
+export function hasNonAsciiCharacters(text: string): boolean {
+  return /[^\u0020-\u007E]/.test(text);
+}
+
 export function targetSlug(target: string): string {
   const cleaned = target.trim().replace(/^#/, 'pr');
   return slugify(cleaned.replaceAll(/[/#]+/g, '-'));

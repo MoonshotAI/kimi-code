@@ -205,7 +205,6 @@ type SketchDict = { [key: string]: Sketch };
 type Sketch = string | SketchDict | [Sketch];
 
 const TYPE_KEY = '_type';
-const MORE_KEY = '…';
 
 function stringifySketch(sketch: Sketch): string {
   if (typeof sketch === 'string') return sketch;
@@ -318,10 +317,6 @@ function renderTsType(sketch: Sketch, indent: string): { doc?: string; lines: st
 
 function emitTsDict(lines: string[], dict: SketchDict, indent: string): void {
   for (const [key, sketch] of Object.entries(dict)) {
-    if (key === MORE_KEY) {
-      lines.push(`${indent}// …`);
-      continue;
-    }
     if (key === TYPE_KEY) continue;
     if (key.startsWith('...')) {
       lines.push(`${indent}// spread: ${key}`);
@@ -334,7 +329,7 @@ function emitTsDict(lines: string[], dict: SketchDict, indent: string): void {
     lines.push(`${indent}${fieldKey}${optional ? '?' : ''}: ${typeLines[0]}${typeLines.length === 1 ? ';' : ''}`);
     if (typeLines.length > 1) {
       lines.push(...typeLines.slice(1, -1));
-      lines.push(`${typeLines[typeLines.length - 1]};`);
+      lines.push(`${typeLines.at(-1)};`);
     }
   }
 }
@@ -376,7 +371,7 @@ function renderPayloadDecl(
       ...header,
       `type ${name} = { ${nameField} } & (${lines[0]}`,
       ...lines.slice(1, -1),
-      `${lines[lines.length - 1]});`,
+      `${lines.at(-1)});`,
       '',
     ];
   }
@@ -454,7 +449,7 @@ function splitObjectFields(body: string): Map<string, string> {
   for (const part of splitTopLevel(body)) {
     const keyMatch = /^([$\w]+|'[^']+'|"[^"]+")\s*:/.exec(part);
     if (keyMatch?.[1] !== undefined) {
-      const key = keyMatch[1].replace(/^['"]|['"]$/g, '');
+      const key = keyMatch[1].replaceAll(/^['"]|['"]$/g, '');
       fields.set(key, part.slice(keyMatch[0].length).trim());
     } else if (part.startsWith('...')) {
       fields.set(part, '');
@@ -556,7 +551,7 @@ function splitTsTypeFields(body: string): Map<string, TsField> {
   for (const part of splitTopLevel(body, [';', ','])) {
     const m = /^(?:readonly\s+)?([$\w]+|'[^']+'|"[^"]+")\s*(\?)?\s*:\s*(.+)$/.exec(part);
     if (m?.[1] !== undefined && m[3] !== undefined) {
-      fields.set(m[1].replace(/^['"]|['"]$/g, ''), {
+      fields.set(m[1].replaceAll(/^['"]|['"]$/g, ''), {
         type: m[3].trim(),
         optional: m[2] !== undefined,
       });
@@ -575,13 +570,7 @@ function renderTsFields(
   depth: number,
 ): SketchDict {
   const dict: SketchDict = {};
-  let count = 0;
   for (const [name, f] of fields) {
-    if (count >= 8) {
-      dict[MORE_KEY] = '…';
-      break;
-    }
-    count += 1;
     dict[`${name}${f.optional ? '?' : ''}`] = summarizeTsTypeExpr(
       f.type,
       file,
@@ -961,7 +950,7 @@ export async function buildWireManifest(): Promise<string> {
     '// type syntax; when a named type is expanded inline, its name appears as a doc',
     '// comment (`/** ContextMessage */`). Bare type names (ContentPart,',
     '// ContextMessage, …) refer to the real types in src/ — they are intentionally',
-    '// not resolved here. `// …` marks a capped field list. On disk (wire.jsonl)',
+    '// not resolved here. On disk (wire.jsonl)',
     '// the journal opens with a metadata line {"type": "metadata",',
     '// "protocol_version", "created_at"}; each record is {"type", ...payload,',
     '// "time"} — object payloads spread at the top level.',

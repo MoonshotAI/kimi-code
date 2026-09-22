@@ -2,8 +2,6 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import type { Session } from '@moonshot-ai/kimi-code-sdk';
-
 import { detectInstallSource } from '#/cli/update/source';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { detectShellEnvironment } from '#/utils/process/shell-env';
@@ -58,12 +56,8 @@ export async function handleForkCommand(host: SlashCommandHost, args: string): P
     return;
   }
 
-  const sourceTitle = forkSourceTitle(host, session);
   try {
-    const forked = await host.harness.forkSession({
-      id: session.id,
-      title: `Fork: ${sourceTitle}`,
-    });
+    const forked = await host.harness.forkSession({ id: session.id });
     const forkId = forked.id;
     try {
       await forked.close();
@@ -109,15 +103,6 @@ function forkResumeCommand(workDir: string, forkId: string): string {
   // cmd.exe and PowerShell (`cd /d` would break PowerShell).
   const changeDir = process.platform === 'win32' ? `pushd ${dir}` : `cd ${dir}`;
   return `${changeDir} && kimi --resume ${quoteShellArg(forkId)}`;
-}
-
-function forkSourceTitle(host: SlashCommandHost, session: Session): string {
-  const currentTitle = host.state.appState.sessionTitle?.trim();
-  if (currentTitle !== undefined && currentTitle.length > 0) return currentTitle;
-
-  const summaryTitle =
-    typeof session.summary?.title === 'string' ? session.summary.title.trim() : '';
-  return summaryTitle.length > 0 ? summaryTitle : session.id;
 }
 
 export async function handleExportMdCommand(host: SlashCommandHost, args: string): Promise<void> {

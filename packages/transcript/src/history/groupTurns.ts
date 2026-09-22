@@ -2,7 +2,7 @@ import type { AgentTranscriptSnapshot } from '../ops/operation';
 import type { TranscriptAttachment } from '../model/attachment';
 import type { TranscriptFrame, TranscriptUserOrigin } from '../model/frame';
 import type { TranscriptItem, TranscriptMarker } from '../model/item';
-import type { TurnOrigin } from '../model/turn';
+import type { StepTiming, StepUsage, TurnOrigin } from '../model/turn';
 import { daemonFileRefFromPairingPart } from '../contract/mediaRef';
 import { projectTranscriptUserOrigin, projectTranscriptUserTurnOrigin } from '../contract/origin';
 
@@ -38,6 +38,8 @@ export interface HistoryMessage {
   readonly toolCallId?: string;
   readonly isError?: boolean;
   readonly origin?: { readonly kind: string };
+  readonly usage?: StepUsage;
+  readonly llmTiming?: StepTiming;
 }
 
 interface TurnDraft {
@@ -54,6 +56,8 @@ interface StepDraft {
   stepId: string;
   ordinal: number;
   frames: TranscriptFrame[];
+  usage?: StepUsage;
+  llmTiming?: StepTiming;
 }
 
 const HIDDEN_USER_ORIGINS = new Set(['injection', 'system_trigger', 'retry']);
@@ -333,6 +337,8 @@ export function groupMessagesIntoSnapshot(
         stepId: `${current.turnId}.${stepOrdinal}`,
         ordinal: stepOrdinal,
         frames: [],
+        usage: message.usage,
+        llmTiming: message.llmTiming,
       };
       current.steps.push(step);
       let frameCount = 0;
@@ -563,6 +569,8 @@ function draftToTurnItem(draft: TurnDraft): TranscriptItem {
       ordinal: step.ordinal,
       state: 'completed' as const,
       frames: step.frames,
+      usage: step.usage,
+      llmTiming: step.llmTiming,
     })),
   };
 }
