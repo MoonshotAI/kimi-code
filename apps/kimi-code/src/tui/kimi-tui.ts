@@ -3884,10 +3884,10 @@ export class KimiTUI {
     this.restoreEditor();
     try {
       await this.harness.trustWorkspace(workDir);
+      this.state.footer.setGitTrusted(true);
     } catch {
       // A failed write leaves the workspace untrusted (re-asked next launch).
     }
-    this.state.footer.setGitTrusted(true);
     return true;
   }
 
