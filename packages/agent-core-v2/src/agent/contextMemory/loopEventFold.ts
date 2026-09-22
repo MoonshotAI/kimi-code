@@ -7,6 +7,7 @@ import type { TokenUsage } from '#human/llm/usage';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import type { ContextMessage, ContextMessageTiming } from './types';
+import { shouldRenderWallTime } from './toolResultRender';
 import { isVacuousContentPart } from './vacuousContent';
 
 const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
@@ -69,6 +70,7 @@ export type LoopRecordedEvent =
         readonly output: string | readonly ContentPart[];
         readonly isError?: boolean;
         readonly note?: string;
+        readonly durationMs?: number;
       };
       readonly parentUuid?: string;
     };
@@ -97,7 +99,7 @@ export function createLoopEventFold(sink: LoopEventFoldSink): LoopEventFold {
 interface InitialFoldState {
   readonly openHasToolCalls: boolean;
   readonly openVacuous: boolean;
-  readonly pendingToolCallIds: readonly string[];
+  readonly pendingToolCalls: readonly { readonly id: string; readonly name: string }[];
 }
 
 function createLoopEventFoldWithState(
@@ -107,7 +109,9 @@ function createLoopEventFoldWithState(
   let openStepUuid: string | null | undefined = initial === undefined ? undefined : null;
   let openHasToolCalls = initial?.openHasToolCalls ?? false;
   let openVacuous = initial?.openVacuous ?? true;
-  const pending = new Set(initial?.pendingToolCallIds);
+  const pending = new Map<string, string>(
+    initial?.pendingToolCalls.map((call) => [call.id, call.name]),
+  );
   let deferred: { message: ContextMessage; time: number | undefined }[] = [];
 
   const flushDeferred = (): void => {
@@ -117,7 +121,7 @@ function createLoopEventFoldWithState(
   };
   const closePending = (time: number | undefined): void => {
     if (pending.size === 0) return;
-    for (const toolCallId of pending) {
+    for (const toolCallId of pending.keys()) {
       sink.pushToolMessage(interruptedToolMessage(toolCallId), time);
     }
     pending.clear();
@@ -182,12 +186,13 @@ function createLoopEventFoldWithState(
             ...(event.extras !== undefined ? { extras: event.extras } : {}),
           };
           sink.appendOpenToolCall(call, event.display);
-          pending.add(event.toolCallId);
+          pending.set(event.toolCallId, event.name);
           openHasToolCalls = true;
           return;
         }
         case 'tool.result': {
           if (!pending.has(event.toolCallId)) return;
+          const toolName = pending.get(event.toolCallId)!;
           pending.delete(event.toolCallId);
           const output = event.result.output;
           sink.pushToolMessage(
@@ -198,6 +203,7 @@ function createLoopEventFoldWithState(
               ),
               isError: event.result.isError,
               note: event.result.note,
+              durationMs: shouldRenderWallTime(toolName) ? event.result.durationMs : undefined,
             },
             time,
           );
@@ -351,9 +357,9 @@ function recoverFoldState(state: readonly ContextMessage[]): InitialFoldState | 
   return {
     openHasToolCalls: open.toolCalls.length > 0,
     openVacuous: open.content.every(isVacuousContentPart),
-    pendingToolCallIds: open.toolCalls
-      .map((call) => call.id)
-      .filter((toolCallId) => !resolvedToolCallIds.has(toolCallId)),
+    pendingToolCalls: open.toolCalls
+      .filter((call) => !resolvedToolCallIds.has(call.id))
+      .map((call) => ({ id: call.id, name: call.name })),
   };
 }
 

@@ -343,6 +343,7 @@ function projectedContent(source: ContextMessage, onAnomaly?: OnAnomaly): Conten
           output: outputFromToolContent(source.content),
           isError: source.isError,
           note: source.note,
+          durationMs: source.durationMs,
         })
       : source.content;
   return cleanContent(source, content, onAnomaly);
