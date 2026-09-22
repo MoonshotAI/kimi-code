@@ -26,7 +26,7 @@ interface BannerTipItem extends BannerVersionFields {
   banner_display_ttl_hours?: unknown;
   banner_platform?: unknown;
   banner_system?: unknown;
-  banner_audience?: unknown;
+  kfc_audience?: unknown;
 }
 
 interface BannerTipsJson {
@@ -250,7 +250,7 @@ function pickCandidates(
     const mainText = normalizeText(item.banner_maintext);
     const tag = normalizeTag(item.banner_title);
     if (mainText === null && tag === null) continue;
-    if (!meetsBannerAudience(item.banner_audience, audience)) continue;
+    if (!meetsBannerAudience(item.kfc_audience, audience)) continue;
     const display = parseBannerDisplay(item.banner_display);
     candidates.push(
       toBannerState({
@@ -263,7 +263,7 @@ function pickCandidates(
           display === 'cooldown' ? parseBannerDisplayTtlHours(item.banner_display_ttl_hours) : undefined,
         startTime: item.banner_start_time,
         endTime: item.banner_end_time,
-        audience: item.banner_audience,
+        audience: item.kfc_audience,
       }),
     );
   }

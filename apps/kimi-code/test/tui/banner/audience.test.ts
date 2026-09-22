@@ -17,14 +17,14 @@ const anonymous: BannerAudienceContext = { login: 'anonymous' };
 const unknown: BannerAudienceContext = { login: 'unknown' };
 
 describe('meetsBannerAudience', () => {
-  it('matches everyone when banner_audience is absent', () => {
+  it('matches everyone when kfc_audience is absent', () => {
     for (const ctx of [loggedIn, anonymous, unknown]) {
       expect(meetsBannerAudience(undefined, ctx)).toBe(true);
       expect(meetsBannerAudience(null, ctx)).toBe(true);
     }
   });
 
-  it('rejects a malformed banner_audience instead of guessing', () => {
+  it('rejects a malformed kfc_audience instead of guessing', () => {
     for (const ctx of [loggedIn, anonymous, unknown]) {
       expect(meetsBannerAudience('all', ctx)).toBe(false);
       expect(meetsBannerAudience(42, ctx)).toBe(false);

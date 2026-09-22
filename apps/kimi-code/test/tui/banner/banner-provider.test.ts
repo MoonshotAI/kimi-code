@@ -209,10 +209,10 @@ describe('selectBannerState', () => {
   it('skips entries whose audience does not match the context', () => {
     const result = select({
       banner_tips: [
-        tip({ banner_maintext: 'Other tiers', banner_audience: { login: 'all', tiers: [15, 20], region: 'all' } }),
-        tip({ banner_maintext: 'Anonymous only', banner_audience: { login: 'anonymous' } }),
-        tip({ banner_maintext: 'Oversea only', banner_audience: { region: 'oversea' } }),
-        tip({ banner_maintext: 'Mine', banner_audience: { login: 'logged_in', tiers: [27], region: 'cn' } }),
+        tip({ banner_maintext: 'Other tiers', kfc_audience: { login: 'all', tiers: [15, 20], region: 'all' } }),
+        tip({ banner_maintext: 'Anonymous only', kfc_audience: { login: 'anonymous' } }),
+        tip({ banner_maintext: 'Oversea only', kfc_audience: { region: 'oversea' } }),
+        tip({ banner_maintext: 'Mine', kfc_audience: { login: 'logged_in', tiers: [27], region: 'cn' } }),
       ],
     });
     expect(result).toMatchObject({ mainText: 'Mine' });
@@ -235,7 +235,7 @@ describe('selectBannerState', () => {
     const base = tip({ banner_maintext: 'Active' });
     const withoutAudience = select({ banner_tips: [base] });
     const withAudience = select({
-      banner_tips: [{ ...base, banner_audience: { login: 'all', tiers: [], region: 'all' } }],
+      banner_tips: [{ ...base, kfc_audience: { login: 'all', tiers: [], region: 'all' } }],
     });
     expect(withoutAudience?.key).not.toBe(withAudience?.key);
   });

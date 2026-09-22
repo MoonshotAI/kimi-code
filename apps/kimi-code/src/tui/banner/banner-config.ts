@@ -9,7 +9,7 @@ import {
 /** The tips/banner payload is one named resource on the resource-configs endpoint. */
 const CONFIG_NAME = 'client_banner';
 
-/** The payload is a `banner_tips` array (plus per-entry `banner_audience`),
+/** The payload is a `banner_tips` array (plus per-entry `kfc_audience`),
     which banner-provider parses defensively; the schema only guarantees an
     object. */
 const bannerConfigSchema = z.looseObject({});
