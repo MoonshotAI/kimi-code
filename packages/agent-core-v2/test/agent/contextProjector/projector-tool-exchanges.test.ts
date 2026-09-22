@@ -134,6 +134,14 @@ describe('projector tool-exchange normalization', () => {
     const history = [user('go'), assistant('', ['c1']), toolResult('c1', 'one'), user('next')];
     expect(shape(history)).toEqual(['user', 'assistant', 'tool:c1', 'user']);
     expect(project(history)).toHaveLength(4);
+    const timed = project([
+      user('go'),
+      assistant('', ['c1']),
+      { ...toolResult('c1', 'one'), durationMs: 42 },
+    ]);
+    expect(timed.at(-1)?.content).toEqual([
+      { type: 'text', text: 'Wall time: 0.042 seconds\none' },
+    ]);
   });
 
   it('synthesizes a result for a trailing unanswered call', () => {
