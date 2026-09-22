@@ -25,6 +25,7 @@ import { TaskStopTool } from '#/agent/tools/task/task-stop/taskStopTool';
 import { WaitForInputSchema } from '#/agent/tools/task/task-wait/task-wait';
 import { WaitForTool, startWaitProgress, waitForProgressUpdate } from '#/agent/tools/task/task-wait/taskWaitTool';
 import { abortError } from '#/_base/utils/abort';
+import { monoNowMs } from '#/_base/utils/monotonic';
 import type { ITaskHandle } from '#/app/task/task';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import { compileToolArgsValidator, validateToolArgs } from '#/tool/args-validator';
@@ -495,7 +496,10 @@ describe('TaskOutputTool', () => {
 
   it('returns agent metadata and final summary without process fields', async () => {
     const tasks = new FakeTaskService();
-    const taskId = tasks.add(agentTaskInfo(), outputSnapshot('SUBAGENT-FINAL-SUMMARY\n'));
+    const taskId = tasks.add(
+      agentTaskInfo({ monoStartedAt: 5_000, monoEndedAt: 8_000 }),
+      outputSnapshot('SUBAGENT-FINAL-SUMMARY\n'),
+    );
 
     const result = await executeTool(
       new TaskOutputTool(tasks),
@@ -506,7 +510,7 @@ describe('TaskOutputTool', () => {
     expect(output).toContain('kind: agent');
     expect(output).toContain('agent_id: agent-child');
     expect(output).toContain('subagent_type: coder');
-    expect(output).toContain('Wall time: 1.000 seconds');
+    expect(output).toContain('Wall time: 3.000 seconds');
     expect(output.indexOf('Wall time:')).toBeLessThan(output.indexOf('status: completed'));
     expect(output).not.toMatch(/^started_at:/m);
     expect(output).not.toMatch(/^ended_at:/m);
@@ -1077,7 +1081,7 @@ describe('WaitForTool', () => {
     tasks.add(processTask({ taskId: 'bash-prog002' }));
     const onUpdate = vi.fn();
 
-    const progress = startWaitProgress({ timeout: 600 }, tasks, onUpdate, Date.now() - 30_000);
+    const progress = startWaitProgress({ timeout: 600 }, tasks, onUpdate, monoNowMs() - 30_000);
     progress.tick();
     progress.stop();
 
