@@ -61,6 +61,9 @@ export default defineConfig({
   },
   outputOptions: {
     codeSplitting: false,
+    // The SEA main script runs with a V8 code cache (02-sea-blob.mjs), and
+    // Node does not support dynamic `import()` there; emit `require()` instead.
+    dynamicImportInCjs: false,
     entryFileNames: 'main.cjs',
   },
   checks: {

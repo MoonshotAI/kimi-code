@@ -101,6 +101,7 @@
     "chalk": "^5.4.1",
     "cli-highlight": "^2.1.11",
     "commander": "^13.1.0",
+    "es-module-lexer": "2.0.0",
     "jimp": "^1.6.1",
     "lovely-mermaid": "0.3.3",
     "pathe": "^2.0.3",

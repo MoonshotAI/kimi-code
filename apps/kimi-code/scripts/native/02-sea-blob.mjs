@@ -17,6 +17,7 @@ import {
   targetTriple,
 } from './paths.mjs';
 import { collectWebAssets, webAssetManifestKey } from './web-assets.mjs';
+import { SEA_EXEC_ARGV, seaCodeCacheEnabled } from './sea-options.mjs';
 
 async function ensureBundleExists() {
   try {
@@ -53,8 +54,13 @@ async function writeSeaConfig(target) {
       Object.entries(seaAssets).sort(([a], [b]) => a.localeCompare(b)),
     ),
     disableExperimentalSEAWarning: true,
-    useCodeCache: false,
+    // Compiles main.cjs at build time so startup skips the parse of the whole
+    // bundle. Node rejects dynamic `import()` in a code-cached main script,
+    // which is why tsdown.native.config.ts lowers them to `require()` and
+    // check-bundle.mjs fails the build if any survive.
+    useCodeCache: seaCodeCacheEnabled(target),
     useSnapshot: false,
+    execArgv: [...SEA_EXEC_ARGV],
   };
   await writeFile(nativeSeaConfigPath(), `${JSON.stringify(config, null, 2)}\n`);
 

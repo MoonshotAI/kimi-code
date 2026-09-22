@@ -4,13 +4,14 @@ import { IHostClock } from '#/os/interface/hostClock';
 
 export class HostClockService implements IHostClock {
   declare readonly _serviceBrand: undefined;
+  private cachedTimeZone: string | undefined;
 
   now(): Date {
     return new Date();
   }
 
   timeZone(): string {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    return (this.cachedTimeZone ??= Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
   }
 }
 

@@ -1,6 +1,9 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { builtinModules } from 'node:module';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+import { init as initModuleLexer, parse as parseModules } from 'es-module-lexer';
 
 import { nativeIntermediatesDir, nativeJsBundlePath } from './paths.mjs';
 
@@ -33,7 +36,28 @@ function executableLines(text) {
     });
 }
 
-function checkBundle(bundlePath, { worker = false } = {}) {
+function lineNumberAt(text, index) {
+  let line = 1;
+  for (let i = 0; i < index; i += 1) {
+    if (text.charCodeAt(i) === 10) line += 1;
+  }
+  return line;
+}
+
+// Dynamic `import()` expressions found by a real lexer, so the `import(` text
+// that bundled dependencies carry inside string literals and comments does not
+// count. Node refuses to evaluate `import()` in a SEA main script that ships a
+// V8 code cache (02-sea-blob.mjs), which is why tsdown.native.config.ts lowers
+// them to `require()` and the main bundle must end up with none.
+export async function findDynamicImports(text) {
+  await initModuleLexer;
+  const [imports] = parseModules(text);
+  return imports
+    .filter((entry) => entry.d >= 0)
+    .map((entry) => ({ index: entry.ss, specifier: entry.n }));
+}
+
+export async function checkBundle(bundlePath, { worker = false } = {}) {
   if (!existsSync(bundlePath)) return [`bundle does not exist: ${bundlePath}`];
   const text = readFileSync(bundlePath, 'utf-8');
   const errors = [];
@@ -65,20 +89,35 @@ function checkBundle(bundlePath, { worker = false } = {}) {
       if (sideEffect) checkSpecifier(sideEffect[1], 'import');
     }
   }
+
+  if (!worker) {
+    for (const { index, specifier } of await findDynamicImports(text)) {
+      errors.push(
+        `dynamic import() remains at line ${lineNumberAt(text, index)} (${specifier ?? 'non-literal specifier'}): ` +
+          'the SEA code cache cannot load it',
+      );
+    }
+  }
   return errors;
 }
 
-const bundles = [
-  { path: nativeJsBundlePath(), worker: false },
-  { path: resolve(nativeIntermediatesDir(), 'text-build-worker.mjs'), worker: true },
-  { path: resolve(nativeIntermediatesDir(), 'search-worker.mjs'), worker: true },
-];
-let failed = false;
-for (const bundle of bundles) {
-  const errors = checkBundle(bundle.path, { worker: bundle.worker });
-  if (errors.length === 0) continue;
-  failed = true;
-  console.error(`Native JS bundle check failed for ${bundle.path}:`);
-  for (const error of errors) console.error(`- ${error}`);
+async function main() {
+  const bundles = [
+    { path: nativeJsBundlePath(), worker: false },
+    { path: resolve(nativeIntermediatesDir(), 'text-build-worker.mjs'), worker: true },
+    { path: resolve(nativeIntermediatesDir(), 'search-worker.mjs'), worker: true },
+  ];
+  let failed = false;
+  for (const bundle of bundles) {
+    const errors = await checkBundle(bundle.path, { worker: bundle.worker });
+    if (errors.length === 0) continue;
+    failed = true;
+    console.error(`Native JS bundle check failed for ${bundle.path}:`);
+    for (const error of errors) console.error(`- ${error}`);
+  }
+  if (failed) process.exit(1);
 }
-if (failed) process.exit(1);
+
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main();
+}

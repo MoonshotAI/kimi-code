@@ -138,6 +138,9 @@ importers:
       commander:
         specifier: ^13.1.0
         version: 13.1.0
+      es-module-lexer:
+        specifier: 2.0.0
+        version: 2.0.0
       jimp:
         specifier: ^1.6.1
         version: 1.6.1
