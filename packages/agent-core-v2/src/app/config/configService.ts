@@ -366,7 +366,7 @@ export class ConfigService extends Disposable implements IConfigService {
   private readonly configKey: string;
   private tainted = false;
   private readonly envNamesBySection = new WeakMap<ConfigSection, readonly string[]>();
-  private readonly envSectionResolutions = new Map<string, EnvSectionResolution>();
+  private readonly envSectionResolutions = new WeakMap<ConfigSection, EnvSectionResolution>();
 
   constructor(
     @IConfigRegistry private readonly registry: IConfigRegistry,
@@ -772,7 +772,7 @@ export class ConfigService extends Disposable implements IConfigService {
       if (section.env === undefined) continue;
       const base = effective[section.domain];
       const envValues = this.sectionEnvNames(section).map(getEnv);
-      const resolved = this.envSectionResolutions.get(section.domain);
+      const resolved = this.envSectionResolutions.get(section);
       if (
         !reportErrors &&
         resolved !== undefined &&
@@ -795,9 +795,9 @@ export class ConfigService extends Disposable implements IConfigService {
         const next = applySectionEnv(base, section.env, getEnv, onDeprecatedEnv);
         const value = this.registry.validate(section.domain, next);
         effective[section.domain] = value;
-        this.envSectionResolutions.set(section.domain, { base, envValues, value });
+        this.envSectionResolutions.set(section, { base, envValues, value });
       } catch (error) {
-        this.envSectionResolutions.delete(section.domain);
+        this.envSectionResolutions.delete(section);
         if (reportErrors) {
           this.pushDiagnostic({
             domain: section.domain,

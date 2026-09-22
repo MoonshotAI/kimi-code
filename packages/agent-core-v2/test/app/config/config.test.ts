@@ -504,6 +504,38 @@ describe('ConfigService env overlay (live)', () => {
     disposables.dispose();
   });
 
+  it('drops a memoized env-bound value when its domain is re-registered by another section', async () => {
+    const env: Record<string, string> = { REBOUND_DEMO_ENV: 'x' };
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    const registry = ix.get(IConfigRegistry);
+
+    registry.registerSection(
+      'reboundDemo',
+      { parse: (value: unknown) => `first:${String(value)}` },
+      { env: 'REBOUND_DEMO_ENV' },
+    );
+    expect(config.get('reboundDemo')).toBe('first:x');
+
+    registry.unregisterSection('reboundDemo');
+    registry.registerSection(
+      'reboundDemo',
+      { parse: (value: unknown) => `second:${String(value)}` },
+      { env: 'REBOUND_DEMO_ENV' },
+    );
+    expect(config.get('reboundDemo')).toBe('second:x');
+
+    disposables.dispose();
+  });
+
   it('applies a scalar section env binding and keeps it out of the file', async () => {
     const env: Record<string, string> = {};
     const disposables = new DisposableStore();
