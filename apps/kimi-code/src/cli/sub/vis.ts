@@ -113,15 +113,26 @@ export function registerVisCommand(parent: Command, overrides?: Partial<VisDeps>
         sessionId: string | undefined,
         options: { port?: string; host?: string; open?: boolean },
       ) => {
-        const port = options.port === undefined ? undefined : Number.parseInt(options.port, 10);
         await handleVis(createDefaultVisDeps(overrides), {
           open: options.open !== false,
-          ...(port === undefined || Number.isNaN(port) ? {} : { port }),
-          ...(options.host === undefined ? {} : { host: options.host }),
-          ...(sessionId === undefined ? {} : { sessionId }),
+          port: parseVisPort(options.port),
+          host: options.host,
+          sessionId,
         });
       },
     );
+}
+
+export function parseVisPort(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(`error: invalid --port value: ${raw}`);
+  }
+  const port = Number.parseInt(raw, 10);
+  if (!Number.isFinite(port) || port < 0 || port > 65535) {
+    throw new Error(`error: invalid --port value: ${raw}`);
+  }
+  return port;
 }
 
 function createDefaultVisDeps(overrides: Partial<VisDeps> = {}): VisDeps {
