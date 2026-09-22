@@ -99,6 +99,7 @@ export function createGitStatusCache(
   return {
     getStatus: () => {
       if (!trusted || git === undefined) return null;
+      if (repoDetected && !isRepo) return null;
       const configArgs = hardenedGitConfigArgs(git, workDir);
       if (configArgs === null) return null;
       if (!repoDetected) {

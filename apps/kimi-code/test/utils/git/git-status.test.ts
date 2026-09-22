@@ -694,6 +694,18 @@ describe('git status cache', () => {
     ).toBe('main [±]');
   });
 
+  it('skips config probes on later renders once the directory is known to be a non-repo', () => {
+    mocks.spawnSync.mockReturnValue({ status: 1, stdout: '' });
+    const cache = createGitStatusCache('/tmp/not-a-repo', { trusted: true });
+
+    expect(cache.getStatus()).toBeNull();
+    const probeCalls = mocks.spawnSync.mock.calls.length;
+    expect(probeCalls).toBeGreaterThan(0);
+
+    expect(cache.getStatus()).toBeNull();
+    expect(mocks.spawnSync.mock.calls.length).toBe(probeCalls);
+  });
+
   it('formats pull request badges as terminal hyperlinks when requested', () => {
     const linked = formatGitBadge(
       {
