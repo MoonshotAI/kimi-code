@@ -34,6 +34,7 @@ export type TowerMissionKind = 'build' | 'survey';
 export interface TowerMissionTask {
   text: string;
   done: boolean;
+  dropped?: boolean;
 }
 
 export interface TowerMission {
