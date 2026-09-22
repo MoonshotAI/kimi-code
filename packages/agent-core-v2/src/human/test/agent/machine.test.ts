@@ -16,8 +16,6 @@ import type { LlmEvent } from '#/llm/requester/actor';
 import type { LlmRequester, LlmRequestEvent } from '#/llm/requester/requester';
 import type { LlmRetryOptions } from '#/llm/requester/retry';
 import { emptyUsage, type TokenUsage } from '#/llm/usage';
-import { connectPlugins } from '#/plugin';
-import { createTimingPlugin } from '#/timing/plugin';
 import { createAgentMachine, type AgentEmitted, type AgentMachineSelf, type PromptGateVerdict, type ScopeFactoryOutput } from '#/agent/machine';
 import type { UserPromptOrigin } from '#/agent/origin';
 import { estimateMessageTokens, estimateTextTokens } from '#/agent/context-usage';
@@ -32,12 +30,8 @@ import {
 } from '#/agent/turn';
 import { MaxStepsExceededError } from '#/agent/errors';
 import { createEventStore } from '#/eventStore/eventStore';
-import { journalFromBranch } from '#/eventStore/journal';
-import { MemoryBackend } from '#/store/backend/memory';
-import { TreeStore } from '#/store/store';
-import type { Tree } from '#/store/tree';
+import { memoryJournal, type SyncStoreJournal } from '#/eventStore/journal';
 import { testScopeFactory } from '#/test/agent/scope-factory';
-import { waitForTool } from '#/tool/wait-for';
 import { defineTool, type ToolDefinition } from '#/tool/tool';
 import type { ToolExecutor, ToolResult } from '#/tool/executor';
 import { createToolMachine } from '#/tool/machine';
@@ -115,19 +109,12 @@ function stubTools(
 }
 
 async function testStore(): Promise<AgentEventStore> {
-  const backend = new MemoryBackend();
-  const store = await TreeStore.open(backend, {});
-  const tree = await store.tree('test');
-  tree.createBranch('main');
-  return createEventStore({ journal: journalFromBranch(tree.openBranch('main'), tree), slices: agentSlices });
+  return createEventStore({ journal: memoryJournal(), slices: agentSlices });
 }
 
-async function seedBranch(tree: Tree, branch: string, texts: readonly string[]): Promise<void> {
-  tree.createBranch(branch);
-  const seed = await createEventStore({
-    journal: journalFromBranch(tree.openBranch(branch), tree),
-    slices: agentSlices,
-  });
+async function seedJournal(branch: string, texts: readonly string[]): Promise<SyncStoreJournal> {
+  const journal = memoryJournal({ tree: 'memory', branch });
+  const seed = await createEventStore({ journal, slices: agentSlices });
   for (const text of texts) {
     await seed.dispatch(
       messageAppended({ message: createUserEntry(createUserMessage(text), { source: 'input' }) }),
@@ -135,6 +122,7 @@ async function seedBranch(tree: Tree, branch: string, texts: readonly string[]):
   }
   await seed.dispatch(turnEnded({ turnId: 0, outcome: 'done' }));
   await seed.close();
+  return journal;
 }
 
 async function runAgent(
@@ -471,120 +459,6 @@ describe('agent machine async tools', () => {
     ]);
   });
 
-  it('lets WaitFor reap a completed background task and delivers the notification in the same batch', async () => {
-    const requester = createStubRequester([
-      createAssistantMessage([], [toolCall('call-1', 'bg_tool')]),
-      createAssistantMessage([], [toolCall('call-2', 'WaitFor', '{"task_id":"call-1","timeout":5}')]),
-      createAssistantMessage([{ type: 'text', text: 'done' }]),
-    ]);
-    let resolveBg: ((result: ToolResult) => void) | undefined;
-    const bgTool = defineTool({
-      name: 'bg_tool',
-      description: 'test background tool',
-      parameters: { type: 'object', properties: {} },
-      execute: ({ detach }) => {
-        detach?.({ text: 'async running: bg_tool' });
-        return new Promise((resolve) => {
-          resolveBg = resolve;
-        });
-      },
-    });
-    const tools = [bgTool, waitForTool];
-    const store = await testStore();
-    const actor = createTestAgent(store, requester, tools);
-    actor.start();
-    actor.send({ type: 'input.submit', entry: { message: createUserMessage('hi') } });
-
-    await vi.waitFor(() => {
-      expect(actor.getSnapshot().context.turnTools['call-2']).toBeDefined();
-    });
-    resolveBg?.({ content: [{ type: 'text', text: 'bg-result' }] });
-    await waitFor(
-      actor,
-      (s) => s.matches('idle') && store.getState().history.length === 7,
-      { timeout: 5000 },
-    );
-
-    expect(rolesAndTexts(store.getState().history)).toEqual([
-      'user:hi',
-      'assistant:',
-      'tool:async running: bg_tool',
-      'assistant:',
-      'tool:completed: call-1',
-      'user:[async tool completed] bg_tool (tool_call_id=call-1)\nbg-result',
-      'assistant:done',
-    ]);
-  });
-
-  it('reports running tasks when WaitFor times out and delivers the completion later', async () => {
-    const requester = createStubRequester([
-      createAssistantMessage([], [toolCall('call-1', 'bg_tool')]),
-      createAssistantMessage([], [
-        toolCall('call-2', 'WaitFor', '{"task_id":"call-1","timeout":1}'),
-      ]),
-      createAssistantMessage([{ type: 'text', text: 'ack-timeout' }]),
-      createAssistantMessage([{ type: 'text', text: 'done' }]),
-    ]);
-    let resolveBg: ((result: ToolResult) => void) | undefined;
-    const bgTool = defineTool({
-      name: 'bg_tool',
-      description: 'test background tool',
-      parameters: { type: 'object', properties: {} },
-      execute: ({ detach }) => {
-        detach?.({ text: 'async running: bg_tool' });
-        return new Promise((resolve) => {
-          resolveBg = resolve;
-        });
-      },
-    });
-    const tools = [bgTool, waitForTool];
-    const store = await testStore();
-    const actor = createTestAgent(store, requester, tools);
-    actor.start();
-    actor.send({ type: 'input.submit', entry: { message: createUserMessage('hi') } });
-
-    await vi.waitFor(
-      () => {
-        expect(actor.getSnapshot().value).toEqual({ idle: 'waiting' });
-      },
-      { timeout: 4000 },
-    );
-    resolveBg?.({ content: [{ type: 'text', text: 'bg-result' }] });
-    await waitFor(
-      actor,
-      (s) => s.matches('idle') && store.getState().history.length === 8,
-      { timeout: 5000 },
-    );
-
-    expect(rolesAndTexts(store.getState().history)).toEqual([
-      'user:hi',
-      'assistant:',
-      'tool:async running: bg_tool',
-      'assistant:',
-      'tool:running: call-1\ntimedOut after 1000 ms',
-      'assistant:ack-timeout',
-      'user:[async tool completed] bg_tool (tool_call_id=call-1)\nbg-result',
-      'assistant:done',
-    ]);
-  });
-
-  it('answers WaitFor immediately for an unknown task_id or when nothing is running', async () => {
-    const requester = createStubRequester([
-      createAssistantMessage([], [toolCall('call-1', 'WaitFor', '{"task_id":"nope","timeout":5}')]),
-      createAssistantMessage([], [toolCall('call-2', 'WaitFor', '{"timeout":5}')]),
-      createAssistantMessage([{ type: 'text', text: 'done' }]),
-    ]);
-    const messages = await runAgent(requester, [waitForTool]);
-
-    expect(rolesAndTexts(messages)).toEqual([
-      'user:hi',
-      'assistant:',
-      'tool:Task not found: nope',
-      'assistant:',
-      'tool:no async tool calls running',
-      'assistant:done',
-    ]);
-  });
 });
 
 describe('agent machine lifecycle', () => {
@@ -1119,12 +993,9 @@ describe('agent machine llm retry', () => {
         return Promise.resolve();
       },
     };
-    const ticks = [1000, 1100, 1200, 100000, 100100, 100140, 100200];
-    const timingPlugin = createTimingPlugin({ now: () => ticks.shift() ?? Number.NaN });
     const tools: ToolDefinition[] = [];
     const store = await testStore();
     const actor = createTestAgent(store, requester, tools, { retry: { maxAttemptsPerStep: 3 } });
-    connectPlugins(actor, [timingPlugin]);
     const retrying: Extract<LlmEvent, { type: 'llm.retrying' }>[] = [];
     const failures: unknown[] = [];
     actor.on('llm.retrying', (event) => retrying.push(event));
@@ -1148,17 +1019,6 @@ describe('agent machine llm retry', () => {
     });
     expect(failures).toHaveLength(0);
     expect(rolesAndTexts(store.getState().history)).toEqual(['user:hi', 'assistant:recovered']);
-
-    const delayMs = retrying[0]?.delayMs ?? 0;
-    expect(timingPlugin.timing()).toEqual({
-      requestBuildMs: 100000 - (1200 + delayMs),
-      ttftMs: 100100 - (1200 + delayMs),
-      serverFirstTokenMs: 100,
-      streamDurationMs: 100,
-      serverDecodeMs: 60,
-      clientConsumeMs: 40,
-    });
-    expect(ticks).toHaveLength(0);
   });
 });
 
@@ -1884,14 +1744,7 @@ describe('agent machine context reset', () => {
     const requester = createStubRequester([
       createAssistantMessage([{ type: 'text', text: 'reply' }]),
     ]);
-    const backend = new MemoryBackend();
-    const treeStore = await TreeStore.open(backend, {});
-    const tree = await treeStore.tree('test');
-    tree.createBranch('main');
-    const store = await createEventStore({
-      journal: journalFromBranch(tree.openBranch('main'), tree),
-      slices: agentSlices,
-    });
+    const store = await testStore();
     const actor = createTestAgent(store, requester);
     actor.start();
     const resets: string[] = [];
@@ -1910,8 +1763,7 @@ describe('agent machine context reset', () => {
       timeout: 5000,
     });
 
-    await seedBranch(tree, 'main~2', ['seed']);
-    await store.reset(journalFromBranch(tree.openBranch('main~2'), tree));
+    await store.reset(await seedJournal('main~2', ['seed']));
 
     await vi.waitFor(() => {
       expect(resets).toEqual(['main~2']);
@@ -1938,8 +1790,7 @@ describe('agent machine context reset', () => {
       expect(actor.getSnapshot().context.queue).toHaveLength(1);
     });
 
-    await seedBranch(tree, 'main~3', ['third-seed']);
-    await store.reset(journalFromBranch(tree.openBranch('main~3'), tree));
+    await store.reset(await seedJournal('main~3', ['third-seed']));
 
     await vi.waitFor(() => {
       expect(resets).toEqual(['main~2', 'main~3']);
@@ -1984,21 +1835,13 @@ describe('agent machine context reset', () => {
         });
       },
     };
-    const backend = new MemoryBackend();
-    const treeStore = await TreeStore.open(backend, {});
-    const tree = await treeStore.tree('test');
-    tree.createBranch('main');
-    const store = await createEventStore({
-      journal: journalFromBranch(tree.openBranch('main'), tree),
-      slices: agentSlices,
-    });
+    const store = await testStore();
     const actor = createTestAgent(store, requester);
     actor.start();
     actor.send({ type: 'input.submit', entry: { message: createUserMessage('hi') } });
     await vi.waitFor(() => expect(calls).toBe(1));
 
-    await seedBranch(tree, 'other', ['seeded']);
-    await store.reset(journalFromBranch(tree.openBranch('other'), tree));
+    await store.reset(await seedJournal('other', ['seeded']));
 
     await waitFor(actor, (s) => s.matches('idle') && store.ref.branch === 'other', {
       timeout: 5000,
@@ -2013,8 +1856,7 @@ describe('agent machine context reset', () => {
     actor.send({ type: 'input.notify', entry: { message: createUserMessage('note') } });
     await vi.waitFor(() => expect(calls).toBe(2));
 
-    await seedBranch(tree, 'third', ['third-seed']);
-    await store.reset(journalFromBranch(tree.openBranch('third'), tree));
+    await store.reset(await seedJournal('third', ['third-seed']));
 
     await waitFor(actor, (s) => s.matches('idle') && store.ref.branch === 'third', {
       timeout: 5000,

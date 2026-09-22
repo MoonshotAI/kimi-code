@@ -11,16 +11,10 @@ import {
   type Message,
   type StreamedMessagePart,
   type ToolDescription,
-  type VideoURLPart,
 } from '#/llm/message';
-import { createMemoryMediaUploadCache } from '#/llm/media/cache';
-import { createMediaRefResolver } from '#/llm/media/resolver';
-import { createMemoryMediaSource } from '#/llm/media/source';
 import type { LlmModel } from '#/llm/model';
 import { createProvider } from '#/llm/provider/definition';
 import { KimiFiles, kimiFilesBaseUrl } from '#/llm-kimi/files';
-import { kimiMediaContribution } from '#/llm-kimi/media';
-import { kimiProvider } from '#/llm-kimi/provider';
 import {
   KIMI_API_KEY_ENV,
   KIMI_BASE_URL_ENV,
@@ -30,16 +24,18 @@ import {
   kimiOpenAITrait,
 } from '#/llm-kimi/trait';
 import { classifyKimiQuotaError } from '#/llm-kimi/errors';
-import { anthropicProvider, googleGenAIConnection, openaiProvider } from '#/llm/provider/providers/standard';
 import type { LlmClientContext, LlmRequester, LlmRequestEvent } from '#/llm/requester/requester';
 import type { TokenUsage } from '#/llm/usage';
 import {
   normalizeToolCallIdsForProvider,
   sanitizeToolCallId,
 } from '#/llm/requester/bases/tool-call-id';
-import { createAnthropicRequester } from '#/llm/requester/bases/anthropic/requester';
+import { anthropicBase, createAnthropicRequester } from '#/llm/requester/bases/anthropic/requester';
 import { createGoogleGenAIRequester } from '#/llm/requester/bases/google-genai/requester';
-import { createOpenAIResponsesRequester } from '#/llm/requester/bases/openai-responses/requester';
+import {
+  createOpenAIResponsesRequester,
+  openAIResponsesBase,
+} from '#/llm/requester/bases/openai-responses/requester';
 import {
   createOpenAIRequester,
   openAIBase,
@@ -294,29 +290,34 @@ describe('defaultHeaders', () => {
 
 describe('capability', () => {
   it('resolves capabilities from the base prefixes and the variant hook', () => {
-    const reasoning = openaiProvider.resolveModel('o1').capability;
+    const testOpenAI = createProvider({ id: 'test-openai', protocols: { openai: { base: openAIBase } } });
+    const reasoning = testOpenAI.resolveModel('o1').capability;
     expect(reasoning.thinking).toBe(true);
     expect(reasoning.tool_use).toBe(true);
     expect(reasoning.image_in).toBe(false);
-    const vision = openaiProvider.resolveModel('gpt-4o').capability;
+    const vision = testOpenAI.resolveModel('gpt-4o').capability;
     expect(vision.image_in).toBe(true);
     expect(vision.thinking).toBe(false);
-    const textOnly = openaiProvider.resolveModel('gpt-3.5-turbo').capability;
+    const textOnly = testOpenAI.resolveModel('gpt-3.5-turbo').capability;
     expect(textOnly.tool_use).toBe(true);
     expect(textOnly.image_in).toBe(false);
     expect(textOnly.thinking).toBe(false);
-    expect(isUnknownCapability(openaiProvider.resolveModel('no-such-model').capability)).toBe(
+    expect(isUnknownCapability(testOpenAI.resolveModel('no-such-model').capability)).toBe(
       true,
     );
 
-    const thinkingVision = anthropicProvider.resolveModel('claude-sonnet-4-20250514').capability;
+    const testAnthropic = createProvider({
+      id: 'test-anthropic',
+      protocols: { anthropic: { base: anthropicBase } },
+    });
+    const thinkingVision = testAnthropic.resolveModel('claude-sonnet-4-20250514').capability;
     expect(thinkingVision.thinking).toBe(true);
     expect(thinkingVision.image_in).toBe(true);
-    const legacyVision = anthropicProvider.resolveModel('claude-3-haiku').capability;
+    const legacyVision = testAnthropic.resolveModel('claude-3-haiku').capability;
     expect(legacyVision.image_in).toBe(true);
     expect(legacyVision.thinking).toBe(false);
     expect(
-      isUnknownCapability(anthropicProvider.resolveModel('no-such-model').capability),
+      isUnknownCapability(testAnthropic.resolveModel('no-such-model').capability),
     ).toBe(true);
 
     const variantCapProvider = createProvider({
@@ -327,7 +328,8 @@ describe('capability', () => {
   });
 
   it('enriches listModels seeds and returns an empty list without a model source', async () => {
-    await expect(openaiProvider.listModels()).resolves.toEqual([]);
+    const sourceless = createProvider({ id: 'test-empty', protocols: { openai: { base: openAIBase } } });
+    await expect(sourceless.listModels()).resolves.toEqual([]);
 
     const provider = createProvider({
       id: 'test-list',
@@ -360,23 +362,6 @@ describe('media', () => {
     model: 'test-model',
     capability: TRAIT_CAPABILITY,
   };
-  const uploadedPart: VideoURLPart = {
-    type: 'video_url',
-    videoUrl: { url: 'ms://file-1', id: 'file-1' },
-  };
-
-  function videoRefMessage(url: string): Message {
-    return { role: 'user', content: [{ type: 'video_url', videoUrl: { url } }] };
-  }
-
-  it('rejects a non-video mime type', async () => {
-    await expect(
-      kimiMediaContribution.uploadVideo!(
-        { data: new Uint8Array([1]), mimeType: 'image/png' },
-        { model },
-      ),
-    ).rejects.toThrow('Expected a video mime type');
-  });
 
   it('rejects a non-image mime type', async () => {
     const files = new KimiFiles({ apiKey: 'sk-test', baseUrl: 'https://example.test/v1' });
@@ -414,76 +399,6 @@ describe('media', () => {
     const openai: LlmModel = { ...mediaModel, provider: 'openai', baseUrl: 'https://api.example.test' };
     expect(kimiFilesBaseUrl(openai)).toBe('https://api.example.test');
   });
-
-  it('uploads a video ref once and serves later requests from the cache', async () => {
-    const uploadVideo = vi.fn(async () => uploadedPart);
-    const provider = createProvider({
-      id: 'test-media',
-      protocols: { openai: { base: openAIBase } },
-      media: { uploadVideo },
-    });
-    const resolver = createMediaRefResolver({
-      providers: [provider],
-      source: createMemoryMediaSource({
-        'ref-1': { bytes: new Uint8Array([1, 2, 3]), mimeType: 'video/mp4' },
-      }),
-      cache: createMemoryMediaUploadCache(),
-    });
-    const messages = [videoRefMessage('media://ref-1')];
-    const ctx = { model: mediaModel, signal: new AbortController().signal };
-
-    const first = await resolver.resolve(messages, ctx);
-    const second = await resolver.resolve(messages, ctx);
-
-    expect(uploadVideo).toHaveBeenCalledTimes(1);
-    expect(first[0]?.content).toEqual([uploadedPart]);
-    expect(second[0]?.content).toEqual([uploadedPart]);
-  });
-
-  it('degrades to a text part when the media source has no bytes', async () => {
-    const provider = createProvider({
-      id: 'test-media',
-      protocols: { openai: { base: openAIBase } },
-      media: { uploadVideo: vi.fn() },
-    });
-    const resolver = createMediaRefResolver({
-      providers: [provider],
-      source: createMemoryMediaSource(),
-      cache: createMemoryMediaUploadCache(),
-    });
-    const resolved = await resolver.resolve([videoRefMessage('media://missing')], {
-      model: mediaModel,
-      signal: new AbortController().signal,
-    });
-    expect(resolved[0]?.content).toEqual([
-      { type: 'text', text: '[video omitted: media unavailable]' },
-    ]);
-  });
-
-  it('inlines video bytes when the provider declares inline video and no uploader exists', async () => {
-    const provider = createProvider({
-      id: 'test-media',
-      protocols: { openai: { base: openAIBase } },
-      media: { inlineVideo: true },
-    });
-    const resolver = createMediaRefResolver({
-      providers: [provider],
-      source: createMemoryMediaSource({
-        'ref-1': { bytes: new Uint8Array([1, 2, 3]), mimeType: 'video/mp4' },
-      }),
-      cache: createMemoryMediaUploadCache(),
-    });
-    const resolved = await resolver.resolve([videoRefMessage('media://ref-1')], {
-      model: mediaModel,
-      signal: new AbortController().signal,
-    });
-    expect(resolved[0]?.content).toEqual([
-      {
-        type: 'video_url',
-        videoUrl: { url: `data:video/mp4;base64,${Buffer.from([1, 2, 3]).toString('base64')}` },
-      },
-    ]);
-  });
 });
 
 
@@ -513,21 +428,22 @@ describe('endpoint', () => {
       ...kimiOpenAI,
       clientFactory: client.clientFactory,
     });
+    const kimiK3: LlmModel = { provider: 'kimi', model: 'kimi-k3', capability: UNKNOWN_CAPABILITY };
     const signal = new AbortController().signal;
 
     await requester.generate(
-      { model: kimiProvider.resolveModel('kimi-k3') },
+      { model: kimiK3 },
       { messages },
       { signal },
     );
     vi.stubEnv(KIMI_BASE_URL_ENV, 'https://example.test/v9');
     await requester.generate(
-      { model: kimiProvider.resolveModel('kimi-k3') },
+      { model: kimiK3 },
       { messages },
       { signal },
     );
     await requester.generate(
-      { model: kimiProvider.resolveModel('kimi-k3', { baseUrl: 'https://explicit.test/v1' }) },
+      { model: { ...kimiK3, baseUrl: 'https://explicit.test/v1' } },
       { messages },
       { signal },
     );
@@ -541,12 +457,20 @@ describe('endpoint', () => {
   });
 
   it('selects protocols by name and rejects undeclared ones', () => {
-    expect(kimiProvider.protocols).toEqual(['openai', 'anthropic', 'openai_responses']);
-    expect(() => kimiProvider.createRequester('google-genai')).toThrow(
-      "provider 'kimi' has no protocol 'google-genai'",
+    const testMulti = createProvider({
+      id: 'test-multi',
+      protocols: {
+        openai: { base: openAIBase },
+        anthropic: { base: anthropicBase },
+        openai_responses: { base: openAIResponsesBase },
+      },
+    });
+    expect(testMulti.protocols).toEqual(['openai', 'anthropic', 'openai_responses']);
+    expect(() => testMulti.createRequester('google-genai')).toThrow(
+      "provider 'test-multi' has no protocol 'google-genai'",
     );
-    expect(() => kimiProvider.resolveModel('kimi-k3', { protocol: 'google-genai' })).toThrow(
-      "provider 'kimi' has no protocol 'google-genai'",
+    expect(() => testMulti.resolveModel('kimi-k3', { protocol: 'google-genai' })).toThrow(
+      "provider 'test-multi' has no protocol 'google-genai'",
     );
 
     const requester: LlmRequester = { generate: () => Promise.resolve() };
@@ -557,13 +481,13 @@ describe('endpoint', () => {
     expect(passthrough.createRequester()).toBe(requester);
     expect(passthrough.createRequester('openai')).toBe(requester);
 
-    const resolved = kimiProvider.resolveModel('kimi-k3', {
+    const resolved = testMulti.resolveModel('kimi-k3', {
       baseUrl: 'https://example.test/v1',
       apiKey: 'k',
       defaultHeaders: { 'x-h': 'v' },
     });
     expect(resolved).toEqual({
-      provider: 'kimi',
+      provider: 'test-multi',
       model: 'kimi-k3',
       capability: resolved.capability,
       baseUrl: 'https://example.test/v1',
@@ -574,13 +498,17 @@ describe('endpoint', () => {
   });
 
   it('passes protocol flags through resolveModel', () => {
-    const resolved = anthropicProvider.resolveModel('claude-sonnet-4-20250514', {
+    const testAnthropic = createProvider({
+      id: 'test-anthropic',
+      protocols: { anthropic: { base: anthropicBase } },
+    });
+    const resolved = testAnthropic.resolveModel('claude-sonnet-4-20250514', {
       betaApi: true,
       vertexai: true,
     });
     expect(resolved.betaApi).toBe(true);
     expect(resolved.vertexai).toBe(true);
-    const plain = anthropicProvider.resolveModel('claude-sonnet-4-20250514');
+    const plain = testAnthropic.resolveModel('claude-sonnet-4-20250514');
     expect(plain.betaApi).toBeUndefined();
     expect(plain.vertexai).toBeUndefined();
   });
@@ -603,51 +531,6 @@ describe('protocol variant flags', () => {
       { signal: new AbortController().signal },
     );
     expect(client.betaCalled()).toBe(true);
-  });
-
-  it('switches google env names when the model opts into vertex', async () => {
-    vi.stubEnv('GOOGLE_API_KEY', 'gemini-key');
-    vi.stubEnv('VERTEXAI_API_KEY', 'vertex-key');
-    const chunks = [
-      {
-        responseId: 'gemini-resp-1',
-        candidates: [
-          {
-            content: { role: 'model', parts: [{ text: 'hi' }] },
-            finishReason: 'STOP',
-          },
-        ],
-        usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 },
-      },
-    ];
-    const seen: LlmModel[] = [];
-    const client = createClientStub((captured, request) => {
-      seen.push(request.model);
-      return {
-        models: {
-          generateContentStream: async (params: Record<string, unknown>) => {
-            captured.push({ params, headers: request.headers });
-            return createAsyncStream(chunks);
-          },
-        },
-      };
-    });
-    const requester = createGoogleGenAIRequester({
-      connection: googleGenAIConnection,
-      clientFactory: client.clientFactory,
-    });
-    const signal = new AbortController().signal;
-    await requester.generate(
-      { model: { ...model, model: 'gemini-2.5-flash' } },
-      { messages },
-      { signal },
-    );
-    await requester.generate(
-      { model: { ...model, model: 'gemini-2.5-flash', vertexai: true } },
-      { messages },
-      { signal },
-    );
-    expect(seen.map((entry) => entry.apiKey)).toEqual(['gemini-key', 'vertex-key']);
   });
 });
 

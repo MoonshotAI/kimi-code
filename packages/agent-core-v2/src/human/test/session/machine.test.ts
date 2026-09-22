@@ -24,11 +24,7 @@ import {
   type AgentActorRef,
 } from '#/session/machine';
 import { createEventStore } from '#/eventStore/eventStore';
-import { journalFromBranch } from '#/eventStore/journal';
-import { MemoryBackend } from '#/store/backend/memory';
-import { TreeStore } from '#/store/store';
-import type { BranchRef } from '#/store/types';
-import type { Tree } from '#/store/tree';
+import { memoryJournal, type SyncStoreJournal } from '#/eventStore/journal';
 import { testScopeFactory } from '#/test/agent/scope-factory';
 
 const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
@@ -72,29 +68,31 @@ function sendCreate(
 }
 
 interface TestEnv {
-  tree: Tree;
-  open(branch: string, from?: BranchRef): Promise<AgentEventStore>;
+  open(branch: string): Promise<AgentEventStore>;
+  fork(source: AgentEventStore, branch: string): Promise<AgentEventStore>;
 }
 
 async function testEnv(): Promise<TestEnv> {
-  const backend = new MemoryBackend();
-  const store = await TreeStore.open(backend, {});
-  const tree = await store.tree('test');
+  const journals = new Map<string, SyncStoreJournal>();
+  const journalFor = (branch: string): SyncStoreJournal => {
+    let journal = journals.get(branch);
+    if (journal === undefined) {
+      journal = memoryJournal({ tree: 'memory', branch });
+      journals.set(branch, journal);
+    }
+    return journal;
+  };
   return {
-    tree,
-    open: (branch, from) => {
-      if (!tree.has(branch)) {
-        tree.createBranch(branch, from !== undefined ? { from } : undefined);
+    open: (branch) => createEventStore({ journal: journalFor(branch), slices: agentSlices }),
+    fork: async (source, branch) => {
+      const journal = memoryJournal({ tree: 'memory', branch });
+      journals.set(branch, journal);
+      for (const record of journalFor(source.ref.branch).readSync()) {
+        await journal.append({ type: record.type, kind: record.kind, data: record.data });
       }
-      return createEventStore({ journal: journalFromBranch(tree.openBranch(branch), tree), slices: agentSlices });
+      return createEventStore({ journal, slices: agentSlices });
     },
   };
-}
-
-function forkStore(env: TestEnv, source: AgentEventStore, branch: string): Promise<AgentEventStore> {
-  const sourceBranch = env.tree.openBranch(source.ref.branch);
-  const head = sourceBranch.head;
-  return env.open(branch, head === null ? undefined : { branch: sourceBranch.name, seq: head });
 }
 
 function agentRef(session: SessionActor, agentId: string): AgentActorRef {
@@ -383,7 +381,7 @@ describe('session machine agent fork', () => {
     session.on('agent.forked', (event) =>
       forked.push({ agentId: event.agentId, branchId: event.branchId }),
     );
-    const storeB = await forkStore(env, storeA, 'b');
+    const storeB = await env.fork(storeA, 'b');
     session.send({
       type: 'agent.fork',
       sourceId: 'a',
