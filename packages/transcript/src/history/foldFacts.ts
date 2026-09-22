@@ -306,6 +306,9 @@ export function foldWireRecordFacts(
     };
     tasks.set(taskId, task);
     if (record.type === 'task.started') {
+      if (info.kind === 'agent' && typeof info.agentId === 'string' && info.agentId.length > 0) {
+        subagentTasks.set(info.agentId, taskId);
+      }
       const refId = `ref-${taskId}`;
       if (!usedRefIds.has(refId)) {
         usedRefIds.add(refId);
@@ -354,18 +357,22 @@ export function foldWireRecordFacts(
         const agentId = record['subagentId'];
         if (typeof agentId !== 'string') break;
         const taskId = subagentTasks.get(agentId) ?? agentId;
-        const task = tasks.get(taskId);
-        if (task === undefined) break;
         const state = record.type === 'subagent.completed' ? 'completed'
           : record.type === 'subagent.failed' ? 'failed'
             : record.type === 'subagent.cancelled' ? 'killed' : 'running';
-        tasks.set(taskId, {
-          ...task,
-          state,
-          endedAt: state === 'running' ? undefined : recordTimeIso(record),
-          resultSummary: typeof record['resultSummary'] === 'string' ? record['resultSummary'] : task.resultSummary,
-          error: typeof record['error'] === 'string' ? record['error'] : task.error,
-        });
+        const terminalise = (key: string): void => {
+          const task = tasks.get(key);
+          if (task === undefined) return;
+          tasks.set(key, {
+            ...task,
+            state,
+            endedAt: state === 'running' ? undefined : recordTimeIso(record),
+            resultSummary: typeof record['resultSummary'] === 'string' ? record['resultSummary'] : task.resultSummary,
+            error: typeof record['error'] === 'string' ? record['error'] : task.error,
+          });
+        };
+        terminalise(taskId);
+        if (taskId !== agentId) terminalise(agentId);
         break;
       }
       case 'tools.update_store': {

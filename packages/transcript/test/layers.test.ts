@@ -1517,6 +1517,19 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(folded.tasks.find((task) => task.taskId === 'reused')?.resultSummary).toBeUndefined();
   });
 
+  it('adopts the task registered after a spawn and keeps both task representations in sync', () => {
+    const folded = foldWireRecordFacts([
+      { type: 'subagent.spawned', subagentId: 'child', subagentName: 'explore', parentAgentId: 'main', parentToolCallId: 'tower', runInBackground: false, time: 1000 },
+      { type: 'task.started', info: { taskId: 'task-9', kind: 'agent', status: 'running', agentId: 'child', detached: false, startedAt: 1100 }, time: 1100 },
+      { type: 'subagent.completed', subagentId: 'child', resultSummary: 'done', time: 2000 },
+    ], baseWithMarker(), { agentId: 'main' });
+    expect(folded.tasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ taskId: 'task-9', agentId: 'child', state: 'completed', resultSummary: 'done' }),
+      expect.objectContaining({ taskId: 'child', agentId: 'child', state: 'completed', resultSummary: 'done' }),
+    ]));
+    expect(folded.tasks.every((task) => task.state === 'completed')).toBe(true);
+  });
+
   it('returns the base snapshot unchanged when no fact records exist (old sessions)', () => {
     const base = baseWithMarker();
     const folded = foldWireRecordFacts(
