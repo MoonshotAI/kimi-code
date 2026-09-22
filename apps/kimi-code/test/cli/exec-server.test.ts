@@ -213,7 +213,7 @@ describe('light entry import graph', () => {
 
   it('reaches the executor implementation only through a dynamic import of the server subpath', () => {
     const source = readFileSync(resolve(srcRoot, 'cli/exec-server.ts'), 'utf-8');
-    expect(source).toContain(`import('@moonshot-ai/remote-exec/server')`);
+    expect(source).toContain(`import('@moonshot-ai/agent-core-v2/remote/server')`);
     expect(source).not.toMatch(/^\s*import\s+.*['"]@moonshot-ai\//m);
   });
 });

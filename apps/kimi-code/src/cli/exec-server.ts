@@ -7,9 +7,12 @@
  * mega-module (`@moonshot-ai/kimi-code-sdk`) would pull in full registration
  * (config/OAuth/telemetry/session services) at import time, so the executor
  * reaches its implementation exclusively through a dynamic import of
- * `@moonshot-ai/remote-exec/server` — the spec-sanctioned exception to the
- * "CLI consumes core capabilities only via the SDK" rule (remote-environment
- * spec §6/§10). `test/cli/exec-server.test.ts` guards this import graph.
+ * `@moonshot-ai/agent-core-v2/remote/server` — the single engine subpath the
+ * CLI may touch, sanctioned as the exception to the "CLI consumes core
+ * capabilities only via the SDK" rule (remote-environment spec §6/§10). That
+ * subpath is import-graph-isolated from the engine root (enforced by
+ * agent-core-v2's check-import-boundaries), so the light-entry property
+ * holds. `test/cli/exec-server.test.ts` guards this import graph.
  *
  * Wire discipline: stdout carries protocol frames only; every diagnostic
  * (usage errors, startup failures, executor logs) goes to stderr.
@@ -74,7 +77,7 @@ export async function runExecServerCommand(listen: string): Promise<number> {
     return 2;
   }
   try {
-    const { runExecServer } = await import('@moonshot-ai/remote-exec/server');
+    const { runExecServer } = await import('@moonshot-ai/agent-core-v2/remote/server');
     return await runExecServer({ version: resolveExecutorVersion() });
   } catch (error) {
     process.stderr.write(

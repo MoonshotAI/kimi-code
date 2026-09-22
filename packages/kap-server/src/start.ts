@@ -35,7 +35,7 @@ import {
 import {
   RemoteEnvironmentProviderFactory,
   type RemoteEnvironmentProviderFactoryOptions,
-} from '@moonshot-ai/remote-exec';
+} from '@moonshot-ai/agent-core-v2/remote';
 import { createAsyncApiDocument } from './protocol/asyncapi';
 import Fastify, { type FastifyInstance } from 'fastify';
 

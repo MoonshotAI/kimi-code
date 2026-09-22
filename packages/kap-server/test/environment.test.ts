@@ -57,8 +57,8 @@ function resolveTsxCli(): string {
 }
 
 function resolveExecServerFixture(): string {
-  const packageJson = require.resolve('@moonshot-ai/remote-exec/package.json');
-  return join(dirname(packageJson), 'test', 'fixtures', 'exec-server-child.ts');
+  const packageJson = require.resolve('@moonshot-ai/agent-core-v2/package.json');
+  return join(dirname(packageJson), 'test', 'remote', 'fixtures', 'exec-server-child.ts');
 }
 
 const DYING_SCRIPT = 'process.stderr.write("kimi: command not found\\n"); process.exit(127)';

@@ -21,7 +21,7 @@ import {
   type Scope,
   type WorkspaceInstance,
 } from '@moonshot-ai/agent-core-v2';
-import { HandshakeError } from '@moonshot-ai/remote-exec';
+import { HandshakeError } from '@moonshot-ai/agent-core-v2/remote';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';

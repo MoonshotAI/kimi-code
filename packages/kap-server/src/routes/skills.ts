@@ -38,7 +38,7 @@ import {
   type MergeAllAvailableSkillsConfig,
   IAgentProfileService,
 } from '@moonshot-ai/agent-core-v2';
-import { HandshakeError } from '@moonshot-ai/remote-exec';
+import { HandshakeError } from '@moonshot-ai/agent-core-v2/remote';
 import { join } from 'node:path';
 import { z } from 'zod';
 
