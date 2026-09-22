@@ -1,16 +1,16 @@
 import { closeSync, openSync, readSync } from 'node:fs';
 
+import { monoNowMs } from '#/_base/utils/monotonic';
+
 export interface ClockSources {
   wallNow(): number;
 
   monoNowMs(): number;
 }
 
-const systemMonoNowMs = (): number => Number(process.hrtime.bigint() / 1_000_000n);
-
 export const SYSTEM_CLOCKS: ClockSources = {
   wallNow: () => Date.now(),
-  monoNowMs: systemMonoNowMs,
+  monoNowMs,
 };
 
 export function resolveClockSources(spec?: string, debug = false): ClockSources {
@@ -26,7 +26,7 @@ export function resolveClockSources(spec?: string, debug = false): ClockSources 
     }
     return {
       wallNow: () => readFileWall(filePath),
-      monoNowMs: systemMonoNowMs,
+      monoNowMs,
     };
   }
 

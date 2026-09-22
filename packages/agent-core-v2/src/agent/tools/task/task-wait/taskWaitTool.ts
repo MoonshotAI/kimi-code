@@ -16,6 +16,7 @@ import { formatTaskList } from '#/agent/tools/task/task-list/taskListTool';
 import { IFlagService } from '#/app/flag/flag';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { abortError, isAbortError, linkAbortSignal } from '#/_base/utils/abort';
+import { monoNowMs } from '#/_base/utils/monotonic';
 import { WAIT_FOR_FLAG_ID } from './flag';
 import { IWaitForTool, WaitForInputSchema, type WaitForInput } from './task-wait';
 import WAIT_FOR_DESCRIPTION from './task-wait.md?raw';
@@ -98,7 +99,7 @@ export function startWaitProgress(
 ): WaitForProgressHandle {
   if (onUpdate === undefined) return { stop: () => {}, tick: () => {} };
   const tick = (): void => {
-    onUpdate(waitForProgressUpdate(args, tasks.list(true).length, startedAt, Date.now()));
+    onUpdate(waitForProgressUpdate(args, tasks.list(true).length, startedAt, monoNowMs()));
   };
   tick();
   const interval = setInterval(tick, PROGRESS_INTERVAL_MS);
@@ -145,7 +146,7 @@ export class WaitForTool implements IWaitForTool {
         output: 'WaitFor is disabled: the wait_for experimental flag is off.',
       };
     }
-    const startedAt = Date.now();
+    const startedAt = monoNowMs();
     const timeoutMs = args.timeout * 1000;
     const runningAtStart = this.tasks.list(true);
 
@@ -252,7 +253,7 @@ export class WaitForTool implements IWaitForTool {
       formatPlainObject({
         waitStatus: 'timed_out',
         taskId: args.task_id,
-        waitedMs: Date.now() - startedAt,
+        waitedMs: monoNowMs() - startedAt,
         timeoutMs,
       }),
       'The wait ended before the task finished — a timeout is not an error. Call WaitFor again to keep waiting, or continue with other work; completion also arrives via automatic notification.',
@@ -270,7 +271,7 @@ export class WaitForTool implements IWaitForTool {
         waitStatus: 'interrupted',
         reason: 'steer',
         taskId: args.task_id,
-        waitedMs: Date.now() - startedAt,
+        waitedMs: monoNowMs() - startedAt,
         timeoutMs,
       }),
       'New input ended this wait early. Read the new input before deciding what to do next. Background tasks have not been stopped; completion still arrives via automatic notification.',
@@ -292,7 +293,7 @@ export class WaitForTool implements IWaitForTool {
       formatPlainObject({
         waitStatus: 'completed',
         taskId: finished.taskId,
-        waitedMs: Date.now() - startedAt,
+        waitedMs: monoNowMs() - startedAt,
         timeoutMs,
       }),
       '',
@@ -352,7 +353,7 @@ export class WaitForTool implements IWaitForTool {
     this.telemetry.track2('wait_for_completed', {
       outcome,
       timeout_ms: timeoutMs,
-      waited_ms: Date.now() - startedAt,
+      waited_ms: monoNowMs() - startedAt,
       has_task_id: args.task_id !== undefined,
       extra_completed_count: extraCompletedCount,
     });
