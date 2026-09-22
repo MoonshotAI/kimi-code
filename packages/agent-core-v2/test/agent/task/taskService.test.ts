@@ -618,6 +618,47 @@ describe('AgentTaskService', () => {
     expect(abortReason).toBe('Session closed');
   });
 
+  it('dispose settles non-terminal tasks as killed and persists the terminal state', async () => {
+    const writes = stubTaskWrites();
+    const svc = ix.get(IAgentTaskService);
+    const first = svc.registerTask(fakeProcessTask());
+    const second = svc.registerTask(fakeProcessTask());
+
+    disposables.dispose();
+    await waitForCondition(
+      () =>
+        writes.filter((write) => write.taskId === first).length >= 2 &&
+        writes.filter((write) => write.taskId === second).length >= 2,
+    );
+
+    for (const taskId of [first, second]) {
+      expect(svc.getTask(taskId)).toMatchObject({ status: 'killed', stopReason: 'Session closed' });
+      expect(writes.filter((write) => write.taskId === taskId).at(-1)).toMatchObject({
+        status: 'killed',
+        stopReason: 'Session closed',
+        terminalNotificationSuppressed: true,
+      });
+    }
+  });
+
+  it('dispose records the durable termination event before the agent deactivates', async () => {
+    const { records } = capturingWire();
+    const svc = ix.get(IAgentTaskService);
+    const taskId = svc.registerTask(fakeProcessTask());
+    const agentContext = ix.get(IAgentScopeContext).agentContext;
+
+    (svc as AgentTaskService).dispose();
+    eventBus.deactivateAgent(agentContext);
+    await Promise.resolve();
+
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        type: 'task.terminated',
+        info: expect.objectContaining({ taskId, status: 'killed' }),
+      }),
+    );
+  });
+
   it('scope disposal requests SIGKILL when a process ignores SIGTERM', async () => {
     const stdout = new Readable({ read() {} });
     const stderr = new Readable({ read() {} });

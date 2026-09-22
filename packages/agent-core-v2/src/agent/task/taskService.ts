@@ -796,6 +796,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
   override dispose(): void {
     if (!this.keepAliveOnExit()) {
+      void this.suppressAllTerminalNotifications();
       for (const entry of this.tasks.values()) {
         if (TERMINAL_STATUSES.has(entry.status)) continue;
         if (entry.timeoutHandle !== undefined) {
@@ -808,6 +809,10 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
           entry.abortController.abort(SESSION_CLOSED_REASON);
         }
         this.forceStopOnDispose(entry);
+        void this.settleTask(entry, {
+          status: 'killed',
+          stopReason: SESSION_CLOSED_REASON,
+        }).catch(() => {});
       }
     }
     super.dispose();
@@ -1039,6 +1044,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     if (this.marksTerminalNotificationSuppressed(entry)) {
       entry.terminalNotificationSuppressed = true;
     }
+    this.fireTerminalEffects(entry);
     if (entry.outputPersistStarted) {
       await this.persistLive(entry);
     } else {
@@ -1052,7 +1058,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       entry.terminalNotificationSuppressed = true;
       await this.persistLive(entry);
     }
-    this.fireTerminalEffects(entry);
     foregroundRelease?.resolve('terminal');
     this.resolveWaiters(entry);
     return true;

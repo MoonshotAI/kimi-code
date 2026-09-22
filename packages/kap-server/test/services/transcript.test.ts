@@ -2879,6 +2879,66 @@ describe('AgentTranscriptProjector', () => {
     }
   });
 
+  it('readColdSnapshot reports tasks without a termination record as lost once the session is cold', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-lost-task-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        {
+          type: 'task.started',
+          info: {
+            taskId: 'task_1',
+            kind: 'process',
+            description: 'pnpm test',
+            status: 'running',
+            startedAt: 6000,
+            endedAt: null,
+          },
+          time: 6000,
+        },
+        {
+          type: 'task.started',
+          info: {
+            taskId: 'task_2',
+            kind: 'process',
+            description: 'node build',
+            status: 'running',
+            startedAt: 7000,
+            endedAt: null,
+          },
+          time: 7000,
+        },
+        {
+          type: 'task.terminated',
+          info: {
+            taskId: 'task_2',
+            kind: 'process',
+            description: 'node build',
+            status: 'completed',
+            startedAt: 7000,
+            endedAt: 9000,
+          },
+          outputTail: 'built',
+          time: 9000,
+        },
+      ];
+      await writeFile(
+        join(wireDir, 'wire.jsonl'),
+        `${records.map((r) => JSON.stringify(r)).join('\n')}\n`,
+      );
+
+      const snapshot = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
+
+      expect(snapshot!.tasks.map((task) => [task.taskId, task.state])).toEqual([
+        ['task_1', 'lost'],
+        ['task_2', 'completed'],
+      ]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('readColdSnapshot projects question requests onto the wire shape without rewriting the log', async () => {
     const home = await mkdtemp(join(tmpdir(), 'transcript-cold-question-'));
     try {
