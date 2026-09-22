@@ -87,9 +87,6 @@ importers:
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../../packages/agent-core-v2
-      '@moonshot-ai/git-hardening':
-        specifier: workspace:^
-        version: link:../../packages/git-hardening
       '@moonshot-ai/kap-server':
         specifier: workspace:^
         version: link:../../packages/kap-server
@@ -516,9 +513,6 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.3.6)
-      '@moonshot-ai/git-hardening':
-        specifier: workspace:^
-        version: link:../git-hardening
       '@moonshot-ai/kimi-code-oauth':
         specifier: workspace:^
         version: link:../oauth
@@ -637,8 +631,6 @@ importers:
       tsx:
         specifier: ^4.21.0
         version: 4.21.0
-
-  packages/git-hardening: {}
 
   packages/kaos:
     dependencies:
