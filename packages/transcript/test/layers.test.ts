@@ -1518,17 +1518,44 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(folded.tasks.find((task) => task.taskId === 'failed')?.usage).toBeUndefined();
   });
 
-  it('adopts the task registered after a spawn and keeps both task representations in sync', () => {
+  it('adopts the spawn placeholder into the task registered afterwards', () => {
     const folded = foldWireRecordFacts([
-      { type: 'subagent.spawned', subagentId: 'child', subagentName: 'explore', parentAgentId: 'main', parentToolCallId: 'tower', runInBackground: false, time: 1000 },
+      { type: 'subagent.spawned', subagentId: 'child', subagentName: 'explore', parentAgentId: 'main', parentToolCallId: 'tower', runInBackground: false, description: 'review the diff', model: 'k2', time: 1000 },
       { type: 'task.started', info: { taskId: 'task-9', kind: 'agent', status: 'running', agentId: 'child', detached: false, startedAt: 1100 }, time: 1100 },
       { type: 'subagent.completed', subagentId: 'child', resultSummary: 'done', usage: { inputOther: 3, output: 4, inputCacheRead: 0, inputCacheCreation: 0 }, time: 2000 },
     ], baseWithMarker(), { agentId: 'main' });
+    expect(folded.tasks).toEqual([
+      expect.objectContaining({
+        taskId: 'task-9', agentId: 'child', state: 'completed', resultSummary: 'done',
+        description: 'review the diff', model: 'k2',
+        startedAt: new Date(1000).toISOString(),
+        usage: { inputOther: 3, output: 4, inputCacheRead: 0, inputCacheCreation: 0 },
+      }),
+    ]);
+  });
+
+  it('terminalises a background member spawned before its task was registered', () => {
+    const folded = foldWireRecordFacts([
+      { type: 'subagent.spawned', subagentId: 'worker', subagentName: 'tower-worker', parentAgentId: 'main', parentToolCallId: 'tower-spawn', runInBackground: true, description: 'build the feature', time: 1000 },
+      { type: 'task.started', info: { taskId: 'task-7', kind: 'agent', status: 'running', agentId: 'worker', detached: true, startedAt: 1100 }, time: 1100 },
+      { type: 'task.terminated', info: { taskId: 'task-7', kind: 'agent', status: 'lost', agentId: 'worker', detached: true, startedAt: 1100, endedAt: 3000 }, time: 3000 },
+    ], baseWithMarker(), { agentId: 'main' });
+    expect(folded.tasks).toEqual([
+      expect.objectContaining({ taskId: 'task-7', agentId: 'worker', state: 'lost', detached: true, description: 'build the feature' }),
+    ]);
+  });
+
+  it('keeps a terminal subagent record in sync with a placeholder left by an earlier generation', () => {
+    const folded = foldWireRecordFacts([
+      { type: 'subagent.spawned', subagentId: 'worker', subagentName: 'explore', parentAgentId: 'main', parentToolCallId: 'agent-a', runInBackground: false, time: 1000 },
+      { type: 'subagent.spawned', subagentId: 'worker', subagentName: 'explore', parentAgentId: 'main', parentToolCallId: 'agent-b', runInBackground: false, taskId: 'task-7', time: 2000 },
+      { type: 'subagent.failed', subagentId: 'worker', error: 'offline', time: 3000 },
+    ], baseWithMarker(), { agentId: 'main' });
     expect(folded.tasks).toEqual(expect.arrayContaining([
-      expect.objectContaining({ taskId: 'task-9', agentId: 'child', state: 'completed', resultSummary: 'done', usage: { inputOther: 3, output: 4, inputCacheRead: 0, inputCacheCreation: 0 } }),
-      expect.objectContaining({ taskId: 'child', agentId: 'child', state: 'completed', resultSummary: 'done' }),
+      expect.objectContaining({ taskId: 'task-7', state: 'failed', error: 'offline' }),
+      expect.objectContaining({ taskId: 'worker', state: 'failed', error: 'offline' }),
     ]));
-    expect(folded.tasks.every((task) => task.state === 'completed')).toBe(true);
+    expect(folded.tasks).toHaveLength(2);
   });
 
   it('returns the base snapshot unchanged when no fact records exist (old sessions)', () => {

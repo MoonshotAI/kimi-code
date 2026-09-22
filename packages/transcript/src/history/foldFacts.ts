@@ -302,11 +302,27 @@ export function foldWireRecordFacts(
   const subagentTasks = new Map<string, string>();
   const subagentRefs = new Map<string, Map<string, { ref: AgentRef; index?: number }>>();
 
+  const adoptSpawnPlaceholder = (agentId: string, taskId: string): TranscriptTask | undefined => {
+    subagentTasks.set(agentId, taskId);
+    if (agentId === taskId) return undefined;
+    const placeholder = tasks.get(agentId);
+    if (placeholder === undefined || placeholder.kind !== 'subagent') return undefined;
+    tasks.delete(agentId);
+    return placeholder;
+  };
+
   const upsertTask = (record: HistoryWireRecord): void => {
     const info = record['info'] as TaskInfoPayload | undefined;
     if (info === undefined || typeof info.taskId !== 'string') return;
     const taskId = info.taskId;
-    const prev = tasks.get(taskId);
+    const adopted =
+      record.type === 'task.started' &&
+      info.kind === 'agent' &&
+      typeof info.agentId === 'string' &&
+      info.agentId.length > 0
+        ? adoptSpawnPlaceholder(info.agentId, taskId)
+        : undefined;
+    const prev = tasks.get(taskId) ?? adopted;
     const status = info.status;
     const task: TranscriptTask = {
       ...prev,
@@ -328,9 +344,6 @@ export function foldWireRecordFacts(
     };
     tasks.set(taskId, task);
     if (record.type === 'task.started') {
-      if (info.kind === 'agent' && typeof info.agentId === 'string' && info.agentId.length > 0) {
-        subagentTasks.set(info.agentId, taskId);
-      }
       const refId = `ref-${taskId}`;
       if (!usedRefIds.has(refId)) {
         usedRefIds.add(refId);
