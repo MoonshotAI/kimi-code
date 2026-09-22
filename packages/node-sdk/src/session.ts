@@ -119,8 +119,9 @@ export class Session {
   /**
    * Re-read this live session's persisted replay without reloading it, so the
    * state returned by {@link getResumeState} reflects everything the engine
-   * has recorded so far. Unlike {@link reloadSession} this is safe while a
-   * turn is running: it folds the on-disk wire and leaves the runtime alone.
+   * has recorded so far (records still being written are flushed first).
+   * Unlike {@link reloadSession} this is safe while a turn is running: it
+   * folds the on-disk wire and leaves the runtime alone.
    */
   async refreshResumeState(options?: {
     readonly replayTurnLimit?: number;

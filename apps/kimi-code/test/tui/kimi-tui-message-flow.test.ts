@@ -10,6 +10,7 @@ import {
   setCapabilities,
 } from '@moonshot-ai/pi-tui';
 import type {
+  AgentReplayRecord,
   ApprovalRequest,
   ApprovalResponse,
   Event,
@@ -9512,6 +9513,205 @@ describe('KimiTUI session tabs', () => {
     expect(harness.resumeSession).not.toHaveBeenCalled();
     expect(driver.state.editor.getText()).toBe('');
     expect(driver.tabs.at(1)?.draft).toBe('draft in tab two');
+  });
+
+  function makeEmittingSession(id: string, overrides: Record<string, unknown> = {}) {
+    const listeners = new Set<(event: Event) => void>();
+    const session = makeSession({
+      id,
+      onEvent: vi.fn((listener: (event: Event) => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      }),
+      ...overrides,
+    });
+    const emit = (event: Record<string, unknown>): void => {
+      for (const listener of [...listeners]) {
+        listener({ agentId: 'main', sessionId: id, ...event } as unknown as Event);
+      }
+    };
+    return { session, emit };
+  }
+
+  /** Feed raw terminal input to the TUI-level input listeners, where the tab shortcuts live. */
+  function pressKeys(driver: MessageDriver, data: string): void {
+    const listeners = (driver.state.ui as unknown as { inputListeners: Set<(data: string) => unknown> })
+      .inputListeners;
+    for (const listener of listeners) listener(data);
+  }
+
+  function countOccurrences(text: string, needle: string): number {
+    return text.split(needle).length - 1;
+  }
+
+  it('refuses tab switches while a picker resume replaces the active tab session', async () => {
+    const first = makeSession({ id: 'ses-1' });
+    const second = makeSession({ id: 'ses-2' });
+    const third = makeSession({ id: 'ses-3' });
+    let finishResume: ((session: unknown) => void) | undefined;
+    const resumeSession = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          finishResume = resolve;
+        }),
+    );
+    const { driver } = await makeDriver(first, {
+      ...tabsEnabled(),
+      createSession: vi.fn(async () => second),
+      resumeSession,
+      listSessions: vi.fn(async () => [
+        { id: 'ses-3', title: 'Third', workDir: '/tmp/proj-a', updatedAt: Date.now() },
+      ]),
+    });
+    driver.handleUserInput('/new tab');
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-2');
+    });
+
+    await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    picker.handleInput('\r');
+    await vi.waitFor(() => {
+      expect(resumeSession).toHaveBeenCalledOnce();
+    });
+
+    // Alt+1 and /tab 1 while the in-place resume is in flight.
+    pressKeys(driver, `${ESC}1`);
+    driver.handleUserInput('/tab 1');
+    await vi.waitFor(() => {
+      expect(
+        countOccurrences(stripSgr(renderTranscript(driver)), 'A session switch is already in progress.'),
+      ).toBe(2);
+    });
+    expect(driver.getCurrentSessionId()).toBe('ses-2');
+    expect(first.refreshResumeState).not.toHaveBeenCalled();
+
+    finishResume?.(third);
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-3');
+    });
+    // The resume replaced the tab it started from; the other tab is untouched.
+    expect(second.close).toHaveBeenCalledOnce();
+    expect(first.close).not.toHaveBeenCalled();
+    expect(driver.tabs.all.map((tab) => tab.session.id)).toEqual(['ses-1', 'ses-3']);
+    expect(driver.tabs.activeTabIndex).toBe(1);
+
+    // With the resume settled, switching works again.
+    pressKeys(driver, `${ESC}1`);
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-1');
+    });
+    expect(third.close).not.toHaveBeenCalled();
+  });
+
+  it('rebuilds the in-progress step of a background tab from its events on switching back', async () => {
+    const interrupted =
+      'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
+    let persisted: AgentReplayRecord[] = [];
+    const { session: first, emit } = makeEmittingSession('ses-1', {
+      getResumeState: vi.fn(() => ({
+        sessionMetadata: {},
+        agents: {
+          main: {
+            config: { modelAlias: 'k2' },
+            context: { history: [], tokenCount: 0 },
+            permission: { mode: 'manual', rules: [] },
+            plan: null,
+            background: [],
+            replay: persisted,
+          },
+        },
+      })),
+    });
+    const second = makeSession({ id: 'ses-2' });
+    const { driver } = await makeDriver(first, {
+      ...tabsEnabled(),
+      createSession: vi.fn(async () => second),
+    });
+    driver.sessionEventHandler.startSubscription();
+
+    emit({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } });
+    emit({ type: 'turn.step.started', turnId: 1, step: 1, stepId: 'step-1' });
+    emit({ type: 'assistant.delta', turnId: 1, delta: 'Streaming the first ' });
+
+    driver.handleUserInput('/new tab');
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-2');
+    });
+
+    // The step keeps streaming in the background, then starts a tool.
+    emit({ type: 'assistant.delta', turnId: 1, delta: 'half of the answer.' });
+    emit({
+      type: 'tool.call.started',
+      turnId: 1,
+      toolCallId: 'call-1',
+      name: 'Bash',
+      args: { command: 'echo step-marker' },
+    });
+    // What a fold of the on-disk wire holds at this point: the step's
+    // persisted text and tool call, plus the synthetic result the fold adds
+    // for a call that is still running.
+    persisted = [
+      {
+        type: 'message',
+        time: 1,
+        message: { role: 'user', content: [{ type: 'text', text: 'Run it' }], toolCalls: [] },
+      },
+      {
+        type: 'message',
+        time: 2,
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Streaming the first half of the answer.' }],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'call-1',
+              name: 'Bash',
+              arguments: JSON.stringify({ command: 'echo step-marker' }),
+            },
+          ],
+        },
+      },
+      {
+        type: 'message',
+        time: 3,
+        message: {
+          role: 'tool',
+          content: [{ type: 'text', text: interrupted }],
+          toolCalls: [],
+          toolCallId: 'call-1',
+          isError: true,
+        },
+      },
+    ] as unknown as AgentReplayRecord[];
+
+    driver.handleUserInput('/tab 1');
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-1');
+    });
+    const switched = stripSgr(renderTranscript(driver));
+    expect(switched).toContain('Run it');
+    expect(countOccurrences(switched, 'Streaming the first half of the answer.')).toBe(1);
+    expect(countOccurrences(switched, 'echo step-marker')).toBe(1);
+    expect(switched).not.toContain('interrupted before its result');
+    expect(driver.state.appState.streamingPhase).not.toBe('idle');
+
+    // Live events continue the rebuilt step without a gap or a repeat.
+    emit({ type: 'tool.result', turnId: 1, toolCallId: 'call-1', output: 'step-output-ok', isError: false });
+    emit({ type: 'turn.step.started', turnId: 1, step: 2, stepId: 'step-2' });
+    emit({ type: 'assistant.delta', turnId: 1, delta: 'Final words.' });
+    emit({ type: 'turn.ended', turnId: 1, reason: 'completed' });
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('Final words.');
+    });
+    const finished = stripSgr(renderTranscript(driver));
+    expect(countOccurrences(finished, 'Streaming the first half of the answer.')).toBe(1);
+    expect(countOccurrences(finished, 'Final words.')).toBe(1);
+    expect(countOccurrences(finished, 'echo step-marker')).toBe(1);
+    expect(driver.state.appState.streamingPhase).toBe('idle');
   });
 
   it('closes every hosted session on shutdown', async () => {

@@ -1,6 +1,7 @@
 import type {
   AgentReplayRecord,
   ContextMessage,
+  Event,
   GoalChange,
   PermissionMode,
   ResumedAgentState,
@@ -38,6 +39,7 @@ import {
   formatHookResultMessageForTranscript,
   isTerminalBackgroundTask,
   limitReplayRecordsByTurn,
+  omitInProgressStepRecords,
   REPLAY_TURN_LIMIT,
   replayBackgroundProjection,
   replayEntry,
@@ -115,7 +117,15 @@ function preserveBundleHookResults(
 export class SessionReplayRenderer {
   constructor(private readonly host: SessionReplayHost) {}
 
-  async hydrateFromReplay(session: Session): Promise<boolean> {
+  /**
+   * Render the session's replay. `inProgressStep` holds the live events of a
+   * step still running (a session tab re-attached mid-step): that step is
+   * left out here, for the caller to render from those events.
+   */
+  async hydrateFromReplay(
+    session: Session,
+    inProgressStep: readonly Event[] = [],
+  ): Promise<boolean> {
     this.host.setAppState({ isReplaying: true });
     try {
       const main = session.getResumeState()?.agents['main'];
@@ -125,7 +135,7 @@ export class SessionReplayRenderer {
       }
 
       this.hydrateSnapshot(main);
-      this.renderRecords(main);
+      this.renderRecords(main, inProgressStep);
       this.applyTerminalBackgroundAgentStatuses(main);
       this.host.sessionEventHandler.notifications.restore(session.getResumeState());
       this.host.mergeAllTurnSteps();
@@ -222,9 +232,10 @@ export class SessionReplayRenderer {
   // Record rendering
   // ---------------------------------------------------------------------------
 
-  private renderRecords(agent: ResumedAgentState): void {
+  private renderRecords(agent: ResumedAgentState, inProgressStep: readonly Event[]): void {
     const context = createReplayRenderContext();
-    const records = [...preserveBundleHookResults(agent.replay, REPLAY_TURN_LIMIT)];
+    const replay = omitInProgressStepRecords(agent.replay, inProgressStep);
+    const records = [...preserveBundleHookResults(replay, REPLAY_TURN_LIMIT)];
     for (let i = 0; i < records.length; i++) {
       i = this.renderRecordWithBundleLookahead(context, records, i);
     }

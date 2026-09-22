@@ -41,6 +41,7 @@ function makeHost() {
   return {
     state,
     terminal,
+    tabsEnabled: () => true,
     onTabsChanged: vi.fn(),
     onBackgroundTurnStarted: vi.fn(),
     onBackgroundTurnEnded: vi.fn(),
@@ -79,13 +80,14 @@ describe('SessionTabsController', () => {
     const tab = open(controller, session);
     controller.activate(tab);
     controller.stopWatching(tab);
-    expect(session.listenerCount()).toBe(0);
+    // Only the always-on step recorder is left.
+    expect(session.listenerCount()).toBe(1);
 
     controller.suspend(tab, { draft: 'half typed', queuedMessages: [], running: true });
     expect(controller.active).toBeUndefined();
     expect(tab.status).toBe('running');
     expect(tab.draft).toBe('half typed');
-    expect(session.listenerCount()).toBe(1);
+    expect(session.listenerCount()).toBe(2);
 
     session.emit({ type: 'assistant.delta', turnId: 1, delta: 'hi' } as never);
     expect(tab.unread).toBe(true);
@@ -111,11 +113,63 @@ describe('SessionTabsController', () => {
     // host's own subscription is up.
     controller.activate(tab);
     expect(tab.unread).toBe(false);
-    expect(session.listenerCount()).toBe(1);
+    expect(session.listenerCount()).toBe(2);
     session.emit({ type: 'turn.started', turnId: 3 } as never);
     expect(tab.status).toBe('running');
     controller.stopWatching(tab);
+    expect(session.listenerCount()).toBe(1);
+
+    controller.remove(tab);
     expect(session.listenerCount()).toBe(0);
+  });
+
+  it('records the main agent in-progress step in the foreground and the background', () => {
+    const host = makeHost();
+    const controller = new SessionTabsController(host);
+    const session = makeSession('a');
+    const tab = open(controller, session);
+    controller.activate(tab);
+    controller.stopWatching(tab);
+    expect(controller.inProgressStep(tab)).toEqual({ generation: 0, events: [] });
+
+    session.emit({ type: 'turn.started', turnId: 1 } as never);
+    // Output outside a step is covered by the replay and not recorded.
+    session.emit({ type: 'assistant.delta', turnId: 1, delta: 'stray' } as never);
+    session.emit({ type: 'turn.step.started', turnId: 1, step: 1 } as never);
+    session.emit({ type: 'assistant.delta', turnId: 1, delta: 'Hello' } as never);
+    session.emit({ type: 'assistant.delta', agentId: 'agent-7', turnId: 1, delta: 'child' } as never);
+    session.emit({ type: 'agent.status.updated', contextTokens: 5 } as never);
+    // Leaving for the background keeps the same recording going.
+    controller.suspend(tab, { draft: '', queuedMessages: [], running: true });
+    session.emit({ type: 'tool.call.started', turnId: 1, toolCallId: 'call-1', name: 'Shell' } as never);
+    const running = controller.inProgressStep(tab);
+    expect(running.events.map((event) => event.type)).toEqual([
+      'turn.step.started',
+      'assistant.delta',
+      'tool.call.started',
+    ]);
+
+    session.emit({ type: 'turn.step.completed', turnId: 1, step: 1 } as never);
+    const settled = controller.inProgressStep(tab);
+    expect(settled.events).toEqual([]);
+    expect(settled.generation).toBeGreaterThan(running.generation);
+
+    session.emit({ type: 'turn.step.started', turnId: 1, step: 2 } as never);
+    expect(controller.inProgressStep(tab).events).toHaveLength(1);
+    session.emit({ type: 'turn.ended', turnId: 1, reason: 'completed' } as never);
+    expect(controller.inProgressStep(tab).events).toEqual([]);
+  });
+
+  it('records no steps while tabs are disabled', () => {
+    const host = { ...makeHost(), tabsEnabled: () => false };
+    const controller = new SessionTabsController(host);
+    const session = makeSession('a');
+    const tab = open(controller, session);
+    controller.activate(tab);
+    controller.stopWatching(tab);
+    expect(session.listenerCount()).toBe(0);
+    session.emit({ type: 'turn.step.started', turnId: 1, step: 1 } as never);
+    expect(controller.inProgressStep(tab).events).toEqual([]);
   });
 
   it('marks a background tab as waiting when a request arrives, but not the active one', () => {

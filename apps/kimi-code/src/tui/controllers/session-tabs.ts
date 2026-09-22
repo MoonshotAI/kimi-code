@@ -11,6 +11,12 @@
  * in that tab instead of surfacing over the active one; switching to the
  * tab attaches the UI hooks and the queued prompt shows immediately.
  *
+ * Every tab also records the events of its in-progress step. The persisted
+ * replay the host re-folds on a switch trails the live stream (a step's text
+ * lands on disk only once the model finishes streaming it, a tool call only
+ * once it starts running), so the host renders the step itself from these
+ * events instead of the partial replay.
+ *
  * Switching is a view change, never a lifecycle event: the controller never
  * closes a session by itself — `remove` only drops the bookkeeping and lets
  * the host close the session explicitly (tab close, shutdown, delete).
@@ -18,6 +24,7 @@
 
 import type { Event, Session, TurnEndedEvent, TurnStartedEvent } from '@moonshot-ai/kimi-code-sdk';
 
+import { MAIN_AGENT_ID } from '#/tui/constant/kimi-tui';
 import { ApprovalController } from '#/tui/reverse-rpc/approval/controller';
 import { QuestionController } from '#/tui/reverse-rpc/question/controller';
 import type { TUIState } from '#/tui/tui-state';
@@ -51,8 +58,18 @@ export interface SessionTabSuspendSnapshot {
   readonly running: boolean;
 }
 
+/** The main agent's events of a tab's in-progress step, see `SessionTabsController.inProgressStep`. */
+export interface SessionTabStepSnapshot {
+  /** Bumped at every step and turn boundary: an unchanged generation means the same step. */
+  readonly generation: number;
+  /** Starts with the step's `turn.step.started`; empty between steps. */
+  readonly events: readonly Event[];
+}
+
 export interface SessionTabsHost {
   readonly state: TUIState;
+  /** Steps are only recorded when tabs are enabled: a single session never re-attaches mid-step. */
+  tabsEnabled(): boolean;
   /** The tab list, order, active tab, or a tab's state/title/unread changed. */
   onTabsChanged(): void;
   /** Turn boundaries of background sessions; staging leases bound to those turns retire here. */
@@ -69,10 +86,35 @@ const OUTPUT_EVENT_TYPES: ReadonlySet<Event['type']> = new Set([
   'compaction.completed',
 ]);
 
+/** Main-agent events that stream a step's visible output. */
+const STEP_STREAM_EVENT_TYPES: ReadonlySet<Event['type']> = new Set([
+  'assistant.delta',
+  'thinking.delta',
+  'tool.call.delta',
+  'tool.call.started',
+  'tool.progress',
+  'tool.result',
+]);
+
+/** Events after which the persisted replay covers everything recorded so far. */
+const STEP_END_EVENT_TYPES: ReadonlySet<Event['type']> = new Set([
+  'turn.started',
+  'turn.step.completed',
+  'turn.step.interrupted',
+  'turn.ended',
+]);
+
+interface StepRecorder {
+  generation: number;
+  events: Event[];
+  readonly unsubscribe: () => void;
+}
+
 export class SessionTabsController {
   private readonly tabs: SessionTab[] = [];
   private activeIndex = -1;
   private readonly watchers = new Map<string, () => void>();
+  private readonly stepRecorders = new Map<SessionTab, StepRecorder>();
 
   constructor(private readonly host: SessionTabsHost) {}
 
@@ -106,7 +148,7 @@ export class SessionTabsController {
 
   /** Register a session as a new (background) tab appended to the strip. */
   open(session: Session): SessionTab {
-    const tab = createTab(session);
+    const tab = this.createTab(session);
     this.tabs.push(tab);
     this.host.onTabsChanged();
     return tab;
@@ -122,7 +164,7 @@ export class SessionTabsController {
     const index = this.tabs.indexOf(previous);
     if (index < 0) return this.open(session);
     this.forget(previous);
-    const tab = createTab(session);
+    const tab = this.createTab(session);
     this.tabs.splice(index, 0, tab);
     this.host.onTabsChanged();
     return tab;
@@ -175,6 +217,17 @@ export class SessionTabsController {
   }
 
   /**
+   * The events of the tab's in-progress step, recorded whether the tab is in
+   * the foreground or not. Everything before the step's start is covered by
+   * the persisted replay; this is what a replay folded right now may lack.
+   */
+  inProgressStep(tab: SessionTab): SessionTabStepSnapshot {
+    const recorder = this.stepRecorders.get(tab);
+    if (recorder === undefined) return { generation: 0, events: [] };
+    return { generation: recorder.generation, events: [...recorder.events] };
+  }
+
+  /**
    * A reverse-RPC request (approval / question) reached `tab`. In the
    * background that means the session is now waiting for the user: flag the
    * tab and raise the terminal notification the foreground panel would have.
@@ -191,9 +244,26 @@ export class SessionTabsController {
     const index = this.tabs.indexOf(tab);
     if (index < 0) return;
     this.unwatch(tab);
+    this.stepRecorders.get(tab)?.unsubscribe();
+    this.stepRecorders.delete(tab);
     tab.approval.cancelAll('tab closed');
     tab.question.cancelAll('tab closed');
     this.tabs.splice(index, 1);
+  }
+
+  private createTab(session: Session): SessionTab {
+    const tab = createTab(session);
+    if (this.host.tabsEnabled()) {
+      const recorder: StepRecorder = {
+        generation: 0,
+        events: [],
+        unsubscribe: session.onEvent((event) => {
+          recordStepEvent(recorder, event);
+        }),
+      };
+      this.stepRecorders.set(tab, recorder);
+    }
+    return tab;
   }
 
   private watch(tab: SessionTab): void {
@@ -256,6 +326,19 @@ function createTab(session: Session): SessionTab {
     draft: '',
     queuedMessages: [],
   };
+}
+
+function recordStepEvent(recorder: StepRecorder, event: Event): void {
+  if (event.agentId !== MAIN_AGENT_ID) return;
+  if (event.type === 'turn.step.started') {
+    recorder.generation += 1;
+    recorder.events = [event];
+  } else if (STEP_END_EVENT_TYPES.has(event.type)) {
+    recorder.generation += 1;
+    recorder.events = [];
+  } else if (recorder.events.length > 0 && STEP_STREAM_EVENT_TYPES.has(event.type)) {
+    recorder.events.push(event);
+  }
 }
 
 function hasPendingRequest(tab: SessionTab): boolean {

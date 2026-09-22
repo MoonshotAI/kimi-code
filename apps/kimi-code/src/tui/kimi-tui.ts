@@ -123,8 +123,10 @@ import {
   NO_ACTIVE_SESSION_MESSAGE,
   PRODUCT_NAME,
   SESSION_LIST_PAGE_SIZE,
+  SESSION_TRANSITION_BUSY_MESSAGE,
   SESSIONLESS_STARTUP_NOTICE,
   TAB_CLOSE_CONFIRM_WINDOW_MS,
+  TAB_HYDRATE_ATTEMPTS,
   TUI_TABS_FLAG,
 } from './constant/kimi-tui';
 import { MEDIA_INGESTION_SUBMIT_WAIT_MS } from './constant/media';
@@ -363,8 +365,16 @@ export class KimiTUI {
   private readonly detachedQuestionController = new QuestionController();
   private readonly reverseRpcDisposers: Array<() => void> = [];
   private disposeTabShortcuts: (() => void) | undefined;
-  /** One tab transition (switch / open / close) at a time; a second one is refused while it runs. */
+  /**
+   * Session transitions in flight. A tab transition (switch, open in a tab,
+   * close) is exclusive. A replace transition (resume or /new in place,
+   * reload, delete from the picker, lazy creation) may nest another one —
+   * a failed delete falls back to /new — but never runs alongside a tab
+   * transition: both swap the active tab's session across awaits, and tab
+   * shortcuts fire even while a dialog holds the input.
+   */
   private tabTransitionInFlight = false;
+  private replaceTransitionDepth = 0;
   /** Armed by a refused close of a running tab; a repeat within the window closes it. */
   private pendingTabClose: { readonly sessionId: string; readonly armedAt: number } | undefined;
   private skillCommands: readonly KimiSlashCommand[] = [];
@@ -499,6 +509,7 @@ export class KimiTUI {
 
     this.tabs = new SessionTabsController({
       state: this.state,
+      tabsEnabled: () => this.tabsEnabled(),
       onTabsChanged: () => {
         this.refreshTabStrip();
       },
@@ -2357,7 +2368,9 @@ export class KimiTUI {
     // partially initialized session.
     if (this.ensureSessionPromise !== null) return this.ensureSessionPromise;
     if (this.session !== undefined) return this.session;
-    this.ensureSessionPromise = this.lazyCreateSession().finally(() => {
+    this.ensureSessionPromise = this.runReplaceTransition(undefined, () =>
+      this.lazyCreateSession(),
+    ).finally(() => {
       this.ensureSessionPromise = null;
     });
     return this.ensureSessionPromise;
@@ -2498,9 +2511,9 @@ export class KimiTUI {
   async activateTab(tab: SessionTab): Promise<boolean> {
     if (this.tabs.indexOf(tab) < 0) return false;
     if (this.tabs.active === tab) return true;
+    await this.waitForLazyCreation();
     if (!this.beginTabTransition()) return false;
     try {
-      await this.waitForLazyCreation();
       if (this.state.appState.isReplaying) {
         this.showError('Cannot switch tabs while history is replaying.');
         return false;
@@ -2530,16 +2543,40 @@ export class KimiTUI {
 
   /**
    * Claim the tab-transition lock. Switch, open-in-tab and close all await
-   * a hydrate (sync, replay fold) mid-way; a second transition interleaving
-   * with that would subscribe the wrong session, so it is refused instead.
+   * a hydrate (sync, replay fold) mid-way; any other session transition
+   * interleaving with that would subscribe or close the wrong session, so
+   * the tab transition is refused instead. So is one during startup, which
+   * installs the first session without the lock.
    */
   private beginTabTransition(): boolean {
-    if (this.tabTransitionInFlight) {
-      this.showStatus('A tab switch is already in progress.', 'warning');
+    if (
+      this.tabTransitionInFlight ||
+      this.replaceTransitionDepth > 0 ||
+      this.state.startupState === 'pending'
+    ) {
+      this.showStatus(SESSION_TRANSITION_BUSY_MESSAGE, 'warning');
       return false;
     }
     this.tabTransitionInFlight = true;
     return true;
+  }
+
+  /**
+   * Run a transition that replaces the active tab's session (or installs the
+   * first one), refused while a tab transition is in flight. Without the
+   * tabs flag there never is one, so this is a plain call.
+   */
+  private async runReplaceTransition<T>(refused: T, transition: () => Promise<T>): Promise<T> {
+    if (this.tabTransitionInFlight) {
+      this.showStatus(SESSION_TRANSITION_BUSY_MESSAGE, 'warning');
+      return refused;
+    }
+    this.replaceTransitionDepth += 1;
+    try {
+      return await transition();
+    } finally {
+      this.replaceTransitionDepth -= 1;
+    }
   }
 
   async activateTabAt(index: number): Promise<boolean> {
@@ -2570,6 +2607,7 @@ export class KimiTUI {
    */
   async closeTab(tab: SessionTab, options: { readonly force?: boolean } = {}): Promise<boolean> {
     if (this.tabs.indexOf(tab) < 0) return false;
+    await this.waitForLazyCreation();
     if (!this.beginTabTransition()) return false;
     try {
       return await this.closeTabLocked(tab, options);
@@ -2582,7 +2620,6 @@ export class KimiTUI {
     tab: SessionTab,
     options: { readonly force?: boolean },
   ): Promise<boolean> {
-    await this.waitForLazyCreation();
     const isActive = this.tabs.active === tab;
     if (isActive && this.tabs.size === 1) {
       // No instant exit on a stray Alt+W: leaving the last session is what
@@ -2623,8 +2660,10 @@ export class KimiTUI {
       this.unloadActiveTab('tab closed');
       this.clearForegroundSessionState();
       this.tabs.remove(tab);
-      await this.closeTabSession(tab);
+      // Attach the neighbour before awaiting the close: with no session
+      // attached meanwhile, a prompt would lazily create one.
       if (next !== undefined) await this.attachTab(next, { hydrate: true });
+      await this.closeTabSession(tab);
     } else {
       this.tabs.remove(tab);
       await this.closeTabSession(tab);
@@ -2663,7 +2702,7 @@ export class KimiTUI {
     this.harness.setTelemetryContext({ sessionId: tab.session.id });
     this.registerSessionHandlers(tab);
     this.syncAdditionalDirs(tab.session);
-    if (options.hydrate) await this.hydrateTabView(tab);
+    if (options.hydrate && !(await this.hydrateTabView(tab))) return;
     this.state.queuedMessages = tab.queuedMessages;
     tab.queuedMessages = [];
     this.updateQueueDisplay();
@@ -2688,8 +2727,14 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  private async hydrateTabView(tab: SessionTab): Promise<void> {
+  /**
+   * Rebuild the transcript of a tab coming back to the foreground and follow
+   * its live events. Returns false when the tab lost the foreground meanwhile
+   * — its session is then left alone.
+   */
+  private async hydrateTabView(tab: SessionTab): Promise<boolean> {
     const { session } = tab;
+    const superseded = (): boolean => this.tabs.active !== tab || this.session !== session;
     // The subscription filters on appState.sessionId; set it up front so a
     // failed status sync cannot leave it pointing at the previous tab.
     this.setAppState({ sessionId: session.id });
@@ -2698,6 +2743,7 @@ export class KimiTUI {
     } catch (error) {
       this.showError(`Failed to sync session state: ${formatErrorMessage(error)}`);
     }
+    if (superseded()) return false;
     this.updateTerminalTitle();
     try {
       await this.refreshSkillCommands(session);
@@ -2705,33 +2751,41 @@ export class KimiTUI {
     } catch {
       /* keep the switched session usable even if dynamic skills fail */
     }
-    // The background watcher stays attached until the live subscription is
-    // up, so a turn that ends while the replay is being folded still lands
-    // on the tab. Output that arrives during the fold flags the tab unread;
-    // one more fold then picks it up before the live events take over.
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      tab.unread = false;
+    if (superseded()) return false;
+    // The facade's resume state is a snapshot from create/resume time; a
+    // background tab may have run several turns since, so re-fold the
+    // persisted replay (safe mid-turn, unlike a reload). Within the running
+    // step the replay trails the live stream, so that step is left out of it
+    // and rebuilt from the tab's recorded step events instead. A step
+    // boundary during the fold may leave a replay older than the step the
+    // recorder now holds: fold again.
+    for (let attempt = 1; ; attempt += 1) {
+      const { generation } = this.tabs.inProgressStep(tab);
       this.clearTranscriptAndRedraw({ keepStagedMedia: true });
       try {
-        // The facade's resume state is a snapshot from create/resume time; a
-        // background tab may have run several turns since, so re-fold the
-        // persisted replay (safe mid-turn, unlike a reload) before rendering.
         await session.refreshResumeState({ replayTurnLimit: REPLAY_FETCH_TURN_LIMIT });
-        await this.sessionReplay.hydrateFromReplay(session);
+        if (superseded()) return false;
+        await this.sessionReplay.hydrateFromReplay(session, this.tabs.inProgressStep(tab).events);
       } catch (error) {
         this.showError(`Failed to replay session history: ${formatErrorMessage(error)}`);
         break;
       }
-      if (!tab.unread) break;
+      if (superseded()) return false;
+      if (this.tabs.inProgressStep(tab).generation === generation) break;
+      if (attempt >= TAB_HYDRATE_ATTEMPTS) break;
     }
-    this.sessionEventHandler.startSubscription();
-    this.tabs.stopWatching(tab);
+    // From here on nothing awaits: the step backlog is taken, the live
+    // subscription attached and the background watcher dropped in one tick,
+    // so every event reaches the transcript exactly once.
     tab.unread = false;
     // A turn that started before the switch is still streaming in the
     // engine (a pending prompt implies one too): show the waiting state so
     // the footer, queueing and Esc/Ctrl+C behave as they would mid-turn,
-    // then let the live events take over.
+    // then let the step backlog and the live events take over.
     if (tab.status === 'running' || tab.status === 'waiting') this.markTurnInProgress();
+    this.sessionEventHandler.startSubscription(session, this.tabs.inProgressStep(tab).events);
+    this.tabs.stopWatching(tab);
+    return true;
   }
 
   private markTurnInProgress(): void {
@@ -3119,19 +3173,18 @@ export class KimiTUI {
     if (mode === 'tab') {
       if (!this.beginTabTransition()) return false;
       try {
-        return await this.resumeSessionIntoTab(targetSessionId);
+        return await this.resumeSessionLocked(targetSessionId, mode);
       } finally {
         this.tabTransitionInFlight = false;
       }
     }
-    return this.resumeSessionIntoTab(targetSessionId, mode);
+    return this.runReplaceTransition(false, () => this.resumeSessionLocked(targetSessionId, mode));
   }
 
-  private async resumeSessionIntoTab(
+  private async resumeSessionLocked(
     targetSessionId: string,
-    mode: SessionOpenMode = 'tab',
+    mode: SessionOpenMode,
   ): Promise<boolean> {
-
     let session: Session;
     try {
       session = await this.harness.resumeSession({
@@ -3144,14 +3197,21 @@ export class KimiTUI {
       return false;
     }
 
-    await this.switchToSession(session, `Resumed session (${session.id}).`, mode);
+    await this.switchToSessionLocked(session, `Resumed session (${session.id}).`, mode);
     return true;
   }
 
-  async switchToSession(
+  /** Switch the active tab to `session` (closing its current one) and replay its history. */
+  async switchToSession(session: Session, statusMessage: string): Promise<void> {
+    await this.runReplaceTransition(undefined, () =>
+      this.switchToSessionLocked(session, statusMessage, 'replace'),
+    );
+  }
+
+  private async switchToSessionLocked(
     session: Session,
     statusMessage: string,
-    mode: SessionOpenMode = 'replace',
+    mode: SessionOpenMode,
   ): Promise<void> {
     await this.openSession(session, mode);
     await this.syncRuntimeState(session);
@@ -3182,6 +3242,15 @@ export class KimiTUI {
   }
 
   async reloadCurrentSessionView(session: Session, statusMessage: string): Promise<void> {
+    await this.runReplaceTransition(undefined, () =>
+      this.reloadCurrentSessionViewLocked(session, statusMessage),
+    );
+  }
+
+  private async reloadCurrentSessionViewLocked(
+    session: Session,
+    statusMessage: string,
+  ): Promise<void> {
     const previous = this.unloadActiveTab('reloading session');
     // The harness hands back the same facade for a live session; a fresh one
     // (the session had been unloaded) takes over the tab's slot.
@@ -3221,6 +3290,9 @@ export class KimiTUI {
       return;
     }
     if (mode === 'tab') {
+      // A first-use lazy creation may still be in flight: wait it out so the
+      // new tab never races the pending prompt's session.
+      await this.waitForLazyCreation();
       if (!this.beginTabTransition()) return;
       try {
         await this.createNewSessionLocked(mode);
@@ -3229,14 +3301,10 @@ export class KimiTUI {
       }
       return;
     }
-    await this.createNewSessionLocked(mode);
+    await this.runReplaceTransition(undefined, () => this.createNewSessionLocked(mode));
   }
 
   private async createNewSessionLocked(mode: SessionOpenMode): Promise<void> {
-    // A first-use lazy creation may still be in flight: wait it out so the
-    // new tab never races the pending prompt's session.
-    await this.waitForLazyCreation();
-
     let session: Session;
     try {
       session = await this.createSessionFromCurrentState();
@@ -4494,6 +4562,12 @@ export class KimiTUI {
     // Invalidate any pending scope-toggle remount: it would replace the picker
     // that is about to lock itself for the delete.
     this.sessionPickerScopeRequestToken += 1;
+    // Deleting the current session replaces it, and deleting a background
+    // tab's drops that tab: either must not interleave with a tab switch.
+    await this.runReplaceTransition(undefined, () => this.deleteSessionFromPickerLocked(session));
+  }
+
+  private async deleteSessionFromPickerLocked(session: SessionRow): Promise<void> {
     try {
       await this.waitForLazyCreation();
       if (session.id === this.state.appState.sessionId && this.session !== undefined) {

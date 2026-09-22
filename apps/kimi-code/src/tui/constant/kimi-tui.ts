@@ -19,6 +19,9 @@ export const EXIT_CONFIRM_WINDOW_MS = 1500;
 export const TUI_TABS_FLAG = 'tui_tabs';
 /** A second close request for the same running tab within this window closes it without --force. */
 export const TAB_CLOSE_CONFIRM_WINDOW_MS = 5000;
+export const SESSION_TRANSITION_BUSY_MESSAGE = 'A session switch is already in progress.';
+/** Replay folds a tab switch tries before accepting one that raced a step boundary. */
+export const TAB_HYDRATE_ATTEMPTS = 3;
 // Time window for treating two consecutive Esc presses as a double-Esc, which
 // opens the undo selector. Kept short (double-click feel) so two deliberate
 // presses far apart don't accidentally trigger undo.
