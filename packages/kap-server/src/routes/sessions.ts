@@ -172,6 +172,20 @@ const sessionActionRequestSchema = z.preprocess(
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
+const MULTI_SESSION_DISABLED_MSG =
+  'multi-session support is disabled; set KIMI_CODE_EXPERIMENTAL_WEB_MULTI_SESSION=1 to enable it';
+
+interface StatusReply {
+  code(status: number): StatusReply;
+  send(payload?: unknown): unknown;
+}
+
+function sendMultiSessionDisabled(reply: unknown, requestId: string): void {
+  (reply as StatusReply)
+    .code(404)
+    .send(errEnvelope(ErrorCode.CAPABILITY_UNSUPPORTED, MULTI_SESSION_DISABLED_MSG, requestId));
+}
+
 export interface SessionsRoutesDeps {
   readonly sessionEventCursor: (sessionId: string) => Promise<{ seq: number; epoch: string }>;
   readonly liveSessions: LiveSessionRegistry;
@@ -607,17 +621,25 @@ export function registerSessionsRoutes(
       success: { data: resumeSessionsResponseSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.CAPABILITY_UNSUPPORTED]: {},
       },
       description: 'Resume several sessions in one call so a client can subscribe to all of them',
       tags: ['sessions'],
       operationId: 'resumeSessions',
     },
     async (req, reply) => {
+      if (!deps.liveSessions.enabled()) {
+        sendMultiSessionDisabled(reply, req.id);
+        return;
+      }
       try {
         const sessionIds = [...new Set(req.body.session_ids)];
         const results: ResumeSessionResult[] = [];
+        let quotaExhausted = false;
         for (const sessionId of sessionIds) {
-          results.push(await resumeOne(core, deps.liveSessions, sessionId));
+          const result = await resumeOne(core, deps.liveSessions, sessionId, quotaExhausted);
+          if (result.status === 'quota_exceeded') quotaExhausted = true;
+          results.push(result);
         }
         reply.send(okEnvelope({ results }, req.id));
       } catch (error) {
@@ -636,11 +658,18 @@ export function registerSessionsRoutes(
       method: 'GET',
       path: '/sessions/live',
       success: { data: liveSessionsResponseSchema },
+      errors: {
+        [ErrorCode.CAPABILITY_UNSUPPORTED]: {},
+      },
       description: 'List the sessions currently loaded in memory with their activity and idle state',
       tags: ['sessions'],
       operationId: 'listLiveSessions',
     },
     async (req, reply) => {
+      if (!deps.liveSessions.enabled()) {
+        sendMultiSessionDisabled(reply, req.id);
+        return;
+      }
       reply.send(
         okEnvelope(
           { items: deps.liveSessions.snapshot(), limits: deps.liveSessions.wireLimits() },
@@ -1150,6 +1179,7 @@ async function resumeOne(
   core: Scope,
   liveSessions: LiveSessionRegistry,
   sessionId: string,
+  quotaExhausted: boolean,
 ): Promise<ResumeSessionResult> {
   if (getLiveSessionById(core.accessor, sessionId) !== undefined) {
     return { session_id: sessionId, status: 'already_live' };
@@ -1157,7 +1187,12 @@ async function resumeOne(
   if ((await core.accessor.get(ISessionIndex).get(sessionId)) === undefined) {
     return { session_id: sessionId, status: 'not_found' };
   }
-  const release = await liveSessions.ensureCapacity();
+  if (quotaExhausted) return { session_id: sessionId, status: 'quota_exceeded' };
+  const reservation = await liveSessions.ensureCapacity();
+  if (!reservation.available) {
+    reservation.release();
+    return { session_id: sessionId, status: 'quota_exceeded' };
+  }
   try {
     const handle = await resumeSessionById(core.accessor, sessionId);
     return { session_id: sessionId, status: handle === undefined ? 'not_found' : 'resumed' };
@@ -1168,7 +1203,7 @@ async function resumeOne(
       msg: error instanceof Error ? error.message : String(error),
     };
   } finally {
-    release();
+    reservation.release();
   }
 }
 

@@ -44,6 +44,7 @@ import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import { sessionWarningsResponseSchema } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 
+import { WEB_MULTI_SESSION_FLAG_ENV } from '../src/services/liveSessions/flag';
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
@@ -146,6 +147,7 @@ describe('server-v2 /api/v1/sessions', () => {
   async function restartWithFreshHome(opts?: {
     toml?: string;
     sessionSweepIntervalMs?: number;
+    sessionEvictionGraceMs?: number;
   }): Promise<void> {
     if (server !== undefined) {
       await server.close();
@@ -165,6 +167,7 @@ describe('server-v2 /api/v1/sessions', () => {
       logLevel: 'silent',
       debugEndpoints: true,
       sessionSweepIntervalMs: opts?.sessionSweepIntervalMs,
+      sessionEvictionGraceMs: opts?.sessionEvictionGraceMs,
     });
     base = `http://127.0.0.1:${server.port}`;
   }
@@ -1036,7 +1039,17 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
+  it('answers the multi-session routes with 404 while the flag is off', async () => {
+    const resume = await postJson<null>('/api/v1/sessions/resume', { session_ids: ['nope'] });
+    expect(resume.status).toBe(404);
+    expect(resume.body.code).toBe(40925);
+    const live = await getJson<null>('/api/v1/sessions/live');
+    expect(live.status).toBe(404);
+    expect(live.body.code).toBe(40925);
+  });
+
   it('POST /sessions/resume reports already_live, resumed and not_found per session', async () => {
+    vi.stubEnv(WEB_MULTI_SESSION_FLAG_ENV, '1');
     const cwd = home as string;
     const live = (await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } })).body.data.id;
     const cold = (await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } })).body.data.id;
@@ -1058,11 +1071,13 @@ describe('server-v2 /api/v1/sessions', () => {
   });
 
   it('POST /sessions/resume rejects an empty id list (40001)', async () => {
+    vi.stubEnv(WEB_MULTI_SESSION_FLAG_ENV, '1');
     const { body } = await postJson<null>('/api/v1/sessions/resume', { session_ids: [] });
     expect(body.code).toBe(40001);
   });
 
   it('GET /sessions/live lists loaded sessions with activity, idle time and limits', async () => {
+    vi.stubEnv(WEB_MULTI_SESSION_FLAG_ENV, '1');
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const id = created.body.data.id;
@@ -1098,10 +1113,43 @@ describe('server-v2 /api/v1/sessions', () => {
     });
   });
 
+  it('keeps sessions within the eviction grace and reports quota_exceeded once capacity is gone', async () => {
+    vi.stubEnv(WEB_MULTI_SESSION_FLAG_ENV, '1');
+    await restartWithFreshHome({
+      toml: ['[server]', 'max_live_sessions = 2', 'session_idle_timeout_ms = 0', ''].join('\n'),
+      sessionSweepIntervalMs: 20,
+    });
+    const cwd = home as string;
+    const accessor = (server as RunningServer).core.accessor;
+    const first = (await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } })).body.data.id;
+    const second = (await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } })).body.data.id;
+    const third = (await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } })).body.data.id;
+    await closeSessionById(accessor, second);
+    await closeSessionById(accessor, third);
+
+    const resumed = await postJson<{ results: Array<{ session_id: string; status: string }> }>(
+      '/api/v1/sessions/resume',
+      { session_ids: [second, third, first, 'nope'] },
+    );
+    expect(resumed.body.data.results).toEqual([
+      { session_id: second, status: 'resumed' },
+      { session_id: third, status: 'quota_exceeded' },
+      { session_id: first, status: 'already_live' },
+      { session_id: 'nope', status: 'not_found' },
+    ]);
+    expect(getLiveSessionById(accessor, third)).toBeUndefined();
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(getLiveSessionById(accessor, first)).toBeDefined();
+    expect(getLiveSessionById(accessor, second)).toBeDefined();
+  });
+
   it('closes the oldest idle session beyond max_live_sessions and never a busy one', async () => {
+    vi.stubEnv(WEB_MULTI_SESSION_FLAG_ENV, '1');
     await restartWithFreshHome({
       toml: ['[server]', 'max_live_sessions = 1', 'session_idle_timeout_ms = 0', ''].join('\n'),
       sessionSweepIntervalMs: 20,
+      sessionEvictionGraceMs: 0,
     });
     const cwd = home as string;
     const accessor = (server as RunningServer).core.accessor;
@@ -1129,11 +1177,8 @@ describe('server-v2 /api/v1/sessions', () => {
       '/api/v1/sessions/resume',
       { session_ids: [first] },
     );
-    expect(resumed.body.data.results).toEqual([{ session_id: first, status: 'resumed' }]);
-    expect(getLiveSessionById(accessor, first)).toBeDefined();
-    expect(getLiveSessionById(accessor, second)).toBe(busySession);
-
-    await vi.waitFor(() => expect(getLiveSessionById(accessor, first)).toBeUndefined());
+    expect(resumed.body.data.results).toEqual([{ session_id: first, status: 'quota_exceeded' }]);
+    expect(getLiveSessionById(accessor, first)).toBeUndefined();
     expect(getLiveSessionById(accessor, second)).toBe(busySession);
     const live = await getJson<{ items: LiveSessionWire[] }>('/api/v1/sessions/live');
     expect(live.body.data.items.map((item) => item.session_id)).toEqual([second]);
@@ -1141,6 +1186,7 @@ describe('server-v2 /api/v1/sessions', () => {
   });
 
   it('closes sessions that stay idle past session_idle_timeout_ms', async () => {
+    vi.stubEnv(WEB_MULTI_SESSION_FLAG_ENV, '1');
     await restartWithFreshHome({
       toml: ['[server]', 'max_live_sessions = 0', 'session_idle_timeout_ms = 1', ''].join('\n'),
       sessionSweepIntervalMs: 20,

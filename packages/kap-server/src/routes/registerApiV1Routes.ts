@@ -98,6 +98,7 @@ export async function registerApiV1Routes(
         startedAt: new Date().toISOString(),
         dangerousBypassAuth: opts.dangerousBypassAuth === true,
         webTitle: opts.webTitle,
+        multiSession: () => opts.liveSessions.enabled(),
         getExperimentalFlags: async () => {
           await core.accessor.get(IConfigService).ready;
           return core.accessor.get(IFlagService).snapshot();

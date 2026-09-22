@@ -78,7 +78,10 @@ import {
   shutdownServerTelemetry,
 } from './services/telemetry';
 import { TranscriptService } from './services/transcript/transcriptService';
-import { LiveSessionRegistry } from './services/liveSessions/liveSessionRegistry';
+import {
+  type CapacityReservation,
+  LiveSessionRegistry,
+} from './services/liveSessions/liveSessionRegistry';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
@@ -124,6 +127,7 @@ export interface ServerStartOptions {
   readonly serverVersion?: string;
   readonly telemetry?: boolean;
   readonly sessionSweepIntervalMs?: number;
+  readonly sessionEvictionGraceMs?: number;
 }
 
 export interface RunningServer {
@@ -311,6 +315,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       for (const client of wssDebug.clients) client.terminate();
     }
     configChangedPublisher.close();
+    await liveSessions.dispose();
     await remoteControlManager.close();
     await app.close();
     configWarningSubscription.dispose();
@@ -318,7 +323,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     capabilityInstallSubscription.dispose();
     authFailureLimiter?.dispose();
     modelCatalogRefreshScheduler.dispose();
-    await liveSessions.dispose();
     try {
       await shutdownServerTelemetry(telemetry);
     } catch (error) {
@@ -357,7 +361,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     core,
     logger,
     transcriptService,
-    ensureCapacity: (): Promise<() => void> => liveSessions.ensureCapacity(),
+    ensureCapacity: (): Promise<CapacityReservation> => liveSessions.ensureCapacity(),
+    autoResume: (): boolean => liveSessions.enabled(),
     onSessionTouched: (sessionId): void => liveSessions.touch(sessionId),
   });
   const liveSessions: LiveSessionRegistry = new LiveSessionRegistry({
@@ -367,10 +372,16 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     announceClosed: (sessionId, workspaceId, reason): void =>
       broadcaster.announceSessionClosed(sessionId, workspaceId, reason),
     sweepIntervalMs: opts.sessionSweepIntervalMs,
+    evictionGraceMs: opts.sessionEvictionGraceMs,
   });
   app.addHook('onRequest', (req, _reply, done) => {
     const match = SESSION_REQUEST_PATTERN.exec(req.url);
-    if (match?.[1] !== undefined) liveSessions.touch(decodeURIComponent(match[1]));
+    if (match?.[1] !== undefined) {
+      try {
+        liveSessions.touch(decodeURIComponent(match[1]));
+      } catch {
+      }
+    }
     done();
   });
 

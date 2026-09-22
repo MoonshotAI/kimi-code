@@ -72,13 +72,17 @@ function newAttachCollectors(reportNotFound: boolean): AttachCollectors {
   };
 }
 
+function nonEmpty<T>(items: T[]): T[] | undefined {
+  return items.length > 0 ? items : undefined;
+}
+
 function subscribeAckPayload(collectors: AttachCollectors): Record<string, unknown> {
   return {
     accepted: collectors.accepted,
     not_found: collectors.notFound ?? [],
     resync_required: collectors.resyncRequired,
-    resumed: collectors.resumed,
-    failed: collectors.failed,
+    resumed: nonEmpty(collectors.resumed),
+    failed: nonEmpty(collectors.failed),
     cursors: collectors.serverCursors,
   };
 }
@@ -256,8 +260,8 @@ export class WsConnectionV1 implements BroadcastTarget {
       buildAck(frame.id ?? '', 0, 'success', {
         accepted_subscriptions: collectors.accepted,
         resync_required: collectors.resyncRequired,
-        resumed: collectors.resumed,
-        failed: collectors.failed,
+        resumed: nonEmpty(collectors.resumed),
+        failed: nonEmpty(collectors.failed),
         cursors: collectors.serverCursors,
       }),
     );

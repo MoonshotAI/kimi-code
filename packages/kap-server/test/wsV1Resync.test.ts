@@ -9,9 +9,10 @@ import {
   closeSessionById,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 
+import { WEB_MULTI_SESSION_FLAG_ENV } from '../src/services/liveSessions/flag';
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
@@ -113,6 +114,10 @@ describe('server-v2 /api/v1/ws resync', () => {
     wsUrl = `ws://127.0.0.1:${server.port}/api/v1/ws`;
   });
 
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   afterAll(async () => {
     if (server !== undefined) {
       await server.close();
@@ -195,7 +200,27 @@ describe('server-v2 /api/v1/ws resync', () => {
     await c.closed;
   });
 
+  it('reports cold sessions as not_found without resuming them while the flag is off', async () => {
+    const a = await createSession();
+    await closeSessionById(server!.core.accessor, a);
+
+    const c = await openConn(wsUrl, server!.authTokenService.getToken());
+    await c.next((f) => f.type === 'server_hello');
+    c.send({ type: 'client_hello', id: 'h1', payload: withToken({ client_id: 'cli', subscriptions: [a] }) });
+    const hello = await c.next((f) => f.type === 'ack' && f.id === 'h1');
+    expect(hello.payload).toEqual({ accepted_subscriptions: [], resync_required: [a], cursors: {} });
+
+    c.send({ type: 'subscribe', id: 's1', payload: { session_ids: [a] } });
+    const ack = await c.next((f) => f.type === 'ack' && f.id === 's1');
+    expect(ack.payload).toEqual({ accepted: [], not_found: [a], resync_required: [], cursors: {} });
+    expect(getLiveSessionById(server!.core.accessor, a)).toBeUndefined();
+
+    c.ws.close();
+    await c.closed;
+  });
+
   it('resumes cold sessions on subscribe and streams events from every one of them', async () => {
+    vi.stubEnv(WEB_MULTI_SESSION_FLAG_ENV, '1');
     const a = await createSession();
     const b = await createSession();
     await closeSessionById(server!.core.accessor, a);
@@ -215,8 +240,8 @@ describe('server-v2 /api/v1/ws resync', () => {
       not_found: ['nope'],
       resync_required: [],
       resumed: [a, b],
-      failed: [],
     });
+    expect(ack.payload).not.toHaveProperty('failed');
     expect(getLiveSessionById(server!.core.accessor, a)).toBeDefined();
     expect(getLiveSessionById(server!.core.accessor, b)).toBeDefined();
 
@@ -238,6 +263,7 @@ describe('server-v2 /api/v1/ws resync', () => {
   });
 
   it('resumes cold sessions listed in client_hello subscriptions', async () => {
+    vi.stubEnv(WEB_MULTI_SESSION_FLAG_ENV, '1');
     const a = await createSession();
     await closeSessionById(server!.core.accessor, a);
 
@@ -249,7 +275,6 @@ describe('server-v2 /api/v1/ws resync', () => {
       accepted_subscriptions: [a],
       resync_required: ['nope'],
       resumed: [a],
-      failed: [],
     });
     expect(getLiveSessionById(server!.core.accessor, a)).toBeDefined();
 
@@ -354,6 +379,7 @@ describe('server-v2 /api/v1/ws live session quota', () => {
   let wsUrl: string;
 
   beforeAll(async () => {
+    vi.stubEnv(WEB_MULTI_SESSION_FLAG_ENV, '1');
     home = await mkdtemp(join(tmpdir(), 'kimi-wsv1-quota-'));
     await writeFile(
       join(home, 'config.toml'),
@@ -367,12 +393,14 @@ describe('server-v2 /api/v1/ws live session quota', () => {
       homeDir: home,
       logLevel: 'silent',
       sessionSweepIntervalMs: 20,
+      sessionEvictionGraceMs: 0,
     });
     base = `http://127.0.0.1:${server.port}`;
     wsUrl = `ws://127.0.0.1:${server.port}/api/v1/ws`;
   });
 
   afterAll(async () => {
+    vi.unstubAllEnvs();
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -394,7 +422,7 @@ describe('server-v2 /api/v1/ws live session quota', () => {
     return { id: body.data.id, workspaceId: body.data.workspace_id };
   }
 
-  it('announces event.session.closed to subscribers when the quota evicts their session, and re-subscribing resumes it', async () => {
+  it('evicts an unsubscribed session over quota, never a subscribed one, and lets subscribers overshoot', async () => {
     const first = await createSession();
     const c = await openConn(wsUrl, server!.authTokenService.getToken());
     await c.next((f) => f.type === 'server_hello');
@@ -407,26 +435,30 @@ describe('server-v2 /api/v1/ws live session quota', () => {
     expect(hello.payload).toMatchObject({ accepted_subscriptions: [first.id] });
 
     const second = await createSession();
-    c.send({ type: 'subscribe', id: 's1', payload: { session_ids: [second.id] } });
-    await c.next((f) => f.type === 'ack' && f.id === 's1');
-
     const closed = await c.next((f) => f.type === 'event.session.closed', 5000);
     expect(closed.session_id).toBe('__global__');
     expect(closed.payload).toMatchObject({
-      sessionId: first.id,
-      workspace_id: first.workspaceId,
+      sessionId: second.id,
+      workspace_id: second.workspaceId,
       reason: 'quota',
     });
-    await vi.waitFor(() => expect(getLiveSessionById(server!.core.accessor, first.id)).toBeUndefined());
+    await vi.waitFor(() => expect(getLiveSessionById(server!.core.accessor, second.id)).toBeUndefined());
+    expect(getLiveSessionById(server!.core.accessor, first.id)).toBeDefined();
 
+    c.send({ type: 'subscribe', id: 's1', payload: { session_ids: [second.id] } });
+    const again = await c.next((f) => f.type === 'ack' && f.id === 's1');
+    expect(again.payload).toMatchObject({ accepted: [second.id], resumed: [second.id] });
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(getLiveSessionById(server!.core.accessor, first.id)).toBeDefined();
+    expect(getLiveSessionById(server!.core.accessor, second.id)).toBeDefined();
     const conns = await fetch(`${base}/api/v1/connections`, { headers: authHeaders(server as RunningServer) } as never);
     const listed = (await conns.json()) as { data: { connections: Array<{ subscriptions: string[] }> } };
-    expect(listed.data.connections.some((item) => item.subscriptions.includes(first.id))).toBe(false);
-
-    c.send({ type: 'subscribe', id: 's2', payload: { session_ids: [first.id] } });
-    const again = await c.next((f) => f.type === 'ack' && f.id === 's2');
-    expect(again.payload).toMatchObject({ accepted: [first.id], resumed: [first.id] });
-    expect(getLiveSessionById(server!.core.accessor, first.id)).toBeDefined();
+    expect(
+      listed.data.connections.some(
+        (item) => item.subscriptions.includes(first.id) && item.subscriptions.includes(second.id),
+      ),
+    ).toBe(true);
 
     c.ws.close();
     await c.closed;

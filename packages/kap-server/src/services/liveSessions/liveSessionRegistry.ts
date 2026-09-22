@@ -2,9 +2,11 @@ import {
   IAgentLifecycleService,
   IAgentLoopService,
   IConfigService,
+  IFlagService,
   ISessionActivityView,
   ISessionContext,
   ISessionManager,
+  ISessionTerminalService,
   closeSessionById,
   getLiveSessionById,
   type IDisposable,
@@ -21,9 +23,11 @@ import {
   type LiveSessionLimits,
   type ServerConfig,
 } from './configSection';
+import { WEB_MULTI_SESSION_FLAG_ID } from './flag';
 
 const MIN_SWEEP_INTERVAL_MS = 5_000;
 const MAX_SWEEP_INTERVAL_MS = 60_000;
+export const DEFAULT_EVICTION_GRACE_MS = 60_000;
 
 interface LiveEntry {
   readonly workspaceId: string;
@@ -39,7 +43,13 @@ export interface LiveSessionRegistryDeps {
   readonly announceClosed: (sessionId: string, workspaceId: string, reason: SessionClosedReason) => void;
   readonly logger?: JournalLogger;
   readonly sweepIntervalMs?: number;
+  readonly evictionGraceMs?: number;
   readonly now?: () => number;
+}
+
+export interface CapacityReservation {
+  readonly available: boolean;
+  release(): void;
 }
 
 export class LiveSessionRegistry {
@@ -49,13 +59,17 @@ export class LiveSessionRegistry {
   private readonly subscriptions: IDisposable[] = [];
   private readonly now: () => number;
   private limits: LiveSessionLimits = resolveLiveSessionLimits(undefined);
+  private readonly evictionGraceMs: number;
   private reserved = 0;
+  private quotaQueue: Promise<unknown> = Promise.resolve();
+  private lastWarnedExcess = 0;
   private timer: NodeJS.Timeout | undefined;
   private sweeping: Promise<void> | undefined;
   private disposed = false;
 
   constructor(private readonly deps: LiveSessionRegistryDeps) {
     this.now = deps.now ?? Date.now;
+    this.evictionGraceMs = deps.evictionGraceMs ?? DEFAULT_EVICTION_GRACE_MS;
     const accessor = deps.core.accessor;
     const config = accessor.get(IConfigService);
     const readLimits = (): void => {
@@ -100,6 +114,10 @@ export class LiveSessionRegistry {
     }
   }
 
+  enabled(): boolean {
+    return this.deps.core.accessor.get(IFlagService).enabled(WEB_MULTI_SESSION_FLAG_ID);
+  }
+
   start(): void {
     if (this.disposed || this.timer !== undefined) return;
     const interval =
@@ -119,6 +137,7 @@ export class LiveSessionRegistry {
     this.disposed = true;
     this.stopTimer();
     await this.sweeping?.catch(() => undefined);
+    await this.quotaQueue;
     for (const subscription of this.subscriptions) subscription.dispose();
     this.subscriptions.length = 0;
     for (const entry of this.entries.values()) entry.activitySubscription.dispose();
@@ -176,15 +195,19 @@ export class LiveSessionRegistry {
     return items.toSorted((a, b) => a.idle_ms - b.idle_ms);
   }
 
-  async ensureCapacity(): Promise<() => void> {
-    await this.enforceQuota(1);
-    this.reserved += 1;
+  async ensureCapacity(): Promise<CapacityReservation> {
+    if (!this.enabled()) return { available: true, release: () => undefined };
     let released = false;
-    return () => {
+    const release = (): void => {
       if (released) return;
       released = true;
       this.reserved -= 1;
     };
+    const available = await this.serializeQuota(async () => {
+      this.reserved += 1;
+      return this.enforceQuota();
+    });
+    return { available, release };
   }
 
   sweep(): Promise<void> {
@@ -196,48 +219,61 @@ export class LiveSessionRegistry {
   }
 
   private async runSweep(): Promise<void> {
-    if (this.disposed) return;
+    if (this.disposed || !this.enabled()) return;
     const timeout = this.limits.sessionIdleTimeoutMs;
     if (timeout > 0) {
       const now = this.now();
       for (const [sessionId, entry] of this.entries) {
         if (now - entry.lastActivityAt < timeout) continue;
-        if (this.deps.subscriberCount(sessionId) > 0) continue;
         await this.closeIfIdle(sessionId, 'idle_timeout');
       }
     }
-    await this.enforceQuota(0);
+    await this.serializeQuota(() => this.enforceQuota());
   }
 
-  private async enforceQuota(reserve: number): Promise<void> {
-    if (this.disposed) return;
+  private serializeQuota<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.quotaQueue.then(work, work);
+    this.quotaQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async enforceQuota(): Promise<boolean> {
+    if (this.disposed) return true;
     const max = this.limits.maxLiveSessions;
-    if (max === 0) return;
-    let excess = this.entries.size + this.reserved + reserve - max;
-    if (excess <= 0) return;
+    if (max === 0) return true;
+    let excess = this.entries.size + this.reserved - max;
+    if (excess <= 0) {
+      this.lastWarnedExcess = 0;
+      return true;
+    }
     for (const sessionId of this.candidates()) {
       if (excess <= 0) break;
       if (await this.closeIfIdle(sessionId, 'quota')) excess -= 1;
     }
-    if (excess > 0) {
+    if (excess > 0 && excess !== this.lastWarnedExcess) {
       this.deps.logger?.warn(
         { excess, max_live_sessions: max },
-        'live session quota exceeded; every remaining session is busy',
+        'live session quota exceeded; every remaining session is busy, subscribed or recently active',
       );
     }
+    this.lastWarnedExcess = Math.max(0, excess);
+    return excess <= 0;
   }
 
   private candidates(): string[] {
-    const rank = (sessionId: string): number => (this.deps.subscriberCount(sessionId) > 0 ? 1 : 0);
+    const cutoff = this.now() - this.evictionGraceMs;
     return [...this.entries]
-      .toSorted(([idA, a], [idB, b]) => rank(idA) - rank(idB) || a.lastActivityAt - b.lastActivityAt)
+      .filter(([, entry]) => entry.lastActivityAt <= cutoff)
+      .toSorted(([, a], [, b]) => a.lastActivityAt - b.lastActivityAt)
       .map(([sessionId]) => sessionId);
   }
 
   private async closeIfIdle(sessionId: string, reason: SessionClosedReason): Promise<boolean> {
     if (this.disposed || this.closing.has(sessionId)) return false;
+    if (this.deps.subscriberCount(sessionId) > 0) return false;
     const handle = getLiveSessionById(this.deps.core.accessor, sessionId);
-    if (handle === undefined || !isIdle(handle)) return false;
+    if (handle === undefined || !(await isIdle(handle))) return false;
+    if (this.deps.subscriberCount(sessionId) > 0) return false;
     this.closing.set(sessionId, reason);
     try {
       await closeSessionById(this.deps.core.accessor, sessionId);
@@ -277,7 +313,7 @@ export class LiveSessionRegistry {
     this.entries.delete(sessionId);
     entry.activitySubscription.dispose();
     const reason = this.closing.get(sessionId) ?? 'exit';
-    if (announce && !this.deleting.has(sessionId)) {
+    if (announce && !this.deleting.has(sessionId) && this.enabled()) {
       this.deps.announceClosed(sessionId, entry.workspaceId, reason);
     }
   }
@@ -296,7 +332,7 @@ function readActivity(
   }
 }
 
-function isIdle(handle: ISessionScopeHandle): boolean {
+async function isIdle(handle: ISessionScopeHandle): Promise<boolean> {
   try {
     const activity = handle.accessor.get(ISessionActivityView).state();
     if (activity.busy || activity.pendingInteraction !== 'none') return false;
@@ -307,7 +343,8 @@ function isIdle(handle: ISessionScopeHandle): boolean {
       const loop = agentHandle.accessor.get(IAgentLoopService).snapshot();
       if (loop.state !== 'idle' || loop.queue.length > 0 || loop.hasPendingRequests) return false;
     }
-    return true;
+    const terminals = await handle.accessor.get(ISessionTerminalService).list();
+    return terminals.every((terminal) => terminal.status !== 'running');
   } catch {
     return false;
   }

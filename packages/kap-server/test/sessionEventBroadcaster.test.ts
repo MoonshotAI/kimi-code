@@ -3295,6 +3295,7 @@ describe('SessionEventBroadcaster multi-session', () => {
   let bc: SessionEventBroadcaster;
   let touched: string[];
   let capacityChecks: number;
+  let autoResume: boolean;
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'kimi-broadcaster-multi-'));
@@ -3302,6 +3303,7 @@ describe('SessionEventBroadcaster multi-session', () => {
     eventBus = new FakeEventBus();
     touched = [];
     capacityChecks = 0;
+    autoResume = true;
     bc = new SessionEventBroadcaster({
       eventsDir: dir,
       core: makeCore(sessions, eventBus, {}, (sessionFor) => {
@@ -3311,10 +3313,13 @@ describe('SessionEventBroadcaster multi-session', () => {
       maxBufferSize: 3,
       ensureCapacity: async () => {
         capacityChecks += 1;
-        return () => {
-          capacityChecks -= 1;
+        return {
+          release: () => {
+            capacityChecks -= 1;
+          },
         };
       },
+      autoResume: () => autoResume,
       onSessionTouched: (sessionId) => touched.push(sessionId),
     });
   });
@@ -3341,6 +3346,15 @@ describe('SessionEventBroadcaster multi-session', () => {
     await bc.getCursor('cold-1');
     expect(envelopes.some((e) => e.type === 'turn.started')).toBe(true);
     expect(bc.subscriberCount('cold-1')).toBe(1);
+  });
+
+  it('reports not_found for a cold session without resuming it when auto-resume is off', async () => {
+    autoResume = false;
+    manager.cold.set('cold-off', new FakeLifecycle('cold-off'));
+    const { target } = collectingTarget();
+    expect(await bc.subscribe('cold-off', target)).toEqual({ ok: false, reason: 'not_found' });
+    expect(manager.resumes).toBe(0);
+    expect(sessions.has('cold-off')).toBe(false);
   });
 
   it('shares one resume between concurrent subscribers of the same cold session', async () => {

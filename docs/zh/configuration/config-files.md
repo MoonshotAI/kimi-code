@@ -484,11 +484,11 @@ max_chars = 500000
 
 ## `server`
 
-`server` 控制 `kimi web` 启动的本地服务同时在内存中保留多少个会话。客户端订阅某个会话时按需加载；长时间空闲的会话会被再次卸载。正在执行轮次或有待处理审批的会话永远不会被卸载。把字段设为 `0` 即关闭对应限制。
+`server` 控制 `kimi web` 启动的本地服务同时在内存中保留多少个会话，仅在实验开关 `web_multi_session` 开启时生效（`KIMI_CODE_EXPERIMENTAL_WEB_MULTI_SESSION=1` 或 `[experimental] web_multi_session = true`）。开启后，客户端订阅某个会话时按需加载；长时间空闲的会话会被再次卸载。有客户端订阅、正在执行轮次、有待处理审批或有打开的终端的会话，以及加载或最近一次使用后一分钟内的会话，都不会被卸载。把字段设为 `0` 即关闭对应限制。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `max_live_sessions` | `integer` | `16` | 同时保留在内存中的会话数上限；超出时卸载最久未使用的空闲会话 |
+| `max_live_sessions` | `integer` | `16` | 同时保留在内存中的会话数上限；超出时卸载最久未使用的空闲会话。若所有已加载会话都受保护，则允许暂时超出上限而不卸载 |
 | `session_idle_timeout_ms` | `integer` | `1800000`（30 分钟） | 无人订阅的会话空闲超过该时长后被卸载 |
 
 两个字段都可被环境变量 `KIMI_CODE_SERVER_MAX_LIVE_SESSIONS` 与 `KIMI_CODE_SERVER_SESSION_IDLE_TIMEOUT_MS` 覆盖，优先级高于配置文件。

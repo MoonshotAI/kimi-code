@@ -163,6 +163,7 @@ export class SessionEventBroadcaster {
   private readonly diEventTargets = new Set<BroadcastTarget>();
   private readonly pendingStates = new Map<string, PendingState>();
   private readonly retirements = new Map<string, Promise<void>>();
+  private readonly attaching = new Map<string, number>();
   private readonly activityTrackers = new Map<string, LegacyActivityTracker>();
   private readonly maxBufferSize: number;
   private readonly coreEventSubscription: IDisposable;
@@ -177,7 +178,8 @@ export class SessionEventBroadcaster {
       readonly logger?: JournalLogger;
       readonly maxBufferSize?: number;
       readonly transcriptService?: TranscriptService;
-      readonly ensureCapacity?: () => Promise<() => void>;
+      readonly ensureCapacity?: () => Promise<{ release(): void }>;
+      readonly autoResume?: () => boolean;
       readonly onSessionTouched?: (sessionId: string) => void;
     },
   ) {
@@ -225,15 +227,20 @@ export class SessionEventBroadcaster {
     opts?: { deferTranscriptReset?: boolean; transcriptSince?: Record<string, number> },
   ): Promise<SubscribeResult> {
     const wasLive = getLiveSessionById(this.opts.core.accessor, sessionId) !== undefined;
+    this.attaching.set(sessionId, (this.attaching.get(sessionId) ?? 0) + 1);
     let state: SessionState | undefined;
     try {
-      state = await this.ensureState(sessionId, true);
+      state = await this.ensureState(sessionId, this.opts.autoResume?.() === true);
     } catch (error) {
       return {
         ok: false,
         reason: 'resume_failed',
         msg: error instanceof Error ? error.message : String(error),
       };
+    } finally {
+      const remaining = (this.attaching.get(sessionId) ?? 1) - 1;
+      if (remaining > 0) this.attaching.set(sessionId, remaining);
+      else this.attaching.delete(sessionId);
     }
     if (state === undefined) return { ok: false, reason: 'not_found' };
     this.opts.onSessionTouched?.(sessionId);
@@ -264,7 +271,7 @@ export class SessionEventBroadcaster {
   }
 
   subscriberCount(sessionId: string): number {
-    return this.sessions.get(sessionId)?.targets.size ?? 0;
+    return (this.sessions.get(sessionId)?.targets.size ?? 0) + (this.attaching.get(sessionId) ?? 0);
   }
 
   announceSessionClosed(sessionId: string, workspaceId: string, reason: SessionClosedReason): void {
@@ -669,11 +676,11 @@ export class SessionEventBroadcaster {
   ): Promise<ISessionScopeHandle | undefined> {
     const live = getLiveSessionById(this.opts.core.accessor, sessionId);
     if (live !== undefined || !resume) return live;
-    const release = await this.opts.ensureCapacity?.();
+    const reservation = await this.opts.ensureCapacity?.();
     try {
       return await resumeSessionById(this.opts.core.accessor, sessionId);
     } finally {
-      release?.();
+      reservation?.release();
     }
   }
 

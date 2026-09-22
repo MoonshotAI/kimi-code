@@ -70,12 +70,7 @@ describe('server-v2 boot', () => {
     expect(typeof metaBody.data.server_id).toBe('string');
     expect(typeof metaBody.data.server_version).toBe('string');
     expect(metaBody.data.capabilities).toBeDefined();
-    expect(metaBody.data.capabilities['multi_session']).toEqual({
-      auto_resume: true,
-      batch_resume: true,
-      live_list: true,
-      idle_reaper: true,
-    });
+    expect(metaBody.data.capabilities['multi_session']).toBeUndefined();
 
     const auth = await authedFetch(server, base, '/api/v1/auth');
     expect(auth.status).toBe(200);

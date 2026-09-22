@@ -7,6 +7,7 @@ import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureM
 import { getFeatureRecipes } from '@moonshot-ai/agent-core-v2/features/featureRegistry';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { WEB_MULTI_SESSION_FLAG_ENV } from '../src/services/liveSessions/flag';
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authedFetch } from './helpers/auth';
@@ -70,6 +71,22 @@ describe('/api/v1/meta experimental_flags', () => {
     const base = await boot();
     const flags = await getMetaFlags(base);
     expect(flags['tool-select']).toBe(false);
+  });
+
+  it('advertises multi_session capabilities only while the web_multi_session flag is on', async () => {
+    const base = await boot();
+    const read = async (): Promise<{ multi_session?: unknown }> => {
+      const res = await authedFetch(server as RunningServer, base, '/api/v1/meta');
+      const body = (await res.json()) as { data: { capabilities: { multi_session?: unknown } } };
+      return body.data.capabilities;
+    };
+    expect((await getMetaFlags(base))['web_multi_session']).toBe(false);
+    expect(await read()).not.toHaveProperty('multi_session');
+
+    vi.stubEnv(WEB_MULTI_SESSION_FLAG_ENV, '1');
+    expect(await read()).toMatchObject({
+      multi_session: { auto_resume: true, batch_resume: true, live_list: true, idle_reaper: true },
+    });
   });
 
   it('reports a config-enabled flag from the very first response', async () => {
@@ -210,8 +227,8 @@ describe('/api/v1/meta features', () => {
     const features = await getMetaFeatures(base);
     const expected = getFeatureRecipes()
       .map((recipe) => recipe.name)
-      .sort();
-    expect(features.map((feature) => feature.name).sort()).toEqual(expected);
+      .toSorted();
+    expect(features.map((feature) => feature.name).toSorted()).toEqual(expected);
     for (const feature of features) {
       expect(feature.state).toBe('Active');
       expect(feature.meta).toEqual({});

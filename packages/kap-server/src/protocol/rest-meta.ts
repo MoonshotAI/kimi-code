@@ -16,7 +16,7 @@ export const metaCapabilitiesSchema = z.object({
     batch_resume: z.literal(true),
     live_list: z.literal(true),
     idle_reaper: z.literal(true),
-  }),
+  }).optional(),
 });
 
 export type MetaCapabilities = z.infer<typeof metaCapabilitiesSchema>;

@@ -519,6 +519,8 @@ describe('WsConnectionV1 transcript subscriptions (subscribe_v2)', () => {
 
     const ack = socket.sent.map((f) => JSON.parse(f)).find((f) => f.type === 'ack');
     expect(ack).toMatchObject({ code: 0, payload: { accepted: [], not_found: ['gone'] } });
+    expect(ack.payload).not.toHaveProperty('resumed');
+    expect(ack.payload).not.toHaveProperty('failed');
     expect(conn.subscriptions.size).toBe(0);
     conn.close();
   });

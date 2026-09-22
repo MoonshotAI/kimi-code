@@ -182,7 +182,13 @@ export const resumeSessionsRequestSchema = z.object({
 });
 export type ResumeSessionsRequest = z.infer<typeof resumeSessionsRequestSchema>;
 
-export const resumeSessionStatusSchema = z.enum(['resumed', 'already_live', 'not_found', 'failed']);
+export const resumeSessionStatusSchema = z.enum([
+  'resumed',
+  'already_live',
+  'not_found',
+  'quota_exceeded',
+  'failed',
+]);
 export type ResumeSessionStatus = z.infer<typeof resumeSessionStatusSchema>;
 
 export const resumeSessionResultSchema = z.object({
