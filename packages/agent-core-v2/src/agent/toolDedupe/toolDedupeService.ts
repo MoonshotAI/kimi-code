@@ -21,11 +21,13 @@ import { TurnEnded } from '#/agent/loop/turnOps';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { IAgentToolExecutorService, type ToolCallDupType } from '#/agent/toolExecutor/toolExecutor';
 import type { ContentPart } from '#human/llm/message';
+import { IConfigService } from '#/app/config/config';
 import {
   IAgentToolDedupeService,
   REPEAT_BREAKER_STOP_REASON,
   type ToolDedupeResult,
 } from './toolDedupe';
+import { repeatBreakerEnabled } from './configSection';
 
 const REMINDER_TEXT_1 =
   '\n\n' +
@@ -191,6 +193,7 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IConfigService private readonly configService: IConfigService,
     @IEventBus eventBus: IEventBus,
   ) {
     super();
@@ -527,19 +530,21 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
 
     let finalResult = result;
     let action: 'none' | 'r1' | 'r2' | 'r3' | 'stop' = 'none';
-    if (streak >= REPEAT_FORCE_STOP_STREAK) {
-      finalResult = forceStopResult(result, REMINDER_TEXT_3);
-      action = 'stop';
-      this.forceStoppedInStep = true;
-    } else if (streak >= REPEAT_REMINDER_3_START) {
-      finalResult = appendReminder(result, REMINDER_TEXT_3);
-      action = 'r3';
-    } else if (streak >= REPEAT_REMINDER_2_START) {
-      finalResult = appendReminder(result, makeReminderText2(streak));
-      action = 'r2';
-    } else if (streak >= REPEAT_REMINDER_1_START) {
-      finalResult = appendReminder(result, REMINDER_TEXT_1);
-      action = 'r1';
+    if (repeatBreakerEnabled(this.configService)) {
+      if (streak >= REPEAT_FORCE_STOP_STREAK) {
+        finalResult = forceStopResult(result, REMINDER_TEXT_3);
+        action = 'stop';
+        this.forceStoppedInStep = true;
+      } else if (streak >= REPEAT_REMINDER_3_START) {
+        finalResult = appendReminder(result, REMINDER_TEXT_3);
+        action = 'r3';
+      } else if (streak >= REPEAT_REMINDER_2_START) {
+        finalResult = appendReminder(result, makeReminderText2(streak));
+        action = 'r2';
+      } else if (streak >= REPEAT_REMINDER_1_START) {
+        finalResult = appendReminder(result, REMINDER_TEXT_1);
+        action = 'r1';
+      }
     }
 
     if (streak >= 2) {
