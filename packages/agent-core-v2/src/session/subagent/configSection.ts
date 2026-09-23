@@ -1,7 +1,8 @@
 import { z } from 'zod';
 
 import { Error2, ErrorCodes, isError2 } from '#/errors';
-import { isPlainObject } from '#/app/config/toml';
+import { deepMerge } from '#/app/config/configPure';
+import { camelToSnake, cloneRecord, isPlainObject, plainObjectToToml } from '#/app/config/toml';
 import {
   type EnvBindings,
   envBindings,
@@ -71,7 +72,37 @@ registerConfigSection(SUBAGENT_SECTION, SubagentConfigSchema, {
   stripEnv: stripSubagentEnv,
 });
 
-registerConfigSection(SECONDARY_MODEL_SECTION, SecondaryModelConfigSchema);
+export function mergeSecondaryModelConfig(
+  base: SecondaryModelConfig | undefined,
+  patch: unknown,
+): SecondaryModelConfig {
+  const merged = deepMerge(base, patch);
+  if (!isPlainObject(patch)) return merged;
+  const touchesPool = 'defaultModel' in patch || 'models' in patch;
+  const touchesRecipe = 'model' in patch;
+  if (touchesPool === touchesRecipe) return merged;
+  if (touchesPool) {
+    delete merged.model;
+  } else {
+    delete merged.defaultModel;
+    delete merged.models;
+  }
+  return merged;
+}
+
+function secondaryModelToToml(value: unknown, rawSnake: unknown): unknown {
+  if (!isPlainObject(value)) return value;
+  const out = cloneRecord(rawSnake);
+  for (const key of Object.keys(SecondaryModelConfigSchema.shape)) {
+    if (!(key in value)) delete out[camelToSnake(key)];
+  }
+  return plainObjectToToml(value, out);
+}
+
+registerConfigSection(SECONDARY_MODEL_SECTION, SecondaryModelConfigSchema, {
+  merge: mergeSecondaryModelConfig,
+  toToml: secondaryModelToToml,
+});
 
 export function resolveSubagentTimeoutMs(config: IConfigService): number {
   return (
