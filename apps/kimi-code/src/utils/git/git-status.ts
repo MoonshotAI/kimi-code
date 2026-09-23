@@ -9,7 +9,6 @@
 
 import { execFile, spawnSync } from 'node:child_process';
 
-import { GIT_CONFIG_ARGS, GIT_DIFF_ARGS } from '#/utils/git/git-args';
 import { resolveCommandPath } from '#/utils/process/resolve-command';
 
 const BRANCH_TTL_MS = 5_000;
@@ -98,18 +97,18 @@ export function createGitStatusCache(
       if (repoDetected && !isRepo) return null;
       if (!repoDetected) {
         repoDetected = true;
-        isRepo = detectGitRepo(git, workDir, GIT_CONFIG_ARGS);
+        isRepo = detectGitRepo(git, workDir);
       }
       if (!isRepo) return null;
 
       const now = Date.now();
       if (now - branch.fetchedAt >= BRANCH_TTL_MS) {
-        branch = { value: readBranch(git, workDir, GIT_CONFIG_ARGS), fetchedAt: now };
+        branch = { value: readBranch(git, workDir), fetchedAt: now };
       }
       if (branch.value === null) return null;
 
       if (now - status.fetchedAt >= STATUS_TTL_MS) {
-        status = { ...readStatus(git, workDir, GIT_CONFIG_ARGS), fetchedAt: now };
+        status = { ...readStatus(git, workDir), fetchedAt: now };
       }
       refreshPullRequestIfNeeded(branch.value, now);
 
@@ -156,32 +155,24 @@ export function createGitStatusCache(
   }
 }
 
-function detectGitRepo(git: string, workDir: string, configArgs: readonly string[]): boolean {
+function detectGitRepo(git: string, workDir: string): boolean {
   try {
-    const result = spawnSync(
-      git,
-      [...configArgs, '-C', workDir, 'rev-parse', '--is-inside-work-tree'],
-      {
-        encoding: 'utf8',
-        timeout: SPAWN_TIMEOUT_MS,
-      },
-    );
+    const result = spawnSync(git, ['-C', workDir, 'rev-parse', '--is-inside-work-tree'], {
+      encoding: 'utf8',
+      timeout: SPAWN_TIMEOUT_MS,
+    });
     return result.status === 0 && result.stdout.trim() === 'true';
   } catch {
     return false;
   }
 }
 
-function readBranch(git: string, workDir: string, configArgs: readonly string[]): string | null {
+function readBranch(git: string, workDir: string): string | null {
   try {
-    const result = spawnSync(
-      git,
-      [...configArgs, '-C', workDir, 'branch', '--show-current'],
-      {
-        encoding: 'utf8',
-        timeout: SPAWN_TIMEOUT_MS,
-      },
-    );
+    const result = spawnSync(git, ['-C', workDir, 'branch', '--show-current'], {
+      encoding: 'utf8',
+      timeout: SPAWN_TIMEOUT_MS,
+    });
     if (result.status !== 0) return null;
     const name = result.stdout.trim();
     return name.length > 0 ? name : null;
@@ -193,7 +184,6 @@ function readBranch(git: string, workDir: string, configArgs: readonly string[])
 function readStatus(
   git: string,
   workDir: string,
-  configArgs: readonly string[],
 ): {
   dirty: boolean;
   ahead: number;
@@ -202,15 +192,11 @@ function readStatus(
   diffDeleted: number;
 } {
   try {
-    const result = spawnSync(
-      git,
-      [...configArgs, '-C', workDir, 'status', '--porcelain', '-b'],
-      {
-        encoding: 'utf8',
-        timeout: SPAWN_TIMEOUT_MS,
-        maxBuffer: 4 * 1024 * 1024,
-      },
-    );
+    const result = spawnSync(git, ['-C', workDir, 'status', '--porcelain', '-b'], {
+      encoding: 'utf8',
+      timeout: SPAWN_TIMEOUT_MS,
+      maxBuffer: 4 * 1024 * 1024,
+    });
     if (result.status !== 0) {
       return { dirty: false, ahead: 0, behind: 0, diffAdded: 0, diffDeleted: 0 };
     }
@@ -229,7 +215,7 @@ function readStatus(
         dirty = true;
       }
     }
-    const diff = dirty ? readDiffStats(git, workDir, configArgs) : { added: 0, deleted: 0 };
+    const diff = dirty ? readDiffStats(git, workDir) : { added: 0, deleted: 0 };
     return {
       dirty,
       ahead,
@@ -242,30 +228,13 @@ function readStatus(
   }
 }
 
-function readDiffStats(
-  git: string,
-  workDir: string,
-  configArgs: readonly string[],
-): { added: number; deleted: number } {
+function readDiffStats(git: string, workDir: string): { added: number; deleted: number } {
   try {
-    const result = spawnSync(
-      git,
-      [
-        ...configArgs,
-        '-C',
-        workDir,
-        'diff',
-        ...GIT_DIFF_ARGS,
-        '--numstat',
-        'HEAD',
-        '--',
-      ],
-      {
-        encoding: 'utf8',
-        timeout: SPAWN_TIMEOUT_MS,
-        maxBuffer: 4 * 1024 * 1024,
-      },
-    );
+    const result = spawnSync(git, ['-C', workDir, 'diff', '--numstat', 'HEAD', '--'], {
+      encoding: 'utf8',
+      timeout: SPAWN_TIMEOUT_MS,
+      maxBuffer: 4 * 1024 * 1024,
+    });
     if (result.status !== 0) return { added: 0, deleted: 0 };
 
     let added = 0;
