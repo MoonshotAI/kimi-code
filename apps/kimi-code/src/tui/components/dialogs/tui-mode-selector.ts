@@ -5,7 +5,7 @@ const TUI_MODE_OPTIONS: readonly ChoiceOption[] = [
   {
     value: 'regular',
     label: 'Regular',
-    description: 'Render into the terminal’s native scrollback.',
+    description: 'Render into the terminal\'s native scrollback.',
   },
   {
     value: 'fullscreen',
