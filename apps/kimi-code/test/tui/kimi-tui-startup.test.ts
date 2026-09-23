@@ -692,6 +692,198 @@ describe('KimiTUI startup', () => {
     expect(created.agentProfile).toBeUndefined();
   });
 
+  it('marks the environment slot connecting while /new waits on a disconnected remote binding', async () => {
+    const created = makeSession({
+      getEnvironment: vi.fn(async () => ({
+        workspaceId: 'ws-1',
+        environmentId: 'dev-box',
+        cwd: '/remote/custom',
+      })),
+      listEnvironments: vi.fn(async () => ({
+        workspaceId: 'ws-1',
+        environments: [
+          { environmentId: 'local', type: 'local', status: 'ready', generation: 'g0', capabilities: [] },
+          { environmentId: 'dev-box', type: 'ssh', status: 'ready', generation: 'g1', capabilities: ['fs'] },
+        ],
+        sshHosts: [],
+      })),
+    });
+    const current = makeSession({
+      getEnvironment: vi.fn(async () => ({
+        workspaceId: 'ws-1',
+        environmentId: 'dev-box',
+        cwd: '/remote/custom',
+      })),
+    });
+    const harness = makeHarness(created, {
+      getConfig: vi.fn(async () => ({
+        models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+        defaultModel: 'k2',
+      })),
+    });
+    let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
+    harness.createSession.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    const driver = makeDriver(harness, makeStartupInput({ model: 'k2' }));
+    await expect(driver.init()).resolves.toBe(false);
+    (driver as unknown as { session: typeof current }).session = current;
+    driver.state.appState.environment = {
+      environmentId: 'dev-box',
+      type: 'ssh',
+      status: 'disconnected',
+      cwd: '/remote/custom',
+    };
+
+    const pending = (driver as unknown as { createNewSession(): Promise<void> }).createNewSession();
+    await vi.waitFor(() => {
+      expect(driver.state.appState.environment).toEqual({
+        environmentId: 'dev-box',
+        type: 'ssh',
+        status: 'connecting',
+        cwd: '/remote/custom',
+      });
+    });
+    expect(driver.state.transcriptContainer.render(160).join('\n')).toContain(
+      'Connecting to dev-box…',
+    );
+
+    resolveCreate(created);
+    await pending;
+    expect(driver.state.appState.environment).toEqual({
+      environmentId: 'dev-box',
+      type: 'ssh',
+      status: 'ready',
+      cwd: '/remote/custom',
+    });
+  });
+
+  it('keeps the ready environment slot when /new reuses a live remote connection', async () => {
+    const session = makeSession({
+      getEnvironment: vi.fn(async () => ({
+        workspaceId: 'ws-1',
+        environmentId: 'dev-box',
+        cwd: '/remote/custom',
+      })),
+    });
+    const harness = makeHarness(session, {
+      getConfig: vi.fn(async () => ({
+        models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+        defaultModel: 'k2',
+      })),
+    });
+    let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
+    harness.createSession.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    const driver = makeDriver(harness, makeStartupInput({ model: 'k2' }));
+    await expect(driver.init()).resolves.toBe(false);
+    (driver as unknown as { session: typeof session }).session = session;
+    driver.state.appState.environment = {
+      environmentId: 'dev-box',
+      type: 'ssh',
+      status: 'ready',
+      cwd: '/remote/custom',
+    };
+
+    const pending = (driver as unknown as { createNewSession(): Promise<void> }).createNewSession();
+    await vi.waitFor(() => {
+      expect(harness.createSession).toHaveBeenCalled();
+    });
+    expect(driver.state.appState.environment).toEqual({
+      environmentId: 'dev-box',
+      type: 'ssh',
+      status: 'ready',
+      cwd: '/remote/custom',
+    });
+    expect(driver.state.transcriptContainer.render(160).join('\n')).not.toContain(
+      'Connecting to dev-box',
+    );
+
+    resolveCreate(session);
+    await pending;
+  });
+
+  it('restores the previous environment slot when /new creation fails', async () => {
+    const session = makeSession({
+      getEnvironment: vi.fn(async () => ({
+        workspaceId: 'ws-1',
+        environmentId: 'dev-box',
+        cwd: '/remote/custom',
+      })),
+      listEnvironments: vi.fn(async () => ({
+        workspaceId: 'ws-1',
+        environments: [
+          { environmentId: 'local', type: 'local', status: 'ready', generation: 'g0', capabilities: [] },
+          {
+            environmentId: 'dev-box',
+            type: 'ssh',
+            status: 'disconnected',
+            generation: 'g1',
+            capabilities: [],
+            connectError: 'timeout',
+          },
+        ],
+        sshHosts: [],
+      })),
+    });
+    const harness = makeHarness(session, {
+      getConfig: vi.fn(async () => ({
+        models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+        defaultModel: 'k2',
+      })),
+    });
+    harness.createSession.mockRejectedValueOnce(new Error('connect failed'));
+    const driver = makeDriver(harness, makeStartupInput({ model: 'k2' }));
+    await expect(driver.init()).resolves.toBe(false);
+    (driver as unknown as { session: typeof session }).session = session;
+    driver.state.appState.environment = {
+      environmentId: 'dev-box',
+      type: 'ssh',
+      status: 'disconnected',
+      cwd: '/remote/custom',
+      connectError: 'timeout',
+    };
+
+    await (driver as unknown as { createNewSession(): Promise<void> }).createNewSession();
+
+    expect(driver.state.appState.environment).toEqual({
+      environmentId: 'dev-box',
+      type: 'ssh',
+      status: 'disconnected',
+      cwd: '/remote/custom',
+      connectError: 'timeout',
+    });
+    expect(driver.state.transcriptContainer.render(160).join('\n')).toContain(
+      'Failed to start a new session',
+    );
+  });
+
+  it('clears the synthetic connecting slot when a session-less /new fails', async () => {
+    const harness = makeHarness(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+        defaultModel: 'k2',
+      })),
+    });
+    harness.createSession.mockRejectedValueOnce(new Error('connect failed'));
+    const driver = makeDriver(harness, makeStartupInput({ model: 'k2' }));
+    await expect(driver.init()).resolves.toBe(false);
+    (
+      driver as unknown as { options: { startup: { environment?: string } } }
+    ).options.startup.environment = 'dev-box';
+
+    await (driver as unknown as { createNewSession(): Promise<void> }).createNewSession();
+
+    expect(driver.state.appState.environment).toBeUndefined();
+  });
+
   it('clears the synthetic environment slot when the background pre-create fails (v2)', async () => {
     const harness = makeHarness(makeSession(), {
       getConfig: vi.fn(async () => ({

@@ -2301,6 +2301,56 @@ export class KimiTUI {
   }
 
   /**
+   * `/new` on a remote binding awaits the environment connect inside
+   * createSession (the engine builds the controller on the remote root), so
+   * surface the wait the same way the startup pre-create does: a synthetic
+   * connecting slot driving the footer spinner, plus a transcript status.
+   * Skipped when the slot already shows the target as usable — a live pooled
+   * connection makes creation fast, and flipping ready → connecting → ready
+   * would be noise. The real slot returns via refreshEnvironmentSlot once the
+   * session exists.
+   */
+  private markNewSessionEnvironmentConnecting(
+    environment: { readonly environmentId: string; readonly environmentCwd?: string } | undefined,
+  ): void {
+    if (environment === undefined || environment.environmentId === 'local') return;
+    const current = this.state.appState.environment;
+    if (
+      current?.environmentId === environment.environmentId &&
+      (current.status === 'ready' || current.status === 'connecting')
+    ) {
+      return;
+    }
+    this.setAppState({
+      environment: {
+        environmentId: environment.environmentId,
+        type:
+          current?.environmentId === environment.environmentId
+            ? current.type
+            : (this.startupEnvironmentType ?? 'command'),
+        status: 'connecting',
+        cwd: environment.environmentCwd,
+      },
+    });
+    this.showStatus(`Connecting to ${environment.environmentId}…`);
+  }
+
+  /**
+   * Undo markNewSessionEnvironmentConnecting when creation fails: the old
+   * session is still live, so re-sync its real slot; session-less there is no
+   * binding to re-sync and the synthetic slot is dropped.
+   */
+  private async restoreEnvironmentSlotAfterCreateFailure(): Promise<void> {
+    if (this.session !== undefined) {
+      await this.refreshEnvironmentSlot(this.session);
+      return;
+    }
+    if (this.state.appState.environment?.status === 'connecting') {
+      this.setAppState({ environment: undefined });
+    }
+  }
+
+  /**
    * Seed appState with the config defaults the v2 engine would apply at
    * createSession time (model, permission, plan mode, thinking effort,
    * context cap), so the footer and the lazy create path reflect them while
@@ -2929,8 +2979,10 @@ export class KimiTUI {
     let session: Session;
     try {
       const environment = inherited ?? (await this.environmentForNewSession());
+      this.markNewSessionEnvironmentConnecting(environment);
       session = await this.createSessionFromCurrentState(false, environment);
     } catch (error) {
+      await this.restoreEnvironmentSlotAfterCreateFailure();
       const msg = formatErrorMessage(error);
       this.showError(`Failed to start a new session: ${msg}`);
       return;
