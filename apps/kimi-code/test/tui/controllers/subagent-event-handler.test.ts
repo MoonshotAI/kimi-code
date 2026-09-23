@@ -17,10 +17,10 @@ function makeSwarmHandler() {
       ui: {
         requestRender,
         terminal: { rows: 40, columns: 120 },
-        children: [transcriptContainer, dockChild],
+        children: [],
       },
       transcriptContainer,
-      dockContainer: undefined,
+      dockContainer: { children: [dockChild] },
     },
     streamingUI: {
       getToolComponent: vi.fn(() => undefined),
