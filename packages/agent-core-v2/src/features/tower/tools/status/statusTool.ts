@@ -58,6 +58,7 @@ export class TowerStatusTool implements ITowerStatusTool {
             '## Missions',
             '',
             ...renderMissions(state),
+            ...renderUnspawnedMissions(state),
             ...renderDeathWarnings(state),
             '',
             '## Roster',
@@ -174,6 +175,20 @@ function renderRoster(state: TowerState): string[] {
     const death = a.diedAt === undefined ? '' : ` — 💀 ${a.deathStatus ?? 'died'}`;
     return `- ${a.name} (${a.kind}) — agent ${a.agentId}, ${assignment}${death}`;
   });
+}
+
+function renderUnspawnedMissions(state: TowerState): string[] {
+  const pending = state.missions.filter((m) => m.status === 'planned' && m.owner === undefined);
+  if (pending.length === 0) return [];
+  return [
+    '',
+    '## Awaiting spawn',
+    '',
+    ...pending.map(
+      (m) =>
+        `- ${m.id} (${m.branch}) — planned but no worker spawned yet: launch one with TowerSpawn(kind="worker", mission_id="${m.id}", name="...")`,
+    ),
+  ];
 }
 
 function renderDeathWarnings(state: TowerState): string[] {

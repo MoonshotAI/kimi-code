@@ -936,6 +936,7 @@ export interface AgentStateSnapshot {
       readonly llmFirstTokenLatencyMs?: number;
       readonly llmStreamDurationMs?: number;
     };
+    readonly durationMs?: number;
   })[];
   // src/agent/contextProjector/contextProjectorService.ts
   'contextProjector.lastRepairSignature': string | null;

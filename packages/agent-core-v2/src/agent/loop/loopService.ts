@@ -221,7 +221,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         this.activeRequestTrace = trace;
       },
       onEvent: (event) => this.projectMachineEvent(event),
-      onToolResult: (toolCallId, result) => this.appendMachineToolResult(toolCallId, result),
+      onToolResult: (toolCallId, result, durationMs) =>
+        this.appendMachineToolResult(toolCallId, result, durationMs),
     };
   }
 
@@ -1670,7 +1671,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         },
       })) {
         if (result.toolCallId === toolCallId) {
-          this.appendMachineToolResult(toolCallId, result.result);
+          this.appendMachineToolResult(toolCallId, result.result, result.durationMs);
         }
       }
     } catch (error) {
@@ -1704,6 +1705,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       readonly stopTurn?: boolean;
       readonly stopTurnReason?: string;
     },
+    durationMs?: number,
   ): void {
     const turn = this.active;
     const step = turn?.current;
@@ -1712,7 +1714,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       type: 'tool.result',
       parentUuid: step.toolCallUuids.get(toolCallId) ?? randomUUID(),
       toolCallId,
-      result: { output: result.output, isError: result.isError, note: result.note },
+      result: { output: result.output, isError: result.isError, note: result.note, durationMs },
     });
     step.resolvedToolIds.add(toolCallId);
     if (result.stopTurn === true) {

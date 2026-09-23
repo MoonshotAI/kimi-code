@@ -624,6 +624,8 @@ additional_dir = ["/absolute/path/to/shared"]
 
 Because directories are stored as absolute paths, which are specific to your machine, we recommend adding `.kimi-code/local.toml` to your project's `.gitignore` so it is not committed.
 
+`.kimi-code/local.toml` is gated by workspace trust: it takes effect only after you trust the project folder in the startup trust prompt, and its `additional_dir` entries are ignored while the workspace is untrusted. Entries that resolve to your home directory or the filesystem root are rejected.
+
 ## Next steps
 
 - [Providers and models](./providers.md) — connection examples for each provider type (Kimi, Claude, OpenAI, Gemini)

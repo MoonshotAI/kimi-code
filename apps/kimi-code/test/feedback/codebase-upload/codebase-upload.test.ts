@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdtemp, mkdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -373,6 +373,32 @@ describe('scanCodebase filtering', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'does not run a repo-configured fsmonitor command while scanning',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'feedback-scan-fsm-'));
+      const outside = await mkdtemp(join(tmpdir(), 'feedback-scan-fsm-cfg-'));
+      try {
+        const marker = join(outside, 'fsmonitor-ran');
+        const helper = join(outside, 'fsmonitor-helper.sh');
+        await writeFile(helper, `#!/bin/sh\ntouch "${marker}"\n`);
+        await chmod(helper, 0o755);
+        await execFileAsync('git', ['init'], { cwd: root });
+        await execFileAsync('git', ['config', 'core.fsmonitor', helper], { cwd: root });
+        await writeFile(join(root, 'keep.ts'), 'export const keep = 1;\n');
+
+        const scan = await scanCodebase(root);
+
+        expect(scan.usedGitIgnore).toBe(true);
+        expect(scan.files.map((file) => file.path)).toEqual(['keep.ts']);
+        await expect(stat(marker)).rejects.toThrow();
+      } finally {
+        await rm(root, { recursive: true, force: true });
+        await rm(outside, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe('removeStaleFeedbackUploads', () => {

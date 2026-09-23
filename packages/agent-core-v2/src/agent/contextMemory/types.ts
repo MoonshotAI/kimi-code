@@ -139,6 +139,7 @@ export type ContextMessage = Message & {
   readonly note?: string;
   readonly usage?: TokenUsage;
   readonly llmTiming?: ContextMessageTiming;
+  readonly durationMs?: number;
 };
 
 export interface UserMessageRecord {

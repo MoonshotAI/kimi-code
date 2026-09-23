@@ -154,6 +154,7 @@ const gitStub: IGitService = {
     throw new Error2(ErrorCodes.FS_GIT_UNAVAILABLE, 'not used in these tests');
   },
   findWorkTree: async () => null,
+  runGit: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
 };
 
 describe('server /api/v2/sessions', () => {

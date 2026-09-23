@@ -1,11 +1,27 @@
 import chalk from 'chalk';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FooterComponent } from '#/tui/components/chrome/footer';
 import { setRainbowDance, type RainbowDanceController } from '#/tui/easter-eggs/dance';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import type { AppState } from '#/tui/types';
+
+const gitStatusMocks = vi.hoisted(() => ({
+  createGitStatusCache: vi.fn(),
+}));
+
+vi.mock('#/utils/git/git-status', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#/utils/git/git-status')>();
+  return { ...actual, createGitStatusCache: gitStatusMocks.createGitStatusCache };
+});
+
+beforeEach(() => {
+  gitStatusMocks.createGitStatusCache.mockClear();
+  gitStatusMocks.createGitStatusCache.mockImplementation(() => ({
+    getStatus: vi.fn(() => null),
+  }));
+});
 
 const TRUECOLOR_PATTERN = /\[38;2;(\d+);(\d+);(\d+)m/g;
 
