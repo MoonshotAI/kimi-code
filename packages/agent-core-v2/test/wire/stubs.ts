@@ -35,6 +35,7 @@ interface TestAgentWireDependencies {
 const noopLog: IAppendLogStore = {
   _serviceBrand: undefined,
   onDidWrite: Event.None as IAppendLogStore['onDidWrite'],
+  onDidRecover: Event.None as IAppendLogStore['onDidRecover'],
   append: () => {},
   read: async function* () {},
   rewrite: async () => {},
@@ -211,6 +212,7 @@ export function recordingWireLog(
   return {
     _serviceBrand: undefined,
     onDidWrite: Event.None as IAppendLogStore['onDidWrite'],
+    onDidRecover: Event.None as IAppendLogStore['onDidRecover'],
     append: (_scope, _key, record) => {
       records.push(record as WireRecord);
       onAppend?.(record as WireRecord);
