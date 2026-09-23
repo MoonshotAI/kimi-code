@@ -507,9 +507,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       .addProvider(
         new RemoteEnvironmentProviderFactory({
           clientVersion: identity.version,
-          onDiagnostic: (line) => {
-            app.accessor.get(ILogService).warn(line.trimEnd());
-          },
         }),
       )
       .catch((error) => {

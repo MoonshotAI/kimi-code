@@ -186,40 +186,6 @@ async function scenarioBasic(environment: RemoteEnvironment, cwd: string): Promi
   });
 }
 
-async function scenarioPty(environment: RemoteEnvironment, cwd: string): Promise<void> {
-  process.stdout.write('scenario: pty\n');
-  const shell = environment.host.shellPath;
-  try {
-    const terminal = await environment.terminal.spawn({ cwd, shell, cols: 90, rows: 30 });
-    await check('pty', 'interactive shell over pty with merged streams', async () => {
-      let output = '';
-      terminal.onProcessData((data) => {
-        output += data;
-      });
-      const exited = new Promise<number | null>((resolve) => {
-        terminal.onProcessExit(({ exitCode }) => {
-          resolve(exitCode);
-        });
-      });
-      terminal.write('echo pty-out; echo pty-err >&2; exit 11\n');
-      const deadline = Date.now() + 10_000;
-      while (Date.now() < deadline) {
-        if (output.includes('pty-out') && output.includes('pty-err')) break;
-        await new Promise((resolve) => {
-          setTimeout(resolve, 50);
-        });
-      }
-      if (!output.includes('pty-out')) throw new Error(`stdout missing in pty stream: ${JSON.stringify(output.slice(-200))}`);
-      if (!output.includes('pty-err')) throw new Error(`stderr missing in pty stream: ${JSON.stringify(output.slice(-200))}`);
-      terminal.resize(100, 40);
-      const code = await exited;
-      expectEqual(code, 11, 'pty exit code');
-    });
-  } catch (error) {
-    record('pty', 'spawn pty', false, `SKIP-OR-FAIL: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
-
 async function scenarioTermIgnore(environment: RemoteEnvironment, cwd: string): Promise<void> {
   process.stdout.write('scenario: term-ignore\n');
   await check('term-ignore', 'SIGTERM-ignoring process is escalated to SIGKILL', async () => {
@@ -371,14 +337,10 @@ async function scenarioInstall(flags: Flags): Promise<void> {
   if (launcher.type === 'command') {
     throw new Error('--scenario install requires a typed target (ssh or docker)');
   }
-  const onDiagnostic = (line: string): void => {
-    process.stdout.write(`  [diag] ${line}\n`);
-  };
   const connectBase = {
     workspaceId: 'remote-exec-e2e',
     environmentId: 'e2e-target',
     clientVersion,
-    onDiagnostic,
   };
 
   await check('install', 'connect on a fresh target fails as a missing executor', async () => {
@@ -606,7 +568,7 @@ async function downloadVerified(artifact: ExecutorArtifact): Promise<string> {
   return path;
 }
 
-const SCENARIOS = ['install', 'basic', 'pty', 'term-ignore', 'group-residue', 'container-stop', 'disconnect'] as const;
+const SCENARIOS = ['install', 'basic', 'term-ignore', 'group-residue', 'container-stop', 'disconnect'] as const;
 
 async function main(): Promise<void> {
   const flags = parseFlags(process.argv.slice(2));
@@ -640,9 +602,6 @@ async function main(): Promise<void> {
         launcher,
         clientVersion: '0.0.0',
         minExecutorVersion: '0.0.0',
-        onDiagnostic: (line) => {
-          process.stdout.write(`  [diag] ${line}\n`);
-        },
       });
     const environment = await connect();
     const cwd = flags.remoteCwd ?? environment.host.cwd;
@@ -651,9 +610,6 @@ async function main(): Promise<void> {
       switch (name) {
         case 'basic':
           await scenarioBasic(environment, cwd);
-          break;
-        case 'pty':
-          await scenarioPty(environment, cwd);
           break;
         case 'term-ignore':
           await scenarioTermIgnore(environment, cwd);

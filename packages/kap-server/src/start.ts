@@ -226,9 +226,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const remoteEnvironmentProvider = await core.accessor.get(IWorkspaceInstanceManager).addProvider(
     new RemoteEnvironmentProviderFactory({
       clientVersion: serverVersion,
-      onDiagnostic: (line) => {
-        logger.warn(line.trimEnd());
-      },
     }),
   );
 

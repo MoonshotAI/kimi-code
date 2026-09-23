@@ -2,6 +2,7 @@ import {
   resolvePathAccessPath,
   type WorkspaceConfig,
 } from '#/tool/path-access';
+import { checkRealPathWriteTarget } from '#/tool/realpath-access';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
 import { IFileEditService } from '#/app/edit/fileEdit';
@@ -76,6 +77,10 @@ export class EditTool implements IEditTool {
         try {
           if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
             return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
+          }
+          const accessError = await checkRealPathWriteTarget(lease.environment.fs!, path, workspace, env.pathClass);
+          if (accessError !== undefined) {
+            return { isError: true, output: accessError.message };
           }
           return await this.execution(args, path, lease.environment.fs!);
         } finally {

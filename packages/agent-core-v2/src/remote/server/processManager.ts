@@ -1,7 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { stat } from 'node:fs/promises';
-import type { IPty } from 'node-pty';
-
 import { OsProcessErrors } from '#/os/interface/hostProcess';
 
 import { RpcError, RpcErrorCode } from '#/remote/protocol/errors';
@@ -17,7 +15,6 @@ import {
 } from '#/remote/protocol/methods';
 import {
   optionalBoolean,
-  optionalInteger,
   requireAbsolutePath,
   requireParams,
   requireString,
@@ -25,7 +22,6 @@ import {
 
 interface ExitedProcessGroup {
   readonly pid: number;
-  readonly tty: boolean;
   killTimer: NodeJS.Timeout | undefined;
   expiryTimer: NodeJS.Timeout | undefined;
 }
@@ -37,12 +33,10 @@ interface AcceptedWriteIds {
 
 interface ManagedProcess {
   readonly processId: string;
-  readonly tty: boolean;
   readonly pipeStdin: boolean;
   state: 'starting' | 'running';
   pid: number;
   child: ChildProcess | undefined;
-  pty: IPty | undefined;
   stdinOpen: boolean;
   terminateAfterStart: boolean;
   clientPaused: boolean;
@@ -119,7 +113,6 @@ export class ProcessManager {
         }
       }
     }
-    const tty = optionalBoolean(params, 'tty') ?? false;
     const pipeStdin = optionalBoolean(params, 'pipeStdin') ?? false;
     if (this.processes.has(processId) || this.exitedGroups.has(processId)) {
       throw new RpcError(RpcErrorCode.InvalidRequest, `duplicate process id ${processId}`);
@@ -134,18 +127,16 @@ export class ProcessManager {
 
     const entry: ManagedProcess = {
       processId,
-      tty,
       pipeStdin,
       state: 'starting',
       pid: -1,
       child: undefined,
-      pty: undefined,
-      stdinOpen: tty || pipeStdin,
+      stdinOpen: pipeStdin,
       terminateAfterStart: false,
       clientPaused: false,
       exitCode: null,
       closed: false,
-      openStreams: tty ? 1 : 2,
+      openStreams: 2,
       writeIds: { ids: new Set(), order: [] },
       stdinWaiters: new Set(),
       killTimer: undefined,
@@ -157,11 +148,7 @@ export class ProcessManager {
         ? undefined
         : { ...(process.env as Record<string, string>), ...(env as Record<string, string>) };
 
-    if (tty) {
-      await this.startPty(entry, argv as string[], cwd, spawnEnv);
-    } else {
-      await this.startPipe(entry, argv as string[], cwd, spawnEnv, pipeStdin);
-    }
+    await this.startPipe(entry, argv as string[], cwd, spawnEnv, pipeStdin);
     if (this.disposed) {
 
       this.processes.delete(processId);
@@ -173,41 +160,6 @@ export class ProcessManager {
       this.beginTermination(entry);
     }
     return { pid: entry.pid };
-  }
-
-  private async startPty(
-    entry: ManagedProcess,
-    argv: string[],
-    cwd: string,
-    spawnEnv: Record<string, string> | undefined,
-  ): Promise<void> {
-    let pty: IPty;
-    try {
-      const nodePty = await import('node-pty');
-      pty = nodePty.spawn(argv[0]!, argv.slice(1), {
-        name: 'xterm-256color',
-        cwd,
-        cols: 80,
-        rows: 24,
-        env: spawnEnv ?? (process.env as Record<string, string>),
-      });
-    } catch (error) {
-      this.processes.delete(entry.processId);
-      const err = error as Error;
-      throw new RpcError(RpcErrorCode.InternalError, `failed to spawn tty process: ${err.message}`, {
-        domainCode: OsProcessErrors.codes.OS_PROCESS_SPAWN_FAILED,
-      });
-    }
-    entry.pty = pty;
-    entry.pid = pty.pid;
-    this.applyOutputPause(entry);
-    pty.onData((data) => {
-      this.pump(entry, 'pty', Buffer.from(data, 'utf8'));
-    });
-    pty.onExit(({ exitCode }) => {
-      entry.openStreams = 0;
-      this.onExit(entry, exitCode);
-    });
   }
 
   private async startPipe(
@@ -312,7 +264,6 @@ export class ProcessManager {
     this.processes.delete(entry.processId);
     const group: ExitedProcessGroup = {
       pid: entry.pid,
-      tty: entry.tty,
       killTimer: entry.killTimer,
       expiryTimer: undefined,
     };
@@ -354,7 +305,7 @@ export class ProcessManager {
     if (entry.state !== 'running') {
       return { status: 'starting' };
     }
-    if (!entry.tty && !entry.pipeStdin) {
+    if (!entry.pipeStdin) {
       return { status: 'stdinClosed' };
     }
     if (!entry.stdinOpen) {
@@ -367,44 +318,36 @@ export class ProcessManager {
     rememberWriteId(entry.writeIds, writeId);
     if (eof) {
       entry.stdinOpen = false;
-      if (entry.pty !== undefined) {
-        entry.pty.write('\u0004');
-      } else {
-        entry.child?.stdin?.end();
-      }
+      entry.child?.stdin?.end();
       return { status: 'accepted' };
     }
     const chunk = Buffer.from(chunkBase64, 'base64');
     if (chunk.length > 0) {
-      if (entry.pty !== undefined) {
-        entry.pty.write(chunk.toString('utf8'));
-      } else {
-        const stdin = entry.child?.stdin;
-        if (stdin === null || stdin === undefined) {
-          entry.stdinOpen = false;
-          return { status: 'stdinClosed' };
-        }
+      const stdin = entry.child?.stdin;
+      if (stdin === null || stdin === undefined) {
+        entry.stdinOpen = false;
+        return { status: 'stdinClosed' };
+      }
 
-        if (!stdin.write(chunk)) {
-          const settled = await new Promise<'drain' | 'broken'>((resolve) => {
-            const cleanup = (): void => {
-              stdin.off('drain', onDrain);
-              entry.stdinWaiters.delete(onBroken);
-            };
-            const onDrain = (): void => {
-              cleanup();
-              resolve('drain');
-            };
-            const onBroken = (): void => {
-              cleanup();
-              resolve('broken');
-            };
-            stdin.once('drain', onDrain);
-            entry.stdinWaiters.add(onBroken);
-          });
-          if (settled === 'broken' || !entry.stdinOpen) {
-            return { status: 'stdinClosed' };
-          }
+      if (!stdin.write(chunk)) {
+        const settled = await new Promise<'drain' | 'broken'>((resolve) => {
+          const cleanup = (): void => {
+            stdin.off('drain', onDrain);
+            entry.stdinWaiters.delete(onBroken);
+          };
+          const onDrain = (): void => {
+            cleanup();
+            resolve('drain');
+          };
+          const onBroken = (): void => {
+            cleanup();
+            resolve('broken');
+          };
+          stdin.once('drain', onDrain);
+          entry.stdinWaiters.add(onBroken);
+        });
+        if (settled === 'broken' || !entry.stdinOpen) {
+          return { status: 'stdinClosed' };
         }
       }
     }
@@ -485,33 +428,6 @@ export class ProcessManager {
     entry.killTimer.unref?.();
   }
 
-  async resize(rawParams: unknown): Promise<typeof EMPTY> {
-    const params = requireParams(rawParams);
-    const processId = requireString(params, 'processId');
-    const cols = optionalInteger(params, 'cols', 1, 10_000);
-    const rows = optionalInteger(params, 'rows', 1, 10_000);
-    if (cols === undefined || rows === undefined) {
-      throw new RpcError(RpcErrorCode.InvalidParams, 'cols and rows are required');
-    }
-    const entry = this.processes.get(processId);
-    if (entry === undefined) {
-      const group = this.exitedGroups.get(processId);
-      if (group?.tty === true) return EMPTY;
-      if (group !== undefined) {
-        throw new RpcError(RpcErrorCode.InvalidRequest, `process id ${processId} has no tty`);
-      }
-      throw new RpcError(RpcErrorCode.InvalidRequest, `unknown process id ${processId}`);
-    }
-    if (!entry.tty || entry.pty === undefined) {
-      throw new RpcError(RpcErrorCode.InvalidRequest, `process id ${processId} has no tty`);
-    }
-    if (entry.exitCode !== null) {
-      return EMPTY;
-    }
-    entry.pty.resize(cols, rows);
-    return EMPTY;
-  }
-
   private killGroup(entry: ManagedProcess, signal: NodeJS.Signals): void {
     if (entry.pid <= 0) return;
     try {
@@ -523,11 +439,7 @@ export class ProcessManager {
       if (err.code !== 'EPERM') throw error;
     }
     try {
-      if (entry.pty !== undefined) {
-        entry.pty.kill(signal);
-      } else {
-        entry.child?.kill(signal);
-      }
+      entry.child?.kill(signal);
     } catch (error) {
       const err = error as NodeJS.ErrnoException;
       if (err.code !== 'ESRCH') throw error;
@@ -558,11 +470,6 @@ export class ProcessManager {
 
   private applyOutputPause(entry: ManagedProcess): void {
     const paused = this.outputPaused || entry.clientPaused;
-    if (entry.pty !== undefined) {
-      if (paused) entry.pty.pause();
-      else entry.pty.resume();
-      return;
-    }
     const child = entry.child;
     if (child === undefined) return;
     const stdout = child.stdout;

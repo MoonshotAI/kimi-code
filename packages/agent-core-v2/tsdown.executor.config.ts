@@ -8,6 +8,5 @@ export default defineConfig({
   clean: true,
   deps: {
     alwaysBundle: [/^@moonshot-ai\//],
-    neverBundle: ['node-pty'],
   },
 });

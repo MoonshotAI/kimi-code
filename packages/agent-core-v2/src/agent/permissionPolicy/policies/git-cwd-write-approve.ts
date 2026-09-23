@@ -1,5 +1,5 @@
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
-import { isWithinWorkspace } from '#/tool/path-access';
+import { isProjectLocalConfigPath, isWithinWorkspace } from '#/tool/path-access';
 import { findGitWorkTree } from '#/app/git/workTree';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -37,6 +37,9 @@ export class GitCwdWriteApprovePermissionPolicyService implements PermissionPoli
 
       const writeAccesses = writeFileAccesses(context);
       if (writeAccesses.length === 0) return undefined;
+      if (writeAccesses.some((access) => isProjectLocalConfigPath(access.path))) {
+        return undefined;
+      }
       if (
         !writeAccesses.every((access) =>
           isWithinWorkspace(

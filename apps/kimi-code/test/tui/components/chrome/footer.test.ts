@@ -16,6 +16,24 @@ import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import type { AppState } from '#/tui/types';
 
+const gitStatusMocks = vi.hoisted(() => ({
+  createGitStatusCache: vi.fn(),
+  actual: null as null | typeof import('#/utils/git/git-status').createGitStatusCache,
+}));
+
+vi.mock('#/utils/git/git-status', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#/utils/git/git-status')>();
+  gitStatusMocks.actual = actual.createGitStatusCache;
+  return { ...actual, createGitStatusCache: gitStatusMocks.createGitStatusCache };
+});
+
+beforeEach(() => {
+  gitStatusMocks.createGitStatusCache.mockClear();
+  gitStatusMocks.createGitStatusCache.mockImplementation(() => ({
+    getStatus: vi.fn(() => null),
+  }));
+});
+
 const TRUECOLOR_PATTERN = /\[38;2;(\d+);(\d+);(\d+)m/g;
 
 function truecolorCodes(text: string): Set<string> {
@@ -354,6 +372,9 @@ describe('FooterComponent environment slot', () => {
 
   beforeEach(() => {
     // A real repo so the local git slot has a branch to render when visible.
+    gitStatusMocks.createGitStatusCache.mockImplementation((workDir, options) =>
+      gitStatusMocks.actual!(workDir, options),
+    );
     repoDir = mkdtempSync(join(tmpdir(), 'kimi-footer-environment-'));
     spawnSync('git', ['init', '-b', 'main'], { cwd: repoDir });
     writeFileSync(join(repoDir, 'a.txt'), 'a');

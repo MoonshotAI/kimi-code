@@ -19,7 +19,6 @@ import { HandshakeError, RemoteExecConnection } from './connection';
 import { resolveLauncher, type LauncherSpec } from './launchers';
 import { RemoteFileSystem } from './remoteFileSystem';
 import { RemoteProcessService } from './remoteProcess';
-import { RemoteTerminalService } from './remoteTerminal';
 
 export interface RemoteEnvironmentProbe extends HostEnvironmentInfo {
   readonly cwd: string;
@@ -33,7 +32,6 @@ export interface RemoteEnvironmentOptions {
   readonly clientVersion?: string;
   readonly minExecutorVersion?: string;
   readonly initializeTimeoutMs?: number;
-  readonly onDiagnostic?: (line: string) => void;
 }
 
 export class RemoteEnvironment implements Environment {
@@ -44,7 +42,6 @@ export class RemoteEnvironment implements Environment {
   readonly workspace = POSIX_ENVIRONMENT_WORKSPACE;
   readonly fs: RemoteFileSystem;
   readonly process: RemoteProcessService;
-  readonly terminal: RemoteTerminalService;
   readonly executorVersion: string;
   private currentStatus: EnvironmentStatus = 'ready';
   private readonly statusEmitter = new Emitter<EnvironmentStatus>();
@@ -111,7 +108,7 @@ export class RemoteEnvironment implements Environment {
       environmentId: options.environmentId,
       generation: `${options.environmentId}-${randomUUID()}`,
     };
-    this.capabilities = new Set<EnvironmentCapability>(['fs', 'process', 'terminal']);
+    this.capabilities = new Set<EnvironmentCapability>(['fs', 'process']);
     const environment = connection.environment;
     this.host = {
       osKind: environment.osKind,
@@ -127,7 +124,6 @@ export class RemoteEnvironment implements Environment {
     this.executorVersion = connection.executorVersion;
     this.fs = new RemoteFileSystem(connection);
     this.process = new RemoteProcessService(connection, environment.cwd, environment.shellPath);
-    this.terminal = new RemoteTerminalService(connection, options.onDiagnostic);
     connection.onDidClose(() => {
       this.setStatus('disconnected');
     });

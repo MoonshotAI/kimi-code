@@ -684,6 +684,8 @@ additional_dir = ["/absolute/path/to/shared"]
 
 Because directories are stored as absolute paths, which are specific to your machine, we recommend adding `.kimi-code/local.toml` to your project's `.gitignore` so it is not committed.
 
+`.kimi-code/local.toml` is gated by workspace trust: it takes effect only after you trust the project folder in the startup trust prompt, and its `additional_dir` entries are ignored while the workspace is untrusted. Entries that resolve to your home directory or the filesystem root are rejected.
+
 Besides `local.toml`, the project `.kimi-code/` directory can also hold `mcp.json` (project MCP servers), which is gated by workspace trust: it only takes effect after you trust the folder in the startup prompt. See [Model Context Protocol](../customization/mcp.md).
 
 ## Next steps

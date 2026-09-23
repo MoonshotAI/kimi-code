@@ -1,10 +1,10 @@
 # Remote environments
 
-A remote environment lets the agent's tools — reading and writing files, running Shell commands, and interactive terminals — execute on another machine or inside a container, while Kimi Code CLI itself, all model requests, and your credentials stay on your machine. Use it when the code lives on a remote server, or when you want tool execution isolated in a Docker-compatible container.
+A remote environment lets the agent's tools — reading and writing files, and running Shell commands — execute on another machine or inside a container, while Kimi Code CLI itself, all model requests, and your credentials stay on your machine. Use it when the code lives on a remote server, or when you want tool execution isolated in a Docker-compatible container.
 
 ## How remote environments work
 
-Kimi Code keeps the agent loop, model requests, credentials, approvals, and session state on your machine. The target environment only executes three groups of OS primitives: filesystem, process, and terminal. A small executor process (`kimi exec-server`) runs on the target and serves those primitives over a single connection; everything else — including every LLM request — stays local.
+Kimi Code keeps the agent loop, model requests, credentials, approvals, and session state on your machine. The target environment only executes two groups of OS primitives: filesystem and process. A small executor process (`kimi exec-server`) runs on the target and serves those primitives over a single connection; everything else — including every LLM request — stays local.
 
 The security boundaries are fixed:
 
@@ -104,7 +104,7 @@ Two guardrails apply to both tools. They are rejected in Plan mode — exit plan
 
 ## Disconnects and reconnecting
 
-Workspaces bound to the same target share one connection per environment: the first workspace to connect builds it, and the rest reuse it. When that connection drops — network loss, a stopped container, the executor exiting — every workspace bound to the target goes `disconnected` at once, and every process the sessions started on the target is terminated. Terminal scrollback stays readable locally.
+Workspaces bound to the same target share one connection per environment: the first workspace to connect builds it, and the rest reuse it. When that connection drops — network loss, a stopped container, the executor exiting — every workspace bound to the target goes `disconnected` at once, and every process the sessions started on the target is terminated.
 
 There is **no silent fallback to the local environment** after a drop: a command like `rm` or `git` that was meant for the remote machine must never land on yours. The next tool call retries the connection on demand — while the target stays unreachable, tool calls fail with an `environment.unavailable` error, and you can also reconnect explicitly from the `/environment` dialog.
 
@@ -143,7 +143,7 @@ Host dev-box
 
 ## The remote executor
 
-The executor is a light build of Kimi Code itself, started as `kimi exec-server` on the target. It only serves filesystem, process, and terminal requests — it never touches model APIs, credentials, or session state. stdio is the default and only supported transport, so the explicit `kimi exec-server --listen stdio` spelling is equivalent and keeps working.
+The executor is a light build of Kimi Code itself, started as `kimi exec-server` on the target. It only serves filesystem and process requests — it never touches model APIs, credentials, or session state. stdio is the default and only supported transport, so the explicit `kimi exec-server --listen stdio` spelling is equivalent and keeps working.
 
 The fixed install path is `~/.kimi-code/bin/kimi` on the target (override it per entry with `remoteBin` when the executor lives elsewhere, for example a preinstalled container image).
 

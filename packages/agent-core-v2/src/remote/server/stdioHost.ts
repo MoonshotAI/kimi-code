@@ -25,7 +25,6 @@ import {
   MAX_IN_FLIGHT_CALLS,
   MAX_PENDING_SEND_BYTES,
   PROCESS_FLOW_METHOD,
-  PROCESS_RESIZE_METHOD,
   PROCESS_SIGNAL_METHOD,
   PROCESS_START_METHOD,
   PROCESS_TERMINATE_METHOD,
@@ -52,7 +51,6 @@ const CONTROL_METHODS: ReadonlySet<string> = new Set([
   PROCESS_WRITE_METHOD,
   PROCESS_SIGNAL_METHOD,
   PROCESS_TERMINATE_METHOD,
-  PROCESS_RESIZE_METHOD,
 ]);
 
 class OutboundWriter {
@@ -171,7 +169,6 @@ export class StdioHost {
       [PROCESS_WRITE_METHOD, (p) => pm.write(p)],
       [PROCESS_SIGNAL_METHOD, (p) => pm.signal(p)],
       [PROCESS_TERMINATE_METHOD, (p) => pm.terminate(p)],
-      [PROCESS_RESIZE_METHOD, (p) => pm.resize(p)],
     ]);
     this.donePromise = new Promise<void>((resolve) => {
       this.resolveDone = resolve;

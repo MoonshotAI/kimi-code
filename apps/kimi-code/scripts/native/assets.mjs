@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -214,15 +214,10 @@ async function packageManifestEntries({ packageName, packageRoot, files, target 
     const packageRelativePath = toPosixPath(relative(packageRoot, file));
     const relativePath = `${root}/${packageRelativePath}`;
     const assetKey = `native/${target}/${relativePath}`;
-    // Preserve the executable bit (e.g. node-pty's spawn-helper): the SEA
-    // extraction writes files with this mode instead of the 0644 default.
-    const { mode: sourceMode } = await stat(file);
-    const mode = (sourceMode & 0o111) !== 0 ? 0o755 : undefined;
     entries.push({
       assetKey,
       relativePath,
       sha256: sha256(sourceBytes),
-      mode,
     });
     assets[assetKey] = file;
   }
@@ -261,9 +256,6 @@ export async function collectNativeAssets({ appRoot, target }) {
       appRoot,
       target,
     );
-    if (dep.ensureNativeBuild !== undefined) {
-      await dep.ensureNativeBuild({ packageRoot, target });
-    }
     const files = await collectPackageFiles({
       packageName: dep.resolvedName,
       packageRoot,

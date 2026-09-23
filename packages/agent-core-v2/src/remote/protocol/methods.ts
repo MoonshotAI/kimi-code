@@ -17,7 +17,6 @@ export const PROCESS_CLOSED_METHOD = 'process/closed';
 export const PROCESS_WRITE_METHOD = 'process/write';
 export const PROCESS_SIGNAL_METHOD = 'process/signal';
 export const PROCESS_TERMINATE_METHOD = 'process/terminate';
-export const PROCESS_RESIZE_METHOD = 'process/resize';
 export const PROCESS_FLOW_METHOD = 'process/flow';
 
 export const SERVER_NOTIFICATION_METHODS: ReadonlySet<string> = new Set([
@@ -131,7 +130,6 @@ export interface ProcessStartParams {
   readonly argv: readonly string[];
   readonly cwd: string;
   readonly env?: Record<string, string>;
-  readonly tty?: boolean;
   readonly pipeStdin?: boolean;
 }
 
@@ -139,7 +137,7 @@ export interface ProcessStartResult {
   readonly pid: number;
 }
 
-export type ProcessOutputStream = 'stdout' | 'stderr' | 'pty';
+export type ProcessOutputStream = 'stdout' | 'stderr';
 
 export interface ProcessOutputNotification {
   readonly processId: string;
@@ -182,12 +180,6 @@ export interface ProcessTerminateParams {
 
 export interface ProcessTerminateResult {
   readonly running: boolean;
-}
-
-export interface ProcessResizeParams {
-  readonly processId: string;
-  readonly cols: number;
-  readonly rows: number;
 }
 
 export const MIN_EXECUTOR_VERSION = '0.1.0';
