@@ -27,7 +27,7 @@ import {
   REPEAT_BREAKER_STOP_REASON,
   type ToolDedupeResult,
 } from './toolDedupe';
-import { repeatBreakerEnabled, toolDedupeEnabled } from './configSection';
+import { repeatBreakerEnabled } from './configSection';
 
 const REMINDER_TEXT_1 =
   '\n\n' +
@@ -443,19 +443,14 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
     this.stepCalls.push(key);
     this.callKeyByCallId.set(toolCallId, key);
 
-    const dedupe = toolDedupeEnabled(this.configService);
-    if (dedupe) {
-      const existing = this.stepDeferreds.get(key);
-      if (existing !== undefined) {
-        this.syntheticCallIds.add(toolCallId);
-        this.recordDupType(toolCallId, toolName, args, 'same_step', trace);
-        return { syntheticResult: DEDUPE_PLACEHOLDER_RESULT };
-      }
+    const existing = this.stepDeferreds.get(key);
+    if (existing !== undefined) {
+      this.syntheticCallIds.add(toolCallId);
+      this.recordDupType(toolCallId, toolName, args, 'same_step', trace);
+      return { syntheticResult: DEDUPE_PLACEHOLDER_RESULT };
     }
     this.recordTurnRepeat(toolCallId, toolName, args, key, trace);
-    if (dedupe) {
-      this.stepDeferreds.set(key, makeDeferred<ToolDedupeResult>());
-    }
+    this.stepDeferreds.set(key, makeDeferred<ToolDedupeResult>());
     this.originalCallIndex.set(toolCallId, index);
     if (this.consecutiveKey === key && this.consecutiveCount > 0) {
       this.recordDupType(toolCallId, toolName, args, 'cross_step', trace);

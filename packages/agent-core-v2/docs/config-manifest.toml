@@ -8,7 +8,7 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (31 sections · 2 overlay(s))
+# Index (30 sections · 2 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   builtinProductSkills     src/features/skill/catalog/configSection.ts
 #   cron                     src/features/cron/configSection.ts
@@ -37,7 +37,6 @@
 #   task                     src/agent/task/configSection.ts
 #   thinking                 src/app/kosongConfig/configSection.ts
 #   tokenCounting            src/agent/tokenCounting/configSection.ts
-#   toolDedupe               src/agent/toolDedupe/configSection.ts
 #   tools                    src/agent/toolPolicy/configSection.ts
 #   watch                    src/app/watch/configSection.ts
 #   (overlay) servicesCredentialEnvOverlay  src/app/auth/configSection.ts
@@ -497,17 +496,6 @@ timeout_ms = 7200000
 
 [token_counting]
 strategy = "measured+estimated"
-
-# ##########################################################################
-# toolDedupe (config.toml: tool_dedupe)
-#   owner: src/agent/toolDedupe/configSection.ts
-#   scope: core
-#   hooks: stripEnv
-#   env:
-#      <- KIMI_CODE_TOOL_DEDUPE (custom parse)
-# ##########################################################################
-
-tool_dedupe = true
 
 # ##########################################################################
 # tools

@@ -18,7 +18,7 @@ import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult, ToolE
 import type { ToolDidExecuteContext, ResolvedToolExecutionHookContext, BeforeExecuteDecision } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolDedupeService, type ToolDedupeResult } from '#/agent/toolDedupe/toolDedupe';
 import { AgentToolDedupeService, __testing as toolDedupeTesting } from '#/agent/toolDedupe/toolDedupeService';
-import { REPEAT_BREAKER_SECTION, TOOL_DEDUPE_SECTION } from '#/agent/toolDedupe/configSection';
+import { REPEAT_BREAKER_SECTION } from '#/agent/toolDedupe/configSection';
 import { IConfigService } from '#/app/config/config';
 import { IAgentToolExecutorService, type ToolExecutionResult } from '#/agent/toolExecutor/toolExecutor';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
@@ -708,39 +708,6 @@ describe('AgentToolDedupeService', () => {
       expect(tool.calls).toHaveLength(1);
       const byId = new Map(results.map((result) => [result.toolCallId, result.result]));
       expect(byId.get('dup')!.output).toBe(byId.get('orig')!.output);
-    });
-  });
-
-  describe('tool dedupe config switch', () => {
-    function dedupeOffHarness(): Harness {
-      return createHarness(recordingTelemetry(telemetryEvents), {
-        config: { [TOOL_DEDUPE_SECTION]: false },
-      });
-    }
-
-    it('executes every identical call when tool_dedupe is false', async () => {
-      const h = dedupeOffHarness();
-      const tool = new EchoTool('Read');
-      h.registry.register(tool);
-      const results = await runStep(h, 1, 1, [
-        toolCall('orig', 'Read', { p: 1 }),
-        toolCall('dup', 'Read', { p: 1 }),
-      ]);
-      expect(tool.calls).toHaveLength(2);
-      const byId = new Map(results.map((result) => [result.toolCallId, result.result]));
-      expect(byId.get('orig')!.isError).toBeFalsy();
-      expect(byId.get('dup')!.isError).toBeFalsy();
-    });
-
-    it('keeps repeat breaker active when tool_dedupe is false', async () => {
-      const h = dedupeOffHarness();
-      h.registry.register(new EchoTool('Read'));
-      let last: ToolResult | undefined;
-      for (let i = 0; i < 3; i += 1) {
-        const [result] = await runStep(h, 1, i + 1, [toolCall(`c${String(i)}`, 'Read', { p: 1 })]);
-        last = result!.result;
-      }
-      expect(last!.output as string).toContain('<system-reminder>');
     });
   });
 
