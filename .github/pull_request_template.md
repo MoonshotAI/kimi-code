@@ -6,24 +6,38 @@ External PRs are accepted for approved bug fixes only: link an issue that a main
 See https://github.com/MoonshotAI/kimi-code/blob/main/CONTRIBUTING.md for more.
 -->
 
-## Related Issue
+<!--
+原则：尽量简洁描述，不要长篇大论，要有结构。
+-->
 
-<!-- Link the issue this change came from. External PRs must link an issue approved by a maintainer (an `/approve` comment) — PRs without one may be closed. -->
+## 需求 or bug
 
-Resolve #(issue_number)
+<!-- 如果有 issue，直接写 Resolve #(issue_number)；
+     如果是需求，用人类能看懂的话简单描述，100 字以内，尽量简短。 -->
 
-## Problem
+## Bug 复现步骤
 
-<!-- What user need or limitation does this address? If the linked issue already covers this, write "See linked issue". -->
+<!-- 仅 bug 类 PR 必填，需求类 PR 写 N/A。
+     建议写在 issue 里，PR 里放链接即可；如果没有 issue，直接写在这里。 -->
 
-## What changed
+## Root cause
 
-<!-- What did you implement, and why does this approach fit Kimi Code? -->
+<!-- 仅 bug 类 PR 必填。讲清楚根本原因。
+     并说明本次是从根本解决了，还是一个 workaround。 -->
+
+## 代码变更
+
+<!-- 用自然语言，简单易懂地描述本次代码变更，给 reviewer 讲清楚。 -->
+
+## 影响范围
+
+<!-- 讲清楚本次改动影响哪些模块 / 功能路径；
+     测试覆盖了什么。 -->
 
 ## Checklist
 
-- [ ] I have read the [CONTRIBUTING](https://github.com/MoonshotAI/kimi-code/blob/main/CONTRIBUTING.md) document.
-- [ ] I have linked a related issue (external PRs: the issue must have a maintainer's `/approve`).
-- [ ] I have added tests that prove my feature works.
-- [ ] Ran `gen-changesets` skill, or this PR needs no changeset.
-- [ ] Ran `gen-docs` skill, or this PR needs no doc update.
+- [ ] 我已阅读 [CONTRIBUTING](https://github.com/MoonshotAI/kimi-code/blob/main/CONTRIBUTING.md) 文档。
+- [ ] 我已链接相关 issue（外部 PR：issue 必须有维护者的 `/approve`）。
+- [ ] 我已添加证明功能可用的测试。
+- [ ] 已运行 `gen-changesets` skill，或本 PR 无需 changeset。
+- [ ] 已运行 `gen-docs` skill，或本 PR 无需文档更新。
