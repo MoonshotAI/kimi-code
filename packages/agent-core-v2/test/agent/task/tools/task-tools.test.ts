@@ -497,7 +497,7 @@ describe('TaskOutputTool', () => {
   it('returns agent metadata and final summary without process fields', async () => {
     const tasks = new FakeTaskService();
     const taskId = tasks.add(
-      agentTaskInfo({ monoStartedAt: 5_000, monoEndedAt: 8_000 }),
+      agentTaskInfo({ durationMs: 3_000 }),
       outputSnapshot('SUBAGENT-FINAL-SUMMARY\n'),
     );
 

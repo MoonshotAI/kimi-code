@@ -127,7 +127,7 @@ interface ManagedTask {
   options: RegisterAgentTaskOptions & { description?: string };
   readonly startedAt: number;
   endedAt: number | null;
-  readonly monoStartedAt?: number;
+  readonly monoStartedAt: number;
   monoEndedAt?: number | null;
   foregroundRelease?: ForegroundRelease;
   stopReason?: string;
@@ -940,8 +940,9 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     const persistence = this.persistence;
     for (const [taskId, info] of this.ghosts) {
       if (TERMINAL_STATUSES.has(info.status)) continue;
+      const { durationMs: _durationMs, ...rest } = info;
       const updated: AgentTaskInfo = {
-        ...info,
+        ...rest,
         status: 'lost',
         endedAt: info.endedAt ?? Date.now(),
       };
@@ -954,8 +955,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
   private persistLive(entry: ManagedTask): Promise<void> {
     const persistence = this.persistence;
-    const { monoStartedAt: _monoStartedAt, monoEndedAt: _monoEndedAt, ...info } =
-      this.toInfo(entry);
+    const info = this.toInfo(entry);
     entry.persistWriteQueue = entry.persistWriteQueue
       .then(() => persistence.writeTask(info))
       .catch(() => { });
@@ -1107,11 +1107,8 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       task_id: info.taskId,
       kind: info.kind,
       duration_ms:
-        info.monoStartedAt !== undefined
-          ? Math.max(0, (info.monoEndedAt ?? monoNowMs()) - info.monoStartedAt)
-          : info.endedAt !== null
-            ? info.endedAt - info.startedAt
-            : null,
+        info.durationMs ??
+        (info.endedAt !== null ? info.endedAt - info.startedAt : null),
       status: info.status,
     });
   }
@@ -1390,8 +1387,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       detached: this.isDetached(entry) ? true : false,
       startedAt: entry.startedAt,
       endedAt: entry.endedAt,
-      monoStartedAt: entry.monoStartedAt,
-      monoEndedAt: entry.monoEndedAt,
+      durationMs: Math.max(0, (entry.monoEndedAt ?? monoNowMs()) - entry.monoStartedAt),
       stopReason: entry.stopReason,
       terminalNotificationSuppressed: entry.terminalNotificationSuppressed,
       timeoutMs: entry.options.timeoutMs,

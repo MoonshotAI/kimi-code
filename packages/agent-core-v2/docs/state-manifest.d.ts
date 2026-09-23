@@ -1138,8 +1138,7 @@ export interface AgentStateSnapshot {
     readonly detached?: boolean;
     readonly startedAt: number;
     readonly endedAt: number | null;
-    readonly monoStartedAt?: number;
-    readonly monoEndedAt?: number | null;
+    readonly durationMs?: number;
     readonly stopReason?: string;
     readonly terminalNotificationSuppressed?: boolean;
     readonly resumeReminded?: boolean;
@@ -1158,8 +1157,7 @@ export interface AgentStateSnapshot {
     readonly detached?: boolean;
     readonly startedAt: number;
     readonly endedAt: number | null;
-    readonly monoStartedAt?: number;
-    readonly monoEndedAt?: number | null;
+    readonly durationMs?: number;
     readonly stopReason?: string;
     readonly terminalNotificationSuppressed?: boolean;
     readonly resumeReminded?: boolean;
@@ -1176,8 +1174,7 @@ export interface AgentStateSnapshot {
     readonly detached?: boolean;
     readonly startedAt: number;
     readonly endedAt: number | null;
-    readonly monoStartedAt?: number;
-    readonly monoEndedAt?: number | null;
+    readonly durationMs?: number;
     readonly stopReason?: string;
     readonly terminalNotificationSuppressed?: boolean;
     readonly resumeReminded?: boolean;
@@ -1196,8 +1193,7 @@ export interface AgentStateSnapshot {
     readonly detached?: boolean;
     readonly startedAt: number;
     readonly endedAt: number | null;
-    readonly monoStartedAt?: number;
-    readonly monoEndedAt?: number | null;
+    readonly durationMs?: number;
     readonly stopReason?: string;
     readonly terminalNotificationSuppressed?: boolean;
     readonly resumeReminded?: boolean;
@@ -1216,8 +1212,7 @@ export interface AgentStateSnapshot {
     readonly detached?: boolean;
     readonly startedAt: number;
     readonly endedAt: number | null;
-    readonly monoStartedAt?: number;
-    readonly monoEndedAt?: number | null;
+    readonly durationMs?: number;
     readonly stopReason?: string;
     readonly terminalNotificationSuppressed?: boolean;
     readonly resumeReminded?: boolean;
@@ -1234,8 +1229,7 @@ export interface AgentStateSnapshot {
     readonly detached?: boolean;
     readonly startedAt: number;
     readonly endedAt: number | null;
-    readonly monoStartedAt?: number;
-    readonly monoEndedAt?: number | null;
+    readonly durationMs?: number;
     readonly stopReason?: string;
     readonly terminalNotificationSuppressed?: boolean;
     readonly resumeReminded?: boolean;
