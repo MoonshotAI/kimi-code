@@ -560,7 +560,7 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `theme` | `string` | `auto` | Color theme: `auto`, `dark`, `light`, or the name of a [custom theme](../customization/themes.md) |
-| `tui_mode` | `string` | `regular` | UI layout: `regular` renders into the terminal scrollback, `fullscreen` (experimental) uses the alternate screen with in-app scrolling and transcript search |
+| `tui_mode` | `string` | `regular` | UI layout: `regular` renders into the terminal scrollback, `fullscreen` (experimental) uses the alternate screen with in-app scrolling and transcript search; existing `KIMI_CODE_TUI_FULL_SCREEN=1` setups are migrated to `fullscreen` automatically |
 | `render_latex` | `boolean` | `true` | Render LaTeX math expressions in Markdown messages as Unicode text; `false` keeps the raw source |
 | `disable_paste_burst` | `boolean` | `false` | Disable the non-bracketed paste-burst fallback that keeps rapid multi-line pastes from submitting line by line |
 | `cache_expiry_hint` | `boolean` | `true` | On resume or when submitting after a long idle stretch, warn that the context cache may have expired and offer to compact or start a new session (v2 engine only) |

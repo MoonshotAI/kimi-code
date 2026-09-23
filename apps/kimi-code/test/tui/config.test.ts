@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   DEFAULT_TUI_CONFIG,
@@ -17,12 +17,14 @@ let dir: string;
 let filePath: string;
 
 beforeEach(() => {
+  vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '');
   dir = join(tmpdir(), `kimi-tui-config-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   mkdirSync(dir, { recursive: true });
   filePath = join(dir, 'tui.toml');
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -396,5 +398,62 @@ tui_mode = "weird"
     const text = readFileSync(filePath, 'utf-8');
     expect(text).toContain('\ntui_mode = "fullscreen"');
     expect((await loadTuiConfig(filePath)).tuiMode).toBe('fullscreen');
+  });
+});
+
+describe('TUI config tui_mode env migration', () => {
+  it('migrates KIMI_CODE_TUI_FULL_SCREEN=1 into tui_mode when the key is absent', async () => {
+    vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '1');
+    writeFileSync(filePath, 'theme = "dark"\n', 'utf-8');
+    const warnings: string[] = [];
+
+    const config = await loadTuiConfig(filePath, (message) => warnings.push(message));
+
+    expect(config.tuiMode).toBe('fullscreen');
+    expect(readFileSync(filePath, 'utf-8')).toContain('tui_mode = "fullscreen"');
+    expect(warnings).toEqual([
+      '[tui.toml] migrated KIMI_CODE_TUI_FULL_SCREEN to tui_mode = "fullscreen"',
+    ]);
+  });
+
+  it('ignores the env when tui_mode is explicitly regular', async () => {
+    vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '1');
+    writeFileSync(filePath, 'tui_mode = "regular"\n', 'utf-8');
+
+    const config = await loadTuiConfig(filePath);
+
+    expect(config.tuiMode).toBe('regular');
+    expect(readFileSync(filePath, 'utf-8')).toBe('tui_mode = "regular"\n');
+  });
+
+  it('does not migrate over an explicitly set unknown value', async () => {
+    vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '1');
+    writeFileSync(filePath, 'tui_mode = "weird"\n', 'utf-8');
+    const warnings: string[] = [];
+
+    const config = await loadTuiConfig(filePath, (message) => warnings.push(message));
+
+    expect(config.tuiMode).toBe('regular');
+    expect(warnings).toEqual(['[tui.toml] ignoring unknown tui_mode value: weird']);
+    expect(readFileSync(filePath, 'utf-8')).toBe('tui_mode = "weird"\n');
+  });
+
+  it('only honors the exact value 1 like the old gate', async () => {
+    vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', 'true');
+    writeFileSync(filePath, 'theme = "dark"\n', 'utf-8');
+
+    const config = await loadTuiConfig(filePath);
+
+    expect(config.tuiMode).toBe('regular');
+    expect(readFileSync(filePath, 'utf-8')).toBe('theme = "dark"\n');
+  });
+
+  it('migrates when the config file does not exist yet', async () => {
+    vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '1');
+
+    const config = await loadTuiConfig(filePath);
+
+    expect(config.tuiMode).toBe('fullscreen');
+    expect(readFileSync(filePath, 'utf-8')).toContain('tui_mode = "fullscreen"');
   });
 });

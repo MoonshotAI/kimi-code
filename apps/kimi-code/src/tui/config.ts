@@ -18,6 +18,13 @@ import { getDataDir } from '#/utils/paths';
 export const INVALID_TUI_CONFIG_MESSAGE =
   'Invalid TUI config in ~/.kimi-code/tui.toml; using defaults.';
 
+const FULLSCREEN_ENV_MIGRATION_MESSAGE =
+  '[tui.toml] migrated KIMI_CODE_TUI_FULL_SCREEN to tui_mode = "fullscreen"';
+
+function fullscreenEnvMigration(): TuiMode | undefined {
+  return process.env['KIMI_CODE_TUI_FULL_SCREEN'] === '1' ? 'fullscreen' : undefined;
+}
+
 export const TuiThemeSchema = z.string();
 
 export const NotificationConditionSchema = z.enum(['unfocused', 'always']);
@@ -169,13 +176,38 @@ export async function loadTuiConfig(
   warn?: (message: string) => void,
 ): Promise<TuiConfig> {
   if (!existsSync(filePath)) {
-    await saveTuiConfig(DEFAULT_TUI_CONFIG, filePath);
-    return DEFAULT_TUI_CONFIG;
+    const migration = fullscreenEnvMigration();
+    const config: TuiConfig =
+      migration === undefined ? DEFAULT_TUI_CONFIG : { ...DEFAULT_TUI_CONFIG, tuiMode: migration };
+    await saveTuiConfig(config, filePath);
+    if (migration !== undefined) {
+      warn?.(FULLSCREEN_ENV_MIGRATION_MESSAGE);
+    }
+    return config;
   }
 
   try {
     const text = await readFile(filePath, 'utf-8');
-    return parseTuiConfig(text, warn);
+    const raw = text.trim().length === 0 ? {} : (parseToml(text) as Record<string, unknown>);
+    const shape = TuiConfigFileSchema.parse(raw);
+    const config = normalizeTuiConfig(shape, warn);
+    if (shape.tui_mode !== undefined) {
+      return config;
+    }
+    const migration = fullscreenEnvMigration();
+    if (migration === undefined) {
+      return config;
+    }
+    const migrated: TuiConfig = { ...config, tuiMode: migration };
+    try {
+      await saveTuiConfig(migrated, filePath);
+      warn?.(FULLSCREEN_ENV_MIGRATION_MESSAGE);
+    } catch {
+      warn?.(
+        '[tui.toml] could not save the migrated tui_mode; fullscreen applies to this session only',
+      );
+    }
+    return migrated;
   } catch {
     throw new TuiConfigParseError(DEFAULT_TUI_CONFIG);
   }

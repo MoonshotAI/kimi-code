@@ -559,7 +559,7 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `theme` | `string` | `auto` | 配色主题：`auto`、`dark`、`light` 或[自定义主题](../customization/themes.md)名 |
-| `tui_mode` | `string` | `regular` | 界面布局：`regular` 渲染进终端滚动缓冲区，`fullscreen`（实验性）使用备用屏幕，提供应用内滚动与 transcript 搜索 |
+| `tui_mode` | `string` | `regular` | 界面布局：`regular` 渲染进终端滚动缓冲区，`fullscreen`（实验性）使用备用屏幕，提供应用内滚动与 transcript 搜索；已设置 `KIMI_CODE_TUI_FULL_SCREEN=1` 的环境会自动迁移到 `fullscreen` |
 | `render_latex` | `boolean` | `true` | 将 Markdown 中的 LaTeX 公式渲染为 Unicode 文本；`false` 保留原始源码 |
 | `disable_paste_burst` | `boolean` | `false` | 禁用非 bracketed paste 的粘贴突发兜底；默认开启，避免快速多行粘贴被逐行提交 |
 | `cache_expiry_hint` | `boolean` | `true` | resume 或长时间空闲后发消息时，若上下文缓存可能过期则提醒，可先压缩或新建会话（仅 v2 引擎） |
