@@ -24,6 +24,10 @@ import {
   type LlmRequestEvent,
   type ToolCallIdPolicy,
 } from '#/llm/requester/requester';
+import {
+  getLlmHeadersTimeoutDispatcher,
+  resolveLlmHeadersTimeoutMs,
+} from '#/llm/requester/timeout';
 
 import {
   normalizeToolCallIdsForProvider,
@@ -55,11 +59,15 @@ const OPENAI_CHAT_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
 };
 
 function createClient(model: LlmModel, headers: Record<string, string> | undefined): OpenAI {
+  const headersTimeoutMs = resolveLlmHeadersTimeoutMs();
+  const dispatcher =
+    headersTimeoutMs === undefined ? undefined : getLlmHeadersTimeoutDispatcher(headersTimeoutMs);
   return new OpenAI({
     apiKey: model.apiKey ?? 'unused',
     baseURL: model.baseUrl,
     defaultHeaders: headers,
     maxRetries: 0,
+    fetchOptions: dispatcher === undefined ? undefined : { dispatcher },
   });
 }
 

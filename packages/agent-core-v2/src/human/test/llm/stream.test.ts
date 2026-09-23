@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { UNKNOWN_CAPABILITY } from '#/llm/capability';
 import type { FinishInfo } from '#/llm/finish-reason';
 import { createUserMessage, type Message, type StreamedMessagePart } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
 import type { LlmClientContext, LlmRequestEvent } from '#/llm/requester/requester';
+import { LLM_HEADERS_TIMEOUT_ENV } from '#/llm/requester/timeout';
 import { createAnthropicRequester } from '#/llm/requester/bases/anthropic/requester';
 import { createGoogleGenAIRequester } from '#/llm/requester/bases/google-genai/requester';
 import { createOpenAIRequester } from '#/llm/requester/bases/openai/requester';
@@ -282,5 +283,67 @@ describe('google-genai requester stream=false', () => {
     ]);
     expect(finishesOf(events)).toEqual([{ finishReason: 'completed', rawFinishReason: 'STOP' }]);
     expect(events.at(-1)?.type).toBe('llm.done');
+  });
+});
+
+describe('openai default client headers timeout', () => {
+  it('passes the configured headers-timeout dispatcher to fetch and fails the request on invalid values', async () => {
+    const proxyEnvKeys = [
+      'http_proxy',
+      'HTTP_PROXY',
+      'https_proxy',
+      'HTTPS_PROXY',
+      'all_proxy',
+      'ALL_PROXY',
+      'no_proxy',
+      'NO_PROXY',
+    ];
+    const savedEnv = Object.fromEntries(
+      [LLM_HEADERS_TIMEOUT_ENV, ...proxyEnvKeys].map((key) => [key, process.env[key]]),
+    );
+    for (const key of [LLM_HEADERS_TIMEOUT_ENV, ...proxyEnvKeys]) delete process.env[key];
+    const fetchStub = vi.fn(
+      async () =>
+        new Response(JSON.stringify(chatCompletion), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    vi.stubGlobal('fetch', fetchStub);
+    try {
+      await generateNonStream(createOpenAIRequester(), model);
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+      expect(fetchStub.mock.calls[0]?.[1]).not.toHaveProperty('dispatcher');
+
+      process.env[LLM_HEADERS_TIMEOUT_ENV] = '45000';
+      await generateNonStream(createOpenAIRequester(), model);
+      expect(fetchStub).toHaveBeenCalledTimes(2);
+      expect(fetchStub.mock.calls[1]?.[1]).toHaveProperty('dispatcher');
+
+      process.env['HTTP_PROXY'] = 'http://127.0.0.1:3128';
+      await generateNonStream(createOpenAIRequester(), model);
+      expect(fetchStub).toHaveBeenCalledTimes(3);
+      expect(fetchStub.mock.calls[2]?.[1]).toHaveProperty('dispatcher');
+      delete process.env['HTTP_PROXY'];
+
+      process.env['ALL_PROXY'] = 'socks5://127.0.0.1:1080';
+      await generateNonStream(createOpenAIRequester(), model);
+      expect(fetchStub).toHaveBeenCalledTimes(4);
+      expect(fetchStub.mock.calls[3]?.[1]).not.toHaveProperty('dispatcher');
+      delete process.env['ALL_PROXY'];
+
+      process.env[LLM_HEADERS_TIMEOUT_ENV] = 'abc';
+      const events = await generateNonStream(createOpenAIRequester(), model);
+      expect(events.at(-1)).toMatchObject({
+        type: 'llm.failed.remote',
+        error: { message: expect.stringContaining(LLM_HEADERS_TIMEOUT_ENV) },
+      });
+    } finally {
+      vi.unstubAllGlobals();
+      for (const [key, value] of Object.entries(savedEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 });
