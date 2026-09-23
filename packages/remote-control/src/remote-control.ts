@@ -22,9 +22,10 @@ export const REMOTE_CONTROL_RELAY_URL_ENV = 'KIMI_CODE_REMOTE_CONTROL_RELAY_URL'
 
 export function resolveRemoteControlRelayOrigin(
   env: Readonly<Record<string, string | undefined>> = process.env,
+  fallback: string = REMOTE_CONTROL_RELAY_ORIGIN,
 ): string {
   const value = env[REMOTE_CONTROL_RELAY_URL_ENV]?.trim();
-  return value === undefined || value.length === 0 ? REMOTE_CONTROL_RELAY_ORIGIN : value;
+  return value === undefined || value.length === 0 ? fallback : value;
 }
 
 const MAX_HTTP_HEADER_BYTES = 64 * 1024;
@@ -126,8 +127,8 @@ class RegistrationError extends Error {}
 
 export function buildRemoteControlUrl(
   deviceId: string,
-  sessionId?: string,
-  relayOrigin = resolveRemoteControlRelayOrigin(),
+  sessionId: string | undefined,
+  relayOrigin: string,
 ): string {
   const url = new URL(relayOrigin);
   const relayPath = url.pathname.replace(/\/+$/, '');
@@ -292,10 +293,8 @@ export async function startRemoteControl(
   if (token?.refreshToken === undefined || token.refreshToken.length === 0) {
     throw new Error('Remote Control requires a Kimi login. Run `kimi login` first.');
   }
-  const envRelay = process.env[REMOTE_CONTROL_RELAY_URL_ENV]?.trim();
   const relayOrigin =
-    options.relayOrigin ??
-    (envRelay !== undefined && envRelay.length > 0 ? envRelay : auth.relayOrigin);
+    options.relayOrigin ?? resolveRemoteControlRelayOrigin(process.env, auth.relayOrigin);
   const deviceId = createKimiDeviceId(options.homeDir);
   const deviceName = hostname();
   const url = buildRemoteControlUrl(deviceId, undefined, relayOrigin);

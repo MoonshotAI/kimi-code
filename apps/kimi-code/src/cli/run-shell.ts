@@ -240,9 +240,7 @@ export async function runShell(
     trackLifecycle('exit', { duration_ms: Date.now() - startedAt, tui_mode: tui.state.ui.mode });
     try {
       await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
-    } catch {
-      // Telemetry must not skip the foreground server handoff.
-    }
+    } catch {}
     const gutter = ' '.repeat(CHROME_GUTTER);
     process.stdout.write(`${gutter}Bye!\n`);
     const hints: string[] = [];
@@ -287,9 +285,7 @@ export async function runShell(
     trackLifecycle('exit', { duration_ms: Date.now() - startedAt, tui_mode: tui.state.ui.mode });
     try {
       await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
-    } catch {
-      // Telemetry must not replace the startup error.
-    }
+    } catch {}
     await harness.close();
     throw error;
   }

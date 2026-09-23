@@ -210,22 +210,40 @@ export interface KimiRemoteControlAuth {
  *
  * `oauthKey` is the persisted login slot when `configuredOAuthKey` is set
  * (including custom `kimi-code-env-*` environments); otherwise the official
- * slot for the resolved region. `relayOrigin` always follows the resolved
- * region profile — custom/internal env keys do not flip the relay to `.ai`.
+ * slot for the resolved region. `relayOrigin` follows the resolved region
+ * profile, except that a custom-env login — a scoped slot outside the two
+ * official ones, without a recognized `configuredOAuthHost` — keeps the
+ * mainland relay: an install-channel marker must not flip a custom
+ * environment to `.ai`.
  */
 export function resolveKimiRemoteControlAuth(
   options: ResolveKimiRegionOptions = {},
 ): KimiRemoteControlAuth {
   const region = resolveKimiRegion(options);
   const profile = kimiRegionProfile(region);
+  const configuredKey = options.configuredOAuthKey;
+  const customSlot =
+    configuredKey !== undefined &&
+    configuredKey !== KIMI_CODE_OAUTH_KEY &&
+    configuredKey !==
+      resolveKimiCodeOAuthRef({
+        oauthHost: KIMI_REGION_PROFILES.global.oauthHost,
+        baseUrl: KIMI_REGION_PROFILES.global.baseUrl,
+      }).key;
+  const hostPinned =
+    options.configuredOAuthHost !== undefined &&
+    regionForOAuthHost(options.configuredOAuthHost) !== undefined;
   return {
     region,
     oauthKey:
-      options.configuredOAuthKey ??
+      configuredKey ??
       resolveKimiCodeOAuthRef({
         oauthHost: profile.oauthHost,
         baseUrl: profile.baseUrl,
       }).key,
-    relayOrigin: profile.relayOrigin,
+    relayOrigin:
+      customSlot && !hostPinned
+        ? KIMI_REGION_PROFILES['mainland-cn'].relayOrigin
+        : profile.relayOrigin,
   };
 }

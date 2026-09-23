@@ -165,7 +165,7 @@ describe('resolveKimiRegion', () => {
     expect(resolveKimiRemoteControlAuth({ env: {}, configuredOAuthKey: key, homeDir: dir })).toEqual({
       region: 'global',
       oauthKey: key,
-      relayOrigin: 'https://code-rc.kimi.ai',
+      relayOrigin: 'https://code-rc.kimi.com',
     });
   });
 
@@ -177,6 +177,13 @@ describe('resolveKimiRegion', () => {
         configuredOAuthKey: KIMI_CODE_OAUTH_KEY,
       }),
     ).toBe('global');
+    expect(
+      resolveKimiRemoteControlAuth({
+        env: {},
+        configuredOAuthHost: 'https://auth.kimi.ai',
+        configuredOAuthKey: 'oauth/kimi-code-env-0123456789abcdef',
+      }).relayOrigin,
+    ).toBe('https://code-rc.kimi.ai');
   });
 });
 

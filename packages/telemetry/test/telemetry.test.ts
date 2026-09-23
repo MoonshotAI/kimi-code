@@ -1050,6 +1050,7 @@ describe('telemetry bootstrap', () => {
       appName: 'kimi-code-cli',
       version: '1.2.3',
       initiallyEnabled: false,
+      endpoint: 'https://mock.test/events',
     });
     track('dropped');
     setTelemetryEnabled(true);
@@ -1076,6 +1077,7 @@ describe('telemetry bootstrap', () => {
       deviceId: 'dev',
       appName: 'kimi-code-cli',
       version: '1.2.3',
+      endpoint: 'https://mock.test/events',
     });
     await vi.waitFor(() => {
       expect(fetchImpl).toHaveBeenCalledTimes(1);
@@ -1096,6 +1098,7 @@ describe('telemetry bootstrap', () => {
       sessionId: 'ses',
       appName: 'kimi-code-cli',
       version: '1.2.3',
+      endpoint: 'https://mock.test/events',
     });
 
     await shutdownTelemetry();
@@ -1158,6 +1161,7 @@ describe('telemetry bootstrap', () => {
       appName: 'kimi-code-cli',
       version: '1.2.3',
       model: 'model-a',
+      endpoint: 'https://mock.test/events',
     });
     track('first');
     setTelemetryModel('model-b');

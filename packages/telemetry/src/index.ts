@@ -46,9 +46,7 @@ export async function shutdownTelemetry(
 ): Promise<void> {
   try {
     await shutdown(options);
-  } catch {
-    // A failed flush must not reject process shutdown.
-  }
+  } catch {}
 }
 
 export { initializeTelemetry, isTelemetryDisabledByEnv, shouldEnableTelemetry } from './bootstrap';

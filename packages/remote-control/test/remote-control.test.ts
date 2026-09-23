@@ -47,7 +47,7 @@ afterEach(async () => {
 
 describe('Remote Control URLs', () => {
   it('builds the public device entry without a local token', () => {
-    const url = buildRemoteControlUrl('device/one');
+    const url = buildRemoteControlUrl('device/one', undefined, 'https://code-rc.kimi.com');
     expect(url).toBe(
       'https://code-rc.kimi.com/devices/device%2Fone/?rc=1&from=kimi_code_cli',
     );
@@ -55,7 +55,7 @@ describe('Remote Control URLs', () => {
   });
 
   it('builds an encoded session deep link before the query', () => {
-    expect(buildRemoteControlUrl('device-1', 'session/a b')).toBe(
+    expect(buildRemoteControlUrl('device-1', 'session/a b', 'https://code-rc.kimi.com')).toBe(
       'https://code-rc.kimi.com/devices/device-1/sessions/session%2Fa%20b?rc=1&from=kimi_code_cli',
     );
   });
@@ -65,12 +65,15 @@ describe('Remote Control URLs', () => {
     expect(
       resolveRemoteControlRelayOrigin({ KIMI_CODE_REMOTE_CONTROL_RELAY_URL: '  ' }),
     ).toBe('https://code-rc.kimi.com');
+    expect(resolveRemoteControlRelayOrigin({}, 'https://code-rc.kimi.ai')).toBe(
+      'https://code-rc.kimi.ai',
+    );
   });
 
   it('builds device URLs from the relay origin env override', () => {
     vi.stubEnv('KIMI_CODE_REMOTE_CONTROL_RELAY_URL', 'https://rc.example.test/coding-relay/');
     expect(resolveRemoteControlRelayOrigin()).toBe('https://rc.example.test/coding-relay/');
-    expect(buildRemoteControlUrl('device-1')).toBe(
+    expect(buildRemoteControlUrl('device-1', undefined, resolveRemoteControlRelayOrigin())).toBe(
       'https://rc.example.test/coding-relay/devices/device-1/?rc=1&from=kimi_code_cli',
     );
   });
