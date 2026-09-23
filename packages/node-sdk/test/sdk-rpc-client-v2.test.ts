@@ -8,7 +8,7 @@
  * Wiring: real v2 engine bootstrapped on a temp KIMI_CODE_HOME; remote provider calls are stubbed.
  * Run: pnpm exec vitest run test/sdk-rpc-client-v2.test.ts
  */
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -286,6 +286,31 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       },
     });
   }
+
+  it('loads remote project skills once when creating the first remote session', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-skills-work-'));
+    const remoteDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-skills-remote-'));
+    tempDirs.push(workDir, remoteDir);
+    const skillPath = join(remoteDir, '.agents', 'skills', 'example', 'SKILL.md');
+    await mkdir(join(remoteDir, '.agents', 'skills', 'example'), { recursive: true });
+    await writeFile(skillPath, '---\nname: example\ndescription: Example remote skill\n---\nbody');
+    const canonicalSkillPath = await realpath(skillPath);
+    const { harness, client } = await makeEnvironmentHarness({ defaultCwd: remoteDir });
+    const provider = await attachFakeBoxEnvironment(client);
+    const readText = vi.spyOn(HostFileSystem.prototype, 'readText');
+    try {
+      const session = await harness.createSession({ workDir, environmentId: 'fake-box', model: 'stub' });
+      expect(await session.listSkills()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: 'example', source: 'project' }),
+      ]));
+      expect(readText.mock.calls.filter(([path]) => path === canonicalSkillPath)).toHaveLength(1);
+    } finally {
+      readText.mockRestore();
+      await provider.dispose();
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
 
   it('prepares remote prompt context only once when creating each session with model overrides', async () => {
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-new-work-'));

@@ -50,6 +50,7 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
     @IConfigService private readonly config: IConfigService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     private readonly fs: IHostFileSystem,
+    private readonly watchEnabled = true,
   ) {
     super();
     this._register(
@@ -82,9 +83,10 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
   private async updateProjectSkillRootWatch(
     scannedDirectories: readonly string[],
   ): Promise<boolean> {
-    const { projectRoot, candidates } = await projectSkillRootCandidates(this.workspace.cwd, this.fs);
+    if (!this.watchEnabled) return false;
     const signature = [...scannedDirectories].toSorted().join('\0');
     if (signature === this.watchSignature) return false;
+    const { projectRoot, candidates } = await projectSkillRootCandidates(this.workspace.cwd, this.fs);
     const resources = this.watchResources.add(new DisposableStore());
     const handle = watchCandidates(projectRoot, candidates, {
       ignored: subtreeWatchFilter(projectRoot, candidates, {

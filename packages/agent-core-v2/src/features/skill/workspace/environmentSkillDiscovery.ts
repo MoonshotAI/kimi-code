@@ -9,6 +9,14 @@ import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
 
 const MAX_SKILL_SCAN_DEPTH = 8;
+const SKILL_SCAN_CONCURRENCY = 8;
+
+interface SkillFileInput {
+  readonly skillMdPath: string;
+  readonly skillDirName: string;
+  readonly root: SkillRoot;
+  readonly subSkillParentName?: string;
+}
 
 export class EnvironmentSkillDiscovery implements ISkillDiscovery {
   declare readonly _serviceBrand: undefined;
@@ -32,14 +40,13 @@ async function discoverEnvironmentSkills(
   const skipped: SkippedSkill[] = [];
   const scannedDirectories: string[] = [];
 
-  const register = async (input: {
-    readonly skillMdPath: string;
-    readonly skillDirName: string;
-    readonly root: SkillRoot;
-    readonly subSkillParentName?: string;
-  }): Promise<SkillDefinition | undefined> => {
+  const register = async (
+    input: SkillFileInput,
+    content?: PromiseSettledResult<string>,
+  ): Promise<SkillDefinition | undefined> => {
     try {
-      const text = await fs.readText(input.skillMdPath);
+      if (content?.status === 'rejected') throw content.reason;
+      const text = content?.status === 'fulfilled' ? content.value : await fs.readText(input.skillMdPath);
       const parsed = parseSkillText({
         skillMdPath: input.skillMdPath,
         skillDirName: input.skillDirName,
@@ -73,6 +80,18 @@ async function discoverEnvironmentSkills(
       }
       return undefined;
     }
+  };
+
+  const registerAll = async (inputs: readonly SkillFileInput[]) => {
+    const skills: (SkillDefinition | undefined)[] = [];
+    for (let offset = 0; offset < inputs.length; offset += SKILL_SCAN_CONCURRENCY) {
+      const batch = inputs.slice(offset, offset + SKILL_SCAN_CONCURRENCY);
+      const contents = await Promise.allSettled(batch.map((input) => fs.readText(input.skillMdPath)));
+      for (const [index, input] of batch.entries()) {
+        skills.push(await register(input, contents[index]));
+      }
+    }
+    return skills;
   };
 
   const isFile = async (value: string): Promise<boolean> => {
@@ -120,24 +139,30 @@ async function discoverEnvironmentSkills(
 
     const directorySkills = new Set<string>();
     const subdirs: string[] = [];
-    for (const entry of entries) {
-      const entryPath = path.join(dirPath, entry.name);
-      const directory = entry.isDirectory || (entry.isSymbolicLink === true && await isDirectory(entryPath));
-      if (directory && await isFile(path.join(entryPath, 'SKILL.md'))) {
-        directorySkills.add(entry.name);
+    for (let offset = 0; offset < entries.length; offset += SKILL_SCAN_CONCURRENCY) {
+      const batch = await Promise.all(entries.slice(offset, offset + SKILL_SCAN_CONCURRENCY).map(async (entry) => {
+        const entryPath = path.join(dirPath, entry.name);
+        const directory = entry.isDirectory || (entry.isSymbolicLink === true && await isDirectory(entryPath));
+        const skill = directory && await isFile(path.join(entryPath, 'SKILL.md'));
+        return { entry, directory, skill };
+      }));
+      for (const { entry, directory, skill } of batch) {
+        if (skill) directorySkills.add(entry.name);
+        if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
+        if (directory) subdirs.push(entry.name);
       }
-      if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
-      if (directory) subdirs.push(entry.name);
     }
 
     const allowedSubSkillBundles = new Map<string, string>();
-    for (const entry of directorySkills) {
-      const skill = await register({
-        skillMdPath: path.join(dirPath, entry, 'SKILL.md'),
-        skillDirName: entry,
-        root,
-        subSkillParentName,
-      });
+    const skillNames = [...directorySkills];
+    const skills = await registerAll(skillNames.map((entry) => ({
+      skillMdPath: path.join(dirPath, entry, 'SKILL.md'),
+      skillDirName: entry,
+      root,
+      subSkillParentName,
+    })));
+    for (const [index, entry] of skillNames.entries()) {
+      const skill = skills[index];
       if (skill !== undefined && hasSubSkillEnabled(skill)) {
         allowedSubSkillBundles.set(entry, skill.name);
       }
@@ -150,16 +175,14 @@ async function discoverEnvironmentSkills(
           await register({ skillMdPath, skillDirName: path.basename(dirPath), root });
         }
       }
-      for (const entry of entries) {
-        if (!entry.isFile || !entry.name.endsWith('.md') || entry.name === 'SKILL.md') continue;
-        const skillName = entry.name.slice(0, -'.md'.length);
-        if (directorySkills.has(skillName)) continue;
-        await register({
+      await registerAll(entries
+        .filter((entry) => entry.isFile && entry.name.endsWith('.md') && entry.name !== 'SKILL.md' &&
+          !directorySkills.has(entry.name.slice(0, -'.md'.length)))
+        .map((entry) => ({
           skillMdPath: path.join(dirPath, entry.name),
-          skillDirName: skillName,
+          skillDirName: entry.name.slice(0, -'.md'.length),
           root,
-        });
-      }
+        })));
     }
 
     for (const entry of subdirs) {

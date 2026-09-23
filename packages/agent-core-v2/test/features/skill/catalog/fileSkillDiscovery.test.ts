@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 import { dirname, join } from 'pathe';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
@@ -21,7 +21,7 @@ interface RecordedWarning {
   readonly payload: LogPayload;
 }
 
-describe('FileSkillDiscovery', () => {
+describe.each(['local', 'environment'] as const)('%s skill discovery', (backend) => {
   let root: string;
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
@@ -59,7 +59,9 @@ describe('FileSkillDiscovery', () => {
   });
 
   function discover(roots: readonly SkillRoot[]) {
-    return ix.get(ISkillDiscovery).discover(roots);
+    return backend === 'local'
+      ? ix.get(ISkillDiscovery).discover(roots)
+      : new EnvironmentSkillDiscovery(ix.get(ILogService), new HostFileSystem()).discover(roots);
   }
 
   async function writeSkill(rel: string, frontmatter: string, body = 'body'): Promise<void> {
@@ -92,6 +94,50 @@ describe('FileSkillDiscovery', () => {
 
     expect(result.skills.map((s) => s.name)).toEqual(['commit']);
     expect(result.skills[0]?.source).toBe('project');
+  });
+
+  it.skipIf(backend === 'local')('bounds parallel skill reads and keeps precedence when later files finish first', async () => {
+    for (let i = 0; i < 10; i++) {
+      await writeSkill(`skills/skill-${i}/SKILL.md`, `name: shared\ndescription: from skill-${i}`);
+    }
+    const fs = new HostFileSystem();
+    const stat = fs.stat.bind(fs);
+    const readText = fs.readText.bind(fs);
+    let releaseMetadata!: () => void;
+    const metadataReady = new Promise<void>((resolve) => { releaseMetadata = resolve; });
+    let metadataInFlight = 0;
+    let metadataPeak = 0;
+    let readsReleased = false;
+    const reads: { path: string; release(): void }[] = [];
+    fs.stat = async (path) => {
+      metadataInFlight += 1;
+      metadataPeak = Math.max(metadataPeak, metadataInFlight);
+      try { await metadataReady; return await stat(path); }
+      finally { metadataInFlight -= 1; }
+    };
+    fs.readText = async (path, options) => {
+      const text = await readText(path, options);
+      if (!readsReleased) await new Promise<void>((resolve) => { reads.push({ path, release: resolve }); });
+      return text;
+    };
+    const discovery = new EnvironmentSkillDiscovery(stubLog(), fs);
+    const loading = discovery.discover([skillRoot('skills')]);
+    try {
+      await vi.waitFor(() => { expect(metadataInFlight).toBe(8); });
+      releaseMetadata();
+      await vi.waitFor(() => { expect(reads).toHaveLength(8); });
+      expect(metadataPeak).toBe(8);
+      readsReleased = true;
+      for (const { release } of reads.toSorted((a, b) => b.path.localeCompare(a.path))) release();
+      const result = await loading;
+      expect(result.skills).toHaveLength(1);
+      expect(result.skills[0]?.description).toBe('from skill-0');
+    } finally {
+      readsReleased = true;
+      releaseMetadata();
+      for (const { release } of reads) release();
+      await loading;
+    }
   });
 
   it('returns an empty result when given no roots', async () => {
