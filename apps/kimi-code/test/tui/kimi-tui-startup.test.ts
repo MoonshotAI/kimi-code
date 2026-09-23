@@ -290,11 +290,9 @@ describe('KimiTUI startup', () => {
     });
   });
 
-  it('mounts the docked fullscreen layout when KIMI_CODE_TUI_FULL_SCREEN=1', async () => {
+  it('mounts the docked fullscreen layout when tui_mode is fullscreen', async () => {
     const harness = makeHarness(makeSession());
-    vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '1');
-    const driver = makeDriver(harness, { ...makeStartupInput() });
-    vi.unstubAllEnvs();
+    const driver = makeDriver(harness, { ...makeStartupInput({}, { tuiMode: 'fullscreen' }) });
 
     expect(driver.state.ui.mode).toBe('fullscreen');
     expect(driver.state.ui.children).toHaveLength(0);

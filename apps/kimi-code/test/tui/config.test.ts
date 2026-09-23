@@ -61,6 +61,7 @@ auto_install = false
 
     expect(config).toEqual({
       theme: 'light',
+      tuiMode: 'regular',
       renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,
@@ -119,6 +120,7 @@ command = "   "
 
     expect(config).toEqual({
       theme: 'auto',
+      tuiMode: 'regular',
       renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,
@@ -168,6 +170,7 @@ command = "   "
 
     expect(await loadTuiConfig(filePath)).toEqual({
       theme: 'light',
+      tuiMode: 'regular',
       renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,
@@ -348,5 +351,50 @@ mermaid = "${value}"
     expect(text).toContain('\n[markdown]\n');
     expect(text).toContain('mermaid = "off"');
     expect((await loadTuiConfig(filePath)).markdown).toEqual({ mermaid: 'off' });
+  });
+});
+
+describe('TUI config tui_mode', () => {
+  it('defaults tui_mode to regular when omitted', () => {
+    expect(parseTuiConfig(`theme = "dark"`).tuiMode).toBe('regular');
+  });
+
+  it('parses tui_mode = "fullscreen"', () => {
+    const config = parseTuiConfig(`
+tui_mode = "fullscreen"
+`);
+
+    expect(config.tuiMode).toBe('fullscreen');
+  });
+
+  it('warns and falls back to regular for unknown tui_mode values without failing the file', () => {
+    const warnings: string[] = [];
+    const config = parseTuiConfig(
+      `
+theme = "dark"
+tui_mode = "weird"
+`,
+      (message) => warnings.push(message),
+    );
+
+    expect(config.tuiMode).toBe('regular');
+    expect(config.theme).toBe('dark');
+    expect(warnings).toEqual(['[tui.toml] ignoring unknown tui_mode value: weird']);
+  });
+
+  it('keeps tui_mode a commented guide by default', async () => {
+    await saveTuiConfig(DEFAULT_TUI_CONFIG, filePath);
+
+    const text = readFileSync(filePath, 'utf-8');
+    expect(text).toContain('# tui_mode = "regular"');
+    expect(text).not.toContain('\ntui_mode =');
+  });
+
+  it('writes a live tui_mode when fullscreen and round-trips it', async () => {
+    await saveTuiConfig({ ...DEFAULT_TUI_CONFIG, tuiMode: 'fullscreen' }, filePath);
+
+    const text = readFileSync(filePath, 'utf-8');
+    expect(text).toContain('\ntui_mode = "fullscreen"');
+    expect((await loadTuiConfig(filePath)).tuiMode).toBe('fullscreen');
   });
 });

@@ -284,6 +284,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     streamingStartTime: 0,
     stepRetry: null,
     theme: input.tuiConfig.theme,
+    tuiMode: input.tuiConfig.tuiMode,
     version: input.version,
     editorCommand: input.tuiConfig.editorCommand,
     disablePasteBurst: input.tuiConfig.disablePasteBurst,

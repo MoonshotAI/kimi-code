@@ -192,6 +192,29 @@ auto_install = false
       'success',
     );
   });
+
+  it('notices a required restart when tui_mode differs from the running UI mode', async () => {
+    await writeTuiConfig('tui_mode = "fullscreen"\n');
+    const host = makeHost();
+
+    await handleReloadTuiCommand(host);
+
+    expect(host.setAppState).toHaveBeenCalledWith(
+      expect.objectContaining({ tuiMode: 'fullscreen' }),
+    );
+    expect(host.showNotice).toHaveBeenCalledWith(
+      'TUI mode takes effect after restarting Kimi Code.',
+    );
+  });
+
+  it('does not notice when tui_mode matches the running UI mode', async () => {
+    await writeTuiConfig('theme = "dark"\n');
+    const host = makeHost();
+
+    await handleReloadTuiCommand(host);
+
+    expect(host.showNotice).not.toHaveBeenCalled();
+  });
 });
 
 async function writeTuiConfig(text: string): Promise<void> {
@@ -218,6 +241,9 @@ function makeHost({
     },
     editor: {
       setDisablePasteBurst: vi.fn(),
+    },
+    ui: {
+      mode: 'regular' as const,
     },
     theme: {
       palette: {
@@ -250,6 +276,7 @@ function makeHost({
     refreshSlashCommandAutocomplete: vi.fn(),
     reloadCurrentSessionView: vi.fn(async () => {}),
     showStatus: vi.fn(),
+    showNotice: vi.fn(),
   } as unknown as SlashCommandHost & {
     readonly harness: {
       readonly reloadSession: ReturnType<typeof vi.fn>;
@@ -259,5 +286,6 @@ function makeHost({
     readonly refreshSlashCommandAutocomplete: ReturnType<typeof vi.fn>;
     readonly reloadCurrentSessionView: ReturnType<typeof vi.fn>;
     readonly showStatus: ReturnType<typeof vi.fn>;
+    readonly showNotice: ReturnType<typeof vi.fn>;
   };
 }
