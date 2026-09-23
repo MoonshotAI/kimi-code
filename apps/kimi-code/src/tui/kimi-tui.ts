@@ -32,6 +32,7 @@ import {
   Spacer,
   TuiAltScreen,
   TuiMainScreen,
+  type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 import { resolve } from 'pathe';
 
@@ -161,6 +162,7 @@ import {
   type TUIStartupState,
 } from './types';
 import {
+  countedByExpandHint,
   hasDispose,
   hasHiddenContent,
   isExpandable,
@@ -477,6 +479,9 @@ export class KimiTUI {
     this.startupNotice = startupInput.startupNotice;
     this.state = createTUIState(tuiOptions);
     this.state.footer.setExpandHintProvider(() => this.toolOutputExpandHint());
+    this.state.transcriptContainer.setUnhandledClick((index) =>
+      this.toggleClickedFoldBlock(index),
+    );
     this.uninstallRainbowDance = installRainbowDance(() => {
       this.state.ui.requestRender();
     });
@@ -3737,15 +3742,30 @@ export class KimiTUI {
       // card with hidden content keeps the collapse hint on.
       for (let i = children.length - 1; i >= 0; i--) {
         const child = children[i];
-        if (isExpandedComponent(child) && hasHiddenContent(child)) return 'collapse';
+        if (isExpandedComponent(child) && countedByExpandHint(child)) return 'collapse';
       }
       return null;
     }
     const cutoff = this.expandCutoff(children);
     for (let i = children.length - 1; i >= cutoff; i--) {
-      if (hasHiddenContent(children[i])) return 'expand';
+      if (countedByExpandHint(children[i])) return 'expand';
     }
     return null;
+  }
+
+  private toggleClickedFoldBlock(index: number): TuiMouseEventResult | undefined {
+    const children = this.state.transcriptContainer.children;
+    const hit = children[index];
+    if (hit === undefined || !isExpandable(hit) || !hasHiddenContent(hit)) return undefined;
+    if (isExpandedComponent(hit)) {
+      hit.setExpanded(false);
+    } else if (index >= this.expandCutoff(children)) {
+      hit.setExpanded(true);
+    } else {
+      return undefined;
+    }
+    this.state.ui.requestRender();
+    return { handled: true };
   }
 
   toggleToolOutputExpansion(): void {

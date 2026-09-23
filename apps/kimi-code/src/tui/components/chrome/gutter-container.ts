@@ -16,7 +16,12 @@
  */
 
 import { Container } from '@moonshot-ai/pi-tui';
-import type { Component, TuiMouseDispatchResult, TuiMouseEvent } from '@moonshot-ai/pi-tui';
+import type {
+  Component,
+  TuiMouseDispatchResult,
+  TuiMouseEvent,
+  TuiMouseEventResult,
+} from '@moonshot-ai/pi-tui';
 
 import { prefixPreservingOsc133Zone } from '#/tui/utils/osc133';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
@@ -31,6 +36,12 @@ interface TranscriptRenderCache {
 
 export class GutterContainer extends Container {
   private renderCache: TranscriptRenderCache | undefined;
+  private unhandledClick: ((index: number) => TuiMouseEventResult | undefined) | undefined;
+
+  setUnhandledClick(handler: (index: number) => TuiMouseEventResult | undefined): void {
+    this.unhandledClick = handler;
+  }
+
   constructor(
     private readonly leftPad: number,
     private readonly rightPad: number,
@@ -98,6 +109,80 @@ export class GutterContainer extends Container {
   // so translate before delegating or clicks land a gutter-width off.
   override handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
     const inner = Math.max(1, event.width - this.leftPad - this.rightPad);
-    return super.handleMouse({ ...event, x: event.x - this.leftPad, width: inner });
+    const adjusted: TuiMouseEvent = { ...event, x: event.x - this.leftPad, width: inner };
+    if (adjusted.y < 0 || adjusted.y >= adjusted.height) return undefined;
+
+    const heights = this.childHeights(inner, event.width);
+    let childY = 0;
+    for (let index = 0; index < this.children.length; index++) {
+      const height = heights[index] ?? 0;
+      if (adjusted.y < childY || adjusted.y >= childY + height) {
+        childY += height;
+        continue;
+      }
+      const child = this.children[index]!;
+      const handled = dispatchToChild(child, { ...adjusted, y: adjusted.y - childY, height });
+      if (handled) return handled;
+      if (
+        this.unhandledClick === undefined ||
+        adjusted.type !== 'click' ||
+        adjusted.button !== 'left'
+      ) {
+        return undefined;
+      }
+      const fallback = this.unhandledClick(index);
+      if (fallback === undefined || (!fallback.handled && !fallback.capture && !fallback.focus)) {
+        return undefined;
+      }
+      return {
+        handled: true,
+        capture: fallback.capture,
+        focus: fallback.focus,
+        render: fallback.render,
+        target: {
+          component: this,
+          originX: event.screenX - event.x,
+          originY: event.screenY - event.y,
+          width: event.width,
+          height: event.height,
+        },
+      };
+    }
+    return undefined;
   }
+
+  private childHeights(innerWidth: number, outerWidth: number): number[] {
+    const cache = this.renderCache;
+    if (
+      cache !== undefined &&
+      cache.width === outerWidth &&
+      cache.childRefs.length === this.children.length &&
+      cache.childRefs.every((child, index) => child === this.children[index])
+    ) {
+      return cache.prefixed.map((lines) => lines.length);
+    }
+    return this.children.map((child) => child.render(innerWidth).length);
+  }
+}
+
+function dispatchToChild(
+  child: Component,
+  event: TuiMouseEvent,
+): TuiMouseDispatchResult | undefined {
+  const result = child.handleMouse?.(event);
+  if (!result) return undefined;
+  if ('target' in result) return result as TuiMouseDispatchResult;
+  if (!result.handled && !result.capture && !result.focus) return undefined;
+  return {
+    ...result,
+    handled: true,
+    focusTarget: result.focus ? child : undefined,
+    target: {
+      component: child,
+      originX: event.screenX - event.x,
+      originY: event.screenY - event.y,
+      width: event.width,
+      height: event.height,
+    },
+  };
 }
