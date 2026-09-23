@@ -20,11 +20,6 @@ import { HandshakeError } from '#/remote/client/connection';
 import { RemoteEphemeralEnvironmentConnector } from '#/remote/client/ephemeralEnvironmentConnector';
 import type { LocalRunner, LocalRunRequest } from '#/remote/client/executorDetect';
 import {
-  RemoteConnectionPool,
-  RemoteConnectionPoolStaleError,
-  type RemoteConnectionPoolHolder,
-} from '#/remote/client/remoteConnectionPool';
-import {
   RemoteEnvironmentProviderFactory,
   type RemoteEnvironmentProviderFactoryOptions,
 } from '#/remote/client/remoteEnvironmentProvider';
@@ -412,6 +407,7 @@ describe('RemoteEnvironmentProviderFactory', () => {
     const oldLease = registry.acquire({ workspaceId: 'workspace-1', environmentId: 'dev-box' }, ['fs']);
     expect(oldLease.environment).toBe(first);
 
+    first.disconnect?.();
     await first.connect!();
     const second = registry.current('dev-box')!;
     expect(second).toBe(first);
@@ -447,6 +443,7 @@ describe('RemoteEnvironmentProviderFactory', () => {
     const managed = registry.current('dev-box')!;
     await expect(managed.fs!.readText('/etc/motd')).resolves.toBe('connection-1');
 
+    managed.disconnect?.();
     await managed.connect!();
     await expect(managed.fs!.readText('/etc/motd')).resolves.toBe('connection-2');
 
@@ -514,7 +511,7 @@ describe('RemoteEnvironmentProviderFactory', () => {
   });
 });
 
-describe('remote connection pool', () => {
+describe('shared connection', () => {
   const CONTEXT_B: EnvironmentProviderContext = { ...CONTEXT, id: 'workspace-2' };
 
   function poolServices(): HostServices {
@@ -544,7 +541,7 @@ describe('remote connection pool', () => {
     return (environment as unknown as { disposed: boolean }).disposed;
   }
 
-  it('shares one connection across workspaces with the same declaration fingerprint', async () => {
+  it('shares one connection across workspaces with the same environment id', async () => {
     const registryA = new EnvironmentRegistry('workspace-1');
     const registryB = new EnvironmentRegistry('workspace-2');
     const { connect, produced } = producingConnect();
@@ -620,6 +617,7 @@ describe('remote connection pool', () => {
     const leaseB = registryB.acquire({ workspaceId: 'workspace-2', environmentId: 'dev-box' }, ['fs']);
     const viewB = leaseB.environment;
 
+    registryA.current('dev-box')!.disconnect?.();
     await registryA.current('dev-box')!.connect!();
 
     expect(connect).toHaveBeenCalledTimes(2);
@@ -667,118 +665,6 @@ describe('remote connection pool', () => {
     await ephemeralRegistry.dispose();
     await attachment.dispose();
     await registry.dispose();
-  });
-});
-
-describe('RemoteConnectionPool', () => {
-  function pooledEnvironment(generation: string): RemoteEnvironment {
-    return new FakeEnvironment(
-      { workspaceId: 'workspace-1', environmentId: 'dev-box', generation },
-      { capabilities: ['fs', 'process'] },
-    ) as unknown as RemoteEnvironment;
-  }
-
-  function holder(overrides: Partial<RemoteConnectionPoolHolder> = {}): RemoteConnectionPoolHolder {
-    return { onPoolReplace: () => {}, ...overrides };
-  }
-
-  it('disposes a connect that finishes after the pool was disposed instead of installing it', async () => {
-    const pool = new RemoteConnectionPool();
-    let releaseConnect!: () => void;
-    const produced: FakeEnvironment[] = [];
-    const factory = vi.fn(() => new Promise<RemoteEnvironment>((resolve) => {
-      releaseConnect = () => {
-        const environment = pooledEnvironment('stale-1');
-        produced.push(environment as unknown as FakeEnvironment);
-        resolve(environment);
-      };
-    }));
-    const acquiring = pool.acquire('fingerprint', factory, holder());
-
-    const disposing = pool.dispose();
-    releaseConnect();
-    await expect(acquiring).rejects.toBeInstanceOf(RemoteConnectionPoolStaleError);
-    expect((produced[0]! as unknown as { disposed: boolean }).disposed).toBe(true);
-    await disposing;
-  });
-
-  it('runs the factory once for concurrent acquires and retries it after a failure', async () => {
-    const pool = new RemoteConnectionPool();
-    let attempts = 0;
-    const factory = vi.fn(async () => {
-      attempts += 1;
-      if (attempts === 1) throw new Error('handshake failed');
-      return pooledEnvironment(`connected-${attempts}`);
-    });
-
-    await expect(pool.acquire('fingerprint', factory, holder())).rejects.toThrow('handshake failed');
-    const handle = await pool.acquire('fingerprint', factory, holder());
-    expect(factory).toHaveBeenCalledTimes(2);
-    expect(handle.connection.status).toBe('ready');
-
-    handle.release();
-    await pool.dispose();
-  });
-
-  it('replaces the connection, broadcasts it to every holder, and disposes the old one', async () => {
-    const pool = new RemoteConnectionPool();
-    const first = pooledEnvironment('connected-1');
-    const second = pooledEnvironment('connected-2');
-    const factory = vi.fn()
-      .mockResolvedValueOnce(first)
-      .mockResolvedValueOnce(second);
-    const replaced: RemoteEnvironment[] = [];
-    const onPoolReplace = (connection: RemoteEnvironment) => {
-      replaced.push(connection);
-    };
-    const handleA = await pool.acquire('fingerprint', factory, holder({ onPoolReplace }));
-    const handleB = await pool.acquire('fingerprint', factory, holder({ onPoolReplace }));
-    expect(handleA.connection).toBe(first);
-
-    const replacement = await pool.replace('fingerprint', factory);
-
-    expect(replacement).toBe(second);
-    expect(factory).toHaveBeenCalledTimes(2);
-
-    expect(handleA.connection).toBe(second);
-    expect(handleB.connection).toBe(second);
-    await vi.waitFor(() => {
-      expect(replaced).toEqual([second, second]);
-    });
-    await vi.waitFor(() => {
-      expect((first as unknown as FakeEnvironment).disposed).toBe(true);
-    });
-    expect((second as unknown as FakeEnvironment).disposed).toBe(false);
-
-    handleA.release();
-    handleB.release();
-    await pool.dispose();
-  });
-
-  it('joins a concurrent replace instead of driving a second factory run', async () => {
-    const pool = new RemoteConnectionPool();
-    const first = pooledEnvironment('connected-1');
-    await pool.acquire('fingerprint', async () => first, holder());
-    let releaseReplace!: (connection: RemoteEnvironment) => void;
-    const factory = vi.fn(() => new Promise<RemoteEnvironment>((resolve) => {
-      releaseReplace = resolve;
-    }));
-
-    const replaceA = pool.replace('fingerprint', factory);
-    const replaceB = pool.replace('fingerprint', factory);
-    const second = pooledEnvironment('connected-2');
-    releaseReplace(second);
-
-    expect(await replaceA).toBe(second);
-    expect(await replaceB).toBe(second);
-    expect(factory).toHaveBeenCalledTimes(1);
-
-    await pool.dispose();
-  });
-
-  it('rejects a replace for an unknown fingerprint', async () => {
-    const pool = new RemoteConnectionPool();
-    await expect(pool.replace('nope', vi.fn())).rejects.toBeInstanceOf(RemoteConnectionPoolStaleError);
   });
 });
 
@@ -848,11 +734,13 @@ describe('declaration watch', () => {
     const attachment = await factory.attach(CONTEXT, fakeHost(baseServices({ config: config.service }), registry));
 
     const before = registry.current('dev-box')!;
+    const generation = before.identity.generation;
     config.setSection({ 'dev-box': { type: 'ssh', host: 'renamed-box', defaultCwd: '/home/me' } });
     await vi.waitFor(() => {
-      expect(registry.current('dev-box')!.identity.generation).not.toBe(before.identity.generation);
+      expect(before.identity.generation).not.toBe(generation);
     });
-    expect(registry.current('dev-box')!.status).toBe('pending');
+    expect(registry.current('dev-box')).toBe(before);
+    expect(before.status).toBe('pending');
 
     await registry.current('dev-box')!.connect!();
     expect(connect).toHaveBeenCalledWith(expect.objectContaining({
@@ -955,14 +843,14 @@ describe('declaration watch', () => {
     const connecting = registry.current('dev-box')!.connect!();
     config.setSection({ 'dev-box': { type: 'ssh', host: 'renamed-box', defaultCwd: '/home/me' } });
     await vi.waitFor(() => {
-      expect(registry.current('dev-box')!.status).toBe('pending');
+      expect(registry.current('dev-box')!.status).toBe('disconnected');
     });
     releaseConnect();
-    await connecting;
+    await expect(connecting).rejects.toThrow(/cancelled/);
 
     expect((produced[0]! as unknown as { disposed: boolean }).disposed).toBe(true);
     expect(registry.current('dev-box')!.identity.generation).not.toBe('stale-1');
-    expect(registry.current('dev-box')!.status).toBe('pending');
+    expect(registry.current('dev-box')!.status).toBe('disconnected');
 
     await attachment.dispose();
     await registry.dispose();
@@ -1097,6 +985,7 @@ describe('factory docker remoteBin resolution', () => {
     expect(connect).toHaveBeenCalledWith(expect.objectContaining({ launcher: resolved }));
     expect(probes).toBe(1);
 
+    registry.current('app-box')!.disconnect?.();
     await registry.current('app-box')!.connect!();
     expect(connect).toHaveBeenCalledTimes(2);
     const currentLauncher = { ...resolved, remoteBin: '/home/user/.kimi-code/bin/kimi' };
