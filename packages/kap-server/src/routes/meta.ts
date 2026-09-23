@@ -22,7 +22,15 @@ export interface MetaRouteOptions {
   readonly webTitle?: string;
   readonly getExperimentalFlags: () => Record<string, boolean> | Promise<Record<string, boolean>>;
   readonly getFeatures: () => MetaFeature[] | Promise<MetaFeature[]>;
+  readonly multiSession: () => boolean;
 }
+
+const MULTI_SESSION_CAPABILITIES = Object.freeze({
+  auto_resume: true as const,
+  batch_resume: true as const,
+  live_list: true as const,
+  idle_reaper: true as const,
+});
 
 export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void {
   const staticData = Object.freeze({
@@ -52,9 +60,13 @@ export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void 
       tags: ['meta'],
     },
     async (req, reply) => {
+      const experimentalFlags = await opts.getExperimentalFlags();
       const data: MetaResponse = {
         ...staticData,
-        experimental_flags: await opts.getExperimentalFlags(),
+        capabilities: opts.multiSession()
+          ? { ...staticData.capabilities, multi_session: MULTI_SESSION_CAPABILITIES }
+          : staticData.capabilities,
+        experimental_flags: experimentalFlags,
         features: await opts.getFeatures(),
       };
       reply.send(okEnvelope(data, req.id));

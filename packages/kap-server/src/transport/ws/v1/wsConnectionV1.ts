@@ -2,6 +2,7 @@ import {
   unsubscribeV2PayloadSchema,
   WS_PROTOCOL_VERSION,
   type SessionCursor,
+  type SubscribeFailure,
 } from '../../../protocol/ws-control';
 import {
   detachGrades,
@@ -49,6 +50,41 @@ interface InboundFrame {
   type: string;
   id?: string;
   payload?: Record<string, unknown>;
+}
+
+interface AttachCollectors {
+  readonly accepted: string[];
+  readonly resyncRequired: string[];
+  readonly resumed: string[];
+  readonly failed: SubscribeFailure[];
+  readonly serverCursors: Record<string, { seq: number; epoch?: string }>;
+  readonly notFound?: string[];
+}
+
+function newAttachCollectors(reportNotFound: boolean): AttachCollectors {
+  return {
+    accepted: [],
+    resyncRequired: [],
+    resumed: [],
+    failed: [],
+    serverCursors: {},
+    notFound: reportNotFound ? [] : undefined,
+  };
+}
+
+function nonEmpty<T>(items: T[]): T[] | undefined {
+  return items.length > 0 ? items : undefined;
+}
+
+function subscribeAckPayload(collectors: AttachCollectors): Record<string, unknown> {
+  return {
+    accepted: collectors.accepted,
+    not_found: collectors.notFound ?? [],
+    resync_required: collectors.resyncRequired,
+    resumed: nonEmpty(collectors.resumed),
+    failed: nonEmpty(collectors.failed),
+    cursors: collectors.serverCursors,
+  };
 }
 
 export interface WsConnectionV1Options {
@@ -136,12 +172,16 @@ export class WsConnectionV1 implements BroadcastTarget {
   }
 
   get subscriptionSessionIds(): readonly string[] {
-    return Array.from(this.subscriptions.keys()).sort();
+    return Array.from(this.subscriptions.keys()).toSorted();
   }
 
   send(envelope: EventEnvelope, delivery: BroadcastDelivery = 'subscription'): void {
     if (delivery === 'immediate') this.sendImmediateFrame(envelope);
     else this.sendSubscribedFrame(envelope);
+  }
+
+  onSessionRetired(sessionId: string): void {
+    this.subscriptions.delete(sessionId);
   }
 
   private onMessage(data: RawData): void {
@@ -202,9 +242,7 @@ export class WsConnectionV1 implements BroadcastTarget {
 
     if (payload['client_id'] === 'kimi-inspect') this.broadcaster.addDiEventTarget(this);
 
-    const accepted: string[] = [];
-    const resyncRequired: string[] = [];
-    const serverCursors: Record<string, { seq: number; epoch?: string }> = {};
+    const collectors = newAttachCollectors(false);
 
     for (const sid of subscriptions) {
       await this.attachSession(
@@ -213,17 +251,29 @@ export class WsConnectionV1 implements BroadcastTarget {
         agentFilter?.[sid],
         this.subscriptions.get(sid)?.transcriptGrades,
         undefined,
-        { accepted, resyncRequired, serverCursors },
+        collectors,
       );
     }
 
+    this.pruneRetired(collectors);
     this.sendImmediateFrame(
       buildAck(frame.id ?? '', 0, 'success', {
-        accepted_subscriptions: accepted,
-        resync_required: resyncRequired,
-        cursors: serverCursors,
+        accepted_subscriptions: collectors.accepted,
+        resync_required: collectors.resyncRequired,
+        resumed: nonEmpty(collectors.resumed),
+        failed: nonEmpty(collectors.failed),
+        cursors: collectors.serverCursors,
       }),
     );
+  }
+
+  private pruneRetired(collectors: AttachCollectors): void {
+    const retired = collectors.accepted.filter((sid) => !this.subscriptions.has(sid));
+    if (retired.length === 0) return;
+    const keep = (sid: string): boolean => !retired.includes(sid);
+    collectors.accepted.splice(0, collectors.accepted.length, ...collectors.accepted.filter(keep));
+    collectors.resumed.splice(0, collectors.resumed.length, ...collectors.resumed.filter(keep));
+    for (const sid of retired) delete collectors.serverCursors[sid];
   }
 
   private async onSubscribe(frame: InboundFrame): Promise<void> {
@@ -232,10 +282,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     const cursors = payload['cursors'] as Record<string, SessionCursor> | undefined;
     const agentFilter = parseAgentFilter(payload['agent_filter']);
 
-    const accepted: string[] = [];
-    const notFound: string[] = [];
-    const resyncRequired: string[] = [];
-    const serverCursors: Record<string, { seq: number; epoch?: string }> = {};
+    const collectors = newAttachCollectors(true);
 
     for (const sid of sessionIds) {
       await this.attachSession(
@@ -244,18 +291,12 @@ export class WsConnectionV1 implements BroadcastTarget {
         agentFilter?.[sid],
         this.subscriptions.get(sid)?.transcriptGrades,
         undefined,
-        { accepted, resyncRequired, serverCursors, notFound },
+        collectors,
       );
     }
 
-    this.sendImmediateFrame(
-      buildAck(frame.id ?? '', 0, 'success', {
-        accepted,
-        not_found: notFound,
-        resync_required: resyncRequired,
-        cursors: serverCursors,
-      }),
-    );
+    this.pruneRetired(collectors);
+    this.sendImmediateFrame(buildAck(frame.id ?? '', 0, 'success', subscribeAckPayload(collectors)));
   }
 
   private async onSubscribeV2(frame: InboundFrame): Promise<void> {
@@ -266,10 +307,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     }
     const sid = parsed.data.session_id;
 
-    const accepted: string[] = [];
-    const notFound: string[] = [];
-    const resyncRequired: string[] = [];
-    const serverCursors: Record<string, { seq: number; epoch?: string }> = {};
+    const collectors = newAttachCollectors(true);
 
     await this.attachSession(
       sid,
@@ -277,17 +315,11 @@ export class WsConnectionV1 implements BroadcastTarget {
       this.subscriptions.get(sid)?.agentFilter,
       parsed.data.transcript,
       parsed.data.transcript_since,
-      { accepted, resyncRequired, serverCursors, notFound },
+      collectors,
     );
 
-    this.sendImmediateFrame(
-      buildAck(frame.id ?? '', 0, 'success', {
-        accepted,
-        not_found: notFound,
-        resync_required: resyncRequired,
-        cursors: serverCursors,
-      }),
-    );
+    this.pruneRetired(collectors);
+    this.sendImmediateFrame(buildAck(frame.id ?? '', 0, 'success', subscribeAckPayload(collectors)));
   }
 
   private async onUnsubscribeV2(frame: InboundFrame): Promise<void> {
@@ -340,25 +372,27 @@ export class WsConnectionV1 implements BroadcastTarget {
     filter: AgentFilter | undefined,
     transcriptGrades: TranscriptGradeSpec | undefined,
     transcriptSince: Record<string, number> | undefined,
-    collectors: {
-      accepted: string[];
-      resyncRequired: string[];
-      serverCursors: Record<string, { seq: number; epoch?: string }>;
-      notFound?: string[];
-    },
+    collectors: AttachCollectors,
   ): Promise<void> {
-    const { accepted, resyncRequired, serverCursors, notFound } = collectors;
-    const ok = await this.broadcaster.subscribe(sid, this, filter, transcriptGrades, {
+    const { accepted, resyncRequired, serverCursors, notFound, resumed, failed } = collectors;
+    const result = await this.broadcaster.subscribe(sid, this, filter, transcriptGrades, {
       deferTranscriptReset: cursor !== undefined,
       transcriptSince,
     });
-    if (!ok) {
-      if (notFound !== undefined) notFound.push(sid);
-      else resyncRequired.push(sid);
+    if (!result.ok) {
+      if (result.reason === 'resume_failed') {
+        failed.push({ session_id: sid, msg: result.msg ?? 'session resume failed' });
+        if (notFound === undefined) resyncRequired.push(sid);
+      } else if (notFound !== undefined) {
+        notFound.push(sid);
+      } else {
+        resyncRequired.push(sid);
+      }
       return;
     }
     this.subscriptions.set(sid, { agentFilter: filter, transcriptGrades });
     accepted.push(sid);
+    if (result.resumed) resumed.push(sid);
     if (cursor !== undefined) {
       await this.replay(sid, cursor, filter, transcriptGrades, resyncRequired, serverCursors);
       await this.broadcaster.flushTranscriptSeed(sid, this);

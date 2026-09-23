@@ -51,7 +51,7 @@ class FakeSocket {
 
 function makeBroadcaster(): SessionEventBroadcaster {
   return {
-    subscribe: async () => true,
+    subscribe: async () => ({ ok: true, resumed: false }),
     unsubscribe: () => {},
     addGlobalTarget: () => {},
     removeGlobalTarget: () => {},
@@ -217,7 +217,7 @@ describe('WsConnectionV1 transcript subscriptions (subscribe_v2)', () => {
         opts?: { deferTranscriptReset?: boolean; transcriptSince?: Record<string, number> },
       ) => {
         calls.push({ sessionId, filter, grades, opts });
-        return true;
+        return { ok: true, resumed: false };
       },
       unsubscribe: () => {},
       unsubscribeTranscript: (sessionId: string, _target: unknown, agentIds?: readonly string[]) => {
@@ -379,7 +379,7 @@ describe('WsConnectionV1 transcript subscriptions (subscribe_v2)', () => {
         if (opts?.deferTranscriptReset !== true) {
           target.send({ type: 'transcript.reset', seq: 10, session_id: 's1', payload: {} });
         }
-        return true;
+        return { ok: true, resumed: false };
       },
       flushTranscriptSeed: async (_sid: string, target: { send: (e: unknown) => void }) => {
         target.send({ type: 'transcript.reset', seq: 10, session_id: 's1', payload: {} });
@@ -431,10 +431,82 @@ describe('WsConnectionV1 transcript subscriptions (subscribe_v2)', () => {
     conn.close();
   });
 
+  it('reports resumed sessions and resume failures in the subscribe ack', async () => {
+    const socket = new FakeSocket();
+    const { broadcaster } = makeCapturingBroadcaster();
+    broadcaster.subscribe = async (sessionId: string) => {
+      if (sessionId === 'cold') return { ok: true, resumed: true };
+      if (sessionId === 'live') return { ok: true, resumed: false };
+      if (sessionId === 'broken') return { ok: false, reason: 'resume_failed', msg: 'disk on fire' };
+      return { ok: false, reason: 'not_found' };
+    };
+    const conn = makeConn(socket, { broadcaster });
+
+    socket.emit('message', controlFrame('subscribe', { session_ids: ['cold', 'live', 'broken', 'gone'] }));
+    await vi.waitFor(() =>
+      expect(socket.sent.some((f) => JSON.parse(f).type === 'ack')).toBe(true),
+    );
+
+    const ack = socket.sent.map((f) => JSON.parse(f)).find((f) => f.type === 'ack');
+    expect(ack).toMatchObject({
+      code: 0,
+      payload: {
+        accepted: ['cold', 'live'],
+        not_found: ['gone'],
+        resync_required: [],
+        resumed: ['cold'],
+        failed: [{ session_id: 'broken', msg: 'disk on fire' }],
+      },
+    });
+    expect(conn.subscriptionSessionIds).toEqual(['cold', 'live']);
+    conn.close();
+  });
+
+  it('keeps client_hello failures in resync_required and reports the resumed ones', async () => {
+    const socket = new FakeSocket();
+    const { broadcaster } = makeCapturingBroadcaster();
+    broadcaster.subscribe = async (sessionId: string) =>
+      sessionId === 'cold' ? { ok: true, resumed: true } : { ok: false, reason: 'resume_failed', msg: 'boom' };
+    const conn = makeConn(socket, { broadcaster });
+
+    socket.emit(
+      'message',
+      JSON.stringify({ type: 'client_hello', id: 'h1', payload: { client_id: 'cli', subscriptions: ['cold', 'bad'] } }),
+    );
+    await vi.waitFor(() =>
+      expect(socket.sent.some((f) => JSON.parse(f).type === 'ack')).toBe(true),
+    );
+
+    const ack = socket.sent.map((f) => JSON.parse(f)).find((f) => f.type === 'ack');
+    expect(ack).toMatchObject({
+      code: 0,
+      payload: {
+        accepted_subscriptions: ['cold'],
+        resync_required: ['bad'],
+        resumed: ['cold'],
+        failed: [{ session_id: 'bad', msg: 'boom' }],
+      },
+    });
+    conn.close();
+  });
+
+  it('drops a subscription when the broadcaster retires its session', async () => {
+    const socket = new FakeSocket();
+    const { broadcaster } = makeCapturingBroadcaster();
+    const conn = makeConn(socket, { broadcaster });
+
+    socket.emit('message', controlFrame('subscribe', { session_ids: ['s1', 's2'] }));
+    await vi.waitFor(() => expect(conn.subscriptionSessionIds).toEqual(['s1', 's2']));
+
+    conn.onSessionRetired('s1');
+    expect(conn.subscriptionSessionIds).toEqual(['s2']);
+    conn.close();
+  });
+
   it('reports an unknown session in the subscribe_v2 ack not_found list', async () => {
     const socket = new FakeSocket();
     const { broadcaster } = makeCapturingBroadcaster();
-    broadcaster.subscribe = async () => false;
+    broadcaster.subscribe = async () => ({ ok: false, reason: 'not_found' });
     const conn = makeConn(socket, { broadcaster });
 
     socket.emit(
@@ -447,6 +519,8 @@ describe('WsConnectionV1 transcript subscriptions (subscribe_v2)', () => {
 
     const ack = socket.sent.map((f) => JSON.parse(f)).find((f) => f.type === 'ack');
     expect(ack).toMatchObject({ code: 0, payload: { accepted: [], not_found: ['gone'] } });
+    expect(ack.payload).not.toHaveProperty('resumed');
+    expect(ack.payload).not.toHaveProperty('failed');
     expect(conn.subscriptions.size).toBe(0);
     conn.close();
   });
@@ -838,7 +912,7 @@ describe('WsConnectionV1 global target registration', () => {
     const removed: unknown[] = [];
     const diOptIns: unknown[] = [];
     const broadcaster = {
-      subscribe: async () => true,
+      subscribe: async () => ({ ok: true, resumed: false }),
       unsubscribe: () => {},
       addGlobalTarget: (target: unknown) => added.push(target),
       removeGlobalTarget: (target: unknown) => removed.push(target),

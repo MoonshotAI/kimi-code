@@ -579,6 +579,14 @@ export const sessionDeletedEventSchema = z.object({
   workspace_id: z.string().min(1),
 });
 
+export const sessionClosedReasonSchema = z.enum(['idle_timeout', 'quota', 'exit']);
+
+export const sessionClosedEventSchema = z.object({
+  type: z.literal('event.session.closed'),
+  workspace_id: z.string().min(1),
+  reason: sessionClosedReasonSchema,
+});
+
 export const workspaceCreatedEventSchema = z.object({
   type: z.literal('event.workspace.created'),
   workspace: workspaceSchema,
@@ -1058,6 +1066,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   sessionCreatedEventSchema,
   sessionArchivedEventSchema,
   sessionDeletedEventSchema,
+  sessionClosedEventSchema,
   workspaceCreatedEventSchema,
   workspaceUpdatedEventSchema,
   workspaceDeletedEventSchema,

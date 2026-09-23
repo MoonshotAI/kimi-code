@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -6,11 +6,13 @@ import {
   type Event2,
   IEventBus,
   IAgentLifecycleService,
+  closeSessionById,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 
+import { WEB_MULTI_SESSION_FLAG_ENV } from '../src/services/liveSessions/flag';
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
@@ -112,6 +114,10 @@ describe('server-v2 /api/v1/ws resync', () => {
     wsUrl = `ws://127.0.0.1:${server.port}/api/v1/ws`;
   });
 
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   afterAll(async () => {
     if (server !== undefined) {
       await server.close();
@@ -189,6 +195,88 @@ describe('server-v2 /api/v1/ws resync', () => {
     expect(ev.seq).toBeGreaterThanOrEqual(1);
     expect(ev.session_id).toBe(sid);
     expect(ev.volatile).toBeUndefined();
+
+    c.ws.close();
+    await c.closed;
+  });
+
+  it('reports cold sessions as not_found without resuming them while the flag is off', async () => {
+    const a = await createSession();
+    await closeSessionById(server!.core.accessor, a);
+
+    const c = await openConn(wsUrl, server!.authTokenService.getToken());
+    await c.next((f) => f.type === 'server_hello');
+    c.send({ type: 'client_hello', id: 'h1', payload: withToken({ client_id: 'cli', subscriptions: [a] }) });
+    const hello = await c.next((f) => f.type === 'ack' && f.id === 'h1');
+    expect(hello.payload).toEqual({ accepted_subscriptions: [], resync_required: [a], cursors: {} });
+
+    c.send({ type: 'subscribe', id: 's1', payload: { session_ids: [a] } });
+    const ack = await c.next((f) => f.type === 'ack' && f.id === 's1');
+    expect(ack.payload).toEqual({ accepted: [], not_found: [a], resync_required: [], cursors: {} });
+    expect(getLiveSessionById(server!.core.accessor, a)).toBeUndefined();
+
+    c.ws.close();
+    await c.closed;
+  });
+
+  it('resumes cold sessions on subscribe and streams events from every one of them', async () => {
+    vi.stubEnv(WEB_MULTI_SESSION_FLAG_ENV, '1');
+    const a = await createSession();
+    const b = await createSession();
+    await closeSessionById(server!.core.accessor, a);
+    await closeSessionById(server!.core.accessor, b);
+    expect(getLiveSessionById(server!.core.accessor, a)).toBeUndefined();
+    expect(getLiveSessionById(server!.core.accessor, b)).toBeUndefined();
+
+    const c = await openConn(wsUrl, server!.authTokenService.getToken());
+    await c.next((f) => f.type === 'server_hello');
+    c.send({ type: 'client_hello', id: 'h1', payload: withToken({ client_id: 'cli' }) });
+    await c.next((f) => f.type === 'ack' && f.id === 'h1');
+
+    c.send({ type: 'subscribe', id: 's1', payload: { session_ids: [a, b, 'nope'] } });
+    const ack = await c.next((f) => f.type === 'ack' && f.id === 's1');
+    expect(ack.payload).toMatchObject({
+      accepted: [a, b],
+      not_found: ['nope'],
+      resync_required: [],
+      resumed: [a, b],
+    });
+    expect(ack.payload).not.toHaveProperty('failed');
+    expect(getLiveSessionById(server!.core.accessor, a)).toBeDefined();
+    expect(getLiveSessionById(server!.core.accessor, b)).toBeDefined();
+
+    await ensureMainAgent(a);
+    await ensureMainAgent(b);
+    emitAgentEvent(a, { type: 'turn.started', turnId: 1 } as unknown as Event2<any>);
+    emitAgentEvent(b, { type: 'turn.started', turnId: 2 } as unknown as Event2<any>);
+    const fromA = await c.next((f) => f.type === 'turn.started' && f.session_id === a);
+    const fromB = await c.next((f) => f.type === 'turn.started' && f.session_id === b);
+    expect(fromA.payload).toMatchObject({ turnId: 1 });
+    expect(fromB.payload).toMatchObject({ turnId: 2 });
+
+    const conns = await fetch(`${base}/api/v1/connections`, { headers: authHeaders(server as RunningServer) } as never);
+    const listed = (await conns.json()) as { data: { connections: Array<{ subscriptions: string[] }> } };
+    expect(listed.data.connections.some((item) => item.subscriptions.includes(a) && item.subscriptions.includes(b))).toBe(true);
+
+    c.ws.close();
+    await c.closed;
+  });
+
+  it('resumes cold sessions listed in client_hello subscriptions', async () => {
+    vi.stubEnv(WEB_MULTI_SESSION_FLAG_ENV, '1');
+    const a = await createSession();
+    await closeSessionById(server!.core.accessor, a);
+
+    const c = await openConn(wsUrl, server!.authTokenService.getToken());
+    await c.next((f) => f.type === 'server_hello');
+    c.send({ type: 'client_hello', id: 'h1', payload: withToken({ client_id: 'cli', subscriptions: [a, 'nope'] }) });
+    const ack = await c.next((f) => f.type === 'ack' && f.id === 'h1');
+    expect(ack.payload).toMatchObject({
+      accepted_subscriptions: [a],
+      resync_required: ['nope'],
+      resumed: [a],
+    });
+    expect(getLiveSessionById(server!.core.accessor, a)).toBeDefined();
 
     c.ws.close();
     await c.closed;
@@ -278,6 +366,99 @@ describe('server-v2 /api/v1/ws resync', () => {
     expect(ev.payload).toMatchObject({ agentId: 'main' });
 
     await expect(c.next((f) => f.type === 'turn.ended', 300)).rejects.toThrow();
+
+    c.ws.close();
+    await c.closed;
+  });
+});
+
+describe('server-v2 /api/v1/ws live session quota', () => {
+  let server: RunningServer | undefined;
+  let home: string | undefined;
+  let base: string;
+  let wsUrl: string;
+
+  beforeAll(async () => {
+    vi.stubEnv(WEB_MULTI_SESSION_FLAG_ENV, '1');
+    home = await mkdtemp(join(tmpdir(), 'kimi-wsv1-quota-'));
+    await writeFile(
+      join(home, 'config.toml'),
+      ['[server]', 'max_live_sessions = 1', 'session_idle_timeout_ms = 0', ''].join('\n'),
+      'utf-8',
+    );
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      sessionSweepIntervalMs: 20,
+      sessionEvictionGraceMs: 0,
+    });
+    base = `http://127.0.0.1:${server.port}`;
+    wsUrl = `ws://127.0.0.1:${server.port}/api/v1/ws`;
+  });
+
+  afterAll(async () => {
+    vi.unstubAllEnvs();
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
+    }
+    if (home !== undefined) {
+      await rm(home, { recursive: true, force: true });
+      home = undefined;
+    }
+  });
+
+  async function createSession(): Promise<{ id: string; workspaceId: string }> {
+    const res = await fetch(`${base}/api/v1/sessions`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ metadata: { cwd: home } }),
+    } as never);
+    const body = (await res.json()) as { code: number; data: { id: string; workspace_id: string } };
+    expect(body.code).toBe(0);
+    return { id: body.data.id, workspaceId: body.data.workspace_id };
+  }
+
+  it('evicts an unsubscribed session over quota, never a subscribed one, and lets subscribers overshoot', async () => {
+    const first = await createSession();
+    const c = await openConn(wsUrl, server!.authTokenService.getToken());
+    await c.next((f) => f.type === 'server_hello');
+    c.send({
+      type: 'client_hello',
+      id: 'h1',
+      payload: { client_id: 'cli', token: server!.authTokenService.getToken(), subscriptions: [first.id] },
+    });
+    const hello = await c.next((f) => f.type === 'ack' && f.id === 'h1');
+    expect(hello.payload).toMatchObject({ accepted_subscriptions: [first.id] });
+
+    const second = await createSession();
+    const closed = await c.next((f) => f.type === 'event.session.closed', 5000);
+    expect(closed.session_id).toBe('__global__');
+    expect(closed.payload).toMatchObject({
+      sessionId: second.id,
+      workspace_id: second.workspaceId,
+      reason: 'quota',
+    });
+    await vi.waitFor(() => expect(getLiveSessionById(server!.core.accessor, second.id)).toBeUndefined());
+    expect(getLiveSessionById(server!.core.accessor, first.id)).toBeDefined();
+
+    c.send({ type: 'subscribe', id: 's1', payload: { session_ids: [second.id] } });
+    const again = await c.next((f) => f.type === 'ack' && f.id === 's1');
+    expect(again.payload).toMatchObject({ accepted: [second.id], resumed: [second.id] });
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(getLiveSessionById(server!.core.accessor, first.id)).toBeDefined();
+    expect(getLiveSessionById(server!.core.accessor, second.id)).toBeDefined();
+    const conns = await fetch(`${base}/api/v1/connections`, { headers: authHeaders(server as RunningServer) } as never);
+    const listed = (await conns.json()) as { data: { connections: Array<{ subscriptions: string[] }> } };
+    expect(
+      listed.data.connections.some(
+        (item) => item.subscriptions.includes(first.id) && item.subscriptions.includes(second.id),
+      ),
+    ).toBe(true);
 
     c.ws.close();
     await c.closed;

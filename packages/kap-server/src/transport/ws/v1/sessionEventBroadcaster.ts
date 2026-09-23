@@ -22,8 +22,10 @@ import {
   ISessionIndex,
   ISessionManager,
   MAIN_AGENT_ID,
+  followSessionLifecycles,
   getLiveSessionById,
   interactions,
+  resumeSessionById,
   toDisposable,
 } from '@moonshot-ai/agent-core-v2';
 import type {
@@ -31,6 +33,7 @@ import type {
   DiUnitChangedEvent,
   ModelCatalogRefreshChange,
   ModelCatalogRefreshFailure,
+  SessionClosedReason,
   SessionCreatedEvent,
   SessionMetaUpdatedEvent,
   Event,
@@ -97,6 +100,16 @@ export type BroadcastDelivery = 'subscription' | 'immediate';
 
 export interface BroadcastTarget {
   send(envelope: EventEnvelope, delivery?: BroadcastDelivery): void;
+  onSessionRetired?(sessionId: string): void;
+}
+
+export type SubscribeResult =
+  | { readonly ok: true; readonly resumed: boolean }
+  | { readonly ok: false; readonly reason: 'not_found' | 'resume_failed'; readonly msg?: string };
+
+interface PendingState {
+  readonly promise: Promise<SessionState | undefined>;
+  readonly resume: boolean;
 }
 
 export type AgentFilter = ReadonlySet<string> | undefined;
@@ -113,6 +126,7 @@ interface TranscriptStream {
 
 interface SessionState {
   readonly sessionId: string;
+  readonly handle?: ISessionScopeHandle;
   readonly journal: SessionEventJournal;
   readonly tracker: InFlightTurnTracker;
   readonly roster: SubagentRosterTracker;
@@ -133,6 +147,8 @@ interface SessionState {
 
 export const DEFAULT_MAX_BUFFER_SIZE = 1000;
 const GLOBAL_SESSION_ID = '__global__';
+const MAX_ATTACH_ATTEMPTS = 3;
+const ATTACH_RETRY_DELAY_MS = 25;
 const TRANSCRIPT_RESET_TAIL_TURNS = 0;
 
 async function disposeSessionState(state: SessionState): Promise<void> {
@@ -145,11 +161,14 @@ export class SessionEventBroadcaster {
   private readonly sessions = new Map<string, SessionState>();
   private readonly globalTargets = new Set<BroadcastTarget>();
   private readonly diEventTargets = new Set<BroadcastTarget>();
-  private readonly pendingStates = new Map<string, Promise<SessionState | undefined>>();
+  private readonly pendingStates = new Map<string, PendingState>();
+  private readonly retirements = new Map<string, Promise<void>>();
+  private readonly attaching = new Map<string, number>();
   private readonly activityTrackers = new Map<string, LegacyActivityTracker>();
   private readonly maxBufferSize: number;
   private readonly coreEventSubscription: IDisposable;
   private readonly deletionSubscription: IDisposable | undefined;
+  private readonly lifecycleSubscription: IDisposable;
   private closed = false;
 
   constructor(
@@ -159,6 +178,9 @@ export class SessionEventBroadcaster {
       readonly logger?: JournalLogger;
       readonly maxBufferSize?: number;
       readonly transcriptService?: TranscriptService;
+      readonly ensureCapacity?: () => Promise<{ release(): void }>;
+      readonly autoResume?: () => boolean;
+      readonly onSessionTouched?: (sessionId: string) => void;
     },
   ) {
     this.maxBufferSize = opts.maxBufferSize ?? DEFAULT_MAX_BUFFER_SIZE;
@@ -167,6 +189,18 @@ export class SessionEventBroadcaster {
         event.waitUntil(this.purgeSession(event.sessionId));
       },
     );
+    this.lifecycleSubscription = followSessionLifecycles(opts.core.accessor, (service) => {
+      const onClose = service.onDidCloseSession(({ sessionId }) => {
+        void this.retireSession(sessionId);
+      });
+      const onArchive = service.onDidArchiveSession(({ sessionId }) => {
+        void this.retireSession(sessionId);
+      });
+      return toDisposable(() => {
+        onClose.dispose();
+        onArchive.dispose();
+      });
+    });
     this.coreEventSubscription = opts.core.accessor
       .get(IEventService)
       .subscribe((event) => this.onCoreEvent(event));
@@ -191,9 +225,25 @@ export class SessionEventBroadcaster {
     filter?: AgentFilter,
     transcriptGrades?: TranscriptGradeSpec,
     opts?: { deferTranscriptReset?: boolean; transcriptSince?: Record<string, number> },
-  ): Promise<boolean> {
-    const state = await this.ensureState(sessionId);
-    if (state === undefined) return false;
+  ): Promise<SubscribeResult> {
+    const wasLive = getLiveSessionById(this.opts.core.accessor, sessionId) !== undefined;
+    this.attaching.set(sessionId, (this.attaching.get(sessionId) ?? 0) + 1);
+    let state: SessionState | undefined;
+    try {
+      state = await this.ensureState(sessionId, this.opts.autoResume?.() === true);
+    } catch (error) {
+      return {
+        ok: false,
+        reason: 'resume_failed',
+        msg: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      const remaining = (this.attaching.get(sessionId) ?? 1) - 1;
+      if (remaining > 0) this.attaching.set(sessionId, remaining);
+      else this.attaching.delete(sessionId);
+    }
+    if (state === undefined) return { ok: false, reason: 'not_found' };
+    this.opts.onSessionTouched?.(sessionId);
     const prev = state.targets.get(target);
     state.targets.set(target, { agentFilter: filter, transcriptGrades });
     if (transcriptGrades !== undefined) {
@@ -217,7 +267,23 @@ export class SessionEventBroadcaster {
         if (state.targets.has(target)) state.transcriptSeeded.add(target);
       }
     }
-    return true;
+    return { ok: true, resumed: !wasLive };
+  }
+
+  subscriberCount(sessionId: string): number {
+    return (this.sessions.get(sessionId)?.targets.size ?? 0) + (this.attaching.get(sessionId) ?? 0);
+  }
+
+  announceSessionClosed(sessionId: string, workspaceId: string, reason: SessionClosedReason): void {
+    void this.dispatchGlobal({
+      type: 'event.session.closed',
+      workspace_id: workspaceId,
+      reason,
+      agentId: 'main',
+      sessionId,
+    } as Event).catch((error: unknown) =>
+      this.logDispatchError(GLOBAL_SESSION_ID, 'event.session.closed', error),
+    );
   }
 
   private willSendTranscriptReset(
@@ -526,8 +592,9 @@ export class SessionEventBroadcaster {
     this.closed = true;
     this.coreEventSubscription.dispose();
     this.deletionSubscription?.dispose();
+    this.lifecycleSubscription.dispose();
     await Promise.all(
-      [...this.pendingStates.values()].map((pending) => pending.catch(() => undefined)),
+      [...this.pendingStates.values()].map((pending) => pending.promise.catch(() => undefined)),
     );
     for (const [sessionId, state] of this.sessions) {
       await disposeSessionState(state);
@@ -543,8 +610,34 @@ export class SessionEventBroadcaster {
     }
   }
 
+  private retireSession(sessionId: string): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    const previous = this.retirements.get(sessionId) ?? Promise.resolve();
+    const retirement = previous
+      .then(() => this.retireSessionNow(sessionId))
+      .finally(() => {
+        if (this.retirements.get(sessionId) === retirement) this.retirements.delete(sessionId);
+      });
+    this.retirements.set(sessionId, retirement);
+    return retirement;
+  }
+
+  private async retireSessionNow(sessionId: string): Promise<void> {
+    await this.pendingStates.get(sessionId)?.promise.catch(() => undefined);
+    const state = this.sessions.get(sessionId);
+    if (state === undefined) return;
+    if (getLiveSessionById(this.opts.core.accessor, sessionId) === state.handle) return;
+    this.sessions.delete(sessionId);
+    const targets = [...state.targets.keys()];
+    state.targets.clear();
+    await disposeSessionState(state);
+    this.dropActivityTrackers(sessionId);
+    for (const target of targets) target.onSessionRetired?.(sessionId);
+  }
+
   private async purgeSession(sessionId: string): Promise<void> {
-    await this.pendingStates.get(sessionId);
+    await this.retirements.get(sessionId)?.catch(() => undefined);
+    await this.pendingStates.get(sessionId)?.promise.catch(() => undefined);
     const state = this.sessions.get(sessionId);
     if (state !== undefined) {
       this.sessions.delete(sessionId);
@@ -556,28 +649,60 @@ export class SessionEventBroadcaster {
     await rm(sessionJournalPath(this.opts.eventsDir, sessionId), { force: true });
   }
 
-  private ensureState(sessionId: string): Promise<SessionState | undefined> {
+  private ensureState(sessionId: string, resume = false): Promise<SessionState | undefined> {
     if (this.closed) return Promise.resolve(undefined);
     const existing = this.sessions.get(sessionId);
     if (existing !== undefined) return Promise.resolve(existing);
-    let pending = this.pendingStates.get(sessionId);
-    if (pending === undefined) {
-      pending = this.createSessionState(sessionId).finally(() => {
+    const inflight = this.pendingStates.get(sessionId);
+    if (inflight !== undefined) {
+      if (!resume || inflight.resume) return inflight.promise;
+      return inflight.promise.then((state) => state ?? this.ensureState(sessionId, true));
+    }
+    const pending: PendingState = {
+      resume,
+      promise: this.createSessionState(sessionId, resume).finally(() => {
         if (this.pendingStates.get(sessionId) === pending) {
           this.pendingStates.delete(sessionId);
         }
-      });
-      this.pendingStates.set(sessionId, pending);
-    }
-    return pending;
+      }),
+    };
+    this.pendingStates.set(sessionId, pending);
+    return pending.promise;
   }
 
-  private async createSessionState(sessionId: string): Promise<SessionState | undefined> {
-    if (this.closed) return undefined;
+  private async resolveSession(
+    sessionId: string,
+    resume: boolean,
+  ): Promise<ISessionScopeHandle | undefined> {
+    const live = getLiveSessionById(this.opts.core.accessor, sessionId);
+    if (live !== undefined || !resume) return live;
+    const reservation = await this.opts.ensureCapacity?.();
+    try {
+      return await resumeSessionById(this.opts.core.accessor, sessionId);
+    } finally {
+      reservation?.release();
+    }
+  }
 
-    const session = getLiveSessionById(this.opts.core.accessor, sessionId);
-    if (session === undefined) return undefined;
+  private async createSessionState(
+    sessionId: string,
+    resume: boolean,
+  ): Promise<SessionState | undefined> {
+    for (let attempt = 0; attempt < MAX_ATTACH_ATTEMPTS; attempt += 1) {
+      if (this.closed) return undefined;
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, ATTACH_RETRY_DELAY_MS));
+      const session = await this.resolveSession(sessionId, resume);
+      if (session === undefined) return undefined;
+      const state = await this.attachSessionState(sessionId, session);
+      if (state !== undefined) return state;
+    }
+    return undefined;
+  }
 
+  private async attachSessionState(
+    sessionId: string,
+    session: ISessionScopeHandle,
+  ): Promise<SessionState | undefined> {
     const journal = await SessionEventJournal.open(
       sessionJournalPath(this.opts.eventsDir, sessionId),
       this.opts.logger,
@@ -588,6 +713,7 @@ export class SessionEventBroadcaster {
     }
     const state: SessionState = {
       sessionId,
+      handle: session,
       journal,
       tracker: new InFlightTurnTracker(),
       roster: new SubagentRosterTracker(),
@@ -619,16 +745,18 @@ export class SessionEventBroadcaster {
     if (this.closed) return Promise.resolve(undefined);
     const existing = this.sessions.get(GLOBAL_SESSION_ID);
     if (existing !== undefined) return Promise.resolve(existing);
-    let pending = this.pendingStates.get(GLOBAL_SESSION_ID);
-    if (pending === undefined) {
-      pending = this.createGlobalState().finally(() => {
+    const inflight = this.pendingStates.get(GLOBAL_SESSION_ID);
+    if (inflight !== undefined) return inflight.promise;
+    const pending: PendingState = {
+      resume: false,
+      promise: this.createGlobalState().finally(() => {
         if (this.pendingStates.get(GLOBAL_SESSION_ID) === pending) {
           this.pendingStates.delete(GLOBAL_SESSION_ID);
         }
-      });
-      this.pendingStates.set(GLOBAL_SESSION_ID, pending);
-    }
-    return pending;
+      }),
+    };
+    this.pendingStates.set(GLOBAL_SESSION_ID, pending);
+    return pending.promise;
   }
 
   private async createGlobalState(): Promise<SessionState | undefined> {

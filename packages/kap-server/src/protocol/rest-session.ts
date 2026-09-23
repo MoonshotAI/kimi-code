@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';
+
 import { messageSchema } from './message';
 import {
   sessionStatusResponseSchema,
@@ -15,6 +17,7 @@ import {
   sessionChildCreateSchema,
   sessionCreateSchema,
   sessionForkSchema,
+  sessionPendingInteractionSchema,
   sessionSchema,
 } from './session';
 
@@ -171,6 +174,60 @@ export const sessionAbortResponseSchema = z.object({
   aborted: z.boolean(),
 });
 export type SessionAbortResponse = z.infer<typeof sessionAbortResponseSchema>;
+
+export const MAX_BATCH_RESUME_SESSIONS = 64;
+
+export const resumeSessionsRequestSchema = z.object({
+  session_ids: z.array(z.string().min(1)).min(1).max(MAX_BATCH_RESUME_SESSIONS),
+});
+export type ResumeSessionsRequest = z.infer<typeof resumeSessionsRequestSchema>;
+
+export const resumeSessionStatusSchema = z.enum([
+  'resumed',
+  'already_live',
+  'not_found',
+  'quota_exceeded',
+  'failed',
+]);
+export type ResumeSessionStatus = z.infer<typeof resumeSessionStatusSchema>;
+
+export const resumeSessionResultSchema = z.object({
+  session_id: z.string().min(1),
+  status: resumeSessionStatusSchema,
+  msg: z.string().optional(),
+});
+export type ResumeSessionResult = z.infer<typeof resumeSessionResultSchema>;
+
+export const resumeSessionsResponseSchema = z.object({
+  results: z.array(resumeSessionResultSchema),
+});
+export type ResumeSessionsResponse = z.infer<typeof resumeSessionsResponseSchema>;
+
+export const liveSessionSchema = z.object({
+  session_id: z.string().min(1),
+  workspace_id: z.string().min(1),
+  cwd: z.string(),
+  busy: z.boolean(),
+  main_turn_active: z.boolean(),
+  pending_interaction: sessionPendingInteractionSchema,
+  subscriber_count: z.number().int().min(0),
+  resumed_at: isoDateTimeSchema,
+  last_activity_at: isoDateTimeSchema,
+  idle_ms: z.number().int().min(0),
+});
+export type LiveSession = z.infer<typeof liveSessionSchema>;
+
+export const liveSessionLimitsSchema = z.object({
+  max_live_sessions: z.number().int().min(0),
+  session_idle_timeout_ms: z.number().int().min(0),
+});
+export type LiveSessionLimits = z.infer<typeof liveSessionLimitsSchema>;
+
+export const liveSessionsResponseSchema = z.object({
+  items: z.array(liveSessionSchema),
+  limits: liveSessionLimitsSchema,
+});
+export type LiveSessionsResponse = z.infer<typeof liveSessionsResponseSchema>;
 
 function fitsUtf8ByteLimit(value: string, limit: number): boolean {
   let bytes = 0;

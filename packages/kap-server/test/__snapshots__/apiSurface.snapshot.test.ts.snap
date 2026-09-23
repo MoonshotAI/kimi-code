@@ -286,6 +286,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/sessions/live",
+    ],
+    [
+      "GET",
       "/api/v1/tools",
     ],
     [
@@ -487,6 +491,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/sessions/{session_id}/title/generate",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/resume",
     ],
     [
       "POST",

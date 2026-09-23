@@ -64,12 +64,13 @@ describe('server-v2 boot', () => {
     expect(meta.status).toBe(200);
     const metaBody = await meta.json() as {
       code: number;
-      data: { server_id: string; server_version: string; capabilities: Record<string, boolean> };
+      data: { server_id: string; server_version: string; capabilities: Record<string, unknown> };
     };
     expect(metaBody.code).toBe(0);
     expect(typeof metaBody.data.server_id).toBe('string');
     expect(typeof metaBody.data.server_version).toBe('string');
     expect(metaBody.data.capabilities).toBeDefined();
+    expect(metaBody.data.capabilities['multi_session']).toBeUndefined();
 
     const auth = await authedFetch(server, base, '/api/v1/auth');
     expect(auth.status).toBe(200);

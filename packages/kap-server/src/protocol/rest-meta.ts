@@ -11,6 +11,12 @@ export const metaCapabilitiesSchema = z.object({
   mcp: z.literal(true),
   tasks: z.literal(true),
   terminal: z.literal(true),
+  multi_session: z.object({
+    auto_resume: z.literal(true),
+    batch_resume: z.literal(true),
+    live_list: z.literal(true),
+    idle_reaper: z.literal(true),
+  }).optional(),
 });
 
 export type MetaCapabilities = z.infer<typeof metaCapabilitiesSchema>;

@@ -4,16 +4,19 @@ import { join, resolve } from 'node:path';
 
 import {
   IHostTerminalService,
+  ISessionTerminalService,
   ScopeActivation,
   LifecycleScope,
+  getLiveSessionById,
   overrideScopedService,
   type TerminalProcess,
   type TerminalSpawnOptions,
 } from '@moonshot-ai/agent-core-v2';
 import { ErrorCode } from '../src/protocol/error-codes';
 import type { Terminal } from '@moonshot-ai/agent-core-v2/os/interface/terminal';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { WEB_MULTI_SESSION_FLAG_ENV } from '../src/services/liveSessions/flag';
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
@@ -248,5 +251,67 @@ describe('server-v2 /api/v1/sessions/{sid}/terminals', () => {
 
     const noSession = await get<unknown>(`/api/v1/sessions/sess_missing/terminals`);
     expect(noSession.code).toBe(ErrorCode.SESSION_NOT_FOUND);
+  });
+});
+
+describe('server-v2 idle session reaper with terminals', () => {
+  let server: RunningServer | undefined;
+  let home: string | undefined;
+
+  beforeAll(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-term-reaper-'));
+    await writeFile(
+      join(home, 'config.toml'),
+      ['[server]', 'max_live_sessions = 0', 'session_idle_timeout_ms = 1', ''].join('\n'),
+    );
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      sessionSweepIntervalMs: 20,
+    });
+  });
+
+  afterAll(async () => {
+    vi.unstubAllEnvs();
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
+    }
+    if (home !== undefined) {
+      await rm(home, { recursive: true, force: true });
+      home = undefined;
+    }
+  });
+
+  async function createSession(): Promise<string> {
+    const res = await fetch(`http://127.0.0.1:${server!.port}/api/v1/sessions`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ metadata: { cwd: home } }),
+    } as never);
+    const body = (await res.json()) as Envelope<{ id: string }>;
+    expect(body.code).toBe(0);
+    return body.data.id;
+  }
+
+  it('treats a session with a running terminal as busy and never reaps it', async () => {
+    processes.length = 0;
+    const accessor = server!.core.accessor;
+    const withTerminal = await createSession();
+    const plain = await createSession();
+    const terminals = getLiveSessionById(accessor, withTerminal)!.accessor.get(ISessionTerminalService);
+    const terminal = await terminals.create({ runtime_id: 'local' });
+
+    vi.stubEnv(WEB_MULTI_SESSION_FLAG_ENV, '1');
+    await vi.waitFor(() => expect(getLiveSessionById(accessor, plain)).toBeUndefined());
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(getLiveSessionById(accessor, withTerminal)).toBeDefined();
+    expect(processes[0]?.killed).toBe(false);
+
+    await terminals.close(terminal.id);
+    await vi.waitFor(() => expect(getLiveSessionById(accessor, withTerminal)).toBeUndefined());
   });
 });
