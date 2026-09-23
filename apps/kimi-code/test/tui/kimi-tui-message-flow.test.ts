@@ -9386,7 +9386,7 @@ describe('KimiTUI environment slot', () => {
     });
   });
 
-  it('shows a one-shot disconnect notice without asking for a manual reconnect', async () => {
+  it('updates the slot on disconnect without a transcript notice', async () => {
     const session = environmentSession({
       listEnvironments: vi.fn(async () => ({
         workspaceId: 'ws-1',
@@ -9400,13 +9400,8 @@ describe('KimiTUI environment slot', () => {
     const { driver } = await makeDriver(session);
     await driver.refreshEnvironmentSlot();
 
-    const transcript = stripSgr(renderTranscript(driver));
-    expect(transcript).toContain('Environment ssh:dev-box disconnected');
-    expect(transcript).not.toContain('/environment');
-
-    await driver.refreshEnvironmentSlot();
-    const after = stripSgr(renderTranscript(driver));
-    expect(after.split('Environment ssh:dev-box disconnected').length - 1).toBe(1);
+    expect(driver.state.appState.environment?.status).toBe('disconnected');
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Environment ssh:dev-box disconnected');
   });
 
   it('does not show the disconnect notice when the environment is reaped to pending', async () => {
@@ -9460,7 +9455,7 @@ describe('KimiTUI environment slot', () => {
     });
   });
 
-  it('refreshes the slot and shows the recorded reason on a environment.status.changed hint', async () => {
+  it('refreshes the slot with the recorded reason on a environment.status.changed hint', async () => {
     const session = environmentSession({
       listEnvironments: vi.fn(async () => ({
         workspaceId: 'ws-1',
@@ -9495,11 +9490,7 @@ describe('KimiTUI environment slot', () => {
     });
 
     expect(driver.state.appState.environment?.connectError).toContain('executor stderr: Password:');
-    const transcript = stripSgr(renderTranscript(driver));
-    expect(transcript).toContain('Environment ssh:dev-box disconnected');
-    expect(transcript).toContain('initialize timed out after 10000ms; executor stderr: Password:');
-    expect(transcript).not.toContain('/environment');
-    expect(transcript).not.toContain('second line stays out');
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Environment ssh:dev-box disconnected');
   });
 
   it('opens the environment manager when /environment is typed', async () => {

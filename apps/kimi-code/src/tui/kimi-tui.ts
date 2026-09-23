@@ -1815,8 +1815,8 @@ export class KimiTUI {
   handleTurnEnded(event: TurnEndedEvent): void {
     this.staging.handleTurnEnded(event);
     this.surveyController.notifyTurnEnded(event.traceId);
-    // A disconnect mid-turn surfaces here: the slot flips to the error color
-    // and a one-shot notice records the drop. The next tool call reconnects.
+    // A disconnect mid-turn surfaces here: the footer slot flips to the error
+    // color. The next tool call reconnects.
     void this.refreshEnvironmentSlot();
   }
 
@@ -2554,10 +2554,10 @@ export class KimiTUI {
 
   /**
    * Sync the footer environment slot with the session's current binding and the
-   * environment registry's connection status. Disconnection surfaces once per
-   * transition as a transcript notice carrying the recorded connect error.
-   * Runs at session load, turn end, explicit environment actions, and on the
-   * engine's environment.status.changed hint (mid-session drops, reconnects).
+   * environment registry's connection status. A disconnect is footer state only;
+   * it does not write a transcript notice. Runs at session load, turn end,
+   * explicit environment actions, and on the engine's environment.status.changed
+   * hint (mid-session drops, reconnects).
    */
   async refreshEnvironmentSlot(session: Session | undefined = this.session): Promise<void> {
     if (session === undefined) return;
@@ -2591,17 +2591,6 @@ export class KimiTUI {
     this.setAppState({ environment: next });
     if (previous?.environmentId !== next.environmentId || previous?.type !== next.type) {
       this.setupAutocomplete();
-    }
-    if (
-      next.environmentId !== 'local' &&
-      next.status === 'disconnected' &&
-      previous?.status !== 'disconnected'
-    ) {
-      const reason = next.connectError?.split('\n', 1)[0];
-      this.showNotice(
-        `Environment ${next.type}:${next.environmentId} disconnected`,
-        reason === undefined || reason.length === 0 ? undefined : reason,
-      );
     }
   }
 
