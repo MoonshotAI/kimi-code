@@ -2981,41 +2981,48 @@ export class KimiTUI {
       return;
     }
 
-    let session: Session;
+    const progress = this.showProgressSpinner('Starting a new session…');
+    let ready = false;
     try {
-      const environment = inherited ?? (await this.environmentForNewSession());
-      this.markNewSessionEnvironmentConnecting(environment);
-      session = await this.createSessionFromCurrentState(false, environment);
-    } catch (error) {
-      await this.restoreEnvironmentSlotAfterCreateFailure();
-      const msg = formatErrorMessage(error);
-      this.showError(`Failed to start a new session: ${msg}`);
-      return;
-    }
+      let session: Session;
+      try {
+        const environment = inherited ?? (await this.environmentForNewSession());
+        this.markNewSessionEnvironmentConnecting(environment);
+        session = await this.createSessionFromCurrentState(false, environment);
+      } catch (error) {
+        await this.restoreEnvironmentSlotAfterCreateFailure();
+        const msg = formatErrorMessage(error);
+        this.showError(`Failed to start a new session: ${msg}`);
+        return;
+      }
 
-    this.resetSessionRuntime();
-    await this.setSession(session);
-    this.setAppState({ sessionId: session.id });
-    try {
-      await this.activateRuntime();
-      await this.syncRuntimeState(session);
-    } catch (error) {
+      this.resetSessionRuntime();
+      await this.setSession(session);
+      this.setAppState({ sessionId: session.id });
+      try {
+        await this.activateRuntime();
+        await this.syncRuntimeState(session);
+      } catch (error) {
+        this.sessionEventHandler.startSubscription();
+        const msg = formatErrorMessage(error);
+        this.showError(`Post-create setup failed: ${msg}`);
+        return;
+      }
+      try {
+        await this.refreshSkillCommands(this.session);
+        await this.refreshPluginCommands(this.session);
+      } catch {
+        /* keep the new session usable even if dynamic skills fail */
+      }
       this.sessionEventHandler.startSubscription();
-      const msg = formatErrorMessage(error);
-      this.showError(`Post-create setup failed: ${msg}`);
-      return;
+      this.clearTranscriptAndRedraw();
+      this.showStatus(`Started a new session (${session.id}).`);
+      void this.showSessionWarnings(session);
+      void this.showConfigWarningsIfAny();
+      ready = true;
+    } finally {
+      progress.stop({ ok: ready, label: ready ? 'New session ready.' : 'New session setup failed.' });
     }
-    try {
-      await this.refreshSkillCommands(this.session);
-      await this.refreshPluginCommands(this.session);
-    } catch {
-      /* keep the new session usable even if dynamic skills fail */
-    }
-    this.sessionEventHandler.startSubscription();
-    this.clearTranscriptAndRedraw();
-    this.showStatus(`Started a new session (${session.id}).`);
-    void this.showSessionWarnings(session);
-    void this.showConfigWarningsIfAny();
   }
 
   /** Surface config.toml load warnings (degraded or kept-previous config) in the status bar. */

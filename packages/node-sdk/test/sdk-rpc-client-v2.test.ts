@@ -286,6 +286,37 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     });
   }
 
+  it('prepares remote prompt context only once when creating each session with model overrides', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-new-work-'));
+    const remoteDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-new-remote-'));
+    tempDirs.push(workDir, remoteDir);
+    const { harness, client } = await makeEnvironmentHarness({ defaultCwd: remoteDir });
+    const provider = await attachFakeBoxEnvironment(client);
+    const readDirectory = vi.spyOn(HostFileSystem.prototype, 'readdir');
+    try {
+      for (let i = 0; i < 2; i++) {
+        readDirectory.mockClear();
+        const session = await harness.createSession({
+          workDir,
+          environmentId: 'fake-box',
+          environmentCwd: remoteDir,
+          model: 'stub',
+          thinking: 'off',
+          permission: 'auto',
+        });
+        expect(await session.getStatus()).toMatchObject({ model: 'stub', permission: 'auto' });
+        expect(await session.getEnvironment()).toMatchObject({ environmentId: 'fake-box', cwd: remoteDir });
+        expect(readDirectory.mock.calls.filter(([path]) => path === remoteDir)).toHaveLength(1);
+        await session.close();
+      }
+    } finally {
+      readDirectory.mockRestore();
+      await provider.dispose();
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('creates and resumes native print sessions with their remote binding', async () => {
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-print-work-'));
     const remoteDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-print-remote-'));

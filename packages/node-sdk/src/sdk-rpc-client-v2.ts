@@ -1471,10 +1471,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       input.thinking !== undefined ||
       input.permission !== undefined
     ) {
-      const agent = await this.materializeMainAgent(handle, {
-        model: input.model,
-        thinking: input.thinking,
-      });
+      const agent = await this.materializeMainAgent(
+        handle,
+        input.environmentId === undefined
+          ? { model: input.model, thinking: input.thinking }
+          : undefined,
+      );
       if (input.permission !== undefined) {
         agent.accessor.get(IAgentPermissionModeService).setMode(input.permission);
       }

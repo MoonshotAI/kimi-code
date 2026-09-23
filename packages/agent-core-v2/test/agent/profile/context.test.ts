@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, normalize } from 'pathe';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -34,6 +34,44 @@ afterEach(async () => {
   await rm(homeDir, { recursive: true, force: true });
   await rm(workDir, { recursive: true, force: true });
   await Promise.all(extraDirs.map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+describe('prepareSystemPromptContext directory listing', () => {
+  it('reads sibling directories concurrently while preserving display order', async () => {
+    const alpha = join(workDir, 'alpha');
+    const beta = join(workDir, 'beta');
+    await mkdir(alpha);
+    await mkdir(beta);
+    await writeFile(join(alpha, 'a.txt'), 'a');
+    await writeFile(join(beta, 'b.txt'), 'b');
+    const readDirectory = fs.readdir.bind(fs);
+    const started: string[] = [];
+    const releases: (() => void)[] = [];
+    fs.readdir = async (path) => {
+      if (path === alpha || path === beta) {
+        started.push(path);
+        await new Promise<void>((resolve) => { releases.push(resolve); });
+      }
+      return readDirectory(path);
+    };
+    const preparation = prepareSystemPromptContext({ fs, homeDir }, workDir);
+    try {
+      await vi.waitFor(() => {
+        expect(started).toEqual([alpha, beta]);
+      });
+    } finally {
+      fs.readdir = readDirectory;
+      for (const release of releases) release();
+      await preparation;
+    }
+    const result = await preparation;
+    expect(result.cwdListing).toBe([
+      '├── alpha/',
+      '│   └── a.txt',
+      '└── beta/',
+      '    └── b.txt',
+    ].join('\n'));
+  });
 });
 
 describe('loadAgentsMd user-level discovery', () => {

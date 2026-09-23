@@ -625,6 +625,53 @@ describe('KimiTUI startup', () => {
     expect(harness.createSession.mock.calls[0]?.[0]).not.toHaveProperty('agentProfile');
   });
 
+  it.each([true, false])('shows progress while /new creates a remote session (success: %s)', async (succeeds) => {
+    const previous = makeSession({
+      id: 'ses-old',
+      getEnvironment: vi.fn(async () => ({ workspaceId: 'ws-1', environmentId: 'dev-box', cwd: '/remote/work' })),
+    });
+    const next = makeSession({ id: 'ses-new' });
+    const harness = makeHarness(previous);
+    const driver = makeDriver(harness, makeStartupInput({ model: 'k2' }));
+    await driver.init();
+    await driver.setSession(previous);
+    driver.state.appState.environment = {
+      environmentId: 'dev-box',
+      type: 'ssh',
+      status: 'ready',
+      cwd: '/remote/work',
+    };
+    let resolveCreation!: (session: typeof next) => void;
+    let rejectCreation!: (error: Error) => void;
+    const creation = new Promise<typeof next>((resolve, reject) => {
+      resolveCreation = resolve;
+      rejectCreation = reject;
+    });
+    harness.createSession.mockReturnValueOnce(creation);
+
+    const pending = (driver as unknown as { createNewSession(): Promise<void> }).createNewSession();
+    try {
+      await vi.waitFor(() => {
+        expect(harness.createSession).toHaveBeenCalledOnce();
+      });
+      expect(driver.state.transcriptContainer.render(160).join('\n')).toContain('Starting a new session…');
+      expect(previous.close).not.toHaveBeenCalled();
+      expect(driver.state.appState.environment?.status).toBe('ready');
+    } finally {
+      if (succeeds) resolveCreation(next);
+      else rejectCreation(new Error('remote unavailable'));
+      await pending;
+    }
+    const transcript = driver.state.transcriptContainer.render(160).join('\n');
+    expect(transcript).not.toContain('Starting a new session…');
+    if (succeeds) {
+      expect(transcript).toContain('Started a new session (ses-new).');
+    } else {
+      expect(transcript).toContain('Failed to start a new session: remote unavailable');
+      expect(previous.close).not.toHaveBeenCalled();
+    }
+  });
+
   it('passes an explicit local binding so /new does not fall back to the config default', async () => {
     const session = makeSession({
       getEnvironment: vi.fn(async () => ({ workspaceId: 'ws-1', environmentId: 'local', cwd: '/tmp/proj-a' })),

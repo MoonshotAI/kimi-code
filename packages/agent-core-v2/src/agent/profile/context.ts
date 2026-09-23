@@ -391,6 +391,14 @@ async function listDirectory(
   if (!readable) return '[not readable]';
   const remaining = total - entries.length;
 
+  const children = await Promise.all(
+    entries.map(async (entry) =>
+      entry.isDir && !shouldCollapseDirectory(entry, options)
+        ? collectEntries(deps, join(workDir, entry.name), LIST_DIR_CHILD_WIDTH)
+        : undefined,
+    ),
+  );
+
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
     if (entry === undefined) continue;
@@ -400,10 +408,9 @@ async function listDirectory(
 
     if (isDir) {
       lines.push(`${connector}${name}/`);
-      if (shouldCollapseDirectory(entry, options)) continue;
+      const child = children[i];
+      if (child === undefined) continue;
       const childPrefix = isLast ? '    ' : '│   ';
-      const childDir = join(workDir, name);
-      const child = await collectEntries(deps, childDir, LIST_DIR_CHILD_WIDTH);
       if (!child.readable) {
         lines.push(`${childPrefix}└── [not readable]`);
         continue;
