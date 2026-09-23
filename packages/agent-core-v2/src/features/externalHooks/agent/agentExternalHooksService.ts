@@ -30,12 +30,13 @@ import type { ResolvedToolExecutionHookContext, ToolDidExecuteContext } from '#/
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { toKimiErrorPayload } from '#/errors';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { IAgentExternalHooksService } from './agentExternalHooks';
-import { IExternalHooksRunnerService } from '../app/externalHooksRunner';
+import { IExternalHooksRunnerService, type HookExecutionError } from '../app/externalHooksRunner';
 import type { HookMatcherValue } from '../internal/types';
 import {
   renderUserPromptHookBlockResult,
@@ -103,6 +104,8 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
 
   private sessionTitle: string | undefined;
 
+  private hookFailureWarned = false;
+
   private withSessionFacts(inputData: Record<string, unknown>): Record<string, unknown> {
     return { sessionTitle: this.sessionTitle, ...inputData };
   }
@@ -125,13 +128,32 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
       void this.runner.fireAndForgetTrigger(event, {
         matcherValue,
         signal,
+        cwd: this.sessionContext.cwd,
         sessionId: this.sessionContext.sessionId,
         inputData: this.withSessionFacts(inputData),
       });
     } catch {}
   }
 
+  private warnHookFailure(failure: HookExecutionError): void {
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
+    if (failure.sessionId !== undefined && failure.sessionId !== this.sessionContext.sessionId) {
+      return;
+    }
+    if (this.hookFailureWarned) return;
+    this.hookFailureWarned = true;
+    void this.dispatcher.dispatch(
+      new HookResult({
+        agentId: this.scopeContext.agentId,
+        hookEvent: failure.event,
+        content: `A ${failure.event} hook failed to execute: ${failure.message}. Hooks always run on this local machine; check that the hook command works locally. Later hook failures in this session are logged without another warning.`,
+      }),
+    );
+  }
+
   private registerListeners(): void {
+    this._register(this.runner.onDidHookError((failure) => this.warnHookFailure(failure)));
+
     this.registerPermissionHooks();
 
     this.registerToolHooks(
@@ -304,6 +326,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     const block = await this.runner.triggerBlock('PreToolUse', {
       matcherValue: ctx.toolCall.name,
       signal: ctx.signal,
+      cwd: this.sessionContext.cwd,
       sessionId: this.sessionContext.sessionId,
       inputData: this.withSessionFacts({
         toolName: ctx.toolCall.name,
@@ -343,6 +366,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     const results = await this.runner.trigger('UserPromptSubmit', {
       matcherValue: input,
       signal,
+      cwd: this.sessionContext.cwd,
       sessionId: this.sessionContext.sessionId,
       inputData: this.withSessionFacts({ prompt: input, isSteer: ctx.isSteer }),
     });
@@ -415,6 +439,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
 
     const block = await this.runner.triggerBlock('Stop', {
       signal: ctx.signal,
+      cwd: this.sessionContext.cwd,
       sessionId: this.sessionContext.sessionId,
       inputData: this.withSessionFacts({ stopHookActive: false }),
     });
@@ -428,6 +453,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     await this.runner.trigger('PreCompact', {
       matcherValue: ctx.trigger,
       signal,
+      cwd: this.sessionContext.cwd,
       sessionId: this.sessionContext.sessionId,
       inputData: this.withSessionFacts({
         trigger: ctx.trigger,

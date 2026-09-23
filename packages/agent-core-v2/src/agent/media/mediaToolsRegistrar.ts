@@ -10,7 +10,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { type ModelRequester } from '#/llm-adapter/model/model-requester';
 import { runWithCredentialRecovery } from '#/llm-adapter/model/credential-recovery';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -36,7 +36,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IEventBus eventBus: IEventBus,
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
@@ -47,7 +47,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     this.states.contributeState(mediaRegisteredKeyKey);
     this.refresh();
     this._register(eventBus.subscribe(AgentStatusUpdated, () => this.refresh()));
-    this._register(this.runtime.onDidChange(() => this.refresh()));
+    this._register(this.environment.onDidChange(() => this.refresh()));
     this._register(toDisposable(() => this.registration?.dispose()));
   }
 
@@ -71,13 +71,13 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
   private refresh(): void {
     const capabilities = this.profile.getModelCapabilities();
     const modelAlias = this.profile.getModel();
-    const hasRuntimeFs = this.runtime.isAvailable(['fs']);
-    if (!hasRuntimeFs && this.attachmentStore === undefined) {
+    const hasEnvironmentFs = this.environment.isAvailable(['fs']);
+    if (!hasEnvironmentFs && this.attachmentStore === undefined) {
       const key = [
         modelAlias,
         String(capabilities.image_in),
         String(capabilities.video_in),
-        'runtime-unavailable',
+        'environment-unavailable',
       ].join('|');
       if (key === this.registeredKey) return;
       this.registeredKey = key;
@@ -85,10 +85,9 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
       this.registration = undefined;
       return;
     }
-    const inspected = hasRuntimeFs ? this.runtime.inspect() : undefined;
+    const inspected = hasEnvironmentFs ? this.environment.inspect() : undefined;
     const identityKey = inspected === undefined ? 'session-attachments' : [
-      inspected.identity.workspaceId,
-      inspected.identity.runtimeId,
+      inspected.identity.environmentId,
       inspected.identity.generation,
     ].join('|');
     const model = this.tryResolveModel(modelAlias);
@@ -100,16 +99,16 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
       String(capabilities.video_in),
       identityKey,
       inspected?.status,
-      inspected?.environment.pathClass,
-      String(hasRuntimeFs),
+      inspected?.host?.pathClass,
+      String(hasEnvironmentFs),
     ].join('|');
     if (key === this.registeredKey) return;
     this.registeredKey = key;
     this.registration?.dispose();
     const workspaceCtx = this.workspaceCtx;
     const skillCatalog = this.skillCatalog;
-    const runtime = this.runtime;
-    const pathClass = inspected?.environment.pathClass;
+    const environment = this.environment;
+    const pathClass = inspected?.host?.pathClass;
     let requester: ModelRequester | undefined;
     if (model !== undefined) {
       try {
@@ -128,7 +127,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     });
     this.registration = registerMediaTools(this.toolRegistry, {
       attachmentStore: this.attachmentStore,
-      runtime,
+      environment,
       workspace: {
         get workspaceDir() {
           return workspaceCtx.workDir;

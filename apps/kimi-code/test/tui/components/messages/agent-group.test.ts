@@ -111,6 +111,55 @@ describe('AgentGroupComponent', () => {
     running.dispose();
   });
 
+  it('shows the environment badge in the row stats only for a non-local subagent', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const ui = stubTui();
+    const group = new AgentGroupComponent(ui);
+    const remote = new ToolCallComponent(
+      {
+        id: 'call_agent_env',
+        name: 'Agent',
+        args: { description: 'inspect project', environment: 'dev-box' },
+      },
+      undefined,
+      ui,
+    );
+    remote.onSubagentSpawned({
+      agentId: 'sub_call_agent_env',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    startAgent(remote, 'call_agent_env', 'explore');
+    const local = new ToolCallComponent(
+      {
+        id: 'call_agent_local',
+        name: 'Agent',
+        args: { description: 'write tests', environment: 'local' },
+      },
+      undefined,
+      ui,
+    );
+    local.onSubagentSpawned({
+      agentId: 'sub_call_agent_local',
+      agentName: 'coder',
+      runInBackground: false,
+    });
+    startAgent(local, 'call_agent_local', 'coder');
+
+    group.attach('call_agent_env', remote);
+    group.attach('call_agent_local', local);
+
+    const output = renderText(group);
+    expect(output).toContain('explore · inspect project · env dev-box · 0 tools');
+    expect(output).toContain('coder · write tests · 0 tools');
+    expect(output).not.toContain('env local');
+
+    group.dispose();
+    remote.dispose();
+    local.dispose();
+  });
+
   it('shows the Ctrl+B hint while agents are running and hides it once all are backgrounded', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);

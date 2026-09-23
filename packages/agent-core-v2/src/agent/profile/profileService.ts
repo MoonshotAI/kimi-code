@@ -26,8 +26,8 @@ import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import type { LoopControl } from '#/agent/loop/configSection';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ToolSource } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -65,6 +65,13 @@ import { isToolActiveComposed, findInactiveToolPatterns, literalToolNames, type 
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { NOTIFY_USER_TOOL_NAME } from '#/features/notify/tools/notify-user/notify-user';
+import { buildEnvironmentsInfo } from '#/features/environmentTools/environmentsInfo';
+import { ENVIRONMENT_SWITCH_TOOL_NAMES } from '#/features/environmentTools/environmentTools';
+import { AGENT_ENVIRONMENT_TOOLS_FLAG_ID } from '#/features/environmentTools/flag';
+import { towerKey } from '#/features/tower/towerOps';
+import { IFlagService } from '#/app/flag/flag';
+import { IEnvironmentService } from '#/app/environment/environment';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { renderAgentProfilePrompt } from '#/app/agentProfileCatalog/profile-shared';
 import { getAgentToolContributions } from '#/agent/toolRegistry/toolContribution';
 import {
@@ -145,7 +152,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IConfigService private readonly config: IConfigService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IProtocolAdapterRegistry private readonly protocolAdapters: IProtocolAdapterRegistry,
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionNotify private readonly notify: ISessionNotify,
@@ -162,6 +169,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IPluginService private readonly plugins: IPluginService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
     @IAgentAgentsMdReminderService private readonly agentsMdReminder: IAgentAgentsMdReminderService,
+    @IFlagService private readonly flags: IFlagService,
+    @IEnvironmentService private readonly environments: IEnvironmentService,
   ) {
     super();
     this.states.contributeState(profileKey);
@@ -321,7 +330,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       systemPrompt: rendered.text,
       environmentDisclosure: rendered.environment,
       agentsMdPaths: context.agentsMdPaths ?? [],
-      activeToolNames: profile.tools,
+      activeToolNames: this.withEnvironmentTools(profile.tools),
       disallowedTools: profile.disallowedTools ?? [],
       subagents: profile.subagents,
     }));
@@ -397,7 +406,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       agentsMdPaths: context.agentsMdPaths ?? [],
       disallowedTools: profile.disallowedTools ?? [],
     });
-    this.setActiveTools(profile.tools);
+    this.setActiveTools(this.withEnvironmentTools(profile.tools));
   }
 
   async applyProfile(profile: ResolvedAgentProfile, options?: ApplyProfileOptions): Promise<void> {
@@ -808,19 +817,20 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   ): Promise<SystemPromptContext> {
     await this.notify.ready;
     const preloadedAgentsMd = await this.workspaceInstructionsSnapshot();
-    const fsAvailable = this.runtime.isAvailable(['fs']);
-    const lease = this.runtime.acquire(fsAvailable ? ['fs'] : []);
-    const env = lease.runtime.environment;
-    const view = new RuntimeWorkspaceView(lease.runtime, {
-      workDir: this.sessionContext.cwd,
+    const fsAvailable = this.environment.isAvailable(['fs']);
+    const lease = this.environment.acquire(fsAvailable ? ['fs'] : []);
+    const currentEnvironmentId = lease.environment.identity.environmentId;
+    const view = new EnvironmentWorkspaceView(lease.environment, {
+      workDir: this.workspace.workDir,
       additionalDirs: options?.additionalDirs ?? this.workspace.additionalDirs,
     });
+    const env = view.host;
     let base: SystemPromptContext;
     try {
       base = !fsAvailable
         ? {}
         : await prepareSystemPromptContext(
-            { fs: lease.runtime.fs!, homeDir: env.homeDir },
+            { fs: lease.environment.fs!, homeDir: env.homeDir },
             view.workDir,
             this.bootstrap.homeDir,
             {
@@ -839,6 +849,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       osKind: env.osKind,
       shellName: env.shellName,
       shellPath: env.shellPath,
+      environmentsInfo: this.resolveEnvironmentsInfo(currentEnvironmentId),
       skills,
       pluginSections,
       skillActive: this.isToolActiveForProfile(profile, 'Skill'),
@@ -886,6 +897,23 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     } catch {
       return '';
     }
+  }
+
+  private environmentToolsVisible(): boolean {
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID) return false;
+    if (!this.flags.enabled(AGENT_ENVIRONMENT_TOOLS_FLAG_ID)) return false;
+    return !(this.states.has(towerKey) && this.states.get(towerKey));
+  }
+
+  private withEnvironmentTools(tools: readonly string[] | undefined): readonly string[] | undefined {
+    if (tools === undefined || !this.environmentToolsVisible()) return tools;
+    const missing = ENVIRONMENT_SWITCH_TOOL_NAMES.filter((name) => !tools.includes(name));
+    return missing.length === 0 ? tools : [...tools, ...missing];
+  }
+
+  private resolveEnvironmentsInfo(currentEnvironmentId: string): string {
+    if (!this.environmentToolsVisible()) return '';
+    return buildEnvironmentsInfo(this.environments.snapshot(), currentEnvironmentId);
   }
 
   private async resolvePluginSections(): Promise<string> {

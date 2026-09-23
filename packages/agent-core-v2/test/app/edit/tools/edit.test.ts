@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PathSecurityError } from '#/tool/path-access';
 import { stubWorkspaceContext } from '../../../session/workspaceContext/stub-workspace-context';
+import { stubAgentEnvironment } from '../../../environment/stubs';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { type EditInput, EditInputSchema } from '#/agent/tools/edit/edit';
@@ -17,8 +18,7 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import type { Runtime } from '#/runtime/runtime';
+import type { Environment } from '#/environment/environment';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
@@ -69,29 +69,19 @@ function buildTool(
       reg.define(IFileEditService, FileEditService);
     },
   });
-  const runtimeValue = {
-    identity: { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+  const environmentValue = {
+    identity: { environmentId: 'local', generation: 'test' },
     capabilities: new Set(['fs'] as const),
-    environment: env,
+    host: env,
     path: posixPath,
     workspace: { mapRoots: (roots: { workDir: string; additionalDirs?: readonly string[] }) => roots },
     fs,
     status: 'ready',
     onDidChangeStatus: () => ({ dispose: () => {} }),
     dispose: () => {},
-  } as unknown as Runtime;
-  const runtime: IAgentRuntimeService = {
-    _serviceBrand: undefined,
-    onDidChange: () => ({ dispose: () => {} }),
-    isAvailable: () => true,
-    inspect: () => runtimeValue,
-    acquire: () => ({
-      runtime: runtimeValue,
-      track: (resource) => resource,
-      dispose: () => {},
-    }),
-  };
-  return new EditTool(ix.get(IFileEditService), runtime, workspace);
+  } as unknown as Environment;
+  const environment = stubAgentEnvironment(environmentValue);
+  return new EditTool(ix.get(IFileEditService), environment, workspace);
 }
 
 function isPromiseLike(
@@ -211,16 +201,16 @@ describe('EditTool', () => {
     expect(writeText).toHaveBeenCalledWith('/tmp/a.txt', 'alpha gamma');
   });
 
-  it('executes against the selected runtime filesystem instead of the App filesystem', async () => {
-    const runtimeWrite = vi.fn().mockResolvedValue(undefined);
-    const { fs: runtimeFs } = createSpiedEditFs({
-      readText: vi.fn().mockResolvedValue('runtime content'),
-      writeText: runtimeWrite,
+  it('executes against the selected environment filesystem instead of the App filesystem', async () => {
+    const environmentWrite = vi.fn().mockResolvedValue(undefined);
+    const { fs: environmentFs } = createSpiedEditFs({
+      readText: vi.fn().mockResolvedValue('environment content'),
+      writeText: environmentWrite,
     });
     const appRead = vi.fn().mockRejectedValue(new Error('App filesystem bypass'));
     const appWrite = vi.fn().mockRejectedValue(new Error('App filesystem bypass'));
     const { fs: appFs } = createSpiedEditFs({ readText: appRead, writeText: appWrite });
-    const tool = buildTool(runtimeFs, createTestEnv(), PERMISSIVE_WORKSPACE, appFs);
+    const tool = buildTool(environmentFs, createTestEnv(), PERMISSIVE_WORKSPACE, appFs);
 
     const result = await execute(tool, {
       path: '/tmp/a.txt',
@@ -229,7 +219,7 @@ describe('EditTool', () => {
     });
 
     expect(result.output).toContain('Replaced 1 occurrence');
-    expect(runtimeWrite).toHaveBeenCalledWith('/tmp/a.txt', 'runtime generation');
+    expect(environmentWrite).toHaveBeenCalledWith('/tmp/a.txt', 'environment generation');
     expect(appRead).not.toHaveBeenCalled();
     expect(appWrite).not.toHaveBeenCalled();
   });

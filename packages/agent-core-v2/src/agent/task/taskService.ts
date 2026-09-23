@@ -29,6 +29,7 @@ import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentLoopService, type LoopNotifyHandle } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { environmentTempTarget, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { ITaskService, type ITaskHandle, TERMINAL_TASK_STATES } from '#/app/task/task';
 import {
   TERMINAL_STATUSES,
@@ -58,7 +59,7 @@ import {
   type RegisterAgentTaskOptions,
 } from './task';
 import { resolveAgentTaskConfig } from './configSection';
-import { AgentTaskPersistence } from './persist';
+import { AgentTaskPersistence, type AgentTaskSpillTarget } from './persist';
 import { taskKey, TaskNotified, TaskStarted, TaskTerminated, TaskWaitDelivered } from './taskOps';
 import { formatTaskList } from '#/agent/tools/task/task-list/taskListTool';
 import '#/agent/tools/task/task-output/taskOutputTool';
@@ -122,6 +123,7 @@ interface ManagedTask {
   outputSizeBytes: number;
   retainedOutputBytes: number;
   outputLimitTripped: boolean;
+  outputSpillDir?: string;
   status: AgentTaskStatus;
   options: RegisterAgentTaskOptions & { description?: string };
   readonly startedAt: number;
@@ -230,6 +232,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     undoParticipants: IAgentConversationUndoParticipantRegistry,
     @ILogService private readonly log: ILogService,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
   ) {
     super();
     this.states.contributeState(taskKey);
@@ -248,6 +251,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       atomicDocs,
       byteStore,
       fallbackRoot,
+      () => this.spillTarget(),
     );
     this._register(
       undoParticipants.register({
@@ -285,6 +289,10 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
   private get ghosts(): Map<string, AgentTaskInfo> {
     return this.states.get(taskGhostsKey);
+  }
+
+  private spillTarget(): AgentTaskSpillTarget | undefined {
+    return environmentTempTarget(this.environment, 'task-output');
   }
 
   private get scheduledNotificationKeys(): Set<string> {
@@ -984,7 +992,13 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   private appendTaskOutput(entry: ManagedTask, chunk: string): void {
     const persistence = this.persistence;
     entry.outputWriteQueue = entry.outputWriteQueue
-      .then(() => persistence.appendTaskOutput(entry.taskId, chunk))
+      .then(async () => {
+        const spillDir = await persistence.appendTaskOutput(entry.taskId, chunk);
+        if (spillDir !== undefined && entry.outputSpillDir === undefined) {
+          entry.outputSpillDir = spillDir;
+          await this.persistLive(entry);
+        }
+      })
       .catch(() => { });
   }
 
@@ -1379,6 +1393,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       stopReason: entry.stopReason,
       terminalNotificationSuppressed: entry.terminalNotificationSuppressed,
       timeoutMs: entry.options.timeoutMs,
+      outputSpillDir: entry.outputSpillDir,
     };
     if (entry.toInfoFn) return entry.toInfoFn(base);
     return entry.task!.toInfo(base);

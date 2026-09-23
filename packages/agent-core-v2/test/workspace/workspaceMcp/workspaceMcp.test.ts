@@ -25,14 +25,14 @@ import {
 } from '#/mcpCore/connection-manager';
 import { McpOAuthService, type McpOAuthEvent } from '#/mcpCore/oauth/service';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { ISessionEphemeralMcpServers } from '#/session/mcp/ephemeralMcpServers';
 import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import type { SessionWillCreateEvent } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import {
   IWorkspaceMcpService,
   type ISessionMcpOverlay,
@@ -58,7 +58,7 @@ function stdioServer(): McpServerConfig {
     transport: 'stdio',
     command: process.execPath,
     args: [stdioFixture],
-    runtime_id: 'local',
+    environment_id: 'local',
   };
 }
 
@@ -73,11 +73,13 @@ describe('WorkspaceMcpService', () => {
   let oauthService: McpOAuthService;
   let oauthScheduler: ManualMcpOAuthScheduler;
   let manager: InstanceType<typeof McpConnectionManager> | undefined;
+  let trackedSessions: Array<string | undefined>;
 
   beforeEach(() => {
     cwd = mkdtempSync(join(tmpdir(), 'kimi-workspace-mcp-cwd-'));
     disposables = new DisposableStore();
     current = {};
+    trackedSessions = [];
     tunablesValue = {};
     tunablesFn = vi.fn(() => tunablesValue);
     configChanges = disposables.add(new AsyncEmitter<McpServersChangeEvent>());
@@ -117,17 +119,32 @@ describe('WorkspaceMcpService', () => {
         reg.definePartialInstance(IMcpOAuthService, oauthService);
         reg.defineInstance(ILogService, stubLog());
         reg.defineInstance(ITelemetryService, noopTelemetryService);
-        const runtime = Object.assign(
-          new FakeRuntime(
-            { workspaceId: 'test-workspace', runtimeId: 'local', generation: 'test-generation' },
+        const environment = Object.assign(
+          new FakeEnvironment(
+            { environmentId: 'local', generation: 'test-generation' },
             { capabilities: ['process'] },
           ),
           { process: new HostProcessService() },
         );
-        reg.defineInstance(IRuntimeResolver, {
+        reg.definePartialInstance(IEnvironmentService, {
           _serviceBrand: undefined,
-          inspect: () => runtime,
-          acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
+          inspect: () => environment,
+          acquire: () => ({
+            environment,
+            track: <T,>(resource: T, sessionId?: string): T => {
+              trackedSessions.push(sessionId);
+              return resource;
+            },
+            dispose: () => {},
+          }),
+          acquireWhenReady: async () => ({
+            environment,
+            track: <T,>(resource: T, sessionId?: string): T => {
+              trackedSessions.push(sessionId);
+              return resource;
+            },
+            dispose: () => {},
+          }),
         });
         reg.definePartialInstance(ISessionManager, {
           onWillCreateSession: assemblyEvents.event,
@@ -362,6 +379,21 @@ describe('WorkspaceMcpService', () => {
     expect(view.get('base')?.status).toBe('connected');
   }, 20000);
 
+  it('tags overlay stdio resources with the session id while workspace servers stay untagged', async () => {
+    current = { base: stdioServer() };
+    const service = createService();
+    manager = service.connectionManager();
+    await service.ready;
+
+    const overlay = service.sessionOverlay({ eph: stdioServer() }, { sessionId: 'session-1' });
+    await overlay.handle.ready;
+
+    expect(trackedSessions.filter((id) => id === undefined)).toHaveLength(2);
+    expect(trackedSessions.filter((id) => id === 'session-1')).toHaveLength(2);
+
+    await overlay.shutdown();
+  }, 20000);
+
   describe('session overlay activation (onWillCreateSession)', () => {
     function willCreateEvent(
       servers: Record<string, McpServerConfig>,
@@ -407,7 +439,7 @@ describe('WorkspaceMcpService', () => {
       const { event, contributed, disposers } = willCreateEvent(servers, sessionCwd);
       assemblyEvents.fire(event);
 
-      expect(sessionOverlay).toHaveBeenCalledWith(servers, { stdioCwd: sessionCwd });
+      expect(sessionOverlay).toHaveBeenCalledWith(servers, { stdioCwd: cwd, sessionId: 's1' });
       const overlay = sessionOverlay.mock.results[0]?.value as ISessionMcpOverlay;
       expect(contributed.get(ISessionMcpHandle)).toBe(overlay.handle);
       await overlay.handle.ready;
@@ -419,6 +451,24 @@ describe('WorkspaceMcpService', () => {
       expect(shutdown).toHaveBeenCalledTimes(1);
       await shutdown.mock.results[0]?.value;
       await rm(sessionCwd, { recursive: true, force: true });
+    }, 20000);
+
+    it('spawns local stdio entries with the local workspace root when the session cwd is remote', async () => {
+      const service = createService();
+      manager = service.connectionManager();
+      await service.ready;
+
+      const servers = { eph: stdioServer() };
+      const sessionOverlay = vi.spyOn(service, 'sessionOverlay');
+      const { event, contributed } = willCreateEvent(servers, '/remote/session-cwd-that-does-not-exist-locally');
+      assemblyEvents.fire(event);
+
+      expect(sessionOverlay).toHaveBeenCalledWith(servers, { stdioCwd: cwd, sessionId: 's1' });
+      const overlay = sessionOverlay.mock.results[0]?.value as ISessionMcpOverlay;
+      expect(contributed.get(ISessionMcpHandle)).toBe(overlay.handle);
+      await overlay.handle.ready;
+      expect(overlay.handle.connectionManager.get('eph')?.status).toBe('connected');
+      await overlay.shutdown();
     }, 20000);
 
     it('ignores a session created without ephemeral servers', async () => {

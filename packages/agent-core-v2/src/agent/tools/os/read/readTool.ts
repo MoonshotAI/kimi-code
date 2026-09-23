@@ -1,12 +1,13 @@
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
+import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
+import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { isDaemonFileUrl } from '#/agent/media/mediaRef';
-import { attachmentFileSource, runtimeFileSource, withAttachmentLocation, type FileReadSource } from '#/agent/tools/fileReadSource';
-import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
+import { attachmentFileSource, environmentFileSource, withAttachmentLocation, type FileReadSource } from '#/agent/tools/fileReadSource';
+import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -120,13 +121,6 @@ function renderLine(entry: ReadLineEntry, lineEndingStyle: LineEndingStyle): str
   return `${String(entry.lineNo)}\t${renderedContent}`;
 }
 
-function isFileNotFoundError(error: unknown): boolean {
-  const unwrapped = unwrapErrorCause(error);
-  if (typeof unwrapped !== 'object' || unwrapped === null) return false;
-  const code = (unwrapped as { code?: unknown })['code'];
-  return code === 'ENOENT' || code === 'ENOTDIR';
-}
-
 function isTextDecodeError(error: unknown): boolean {
   const unwrapped = unwrapErrorCause(error);
   if (typeof unwrapped !== 'object' || unwrapped === null) return false;
@@ -181,7 +175,7 @@ export class ReadTool implements IReadTool {
   }
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadInputSchema);
   constructor(
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
     @IAgentToolResultTruncationService private readonly resultTruncation: IAgentToolResultTruncationService,
@@ -201,7 +195,7 @@ export class ReadTool implements IReadTool {
     };
   }
 
-  private workspaceConfig(view: RuntimeWorkspaceView): WorkspaceConfig {
+  private workspaceConfig(view: EnvironmentWorkspaceView): WorkspaceConfig {
     return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
@@ -210,12 +204,13 @@ export class ReadTool implements IReadTool {
       return { isError: true, output: 'column_offset is only supported for forward reads. Use a positive line_offset or the forward Next Read arguments.' };
     }
     if (isDaemonFileUrl(args.path)) return this.attachmentExecution(args);
-    const inspected = inspectAgentRuntime(this.runtime);
-    const view = new RuntimeWorkspaceView(inspected, {
+    const inspected = this.environment.inspect();
+    const expectedGeneration = pinnedGeneration(inspected);
+    const view = new EnvironmentWorkspaceView(inspected, {
       workDir: this.workspaceCtx.workDir,
       additionalDirs: [...this.workspaceCtx.additionalDirs, ...this.skillCatalog.catalog.getSkillRoots()],
     });
-    const env = { _serviceBrand: undefined, ...inspected.environment, ready: Promise.resolve() };
+    const env = { _serviceBrand: undefined, ...view.host, ready: Promise.resolve() };
     const workspace = this.workspaceConfig(view);
     const path = resolvePathAccessPath(args.path, {
       env,
@@ -234,17 +229,17 @@ export class ReadTool implements IReadTool {
           homeDir: env.homeDir,
         }),
       execute: async () => {
-        const lease = this.runtime.acquire(['fs']);
+        const lease = await acquireOrWhenReady(this.environment, ['fs']);
         try {
-          if (lease.runtime.identity.generation !== inspected.identity.generation) {
-            return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
+          if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
+            return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
           }
-          const accessError = await checkRealPathWithinWorkspace(lease.runtime.fs!, path, workspace, env.pathClass);
+          const accessError = await checkRealPathWithinWorkspace(lease.environment.fs!, path, workspace, env.pathClass);
           if (accessError !== undefined) {
             return { isError: true, output: accessError.message };
           }
           const eventLog = this.resultTruncation.isWireJournalPath(path);
-          const result = await this.execution(runtimeFileSource(lease.runtime.fs!, path), args, eventLog);
+          const result = await this.execution(environmentFileSource(lease.environment.fs!, path), args, eventLog);
           return { ...result, spillExempt: true };
         } finally {
           lease.dispose();
@@ -278,7 +273,7 @@ export class ReadTool implements IReadTool {
       try {
         stat = await source.stat();
       } catch (error) {
-        if (isFileNotFoundError(error)) {
+        if (isHostFsNotFound(error) || isHostFsNotDirectory(error)) {
           return { isError: true, output: `"${args.path}" does not exist.` };
         }
         throw error;

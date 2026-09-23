@@ -124,6 +124,9 @@ export function renderAgentProfilePrompt(
 const ADDITIONAL_DIRS_SECTION_PROSE =
   'The following directories have been added to the workspace. You can read, write, search, and glob files in these directories as part of your workspace scope.';
 
+const ENVIRONMENTS_SECTION_PROSE =
+  'This session can execute tool calls on the environments below. Use `change_environment` to switch the active environment (the switch takes effect for the next tool call; the call fails while other tool calls are still running, so run it on its own), or `connect` to create a temporary environment from a launcher spec.';
+
 const SKILLS_SECTION_PROSE =
   'Skills are reusable, composable capabilities that enhance your abilities. Each skill is either a self-contained directory with a `SKILL.md` file or a standalone `.md` file that contains instructions, examples, and/or reference material.\n\n' +
   'Identify the skills relevant to your current task and read the skill file for its instructions; only read further skill details when needed, to conserve the context window.\n\n' +
@@ -143,6 +146,7 @@ export function systemPromptVars(
   const skills = skillActive ? (context.skills ?? '') : '';
   const pluginSections = context.pluginSections ?? '';
   const additionalDirsInfo = context.additionalDirsInfo ?? '';
+  const environmentsInfo = context.environmentsInfo ?? '';
   return {
     role_additional: '',
     product_name: context.productName ?? DEFAULT_PRODUCT_NAME,
@@ -158,6 +162,11 @@ export function systemPromptVars(
     additional_dirs_section:
       additionalDirsInfo.length > 0
         ? `\n\n## Additional Directories\n\n${ADDITIONAL_DIRS_SECTION_PROSE}\n\n${additionalDirsInfo}\n\n`
+        : '',
+    environments_info: environmentsInfo,
+    environments_section:
+      environmentsInfo.length > 0
+        ? `\n\n## Available environments\n\n${ENVIRONMENTS_SECTION_PROSE}\n\n${environmentsInfo}\n\n`
         : '',
     skills,
     skills_section:

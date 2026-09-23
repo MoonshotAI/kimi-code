@@ -1224,7 +1224,7 @@ describe('context-projector', () => {
       { lineNo: 5, data: { type: 'task.started' as const, agentId: 'main', info: { taskId: 'bash-abc12345', description: 'x', status: 'running' as const, startedAt: 1, endedAt: null } }, raw: {} },
       { lineNo: 6, data: { type: 'cron.add' as const, agentId: 'main', task: { id: '01ARZ3NDEKTSV4RRFFQ69G5FAV', cron: '* * * * *', prompt: 'p', createdAt: 1 } }, raw: {} },
       { lineNo: 7, data: { type: 'plan.revision' as const, agentId: 'main', id: 'plan1', version: 2, key: 'k', sha256: 's', bytes: 10 }, raw: {} },
-      { lineNo: 8, data: { type: 'runtime.set_binding' as const, agentId: 'main', workspaceId: 'w', runtimeId: 'r' }, raw: {} },
+      { lineNo: 8, data: { type: 'environment.set_binding' as const, agentId: 'main', workspaceId: 'w', environmentId: 'r' }, raw: {} },
       { lineNo: 9, data: { type: 'staleGuard.recorded' as const, path: '/x', mtimeMs: 1 }, raw: {} },
       { lineNo: 10, data: { type: 'interruptionReminder.recorded' as const, agentId: 'main', turnId: 1 }, raw: {} },
     ];

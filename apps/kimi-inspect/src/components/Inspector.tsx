@@ -20,7 +20,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { serviceByName } from '../channel';
 import { useConnection } from '../connection';
 import { type AnyService } from '../panels';
-import { fetchAgentRuntimeBinding } from '../snapshots/api';
+import { fetchAgentEnvironmentBinding } from '../snapshots/api';
 import { fetchTranscriptPlan, type TranscriptPlanInfo } from '../transcript/api';
 import { ActionButton, Badge, ErrorLine } from '../ui';
 import { ScopePanels } from './ServicePanels';
@@ -58,9 +58,9 @@ export function Inspector({
 
   // Keep the selected agent valid as the registry changes.
   const effectiveAgent = agentIds.includes(agentId) ? agentId : agentIds[0]!;
-  const runtimeBinding = useQuery({
-    queryKey: ['agent-runtime-binding', klient.baseUrl, sessionId, effectiveAgent],
-    queryFn: () => fetchAgentRuntimeBinding(klient, sessionId as string, effectiveAgent),
+  const environmentBinding = useQuery({
+    queryKey: ['agent-environment-binding', klient.baseUrl, sessionId, effectiveAgent],
+    queryFn: () => fetchAgentEnvironmentBinding(klient, sessionId as string, effectiveAgent),
     enabled: sessionId !== null && ready,
     refetchInterval: 1_000,
   });
@@ -140,26 +140,24 @@ export function Inspector({
           <>
             <div className="mb-3 rounded border border-neutral-800 bg-neutral-950/40 p-2 text-[11px]">
               <div className="mb-1 flex items-center gap-2 font-semibold uppercase tracking-wider text-neutral-500">
-                Runtime binding
-                {runtimeBinding.data !== undefined ? (
-                  <Badge tone={runtimeBinding.data.available ? 'green' : 'red'}>
-                    {runtimeBinding.data.available ? 'available' : 'unavailable'}
+                Environment binding
+                {environmentBinding.data !== undefined ? (
+                  <Badge tone={environmentBinding.data.available ? 'green' : 'red'}>
+                    {environmentBinding.data.available ? 'available' : 'unavailable'}
                   </Badge>
                 ) : null}
               </div>
               <div className="grid grid-cols-[80px_minmax(0,1fr)] gap-1 font-mono">
-                <span className="text-neutral-600">workspace</span>
-                <span className="break-all text-neutral-300">{runtimeBinding.data?.binding.workspaceId ?? 'loading…'}</span>
-                <span className="text-neutral-600">runtime</span>
-                <span className="break-all text-neutral-300">{runtimeBinding.data?.binding.runtimeId ?? 'loading…'}</span>
+                <span className="text-neutral-600">environment</span>
+                <span className="break-all text-neutral-300">{environmentBinding.data?.binding.environmentId ?? 'loading…'}</span>
                 <span className="text-neutral-600">generation</span>
-                <span className="break-all text-neutral-300">{runtimeBinding.data?.runtime?.generation ?? 'unavailable'}</span>
+                <span className="break-all text-neutral-300">{environmentBinding.data?.environment?.generation ?? 'unavailable'}</span>
                 <span className="text-neutral-600">status</span>
-                <span className="text-neutral-300">{runtimeBinding.data?.runtime?.status ?? 'unavailable'}</span>
+                <span className="text-neutral-300">{environmentBinding.data?.environment?.status ?? 'unavailable'}</span>
                 <span className="text-neutral-600">capabilities</span>
-                <span className="text-neutral-300">{runtimeBinding.data?.runtime?.capabilities.join(', ') ?? 'none'}</span>
+                <span className="text-neutral-300">{environmentBinding.data?.environment?.capabilities.join(', ') ?? 'none'}</span>
               </div>
-              {runtimeBinding.isError ? <ErrorLine error={runtimeBinding.error} /> : null}
+              {environmentBinding.isError ? <ErrorLine error={environmentBinding.error} /> : null}
             </div>
             <PlanCard sessionId={sessionId} agentId={effectiveAgent} />
             <ScopePanels

@@ -24,7 +24,7 @@ import type {
   AddAdditionalDirInput,
   AddAdditionalDirResult,
   AgentCommandInfo,
-  AgentRuntimeBinding,
+  AgentEnvironmentBinding,
   AppMcpServerInspection,
   BackgroundTaskInfo,
   ConfigDiagnostics,
@@ -68,12 +68,15 @@ import type {
   ResumedSessionSummary,
   SessionSummary,
   SessionSummaryPage,
+  SessionEnvironmentsInfo,
+  RemoteEnvironmentEntry,
   SkillSummary,
   PluginCommandDef,
   SuggestFilesInput,
   SuggestFilesResult,
   Unsubscribe,
   UploadFileOptions,
+  WorkspaceEnvironmentDeclarationInfo,
   WorkspaceTrustInfo,
 } from '#/types';
 
@@ -152,8 +155,14 @@ export interface RunCommandRpcInput extends SessionIdRpcInput {
   readonly args?: string | undefined;
 }
 
-export interface SwitchSessionRuntimeRpcInput extends SessionIdRpcInput {
-  readonly runtimeId: string;
+export interface SwitchSessionEnvironmentRpcInput extends SessionIdRpcInput {
+  readonly environmentId: string;
+  readonly cwd?: string;
+}
+
+export interface DeclareEnvironmentRpcInput extends SessionIdRpcInput {
+  readonly id: string;
+  readonly entry: RemoteEnvironmentEntry;
 }
 
 export interface ReconnectMcpServerRpcInput extends SessionIdRpcInput {
@@ -220,6 +229,8 @@ export abstract class SDKRpcClientBase {
   abstract listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]>;
 
   abstract getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo>;
+
+  abstract listEnvironmentDeclarations(): Promise<readonly WorkspaceEnvironmentDeclarationInfo[]>;
 
   abstract trustWorkspace(workDir: string): Promise<void>;
 
@@ -399,6 +410,19 @@ export abstract class SDKRpcClientBase {
     input: SuggestFilesInput,
   ): Promise<SuggestFilesResult | undefined>;
 
+  /**
+   * Session-scoped file suggestions rooted at the session's workspace
+   * context and served by the session's currently bound environment. Only the
+   * agent-core-v2 engine implements it; the v1 engine reports `undefined`
+   * (capability absent), same convention as the session-less variant.
+   */
+  async suggestSessionFiles(
+    input: SessionIdRpcInput & SuggestFilesInput,
+  ): Promise<SuggestFilesResult | undefined> {
+    void input;
+    return undefined;
+  }
+
   abstract listBackgroundTasks(
     input: SessionIdRpcInput & { activeOnly?: boolean; limit?: number },
   ): Promise<readonly BackgroundTaskInfo[]>;
@@ -467,9 +491,15 @@ export abstract class SDKRpcClientBase {
 
   abstract runCommand(input: RunCommandRpcInput): Promise<void>;
 
-  abstract getRuntime(input: SessionIdRpcInput): Promise<AgentRuntimeBinding>;
+  abstract getEnvironment(input: SessionIdRpcInput): Promise<AgentEnvironmentBinding>;
 
-  abstract switchRuntime(input: SwitchSessionRuntimeRpcInput): Promise<AgentRuntimeBinding>;
+  abstract switchEnvironment(input: SwitchSessionEnvironmentRpcInput): Promise<AgentEnvironmentBinding>;
+
+  abstract reconnectEnvironment(input: SessionIdRpcInput): Promise<AgentEnvironmentBinding>;
+
+  abstract listEnvironments(input: SessionIdRpcInput): Promise<SessionEnvironmentsInfo>;
+
+  abstract declareEnvironment(input: DeclareEnvironmentRpcInput): Promise<void>;
 
   onEvent(listener: (event: Event) => void): Unsubscribe {
     this.eventListeners.add(listener);

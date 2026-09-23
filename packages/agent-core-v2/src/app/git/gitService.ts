@@ -10,7 +10,8 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { GIT_DIFF_ARGS, hardenedGitConfigArgs } from '#/app/git/hardening';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IRuntimeResolver, IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
 import { IGitService } from './git';
 import { parseNumstat, parsePorcelain, parsePullRequest } from './gitParsers';
@@ -31,8 +32,7 @@ export class GitService implements IGitService {
   >();
 
   constructor(
-    @IRuntimeResolver private readonly resolver: IRuntimeResolver,
-    @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
+    @IEnvironmentService private readonly resolver: EnvironmentResolver,
     @IHostFileSystem private readonly fs: IHostFileSystem,
   ) {}
 
@@ -196,9 +196,8 @@ export class GitService implements IGitService {
     cwd: string,
     options: RunGitOptions,
   ): Promise<RunGitResult> {
-    const workspaceId = this.resolveWorkspaceId(cwd);
-    const lease = this.resolver.acquire({ workspaceId, runtimeId: 'local' }, ['process']);
-    const spawned = await lease.runtime.process!
+    const lease = this.resolver.acquire({ environmentId: LOCAL_ENVIRONMENT_ID }, ['process']);
+    const spawned = await lease.environment.process!
       .spawn(cmd, args, { cwd, env: options.env })
       .then(
         (proc) => ({ ok: true as const, proc }),
@@ -246,14 +245,6 @@ export class GitService implements IGitService {
       void proc.dispose();
       lease.dispose();
     }
-  }
-
-  private resolveWorkspaceId(cwd: string): string {
-    const workspace = this.workspaces.findByRoot(cwd);
-    if (workspace === undefined) {
-      throw new Error(`workspace for root ${cwd} is not materialized`);
-    }
-    return workspace.id;
   }
 
   private gitUnavailable(cwd: string, detail: string): Error2 {

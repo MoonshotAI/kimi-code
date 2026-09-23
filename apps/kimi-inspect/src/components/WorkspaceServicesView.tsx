@@ -82,7 +82,7 @@ export function WorkspaceServicesView() {
               <SnapshotRow label="lifecycle" value={<Badge tone="sky">{data.lifecycle}</Badge>} />
             </SnapshotPanel>
             <SnapshotPanel title="Program">
-              <SnapshotRow label="binding" value={`${data.program.binding.workspaceId} / ${data.program.binding.runtimeId}`} />
+              <SnapshotRow label="binding" value={data.program.binding.environmentId} />
               <SnapshotRow label="status" value={<Badge tone={data.program.status === 'ready' ? 'green' : 'neutral'}>{data.program.status}</Badge>} />
               <SnapshotRow label="ready" value={String(data.program.ready)} />
               <SnapshotRow label="generation" value={data.program.generation ?? 'unavailable'} />
@@ -91,17 +91,17 @@ export function WorkspaceServicesView() {
               <SnapshotRow label="agent profiles" value={String(data.program.catalog.agentProfiles)} />
               <SnapshotRow label="MCP servers" value={String(data.program.catalog.mcpServers)} />
             </SnapshotPanel>
-            <SnapshotPanel title="Runtimes">
-              {data.runtimes.runtimes.length === 0 ? (
+            <SnapshotPanel title="Environments">
+              {data.program.environments.length === 0 ? (
                 <div className="text-[11px] text-neutral-600">no current generations</div>
-              ) : data.runtimes.runtimes.map((runtime) => (
-                <div key={`${runtime.runtimeId}:${runtime.generation}`} className="rounded border border-neutral-800 bg-neutral-950/40 p-2">
+              ) : data.program.environments.map((environment) => (
+                <div key={`${environment.environmentId}:${environment.generation}`} className="rounded border border-neutral-800 bg-neutral-950/40 p-2">
                   <div className="mb-1 flex items-center gap-2">
-                    <span className="font-mono text-[12px] text-neutral-200">{runtime.runtimeId}</span>
-                    <Badge tone={runtime.status === 'ready' ? 'green' : 'neutral'}>{runtime.status}</Badge>
+                    <span className="font-mono text-[12px] text-neutral-200">{environment.environmentId}</span>
+                    <Badge tone={environment.status === 'ready' ? 'green' : 'neutral'}>{environment.status}</Badge>
                   </div>
-                  <SnapshotRow label="generation" value={runtime.generation} />
-                  <SnapshotRow label="capabilities" value={runtime.capabilities.join(', ') || 'none'} />
+                  <SnapshotRow label="generation" value={environment.generation} />
+                  <SnapshotRow label="capabilities" value={environment.capabilities.join(', ') || 'none'} />
                 </div>
               ))}
             </SnapshotPanel>

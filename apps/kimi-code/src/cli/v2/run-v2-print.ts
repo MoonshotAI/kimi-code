@@ -2,9 +2,9 @@
  * Native v2 `kimi -p` (print mode) runner.
  *
  * Unlike the v1 path (and the former `V2PromptHarness` / `V2Session` shim), this
- * runner talks to agent-core-v2's native DI services directly — no
+ * runner drives agent-core-v2's native DI services through an SDK-owned host — no
  * `PromptHarness`, no SDK-shaped session, no v2→v1 event translation. It:
- *   - `bootstrap()`s the app scope,
+ *   - creates the host through `SDKRpcClientV2`,
  *   - creates / resumes a session and its main agent via native services,
  *   - subscribes to the main agent's per-agent `IEventBus` and renders the
  *     native `Event2` stream (payloads are already v1-protocol-shaped),
@@ -38,16 +38,13 @@ import {
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
   applyPrintModeConfigDefaults,
-  bootstrap,
   createCloudAppender,
   ensureMainAgent,
   resumeSessionById,
-  logSeed,
   parseAgentFileText,
   resolveAgentPath,
   resolveAgentTaskConfig,
   resolveKimiHome,
-  resolveLoggingConfig,
   resolvePrintBackgroundMode,
   setClampedTimeout,
   type Event2,
@@ -56,17 +53,17 @@ import {
   type LoopRunResult,
   type McpServerConfig,
   type PrintBackgroundMode,
-  type Scope,
+  type ServicesAccessor,
 } from '@moonshot-ai/agent-core-v2';
 import {
   loadMcpServersDetailed,
   resolveMcpJsonPaths,
 } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
 import {
-  createKimiDefaultHeaders,
   createKimiDeviceId,
   KIMI_CODE_PROVIDER_NAME,
 } from '@moonshot-ai/kimi-code-oauth';
+import { SDKRpcClientV2 } from '@moonshot-ai/kimi-code-sdk';
 import {
   initializeTelemetry,
   setCrashPhase,
@@ -158,32 +155,17 @@ export async function runV2Print(
       firstLaunch = true;
     },
   });
-  const logging = resolveLoggingConfig({ homeDir, env: process.env });
-  const identity = createKimiCodeHostIdentity(version);
-  const hostHeaders = createKimiDefaultHeaders({ homeDir, ...identity });
+  const client = new SDKRpcClientV2({
+    homeDir,
+    identity: createKimiCodeHostIdentity(version),
+    nonInteractive: true,
+    skillDirs: opts.skillsDirs,
+    agentFiles: opts.agentFiles,
+  });
+  const services = client.engineAccessor;
+  const auth = services.get(IOAuthToolkit);
 
-  const { app } = bootstrap(
-    {
-      homeDir,
-      clientIdentity: identity,
-      args: {
-        requestHeaders: hostHeaders,
-        nonInteractive: true,
-        // `--skillsDir` (v1 print parity): explicit skill dirs replace default
-        // user / project discovery for this process.
-        skillDirs: opts.skillsDirs,
-        // `--agent-file`: explicit agent definition files, registered with the
-        // highest-precedence source for this process. Passed through unresolved —
-        // the engine expands `~` and resolves relative paths against the session
-        // workDir (mirroring `--skills-dir`).
-        agentFiles: opts.agentFiles,
-      },
-    },
-    [...logSeed(logging)],
-  );
-  const auth = app.accessor.get(IOAuthToolkit);
-
-  const configService = app.accessor.get(IConfigService);
+  const configService = services.get(IConfigService);
   await configService.ready;
   // Print-mode config defaults (task timeouts / loop step cap / subagent
   // timeout → unbounded) before anything resolves a session; only keys the
@@ -230,7 +212,7 @@ export async function runV2Print(
               : Promise.resolve(),
             shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS }).catch(() => {}),
           ]);
-          app.dispose();
+          await client.close();
         } finally {
           // Keep producers frozen until the journals are drained and disposed.
           releaseQuiescence?.();
@@ -250,10 +232,10 @@ export async function runV2Print(
     // setTelemetryModel). The v1 pipeline is initialized here too: the
     // process-wide crash handlers report through its default client, so its
     // sink must be attached before the run can crash.
-    telemetryService = app.accessor.get(ITelemetryService);
+    telemetryService = services.get(ITelemetryService);
     if (telemetryEnabled) {
       telemetryService.addAppender(
-        createCloudAppender(app.accessor, {
+        createCloudAppender(services, {
           deviceId,
           appName: CLI_USER_AGENT_PRODUCT,
           uiMode: PROMPT_UI_MODE,
@@ -280,13 +262,13 @@ export async function runV2Print(
     // Print mode has no trust prompt, so the engine's workspace-trust gate
     // would silently drop project-level MCP servers — say so on stderr.
     try {
-      const gated = await listTrustGatedMcpServers(app, workDir, homeDir);
+      const gated = await listTrustGatedMcpServers(services, workDir, homeDir);
       if (gated.length > 0) stderr.write(formatTrustGatedMcpWarning(gated));
     } catch {
       // Best-effort: a broken mcp.json or trust store must not fail the run.
     }
 
-    const resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
+    const resolved = await resolveNativeSession(services, opts, workDir, defaultModel, stderr);
     restorePermission = resolved.restorePermission;
     quiesceAgents = async () => {
       releaseQuiescence = await quiesceSessionAgents(resolved.session, resolved.agent);
@@ -304,7 +286,7 @@ export async function runV2Print(
     const goalCreate = parseHeadlessGoalCreate(opts.prompt!);
     if (goalCreate !== undefined) {
       await runNativeGoal(
-        app,
+        services,
         resolved.session,
         resolved.agent,
         goalCreate,
@@ -315,7 +297,7 @@ export async function runV2Print(
       );
     } else {
       await runNativeTurn(
-        app,
+        services,
         resolved.session,
         resolved.agent,
         opts.prompt!,
@@ -343,14 +325,14 @@ interface ResolvedNativeSession {
 }
 
 async function resolveNativeSession(
-  app: Scope,
+  services: ServicesAccessor,
   opts: CLIOptions,
   workDir: string,
   defaultModel: string | undefined,
   stderr: PromptOutput,
 ): Promise<ResolvedNativeSession> {
-  const sessions = app.accessor.get(ISessionManager);
-  const index = app.accessor.get(ISessionIndex);
+  const sessions = services.get(ISessionManager);
+  const index = services.get(ISessionIndex);
 
   // `--agent` selects a catalog profile by name; otherwise `--agent-file`
   // implicitly selects the profile that file defines. The file
@@ -361,7 +343,7 @@ async function resolveNativeSession(
     const agentFilePath = resolveAgentPath(
       agentFile,
       workDir,
-      app.accessor.get(IBootstrapService).osHomeDir,
+      services.get(IBootstrapService).osHomeDir,
     );
     let agentFileText: string;
     try {
@@ -397,7 +379,7 @@ async function resolveNativeSession(
   };
 
   const resumeById = async (id: string): Promise<ISessionScopeHandle> => {
-    const session = await resumeSessionById(app.accessor, id);
+    const session = await resumeSessionById(services, id);
     if (session === undefined) {
       throw new Error(`Session "${id}" not found.`);
     }
@@ -475,6 +457,10 @@ async function resolveNativeSession(
       profile: agentProfileName ?? 'agent',
       model,
     },
+    // `--environment <id>` one-shot override of the `[environments]` default for the
+    // new session's initial binding; id/defaultCwd validation is enforced by
+    // the environments config-resolution layer at this seam.
+    environmentId: opts.environment,
   });
   const agentContext = await ensureMainAgent(session);
   const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
@@ -500,15 +486,15 @@ export interface TrustGatedMcpServer {
  * or nothing project-level is declared.
  */
 export async function listTrustGatedMcpServers(
-  app: Scope,
+  services: ServicesAccessor,
   workDir: string,
   homeDir: string,
 ): Promise<readonly TrustGatedMcpServer[]> {
-  const workspace = await app.accessor
+  const workspace = await services
     .get(IWorkspaceInstanceManager)
     .getOrCreate({ root: workDir });
   if (await workspace.program.trust.get()) return [];
-  const fs = app.accessor.get(IHostFileSystem);
+  const fs = services.get(IHostFileSystem);
   const [paths, loaded] = await Promise.all([
     resolveMcpJsonPaths({ fs, cwd: workDir, homeDir }),
     loadMcpServersDetailed({ fs, cwd: workDir, homeDir, includeProject: true }),
@@ -538,7 +524,7 @@ function describeMcpTarget(config: McpServerConfig): string {
 }
 
 async function runNativeTurn(
-  app: Scope,
+  services: ServicesAccessor,
   session: ISessionScopeHandle,
   agent: IAgentScopeHandle,
   prompt: string,
@@ -591,7 +577,7 @@ async function runNativeTurn(
       if (skipTurnId === undefined) {
         throw new Error('Prompt turn ended before it started');
       }
-      const configService = app.accessor.get(IConfigService);
+      const configService = services.get(IConfigService);
       const taskConfig = resolveAgentTaskConfig(configService);
       const goalService = agent.accessor.get(IAgentGoalService);
       const cronService = agent.accessor.get(IAgentCronService);
@@ -638,7 +624,7 @@ async function runNativeTurn(
 }
 
 async function runNativeGoal(
-  app: Scope,
+  services: ServicesAccessor,
   session: ISessionScopeHandle,
   agent: IAgentScopeHandle,
   goal: HeadlessGoalCreate,
@@ -663,7 +649,7 @@ async function runNativeGoal(
     }
   });
   try {
-    await runNativeTurn(app, session, agent, goal.objective, outputFormat, stdout, stderr);
+    await runNativeTurn(services, session, agent, goal.objective, outputFormat, stdout, stderr);
   } finally {
     subscription.dispose();
     const snapshot = completedSnapshot ?? goalService.getGoal().goal;

@@ -7,13 +7,9 @@ import {
   createMessageAccumulator,
   createToolMessage,
   salvageInterruptedMessage,
-  type AssistantMessage,
   type Message,
   type StreamedMessagePart,
-  type SystemMessage,
   type ToolCall,
-  type ToolMessage,
-  type UserMessage,
 } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
 import { createRequestActor, type LlmEvent, type MessageResolver } from '#/llm/requester/actor';
@@ -40,68 +36,16 @@ import { createAbortScope, withAbort, type AbortScope } from '#/utils/abort';
 
 import { MaxStepsExceededError } from './errors';
 import { estimateUsedContextTokens } from './context-usage';
-import type { PromptOrigin } from './origin';
+import {
+  createAssistantEntry,
+  createToolEntry,
+  type AssistantEntry,
+  type AssistantMetaInput,
+  type HistoryMessage,
+  type ToolEntry,
+} from './historyEntry';
 
-export interface EntryMeta {
-  source?: string;
-  key?: string;
-}
-
-export type SystemMeta = EntryMeta;
-
-export interface UserMeta extends EntryMeta {
-  promptId?: string;
-  origin?: PromptOrigin;
-  tracked?: boolean;
-  createdAt?: string;
-  userMessageId?: string;
-}
-
-export type ToolMeta = EntryMeta;
-
-export interface AssistantMeta extends EntryMeta {
-  model?: { provider: string; model: string };
-  usage: TokenUsage;
-  headers?: Record<string, string>;
-  finish?: FinishInfo;
-  messageId?: string;
-}
-
-export type AssistantMetaInput = Omit<AssistantMeta, 'usage'> & { usage?: TokenUsage };
-
-export interface HistoryEntry<T extends Message, F extends EntryMeta> {
-  message: T;
-  meta?: F;
-}
-
-export type SystemEntry = HistoryEntry<SystemMessage, SystemMeta>;
-
-export type UserEntry = HistoryEntry<UserMessage, UserMeta>;
-
-export type ToolEntry = HistoryEntry<ToolMessage, ToolMeta>;
-
-export type AssistantEntry = HistoryEntry<AssistantMessage, AssistantMeta>;
-
-export type HistoryMessage = SystemEntry | UserEntry | AssistantEntry | ToolEntry;
-
-export function createUserEntry(message: UserMessage, meta: UserMeta = {}): UserEntry {
-  return { message, meta };
-}
-
-export function createSystemEntry(message: SystemMessage, meta: SystemMeta = {}): SystemEntry {
-  return { message, meta };
-}
-
-export function createToolEntry(message: ToolMessage, meta: ToolMeta = {}): ToolEntry {
-  return { message, meta };
-}
-
-export function createAssistantEntry(
-  message: AssistantMessage,
-  meta: AssistantMeta,
-): AssistantEntry {
-  return { message, meta };
-}
+export * from './historyEntry';
 
 export function toInputMessages(history: readonly HistoryMessage[]): Message[] {
   return history.map((entry) => entry.message);

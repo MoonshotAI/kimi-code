@@ -47,6 +47,13 @@ export interface CLIOptions {
   agent: string | undefined;
   agentFiles: string[];
   addDirs?: string[];
+  /**
+   * `--environment <id>`: one-shot override of the configured `[environments]`
+   * default — the new session's initial binding targets this environment, with
+   * the cwd taken from the entry's `defaultCwd`. Creation-only, like
+   * `--agent`: a resumed session restores its recorded binding instead.
+   */
+  environment: string | undefined;
 }
 
 export interface ValidatedOptions {
@@ -87,6 +94,14 @@ export function validateOptions(
   }
   if (opts.agent !== undefined && opts.agent.trim().length === 0) {
     throw new OptionConflictError('Agent cannot be empty.');
+  }
+  if (opts.environment !== undefined && opts.environment.trim().length === 0) {
+    throw new OptionConflictError('Environment cannot be empty.');
+  }
+  if (opts.environment !== undefined && (opts.session !== undefined || opts.continue)) {
+    throw new OptionConflictError(
+      'Cannot combine --environment with --session/--continue: the environment is bound at session creation and the bound environment is restored automatically on resume.',
+    );
   }
   if (opts.agentFiles.length > 1) {
     throw new OptionConflictError('--agent-file may only be specified once.');

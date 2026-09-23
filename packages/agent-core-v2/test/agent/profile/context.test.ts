@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, normalize } from 'pathe';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -10,6 +10,7 @@ import {
   extractAgentsMdPathsFromSystemPrompt,
   loadAgentsMd,
   loadAgentsMdDetailed,
+  loadAgentsMdForRoots,
   prepareSystemPromptContext,
 } from '#/agent/profile/context';
 
@@ -35,7 +36,59 @@ afterEach(async () => {
   await Promise.all(extraDirs.map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
+describe('prepareSystemPromptContext directory listing', () => {
+  it('reads sibling directories concurrently while preserving display order', async () => {
+    const alpha = join(workDir, 'alpha');
+    const beta = join(workDir, 'beta');
+    await mkdir(alpha);
+    await mkdir(beta);
+    await writeFile(join(alpha, 'a.txt'), 'a');
+    await writeFile(join(beta, 'b.txt'), 'b');
+    const readDirectory = fs.readdir.bind(fs);
+    const started: string[] = [];
+    const releases: (() => void)[] = [];
+    fs.readdir = async (path) => {
+      if (path === alpha || path === beta) {
+        started.push(path);
+        await new Promise<void>((resolve) => { releases.push(resolve); });
+      }
+      return readDirectory(path);
+    };
+    const preparation = prepareSystemPromptContext({ fs, homeDir }, workDir);
+    try {
+      await vi.waitFor(() => {
+        expect(started).toEqual([alpha, beta]);
+      });
+    } finally {
+      fs.readdir = readDirectory;
+      for (const release of releases) release();
+      await preparation;
+    }
+    const result = await preparation;
+    expect(result.cwdListing).toBe([
+      '├── alpha/',
+      '│   └── a.txt',
+      '└── beta/',
+      '    └── b.txt',
+    ].join('\n'));
+  });
+});
+
 describe('loadAgentsMd user-level discovery', () => {
+  it('keeps personal and remote project instructions when their absolute paths are identical', async () => {
+    const path = join(homeDir, '.kimi-code', 'AGENTS.md');
+    await mkdir(join(homeDir, '.kimi-code'));
+    await writeFile(path, 'personal instructions');
+    const targetFs = new HostFileSystem();
+    targetFs.readText = async (file, options) => file === path ? 'remote project instructions' : fs.readText(file, options);
+
+    const result = await loadAgentsMdForRoots({ fs: targetFs, homeDir }, undefined, [homeDir], fs);
+
+    expect(result.content).toContain('personal instructions');
+    expect(result.content).toContain('remote project instructions');
+    expect(result.content.indexOf('personal instructions')).toBeLessThan(result.content.indexOf('remote project instructions'));
+  });
+
   it('loads user-level branded and generic files before project-level', async () => {
     await mkdir(join(homeDir, '.kimi-code'), { recursive: true });
     await writeFile(join(homeDir, '.kimi-code', 'AGENTS.md'), 'user branded', 'utf-8');

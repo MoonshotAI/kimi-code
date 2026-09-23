@@ -1,21 +1,25 @@
-
+import { IEnvironmentService } from '#/app/environment/environment';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { Emitter, type Event, type IWaitUntil } from '#/_base/event';
 import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from '#/_base/di/scope';
+import { ILogService } from '#/_base/log/log';
 import { LifecycleScope } from '#/app/scopes';
+import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
 import { Error2, ErrorCodes } from '#/errors';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
+import { environmentIsReady } from '#/environment/environmentRegistry';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
-import {
-  type CreateChildSessionOptions,
-  type ForkSessionOptions,
-  type ResumeSessionOptions,
-  type SessionArchivedEvent,
-  type SessionClosedEvent,
-  type SessionCreatedEvent,
-  type SessionForkedEvent,
-  type SessionWillCloseEvent,
-  type SessionWillCreateEvent,
+import type {
+  CreateChildSessionOptions,
+  ForkSessionOptions,
+  ResumeSessionOptions,
+  SessionArchivedEvent,
+  SessionClosedEvent,
+  SessionCreatedEvent,
+  SessionForkedEvent,
+  SessionWillCloseEvent,
+  SessionWillCreateEvent,
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
@@ -60,6 +64,9 @@ export class SessionManager implements ISessionManager {
   constructor(
     @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
     @ISessionIndex private readonly index: ISessionIndex,
+    @IEnvironmentDeclarationService private readonly environmentDeclarations: IEnvironmentDeclarationService,
+    @ILogService private readonly log: ILogService,
+    @IEnvironmentService private readonly environments: IEnvironmentService,
   ) {}
 
   async create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle> {
@@ -68,18 +75,76 @@ export class SessionManager implements ISessionManager {
         ? { root: options.workDir }
         : { workspaceId: options.workspaceId, root: options.workDir },
     );
-    const create = () => this.controllerForWorkspace(workspace.id).create(options);
+    const declarations = await this.environmentDeclarations.declarations();
+    const requestedEnvironmentId = options.environmentId;
+    const explicitRemote =
+      requestedEnvironmentId !== undefined && requestedEnvironmentId !== LOCAL_ENVIRONMENT_ID;
+    const registered = explicitRemote ? this.environments.current(requestedEnvironmentId) : undefined;
+    const declared = explicitRemote
+      ? declarations?.entries.find((entry) => entry.id === requestedEnvironmentId)
+      : undefined;
+    if (explicitRemote) {
+      if (declared === undefined && registered === undefined) {
+        if (declarations === undefined) {
+          throw new Error2(
+            ErrorCodes.CONFIG_INVALID,
+            `environment declarations failed to resolve; cannot validate environment "${requestedEnvironmentId}"`,
+          );
+        }
+        throw new Error2(
+          ErrorCodes.CONFIG_INVALID,
+          `environment "${requestedEnvironmentId}" is not declared in [environments]`,
+        );
+      }
+      if (options.environmentCwd === undefined && declared?.entry.defaultCwd === undefined) {
+        throw new Error2(
+          ErrorCodes.CONFIG_INVALID,
+          declared === undefined
+            ? `environment "${requestedEnvironmentId}" requires a cwd`
+            : `environment "${requestedEnvironmentId}" does not set defaultCwd in [environments]`,
+        );
+      }
+    }
+    const resolved = options.environmentId === undefined ? declarations?.default : undefined;
+    const environmentId = options.environmentId ?? resolved?.environmentId;
+    const environmentCwd = options.environmentCwd ?? resolved?.cwd ?? declared?.entry.defaultCwd;
+    const effective =
+      environmentId === undefined && environmentCwd === undefined
+        ? options
+        : { ...options, environmentId, environmentCwd };
+    const create = async () => {
+      if (environmentId !== undefined) await this.connectForCreate(environmentId, environmentCwd);
+      const controllerEnvironmentId = this.selectControllerEnvironmentId(environmentId ?? LOCAL_ENVIRONMENT_ID);
+      const controllerCwd = controllerEnvironmentId === LOCAL_ENVIRONMENT_ID ? undefined : environmentCwd ?? options.workDir;
+      return this.controllerForWorkspace(workspace.id, controllerEnvironmentId, controllerCwd).create(effective);
+    };
     if (options.sessionId === undefined) return create();
     return this.serializeLifecycle(options.sessionId, create);
+  }
+
+  private async connectForCreate(environmentId: string, environmentCwd?: string): Promise<void> {
+    if (environmentId === LOCAL_ENVIRONMENT_ID) return;
+    const environment = await this.environmentDeclarations.ensureConnected(environmentId);
+    if (environment === undefined || environmentCwd === undefined) return;
+    await this.environmentDeclarations.assertCwdUsable(environmentId, environmentCwd);
+  }
+
+  private selectControllerEnvironmentId(environmentId: string): string {
+    if (environmentId === LOCAL_ENVIRONMENT_ID) return LOCAL_ENVIRONMENT_ID;
+    const environment = this.environments.current(environmentId);
+    if (environment === undefined || !environmentIsReady(environment)) return LOCAL_ENVIRONMENT_ID;
+    return environmentId;
   }
 
   async resume(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined> {
     const inflight = this.pendingResumes.get(sessionId);
     if (inflight !== undefined) return inflight;
     this.resumeFailures.delete(sessionId);
-    const promise = this.serializeLifecycle(sessionId, async () =>
-      (await this.controllerForSession(sessionId))?.resume(sessionId, options),
-    ).finally(() => this.pendingResumes.delete(sessionId));
+    const promise = this.serializeLifecycle(sessionId, async () => {
+      const controller = await this.locateSession(sessionId, { connect: true });
+      if (controller === undefined) return undefined;
+      return controller.resume(sessionId, options);
+    }).finally(() => this.pendingResumes.delete(sessionId));
     this.pendingResumes.set(sessionId, promise);
     void promise.catch((error: unknown) => {
       this.resumeFailures.set(sessionId, error instanceof Error ? error : new Error('session resume failed'));
@@ -123,7 +188,7 @@ export class SessionManager implements ISessionManager {
   }
 
   private lifecycleKeys(...ids: (string | undefined)[]): string[] {
-    return [...new Set(ids.filter((id): id is string => id !== undefined))].sort();
+    return [...new Set(ids.filter((id): id is string => id !== undefined))].toSorted();
   }
 
   withLifecycleSerialization<T>(
@@ -158,7 +223,9 @@ export class SessionManager implements ISessionManager {
     sessionId: string,
     options?: ResumeSessionOptions,
   ): Promise<ISessionScopeHandle | undefined> {
-    return (await this.controllerForSession(sessionId))?.restore(sessionId, options);
+    const controller = await this.locateSession(sessionId, { connect: true });
+    if (controller === undefined) return undefined;
+    return controller.restore(sessionId, options);
   }
 
   async restore(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined> {
@@ -222,7 +289,7 @@ export class SessionManager implements ISessionManager {
   }
 
   dispose(): void {
-    for (const { controller, subscriptions } of [...this.controllerEntries].reverse()) {
+    for (const { controller, subscriptions } of [...this.controllerEntries].toReversed()) {
       subscriptions.dispose();
       controller.dispose();
     }
@@ -239,13 +306,14 @@ export class SessionManager implements ISessionManager {
     this.didForkEmitter.dispose();
   }
 
-  private controllerForWorkspace(workspaceId: string): SessionLifecycleService {
+  private controllerForWorkspace(workspaceId: string, environmentId: string = LOCAL_ENVIRONMENT_ID, cwd?: string): SessionLifecycleService {
     const workspace = this.workspaces.get(workspaceId);
     if (workspace === undefined) throw new Error(`workspace ${workspaceId} is not materialized`);
-    const generation = workspace.program.sessionControllerGeneration;
-    const existing = this.controllers.get(workspaceId);
+    const key = `${workspaceId}\0${environmentId}\0${cwd ?? ''}`;
+    const generation = workspace.program.sessionControllerGenerationFor(environmentId, cwd);
+    const existing = this.controllers.get(key);
     if (existing?.generation === generation) return existing.controller;
-    const controller = workspace.program.createSessionController();
+    const controller = workspace.program.createSessionController(environmentId, cwd);
     const subscriptions = new DisposableStore();
     const entry: SessionControllerEntry = { generation, controller, subscriptions, sessionCount: 0 };
     subscriptions.add(controller.onWillCreateSession((event) => this.willCreateEmitter.fire(event)));
@@ -261,37 +329,68 @@ export class SessionManager implements ISessionManager {
       this.sessions.delete(event.sessionId);
       this.owners.delete(event.sessionId);
       this.didCloseEmitter.fire(event);
-      this.retireEntryIfIdle(workspaceId, entry);
+      this.retireEntryIfIdle(key, entry);
     }));
     subscriptions.add(controller.onDidArchiveSession((event) => {
       entry.sessionCount -= 1;
       this.sessions.delete(event.sessionId);
       this.owners.delete(event.sessionId);
       this.didArchiveEmitter.fire(event);
-      this.retireEntryIfIdle(workspaceId, entry);
+      this.retireEntryIfIdle(key, entry);
     }));
     subscriptions.add(controller.onDidForkSession((event) => this.didForkEmitter.fire(event)));
     this.controllerEntries.add(entry);
-    this.controllers.set(workspaceId, entry);
-    if (existing !== undefined) this.retireEntryIfIdle(workspaceId, existing);
+    this.controllers.set(key, entry);
+    if (existing !== undefined) this.retireEntryIfIdle(key, existing);
     return controller;
   }
 
-  private retireEntryIfIdle(workspaceId: string, entry: SessionControllerEntry): void {
+  private retireEntryIfIdle(key: string, entry: SessionControllerEntry): void {
     if (entry.sessionCount !== 0 || !this.controllerEntries.has(entry)) return;
     this.controllerEntries.delete(entry);
-    if (this.controllers.get(workspaceId) === entry) this.controllers.delete(workspaceId);
+    if (this.controllers.get(key) === entry) this.controllers.delete(key);
     entry.subscriptions.dispose();
     entry.controller.dispose();
   }
 
   private async controllerForSession(sessionId: string): Promise<SessionLifecycleService | undefined> {
+    return this.locateSession(sessionId);
+  }
+
+  private beginResumeConnect(environmentId: string, sessionId: string): void {
+    const environment = this.environments.current(environmentId);
+    if (environment === undefined || environmentIsReady(environment)) return;
+    if (typeof environment.connect !== 'function') {
+      this.log.warn(
+        `resume could not connect environment ${environmentId}; session ${sessionId} loads with the binding kept and the environment left unconnected`,
+      );
+      return;
+    }
+    void environment.connect().catch((error: unknown) => {
+      this.log.warn(
+        `resume could not connect environment ${environmentId}; session ${sessionId} loads with the binding kept and the environment left unconnected`,
+        { error },
+      );
+    });
+  }
+
+  private async locateSession(sessionId: string, options?: { readonly connect?: boolean }): Promise<SessionLifecycleService | undefined> {
     const live = this.owners.get(sessionId);
     if (live !== undefined) return live;
     const summary = await this.index.get(sessionId);
     if (summary === undefined) return undefined;
     const workspace = await this.workspaces.getOrCreate({ workspaceId: summary.workspaceId, root: summary.cwd });
-    return this.controllerForWorkspace(workspace.id);
+    const persistedBinding = await this.environmentDeclarations.readPersistedEnvironmentBinding(workspace.id, sessionId);
+    const boundEnvironmentId = persistedBinding?.environmentId ?? LOCAL_ENVIRONMENT_ID;
+    if (options?.connect === true && boundEnvironmentId !== LOCAL_ENVIRONMENT_ID) {
+      this.beginResumeConnect(boundEnvironmentId, sessionId);
+    }
+    const controllerEnvironmentId = this.selectControllerEnvironmentId(boundEnvironmentId);
+    return this.controllerForWorkspace(
+      workspace.id,
+      controllerEnvironmentId,
+      controllerEnvironmentId === LOCAL_ENVIRONMENT_ID ? undefined : persistedBinding?.cwd,
+    );
   }
 }
 

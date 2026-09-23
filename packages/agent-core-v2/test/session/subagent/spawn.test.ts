@@ -1,3 +1,4 @@
+import { IEnvironmentService } from '#/app/environment/environment';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -7,6 +8,9 @@ import { Event } from '#/_base/event';
 import { LifecycleScope } from '#/app/scopes';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { IConfigService } from '#/app/config/config';
+import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
+import { EnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclarationService';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
 import { ILogService } from '#/_base/log/log';
 import {
@@ -16,27 +20,45 @@ import {
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { Error2, ErrorCodes, isError2 } from '#/errors';
 import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
-import type { RuntimeLease } from '#/runtime/runtime';
+import type { IHostProcessService } from '#/os/interface/hostProcess';
+import type { IGitService } from '#/app/git/git';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
+import type { EnvironmentBinding, EnvironmentLease } from '#/environment/environment';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { collectGitContext } from '#/session/agentLifecycle/profile/gitContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { SECONDARY_MODEL_SECTION } from '#/session/subagent/configSection';
+import {
+  SECONDARY_MODEL_SECTION,
+  stripSubagentEnvironmentParameter,
+} from '#/session/subagent/configSection';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
 import {
   FORK_CONTEXT_NOTICE,
+  FORK_WITH_ENVIRONMENT_UNAVAILABLE,
+  forkIncompatibility,
   type SpawnedSubagent,
   type SpawnSubagentOptions,
   type SubagentSpawnPlan,
   type SubagentSpawnPlanInput,
 } from '#/session/subagent/spawn';
+import { SubagentToolInputSchema } from '#/agent/tools/agent/agent';
+import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { EnvironmentRegistry, EnvironmentError } from '#/environment/environmentRegistry';
+import { ENVIRONMENTS_SECTION } from '#/environment/configSection';
+import { fakeEnvironment } from '../../environment/stubs';
 
 import { stubLog } from '../../_base/log/stubs';
 import { stubFlag } from '../../app/flag/stubs';
@@ -56,13 +78,14 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   let createdHandles: Map<string, IAgentScopeHandle>;
   let createAgent: ReturnType<typeof vi.fn>;
   let forkAgent: ReturnType<typeof vi.fn>;
-  let acquireRuntime: ReturnType<typeof vi.fn>;
+  let acquireEnvironment: ReturnType<typeof vi.fn>;
   let callerPermissionMode: { mode: string; setMode: ReturnType<typeof vi.fn> };
   let createdPermissionMode: { mode: string; setMode: ReturnType<typeof vi.fn> };
   let callerUserTools: IAgentUserToolService;
   let createdUserTools: IAgentUserToolService;
   let createdReminder: { notify: ReturnType<typeof vi.fn> };
-  let lease: RuntimeLease;
+  let lease: EnvironmentLease;
+  let callerBinding: EnvironmentBinding;
 
   function userToolsStub(): IAgentUserToolService {
     return {
@@ -132,11 +155,12 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     createdUserTools = userToolsStub();
     createdReminder = { notify: vi.fn() };
     lease = {
-      runtime: new FakeRuntime({ workspaceId: 'w1', runtimeId: 'acp:s1', generation: 'g1' }),
+      environment: new FakeEnvironment({ environmentId: 'acp:s1', generation: 'g1' }),
       track: (resource) => resource,
       dispose: vi.fn(),
     };
-    acquireRuntime = vi.fn(() => lease);
+    acquireEnvironment = vi.fn(() => lease);
+    callerBinding = { environmentId: 'acp:s1' };
     caller = {
       id: CALLER_ID,
       kind: LifecycleScope.Agent,
@@ -145,10 +169,16 @@ describe('SessionSubagentService planSpawn and spawn', () => {
           if (serviceId === IAgentProfileService) return profileServiceStub(callerData);
           if (serviceId === IAgentPermissionModeService) return callerPermissionMode;
           if (serviceId === IAgentUserToolService) return callerUserTools;
-          if (serviceId === IAgentRuntimeService) {
+          if (serviceId === IAgentEnvironmentService) {
             return {
               _serviceBrand: undefined,
-              acquire: acquireRuntime,
+              acquire: acquireEnvironment,
+            };
+          }
+          if (serviceId === IAgentEnvironmentBindingService) {
+            return {
+              _serviceBrand: undefined,
+              current: callerBinding,
             };
           }
           if (serviceId === IAgentScopeContext) {
@@ -212,8 +242,22 @@ describe('SessionSubagentService planSpawn and spawn', () => {
         return { id: alias, ...modelMeta.get(alias) } as Model;
       },
     } as unknown as IModelCatalog);
-    ix.stub(ISessionContext, { _serviceBrand: undefined, cwd: '/repo' } as unknown as ISessionContext);
+    ix.stub(ISessionContext, { _serviceBrand: undefined, cwd: '/repo', workspaceId: 'w1' } as unknown as ISessionContext);
     ix.stub(ILogService, stubLog());
+    ix.stub(IEnvironmentService, new EnvironmentRegistry() as unknown as IEnvironmentService);
+    ix.stub(IHostFileSystem, {} as IHostFileSystem);
+    ix.stub(IAtomicDocumentStore, {
+      _serviceBrand: undefined,
+      get: async () => undefined,
+    } as unknown as IAtomicDocumentStore);
+    ix.stub(IAppendLogStore, {
+      _serviceBrand: undefined,
+      read: async function* () {},
+    } as unknown as IAppendLogStore);
+    ix.stub(IBootstrapService, {
+      _serviceBrand: undefined,
+      scope: (name: string) => name,
+    } as unknown as IBootstrapService);
   });
 
   afterEach(() => {
@@ -222,6 +266,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
 
   function service(configValues: Record<string, unknown> = {}): ISessionSubagentService {
     ix.stub(IConfigService, new StubConfigService(configValues));
+    ix.set(IEnvironmentDeclarationService, new SyncDescriptor(EnvironmentDeclarationService));
     ix.set(ISessionSubagentService, new SyncDescriptor(SessionSubagentService));
     return ix.get(ISessionSubagentService);
   }
@@ -267,6 +312,79 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       plan: { profileName: 'orchestrator', model: 'main-model', modelSource: 'inherited', thinking: 'high', fork: true },
       labels: { parentAgentId: 'main' },
       prompt: 'Continue the analysis',
+    });
+  }
+
+  function spawnCoderOnEnvironment(svc: ISessionSubagentService, environment: string): Promise<SpawnedSubagent> {
+    return svc.spawn({
+      callerAgentId: CALLER_ID,
+      plan: { profileName: 'coder', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
+      labels: { parentAgentId: 'main' },
+      prompt: 'Review the file',
+      environment,
+    });
+  }
+
+  function stubEnvironments(registry: EnvironmentRegistry): void {
+    ix.stub(IEnvironmentService, Object.assign(registry, { ready: Promise.resolve() }) as unknown as IEnvironmentService);
+  }
+
+  function gitProcessForRepo(repoCwd: string): { process: IHostProcessService; git: IGitService; gitCwds: string[] } {
+    const gitCwds: string[] = [];
+    const script: Record<string, { stdout?: string; exitCode?: number; stderr?: string }> = {
+      'rev-parse --is-inside-work-tree': { stdout: 'true' },
+      'remote get-url origin': { stdout: 'git@github.com:owner/repo-only-there.git' },
+      'symbolic-ref --short HEAD': { stdout: 'main' },
+      'status --porcelain': { stdout: '' },
+      'log -3 --format=%h %s': { stdout: 'abc123 a commit' },
+    };
+    const runGit = async (cwd: string, args: readonly string[]) => {
+      gitCwds.push(cwd);
+      if (cwd !== repoCwd) {
+        return { exitCode: 128, stdout: '', stderr: 'fatal: not a git repository (or any of the parent directories): .git' };
+      }
+      const out = script[args.join(' ')];
+      if (out === undefined) return { exitCode: 1, stdout: '', stderr: '' };
+      return { exitCode: out.exitCode ?? 0, stdout: out.stdout ?? '', stderr: out.stderr ?? '' };
+    };
+    const git = {
+      _serviceBrand: undefined,
+      status: vi.fn(),
+      diff: vi.fn(),
+      findWorkTree: vi.fn(),
+      runGit,
+    } as unknown as IGitService;
+    return { process: { _serviceBrand: undefined, spawn: vi.fn() } as IHostProcessService, git, gitCwds };
+  }
+
+  function spawnExploreWithGitContext(
+    svc: ISessionSubagentService,
+    git: { process: IHostProcessService; git: IGitService; gitCwds: string[] },
+  ): Promise<SpawnedSubagent> {
+    const environment = Object.assign(
+      new FakeEnvironment({ environmentId: 'acp:s1', generation: 'g1' }),
+      { process: git.process },
+    );
+    lease = { environment, track: (resource) => resource, dispose: vi.fn() };
+    profiles = [
+      normalizeAgentProfile({
+        name: 'explore',
+        description: 'Explorer',
+        systemPrompt: () => 'explore',
+        promptPrefix: async ({ cwd, process, log }) => {
+          try {
+            return await collectGitContext(git.git, cwd, log);
+          } catch {
+            return '';
+          }
+        },
+      }),
+    ];
+    return svc.spawn({
+      callerAgentId: CALLER_ID,
+      plan: { profileName: 'explore', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
+      labels: { parentAgentId: 'main' },
+      prompt: 'Survey the repo',
     });
   }
 
@@ -520,12 +638,166 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     );
   });
 
-  it('creates the child on the acquired runtime lease', async () => {
+  it('creates the child on the acquired environment lease', async () => {
     const svc = service();
 
     await spawnNonForkChild(svc);
 
-    expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({ runtimeId: 'acp:s1' }));
+    expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({ environmentId: 'acp:s1' }));
+  });
+
+  it('binds the child to the requested environment with the declaration defaultCwd', async () => {
+    const registry = new EnvironmentRegistry();
+    const stats: string[] = [];
+    registry.register(Object.assign(
+      new FakeEnvironment(
+        { environmentId: 'staging', generation: 'staging-one' },
+        { status: 'ready', capabilities: ['fs', 'process'] },
+      ),
+      {
+        fs: {
+          stat: async (path: string) => {
+            stats.push(path);
+            return { isDirectory: true };
+          },
+        },
+        process: {},
+      },
+    ));
+    stubEnvironments(registry);
+    const svc = service({ [ENVIRONMENTS_SECTION]: { staging: { type: 'ssh', host: 'staging', defaultCwd: '/srv/app' } } });
+
+    await spawnCoderOnEnvironment(svc, 'staging');
+
+    expect(stats).toContain('/srv/app');
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: 'staging', environmentCwd: '/srv/app' }),
+    );
+  });
+
+  it('inherits the caller binding when the requested environment matches the current one', async () => {
+    callerBinding = { environmentId: 'acp:s1', cwd: '/remote/repo' };
+    const svc = service();
+
+    await spawnCoderOnEnvironment(svc, 'acp:s1');
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: 'acp:s1', environmentCwd: '/remote/repo' }),
+    );
+  });
+
+  it('binds the child to local without a cwd when local is requested', async () => {
+    const registry = new EnvironmentRegistry();
+    registry.register(fakeEnvironment('local', 'local-one', { workspaceId: 'w1' }));
+    stubEnvironments(registry);
+    const svc = service();
+
+    await spawnCoderOnEnvironment(svc, 'local');
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: 'local', environmentCwd: undefined }),
+    );
+  });
+
+  it('rejects an unknown environment and lists the available ids', async () => {
+    const registry = new EnvironmentRegistry();
+    registry.register(fakeEnvironment('local', 'local-one', { workspaceId: 'w1' }));
+    registry.register(fakeEnvironment('staging', 'staging-one', { workspaceId: 'w1' }));
+    stubEnvironments(registry);
+    const svc = service();
+
+    const error = await spawnCoderOnEnvironment(svc, 'ghost').then(
+      () => {
+        throw new Error('spawn did not throw');
+      },
+      (error: unknown) => error,
+    );
+
+    expect(error).toBeInstanceOf(EnvironmentError);
+    expect((error as EnvironmentError).code).toBe('environment.not_found');
+    expect((error as EnvironmentError).message).toContain('local, staging');
+    expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it('binds the child to the environment host cwd when the contract carries one', async () => {
+    const registry = new EnvironmentRegistry();
+    registry.register(fakeEnvironment('ephemeral-box', 'ephemeral-one', {
+      workspaceId: 'w1',
+      host: { homeDir: '/home/remote', cwd: '/srv/box' },
+    }));
+    registry.register(fakeEnvironment('ephemeral-home', 'ephemeral-two', {
+      workspaceId: 'w1',
+      host: { homeDir: '/home/remote' },
+    }));
+    stubEnvironments(registry);
+    const svc = service();
+
+    await spawnCoderOnEnvironment(svc, 'ephemeral-box');
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: 'ephemeral-box', environmentCwd: '/srv/box' }),
+    );
+
+    await spawnCoderOnEnvironment(svc, 'ephemeral-home');
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: 'ephemeral-home', environmentCwd: '/home/remote' }),
+    );
+  });
+
+  it('connects a disconnected requested environment before binding', async () => {
+    const registry = new EnvironmentRegistry();
+    const connectCalls: string[] = [];
+    const staging = new FakeEnvironment(
+      { environmentId: 'staging', generation: 'staging-pending' },
+      { status: 'disconnected', capabilities: ['fs', 'process'] },
+    );
+    Object.assign(staging, {
+      connect: async () => {
+        connectCalls.push('connect');
+        staging.setStatus('ready');
+      },
+      fs: {
+        stat: async () => ({ isDirectory: true }),
+      },
+      process: {},
+    });
+    registry.register(staging);
+    stubEnvironments(registry);
+    const svc = service();
+
+    await spawnCoderOnEnvironment(svc, 'staging');
+
+    expect(connectCalls).toEqual(['connect']);
+    expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({ environmentId: 'staging' }));
+  });
+
+  it('binds the host of the replaced view after connect swaps the registry generation', async () => {
+    const registry = new EnvironmentRegistry();
+    const pending = new FakeEnvironment(
+      { environmentId: 'staging', generation: 'staging-pending' },
+      { status: 'disconnected', capabilities: ['fs', 'process'], host: { homeDir: '/' } },
+    );
+    Object.assign(pending, { fs: {}, process: {} });
+    const registration = registry.register(pending);
+    const connected = new FakeEnvironment(
+      { environmentId: 'staging', generation: 'staging-connected' },
+      { status: 'ready', capabilities: ['fs', 'process'], host: { homeDir: '/home/remote' } },
+    );
+    Object.assign(connected, { fs: {}, process: {} });
+    Object.assign(pending, {
+      connect: async () => {
+        await registration.replace(connected);
+      },
+    });
+    stubEnvironments(registry);
+    const svc = service();
+
+    await spawnCoderOnEnvironment(svc, 'staging');
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: 'staging', environmentCwd: '/home/remote' }),
+    );
   });
 
   it('inherits the caller permission mode and user tools', async () => {
@@ -559,7 +831,76 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     });
   });
 
-  it('releases the runtime lease after spawn', async () => {
+  it('collects the explore git context at the inherited binding cwd on the bound environment', async () => {
+    callerBinding = { environmentId: 'acp:s1', cwd: '/remote/repo' };
+    const git = gitProcessForRepo('/remote/repo');
+    const svc = service();
+
+    const spawned = await spawnExploreWithGitContext(svc, git);
+
+    expect(git.gitCwds.length).toBeGreaterThan(0);
+    expect(git.gitCwds.every((cwd) => cwd === '/remote/repo')).toBe(true);
+    expect(spawned.promptText).toContain('Working directory: /remote/repo');
+    expect(spawned.promptText).toContain('Project: owner/repo-only-there');
+    expect(spawned.promptText).toContain('Survey the repo');
+
+    callerBinding = { environmentId: 'acp:s1' };
+    const sessionGit = gitProcessForRepo('/repo');
+
+    const sessionSpawned = await spawnExploreWithGitContext(svc, sessionGit);
+
+    expect(sessionGit.gitCwds.length).toBeGreaterThan(0);
+    expect(sessionGit.gitCwds.every((cwd) => cwd === '/repo')).toBe(true);
+    expect(sessionSpawned.promptText).toContain('Working directory: /repo');
+    expect(sessionSpawned.promptText).toContain('Project: owner/repo-only-there');
+  });
+
+  it('collects the prompt prefix git context on the requested environment instead of the caller one', async () => {
+    const git = gitProcessForRepo('/srv/app');
+    const registry = new EnvironmentRegistry();
+    registry.register(Object.assign(
+      new FakeEnvironment(
+        { environmentId: 'staging', generation: 'staging-one' },
+        { status: 'ready', capabilities: ['fs', 'process'] },
+      ),
+      {
+        fs: { stat: async () => ({ isDirectory: true }) },
+        process: git.process,
+      },
+    ));
+    stubEnvironments(registry);
+    profiles = [
+      normalizeAgentProfile({
+        name: 'explore',
+        description: 'Explorer',
+        systemPrompt: () => 'explore',
+        promptPrefix: async ({ cwd, process, log }) => {
+          try {
+            return await collectGitContext(git.git, cwd, log);
+          } catch {
+            return '';
+          }
+        },
+      }),
+    ];
+    const svc = service({ [ENVIRONMENTS_SECTION]: { staging: { type: 'ssh', host: 'staging', defaultCwd: '/srv/app' } } });
+
+    const spawned = await svc.spawn({
+      callerAgentId: CALLER_ID,
+      plan: { profileName: 'explore', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
+      labels: { parentAgentId: 'main' },
+      prompt: 'Survey the repo',
+      environment: 'staging',
+    });
+
+    expect(acquireEnvironment).not.toHaveBeenCalled();
+    expect(git.gitCwds.length).toBeGreaterThan(0);
+    expect(git.gitCwds.every((cwd) => cwd === '/srv/app')).toBe(true);
+    expect(spawned.promptText).toContain('Working directory: /srv/app');
+    expect(spawned.promptText).toContain('Project: owner/repo-only-there');
+  });
+
+  it('releases the environment lease after spawn', async () => {
     const svc = service();
 
     await spawnNonForkChild(svc);
@@ -609,14 +950,14 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   });
 
   it('does not require the process capability when forking', async () => {
-    acquireRuntime.mockImplementation(() => {
+    acquireEnvironment.mockImplementation(() => {
       throw new Error('process capability is no longer available');
     });
     const svc = service();
 
     await expect(spawnForkChild(svc)).resolves.toMatchObject({ agentId: 'agent-fork' });
 
-    expect(acquireRuntime).not.toHaveBeenCalled();
+    expect(acquireEnvironment).not.toHaveBeenCalled();
     expect(forkAgent).toHaveBeenCalledWith(
       expect.objectContaining({ agentId: 'main' }),
       { labels: { parentAgentId: 'main' } },
@@ -644,8 +985,8 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(error.message).toContain('comes from [secondary_model.models]');
   });
 
-  it('spawn throws before creating anything when the caller runtime lease fails', async () => {
-    acquireRuntime.mockImplementation(() => {
+  it('spawn throws before creating anything when the caller environment lease fails', async () => {
+    acquireEnvironment.mockImplementation(() => {
       throw new Error('process capability is no longer available');
     });
     const svc = service();
@@ -662,5 +1003,37 @@ describe('SessionSubagentService planSpawn and spawn', () => {
 
     expect(createAgent).not.toHaveBeenCalled();
     expect(forkAgent).not.toHaveBeenCalled();
+  });
+});
+
+describe('subagent environment parameter', () => {
+  it('accepts an environment id in the Agent tool input schema', () => {
+    const parsed = SubagentToolInputSchema.parse({
+      prompt: 'Review the file',
+      description: 'review file',
+      environment: 'staging',
+    });
+    expect(parsed.environment).toBe('staging');
+  });
+
+  it('strips the environment property from the tool parameters', () => {
+    const parameters = toInputJsonSchema(SubagentToolInputSchema);
+    expect(parameters['properties']).toHaveProperty('environment');
+
+    const stripped = stripSubagentEnvironmentParameter(parameters);
+
+    expect(stripped['properties']).not.toHaveProperty('environment');
+    expect(stripped['properties']).toHaveProperty('prompt');
+    expect(parameters['properties']).toHaveProperty('environment');
+  });
+
+  it('rejects environment with fork since a fork inherits the caller binding', () => {
+    expect(
+      forkIncompatibility({ environment: 'staging' }, { profileName: 'coder', modelAlias: 'main-model' }),
+    ).toBe(FORK_WITH_ENVIRONMENT_UNAVAILABLE);
+    expect(
+      forkIncompatibility({ environment: '  ' }, { profileName: 'coder', modelAlias: 'main-model' }),
+    ).toBeUndefined();
+    expect(forkIncompatibility({}, { profileName: 'coder', modelAlias: 'main-model' })).toBeUndefined();
   });
 });

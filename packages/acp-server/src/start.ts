@@ -23,13 +23,13 @@ import {
   ensureMainAgent,
   getLiveSessionById,
   IAgentLifecycleService,
-  IAgentRuntimeBindingService,
+  IAgentEnvironmentBindingService,
   IAppendLogStore,
   IHostEnvironment,
   IHostProcessService,
   ISessionContext,
   ISessionIndexMirror,
-  IWorkspaceInstanceManager,
+  IEnvironmentService,
   logSeed,
   resolveConfigPath,
   resolveKimiHome,
@@ -47,7 +47,7 @@ import { acpClientFromContext } from './acp-client';
 // module side effects. `IAcpConnection` is used below to bind the ACP client
 // connection.
 import { IAcpConnection } from './acp-fs';
-import { AcpRuntimeProviderFactory } from './acp-terminal';
+import { AcpEnvironmentProviderFactory } from './acp-terminal';
 import { AcpServer, type AcpServerOptions, createAcpAgentApp } from './server';
 
 export interface RunAcpServerOptions extends AcpServerOptions {
@@ -142,9 +142,8 @@ export async function runAcpServerWithStream(
   // file IO. The `acp` `IHostFileSystem` reads it lazily via
   // `IAcpConnection.get()`.
   acpConnection.bind(client);
-  const workspaceManager = core.accessor.get(IWorkspaceInstanceManager);
-  const acpRuntimeProvider = new AcpRuntimeProviderFactory(acpConnection, core.accessor.get(IHostEnvironment), core.accessor.get(IHostProcessService));
-  const acpProviderRegistration = await workspaceManager.addProvider(acpRuntimeProvider);
+  const acpEnvironmentProvider = new AcpEnvironmentProviderFactory(acpConnection, core.accessor.get(IHostEnvironment), core.accessor.get(IHostProcessService));
+  const acpProviderRegistration = await core.accessor.get(IEnvironmentService).addProvider(acpEnvironmentProvider);
   const sessionWorkspaces = new Map<string, string>();
   server = new AcpServer(client, klient, acpConnection, {
     agentInfo: opts.agentInfo,
@@ -152,24 +151,24 @@ export async function runAcpServerWithStream(
     terminalAuthEnv: opts.terminalAuthEnv,
     terminalAuthLegacyCommand: opts.terminalAuthLegacyCommand,
     slashCommands: opts.slashCommands,
-    bindSessionRuntime: async (sessionId) => {
+    bindSessionEnvironment: async (sessionId) => {
       const handle = getLiveSessionById(core.accessor, sessionId);
       if (handle === undefined) throw new Error(`session ${sessionId} is not live`);
       const context = handle.accessor.get(ISessionContext);
-      const runtimeId = acpRuntimeProvider.bindSession(context.workspaceId, sessionId, context.cwd);
+      const environmentId = acpEnvironmentProvider.bindSession(sessionId, context.cwd);
       sessionWorkspaces.set(sessionId, context.workspaceId);
-      const agentContext = await ensureMainAgent(handle, { runtimeId });
+      const agentContext = await ensureMainAgent(handle, { environmentId });
       handle.accessor
         .get(IAgentLifecycleService)
         .handleOf(agentContext.agentId)!
-        .accessor.get(IAgentRuntimeBindingService)
-        .switch(runtimeId);
+        .accessor.get(IAgentEnvironmentBindingService)
+        .switch(environmentId, context.cwd);
     },
-    unbindSessionRuntime: async (sessionId) => {
+    unbindSessionEnvironment: async (sessionId) => {
       const workspaceId = sessionWorkspaces.get(sessionId);
       if (workspaceId === undefined) return;
       sessionWorkspaces.delete(sessionId);
-      await acpRuntimeProvider.unbindSession(workspaceId, sessionId);
+      await acpEnvironmentProvider.unbindSession(sessionId);
     },
     // Prompt-image compression persists originals into the session's own
     // media-originals dir (same resolution as kap-server's prompt route):

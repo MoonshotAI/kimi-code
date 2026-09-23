@@ -567,8 +567,11 @@ These endpoints create, list, and inspect sessions, drive session-level actions 
 | `GET /api/v1/sessions/{session_id}/status` | Realtime status rollup |
 | `GET /api/v1/sessions/{session_id}/goal` | Current goal snapshot (`null` when none) |
 | `GET /api/v1/sessions/{session_id}/warnings` | Session-level warnings |
-| `GET /api/v1/sessions/{session_id}/runtime` | Read the main agent's runtime binding |
-| `POST /api/v1/sessions/{session_id}/runtime` | Switch the main agent's runtime binding |
+| `GET /api/v1/sessions/{session_id}/environment` | Read the main agent's environment binding |
+| `POST /api/v1/sessions/{session_id}/environment` | Switch the main agent's environment binding |
+| `POST /api/v1/sessions/{session_id}/environment/reconnect` | Reconnect the bound environment |
+| `GET /api/v1/sessions/{session_id}/environments` | List the environments registered for the session workspace |
+| `POST /api/v1/sessions/{session_id}/environments` | Declare an environment for the session workspace |
 | `POST /api/v1/sessions/{session_id}/export` | Export the session with diagnostics (zip stream, not enveloped) |
 | `GET /api/v1/sessions/{session_id}/snapshot` | Full snapshot for client rebuilds (with `as_of_seq` and `epoch`) |
 | `GET /api/v1/sessions/{session_id}/media/{file_id}` | Download prompt media by file id (binary) |
@@ -835,31 +838,76 @@ On success, `data` is `{ warnings }`, each entry `{ code, message, severity }` w
 
 - `40401`: session not found
 
-#### `GET /api/v1/sessions/{session_id}/runtime`
+#### `GET /api/v1/sessions/{session_id}/environment`
 
-Reads the main agent's runtime binding — which runtime the session's agent loop runs on.
+Reads the main agent's environment binding — which environment the session's agent loop runs on.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 
-On success, `data` is `{ workspace_id, runtime_id }`.
+On success, `data` is `{ workspace_id, environment_id, cwd? }`; `cwd` is the working directory on the bound environment, present when the binding carries one.
 
 - `40401`: session not found
 
-#### `POST /api/v1/sessions/{session_id}/runtime`
+#### `POST /api/v1/sessions/{session_id}/environment`
 
-Switches the main agent's runtime binding.
+Switches the main agent's environment binding. The connection is established and the given `cwd` is validated against the target's filesystem before the new binding is persisted — on failure the previous binding is kept. A successful switch takes effect immediately: the session's next tool call already runs on the new environment. See [Remote environments](../guides/remote-environment.md) for the feature walkthrough.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
-| `runtime_id` | body | string | **Required.** Target runtime id |
+| `environment_id` | body | string | **Required.** Target environment id |
+| `cwd` | body | string | Working directory on the target environment; required for non-local environments (`40001` when missing) — the entry's `defaultCwd` applies only when a session is created bound to the environment |
 
-On success, `data` is the new binding `{ workspace_id, runtime_id }`.
+On success, `data` is the new binding `{ workspace_id, environment_id, cwd? }`.
 
-- `40420`: no runtime with that `runtime_id`
-- `40926`: the runtime exists but is unavailable
+- `40001`: a non-local `environment_id` without a `cwd`, or the given `cwd` does not resolve to a directory on the target environment
+- `40401`: session not found
+- `40420`: no environment with that `environment_id`
+- `40901`: the session has tool calls executing or a pending approval; the switch is rejected — retry once the turn settles
+- `40926`: the environment exists but is unavailable
+
+#### `POST /api/v1/sessions/{session_id}/environment/reconnect`
+
+Explicitly reconnects the main agent's bound environment after a disconnect. The binding never falls back to `local` silently: resuming the session or running the next tool call retries the connection on demand, and tool calls fail with an environment-unavailable error only while the target stays unreachable. This endpoint (or the `/environment` dialog) re-establishes the connection without waiting for the next tool call.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+
+On success, `data` is the current binding `{ workspace_id, environment_id, cwd? }`.
+
+- `40401`: session not found
+- `40420`: no environment with that `environment_id`
+- `40926`: the environment exists but is unavailable
+
+#### `GET /api/v1/sessions/{session_id}/environments`
+
+Lists the environments registered for the session's workspace, plus the SSH hosts discovered in `~/.ssh/config` as candidates for new declarations.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+
+On success, `data` is `{ workspace_id, environments, ssh_hosts }`. Each `environments` entry is `{ environment_id, type, status, generation, capabilities, default_cwd?, connect_error? }` with `type` one of `local` / `ssh` / `docker` / `command`, `status` one of `pending` / `connecting` / `ready` / `disconnected` / `disposed`, and `capabilities` drawn from `fs` / `process` / `terminal`; `pending` means no live connection and no observed failure (never connected), and `connect_error` carries the recorded failure reason for a `disconnected` entry. `ssh_hosts` is a list of host names.
+
+- `40401`: session not found
+
+#### `POST /api/v1/sessions/{session_id}/environments`
+
+Declares a new environment for the session's workspace and registers it live — no restart. The entry is deep-merged into the user-level `config.toml` `[environments]` section.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+| `environment_id` | body | string | **Required.** Id for the new environment |
+| `entry` | body | object | **Required.** The environment entry: `{ type: "ssh", host, remote_bin?, default_cwd? }`, `{ type: "docker", container, context?, remote_bin?, default_cwd? }`, or `{ command, args?, env?, default_cwd? }` |
+
+On success, `data` is `{ workspace_id, environment_id }`.
+
+- `40001`: the entry fails validation or the id is already declared
+- `40401`: session not found
 
 #### `POST /api/v1/sessions/{session_id}/export`
 
@@ -1512,9 +1560,9 @@ Creates a PTY terminal for the session.
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
-| `runtime_id` | body | string | Runtime to spawn in. Default `local` |
+| `environment_id` | body | string | Environment to spawn in. Default `local` |
 | `cwd` | body | string | Working directory, relative to the session workspace (an absolute path fails validation). Default the workspace root |
-| `shell` | body | string | Shell executable. Default the runtime's shell |
+| `shell` | body | string | Shell executable. Default the environment's shell |
 | `cols` | body | integer | Terminal width, positive. Default `80` |
 | `rows` | body | integer | Terminal height, positive. Default `24` |
 
@@ -1681,7 +1729,7 @@ On success, `data` is `{ project_root, config_path, additional_dirs, persisted }
 
 ### File system
 
-In-session file operations go through `POST /api/v1/sessions/{session_id}/fs:{action}` with JSON bodies; actions are `list` / `read` / `list_many` / `stat` / `stat_many` / `mkdir` / `search` / `grep` / `git_status` / `diff` / `open` / `open-in` / `reveal`. Every action body also accepts an optional `runtime_id` (string, default `local`) selecting the runtime that executes the operation; `open`, `open-in`, and `reveal` only work on the `local` runtime. In addition:
+In-session file operations go through `POST /api/v1/sessions/{session_id}/fs:{action}` with JSON bodies; actions are `list` / `read` / `list_many` / `stat` / `stat_many` / `mkdir` / `search` / `grep` / `git_status` / `diff` / `open` / `open-in` / `reveal`. Every action body also accepts an optional `environment_id` (string, default `local`) selecting the environment that executes the operation; `open`, `open-in`, and `reveal` only work on the `local` environment. In addition:
 
 | Method and path | Description |
 | --- | --- |
@@ -1875,7 +1923,7 @@ On success, `data` is `{ path, diff, truncated }` where `diff` is the unified di
 
 #### `POST /api/v1/sessions/{session_id}/fs:open`
 
-Opens a session file with the host operating system's default handler. Local runtime only.
+Opens a session file with the host operating system's default handler. Local environment only.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1892,7 +1940,7 @@ On success, `data` is `{ opened: true }`.
 
 #### `POST /api/v1/sessions/{session_id}/fs:open-in`
 
-Opens a session file or directory in a specific host application. Local runtime only.
+Opens a session file or directory in a specific host application. Local environment only.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1911,7 +1959,7 @@ On success, `data` is `{ opened: true }`.
 
 #### `POST /api/v1/sessions/{session_id}/fs:reveal`
 
-Reveals a session file in the host operating system's file manager. Local runtime only.
+Reveals a session file in the host operating system's file manager. Local environment only.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1933,7 +1981,7 @@ Downloads a file from the session workspace; `{path}` is the workspace-relative 
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 | `path` | path | string | **Required.** Workspace-relative file path plus the `:download` suffix |
-| `runtime_id` | query | string | Runtime to read from. Default `local` |
+| `environment_id` | query | string | Environment to read from. Default `local` |
 
 - `40001`: missing or empty path
 - `40401`: session not found
@@ -1952,7 +2000,7 @@ The session-less form of `fs:search`: the workspace travels in the body instead 
 | `include_globs` | body | string[] | Only paths matching one of these globs |
 | `exclude_globs` | body | string[] | Skip paths matching these globs |
 | `follow_gitignore` | body | boolean | Skip gitignored paths. Default `true` |
-| `runtime_id` | body | string | Runtime to search on. Default `local` |
+| `environment_id` | body | string | Environment to search on. Default `local` |
 
 On success, `data` is `{ items, truncated }` with the same hit shape and ordering as `fs:search`.
 
@@ -1972,7 +2020,7 @@ Suggests file and directory completion candidates in a workspace without a sessi
 | `show_hidden` | body | boolean | Include dotfiles. Default `false` |
 | `include_globs` | body | string[] | Only paths matching one of these globs |
 | `exclude_globs` | body | string[] | Skip paths matching these globs |
-| `runtime_id` | body | string | Runtime to complete on. Default `local` |
+| `environment_id` | body | string | Environment to complete on. Default `local` |
 
 On success, `data` is `{ items, truncated }` where each item is `{ path, name, kind, score, match_positions }`, the same hit shape as `fs:search`.
 
@@ -2263,7 +2311,7 @@ Lists every MCP server the management plane knows about; the second route return
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
-| `name` | path | string | **Required (get only).** Runtime name of the server |
+| `name` | path | string | **Required (get only).** Environment name of the server |
 | `cwd` | query | string | Include the project layers of this (trusted) directory |
 
 On success, `data` is an array of managed servers (a single object for the get route), each `{ name, config, source, origin, mutable, plugin? }`:
@@ -2290,7 +2338,7 @@ Probes a real connection to one server and never persists anything. Pass either 
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
-| `name` | body | string | Runtime name of a registry entry |
+| `name` | body | string | Environment name of a registry entry |
 | `server` | body | object | Inline server config to probe as-is |
 | `cwd` | body | string | Project layers join the resolution; also the stdio working directory |
 

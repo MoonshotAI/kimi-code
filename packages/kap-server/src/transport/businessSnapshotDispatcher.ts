@@ -2,14 +2,14 @@ import {
   Error2,
   ErrorCodes,
   IAgentLifecycleService,
-  IAgentRuntimeBindingService,
-  IAgentRuntimeService,
+  IAgentEnvironmentBindingService,
+  IAgentEnvironmentService,
   ISessionContext,
   IWorkspaceInstanceManager,
   getLiveSessionById,
-  snapshotAgentRuntimeBinding,
+  snapshotAgentEnvironmentBinding,
   snapshotSessionWorkspaceAssociation,
-  type AgentRuntimeBindingSnapshot,
+  type AgentEnvironmentBindingSnapshot,
   type Scope,
   type SessionWorkspaceAssociationSnapshot,
   type WorkspaceInstanceSnapshot,
@@ -40,11 +40,11 @@ export function sessionWorkspaceAssociation(
   return snapshotSessionWorkspaceAssociation(session.accessor.get(ISessionContext));
 }
 
-export async function agentRuntimeBindingSnapshot(
+export async function agentEnvironmentBindingSnapshot(
   core: Scope,
   sessionId: string,
   agentId: string,
-): Promise<AgentRuntimeBindingSnapshot> {
+): Promise<AgentEnvironmentBindingSnapshot> {
   const session = getLiveSessionById(core.accessor, sessionId);
   if (session === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} not found`);
@@ -58,8 +58,8 @@ export async function agentRuntimeBindingSnapshot(
       `agent ${agentId} not found in session ${sessionId}`,
     );
   }
-  return snapshotAgentRuntimeBinding(
-    agent.accessor.get(IAgentRuntimeBindingService),
-    agent.accessor.get(IAgentRuntimeService),
+  return snapshotAgentEnvironmentBinding(
+    agent.accessor.get(IAgentEnvironmentBindingService),
+    agent.accessor.get(IAgentEnvironmentService),
   );
 }

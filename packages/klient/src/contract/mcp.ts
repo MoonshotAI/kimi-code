@@ -20,14 +20,22 @@ const mcpServerCommonFields = {
   disabledTools: z.array(z.string()).optional(),
 } as const;
 
+export const mcpServerEnvVarSchema = z.union([
+  z.string().min(1),
+  z.object({
+    name: z.string().min(1),
+    source: z.enum(['local', 'remote']).optional(),
+  }),
+]);
+
 export const mcpServerStdioConfigSchema = z.object({
   transport: z.literal('stdio'),
-  runtime_id: z.string().min(1).optional(),
+  environment_id: z.string().min(1).optional(),
   command: z.string().min(1),
   args: z.array(z.string()).optional(),
   env: stringRecordSchema.optional(),
+  envVars: z.array(mcpServerEnvVarSchema).optional(),
   cwd: z.string().optional(),
-  executor: z.enum(['local', 'kaos']).optional(),
   ...mcpServerCommonFields,
 });
 

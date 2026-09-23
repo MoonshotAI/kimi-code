@@ -686,7 +686,7 @@ export class StreamingUIController {
       void (async () => {
         try {
           const plan = await session.getPlan();
-          tc.setPlanInfo(plan === null ? {} : { plan: plan.content, path: plan.path });
+          tc.setPlanInfo(plan === null ? {} : { plan: plan.content, path: plan.path ?? undefined });
         } catch {
           tc.setPlanInfo({});
         }

@@ -391,6 +391,21 @@ export function stripSubagentForkParameter(
   return next;
 }
 
+export function stripSubagentEnvironmentParameter(
+  parameters: Record<string, unknown>,
+): Record<string, unknown> {
+  const properties = parameters['properties'];
+  if (!isPlainObject(properties) || !('environment' in properties)) return parameters;
+  const nextProperties = { ...properties };
+  delete nextProperties['environment'];
+  const next: Record<string, unknown> = { ...parameters, properties: nextProperties };
+  const required = parameters['required'];
+  if (Array.isArray(required) && required.includes('environment')) {
+    next['required'] = required.filter((entry) => entry !== 'environment');
+  }
+  return next;
+}
+
 export function wrapSubagentModelError(
   error: unknown,
   boundModel: string,

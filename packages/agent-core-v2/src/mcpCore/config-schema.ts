@@ -14,14 +14,24 @@ const McpServerCommonFields = {
   disabledTools: z.array(z.string()).optional(),
 } as const;
 
+export const McpServerEnvVarSchema = z.union([
+  z.string().min(1),
+  z.object({
+    name: z.string().min(1),
+    source: z.enum(['local', 'remote']).optional(),
+  }),
+]);
+
+export type McpServerEnvVar = z.infer<typeof McpServerEnvVarSchema>;
+
 export const McpServerStdioConfigSchema = z.object({
   transport: z.literal('stdio'),
   command: z.string().min(1),
   args: z.array(z.string()).optional(),
   env: StringRecordSchema.optional(),
+  envVars: z.array(McpServerEnvVarSchema).optional(),
   cwd: z.string().optional(),
-  executor: z.enum(['local', 'kaos']).optional(),
-  runtime_id: z.string().min(1).optional(),
+  environment_id: z.string().min(1).optional(),
   ...McpServerCommonFields,
 });
 

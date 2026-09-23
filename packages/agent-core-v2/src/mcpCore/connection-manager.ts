@@ -83,10 +83,10 @@ export interface McpDefaultTimeouts {
 export interface McpConnectionManagerOptions {
   readonly envLookup?: (name: string) => string | undefined;
   readonly stdioCwd?: string;
-  readonly runtimeResolver?: import('#/workspace/workspaceInstance/workspaceInstanceManager').IRuntimeResolver;
-  readonly workspaceId?: string;
-  readonly runtimeId?: string;
-  readonly requireStdioRuntimeId?: boolean;
+  readonly environmentResolver?: import('#/app/environment/environment').EnvironmentResolver;
+  readonly environmentId?: string;
+  readonly requireStdioEnvironmentId?: boolean;
+  readonly sessionId?: string;
   readonly oauthService?: McpOAuthService;
   readonly log?: Logger;
   readonly resolveDefaultTimeouts?: () => McpDefaultTimeouts;
@@ -436,20 +436,19 @@ export class McpConnectionManager implements McpConnectionView {
       config.toolTimeoutMs ?? this.options.resolveDefaultTimeouts?.().toolTimeoutMs;
     const clientName = this.options.resolveClientName?.();
     if (config.transport === 'stdio') {
-      const runtimeResolver = this.options.runtimeResolver;
-      const workspaceId = this.options.workspaceId;
-      const runtimeId = config.runtime_id ?? this.options.runtimeId;
-      if (runtimeResolver === undefined || workspaceId === undefined || runtimeId === undefined || (this.options.requireStdioRuntimeId === true && config.runtime_id === undefined)) {
-        throw new Error('MCP stdio requires runtime_id and runtime binding');
+      const environmentResolver = this.options.environmentResolver;
+      const environmentId = config.environment_id ?? this.options.environmentId;
+      if (environmentResolver === undefined || environmentId === undefined || (this.options.requireStdioEnvironmentId === true && config.environment_id === undefined)) {
+        throw new Error('MCP stdio requires environment_id and environment binding');
       }
       return new StdioMcpClient(config, {
         startupTimeoutMs,
         toolCallTimeoutMs,
         defaultCwd: this.options.stdioCwd,
         clientName,
-        runtimeResolver,
-        workspaceId,
-        runtimeId,
+        environmentResolver,
+        environmentId,
+        sessionId: this.options.sessionId,
       });
     }
     if (config.transport === 'sse') {

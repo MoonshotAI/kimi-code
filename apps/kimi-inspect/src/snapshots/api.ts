@@ -1,5 +1,5 @@
 import type {
-  AgentRuntimeBindingSnapshot,
+  AgentEnvironmentBindingSnapshot,
   SessionWorkspaceAssociationSnapshot,
   WorkspaceInstanceSnapshot,
   WorkspaceInstancesSnapshot,
@@ -26,14 +26,14 @@ export function fetchSessionWorkspaceAssociation(
   return fetchSnapshot(client, `/session/${encodeURIComponent(sessionId)}/association`);
 }
 
-export function fetchAgentRuntimeBinding(
+export function fetchAgentEnvironmentBinding(
   client: InspectClient,
   sessionId: string,
   agentId: string,
-): Promise<AgentRuntimeBindingSnapshot> {
+): Promise<AgentEnvironmentBindingSnapshot> {
   return fetchSnapshot(
     client,
-    `/session/${encodeURIComponent(sessionId)}/agent/${encodeURIComponent(agentId)}/runtime-binding`,
+    `/session/${encodeURIComponent(sessionId)}/agent/${encodeURIComponent(agentId)}/environment-binding`,
   );
 }
 

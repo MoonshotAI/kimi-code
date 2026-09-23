@@ -8,6 +8,7 @@ export interface HostFileStat {
   readonly size: number;
   readonly mtimeMs?: number;
   readonly ino?: number;
+  readonly mode?: number;
 }
 
 export interface HostDirEntry {
@@ -27,7 +28,7 @@ export interface IHostFileSystem {
   writeText(path: string, data: string): Promise<void>;
   appendText(path: string, data: string): Promise<void>;
   readBytes(path: string, n?: number, offset?: number): Promise<Uint8Array>;
-  writeBytes(path: string, data: Uint8Array): Promise<void>;
+  writeBytes(path: string, data: Uint8Array | AsyncIterable<Uint8Array>): Promise<void>;
   readLines(
     path: string,
     options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
@@ -36,8 +37,12 @@ export interface IHostFileSystem {
   stat(path: string): Promise<HostFileStat>;
   lstat(path: string): Promise<HostFileStat>;
   readdir(path: string): Promise<readonly HostDirEntry[]>;
-  mkdir(path: string, options?: { readonly recursive?: boolean }): Promise<void>;
+  mkdir(
+    path: string,
+    options?: { readonly recursive?: boolean; readonly mode?: number },
+  ): Promise<void>;
   remove(path: string): Promise<void>;
+  rename?(from: string, to: string): Promise<void>;
   realpath(path: string): Promise<string>;
 }
 

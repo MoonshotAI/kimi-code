@@ -49,10 +49,11 @@ import type {
   TelemetryProperties,
   TestMcpServerOptions,
   UploadFileOptions,
+  WorkspaceEnvironmentDeclarationInfo,
   WorkspaceTrustInfo,
 } from '#/types';
 
-export interface KimiHarnessRuntimeOptions {
+export interface KimiHarnessEnvironmentOptions {
   readonly identity?: KimiHostIdentity;
   readonly uiMode?: string;
   readonly homeDir: string;
@@ -96,7 +97,7 @@ export class KimiHarness {
 
   constructor(
     private readonly rpc: SDKRpcClientBase,
-    options: KimiHarnessRuntimeOptions,
+    options: KimiHarnessEnvironmentOptions,
   ) {
     this.identity = options.identity;
     this.uiMode = options.uiMode ?? DEFAULT_SESSION_STARTED_UI_MODE;
@@ -426,6 +427,15 @@ export class KimiHarness {
    */
   async getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo> {
     return this.rpc.getWorkspaceTrustInfo(workDir);
+  }
+
+  /**
+   * Resolved `[environments]` declarations from the user-level config
+   * (agent-core-v2 only): the entries a new session could bind. Session-less —
+   * no project files are consulted and no trust gating applies.
+   */
+  async listEnvironmentDeclarations(): Promise<readonly WorkspaceEnvironmentDeclarationInfo[]> {
+    return this.rpc.listEnvironmentDeclarations();
   }
 
   /** Mark `workDir` as trusted; project-level MCP servers connect live afterwards. */

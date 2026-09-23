@@ -12,12 +12,14 @@ import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { IGitService } from '#/app/git/git';
 import { ErrorCodes, Error2 } from '#/errors';
 import { type HostDirEntry, IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostFsError, toHostFsError } from '#/os/interface/hostFsErrors';
 import { IHostProcessService, type IHostProcess } from '#/os/interface/hostProcess';
 import { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
 import { WorkspaceFsService } from '#/workspace/workspaceFs/fsService';
+import { getShareBinRgPath } from '#/workspace/workspaceFs/internal/rgLocator';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { ITelemetryService, type TelemetryProperties } from '#/app/telemetry/telemetry';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
@@ -241,6 +243,27 @@ function fakeFs(
   };
 }
 
+function remoteShapedFs(files: Record<string, string | Buffer>): IHostFileSystem {
+  const base = fakeFs(files) as unknown as Record<string, unknown>;
+  const wrapped: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(base)) {
+    if (typeof value !== 'function') {
+      wrapped[key] = value;
+      continue;
+    }
+    const fn = value as (...args: unknown[]) => Promise<unknown>;
+    wrapped[key] = async (...args: unknown[]) => {
+      try {
+        return await fn(...args);
+      } catch (error) {
+        const domain = toHostFsError(error, { path: String(args[0]), op: key });
+        throw new HostFsError(domain.code, domain.message, { details: domain.details });
+      }
+    };
+  }
+  return wrapped as unknown as IHostFileSystem;
+}
+
 function fakeProcess(stdout: string, stderr: string, exitCode: number): IHostProcess {
   return {
     _serviceBrand: undefined,
@@ -385,13 +408,9 @@ function makeSession(
       ready: Promise.resolve(),
     }),
   ]);
-  const runtime = new FakeRuntime({ workspaceId: 'w', runtimeId: 'local', generation: 'test' }, { capabilities: ['process'], pathClass });
-  Object.defineProperty(runtime, 'process', { value: runner ?? fakeRunner(handler) });
-  host.app.instantiation.provide(IRuntimeResolver, {
-    _serviceBrand: undefined,
-    inspect: () => runtime,
-    acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
-  });
+  const environment = new FakeEnvironment({ environmentId: 'local', generation: 'test' }, { capabilities: ['process'], pathClass });
+  Object.defineProperty(environment, 'process', { value: runner ?? fakeRunner(handler) });
+  host.app.instantiation.provide(IEnvironmentService, resolverFor(environment));
   const workspace = host.child('program', 'w1', [
     stubPair(IWorkspaceContext, stubWorkspaceContext()),
     stubPair(IWorkspaceDirs, stubWorkspaceDirs(additionalDirs)),
@@ -404,6 +423,40 @@ function makeSession(
 }
 
 const emptyHandler: RunHandler = () => ({ stdout: '', exitCode: 0 });
+
+function resolverFor(environment: FakeEnvironment): EnvironmentResolver {
+  return {
+    _serviceBrand: undefined,
+    inspect: () => environment,
+    acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+    acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+  };
+}
+
+function makeRemoteSession(
+  files: Record<string, string | Buffer>,
+  handler: RunHandler,
+  events: Array<{ event: string; properties: Record<string, unknown> }> = [],
+  environmentId = 'ssh-dev',
+  homeDir = '/home/target',
+  hostFs?: IHostFileSystem,
+): IWorkspaceFsService {
+  const environment = new FakeEnvironment(
+    { environmentId, generation: 'test' },
+    { capabilities: ['process'], host: { homeDir } },
+  );
+  Object.defineProperty(environment, 'process', { value: fakeRunner(handler) });
+  const resolver = resolverFor(environment);
+  return new WorkspaceFsService(
+    stubWorkspaceContext(),
+    stubWorkspaceDirs(),
+    hostFs ?? fakeFs(files),
+    resolver,
+    telemetryStub(events),
+    workspaceGitStub(defaultGitStub()),
+    environmentId,
+  );
+}
 
 describe('WorkspaceFsService.gitStatus', () => {
   it('delegates to IWorkspaceGitService with the handler root and a confined filter', async () => {
@@ -565,7 +618,7 @@ describe('WorkspaceFsService.suggest', () => {
   }
 
   function rgMissingHandler(args: readonly string[]): { stdout: string; exitCode: number } {
-    if (args[0] === 'rg' && args[1] === '--version') return { stdout: '', exitCode: 1 };
+    if (args[1] === '--version') return { stdout: '', exitCode: 1 };
     return { stdout: '', exitCode: 0 };
   }
 
@@ -1214,7 +1267,7 @@ describe('WorkspaceFsService.grep', () => {
     const fs = makeSession(
       { 'src/a.ts': 'hello world\nfoo bar\nhello again\n' },
       (args) => {
-        if (args[0] === 'rg' && args[1] === '--version') return { stdout: '', exitCode: 1 };
+        if (args[1] === '--version') return { stdout: '', exitCode: 1 };
         return { stdout: '', exitCode: 0 };
       },
       events,
@@ -1324,7 +1377,117 @@ describe('WorkspaceFsService.grep', () => {
   });
 });
 
+describe('WorkspaceFsService rg share-bin fallback', () => {
+  it('probes the target share bin on a remote binding and runs rg from it', async () => {
+    const captured: string[][] = [];
+    const fs = makeRemoteSession({}, (args) => {
+      captured.push([...args]);
+      if (args[1] === '--version') {
+        return args[0] === '/home/target/.kimi-code/bin/rg'
+          ? { stdout: 'ripgrep 15.0.0', exitCode: 0 }
+          : { stdout: '', exitCode: 1 };
+      }
+      if (args[0] === '/home/target/.kimi-code/bin/rg' && args.includes('--files')) {
+        return { stdout: 'src/foo.ts\n', exitCode: 0 };
+      }
+      return { stdout: '', exitCode: 1 };
+    });
+
+    const result = await fs.suggest({
+      query: 'foo',
+      limit: 50,
+      follow_gitignore: true,
+      show_hidden: false,
+    });
+
+    expect(result.items.map((i) => i.path)).toContain('src/foo.ts');
+    const versionProbes = captured.filter((a) => a[1] === '--version').map((a) => a[0]);
+    expect(versionProbes).toEqual(['rg', '/home/target/.kimi-code/bin/rg']);
+    expect(versionProbes).not.toContain(getShareBinRgPath());
+    const filesRun = captured.find((a) => a.includes('--files'))!;
+    expect(filesRun[0]).toBe('/home/target/.kimi-code/bin/rg');
+  });
+
+  it('falls back to the node walk on a remote binding when the target has no rg anywhere', async () => {
+    const events: Array<{ event: string; properties: Record<string, unknown> }> = [];
+    const captured: string[][] = [];
+    const fs = makeRemoteSession(
+      { 'src/foo.ts': '' },
+      (args) => {
+        captured.push([...args]);
+        return { stdout: '', exitCode: 1 };
+      },
+      events,
+    );
+
+    const result = await fs.suggest({
+      query: 'foo',
+      limit: 50,
+      follow_gitignore: true,
+      show_hidden: false,
+    });
+
+    expect(result.items.map((i) => i.path)).toContain('src/foo.ts');
+    expect(events).toContainEqual({
+      event: 'fs_suggest_node_fallback',
+      properties: { reason: 'rg_missing' },
+    });
+    const versionProbes = captured.filter((a) => a[1] === '--version').map((a) => a[0]);
+    expect(versionProbes).toEqual(['rg', '/home/target/.kimi-code/bin/rg']);
+    expect(versionProbes).not.toContain(getShareBinRgPath());
+  });
+
+  it('finds a local cached rg on a local binding', async () => {
+    const localShareBin = getShareBinRgPath();
+    const captured: string[][] = [];
+    const fs = makeSession({}, (args) => {
+      captured.push([...args]);
+      if (args[1] === '--version') {
+        return args[0] === localShareBin
+          ? { stdout: 'ripgrep 15.0.0', exitCode: 0 }
+          : { stdout: '', exitCode: 1 };
+      }
+      if (args[0] === localShareBin && args.includes('--files')) {
+        return { stdout: 'src/foo.ts\n', exitCode: 0 };
+      }
+      return { stdout: '', exitCode: 1 };
+    });
+
+    const result = await fs.suggest({
+      query: 'foo',
+      limit: 50,
+      follow_gitignore: true,
+      show_hidden: false,
+    });
+
+    expect(result.items.map((i) => i.path)).toContain('src/foo.ts');
+    const filesRun = captured.find((a) => a.includes('--files'))!;
+    expect(filesRun[0]).toBe(localShareBin);
+  });
+});
+
 describe('WorkspaceFsService.list', () => {
+  it.each(['list', 'suggest'] as const)('rejects an oversized nested directory during %s', async (operation) => {
+    const backend = fakeFs({ 'huge/hidden.txt': '', 'visible.txt': '' });
+    const readdir = backend.readdir;
+    backend.readdir = async (path) => {
+      if (path === '/repo/huge') {
+        throw new HostFsError('os.fs.directory_too_large', 'Directory /repo/huge exceeds 50000 entries');
+      }
+      return readdir(path);
+    };
+    const fs = makeRemoteSession({}, () => ({ stdout: '', exitCode: 127 }), [], 'ssh-dev', '/home/target', backend);
+
+    const result = operation === 'list'
+      ? fs.list({ path: '.', depth: 2, limit: 200, show_hidden: false, follow_gitignore: false, sort: 'name_asc', include_git_status: false })
+      : fs.suggest({ query: 'hidden', limit: 50, show_hidden: false, follow_gitignore: false });
+
+    await expect(result).rejects.toMatchObject({
+      code: 'fs.too_many_results',
+      message: 'Directory /repo/huge exceeds 50000 entries',
+    });
+  });
+
   it('lists files and directories with kinds', async () => {
     const fs = makeSession(
       { 'src/a.ts': '', 'src/sub/b.ts': '', 'README.md': '' },
@@ -1374,6 +1537,31 @@ describe('WorkspaceFsService.list', () => {
         include_git_status: false,
       }),
     ).rejects.toMatchObject({ code: 'fs.path_escapes' });
+  });
+
+  it('throws fs.path_not_found when a remote fs reports fs-domain not_found for the path', async () => {
+    const fs = makeRemoteSession(
+      {},
+      emptyHandler,
+      [],
+      'ssh-dev',
+      '/home/target',
+      remoteShapedFs({}),
+    );
+    await expect(
+      fs.list({
+        path: 'missing-dir',
+        depth: 1,
+        limit: 200,
+        show_hidden: false,
+        follow_gitignore: false,
+        sort: 'name_asc',
+        include_git_status: false,
+      }),
+    ).rejects.toMatchObject({
+      code: 'fs.path_not_found',
+      message: 'path not found: missing-dir',
+    });
   });
 });
 
@@ -1521,6 +1709,29 @@ describe('WorkspaceFsService.statMany', () => {
 });
 
 describe('WorkspaceFsService.listMany', () => {
+  it('reports an oversized remote directory as too many results', async () => {
+    const backend = fakeFs({});
+    backend.readdir = async () => {
+      throw new HostFsError('os.fs.directory_too_large', 'Directory /repo exceeds 50000 entries', {
+        details: { path: '/repo', op: 'readdir', limit: 50000 },
+      });
+    };
+    const fs = makeRemoteSession({}, emptyHandler, [], 'ssh-dev', '/home/target', backend);
+
+    const result = await fs.listMany({
+      paths: ['.'],
+      depth: 1,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+
+    expect(result.results['.']).toBeUndefined();
+    expect(result.partial_errors?.['.']).toEqual({ code: 41303, msg: 'Directory /repo exceeds 50000 entries' });
+  });
+
   it('returns results per path and partial_errors for failures', async () => {
     const fs = makeSession({ 'a.txt': '' }, emptyHandler);
     const result = await fs.listMany({
@@ -1550,6 +1761,23 @@ describe('WorkspaceFsService.mkdir', () => {
     await expect(fs.mkdir({ path: 'src', recursive: false })).rejects.toMatchObject({
       code: 'fs.already_exists',
     });
+  });
+
+  it('throws fs.path_not_found when a remote fs reports fs-domain not_found for the parent', async () => {
+    const fs = makeRemoteSession(
+      {},
+      emptyHandler,
+      [],
+      'ssh-dev',
+      '/home/target',
+      remoteShapedFs({}),
+    );
+    await expect(fs.mkdir({ path: 'missing-parent/newdir', recursive: false })).rejects.toMatchObject(
+      {
+        code: 'fs.path_not_found',
+        message: 'parent not found: missing-parent/newdir',
+      },
+    );
   });
 });
 

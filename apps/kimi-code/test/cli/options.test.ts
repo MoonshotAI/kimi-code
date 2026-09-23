@@ -51,6 +51,7 @@ describe('CLI options parsing', () => {
       expect(opts.agent).toBeUndefined();
       expect(opts.agentFiles).toEqual([]);
       expect(opts.addDirs).toEqual([]);
+      expect(opts.environment).toBeUndefined();
     });
   });
 
@@ -508,6 +509,48 @@ describe('CLI options parsing', () => {
 
     it('accepts --agent in prompt mode', () => {
       const opts = parse(['-p', 'hi', '--agent', 'reviewer']);
+      expect(validateOptions(opts, {}).uiMode).toBe('print');
+    });
+  });
+
+  describe('--environment', () => {
+    it('parses --environment as the new-session environment override', () => {
+      expect(parse(['--environment', 'dev-box']).environment).toBe('dev-box');
+    });
+
+    it('is hidden from the help output while the feature is experimental', () => {
+      const help = createProgram('0.1.0-test', () => {}, () => {}).helpInformation();
+      expect(help).not.toContain('--environment');
+    });
+
+    it('rejects empty environment values', () => {
+      const opts = parse(['--environment', '   ']);
+      expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts)).toThrow('Environment cannot be empty.');
+    });
+
+    it('rejects --environment with --session', () => {
+      const opts = parse(['--environment', 'dev-box', '--session', 'ses_123']);
+      expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts)).toThrow(
+        'Cannot combine --environment with --session/--continue',
+      );
+    });
+
+    it('rejects --environment with --continue', () => {
+      const opts = parse(['--environment', 'dev-box', '--continue']);
+      expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts)).toThrow(
+        'Cannot combine --environment with --session/--continue',
+      );
+    });
+
+    it('accepts --environment for a new interactive session', () => {
+      expect(validateOptions(parse(['--environment', 'dev-box']), {}).uiMode).toBe('shell');
+    });
+
+    it('accepts --environment in prompt mode', () => {
+      const opts = parse(['-p', 'hi', '--environment', 'dev-box']);
       expect(validateOptions(opts, {}).uiMode).toBe('print');
     });
   });

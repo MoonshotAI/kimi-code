@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
-import { Emitter } from '#/_base/event';
+import { AsyncEmitter, Emitter, type IWaitUntil } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
@@ -48,7 +48,7 @@ describe('WorkspaceDirsService trust gating', () => {
   let extraDir: string;
   let disposables: DisposableStore;
   let trusted: boolean;
-  let trustFlips: Emitter<WorkspaceTrustChange>;
+  let trustFlips: AsyncEmitter<WorkspaceTrustChange & IWaitUntil>;
   let changes: number;
 
   beforeEach(() => {
@@ -58,7 +58,7 @@ describe('WorkspaceDirsService trust gating', () => {
     disposables = new DisposableStore();
     watchFires.clear();
     trusted = true;
-    trustFlips = new Emitter<WorkspaceTrustChange>();
+    trustFlips = new AsyncEmitter<WorkspaceTrustChange & IWaitUntil>();
     changes = 0;
   });
 
@@ -134,7 +134,7 @@ describe('WorkspaceDirsService trust gating', () => {
     expect(service.additionalDirs).toEqual([]);
 
     trusted = true;
-    trustFlips.fire({ trusted: true });
+    await trustFlips.fireAsync({ trusted: true }, new AbortController().signal);
 
     await vi.waitFor(
       () => {
@@ -152,7 +152,7 @@ describe('WorkspaceDirsService trust gating', () => {
     expect(service.additionalDirs).toEqual([extraDir]);
 
     trusted = false;
-    trustFlips.fire({ trusted: false });
+    await trustFlips.fireAsync({ trusted: false }, new AbortController().signal);
 
     expect(service.additionalDirs).toEqual([]);
   }, 20000);

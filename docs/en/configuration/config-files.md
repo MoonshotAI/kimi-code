@@ -113,6 +113,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | [`image`](#image) | `table` | — | Image compression parameters |
 | [`services`](#services) | `table` | — | Built-in external service configuration |
 | [`permission`](#permission) | `table` | — | Initial permission rules |
+| [`environments`](#environments) | `table` | — | Remote environment declarations |
 | [`hooks`](../customization/hooks.md) | `array<table>` | — | Lifecycle hooks |
 | [`identity`](#identity) | `table` | — | Custom agent identity |
 
@@ -171,7 +172,7 @@ max_context_size = 1047576
 
 ### Model overrides
 
-Use `[models."<alias>".overrides]` for user overrides that must survive provider-model refreshes. Runtime consumers read the effective value: the override when present, otherwise the top-level field.
+Use `[models."<alias>".overrides]` for user overrides that must survive provider-model refreshes. Environment consumers read the effective value: the override when present, otherwise the top-level field.
 
 ```toml
 [models."kimi-code/kimi-for-coding"]
@@ -553,6 +554,65 @@ pattern = "Bash"
 MCP server declarations are configured in `~/.kimi-code/mcp.json` or the project-local `.kimi-code/mcp.json`, not in `config.toml`. The interactive configuration entry point is `/mcp-config`; see [Model Context Protocol](../customization/mcp.md).
 :::
 
+## `environments`
+
+`environments` declares remote environments — SSH hosts, Docker-compatible containers, or custom launcher commands — that sessions can bind to so the agent's tools execute in the target environment. See [Remote environments](../guides/remote-environment.md) for the feature walkthrough, boundaries, and limitations.
+
+Each entry is keyed by its environment id: at most 64 characters, no leading or trailing whitespace, and `local` and `default` are reserved words. Within one entry, `type` and `command` are mutually exclusive.
+
+The optional top-level `default` names the environment a session binds to when creation does not specify one. It must reference a configured entry, and that entry must set `defaultCwd` — a binding pairs an environment with a working directory, so a default without one would dangle. Without `default`, those sessions start on the `local` environment. A TUI `/new` does not use this default: it keeps the current environment. See [Remote environments](../guides/remote-environment.md).
+
+### SSH entries
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `type` | `string` | Yes | `"ssh"` |
+| `host` | `string` | Yes | SSH host; spawned through the system `ssh`, so `~/.ssh/config` (user, port, key, `ProxyJump`, `ControlMaster`) applies |
+| `remoteBin` | `string` | No | Executor path on the target; defaults to `~/.kimi-code/bin/kimi` |
+| `defaultCwd` | `string` | No | Working-directory prefill when binding a session; not validated locally |
+
+### Docker entries
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `type` | `string` | Yes | `"docker"` |
+| `container` | `string` | Yes | Running container name or id; attached with `docker exec` |
+| `context` | `string` | No | Docker context (for example `orbstack`) |
+| `remoteBin` | `string` | No | Executor path inside the container; defaults to `~/.kimi-code/bin/kimi` under the container user's home. A `~/`-prefixed value is resolved to that absolute home path at connect time, because `docker exec` performs no shell expansion |
+| `defaultCwd` | `string` | No | Working-directory prefill when binding a session |
+
+### Command entries
+
+The generic launcher form, for any environment the built-in launchers do not cover (OrbStack machines, `kubectl exec`, Apple Container, managed sandboxes). The declared command must bridge stdio to `kimi exec-server` on the target.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `command` | `string` | Yes | Launcher executable: a name resolved against `PATH`, or an absolute path. A resolution landing inside the working directory is refused, so a project cannot shadow the launcher with a same-named binary |
+| `args` | `array<string>` | No | Launcher arguments; must include the executor invocation (`... exec-server`) |
+| `env` | `table<string, string>` | No | Environment for the launcher process on your machine; never propagated into commands running on the target |
+| `defaultCwd` | `string` | No | Working-directory prefill when binding a session |
+
+```toml
+[environments]
+default = "dev-box"
+
+[environments.dev-box]
+type = "ssh"
+host = "dev-box"
+defaultCwd = "/home/me/projects"
+
+[environments.dev-container]
+type = "docker"
+container = "myapp-dev"
+
+[environments.sandbox]
+command = "sandbox"
+args = ["ssh", "i-1234567890", "--",
+        "/home/me/.kimi-code/bin/kimi", "exec-server"]
+env = { SANDBOX_TOKEN = "..." }
+defaultCwd = "/home/me/kimi-code"
+```
+
 ## `tui.toml`
 
 Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a companion `tui.toml` in the same directory (`~/.kimi-code/tui.toml`, or `$KIMI_CODE_HOME/tui.toml` when overridden). It is created with defaults on first run, and the interactive commands `/config`, `/theme`, and `/editor` write to it for you, so you rarely need to edit it by hand. If the file is malformed, the CLI falls back to defaults and shows a notice instead of failing to start.
@@ -627,6 +687,8 @@ additional_dir = ["/absolute/path/to/shared"]
 Because directories are stored as absolute paths, which are specific to your machine, we recommend adding `.kimi-code/local.toml` to your project's `.gitignore` so it is not committed.
 
 `.kimi-code/local.toml` is gated by workspace trust: it takes effect only after you trust the project folder in the startup trust prompt, and its `additional_dir` entries are ignored while the workspace is untrusted. Entries that resolve to your home directory or the filesystem root are rejected.
+
+Besides `local.toml`, the project `.kimi-code/` directory can also hold `mcp.json` (project MCP servers), which is gated by workspace trust: it only takes effect after you trust the folder in the startup prompt. See [Model Context Protocol](../customization/mcp.md).
 
 ## Next steps
 

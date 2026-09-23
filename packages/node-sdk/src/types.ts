@@ -3,6 +3,8 @@ import type {
   ExportSessionManifest,
   ShellEnvironment,
 } from '@moonshot-ai/agent-core-v2/app/sessionExport/sessionExport';
+import type { EnvironmentStatus as SessionEnvironmentStatus } from '@moonshot-ai/agent-core-v2/environment/environment';
+import type { RemoteEnvironmentEntry } from '@moonshot-ai/agent-core-v2/environment/remoteEnvironmentDeclaration';
 import type { Kaos } from '@moonshot-ai/kaos';
 import type { KimiHostIdentity, OAuthRefreshOutcome } from '@moonshot-ai/kimi-code-oauth';
 import type { ContentPart } from '@moonshot-ai/kosong';
@@ -23,9 +25,33 @@ export type { ImportCustomRegistryOptions, ImportCustomRegistryResult } from '@m
 
 export type Unsubscribe = () => void;
 
-export interface AgentRuntimeBinding {
-  readonly workspaceId: string;
-  readonly runtimeId: string;
+export interface AgentEnvironmentBinding {
+  readonly environmentId: string;
+  readonly cwd?: string;
+}
+
+export type { EnvironmentStatus as SessionEnvironmentStatus } from '@moonshot-ai/agent-core-v2/environment/environment';
+
+export type SessionEnvironmentType = 'local' | 'ssh' | 'docker' | 'command';
+
+export interface SessionEnvironmentInfo {
+  readonly environmentId: string;
+  readonly type: SessionEnvironmentType;
+  readonly status: SessionEnvironmentStatus;
+  readonly defaultCwd?: string;
+  readonly connectError?: string;
+}
+
+export interface SessionEnvironmentsInfo {
+  readonly environments: readonly SessionEnvironmentInfo[];
+  readonly sshHosts: readonly string[];
+}
+
+export type { RemoteEnvironmentEntry };
+
+export interface DeclareEnvironmentInput {
+  readonly id: string;
+  readonly entry: RemoteEnvironmentEntry;
 }
 
 export type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
@@ -59,6 +85,7 @@ export type {
 export type {
   BackgroundConfig,
   ConfigDiagnostics,
+  EnvironmentsConfig,
   KimiConfig,
   KimiConfigPatch,
   LoopControl,
@@ -145,6 +172,18 @@ export interface WorkspaceTrustInfo {
   readonly trusted: boolean;
   /** Safe descriptions of project-level MCP servers that trusting would enable. */
   readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
+}
+
+/**
+ * One resolved `[environments]` declaration from the user-level config — an
+ * entry a new session could bind. Session-less: project files are not
+ * consulted and workspace trust does not gate the result. Only meaningful on
+ * the agent-core-v2 engine.
+ */
+export interface WorkspaceEnvironmentDeclarationInfo {
+  readonly id: string;
+  readonly type: Exclude<SessionEnvironmentType, 'local'>;
+  readonly defaultCwd?: string;
 }
 
 /**
@@ -246,6 +285,20 @@ export interface CreateSessionOptions {
    * interactive / SDK sessions.
    */
   readonly drainAgentTasksOnStop?: boolean;
+  /**
+   * Initial environment binding for the main agent. An id declared in
+   * `[environments]`, or one already registered in this process (a temporary
+   * `connect` environment). Omit to start on the local environment, or the
+   * configured default when one is set. A registered environment that is not
+   * declared requires `environmentCwd`.
+   */
+  readonly environmentId?: string;
+  /**
+   * Working directory on the target environment for the initial binding.
+   * For a declared environment, defaults to that entry's `defaultCwd`.
+   * Required when the id is registered in this process but not declared.
+   */
+  readonly environmentCwd?: string;
 }
 
 export interface RenameSessionInput {
@@ -376,7 +429,7 @@ export interface ReloadSessionOptions {
 export interface PlanInfo {
   readonly id: string;
   readonly content: string;
-  readonly path: string;
+  readonly path: string | null;
 }
 
 export type SessionPlan = PlanInfo | null;

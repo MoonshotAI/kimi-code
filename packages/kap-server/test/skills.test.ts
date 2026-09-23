@@ -1,17 +1,24 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { IEnvironmentService } from '@moonshot-ai/agent-core-v2';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  agentEnvironmentBindingKey,
   IAgentLifecycleService,
+  IAgentStateService,
+  ISessionContext,
+  IWorkspaceInstanceManager,
   closeSessionById,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
+import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
+import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
 import {
   activateSkillResultSchema,
   listSkillsResponseSchema,
 } from '../src/protocol/rest-skill';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -356,6 +363,103 @@ describe('server-v2 /api/v1 skills', () => {
         },
       );
       expect(body.code).toBe(40407);
+    });
+
+    it('connects a pending bound environment on demand for activation attachments', async () => {
+      const id = await createSession();
+      await createMainAgent(id);
+      const session = getLiveSessionById(server!.core.accessor, id);
+      const workspaceId = session!.accessor.get(ISessionContext).workspaceId;
+      const remoteRoot = await realpath(await mkdtemp(join(tmpdir(), 'kimi-skills-pending-remote-')));
+      try {
+        const instance = server!.core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
+        const fake = new FakeEnvironment(
+          { environmentId: 'pending-remote', generation: 'pending-generation' },
+          { status: 'pending', capabilities: ['fs'] },
+        );
+        const connect = vi.fn(async () => {
+          fake.setStatus('ready');
+        });
+        server!.core.accessor.get(IEnvironmentService).register(Object.assign(fake, {
+          fs: new HostFileSystem(),
+          host: { ...fake.host, tempDir: join(remoteRoot, 'remote-tmp') },
+          connect,
+        }));
+        const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
+        main.accessor.get(IAgentStateService).set(agentEnvironmentBindingKey, {
+          environmentId: 'pending-remote',
+        });
+
+        const noteBytes = Buffer.from('hello from the attachment');
+        const form = new FormData();
+        form.set('file', new Blob([noteBytes], { type: 'text/plain' }), 'note.txt');
+        const uploadRes = await fetch(`${base}/api/v1/files`, {
+          method: 'POST',
+          headers: authHeaders(server as RunningServer),
+          body: form,
+        } as never);
+        const uploaded = (await uploadRes.json()) as Envelope<{ id: string; size: number }>;
+        expect(uploaded.code).toBe(0);
+
+        const { body } = await postJson<{ activated: boolean; skill_name: string }>(
+          `/api/v1/sessions/${id}/skills/update-config:activate`,
+          {
+            attachments: [
+              { type: 'file', file_id: uploaded.data.id, name: 'note.txt', media_type: 'text/plain', size: noteBytes.length },
+            ],
+          },
+        );
+        expect(body.code).toBe(0);
+        expect(connect).toHaveBeenCalledTimes(1);
+        const attachedPath = join(remoteRoot, 'remote-tmp', 'kimi-code', 'attachments', `${uploaded.data.id}-note.txt`);
+        expect(await readFile(attachedPath)).toEqual(noteBytes);
+      } finally {
+        await rm(remoteRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('maps a disconnected bound environment failure to 40926 instead of 50001', async () => {
+      const id = await createSession();
+      await createMainAgent(id);
+      const session = getLiveSessionById(server!.core.accessor, id);
+      const workspaceId = session!.accessor.get(ISessionContext).workspaceId;
+      const instance = server!.core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
+      const fake = new FakeEnvironment(
+        { environmentId: 'dead-remote', generation: 'dead-generation' },
+        { status: 'disconnected', capabilities: ['fs'] },
+      );
+      server!.core.accessor.get(IEnvironmentService).register(Object.assign(fake, {
+        fs: new HostFileSystem(),
+        host: { ...fake.host, tempDir: join(home as string, 'dead-remote-tmp') },
+        connectError: 'connection refused',
+      }));
+      const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
+      main.accessor.get(IAgentStateService).set(agentEnvironmentBindingKey, {
+        environmentId: 'dead-remote',
+      });
+
+      const noteBytes = Buffer.from('hello from the attachment');
+      const form = new FormData();
+      form.set('file', new Blob([noteBytes], { type: 'text/plain' }), 'note.txt');
+      const uploadRes = await fetch(`${base}/api/v1/files`, {
+        method: 'POST',
+        headers: authHeaders(server as RunningServer),
+        body: form,
+      } as never);
+      const uploaded = (await uploadRes.json()) as Envelope<{ id: string; size: number }>;
+      expect(uploaded.code).toBe(0);
+
+      const { body } = await postJson<null>(
+        `/api/v1/sessions/${id}/skills/update-config:activate`,
+        {
+          attachments: [
+            { type: 'file', file_id: uploaded.data.id, name: 'note.txt', media_type: 'text/plain', size: noteBytes.length },
+          ],
+        },
+      );
+      expect(body.code).toBe(40926);
+      expect(body.msg).toContain('dead-remote');
+      expect((body as { stack?: string }).stack).toBeUndefined();
     });
 
     it('activates a skill with a server-local file attachment by path', async () => {

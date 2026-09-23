@@ -5,11 +5,11 @@ import { inlineVideoPart, isMediaUploadAuthError } from '#/agent/media/videoUplo
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { isDaemonFileUrl } from '#/agent/media/mediaRef';
-import { attachmentFileSource, runtimeFileSource, withAttachmentLocation, type FileReadSource } from '#/agent/tools/fileReadSource';
+import { attachmentFileSource, environmentFileSource, withAttachmentLocation, type FileReadSource } from '#/agent/tools/fileReadSource';
 
-import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
+import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
-import { inspectAgentRuntime, type IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { acquireOrWhenReady, pinnedGeneration, type IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import {
   ToolAccesses,
   type AgentTool,
@@ -190,7 +190,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
   private readonly providerType: string | undefined;
   private readonly inlineImageByteBudget: number;
   constructor(
-    private readonly runtime: IAgentRuntimeService,
+    private readonly environment: IAgentEnvironmentService,
     private readonly workspace: WorkspaceConfig,
     private readonly capabilities: ModelCapability,
     private readonly videoUploader?: VideoUploader,
@@ -232,12 +232,13 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     if (isDaemonFileUrl(args.path)) {
       return this.attachmentExecution(args);
     }
-    const inspected = inspectAgentRuntime(this.runtime);
-    const env = inspected.environment;
-    const view = new RuntimeWorkspaceView(inspected, {
+    const inspected = this.environment.inspect();
+    const expectedGeneration = pinnedGeneration(inspected);
+    const view = new EnvironmentWorkspaceView(inspected, {
       workDir: this.workspace.workspaceDir,
       additionalDirs: this.workspace.additionalDirs,
     });
+    const env = view.host;
     const workspace = { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
     const path = resolvePathAccessPath(args.path, {
       env,
@@ -256,16 +257,16 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
           homeDir: env.homeDir,
         }),
       execute: async () => {
-        const lease = this.runtime.acquire(['fs']);
+        const lease = await acquireOrWhenReady(this.environment, ['fs']);
         try {
-          if (lease.runtime.identity.generation !== inspected.identity.generation) {
-            return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
+          if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
+            return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
           }
-          const accessError = await checkRealPathWithinWorkspace(lease.runtime.fs!, path, workspace, env.pathClass);
+          const accessError = await checkRealPathWithinWorkspace(lease.environment.fs!, path, workspace, env.pathClass);
           if (accessError !== undefined) {
             return { isError: true, output: accessError.message };
           }
-          return await this.execution(args, runtimeFileSource(lease.runtime.fs!, path), env);
+          return await this.execution(args, environmentFileSource(lease.environment.fs!, path), env);
         } finally {
           lease.dispose();
         }

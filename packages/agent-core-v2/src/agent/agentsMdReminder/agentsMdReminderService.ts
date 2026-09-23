@@ -1,6 +1,7 @@
 import { basename, dirname, isAbsolute, join, normalize } from 'pathe';
 
 import { Disposable } from '#/_base/di/lifecycle';
+import { ILogService } from '#/_base/log/log';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
@@ -10,7 +11,9 @@ import type { AgentsMdReminderShownEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { WatchChange } from '#human/utils/watch';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { acquireEnvironmentLease } from '#/agent/permissionPolicy/policies/environment-lease';
+import { DEFAULT_ENVIRONMENT_HOST } from '#/environment/environmentDefaults';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { normalizeUserPath } from '#/tool/path-access';
@@ -73,12 +76,13 @@ export class AgentAgentsMdReminderService
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionContext private readonly sessionContext: ISessionContext,
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IBashParserService private readonly bashParser: IBashParserService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
+    @ILogService private readonly log: ILogService,
   ) {
     super();
     this.states.contributeState(agentsMdReminderKnownKey);
@@ -166,10 +170,13 @@ export class AgentAgentsMdReminderService
 
   private async ensureSeeded(): Promise<void> {
     if (this.states.get(agentsMdReminderSeededKey)) return;
-    const lease = this.runtime.acquire(['fs']);
+    const lease = acquireEnvironmentLease(this.environment, ['fs']);
+    if (lease === undefined) return;
     try {
+      const homeDir = lease.environment.host?.homeDir;
+      if (homeDir === undefined) return;
       const { paths } = await loadAgentsMdDetailed(
-        { fs: lease.runtime.fs!, homeDir: lease.runtime.environment.homeDir },
+        { fs: lease.environment.fs!, homeDir },
         this.agentCwd,
         this.bootstrap.homeDir,
       );
@@ -234,8 +241,9 @@ export class AgentAgentsMdReminderService
 
   private targetDirs(ctx: ToolDidExecuteContext): { dirs: string[]; selfKnown: string[] } {
     const selfKnown: string[] = [];
-    const lease = this.runtime.acquire();
-    const env = lease.runtime.environment;
+    const lease = acquireEnvironmentLease(this.environment);
+    if (lease === undefined) return { dirs: [], selfKnown };
+    const env = lease.environment.host ?? DEFAULT_ENVIRONMENT_HOST;
     lease.dispose();
     switch (ctx.toolCall.name) {
       case 'Read':
@@ -249,7 +257,7 @@ export class AgentAgentsMdReminderService
         const command = stringArg(args, 'command');
         if (command === undefined) return { dirs: [], selfKnown };
         const cwdArg = stringArg(args, 'cwd');
-        const base = hostPath(this.sessionContext.cwd, env.pathClass);
+        const base = hostPath(this.environment.workspaceRoots().workDir, env.pathClass);
         const normalizedCwdArg =
           cwdArg === undefined ? undefined : normalizeUserPath(cwdArg, env.pathClass);
         const effectiveCwd =
@@ -306,9 +314,10 @@ export class AgentAgentsMdReminderService
   }
 
   private async probeDir(dir: string): Promise<string[]> {
-    const lease = this.runtime.acquire(['fs']);
+    const lease = acquireEnvironmentLease(this.environment, ['fs']);
+    if (lease === undefined) return [];
     try {
-      const fs = lease.runtime.fs!;
+      const fs = lease.environment.fs!;
       const anchor = await this.nearestExistingDir(fs, dir);
       if (anchor === undefined) return [];
       const deps = { fs };
@@ -334,7 +343,10 @@ export class AgentAgentsMdReminderService
       const stat = await fs.stat(current).catch(() => undefined);
       if (stat?.isDirectory === true) return current;
       const parent = dirname(current);
-      if (parent === current) return undefined;
+      if (parent === current) {
+        this.log.debug('agentsMdReminder probe found no existing anchor directory', { path });
+        return undefined;
+      }
       current = parent;
     }
   }

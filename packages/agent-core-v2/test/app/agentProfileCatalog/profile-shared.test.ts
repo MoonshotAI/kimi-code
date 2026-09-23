@@ -104,6 +104,15 @@ describe('systemPromptVars', () => {
     expect(systemPromptVars({}, { skillActive: true })['plugin_sections']).toBe('');
   });
 
+  it('composes the available environments section only when environments are listed', () => {
+    const vars = systemPromptVars({ environmentsInfo: '- `local` (ready, current)' }, { skillActive: true });
+
+    expect(vars['environments_section']).toContain('## Available environments');
+    expect(vars['environments_section']).toContain('change_environment');
+    expect(vars['environments_section']).toContain('- `local` (ready, current)');
+    expect(systemPromptVars({}, { skillActive: true })['environments_section']).toBe('');
+  });
+
   it('defaults host-identity variables to the CLI text', () => {
     const vars = systemPromptVars({}, { skillActive: true });
 

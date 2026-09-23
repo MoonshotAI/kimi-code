@@ -89,10 +89,10 @@ interface UnregisterToolPayload { readonly name: string }
 import { type UsageStatus } from '#/agent/usage/usage';
 import { type PromptWithSkillsInput, type PromptWithSkillsResult, type SkillActivationInput } from '#/features/skill/skill';
 import { IAgentSkillService } from '#/features/skill/skillService';
-import { IAgentRuntimeBindingSeed } from '#/agent/runtimeBinding/runtimeBinding';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import type { RuntimeLease } from '#/runtime/runtime';
-import { LocalRuntime } from '#/runtime/localRuntime';
+import { IAgentEnvironmentBindingSeed, IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import type { EnvironmentBinding, EnvironmentLease } from '#/environment/environment';
+import { LocalEnvironment } from '#/environment/localEnvironment';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
 import type {
   ExecutableToolOutput as ToolOutput,
@@ -102,6 +102,7 @@ import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { ISessionStateService } from '#/session/state/sessionState';
+import { workspaceContextAdditionalDirsKey } from '#/session/workspaceContext/workspaceContextService';
 import type { StateKey } from '#/state/state';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
@@ -722,6 +723,7 @@ const noopHookRunner: IExternalHooksRunnerService = {
   _serviceBrand: undefined,
   ready: Promise.resolve(),
   onDidReload: Event.None as Event<void>,
+  onDidHookError: Event.None as IExternalHooksRunnerService['onDidHookError'],
   trigger: async () => [],
   triggerBlock: async () => undefined,
   fireAndForgetTrigger: async () => [],
@@ -1335,29 +1337,47 @@ export class AgentTestContext {
       seeds: collectScopeSeed(
         [
           (reg) => {
-            reg.defineInstance(IAgentRuntimeBindingSeed, {
+            reg.defineInstance(IAgentEnvironmentBindingSeed, {
               _serviceBrand: undefined,
-              binding: { workspaceId: 'workspace-1', runtimeId: 'local' },
+              binding: { environmentId: 'local' },
             });
-            const runtime = new LocalRuntime(
-              'workspace-1',
-              this.root.accessor.get(IHostEnvironment),
+            const harnessBinding = { environmentId: 'local' };
+            reg.defineInstance<IAgentEnvironmentBindingService>(IAgentEnvironmentBindingService, {
+              _serviceBrand: undefined,
+              onDidChange: Event.None as IAgentEnvironmentBindingService['onDidChange'],
+              get current() {
+                return harnessBinding;
+              },
+              set: (next: EnvironmentBinding) => next,
+              switch: (environmentId: string, cwd?: string) => ({ ...harnessBinding, environmentId, cwd }),
+              connectAndSwitch: async (environmentId: string, cwd?: string) => ({ ...harnessBinding, environmentId, cwd }),
+              connectAndSwitchInTurn: async (environmentId: string, cwd?: string) => ({ ...harnessBinding, environmentId, cwd }),
+            });
+            const environment = new LocalEnvironment(this.root.accessor.get(IHostEnvironment),
               this.root.accessor.get(IHostFileSystem),
               this.root.accessor.get(IHostProcessService),
               this.root.accessor.get(IHostTerminalService),
             );
-            reg.defineInstance<IAgentRuntimeService>(IAgentRuntimeService, {
+            reg.defineInstance<IAgentEnvironmentService>(IAgentEnvironmentService, {
               _serviceBrand: undefined,
               onDidChange: () => ({ dispose: () => {} }),
-              isAvailable: (required = []) => required.every((capability) => runtime.capabilities.has(capability)),
-              inspect: () => runtime,
-              acquire: (required = []): RuntimeLease => {
-                const missing = required.filter((capability) => !runtime.capabilities.has(capability));
+              isAvailable: (required = []) => required.every((capability) => environment.capabilities.has(capability)),
+              inspect: () => environment,
+              acquire: (required = []): EnvironmentLease => {
+                const missing = required.filter((capability) => !environment.capabilities.has(capability));
                 if (missing.length > 0) {
-                  throw new Error(`test runtime missing capabilities: ${missing.join(', ')}`);
+                  throw new Error(`test environment missing capabilities: ${missing.join(', ')}`);
                 }
-                return { runtime, track: (resource) => resource, dispose: () => {} };
+                return { environment, track: (resource) => resource, dispose: () => {} };
               },
+              acquireWhenReady(required = []) { return Promise.resolve(this.acquire(required)); },
+              reconnect: async () => {},
+              workspaceRoots: () => ({
+                workDir: this.session.accessor.get(ISessionContext).cwd,
+                additionalDirs: this.session.accessor
+                  .get(ISessionStateService)
+                  .get(workspaceContextAdditionalDirsKey),
+              }),
             });
             reg.defineDescriptor(
               IWireService,
@@ -2332,6 +2352,7 @@ function createWorkspaceContextStub(
       }
       return target;
     },
+    setWorkDir: () => {},
   };
 }
 

@@ -7,9 +7,8 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
 import { IFileEditService } from '#/app/edit/fileEdit';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import type { Runtime } from '#/runtime/runtime';
-import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
-import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
+import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
+import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
@@ -30,26 +29,27 @@ export class EditTool implements IEditTool {
 
   constructor(
     @IFileEditService private readonly editor: IFileEditService,
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
   ) {}
 
-  private workspaceConfig(runtime: Runtime): WorkspaceConfig {
-    const view = new RuntimeWorkspaceView(runtime, {
+  private workspaceConfig(view: EnvironmentWorkspaceView): WorkspaceConfig {
+    return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
+  }
+
+  resolveExecution(args: EditInput): ToolExecution {
+    const inspected = this.environment.inspect();
+    const expectedGeneration = pinnedGeneration(inspected);
+    const view = new EnvironmentWorkspaceView(inspected, {
       workDir: this.workspaceCtx.workDir,
       additionalDirs: [
         ...this.workspaceCtx.additionalDirs,
         ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
       ],
     });
-    return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
-  }
-
-  resolveExecution(args: EditInput): ToolExecution {
-    const inspected = inspectAgentRuntime(this.runtime);
-    const env = inspected.environment;
-    const workspace = this.workspaceConfig(inspected);
+    const env = view.host;
+    const workspace = this.workspaceConfig(view);
     const path = resolvePathAccessPath(args.path, {
       env,
       workspace,
@@ -73,16 +73,16 @@ export class EditTool implements IEditTool {
           homeDir: env.homeDir,
         }),
       execute: async () => {
-        const lease = this.runtime.acquire(['fs']);
+        const lease = await acquireOrWhenReady(this.environment, ['fs']);
         try {
-          if (lease.runtime.identity.generation !== inspected.identity.generation) {
-            return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
+          if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
+            return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
           }
-          const accessError = await checkRealPathWriteTarget(lease.runtime.fs!, path, workspace, env.pathClass);
+          const accessError = await checkRealPathWriteTarget(lease.environment.fs!, path, workspace, env.pathClass);
           if (accessError !== undefined) {
             return { isError: true, output: accessError.message };
           }
-          return await this.execution(args, path, lease.runtime.fs!);
+          return await this.execution(args, path, lease.environment.fs!);
         } finally {
           lease.dispose();
         }
@@ -120,5 +120,5 @@ export class EditTool implements IEditTool {
 registerAgentToolService(IEditTool, EditTool, {
   name: 'Edit',
   domain: 'edit',
-  requiredRuntimeCapabilities: ['fs'],
+  requiredEnvironmentCapabilities: ['fs'],
 });

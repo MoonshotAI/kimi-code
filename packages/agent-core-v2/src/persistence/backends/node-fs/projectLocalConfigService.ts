@@ -11,6 +11,7 @@ import {
 } from '#/app/projectLocalConfig/projectLocalConfig';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { OsFsErrors } from '#/os/interface/hostFsErrors';
 import { StorageError, StorageErrors, toStorageIoError } from '#/persistence/interface/storage';
 import { isWithinDirectory } from '#/tool/path-access';
 
@@ -323,7 +324,12 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function isPathMissing(error: unknown): boolean {
   const code = getErrorCode(unwrapErrorCause(error));
-  return code === 'ENOENT' || code === 'ENOTDIR';
+  return (
+    code === 'ENOENT' ||
+    code === 'ENOTDIR' ||
+    code === OsFsErrors.codes.OS_FS_NOT_FOUND ||
+    code === OsFsErrors.codes.OS_FS_NOT_DIRECTORY
+  );
 }
 
 function getErrorCode(error: unknown): unknown {

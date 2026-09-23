@@ -10,7 +10,9 @@ function strip(text: string): string {
   return text.replaceAll(ANSI_SGR, '');
 }
 
-function renderLines(gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[] = []): string[] {
+function renderLines(
+  gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[] = [],
+): string[] {
   const prompt = new TrustPromptComponent({
     workDir: '/tmp/demo-workspace',
     gatedMcpServers,

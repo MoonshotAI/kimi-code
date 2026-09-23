@@ -6,7 +6,7 @@ import type { FinishReason } from '#human/llm/finish-reason';
 import type { ContentPart } from '#human/llm/message';
 import type { TokenUsage } from '#human/llm/usage';
 import type { Hooks } from '#/hooks';
-import type { UserEntry } from '#human/agent/turn';
+import type { UserEntry } from '#human/agent/historyEntry';
 import { LoopErrors } from './errors';
 import type {
   MachineEngine,

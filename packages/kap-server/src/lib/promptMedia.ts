@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto';
-import { createReadStream, createWriteStream, type Stats } from 'node:fs';
-import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { createReadStream, type Stats } from 'node:fs';
+import { mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join } from 'node:path';
 import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
 
 import {
   buildDaemonFileUrl,
@@ -13,6 +12,7 @@ import {
   compressImageForModel,
   decodeBase64Prefix,
   Error2,
+  ErrorCodes,
   fileNotFoundError,
   isModelAcceptedImageMime,
   MAX_IMAGE_DECODE_BYTES,
@@ -33,6 +33,8 @@ import {
   VIDEO_MIME_BY_SUFFIX,
 } from '@moonshot-ai/agent-core-v2/agent/media/mediaRef';
 import { isSensitiveFile } from '@moonshot-ai/agent-core-v2/tool/path-access';
+import type { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
+import type { Environment, EnvironmentPath } from '@moonshot-ai/agent-core-v2/environment/environment';
 
 import type { PromptSubmission } from '../protocol/rest-prompt';
 
@@ -129,15 +131,82 @@ export function contentToCoreParts(content: WireContent): ContentPart[] {
 
 export interface ResolvePromptMediaOptions {
   readonly resolveOriginalsDir?: () => Promise<string | undefined>;
+  readonly resolveOriginalsTarget?: () => Promise<PromptAttachmentsTarget | undefined>;
   readonly resolveAttachmentsDir?: () => Promise<string | undefined>;
+  readonly resolveAttachmentsTarget?: () => Promise<PromptAttachmentsTarget | undefined>;
   readonly telemetry?: ITelemetryService;
   readonly providerType?: string;
+}
+
+export interface PromptAttachmentsTarget {
+  readonly dir: string;
+  readonly fs: IHostFileSystem;
+  readonly path: EnvironmentPath;
+}
+
+export function environmentAttachmentsTarget(environment: Environment): PromptAttachmentsTarget {
+  return environmentTempDirTarget(environment, 'attachments');
+}
+
+export function environmentOriginalsTarget(environment: Environment): PromptAttachmentsTarget {
+  return environmentTempDirTarget(environment, 'original-images');
+}
+
+function environmentTempDirTarget(environment: Environment, subdir: string): PromptAttachmentsTarget {
+  const tempDir = (environment.host as Environment['host'] & { tempDir?: string }).tempDir;
+  if (tempDir === undefined || environment.fs === undefined || environment.path === undefined) {
+    throw new Error2(
+      ErrorCodes.INTERNAL,
+      `environment ${environment.identity.environmentId} does not provide a writable tempDir`,
+    );
+  }
+  return {
+    dir: environment.path.join(tempDir, 'kimi-code', subdir),
+    fs: environment.fs,
+    path: environment.path,
+  };
+}
+
+interface AttachmentSink {
+  readonly dir: string;
+  join(...parts: readonly string[]): string;
+  prepare(): Promise<void>;
+  size(path: string): Promise<number | undefined>;
+  write(path: string, data: Uint8Array | AsyncIterable<Uint8Array>): Promise<void>;
+  remove(path: string): Promise<void>;
+}
+
+function localAttachmentSink(dir: string): AttachmentSink {
+  return {
+    dir,
+    join: (...parts) => join(...parts),
+    prepare: async () => {
+      await mkdir(dir, { recursive: true });
+    },
+    size: (path) => stat(path).then((info) => info.size, () => undefined),
+    write: (path, data) => writeFile(path, data),
+    remove: (path) => rm(path, { force: true }),
+  };
+}
+
+function environmentAttachmentSink(target: PromptAttachmentsTarget): AttachmentSink {
+  return {
+    dir: target.dir,
+    join: (...parts) => target.path.join(...parts),
+    prepare: async () => {
+      await target.fs.mkdir(target.dir, { recursive: true });
+    },
+    size: (path) => target.fs.stat(path).then((info) => info.size, () => undefined),
+    write: (path, data) => target.fs.writeBytes(path, data),
+    remove: (path) => target.fs.remove(path),
+  };
 }
 
 export interface PromptMediaPreparation {
   readonly content: WireContent;
   readonly attachments: readonly PromptFileAttachment[];
   readonly discard: () => Promise<void>;
+  readonly discardStaged: () => Promise<void>;
 }
 
 export async function resolvePromptMediaFiles(
@@ -155,24 +224,51 @@ export async function resolvePromptMediaFiles(
       [...ownedFileIds].map((fileId) => store.delete(fileId).catch(() => undefined)),
     );
   };
-  let changed = false;
-  let originalsDir: string | undefined;
-  let originalsDirResolved = false;
-  const resolveOriginalsDir = async (): Promise<string | undefined> => {
-    if (!originalsDirResolved) {
-      originalsDirResolved = true;
-      originalsDir = await options.resolveOriginalsDir?.().catch(() => undefined);
-    }
-    return originalsDir;
+  let stagedDiscarded = false;
+  const discardStaged = async (): Promise<void> => {
+    await discard();
+    if (stagedDiscarded) return;
+    stagedDiscarded = true;
+    if (attachmentsSink === undefined || stagedPaths.size === 0) return;
+    const sink = attachmentsSink;
+    await Promise.all([...stagedPaths].map((path) => sink.remove(path).catch(() => undefined)));
   };
-  let attachmentsDir: string | undefined;
-  let attachmentsDirResolved = false;
-  const resolveAttachmentsDir = async (): Promise<string> => {
-    if (!attachmentsDirResolved) {
-      attachmentsDirResolved = true;
-      attachmentsDir = await options.resolveAttachmentsDir?.().catch(() => undefined);
+  let changed = false;
+  let originals:
+    | { readonly dir?: string; readonly fs?: IHostFileSystem; readonly path?: EnvironmentPath }
+    | undefined;
+  let originalsResolved = false;
+  const resolveOriginals = async (): Promise<
+    { readonly dir?: string; readonly fs?: IHostFileSystem; readonly path?: EnvironmentPath } | undefined
+  > => {
+    if (!originalsResolved) {
+      originalsResolved = true;
+      const target = await options.resolveOriginalsTarget?.();
+      if (target !== undefined) {
+        originals = { dir: target.dir, fs: target.fs, path: target.path };
+      } else {
+        originals = { dir: await options.resolveOriginalsDir?.().catch(() => undefined) };
+      }
     }
-    return attachmentsDir ?? cacheDir;
+    return originals;
+  };
+  const stagedPaths = new Set<string>();
+  let attachmentsSink: AttachmentSink | undefined;
+  const resolveAttachmentsSink = async (): Promise<AttachmentSink> => {
+    if (attachmentsSink !== undefined) return attachmentsSink;
+    const target = await options.resolveAttachmentsTarget?.();
+    const base =
+      target !== undefined
+        ? environmentAttachmentSink(target)
+        : localAttachmentSink(await options.resolveAttachmentsDir?.().catch(() => undefined) ?? cacheDir);
+    attachmentsSink = {
+      ...base,
+      write: async (path, data) => {
+        stagedPaths.add(path);
+        await base.write(path, data);
+      },
+    };
+    return attachmentsSink;
   };
   const attachments: PromptFileAttachment[] = [];
   const content: WireContent = [];
@@ -189,7 +285,7 @@ export async function resolvePromptMediaFiles(
           const persisted = await persistAttachmentBytes(
             bytes,
             `${createHash('sha256').update(bytes).digest('hex').slice(0, 32)}-${sanitizeAttachmentName(name)}`,
-            await resolveAttachmentsDir(),
+            await resolveAttachmentsSink(),
           );
           content.push({
             type: 'text',
@@ -209,11 +305,11 @@ export async function resolvePromptMediaFiles(
           telemetrySource: 'prompt_inline',
         });
         if (compressed.changed) {
-          const dir = await resolveOriginalsDir();
+          const originals = await resolveOriginals();
           const originalPath = await persistOriginalImage(
             Buffer.from(part.source.data, 'base64'),
             part.source.media_type,
-            { dir },
+            { dir: originals?.dir, fs: originals?.fs, path: originals?.path },
           );
           content.push({
             type: 'text',
@@ -277,7 +373,7 @@ export async function resolvePromptMediaFiles(
           throw new Error2('validation.failed', 'file part requires file_id or path');
         }
         const file = await store.get(part.file_id);
-        const attachedPath = await materializeAttachmentToDir(file, await resolveAttachmentsDir());
+        const attachedPath = await materializeAttachment(file, await resolveAttachmentsSink());
         content.push({
           type: 'text',
           text: buildAttachedFileNotice(file.meta.name, file.meta.media_type, file.meta.size, attachedPath),
@@ -399,7 +495,7 @@ export async function resolvePromptMediaFiles(
           const persisted = await persistAttachmentBytes(
             data,
             `${file.meta.id}-${sanitizeAttachmentName(name)}`,
-            await resolveAttachmentsDir(),
+            await resolveAttachmentsSink(),
           );
           content.push({
             type: 'text',
@@ -424,8 +520,8 @@ export async function resolvePromptMediaFiles(
           telemetrySource: 'prompt_file',
         });
         if (compressed.changed) {
-          const dir = await resolveOriginalsDir();
-          const originalPath = await persistOriginalImage(data, mediaType, { dir });
+          const originals = await resolveOriginals();
+          const originalPath = await persistOriginalImage(data, mediaType, { dir: originals?.dir, fs: originals?.fs, path: originals?.path });
           content.push({
             type: 'text',
             text: buildImageCompressionCaption({
@@ -471,9 +567,9 @@ export async function resolvePromptMediaFiles(
       });
       changed = true;
     }
-    return { content: changed ? content : input, attachments, discard };
+    return { content: changed ? content : input, attachments, discard, discardStaged };
   } catch (error) {
-    await discard();
+    await discardStaged();
     throw error;
   }
 }
@@ -495,26 +591,23 @@ function sanitizeAttachmentName(name: string): string {
   return cleaned.length > 0 ? cleaned : 'attachment';
 }
 
-async function materializeAttachmentToDir(file: GetResult, dir: string): Promise<string> {
-  await mkdir(dir, { recursive: true });
-  const target = join(dir, `${file.meta.id}-${sanitizeAttachmentName(file.meta.name)}`);
-  const info = await stat(target).catch(() => undefined);
-  if (info?.size === file.meta.size) return target;
-
-  await pipeline(file.stream(), createWriteStream(target));
+async function materializeAttachment(file: GetResult, sink: AttachmentSink): Promise<string> {
+  await sink.prepare();
+  const target = sink.join(sink.dir, `${file.meta.id}-${sanitizeAttachmentName(file.meta.name)}`);
+  if ((await sink.size(target)) === file.meta.size) return target;
+  await sink.write(target, file.stream());
   return target;
 }
 
 async function persistAttachmentBytes(
   bytes: Uint8Array,
   name: string,
-  dir: string,
+  sink: AttachmentSink,
 ): Promise<string | null> {
   try {
-    await mkdir(dir, { recursive: true });
-    const target = join(dir, name);
-    const info = await stat(target).catch(() => undefined);
-    if (info?.size !== bytes.length) await writeFile(target, bytes);
+    await sink.prepare();
+    const target = sink.join(sink.dir, name);
+    if ((await sink.size(target)) !== bytes.length) await sink.write(target, bytes);
     return target;
   } catch {
     return null;

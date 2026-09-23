@@ -10,6 +10,10 @@ const HUMAN_ROOT = join(SRC_ROOT, 'human');
 const ADAPTER_ROOT = join(SRC_ROOT, 'llm-adapter');
 const LOOP_MACHINE_ADAPTER_ROOT = join(SRC_ROOT, 'agent/loop/machine');
 const SESSION_LIFECYCLE_ADAPTER_ROOT = join(SRC_ROOT, 'session/agentLifecycle');
+const REMOTE_SERVER_ROOT = join(SRC_ROOT, 'remote/server');
+const REMOTE_SERVER_ALLOWED_RE =
+  /^#\/(?:remote\/protocol|os\/interface|_base\/execEnv)(?:\/|$)/;
+const REMOTE_SERVER_MODULE_RE = /\/remote\/server(?:\/|$)/;
 
 const SELF_PACKAGE_PREFIX = '@moonshot-ai/agent-core-v2/';
 const KOSONG_PATH_RE = /(?:^|\/)kosong(?:\/|$)/;
@@ -40,16 +44,38 @@ function basesInternalViolation(absFile, targetAbs, specifier) {
   return `protocol format modules are internal to the requester pipeline ('${specifier}') — only llm/requester/bases code and tests may import format/lower/patterns; everyone else speaks contract/trait/requester`;
 }
 
+function remoteServerViolation(absFile, specifier) {
+  if (!isInside(REMOTE_SERVER_ROOT, absFile)) return undefined;
+  if (specifier.startsWith('.') || specifier.startsWith('node:')) return undefined;
+  if (REMOTE_SERVER_ALLOWED_RE.test(specifier)) return undefined;
+  return `the remote executor stays light: src/remote/server may import only node builtins, relative modules, #/remote/protocol, #/os/interface and #/_base/execEnv ('${specifier}')`;
+}
+
+function remoteServerConsumerViolation(absFile, specifier) {
+  if (isInside(REMOTE_SERVER_ROOT, absFile) || TEST_DIR_RE.test(absFile)) {
+    return undefined;
+  }
+  const targetAbs = resolveIntraV2(specifier, absFile);
+  if (targetAbs === undefined || !REMOTE_SERVER_MODULE_RE.test(stripTs(targetAbs))) {
+    return undefined;
+  }
+  return `engine code never imports the remote executor ('${specifier}') — only tests and the CLI exec-server entry may touch src/remote/server; engine code speaks the client side (#/remote)`;
+}
+
 const HUMAN_VOCABULARY = new Set([
+  'agent/historyEntry',
   'agent/origin',
   'llm/message',
   'llm/usage',
   'llm/capability',
   'llm/thinking',
+  'llm/errorStatus',
   'llm/finish-reason',
   'llm/response-format',
-  'llm/media/upload',
+  'llm/media/imageCaption',
   'llm/media/image-formats',
+  'llm/media/pathTag',
+  'llm/media/upload',
   'llm/requester/requester',
   'llm/toolCallIdNormalizer',
   'llm-kimi/trait',
@@ -73,7 +99,7 @@ const V2_ONLY_FIRST_SEGMENTS = new Set([
   'errors',
   'debug',
   'program',
-  'runtime',
+  'environment',
   '_base',
 ]);
 
@@ -142,6 +168,17 @@ export function checkSource(source, absFile) {
     }
 
     if (!inSrc) continue;
+
+    const remoteServer = remoteServerViolation(absFile, specifier);
+    if (remoteServer !== undefined) {
+      violations.push({ file: absFile, line, message: remoteServer });
+      continue;
+    }
+    const remoteServerConsumer = remoteServerConsumerViolation(absFile, specifier);
+    if (remoteServerConsumer !== undefined) {
+      violations.push({ file: absFile, line, message: remoteServerConsumer });
+      continue;
+    }
 
     const targetAbs = resolveIntraV2(specifier, absFile);
     if (targetAbs !== undefined) {

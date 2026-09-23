@@ -15,6 +15,7 @@ import type {
   PluginCommandDef,
   PromptPart,
   Session,
+  SessionEnvironmentType,
   SkillSummary,
   TokenUsage,
   TurnEndedEvent,
@@ -153,6 +154,7 @@ import {
   type LivePaneState,
   type LoginProgressSpinnerHandle,
   type QueuedMessage,
+  type EnvironmentSlotState,
   type SteerInputItem,
   type StepRetryState,
   type TranscriptEntry,
@@ -184,6 +186,7 @@ import { combineSteerInput } from './utils/steer-input';
 import { startupTrace } from '#/utils/startup-trace';
 import { REPLAY_FETCH_TURN_LIMIT } from './utils/message-replay';
 import { hasPatchChanges } from './utils/object-patch';
+import { remoteMentionSuggester } from './utils/remote-mention-suggest';
 import { beginScreenTakeover, endScreenTakeover, type ScreenTakeover } from './utils/screen-takeover';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
 import { formatStepRetryDetail, formatStepRetryLabel } from './utils/step-retry';
@@ -342,6 +345,8 @@ export class KimiTUI {
   state: TUIState;
   /** In-flight lazy session creation (v2 engine), shared by concurrent first-use triggers. */
   private ensureSessionPromise: Promise<Session | undefined> | null = null;
+  /** Type of the validated `--environment` startup declaration, used for the synthetic connecting footer slot. */
+  private startupEnvironmentType: SessionEnvironmentType | undefined;
   private readonly cacheHint = new CacheHintController(this);
   /** Staged prompt media lifecycle (daemon uploads + cache copies) — see StagingLeaseTracker. */
   private readonly staging: StagingLeaseTracker;
@@ -464,6 +469,7 @@ export class KimiTUI {
         model: startupInput.cliOptions.model,
         agentProfile: startupInput.agentProfile,
         agentFiles: startupInput.cliOptions.agentFiles,
+        environment: startupInput.cliOptions.environment,
         startupNotice: startupInput.startupNotice,
       },
     };
@@ -544,6 +550,7 @@ export class KimiTUI {
       this.state.appState.additionalDirs,
       () => this.state.appState.inputMode,
       skillCommandNames,
+      remoteMentionSuggester(this.session, this.state.appState.environment),
     );
     this.state.editor.setAutocompleteProvider(provider);
 
@@ -562,6 +569,10 @@ export class KimiTUI {
   refreshSlashCommandAutocomplete(): void {
     this.sessionEventHandler.notifications.setEnabled(isExperimentalFlagEnabled('notify_user'));
     this.setupAutocomplete();
+  }
+
+  requestRender(): void {
+    this.state.ui.requestRender();
   }
 
   async refreshSkillCommands(session?: SkillListSession): Promise<void> {
@@ -657,7 +668,17 @@ export class KimiTUI {
             await this.onExit?.(failed ? 1 : 0);
             return;
           }
-          const shouldReplayHistory = await this.initMainTui();
+          const startupSpinner = this.showProgressSpinner(this.startupProgressLabel());
+          const shouldReplayHistory = await this.initMainTui().then(
+            (result) => {
+              startupSpinner.stop({ ok: true, label: 'Ready.' });
+              return result;
+            },
+            (error: unknown) => {
+              startupSpinner.stop({ ok: false, label: 'Startup failed.' });
+              throw error;
+            },
+          );
           this.startBackgroundFdAutocomplete();
           await this.finishStartup(shouldReplayHistory);
         } catch (error) {
@@ -669,15 +690,21 @@ export class KimiTUI {
       }
 
       startupTrace('initMainTui:begin');
-      const shouldReplayHistory = await this.initMainTui();
+      if (!trustPromptStartedLoop) this.startEventLoop();
+      const startupSpinner = this.showProgressSpinner(this.startupProgressLabel());
+      let shouldReplayHistory: boolean;
+      try {
+        shouldReplayHistory = await this.initMainTui();
+      } catch (error) {
+        startupSpinner.stop({ ok: false, label: 'Startup failed.' });
+        this.disposeTerminalTracking();
+        this.state.ui.stop();
+        throw error;
+      }
+      startupSpinner.stop({ ok: true, label: 'Ready.' });
       startupTrace('initMainTui:end');
       // Debug-only input→render latency overlay (KIMI_TUI_INPUT_LATENCY=1).
       if (process.env['KIMI_TUI_INPUT_LATENCY']) installInputLatencyProbe(this.state.ui);
-      // When the trust prompt already started the event loop, starting it
-      // again would re-run pi-tui's terminal.start() — stacking a second
-      // Kitty keyboard-protocol push (leaking CSI-u mode past exit) and
-      // duplicate stdin listeners.
-      if (!trustPromptStartedLoop) this.startEventLoop();
       startupTrace('eventLoop:started');
       try {
         this.startBackgroundFdAutocomplete();
@@ -773,6 +800,15 @@ export class KimiTUI {
     this.refreshTerminalThemeTracking();
   }
 
+  private startupProgressLabel(): string {
+    const { startup } = this.options;
+    if (startup.sessionFlag !== undefined || startup.continueLast) return 'Restoring session…';
+    if (startup.environment !== undefined && startup.environment !== 'local') {
+      return `Connecting to ${startup.environment}…`;
+    }
+    return 'Preparing Kimi Code…';
+  }
+
   private startClipboardImageHintController(): void {
     this.clipboardImageHintController = new ClipboardImageHintController({
       ui: this.state.ui,
@@ -862,6 +898,7 @@ export class KimiTUI {
     }
     if (this.session !== undefined) {
       this.sessionEventHandler.startSubscription();
+      void this.refreshEnvironmentSlot(this.session);
       void this.showSessionWarnings(this.session);
     }
     if (shouldReplayHistory) {
@@ -982,6 +1019,9 @@ export class KimiTUI {
         // time (model, permission, plan mode, thinking effort, context cap).
         await this.hydrateLazyConfigDefaults();
         this.appendStartupNotice(SESSIONLESS_STARTUP_NOTICE);
+        if (startup.environment !== undefined && startup.environment !== 'local') {
+          await this.prepareStartupEnvironment(startup.environment);
+        }
       }
       if (session !== undefined && shouldReplayHistory) {
         await this.applyStartupModesToResumedSession(session);
@@ -1032,6 +1072,7 @@ export class KimiTUI {
     this.editorKeyboard.dispose();
     this.surveyController.dispose();
     this.state.footer.dispose();
+    this.disposeEditorReplacement();
     for (const dispose of this.reverseRpcDisposers) {
       dispose();
     }
@@ -1780,6 +1821,9 @@ export class KimiTUI {
   handleTurnEnded(event: TurnEndedEvent): void {
     this.staging.handleTurnEnded(event);
     this.surveyController.notifyTurnEnded(event.traceId);
+    // A disconnect mid-turn surfaces here: the footer slot flips to the error
+    // color. The next tool call reconnects.
+    void this.refreshEnvironmentSlot();
   }
 
   releaseStagingMedia(mediaAttachmentIds: readonly number[]): void {
@@ -2204,7 +2248,7 @@ export class KimiTUI {
   }
 
   // =========================================================================
-  // Session Runtime
+  // Session Environment
   // =========================================================================
 
   requireSession(): Session {
@@ -2212,6 +2256,104 @@ export class KimiTUI {
       throw new Error(NO_ACTIVE_SESSION_MESSAGE);
     }
     return this.session;
+  }
+
+  /**
+   * `--environment <id>` startup binding: resolve the declared type for the
+   * synthetic connecting slot, then pre-create the session in the background
+   * so the remote connect overlaps startup instead of blocking the first
+   * prompt. A bad id surfaces the engine's own createSession error on first
+   * use — no early validation here.
+   */
+  private async prepareStartupEnvironment(environmentId: string): Promise<void> {
+    try {
+      const declarations = await this.harness.listEnvironmentDeclarations();
+      const declared = declarations.find((entry) => entry.id === environmentId);
+      if (declared !== undefined) this.startupEnvironmentType = declared.type;
+    } catch {
+      // Declaration resolution failed (e.g. unreadable config): the slot
+      // falls back to the generic type and the background create surfaces
+      // the engine's own error.
+    }
+    void this.ensureSession();
+  }
+
+  /**
+   * While the `--environment` startup session is being created there is no
+   * binding to sync from yet; a synthetic connecting slot drives the same
+   * footer spinner the registry-backed slot shows once refreshEnvironmentSlot
+   * takes over.
+   */
+  private markStartupEnvironmentConnecting(): void {
+    const environmentId = this.options.startup.environment;
+    if (environmentId === undefined || environmentId === 'local') return;
+    const current = this.state.appState.environment;
+    if (current?.environmentId === environmentId && current.status === 'connecting') return;
+    this.setAppState({
+      environment: {
+        environmentId,
+        type: this.startupEnvironmentType ?? 'command',
+        status: 'connecting',
+      },
+    });
+  }
+
+  private clearStartupEnvironmentConnecting(): void {
+    const environmentId = this.options.startup.environment;
+    const current = this.state.appState.environment;
+    if (environmentId === undefined || current?.environmentId !== environmentId) return;
+    if (current.status !== 'connecting') return;
+    this.setAppState({ environment: undefined });
+  }
+
+  /**
+   * `/new` on a remote binding awaits the environment connect inside
+   * createSession (the engine builds the controller on the remote root), so
+   * surface the wait the same way the startup pre-create does: a synthetic
+   * connecting slot driving the footer spinner, plus a transcript status.
+   * Skipped when the slot already shows the target as usable — a live pooled
+   * connection makes creation fast, and flipping ready → connecting → ready
+   * would be noise. The real slot returns via refreshEnvironmentSlot once the
+   * session exists.
+   */
+  private markNewSessionEnvironmentConnecting(
+    environment: { readonly environmentId: string; readonly environmentCwd?: string } | undefined,
+  ): void {
+    if (environment === undefined || environment.environmentId === 'local') return;
+    const current = this.state.appState.environment;
+    if (
+      current?.environmentId === environment.environmentId &&
+      (current.status === 'ready' || current.status === 'connecting')
+    ) {
+      return;
+    }
+    this.setAppState({
+      environment: {
+        environmentId: environment.environmentId,
+        type:
+          current?.environmentId === environment.environmentId
+            ? current.type
+            : (this.startupEnvironmentType ?? 'command'),
+        status: 'connecting',
+        cwd: environment.environmentCwd,
+      },
+    });
+    this.showStatus(`Connecting to ${environment.environmentId}…`);
+  }
+
+  /**
+   * Undo markNewSessionEnvironmentConnecting when creation fails: the old
+   * session is still live, so re-sync its real slot; session-less there is no
+   * binding to re-sync and the synthetic slot is dropped.
+   */
+  private async restoreEnvironmentSlotAfterCreateFailure(): Promise<void> {
+    if (this.session !== undefined) {
+      await this.refreshEnvironmentSlot(this.session);
+      return;
+    }
+    if (this.state.appState.environment?.status === 'connecting') {
+      this.setAppState({ environment: undefined });
+    }
   }
 
   /**
@@ -2275,7 +2417,31 @@ export class KimiTUI {
     this.setAppState(patch);
   }
 
-  private async createSessionFromCurrentState(bindStartupAgent = false): Promise<Session> {
+  private async environmentForNewSession(): Promise<
+    { readonly environmentId: string; readonly environmentCwd?: string } | undefined
+  > {
+    const session = this.session;
+    if (session !== undefined) {
+      const binding = await session.getEnvironment();
+      if (binding.environmentId !== 'local' && binding.cwd === undefined) {
+        throw new Error(
+          `Cannot start a new session on ${binding.environmentId}: the current binding has no working directory`,
+        );
+      }
+      return {
+        environmentId: binding.environmentId,
+        environmentCwd: binding.cwd,
+      };
+    }
+    const startupEnvironment = this.options.startup.environment;
+    if (startupEnvironment === undefined) return undefined;
+    return { environmentId: startupEnvironment };
+  }
+
+  private async createSessionFromCurrentState(
+    bindStartupAgent = false,
+    inherited?: { readonly environmentId: string; readonly environmentCwd?: string },
+  ): Promise<Session> {
     // Background warm-up of the cache-hint config on every new session.
     this.cacheHint.refreshConfigInBackground();
     const model = this.state.appState.model.trim();
@@ -2310,14 +2476,23 @@ export class KimiTUI {
       options.additionalDirs = [...this.state.appState.additionalDirs];
     }
     if (bindStartupAgent) {
-      // The --agent/--agent-file startup binding is consumed by the first
-      // lazy-created session; `/new` sessions fall back to the default profile.
+      // --agent / --agent-file bind only the first lazy-created session.
+      // `/new` keeps the default profile.
       if (this.state.appState.agentProfile !== undefined) {
         options.agentProfile = this.state.appState.agentProfile;
       }
       if (this.state.appState.agentFiles !== undefined) {
         options.agentFiles = [...this.state.appState.agentFiles];
       }
+      if (this.options.startup.environment !== undefined) {
+        options.environmentId = this.options.startup.environment;
+      }
+    } else if (inherited !== undefined) {
+      // `/new` keeps the live binding, including an explicit switch back to
+      // local. A session-less `/new` passes the startup `--environment` here
+      // instead, so that flag is not discarded before the first session exists.
+      options.environmentId = inherited.environmentId;
+      options.environmentCwd = inherited.environmentCwd;
     }
     return this.harness.createSession(options);
   }
@@ -2354,15 +2529,17 @@ export class KimiTUI {
   }
 
   private async lazyCreateSession(): Promise<Session | undefined> {
+    this.markStartupEnvironmentConnecting();
     let session: Session;
     try {
       session = await this.createSessionFromCurrentState(true);
     } catch (error) {
+      this.clearStartupEnvironmentConnecting();
       const msg = formatErrorMessage(error);
       this.showError(`Failed to start a session: ${msg}`);
       return undefined;
     }
-    this.resetSessionRuntime();
+    this.resetSessionRuntime(true);
     await this.setSession(session);
     this.setAppState({ sessionId: session.id });
     try {
@@ -2370,6 +2547,7 @@ export class KimiTUI {
       await this.syncRuntimeState(session);
     } catch (error) {
       this.sessionEventHandler.startSubscription();
+      this.clearStartupEnvironmentConnecting();
       const msg = formatErrorMessage(error);
       this.showError(`Post-create setup failed: ${msg}`);
       return undefined;
@@ -2427,6 +2605,49 @@ export class KimiTUI {
       goal: goalResult.goal,
     });
     this.syncAdditionalDirs(session);
+    await this.refreshEnvironmentSlot(session);
+  }
+
+  /**
+   * Sync the footer environment slot with the session's current binding and the
+   * environment registry's connection status. A disconnect is footer state only;
+   * it does not write a transcript notice. Runs at session load, turn end,
+   * explicit environment actions, and on the engine's environment.status.changed
+   * hint (mid-session drops, reconnects).
+   */
+  async refreshEnvironmentSlot(session: Session | undefined = this.session): Promise<void> {
+    if (session === undefined) return;
+    let binding;
+    let list;
+    try {
+      [binding, list] = await Promise.all([session.getEnvironment(), session.listEnvironments()]);
+    } catch {
+      return;
+    }
+    if (this.session !== session) return;
+    const info = list.environments.find((entry) => entry.environmentId === binding.environmentId);
+    const next: EnvironmentSlotState = {
+      environmentId: binding.environmentId,
+      type: info?.type ?? (binding.environmentId === 'local' ? 'local' : 'command'),
+      status: info?.status ?? 'ready',
+      cwd: binding.cwd,
+      connectError: info?.connectError,
+    };
+    const previous = this.state.appState.environment;
+    if (
+      previous !== undefined &&
+      previous.environmentId === next.environmentId &&
+      previous.type === next.type &&
+      previous.status === next.status &&
+      previous.cwd === next.cwd &&
+      previous.connectError === next.connectError
+    ) {
+      return;
+    }
+    this.setAppState({ environment: next });
+    if (previous?.environmentId !== next.environmentId || previous?.type !== next.type) {
+      this.setupAutocomplete();
+    }
   }
 
   // Apply --auto/--yolo/--plan startup flags to a resumed session. The resumed
@@ -2488,7 +2709,7 @@ export class KimiTUI {
     this.session = undefined;
     this.state.swarmModeEntry = undefined;
     this.harness.setTelemetryContext({ sessionId: null });
-    this.setAppState({ goal: null });
+    this.setAppState({ goal: null, environment: undefined });
     return previous;
   }
 
@@ -2501,9 +2722,13 @@ export class KimiTUI {
 
   private registerSessionHandlers(session: Session): void {
     session.setApprovalHandler(
-      createApprovalRequestHandler(this.approvalController, (request, response) => {
-        this.appendApprovalTranscriptEntry(request, response);
-      }),
+      createApprovalRequestHandler(
+        this.approvalController,
+        (request, response) => {
+          this.appendApprovalTranscriptEntry(request, response);
+        },
+        (agentId) => this.resolveApprovalEnvironment(session, agentId),
+      ),
     );
     session.setQuestionHandler(createQuestionAskHandler(this.questionController));
   }
@@ -2615,12 +2840,15 @@ export class KimiTUI {
     this.state.terminal.setTitle(label);
   }
 
-  resetSessionRuntime(): void {
+  resetSessionRuntime(preserveQueue = false): void {
     this.aborted = false;
     this.cacheHint.resetRuntime();
     this.surveyController.reset();
     this.streamingUI.discardPending();
-    this.clearQueuedMessages();
+    // The lazy first creation keeps input queued while it was in flight (the
+    // queued messages belong to the session being created); every other
+    // reset discards the old session's backlog.
+    if (!preserveQueue) this.clearQueuedMessages();
     this.state.swarmModeEntry = undefined;
     this.streamingUI.resetToolCallState();
     this.streamingUI.resetToolUi();
@@ -2702,6 +2930,7 @@ export class KimiTUI {
       this.showError(`Failed to replay session history: ${msg}`);
     } finally {
       this.sessionEventHandler.startSubscription();
+      void this.refreshEnvironmentSlot(session);
     }
     const resumeState = session.getResumeState();
     this.surveyController.seedFromResumedAgents(resumeState?.sessionMetadata.agents ?? {});
@@ -2744,44 +2973,57 @@ export class KimiTUI {
     void this.showSessionWarnings(session);
   }
 
-  async createNewSession(): Promise<void> {
+  async createNewSession(inherited?: {
+    readonly environmentId: string;
+    readonly environmentCwd?: string;
+  }): Promise<void> {
     if (this.state.appState.isReplaying) {
       this.showError('Cannot start a new session while history is replaying.');
       return;
     }
 
-    let session: Session;
+    const progress = this.showProgressSpinner('Starting a new session…');
+    let ready = false;
     try {
-      session = await this.createSessionFromCurrentState();
-    } catch (error) {
-      const msg = formatErrorMessage(error);
-      this.showError(`Failed to start a new session: ${msg}`);
-      return;
-    }
+      let session: Session;
+      try {
+        const environment = inherited ?? (await this.environmentForNewSession());
+        this.markNewSessionEnvironmentConnecting(environment);
+        session = await this.createSessionFromCurrentState(false, environment);
+      } catch (error) {
+        await this.restoreEnvironmentSlotAfterCreateFailure();
+        const msg = formatErrorMessage(error);
+        this.showError(`Failed to start a new session: ${msg}`);
+        return;
+      }
 
-    this.resetSessionRuntime();
-    await this.setSession(session);
-    this.setAppState({ sessionId: session.id });
-    try {
-      await this.activateRuntime();
-      await this.syncRuntimeState(session);
-    } catch (error) {
+      this.resetSessionRuntime();
+      await this.setSession(session);
+      this.setAppState({ sessionId: session.id });
+      try {
+        await this.activateRuntime();
+        await this.syncRuntimeState(session);
+      } catch (error) {
+        this.sessionEventHandler.startSubscription();
+        const msg = formatErrorMessage(error);
+        this.showError(`Post-create setup failed: ${msg}`);
+        return;
+      }
+      try {
+        await this.refreshSkillCommands(this.session);
+        await this.refreshPluginCommands(this.session);
+      } catch {
+        /* keep the new session usable even if dynamic skills fail */
+      }
       this.sessionEventHandler.startSubscription();
-      const msg = formatErrorMessage(error);
-      this.showError(`Post-create setup failed: ${msg}`);
-      return;
+      this.clearTranscriptAndRedraw();
+      this.showStatus(`Started a new session (${session.id}).`);
+      void this.showSessionWarnings(session);
+      void this.showConfigWarningsIfAny();
+      ready = true;
+    } finally {
+      progress.stop({ ok: ready, label: ready ? 'New session ready.' : 'New session setup failed.' });
     }
-    try {
-      await this.refreshSkillCommands(this.session);
-      await this.refreshPluginCommands(this.session);
-    } catch {
-      /* keep the new session usable even if dynamic skills fail */
-    }
-    this.sessionEventHandler.startSubscription();
-    this.clearTranscriptAndRedraw();
-    this.showStatus(`Started a new session (${session.id}).`);
-    void this.showSessionWarnings(session);
-    void this.showConfigWarningsIfAny();
   }
 
   /** Surface config.toml load warnings (degraded or kept-previous config) in the status bar. */
@@ -3797,9 +4039,15 @@ export class KimiTUI {
   // Dialogs / Selectors
   // =========================================================================
 
+  // Tracked so a dropped panel's `dispose()` runs on replacement / editor
+  // return — a busy dialog's spinner timer must not tick after removal.
+  private editorReplacementPanel: (Component & Focusable) | undefined;
+
   mountEditorReplacement(panel: Component & Focusable): void {
     this.surveyController.notifyDisplaced();
+    this.disposeEditorReplacement();
     this.state.editorReplacementMounted = true;
+    this.editorReplacementPanel = panel;
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(panel);
     this.state.ui.setFocus(panel);
@@ -3807,6 +4055,7 @@ export class KimiTUI {
   }
 
   restoreEditor(): void {
+    this.disposeEditorReplacement();
     this.state.editorReplacementMounted = false;
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(this.state.editor);
@@ -3815,6 +4064,12 @@ export class KimiTUI {
     // rows above the bottom (blank tail) until the next append, but avoids a
     // destructive full redraw on every dialog close.
     this.state.ui.requestRender();
+  }
+
+  private disposeEditorReplacement(): void {
+    const panel = this.editorReplacementPanel;
+    this.editorReplacementPanel = undefined;
+    if (panel !== undefined && hasDispose(panel)) panel.dispose();
   }
 
   restoreInputText(text: string): void {
@@ -4043,6 +4298,24 @@ export class KimiTUI {
   }
 
   private async deleteCurrentSessionFromPicker(session: SessionRow): Promise<void> {
+    // Read the binding before closeSession drops it. The replacement session
+    // is created after the old one is gone, so it cannot rediscover the binding.
+    let inherited: { readonly environmentId: string; readonly environmentCwd?: string } | undefined;
+    let inheritError: unknown;
+    try {
+      inherited = await this.environmentForNewSession();
+    } catch (error) {
+      inheritError = error;
+    }
+    const startReplacement = async (): Promise<void> => {
+      this.setAppState({ sessionId: '' });
+      this.clearTranscriptAndRedraw();
+      if (inheritError !== undefined) {
+        this.showError(`Failed to start a new session: ${formatErrorMessage(inheritError)}`);
+        return;
+      }
+      await this.createNewSession(inherited);
+    };
     // The picker stays mounted (locking input) until the replacement session
     // is ready — restoring the editor mid-flight would let a prompt race the swap.
     try {
@@ -4061,21 +4334,13 @@ export class KimiTUI {
         });
         await this.switchToSession(resumed, `Resumed session (${resumed.id}).`);
       } catch {
-        // Reattach failed and the session is already unloaded: detach before
-        // the fallback create so a failed create leaves no ghost UI behind.
-        this.setAppState({ sessionId: '' });
-        this.clearTranscriptAndRedraw();
-        await this.createNewSession();
+        await startReplacement();
       }
       this.showError(message);
       this.hideSessionPicker();
       return;
     }
-    // The session is gone whether or not replacement creation succeeds: detach
-    // first so a failed create leaves no ghost (stale id + transcript) behind.
-    this.setAppState({ sessionId: '' });
-    this.clearTranscriptAndRedraw();
-    await this.createNewSession();
+    await startReplacement();
     this.hideSessionPicker();
   }
 
@@ -4120,6 +4385,9 @@ export class KimiTUI {
       onCtrlD: options.onCtrlD,
       onToggleScope: (selectedSessionId: string) => {
         void this.toggleSessionPickerScope(selectedSessionId);
+      },
+      requestRender: () => {
+        this.state.ui.requestRender();
       },
       onDeleteRequest: (session: SessionRow) => this.deleteSessionFromPicker(session),
     });
@@ -4169,6 +4437,37 @@ export class KimiTUI {
     );
     this.activeApprovalPanel = panel;
     this.mountEditorReplacement(panel);
+  }
+
+  /**
+   * Approval-panel badge for the agent that initiated the request. A subagent
+   * may be bound to a different environment than the main session binding
+   * shown in the footer, so the badge resolves the initiating agent's own
+   * binding through the harness's interactive-agent scope; a local binding
+   * (or a failed lookup) renders no badge rather than a misleading host.
+   */
+  private async resolveApprovalEnvironment(
+    session: Session,
+    agentId: string | undefined,
+  ): Promise<string | undefined> {
+    if (agentId === undefined || agentId === MAIN_AGENT_ID) {
+      const environment = this.state.appState.environment;
+      if (environment === undefined || environment.environmentId === 'local') return undefined;
+      return `${environment.type}:${environment.environmentId}`;
+    }
+    try {
+      const binding = await this.harness.withInteractiveAgent(agentId, () =>
+        session.getEnvironment(),
+      );
+      if (binding.environmentId === 'local') return undefined;
+      const { environments } = await session.listEnvironments();
+      const type =
+        environments.find((entry) => entry.environmentId === binding.environmentId)?.type ??
+        'command';
+      return `${type}:${binding.environmentId}`;
+    } catch {
+      return undefined;
+    }
   }
 
   private hideApprovalPanel(): void {

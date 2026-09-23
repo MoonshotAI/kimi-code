@@ -8,7 +8,9 @@ import { PathSecurityError } from '#/tool/path-access';
 import { MEDIA_SNIFF_BYTES } from '#/agent/media/file-type';
 import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
+import { stubAgentEnvironment } from '../../../../environment/stubs';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostFsError } from '#/os/interface/hostFsErrors';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import {
   type ReadInput,
@@ -23,9 +25,9 @@ import type { IAgentToolResultTruncationService } from '#/agent/toolResultTrunca
 import type { IAgentProfileService } from '#/agent/profile/profile';
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
-import { RuntimeRegistry } from '#/runtime/runtimeRegistry';
+import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
+import { EnvironmentRegistry } from '#/environment/environmentRegistry';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
@@ -94,20 +96,14 @@ function createReadTool(
   toolPolicy: IAgentToolPolicyService = { isToolActive: () => true } as unknown as IAgentToolPolicyService,
   toolRegistry: IAgentToolRegistryService = { resolve: () => ({}) } as unknown as IAgentToolRegistryService,
 ): ReadTool {
-  const runtime = Object.assign(
-    new FakeRuntime(
-      { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+  const environment = Object.assign(
+    new FakeEnvironment(
+      { environmentId: 'local', generation: 'test' },
       { capabilities: ['fs'], pathClass: env.pathClass },
     ),
-    { environment: env, fs },
+    { host: env, fs },
   );
-  const resolver: IAgentRuntimeService = {
-    _serviceBrand: undefined,
-    onDidChange: () => ({ dispose: () => {} }),
-    isAvailable: () => true,
-    inspect: () => runtime,
-    acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
-  };
+  const resolver = stubAgentEnvironment(environment);
   return new ReadTool(resolver, workspace, skillCatalog, truncation, stubConfigService(), profile, toolPolicy, toolRegistry);
 }
 
@@ -195,6 +191,55 @@ async function execute(tool: ReadTool, args: ReadInput): Promise<ExecutableToolR
     signal,
   };
   return execution.execute(ctx);
+}
+
+function createRegistryBackedTool(environmentValue: FakeEnvironment) {
+  const registry = new EnvironmentRegistry();
+  registry.register(environmentValue);
+  const binding = { environmentId: 'local' } as const;
+  const environment: IAgentEnvironmentService = {
+    _serviceBrand: undefined,
+    onDidChange: (listener) => registry.onDidChange(() => listener()),
+    isAvailable: (required = []) => {
+      try {
+        const lease = registry.acquire(binding, required);
+        lease.dispose();
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    inspect: () => registry.inspect(binding),
+    acquire: (required = []) => registry.acquire(binding, required),
+    acquireWhenReady: (required = []) => registry.acquireWhenReady(binding, required),
+    reconnect: async () => {},
+    workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
+  };
+  const tool = new ReadTool(
+    environment,
+    stubWorkspaceContext('/workspace'),
+    { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog,
+    stubToolResultTruncationService(),
+    stubConfigService(),
+    stubProfileService({ image_in: true, video_in: true }),
+    { isToolActive: () => true } as unknown as IAgentToolPolicyService,
+    { resolve: () => ({}) } as unknown as IAgentToolRegistryService,
+  );
+  return { registry, tool };
+}
+
+async function connectingReadExecution(status?: 'connecting') {
+  const env = createTestEnv();
+  const fs = createSpiedFs('visible').fs;
+  const environmentValue = new FakeEnvironment(
+    { environmentId: 'local', generation: 'test' },
+    { capabilities: ['fs'], status },
+  );
+  Object.assign(environmentValue, { host: env, fs });
+  const { tool } = createRegistryBackedTool(environmentValue);
+  const execution = await tool.resolveExecution({ path: '/workspace/a.txt' });
+  if (!('execute' in execution)) throw new Error('expected executable Read tool');
+  return { environmentValue, execution };
 }
 
 describe('ReadTool', () => {
@@ -649,6 +694,25 @@ describe('ReadTool', () => {
 
   it('returns a friendly error for missing files before sniffing bytes', async () => {
     const { fs, readBytes, readLines } = createSpiedMapFs({});
+    const tool = createReadTool(fs, createTestEnv(), stubWorkspaceContext('/workspace'));
+
+    const result = await execute(tool, { path: '/workspace/missing.txt' });
+
+    expect(result).toMatchObject({
+      isError: true,
+      output: '"/workspace/missing.txt" does not exist.',
+    });
+    expect(readBytes).not.toHaveBeenCalled();
+    expect(readLines).not.toHaveBeenCalled();
+  });
+
+  it('returns a friendly missing-file error when a remote fs reports fs-domain not_found', async () => {
+    const { fs, readBytes, readLines, stat } = createSpiedMapFs({});
+    stat.mockRejectedValue(
+      new HostFsError('os.fs.not_found', 'stat failed: path does not exist', {
+        details: { path: '/workspace/missing.txt', op: 'stat', domainCode: 'os.fs.not_found' },
+      }),
+    );
     const tool = createReadTool(fs, createTestEnv(), stubWorkspaceContext('/workspace'));
 
     const result = await execute(tool, { path: '/workspace/missing.txt' });
@@ -1460,51 +1524,55 @@ describe('ReadTool', () => {
     expect(result.truncated).toBeUndefined();
   });
 
-  it('rechecks runtime availability when execution starts after the tool was shown', async () => {
-    const env = createTestEnv();
-    const fs = createSpiedFs('visible').fs;
-    const runtimeValue = new FakeRuntime(
-      { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
-      { capabilities: ['fs'] },
-    );
-    Object.assign(runtimeValue, { environment: env, fs });
-    const registry = new RuntimeRegistry('workspace');
-    registry.register(runtimeValue);
-    const binding = { workspaceId: 'workspace', runtimeId: 'local' } as const;
-    const runtime: IAgentRuntimeService = {
-      _serviceBrand: undefined,
-      onDidChange: (listener) => registry.onDidChange(() => listener()),
-      isAvailable: (required = []) => {
-        try {
-          const lease = registry.acquire(binding, required);
-          lease.dispose();
-          return true;
-        } catch {
-          return false;
-        }
-      },
-      inspect: () => registry.inspect(binding),
-      acquire: (required = []) => registry.acquire(binding, required),
-    };
-    const tool = new ReadTool(
-      runtime,
-      stubWorkspaceContext('/workspace'),
-      { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog,
-      stubToolResultTruncationService(),
-      stubConfigService(),
-      stubProfileService({ image_in: true, video_in: true }),
-      { isToolActive: () => true } as unknown as IAgentToolPolicyService,
-      { resolve: () => ({}) } as unknown as IAgentToolRegistryService,
-    );
-    const execution = await tool.resolveExecution({ path: '/workspace/a.txt' });
+  it('rechecks environment availability when execution starts after the tool was shown', async () => {
+    const { environmentValue, execution } = await connectingReadExecution();
     expect('execute' in execution).toBe(true);
 
-    runtimeValue.setStatus('disconnected');
+    environmentValue.setStatus('disconnected');
 
     if (!('execute' in execution)) throw new Error('expected executable Read tool');
     await expect(
       execution.execute({ turnId: 0, toolCallId: 'call_read_late', signal }),
-    ).rejects.toMatchObject({ code: 'runtime.unavailable' });
+    ).rejects.toMatchObject({ code: 'environment.unavailable' });
+  });
+
+  it('waits for an in-flight connect when execution starts while the environment is connecting', async () => {
+    const { environmentValue, execution } = await connectingReadExecution('connecting');
+
+    let releaseConnect!: () => void;
+    environmentValue.whenReady = new Promise<void>((resolve) => {
+      releaseConnect = resolve;
+    });
+    let settled = false;
+    const pending = execution
+      .execute({ turnId: 0, toolCallId: 'call_read_connecting', signal })
+      .then((result) => {
+        settled = true;
+        return result;
+      });
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    expect(settled).toBe(false);
+
+    environmentValue.whenReady = undefined;
+    environmentValue.setStatus('ready');
+    releaseConnect();
+    const result = await pending;
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toContain('visible');
+  });
+
+  it('fails with the connect reason when the in-flight connect fails during execution', async () => {
+    const { environmentValue, execution } = await connectingReadExecution('connecting');
+
+    const failure = new Error('executor process exited before the handshake completed (code 255, signal null): ssh: connect failed');
+    environmentValue.whenReady = Promise.reject(failure);
+    void environmentValue.whenReady.catch(() => {});
+
+    await expect(
+      execution.execute({ turnId: 0, toolCallId: 'call_read_connect_failed', signal }),
+    ).rejects.toBe(failure);
   });
 });
 

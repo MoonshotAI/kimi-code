@@ -132,7 +132,7 @@ Complete variable list:
 
 If `KIMI_MODEL_NAME` is set but a required variable is missing, startup fails immediately with a clear error message.
 
-## Runtime switches
+## Environment switches
 
 Switches that control the behavior of subsystems such as telemetry, background tasks, and the plugin marketplace:
 
@@ -159,6 +159,7 @@ Switches that control the behavior of subsystems such as telemetry, background t
 | `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` | Offer the built-in skills documenting Kimi Code itself to the model; higher priority than `builtin_product_skills` | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
 | `KIMI_CODE_REPEAT_BREAKER` | Whether repeating the same tool call many times in a row injects reminders and eventually force-stops the turn. Unset keeps this on | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off`; any other value is ignored |
 | `KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK` | Experimental `fork` parameter on `Agent`/`AgentSwarm`: start the subagent from a snapshot of the caller's history instead of an empty context; `KIMI_CODE_EXPERIMENTAL_FLAG=1` also enables it | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
+| `KIMI_CODE_EXPERIMENTAL_AGENT_ENVIRONMENT_TOOLS` | Agent environment tools, off by default: the main agent gains `change_environment` (switch the session environment, taking effect on the next tool call) and `connect` (create a temporary environment from a launcher spec), plus an `environment` parameter on `Agent` — see [Remote environments](../guides/remote-environment.md#agent-environment-tools); set a truthy value to opt in | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off`; unset = disabled |
 | `KIMI_CODE_EXPERIMENTAL_TOOL_SELECT` | Experimental on-demand tool loading: tools of MCP servers marked `deferred: true` stay out of the top-level tool list and are loaded via `select_tools`; also requires the model to declare the `dynamically_loaded_tools` capability — see [MCP](../customization/mcp.md#loading-tools-on-demand) | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
 | `KIMI_CODE_WATCH` | Attach filesystem watchers that reload config and workspace files; higher priority than `[watch] enabled` (default `false`) | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
 | `KIMI_CODE_SEARCH_WORKER` | Run the global search index in a dedicated worker thread; higher priority than `[database] search` (default `true`) | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |

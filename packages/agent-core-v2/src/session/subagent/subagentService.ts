@@ -19,18 +19,23 @@ import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalo
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import type { Runtime } from '#/runtime/runtime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
+import type { Environment, EnvironmentBinding, EnvironmentLease } from '#/environment/environment';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
+import { EnvironmentError } from '#/environment/environmentRegistry';
+import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
 import { IConfigService } from '#/app/config/config';
 import { IGitService } from '#/app/git/git';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { ILogService } from '#/_base/log/log';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
+import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { createHooks } from '#/hooks';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { IEnvironmentService } from '#/app/environment/environment';
 
 import {
   type AgentRunHandle,
@@ -75,6 +80,8 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ILogService private readonly log: ILogService,
+    @IEnvironmentService private readonly environments: IEnvironmentService,
+    @IEnvironmentDeclarationService private readonly environmentDeclarations: IEnvironmentDeclarationService,
   ) {
     super();
   }
@@ -150,9 +157,11 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
   async spawn(opts: SpawnSubagentOptions): Promise<SpawnedSubagent> {
     const caller = this.requireCaller(opts.callerAgentId);
     const { plan } = opts;
+    const callerBinding = caller.accessor.get(IAgentEnvironmentBindingService).current;
+    const spawnBinding = await this.resolveSpawnBinding(callerBinding, opts.environment);
     const lease = plan.fork
       ? undefined
-      : caller.accessor.get(IAgentRuntimeService).acquire(['process']);
+      : this.acquirePromptEnvironment(caller, callerBinding, spawnBinding);
     try {
       let created: IAgentScopeHandle;
       try {
@@ -172,7 +181,8 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
               thinking: plan.thinking,
             },
             labels: opts.labels,
-            runtimeId: lease!.runtime.identity.runtimeId,
+            environmentId: spawnBinding.environmentId,
+            environmentCwd: spawnBinding.cwd,
           });
           created = this.agentLifecycle.handleOf(createdContext.agentId)!;
         }
@@ -196,7 +206,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       }
       const promptText = plan.fork
         ? opts.prompt
-        : await this.applyPromptPrefix(plan.profileName, opts.prompt, lease!.runtime);
+        : await this.applyPromptPrefix(plan.profileName, opts.prompt, lease!.environment, spawnBinding.cwd);
       return {
         agentId: created.id,
         profileName: plan.profileName,
@@ -216,19 +226,65 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
   private async applyPromptPrefix(
     profileName: string,
     prompt: string,
-    runtime: Runtime,
+    environment: Environment,
+    cwd: string | undefined,
   ): Promise<string> {
     const profile = this.catalog.get(profileName);
     if (profile?.promptPrefix === undefined) return prompt;
-    const view = new RuntimeWorkspaceView(runtime, {
-      workDir: this.sessionContext.cwd,
+    const view = new EnvironmentWorkspaceView(environment, {
+      workDir: cwd ?? this.sessionContext.cwd,
     });
     return applyProfilePromptPrefix(profile, prompt, {
       cwd: view.workDir,
-      process: runtime.process!,
+      process: environment.process!,
       log: this.log,
       git: this.git,
     });
+  }
+
+  private acquirePromptEnvironment(
+    caller: IAgentScopeHandle,
+    callerBinding: EnvironmentBinding,
+    spawnBinding: EnvironmentBinding,
+  ): EnvironmentLease {
+    if (spawnBinding.environmentId === callerBinding.environmentId) {
+      return caller.accessor.get(IAgentEnvironmentService).acquire(['process']);
+    }
+    return this.environments.acquire(spawnBinding, ['process']);
+  }
+
+  private async resolveSpawnBinding(
+    callerBinding: EnvironmentBinding,
+    requested: string | undefined,
+  ): Promise<EnvironmentBinding> {
+    const environmentId = requested?.trim();
+    if (environmentId === undefined || environmentId.length === 0 || environmentId === callerBinding.environmentId) {
+      return callerBinding;
+    }
+    if (environmentId === LOCAL_ENVIRONMENT_ID) {
+      return { environmentId: LOCAL_ENVIRONMENT_ID };
+    }
+    const environment = this.environments.current(environmentId);
+    if (environment === undefined) {
+      const available =
+        this.environments.list().map((entry) => entry.identity.environmentId).join(', ') ?? '';
+      throw new EnvironmentError(
+        'environment.not_found',
+        `environment "${environmentId}" does not exist. Available environments: ${available}.`,
+      );
+    }
+    const connected = (await this.environmentDeclarations.ensureConnected(environmentId))!;
+    const declaredDefaultCwd = await this.environmentDeclarations.declaredDefaultCwd(environmentId);
+    if (declaredDefaultCwd !== undefined) {
+      if (connected.fs !== undefined) {
+        await this.environmentDeclarations.assertCwdUsable(environmentId, declaredDefaultCwd);
+      }
+      return { environmentId, cwd: declaredDefaultCwd };
+    }
+    return {
+      environmentId,
+      cwd: connected.host?.cwd ?? connected.host?.homeDir,
+    };
   }
 
   private requireCaller(agentId: string): IAgentScopeHandle {
