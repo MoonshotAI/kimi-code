@@ -25,7 +25,7 @@ Environments are declared in the `[environments]` section of `config.toml` (user
 
 ```toml
 [environments]
-default = "dev-box"          # optional; new sessions start bound to this environment
+default = "dev-box"          # optional; sessions created without an explicit binding start here
 
 [environments.dev-box]
 type = "ssh"
@@ -50,7 +50,7 @@ Key rules:
 
 - `type` and `command` are mutually exclusive within one entry: `type = "ssh"` and `type = "docker"` are built-in launchers, while `command` + `args` is the generic form (same shape as stdio entries in `.mcp.json`). `env` sets the launcher process's environment on your machine; it is **not** propagated into commands the agent runs on the target.
 - `defaultCwd` prefills the working-directory prompt when you bind a session to the environment. It is not validated locally and no path mapping is applied — it must be a valid path on the target.
-- The optional top-level `default` names the environment new sessions bind to initially; the entry it points at must set `defaultCwd`. Without a `default`, new sessions start on the `local` environment.
+- The optional top-level `default` names the environment a session binds to when creation does not specify one — a cold start, print mode, or an API create. The entry it points at must set `defaultCwd`. Without a `default`, those sessions start on the `local` environment. In the TUI, `/new` is not one of those cases: it keeps the current session's environment and working directory, including an explicit switch back to `local`. If no session exists yet, `/new` uses `--environment` when the process was started with it, otherwise this default.
 - The environment id is the entry's key: at most 64 characters, no leading or trailing whitespace; `local` and `default` are reserved words.
 
 Environments added through `/environment` are available as soon as the operation completes, even when [file watching](../configuration/config-files.md#watch) is disabled. With file watching enabled, editing declaration files also registers, replaces, or unregisters environments without a restart. A removed environment drains rather than vanishing from under a session that still uses it — the session keeps its connection until in-flight work releases it (bounded to a few seconds), new tool calls fail with `environment.not_found`, and nothing silently falls back to `local`.
@@ -86,7 +86,7 @@ The hidden `--environment <id>` flag binds a new session to a configured environ
 kimi -p --environment dev-box "Run the test suite"
 ```
 
-The flag is creation-only, like `--agent`: it cannot be combined with `--session`/`--continue`, because a resumed session restores its recorded binding automatically. An unknown id, or an entry without `defaultCwd`, fails startup outright. Creation also connects to the target before the session starts, so a connection failure aborts with the reported reason instead of opening a broken session.
+The flag is creation-only, like `--agent`: it cannot be combined with `--session`/`--continue`, because a resumed session restores its recorded binding automatically. It binds the first session in the process. A later `/new` keeps the live binding instead of applying the flag again; `/new` uses the flag only when no session exists yet. An unknown id, or an entry without `defaultCwd`, fails startup outright. Creation also connects to the target before the session starts, so a connection failure aborts with the reported reason instead of opening a broken session.
 
 ## Agent environment tools
 

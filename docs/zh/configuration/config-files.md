@@ -559,7 +559,7 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 
 每个条目以环境 id 为键：不超过 64 个字符，首尾不能有空白，`local` 和 `default` 是保留字。同一条目内 `type` 与 `command` 互斥。
 
-可选的顶层 `default` 指定新会话初始绑定的环境。它必须指向一个已配置的条目，且该条目必须设置 `defaultCwd`——绑定由环境和工作目录成对构成，缺了工作目录的默认绑定会悬空。未设置 `default` 时，新会话默认使用 `local` 环境。
+可选的顶层 `default` 指定创建会话时未显式给出绑定时使用的环境。它必须指向一个已配置的条目，且该条目必须设置 `defaultCwd`——绑定由环境和工作目录成对构成，缺了工作目录的默认绑定会悬空。未设置 `default` 时，这些会话从 `local` 开始。TUI 的 `/new` 不用这个 default，而是保留当前环境。详见 [远程环境](../guides/remote-environment.md)。
 
 ### SSH 条目
 

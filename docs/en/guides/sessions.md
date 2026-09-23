@@ -60,7 +60,7 @@ When a session is being restored, the TUI shows progress while it attempts the s
 
 You can manage sessions without leaving the terminal. The following slash commands are available only when the agent is idle:
 
-- **`/new`** (alias `/clear`): switch to a new session, discarding the current context.
+- **`/new`** (alias `/clear`): switch to a new session in the current environment, discarding the conversation. The environment and its working directory stay; only the context is cleared.
 - **`/sessions`** (alias `/resume`): browse and resume a previous session.
 - **`/fork`**: fork the current session (see below).
 - **`/title <text>`** (alias `/rename`): set a session title for easier identification; without arguments, displays the current title.

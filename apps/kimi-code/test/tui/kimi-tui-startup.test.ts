@@ -134,6 +134,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     getResumeState: vi.fn(() => null),
     listSkills: vi.fn(async () => []),
     close: vi.fn(async () => {}),
+    getEnvironment: vi.fn(async () => ({ workspaceId: 'ws-1', environmentId: 'local' })),
     ...overrides,
   };
 }
@@ -585,6 +586,103 @@ describe('KimiTUI startup', () => {
       status: 'ready',
       cwd: '/remote/work',
     });
+  });
+
+  it('binds /new to the current session environment and cwd, not the startup flag', async () => {
+    const session = makeSession({
+      getEnvironment: vi.fn(async () => ({
+        workspaceId: 'ws-1',
+        environmentId: 'dev-box',
+        cwd: '/remote/custom',
+      })),
+    });
+    const harness = makeHarness(session, {
+      getConfig: vi.fn(async () => ({
+        models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+        defaultModel: 'k2',
+      })),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ model: 'k2' }));
+    await expect(driver.init()).resolves.toBe(false);
+    driver.state.appState.agentProfile = 'reviewer';
+    (driver as unknown as { session: typeof session }).session = session;
+
+    await (driver as unknown as { createNewSession(): Promise<void> }).createNewSession();
+
+    expect(harness.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        environmentId: 'dev-box',
+        environmentCwd: '/remote/custom',
+      }),
+    );
+    expect(harness.createSession.mock.calls[0]?.[0]).not.toHaveProperty('agentProfile');
+  });
+
+  it('passes an explicit local binding so /new does not fall back to the config default', async () => {
+    const session = makeSession({
+      getEnvironment: vi.fn(async () => ({ workspaceId: 'ws-1', environmentId: 'local', cwd: '/tmp/proj-a' })),
+    });
+    const harness = makeHarness(session, {
+      getConfig: vi.fn(async () => ({
+        models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+        defaultModel: 'k2',
+      })),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ model: 'k2' }));
+    await expect(driver.init()).resolves.toBe(false);
+    (driver as unknown as { session: typeof session }).session = session;
+
+    await (driver as unknown as { createNewSession(): Promise<void> }).createNewSession();
+
+    expect(harness.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: 'local', environmentCwd: '/tmp/proj-a' }),
+    );
+  });
+
+  it('fails /new when the current remote binding has no working directory', async () => {
+    const session = makeSession({
+      getEnvironment: vi.fn(async () => ({ workspaceId: 'ws-1', environmentId: 'dev-box' })),
+    });
+    const harness = makeHarness(session, {
+      getConfig: vi.fn(async () => ({
+        models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+        defaultModel: 'k2',
+      })),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ model: 'k2' }));
+    await expect(driver.init()).resolves.toBe(false);
+    (driver as unknown as { session: typeof session }).session = session;
+
+    await (driver as unknown as { createNewSession(): Promise<void> }).createNewSession();
+
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(driver.state.transcriptContainer.render(160).join('\n')).toContain('no working directory');
+  });
+
+  it('uses the startup environment when /new runs before any session exists', async () => {
+    const harness = makeHarness(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+        defaultModel: 'k2',
+      })),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ model: 'k2' }));
+    await expect(driver.init()).resolves.toBe(false);
+    driver.state.appState.agentProfile = 'reviewer';
+    (
+      driver as unknown as { options: { startup: { environment?: string } } }
+    ).options.startup.environment = 'dev-box';
+
+    await (driver as unknown as { createNewSession(): Promise<void> }).createNewSession();
+
+    const created = harness.createSession.mock.calls.at(-1)?.[0] as {
+      environmentId?: string;
+      environmentCwd?: string;
+      agentProfile?: string;
+    };
+    expect(created.environmentId).toBe('dev-box');
+    expect(created.environmentCwd).toBeUndefined();
+    expect(created.agentProfile).toBeUndefined();
   });
 
   it('clears the synthetic environment slot when the background pre-create fails (v2)', async () => {

@@ -560,7 +560,7 @@ MCP server declarations are configured in `~/.kimi-code/mcp.json` or the project
 
 Each entry is keyed by its environment id: at most 64 characters, no leading or trailing whitespace, and `local` and `default` are reserved words. Within one entry, `type` and `command` are mutually exclusive.
 
-The optional top-level `default` names the environment new sessions bind to initially. It must reference a configured entry, and that entry must set `defaultCwd` — a binding pairs an environment with a working directory, so a default without one would dangle. Without `default`, new sessions start on the `local` environment.
+The optional top-level `default` names the environment a session binds to when creation does not specify one. It must reference a configured entry, and that entry must set `defaultCwd` — a binding pairs an environment with a working directory, so a default without one would dangle. Without `default`, those sessions start on the `local` environment. A TUI `/new` does not use this default: it keeps the current environment. See [Remote environments](../guides/remote-environment.md).
 
 ### SSH entries
 

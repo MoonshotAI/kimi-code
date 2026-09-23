@@ -75,27 +75,32 @@ export class SessionManager implements ISessionManager {
         : { workspaceId: options.workspaceId, root: options.workDir },
     );
     const declarations = await this.environmentDeclarations.declarations();
-    const declared =
-      options.environmentId === undefined || options.environmentId === LOCAL_ENVIRONMENT_ID
-        ? undefined
-        : declarations?.entries.find((entry) => entry.id === options.environmentId);
-    if (options.environmentId !== undefined && options.environmentId !== LOCAL_ENVIRONMENT_ID) {
-      if (declarations === undefined) {
+    const requestedEnvironmentId = options.environmentId;
+    const explicitRemote =
+      requestedEnvironmentId !== undefined && requestedEnvironmentId !== LOCAL_ENVIRONMENT_ID;
+    const registered = explicitRemote ? workspace.environments.current(requestedEnvironmentId) : undefined;
+    const declared = explicitRemote
+      ? declarations?.entries.find((entry) => entry.id === requestedEnvironmentId)
+      : undefined;
+    if (explicitRemote) {
+      if (declared === undefined && registered === undefined) {
+        if (declarations === undefined) {
+          throw new Error2(
+            ErrorCodes.CONFIG_INVALID,
+            `environment declarations failed to resolve; cannot validate environment "${requestedEnvironmentId}"`,
+          );
+        }
         throw new Error2(
           ErrorCodes.CONFIG_INVALID,
-          `environment declarations failed to resolve; cannot validate environment "${options.environmentId}"`,
+          `environment "${requestedEnvironmentId}" is not declared in [environments]`,
         );
       }
-      if (declared === undefined) {
+      if (options.environmentCwd === undefined && declared?.entry.defaultCwd === undefined) {
         throw new Error2(
           ErrorCodes.CONFIG_INVALID,
-          `environment "${options.environmentId}" is not declared in [environments]`,
-        );
-      }
-      if (options.environmentCwd === undefined && declared.entry.defaultCwd === undefined) {
-        throw new Error2(
-          ErrorCodes.CONFIG_INVALID,
-          `environment "${options.environmentId}" does not set defaultCwd in [environments]`,
+          declared === undefined
+            ? `environment "${requestedEnvironmentId}" requires a cwd`
+            : `environment "${requestedEnvironmentId}" does not set defaultCwd in [environments]`,
         );
       }
     }

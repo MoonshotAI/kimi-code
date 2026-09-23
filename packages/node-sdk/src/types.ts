@@ -287,14 +287,17 @@ export interface CreateSessionOptions {
    */
   readonly drainAgentTasksOnStop?: boolean;
   /**
-   * Initial environment binding for the main agent: an environment declared in
-   * the `[environments]` config section; omit to start on the local environment
-   * (or the configured default).
+   * Initial environment binding for the main agent. An id declared in
+   * `[environments]`, or one already registered in this process (a temporary
+   * `connect` environment). Omit to start on the local environment, or the
+   * configured default when one is set. A registered environment that is not
+   * declared requires `environmentCwd`.
    */
   readonly environmentId?: string;
   /**
-   * Working directory on the target environment for the initial binding. Defaults
-   * to `workDir` when `environmentId` names a non-local environment.
+   * Working directory on the target environment for the initial binding.
+   * For a declared environment, defaults to that entry's `defaultCwd`.
+   * Required when the id is registered in this process but not declared.
    */
   readonly environmentCwd?: string;
 }

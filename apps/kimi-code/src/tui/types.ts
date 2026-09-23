@@ -342,7 +342,7 @@ export interface TUIStartupOptions {
   readonly agentProfile?: string;
   /** Raw --agent-file paths, passed to session creation alongside `agentProfile`. */
   readonly agentFiles?: readonly string[];
-  /** --environment <id> one-shot binding override, consumed by the startup session only. */
+  /** --environment <id> one-shot binding. The first session consumes it; a later /new keeps the live binding. */
   readonly environment?: string;
   readonly startupNotice?: string;
 }

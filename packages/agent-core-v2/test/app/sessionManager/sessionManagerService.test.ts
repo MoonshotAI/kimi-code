@@ -869,6 +869,31 @@ describe('SessionManager remote environment wiring', () => {
     });
   });
 
+  it('binds a new session to an already-registered environment that is not declared', async () => {
+    const { manager, registry, byEnvironment, remote } = remoteWiringSetup({
+      config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
+    });
+    connectableEnvironment(registry, {
+      workspaceId: 'workspace-1',
+      environmentId: 'temp-box',
+      stat: async () => ({ isDirectory: true }),
+    });
+
+    await expect(manager.create({ workDir: '/workspace', environmentId: 'temp-box' })).rejects.toThrow(
+      'requires a cwd',
+    );
+    await manager.create({
+      workDir: '/workspace',
+      environmentId: 'temp-box',
+      environmentCwd: '/srv/work',
+    });
+    expect(remote).toBeUndefined();
+    expect(byEnvironment.get('temp-box')!.options[0]).toMatchObject({
+      environmentId: 'temp-box',
+      environmentCwd: '/srv/work',
+    });
+  });
+
   it('keeps new sessions local when no default is configured', async () => {
     const { manager, registry, byEnvironment } = remoteWiringSetup({ config: undefined });
 

@@ -25,7 +25,7 @@ Kimi Code 把 Agent 循环、模型请求、凭据、审批和会话状态全部
 
 ```toml
 [environments]
-default = "dev-box"          # 可选；新会话初始绑定到该环境
+default = "dev-box"          # 可选；未显式指定绑定时，新会话从这里开始
 
 [environments.dev-box]
 type = "ssh"
@@ -50,7 +50,7 @@ defaultCwd = "/home/me/kimi-code"
 
 - `type` 与 `command` 在同一条目内互斥：`type = "ssh"` 和 `type = "docker"` 是内置启动器，`command` + `args` 是通用形式（与 `.mcp.json` 的 stdio 条目形态一致）。`env` 设置的是本机启动器进程的环境，**不会**传播到 Agent 在目标环境执行的命令里。
 - `defaultCwd` 在绑定会话时作为工作目录输入的预填。它不在本机校验，也不做任何路径映射——必须是目标环境上的有效路径。
-- 可选的顶层 `default` 指定新会话初始绑定的环境，指向的条目必须设置 `defaultCwd`。未设置 `default` 时，新会话默认使用 `local` 环境。
+- 可选的顶层 `default` 指定创建会话时未显式给出绑定时使用的环境——冷启动、print 模式，或 API 创建。它指向的条目必须设置 `defaultCwd`。未设置 `default` 时，这些会话从 `local` 开始。TUI 里的 `/new` 不属于这种情况：它保留当前会话的环境和工作目录，包括显式切回 `local`。还没有会话时，`/new` 使用进程启动时的 `--environment`；没有该参数时才用这个 default。
 - 环境 id 即条目的键名：不超过 64 个字符，首尾不能有空白；`local` 和 `default` 是保留字。
 
 通过 `/environment` 添加的环境在操作完成后即可选择，即使关闭了[文件监听](../configuration/config-files.md#watch)也会立即生效。启用文件监听时，手动编辑声明文件也会注册、替换或注销对应环境，无需重启。被删除的环境不会立刻从仍在使用它的会话下消失——会话保留连接直至在执行的工作释放（有界等待，上限数秒），随后连接关闭；新的工具调用以 `environment.not_found` 失败，绝不会静默回退到 `local`。
@@ -86,7 +86,7 @@ defaultCwd = "/home/me/kimi-code"
 kimi -p --environment dev-box "Run the test suite"
 ```
 
-该标志与 `--agent` 一样只在创建会话时生效：不能与 `--session`/`--continue` 组合，因为恢复会话时会自动还原其记录的绑定。id 未声明、或条目未设置 `defaultCwd` 时，启动会直接失败。创建会话会先连接目标环境再启动，连接失败会带着具体原因中止，而不是打开一个无法正常工作的会话。
+该标志与 `--agent` 一样只在创建会话时生效：不能与 `--session`/`--continue` 组合，因为恢复会话时会自动还原其记录的绑定。它绑定的是本进程的第一个会话。之后的 `/new` 保留当前绑定，不再套用这个标志；只有还没有会话时，`/new` 才会用它。id 未声明、或条目未设置 `defaultCwd` 时，启动会直接失败。创建会话会先连接目标环境再启动，连接失败会带着具体原因中止，而不是打开一个无法正常工作的会话。
 
 ## Agent 环境工具
 
