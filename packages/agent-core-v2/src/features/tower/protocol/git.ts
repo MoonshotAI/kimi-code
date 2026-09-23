@@ -2,7 +2,10 @@ import { execFile } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
+import { GIT_DIFF_ARGS, hardenedGitConfigArgs, type GitProbeResult } from '#/app/git/hardening';
+
 const GIT_TIMEOUT_MS = 60_000;
+const CONFIG_PROBE_TIMEOUT_MS = 5_000;
 
 export class GitError extends Error {
   constructor(
@@ -23,10 +26,16 @@ export async function git(
   args: readonly string[],
   options: GitOptions = {},
 ): Promise<string> {
+  const configArgs = await hardenedGitConfigArgs(cwd, (probeArgs) =>
+    probeGitConfig(cwd, probeArgs),
+  );
+  if (configArgs === null) {
+    throw new GitError(args, 'git config probe failed');
+  }
   return new Promise((resolve, reject) => {
     execFile(
       'git',
-      [...args],
+      [...configArgs, ...args],
       {
         cwd,
         timeout: GIT_TIMEOUT_MS,
@@ -39,6 +48,27 @@ export async function git(
           return;
         }
         resolve(stdout.trimEnd());
+      },
+    );
+  });
+}
+
+function probeGitConfig(cwd: string, args: readonly string[]): Promise<GitProbeResult> {
+  return new Promise((resolve) => {
+    execFile(
+      'git',
+      [...args],
+      { cwd, timeout: CONFIG_PROBE_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 },
+      (error, stdout) => {
+        if (error === null) {
+          resolve({ exitCode: 0, stdout });
+          return;
+        }
+        const code: unknown = (error as { code?: unknown }).code;
+        resolve({
+          exitCode: typeof code === 'number' ? code : -1,
+          stdout: typeof stdout === 'string' ? stdout : '',
+        });
       },
     );
   });
@@ -168,6 +198,6 @@ export async function diffNameOnly(
   base: string,
   ref: string,
 ): Promise<readonly string[]> {
-  const out = await git(cwd, ['diff', '--name-only', `${base}...${ref}`]);
+  const out = await git(cwd, ['diff', ...GIT_DIFF_ARGS, '--name-only', `${base}...${ref}`]);
   return out.length === 0 ? [] : out.split('\n').filter((line) => line.trim().length > 0);
 }

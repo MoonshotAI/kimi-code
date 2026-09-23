@@ -25,6 +25,7 @@ import {
   SENSITIVE_DOT_VARIANT_SUFFIXES,
   type WorkspaceConfig,
 } from '#/tool/path-access';
+import { checkRealPathWithinWorkspace } from '#/tool/realpath-access';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import {
@@ -115,6 +116,10 @@ export class GrepTool implements IGrepTool {
         try {
           if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
             return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
+          }
+          const accessError = await checkRealPathWithinWorkspace(lease.environment.fs!, searchPaths[0]!, workspace, env.pathClass, { checkSensitive: false });
+          if (accessError !== undefined) {
+            return { isError: true, output: accessError.message };
           }
           return await this.execution(lease.environment, lease.environment.process!, lease.environment.fs!, env, workspace, args, signal, searchPaths);
         } finally {

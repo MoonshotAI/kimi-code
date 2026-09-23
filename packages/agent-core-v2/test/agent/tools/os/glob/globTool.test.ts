@@ -71,7 +71,7 @@ function createBackend(calls: SpawnCall[]): FakeEnvironment {
     readdir: () => notImplemented('readdir'),
     mkdir: () => notImplemented('mkdir'),
     remove: () => notImplemented('remove'),
-    realpath: () => notImplemented('realpath'),
+    realpath: async (path: string) => path,
   };
   return Object.assign(
     new FakeEnvironment(

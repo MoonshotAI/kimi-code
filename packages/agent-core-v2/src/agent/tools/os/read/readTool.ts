@@ -24,6 +24,7 @@ import {
   resolvePathAccessPath,
   type WorkspaceConfig,
 } from '#/tool/path-access';
+import { checkRealPathWithinWorkspace } from '#/tool/realpath-access';
 import { MEDIA_SNIFF_BYTES, detectFileType } from '#/agent/media/file-type';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject, matchesPathRuleSubject } from '#/tool/rule-match';
@@ -234,6 +235,10 @@ export class ReadTool implements IReadTool {
         try {
           if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
             return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
+          }
+          const accessError = await checkRealPathWithinWorkspace(lease.environment.fs!, path, workspace, env.pathClass);
+          if (accessError !== undefined) {
+            return { isError: true, output: accessError.message };
           }
           const eventLog = this.resultTruncation.isWireJournalPath(path);
           const result = await this.execution(environmentFileSource(lease.environment.fs!, path), args, eventLog);

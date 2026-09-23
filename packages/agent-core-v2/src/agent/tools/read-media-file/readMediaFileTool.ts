@@ -18,6 +18,7 @@ import {
   type ToolExecution,
 } from '#/tool/toolContract';
 import { resolvePathAccessPath, type WorkspaceConfig } from '#/tool/path-access';
+import { checkRealPathWithinWorkspace } from '#/tool/realpath-access';
 import {
   MEDIA_SNIFF_BYTES,
   detectFileType,
@@ -262,6 +263,10 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
         try {
           if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
             return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
+          }
+          const accessError = await checkRealPathWithinWorkspace(lease.environment.fs!, path, workspace, env.pathClass);
+          if (accessError !== undefined) {
+            return { isError: true, output: accessError.message };
           }
           return await this.execution(args, environmentFileSource(lease.environment.fs!, path), env);
         } finally {

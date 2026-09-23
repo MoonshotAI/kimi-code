@@ -53,12 +53,24 @@ export const fsDiffResponseSchema = z.object({
 });
 export type FsDiffResponse = z.infer<typeof fsDiffResponseSchema>;
 
+export interface RunGitOptions {
+  readonly timeoutMs?: number;
+  readonly env?: Record<string, string>;
+}
+
+export interface RunGitResult {
+  readonly exitCode: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
 export interface IGitService {
   readonly _serviceBrand: undefined;
 
   status(cwd: string, pathFilter?: ReadonlySet<string>): Promise<FsGitStatusResponse>;
   diff(cwd: string, relPath: string, absPath: string): Promise<FsDiffResponse>;
   findWorkTree(cwd: string): Promise<GitWorkTree | null>;
+  runGit(cwd: string, args: readonly string[], options?: RunGitOptions): Promise<RunGitResult>;
 }
 
 export const IGitService: ServiceIdentifier<IGitService> =

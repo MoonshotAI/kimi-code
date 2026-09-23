@@ -1,7 +1,5 @@
-import type { Readable } from 'node:stream';
-
 import type { ILogger } from '#/_base/log/log';
-import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
+import type { IGitService, RunGitResult } from '#/app/git/git';
 
 const GIT_TIMEOUT_MS = 5_000;
 const MAX_DIRTY_FILES = 20;
@@ -16,26 +14,17 @@ const ALLOWED_HOSTS = [
   'git.sr.ht',
 ] as const;
 
-type GitFailure =
-  | { readonly kind: 'timeout' }
-  | { readonly kind: 'spawn-error' }
-  | { readonly kind: 'command-failed'; readonly exitCode?: number; readonly stderr?: string };
-
-type GitResult =
-  | { readonly ok: true; readonly stdout: string }
-  | ({ readonly ok: false } & GitFailure);
-
-type TaggedGitResult = { readonly args: readonly string[]; readonly result: GitResult };
+type TaggedGitResult = { readonly args: readonly string[]; readonly result: RunGitResult };
 
 export async function collectGitContext(
-  process: IHostProcessService,
+  git: IGitService,
   cwd: string,
   log?: ILogger,
 ): Promise<string> {
   const revParseArgs = ['rev-parse', '--is-inside-work-tree'] as const;
-  const revParse = await runGit(process, cwd, revParseArgs);
-  if (!revParse.ok) {
-    if (revParse.kind === 'command-failed' && isNotARepo(revParse.stderr)) {
+  const revParse = await git.runGit(cwd, revParseArgs, { timeoutMs: GIT_TIMEOUT_MS });
+  if (revParse.exitCode !== 0) {
+    if (isNotARepo(revParse.stderr)) {
       return `<git-context status="unavailable" reason="not-a-repo"/>`;
     }
     logGitFailure(cwd, revParseArgs, revParse, log);
@@ -49,11 +38,14 @@ export async function collectGitContext(
     ['log', '-3', '--format=%h %s'],
   ] as const;
   const [remote, branch, status, gitLog] = (await Promise.all(
-    commandArgs.map(async (args) => ({ args, result: await runGit(process, cwd, args) })),
+    commandArgs.map(async (args) => ({
+      args,
+      result: await git.runGit(cwd, args, { timeoutMs: GIT_TIMEOUT_MS }),
+    })),
   )) as unknown as [TaggedGitResult, TaggedGitResult, TaggedGitResult, TaggedGitResult];
 
   for (const { args, result } of [remote, branch, status, gitLog]) {
-    if (!result.ok) logGitFailure(cwd, args, result, log);
+    if (result.exitCode !== 0) logGitFailure(cwd, args, result, log);
   }
 
   const remoteUrl = stdoutOf(remote.result);
@@ -135,94 +127,30 @@ function tryUrlPath(remoteUrl: string): string | null {
   }
 }
 
-function stdoutOf(result: GitResult): string {
-  return result.ok ? result.stdout : '';
+function stdoutOf(result: RunGitResult): string {
+  return result.exitCode === 0 ? result.stdout.trim() : '';
 }
 
-function isNotARepo(stderr: string | undefined): boolean {
-  return stderr !== undefined && stderr.includes('not a git repository');
+function isNotARepo(stderr: string): boolean {
+  return stderr.includes('not a git repository');
 }
 
 function logGitFailure(
   cwd: string,
   args: readonly string[],
-  failure: GitFailure,
+  result: RunGitResult,
   log?: ILogger,
 ): void {
   if (log === undefined) return;
   const command = `git ${args.join(' ')}`;
-  if (failure.kind === 'timeout') {
-    log.debug('git context command timed out', { cwd, command });
-  } else if (failure.kind === 'spawn-error') {
-    log.warn('git context command failed to spawn', { cwd, command });
+  if (result.exitCode === -1) {
+    log.warn('git context command failed to spawn', { cwd, command, stderr: result.stderr });
   } else {
     log.debug('git context command failed', {
       cwd,
       command,
-      exitCode: failure.exitCode,
-      stderr: failure.stderr,
+      exitCode: result.exitCode,
+      stderr: result.stderr,
     });
-  }
-}
-
-async function runGit(
-  process: IHostProcessService,
-  cwd: string,
-  args: readonly string[],
-): Promise<GitResult> {
-  let proc: IHostProcess | undefined;
-  try {
-    proc = await process.spawn('git', ['-C', cwd, ...args], { cwd });
-  } catch {
-    return { ok: false, kind: 'spawn-error' };
-  }
-
-  try {
-    proc.stdin.end();
-  } catch {
-  }
-
-  const work = Promise.all([collectStream(proc.stdout), collectStream(proc.stderr), proc.wait()]);
-  work.catch(() => {});
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let timedOut = false;
-  try {
-    const timeout = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => {
-        timedOut = true;
-        reject(new Error(`git ${args.join(' ')} timed out`));
-      }, GIT_TIMEOUT_MS);
-    });
-    const [stdout, stderr, exitCode] = await Promise.race([work, timeout]);
-    if (exitCode !== 0) {
-      return { ok: false, kind: 'command-failed', exitCode, stderr: stderr.trim() };
-    }
-    return { ok: true, stdout: stdout.trim() };
-  } catch {
-    try {
-      await proc.kill('SIGKILL');
-    } catch {
-    }
-    await work.catch(() => {});
-    if (timedOut) return { ok: false, kind: 'timeout' };
-    return { ok: false, kind: 'command-failed' };
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-    if (proc !== undefined) await disposeProcess(proc);
-  }
-}
-
-async function collectStream(stream: Readable): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string));
-  }
-  return Buffer.concat(chunks).toString('utf-8');
-}
-
-async function disposeProcess(proc: IHostProcess): Promise<void> {
-  try {
-    await proc.dispose();
-  } catch {
   }
 }
