@@ -10,7 +10,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Features
 
-- Add an experimental fullscreen TUI layout. Enable it via the TUI mode setting in `/settings`, or set `tui_mode = "fullscreen"` in `~/.kimi-code/tui.toml`; the new mode takes effect after restarting Kimi Code.
+- Add an experimental fullscreen mode toggle for the TUI. Enable it via the TUI mode setting in `/settings`, or set `tui_mode = "fullscreen"` in `~/.kimi-code/tui.toml`; it takes effect after restarting Kimi Code.
 - In fullscreen, click a folded block to open or close it.
 - Add a clickable "Jump to bottom" indicator to the fullscreen TUI.
 
