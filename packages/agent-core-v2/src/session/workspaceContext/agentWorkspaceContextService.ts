@@ -41,7 +41,7 @@ export class AgentWorkspaceContextService implements ISessionWorkspaceContext {
     const environment = this.environment.current;
     if (environment !== undefined) {
       try {
-        return environment.inspect().path;
+        return environment.inspect().path ?? hostWorkspacePathSemantics;
       } catch {
         return hostWorkspacePathSemantics;
       }

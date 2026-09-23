@@ -71,7 +71,7 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
     async (req, reply) => {
       try {
         const agent = await resolveEnvironmentAgent(core, req.params.session_id);
-        reply.send(okEnvelope(toResponse(agent.accessor.get(IAgentEnvironmentBindingService).get()), req.id));
+        reply.send(okEnvelope(toResponse(agent.accessor.get(IAgentEnvironmentBindingService).current), req.id));
       } catch (error) {
         sendEnvironmentRouteError(reply, req.id, error);
       }
@@ -127,7 +127,7 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
       try {
         const agent = await resolveEnvironmentAgent(core, req.params.session_id);
         await agent.accessor.get(IAgentEnvironmentService).reconnect();
-        reply.send(okEnvelope(toResponse(agent.accessor.get(IAgentEnvironmentBindingService).get()), req.id));
+        reply.send(okEnvelope(toResponse(agent.accessor.get(IAgentEnvironmentBindingService).current), req.id));
       } catch (error) {
         sendEnvironmentRouteError(reply, req.id, error);
       }
@@ -250,22 +250,18 @@ const declareEnvironmentResponseSchema = z.object({
 
 function toEngineEnvironmentEntry(entry: z.infer<typeof declareEnvironmentEntrySchema>): RemoteEnvironmentEntry {
   if ('command' in entry) {
-    return definedFields({ command: entry.command, args: entry.args, env: entry.env, defaultCwd: entry.default_cwd });
+    return { command: entry.command, args: entry.args, env: entry.env, defaultCwd: entry.default_cwd };
   }
   if (entry.type === 'ssh') {
-    return definedFields({ type: 'ssh', host: entry.host, remoteBin: entry.remote_bin, defaultCwd: entry.default_cwd });
+    return { type: 'ssh', host: entry.host, remoteBin: entry.remote_bin, defaultCwd: entry.default_cwd };
   }
-  return definedFields({
+  return {
     type: 'docker',
     container: entry.container,
     context: entry.context,
     remoteBin: entry.remote_bin,
     defaultCwd: entry.default_cwd,
-  });
-}
-
-function definedFields<T extends object>(value: T): T {
-  return Object.fromEntries(Object.entries(value).filter(([, field]) => field !== undefined)) as T;
+  };
 }
 
 async function resolveEnvironmentAgent(core: Scope, sessionId: string): Promise<IAgentScopeHandle> {
@@ -276,7 +272,7 @@ async function resolveEnvironmentAgent(core: Scope, sessionId: string): Promise<
   return ensureMainAgent(session);
 }
 
-async function resolveWorkspaceInstance(core: Scope, workspaceId: string): Promise<WorkspaceInstance> {
+export async function resolveWorkspaceInstance(core: Scope, workspaceId: string): Promise<WorkspaceInstance> {
   const manager = core.accessor.get(IWorkspaceInstanceManager);
   const existing = manager.get(workspaceId);
   if (existing !== undefined) return existing;
@@ -327,14 +323,7 @@ function sendEnvironmentRouteError(
   requestId: string,
   error: unknown,
 ): void {
-  if (error instanceof EnvironmentError) {
-    reply.send(errEnvelope(environmentErrorCode(error.code), error.message, requestId));
-    return;
-  }
-  if (error instanceof HandshakeError) {
-    reply.send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error.message, requestId));
-    return;
-  }
+  if (sendEnvironmentError(reply, requestId, error)) return;
   if (isError2(error)) {
     switch (error.code) {
       case ErrorCodes.SESSION_NOT_FOUND:
@@ -349,6 +338,22 @@ function sendEnvironmentRouteError(
     }
   }
   throw error;
+}
+
+export function sendEnvironmentError(
+  reply: { send(payload: unknown): unknown },
+  requestId: string,
+  error: unknown,
+): boolean {
+  if (error instanceof EnvironmentError) {
+    reply.send(errEnvelope(environmentErrorCode(error.code), error.message, requestId));
+    return true;
+  }
+  if (error instanceof HandshakeError) {
+    reply.send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error.message, requestId));
+    return true;
+  }
+  return false;
 }
 
 export function environmentErrorCode(code: EnvironmentError['code']): ErrorCode {

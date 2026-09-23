@@ -17,7 +17,6 @@ import {
   MIN_EXECUTOR_VERSION,
   SERVER_NOTIFICATION_METHODS,
   type InitializeResult,
-  type RemoteCapabilities,
   type RemoteEnvironmentInfo,
 } from '#/remote/protocol/methods';
 import type { BytePipe } from './execBridge';
@@ -35,7 +34,6 @@ export interface ConnectOptions {
 
 export interface ConnectionCloseInfo {
   readonly reason: string;
-  readonly error?: Error;
 }
 
 export class ConnectionClosedError extends Error {
@@ -116,10 +114,6 @@ export class RemoteExecConnection {
     return this.executorVersionValue;
   }
 
-  get capabilities(): RemoteCapabilities {
-    return this.capabilitiesValue;
-  }
-
   get closed(): boolean {
     return this.state === 'closed';
   }
@@ -130,7 +124,6 @@ export class RemoteExecConnection {
 
   private environmentValue!: RemoteEnvironmentInfo;
   private executorVersionValue!: string;
-  private capabilitiesValue!: RemoteCapabilities;
 
   private handshake(options: ConnectOptions): Promise<RemoteExecConnection> {
     return new Promise<RemoteExecConnection>((resolve, reject) => {
@@ -203,7 +196,6 @@ export class RemoteExecConnection {
     }
     this.executorVersionValue = parsed.executorVersion;
     this.environmentValue = parsed.environment;
-    this.capabilitiesValue = parsed.capabilities;
     this.handshakeComplete = true;
     this.onHandshakeResponse(undefined);
   }
@@ -233,9 +225,6 @@ export class RemoteExecConnection {
       if (typeof environment[field] !== 'string' || environment[field].length === 0) {
         return new HandshakeError(`environment.${field} must be a non-empty string`);
       }
-    }
-    if (result.capabilities === null || typeof result.capabilities !== 'object') {
-      return new HandshakeError('initialize response must carry a capabilities object');
     }
     return result;
   }
@@ -411,7 +400,7 @@ export class RemoteExecConnection {
   private fail(error: Error): void {
     if (this.state === 'closed') return;
     this.state = 'closed';
-    this.closeInfo = { reason: error.message, error };
+    this.closeInfo = { reason: error.message };
     if (this.handshakeTimer !== undefined) {
       clearTimeout(this.handshakeTimer);
       this.handshakeTimer = undefined;

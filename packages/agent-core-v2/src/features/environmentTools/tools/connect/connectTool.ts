@@ -102,6 +102,9 @@ export class ConnectEnvironmentTool implements IConnectEnvironmentTool {
         registry,
       });
       const host = environment.host;
+      if (host === undefined) {
+        throw new EnvironmentError('environment.unavailable', `environment ${environmentId} host information is not available`);
+      }
       const cwdHint = initialCwd === undefined ? '' : `, initial working directory ${initialCwd}`;
       const switchHint =
         initialCwd === undefined

@@ -6,7 +6,7 @@ import type { Environment, EnvironmentBinding, EnvironmentCapability } from '#/e
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import {
   EnvironmentRegistry,
-  environmentStatusAllows,
+  environmentIsReady,
   type EnvironmentRegistrationHandle,
 } from '#/environment/environmentRegistry';
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
@@ -66,7 +66,7 @@ function registryBackedService(registry: EnvironmentRegistry): IAgentEnvironment
       try {
         const environment = registry.inspect(BINDING);
         return (
-          environmentStatusAllows(environment, required) &&
+          environmentIsReady(environment) &&
           required.every((capability) => environment.capabilities.has(capability))
         );
       } catch {
@@ -77,7 +77,7 @@ function registryBackedService(registry: EnvironmentRegistry): IAgentEnvironment
     acquire: (required = []) => registry.acquire(BINDING, required),
     acquireWhenReady: async (required = []) => {
       const environment = registry.inspect(BINDING);
-      if (!environmentStatusAllows(environment, required) && typeof environment.connect === 'function') {
+      if (!environmentIsReady(environment) && typeof environment.connect === 'function') {
         await environment.connect();
       }
       return registry.acquireWhenReady(BINDING, required);

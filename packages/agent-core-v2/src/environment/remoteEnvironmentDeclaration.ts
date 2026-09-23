@@ -1,10 +1,7 @@
 import { z } from 'zod';
 
-import { resolveProgramPath } from './programPath';
-
 export const ENVIRONMENT_ID_MAX_LENGTH = 64;
 export const RESERVED_ENVIRONMENT_IDS = ['local', 'default'] as const;
-export const DEFAULT_REMOTE_BIN = '~/.kimi-code/bin/kimi';
 
 const sshEnvironmentEntrySchema = z
   .object({
@@ -113,20 +110,4 @@ export function sectionEntries(
   return Object.entries(section)
     .filter(([id]) => id !== 'default')
     .map(([id, entry]) => ({ id, entry: entry as RemoteEnvironmentEntry }));
-}
-
-export function describeEnvironmentEntry(
-  entry: RemoteEnvironmentEntry,
-  options?: { readonly cwd?: string },
-): string {
-  if ('command' in entry) {
-    return [resolveProgramPath(entry.command, { cwd: options?.cwd }), ...(entry.args ?? [])].join(' ');
-  }
-  const remoteBin = entry.remoteBin ?? DEFAULT_REMOTE_BIN;
-  switch (entry.type) {
-    case 'ssh':
-      return `ssh ${entry.host} ${remoteBin} exec-server --listen stdio`;
-    case 'docker':
-      return `docker ${entry.context === undefined ? '' : `--context ${entry.context} `}exec ${entry.container} ${remoteBin} exec-server --listen stdio`;
-  }
 }

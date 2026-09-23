@@ -230,9 +230,7 @@ export abstract class SDKRpcClientBase {
 
   abstract getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo>;
 
-  abstract listEnvironmentDeclarations(
-    workDir: string,
-  ): Promise<readonly WorkspaceEnvironmentDeclarationInfo[]>;
+  abstract listEnvironmentDeclarations(): Promise<readonly WorkspaceEnvironmentDeclarationInfo[]>;
 
   abstract trustWorkspace(workDir: string): Promise<void>;
 

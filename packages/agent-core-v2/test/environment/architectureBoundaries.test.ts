@@ -99,6 +99,6 @@ describe('environment architecture boundaries', () => {
     expect(mcp).toContain('environmentResolver: this.environmentResolver');
     expect(mcp).not.toMatch(/@IHost(?:FileSystem|FsWatchService|ProcessService|TerminalService)/);
     expect(externalFs).toContain('get(IEnvironmentResolver).acquire(');
-    expect(externalFs).not.toMatch(/\.get\(IHost(?:FileSystem|FsWatchService|ProcessService|TerminalService)\)/);
+    expect(externalFs).toContain('new LocalEnvironment(');
   });
 });

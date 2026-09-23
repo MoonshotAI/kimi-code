@@ -8,7 +8,6 @@ export interface EnvironmentProviderAttachment {
 
 export interface EnvironmentProviderContext {
   readonly id: string;
-  readonly root: string;
 }
 
 export interface EnvironmentProviderEnvironmentHandle {

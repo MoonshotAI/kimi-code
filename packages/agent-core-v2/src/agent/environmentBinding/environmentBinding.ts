@@ -6,7 +6,6 @@ export interface IAgentEnvironmentBindingService {
   readonly _serviceBrand: undefined;
   readonly current: EnvironmentBinding;
   readonly onDidChange: Event<EnvironmentBinding>;
-  get(): EnvironmentBinding;
   set(binding: EnvironmentBinding): EnvironmentBinding;
   switch(environmentId: string, cwd?: string): EnvironmentBinding;
   connectAndSwitch(environmentId: string, cwd?: string): Promise<EnvironmentBinding>;

@@ -181,7 +181,11 @@ export class Program {
   ): Promise<FsSuggestResponse> {
     const lease = this.resolver.acquire({ workspaceId: this.workspaceId, environmentId }, ['fs']);
     try {
-      const mapped = lease.environment.workspace.mapRoots(roots);
+      const workspace = lease.environment.workspace;
+      if (workspace === undefined) {
+        throw new EnvironmentError('environment.unavailable', `environment ${environmentId} is not ready`);
+      }
+      const mapped = workspace.mapRoots(roots);
       const context: IWorkspaceContext = { ...this.context, cwd: mapped.workDir };
       const dirs = { additionalDirs: mapped.additionalDirs ?? [] };
       const fs = new WorkspaceFsService(
@@ -353,7 +357,7 @@ export class Program {
     };
     try {
       const localEnvironment = this.environments.current(LOCAL_ENVIRONMENT_ID);
-      if (localEnvironment?.fs === undefined) {
+      if (localEnvironment?.fs === undefined || localEnvironment.host === undefined) {
         throw new Error(`program ${this.workspaceId} has no local environment fs`);
       }
       const localFs = localEnvironment.fs;

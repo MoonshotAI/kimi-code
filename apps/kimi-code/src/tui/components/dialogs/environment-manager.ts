@@ -27,7 +27,7 @@
  * through callbacks; the host reports progress via `setBusy` / `showError`.
  */
 
-import type { SessionEnvironmentStatus, SessionEnvironmentType } from '@moonshot-ai/kimi-code-sdk';
+import type { SessionEnvironmentInfo } from '@moonshot-ai/kimi-code-sdk';
 import {
   Container,
   Key,
@@ -43,16 +43,8 @@ import { printableChar } from '#/tui/utils/printable-key';
 import { pageView, type PageView } from '#/tui/utils/paging';
 import { SpinnerTicker } from '#/tui/utils/spinner-ticker';
 
-export interface EnvironmentManagerEnvironment {
-  readonly environmentId: string;
-  readonly type: SessionEnvironmentType;
-  readonly status: SessionEnvironmentStatus;
-  readonly defaultCwd?: string;
-  readonly connectError?: string;
-}
-
 export interface EnvironmentManagerOptions {
-  readonly environments: readonly EnvironmentManagerEnvironment[];
+  readonly environments: readonly SessionEnvironmentInfo[];
   readonly currentEnvironmentId: string;
   readonly onSwitch: (environmentId: string) => void;
   readonly onReconnect: () => void;
@@ -64,7 +56,7 @@ export interface EnvironmentManagerOptions {
 
 interface EnvironmentRow {
   readonly kind: 'environment';
-  readonly environment: EnvironmentManagerEnvironment;
+  readonly environment: SessionEnvironmentInfo;
 }
 
 interface AddRow {
@@ -82,7 +74,7 @@ const ADD_ROW_LABEL = '[ Add Environment ]';
 const PAGE_SIZE = 8;
 const MAX_ERROR_LINES = 4;
 
-function buildRows(environments: readonly EnvironmentManagerEnvironment[]): readonly Row[] {
+function buildRows(environments: readonly SessionEnvironmentInfo[]): readonly Row[] {
   const sorted = environments.toSorted(
     (a, b) => Number(b.environmentId === 'local') - Number(a.environmentId === 'local'),
   );
@@ -317,7 +309,7 @@ function renderRow(
   return lines;
 }
 
-function renderSecondary(environment: EnvironmentManagerEnvironment, width: number): string {
+function renderSecondary(environment: SessionEnvironmentInfo, width: number): string {
   if (environment.environmentId === 'local') {
     return currentTheme.fg('textMuted', '      this machine');
   }

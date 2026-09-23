@@ -42,9 +42,9 @@ export interface EnvironmentWorkspaceMapper {
 export interface Environment {
   readonly identity: EnvironmentIdentity;
   readonly capabilities: ReadonlySet<EnvironmentCapability>;
-  readonly host: HostEnvironmentInfo;
-  readonly path: EnvironmentPath;
-  readonly workspace: EnvironmentWorkspaceMapper;
+  readonly host?: HostEnvironmentInfo;
+  readonly path?: EnvironmentPath;
+  readonly workspace?: EnvironmentWorkspaceMapper;
   readonly fs?: IHostFileSystem;
   readonly process?: IHostProcessService;
   readonly terminal?: IHostTerminalService;

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { IModelCatalog, IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2';
+import { IModelCatalog, IWorkspaceInstanceManager, IWorkspaceService } from '@moonshot-ai/agent-core-v2';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import type { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
@@ -508,12 +508,13 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
     provider = await server!.core.accessor.get(IWorkspaceInstanceManager).addProvider({
       id: 'remote-test-provider',
       attach: async (context, host) => {
+        const workspace = await host.get(IWorkspaceService).get(context.id);
         const environment = Object.assign(
           new FakeEnvironment(
             { workspaceId: context.id, environmentId: 'remote-test', generation: 'remote-generation' },
             { capabilities: ['fs'] },
           ),
-          { fs: mappingHostFs(remoteRoots.get(context.root) ?? (remoteRoot as string)) },
+          { fs: mappingHostFs(remoteRoots.get(workspace?.root ?? '') ?? (remoteRoot as string)) },
         );
         const registration = host.registerEnvironment(environment);
         return { dispose: () => registration.remove() };

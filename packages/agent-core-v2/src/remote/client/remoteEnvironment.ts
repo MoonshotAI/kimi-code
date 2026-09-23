@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import * as posixPath from 'node:path/posix';
 
 import { Emitter } from '#/_base/event';
 import type {
@@ -7,11 +6,11 @@ import type {
   PathClass,
   ShellName,
 } from '#/os/interface/hostEnvironment';
+import { POSIX_ENVIRONMENT_PATH, POSIX_ENVIRONMENT_WORKSPACE } from '#/environment/environmentDefaults';
 import type {
   Environment,
   EnvironmentCapability,
   EnvironmentIdentity,
-  EnvironmentPath,
   EnvironmentStatus,
 } from '#/environment/environment';
 
@@ -31,8 +30,6 @@ export interface RemoteEnvironmentOptions {
   readonly workspaceId: string;
   readonly environmentId: string;
   readonly launcher: LauncherSpec;
-  readonly generation?: string;
-  readonly clientName?: string;
   readonly clientVersion?: string;
   readonly minExecutorVersion?: string;
   readonly initializeTimeoutMs?: number;
@@ -43,8 +40,8 @@ export class RemoteEnvironment implements Environment {
   readonly identity: EnvironmentIdentity;
   readonly capabilities: ReadonlySet<EnvironmentCapability>;
   readonly host: RemoteEnvironmentProbe;
-  readonly path: EnvironmentPath;
-  readonly workspace: Environment['workspace'];
+  readonly path = POSIX_ENVIRONMENT_PATH;
+  readonly workspace = POSIX_ENVIRONMENT_WORKSPACE;
   readonly fs: RemoteFileSystem;
   readonly process: RemoteProcessService;
   readonly terminal: RemoteTerminalService;
@@ -67,7 +64,7 @@ export class RemoteEnvironment implements Environment {
     let connection: RemoteExecConnection;
     try {
       connection = await RemoteExecConnection.connect(bridge, {
-        clientName: options.clientName ?? 'kimi-code',
+        clientName: 'kimi-code',
         clientVersion: options.clientVersion ?? '0.0.0',
         minExecutorVersion: options.minExecutorVersion,
         initializeTimeoutMs: options.initializeTimeoutMs,
@@ -112,7 +109,7 @@ export class RemoteEnvironment implements Environment {
     this.identity = {
       workspaceId: options.workspaceId,
       environmentId: options.environmentId,
-      generation: options.generation ?? `${options.environmentId}-${randomUUID()}`,
+      generation: `${options.environmentId}-${randomUUID()}`,
     };
     this.capabilities = new Set<EnvironmentCapability>(['fs', 'process', 'terminal']);
     const environment = connection.environment;
@@ -128,22 +125,6 @@ export class RemoteEnvironment implements Environment {
       tempDir: environment.tempDir,
     };
     this.executorVersion = connection.executorVersion;
-    this.path = {
-      separator: '/',
-      delimiter: ':',
-      isAbsolute: (path) => posixPath.isAbsolute(path),
-      join: (...paths) => posixPath.join(...paths),
-      relative: (from, to) => posixPath.relative(from, to),
-      resolve: (...paths) => posixPath.resolve(...paths),
-      basename: (path) => posixPath.basename(path),
-      dirname: (path) => posixPath.dirname(path),
-    };
-    this.workspace = {
-      mapRoots: (roots) => ({
-        workDir: posixPath.resolve(roots.workDir),
-        additionalDirs: roots.additionalDirs?.map((root) => posixPath.resolve(root)),
-      }),
-    };
     this.fs = new RemoteFileSystem(connection);
     this.process = new RemoteProcessService(connection, environment.cwd, environment.shellPath);
     this.terminal = new RemoteTerminalService(connection, options.onDiagnostic);

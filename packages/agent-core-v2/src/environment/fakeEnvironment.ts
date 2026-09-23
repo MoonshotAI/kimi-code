@@ -26,8 +26,8 @@ export class FakeEnvironment implements Environment {
       readonly status?: EnvironmentStatus;
       readonly capabilities?: readonly EnvironmentCapability[];
       readonly pathClass?: 'posix' | 'win32';
-      readonly host?: Partial<Environment['host']>;
-      readonly mapWorkspaceRoots?: Environment['workspace']['mapRoots'];
+      readonly host?: Partial<NonNullable<Environment['host']>>;
+      readonly mapWorkspaceRoots?: NonNullable<Environment['workspace']>['mapRoots'];
     } = {},
   ) {
     this.currentStatus = options.status ?? 'ready';

@@ -29,7 +29,6 @@ import {
   projectRoots,
   sessionMediaOriginalsDir,
   userRoots,
-  EnvironmentError,
   type ContentPart,
   type ISessionScopeHandle,
   type Scope,
@@ -38,7 +37,6 @@ import {
   type MergeAllAvailableSkillsConfig,
   IAgentProfileService,
 } from '@moonshot-ai/agent-core-v2';
-import { HandshakeError } from '@moonshot-ai/agent-core-v2/remote';
 import { join } from 'node:path';
 import { z } from 'zod';
 
@@ -67,7 +65,7 @@ import {
 import { workspaceIdParamSchema } from '../protocol/rest-workspace';
 import type { SkillDescriptor } from '../protocol/skill';
 import { parseActionSuffix } from './action-suffix';
-import { environmentErrorCode } from './environment';
+import { sendEnvironmentError } from './environment';
 
 interface SkillsRouteHost {
   get(
@@ -237,7 +235,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         if (attachments.length > 0) {
           if (contentHasPathRefs(attachments)) {
             const mainAgent = await ensureMainAgentHandle(resolved.handle);
-            if (mainAgent.accessor.get(IAgentEnvironmentBindingService).get().environmentId !== 'local') {
+            if (mainAgent.accessor.get(IAgentEnvironmentBindingService).current.environmentId !== 'local') {
               throw new Error2(
                 ErrorCodes.REQUEST_INVALID,
                 'file attachments by server-local path require the local environment',
@@ -265,7 +263,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
           const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
           const sessionDir = resolved.handle.accessor.get(ISessionContext).sessionDir;
           const mainAgent = await ensureMainAgentHandle(resolved.handle);
-          const binding = mainAgent.accessor.get(IAgentEnvironmentBindingService).get();
+          const binding = mainAgent.accessor.get(IAgentEnvironmentBindingService).current;
           let environmentLease: EnvironmentLease | undefined;
           try {
             preparedMedia = await resolvePromptMediaFiles(
@@ -405,14 +403,7 @@ function sendMappedError(
   requestId: string,
   err: unknown,
 ): void {
-  if (err instanceof EnvironmentError) {
-    reply.send(errEnvelope(environmentErrorCode(err.code), err.message, requestId));
-    return;
-  }
-  if (err instanceof HandshakeError) {
-    reply.send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, err.message, requestId));
-    return;
-  }
+  if (sendEnvironmentError(reply, requestId, err)) return;
   if (isError2(err)) {
     switch (err.code) {
       case ErrorCodes.SKILL_NOT_FOUND:

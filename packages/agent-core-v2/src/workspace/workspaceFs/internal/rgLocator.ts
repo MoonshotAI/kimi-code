@@ -1,8 +1,8 @@
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-
 import { ErrorCodes, Error2 } from '#/errors';
-import { LOCAL_ENVIRONMENT_ID, type Environment } from '#/environment/environment';
+import type { Environment } from '#/environment/environment';
+import { shareBinRgPath } from '#/environment/shareBinRg';
+
+export { getShareBinRgPath } from '#/environment/shareBinRg';
 
 export type RgResolutionSource = 'system-path' | 'share-bin-cached';
 
@@ -19,31 +19,6 @@ export interface EnsureRgPathOptions {
   readonly signal?: AbortSignal;
   readonly allowCachedFallback?: boolean;
   readonly environment?: Environment;
-}
-
-function rgBinaryName(): string {
-  return process.platform === 'win32' ? 'rg.exe' : 'rg';
-}
-
-function getShareDir(): string {
-  const override = process.env['KIMI_CODE_HOME'];
-  if (override !== undefined && override !== '') return override;
-  return join(homedir(), '.kimi-code');
-}
-
-export function getShareBinRgPath(): string {
-  return join(getShareDir(), 'bin', rgBinaryName());
-}
-
-function isRemoteEnvironment(environment: Environment | undefined): environment is Environment {
-  return environment !== undefined && environment.identity.environmentId !== LOCAL_ENVIRONMENT_ID;
-}
-
-function shareBinRgPath(environment: Environment | undefined): string {
-  if (isRemoteEnvironment(environment)) {
-    return `${environment.host.homeDir}/.kimi-code/bin/rg`;
-  }
-  return getShareBinRgPath();
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {

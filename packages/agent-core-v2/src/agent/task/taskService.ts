@@ -29,8 +29,7 @@ import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentLoopService, type LoopNotifyHandle } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import type { EnvironmentLease } from '#/environment/environment';
+import { environmentTempTarget, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { ITaskService, type ITaskHandle, TERMINAL_TASK_STATES } from '#/app/task/task';
 import {
   TERMINAL_STATUSES,
@@ -293,20 +292,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private spillTarget(): AgentTaskSpillTarget | undefined {
-    let lease: EnvironmentLease;
-    try {
-      lease = this.environment.acquire();
-    } catch {
-      return undefined;
-    }
-    try {
-      const tempDir = lease.environment.host.tempDir;
-      const fs = lease.environment.fs;
-      if (tempDir === undefined || fs === undefined) return undefined;
-      return { fs, dir: lease.environment.path.join(tempDir, 'kimi-code', 'task-output') };
-    } finally {
-      lease.dispose();
-    }
+    return environmentTempTarget(this.environment, 'task-output');
   }
 
   private get scheduledNotificationKeys(): Set<string> {

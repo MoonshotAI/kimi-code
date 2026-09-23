@@ -6,7 +6,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
 import { Error2, ErrorCodes } from '#/errors';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
-import { environmentStatusAllows } from '#/environment/environmentRegistry';
+import { environmentIsReady } from '#/environment/environmentRegistry';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import type {
@@ -35,10 +35,6 @@ interface SessionControllerEntry {
   readonly controller: SessionLifecycleService;
   readonly subscriptions: DisposableStore;
   sessionCount: number;
-}
-
-interface LocatedSession {
-  readonly controller: SessionLifecycleService;
 }
 
 export class SessionManager implements ISessionManager {
@@ -130,7 +126,7 @@ export class SessionManager implements ISessionManager {
   private selectControllerEnvironmentId(workspace: WorkspaceInstance, environmentId: string): string {
     if (environmentId === LOCAL_ENVIRONMENT_ID) return LOCAL_ENVIRONMENT_ID;
     const environment = workspace.environments.current(environmentId);
-    if (environment === undefined || !environmentStatusAllows(environment, ['fs', 'process'])) return LOCAL_ENVIRONMENT_ID;
+    if (environment === undefined || !environmentIsReady(environment)) return LOCAL_ENVIRONMENT_ID;
     return environmentId;
   }
 
@@ -139,9 +135,9 @@ export class SessionManager implements ISessionManager {
     if (inflight !== undefined) return inflight;
     this.resumeFailures.delete(sessionId);
     const promise = this.serializeLifecycle(sessionId, async () => {
-      const located = await this.locateSession(sessionId, { connect: true });
-      if (located === undefined) return undefined;
-      return located.controller.resume(sessionId, options);
+      const controller = await this.locateSession(sessionId, { connect: true });
+      if (controller === undefined) return undefined;
+      return controller.resume(sessionId, options);
     }).finally(() => this.pendingResumes.delete(sessionId));
     this.pendingResumes.set(sessionId, promise);
     void promise.catch((error: unknown) => {
@@ -221,9 +217,9 @@ export class SessionManager implements ISessionManager {
     sessionId: string,
     options?: ResumeSessionOptions,
   ): Promise<ISessionScopeHandle | undefined> {
-    const located = await this.locateSession(sessionId, { connect: true });
-    if (located === undefined) return undefined;
-    return located.controller.restore(sessionId, options);
+    const controller = await this.locateSession(sessionId, { connect: true });
+    if (controller === undefined) return undefined;
+    return controller.restore(sessionId, options);
   }
 
   async restore(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined> {
@@ -352,12 +348,12 @@ export class SessionManager implements ISessionManager {
   }
 
   private async controllerForSession(sessionId: string): Promise<SessionLifecycleService | undefined> {
-    return (await this.locateSession(sessionId))?.controller;
+    return this.locateSession(sessionId);
   }
 
   private beginResumeConnect(workspace: WorkspaceInstance, environmentId: string, sessionId: string): void {
     const environment = workspace.environments.current(environmentId);
-    if (environment === undefined || environmentStatusAllows(environment, ['fs', 'process'])) return;
+    if (environment === undefined || environmentIsReady(environment)) return;
     if (typeof environment.connect !== 'function') {
       this.log.warn(
         `resume could not connect environment ${environmentId}; session ${sessionId} loads with the binding kept and the environment left unconnected`,
@@ -372,9 +368,9 @@ export class SessionManager implements ISessionManager {
     });
   }
 
-  private async locateSession(sessionId: string, options?: { readonly connect?: boolean }): Promise<LocatedSession | undefined> {
+  private async locateSession(sessionId: string, options?: { readonly connect?: boolean }): Promise<SessionLifecycleService | undefined> {
     const live = this.owners.get(sessionId);
-    if (live !== undefined) return { controller: live };
+    if (live !== undefined) return live;
     const summary = await this.index.get(sessionId);
     if (summary === undefined) return undefined;
     const workspace = await this.workspaces.getOrCreate({ workspaceId: summary.workspaceId, root: summary.cwd });
@@ -384,13 +380,11 @@ export class SessionManager implements ISessionManager {
       this.beginResumeConnect(workspace, boundEnvironmentId, sessionId);
     }
     const controllerEnvironmentId = this.selectControllerEnvironmentId(workspace, boundEnvironmentId);
-    return {
-      controller: this.controllerForWorkspace(
-        workspace.id,
-        controllerEnvironmentId,
-        controllerEnvironmentId === LOCAL_ENVIRONMENT_ID ? undefined : persistedBinding?.cwd,
-      ),
-    };
+    return this.controllerForWorkspace(
+      workspace.id,
+      controllerEnvironmentId,
+      controllerEnvironmentId === LOCAL_ENVIRONMENT_ID ? undefined : persistedBinding?.cwd,
+    );
   }
 }
 

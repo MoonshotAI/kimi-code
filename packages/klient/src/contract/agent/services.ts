@@ -61,7 +61,7 @@ export const agentCommandContract = {
 } satisfies ServiceContract;
 
 export const agentEnvironmentBindingContract = {
-  get: { input: z.tuple([]), output: environmentBindingSchema },
+  current: { input: z.tuple([]), output: environmentBindingSchema },
   set: { input: z.tuple([environmentBindingSchema]), output: environmentBindingSchema },
   connectAndSwitch: { input: z.tuple([z.string(), z.string().optional()]), output: environmentBindingSchema },
 } satisfies ServiceContract;

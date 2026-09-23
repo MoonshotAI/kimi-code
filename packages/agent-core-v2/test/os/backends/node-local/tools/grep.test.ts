@@ -1673,22 +1673,17 @@ describe('GrepTool', () => {
     vi.mocked(ensureRgPath).mockImplementationOnce((_probe, { signal: locatorSignal } = {}) => {
       expect(locatorSignal).toBe(controller.signal);
       return new Promise((_resolve, reject) => {
-        const rejectAbort = (): void => {
+        queueMicrotask(() => {
           const error = new Error('Aborted');
           error.name = 'AbortError';
+          controller.abort();
           reject(error);
-        };
-        if (locatorSignal?.aborted === true) {
-          rejectAbort();
-          return;
-        }
-        locatorSignal?.addEventListener('abort', rejectAbort, { once: true });
+        });
       });
     });
     const tool = new GrepTool(createFakeKaos({ exec }), workspace);
 
     const resultPromise = executeTool(tool, context({ pattern: 'hit' }, controller.signal));
-    controller.abort();
     const result = await Promise.race([
       resultPromise,
       new Promise<'timed out'>((resolve) => {

@@ -6,6 +6,7 @@ import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMd
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
+import { EnvironmentError } from '#/environment/environmentRegistry';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ErrorCodes, Error2 } from '#/errors';
@@ -88,8 +89,12 @@ export class SessionInitService implements ISessionInitService {
       let agentsMd: string;
       let agentsMdPaths: readonly string[];
       try {
+        const homeDir = lease.environment.host?.homeDir;
+        if (homeDir === undefined) {
+          throw new EnvironmentError('environment.unavailable', 'environment host information is not available');
+        }
         ({ content: agentsMd, paths: agentsMdPaths } = await loadAgentsMdDetailed(
-          { fs: lease.environment.fs!, homeDir: lease.environment.host.homeDir },
+          { fs: lease.environment.fs!, homeDir },
           workDir,
           this.bootstrap.homeDir,
         ));

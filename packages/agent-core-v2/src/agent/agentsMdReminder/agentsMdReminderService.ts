@@ -13,6 +13,7 @@ import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { WatchChange } from '#human/utils/watch';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { acquireEnvironmentLease } from '#/agent/permissionPolicy/policies/environment-lease';
+import { DEFAULT_ENVIRONMENT_HOST } from '#/environment/environmentDefaults';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { normalizeUserPath } from '#/tool/path-access';
@@ -172,8 +173,10 @@ export class AgentAgentsMdReminderService
     const lease = acquireEnvironmentLease(this.environment, ['fs']);
     if (lease === undefined) return;
     try {
+      const homeDir = lease.environment.host?.homeDir;
+      if (homeDir === undefined) return;
       const { paths } = await loadAgentsMdDetailed(
-        { fs: lease.environment.fs!, homeDir: lease.environment.host.homeDir },
+        { fs: lease.environment.fs!, homeDir },
         this.agentCwd,
         this.bootstrap.homeDir,
       );
@@ -240,7 +243,7 @@ export class AgentAgentsMdReminderService
     const selfKnown: string[] = [];
     const lease = acquireEnvironmentLease(this.environment);
     if (lease === undefined) return { dirs: [], selfKnown };
-    const env = lease.environment.host;
+    const env = lease.environment.host ?? DEFAULT_ENVIRONMENT_HOST;
     lease.dispose();
     switch (ctx.toolCall.name) {
       case 'Read':

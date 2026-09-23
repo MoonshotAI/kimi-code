@@ -175,7 +175,7 @@ export class EnvironmentRegistry {
       throw new EnvironmentError('environment.not_found', `workspace ${binding.workspaceId} is not ${this.workspaceId}`);
     }
     const entry = this.entries.get(binding.environmentId);
-    const pending = entry !== undefined && !entry.closed && !environmentStatusAllows(entry.environment, required)
+    const pending = entry !== undefined && !entry.closed && !environmentIsReady(entry.environment)
       ? entry.environment.whenReady
       : undefined;
     if (pending !== undefined) await pending;
@@ -190,7 +190,7 @@ export class EnvironmentRegistry {
     if (entry === undefined) {
       throw new EnvironmentError('environment.not_found', `environment ${binding.environmentId} does not exist in workspace ${this.workspaceId}`);
     }
-    if (entry.closed || !environmentStatusAllows(entry.environment, required)) {
+    if (entry.closed || !environmentIsReady(entry.environment)) {
       const reason = entry.environment.connectError?.split('\n', 1)[0];
       throw new EnvironmentError(
         'environment.unavailable',
@@ -315,6 +315,6 @@ export class EnvironmentRegistry {
   }
 }
 
-export function environmentStatusAllows(environment: Environment, _required: readonly EnvironmentCapability[] = []): boolean {
+export function environmentIsReady(environment: Environment): boolean {
   return environment.status === 'ready';
 }

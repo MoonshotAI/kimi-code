@@ -375,10 +375,8 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
 
   it('lists resolved environment declarations without a session', async () => {
     const { harness } = await makeEnvironmentHarness();
-    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
-    tempDirs.push(workDir);
     try {
-      await expect(harness.listEnvironmentDeclarations(workDir)).resolves.toEqual([
+      await expect(harness.listEnvironmentDeclarations()).resolves.toEqual([
         { id: 'fake-box', type: 'ssh', defaultCwd: '/remote/work' },
       ]);
     } finally {

@@ -286,7 +286,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     return {
       workspaceId: callerBinding.workspaceId,
       environmentId,
-      cwd: connected.host.cwd ?? connected.host.homeDir,
+      cwd: connected.host?.cwd ?? connected.host?.homeDir,
     };
   }
 

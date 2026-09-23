@@ -160,7 +160,7 @@ export const planDataSchema = z.union([
   z.object({
     id: z.string(),
     content: z.string(),
-    path: z.string(),
+    path: z.string().nullable(),
   }),
 ]);
 

@@ -1,10 +1,11 @@
 import chalk from 'chalk';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import type { SessionEnvironmentInfo } from '@moonshot-ai/kimi-code-sdk';
+
 import {
   EnvironmentManagerComponent,
   type EnvironmentManagerOptions,
-  type EnvironmentManagerEnvironment,
 } from '#/tui/components/dialogs/environment-manager';
 import { BRAILLE_SPINNER_FRAMES, BRAILLE_SPINNER_INTERVAL_MS } from '#/tui/constant/rendering';
 
@@ -23,14 +24,14 @@ function rendered(component: EnvironmentManagerComponent, width = 120): string {
   return component.render(width).join('\n').replaceAll(SGR, '');
 }
 
-const LOCAL: EnvironmentManagerEnvironment = { environmentId: 'local', type: 'local', status: 'ready' };
-const DEV_BOX: EnvironmentManagerEnvironment = {
+const LOCAL: SessionEnvironmentInfo = { environmentId: 'local', type: 'local', status: 'ready' };
+const DEV_BOX: SessionEnvironmentInfo = {
   environmentId: 'dev-box',
   type: 'ssh',
   status: 'ready',
   defaultCwd: '/home/me/projects',
 };
-const SANDBOX: EnvironmentManagerEnvironment = { environmentId: 'sandbox', type: 'command', status: 'disconnected' };
+const SANDBOX: SessionEnvironmentInfo = { environmentId: 'sandbox', type: 'command', status: 'disconnected' };
 
 function makeComponent(overrides: Partial<EnvironmentManagerOptions> = {}): EnvironmentManagerComponent {
   return new EnvironmentManagerComponent({

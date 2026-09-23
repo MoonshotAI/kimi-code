@@ -819,12 +819,12 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     const preloadedAgentsMd = await this.workspaceInstructionsSnapshot();
     const fsAvailable = this.environment.isAvailable(['fs']);
     const lease = this.environment.acquire(fsAvailable ? ['fs'] : []);
-    const env = lease.environment.host;
     const currentEnvironmentId = lease.environment.identity.environmentId;
     const view = new EnvironmentWorkspaceView(lease.environment, {
       workDir: this.workspace.workDir,
       additionalDirs: options?.additionalDirs ?? this.workspace.additionalDirs,
     });
+    const env = view.host;
     let base: SystemPromptContext;
     try {
       base = !fsAvailable

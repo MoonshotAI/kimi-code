@@ -5,9 +5,10 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 import { ISessionEventBus } from '#/app/event/eventBus';
 import { LifecycleScope } from '#/app/scopes';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import type { Environment, EnvironmentBinding, EnvironmentCapability, EnvironmentLease, EnvironmentWorkspaceRoots } from '#/environment/environment';
+import type { Environment, EnvironmentBinding, EnvironmentCapability, EnvironmentLease, EnvironmentPath, EnvironmentWorkspaceRoots } from '#/environment/environment';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
-import { EnvironmentError, environmentStatusAllows, type EnvironmentGenerationSnapshot, type EnvironmentRegistryChange } from '#/environment/environmentRegistry';
+import { EnvironmentError, environmentIsReady, type EnvironmentGenerationSnapshot, type EnvironmentRegistryChange } from '#/environment/environmentRegistry';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
@@ -42,20 +43,44 @@ export interface IAgentEnvironmentService {
 export const IAgentEnvironmentService: ServiceIdentifier<IAgentEnvironmentService> =
   createDecorator<IAgentEnvironmentService>('agentEnvironmentService');
 
-export function inspectAgentEnvironment(service: IAgentEnvironmentService): Environment {
-  return service.inspect();
-}
-
-export function acquireOrWhenReady(
+export async function acquireOrWhenReady(
   service: IAgentEnvironmentService,
   required: readonly EnvironmentCapability[] = [],
-): EnvironmentLease | Promise<EnvironmentLease> {
+): Promise<EnvironmentLease> {
   if (service.isAvailable(required)) return service.acquire(required);
   return service.acquireWhenReady(required);
 }
 
-export function pinnedGeneration(environment: Environment, required: readonly EnvironmentCapability[]): string | undefined {
-  return environmentStatusAllows(environment, required) ? environment.identity.generation : undefined;
+export function pinnedGeneration(environment: Environment): string | undefined {
+  return environmentIsReady(environment) ? environment.identity.generation : undefined;
+}
+
+export interface EnvironmentTempTarget {
+  readonly fs: IHostFileSystem;
+  readonly path: EnvironmentPath;
+  readonly dir: string;
+}
+
+export function environmentTempTarget(
+  service: IAgentEnvironmentService,
+  subdir: string,
+): EnvironmentTempTarget | undefined {
+  let lease: EnvironmentLease;
+  try {
+    lease = service.acquire();
+  } catch {
+    return undefined;
+  }
+  try {
+    const environment = lease.environment;
+    const fs = environment.fs;
+    const path = environment.path;
+    const tempDir = environment.host?.tempDir;
+    if (fs === undefined || path === undefined || tempDir === undefined) return undefined;
+    return { fs, path, dir: path.join(tempDir, 'kimi-code', subdir) };
+  } finally {
+    lease.dispose();
+  }
 }
 
 export function snapshotAgentEnvironmentBinding(
@@ -126,7 +151,7 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
     if (workDir === undefined && binding.environmentId !== LOCAL_ENVIRONMENT_ID) {
       try {
         const environment = this.resolver.inspect(binding);
-        workDir = environment.host.cwd ?? environment.host.homeDir;
+        workDir = environment.host?.cwd ?? environment.host?.homeDir;
       } catch {
         workDir = undefined;
       }
@@ -140,7 +165,7 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
   isAvailable(required: readonly EnvironmentCapability[] = []): boolean {
     try {
       const environment = this.inspect();
-      return environmentStatusAllows(environment, required) && required.every((capability) => environment.capabilities.has(capability));
+      return environmentIsReady(environment) && required.every((capability) => environment.capabilities.has(capability));
     } catch {
       return false;
     }
@@ -153,7 +178,7 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
   async acquireWhenReady(required: readonly EnvironmentCapability[] = []): Promise<EnvironmentLease> {
     const binding = this.binding.current;
     const environment = this.resolver.inspect(binding);
-    if (!environmentStatusAllows(environment, required) && typeof environment.connect === 'function') {
+    if (!environmentIsReady(environment) && typeof environment.connect === 'function') {
       await environment.connect();
     }
     return this.resolver.acquireWhenReady(binding, required);

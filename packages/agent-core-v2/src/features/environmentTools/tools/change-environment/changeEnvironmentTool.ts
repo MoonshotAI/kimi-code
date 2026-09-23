@@ -45,7 +45,7 @@ export class ChangeEnvironmentTool implements IChangeEnvironmentTool {
     const environmentId = args.id.trim();
     let cwd = args.cwd;
     if (environmentId !== LOCAL_ENVIRONMENT_ID && cwd === undefined) {
-      cwd = await this.declaredDefaultCwd(environmentId);
+      cwd = await this.environmentDeclarations.declaredDefaultCwd(environmentId);
       if (cwd === undefined) {
         return {
           isError: true,
@@ -80,9 +80,5 @@ export class ChangeEnvironmentTool implements IChangeEnvironmentTool {
         `Environment switched to "${environmentId}" (working directory ${workDir}). ` +
         `Subsequent tool calls in this turn execute on "${environmentId}".`,
     };
-  }
-
-  private async declaredDefaultCwd(environmentId: string): Promise<string | undefined> {
-    return this.environmentDeclarations.declaredDefaultCwd(environmentId);
   }
 }

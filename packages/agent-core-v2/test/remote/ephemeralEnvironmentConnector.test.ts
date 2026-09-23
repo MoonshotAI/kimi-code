@@ -66,7 +66,6 @@ describe('RemoteEphemeralEnvironmentConnector', () => {
       workspaceId: 'workspace',
       environmentId: 'eph-test',
       launcher: { type: 'ssh', host: 'dev-box', remoteBin: '/opt/kimi' },
-      clientName: 'kimi-code',
       clientVersion: '1.2.3',
     });
     expect(registry.current('eph-test')).toBe(result.environment);
@@ -96,7 +95,7 @@ describe('RemoteEphemeralEnvironmentConnector', () => {
     expect(calls).toHaveLength(2);
     expect(registry.current('eph-test')).toBe(result.environment);
     expect(result.environment.identity.generation).toBe(generation);
-    expect(result.environment.host.cwd).toBe('/home/me/work-2');
+    expect(result.environment.host?.cwd).toBe('/home/me/work-2');
   });
 
   it('maps docker and command entries to launcher specs', async () => {

@@ -36,7 +36,6 @@ describe('handshake', () => {
     const { connection, loopback } = await connectInProcess();
     expect(connection.executorVersion).toBe('9.9.9-test');
     expect(connection.environment).toEqual(TEST_ENVIRONMENT);
-    expect(connection.capabilities).toEqual({});
     await expect(connection.call(FS_GET_METADATA_METHOD, { path: '/' })).resolves.toMatchObject({
       isDirectory: true,
     });
@@ -306,7 +305,7 @@ describe('request call timeout', () => {
     first.close();
     await expect(stale).rejects.toThrow(ConnectionClosedError);
 
-    processStartReply({ id: 2, result: { processId: 'p1', pid: 1 } });
+    processStartReply({ id: 2, result: { pid: 1 } });
     await new Promise((resolve) => {
       setTimeout(resolve, 50);
     });

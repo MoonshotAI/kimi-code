@@ -8,7 +8,7 @@ import { LifecycleScope } from '#/app/scopes';
 import type { Environment, EnvironmentBinding } from '#/environment/environment';
 import { ENVIRONMENTS_SECTION } from '#/environment/configSection';
 import { resolveWorkspaceEnvironmentDeclarations } from '#/environment/environmentDeclarations';
-import { EnvironmentError, environmentStatusAllows } from '#/environment/environmentRegistry';
+import { EnvironmentError, environmentIsReady } from '#/environment/environmentRegistry';
 import type { EnvironmentDeclarationSet } from '#/environment/remoteEnvironmentDeclaration';
 import { Error2, ErrorCodes } from '#/errors';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -74,7 +74,7 @@ export class EnvironmentDeclarationService implements IEnvironmentDeclarationSer
 
   async declarations(): Promise<EnvironmentDeclarationSet | undefined> {
     try {
-      return await resolveWorkspaceEnvironmentDeclarations({ config: this.config });
+      return await resolveWorkspaceEnvironmentDeclarations(this.config);
     } catch (error) {
       this.log.warn('remote environment declaration resolution failed', { error });
       return undefined;
@@ -90,7 +90,7 @@ export class EnvironmentDeclarationService implements IEnvironmentDeclarationSer
     const workspace = this.workspaces.get(workspaceId);
     const environment = workspace?.environments.current(environmentId);
     if (workspace === undefined || environment === undefined) return undefined;
-    if (!environmentStatusAllows(environment, ['fs', 'process'])) {
+    if (!environmentIsReady(environment)) {
       if (typeof environment.connect !== 'function') {
         throw new EnvironmentError('environment.unavailable', `environment ${environmentId} is ${environment.status}`);
       }

@@ -3,6 +3,7 @@ import {
   readUtf8Lines,
   type TextDecodeErrors,
 } from '#/_base/execEnv/decodeText';
+import { splitLinesKeepingTerminator } from '#/_base/text/line-endings';
 import type {
   HostDirEntry,
   HostFileStat,
@@ -34,6 +35,7 @@ import {
   type FsWriteMode,
 } from '#/remote/protocol/methods';
 import type { RemoteExecConnection } from './connection';
+import { rpcDomainError } from './rpcDomainError';
 
 const HOST_FS_CODES: ReadonlySet<string> = new Set(Object.values(OsFsErrors.codes));
 
@@ -41,14 +43,10 @@ export function toRemoteFsError(error: unknown): Error {
   if (!(error instanceof RpcError)) {
     return error instanceof Error ? error : new Error(String(error));
   }
-  const data = error.data;
-  const domainCode =
-    data !== null && typeof data === 'object'
-      ? (data as Record<string, unknown>)['domainCode']
-      : undefined;
-  if (typeof domainCode === 'string' && HOST_FS_CODES.has(domainCode)) {
-    return new HostFsError(domainCode as HostFsErrorCode, error.message, {
-      details: data as Record<string, unknown>,
+  const domain = rpcDomainError(error, HOST_FS_CODES);
+  if (domain !== undefined) {
+    return new HostFsError(domain.domainCode as HostFsErrorCode, error.message, {
+      details: domain.details,
     });
   }
   const fallback =
@@ -60,20 +58,6 @@ export function toRemoteFsError(error: unknown): Error {
 
 function isUtf8Encoding(encoding: BufferEncoding): boolean {
   return encoding === 'utf-8' || encoding === 'utf8';
-}
-
-function* splitLinesKeepingTerminator(text: string): Generator<string> {
-  if (text.length === 0) return;
-  let start = 0;
-  for (let i = 0; i < text.length; i += 1) {
-    if (text.codePointAt(i) === 0x0a) {
-      yield text.slice(start, i + 1);
-      start = i + 1;
-    }
-  }
-  if (start < text.length) {
-    yield text.slice(start);
-  }
 }
 
 export class RemoteFileSystem implements IHostFileSystem {

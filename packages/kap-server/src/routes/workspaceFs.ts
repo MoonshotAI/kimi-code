@@ -10,8 +10,6 @@ import {
   IHostFileSystem,
   IHostFolderBrowser,
   ISessionIndex,
-  IWorkspaceInstanceManager,
-  IWorkspaceService,
   isError2,
   type HostFileStat,
   type Scope,
@@ -36,6 +34,7 @@ import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import { createEnvironmentReadStream, type EnvironmentReadStreamSource } from './fs';
+import { resolveWorkspaceInstance, sendEnvironmentError } from './environment';
 
 interface FsContentReply {
   type(mime: string): FsContentReply;
@@ -213,18 +212,7 @@ async function acquireFsSource(
     };
   }
   const workspaceId = await resolveContextWorkspaceId(core, environmentId, context);
-  const manager = core.accessor.get(IWorkspaceInstanceManager);
-  let instance = manager.get(workspaceId);
-  if (instance === undefined) {
-    const workspace = await core.accessor.get(IWorkspaceService).get(workspaceId);
-    if (workspace === undefined) {
-      throw new Error2(
-        ErrorCodes.WORKSPACE_NOT_FOUND,
-        `workspace ${workspaceId} does not exist`,
-      );
-    }
-    instance = await manager.getOrCreate({ workspaceId, root: workspace.root });
-  }
+  const instance = await resolveWorkspaceInstance(core, workspaceId);
   if (instance.environments.current(environmentId) === undefined) {
     throw new EnvironmentError('environment.not_found', `environment ${environmentId} does not exist`);
   }
@@ -261,13 +249,7 @@ function sendAcquireError(
   requestId: string,
   err: unknown,
 ): void {
-  if (err instanceof EnvironmentError) {
-    const code = err.code === 'environment.not_found'
-      ? ErrorCode.ENVIRONMENT_NOT_FOUND
-      : ErrorCode.ENVIRONMENT_UNAVAILABLE;
-    reply.send(errEnvelope(code, err.message, requestId));
-    return;
-  }
+  if (sendEnvironmentError(reply, requestId, err)) return;
   if (isError2(err)) {
     switch (err.code) {
       case ErrorCodes.VALIDATION_FAILED:

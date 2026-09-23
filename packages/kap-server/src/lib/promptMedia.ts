@@ -154,7 +154,7 @@ export function environmentOriginalsTarget(environment: Environment): PromptAtta
 
 function environmentTempDirTarget(environment: Environment, subdir: string): PromptAttachmentsTarget {
   const tempDir = (environment.host as Environment['host'] & { tempDir?: string }).tempDir;
-  if (tempDir === undefined || environment.fs === undefined) {
+  if (tempDir === undefined || environment.fs === undefined || environment.path === undefined) {
     throw new Error2(
       ErrorCodes.INTERNAL,
       `environment ${environment.identity.environmentId} does not provide a writable tempDir`,

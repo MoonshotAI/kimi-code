@@ -6,10 +6,8 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
 import { IFileEditService } from '#/app/edit/fileEdit';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import type { Environment } from '#/environment/environment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
-import { isPromiseLike } from '#/_base/lifecycle/disposer';
-import { acquireOrWhenReady, IAgentEnvironmentService, inspectAgentEnvironment, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
+import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
@@ -35,22 +33,22 @@ export class EditTool implements IEditTool {
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
   ) {}
 
-  private workspaceConfig(environment: Environment): WorkspaceConfig {
-    const view = new EnvironmentWorkspaceView(environment, {
+  private workspaceConfig(view: EnvironmentWorkspaceView): WorkspaceConfig {
+    return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
+  }
+
+  resolveExecution(args: EditInput): ToolExecution {
+    const inspected = this.environment.inspect();
+    const expectedGeneration = pinnedGeneration(inspected);
+    const view = new EnvironmentWorkspaceView(inspected, {
       workDir: this.workspaceCtx.workDir,
       additionalDirs: [
         ...this.workspaceCtx.additionalDirs,
         ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
       ],
     });
-    return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
-  }
-
-  resolveExecution(args: EditInput): ToolExecution {
-    const inspected = inspectAgentEnvironment(this.environment);
-    const expectedGeneration = pinnedGeneration(inspected, ['fs']);
-    const env = inspected.host;
-    const workspace = this.workspaceConfig(inspected);
+    const env = view.host;
+    const workspace = this.workspaceConfig(view);
     const path = resolvePathAccessPath(args.path, {
       env,
       workspace,
@@ -74,8 +72,7 @@ export class EditTool implements IEditTool {
           homeDir: env.homeDir,
         }),
       execute: async () => {
-        const acquired = acquireOrWhenReady(this.environment, ['fs']);
-        const lease = isPromiseLike(acquired) ? await acquired : acquired;
+        const lease = await acquireOrWhenReady(this.environment, ['fs']);
         try {
           if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
             return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };

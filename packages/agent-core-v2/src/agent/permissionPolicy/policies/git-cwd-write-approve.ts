@@ -27,7 +27,7 @@ export class GitCwdWriteApprovePermissionPolicyService implements PermissionPoli
     const lease = acquireEnvironmentLease(this.environment);
     if (lease === undefined) return undefined;
     try {
-      const pathClass = lease.environment.host.pathClass;
+      const pathClass = lease.environment.host?.pathClass;
       if (pathClass !== 'posix') return undefined;
       const fs = lease.environment.fs;
       if (fs === undefined) return undefined;

@@ -5,7 +5,7 @@ import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 
 import { proxyEnvForChild, reconcileChildNoProxy } from '#/_base/utils/proxy';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
-import { environmentStatusAllows } from '#/environment/environmentRegistry';
+import { EnvironmentError, environmentIsReady } from '#/environment/environmentRegistry';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import type { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
@@ -184,21 +184,26 @@ class EnvironmentStdioTransport implements Transport {
     };
     const required = ['process'] as const;
     const inspected = this.options.environmentResolver.inspect(binding);
-    if (!environmentStatusAllows(inspected, required) && typeof inspected.connect === 'function') {
+    if (!environmentIsReady(inspected) && typeof inspected.connect === 'function') {
       await inspected.connect();
     }
     const lease = await this.options.environmentResolver.acquireWhenReady(binding, required);
     this.lease = lease;
     try {
-      const base = lease.environment.path.resolve(
+      const host = lease.environment.host;
+      const path = lease.environment.path;
+      if (host === undefined || path === undefined) {
+        throw new EnvironmentError('environment.unavailable', `environment ${this.options.environmentId} is not ready`);
+      }
+      const base = path.resolve(
         this.options.environmentId === LOCAL_ENVIRONMENT_ID
-          ? this.options.defaultCwd ?? lease.environment.host.homeDir
-          : lease.environment.host.cwd ?? lease.environment.host.homeDir,
+          ? this.options.defaultCwd ?? host.homeDir
+          : host.cwd ?? host.homeDir,
       );
       const cwd =
         this.config.cwd === undefined
           ? base
-          : lease.environment.path.resolve(base, this.config.cwd);
+          : path.resolve(base, this.config.cwd);
       const env =
         this.options.environmentId === LOCAL_ENVIRONMENT_ID
           ? mergeStdioEnv(this.config.env)

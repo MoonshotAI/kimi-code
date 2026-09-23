@@ -176,10 +176,10 @@ export interface WorkspaceTrustInfo {
 }
 
 /**
- * One resolved `[environments]` declaration for a workspace directory — the
- * merged user-config + project-file view a new session could bind, with
- * project entries included only once the folder is trusted. Session-less.
- * Only meaningful on the agent-core-v2 engine.
+ * One resolved `[environments]` declaration from the user-level config — an
+ * entry a new session could bind. Session-less: project files are not
+ * consulted and workspace trust does not gate the result. Only meaningful on
+ * the agent-core-v2 engine.
  */
 export interface WorkspaceEnvironmentDeclarationInfo {
   readonly id: string;
@@ -427,7 +427,7 @@ export interface ReloadSessionOptions {
 export interface PlanInfo {
   readonly id: string;
   readonly content: string;
-  readonly path: string;
+  readonly path: string | null;
 }
 
 export type SessionPlan = PlanInfo | null;

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  describeEnvironmentEntry,
   EnvironmentsSectionSchema,
   sectionEntries,
   environmentIdProblem,
@@ -78,24 +77,5 @@ describe('sectionEntries', () => {
         { id: 'dev-box', entry: { type: 'ssh', host: 'x', defaultCwd: '/home/me' } },
       ]);
     }
-  });
-});
-
-describe('describeEnvironmentEntry', () => {
-  it('renders docker entries as full command lines', () => {
-    expect(describeEnvironmentEntry({ type: 'docker', container: 'myapp-dev', context: 'orbstack' })).toBe(
-      'docker --context orbstack exec myapp-dev ~/.kimi-code/bin/kimi exec-server --listen stdio',
-    );
-  });
-
-  it('renders command entries with the resolved program path', () => {
-    const line = describeEnvironmentEntry({ command: process.execPath, args: ['--version'] });
-    expect(line).toBe(`${process.execPath} --version`);
-  });
-
-  it('throws for command entries that do not resolve', () => {
-    expect(() => describeEnvironmentEntry({ command: 'definitely-not-a-real-binary-xyz' })).toThrow(
-      /was not found on PATH/,
-    );
   });
 });

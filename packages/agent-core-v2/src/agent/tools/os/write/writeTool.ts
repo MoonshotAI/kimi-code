@@ -2,8 +2,7 @@ import { dirname } from 'pathe';
 
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { isHostFsNotFound } from '#/os/interface/hostFsErrors';
-import { isPromiseLike } from '#/_base/lifecycle/disposer';
-import { acquireOrWhenReady, IAgentEnvironmentService, inspectAgentEnvironment, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
+import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -39,8 +38,8 @@ export class WriteTool implements IWriteTool {
   }
 
   resolveExecution(args: WriteInput): ToolExecution {
-    const inspected = inspectAgentEnvironment(this.environment);
-    const expectedGeneration = pinnedGeneration(inspected, ['fs']);
+    const inspected = this.environment.inspect();
+    const expectedGeneration = pinnedGeneration(inspected);
     const view = new EnvironmentWorkspaceView(inspected, {
       workDir: this.workspaceCtx.workDir,
       additionalDirs: [
@@ -48,7 +47,7 @@ export class WriteTool implements IWriteTool {
         ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
       ],
     });
-    const env = { _serviceBrand: undefined, ...inspected.host, ready: Promise.resolve() };
+    const env = { _serviceBrand: undefined, ...view.host, ready: Promise.resolve() };
     const workspace = this.workspaceConfig(view);
     const path = resolvePathAccessPath(args.path, {
       env,
@@ -67,8 +66,7 @@ export class WriteTool implements IWriteTool {
           homeDir: env.homeDir,
         }),
       execute: async () => {
-        const acquired = acquireOrWhenReady(this.environment, ['fs']);
-        const lease = isPromiseLike(acquired) ? await acquired : acquired;
+        const lease = await acquireOrWhenReady(this.environment, ['fs']);
         try {
           if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
             return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };

@@ -32,12 +32,10 @@ import {
   isError2,
   Error2,
   ErrorCodes,
-  EnvironmentError,
   sessionMediaOriginalsDir,
   type ISessionScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import { HandshakeError } from '@moonshot-ai/agent-core-v2/remote';
 import { ErrorCode } from '../protocol/error-codes';
 import { projectPromptContentParts } from '../services/messages/messageProjection';
 import {
@@ -68,7 +66,7 @@ import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, resolveActionTarget, runAction } from './action-dispatch';
-import { environmentErrorCode } from './environment';
+import { sendEnvironmentError } from './environment';
 
 interface PromptRouteHost {
   get(
@@ -224,7 +222,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         let resolved: Awaited<ReturnType<typeof resolvePromptFromSession>> | undefined;
         if (contentHasPathRefs(req.body.content)) {
           resolved = await resolvePromptFromSession(session, req.body.agent_id);
-          if (resolved.binding.get().environmentId !== 'local') {
+          if (resolved.binding.current.environmentId !== 'local') {
             throw new Error2(
               ErrorCodes.REQUEST_INVALID,
               'file attachments by server-local path require the local environment',
@@ -253,7 +251,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         reservation = reservePromptId(session_id, req.body.prompt_id);
 
         const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
-        const binding = resolved.binding.get();
+        const binding = resolved.binding.current;
         let environmentLease: EnvironmentLease | undefined;
         try {
           preparedMedia = await resolvePromptMediaFiles(
@@ -631,14 +629,7 @@ function sendMappedError(
 ): void {
   const requestId = req.id;
   const log = requestLog(req);
-  if (err instanceof EnvironmentError) {
-    reply.send(errEnvelope(environmentErrorCode(err.code), err.message, requestId));
-    return;
-  }
-  if (err instanceof HandshakeError) {
-    reply.send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, err.message, requestId));
-    return;
-  }
+  if (sendEnvironmentError(reply, requestId, err)) return;
   if (isError2(err)) {
     switch (err.code) {
       case 'session.not_found':

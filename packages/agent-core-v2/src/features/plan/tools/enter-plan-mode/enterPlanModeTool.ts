@@ -45,7 +45,7 @@ export class EnterPlanModeTool implements IEnterPlanModeTool {
           outcome: 'auto_approved',
         });
         const after = await this.planMode.status();
-        const planPath = after !== null && after.path.length > 0 ? after.path : null;
+        const planPath = after?.path ?? null;
         return { output: enteredPlanModeMessage(planPath) };
       },
     };

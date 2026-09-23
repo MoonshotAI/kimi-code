@@ -328,7 +328,7 @@ describe('AgentPlanService plan-guard listener', () => {
       buildServices(unavailableEnvironment());
       const svc = await enterPlan();
 
-      expect((await svc.status())?.path).toBe('');
+      expect((await svc.status())?.path).toBeNull();
       const decision = await run(
         hookContext('Write', {
           args: { path: PLAN_PATH },

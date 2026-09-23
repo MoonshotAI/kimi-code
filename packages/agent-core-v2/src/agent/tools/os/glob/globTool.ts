@@ -12,8 +12,7 @@ import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
-import { isPromiseLike } from '#/_base/lifecycle/disposer';
-import { acquireOrWhenReady, IAgentEnvironmentService, inspectAgentEnvironment, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
+import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -72,7 +71,7 @@ export class GlobTool implements IGlobTool {
   ) {}
 
   get description(): string {
-    return inspectAgentEnvironment(this.environment).host.pathClass === 'win32'
+    return this.environment.inspect().host?.pathClass === 'win32'
       ? globDescription + WINDOWS_PATH_HINT
       : globDescription;
   }
@@ -82,8 +81,8 @@ export class GlobTool implements IGlobTool {
   }
 
   resolveExecution(args: GlobInput): ToolExecution {
-    const inspected = inspectAgentEnvironment(this.environment);
-    const expectedGeneration = pinnedGeneration(inspected, ['fs', 'process']);
+    const inspected = this.environment.inspect();
+    const expectedGeneration = pinnedGeneration(inspected);
     const view = new EnvironmentWorkspaceView(inspected, {
       workDir: this.workspaceCtx.workDir,
       additionalDirs: [
@@ -91,7 +90,7 @@ export class GlobTool implements IGlobTool {
         ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
       ],
     });
-    const env = { _serviceBrand: undefined, ...inspected.host, ready: Promise.resolve() };
+    const env = { _serviceBrand: undefined, ...view.host, ready: Promise.resolve() };
     const workspace = this.workspaceConfig(view);
     let path: string | undefined;
     if (args.path !== undefined) {
@@ -124,8 +123,7 @@ export class GlobTool implements IGlobTool {
       approvalRule: literalRulePattern(this.name, args.pattern),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.pattern),
       execute: async ({ signal }) => {
-        const acquired = acquireOrWhenReady(this.environment, ['fs', 'process']);
-        const lease = isPromiseLike(acquired) ? await acquired : acquired;
+        const lease = await acquireOrWhenReady(this.environment, ['fs', 'process']);
         try {
           if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
             return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };

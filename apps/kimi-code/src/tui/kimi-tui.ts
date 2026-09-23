@@ -2255,7 +2255,7 @@ export class KimiTUI {
    */
   private async prepareStartupEnvironment(environmentId: string): Promise<void> {
     try {
-      const declarations = await this.harness.listEnvironmentDeclarations(this.state.appState.workDir);
+      const declarations = await this.harness.listEnvironmentDeclarations();
       const declared = declarations.find((entry) => entry.id === environmentId);
       if (declared !== undefined) this.startupEnvironmentType = declared.type;
     } catch {
@@ -4312,13 +4312,6 @@ export class KimiTUI {
     this.mountEditorReplacement(panel);
   }
 
-  /** The approval panel's environment identifier for a remote-bound session. */
-  private environmentBadge(): string | undefined {
-    const environment = this.state.appState.environment;
-    if (environment === undefined || environment.environmentId === 'local') return undefined;
-    return `${environment.type}:${environment.environmentId}`;
-  }
-
   /**
    * Approval-panel badge for the agent that initiated the request. A subagent
    * may be bound to a different environment than the main session binding
@@ -4330,7 +4323,11 @@ export class KimiTUI {
     session: Session,
     agentId: string | undefined,
   ): Promise<string | undefined> {
-    if (agentId === undefined || agentId === MAIN_AGENT_ID) return this.environmentBadge();
+    if (agentId === undefined || agentId === MAIN_AGENT_ID) {
+      const environment = this.state.appState.environment;
+      if (environment === undefined || environment.environmentId === 'local') return undefined;
+      return `${environment.type}:${environment.environmentId}`;
+    }
     try {
       const binding = await this.harness.withInteractiveAgent(agentId, () =>
         session.getEnvironment(),

@@ -12,7 +12,14 @@ import {
   type RequestId,
 } from '#/remote/protocol/messages';
 import {
+  FS_CANONICALIZE_METHOD,
+  FS_CREATE_DIRECTORY_METHOD,
+  FS_GET_METADATA_METHOD,
+  FS_READ_DIRECTORY_METHOD,
   FS_READ_FILE_METHOD,
+  FS_REMOVE_METHOD,
+  FS_RENAME_METHOD,
+  FS_WRITE_FILE_METHOD,
   INITIALIZE_METHOD,
   INITIALIZED_METHOD,
   MAX_IN_FLIGHT_CALLS,
@@ -20,6 +27,7 @@ import {
   PROCESS_FLOW_METHOD,
   PROCESS_RESIZE_METHOD,
   PROCESS_SIGNAL_METHOD,
+  PROCESS_START_METHOD,
   PROCESS_TERMINATE_METHOD,
   PROCESS_WRITE_METHOD,
   type InitializeResult,
@@ -46,8 +54,6 @@ const CONTROL_METHODS: ReadonlySet<string> = new Set([
   PROCESS_TERMINATE_METHOD,
   PROCESS_RESIZE_METHOD,
 ]);
-
-const DATA_LANE_RESPONSE_METHODS: ReadonlySet<string> = new Set([FS_READ_FILE_METHOD]);
 
 class OutboundWriter {
   private control: Uint8Array[] = [];
@@ -136,10 +142,8 @@ export class StdioHost {
   private resolveDone!: () => void;
 
   constructor(private readonly options: StdioHostOptions) {
-    this.processManager = new ProcessManager({
-      notify: (method, params) => {
-        this.sendNotification(method, params);
-      },
+    this.processManager = new ProcessManager((method, params) => {
+      this.sendNotification(method, params);
     });
     this.writer = new OutboundWriter(
       options.output,
@@ -155,19 +159,19 @@ export class StdioHost {
     const fs = this.fsHandler;
     const pm = this.processManager;
     this.handlers = new Map<string, Handler>([
-      ['fs/readFile', (p) => fs.readFile(p)],
-      ['fs/writeFile', (p) => fs.writeFile(p)],
-      ['fs/createDirectory', (p) => fs.createDirectory(p)],
-      ['fs/getMetadata', (p) => fs.getMetadata(p)],
-      ['fs/canonicalize', (p) => fs.canonicalize(p)],
-      ['fs/readDirectory', (p) => fs.readDirectory(p)],
-      ['fs/remove', (p) => fs.remove(p)],
-      ['fs/rename', (p) => fs.rename(p)],
-      ['process/start', (p) => pm.start(p)],
-      ['process/write', (p) => pm.write(p)],
-      ['process/signal', (p) => pm.signal(p)],
-      ['process/terminate', (p) => pm.terminate(p)],
-      ['process/resize', (p) => pm.resize(p)],
+      [FS_READ_FILE_METHOD, (p) => fs.readFile(p)],
+      [FS_WRITE_FILE_METHOD, (p) => fs.writeFile(p)],
+      [FS_CREATE_DIRECTORY_METHOD, (p) => fs.createDirectory(p)],
+      [FS_GET_METADATA_METHOD, (p) => fs.getMetadata(p)],
+      [FS_CANONICALIZE_METHOD, (p) => fs.canonicalize(p)],
+      [FS_READ_DIRECTORY_METHOD, (p) => fs.readDirectory(p)],
+      [FS_REMOVE_METHOD, (p) => fs.remove(p)],
+      [FS_RENAME_METHOD, (p) => fs.rename(p)],
+      [PROCESS_START_METHOD, (p) => pm.start(p)],
+      [PROCESS_WRITE_METHOD, (p) => pm.write(p)],
+      [PROCESS_SIGNAL_METHOD, (p) => pm.signal(p)],
+      [PROCESS_TERMINATE_METHOD, (p) => pm.terminate(p)],
+      [PROCESS_RESIZE_METHOD, (p) => pm.resize(p)],
     ]);
     this.donePromise = new Promise<void>((resolve) => {
       this.resolveDone = resolve;
@@ -258,7 +262,6 @@ export class StdioHost {
     const result: InitializeResult = {
       executorVersion: this.options.version,
       environment: this.options.environment,
-      capabilities: {},
     };
     this.respond(message.id, result, 'control');
     this.state = 'awaiting-initialized';
@@ -292,7 +295,7 @@ export class StdioHost {
       );
       return;
     }
-    const lane: Lane = DATA_LANE_RESPONSE_METHODS.has(message.method) ? 'data' : 'control';
+    const lane: Lane = message.method === FS_READ_FILE_METHOD ? 'data' : 'control';
     if (CONTROL_METHODS.has(message.method)) {
       void this.runHandler(message.id, handler, message.params, lane, false);
       return;

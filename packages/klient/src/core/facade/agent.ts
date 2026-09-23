@@ -40,7 +40,7 @@ export type AgentContextData = {
   tokenCount: ReturnType<ISessionTokenCountingService['statusSize']>;
 };
 export type AgentCommandInfo = Awaited<ReturnType<IAgentCommandService['list']>>[number];
-export type EnvironmentBinding = ReturnType<IAgentEnvironmentBindingService['get']>;
+export type EnvironmentBinding = IAgentEnvironmentBindingService['current'];
 export type PlanData = Awaited<ReturnType<IAgentPlanService['status']>>;
 export type AgentTaskInfo = Awaited<ReturnType<IAgentTaskService['list']>>[number];
 export type McpServerEntry = ReturnType<IAgentMcpService['list']>[number];
@@ -151,7 +151,7 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
         input.args === undefined ? [input.name] : [input.name, input.args],
       ) as Promise<void>,
     getEnvironment: () =>
-      call(scope, 'agentEnvironmentBindingService', 'get', []) as Promise<EnvironmentBinding>,
+      call(scope, 'agentEnvironmentBindingService', 'current', []) as Promise<EnvironmentBinding>,
     switchEnvironment: (environmentId, options) =>
       call(
         scope,
@@ -161,7 +161,7 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
       ) as Promise<EnvironmentBinding>,
     reconnectEnvironment: async () => {
       await call(scope, 'agentEnvironmentService', 'reconnect', []);
-      return call(scope, 'agentEnvironmentBindingService', 'get', []) as Promise<EnvironmentBinding>;
+      return call(scope, 'agentEnvironmentBindingService', 'current', []) as Promise<EnvironmentBinding>;
     },
     getPlan: () => call(scope, 'agentPlanService', 'status', []) as Promise<PlanData>,
     enterPlan: () => call(scope, 'agentPlanService', 'enter', []) as Promise<void>,

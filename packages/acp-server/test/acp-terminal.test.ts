@@ -101,7 +101,9 @@ describe('AcpSessionEnvironment', () => {
       homeDir: '/Users/test',
     });
     expect(environment.fs).toBeInstanceOf(AcpHostFileSystem);
-    expect(environment.path.isAbsolute('/repo')).toBe(true);
+    const { path } = environment;
+    if (path === undefined) throw new Error('ready environment must expose path');
+    expect(path.isAbsolute('/repo')).toBe(true);
   });
 
   it('adapts path semantics and shell to a win32 host environment', async () => {
@@ -122,10 +124,12 @@ describe('AcpSessionEnvironment', () => {
       pathClass: 'win32',
       homeDir: 'C:\\Users\\test',
     });
-    expect(environment.path.separator).toBe('\\');
-    expect(environment.path.isAbsolute('C:\\repo')).toBe(true);
-    expect(environment.path.isAbsolute('repo')).toBe(false);
-    expect(environment.path.resolve('C:\\repo', 'src')).toBe('C:\\repo\\src');
+    const { path } = environment;
+    if (path === undefined) throw new Error('ready environment must expose path');
+    expect(path.separator).toBe('\\');
+    expect(path.isAbsolute('C:\\repo')).toBe(true);
+    expect(path.isAbsolute('repo')).toBe(false);
+    expect(path.resolve('C:\\repo', 'src')).toBe('C:\\repo\\src');
   });
 });
 

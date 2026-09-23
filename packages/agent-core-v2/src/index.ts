@@ -39,7 +39,6 @@ export * from '#/environment/environmentRegistry';
 export * from '#/environment/environmentWorkspaceView';
 export * from '#/environment/environmentProvider';
 export * from '#/environment/localEnvironment';
-export * from '#/environment/standaloneEnvironment';
 export * from '#/environment/programPath';
 export * from '#/environment/remoteEnvironmentDeclaration';
 export * from '#/environment/environmentDeclarations';

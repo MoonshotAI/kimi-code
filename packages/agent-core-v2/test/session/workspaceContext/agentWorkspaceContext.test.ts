@@ -163,8 +163,10 @@ describe('AgentWorkspaceContextService', () => {
     const { agent, registry } = setup();
     const remote = registry.current('remote');
     if (remote === undefined) throw new Error('remote environment missing');
-    const resolveSpy = vi.spyOn(remote.path, 'resolve');
-    const relativeSpy = vi.spyOn(remote.path, 'relative');
+    const path = remote.path;
+    if (path === undefined) throw new Error('remote environment path missing');
+    const resolveSpy = vi.spyOn(path, 'resolve');
+    const relativeSpy = vi.spyOn(path, 'relative');
     const main = agent('main', { workspaceId: 'workspace', environmentId: 'remote', cwd: '/srv/work' });
 
     expect(main.shadow.resolve('src/file.ts')).toBe('/srv/work/src/file.ts');

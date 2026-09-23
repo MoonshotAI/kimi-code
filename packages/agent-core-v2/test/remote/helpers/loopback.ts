@@ -59,7 +59,7 @@ export function createScriptedServer(
 }
 
 export function testInitializeResult(): InitializeResult {
-  return { executorVersion: TEST_VERSION, environment: TEST_ENVIRONMENT, capabilities: {} };
+  return { executorVersion: TEST_VERSION, environment: TEST_ENVIRONMENT };
 }
 
 export interface InProcessLoopback {

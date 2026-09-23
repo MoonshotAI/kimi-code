@@ -1,12 +1,16 @@
 import { ErrorCodes, Error2 } from '#/errors';
 import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
+import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 
-import type { Environment, EnvironmentBinding, EnvironmentWorkspaceRoots } from './environment';
+import type { Environment, EnvironmentBinding, EnvironmentPath, EnvironmentWorkspaceRoots } from './environment';
+import { DEFAULT_ENVIRONMENT_HOST, POSIX_ENVIRONMENT_PATH, POSIX_ENVIRONMENT_WORKSPACE } from './environmentDefaults';
 
 export type { EnvironmentWorkspaceRoots } from './environment';
 
 export class EnvironmentWorkspaceView {
   readonly binding: EnvironmentBinding;
+  readonly host: HostEnvironmentInfo;
+  readonly path: EnvironmentPath;
   readonly workDir: string;
   readonly additionalDirs: readonly string[];
   readonly roots: readonly string[];
@@ -19,23 +23,25 @@ export class EnvironmentWorkspaceView {
       workspaceId: environment.identity.workspaceId,
       environmentId: environment.identity.environmentId,
     };
-    const mapped = environment.workspace.mapRoots(roots);
-    this.workDir = environment.path.resolve(mapped.workDir);
-    this.additionalDirs = [...new Set((mapped.additionalDirs ?? []).map((root) => environment.path.resolve(root)))];
+    this.host = environment.host ?? DEFAULT_ENVIRONMENT_HOST;
+    this.path = environment.path ?? POSIX_ENVIRONMENT_PATH;
+    const workspace = environment.workspace ?? POSIX_ENVIRONMENT_WORKSPACE;
+    const mapped = workspace.mapRoots(roots);
+    this.workDir = this.path.resolve(mapped.workDir);
+    this.additionalDirs = [...new Set((mapped.additionalDirs ?? []).map((root) => this.path.resolve(root)))];
     this.roots = [this.workDir, ...this.additionalDirs];
   }
 
   resolve(path: string, cwd = this.workDir): string {
-    const env = this.environment.host;
-    const bridged = env.pathClass === 'win32' ? getShellPathBridge(env).fromShellPath(path) : path;
-    return this.environment.path.isAbsolute(bridged)
-      ? this.environment.path.resolve(bridged)
-      : this.environment.path.resolve(cwd, bridged);
+    const bridged = this.host.pathClass === 'win32' ? getShellPathBridge(this.host).fromShellPath(path) : path;
+    return this.path.isAbsolute(bridged)
+      ? this.path.resolve(bridged)
+      : this.path.resolve(cwd, bridged);
   }
 
   assertAllowed(path: string): string {
-    const resolved = this.environment.path.resolve(path);
-    if (this.roots.some((root) => contains(this.environment, root, resolved))) return resolved;
+    const resolved = this.path.resolve(path);
+    if (this.roots.some((root) => contains(this.path, root, resolved))) return resolved;
     throw new Error2(
       ErrorCodes.FS_PATH_ESCAPES,
       `path ${path} is outside environment workspace ${this.binding.environmentId}`,
@@ -44,8 +50,8 @@ export class EnvironmentWorkspaceView {
   }
 }
 
-function contains(environment: Environment, root: string, candidate: string): boolean {
-  const relative = environment.path.relative(root, candidate);
+function contains(path: EnvironmentPath, root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
   if (relative === '') return true;
-  return relative !== '..' && !relative.startsWith(`..${environment.path.separator}`) && !environment.path.isAbsolute(relative);
+  return relative !== '..' && !relative.startsWith(`..${path.separator}`) && !path.isAbsolute(relative);
 }

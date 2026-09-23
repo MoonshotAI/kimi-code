@@ -1,13 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import * as posixPath from 'node:path/posix';
 
 import { Emitter } from '#/_base/event';
-import type { TextDecodeErrors } from '#/_base/execEnv/decodeText';
 import { ILogService } from '#/_base/log/log';
 import { IConfigService } from '#/app/config/config';
 import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
-import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
-import type { HostDirEntry, HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ENVIRONMENTS_SECTION } from '#/environment/configSection';
 import { resolveWorkspaceEnvironmentDeclarations } from '#/environment/environmentDeclarations';
 import type {
@@ -19,7 +16,6 @@ import type {
   Environment,
   EnvironmentCapability,
   EnvironmentIdentity,
-  EnvironmentPath,
   EnvironmentStatus,
 } from '#/environment/environment';
 import type {
@@ -48,108 +44,11 @@ export function toLauncherSpec(entry: RemoteEnvironmentEntry): LauncherSpec {
   }
 }
 
-const PENDING_ENVIRONMENT: HostEnvironmentInfo = {
-  osKind: 'unknown',
-  osArch: 'unknown',
-  osVersion: '',
-  shellName: 'sh',
-  shellPath: '/bin/sh',
-  pathClass: 'posix',
-  homeDir: '/',
-};
-
-const PENDING_PATH: EnvironmentPath = {
-  separator: '/',
-  delimiter: ':',
-  isAbsolute: (path) => posixPath.isAbsolute(path),
-  join: (...paths) => posixPath.join(...paths),
-  relative: (from, to) => posixPath.relative(from, to),
-  resolve: (...paths) => posixPath.resolve(...paths),
-  basename: (path) => posixPath.basename(path),
-  dirname: (path) => posixPath.dirname(path),
-};
-
-const PENDING_WORKSPACE: Environment['workspace'] = {
-  mapRoots: (roots) => ({
-    workDir: posixPath.resolve(roots.workDir),
-    additionalDirs: roots.additionalDirs?.map((root) => posixPath.resolve(root)),
-  }),
-};
-
 const EMPTY_CAPABILITIES: ReadonlySet<EnvironmentCapability> = new Set();
-
-class InnerForwardingFileSystem implements IHostFileSystem {
-  declare readonly _serviceBrand: undefined;
-
-  constructor(private readonly resolve: () => IHostFileSystem | undefined) {}
-
-  private fs(): IHostFileSystem {
-    const fs = this.resolve();
-    if (fs === undefined) throw new Error('remote environment is not connected');
-    return fs;
-  }
-
-  async readText(path: string, options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors }): Promise<string> {
-    return this.fs().readText(path, options);
-  }
-
-  async writeText(path: string, data: string): Promise<void> {
-    return this.fs().writeText(path, data);
-  }
-
-  async appendText(path: string, data: string): Promise<void> {
-    return this.fs().appendText(path, data);
-  }
-
-  async readBytes(path: string, n?: number, offset?: number): Promise<Uint8Array> {
-    return this.fs().readBytes(path, n, offset);
-  }
-
-  async writeBytes(path: string, data: Uint8Array | AsyncIterable<Uint8Array>): Promise<void> {
-    return this.fs().writeBytes(path, data);
-  }
-
-  async *readLines(path: string, options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors }): AsyncGenerator<string> {
-    yield* this.fs().readLines(path, options);
-  }
-
-  async createExclusive(path: string, data: Uint8Array): Promise<boolean> {
-    return this.fs().createExclusive(path, data);
-  }
-
-  async stat(path: string): Promise<HostFileStat> {
-    return this.fs().stat(path);
-  }
-
-  async lstat(path: string): Promise<HostFileStat> {
-    return this.fs().lstat(path);
-  }
-
-  async readdir(path: string): Promise<readonly HostDirEntry[]> {
-    return this.fs().readdir(path);
-  }
-
-  async mkdir(path: string, options?: { readonly recursive?: boolean; readonly mode?: number }): Promise<void> {
-    return this.fs().mkdir(path, options);
-  }
-
-  async remove(path: string): Promise<void> {
-    return this.fs().remove(path);
-  }
-
-  async rename(from: string, to: string): Promise<void> {
-    return this.fs().rename!(from, to);
-  }
-
-  async realpath(path: string): Promise<string> {
-    return this.fs().realpath(path);
-  }
-}
 
 export class ManagedRemoteEnvironment implements Environment {
   readonly identity: EnvironmentIdentity;
   private inner: RemoteEnvironment | undefined;
-  private readonly fsForwarder: IHostFileSystem;
   private readonly connectCallback: () => Promise<void>;
   private readonly ownsInner: boolean;
   private currentStatus: EnvironmentStatus;
@@ -169,7 +68,6 @@ export class ManagedRemoteEnvironment implements Environment {
     this.connectCallback = connectCallback;
     this.identity = identity;
     this.ownsInner = options.ownsInner === true;
-    this.fsForwarder = new InnerForwardingFileSystem(() => this.inner?.fs);
     this.currentStatus = inner === undefined ? 'pending' : inner.status;
     this.bindInner(inner);
   }
@@ -178,20 +76,20 @@ export class ManagedRemoteEnvironment implements Environment {
     return this.inner?.capabilities ?? EMPTY_CAPABILITIES;
   }
 
-  get host(): HostEnvironmentInfo {
-    return this.inner?.host ?? PENDING_ENVIRONMENT;
+  get host(): Environment['host'] {
+    return this.inner?.host;
   }
 
-  get path(): EnvironmentPath {
-    return this.inner?.path ?? PENDING_PATH;
+  get path(): Environment['path'] {
+    return this.inner?.path;
   }
 
   get workspace(): Environment['workspace'] {
-    return this.inner?.workspace ?? PENDING_WORKSPACE;
+    return this.inner?.workspace;
   }
 
   get fs(): IHostFileSystem | undefined {
-    return this.inner?.fs === undefined ? undefined : this.fsForwarder;
+    return this.inner?.fs;
   }
 
   get process() {
@@ -281,7 +179,6 @@ export class ManagedRemoteEnvironment implements Environment {
 }
 
 export interface RemoteEnvironmentProviderFactoryOptions {
-  readonly clientName?: string;
   readonly clientVersion?: string;
   readonly minExecutorVersion?: string;
   readonly initializeTimeoutMs?: number;
@@ -312,7 +209,7 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
     const log = host.get(ILogService);
     const config = host.get(IConfigService);
     const resolve = () =>
-      resolveWorkspaceEnvironmentDeclarations({ config });
+      resolveWorkspaceEnvironmentDeclarations(config);
     let initial: EnvironmentDeclarationSet;
     try {
       initial = await resolve();
@@ -440,71 +337,61 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
     declaration: RemoteEnvironmentDeclaration,
     log: ILogService,
   ): () => Promise<void> {
-    let inflight: Promise<void> | undefined;
     const fingerprint = declarationFingerprint(declaration.entry);
-    const connectEnvironment = (): Promise<void> => {
-      inflight ??= (async () => {
-        try {
-          const factory = async (): Promise<RemoteEnvironment> => {
-            const connect = this.options.connect ?? ((opts: RemoteEnvironmentOptions) => RemoteEnvironment.connect(opts));
-            const attempt = (launcher: LauncherSpec): Promise<RemoteEnvironment> =>
-              connect({
-                workspaceId: context.id,
-                environmentId: declaration.id,
-                launcher,
-                clientName: this.options.clientName,
-                clientVersion: this.options.clientVersion,
-                minExecutorVersion: this.options.minExecutorVersion,
-                initializeTimeoutMs: this.options.initializeTimeoutMs,
-                onDiagnostic: this.options.onDiagnostic,
-              });
-            return connectWithGuidance(attempt, {
-              launcher: toLauncherSpec(declaration.entry),
-              minExecutorVersion: this.options.minExecutorVersion,
-              runner: this.options.probeRunner,
-            });
-          };
-
-          const pooled = record.poolHandle?.connection;
-          if (pooled !== undefined) {
-            if (pooled.status === 'ready' && record.viewConnection !== pooled) {
-              this.swapPoolConnection(record, pooled);
-              return;
-            }
-            const replaced = await this.pool.replace(fingerprint, factory);
-            if (record.detached || declarationFingerprint(record.declaration.entry) !== fingerprint) return;
-            this.swapPoolConnection(record, replaced);
-            return;
-          }
-          const acquired = await this.pool.acquire(fingerprint, factory, {
-            onPoolReplace: (connection) => {
-              try {
-                this.swapPoolConnection(record, connection);
-              } catch (error: unknown) {
-                log.warn(`remote environment ${declaration.id} pooled connection replacement failed`, { error });
-              }
-            },
+    return async () => {
+      const factory = async (): Promise<RemoteEnvironment> => {
+        const connect = this.options.connect ?? ((opts: RemoteEnvironmentOptions) => RemoteEnvironment.connect(opts));
+        const attempt = (launcher: LauncherSpec): Promise<RemoteEnvironment> =>
+          connect({
+            workspaceId: context.id,
+            environmentId: declaration.id,
+            launcher,
+            clientVersion: this.options.clientVersion,
+            minExecutorVersion: this.options.minExecutorVersion,
+            initializeTimeoutMs: this.options.initializeTimeoutMs,
+            onDiagnostic: this.options.onDiagnostic,
           });
-          if (record.detached || declarationFingerprint(record.declaration.entry) !== fingerprint) {
-            acquired.release();
-            return;
-          }
-          record.poolHandle = acquired;
-          try {
-            this.swapPoolConnection(record, acquired.connection);
-          } catch (error) {
-            record.poolHandle = undefined;
-            record.viewConnection = undefined;
-            acquired.release();
-            throw error;
-          }
-        } finally {
-          inflight = undefined;
+        return connectWithGuidance(attempt, {
+          launcher: toLauncherSpec(declaration.entry),
+          minExecutorVersion: this.options.minExecutorVersion,
+          runner: this.options.probeRunner,
+        });
+      };
+
+      const pooled = record.poolHandle?.connection;
+      if (pooled !== undefined) {
+        if (pooled.status === 'ready' && record.viewConnection !== pooled) {
+          this.swapPoolConnection(record, pooled);
+          return;
         }
-      })();
-      return inflight;
+        const replaced = await this.pool.replace(fingerprint, factory);
+        if (record.detached || declarationFingerprint(record.declaration.entry) !== fingerprint) return;
+        this.swapPoolConnection(record, replaced);
+        return;
+      }
+      const acquired = await this.pool.acquire(fingerprint, factory, {
+        onPoolReplace: (connection) => {
+          try {
+            this.swapPoolConnection(record, connection);
+          } catch (error: unknown) {
+            log.warn(`remote environment ${declaration.id} pooled connection replacement failed`, { error });
+          }
+        },
+      });
+      if (record.detached || declarationFingerprint(record.declaration.entry) !== fingerprint) {
+        acquired.release();
+        return;
+      }
+      record.poolHandle = acquired;
+      try {
+        this.swapPoolConnection(record, acquired.connection);
+      } catch (error) {
+        record.poolHandle = undefined;
+        record.viewConnection = undefined;
+        acquired.release();
+        throw error;
+      }
     };
-    return connectEnvironment;
   }
 
   private swapPoolConnection(record: DeclaredEnvironmentRecord, connection: RemoteEnvironment): void {

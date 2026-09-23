@@ -4,13 +4,17 @@ import { Readable } from 'node:stream';
 import {
   ErrorCodes,
   IEnvironmentResolver,
+  IHostEnvironment,
+  IHostFileSystem,
+  IHostProcessService,
+  IHostTerminalService,
   ISessionContext,
   ISessionWorkspaceContext,
-  IStandaloneEnvironmentFactory,
   ITelemetryService,
   IWorkspaceFsService,
   IWorkspaceInstanceManager,
   IWorkspaceService,
+  LocalEnvironment,
   getLiveSessionById,
   resumeSessionById,
   isError2,
@@ -35,8 +39,7 @@ import {
   fsSuggestResponseSchema,
 } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
 import { GitService, type GitWorkspaceLocator } from '@moonshot-ai/agent-core-v2/app/git/gitService';
-import type { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
-import type { EnvironmentCapability, EnvironmentLease } from '@moonshot-ai/agent-core-v2/environment/environment';
+import type { Environment, EnvironmentCapability, EnvironmentLease } from '@moonshot-ai/agent-core-v2/environment/environment';
 import { WorkspaceFsService } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fsService';
 import { WorkspaceGitService } from '@moonshot-ai/agent-core-v2/workspace/workspaceGit/workspaceGitService';
 import type { IWorkspaceContext } from '@moonshot-ai/agent-core-v2/workspace/workspaceContext/workspaceContext';
@@ -59,7 +62,7 @@ import {
   fsOpenRequestSchema,
   fsRevealRequestSchema,
 } from '../protocol/rest-fs';
-import { environmentErrorCode } from './environment';
+import { sendEnvironmentError } from './environment';
 
 interface FsRouteHost {
   post(
@@ -172,7 +175,13 @@ function createLocalEnvironmentFs(
   roots: { readonly workDir: string; readonly additionalDirs?: readonly string[] },
 ): EnvironmentFsScope {
   const workspaceId = encodeWorkDirKey(roots.workDir);
-  const environment = core.accessor.get(IStandaloneEnvironmentFactory).createLocalEnvironment(workspaceId);
+  const environment: Environment = new LocalEnvironment(
+    workspaceId,
+    core.accessor.get(IHostEnvironment),
+    core.accessor.get(IHostFileSystem),
+    core.accessor.get(IHostProcessService),
+    core.accessor.get(IHostTerminalService),
+  );
   const lease: EnvironmentLease = {
     environment,
     track: (resource) => resource,
@@ -195,7 +204,7 @@ function buildEnvironmentFsScope(
   environmentId: string,
   lease: EnvironmentLease,
 ): EnvironmentFsScope {
-  const mapped = lease.environment.workspace.mapRoots(roots);
+  const mapped = lease.environment.workspace!.mapRoots(roots);
   const workspace = {
     _serviceBrand: undefined,
     workspaceId,
@@ -565,10 +574,6 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         const data = await environmentFs.fs.suggest(suggestRequest);
         reply.send(okEnvelope(data, req.id));
       } catch (error) {
-        if (error instanceof EnvironmentError) {
-          reply.send(errEnvelope(environmentErrorCode(error.code), error.message, req.id));
-          return;
-        }
         sendMappedError(reply, req, error);
       } finally {
         environmentFs?.lease.dispose();
@@ -893,10 +898,7 @@ async function handleOpenIn(fs: IWorkspaceFsService, sessionId: string, req: Req
 function sendMappedError(reply: Reply, req: { id: string }, err: unknown): void {
   const requestId = req.id;
   const log = requestLog(req);
-  if (err instanceof EnvironmentError) {
-    reply.send(errEnvelope(environmentErrorCode(err.code), err.message, requestId));
-    return;
-  }
+  if (sendEnvironmentError(reply, requestId, err)) return;
   if (isError2(err)) {
     switch (err.code) {
       case ErrorCodes.FS_PATH_ESCAPES:

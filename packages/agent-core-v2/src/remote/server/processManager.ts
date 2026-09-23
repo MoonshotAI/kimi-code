@@ -54,10 +54,6 @@ interface ManagedProcess {
   killTimer: NodeJS.Timeout | undefined;
 }
 
-export interface ProcessManagerHost {
-  notify(method: string, params: unknown): void;
-}
-
 const EMPTY: Record<string, never> = {};
 
 const TERMINATED_ID_CACHE_SIZE = 4096;
@@ -75,16 +71,6 @@ function rememberWriteId(writeIds: AcceptedWriteIds, writeId: string): void {
   }
 }
 
-function rememberBounded<T>(set: Set<T>, value: T, capacity: number): void {
-  if (set.has(value)) return;
-  set.add(value);
-  while (set.size > capacity) {
-    const oldest = set.values().next();
-    if (oldest.done) break;
-    set.delete(oldest.value);
-  }
-}
-
 export class ProcessManager {
   private readonly processes = new Map<string, ManagedProcess>();
 
@@ -93,7 +79,7 @@ export class ProcessManager {
   private outputPaused = false;
   private disposed = false;
 
-  constructor(private readonly host: ProcessManagerHost) {}
+  constructor(private readonly notify: (method: string, params: unknown) => void) {}
 
   async start(rawParams: unknown): Promise<ProcessStartResult> {
     const params = requireParams(rawParams);
@@ -186,7 +172,7 @@ export class ProcessManager {
     if (entry.terminateAfterStart) {
       this.beginTermination(entry);
     }
-    return { processId, pid: entry.pid };
+    return { pid: entry.pid };
   }
 
   private async startPty(
@@ -291,7 +277,7 @@ export class ProcessManager {
 
   private pump(entry: ManagedProcess, stream: ProcessOutputStream, chunk: Buffer): void {
     if (this.disposed || this.processes.get(entry.processId) !== entry) return;
-    this.host.notify(PROCESS_OUTPUT_METHOD, {
+    this.notify(PROCESS_OUTPUT_METHOD, {
       processId: entry.processId,
       stream,
       chunkBase64: chunk.toString('base64'),
@@ -308,7 +294,7 @@ export class ProcessManager {
     if (entry.exitCode !== null) return;
     entry.exitCode = exitCode;
     this.breakStdin(entry);
-    this.host.notify(PROCESS_EXITED_METHOD, { processId: entry.processId, exitCode });
+    this.notify(PROCESS_EXITED_METHOD, { processId: entry.processId, exitCode });
     this.maybeClose(entry);
   }
 
@@ -322,7 +308,7 @@ export class ProcessManager {
   private maybeClose(entry: ManagedProcess): void {
     if (this.disposed || entry.closed || entry.exitCode === null || entry.openStreams !== 0) return;
     entry.closed = true;
-    this.host.notify(PROCESS_CLOSED_METHOD, { processId: entry.processId });
+    this.notify(PROCESS_CLOSED_METHOD, { processId: entry.processId });
     this.processes.delete(entry.processId);
     const group: ExitedProcessGroup = {
       pid: entry.pid,
@@ -467,7 +453,12 @@ export class ProcessManager {
         return { running: false };
       }
 
-      rememberBounded(this.terminatedIds, processId, TERMINATED_ID_CACHE_SIZE);
+      this.terminatedIds.add(processId);
+      while (this.terminatedIds.size > TERMINATED_ID_CACHE_SIZE) {
+        const oldest = this.terminatedIds.values().next();
+        if (oldest.done) break;
+        this.terminatedIds.delete(oldest.value);
+      }
       return { running: false };
     }
     if (entry.state !== 'running') {

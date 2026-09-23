@@ -1,7 +1,6 @@
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
-import { isPromiseLike } from '#/_base/lifecycle/disposer';
-import { acquireOrWhenReady, IAgentEnvironmentService, inspectAgentEnvironment, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
+import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
@@ -204,13 +203,13 @@ export class ReadTool implements IReadTool {
       return { isError: true, output: 'column_offset is only supported for forward reads. Use a positive line_offset or the forward Next Read arguments.' };
     }
     if (isDaemonFileUrl(args.path)) return this.attachmentExecution(args);
-    const inspected = inspectAgentEnvironment(this.environment);
-    const expectedGeneration = pinnedGeneration(inspected, ['fs']);
+    const inspected = this.environment.inspect();
+    const expectedGeneration = pinnedGeneration(inspected);
     const view = new EnvironmentWorkspaceView(inspected, {
       workDir: this.workspaceCtx.workDir,
       additionalDirs: [...this.workspaceCtx.additionalDirs, ...this.skillCatalog.catalog.getSkillRoots()],
     });
-    const env = { _serviceBrand: undefined, ...inspected.host, ready: Promise.resolve() };
+    const env = { _serviceBrand: undefined, ...view.host, ready: Promise.resolve() };
     const workspace = this.workspaceConfig(view);
     const path = resolvePathAccessPath(args.path, {
       env,
@@ -229,8 +228,7 @@ export class ReadTool implements IReadTool {
           homeDir: env.homeDir,
         }),
       execute: async () => {
-        const acquired = acquireOrWhenReady(this.environment, ['fs']);
-        const lease = isPromiseLike(acquired) ? await acquired : acquired;
+        const lease = await acquireOrWhenReady(this.environment, ['fs']);
         try {
           if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
             return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };

@@ -28,6 +28,7 @@ import {
   type ProcessWriteResult,
 } from '#/remote/protocol/methods';
 import { ConnectionClosedError, RequestTimeoutError, type RemoteExecConnection } from './connection';
+import { rpcDomainError } from './rpcDomainError';
 
 const HOST_PROCESS_CODES: ReadonlySet<string> = new Set(Object.values(OsProcessErrors.codes));
 
@@ -39,14 +40,10 @@ export function toRemoteProcessError(error: unknown): Error {
   if (!(error instanceof RpcError)) {
     return error instanceof Error ? error : new Error(String(error));
   }
-  const data = error.data;
-  const domainCode =
-    data !== null && typeof data === 'object'
-      ? (data as Record<string, unknown>)['domainCode']
-      : undefined;
-  if (typeof domainCode === 'string' && HOST_PROCESS_CODES.has(domainCode)) {
-    return new HostProcessError(domainCode as HostProcessErrorCode, error.message, {
-      details: data as Record<string, unknown>,
+  const domain = rpcDomainError(error, HOST_PROCESS_CODES);
+  if (domain !== undefined) {
+    return new HostProcessError(domain.domainCode as HostProcessErrorCode, error.message, {
+      details: domain.details,
     });
   }
   return error;

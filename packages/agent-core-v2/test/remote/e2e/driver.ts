@@ -377,7 +377,6 @@ async function scenarioInstall(flags: Flags): Promise<void> {
   const connectBase = {
     workspaceId: 'remote-exec-e2e',
     environmentId: 'e2e-target',
-    clientName: 'remote-exec-e2e-driver',
     clientVersion,
     onDiagnostic,
   };
@@ -639,7 +638,6 @@ async function main(): Promise<void> {
         workspaceId: 'remote-exec-e2e',
         environmentId: 'e2e-target',
         launcher,
-        clientName: 'remote-exec-e2e-driver',
         clientVersion: '0.0.0',
         minExecutorVersion: '0.0.0',
         onDiagnostic: (line) => {

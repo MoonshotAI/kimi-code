@@ -13,6 +13,9 @@ import { basename, dirname, join } from 'pathe';
 import { abortable } from '#/_base/utils/abort';
 import { ErrorCodes, Error2 } from '#/errors';
 import { LOCAL_ENVIRONMENT_ID, type Environment } from '#/environment/environment';
+import { getShareBinRgPath, isRemoteEnvironment, shareBinRgPath } from '#/environment/shareBinRg';
+
+export { getShareBinRgPath } from '#/environment/shareBinRg';
 
 const RG_VERSION = '15.0.0';
 const DOWNLOAD_TIMEOUT_MS = 600_000;
@@ -61,21 +64,6 @@ function getShareDir(): string {
   const override = process.env['KIMI_CODE_HOME'];
   if (override !== undefined && override !== '') return override;
   return join(homedir(), '.kimi-code');
-}
-
-export function getShareBinRgPath(): string {
-  return join(getShareDir(), 'bin', rgBinaryName());
-}
-
-function isRemoteEnvironment(environment: Environment | undefined): environment is Environment {
-  return environment !== undefined && environment.identity.environmentId !== LOCAL_ENVIRONMENT_ID;
-}
-
-function shareBinRgPath(environment: Environment | undefined): string {
-  if (isRemoteEnvironment(environment)) {
-    return `${environment.host.homeDir}/.kimi-code/bin/rg`;
-  }
-  return getShareBinRgPath();
 }
 
 function rgBaseUrl(): string {
@@ -171,6 +159,12 @@ async function installRemoteRg(
   binPath: string,
 ): Promise<void> {
   const host = environment.host;
+  if (host === undefined) {
+    throw new Error2(
+      ErrorCodes.OS_FS_UNAVAILABLE,
+      'environment does not provide host information for the ripgrep install',
+    );
+  }
   const target = detectRemoteTarget(host.osKind, host.osArch);
   if (target === undefined) {
     throw new Error2(

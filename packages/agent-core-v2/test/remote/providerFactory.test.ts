@@ -101,7 +101,6 @@ const NO_ABORT = new AbortController().signal;
 
 const CONTEXT: EnvironmentProviderContext = {
   id: 'workspace-1',
-  root: '/repo',
 };
 
 interface HostServices {
@@ -432,7 +431,7 @@ describe('RemoteEnvironmentProviderFactory', () => {
     await registry.dispose();
   });
 
-  it('forwards a captured fs to the replacement connection after reconnect', async () => {
+  it('serves fs from the current connection after reconnect', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
     let generation = 0;
     const connect = vi.fn(async (options: RemoteEnvironmentOptions) => {
@@ -446,14 +445,13 @@ describe('RemoteEnvironmentProviderFactory', () => {
 
     await registry.current('dev-box')!.connect!();
     const managed = registry.current('dev-box')!;
-    const captured = managed.fs;
-    await expect(captured!.readText('/etc/motd')).resolves.toBe('connection-1');
+    await expect(managed.fs!.readText('/etc/motd')).resolves.toBe('connection-1');
 
     await managed.connect!();
-    await expect(captured!.readText('/etc/motd')).resolves.toBe('connection-2');
+    await expect(managed.fs!.readText('/etc/motd')).resolves.toBe('connection-2');
 
     await managed.dispose();
-    await expect(captured!.readText('/etc/motd')).rejects.toThrow('remote environment is not connected');
+    expect(managed.fs).toBeUndefined();
 
     await attachment.dispose();
     await registry.dispose();

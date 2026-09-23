@@ -32,10 +32,7 @@ import {
   kimiRegionProfile,
   type KimiHostIdentity,
 } from '@moonshot-ai/kimi-code-oauth';
-import {
-  RemoteEnvironmentProviderFactory,
-  type RemoteEnvironmentProviderFactoryOptions,
-} from '@moonshot-ai/agent-core-v2/remote';
+import { RemoteEnvironmentProviderFactory } from '@moonshot-ai/agent-core-v2/remote';
 import { createAsyncApiDocument } from './protocol/asyncapi';
 import Fastify, { type FastifyInstance } from 'fastify';
 
@@ -142,21 +139,6 @@ export interface RunningServer {
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 58627;
 
-export interface CreateRemoteEnvironmentProviderOptionsInput {
-  readonly clientVersion: string;
-  readonly onDiagnostic: (line: string) => void;
-}
-
-export function createRemoteEnvironmentProviderOptions(
-  input: CreateRemoteEnvironmentProviderOptionsInput,
-): RemoteEnvironmentProviderFactoryOptions {
-  return {
-    clientName: 'kimi-code',
-    clientVersion: input.clientVersion,
-    onDiagnostic: input.onDiagnostic,
-  };
-}
-
 export async function startServer(opts: ServerStartOptions): Promise<RunningServer> {
   const host = opts.host ?? DEFAULT_HOST;
   const port = opts.port ?? DEFAULT_PORT;
@@ -242,14 +224,12 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     [...logSeed(logging), ...(opts.seeds ?? [])],
   );
   const remoteEnvironmentProvider = await core.accessor.get(IWorkspaceInstanceManager).addProvider(
-    new RemoteEnvironmentProviderFactory(
-      createRemoteEnvironmentProviderOptions({
-        clientVersion: serverVersion,
-        onDiagnostic: (line) => {
-          logger.warn(line.trimEnd());
-        },
-      }),
-    ),
+    new RemoteEnvironmentProviderFactory({
+      clientVersion: serverVersion,
+      onDiagnostic: (line) => {
+        logger.warn(line.trimEnd());
+      },
+    }),
   );
 
   let telemetry: ServerTelemetry = {};

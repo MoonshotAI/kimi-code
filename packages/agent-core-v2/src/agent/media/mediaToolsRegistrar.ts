@@ -100,7 +100,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
       String(capabilities.video_in),
       identityKey,
       inspected?.status,
-      inspected?.host.pathClass,
+      inspected?.host?.pathClass,
       String(hasEnvironmentFs),
     ].join('|');
     if (key === this.registeredKey) return;
@@ -109,7 +109,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     const workspaceCtx = this.workspaceCtx;
     const skillCatalog = this.skillCatalog;
     const environment = this.environment;
-    const pathClass = inspected?.host.pathClass;
+    const pathClass = inspected?.host?.pathClass;
     let requester: ModelRequester | undefined;
     if (model !== undefined) {
       try {

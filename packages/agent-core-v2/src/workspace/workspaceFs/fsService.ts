@@ -50,6 +50,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem, type HostDirEntry, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import type { EnvironmentPath } from '#/environment/environment';
+import { POSIX_ENVIRONMENT_PATH } from '#/environment/environmentDefaults';
 import { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
@@ -113,7 +114,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     private readonly environmentId = 'local',
   ) {
     this.workspaceId = workspace.workspaceId;
-    this.path = resolver.inspect({ workspaceId: workspace.workspaceId, environmentId }).path;
+    this.path = resolver.inspect({ workspaceId: workspace.workspaceId, environmentId }).path ?? POSIX_ENVIRONMENT_PATH;
     this.workDir = this.path.resolve(workspace.cwd);
   }
 

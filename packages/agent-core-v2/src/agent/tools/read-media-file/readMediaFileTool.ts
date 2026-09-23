@@ -9,8 +9,7 @@ import { attachmentFileSource, environmentFileSource, withAttachmentLocation, ty
 
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
-import { isPromiseLike } from '#/_base/lifecycle/disposer';
-import { acquireOrWhenReady, inspectAgentEnvironment, pinnedGeneration, type IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { acquireOrWhenReady, pinnedGeneration, type IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import {
   ToolAccesses,
   type AgentTool,
@@ -232,13 +231,13 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     if (isDaemonFileUrl(args.path)) {
       return this.attachmentExecution(args);
     }
-    const inspected = inspectAgentEnvironment(this.environment);
-    const expectedGeneration = pinnedGeneration(inspected, ['fs']);
-    const env = inspected.host;
+    const inspected = this.environment.inspect();
+    const expectedGeneration = pinnedGeneration(inspected);
     const view = new EnvironmentWorkspaceView(inspected, {
       workDir: this.workspace.workspaceDir,
       additionalDirs: this.workspace.additionalDirs,
     });
+    const env = view.host;
     const workspace = { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
     const path = resolvePathAccessPath(args.path, {
       env,
@@ -257,8 +256,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
           homeDir: env.homeDir,
         }),
       execute: async () => {
-        const acquired = acquireOrWhenReady(this.environment, ['fs']);
-        const lease = isPromiseLike(acquired) ? await acquired : acquired;
+        const lease = await acquireOrWhenReady(this.environment, ['fs']);
         try {
           if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
             return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };

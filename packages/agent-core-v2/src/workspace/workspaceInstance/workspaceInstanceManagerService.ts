@@ -277,7 +277,6 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     try {
       attachment = await provider.attach({
         id: instance.id,
-        root: instance.root,
       }, this.providerHost(instance, handles));
     } catch (error) {
       for (const handle of handles.toReversed()) await handle.remove();

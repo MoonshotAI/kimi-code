@@ -27,7 +27,6 @@ import {
   setSessionArchived,
   isError2,
   Error2,
-  EnvironmentError,
   type ContextMessage,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
@@ -71,7 +70,7 @@ import { defineRoute } from '../middleware/defineRoute';
 import { readLegacyStatus } from '../services/legacyStatus/legacyStatus';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, dispatchAction } from './action-dispatch';
-import { environmentErrorCode } from './environment';
+import { sendEnvironmentError } from './environment';
 import { applySessionAgentConfig } from './sessionAgentConfig';
 import { updateSessionProfile } from './sessionProfile';
 
@@ -1181,10 +1180,7 @@ function sendMappedError(
 ): void {
   const requestId = req.id;
   const log = requestLog(req);
-  if (err instanceof EnvironmentError) {
-    reply.send(errEnvelope(environmentErrorCode(err.code), err.message, requestId, err.stack));
-    return;
-  }
+  if (sendEnvironmentError(reply, requestId, err)) return;
   if (isError2(err)) {
     switch (err.code) {
       case 'session.not_found':

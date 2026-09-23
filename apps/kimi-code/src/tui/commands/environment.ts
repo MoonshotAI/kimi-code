@@ -9,12 +9,10 @@ import {
 import { EnvironmentCwdDialogComponent } from '../components/dialogs/environment-cwd-dialog';
 import {
   EnvironmentManagerComponent,
-  type EnvironmentManagerEnvironment,
+  type EnvironmentManagerOptions,
 } from '../components/dialogs/environment-manager';
 import { formatErrorMessage } from '../utils/event-payload';
 import type { SlashCommandHost } from './dispatch';
-
-const environmentManagerGenerations = new WeakMap<object, number>();
 
 // ---------------------------------------------------------------------------
 // /environment command
@@ -32,66 +30,59 @@ interface ActionFeedback {
 }
 
 async function openEnvironmentManager(host: SlashCommandHost, session: Session): Promise<void> {
-  const generation = (environmentManagerGenerations.get(host) ?? 0) + 1;
-  environmentManagerGenerations.set(host, generation);
-  let list: SessionEnvironmentsInfo | undefined;
-  let currentEnvironmentId = 'local';
-  let manager!: EnvironmentManagerComponent;
-  const managerOptions = {
-    environments: [],
+  const manager: EnvironmentManagerComponent = new EnvironmentManagerComponent(
+    buildManagerOptions(host, session, () => manager, undefined, 'local'),
+  );
+  host.mountEditorReplacement(manager);
+  manager.setBusy('Loading environments…');
+
+  try {
+    const [list, binding] = await Promise.all([
+      session.listEnvironments(),
+      session.getEnvironment(),
+    ]);
+    manager.setOptions(buildManagerOptions(host, session, () => manager, list, binding.environmentId), {
+      selectCurrent: true,
+    });
+  } catch (error) {
+    manager.showError(formatErrorMessage(error));
+  }
+}
+
+/**
+ * Options for one manager snapshot. `list` is undefined only during the initial
+ * load, where input is busy-locked (and stays inert if the load fails). The
+ * manager arrives lazily because the callbacks outlive the constructor call
+ * that receives them.
+ */
+function buildManagerOptions(
+  host: SlashCommandHost,
+  session: Session,
+  manager: () => EnvironmentManagerComponent,
+  list: SessionEnvironmentsInfo | undefined,
+  currentEnvironmentId: string,
+): EnvironmentManagerOptions {
+  return {
+    environments: list?.environments ?? [],
     currentEnvironmentId,
     onSwitch: (environmentId) => {
       if (list === undefined) return;
-      void switchFlow(host, session, manager, list, currentEnvironmentId, environmentId);
+      void switchFlow(host, session, manager(), list, currentEnvironmentId, environmentId);
     },
     onReconnect: () => {
       if (list === undefined) return;
-      void reconnectFlow(host, session, manager, currentEnvironmentId);
+      void reconnectFlow(host, session, manager(), currentEnvironmentId);
     },
     onAdd: () => {
       if (list !== undefined) void addFlow(host, session, list);
     },
     onClose: () => {
-      if (environmentManagerGenerations.get(host) !== generation) return;
-      environmentManagerGenerations.set(host, generation + 1);
       host.restoreEditor();
     },
     requestRender: () => {
       host.requestRender();
     },
-  } satisfies ConstructorParameters<typeof EnvironmentManagerComponent>[0];
-  manager = new EnvironmentManagerComponent(managerOptions);
-  host.mountEditorReplacement(manager);
-  manager.setBusy('Loading environments…');
-
-  try {
-    const [loadedList, binding] = await Promise.all([
-      session.listEnvironments(),
-      session.getEnvironment(),
-    ]);
-    if (environmentManagerGenerations.get(host) !== generation) return;
-    list = loadedList;
-    currentEnvironmentId = binding.environmentId;
-    manager.setOptions({
-      ...managerOptions,
-      environments: toManagerEnvironments(list),
-      currentEnvironmentId,
-    }, { selectCurrent: true });
-  } catch (error) {
-    if (environmentManagerGenerations.get(host) === generation) {
-      manager.showError(formatErrorMessage(error));
-    }
-  }
-}
-
-function toManagerEnvironments(list: SessionEnvironmentsInfo): readonly EnvironmentManagerEnvironment[] {
-  return list.environments.map((environment) => ({
-    environmentId: environment.environmentId,
-    type: environment.type,
-    status: environment.status,
-    defaultCwd: environment.defaultCwd,
-    connectError: environment.connectError,
-  }));
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -174,25 +165,7 @@ async function reconnectFlow(
   }
   await host.refreshEnvironmentSlot();
   const list = await session.listEnvironments();
-  manager.setOptions({
-    environments: toManagerEnvironments(list),
-    currentEnvironmentId,
-    onSwitch: (nextId) => {
-      void switchFlow(host, session, manager, list, currentEnvironmentId, nextId);
-    },
-    onReconnect: () => {
-      void reconnectFlow(host, session, manager, currentEnvironmentId);
-    },
-    onAdd: () => {
-      void addFlow(host, session, list);
-    },
-    onClose: () => {
-      host.restoreEditor();
-    },
-    requestRender: () => {
-      host.requestRender();
-    },
-  });
+  manager.setOptions(buildManagerOptions(host, session, () => manager, list, currentEnvironmentId));
 }
 
 // ---------------------------------------------------------------------------

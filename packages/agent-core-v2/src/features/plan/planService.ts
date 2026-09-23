@@ -231,7 +231,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     if (!state.active || state.id === undefined) return null;
     const target = this.planFileTarget(state.id);
     if (target === undefined) {
-      return { id: state.id, content: '', path: '' };
+      return { id: state.id, content: '', path: null };
     }
     let content = '';
     try {
@@ -255,12 +255,13 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     }
     try {
       const fs = lease.environment.fs;
-      if (fs === undefined) return undefined;
-      const tempDir = lease.environment.host.tempDir ?? tmpdir();
+      const environmentPath = lease.environment.path;
+      if (fs === undefined || environmentPath === undefined) return undefined;
+      const tempDir = lease.environment.host?.tempDir ?? tmpdir();
       return {
         fs,
-        environmentPath: lease.environment.path,
-        path: lease.environment.path.join(
+        environmentPath,
+        path: environmentPath.join(
           tempDir,
           'kimi-code',
           'plans',

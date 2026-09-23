@@ -3,7 +3,7 @@ import { createDecorator } from "#/_base/di/instantiation";
 export type PlanData = null | {
   readonly id: string;
   readonly content: string;
-  readonly path: string;
+  readonly path: string | null;
 };
 
 export type PlanFilePath = string | null;

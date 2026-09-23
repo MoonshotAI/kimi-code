@@ -379,7 +379,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
 
     const dispatched = await call<{ workspaceId: string; environmentId: string }>(
       'POST',
-      rpc('agent', IAgentEnvironmentBindingService, 'get', { sid: id, aid: 'main' }),
+      rpc('agent', IAgentEnvironmentBindingService, 'current', { sid: id, aid: 'main' }),
     );
     expect(dispatched.body.data.environmentId).toBe('local');
 

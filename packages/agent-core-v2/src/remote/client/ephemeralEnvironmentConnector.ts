@@ -11,9 +11,8 @@ import {
 } from '#/environment/ephemeralEnvironment';
 
 import { connectWithGuidance } from './connectGuidance';
-import { ManagedRemoteEnvironment } from './remoteEnvironmentProvider';
+import { ManagedRemoteEnvironment, toLauncherSpec } from './remoteEnvironmentProvider';
 import { RemoteEnvironment, type RemoteEnvironmentOptions } from './remoteEnvironment';
-import { toLauncherSpec } from './remoteEnvironmentProvider';
 
 export type EphemeralEnvironmentConnectFn = (
   options: RemoteEnvironmentOptions,
@@ -44,7 +43,6 @@ export class RemoteEphemeralEnvironmentConnector implements IEphemeralEnvironmen
             workspaceId: request.workspaceId,
             environmentId: request.environmentId,
             launcher: spec,
-            clientName: 'kimi-code',
             clientVersion,
             onDiagnostic,
           }),
@@ -70,7 +68,7 @@ export class RemoteEphemeralEnvironmentConnector implements IEphemeralEnvironmen
       await environment.dispose();
       throw error;
     }
-    return { environment, initialCwd: environment.host.cwd };
+    return { environment, initialCwd: inner.host.cwd };
   }
 }
 

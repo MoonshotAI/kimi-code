@@ -80,7 +80,7 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
     );
     const view = new EnvironmentWorkspaceView(lease.environment, this.workspace);
     const cwd = input.cwd === undefined ? view.workDir : view.assertAllowed(view.resolve(input.cwd));
-    const shell = input.shell ?? lease.environment.host.shellPath;
+    const shell = input.shell ?? view.host.shellPath;
     let process: TerminalProcess;
     let killer: IDisposable;
     try {

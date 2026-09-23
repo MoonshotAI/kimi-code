@@ -195,7 +195,7 @@ describe('process protocol semantics', () => {
       cwd: '/tmp',
       pipeStdin: false,
     });
-    expect(first['result']).toMatchObject({ processId: 'dup' });
+    expect(first['result']).toMatchObject({ pid: expect.any(Number) });
     const second = await startProcess(raw, 2, {
       processId: 'dup',
       argv: ['sleep', '5'],

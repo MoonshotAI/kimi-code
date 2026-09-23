@@ -430,14 +430,12 @@ export class KimiHarness {
   }
 
   /**
-   * Resolved `[environments]` declarations for `workDir` (agent-core-v2 only):
-   * the merged user/project entries a new session could bind — project entries
-   * appear only once the folder is trusted.
+   * Resolved `[environments]` declarations from the user-level config
+   * (agent-core-v2 only): the entries a new session could bind. Session-less —
+   * no project files are consulted and no trust gating applies.
    */
-  async listEnvironmentDeclarations(
-    workDir: string,
-  ): Promise<readonly WorkspaceEnvironmentDeclarationInfo[]> {
-    return this.rpc.listEnvironmentDeclarations(workDir);
+  async listEnvironmentDeclarations(): Promise<readonly WorkspaceEnvironmentDeclarationInfo[]> {
+    return this.rpc.listEnvironmentDeclarations();
   }
 
   /** Mark `workDir` as trusted; project-level MCP servers connect live afterwards. */

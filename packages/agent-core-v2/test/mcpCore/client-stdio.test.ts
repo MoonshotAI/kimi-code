@@ -6,7 +6,7 @@ import { join } from 'pathe';
 import { describe, expect, it } from 'vitest';
 
 import type { EnvironmentLease, EnvironmentStatus } from '#/environment/environment';
-import { EnvironmentError, environmentStatusAllows } from '#/environment/environmentRegistry';
+import { EnvironmentError, environmentIsReady } from '#/environment/environmentRegistry';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import {
   mergeRemoteStdioEnv,
@@ -122,12 +122,12 @@ function createEnvironmentClient(
     },
     acquire: () => {
       calls.push('acquire');
-      if (!environmentStatusAllows(environment, ['process'])) unavailable();
+      if (!environmentIsReady(environment)) unavailable();
       return lease();
     },
     acquireWhenReady: async () => {
       calls.push('acquireWhenReady');
-      if (!environmentStatusAllows(environment, ['process'])) unavailable();
+      if (!environmentIsReady(environment)) unavailable();
       return lease();
     },
   };

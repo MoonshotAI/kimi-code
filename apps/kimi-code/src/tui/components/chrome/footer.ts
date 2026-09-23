@@ -11,16 +11,13 @@ import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { effectiveModelAlias } from '@moonshot-ai/kimi-code-sdk';
 
-import {
-  BRAILLE_SPINNER_FRAMES,
-  BRAILLE_SPINNER_INTERVAL_MS,
-} from '#/tui/constant/rendering';
 import { ALL_TIPS, type ToolbarTip } from '#/tui/constant/tips';
 import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/dance';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { AppState, EnvironmentSlotState } from '#/tui/types';
 import { PERMISSION_MODE_DISPLAY_NAMES } from '#/tui/utils/permission-mode';
+import { SpinnerTicker } from '#/tui/utils/spinner-ticker';
 import {
   StatusLineCommandRunner,
   type StatusLinePayload,
@@ -211,8 +208,9 @@ export class FooterComponent implements Component {
   private goalSnapshotKey: string | null = null;
   private goalObservedAtMs = Date.now();
   private goalTimer: ReturnType<typeof setInterval> | null = null;
-  private environmentSpinnerFrame = 0;
-  private environmentSpinnerTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly environmentSpinner = new SpinnerTicker(() => {
+    this.onRefresh();
+  });
   private statusLineRunner: StatusLineCommandRunner | null = null;
   /**
    * Non-terminal background-task counts split by kind so the footer can
@@ -525,9 +523,7 @@ export class FooterComponent implements Component {
           ? environment.connectError.split('\n', 1)[0]
           : undefined;
       const spinner =
-        environment.status === 'connecting'
-          ? `${BRAILLE_SPINNER_FRAMES[this.environmentSpinnerFrame] ?? BRAILLE_SPINNER_FRAMES[0]} `
-          : '';
+        environment.status === 'connecting' ? `${this.environmentSpinner.current} ` : '';
       slots['environment'] = [
         chalk.hex(tone)(
           reason === undefined
@@ -597,11 +593,11 @@ export class FooterComponent implements Component {
   }
 
   /**
-   * The connecting spinner is client-side frame ticking on the shared braille
-   * interval — the slot state itself only changes with the environment status.
-   * The timer is strictly bounded to the connecting status: it starts when the
-   * slot enters connecting and stops the moment the status moves on, so no
-   * always-on ticker exists. Each frame repaints through onRefresh.
+   * The connecting spinner ticks on the shared braille ticker — the slot state
+   * itself only changes with the environment status. The ticker is strictly
+   * bounded to the connecting status: it starts when the slot enters
+   * connecting and stops the moment the status moves on, so no always-on
+   * ticker exists. Each frame repaints through onRefresh.
    */
   private syncEnvironmentSpinner(environment: AppState['environment']): void {
     const connecting =
@@ -609,20 +605,9 @@ export class FooterComponent implements Component {
       environment.environmentId !== 'local' &&
       environment.status === 'connecting';
     if (connecting) {
-      if (this.environmentSpinnerTimer !== null) return;
-      this.environmentSpinnerFrame = 0;
-      this.environmentSpinnerTimer = setInterval(() => {
-        this.environmentSpinnerFrame =
-          (this.environmentSpinnerFrame + 1) % BRAILLE_SPINNER_FRAMES.length;
-        this.onRefresh();
-      }, BRAILLE_SPINNER_INTERVAL_MS);
-      this.environmentSpinnerTimer.unref?.();
-      return;
-    }
-
-    if (this.environmentSpinnerTimer !== null) {
-      clearInterval(this.environmentSpinnerTimer);
-      this.environmentSpinnerTimer = null;
+      this.environmentSpinner.start();
+    } else {
+      this.environmentSpinner.stop();
     }
   }
 
@@ -631,10 +616,7 @@ export class FooterComponent implements Component {
       clearInterval(this.goalTimer);
       this.goalTimer = null;
     }
-    if (this.environmentSpinnerTimer !== null) {
-      clearInterval(this.environmentSpinnerTimer);
-      this.environmentSpinnerTimer = null;
-    }
+    this.environmentSpinner.dispose();
   }
 
   private goalWallClockMs(goal: AppState['goal']): number | undefined {

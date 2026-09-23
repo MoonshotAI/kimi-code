@@ -506,7 +506,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       .get(IWorkspaceInstanceManager)
       .addProvider(
         new RemoteEnvironmentProviderFactory({
-          clientName: 'kimi-code',
           clientVersion: identity.version,
           onDiagnostic: (line) => {
             app.accessor.get(ILogService).warn(line.trimEnd());
@@ -695,6 +694,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return this.engineAccessor.get(IWorkspaceInstanceManager).getOrCreate({ root });
   }
 
+  private async sessionWorkspaceInstance(context: ISessionContext): Promise<WorkspaceInstance> {
+    const manager = this.engineAccessor.get(IWorkspaceInstanceManager);
+    return manager.get(context.workspaceId) ?? (await manager.getOrCreate({ root: context.cwd }));
+  }
+
   /**
    * Through the workspace handler's `IWorkspaceSkillCatalog` — the engine's
    * own merged view (builtin / user / explicit / extra / workspace-root /
@@ -734,13 +738,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const parsed = parseSuggestFilesInput(input);
     const session = this.requireLiveSession(input.sessionId);
     const agent = await this.agentScope(input.sessionId);
-    const binding = agent.accessor.get(IAgentEnvironmentBindingService).get();
+    const binding = agent.accessor.get(IAgentEnvironmentBindingService).current;
     const workspace = session.accessor.get(ISessionWorkspaceContext);
     const context = session.accessor.get(ISessionContext);
-    const manager = this.engineAccessor.get(IWorkspaceInstanceManager);
-    const instance =
-      manager.get(context.workspaceId) ??
-      (await manager.getOrCreate({ root: context.cwd }));
+    const instance = await this.sessionWorkspaceInstance(context);
     const result = await instance.program.suggestFiles(
       binding.environmentId,
       { workDir: workspace.workDir, additionalDirs: workspace.additionalDirs },
@@ -802,12 +803,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * services the session manager's create-time validation uses. Declarations
    * come from the user-level `[environments]` section.
    */
-  override async listEnvironmentDeclarations(
-    workDir: string,
-  ): Promise<readonly WorkspaceEnvironmentDeclarationInfo[]> {
-    const resolved = await resolveWorkspaceEnvironmentDeclarations({
-      config: this.engineAccessor.get(IConfigService),
-    });
+  override async listEnvironmentDeclarations(): Promise<readonly WorkspaceEnvironmentDeclarationInfo[]> {
+    const resolved = await resolveWorkspaceEnvironmentDeclarations(this.engineAccessor.get(IConfigService));
     return resolved.entries.map((declaration) => ({
       id: declaration.id,
       type: 'command' in declaration.entry ? 'command' : declaration.entry.type,
@@ -1978,10 +1975,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async listEnvironments(input: SessionIdRpcInput): Promise<SessionEnvironmentsInfo> {
     const session = this.requireLiveSession(input.sessionId);
     const context = session.accessor.get(ISessionContext);
-    const manager = this.engineAccessor.get(IWorkspaceInstanceManager);
-    const instance =
-      manager.get(context.workspaceId) ??
-      (await manager.getOrCreate({ root: context.cwd }));
+    const instance = await this.sessionWorkspaceInstance(context);
     const declarations = await this.resolveEnvironmentDeclarationEntries();
     return {
       environments: instance.environments.snapshot().environments.map((environment) =>
@@ -2003,9 +1997,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   private async resolveEnvironmentDeclarationEntries(): Promise<ReadonlyMap<string, RemoteEnvironmentEntry>> {
     try {
-      const resolved = await resolveWorkspaceEnvironmentDeclarations({
-        config: this.engineAccessor.get(IConfigService),
-      });
+      const resolved = await resolveWorkspaceEnvironmentDeclarations(this.engineAccessor.get(IConfigService));
       return new Map(resolved.entries.map((declaration) => [declaration.id, declaration.entry]));
     } catch {
       return new Map();

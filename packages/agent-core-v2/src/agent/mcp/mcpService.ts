@@ -10,7 +10,7 @@ import { ErrorCodes, makeErrorPayload } from "#/errors";
 import { abortable } from '#/_base/utils/abort';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { environmentTempTarget, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { McpOriginalsTarget } from '#/agent/mcp/output';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
@@ -18,7 +18,6 @@ import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import type { EnvironmentLease } from '#/environment/environment';
 import { createMcpAuthTool } from '#/agent/mcp/tools/auth';
 import { createMcpTool } from '#/agent/mcp/tools/mcp';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
@@ -105,24 +104,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
   }
 
   private originalsTarget(): McpOriginalsTarget | undefined {
-    let lease: EnvironmentLease;
-    try {
-      lease = this.environment.acquire();
-    } catch {
-      return undefined;
-    }
-    try {
-      const tempDir = lease.environment.host.tempDir;
-      const fs = lease.environment.fs;
-      if (tempDir === undefined || fs === undefined) return undefined;
-      return {
-        fs,
-        dir: lease.environment.path.join(tempDir, 'kimi-code', 'original-images'),
-        path: lease.environment.path,
-      };
-    } finally {
-      lease.dispose();
-    }
+    return environmentTempTarget(this.environment, 'original-images');
   }
 
   waitForInitialLoad(signal?: AbortSignal): Promise<void> {

@@ -328,7 +328,7 @@ describe('AgentEnvironmentBindingService', () => {
     binding.onDidChange((next) => changes.push(next));
 
     expect(binding.switch('remote')).toEqual({ workspaceId: 'workspace', environmentId: 'remote' });
-    expect(binding.get()).toEqual({ workspaceId: 'workspace', environmentId: 'remote' });
+    expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'remote' });
     expect(changes).toEqual([{ workspaceId: 'workspace', environmentId: 'remote' }]);
   });
 

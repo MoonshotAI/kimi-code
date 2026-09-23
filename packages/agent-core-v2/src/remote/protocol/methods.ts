@@ -43,12 +43,9 @@ export interface RemoteEnvironmentInfo {
   readonly tempDir: string;
 }
 
-export type RemoteCapabilities = Record<string, boolean>;
-
 export interface InitializeResult {
   readonly executorVersion: string;
   readonly environment: RemoteEnvironmentInfo;
-  readonly capabilities: RemoteCapabilities;
 }
 
 export interface FsReadFileParams {
@@ -139,7 +136,6 @@ export interface ProcessStartParams {
 }
 
 export interface ProcessStartResult {
-  readonly processId: string;
   readonly pid: number;
 }
 
@@ -192,11 +188,6 @@ export interface ProcessResizeParams {
   readonly processId: string;
   readonly cols: number;
   readonly rows: number;
-}
-
-export interface ProcessFlowParams {
-  readonly processId: string;
-  readonly paused: boolean;
 }
 
 export const MIN_EXECUTOR_VERSION = '0.1.0';

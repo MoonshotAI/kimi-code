@@ -5,8 +5,7 @@ import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { isPromiseLike } from '#/_base/lifecycle/disposer';
-import { acquireOrWhenReady, IAgentEnvironmentService, inspectAgentEnvironment } from '#/agent/environmentBinding/agentEnvironment';
+import { acquireOrWhenReady, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
@@ -127,7 +126,7 @@ export class BashTool implements IBashTool {
   }
 
   get description(): string {
-    const renderedDescription = renderBashDescription(inspectAgentEnvironment(this.environment).host.shellName);
+    const renderedDescription = renderBashDescription(this.environment.inspect().host?.shellName ?? 'sh');
     if (!this.allowBackground()) return withoutBackgroundDescription(renderedDescription);
     if (!this.autoBackgroundOnTimeout()) {
       return withoutAutoBackgroundOnTimeout(renderedDescription);
@@ -157,7 +156,7 @@ export class BashTool implements IBashTool {
 
   private executionCwd(args: BashInput): string {
     try {
-      const view = new EnvironmentWorkspaceView(inspectAgentEnvironment(this.environment), this.workspaceCtx);
+      const view = new EnvironmentWorkspaceView(this.environment.inspect(), this.workspaceCtx);
       return view.resolve(args.cwd ?? view.workDir);
     } catch {
       return args.cwd ?? this.ctx.cwd;
@@ -194,10 +193,9 @@ export class BashTool implements IBashTool {
 
     const startsInBackground = args.run_in_background === true;
     const foregroundTimeoutMs = normalizeTimeoutMs(args.timeout, false);
-    const acquired = acquireOrWhenReady(this.environment, ['process']);
-    const lease = isPromiseLike(acquired) ? await acquired : acquired;
+    const lease = await acquireOrWhenReady(this.environment, ['process']);
     const view = new EnvironmentWorkspaceView(lease.environment, this.workspaceCtx);
-    const env = lease.environment.host;
+    const env = view.host;
     const command = env.osKind === 'Windows' ? rewriteWindowsNullRedirect(args.command) : args.command;
     const effectiveCwd = view.resolve(args.cwd ?? view.workDir);
     const description = startsInBackground ? args.description!.trim() : foregroundDescription(args);

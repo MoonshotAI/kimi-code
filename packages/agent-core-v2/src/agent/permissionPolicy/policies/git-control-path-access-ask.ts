@@ -30,7 +30,8 @@ export class GitControlPathAccessAskPermissionPolicyService implements Permissio
     const lease = acquireEnvironmentLease(this.environment);
     if (lease === undefined) return undefined;
     try {
-      const pathClass = lease.environment.host.pathClass;
+      const pathClass = lease.environment.host?.pathClass;
+      if (pathClass === undefined) return undefined;
       const fs = lease.environment.fs;
       const accesses = fileAccesses(context);
       if (accesses.length === 0) return undefined;

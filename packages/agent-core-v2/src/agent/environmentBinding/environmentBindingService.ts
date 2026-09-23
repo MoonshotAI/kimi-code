@@ -16,6 +16,7 @@ import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { CHANGE_ENVIRONMENT_TOOL_NAME } from '#/features/environmentTools/environmentTools';
 import { planKey } from '#/features/plan/planOps';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
+import { DEFAULT_ENVIRONMENT_HOST } from '#/environment/environmentDefaults';
 import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding, type EnvironmentLease } from '#/environment/environment';
 import { EnvironmentError } from '#/environment/environmentRegistry';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -178,10 +179,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     return this.state.get(agentEnvironmentBindingKey);
   }
 
-  get(): EnvironmentBinding {
-    return this.current;
-  }
-
   set(binding: EnvironmentBinding): EnvironmentBinding {
     this.assertSessionWorkspace(binding);
     this.assertNotInPlanMode();
@@ -257,8 +254,8 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     }
     try {
       return !hostEnvironmentEquals(
-        this.resolver.inspect(previous).host,
-        this.resolver.inspect(next).host,
+        this.resolver.inspect(previous).host ?? DEFAULT_ENVIRONMENT_HOST,
+        this.resolver.inspect(next).host ?? DEFAULT_ENVIRONMENT_HOST,
       );
     } catch {
       return true;
@@ -287,7 +284,9 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
     let environment: HostEnvironmentInfo;
     try {
-      environment = this.resolver.inspect(binding).host;
+      const host = this.resolver.inspect(binding).host;
+      if (host === undefined) return;
+      environment = host;
     } catch {
       return;
     }
@@ -320,9 +319,11 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     try {
       const fs = lease.environment.fs;
       if (fs === undefined) return;
+      const homeDir = lease.environment.host?.homeDir;
+      if (homeDir === undefined) return;
       const cwd = binding.cwd ?? this.session.cwd;
       const { paths } = await loadAgentsMdDetailed(
-        { fs, homeDir: lease.environment.host.homeDir },
+        { fs, homeDir },
         cwd,
         this.bootstrap.homeDir,
       );

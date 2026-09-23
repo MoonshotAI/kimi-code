@@ -507,7 +507,7 @@ describe('KimiTUI startup', () => {
 
     await expect(driver.init()).resolves.toBe(false);
 
-    expect(listEnvironmentDeclarations).toHaveBeenCalledWith('/tmp/proj-a');
+    expect(listEnvironmentDeclarations).toHaveBeenCalledWith();
     expect(harness.createSession).toHaveBeenCalledWith(
       expect.objectContaining({ environmentId: 'dev-box' }),
     );

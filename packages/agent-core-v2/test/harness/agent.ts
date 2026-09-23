@@ -1348,7 +1348,6 @@ export class AgentTestContext {
               get current() {
                 return harnessBinding;
               },
-              get: () => harnessBinding,
               set: (next: EnvironmentBinding) => next,
               switch: (environmentId: string, cwd?: string) => ({ ...harnessBinding, environmentId, cwd }),
               connectAndSwitch: async (environmentId: string, cwd?: string) => ({ ...harnessBinding, environmentId, cwd }),

@@ -19,7 +19,6 @@ import {
 
 import { listLiveServerInstances } from '../src/instanceRegistry';
 import {
-  createRemoteEnvironmentProviderOptions,
   listenWithPortRetry,
   type RunningServer,
   startServer,
@@ -353,21 +352,6 @@ async function allocateAdjacentFreePair(
   }
   throw new Error('could not allocate an adjacent free port pair');
 }
-
-describe('createRemoteEnvironmentProviderOptions', () => {
-  it('passes the client identity and diagnostics through to the provider factory', () => {
-    const onDiagnostic = (): void => {};
-    const options = createRemoteEnvironmentProviderOptions({
-      clientVersion: '9.9.9-test',
-      onDiagnostic,
-    });
-
-    expect(options.clientName).toBe('kimi-code');
-    expect(options.clientVersion).toBe('9.9.9-test');
-    expect(options.onDiagnostic).toBe(onDiagnostic);
-    expect(options.probeRunner).toBeUndefined();
-  });
-});
 
 describe('listenWithPortRetry', () => {
   it('returns the requested port when the first listen succeeds', async () => {

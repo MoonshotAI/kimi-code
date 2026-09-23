@@ -500,7 +500,9 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     try {
       const fs = lease.environment.fs;
       if (fs === undefined) return 'unreadable';
-      const absolute = resolveWorkspacePath(lease.environment.path, this.workspaceCtx.workDir, pathKey);
+      const path = lease.environment.path;
+      if (path === undefined) return 'unreadable';
+      const absolute = resolveWorkspacePath(path, this.workspaceCtx.workDir, pathKey);
       let info;
       try {
         info = await fs.stat(absolute);
@@ -554,9 +556,9 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     semantics: WorkspacePathSemantics;
     caseInsensitive: boolean;
   } {
-    const environment = this.inspectEnvironment(environmentId);
-    if (environment !== undefined) {
-      return { semantics: environment.path, caseInsensitive: environment.path.separator === '\\' };
+    const path = this.inspectEnvironment(environmentId)?.path;
+    if (path !== undefined) {
+      return { semantics: path, caseInsensitive: path.separator === '\\' };
     }
     return {
       semantics: hostWorkspacePathSemantics,

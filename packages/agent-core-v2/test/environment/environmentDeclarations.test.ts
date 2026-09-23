@@ -20,13 +20,13 @@ const USER_TOML: EnvironmentsSection = EnvironmentsSectionSchema.parse({
 
 describe('resolveWorkspaceEnvironmentDeclarations', () => {
   it('resolves user declarations from the [environments] section', async () => {
-    const resolved = await resolveWorkspaceEnvironmentDeclarations({ config: fakeConfig(USER_TOML) });
+    const resolved = await resolveWorkspaceEnvironmentDeclarations(fakeConfig(USER_TOML));
     expect(resolved.entries.map((entry) => entry.id).toSorted()).toEqual(['shared', 'user-box']);
     expect(resolved.default).toEqual({ environmentId: 'user-box', cwd: '/home/me/user' });
   });
 
   it('yields no entries and no default without a section', async () => {
-    const resolved = await resolveWorkspaceEnvironmentDeclarations({ config: fakeConfig(undefined) });
+    const resolved = await resolveWorkspaceEnvironmentDeclarations(fakeConfig(undefined));
     expect(resolved.entries).toEqual([]);
     expect(resolved.default).toBeUndefined();
   });
