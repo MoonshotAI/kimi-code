@@ -46,7 +46,7 @@ describe('RemoteEnvironment over a subprocess loopback', () => {
     try {
       expect(environment.identity).toMatchObject({ workspaceId: 'ws-test', environmentId: 'loopback' });
       expect(environment.identity.generation.length).toBeGreaterThan(0);
-      expect(environment.capabilities).toEqual(new Set(['fs', 'process', 'terminal']));
+      expect(environment.capabilities).toEqual(new Set(['fs', 'process']));
       expect(environment.status).toBe('ready');
       expect(environment.executorVersion).toBe(TEST_VERSION);
       expect(environment.host.osKind.length).toBeGreaterThan(0);
@@ -63,7 +63,6 @@ describe('RemoteEnvironment over a subprocess loopback', () => {
       );
       expect(environment.fs).toBeDefined();
       expect(environment.process).toBeDefined();
-      expect(environment.terminal).toBeDefined();
 
       const file = join(workDir, 'chain.txt');
       await environment.fs.writeText(file, 'chain-data');

@@ -355,16 +355,13 @@ async function allocateAdjacentFreePair(
 }
 
 describe('createRemoteEnvironmentProviderOptions', () => {
-  it('passes the client identity and diagnostics through to the provider factory', () => {
-    const onDiagnostic = (): void => {};
+  it('passes the client identity through to the provider factory', () => {
     const options = createRemoteEnvironmentProviderOptions({
       clientVersion: '9.9.9-test',
-      onDiagnostic,
     });
 
     expect(options.clientName).toBe('kimi-code');
     expect(options.clientVersion).toBe('9.9.9-test');
-    expect(options.onDiagnostic).toBe(onDiagnostic);
     expect(options.probeRunner).toBeUndefined();
   });
 });

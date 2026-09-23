@@ -18,7 +18,6 @@ import {
   MAX_IN_FLIGHT_CALLS,
   MAX_PENDING_SEND_BYTES,
   PROCESS_FLOW_METHOD,
-  PROCESS_RESIZE_METHOD,
   PROCESS_SIGNAL_METHOD,
   PROCESS_TERMINATE_METHOD,
   PROCESS_WRITE_METHOD,
@@ -44,7 +43,6 @@ const CONTROL_METHODS: ReadonlySet<string> = new Set([
   PROCESS_WRITE_METHOD,
   PROCESS_SIGNAL_METHOD,
   PROCESS_TERMINATE_METHOD,
-  PROCESS_RESIZE_METHOD,
 ]);
 
 const DATA_LANE_RESPONSE_METHODS: ReadonlySet<string> = new Set([FS_READ_FILE_METHOD]);
@@ -167,7 +165,6 @@ export class StdioHost {
       ['process/write', (p) => pm.write(p)],
       ['process/signal', (p) => pm.signal(p)],
       ['process/terminate', (p) => pm.terminate(p)],
-      ['process/resize', (p) => pm.resize(p)],
     ]);
     this.donePromise = new Promise<void>((resolve) => {
       this.resolveDone = resolve;

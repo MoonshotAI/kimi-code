@@ -1,4 +1,3 @@
-import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { EnvironmentRegistry } from '#/environment/environmentRegistry';
 import type { EphemeralEnvironmentConnectRequest } from '#/environment/ephemeralEnvironment';
@@ -13,13 +12,6 @@ function bootstrap(): IBootstrapService {
     _serviceBrand: undefined,
     clientIdentity: { productName: 'Kimi Code CLI', version: '1.2.3', platform: 'kimi_code_cli' },
   } as unknown as IBootstrapService;
-}
-
-function log(): ILogService {
-  return {
-    _serviceBrand: undefined,
-    warn: () => {},
-  } as unknown as ILogService;
 }
 
 function request(
@@ -50,7 +42,6 @@ describe('RemoteEphemeralEnvironmentConnector', () => {
     Object.assign(connected.host, { cwd: '/home/me/work' });
     const connector = new RemoteEphemeralEnvironmentConnector(
       bootstrap(),
-      log(),
       async (options) => {
         calls.push(options);
         return connected as unknown as RemoteEnvironment;
@@ -80,7 +71,6 @@ describe('RemoteEphemeralEnvironmentConnector', () => {
     const calls: RemoteEnvironmentOptions[] = [];
     const connector = new RemoteEphemeralEnvironmentConnector(
       bootstrap(),
-      log(),
       async (options) => {
         calls.push(options);
         const connected = fakeConnected(options.environmentId, '/home/me');
@@ -104,7 +94,6 @@ describe('RemoteEphemeralEnvironmentConnector', () => {
     const calls: RemoteEnvironmentOptions[] = [];
     const connector = new RemoteEphemeralEnvironmentConnector(
       bootstrap(),
-      log(),
       async (options) => {
         calls.push(options);
         return fakeConnected(options.environmentId) as unknown as RemoteEnvironment;
@@ -146,7 +135,6 @@ describe('RemoteEphemeralEnvironmentConnector', () => {
     const registry = new EnvironmentRegistry('workspace');
     const connector = new RemoteEphemeralEnvironmentConnector(
       bootstrap(),
-      log(),
       async () => {
         throw new Error(
           'executor process exited before the handshake completed (code 255, signal null)',
@@ -172,7 +160,6 @@ describe('RemoteEphemeralEnvironmentConnector', () => {
     });
     const connector = new RemoteEphemeralEnvironmentConnector(
       bootstrap(),
-      log(),
       async () => connected as unknown as RemoteEnvironment,
     );
 

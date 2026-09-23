@@ -105,31 +105,6 @@ describe('process protocol semantics', () => {
     }
   });
 
-  it('accepts a resize after a terminal has closed its output', async (testContext) => {
-    const ptyAvailable = await import('node-pty').then(() => true, () => false);
-    if (!ptyAvailable) testContext.skip();
-    const loopback = createInProcessLoopback();
-    const raw = new RawClient(loopback);
-    try {
-      await raw.handshake();
-      const started = await startProcess(raw, 1, {
-        processId: 'finished-tty',
-        argv: ['sh', '-c', 'exit 0'],
-        cwd: '/tmp',
-        tty: true,
-      });
-      expect(started['error']).toBeUndefined();
-      await vi.waitFor(() => {
-        expect(raw.notifications('process/closed')).toHaveLength(1);
-      });
-      raw.send({ id: 2, method: 'process/resize', params: { processId: 'finished-tty', cols: 100, rows: 40 } });
-      expect((await raw.nextResponse(2))['result']).toEqual({});
-    } finally {
-      loopback.clientInput.end();
-      await loopback.host.done;
-    }
-  });
-
   it('rejects the unused process replay method', async () => {
     const loopback = createInProcessLoopback();
     const raw = new RawClient(loopback);

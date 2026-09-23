@@ -166,10 +166,6 @@
               pnpm
               (pkgs.pnpmConfigHook.override { inherit pnpm; })
               pkgs.makeWrapper
-              # node-pty ships no Linux prebuilds, so the SEA asset step
-              # source-builds it via node-gyp inside the sandbox; node-gyp
-              # locates a Python interpreter through PATH.
-              pkgs.python3
             ]
             # The SEA inject step (postject) invalidates the macOS code
             # signature on the copied Node executable; build.mjs then re-applies
@@ -179,13 +175,6 @@
             ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
               pkgs.darwin.sigtool
             ];
-
-            # node-gyp (run by the node-pty source build in the SEA asset
-            # step) downloads the Node headers from nodejs.org unless told
-            # where they live; the sandbox has no network. Point it at the
-            # headers of the same Node the build uses — nodedir is the root
-            # under which include/node sits, not the include dir itself.
-            npm_config_nodedir = "${nodejs}";
 
             # The SEA binary is produced by `postject`-injecting a blob into a
             # plain Node executable. Stripping rewrites section tables and can

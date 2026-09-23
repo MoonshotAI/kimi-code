@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
 import { ScopeActivation, overrideScopedService } from '#/_base/di/scope';
-import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { LifecycleScope } from '#/app/scopes';
 import {
@@ -24,7 +23,6 @@ export class RemoteEphemeralEnvironmentConnector implements IEphemeralEnvironmen
 
   constructor(
     @IBootstrapService private readonly bootstrap: IBootstrapService,
-    @ILogService private readonly log: ILogService,
     private readonly connectFn: EphemeralEnvironmentConnectFn = (options) =>
       RemoteEnvironment.connect(options),
   ) {}
@@ -34,9 +32,6 @@ export class RemoteEphemeralEnvironmentConnector implements IEphemeralEnvironmen
   ): Promise<EphemeralEnvironmentConnection> {
     const launcher = toLauncherSpec(request.entry);
     const clientVersion = this.bootstrap.clientIdentity.version;
-    const onDiagnostic = (line: string): void => {
-      this.log.warn(line.trimEnd());
-    };
     const connectInner = async (): Promise<RemoteEnvironment> =>
       connectWithGuidance(
         (spec) =>
@@ -46,7 +41,6 @@ export class RemoteEphemeralEnvironmentConnector implements IEphemeralEnvironmen
             launcher: spec,
             clientName: 'kimi-code',
             clientVersion,
-            onDiagnostic,
           }),
         { launcher },
       );

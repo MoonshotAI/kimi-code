@@ -47,9 +47,8 @@ function basesInternalViolation(absFile, targetAbs, specifier) {
 function remoteServerViolation(absFile, specifier) {
   if (!isInside(REMOTE_SERVER_ROOT, absFile)) return undefined;
   if (specifier.startsWith('.') || specifier.startsWith('node:')) return undefined;
-  if (specifier === 'node-pty') return undefined;
   if (REMOTE_SERVER_ALLOWED_RE.test(specifier)) return undefined;
-  return `the remote executor stays light: src/remote/server may import only node builtins, node-pty, relative modules, #/remote/protocol, #/os/interface and #/_base/execEnv ('${specifier}')`;
+  return `the remote executor stays light: src/remote/server may import only node builtins, relative modules, #/remote/protocol, #/os/interface and #/_base/execEnv ('${specifier}')`;
 }
 
 function remoteServerConsumerViolation(absFile, specifier) {

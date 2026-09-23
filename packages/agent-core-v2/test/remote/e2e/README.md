@@ -22,13 +22,7 @@ pnpm --filter @moonshot-ai/agent-core-v2 run build:executor
 
 It accepts the stock argv shape (`executor.mjs exec-server --listen stdio`),
 so the ssh/docker launcher lowering works unchanged. It needs only `node` on
-the target. For the `pty` scenario the target also needs `node-pty` next to
-the bundle:
-
-```bash
-# on the target, next to executor.mjs
-npm init -y && npm install node-pty@^1.1.0
-```
+the target.
 
 (The bundle is an interim acceptance vehicle. The shipped executor is the SEA
 `kimi` binary at `~/.kimi-code/bin/kimi`; swap it in via `--remote-bin` once
@@ -73,7 +67,7 @@ npx tsx test/remote/e2e/driver.ts --target ssh --host dev-box           # defaul
 npx tsx test/remote/e2e/driver.ts --target docker --container myapp-dev --remote-bin /root/.kimi-code/bin/kimi
 ```
 
-Useful flags: `--scenario install,basic,pty,term-ignore,group-residue,container-stop,disconnect`
+Useful flags: `--scenario install,basic,term-ignore,group-residue,container-stop,disconnect`
 (default: everything except `install`), `--remote-cwd <dir>` (working directory
 for the checks). The `install` scenario additionally needs `--cdn-base <url>`
 and `--client-version <semver>` (§5) and runs first, before the other
@@ -84,9 +78,6 @@ scenarios' upfront connect.
 - `basic` — handshake + environment payload; fs write/read/rename/remove;
   process output/exit code; **env hygiene** (a local-only variable does not
   cross the wire; an explicit override does).
-- `pty` — interactive shell, merged stdout/stderr pty stream, resize, exit
-  code. Requires node-pty on the target; reports SKIP-OR-FAIL with the reason
-  otherwise.
 - `term-ignore` — `trap "" TERM` process is SIGKILL-escalated after the short
   grace window (spec §5.3).
 - `group-residue` — `sleep & exit 0` leader exits; the residue group member is

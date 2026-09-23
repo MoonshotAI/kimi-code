@@ -2,13 +2,13 @@
 
 Remote execution protocol and bridge: a self-contained NDJSON line-framed RPC
 (codex exec-server dialect) between the local `ExecBridge` and the light
-`kimi exec-server` executor, plus the fs/process/terminal RPC stubs behind
+`kimi exec-server` executor, plus the fs/process RPC stubs behind
 the engine `Environment` interface (`src/environment/`).
 
 ```text
 packages/agent-core-v2/src/remote/
 ├── protocol/   message types, error codes, NDJSON codec (self-contained)
-├── client/     execBridge, launchers, connection, fs/process/terminal stubs, remoteEnvironment, remoteConnectionPool,
+├── client/     execBridge, launchers, connection, fs/process stubs, remoteEnvironment, remoteConnectionPool,
 │               remoteEnvironmentProvider, executorDetect, connectGuidance (executor detection + guidance)
 └── server/     stdioHost, fsHandler, processManager, environment, entry, standalone
 ```
@@ -25,7 +25,7 @@ backends and awaits the environment probe; it creates no App scope and starts
 no config/OAuth/telemetry/session services. Logs go to stderr; stdout carries
 protocol frames only. The light import graph is enforced by
 `scripts/check-import-boundaries.mjs`: `src/remote/server` may import only
-node builtins, `node-pty`, relative modules, `#/remote/protocol`,
+node builtins, relative modules, `#/remote/protocol`,
 `#/os/interface` and `#/_base/execEnv`.
 
 ## Protocol notes (deviations from codex exec-server)
@@ -44,7 +44,7 @@ deviations per the design spec, plus one forced addition:
 - `fs/readDirectory` preserves the symlink marker on each entry. The client
   rejects a truncated listing with `os.fs.directory_too_large` rather than
   exposing an incomplete directory; the current limit is 50,000 entries.
-- Added `fs/rename` and `process/resize` (no codex counterpart).
+- Added `fs/rename` (no codex counterpart).
 - `process/signal` is three-state (`interrupt|terminate|kill`, codex only
   interrupt); signal/terminate act on the whole process group, and group
   residue is cleaned even when the leader has already exited (spec §5.3 —
@@ -52,8 +52,6 @@ deviations per the design spec, plus one forced addition:
 - `process/write` accepts `eof: true` (with an empty chunk) to close remote
   stdin. Codex has no stdin close on the wire; our `IHostProcess.stdin.end()`
   makes it necessary. After EOF, writes report `stdinClosed`.
-- `process/resize` on an already-exited tty process is a success no-op, so a
-  resize racing the process exit does not surface an ioctl error.
 - `process/write` suspends the RPC response until the child's stdin drains
   (or the process exits / the connection drops), propagating backpressure to
   the caller instead of buffering unboundedly executor-side; codex uses a
@@ -151,9 +149,5 @@ handshake completes: any byte or unknown notification disconnects.
 
 - The executor is posix-only; the client refuses non-posix environments and
   executors below `MIN_EXECUTOR_VERSION` at the handshake gate.
-- node-pty is a native module loaded lazily (tty processes only). If it is not
-  built for the current platform, everything except tty still works and tty
-  spawns fail with `os.process.spawn_failed`. Build it with
-  `pnpm rebuild node-pty` (needs node-gyp).
 - `test/remote/e2e/` holds the real-machine (ssh/docker) acceptance driver and
   step-by-step docs; the vitest suite covers the local loopback.

@@ -655,7 +655,6 @@ describe('remote connection pool', () => {
         _serviceBrand: undefined,
         clientIdentity: { productName: 'Kimi Code CLI', version: '1.2.3', platform: 'kimi_code_cli' },
       } as unknown as IBootstrapService,
-      NOOP_LOG,
       connect,
     );
     const ephemeralRegistry = new EnvironmentRegistry('workspace-1');

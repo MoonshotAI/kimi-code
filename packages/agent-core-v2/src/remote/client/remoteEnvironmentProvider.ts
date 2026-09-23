@@ -198,10 +198,6 @@ export class ManagedRemoteEnvironment implements Environment {
     return this.inner?.process;
   }
 
-  get terminal() {
-    return this.inner?.terminal;
-  }
-
   get status(): EnvironmentStatus {
     return this.currentStatus;
   }
@@ -285,7 +281,6 @@ export interface RemoteEnvironmentProviderFactoryOptions {
   readonly clientVersion?: string;
   readonly minExecutorVersion?: string;
   readonly initializeTimeoutMs?: number;
-  readonly onDiagnostic?: (line: string) => void;
   readonly connect?: (options: RemoteEnvironmentOptions) => Promise<RemoteEnvironment>;
 
   readonly probeRunner?: LocalRunner;
@@ -456,7 +451,6 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
                 clientVersion: this.options.clientVersion,
                 minExecutorVersion: this.options.minExecutorVersion,
                 initializeTimeoutMs: this.options.initializeTimeoutMs,
-                onDiagnostic: this.options.onDiagnostic,
               });
             return connectWithGuidance(attempt, {
               launcher: toLauncherSpec(declaration.entry),

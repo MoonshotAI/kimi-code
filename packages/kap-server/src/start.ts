@@ -144,7 +144,6 @@ const DEFAULT_PORT = 58627;
 
 export interface CreateRemoteEnvironmentProviderOptionsInput {
   readonly clientVersion: string;
-  readonly onDiagnostic: (line: string) => void;
 }
 
 export function createRemoteEnvironmentProviderOptions(
@@ -153,7 +152,6 @@ export function createRemoteEnvironmentProviderOptions(
   return {
     clientName: 'kimi-code',
     clientVersion: input.clientVersion,
-    onDiagnostic: input.onDiagnostic,
   };
 }
 
@@ -245,9 +243,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     new RemoteEnvironmentProviderFactory(
       createRemoteEnvironmentProviderOptions({
         clientVersion: serverVersion,
-        onDiagnostic: (line) => {
-          logger.warn(line.trimEnd());
-        },
       }),
     ),
   );

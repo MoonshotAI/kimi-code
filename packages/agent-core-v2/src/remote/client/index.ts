@@ -5,7 +5,6 @@ export * from './executorDetect';
 export * from './connectGuidance';
 export * from './remoteFileSystem';
 export * from './remoteProcess';
-export * from './remoteTerminal';
 export * from './remoteEnvironment';
 export * from './remoteEnvironmentProvider';
 export * from './ephemeralEnvironmentConnector';

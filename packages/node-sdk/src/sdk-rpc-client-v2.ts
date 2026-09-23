@@ -508,9 +508,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         new RemoteEnvironmentProviderFactory({
           clientName: 'kimi-code',
           clientVersion: identity.version,
-          onDiagnostic: (line) => {
-            app.accessor.get(ILogService).warn(line.trimEnd());
-          },
         }),
       )
       .catch((error) => {
