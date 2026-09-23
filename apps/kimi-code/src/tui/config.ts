@@ -18,10 +18,7 @@ import { getDataDir } from '#/utils/paths';
 export const INVALID_TUI_CONFIG_MESSAGE =
   'Invalid TUI config in ~/.kimi-code/tui.toml; using defaults.';
 
-const FULLSCREEN_ENV_MIGRATION_MESSAGE =
-  '[tui.toml] migrated KIMI_CODE_TUI_FULL_SCREEN to tui_mode = "fullscreen"';
-
-function fullscreenEnvMigration(): TuiMode | undefined {
+function legacyFullscreenEnvMode(): TuiMode | undefined {
   return process.env['KIMI_CODE_TUI_FULL_SCREEN'] === '1' ? 'fullscreen' : undefined;
 }
 
@@ -176,36 +173,33 @@ export async function loadTuiConfig(
   warn?: (message: string) => void,
 ): Promise<TuiConfig> {
   if (!existsSync(filePath)) {
-    const migration = fullscreenEnvMigration();
+    const envTuiMode = legacyFullscreenEnvMode();
     const config: TuiConfig =
-      migration === undefined ? DEFAULT_TUI_CONFIG : { ...DEFAULT_TUI_CONFIG, tuiMode: migration };
-    await saveTuiConfig(config, filePath);
-    if (migration !== undefined) {
-      warn?.(FULLSCREEN_ENV_MIGRATION_MESSAGE);
+      envTuiMode === undefined ? DEFAULT_TUI_CONFIG : { ...DEFAULT_TUI_CONFIG, tuiMode: envTuiMode };
+    try {
+      await saveTuiConfig(config, filePath);
+    } catch {
+      warn?.('[tui.toml] could not save the default config');
     }
     return config;
   }
 
   try {
     const text = await readFile(filePath, 'utf-8');
-    const raw = text.trim().length === 0 ? {} : (parseToml(text) as Record<string, unknown>);
-    const shape = TuiConfigFileSchema.parse(raw);
+    const shape = parseTuiConfigShape(text);
     const config = normalizeTuiConfig(shape, warn);
     if (shape.tui_mode !== undefined) {
       return config;
     }
-    const migration = fullscreenEnvMigration();
-    if (migration === undefined) {
+    const envTuiMode = legacyFullscreenEnvMode();
+    if (envTuiMode === undefined) {
       return config;
     }
-    const migrated: TuiConfig = { ...config, tuiMode: migration };
+    const migrated: TuiConfig = { ...config, tuiMode: envTuiMode };
     try {
       await saveTuiConfig(migrated, filePath);
-      warn?.(FULLSCREEN_ENV_MIGRATION_MESSAGE);
     } catch {
-      warn?.(
-        '[tui.toml] could not save the migrated tui_mode; fullscreen applies to this session only',
-      );
+      warn?.('[tui.toml] could not save the migrated tui_mode preference');
     }
     return migrated;
   } catch {
@@ -213,16 +207,16 @@ export async function loadTuiConfig(
   }
 }
 
+function parseTuiConfigShape(tomlText: string): TuiConfigFileShape {
+  const raw = tomlText.trim().length === 0 ? {} : (parseToml(tomlText) as Record<string, unknown>);
+  return TuiConfigFileSchema.parse(raw);
+}
+
 export function parseTuiConfig(
   tomlText: string,
   warn?: (message: string) => void,
 ): TuiConfig {
-  if (tomlText.trim().length === 0) {
-    return DEFAULT_TUI_CONFIG;
-  }
-  const raw = parseToml(tomlText) as Record<string, unknown>;
-  const parsed = TuiConfigFileSchema.parse(raw);
-  return normalizeTuiConfig(parsed, warn);
+  return normalizeTuiConfig(parseTuiConfigShape(tomlText), warn);
 }
 
 export async function saveTuiConfig(
@@ -316,10 +310,7 @@ export function renderTuiConfig(config: TuiConfig): string {
   if (statusCommand) {
     statusLines.push(`command = "${escapeTomlBasicString(statusCommand)}"`);
   }
-  const tuiModeLine =
-    config.tuiMode === 'fullscreen'
-      ? `tui_mode = "fullscreen" # "regular" | "fullscreen"\n`
-      : `# tui_mode = "regular" # "regular" | "fullscreen" ("fullscreen" is experimental)\n`;
+  const tuiModeLine = `tui_mode = "${config.tuiMode ?? 'regular'}" # "regular" | "fullscreen" ("fullscreen" is experimental)`;
   const markdownSection =
     config.markdown?.mermaid === 'off'
       ? `[markdown]\nmermaid = "off" # "final" | "off"\n`
@@ -342,7 +333,8 @@ export function renderTuiConfig(config: TuiConfig): string {
 # Agent/runtime settings stay in ~/.kimi-code/config.toml.
 
 theme = "${escapeTomlBasicString(config.theme)}" # "auto" | "dark" | "light" | custom theme name
-${tuiModeLine}render_latex = ${String(config.renderLatex !== false)} # false keeps LaTeX math in assistant messages as raw source
+${tuiModeLine}
+render_latex = ${String(config.renderLatex !== false)} # false keeps LaTeX math in assistant messages as raw source
 disable_paste_burst = ${String(config.disablePasteBurst)} # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = ${String(config.cacheExpiryHint !== false)} # false disables the "cache expired" dialog on resume / idle submit
 disable_feedback_survey = ${String(config.disableFeedbackSurvey === true)} # true hides the occasional session rating prompt

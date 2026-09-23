@@ -384,12 +384,12 @@ tui_mode = "weird"
     expect(warnings).toEqual(['[tui.toml] ignoring unknown tui_mode value: weird']);
   });
 
-  it('keeps tui_mode a commented guide by default', async () => {
+  it('writes a live tui_mode key even at the default value', async () => {
     await saveTuiConfig(DEFAULT_TUI_CONFIG, filePath);
 
     const text = readFileSync(filePath, 'utf-8');
-    expect(text).toContain('# tui_mode = "regular"');
-    expect(text).not.toContain('\ntui_mode =');
+    expect(text).toContain('\ntui_mode = "regular"');
+    expect(text).not.toContain('# tui_mode');
   });
 
   it('writes a live tui_mode when fullscreen and round-trips it', async () => {
@@ -410,10 +410,8 @@ describe('TUI config tui_mode env migration', () => {
     const config = await loadTuiConfig(filePath, (message) => warnings.push(message));
 
     expect(config.tuiMode).toBe('fullscreen');
-    expect(readFileSync(filePath, 'utf-8')).toContain('tui_mode = "fullscreen"');
-    expect(warnings).toEqual([
-      '[tui.toml] migrated KIMI_CODE_TUI_FULL_SCREEN to tui_mode = "fullscreen"',
-    ]);
+    expect(readFileSync(filePath, 'utf-8')).toContain('\ntui_mode = "fullscreen"');
+    expect(warnings).toEqual([]);
   });
 
   it('ignores the env when tui_mode is explicitly regular', async () => {
@@ -454,6 +452,16 @@ describe('TUI config tui_mode env migration', () => {
     const config = await loadTuiConfig(filePath);
 
     expect(config.tuiMode).toBe('fullscreen');
-    expect(readFileSync(filePath, 'utf-8')).toContain('tui_mode = "fullscreen"');
+    expect(readFileSync(filePath, 'utf-8')).toContain('\ntui_mode = "fullscreen"');
+  });
+
+  it('does not re-migrate after a regular preference has been saved', async () => {
+    vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '1');
+    await saveTuiConfig({ ...DEFAULT_TUI_CONFIG, tuiMode: 'regular' }, filePath);
+
+    const config = await loadTuiConfig(filePath);
+
+    expect(config.tuiMode).toBe('regular');
+    expect(readFileSync(filePath, 'utf-8')).toContain('\ntui_mode = "regular"');
   });
 });
