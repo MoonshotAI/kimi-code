@@ -1,5 +1,7 @@
 import type { ContentPart } from '#human/llm/message';
 
+import { isMcpToolName } from '#/tool/toolContract';
+
 const TOOL_ERROR_STATUS = '<system>ERROR: Tool execution failed.</system>';
 const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';
 const TOOL_EMPTY_ERROR_STATUS =
@@ -10,10 +12,34 @@ export interface RenderableToolResult {
   readonly output: string | readonly ContentPart[];
   readonly note?: string;
   readonly isError?: boolean;
+  readonly durationMs?: number;
+}
+
+const WALL_TIME_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'Agent',
+  'AgentSwarm',
+  'Bash',
+  'FetchURL',
+  'Glob',
+  'Grep',
+  'WebSearch',
+]);
+
+export function shouldRenderWallTime(toolName: string): boolean {
+  return WALL_TIME_TOOL_NAMES.has(toolName) || isMcpToolName(toolName);
 }
 
 export function renderToolResultForModel(result: RenderableToolResult): ContentPart[] {
   const rendered = renderStatus(result);
+  if (result.durationMs !== undefined) {
+    const header = `Wall time: ${(result.durationMs / 1000).toFixed(3)} seconds`;
+    const first = rendered[0];
+    if (first?.type === 'text') {
+      rendered.splice(0, 1, textPart(`${header}\n${first.text}`));
+    } else {
+      rendered.unshift(textPart(header));
+    }
+  }
   if (result.note === undefined || result.note.length === 0) return rendered;
   const only = rendered[0];
   if (rendered.length === 1 && only?.type === 'text') {

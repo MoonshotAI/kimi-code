@@ -15,9 +15,15 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IPluginService } from '#/app/plugin/plugin';
 import { PluginService } from '#/app/plugin/pluginService';
 import * as pluginStore from '#/app/plugin/store';
-import type { InstalledFile } from '#/app/plugin/store';
+import type { InstalledFile, InstalledRecord } from '#/app/plugin/store';
 import type { PluginMutationSummary, ReloadSummary } from '#/app/plugin/types';
 import { LifecycleScope } from '#/app/scopes';
+import {
+  ITelemetryService,
+  noopTelemetryService,
+  type TelemetryAppenderRecord,
+} from '#/app/telemetry/telemetry';
+import { TelemetryService } from '#/app/telemetry/telemetryService';
 import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
 import { IProviderService, type ProviderConfig } from '#/llm-adapter/provider/provider';
 
@@ -40,6 +46,7 @@ function makeHost(
   homeDir: string,
   providers = stubProviderService(),
   env: NodeJS.ProcessEnv = {},
+  telemetry: ITelemetryService = noopTelemetryService,
 ): ScopedTestHost {
   return createScopedTestHost([
     stubPair(IBootstrapService, stubBootstrap(homeDir, env)),
@@ -53,6 +60,7 @@ function makeHost(
         scannedDirectories: [],
       }),
     } satisfies ISkillDiscovery),
+    stubPair(ITelemetryService, telemetry),
   ]);
 }
 
@@ -224,10 +232,13 @@ describe('PluginService (plugin boundary)', () => {
   it('recovers the management plane through an explicit reload after the file is fixed', async () => {
     const home = await makeHome();
     await writeInstalledFile(home, '{ not json');
-    const host = makeHost(home);
+    const telemetry = new TelemetryService();
+    const host = makeHost(home, stubProviderService(), {}, telemetry);
     try {
       const svc = host.app.accessor.get(IPluginService);
+      expect(svc.enabledPluginIds()).toBeUndefined();
       await expect(svc.listPlugins()).rejects.toMatchObject({ code: 'plugin.load_failed' });
+      expect(svc.enabledPluginIds()).toBeUndefined();
 
       const pluginRoot = await makePluginDir('recovery-demo', {});
       createdDirs.push(pluginRoot);
@@ -244,6 +255,7 @@ describe('PluginService (plugin boundary)', () => {
         expect.objectContaining({ id: 'recovery-demo' }),
       ]);
       expect(reloads).toEqual([{ added: ['recovery-demo'], removed: [], errors: [] }]);
+      expect(svc.enabledPluginIds()).toEqual(['recovery-demo']);
     } finally {
       host.dispose();
     }
@@ -297,6 +309,159 @@ describe('PluginService (plugin boundary)', () => {
 
       await svc.reloadPlugins();
       expect(mutations).toHaveLength(4);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('tracks plugin enable and disable toggles', async () => {
+    const home = await makeHome();
+    await writeValidInstalledFile(home);
+    const pluginRoot = await makePluginDir('toggle-demo', {});
+    createdDirs.push(pluginRoot);
+    const telemetry = new TelemetryService();
+    const events: TelemetryAppenderRecord[] = [];
+    telemetry.addAppender({ track: (record) => events.push(record) });
+    const host = makeHost(home, stubProviderService(), {}, telemetry);
+    try {
+      const svc = host.app.accessor.get(IPluginService);
+      await svc.installPlugin({ source: pluginRoot });
+      expect(svc.enabledPluginIds()).toEqual(['toggle-demo']);
+      writeInstalled.mockRejectedValueOnce(new Error('persist failed'));
+      await expect(svc.setPluginEnabled({ id: 'toggle-demo', enabled: false })).rejects.toThrow(
+        'persist failed',
+      );
+      expect(svc.enabledPluginIds()).toEqual(['toggle-demo']);
+      expect(events).toEqual([]);
+      await svc.setPluginEnabled({ id: 'toggle-demo', enabled: false });
+      await svc.setPluginEnabled({ id: 'toggle-demo', enabled: true });
+      await svc.removePlugin({ id: 'toggle-demo' });
+
+      expect(events.map((record) => [record.event, record.properties])).toEqual([
+        ['plugin_toggle', { plugin_id: 'toggle-demo', enabled: false, enabled_plugins: '' }],
+        [
+          'plugin_toggle',
+          { plugin_id: 'toggle-demo', enabled: true, enabled_plugins: 'toggle-demo' },
+        ],
+      ]);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('reports committed plugin state on toggle events with canonical ids', async () => {
+    const home = await makeHome();
+    const pluginRoot = await makePluginDir('alpha', {});
+    createdDirs.push(pluginRoot);
+    await writeInstalledFile(home, JSON.stringify(installedFile('alpha', pluginRoot)));
+    const telemetry = new TelemetryService();
+    const events: TelemetryAppenderRecord[] = [];
+    telemetry.addAppender({ track: (record) => events.push(record) });
+    const host = makeHost(home, stubProviderService(), {}, telemetry);
+    try {
+      const svc = host.app.accessor.get(IPluginService);
+      await svc.listPlugins();
+      await svc.setPluginEnabled({ id: 'ALPHA', enabled: false });
+      await svc.setPluginEnabled({ id: 'alpha', enabled: true });
+      await svc.removePlugin({ id: 'alpha' });
+
+      expect(events.map((record) => [record.event, record.properties])).toEqual([
+        ['plugin_toggle', { plugin_id: 'alpha', enabled: false, enabled_plugins: '' }],
+        ['plugin_toggle', { plugin_id: 'alpha', enabled: true, enabled_plugins: 'alpha' }],
+      ]);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('emits no toggle and reports committed state when a persisted toggle cannot reload', async () => {
+    const home = await makeHome();
+    const pluginRoot = await makePluginDir('alpha', {});
+    createdDirs.push(pluginRoot);
+    await writeInstalledFile(home, JSON.stringify(installedFile('alpha', pluginRoot)));
+    const telemetry = new TelemetryService();
+    const events: TelemetryAppenderRecord[] = [];
+    telemetry.addAppender({ track: (record) => events.push(record) });
+    const host = makeHost(home, stubProviderService(), {}, telemetry);
+    try {
+      const svc = host.app.accessor.get(IPluginService);
+      await svc.listPlugins();
+      readInstalled.mockRejectedValueOnce(new Error('reload failed'));
+
+      await expect(svc.setPluginEnabled({ id: 'alpha', enabled: false })).rejects.toThrow(
+        'reload failed',
+      );
+      expect(events).toEqual([]);
+      await expect(svc.listPlugins()).resolves.toEqual([
+        expect.objectContaining({ id: 'alpha', enabled: false }),
+      ]);
+      expect(svc.enabledPluginIds()).toEqual([]);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('reports only enabled, healthy plugin ids in sorted order after the initial load', async () => {
+    const home = await makeHome();
+    const installed: InstalledRecord[] = [];
+    for (const id of ['zeta', 'disabled', 'alpha', 'broken']) {
+      const root = await makePluginDir(id, id === 'broken' ? { name: 'invalid name' } : {});
+      createdDirs.push(root);
+      installed.push(...installedFile(id, root, id !== 'disabled').plugins);
+    }
+    await writeInstalledFile(home, JSON.stringify({ version: 1, plugins: installed }));
+    const telemetry = new TelemetryService();
+    const host = makeHost(home, stubProviderService(), {}, telemetry);
+    try {
+      const svc = host.app.accessor.get(IPluginService);
+      await svc.listPlugins();
+      expect(svc.enabledPluginIds()).toEqual(['alpha', 'zeta']);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('records concurrent toggles in commit order without waiting for reload delivery', async () => {
+    const home = await makeHome();
+    const pluginRoot = await makePluginDir('sequencing-demo', {});
+    createdDirs.push(pluginRoot);
+    await writeInstalledFile(home, JSON.stringify(installedFile('sequencing-demo', pluginRoot)));
+    const telemetry = new TelemetryService();
+    const events: TelemetryAppenderRecord[] = [];
+    telemetry.addAppender({ track: (record) => events.push(record) });
+    const host = makeHost(home, stubProviderService(), {}, telemetry);
+    try {
+      const svc = host.app.accessor.get(IPluginService);
+      await expect(svc.listPlugins()).resolves.toHaveLength(1);
+
+      const listenerCalled = deferred<void>();
+      const gate = deferred<void>();
+      let reloadCount = 0;
+      svc.onDidReload((event) => {
+        reloadCount++;
+        if (reloadCount !== 1) return;
+        listenerCalled.resolve(undefined);
+        event.waitUntil(gate.promise);
+      });
+
+      const mutation = svc.setPluginEnabled({ id: 'sequencing-demo', enabled: false });
+      let mutationSettled = false;
+      void mutation.then(() => {
+        mutationSettled = true;
+      });
+      await listenerCalled.promise;
+      await svc.setPluginEnabled({ id: 'sequencing-demo', enabled: true });
+      expect(mutationSettled).toBe(false);
+      expect(events.map((record) => [
+        record.properties['enabled'],
+        record.properties['enabled_plugins'],
+      ])).toEqual([
+        [false, ''],
+        [true, 'sequencing-demo'],
+      ]);
+      gate.resolve(undefined);
+      await mutation;
+      expect(mutationSettled).toBe(true);
     } finally {
       host.dispose();
     }

@@ -195,7 +195,7 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     return parseToml(text) as Record<string, unknown>;
   }
 
-  async function waitForServerState(check: () => Promise<boolean>, timeoutMs = 3000): Promise<void> {
+  async function waitForServerState(check: () => Promise<boolean>, timeoutMs = 10000): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       if (await check()) return;

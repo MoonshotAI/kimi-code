@@ -32,6 +32,7 @@ export interface ToolExecutionResult {
   readonly toolCallId: string;
   readonly toolName: string;
   readonly result: ToolResult;
+  readonly durationMs: number;
 }
 
 export type MissingToolDescriber = (toolName: string) => string | undefined;

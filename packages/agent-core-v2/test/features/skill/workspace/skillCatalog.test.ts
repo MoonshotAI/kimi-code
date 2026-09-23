@@ -16,6 +16,7 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IPluginService } from '#/app/plugin/plugin';
 import { PluginService } from '#/app/plugin/pluginService';
 import type { PluginReloadEvent } from '#/app/plugin/types';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IProviderService } from '#/llm-adapter/provider/provider';
 import { IAppStateService } from '#/app/state/appState';
 import { AppStateService } from '#/app/state/appStateService';
@@ -154,6 +155,7 @@ function pluginStub(
     mcpServerEntries: async () => [],
     enabledHooks: async () => [],
     hasLoadedSnapshot: () => true,
+    enabledPluginIds: () => undefined,
   };
 }
 
@@ -769,6 +771,7 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(IConfigService, configStub()),
       stubPair(IProviderService, stubProviderService()),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     const ws = workspaceContextStub('/work');
     const workspace = host.child('program', 'w1', [
@@ -979,7 +982,7 @@ describe('WorkspaceSkillCatalogService', () => {
       await catalog.reloadSources(['user', 'explicit', 'extra', 'plugin']);
       sub.dispose();
 
-      expect([...fired].sort()).toEqual(['explicit', 'extra', 'plugin', 'user']);
+      expect([...fired].toSorted()).toEqual(['explicit', 'extra', 'plugin', 'user']);
       expect(catalog.catalog.getSkill('user-skill')?.description).toBe('v2');
       expect(catalog.catalog.getSkill('extra-skill')?.description).toBe('v2');
       expect(catalog.catalog.getPluginSkill('demo', 'demo-skill')).toBeUndefined();

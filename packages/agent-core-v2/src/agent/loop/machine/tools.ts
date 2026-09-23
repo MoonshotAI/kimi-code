@@ -37,7 +37,7 @@ export interface CreateMachineToolsOptions {
   readonly steerSignal?: () => AbortSignal | undefined;
   readonly trace?: () => LLMRequestTrace | undefined;
   readonly onToolCall?: (payload: ToolCallStartedPayload) => void;
-  readonly onToolResult?: (toolCallId: string, result: AgentToolResult) => void;
+  readonly onToolResult?: (toolCallId: string, result: AgentToolResult, durationMs: number) => void;
   readonly onBatchError?: (error: unknown) => void;
 }
 
@@ -167,7 +167,7 @@ export function createMachineTools(options: CreateMachineToolsOptions): MachineT
   const applyResult = (entry: PendingEntry, matched: ToolExecutionResult): void => {
     const id = entry.input.toolCall.id;
     const { result } = matched;
-    options.onToolResult?.(id, result);
+    options.onToolResult?.(id, result, matched.durationMs);
     extras.set(id, {
       stopTurn: result.stopTurn,
       stopTurnReason: result.stopTurnReason,

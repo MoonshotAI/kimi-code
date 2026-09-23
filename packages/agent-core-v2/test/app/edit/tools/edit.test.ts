@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as posixPath from 'node:path/posix';
@@ -50,7 +50,8 @@ function createSpiedEditFs(
   const readText = options.readText ?? vi.fn(async () => '');
   const writeText = options.writeText ?? vi.fn(async () => undefined);
   const stat = vi.fn(async () => ({ isFile: true, isDirectory: false, size: 0 }));
-  const fs = { readText, writeText, stat } as unknown as IHostFileSystem;
+  const realpath = vi.fn(async (path: string) => path);
+  const fs = { readText, writeText, stat, realpath } as unknown as IHostFileSystem;
   return { fs, readText, writeText };
 }
 
@@ -610,4 +611,42 @@ describe('EditTool', () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+});
+
+describe('EditTool symlink escape', () => {
+  let tmpDir: string;
+  let wsDir: string;
+  let outsideDir: string;
+
+  beforeEach(() => {
+    disposables = new DisposableStore();
+  });
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'edit-symlink-'));
+    wsDir = join(tmpDir, 'ws');
+    outsideDir = join(tmpDir, 'outside');
+    await mkdir(wsDir);
+    await mkdir(outsideDir);
+  });
+
+  afterEach(async () => {
+    disposables.dispose();
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('rejects editing through a symlink that points outside the workspace', async () => {
+    const target = join(outsideDir, 'config.txt');
+    await writeFile(target, 'alpha beta');
+    const link = join(wsDir, 'config.txt');
+    await symlink(target, link);
+    const tool = buildTool(new HostFileSystem(), createTestEnv(), stubWorkspaceContext(wsDir));
+
+    const result = await execute(tool, { path: link, old_string: 'beta', new_string: 'gamma' });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('symbolic link');
+    await expect(readFile(target, 'utf8')).resolves.toBe('alpha beta');
+  });
+
 });

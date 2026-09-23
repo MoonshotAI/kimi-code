@@ -148,6 +148,42 @@ describe('reduceContextTranscript', () => {
     expect(result.times).toEqual([100, 200, 220, undefined]);
   });
 
+  it('attaches step.end usage and timing to the sealed assistant message', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('u1')),
+      loopEvent({ type: 'step.begin', uuid: 'st1' }),
+      loopEvent({ type: 'content.part', stepUuid: 'st1', part: { type: 'text', text: 'a1' } }),
+      loopEvent({
+        type: 'step.end',
+        uuid: 'st1',
+        usage: { inputOther: 10, output: 20, inputCacheRead: 30, inputCacheCreation: 40 },
+        llmFirstTokenLatencyMs: 800,
+        llmStreamDurationMs: 5000,
+      }),
+    ]);
+    const assistant = result.entries.find((m) => m.role === 'assistant');
+    expect(assistant?.usage).toEqual({
+      inputOther: 10,
+      output: 20,
+      inputCacheRead: 30,
+      inputCacheCreation: 40,
+    });
+    expect(assistant?.llmTiming).toEqual({
+      llmFirstTokenLatencyMs: 800,
+      llmStreamDurationMs: 5000,
+    });
+  });
+
+  it('seals without usage or timing when step.end carries neither', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('u1')),
+      ...assistantStep('st1', 'a1'),
+    ]);
+    const assistant = result.entries.find((m) => m.role === 'assistant');
+    expect(assistant?.usage).toBeUndefined();
+    expect(assistant?.llmTiming).toBeUndefined();
+  });
+
   it('preserves the pre-compaction assistant reply after a later undo', () => {
     const result = reduceContextTranscript([
       appendMessage(userMessage('message A')),

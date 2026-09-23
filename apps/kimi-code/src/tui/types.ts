@@ -19,7 +19,7 @@ export type BannerDisplay = 'always' | 'once' | 'cooldown';
 export interface BannerState {
   key: string;
   tag: string | null;
-  mainText: string;
+  mainText: string | null;
   subText: string | null;
   display: BannerDisplay;
   ttlHours?: number;

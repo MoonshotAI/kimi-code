@@ -48,32 +48,43 @@ export class BannerComponent implements Component {
     // line's main-text column, which starts right after the tag display. When
     // the tag is on its own line, the main text aligns with the tag text.
     const bodyIndent = inlineTag ? ' '.repeat(tagWidth) : tagOnOwnLine ? ' '.repeat(hangingWidth) : '';
-    // Descriptive subtext lines (the second line in the design) start at the
-    // column after the leading star + space, aligning with the tag text itself.
-    const descIndent = showTag ? ' '.repeat(hangingWidth) : '';
+
+    const mainSegments = this.state.mainText === null ? [] : this.state.mainText.split('\n');
+    const subSegments = this.state.subText ? this.state.subText.split('\n') : [];
+    // A title-only banner: the tag is the entire content, so it wraps to the
+    // width instead of being dropped when too long.
+    const titleOnly = mainSegments.length === 0;
+    const tagRendered = titleOnly ? tagStyled.length > 0 : showTag;
     const bodyContentWidth =
       width - (inlineTag ? tagWidth : tagOnOwnLine ? hangingWidth : 0);
-    const descContentWidth = width - (showTag ? hangingWidth : 0);
+    const descContentWidth = width - (tagRendered ? hangingWidth : 0);
+    // Descriptive subtext lines (the second line in the design) start at the
+    // column after the leading star + space, aligning with the tag text itself.
+    // When even the indent does not fit, the subtext uses the full width instead.
+    const descIndent = tagRendered && descContentWidth > 0 ? ' '.repeat(hangingWidth) : '';
 
     if (bodyContentWidth <= 0) {
       return [''];
     }
 
-    const mainSegments = this.state.mainText.split('\n');
-    const subSegments = this.state.subText ? this.state.subText.split('\n') : [];
-
     const result: string[] = [];
-    if (tagOnOwnLine) {
-      result.push(tagStyled);
-    }
-    for (let i = 0; i < mainSegments.length; i++) {
-      const wrapped = wrapTextWithAnsi(mainSegments[i]!, bodyContentWidth);
-      for (let j = 0; j < wrapped.length; j++) {
-        const boldLine = main(wrapped[j]!);
-        if (i === 0 && j === 0 && inlineTag) {
-          result.push(tagDisplay + boldLine);
-        } else {
-          result.push(bodyIndent + boldLine);
+    if (titleOnly) {
+      if (tagStyled.length > 0) {
+        result.push(...wrapTextWithAnsi(tagStyled, width));
+      }
+    } else {
+      if (tagOnOwnLine) {
+        result.push(tagStyled);
+      }
+      for (let i = 0; i < mainSegments.length; i++) {
+        const wrapped = wrapTextWithAnsi(mainSegments[i]!, bodyContentWidth);
+        for (let j = 0; j < wrapped.length; j++) {
+          const boldLine = main(wrapped[j]!);
+          if (i === 0 && j === 0 && inlineTag) {
+            result.push(tagDisplay + boldLine);
+          } else {
+            result.push(bodyIndent + boldLine);
+          }
         }
       }
     }
