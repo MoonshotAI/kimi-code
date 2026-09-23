@@ -218,6 +218,8 @@ function makeSession(overrides: Record<string, unknown> = {}) {
       contextUsage: 0,
     })),
     getGoal: vi.fn(async () => ({ goal: null })),
+    getEnvironment: vi.fn(async () => ({ workspaceId: 'ws-1', environmentId: 'local' })),
+    listEnvironments: vi.fn(async () => ({ environments: [] })),
     setApprovalHandler: vi.fn(),
     setQuestionHandler: vi.fn(),
     setModel: vi.fn(async (alias: string) => {
@@ -2681,6 +2683,8 @@ command = "vim"
         thinking: 'off',
         permission: 'manual',
         planMode: true,
+        environmentId: 'local',
+        environmentCwd: undefined,
       });
     });
     expect(session.setPlanMode).not.toHaveBeenCalled();

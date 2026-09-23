@@ -329,12 +329,10 @@ describe('exec-server stdio handshake (source entry)', () => {
       const initializeResult = result.initialize['result'] as {
         executorVersion: string;
         environment: { osKind: string; cwd: string };
-        capabilities: Record<string, boolean>;
       };
       expect(initializeResult.executorVersion).toBe(hostPackage.version);
       expect(initializeResult.environment.osKind).not.toBe('windows');
       expect(initializeResult.environment.cwd).toBe(appRoot);
-      expect(initializeResult.capabilities).toBeTypeOf('object');
 
       expect(result.status['id']).toBe(2);
       expect((result.status['result'] as { isDirectory: boolean }).isDirectory).toBe(true);
