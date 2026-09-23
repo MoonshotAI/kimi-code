@@ -10,7 +10,7 @@ outline: 2
 
 ### 新功能
 
-- `/settings` 新增 TUI 模式设置，可选实验性全屏布局，切换模式后需重启 Kimi Code 生效。也可以直接在 `~/.kimi-code/tui.toml` 中设置 `tui_mode`：`"regular"` 渲染到终端滚动缓冲区，`"fullscreen"` 让部分界面支持鼠标交互，体验更流畅。
+- 新增实验性全屏界面布局，可在 `/settings` 的 TUI mode 设置中开启，或在 `~/.kimi-code/tui.toml` 中设置 `tui_mode = "fullscreen"`，重启 Kimi Code 后生效。
 - 全屏模式下，点击折叠块即可展开或收起。
 - 全屏界面新增可点击的 "Jump to bottom" 指示器。
 
