@@ -8,7 +8,7 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (30 sections · 2 overlay(s))
+# Index (29 sections · 2 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   builtinProductSkills     src/features/skill/catalog/configSection.ts
 #   cron                     src/features/cron/configSection.ts
@@ -29,7 +29,6 @@
 #   permission               src/agent/permissionRules/configSection.ts
 #   providers                src/app/kosongConfig/configSection.ts
 #   read                     src/agent/tools/os/read/configSection.ts
-#   repeatBreaker            src/agent/toolDedupe/configSection.ts
 #   secondaryModel           src/session/subagent/configSection.ts
 #   services                 src/app/auth/configSection.ts
 #   subagent                 src/session/subagent/configSection.ts
@@ -356,17 +355,6 @@ merge_all_available_skills = true
 [read]
 # default_max_chars: integer
 # max_chars: integer
-
-# ##########################################################################
-# repeatBreaker (config.toml: repeat_breaker)
-#   owner: src/agent/toolDedupe/configSection.ts
-#   scope: core
-#   hooks: stripEnv
-#   env:
-#      <- KIMI_CODE_REPEAT_BREAKER (custom parse)
-# ##########################################################################
-
-repeat_breaker = true
 
 # ##########################################################################
 # secondaryModel (config.toml: secondary_model)

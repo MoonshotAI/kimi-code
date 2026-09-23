@@ -45,7 +45,6 @@ import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
 import { AgentToolDedupeService } from '#/agent/toolDedupe/toolDedupeService';
-import { IConfigService } from '#/app/config/config';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
@@ -57,7 +56,6 @@ import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMd
 import { AgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminderService';
 import { extractBashTargetDirs } from '#/agent/agentsMdReminder/bashTargets';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
-import { StubConfigService } from '../../stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 import { runWillBeginStepHooks, stubLoopWithHooks, type StubLoop } from '../loop/stubs';
 import { stubContextMemory, type StubContextMemory } from '../contextMemory/stubs';
@@ -150,7 +148,10 @@ function createHarness(
         dispatch: async () => {},
       } as unknown as IEventDispatcher;
       reg.defineInstance(IEventDispatcher, dispatcher);
-      reg.defineInstance(IBootstrapService, { homeDir } as unknown as IBootstrapService);
+      reg.defineInstance(IBootstrapService, {
+        homeDir,
+        getEnv: () => undefined,
+      } as unknown as IBootstrapService);
       const agentState = new AgentStateService();
       agentState.contributeState(profileKey);
       agentState.set(profileKey, {
@@ -232,7 +233,6 @@ function createHarness(
         options.telemetry ?? recordingTelemetry(telemetryEvents),
       );
       if (options.withDedupe === true) {
-        reg.defineInstance(IConfigService, new StubConfigService());
         reg.define(IAgentToolDedupeService, AgentToolDedupeService);
       }
       reg.define(IAgentAgentsMdReminderService, AgentAgentsMdReminderService);

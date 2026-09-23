@@ -17,16 +17,18 @@ import { AgentStateService } from '#/agent/state/agentStateService';
 import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult, ToolExecution, ToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext, ResolvedToolExecutionHookContext, BeforeExecuteDecision } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolDedupeService, type ToolDedupeResult } from '#/agent/toolDedupe/toolDedupe';
-import { AgentToolDedupeService, __testing as toolDedupeTesting } from '#/agent/toolDedupe/toolDedupeService';
-import { REPEAT_BREAKER_SECTION } from '#/agent/toolDedupe/configSection';
-import { IConfigService } from '#/app/config/config';
+import {
+  AgentToolDedupeService,
+  REPEAT_BREAKER_ENV,
+  __testing as toolDedupeTesting,
+} from '#/agent/toolDedupe/toolDedupeService';
 import { IAgentToolExecutorService, type ToolExecutionResult } from '#/agent/toolExecutor/toolExecutor';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
-import { StubConfigService } from '../../stubs';
+import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { stubLoopWithHooks, type StubLoop } from '../loop/stubs';
 import { stubToolExecutorEvents } from '../toolExecutor/stubs';
 import { registerToolResultTruncationServices } from '../toolResultTruncation/stubs';
@@ -66,7 +68,7 @@ interface Harness {
 
 function createHarness(
   telemetry: ITelemetryService = recordingTelemetry(telemetryEvents),
-  options: { readonly executorEvents?: boolean; readonly config?: Record<string, unknown> } = {},
+  options: { readonly executorEvents?: boolean; readonly env?: Record<string, string> } = {},
 ): Harness {
   const loop = stubLoopWithHooks();
   const events = options.executorEvents === true ? stubToolExecutorEvents() : undefined;
@@ -92,12 +94,9 @@ function createHarness(
         agentContext: stubAgentContext('main', 0),
         scope: (sub?: string): string => (sub ? `agents/main/${sub}` : 'agents/main'),
       } satisfies IAgentScopeContext);
-      reg.defineInstance(IBootstrapService, {
-        homeDir: homedir,
-      } as unknown as IBootstrapService);
+      reg.defineInstance(IBootstrapService, stubBootstrap(homedir, options.env));
       reg.defineInstance(IAgentLoopService, loop);
       reg.defineInstance(IAgentStateService, new AgentStateService());
-      reg.defineInstance(IConfigService, new StubConfigService(options.config));
       reg.define(IAgentToolRegistryService, AgentToolRegistryService);
       if (events === undefined) {
         reg.define(IAgentToolExecutorService, AgentToolExecutorService);
@@ -677,14 +676,14 @@ describe('AgentToolDedupeService', () => {
     });
   });
 
-  describe('repeat breaker config switch', () => {
+  describe('repeat breaker env switch', () => {
     function disabledHarness(): Harness {
       return createHarness(recordingTelemetry(telemetryEvents), {
-        config: { [REPEAT_BREAKER_SECTION]: false },
+        env: { [REPEAT_BREAKER_ENV]: '0' },
       });
     }
 
-    it('injects no reminders and never force-stops when repeat_breaker is false', async () => {
+    it('injects no reminders and never force-stops when KIMI_CODE_REPEAT_BREAKER is 0', async () => {
       const h = disabledHarness();
       h.registry.register(new EchoTool('Read'));
       let last: ToolResult | undefined;
@@ -697,7 +696,7 @@ describe('AgentToolDedupeService', () => {
       expect(h.loop.queue.hasPendingRequests()).toBe(false);
     });
 
-    it('keeps same-step dedupe active when repeat_breaker is false', async () => {
+    it('keeps same-step dedupe active when KIMI_CODE_REPEAT_BREAKER is 0', async () => {
       const h = disabledHarness();
       const tool = new EchoTool('Read');
       h.registry.register(tool);

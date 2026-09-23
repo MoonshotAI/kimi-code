@@ -13,7 +13,9 @@ import type {
 } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import { parseBooleanEnv } from '#/_base/utils/env';
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventBus } from '#/app/event/eventBus';
@@ -21,13 +23,13 @@ import { TurnEnded } from '#/agent/loop/turnOps';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { IAgentToolExecutorService, type ToolCallDupType } from '#/agent/toolExecutor/toolExecutor';
 import type { ContentPart } from '#human/llm/message';
-import { IConfigService } from '#/app/config/config';
 import {
   IAgentToolDedupeService,
   REPEAT_BREAKER_STOP_REASON,
   type ToolDedupeResult,
 } from './toolDedupe';
-import { repeatBreakerEnabled } from './configSection';
+
+export const REPEAT_BREAKER_ENV = 'KIMI_CODE_REPEAT_BREAKER';
 
 const REMINDER_TEXT_1 =
   '\n\n' +
@@ -187,16 +189,18 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
   private readonly stepDeferreds = new Map<string, Deferred<ToolDedupeResult>>();
   private readonly handoffVetoedCallIds = new Set<string>();
   private forceStoppedInStep = false;
+  private readonly repeatBreakerEnabled: boolean;
 
   constructor(
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
     @IAgentStateService private readonly states: IAgentStateService,
-    @IConfigService private readonly configService: IConfigService,
+    @IBootstrapService bootstrap: IBootstrapService,
     @IEventBus eventBus: IEventBus,
   ) {
     super();
+    this.repeatBreakerEnabled = parseBooleanEnv(bootstrap.getEnv(REPEAT_BREAKER_ENV)) !== false;
     this.states.contributeState(toolDedupeStepCallsKey);
     this.states.contributeState(toolDedupeOriginalCallIndexKey);
     this.states.contributeState(toolDedupeSyntheticCallIdsKey);
@@ -530,7 +534,7 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
 
     let finalResult = result;
     let action: 'none' | 'r1' | 'r2' | 'r3' | 'stop' = 'none';
-    if (repeatBreakerEnabled(this.configService)) {
+    if (this.repeatBreakerEnabled) {
       if (streak >= REPEAT_FORCE_STOP_STREAK) {
         finalResult = forceStopResult(result, REMINDER_TEXT_3);
         action = 'stop';
