@@ -851,7 +851,7 @@ export class AcpSession {
    * Correlate a freshly-created client terminal with the in-flight Bash tool
    * call whose command it runs, then attach a `{type: 'terminal'}` content
    * entry to that call's card. Match key: the runner reports the full shell
-   * invocation (`cd <cwd> && <command>`), which ends with the model's
+   * invocation (`cd <cwd> || exit 1\n<command>`), which ends with the model's
    * `args.command`. Terminals with no matching call (e.g. a subagent's —
    * this session only follows the main agent's events) stay unattached.
    */
