@@ -47,6 +47,7 @@ import { quoteShellArg } from '#/utils/shell-quote';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
 
 import { BannerProvider } from './banner/banner-provider';
+import { resolveBannerAudienceContext, type BannerAudienceContext } from './banner/audience';
 import { readBannerDisplayState, writeBannerDisplayState } from './banner/state';
 import {
   BUILTIN_SLASH_COMMANDS,
@@ -692,9 +693,14 @@ export class KimiTUI {
     const provider = new BannerProvider(this.state.appState.version);
     const displayState = await readBannerDisplayState();
     const now = new Date();
+    const audience = this.harness.auth.getCachedAccessToken().then(
+      (accessToken) => resolveBannerAudienceContext(accessToken),
+      (): BannerAudienceContext => ({ login: 'unknown' }),
+    );
     const banner = await provider.load({
       state: displayState,
       now,
+      audience,
     });
     this.state.appState.banner = banner;
     if (banner === null) return;
@@ -3840,12 +3846,11 @@ export class KimiTUI {
   /**
    * agent-core-v2 startup gate: before any session is created, ask whether to
    * trust this folder when the workspace is not trusted yet (project-level MCP
-   * servers stay disabled while untrusted). Best-effort throughout — a failed
-   * check or trust write never blocks startup. Choosing "don't trust" (or Esc)
-   * exits the program before any session is created; the prompt reappears on
-   * the next launch: the engine's untrusted state is indistinguishable from
-   * never-trusted. Returns true when the prompt started the event loop (the
-   * caller must not start it again).
+   * servers stay disabled while untrusted). A failed trust-info read is treated
+   * as untrusted and still prompts. Choosing "don't trust" (or Esc) exits the
+   * program before any session is created. A failed trust write still enters
+   * the TUI for this process and re-asks on the next launch. Returns true when
+   * the prompt started the event loop (the caller must not start it again).
    */
   private async maybeRunWorkspaceTrustPrompt(): Promise<boolean> {
     const workDir = this.state.appState.workDir;
@@ -3853,9 +3858,11 @@ export class KimiTUI {
     try {
       info = await this.harness.getWorkspaceTrustInfo(workDir);
     } catch {
+      info = { trusted: false, gatedMcpServers: [] };
+    }
+    if (info.trusted) {
       return false;
     }
-    if (info.trusted) return false;
     this.startEventLoop();
     const choice = await new Promise<TrustPromptChoice>((resolve) => {
       this.state.activeDialog = 'trust-prompt';
@@ -3882,7 +3889,6 @@ export class KimiTUI {
     try {
       await this.harness.trustWorkspace(workDir);
     } catch {
-      // A failed write leaves the workspace untrusted (re-asked next launch).
     }
     return true;
   }

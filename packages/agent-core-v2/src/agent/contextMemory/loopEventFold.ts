@@ -6,11 +6,17 @@ import type { ContentPart, ToolCall } from '#human/llm/message';
 import type { TokenUsage } from '#human/llm/usage';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
-import type { ContextMessage } from './types';
+import type { ContextMessage, ContextMessageTiming } from './types';
+import { shouldRenderWallTime } from './toolResultRender';
 import { isVacuousContentPart } from './vacuousContent';
 
 const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
   'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
+
+export interface AssistantSealMeta {
+  readonly usage?: TokenUsage;
+  readonly llmTiming?: ContextMessageTiming;
+}
 
 export type LoopRecordedEvent =
   | {
@@ -64,6 +70,7 @@ export type LoopRecordedEvent =
         readonly output: string | readonly ContentPart[];
         readonly isError?: boolean;
         readonly note?: string;
+        readonly durationMs?: number;
       };
       readonly parentUuid?: string;
     };
@@ -73,7 +80,7 @@ export interface LoopEventFoldSink {
   appendOpenContent(part: ContentPart): void;
   appendOpenToolCall(call: ToolCall, display?: ToolInputDisplay): void;
   dropOpenAssistant(): void;
-  sealOpenAssistant(): void;
+  sealOpenAssistant(meta?: AssistantSealMeta): void;
   pushToolMessage(message: ContextMessage, time: number | undefined): void;
   pushMessage(message: ContextMessage, time: number | undefined): void;
 }
@@ -92,7 +99,7 @@ export function createLoopEventFold(sink: LoopEventFoldSink): LoopEventFold {
 interface InitialFoldState {
   readonly openHasToolCalls: boolean;
   readonly openVacuous: boolean;
-  readonly pendingToolCallIds: readonly string[];
+  readonly pendingToolCalls: readonly { readonly id: string; readonly name: string }[];
 }
 
 function createLoopEventFoldWithState(
@@ -102,7 +109,9 @@ function createLoopEventFoldWithState(
   let openStepUuid: string | null | undefined = initial === undefined ? undefined : null;
   let openHasToolCalls = initial?.openHasToolCalls ?? false;
   let openVacuous = initial?.openVacuous ?? true;
-  const pending = new Set(initial?.pendingToolCallIds);
+  const pending = new Map<string, string>(
+    initial?.pendingToolCalls.map((call) => [call.id, call.name]),
+  );
   let deferred: { message: ContextMessage; time: number | undefined }[] = [];
 
   const flushDeferred = (): void => {
@@ -112,19 +121,19 @@ function createLoopEventFoldWithState(
   };
   const closePending = (time: number | undefined): void => {
     if (pending.size === 0) return;
-    for (const toolCallId of pending) {
+    for (const toolCallId of pending.keys()) {
       sink.pushToolMessage(interruptedToolMessage(toolCallId), time);
     }
     pending.clear();
     flushDeferred();
   };
-  const settleOpen = (time: number | undefined): void => {
+  const settleOpen = (time: number | undefined, meta?: AssistantSealMeta): void => {
     if (openStepUuid === undefined) return;
     closePending(time);
     if (!openHasToolCalls && openVacuous) {
       sink.dropOpenAssistant();
     } else {
-      sink.sealOpenAssistant();
+      sink.sealOpenAssistant(meta);
     }
     openStepUuid = undefined;
   };
@@ -157,7 +166,7 @@ function createLoopEventFoldWithState(
         }
         case 'step.end': {
           if (event.finishReason === 'interrupted' || event.finishReason === 'error') return;
-          settleOpen(time);
+          settleOpen(time, stepEndSealMeta(event));
           flushDeferred();
           return;
         }
@@ -177,12 +186,13 @@ function createLoopEventFoldWithState(
             ...(event.extras !== undefined ? { extras: event.extras } : {}),
           };
           sink.appendOpenToolCall(call, event.display);
-          pending.add(event.toolCallId);
+          pending.set(event.toolCallId, event.name);
           openHasToolCalls = true;
           return;
         }
         case 'tool.result': {
           if (!pending.has(event.toolCallId)) return;
+          const toolName = pending.get(event.toolCallId)!;
           pending.delete(event.toolCallId);
           const output = event.result.output;
           sink.pushToolMessage(
@@ -193,6 +203,7 @@ function createLoopEventFoldWithState(
               ),
               isError: event.result.isError,
               note: event.result.note,
+              durationMs: shouldRenderWallTime(toolName) ? event.result.durationMs : undefined,
             },
             time,
           );
@@ -307,8 +318,13 @@ function createImmutableFoldSink(initial: readonly ContextMessage[]): ImmutableF
       current = Object.freeze([...current.slice(0, openIndex), ...current.slice(openIndex + 1)]);
       openIndex = -1;
     },
-    sealOpenAssistant: () => {
-      updateOpen((message) => ({ ...message, partial: undefined }));
+    sealOpenAssistant: (meta) => {
+      updateOpen((message) => ({
+        ...message,
+        usage: meta?.usage,
+        llmTiming: meta?.llmTiming,
+        partial: undefined,
+      }));
       openIndex = -1;
     },
     pushToolMessage: (message) => {
@@ -341,9 +357,9 @@ function recoverFoldState(state: readonly ContextMessage[]): InitialFoldState | 
   return {
     openHasToolCalls: open.toolCalls.length > 0,
     openVacuous: open.content.every(isVacuousContentPart),
-    pendingToolCallIds: open.toolCalls
-      .map((call) => call.id)
-      .filter((toolCallId) => !resolvedToolCallIds.has(toolCallId)),
+    pendingToolCalls: open.toolCalls
+      .filter((call) => !resolvedToolCallIds.has(call.id))
+      .map((call) => ({ id: call.id, name: call.name })),
   };
 }
 
@@ -352,4 +368,16 @@ function interruptedToolMessage(toolCallId: string): ContextMessage {
     ...createToolMessage(toolCallId, TOOL_INTERRUPTED_ON_RESUME_OUTPUT),
     isError: true,
   };
+}
+
+function stepEndSealMeta(
+  event: Extract<LoopRecordedEvent, { type: 'step.end' }>,
+): AssistantSealMeta | undefined {
+  const timing: ContextMessageTiming = {
+    llmFirstTokenLatencyMs: event.llmFirstTokenLatencyMs,
+    llmStreamDurationMs: event.llmStreamDurationMs,
+  };
+  const hasTiming = Object.values(timing).some((value) => value !== undefined);
+  if (event.usage === undefined && !hasTiming) return undefined;
+  return { usage: event.usage, llmTiming: hasTiming ? timing : undefined };
 }

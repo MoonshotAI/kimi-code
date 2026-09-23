@@ -33,11 +33,21 @@ export class TowerMergeTool implements ITowerMergeTool {
         runTowerTool(async () => {
           const store = newTowerStore(this.sessionContext);
           const { mergeCommit, conflictsWith, noop } = await store.merge(args.branch);
+          const after = await store.load();
+          const allClosed =
+            after.missions.length > 0 &&
+            after.missions.every(
+              (mission) => mission.status === 'merged' || mission.status === 'abandoned',
+            );
+          const teardownHint =
+            'Every mission is now merged or abandoned — ready for TowerTeardown (branches and .tower/comms/ are kept; dirty worktrees are protected).';
           if (noop === true) {
             return {
               output: [
                 `${args.branch} is a read-only survey with a zero-diff branch — mission marked merged, no git merge needed.`,
-                'Continue with the remaining missions in Dependency Flow order.',
+                allClosed
+                  ? teardownHint
+                  : 'Continue with the remaining missions in Dependency Flow order.',
               ].join('\n'),
             };
           }
@@ -54,6 +64,8 @@ export class TowerMergeTool implements ITowerMergeTool {
               ),
               'Tell each affected worker (Agent resume with run_in_background=true — never foreground: their output flows back through the tower protocol files) to rebase onto the updated base, resolve, push, and request a re-review.',
             );
+          } else if (allClosed) {
+            lines.push(`The mission is now marked merged. ${teardownHint}`);
           } else {
             lines.push('The mission is now marked merged. Continue with the remaining missions in Dependency Flow order.');
           }

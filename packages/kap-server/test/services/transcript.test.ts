@@ -760,7 +760,7 @@ describe('AgentTranscriptProjector', () => {
       inputCacheCreation: 40,
     });
     expect(step.finishReason).toBe('tool_calls');
-    expect(step.timing).toEqual({
+    expect(step.llmTiming).toEqual({
       llmFirstTokenLatencyMs: 120,
       llmStreamDurationMs: 900,
       llmRequestBuildMs: 10,
@@ -4470,6 +4470,25 @@ describe('WireRecordCache', () => {
       const grown = await cache.read(wirePath);
       expect(grown).toEqual([a, b]);
       expect(await new WireRecordCache().read(wirePath)).toEqual(grown);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('serves a cold read of a wire with hundreds of thousands of records', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-large-'));
+    try {
+      const wirePath = join(home, 'wire.jsonl');
+      const records = Array.from({ length: 200_000 }, (_, index) => ({
+        type: 'turn.tick',
+        index,
+      }));
+      await writeFile(wirePath, wireText(records));
+      const cache = new WireRecordCache();
+      const read = await cache.read(wirePath);
+      expect(read).toHaveLength(records.length);
+      expect(read[0]).toEqual({ type: 'turn.tick', index: 0 });
+      expect(read[records.length - 1]).toEqual({ type: 'turn.tick', index: records.length - 1 });
     } finally {
       await rm(home, { recursive: true, force: true });
     }

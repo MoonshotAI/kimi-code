@@ -304,6 +304,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `secondary_model` | object | subagent 的次级模型池 |
 | `experimental` | object | 实验开关 id → 是否启用 |
 | `telemetry` | boolean | 是否启用匿名遥测 |
+| `auto_session_title` | boolean | 是否允许客户端自动生成会话标题 |
 | `raw` | object | 原始解析的 `config.toml` 内容，包含未建模字段 |
 
 #### `POST /api/v1/config`
@@ -336,6 +337,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `secondary_model` | body | object | subagent 的次级模型池 |
 | `experimental` | body | object | 实验开关 id → 是否启用 |
 | `telemetry` | body | boolean | 是否启用匿名遥测 |
+| `auto_session_title` | body | boolean | 是否允许客户端自动生成会话标题 |
 
 成功时 `data` 为完整的更新后配置，形态与 `GET /api/v1/config` 相同。
 

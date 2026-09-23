@@ -30,6 +30,7 @@ const KIMI_CONFIG_DOMAINS = [
   'yolo',
   'defaultPermissionMode',
   'defaultPlanMode',
+  'autoSessionTitle',
   'permission',
   'hooks',
   'services',

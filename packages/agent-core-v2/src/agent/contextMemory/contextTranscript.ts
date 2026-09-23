@@ -1,4 +1,5 @@
 import { type ContentPart, type ToolCall } from '#human/llm/message';
+import type { TokenUsage } from '#human/llm/usage';
 import type { WireRecord } from '#/wire/record';
 
 import {
@@ -8,7 +9,7 @@ import {
 } from './compactionHandoff';
 import { isPromptOwnedInjection, isUndoAnchor } from './conversationTime';
 import { createLoopEventFold, type LoopRecordedEvent } from './loopEventFold';
-import type { ContextMessage } from './types';
+import type { ContextMessage, ContextMessageTiming } from './types';
 
 export interface ContextTranscript {
   readonly entries: readonly ContextMessage[];
@@ -30,6 +31,8 @@ interface MutableMessage {
   isError?: boolean;
   note?: string;
   origin?: ContextMessage['origin'];
+  usage?: TokenUsage;
+  llmTiming?: ContextMessageTiming;
 }
 
 interface MutableEntry {
@@ -73,7 +76,11 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
       transcript.splice(index, 1);
       foldedLength = Math.max(0, foldedLength - 1);
     },
-    sealOpenAssistant: () => {
+    sealOpenAssistant: (meta) => {
+      if (openEntry !== undefined) {
+        openEntry.message.usage = meta?.usage;
+        openEntry.message.llmTiming = meta?.llmTiming;
+      }
       openEntry = undefined;
     },
     pushToolMessage: (message, time) => {
@@ -175,6 +182,8 @@ function toMutableEntry(message: ContextMessage, time: number | undefined): Muta
       ...(message.toolCallId !== undefined ? { toolCallId: message.toolCallId } : {}),
       ...(message.isError !== undefined ? { isError: message.isError } : {}),
       ...(message.origin !== undefined ? { origin: message.origin } : {}),
+      usage: message.usage,
+      llmTiming: message.llmTiming,
     },
     time,
   };

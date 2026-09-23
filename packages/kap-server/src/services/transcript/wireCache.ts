@@ -129,7 +129,7 @@ export class WireRecordCache {
       if (record !== undefined) parsed.push(record);
       start = nl + 1;
     }
-    entry.records.push(...parsed);
+    for (const record of parsed) entry.records.push(record);
     entry.lineCount = lineCount;
     entry.offset += start;
     entry.tail = start === region.length ? EMPTY_BUFFER : Buffer.from(region.subarray(start));

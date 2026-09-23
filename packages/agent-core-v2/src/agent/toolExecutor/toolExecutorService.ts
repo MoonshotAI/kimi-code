@@ -308,6 +308,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       toolCallId: call.toolCall.id,
       toolName: call.toolName,
       result: finalized,
+      durationMs: timedResult.durationMs,
     };
   }
 

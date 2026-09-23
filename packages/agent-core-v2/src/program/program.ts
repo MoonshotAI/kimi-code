@@ -279,11 +279,11 @@ export class Program {
     try {
       const state = own(new WorkspaceStateService(this.dependencies.appState));
       const localConfig = new FileProjectLocalConfigService(this.dependencies.bootstrap, runtime.fs!);
-      const dirs = own(new WorkspaceDirsService(this.context, localConfig, this.dependencies.log, state));
+      const trust = own(new WorkspaceTrustService(this.context, this.dependencies.docs, state, this.dependencies.telemetry));
+      const dirs = own(new WorkspaceDirsService(this.context, localConfig, this.dependencies.log, state, trust));
       const git = new WorkspaceGitService(this.context, this.dependencies.git);
       const fs = new WorkspaceFsService(this.context, dirs, runtime.fs!, this.resolver, this.dependencies.telemetry, git);
       const instructions = own(new WorkspaceInstructionsService(this.context, runtime.fs!, runtime.environment, this.dependencies.bootstrap, this.dependencies.log, state));
-      const trust = own(new WorkspaceTrustService(this.context, this.dependencies.docs, state, this.dependencies.telemetry));
       const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, runtime.fs!, trust, this.dependencies.configStore));
       const mcp = own(new WorkspaceMcpService(this.context, this.resolver, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager));
       const userAgentProfiles = own(new UserAgentProfileLoaderService(this.dependencies.bootstrap, runtime.fs!, this.dependencies.log, this.dependencies.builtinAgentProfiles, this.context, this.dependencies.agentProfiles));

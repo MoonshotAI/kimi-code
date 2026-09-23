@@ -711,7 +711,7 @@ export class AgentTranscriptProjector {
       endedAt: nowIso(),
       usage: event.usage,
       finishReason: event.finishReason ?? event.rawFinishReason ?? event.providerFinishReason,
-      timing: {
+      llmTiming: {
         llmFirstTokenLatencyMs: event.llmFirstTokenLatencyMs,
         llmStreamDurationMs: event.llmStreamDurationMs,
         llmRequestBuildMs: event.llmRequestBuildMs,

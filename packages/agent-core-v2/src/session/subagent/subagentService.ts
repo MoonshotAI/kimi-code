@@ -22,6 +22,7 @@ import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { Runtime } from '#/runtime/runtime';
 import { IConfigService } from '#/app/config/config';
+import { IGitService } from '#/app/git/git';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { ILogService } from '#/_base/log/log';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -70,6 +71,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @IConfigService private readonly configService: IConfigService,
+    @IGitService private readonly git: IGitService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ILogService private readonly log: ILogService,
@@ -225,6 +227,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       cwd: view.workDir,
       process: runtime.process!,
       log: this.log,
+      git: this.git,
     });
   }
 
