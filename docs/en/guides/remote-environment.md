@@ -104,11 +104,11 @@ Two guardrails apply to both tools. They are rejected in Plan mode — exit plan
 
 ## Disconnects and reconnecting
 
-Workspaces bound to the same target share one connection per environment: the first workspace to connect builds it, and the rest reuse it. When that connection drops — network loss, a stopped container, the executor exiting — every workspace bound to the target goes `disconnected` at once, and every process the sessions started on the target is terminated.
+Each environment id keeps one connection for the whole process. Workspaces bound to that id share it; a different id, including another id on the same machine, keeps its own. SSH decides when the connection is dead: the launcher sets `ServerAliveInterval`, and the local pipe closing is the disconnect signal. There is no protocol heartbeat. When the connection drops — network loss, a stopped container, the executor exiting — every workspace using that id goes `disconnected` at once, and the processes it started on the target end with the connection. A temporary `connect` is its own connection and is not shared.
 
-There is **no silent fallback to the local environment** after a drop: a command like `rm` or `git` that was meant for the remote machine must never land on yours. The next tool call retries the connection on demand — while the target stays unreachable, tool calls fail with an `environment.unavailable` error, and you can also reconnect explicitly from the `/environment` dialog.
+There is **no silent fallback to the local environment** after a drop: a command like `rm` or `git` that was meant for the remote machine must never land on yours. The next tool call opens the pipe again — while the target stays unreachable, tool calls fail with an `environment.unavailable` error, and you can also reconnect explicitly from the `/environment` dialog.
 
-Reconnecting replaces the **shared** connection, so it reaches every workspace bound to the same target: whichever workspace triggers it — the `/environment` dialog, the REST API, or an automatic retry — Kimi Code builds a fresh connection and switches every workspace's view to it. A turn still in flight on the old connection fails with `environment.unavailable`, exactly as if the connection had dropped.
+An explicit reconnect is process-wide for that id: whichever workspace triggers it, Kimi Code drops the connection and opens a new one. A call still in flight fails; it is not retried on the new connection. Other environment ids are left alone.
 
 Resuming a session works the same way: the restored binding is connected in the background and does not delay opening the session. When the target is unreachable, or the handshake is still in progress, the session opens immediately with the binding kept and the environment left `connecting` or `disconnected`. The first tool call waits for that attempt or retries it, and there is never a silent fallback to `local`.
 

@@ -83,27 +83,19 @@ Client-surface notes beyond the wire protocol:
 - Whole-file reads without `maxBytes` are rejected server-side above 32MiB
   (base64 of the response must fit the 64MiB frame cap); larger files are read
   through `offset`/`maxBytes` range reads.
-- `RemoteEnvironmentProviderFactory` is the workspace composition root for
-  declared environments: it attaches via `IWorkspaceInstanceManager.addProvider`,
-  reads the declaration set from `config.toml` `[environments]` (resolved by
-  agent-core-v2's `resolveWorkspaceEnvironmentDeclarations`), and registers
-  each declared environment as a `pending` placeholder (`ManagedRemoteEnvironment`) — no connections
-  are made at registration.
-- Executor connections are owned by an app-level `RemoteConnectionPool`, not by
-  workspaces: one connection per declaration fingerprint is shared by every
-  workspace bound to the same target, and the pool destroys it once the last
-  workspace holder lets go. Ephemeral
-  environments (the agent-created `connect` tool) never enter the pool. An
-  explicit `connect()` (the binding `connectAndSwitch` flow, or reconnect) goes
-  through the pool: a first connect joins or builds the shared connection, and
-  a **reconnect is a pool-level coordinated replacement** — the pool bumps its
-  version so a stale in-flight connect cannot install, builds the replacement,
-  and broadcasts it to every workspace view on the fingerprint. Each view swaps
-  to the new connection with its fresh generation; turns pinned to the old
-  generation fail explicitly through the registry drain and the disposed
-  connection, exactly as if the connection had dropped — only the trigger may
-  be another workspace. The replaced connection is disposed after every view
-  settles, so old-generation leases keep their registry drain grace first.
+- `RemoteEnvironmentProviderFactory` holds one connection per environment id
+  for the process. Each workspace registers a view of that connection; the last
+  view to release closes it. Registration is still `pending` — no connection is
+  opened until `connect()`. A temporary `connect` does not enter this table.
+- `connect()` while `ready` is a no-op. A drop is process-wide for that id.
+  The next `connect()` opens a new process; explicit reconnect is `disconnect()`
+  then `connect()`, and it does not change a view's generation. A different id
+  is unaffected. SSH liveness is the ssh process (`ServerAliveInterval`); there
+  is no protocol heartbeat and no merge by host or declaration fingerprint. A
+  changed declaration replaces the launcher, bumps every view's generation, and
+  drops the live process; an in-flight spawn from the old launcher is discarded.
+  In-flight tool calls are not retried on the new process. The connection's
+  in-flight call cap (256) is shared by every workspace using that id.
 
 ## Executor detection and version guidance
 

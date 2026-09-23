@@ -142,6 +142,7 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
         `environment ${this.binding.current.environmentId} does not support reconnect`,
       );
     }
+    environment.disconnect?.();
     await environment.connect();
   }
 
