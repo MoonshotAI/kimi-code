@@ -1,6 +1,7 @@
 ---
 name: review-pr
 description: Use when reviewing a pull request in the kimi-code repository — translate the PR template sections into Chinese and evaluate the change against the template structure.
+disable-model-invocation: true
 ---
 
 # Review PR

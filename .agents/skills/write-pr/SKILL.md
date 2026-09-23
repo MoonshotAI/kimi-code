@@ -88,6 +88,18 @@ Show component or UI structure changes as a tree diff:
 +    <SkillResultCard />
 ```
 
+Show component interaction, control flow, or data flow with Mermaid (especially useful for explaining bug mechanics):
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant UI
+    participant Daemon
+    User->>UI: choose command
+    UI->>Daemon: send expanded prompt
+    Daemon-->>UI: stream result
+```
+
 Show key data structure or type changes in a language-specific block:
 
 ```ts
