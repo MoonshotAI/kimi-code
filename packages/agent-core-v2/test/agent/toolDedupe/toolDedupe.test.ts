@@ -18,12 +18,15 @@ import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult, ToolE
 import type { ToolDidExecuteContext, ResolvedToolExecutionHookContext, BeforeExecuteDecision } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolDedupeService, type ToolDedupeResult } from '#/agent/toolDedupe/toolDedupe';
 import { AgentToolDedupeService, __testing as toolDedupeTesting } from '#/agent/toolDedupe/toolDedupeService';
+import { REPEAT_BREAKER_SECTION } from '#/agent/toolDedupe/configSection';
+import { IConfigService } from '#/app/config/config';
 import { IAgentToolExecutorService, type ToolExecutionResult } from '#/agent/toolExecutor/toolExecutor';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
+import { StubConfigService } from '../../stubs';
 import { stubLoopWithHooks, type StubLoop } from '../loop/stubs';
 import { stubToolExecutorEvents } from '../toolExecutor/stubs';
 import { registerToolResultTruncationServices } from '../toolResultTruncation/stubs';
@@ -63,7 +66,7 @@ interface Harness {
 
 function createHarness(
   telemetry: ITelemetryService = recordingTelemetry(telemetryEvents),
-  options: { readonly executorEvents?: boolean } = {},
+  options: { readonly executorEvents?: boolean; readonly config?: Record<string, unknown> } = {},
 ): Harness {
   const loop = stubLoopWithHooks();
   const events = options.executorEvents === true ? stubToolExecutorEvents() : undefined;
@@ -94,6 +97,7 @@ function createHarness(
       } as unknown as IBootstrapService);
       reg.defineInstance(IAgentLoopService, loop);
       reg.defineInstance(IAgentStateService, new AgentStateService());
+      reg.defineInstance(IConfigService, new StubConfigService(options.config));
       reg.define(IAgentToolRegistryService, AgentToolRegistryService);
       if (events === undefined) {
         reg.define(IAgentToolExecutorService, AgentToolExecutorService);
@@ -670,6 +674,40 @@ describe('AgentToolDedupeService', () => {
       expect(last!.isError).toBe(true);
       expect(stopTurnOf(last!)).toBe(true);
       expect(last!.output as string).toContain('Write your final response now');
+    });
+  });
+
+  describe('repeat breaker config switch', () => {
+    function disabledHarness(): Harness {
+      return createHarness(recordingTelemetry(telemetryEvents), {
+        config: { [REPEAT_BREAKER_SECTION]: false },
+      });
+    }
+
+    it('injects no reminders and never force-stops when repeat_breaker is false', async () => {
+      const h = disabledHarness();
+      h.registry.register(new EchoTool('Read'));
+      let last: ToolResult | undefined;
+      for (let i = 0; i < 14; i += 1) {
+        const [result] = await runStep(h, 1, i + 1, [toolCall(`c${String(i)}`, 'Read', { p: 1 })]);
+        last = result!.result;
+      }
+      expect(last!.output as string).not.toContain('<system-reminder>');
+      expect(last!.stopTurn).toBeFalsy();
+      expect(h.loop.queue.hasPendingRequests()).toBe(false);
+    });
+
+    it('keeps same-step dedupe active when repeat_breaker is false', async () => {
+      const h = disabledHarness();
+      const tool = new EchoTool('Read');
+      h.registry.register(tool);
+      const results = await runStep(h, 1, 1, [
+        toolCall('orig', 'Read', { p: 1 }),
+        toolCall('dup', 'Read', { p: 1 }),
+      ]);
+      expect(tool.calls).toHaveLength(1);
+      const byId = new Map(results.map((result) => [result.toolCallId, result.result]));
+      expect(byId.get('dup')!.output).toBe(byId.get('orig')!.output);
     });
   });
 

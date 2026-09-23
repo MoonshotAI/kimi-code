@@ -102,6 +102,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | `extra_skill_dirs` | `array<string>` | — | Extra skill search directories, layered on top of the default directories |
 | `extra_agent_dirs` | `array<string>` | — | Extra custom agent search directories, layered on top of the default directories |
 | `builtin_product_skills` | `boolean` | `true` | Whether the built-in skills that document Kimi Code itself are offered to the model |
+| `repeat_breaker` | `boolean` | `true` | Whether repeating the same tool call many times in a row injects reminders and eventually force-stops the turn |
 | `telemetry` | `boolean` | `true` | Whether anonymous telemetry is enabled; disabled only when explicitly set to `false` |
 | `auto_session_title` | `boolean` | `true` | Whether clients may automatically generate session titles; disabled only when explicitly set to `false` |
 | [`providers`](#providers) | `table` | `{}` | API provider table |
