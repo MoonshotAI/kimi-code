@@ -1,7 +1,7 @@
 import type { Workspace } from '#/app/workspace/workspace';
 import { Program, type ProgramSnapshot } from '#/program/program';
 import type { ProgramDependencies } from '#/program/programDependencies';
-import type { EnvironmentRegistry, EnvironmentRegistrySnapshot } from '#/environment/environmentRegistry';
+import type { IEnvironmentService } from '#/app/environment/environment';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 
 export type WorkspaceInstanceLifecycle = 'materializing' | 'active' | 'closing' | 'disposed';
@@ -10,22 +10,19 @@ export interface WorkspaceInstanceSnapshot {
   readonly metadata: Workspace;
   readonly lifecycle: WorkspaceInstanceLifecycle;
   readonly program: ProgramSnapshot;
-  readonly environments: EnvironmentRegistrySnapshot;
 }
 
 export class WorkspaceInstance {
-  readonly environments: EnvironmentRegistry;
   readonly program: Program;
   private lifecycle: WorkspaceInstanceLifecycle = 'materializing';
 
   constructor(
     readonly metadata: Workspace,
-    environments: EnvironmentRegistry,
+    environments: IEnvironmentService,
     context: IWorkspaceContext,
     dependencies: ProgramDependencies,
   ) {
-    this.environments = environments;
-    this.program = new Program(metadata.id, this.environments, context, dependencies);
+    this.program = new Program(metadata.id, environments, context, dependencies);
   }
 
   get id(): string {
@@ -45,7 +42,6 @@ export class WorkspaceInstance {
       metadata: this.metadata,
       lifecycle: this.lifecycle,
       program: this.program.snapshot(),
-      environments: this.environments.snapshot(),
     };
   }
 
@@ -53,7 +49,6 @@ export class WorkspaceInstance {
     if (this.lifecycle === 'disposed') return;
     this.lifecycle = 'closing';
     this.program.dispose();
-    await this.environments.dispose();
     this.lifecycle = 'disposed';
   }
 }

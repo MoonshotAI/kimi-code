@@ -185,7 +185,7 @@ class GrepTool extends ProductionGrepTool {
     const environment = createTestEnv(kaos);
     const backend = Object.assign(
       new FakeEnvironment(
-        { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
+        { environmentId: 'local', generation: 'test' },
         { capabilities: ['fs', 'process'], pathClass: environment.pathClass },
       ),
       {
@@ -341,7 +341,7 @@ describe('GrepTool', () => {
           reg.defineInstance(IHostEnvironment, environment);
           const backend = Object.assign(
             new FakeEnvironment(
-              { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
+              { environmentId: 'local', generation: 'test' },
               { capabilities: ['fs', 'process'], pathClass: environment.pathClass },
             ),
             { process: processService, fs, host: environment },
@@ -1622,7 +1622,7 @@ describe('GrepTool', () => {
     const environment = createTestEnv(kaos);
     const backend = Object.assign(
       new FakeEnvironment(
-        { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
+        { environmentId: 'local', generation: 'test' },
         { capabilities: ['fs', 'process'], pathClass: environment.pathClass },
       ),
       {
@@ -2180,7 +2180,7 @@ describe('GrepTool symlink escape', () => {
     const environment = createTestEnv(createFakeKaos());
     const backend = Object.assign(
       new FakeEnvironment(
-        { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
+        { environmentId: 'local', generation: 'test' },
         { capabilities: ['fs', 'process'], pathClass: environment.pathClass },
       ),
       {

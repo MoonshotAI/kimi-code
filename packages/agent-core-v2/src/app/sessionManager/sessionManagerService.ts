@@ -1,3 +1,4 @@
+import { IEnvironmentService } from '#/app/environment/environment';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { Emitter, type Event, type IWaitUntil } from '#/_base/event';
 import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from '#/_base/di/scope';
@@ -21,7 +22,6 @@ import type {
   SessionWillCreateEvent,
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
-import type { WorkspaceInstance } from '#/workspace/workspaceInstance/workspaceInstance';
 import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
 import {
@@ -66,6 +66,7 @@ export class SessionManager implements ISessionManager {
     @ISessionIndex private readonly index: ISessionIndex,
     @IEnvironmentDeclarationService private readonly environmentDeclarations: IEnvironmentDeclarationService,
     @ILogService private readonly log: ILogService,
+    @IEnvironmentService private readonly environments: IEnvironmentService,
   ) {}
 
   async create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle> {
@@ -78,7 +79,7 @@ export class SessionManager implements ISessionManager {
     const requestedEnvironmentId = options.environmentId;
     const explicitRemote =
       requestedEnvironmentId !== undefined && requestedEnvironmentId !== LOCAL_ENVIRONMENT_ID;
-    const registered = explicitRemote ? workspace.environments.current(requestedEnvironmentId) : undefined;
+    const registered = explicitRemote ? this.environments.current(requestedEnvironmentId) : undefined;
     const declared = explicitRemote
       ? declarations?.entries.find((entry) => entry.id === requestedEnvironmentId)
       : undefined;
@@ -112,8 +113,8 @@ export class SessionManager implements ISessionManager {
         ? options
         : { ...options, environmentId, environmentCwd };
     const create = async () => {
-      if (environmentId !== undefined) await this.connectForCreate(workspace, environmentId, environmentCwd);
-      const controllerEnvironmentId = this.selectControllerEnvironmentId(workspace, environmentId ?? LOCAL_ENVIRONMENT_ID);
+      if (environmentId !== undefined) await this.connectForCreate(environmentId, environmentCwd);
+      const controllerEnvironmentId = this.selectControllerEnvironmentId(environmentId ?? LOCAL_ENVIRONMENT_ID);
       const controllerCwd = controllerEnvironmentId === LOCAL_ENVIRONMENT_ID ? undefined : environmentCwd ?? options.workDir;
       return this.controllerForWorkspace(workspace.id, controllerEnvironmentId, controllerCwd).create(effective);
     };
@@ -121,16 +122,16 @@ export class SessionManager implements ISessionManager {
     return this.serializeLifecycle(options.sessionId, create);
   }
 
-  private async connectForCreate(workspace: WorkspaceInstance, environmentId: string, environmentCwd?: string): Promise<void> {
+  private async connectForCreate(environmentId: string, environmentCwd?: string): Promise<void> {
     if (environmentId === LOCAL_ENVIRONMENT_ID) return;
-    const environment = await this.environmentDeclarations.ensureConnected(workspace.id, environmentId);
+    const environment = await this.environmentDeclarations.ensureConnected(environmentId);
     if (environment === undefined || environmentCwd === undefined) return;
-    await this.environmentDeclarations.assertCwdUsable(workspace.id, environmentId, environmentCwd);
+    await this.environmentDeclarations.assertCwdUsable(environmentId, environmentCwd);
   }
 
-  private selectControllerEnvironmentId(workspace: WorkspaceInstance, environmentId: string): string {
+  private selectControllerEnvironmentId(environmentId: string): string {
     if (environmentId === LOCAL_ENVIRONMENT_ID) return LOCAL_ENVIRONMENT_ID;
-    const environment = workspace.environments.current(environmentId);
+    const environment = this.environments.current(environmentId);
     if (environment === undefined || !environmentIsReady(environment)) return LOCAL_ENVIRONMENT_ID;
     return environmentId;
   }
@@ -356,8 +357,8 @@ export class SessionManager implements ISessionManager {
     return this.locateSession(sessionId);
   }
 
-  private beginResumeConnect(workspace: WorkspaceInstance, environmentId: string, sessionId: string): void {
-    const environment = workspace.environments.current(environmentId);
+  private beginResumeConnect(environmentId: string, sessionId: string): void {
+    const environment = this.environments.current(environmentId);
     if (environment === undefined || environmentIsReady(environment)) return;
     if (typeof environment.connect !== 'function') {
       this.log.warn(
@@ -382,9 +383,9 @@ export class SessionManager implements ISessionManager {
     const persistedBinding = await this.environmentDeclarations.readPersistedEnvironmentBinding(workspace.id, sessionId);
     const boundEnvironmentId = persistedBinding?.environmentId ?? LOCAL_ENVIRONMENT_ID;
     if (options?.connect === true && boundEnvironmentId !== LOCAL_ENVIRONMENT_ID) {
-      this.beginResumeConnect(workspace, boundEnvironmentId, sessionId);
+      this.beginResumeConnect(boundEnvironmentId, sessionId);
     }
-    const controllerEnvironmentId = this.selectControllerEnvironmentId(workspace, boundEnvironmentId);
+    const controllerEnvironmentId = this.selectControllerEnvironmentId(boundEnvironmentId);
     return this.controllerForWorkspace(
       workspace.id,
       controllerEnvironmentId,

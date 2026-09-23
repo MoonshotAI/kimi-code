@@ -15,10 +15,7 @@ import { ISessionStateService } from '#/session/state/sessionState';
 import {
   workspaceContextAdditionalDirsKey,
 } from '#/session/workspaceContext/workspaceContextService';
-import {
-  IEnvironmentResolver,
-  IWorkspaceInstanceManager,
-} from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentService } from '#/app/environment/environment';
 
 import { IAgentEnvironmentBindingService } from './environmentBinding';
 import { EnvironmentStatusChanged } from './environmentEvents';
@@ -111,23 +108,23 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
   private readonly changeEmitter = new Emitter<void>();
   readonly onDidChange = this.changeEmitter.event;
   private readonly bindingSubscription: IDisposable;
-  private readonly workspaceSubscription: IDisposable;
-  private registrySubscription: IDisposable | undefined;
+  private readonly registrySubscription: IDisposable;
 
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentEnvironmentBindingService private readonly binding: IAgentEnvironmentBindingService,
-    @IEnvironmentResolver private readonly resolver: IEnvironmentResolver,
-    @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
+    @IEnvironmentService private readonly resolver: IEnvironmentService,
     @ISessionEventBus private readonly eventBus: ISessionEventBus,
     @ISessionContext private readonly session: ISessionContext,
     @ISessionStateService private readonly sessionState: ISessionStateService,
   ) {
-    this.bindingSubscription = this.binding.onDidChange(() => this.rebind());
-    this.workspaceSubscription = this.workspaces.onDidChange((change) => {
-      if (change.workspaceId === this.binding.current.workspaceId) this.rebind();
+    this.bindingSubscription = this.binding.onDidChange(() => this.changeEmitter.fire());
+    this.registrySubscription = this.resolver.onDidChange((change) => {
+      if (change.environmentId !== this.binding.current.environmentId) return;
+      if (change.current !== undefined && change.current !== this.resolver.current(change.environmentId)) return;
+      this.changeEmitter.fire();
+      this.publishEnvironmentStatus(change);
     });
-    this.bindRegistry();
   }
 
   inspect(): Environment {
@@ -187,27 +184,8 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
 
   dispose(): void {
     this.registrySubscription?.dispose();
-    this.workspaceSubscription.dispose();
     this.bindingSubscription.dispose();
     this.changeEmitter.dispose();
-  }
-
-  private rebind(): void {
-    this.bindRegistry();
-    this.changeEmitter.fire();
-  }
-
-  private bindRegistry(): void {
-    this.registrySubscription?.dispose();
-    const binding = this.binding.current;
-    const workspace = this.workspaces.get(binding.workspaceId);
-    this.registrySubscription = workspace?.environments.onDidChange((change) => {
-      if (change.environmentId !== this.binding.current.environmentId) return;
-      const current = workspace.environments.current(change.environmentId);
-      if (change.current !== undefined && change.current !== current) return;
-      this.changeEmitter.fire();
-      this.publishEnvironmentStatus(change);
-    });
   }
 
   private publishEnvironmentStatus(change: EnvironmentRegistryChange): void {

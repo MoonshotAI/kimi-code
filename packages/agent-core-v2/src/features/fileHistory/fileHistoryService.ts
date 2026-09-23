@@ -27,7 +27,7 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import type { Environment, EnvironmentLease } from '#/environment/environment';
 import { EnvironmentError } from '#/environment/environmentRegistry';
-import { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
 import {
   IAgentFileHistoryService,
@@ -73,7 +73,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @IAgentEnvironmentBindingService private readonly environmentBinding: IAgentEnvironmentBindingService,
-    @IEnvironmentResolver private readonly resolver: IEnvironmentResolver,
+    @IEnvironmentService private readonly resolver: EnvironmentResolver,
   ) {
     super();
     this.agentState.contributeState(fileHistoryKey);
@@ -342,7 +342,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
               oversize: true,
               size: current.oversizeBytes,
               mtimeMs: current.mtimeMs,
-              environmentId,
+            environmentId,
             };
     }
     await this.dispatcher.dispatch(
@@ -492,7 +492,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     try {
       lease = environmentId === undefined
         ? this.environment.acquire(['fs'])
-        : this.resolver.acquire({ workspaceId: this.sessionCtx.workspaceId, environmentId }, ['fs']);
+        : this.resolver.acquire({ environmentId }, ['fs']);
     } catch (error) {
       if (error instanceof EnvironmentError) return 'unreadable';
       throw error;
@@ -570,7 +570,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     try {
       return environmentId === undefined
         ? this.environment.inspect()
-        : this.resolver.inspect({ workspaceId: this.sessionCtx.workspaceId, environmentId });
+        : this.resolver.inspect({ environmentId });
     } catch {
       return undefined;
     }

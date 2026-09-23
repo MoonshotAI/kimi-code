@@ -19,12 +19,12 @@ function request(
   entry: EphemeralEnvironmentConnectRequest['entry'],
   environmentId = 'eph-test',
 ): EphemeralEnvironmentConnectRequest {
-  return { workspaceId: 'workspace', environmentId, entry, registry };
+  return { environmentId, entry, registry };
 }
 
 function fakeConnected(environmentId: string, homeDir?: string): FakeEnvironment {
   const environment = new FakeEnvironment(
-    { workspaceId: 'workspace', environmentId, generation: 'gen-one' },
+    { environmentId, generation: 'gen-one' },
     {
       status: 'ready',
       capabilities: ['fs', 'process'],
@@ -36,7 +36,7 @@ function fakeConnected(environmentId: string, homeDir?: string): FakeEnvironment
 
 describe('RemoteEphemeralEnvironmentConnector', () => {
   it('connects with the converted launcher, registers the environment, and returns the initial cwd', async () => {
-    const registry = new EnvironmentRegistry('workspace');
+    const registry = new EnvironmentRegistry();
     const calls: RemoteEnvironmentOptions[] = [];
     const connected = fakeConnected('eph-test', '/home/me');
     Object.assign(connected.host, { cwd: '/home/me/work' });
@@ -54,7 +54,6 @@ describe('RemoteEphemeralEnvironmentConnector', () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({
-      workspaceId: 'workspace',
       environmentId: 'eph-test',
       launcher: { type: 'ssh', host: 'dev-box', remoteBin: '/opt/kimi' },
       clientVersion: '1.2.3',
@@ -66,7 +65,7 @@ describe('RemoteEphemeralEnvironmentConnector', () => {
   });
 
   it('reconnects a temporary environment in process without changing its identity', async () => {
-    const registry = new EnvironmentRegistry('workspace');
+    const registry = new EnvironmentRegistry();
     const calls: RemoteEnvironmentOptions[] = [];
     const connector = new RemoteEphemeralEnvironmentConnector(
       bootstrap(),
@@ -89,7 +88,7 @@ describe('RemoteEphemeralEnvironmentConnector', () => {
   });
 
   it('maps docker and command entries to launcher specs', async () => {
-    const registry = new EnvironmentRegistry('workspace');
+    const registry = new EnvironmentRegistry();
     const calls: RemoteEnvironmentOptions[] = [];
     const connector = new RemoteEphemeralEnvironmentConnector(
       bootstrap(),
@@ -131,7 +130,7 @@ describe('RemoteEphemeralEnvironmentConnector', () => {
   });
 
   it('rethrows the connect failure and leaves nothing registered', async () => {
-    const registry = new EnvironmentRegistry('workspace');
+    const registry = new EnvironmentRegistry();
     const connector = new RemoteEphemeralEnvironmentConnector(
       bootstrap(),
       async () => {
@@ -148,7 +147,7 @@ describe('RemoteEphemeralEnvironmentConnector', () => {
   });
 
   it('disposes the connection when the registry rejects the registration', async () => {
-    const registry = new EnvironmentRegistry('workspace');
+    const registry = new EnvironmentRegistry();
     await registry.dispose();
     const connected = fakeConnected('eph-test');
     let disposed = false;

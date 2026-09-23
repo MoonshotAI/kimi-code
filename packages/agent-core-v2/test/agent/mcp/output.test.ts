@@ -1000,7 +1000,7 @@ describe('mcpResultToExecutableOutput over a real stdio server', () => {
   async function callFixtureTool(name: string) {
     const environment = Object.assign(
       new FakeEnvironment(
-        { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
+        { environmentId: 'local', generation: 'test' },
         { capabilities: ['process'] },
       ),
       { process: new HostProcessService() },
@@ -1026,7 +1026,6 @@ describe('mcpResultToExecutableOutput over a real stdio server', () => {
             dispose: () => {},
           }),
         },
-        workspaceId: 'workspace',
         environmentId: 'local',
         defaultCwd: process.cwd(),
       },

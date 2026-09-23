@@ -82,7 +82,7 @@ export function WorkspaceServicesView() {
               <SnapshotRow label="lifecycle" value={<Badge tone="sky">{data.lifecycle}</Badge>} />
             </SnapshotPanel>
             <SnapshotPanel title="Program">
-              <SnapshotRow label="binding" value={`${data.program.binding.workspaceId} / ${data.program.binding.environmentId}`} />
+              <SnapshotRow label="binding" value={data.program.binding.environmentId} />
               <SnapshotRow label="status" value={<Badge tone={data.program.status === 'ready' ? 'green' : 'neutral'}>{data.program.status}</Badge>} />
               <SnapshotRow label="ready" value={String(data.program.ready)} />
               <SnapshotRow label="generation" value={data.program.generation ?? 'unavailable'} />
@@ -92,9 +92,9 @@ export function WorkspaceServicesView() {
               <SnapshotRow label="MCP servers" value={String(data.program.catalog.mcpServers)} />
             </SnapshotPanel>
             <SnapshotPanel title="Environments">
-              {data.environments.environments.length === 0 ? (
+              {data.program.environments.length === 0 ? (
                 <div className="text-[11px] text-neutral-600">no current generations</div>
-              ) : data.environments.environments.map((environment) => (
+              ) : data.program.environments.map((environment) => (
                 <div key={`${environment.environmentId}:${environment.generation}`} className="rounded border border-neutral-800 bg-neutral-950/40 p-2">
                   <div className="mb-1 flex items-center gap-2">
                     <span className="font-mono text-[12px] text-neutral-200">{environment.environmentId}</span>

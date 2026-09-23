@@ -136,7 +136,7 @@ describe('business snapshots', () => {
       }
       return {
         json: async () => ok({
-          binding: { workspaceId: 'w 1', environmentId: 'remote' },
+          binding: { environmentId: 'remote' },
           available: true,
           environment: { environmentId: 'remote', generation: 'g2', status: 'ready', capabilities: ['process'] },
         }),

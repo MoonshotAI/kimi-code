@@ -2235,7 +2235,7 @@ function agentHandle(
         if (serviceId === IAgentEnvironmentBindingService) {
           return {
             _serviceBrand: undefined,
-            current: { workspaceId: 'w1', environmentId: 'local' },
+            current: { environmentId: 'local' },
             switch: () => {},
             onDidChange: Event.None,
           } as unknown as IAgentEnvironmentBindingService;

@@ -1,3 +1,4 @@
+import { IEnvironmentService } from '@moonshot-ai/agent-core-v2';
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -373,20 +374,19 @@ describe('server-v2 /api/v1 skills', () => {
       try {
         const instance = server!.core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
         const fake = new FakeEnvironment(
-          { workspaceId, environmentId: 'pending-remote', generation: 'pending-generation' },
+          { environmentId: 'pending-remote', generation: 'pending-generation' },
           { status: 'pending', capabilities: ['fs'] },
         );
         const connect = vi.fn(async () => {
           fake.setStatus('ready');
         });
-        instance!.environments.register(Object.assign(fake, {
+        server!.core.accessor.get(IEnvironmentService).register(Object.assign(fake, {
           fs: new HostFileSystem(),
           host: { ...fake.host, tempDir: join(remoteRoot, 'remote-tmp') },
           connect,
         }));
         const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
         main.accessor.get(IAgentStateService).set(agentEnvironmentBindingKey, {
-          workspaceId,
           environmentId: 'pending-remote',
         });
 
@@ -425,17 +425,16 @@ describe('server-v2 /api/v1 skills', () => {
       const workspaceId = session!.accessor.get(ISessionContext).workspaceId;
       const instance = server!.core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
       const fake = new FakeEnvironment(
-        { workspaceId, environmentId: 'dead-remote', generation: 'dead-generation' },
+        { environmentId: 'dead-remote', generation: 'dead-generation' },
         { status: 'disconnected', capabilities: ['fs'] },
       );
-      instance!.environments.register(Object.assign(fake, {
+      server!.core.accessor.get(IEnvironmentService).register(Object.assign(fake, {
         fs: new HostFileSystem(),
         host: { ...fake.host, tempDir: join(home as string, 'dead-remote-tmp') },
         connectError: 'connection refused',
       }));
       const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
       main.accessor.get(IAgentStateService).set(agentEnvironmentBindingKey, {
-        workspaceId,
         environmentId: 'dead-remote',
       });
 

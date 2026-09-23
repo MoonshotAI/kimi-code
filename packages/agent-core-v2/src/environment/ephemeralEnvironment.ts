@@ -4,14 +4,13 @@ import { LifecycleScope } from '#/app/scopes';
 
 import type { Environment } from './environment';
 import { EnvironmentError } from './environmentRegistry';
-import type { EnvironmentRegistry } from './environmentRegistry';
+import type { IEnvironmentService } from '#/app/environment/environment';
 import type { RemoteEnvironmentEntry } from './remoteEnvironmentDeclaration';
 
 export interface EphemeralEnvironmentConnectRequest {
-  readonly workspaceId: string;
   readonly environmentId: string;
   readonly entry: RemoteEnvironmentEntry;
-  readonly registry: EnvironmentRegistry;
+  readonly registry: Pick<IEnvironmentService, 'register'>;
 }
 
 export interface EphemeralEnvironmentConnection {

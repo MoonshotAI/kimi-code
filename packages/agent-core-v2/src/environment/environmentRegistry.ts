@@ -43,7 +43,6 @@ export interface EnvironmentGenerationSnapshot {
 }
 
 export interface EnvironmentRegistrySnapshot {
-  readonly workspaceId: string;
   readonly environments: readonly EnvironmentGenerationSnapshot[];
 }
 
@@ -95,15 +94,12 @@ export class EnvironmentRegistry {
   readonly onDidChange: Event<EnvironmentRegistryChange> = this.changeEmitter.event;
   private disposing = false;
 
-  constructor(readonly workspaceId: string) {}
-
   list(): readonly Environment[] {
     return [...this.entries.values()].map((entry) => entry.environment);
   }
 
   snapshot(): EnvironmentRegistrySnapshot {
     return {
-      workspaceId: this.workspaceId,
       environments: this.list().map((environment) => ({
         environmentId: environment.identity.environmentId,
         generation: environment.identity.generation,
@@ -119,22 +115,19 @@ export class EnvironmentRegistry {
   }
 
   inspect(binding: EnvironmentBinding): Environment {
-    if (binding.workspaceId !== this.workspaceId) {
-      throw new EnvironmentError('environment.not_found', `workspace ${binding.workspaceId} is not ${this.workspaceId}`);
-    }
     const environment = this.entries.get(binding.environmentId)?.environment;
     if (environment === undefined) {
-      throw new EnvironmentError('environment.not_found', `environment ${binding.environmentId} does not exist in workspace ${this.workspaceId}`);
+      throw new EnvironmentError('environment.not_found', `environment ${binding.environmentId} does not exist`);
     }
     return environment;
   }
 
   register(environment: Environment): EnvironmentRegistrationHandle {
-    if (this.disposing) throw new EnvironmentError('environment.unavailable', `environment registry ${this.workspaceId} is disposing`);
+    if (this.disposing) throw new EnvironmentError('environment.unavailable', `environment registry is disposing`);
     this.assertReady(environment);
     const environmentId = environment.identity.environmentId;
     if (this.entries.has(environmentId)) {
-      throw new EnvironmentError('environment.conflict', `environment ${environmentId} already exists in workspace ${this.workspaceId}`);
+      throw new EnvironmentError('environment.conflict', `environment ${environmentId} already exists`);
     }
     this.entries.set(environmentId, this.createEntry(environment));
     this.publish(environment);
@@ -144,7 +137,7 @@ export class EnvironmentRegistry {
   async replace(environmentId: string, environment: Environment): Promise<void> {
     if (this.disposing) {
       await environment.dispose();
-      throw new EnvironmentError('environment.unavailable', `environment registry ${this.workspaceId} is disposing`);
+      throw new EnvironmentError('environment.unavailable', `environment registry is disposing`);
     }
     const previous = this.entries.get(environmentId);
     if (previous === undefined) {
@@ -171,9 +164,6 @@ export class EnvironmentRegistry {
   }
 
   async acquireWhenReady(binding: EnvironmentBinding, required: readonly EnvironmentCapability[] = []): Promise<EnvironmentLease> {
-    if (binding.workspaceId !== this.workspaceId) {
-      throw new EnvironmentError('environment.not_found', `workspace ${binding.workspaceId} is not ${this.workspaceId}`);
-    }
     const entry = this.entries.get(binding.environmentId);
     const pending = entry !== undefined && !entry.closed && !environmentIsReady(entry.environment)
       ? entry.environment.whenReady
@@ -183,12 +173,9 @@ export class EnvironmentRegistry {
   }
 
   acquire(binding: EnvironmentBinding, required: readonly EnvironmentCapability[] = []): EnvironmentLease {
-    if (binding.workspaceId !== this.workspaceId) {
-      throw new EnvironmentError('environment.not_found', `workspace ${binding.workspaceId} is not ${this.workspaceId}`);
-    }
     const entry = this.entries.get(binding.environmentId);
     if (entry === undefined) {
-      throw new EnvironmentError('environment.not_found', `environment ${binding.environmentId} does not exist in workspace ${this.workspaceId}`);
+      throw new EnvironmentError('environment.not_found', `environment ${binding.environmentId} does not exist`);
     }
     if (entry.closed || !environmentIsReady(entry.environment)) {
       const reason = entry.environment.connectError?.split('\n', 1)[0];
@@ -292,7 +279,6 @@ export class EnvironmentRegistry {
   }
 
   private assertReady(environment: Environment, expectedEnvironmentId?: string): void {
-    if (environment.identity.workspaceId !== this.workspaceId) throw new Error(`environment belongs to workspace ${environment.identity.workspaceId}`);
     if (expectedEnvironmentId !== undefined && environment.identity.environmentId !== expectedEnvironmentId) throw new Error(`replacement environment id must remain ${expectedEnvironmentId}`);
     if (environment.status === 'disposed') throw new EnvironmentError('environment.unavailable', `environment ${environment.identity.environmentId} is ${environment.status}`);
     for (const capability of environment.capabilities) {

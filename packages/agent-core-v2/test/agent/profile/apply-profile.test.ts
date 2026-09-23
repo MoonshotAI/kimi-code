@@ -1,3 +1,4 @@
+import { IEnvironmentService } from '#/app/environment/environment';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'pathe';
@@ -165,21 +166,17 @@ describe('AgentProfileService.applyProfile', () => {
     });
 
     it('injects the environment list when the agent_environment_tools flag is on', async () => {
-      const registry = new EnvironmentRegistry('test-workspace');
+      const registry = new EnvironmentRegistry();
       registry.register(fakeEnvironment('local', 'local-one', { workspaceId: 'test-workspace' }));
       registry.register(fakeEnvironment('staging', 'staging-one', { workspaceId: 'test-workspace', status: 'disconnected' }));
       const { ctx, profile: svc } = buildContext(
         appService(IFlagService, stubFlag((id) => id === AGENT_ENVIRONMENT_TOOLS_FLAG_ID)),
-        appService(IWorkspaceInstanceManager, {
-          _serviceBrand: undefined,
-          get: (workspaceId: string) =>
-            workspaceId === 'test-workspace' ? ({ environments: registry, root: workDir } as never) : undefined,
-        } as unknown as IWorkspaceInstanceManager),
+        appService(IEnvironmentService, registry as unknown as IEnvironmentService),
         agentService(IAgentEnvironmentBindingService, {
           _serviceBrand: undefined,
           onDidChange: Event.None,
           get current() {
-            return { workspaceId: 'test-workspace', environmentId: 'local' };
+            return { environmentId: 'local' };
           },
         } as unknown as IAgentEnvironmentBindingService),
         agentService(IAgentPlanService, {
@@ -593,7 +590,7 @@ function mappedEnvironmentService(
   workDir?: string,
 ): IAgentEnvironmentService {
   const environment: Environment = {
-    identity: { workspaceId: 'workspace-1', environmentId: 'mapped', generation: 'g1' },
+    identity: { environmentId: 'mapped', generation: 'g1' },
     capabilities: new Set(capabilities),
     host: {
       osKind: 'Linux',

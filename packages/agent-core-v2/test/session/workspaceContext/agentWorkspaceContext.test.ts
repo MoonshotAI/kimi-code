@@ -1,3 +1,4 @@
+import { IEnvironmentService } from '#/app/environment/environment';
 import { describe, expect, it, vi } from 'vitest';
 
 import { Emitter, Event } from '#/_base/event';
@@ -35,7 +36,7 @@ interface AgentHarness {
 }
 
 function setup(options: { readonly sessionCwd?: string } = {}) {
-  const registry = new EnvironmentRegistry('workspace');
+  const registry = new EnvironmentRegistry();
   registry.register(fakeEnvironment('local', 'local-one'));
   registry.register(fakeEnvironment('remote', 'remote-one'));
   const sessionState = new SessionStateService();
@@ -90,12 +91,7 @@ function setup(options: { readonly sessionCwd?: string } = {}) {
       agentContext: stubAgentContext(agentId, 1),
       scope: (subKey?: string) => subKey ?? '',
     };
-    const environment = new AgentEnvironmentService(scopeContext, binding, {
-      _serviceBrand: undefined,
-      inspect: (b: EnvironmentBinding) => registry.inspect(b),
-      acquire: (b: EnvironmentBinding, required?: never) => registry.acquire(b, required),
-      acquireWhenReady: (b: EnvironmentBinding, required?: never) => registry.acquireWhenReady(b, required),
-    }, workspaces, eventBus, session, sessionState);
+    const environment = new AgentEnvironmentService(scopeContext, binding, registry as unknown as IEnvironmentService, eventBus, session, sessionState);
     const shadow = new AgentWorkspaceContextService(sessionState, {
       current: environment,
       onDidChange: () => ({ dispose: () => {} }),
@@ -113,12 +109,12 @@ function setup(options: { readonly sessionCwd?: string } = {}) {
 describe('AgentWorkspaceContextService', () => {
   it('derives the workDir from each agent binding', () => {
     const { agent } = setup();
-    const main = agent('main', { workspaceId: 'workspace', environmentId: 'local' });
-    const sub = agent('agent-1', { workspaceId: 'workspace', environmentId: 'local' });
+    const main = agent('main', { environmentId: 'local' });
+    const sub = agent('agent-1', { environmentId: 'local' });
 
     expect(main.shadow.workDir).toBe('/workspace');
 
-    main.binding.apply({ workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
+    main.binding.apply({ environmentId: 'remote', cwd: '/remote/work' });
     expect(main.shadow.workDir).toBe('/remote/work');
     expect(main.shadow.additionalDirs).toEqual(['/extra']);
 
@@ -128,10 +124,10 @@ describe('AgentWorkspaceContextService', () => {
 
   it('keeps a sub-agent on its own inherited binding cwd after the main agent switches', () => {
     const { agent } = setup();
-    const main = agent('main', { workspaceId: 'workspace', environmentId: 'local', cwd: '/workspace' });
-    const sub = agent('agent-1', { workspaceId: 'workspace', environmentId: 'local', cwd: '/workspace' });
+    const main = agent('main', { environmentId: 'local', cwd: '/workspace' });
+    const sub = agent('agent-1', { environmentId: 'local', cwd: '/workspace' });
 
-    main.binding.apply({ workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
+    main.binding.apply({ environmentId: 'remote', cwd: '/remote/work' });
 
     expect(main.shadow.workDir).toBe('/remote/work');
     expect(sub.shadow.workDir).toBe('/workspace');
@@ -139,10 +135,10 @@ describe('AgentWorkspaceContextService', () => {
 
   it('re-pins the derived roots when the binding switches mid-turn', () => {
     const { agent } = setup();
-    const main = agent('main', { workspaceId: 'workspace', environmentId: 'local' });
+    const main = agent('main', { environmentId: 'local' });
 
     main.publishBus('turn.started', { agentId: 'main' });
-    main.binding.apply({ workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
+    main.binding.apply({ environmentId: 'remote', cwd: '/remote/work' });
     expect(main.shadow.workDir).toBe('/remote/work');
 
     main.publishBus('turn.ended', { agentId: 'main' });
@@ -151,7 +147,7 @@ describe('AgentWorkspaceContextService', () => {
 
   it('resolves and guards paths against the derived roots', () => {
     const { agent } = setup();
-    const main = agent('main', { workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
+    const main = agent('main', { environmentId: 'remote', cwd: '/remote/work' });
 
     expect(main.shadow.resolve('src/index.ts')).toBe('/remote/work/src/index.ts');
     expect(main.shadow.isWithin('/remote/work/src')).toBe(true);
@@ -167,7 +163,7 @@ describe('AgentWorkspaceContextService', () => {
     if (path === undefined) throw new Error('remote environment path missing');
     const resolveSpy = vi.spyOn(path, 'resolve');
     const relativeSpy = vi.spyOn(path, 'relative');
-    const main = agent('main', { workspaceId: 'workspace', environmentId: 'remote', cwd: '/srv/work' });
+    const main = agent('main', { environmentId: 'remote', cwd: '/srv/work' });
 
     expect(main.shadow.resolve('src/file.ts')).toBe('/srv/work/src/file.ts');
     expect(main.shadow.isWithin('/srv/work/src')).toBe(true);
@@ -178,7 +174,7 @@ describe('AgentWorkspaceContextService', () => {
   it('resolves and guards paths with win32 semantics for a win32 environment binding', () => {
     const { agent, registry } = setup();
     registry.register(fakeEnvironment('win-remote', 'win-remote-one', { pathClass: 'win32' }));
-    const main = agent('main', { workspaceId: 'workspace', environmentId: 'win-remote', cwd: 'C:\\work' });
+    const main = agent('main', { environmentId: 'win-remote', cwd: 'C:\\work' });
 
     expect(main.shadow.resolve('src\\file.ts')).toBe('C:\\work\\src\\file.ts');
     expect(main.shadow.isWithin('C:\\work\\src')).toBe(true);
@@ -188,7 +184,7 @@ describe('AgentWorkspaceContextService', () => {
 
   it('allows access under the configured additional dirs for a non-local binding', () => {
     const { agent } = setup();
-    const main = agent('main', { workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
+    const main = agent('main', { environmentId: 'remote', cwd: '/remote/work' });
 
     expect(main.shadow.additionalDirs).toEqual(['/extra']);
     expect(main.shadow.isWithin('/extra/file.txt')).toBe(true);
@@ -197,7 +193,7 @@ describe('AgentWorkspaceContextService', () => {
 
   it('falls back to the session roots and host path semantics when the bound environment is missing', () => {
     const { agent } = setup();
-    const main = agent('main', { workspaceId: 'workspace', environmentId: 'ghost' });
+    const main = agent('main', { environmentId: 'ghost' });
 
     expect(main.shadow.workDir).toBe('/workspace');
     expect(main.shadow.resolve('src/file.ts')).toBe('/workspace/src/file.ts');
@@ -206,7 +202,7 @@ describe('AgentWorkspaceContextService', () => {
 
   it('keeps setWorkDir writing the shared session state', () => {
     const { agent, sessionState } = setup();
-    const main = agent('main', { workspaceId: 'workspace', environmentId: 'local' });
+    const main = agent('main', { environmentId: 'local' });
 
     main.shadow.setWorkDir('/pushed');
     expect(sessionState.get(workspaceContextWorkDirKey)).toBe('/pushed');

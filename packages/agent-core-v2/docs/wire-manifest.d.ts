@@ -222,7 +222,6 @@ interface CronDeletePayload {
 interface EnvironmentSetBindingPayload {
   _name: 'environment.set_binding';
   agentId: string;
-  workspaceId: string;
   environmentId: string;
   cwd?: string;
 }

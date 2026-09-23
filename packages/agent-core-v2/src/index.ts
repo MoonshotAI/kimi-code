@@ -35,6 +35,8 @@ export { Service } from '#/_base/di/service';
 export * from './errors';
 export * from './events';
 export * from '#/environment/environment';
+export * from '#/app/environment/environment';
+export * from '#/app/environment/environmentService';
 export * from '#/environment/environmentRegistry';
 export * from '#/environment/environmentWorkspaceView';
 export * from '#/environment/environmentProvider';

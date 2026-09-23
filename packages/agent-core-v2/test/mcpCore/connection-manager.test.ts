@@ -28,7 +28,7 @@ import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import type { EnvironmentBinding } from '#/environment/environment';
 
-const testEnvironmentBinding: EnvironmentBinding = { workspaceId: 'test-workspace', environmentId: 'local' };
+const testEnvironmentBinding: EnvironmentBinding = { environmentId: 'local' };
 const testProcess = new HostProcessService();
 const testEnvironment = Object.assign(
   new FakeEnvironment({ ...testEnvironmentBinding, generation: 'test-generation' }, {
@@ -54,7 +54,6 @@ const testEnvironmentResolver = {
 function createManager(options: McpConnectionManagerOptions = {}): McpConnectionManager {
   return new McpConnectionManager({
     environmentResolver: testEnvironmentResolver,
-    workspaceId: testEnvironmentBinding.workspaceId,
     environmentId: testEnvironmentBinding.environmentId,
     stdioCwd: process.cwd(),
     ...options,

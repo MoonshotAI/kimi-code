@@ -14,11 +14,10 @@ import {
   ENVIRONMENT_TOOLS_PLAN_MODE_UNAVAILABLE,
 } from '#/features/environmentTools/environmentTools';
 import { IAgentPlanService } from '#/features/plan/plan';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import { ToolAccesses, type ExecutableToolResult, type ToolExecution } from '#/tool/toolContract';
-import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentService } from '#/app/environment/environment';
 
 import {
   ConnectEnvironmentInputSchema,
@@ -39,8 +38,7 @@ export class ConnectEnvironmentTool implements IConnectEnvironmentTool {
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentPlanService private readonly planMode: IAgentPlanService,
-    @ISessionContext private readonly session: ISessionContext,
-    @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
+    @IEnvironmentService private readonly environments: IEnvironmentService,
     @IEphemeralEnvironmentConnector private readonly connector: IEphemeralEnvironmentConnector,
   ) {}
 
@@ -60,10 +58,10 @@ export class ConnectEnvironmentTool implements IConnectEnvironmentTool {
           output: `environment id "${requestedId}" is reserved (${RESERVED_ENVIRONMENT_IDS.join(', ')})`,
         };
       }
-      if (this.registry()?.current(requestedId) !== undefined) {
+      if (this.environments.current(requestedId) !== undefined) {
         return {
           isError: true,
-          output: `environment "${requestedId}" already exists in this workspace; pick another id.`,
+          output: `environment "${requestedId}" already exists; pick another id.`,
         };
       }
     }
@@ -84,19 +82,15 @@ export class ConnectEnvironmentTool implements IConnectEnvironmentTool {
     environmentId: string,
     entry: RemoteEnvironmentEntry,
   ): Promise<ExecutableToolResult> {
-    const registry = this.registry();
-    if (registry === undefined) {
-      return { output: `workspace ${this.session.workspaceId} is not materialized`, isError: true };
-    }
+    const registry = this.environments;
     if (registry.current(environmentId) !== undefined) {
       return {
-        output: `environment "${environmentId}" already exists in this workspace; pick another id.`,
+        output: `environment "${environmentId}" already exists; pick another id.`,
         isError: true,
       };
     }
     try {
       const { environment, initialCwd } = await this.connector.connect({
-        workspaceId: this.session.workspaceId,
         environmentId,
         entry,
         registry,
@@ -125,9 +119,6 @@ export class ConnectEnvironmentTool implements IConnectEnvironmentTool {
     }
   }
 
-  private registry() {
-    return this.workspaces.get(this.session.workspaceId)?.environments;
-  }
 }
 
 function toRemoteEnvironmentEntry(args: ConnectEnvironmentInput): RemoteEnvironmentEntry {

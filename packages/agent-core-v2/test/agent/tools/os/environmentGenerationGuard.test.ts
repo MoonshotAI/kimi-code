@@ -38,7 +38,7 @@ vi.mock('#/os/backends/node-local/tools/rgLocator', async (importOriginal) => {
 const ensureRgPathMock = vi.mocked(ensureRgPath);
 
 const ENVIRONMENT_CHANGED_OUTPUT = 'Environment changed before execution. Retry the tool call.';
-const BINDING: EnvironmentBinding = { workspaceId: 'workspace', environmentId: 'remote' };
+const BINDING: EnvironmentBinding = { environmentId: 'remote' };
 const WORKSPACE: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: [] };
 
 const skillCatalog = { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog;
@@ -88,7 +88,7 @@ function registryBackedService(registry: EnvironmentRegistry): IAgentEnvironment
 }
 
 function connectSwappingHarness(readyFs: IHostFileSystem) {
-  const registry = new EnvironmentRegistry('workspace');
+  const registry = new EnvironmentRegistry();
   const calls: string[] = [];
   let registration: EnvironmentRegistrationHandle;
   const ready = Object.assign(
@@ -115,7 +115,7 @@ function connectSwappingHarness(readyFs: IHostFileSystem) {
 }
 
 function readyHarness(fs: IHostFileSystem) {
-  const registry = new EnvironmentRegistry('workspace');
+  const registry = new EnvironmentRegistry();
   const ready = Object.assign(
     new FakeEnvironment(
       { ...BINDING, generation: 'remote-one' },

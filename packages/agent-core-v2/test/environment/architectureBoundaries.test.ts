@@ -52,20 +52,20 @@ describe('environment architecture boundaries', () => {
     expect(workspaceSources).not.toMatch(/registerScopedService\(\s*['"]program['"]/);
   });
 
-  it('attaches environment providers through context and the provider host', () => {
+  it('attaches environment providers once through the app service', () => {
     const provider = source('environment/environmentProvider.ts');
     const local = source('environment/localEnvironment.ts');
     const workspaceInstance = source('workspace/workspaceInstance/workspaceInstance.ts');
-    const manager = source('workspace/workspaceInstance/workspaceInstanceManagerService.ts');
-    expect(provider).toContain('EnvironmentProviderContext');
+    const manager = source('app/environment/environmentService.ts');
+    expect(provider).not.toContain('EnvironmentProviderContext');
     expect(provider).toContain('registerEnvironment');
     expect(provider).not.toContain('WorkspaceInstance');
     expect(provider).not.toContain('EnvironmentProviderRegistry');
     expect(provider).not.toContain('readonly environments');
     expect(local).not.toContain('ServicesAccessor');
     expect(workspaceInstance).not.toContain('IInstantiationService');
-    expect(manager).toContain('provider.attach(');
-    expect(manager).toContain('this.providerHost(instance, handles)');
+    expect(manager).toContain('factory.attach(');
+    expect(workspaceInstance).not.toContain('environments.dispose');
   });
 
   it('builds every agent OS execution from an environment lease and workspace view', () => {
@@ -98,7 +98,7 @@ describe('environment architecture boundaries', () => {
     expect(terminal).not.toMatch(/@IHostTerminalService/);
     expect(mcp).toContain('environmentResolver: this.environmentResolver');
     expect(mcp).not.toMatch(/@IHost(?:FileSystem|FsWatchService|ProcessService|TerminalService)/);
-    expect(externalFs).toContain('get(IEnvironmentResolver).acquire(');
-    expect(externalFs).toContain('new LocalEnvironment(');
+    expect(externalFs).toContain('get(IEnvironmentService).acquire(');
+    expect(externalFs).not.toContain('environmentWorkspaceId');
   });
 });

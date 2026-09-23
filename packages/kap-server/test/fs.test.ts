@@ -1,3 +1,4 @@
+import { IEnvironmentService } from '@moonshot-ai/agent-core-v2';
 import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
@@ -142,12 +143,12 @@ describe('server-v2 /api/v1 fs routes', () => {
     const remote = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-remote-'));
     await writeFile(join(remote, 'selected.txt'), 'remote');
     const id = await createSession();
-    const provider = await server!.core.accessor.get(IWorkspaceInstanceManager).addProvider({
+    const provider = await server!.core.accessor.get(IEnvironmentService).addProvider({
       id: 'remote-test-provider',
-      attach: async (context, host) => {
+      attach: async (host) => {
         const environment = Object.assign(
           new FakeEnvironment(
-            { workspaceId: context.id, environmentId: 'remote-test', generation: 'remote-generation' },
+            { environmentId: 'remote-test', generation: 'remote-generation' },
             {
               capabilities: ['fs'],
               mapWorkspaceRoots: () => ({ workDir: remote, additionalDirs: [] }),
@@ -190,12 +191,12 @@ describe('server-v2 /api/v1 fs routes', () => {
 
   it('fs:git_status maps a disconnected environment to ENVIRONMENT_UNAVAILABLE without a stack', async () => {
     const id = await createSession();
-    const provider = await server!.core.accessor.get(IWorkspaceInstanceManager).addProvider({
+    const provider = await server!.core.accessor.get(IEnvironmentService).addProvider({
       id: 'disconnected-test-provider',
-      attach: async (context, host) => {
+      attach: async (host) => {
         const environment = Object.assign(
           new FakeEnvironment(
-            { workspaceId: context.id, environmentId: 'remote-down', generation: 'remote-generation' },
+            { environmentId: 'remote-down', generation: 'remote-generation' },
             {
               capabilities: ['fs'],
               status: 'disconnected',
@@ -807,12 +808,12 @@ describe('server-v2 /api/v1 fs routes', () => {
     await writeFile(join(remote, 'remote-only.ts'), '');
     const id = await createSession();
     expect(id).toBeTruthy();
-    const provider = await server!.core.accessor.get(IWorkspaceInstanceManager).addProvider({
+    const provider = await server!.core.accessor.get(IEnvironmentService).addProvider({
       id: 'remote-suggest-provider',
-      attach: async (context, host) => {
+      attach: async (host) => {
         const environment = Object.assign(
           new FakeEnvironment(
-            { workspaceId: context.id, environmentId: 'remote-suggest', generation: 'remote-generation' },
+            { environmentId: 'remote-suggest', generation: 'remote-generation' },
             { capabilities: ['fs'] },
           ),
           { fs: new HostFileSystem() },

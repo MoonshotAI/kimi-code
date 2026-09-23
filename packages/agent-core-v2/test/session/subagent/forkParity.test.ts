@@ -25,11 +25,8 @@ import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import { FORK_CONTEXT_NOTICE } from '#/session/subagent/spawn';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
-import {
-  IEnvironmentResolver,
-  IWorkspaceInstanceManager,
-  type WorkspaceInstanceChange,
-} from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IWorkspaceInstanceManager, type WorkspaceInstanceChange } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
 import {
   appService,
@@ -90,7 +87,8 @@ class ScopedAppendLogStore implements IAppendLogStore {
   }
 }
 
-class TestEnvironmentResolver implements IEnvironmentResolver {
+class TestEnvironmentResolver implements EnvironmentResolver {
+  readonly onDidChange = () => ({ dispose: () => {} });
   declare readonly _serviceBrand: undefined;
   private readonly environment: LocalEnvironment;
 
@@ -100,7 +98,7 @@ class TestEnvironmentResolver implements IEnvironmentResolver {
     @IHostProcessService processes: IHostProcessService,
     @IHostTerminalService terminal: IHostTerminalService,
   ) {
-    this.environment = new LocalEnvironment('test-workspace', environment, fs, processes, terminal);
+    this.environment = new LocalEnvironment(environment, fs, processes, terminal);
   }
 
   inspect(_binding: EnvironmentBinding): Environment {
@@ -134,7 +132,7 @@ describe('fork subagent first-request parity', () => {
       appService(IAppendLogStore, store),
       appService(IFlagService, stubFlag((id) => id === SUBAGENT_FORK_FLAG_ID)),
       sessionServices((reg) => {
-        reg.defineDescriptor(IEnvironmentResolver, new SyncDescriptor(TestEnvironmentResolver));
+        reg.defineDescriptor(IEnvironmentService, new SyncDescriptor(TestEnvironmentResolver));
         reg.definePartialInstance(IWorkspaceInstanceManager, {
           onDidChange: Event.None as Event<WorkspaceInstanceChange>,
           get: () => undefined,

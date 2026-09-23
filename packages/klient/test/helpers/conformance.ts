@@ -1,3 +1,4 @@
+import { IEnvironmentService } from '@moonshot-ai/agent-core-v2';
 /**
  * Shared conformance suite — the guarantee that the ipc and memory
  * transports are interchangeable. Every transport test file runs the exact
@@ -549,7 +550,7 @@ export function defineKlientConformance(
         const agent = target.klient.session(created.id).agent('main');
         const binding = await agent.getEnvironment();
         expect(binding.environmentId).toBe('local');
-        expect(binding.workspaceId.length).toBeGreaterThan(0);
+        expect(binding).toEqual({ environmentId: 'local' });
         await expect(agent.switchEnvironment('missing-environment')).rejects.toThrow(/missing-environment/);
         expect(await agent.getEnvironment()).toEqual(binding);
       } finally {
@@ -560,11 +561,11 @@ export function defineKlientConformance(
     it('connects an environment with cwd and preserves the binding when a later switch fails', async () => {
       const remoteCwd = await mkdtemp(join(tmpdir(), 'klient-environment-'));
       let connections = 0;
-      const provider = await target.app.accessor.get(IWorkspaceInstanceManager).addProvider({
+      const provider = await target.app.accessor.get(IEnvironmentService).addProvider({
         id: 'conformance-environment',
-        attach: async (context, host) => {
+        attach: async (host) => {
           const environment = new FakeEnvironment(
-            { workspaceId: context.id, environmentId: 'remote-box', generation: 'conformance' },
+            { environmentId: 'remote-box', generation: 'conformance' },
             { status: 'pending', capabilities: ['fs', 'process'] },
           );
           const registration = host.registerEnvironment(Object.assign(environment, {

@@ -70,7 +70,7 @@ function createWriteFs(options: WriteFsOptions = {}) {
 function makeToolWithFs(fs: IHostFileSystem, workspace = PERMISSIVE_WORKSPACE) {
   const backend = Object.assign(
     new FakeEnvironment(
-      { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
+      { environmentId: 'local', generation: 'test' },
       { capabilities: ['fs'] },
     ),
     { fs, host: createTestEnv() },
@@ -182,7 +182,7 @@ describe('WriteTool', () => {
     const environment = createTestEnv('/home/test');
     const backend = Object.assign(
       new FakeEnvironment(
-        { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
+        { environmentId: 'local', generation: 'test' },
         { capabilities: ['fs'] },
       ),
       { fs: fakes.fs, host: environment },

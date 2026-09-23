@@ -17,7 +17,7 @@ import {
 import { McpServerStdioConfigSchema, type McpServerStdioConfig } from '#/mcpCore/config-schema';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
-import type { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
 import {
   crashAfterConnectFixture,
@@ -32,7 +32,7 @@ function createClient(
 ): StdioMcpClient {
   const environment = Object.assign(
     new FakeEnvironment(
-      { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
+      { environmentId: 'local', generation: 'test' },
       { capabilities: ['process'] },
     ),
     { process: new HostProcessService() },
@@ -52,7 +52,6 @@ function createClient(
         dispose: () => {},
       }),
     },
-    workspaceId: 'workspace',
     environmentId: 'local',
     defaultCwd: process.cwd(),
     ...options,
@@ -91,7 +90,7 @@ function createEnvironmentClient(
     },
   };
   const environment = new FakeEnvironment(
-    { workspaceId: 'workspace', environmentId, generation: 'test' },
+    { environmentId, generation: 'test' },
     {
       capabilities: ['process'],
       status: options.status ?? 'ready',
@@ -114,7 +113,7 @@ function createEnvironmentClient(
   const unavailable = (): never => {
     throw new EnvironmentError('environment.unavailable', `environment is ${environment.status}`);
   };
-  const environmentResolver: IEnvironmentResolver = {
+  const environmentResolver: EnvironmentResolver = {
     _serviceBrand: undefined,
     inspect: () => {
       calls.push('inspect');
@@ -133,7 +132,6 @@ function createEnvironmentClient(
   };
   const client = new StdioMcpClient(config, {
     environmentResolver,
-    workspaceId: 'workspace',
     environmentId,
     defaultCwd: options.defaultCwd ?? process.cwd(),
   });
@@ -533,7 +531,7 @@ describe('StdioMcpClient', () => {
     const tracked: Array<{ sessionId?: string; disposed: boolean }> = [];
     const environment = Object.assign(
       new FakeEnvironment(
-        { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
+        { environmentId: 'local', generation: 'test' },
         { capabilities: ['process'] },
       ),
       { process: new HostProcessService() },
@@ -564,7 +562,6 @@ describe('StdioMcpClient', () => {
         acquire: () => ({ environment, track, dispose: () => {} }),
         acquireWhenReady: async () => ({ environment, track, dispose: () => {} }),
       },
-      workspaceId: 'workspace',
       environmentId: 'local',
       defaultCwd: process.cwd(),
       sessionId: 's1',

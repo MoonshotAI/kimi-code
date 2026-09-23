@@ -13,7 +13,6 @@ import type {
   Environment,
   EnvironmentPath,
   EnvironmentProviderAttachment,
-  EnvironmentProviderContext,
   EnvironmentProviderFactory,
   EnvironmentProviderHost,
 } from '@moonshot-ai/agent-core-v2';
@@ -171,7 +170,6 @@ class AcpSessionEnvironment implements Environment {
   readonly onDidChangeStatus = () => ({ dispose: () => {} });
 
   constructor(
-    workspaceId: string,
     sessionId: string,
     cwd: string,
     connection: IAcpConnection,
@@ -179,7 +177,6 @@ class AcpSessionEnvironment implements Environment {
     local: IHostProcessService,
   ) {
     this.identity = {
-      workspaceId,
       environmentId: AcpEnvironmentProviderFactory.environmentId(sessionId),
       generation: `acp-${String(nextGeneration++)}`,
     };
@@ -210,11 +207,10 @@ class AcpSessionEnvironment implements Environment {
   dispose(): void {}
 }
 
-class AcpWorkspaceEnvironmentAttachment implements EnvironmentProviderAttachment {
+class AcpSessionEnvironmentAttachment implements EnvironmentProviderAttachment {
   private readonly sessions = new Map<string, { remove(): Promise<void> }>();
 
   constructor(
-    private readonly workspace: EnvironmentProviderContext,
     private readonly host: EnvironmentProviderHost,
     private readonly connection: IAcpConnection,
     private readonly environment: IHostEnvironment,
@@ -225,7 +221,7 @@ class AcpWorkspaceEnvironmentAttachment implements EnvironmentProviderAttachment
     const environmentId = AcpEnvironmentProviderFactory.environmentId(sessionId);
     if (this.sessions.has(sessionId)) return environmentId;
     const registration = this.host.registerEnvironment(
-      new AcpSessionEnvironment(this.workspace.id, sessionId, cwd, this.connection, this.environment, this.local),
+      new AcpSessionEnvironment(sessionId, cwd, this.connection, this.environment, this.local),
     );
     this.sessions.set(sessionId, registration);
     return environmentId;
@@ -247,7 +243,7 @@ class AcpWorkspaceEnvironmentAttachment implements EnvironmentProviderAttachment
 
 export class AcpEnvironmentProviderFactory implements EnvironmentProviderFactory {
   readonly id = 'acp';
-  private readonly attachments = new Map<string, AcpWorkspaceEnvironmentAttachment>();
+  private attachment: AcpSessionEnvironmentAttachment | undefined;
 
   constructor(
     private readonly connection: IAcpConnection,
@@ -259,25 +255,22 @@ export class AcpEnvironmentProviderFactory implements EnvironmentProviderFactory
     return `acp:${sessionId}`;
   }
 
-  async attach(workspace: EnvironmentProviderContext, host: EnvironmentProviderHost): Promise<EnvironmentProviderAttachment> {
-    const attachment = new AcpWorkspaceEnvironmentAttachment(workspace, host, this.connection, this.environment, this.local);
-    this.attachments.set(workspace.id, attachment);
-    return {
-      dispose: async () => {
-        if (this.attachments.get(workspace.id) !== attachment) return;
-        this.attachments.delete(workspace.id);
-        await attachment.dispose();
-      },
-    };
+  async attach(host: EnvironmentProviderHost): Promise<EnvironmentProviderAttachment> {
+    const attachment = new AcpSessionEnvironmentAttachment(host, this.connection, this.environment, this.local);
+    this.attachment = attachment;
+    return { dispose: async () => {
+      if (this.attachment !== attachment) return;
+      this.attachment = undefined;
+      await attachment.dispose();
+    } };
   }
 
-  bindSession(workspaceId: string, sessionId: string, cwd: string): string {
-    const attachment = this.attachments.get(workspaceId);
-    if (attachment === undefined) throw new Error(`ACP environment provider is not attached to workspace ${workspaceId}`);
-    return attachment.bindSession(sessionId, cwd);
+  bindSession(sessionId: string, cwd: string): string {
+    if (this.attachment === undefined) throw new Error('ACP environment provider is not attached');
+    return this.attachment.bindSession(sessionId, cwd);
   }
 
-  async unbindSession(workspaceId: string, sessionId: string): Promise<void> {
-    await this.attachments.get(workspaceId)?.unbindSession(sessionId);
+  async unbindSession(sessionId: string): Promise<void> {
+    await this.attachment?.unbindSession(sessionId);
   }
 }

@@ -56,6 +56,7 @@ import {
   IMcpOAuthService,
   ISessionManager,
   IWorkspaceInstanceManager,
+  IEnvironmentService,
   IWorkspaceService,
   MAIN_AGENT_ID,
   OsProcessErrors,
@@ -188,7 +189,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     try {
       const binding = await session.getEnvironment();
       expect(binding.environmentId).toBe('local');
-      expect(binding.workspaceId.length).toBeGreaterThan(0);
+      expect(binding).toEqual({ environmentId: 'local' });
       await expect(session.switchEnvironment('missing-environment')).rejects.toThrow(/missing-environment/);
       expect(await session.getEnvironment()).toEqual(binding);
     } finally {
@@ -267,11 +268,11 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       remoteEnvironmentProvider: Promise<{ dispose(): void | Promise<void> } | undefined>;
     }).remoteEnvironmentProvider;
     await attached?.dispose();
-    return client.engineAccessor.get(IWorkspaceInstanceManager).addProvider({
+    return client.engineAccessor.get(IEnvironmentService).addProvider({
       id: 'fake-box-provider',
-      attach: async (context, host) => {
+      attach: async (host) => {
         const fake = new FakeEnvironment(
-          { workspaceId: context.id, environmentId: 'fake-box', generation: 'fake-generation' },
+          { environmentId: 'fake-box', generation: 'fake-generation' },
           { capabilities: ['fs', 'process'] },
         );
         const environment = Object.assign(fake, {
@@ -1370,7 +1371,7 @@ key = "${titleOAuthRef.key}"
     }
   });
 
-  it('reports registration failure when the declaring workspace closes while a global write completes', async () => {
+  it('finishes environment registration when the declaring workspace closes during the config write', async () => {
     vi.stubEnv('KIMI_CODE_WATCH', '0');
     const { harness, client, homeDir } = await makeEnvironmentHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
@@ -1380,7 +1381,7 @@ key = "${titleOAuthRef.key}"
     let outcome: Promise<unknown> | undefined;
     try {
       const session = await harness.createSession({ workDir });
-      const { workspaceId } = await session.getEnvironment();
+      const workspaceId = client.engineAccessor.get(IWorkspaceInstanceManager).findByRoot(workDir)!.id;
       const config = client.engineAccessor.get(IConfigService);
       const replaceSections = config.replaceSections.bind(config);
       vi.spyOn(config, 'replaceSections').mockImplementation(async (...args) => {
@@ -1397,9 +1398,8 @@ key = "${titleOAuthRef.key}"
       await client.engineAccessor.get(IWorkspaceInstanceManager).close(workspaceId);
       release.resolve();
 
-      expect(await outcome).toMatchObject({
-        message: expect.stringContaining('was saved, but registration failed'),
-      });
+      expect(await outcome).toBeUndefined();
+      expect(client.engineAccessor.get(IEnvironmentService).current('closing-box')?.status).toBe('pending');
       expect(await readFile(join(homeDir, 'config.toml'), 'utf-8')).toContain('[environments.closing-box]');
     } finally {
       release.resolve();
@@ -1435,11 +1435,10 @@ key = "${titleOAuthRef.key}"
     const { harness, client } = await makeEnvironmentHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
-    const provider = await client.engineAccessor.get(IWorkspaceInstanceManager).addProvider({
+    const provider = await client.engineAccessor.get(IEnvironmentService).addProvider({
       id: 'conflicting-environment',
-      attach: async (context, host) => {
+      attach: async (host) => {
         const registration = host.registerEnvironment(new FakeEnvironment({
-          workspaceId: context.id,
           environmentId: 'taken-box',
           generation: 'existing-generation',
         }));

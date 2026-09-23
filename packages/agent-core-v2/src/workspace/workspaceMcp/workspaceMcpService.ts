@@ -18,7 +18,7 @@ import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import {
   IWorkspaceMcpConfigService,
   type McpServersChange,
@@ -45,7 +45,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
 
   constructor(
     @IWorkspaceContext workspace: IWorkspaceContext,
-    @IEnvironmentResolver private readonly environmentResolver: IEnvironmentResolver,
+    @IEnvironmentService private readonly environmentResolver: EnvironmentResolver,
     @IWorkspaceMcpConfigService private readonly mcpConfig: IWorkspaceMcpConfigService,
     @IMcpOAuthService oauthService: McpOAuthService,
     @ILogService private readonly log: ILogService,
@@ -63,7 +63,6 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       oauthService: this.oauthService,
       stdioCwd: this.stdioCwd,
       environmentResolver: this.environmentResolver,
-      workspaceId: workspace.workspaceId,
       environmentId: 'local',
       resolveDefaultTimeouts: () => this.mcpConfig.tunables(),
       resolveClientName: this.resolveClientName,
@@ -127,7 +126,6 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       oauthService: this.oauthService,
       stdioCwd: opts?.stdioCwd ?? this.stdioCwd,
       environmentResolver: this.environmentResolver,
-      workspaceId: this.workspaceId,
       environmentId: 'local',
       requireStdioEnvironmentId: true,
       sessionId: opts?.sessionId,

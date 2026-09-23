@@ -31,7 +31,6 @@ export interface PlanEnvironmentOptions {
 export function stubPlanEnvironment(options: PlanEnvironmentOptions): IAgentEnvironmentService {
   const environment: Environment = {
     identity: {
-      workspaceId: 'workspace-1',
       environmentId: options.environmentId ?? 'remote',
       generation: 'test-generation',
     },

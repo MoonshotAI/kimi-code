@@ -97,7 +97,7 @@ describe('AgentPermissionPolicyService chain', () => {
           acquire: () => ({
             track: (resource) => resource,
             environment: {
-              identity: { workspaceId: 'test', environmentId: 'local', generation: 'test' },
+              identity: { environmentId: 'local', generation: 'test' },
               capabilities: new Set(),
               status: 'ready',
               onDidChangeStatus: () => ({ dispose: () => {} }),
@@ -572,7 +572,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
             return {
               track: (resource) => resource,
               environment: {
-                identity: { workspaceId: 'test', environmentId: 'local', generation: 'test' },
+                identity: { environmentId: 'local', generation: 'test' },
                 capabilities: new Set(),
                 status: 'ready',
                 onDidChangeStatus: () => ({ dispose: () => {} }),

@@ -23,12 +23,12 @@ import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
 import { IAgentEnvironmentBindingSeed, IAgentEnvironmentBindingService } from './environmentBinding';
 import { EnvironmentSetBinding, environmentBindingKey } from './environmentBindingOps';
 
-export const agentEnvironmentBindingKey = defineState<EnvironmentBinding>('environment.binding', () => ({ workspaceId: '', environmentId: LOCAL_ENVIRONMENT_ID }));
+export const agentEnvironmentBindingKey = defineState<EnvironmentBinding>('environment.binding', () => ({ environmentId: LOCAL_ENVIRONMENT_ID }));
 
 export const ENVIRONMENT_BINDING_REMINDER_VARIANT = 'environment_binding';
 
@@ -84,7 +84,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     @IAgentEnvironmentBindingSeed private readonly seed: IAgentEnvironmentBindingSeed,
     @ISessionContext private readonly session: ISessionContext,
     @ISessionWorkspaceContext private readonly workspaceContext: ISessionWorkspaceContext,
-    @IEnvironmentResolver private readonly resolver: IEnvironmentResolver,
+    @IEnvironmentService private readonly resolver: EnvironmentResolver,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ref(IAgentLoopService) private readonly loop: LiveRef<IAgentLoopService>,
     @IAgentReminderService private readonly reminder: IAgentReminderService,
@@ -96,13 +96,11 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     this.state.contributeState(agentEnvironmentBindingKey);
     this.state.contributeState(environmentBindingKey);
     const initial = this.state.get(environmentBindingKey) ?? seed.binding;
-    this.assertSessionWorkspace(initial);
     this.state.set(agentEnvironmentBindingKey, initial);
     this.markProjectContextVisited(initial);
     this.restoreHook = dispatcher.hooks.onDidRestore.register('agent-environment-binding', async (_ctx, next) => {
       const replayed = this.state.get(environmentBindingKey);
       if (replayed !== undefined) {
-        this.assertSessionWorkspace(replayed);
         this.state.set(agentEnvironmentBindingKey, replayed);
         this.applySessionWorkDir(replayed);
         if (this.isSeedRoundTrip(replayed)) {
@@ -127,20 +125,10 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     this.undoParticipant = undoParticipants.register(participant);
   }
 
-  private assertSessionWorkspace(binding: EnvironmentBinding): void {
-    if (binding.workspaceId !== this.session.workspaceId) {
-      throw new EnvironmentError(
-        'environment.not_found',
-        `environment binding workspace ${binding.workspaceId} does not match session workspace ${this.session.workspaceId}`,
-      );
-    }
-  }
-
   private isSeedRoundTrip(binding: EnvironmentBinding): boolean {
     const seed = this.seed.binding;
     return (
       binding.environmentId !== LOCAL_ENVIRONMENT_ID &&
-      binding.workspaceId === seed.workspaceId &&
       binding.environmentId === seed.environmentId &&
       binding.cwd === seed.cwd
     );
@@ -180,7 +168,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
   }
 
   set(binding: EnvironmentBinding): EnvironmentBinding {
-    this.assertSessionWorkspace(binding);
     this.assertNotInPlanMode();
     this.assertSwitchAllowed();
     const lease = this.resolver.acquire(binding, []);
@@ -189,8 +176,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
   }
 
   async connectAndSwitch(environmentId: string, cwd?: string): Promise<EnvironmentBinding> {
-    const binding: EnvironmentBinding = { workspaceId: this.session.workspaceId, environmentId, cwd };
-    this.assertSessionWorkspace(binding);
+    const binding: EnvironmentBinding = { environmentId, cwd };
     this.assertNotInPlanMode();
     this.assertSwitchAllowed();
     await this.prepareSwitch(binding);
@@ -198,8 +184,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
   }
 
   async connectAndSwitchInTurn(environmentId: string, cwd?: string): Promise<EnvironmentBinding> {
-    const binding: EnvironmentBinding = { workspaceId: this.session.workspaceId, environmentId, cwd };
-    this.assertSessionWorkspace(binding);
+    const binding: EnvironmentBinding = { environmentId, cwd };
     this.assertNotInPlanMode();
     const foreign = this.foreignInFlightToolCallCount();
     if (foreign > 0) {
@@ -216,21 +201,20 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     if (binding.environmentId !== LOCAL_ENVIRONMENT_ID && binding.cwd === undefined) {
       throw new EnvironmentError('environment.invalid_cwd', `binding environment ${binding.environmentId} requires a cwd`);
     }
-    await this.environmentDeclarations.ensureConnected(binding.workspaceId, binding.environmentId);
+    await this.environmentDeclarations.ensureConnected(binding.environmentId);
     if (binding.environmentId === LOCAL_ENVIRONMENT_ID || binding.cwd === undefined) return;
-    await this.environmentDeclarations.assertCwdUsable(binding.workspaceId, binding.environmentId, binding.cwd);
+    await this.environmentDeclarations.assertCwdUsable(binding.environmentId, binding.cwd);
   }
 
   private commit(binding: EnvironmentBinding): EnvironmentBinding {
     const previous = this.current;
     if (
-      binding.workspaceId === previous.workspaceId &&
       binding.environmentId === previous.environmentId &&
       binding.cwd === previous.cwd
     ) {
       return previous;
     }
-    const next = { workspaceId: binding.workspaceId, environmentId: binding.environmentId, cwd: binding.cwd };
+    const next = { environmentId: binding.environmentId, cwd: binding.cwd };
     void this.dispatcher.dispatch(
       new EnvironmentSetBinding({ ...next, agentId: this.scopeContext.agentId }),
     );
@@ -266,7 +250,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     const target = this.state.get(environmentBindingKey) ?? this.seed.binding;
     const previous = this.current;
     if (
-      target.workspaceId === previous.workspaceId &&
       target.environmentId === previous.environmentId &&
       target.cwd === previous.cwd
     ) {
@@ -340,7 +323,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
   }
 
   switch(environmentId: string, cwd?: string): EnvironmentBinding {
-    return this.set({ workspaceId: this.session.workspaceId, environmentId, cwd });
+    return this.set({ environmentId, cwd });
   }
 
   dispose(): void {

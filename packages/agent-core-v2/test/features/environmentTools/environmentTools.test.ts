@@ -1,3 +1,4 @@
+import { IEnvironmentService } from '#/app/environment/environment';
 import { describe, expect, it } from 'vitest';
 
 import type { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
@@ -52,7 +53,7 @@ function planMode(plan: PlanData = null): IAgentPlanService {
 
 function bindingStub(
   calls: { environmentId: string; cwd?: string }[],
-  initial: EnvironmentBinding = { workspaceId: 'workspace', environmentId: 'local' },
+  initial: EnvironmentBinding = { environmentId: 'local' },
 ): IAgentEnvironmentBindingService {
   let current = initial;
   return {
@@ -62,7 +63,7 @@ function bindingStub(
     },
     connectAndSwitchInTurn: async (environmentId: string, cwd?: string) => {
       calls.push({ environmentId, cwd });
-      const next = { workspaceId: 'workspace', environmentId, cwd };
+      const next = { environmentId, cwd };
       current = next;
       return next;
     },
@@ -90,14 +91,14 @@ function declarationService(workspaces: IWorkspaceInstanceManager, config: unkno
     configStub(config),
     { _serviceBrand: undefined, read: async function* () {} } as never,
     { _serviceBrand: undefined, scope: (name: string) => name } as never,
-    workspaces,
+    Object.assign((workspaces.get('workspace') as unknown as { environments: EnvironmentRegistry }).environments, { ready: Promise.resolve() }) as unknown as IEnvironmentService,
     { _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as never,
   );
 }
 
 describe('buildEnvironmentsInfo', () => {
   it('lists each environment with its status and marks the current one', () => {
-    const registry = new EnvironmentRegistry('workspace');
+    const registry = new EnvironmentRegistry();
     registry.register(fakeEnvironment('local', 'local-one', { status: 'ready' }));
     registry.register(fakeEnvironment('dev-box', 'dev-box-one', { status: 'disconnected' }));
 
@@ -117,11 +118,11 @@ describe('ChangeEnvironmentTool', () => {
     } = {},
   ) {
     const calls: { environmentId: string; cwd?: string }[] = [];
-    const registry = options.registry ?? new EnvironmentRegistry('workspace');
+    const registry = options.registry ?? new EnvironmentRegistry();
     const workspaces = workspacesStub(registry);
     const tool = new ChangeEnvironmentTool(
       options.scope ?? mainScope,
-      bindingStub(calls, { workspaceId: 'workspace', environmentId: 'local' }),
+      bindingStub(calls, { environmentId: 'local' }),
       planMode(options.plan),
       session(),
       declarationService(workspaces, options.config),
@@ -156,13 +157,13 @@ describe('ChangeEnvironmentTool', () => {
   });
 
   it('reports the in-flight conflict as a retryable tool error', async () => {
-    const registry = new EnvironmentRegistry('workspace');
+    const registry = new EnvironmentRegistry();
     const tool = new ChangeEnvironmentTool(
       mainScope,
       {
         _serviceBrand: undefined,
         get current() {
-          return { workspaceId: 'workspace', environmentId: 'local' };
+          return { environmentId: 'local' };
         },
         connectAndSwitchInTurn: async () => {
           throw new EnvironmentError(
@@ -214,13 +215,13 @@ describe('ChangeEnvironmentTool', () => {
   });
 
   it('maps binding EnvironmentError rejections to tool errors', async () => {
-    const registry = new EnvironmentRegistry('workspace');
+    const registry = new EnvironmentRegistry();
     const tool = new ChangeEnvironmentTool(
       mainScope,
       {
         _serviceBrand: undefined,
         get current() {
-          return { workspaceId: 'workspace', environmentId: 'local' };
+          return { environmentId: 'local' };
         },
         connectAndSwitchInTurn: async () => {
           throw new EnvironmentError(
@@ -254,12 +255,11 @@ describe('ConnectEnvironmentTool', () => {
       readonly connector?: IEphemeralEnvironmentConnector;
     } = {},
   ) {
-    const registry = options.registry ?? new EnvironmentRegistry('workspace');
+    const registry = options.registry ?? new EnvironmentRegistry();
     const tool = new ConnectEnvironmentTool(
       options.scope ?? mainScope,
       planMode(options.plan),
-      session(),
-      workspacesStub(registry),
+      registry as unknown as IEnvironmentService,
       options.connector ?? unavailableConnector(),
     );
     return { tool, registry };
@@ -311,7 +311,7 @@ describe('ConnectEnvironmentTool', () => {
   });
 
   it('rejects reserved and already-registered ids', async () => {
-    const registry = new EnvironmentRegistry('workspace');
+    const registry = new EnvironmentRegistry();
     registry.register(fakeEnvironment('taken', 'taken-one'));
     const { tool } = createTool({ registry });
 
@@ -365,7 +365,6 @@ describe('ConnectEnvironmentTool', () => {
     expect(result.isError).toBeUndefined();
     expect(requests).toHaveLength(1);
     expect(requests[0]).toMatchObject({
-      workspaceId: 'workspace',
       environmentId: 'dev-box-a1b2c3',
       entry: { type: 'ssh', host: 'dev-box', remoteBin: undefined },
     });
@@ -401,7 +400,7 @@ describe('ConnectEnvironmentTool', () => {
   });
 
   it('surfaces the connector failure and leaves nothing registered', async () => {
-    const registry = new EnvironmentRegistry('workspace');
+    const registry = new EnvironmentRegistry();
     const connector = {
       _serviceBrand: undefined,
       connect: async () => {

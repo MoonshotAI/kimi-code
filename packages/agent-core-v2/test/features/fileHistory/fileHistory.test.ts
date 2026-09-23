@@ -172,7 +172,7 @@ describe('AgentFileHistoryService', () => {
     const environmentId = options.environmentId ?? 'local';
     const environmentBinding = {
       _serviceBrand: undefined,
-      current: { workspaceId: 'wd_test', environmentId },
+      current: { environmentId },
     };
     const remoteEnvironment = {
       fs: hostFs(remoteShape, options.remoteFiles ?? options.localFiles ?? files),
@@ -207,7 +207,7 @@ describe('AgentFileHistoryService', () => {
               if (serviceId === IAgentEnvironmentBindingService) {
                 return {
                   _serviceBrand: undefined,
-                  current: { workspaceId: 'wd_test', environmentId: options.mainEnvironmentId ?? 'local' },
+                  current: { environmentId: options.mainEnvironmentId ?? 'local' },
                 };
               }
               return undefined;

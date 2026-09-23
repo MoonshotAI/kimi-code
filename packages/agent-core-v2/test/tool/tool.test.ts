@@ -298,7 +298,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
         if (serviceId === IAgentEnvironmentBindingService) {
           return {
             _serviceBrand: undefined,
-            current: { workspaceId: 'test', environmentId: 'local' },
+            current: { environmentId: 'local' },
           } as never;
         }
         if (serviceId === IAgentPermissionModeService) {

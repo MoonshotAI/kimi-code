@@ -293,7 +293,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
             [ITelemetryService, telemetryBinding.telemetry],
             [IAgentEnvironmentBindingSeed, {
               _serviceBrand: undefined,
-              binding: { workspaceId: this.ctx.workspaceId, environmentId: opts.environmentId ?? LOCAL_ENVIRONMENT_ID, cwd: opts.environmentCwd },
+              binding: { environmentId: opts.environmentId ?? LOCAL_ENVIRONMENT_ID, cwd: opts.environmentCwd },
             }],
             [IAgentBlobService, blobView],
             [IWireService, wire],
@@ -348,7 +348,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         await handle.accessor.get(IEventDispatcher).dispatch(
           new EnvironmentSetBinding({
             agentId,
-            workspaceId: this.ctx.workspaceId,
             environmentId: opts.environmentId,
             cwd: opts.environmentCwd,
           }),

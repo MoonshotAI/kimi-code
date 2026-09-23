@@ -39,12 +39,11 @@ describe('RemoteEnvironment over a subprocess loopback', () => {
 
   it('exposes the Environment surface and runs the fs/process chain', async () => {
     const environment = await RemoteEnvironment.connect({
-      workspaceId: 'ws-test',
       environmentId: 'loopback',
       launcher: loopbackLauncher(),
     });
     try {
-      expect(environment.identity).toMatchObject({ workspaceId: 'ws-test', environmentId: 'loopback' });
+      expect(environment.identity).toMatchObject({ environmentId: 'loopback' });
       expect(environment.identity.generation.length).toBeGreaterThan(0);
       expect(environment.capabilities).toEqual(new Set(['fs', 'process']));
       expect(environment.status).toBe('ready');
@@ -87,7 +86,6 @@ describe('RemoteEnvironment over a subprocess loopback', () => {
 
   it('moves to disconnected when the bridge drops and rejects new calls', async () => {
     const environment = await RemoteEnvironment.connect({
-      workspaceId: 'ws-test',
       environmentId: 'loopback',
       launcher: loopbackLauncher(),
     });
@@ -104,7 +102,6 @@ describe('RemoteEnvironment over a subprocess loopback', () => {
 
   it('marks the environment unavailable and drains in-flight work when the transport drops', async () => {
     const environment = await RemoteEnvironment.connect({
-      workspaceId: 'ws-test',
       environmentId: 'loopback',
       launcher: loopbackLauncher({ EXEC_SERVER_EXIT_AFTER_MS: '3000' }),
     });
@@ -124,7 +121,6 @@ describe('RemoteEnvironment over a subprocess loopback', () => {
   it('fails to connect when the executor is missing, with exit diagnostics', async () => {
     await expect(
       RemoteEnvironment.connect({
-        workspaceId: 'ws-test',
         environmentId: 'loopback',
         launcher: {
           type: 'command',
@@ -138,7 +134,6 @@ describe('RemoteEnvironment over a subprocess loopback', () => {
   it('times out a silent executor inside the initialize window', async () => {
     const started = Date.now();
     const pending = RemoteEnvironment.connect({
-      workspaceId: 'ws-test',
       environmentId: 'loopback',
       initializeTimeoutMs: 500,
       launcher: {
@@ -155,7 +150,6 @@ describe('RemoteEnvironment over a subprocess loopback', () => {
 
   it('carries the executor stderr tail in the initialize timeout error', async () => {
     const pending = RemoteEnvironment.connect({
-      workspaceId: 'ws-test',
       environmentId: 'loopback',
       initializeTimeoutMs: 500,
       launcher: {

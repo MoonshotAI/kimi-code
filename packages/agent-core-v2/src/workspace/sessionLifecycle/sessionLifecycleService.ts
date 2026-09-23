@@ -5,7 +5,7 @@ import { join } from 'pathe';
 import type { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
-import type { EnvironmentRegistry } from '#/environment/environmentRegistry';
+import type { IEnvironmentService } from '#/app/environment/environment';
 import {
   createScopedChildHandle,
   type ISessionScopeHandle,
@@ -191,7 +191,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IWorkspaceMcpService private readonly workspaceMcp: IWorkspaceMcpService,
     @IModelService private readonly models: IModelService,
     @IProviderService private readonly providers: IProviderService,
-    private readonly environments: EnvironmentRegistry,
+    private readonly environments: Pick<IEnvironmentService, 'drainSession'>,
     onDispose?: () => void,
     private readonly profileContextKey?: string,
   ) {
@@ -221,7 +221,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           : await agents.create({
               agentId: MAIN_AGENT_ID,
               binding: opts.mainAgentBinding,
-              environmentId: opts.environmentId,
+            environmentId: opts.environmentId,
               environmentCwd:
                 opts.environmentCwd ??
                 (opts.environmentId === undefined || opts.environmentId === LOCAL_ENVIRONMENT_ID ? undefined : opts.workDir),

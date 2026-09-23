@@ -476,7 +476,7 @@ describe('AgentDateChangeService on a remote environment binding', () => {
     clock = testHostClock(INITIAL_INSTANT);
     const binding = {
       _serviceBrand: undefined,
-      current: { workspaceId: 'test-workspace', environmentId: 'remote-1', cwd: REMOTE_WORK_DIR },
+      current: { environmentId: 'remote-1', cwd: REMOTE_WORK_DIR },
     } as unknown as IAgentEnvironmentBindingService;
     ctx = createTestAgent(
       { autoConfigure: false },

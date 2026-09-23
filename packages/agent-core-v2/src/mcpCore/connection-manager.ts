@@ -83,8 +83,7 @@ export interface McpDefaultTimeouts {
 export interface McpConnectionManagerOptions {
   readonly envLookup?: (name: string) => string | undefined;
   readonly stdioCwd?: string;
-  readonly environmentResolver?: import('#/workspace/workspaceInstance/workspaceInstanceManager').IEnvironmentResolver;
-  readonly workspaceId?: string;
+  readonly environmentResolver?: import('#/app/environment/environment').EnvironmentResolver;
   readonly environmentId?: string;
   readonly requireStdioEnvironmentId?: boolean;
   readonly sessionId?: string;
@@ -438,9 +437,8 @@ export class McpConnectionManager implements McpConnectionView {
     const clientName = this.options.resolveClientName?.();
     if (config.transport === 'stdio') {
       const environmentResolver = this.options.environmentResolver;
-      const workspaceId = this.options.workspaceId;
       const environmentId = config.environment_id ?? this.options.environmentId;
-      if (environmentResolver === undefined || workspaceId === undefined || environmentId === undefined || (this.options.requireStdioEnvironmentId === true && config.environment_id === undefined)) {
+      if (environmentResolver === undefined || environmentId === undefined || (this.options.requireStdioEnvironmentId === true && config.environment_id === undefined)) {
         throw new Error('MCP stdio requires environment_id and environment binding');
       }
       return new StdioMcpClient(config, {
@@ -449,7 +447,6 @@ export class McpConnectionManager implements McpConnectionView {
         defaultCwd: this.options.stdioCwd,
         clientName,
         environmentResolver,
-        workspaceId,
         environmentId,
         sessionId: this.options.sessionId,
       });

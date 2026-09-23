@@ -75,7 +75,7 @@ function createBackend(calls: SpawnCall[]): FakeEnvironment {
   };
   return Object.assign(
     new FakeEnvironment(
-      { workspaceId: 'workspace', environmentId: 'ssh-dev', generation: randomUUID() },
+      { environmentId: 'ssh-dev', generation: randomUUID() },
       { capabilities: ['fs', 'process'], host: { homeDir: '/home/remote' } },
     ),
     { process: processService, fs },

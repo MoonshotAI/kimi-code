@@ -26,7 +26,6 @@ export type { ImportCustomRegistryOptions, ImportCustomRegistryResult } from '@m
 export type Unsubscribe = () => void;
 
 export interface AgentEnvironmentBinding {
-  readonly workspaceId: string;
   readonly environmentId: string;
   readonly cwd?: string;
 }

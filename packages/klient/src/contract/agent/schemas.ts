@@ -108,7 +108,6 @@ export const setModelResultSchema = z.object({
 });
 
 export const environmentBindingSchema = z.object({
-  workspaceId: z.string(),
   environmentId: z.string(),
   cwd: z.string().optional(),
 });

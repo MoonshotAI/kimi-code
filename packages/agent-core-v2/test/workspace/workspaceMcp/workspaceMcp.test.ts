@@ -32,7 +32,7 @@ import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import type { SessionWillCreateEvent } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import {
   IWorkspaceMcpService,
   type ISessionMcpOverlay,
@@ -121,12 +121,12 @@ describe('WorkspaceMcpService', () => {
         reg.defineInstance(ITelemetryService, noopTelemetryService);
         const environment = Object.assign(
           new FakeEnvironment(
-            { workspaceId: 'test-workspace', environmentId: 'local', generation: 'test-generation' },
+            { environmentId: 'local', generation: 'test-generation' },
             { capabilities: ['process'] },
           ),
           { process: new HostProcessService() },
         );
-        reg.defineInstance(IEnvironmentResolver, {
+        reg.definePartialInstance(IEnvironmentService, {
           _serviceBrand: undefined,
           inspect: () => environment,
           acquire: () => ({

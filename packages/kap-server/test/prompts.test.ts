@@ -1,3 +1,4 @@
+import { IEnvironmentService } from '@moonshot-ai/agent-core-v2';
 import { chmod, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -1534,7 +1535,6 @@ describe('server-v2 /api/v1 prompts', () => {
     const workspaceId = session!.accessor.get(ISessionContext).workspaceId;
     const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
     main.accessor.get(IAgentStateService).set(agentEnvironmentBindingKey, {
-      workspaceId,
       environmentId: 'fake-remote',
     });
 
@@ -1555,10 +1555,10 @@ describe('server-v2 /api/v1 prompts', () => {
     try {
       const instance = server!.core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
       const fake = new FakeEnvironment(
-        { workspaceId, environmentId: 'fake-remote', generation: 'fake-generation' },
+        { environmentId: 'fake-remote', generation: 'fake-generation' },
         { capabilities: ['fs'] },
       );
-      instance!.environments.register(Object.assign(fake, {
+      server!.core.accessor.get(IEnvironmentService).register(Object.assign(fake, {
         fs: new HostFileSystem(),
         host: { ...fake.host, tempDir: join(remoteRoot, 'remote-tmp') },
       }));
@@ -1589,11 +1589,11 @@ describe('server-v2 /api/v1 prompts', () => {
   async function bindRemoteEnvironment(sessionId: string): Promise<{ remoteTempDir: string; dispose(): Promise<void> }> {
     const remoteRoot = await realpath(await mkdtemp(join(tmpdir(), 'kimi-prompt-remote-')));
     const remoteTempDir = join(remoteRoot, 'remote-tmp');
-    const provider = await server!.core.accessor.get(IWorkspaceInstanceManager).addProvider({
+    const provider = await server!.core.accessor.get(IEnvironmentService).addProvider({
       id: 'prompt-remote-provider',
-      attach: async (context, host) => {
+      attach: async (host) => {
         const fake = new FakeEnvironment(
-          { workspaceId: context.id, environmentId: 'remote-test', generation: 'remote-generation' },
+          { environmentId: 'remote-test', generation: 'remote-generation' },
           { capabilities: ['fs'] },
         );
         const environment = Object.assign(fake, {
@@ -1745,10 +1745,10 @@ describe('server-v2 /api/v1 prompts', () => {
     try {
       const instance = server!.core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
       const fake = new FakeEnvironment(
-        { workspaceId, environmentId: 'broken-remote', generation: 'broken-generation' },
+        { environmentId: 'broken-remote', generation: 'broken-generation' },
         { capabilities: ['fs'] },
       );
-      instance!.environments.register(Object.assign(fake, {
+      server!.core.accessor.get(IEnvironmentService).register(Object.assign(fake, {
         fs: Object.assign(new HostFileSystem(), {
           mkdir: async () => {
             throw new Error('remote fs unavailable');
@@ -1759,7 +1759,6 @@ describe('server-v2 /api/v1 prompts', () => {
       await createMainAgent(id);
       const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
       main.accessor.get(IAgentStateService).set(agentEnvironmentBindingKey, {
-        workspaceId,
         environmentId: 'broken-remote',
       });
 
@@ -1788,20 +1787,19 @@ describe('server-v2 /api/v1 prompts', () => {
     try {
       const instance = server!.core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
       const fake = new FakeEnvironment(
-        { workspaceId, environmentId: 'pending-remote', generation: 'pending-generation' },
+        { environmentId: 'pending-remote', generation: 'pending-generation' },
         { status: 'pending', capabilities: ['fs'] },
       );
       const connect = vi.fn(async () => {
         fake.setStatus('ready');
       });
-      instance!.environments.register(Object.assign(fake, {
+      server!.core.accessor.get(IEnvironmentService).register(Object.assign(fake, {
         fs: new HostFileSystem(),
         host: { ...fake.host, tempDir: join(remoteRoot, 'remote-tmp') },
         connect,
       }));
       const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
       main.accessor.get(IAgentStateService).set(agentEnvironmentBindingKey, {
-        workspaceId,
         environmentId: 'pending-remote',
       });
 
@@ -1830,17 +1828,16 @@ describe('server-v2 /api/v1 prompts', () => {
     const workspaceId = session!.accessor.get(ISessionContext).workspaceId;
     const instance = server!.core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
     const fake = new FakeEnvironment(
-      { workspaceId, environmentId: 'dead-remote', generation: 'dead-generation' },
+      { environmentId: 'dead-remote', generation: 'dead-generation' },
       { status: 'disconnected', capabilities: ['fs'] },
     );
-    instance!.environments.register(Object.assign(fake, {
+    server!.core.accessor.get(IEnvironmentService).register(Object.assign(fake, {
       fs: new HostFileSystem(),
       host: { ...fake.host, tempDir: join(home as string, 'dead-remote-tmp') },
       connectError: 'connection refused',
     }));
     const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
     main.accessor.get(IAgentStateService).set(agentEnvironmentBindingKey, {
-      workspaceId,
       environmentId: 'dead-remote',
     });
 

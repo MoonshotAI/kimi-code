@@ -1,27 +1,17 @@
 import type { ServiceIdentifier } from '#/_base/di/instantiation';
-
 import type { Environment } from './environment';
+import type { EnvironmentRegistrationHandle } from './environmentRegistry';
 
 export interface EnvironmentProviderAttachment {
   dispose(): void | Promise<void>;
 }
 
-export interface EnvironmentProviderContext {
-  readonly id: string;
-}
-
-export interface EnvironmentProviderEnvironmentHandle {
-  readonly environmentId: string;
-  update(prepare: () => Environment | Promise<Environment>): Promise<void>;
-  remove(): Promise<void>;
-}
-
 export interface EnvironmentProviderHost {
   get<T>(id: ServiceIdentifier<T>): T;
-  registerEnvironment(environment: Environment): EnvironmentProviderEnvironmentHandle;
+  registerEnvironment(environment: Environment): EnvironmentRegistrationHandle;
 }
 
 export interface EnvironmentProviderFactory {
   readonly id: string;
-  attach(context: EnvironmentProviderContext, host: EnvironmentProviderHost): Promise<EnvironmentProviderAttachment>;
+  attach(host: EnvironmentProviderHost): Promise<EnvironmentProviderAttachment>;
 }

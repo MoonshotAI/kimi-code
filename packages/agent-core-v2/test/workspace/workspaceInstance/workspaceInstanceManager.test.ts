@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { EnvironmentService } from '#/app/environment/environmentService';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Workspace, IWorkspaceService } from '#/app/workspace/workspace';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
@@ -18,24 +19,19 @@ function workspace(id: string): Workspace {
 }
 
 function environment(workspaceId: string, environmentId: string, status: Environment['status'] = 'connecting'): FakeEnvironment {
-  return new FakeEnvironment({ workspaceId, environmentId, generation: `${environmentId}-one` }, { status });
+  return new FakeEnvironment({ environmentId, generation: `${environmentId}-one` }, { status });
 }
 
-function provider(
-  id: string,
-  environmentId: string,
-  events: string[],
-  options: { failWorkspace?: string; status?: Environment['status'] } = {},
-): EnvironmentProviderFactory {
-  return {
-    id,
-    attach: async (context, host) => {
-      events.push(`attach:${id}:${context.id}`);
-      if (options.failWorkspace === context.id) throw new Error(`attach failed ${context.id}`);
-      host.registerEnvironment(environment(context.id, environmentId, options.status));
-      return { dispose: () => { events.push(`detach:${id}:${context.id}`); } };
-    },
-  };
+const environmentServices: EnvironmentService[] = [];
+
+afterEach(async () => {
+  for (const service of environmentServices.splice(0)) await service.dispose();
+});
+
+function environmentService(ready: Promise<void> = Promise.resolve()): EnvironmentService {
+  const service = new EnvironmentService({} as never, { ready, pathClass: 'posix', homeDir: '/home/test' } as never, undefined as never, undefined as never, undefined as never);
+  environmentServices.push(service);
+  return service;
 }
 
 function manager(
@@ -43,6 +39,7 @@ function manager(
   ready: Promise<void> = Promise.resolve(),
   events: string[] = [],
   customize?: (args: unknown[]) => void,
+  environments = environmentService(ready),
 ): WorkspaceInstanceManager {
   const byId = new Map(values.map((value) => [value.id, value]));
   const workspaces: IWorkspaceService = {
@@ -65,12 +62,9 @@ function manager(
     ...Array.from({ length: 24 }, () => undefined),
   ];
   args[19] = { entries: () => [] };
+  args[28] = environments;
   customize?.(args);
-  const value = Reflect.construct(WorkspaceInstanceManager, args) as WorkspaceInstanceManager;
-  const providers = (value as unknown as { providers: Map<string, EnvironmentProviderFactory> }).providers;
-  providers.clear();
-  providers.set('local', provider('local', 'local', events));
-  return value;
+  return Reflect.construct(WorkspaceInstanceManager, args) as WorkspaceInstanceManager;
 }
 
 describe('WorkspaceInstanceManager', () => {
@@ -89,62 +83,48 @@ describe('WorkspaceInstanceManager', () => {
     expect(firstInstance).toBe(secondInstance);
     await closing;
     expect(value.get('one')).toBeUndefined();
-    expect(events).toEqual(['attach:local:one', 'detach:local:one']);
+    expect(events).toEqual([]);
   });
 
-  it('keeps environment registries and provider attachments isolated across workspaces', async () => {
-    const events: string[] = [];
-    const value = manager([workspace('one'), workspace('two')], Promise.resolve(), events);
-    const one = await value.getOrCreate({ workspaceId: 'one' });
-    const two = await value.getOrCreate({ workspaceId: 'two' });
-
-    expect(one.environments.current('local')?.identity.workspaceId).toBe('one');
-    expect(two.environments.current('local')?.identity.workspaceId).toBe('two');
-    expect(one.environments.current('local')).not.toBe(two.environments.current('local'));
-
-    await value.close('one');
-    expect(value.get('two')).toBe(two);
-    expect(two.environments.current('local')).toBeDefined();
-    await value.dispose();
-  });
-
-  it('maintains both provider and workspace axes and detaches each matrix cell', async () => {
-    const events: string[] = [];
-    const value = manager([workspace('one'), workspace('two')], Promise.resolve(), events);
-    const one = await value.getOrCreate({ workspaceId: 'one' });
-    const remote = await value.addProvider(provider('remote-provider', 'remote', events, { status: 'ready' }));
-    const two = await value.getOrCreate({ workspaceId: 'two' });
-
-    expect(one.environments.current('remote')).toBeDefined();
-    expect(two.environments.current('remote')).toBeDefined();
-
-    await remote.dispose();
-    expect(one.environments.current('remote')).toBeUndefined();
-    expect(two.environments.current('remote')).toBeUndefined();
-    expect(events.filter((event) => event.startsWith('detach:remote-provider:')).toSorted()).toEqual([
-      'detach:remote-provider:one',
-      'detach:remote-provider:two',
-    ]);
-    await value.dispose();
-  });
-
-  it('rolls back earlier attachments when adding a provider fails on a later workspace', async () => {
-    const events: string[] = [];
-    const value = manager([workspace('one'), workspace('two')], Promise.resolve(), events);
-    const one = await value.getOrCreate({ workspaceId: 'one' });
+  it('attaches an environment once and keeps it alive when a workspace closes', async () => {
+    const environments = environmentService();
+    const attach = vi.fn(async (host: Parameters<EnvironmentProviderFactory['attach']>[0]) => {
+      host.registerEnvironment(environment('unused', 'remote'));
+      return { dispose: () => {} };
+    });
+    const registration = await environments.addProvider({ id: 'remote', attach });
+    const value = manager([workspace('one'), workspace('two')], Promise.resolve(), [], undefined, environments);
+    await value.getOrCreate({ workspaceId: 'one' });
     await value.getOrCreate({ workspaceId: 'two' });
-
-    await expect(value.addProvider(provider('broken', 'remote', events, { failWorkspace: 'two' })))
-      .rejects.toThrow('attach failed two');
-    expect(one.environments.current('remote')).toBeUndefined();
-    expect(events).toContain('detach:broken:one');
-
-    const three = workspace('three');
+    const remote = environments.current('remote');
+    await value.close('one');
+    expect(attach).toHaveBeenCalledOnce();
+    expect(environments.current('remote')).toBe(remote);
+    expect(remote?.status).toBe('connecting');
     await value.dispose();
-    expect(three.id).toBe('three');
+    expect(environments.current('remote')).toBe(remote);
+    await registration.dispose();
+    expect(environments.current('remote')).toBeUndefined();
+  });
+
+  it('rolls back environments registered by a provider that fails to attach', async () => {
+    const environments = environmentService();
+    const remote = environment('unused', 'remote');
+    await expect(environments.addProvider({
+      id: 'broken',
+      attach: async (host) => {
+        host.registerEnvironment(remote);
+        throw new Error('attach failed');
+      },
+    })).rejects.toThrow('attach failed');
+    expect(environments.current('remote')).toBeUndefined();
+    expect(remote.disposed).toBe(true);
+    const registration = await environments.addProvider({ id: 'broken', attach: async () => ({ dispose: () => {} }) });
+    await registration.dispose();
   });
 
   it('session controllers operate on the local session dir even when bound to a remote environment', async () => {
+    const environments = environmentService();
     const removed: string[] = [];
     const remoteRemoved: string[] = [];
     const value = manager([workspace('one')], Promise.resolve(), [], (args) => {
@@ -156,13 +136,13 @@ describe('WorkspaceInstanceManager', () => {
       args[23] = { withContext: () => ({ track2: () => {} }) };
       args[25] = { append: () => {}, flush: async () => {}, drainRetirements: async () => {} };
       args[26] = { get: async () => undefined };
-    });
+    }, environments);
     const one = await value.getOrCreate({ workspaceId: 'one' });
-    await value.addProvider({
+    await environments.addProvider({
       id: 'remote-provider',
-      attach: async (context, host) => {
+      attach: async (host) => {
         const remote = new FakeEnvironment(
-          { workspaceId: context.id, environmentId: 'remote', generation: 'remote-one' },
+          { environmentId: 'remote', generation: 'remote-one' },
           { status: 'ready', capabilities: ['fs', 'process'] },
         );
         Object.assign(remote, {
@@ -178,7 +158,7 @@ describe('WorkspaceInstanceManager', () => {
       createGeneration: (environmentId: string, cwd?: string) => unknown;
     };
     program.createGeneration = (environmentId: string) => {
-      const lease = one.environments.acquire({ workspaceId: 'one', environmentId }, ['fs', 'process']);
+      const lease = environments.acquire({ environmentId }, ['fs', 'process']);
       const behavior = { ready: Promise.resolve(), dispose: () => {} };
       const catalog = {
         listSkills: () => [],
@@ -227,12 +207,11 @@ describe('WorkspaceInstanceManager', () => {
     await value.dispose();
   });
 
-  it('materializes once required local structure exists without waiting for ready status', async () => {
+  it('materializes the workspace even when project services are unavailable', async () => {
     const value = manager([workspace('one')]);
     const instance = await value.getOrCreate({ workspaceId: 'one' });
 
-    expect(instance.environments.current('local')?.status).toBe('connecting');
-    expect(instance.program.status).toBe('preparing');
+    expect(instance.program.status).toBe('degraded');
     expect(instance.snapshot().lifecycle).toBe('active');
     await value.dispose();
   });

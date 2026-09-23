@@ -87,7 +87,6 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     }
     const inspected = hasEnvironmentFs ? this.environment.inspect() : undefined;
     const identityKey = inspected === undefined ? 'session-attachments' : [
-      inspected.identity.workspaceId,
       inspected.identity.environmentId,
       inspected.identity.generation,
     ].join('|');

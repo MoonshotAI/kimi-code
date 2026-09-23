@@ -26,7 +26,6 @@ export interface RemoteEnvironmentProbe extends HostEnvironmentInfo {
 }
 
 export interface RemoteEnvironmentOptions {
-  readonly workspaceId: string;
   readonly environmentId: string;
   readonly launcher: LauncherSpec;
   readonly clientVersion?: string;
@@ -104,7 +103,6 @@ export class RemoteEnvironment implements Environment {
     readonly connection: RemoteExecConnection,
   ) {
     this.identity = {
-      workspaceId: options.workspaceId,
       environmentId: options.environmentId,
       generation: `${options.environmentId}-${randomUUID()}`,
     };

@@ -1339,9 +1339,9 @@ export class AgentTestContext {
           (reg) => {
             reg.defineInstance(IAgentEnvironmentBindingSeed, {
               _serviceBrand: undefined,
-              binding: { workspaceId: 'workspace-1', environmentId: 'local' },
+              binding: { environmentId: 'local' },
             });
-            const harnessBinding = { workspaceId: 'workspace-1', environmentId: 'local' };
+            const harnessBinding = { environmentId: 'local' };
             reg.defineInstance<IAgentEnvironmentBindingService>(IAgentEnvironmentBindingService, {
               _serviceBrand: undefined,
               onDidChange: Event.None as IAgentEnvironmentBindingService['onDidChange'],
@@ -1353,9 +1353,7 @@ export class AgentTestContext {
               connectAndSwitch: async (environmentId: string, cwd?: string) => ({ ...harnessBinding, environmentId, cwd }),
               connectAndSwitchInTurn: async (environmentId: string, cwd?: string) => ({ ...harnessBinding, environmentId, cwd }),
             });
-            const environment = new LocalEnvironment(
-              'workspace-1',
-              this.root.accessor.get(IHostEnvironment),
+            const environment = new LocalEnvironment(this.root.accessor.get(IHostEnvironment),
               this.root.accessor.get(IHostFileSystem),
               this.root.accessor.get(IHostProcessService),
               this.root.accessor.get(IHostTerminalService),

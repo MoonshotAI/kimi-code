@@ -1,3 +1,4 @@
+import { IEnvironmentService } from '@moonshot-ai/agent-core-v2';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -165,7 +166,7 @@ describe('server-v2 /api/v1 environment routes', () => {
       }
     });
 
-    it('returns 40410 when the session workspace no longer exists', async () => {
+    it('lists app environments after the session workspace closes', async () => {
       const id = await createSession();
       const session = getLiveSessionById(server!.core.accessor, id);
       const workspaceId = session!.accessor.get(ISessionContext).workspaceId;
@@ -173,8 +174,7 @@ describe('server-v2 /api/v1 environment routes', () => {
       await server!.core.accessor.get(IWorkspaceService).delete(workspaceId);
 
       const listed = await call<null>('GET', `/api/v1/sessions/${id}/environments`);
-      expect(listed.body.code).toBe(40410);
-      expect(listed.body.msg).toContain(workspaceId);
+      expect(listed.body.code).toBe(0);
       expect((listed.body as { stack?: string }).stack).toBeUndefined();
     });
 

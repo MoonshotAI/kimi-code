@@ -80,8 +80,8 @@ async function bindEnvironment(
     environment,
     options.local ?? makeLocalProcessService().local,
   );
-  await factory.attach({ id: 'w1' } as never, host);
-  factory.bindSession('w1', 's1', '/repo');
+  await factory.attach(host);
+  factory.bindSession('s1', '/repo');
   const backend = environments[0];
   if (backend === undefined) throw new Error('environment was not registered');
   return backend;

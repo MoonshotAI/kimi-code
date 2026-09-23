@@ -67,7 +67,7 @@ function createBackend(options: {
   };
   return Object.assign(
     new FakeEnvironment(
-      { workspaceId: 'workspace', environmentId: options.environmentId, generation: 'test' },
+      { environmentId: options.environmentId, generation: 'test' },
       { capabilities: ['fs', 'process'], host: { homeDir: options.homeDir } },
     ),
     { process: processService, fs },

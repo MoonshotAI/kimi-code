@@ -148,8 +148,6 @@ export function Inspector({
                 ) : null}
               </div>
               <div className="grid grid-cols-[80px_minmax(0,1fr)] gap-1 font-mono">
-                <span className="text-neutral-600">workspace</span>
-                <span className="break-all text-neutral-300">{environmentBinding.data?.binding.workspaceId ?? 'loading…'}</span>
                 <span className="text-neutral-600">environment</span>
                 <span className="break-all text-neutral-300">{environmentBinding.data?.binding.environmentId ?? 'loading…'}</span>
                 <span className="text-neutral-600">generation</span>

@@ -97,10 +97,8 @@ import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTok
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
-import {
-  IEnvironmentResolver,
-  IWorkspaceInstanceManager,
-} from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import type { AgentEventStore } from '#human/agent/slices';
 
 import { stubAgentContext } from '../../agent/agentContext/stubs';
@@ -362,7 +360,8 @@ describe('SessionSubagentScopeCacheService', () => {
           ? 'sessions/ws_test/sess_test'
           : `sessions/ws_test/sess_test/${subKey}`,
     } as unknown as ISessionContext);
-    ix.stub(IEnvironmentResolver, {
+    ix.stub(IEnvironmentService, {
+      onDidChange: () => ({ dispose: () => {} }),
       _serviceBrand: undefined,
       inspect: (binding) => new FakeEnvironment({ ...binding, generation: `${binding.environmentId}-one` }),
       acquire: (binding) => ({

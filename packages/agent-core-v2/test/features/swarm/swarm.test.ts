@@ -1,3 +1,5 @@
+import { IEnvironmentService } from '#/app/environment/environment';
+import { EnvironmentRegistry } from '#/environment/environmentRegistry';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 
@@ -270,7 +272,7 @@ function realSubagents(
     },
   } as unknown as IModelCatalog;
   const sessionContext = { _serviceBrand: undefined, cwd: '/repo' } as unknown as ISessionContext;
-  const workspaces = { _serviceBrand: undefined, get: () => undefined } as unknown as IWorkspaceInstanceManager;
+  const workspaces = new EnvironmentRegistry() as unknown as IEnvironmentService;
   const git = {
     _serviceBrand: undefined,
     runGit: vi.fn(async () => ({ exitCode: 1, stdout: '', stderr: '' })),

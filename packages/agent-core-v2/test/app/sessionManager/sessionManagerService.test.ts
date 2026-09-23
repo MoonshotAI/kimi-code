@@ -1,3 +1,4 @@
+import { IEnvironmentService } from '#/app/environment/environment';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { Emitter, Event } from '#/_base/event';
@@ -38,6 +39,11 @@ function makeSessionManager(
   const log =
     overrides.log ??
     ({ _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService);
+  const environments = {
+    ready: Promise.resolve(),
+    current: (id: string) => (workspaces.get('workspace') as unknown as { environments?: EnvironmentRegistry } | undefined)?.environments?.current(id),
+    acquire: (binding: { environmentId: string }, required: never) => (workspaces.get('workspace') as unknown as { environments: EnvironmentRegistry }).environments.acquire(binding, required),
+  } as unknown as IEnvironmentService;
   return new SessionManager(
     workspaces,
     index,
@@ -47,10 +53,11 @@ function makeSessionManager(
       overrides.appendLogStore ??
         ({ _serviceBrand: undefined, read: async function* () {} } as unknown as IAppendLogStore),
       overrides.bootstrap ?? ({ _serviceBrand: undefined, scope: (name: string) => name } as unknown as IBootstrapService),
-      workspaces,
+      environments,
       log,
     ),
     log,
+    environments,
   );
 }
 
@@ -540,7 +547,7 @@ describe('SessionManager controller retirement', () => {
   function remoteEnvironment(generation: string): FakeEnvironment {
     return Object.assign(
       new FakeEnvironment(
-        { workspaceId: 'workspace', environmentId: 'remote', generation },
+        { environmentId: 'remote', generation },
         { capabilities: ['fs', 'process'] },
       ),
       { fs: { stat: async () => ({ isDirectory: true }) }, process: {} },
@@ -552,7 +559,7 @@ describe('SessionManager controller retirement', () => {
     readonly program: Program;
     readonly controllers: { readonly service: SessionLifecycleService; readonly dispose: ReturnType<typeof vi.fn> }[];
   } {
-    const registry = new EnvironmentRegistry('workspace');
+    const registry = new EnvironmentRegistry();
     const controllers: { readonly service: SessionLifecycleService; readonly dispose: ReturnType<typeof vi.fn> }[] = [];
     let nextSession = 0;
     const program = new Program(
@@ -625,7 +632,7 @@ describe('SessionManager controller retirement', () => {
       } as never,
     );
     const createGeneration = vi.fn((environmentId: string) => {
-      const lease = registry.acquire({ workspaceId: 'workspace', environmentId }, ['fs', 'process']);
+      const lease = registry.acquire({ environmentId }, ['fs', 'process']);
       const id = lease.environment.identity.generation;
       const behavior = {
         ready: Promise.resolve(),
@@ -822,9 +829,9 @@ describe('SessionManager remote environment wiring', () => {
   }
 
   function localRegistry(): EnvironmentRegistry {
-    const registry = new EnvironmentRegistry('workspace-1');
+    const registry = new EnvironmentRegistry();
     registry.register(Object.assign(new FakeEnvironment(
-      { workspaceId: 'workspace-1', environmentId: 'local', generation: 'local-one' },
+      { environmentId: 'local', generation: 'local-one' },
       { capabilities: ['fs', 'process'] },
     ), { fs: {}, process: {} }));
     return registry;
@@ -874,7 +881,6 @@ describe('SessionManager remote environment wiring', () => {
       config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
     });
     connectableEnvironment(registry, {
-      workspaceId: 'workspace-1',
       environmentId: 'temp-box',
       stat: async () => ({ isDirectory: true }),
     });
@@ -914,7 +920,7 @@ describe('SessionManager remote environment wiring', () => {
     registry = localRegistry();
     const remote = options.remote === undefined
       ? undefined
-      : connectableEnvironment(registry, { workspaceId: 'workspace-1', environmentId: 'sandbox', ...options.remote });
+      : connectableEnvironment(registry, { environmentId: 'sandbox', ...options.remote });
     const { program, byEnvironment, createCalls } = createCapture();
     manager = makeSessionManager(
       workspacesFor(registry, program),
@@ -1076,7 +1082,7 @@ describe('SessionManager remote environment wiring', () => {
   }) {
     registry = localRegistry();
     const remote = new FakeEnvironment(
-      { workspaceId: 'workspace-1', environmentId: 'remote', generation: 'remote-one' },
+      { environmentId: 'remote', generation: 'remote-one' },
       { status: options.remoteStatus, capabilities: ['fs', 'process'] },
     );
     const remoteConnect = vi.fn(async () => {
@@ -1094,7 +1100,6 @@ describe('SessionManager remote environment wiring', () => {
       {
         type: 'environment.set_binding',
         agentId: 'main',
-        workspaceId: 'workspace-1',
         environmentId: persistedEnvironmentId,
         cwd: persistedCwd ?? undefined,
         time: 1,
@@ -1128,7 +1133,7 @@ describe('SessionManager remote environment wiring', () => {
     expect(registry.current('remote')).toBe(remote);
     expect(registry.current('remote')!.identity.generation).toBe('remote-one');
     expect(registry.current('remote')!.status).toBe('ready');
-    registry.acquire({ workspaceId: 'workspace-1', environmentId: 'remote' }).dispose();
+    registry.acquire({ environmentId: 'remote' }).dispose();
   });
 
   it('resumes with the binding kept on a local controller when the persisted environment cannot connect', async () => {
@@ -1163,7 +1168,7 @@ describe('SessionManager remote environment wiring', () => {
     await remoteConnect();
     expect(remoteConnect).toHaveBeenCalledTimes(2);
     expect(registry.current('remote')!.status).toBe('ready');
-    registry.acquire({ workspaceId: 'workspace-1', environmentId: 'remote' }).dispose();
+    registry.acquire({ environmentId: 'remote' }).dispose();
 
     await manager.resume('session-1');
     expect(createCalls).toEqual([

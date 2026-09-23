@@ -184,7 +184,7 @@ function createTestEnv(): IHostEnvironment {
 
 function environmentFor(fs: IHostFileSystem, env: IHostEnvironment = createTestEnv()): IAgentEnvironmentService {
   const environment = {
-    identity: { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
+    identity: { environmentId: 'local', generation: 'test' },
     capabilities: new Set(['fs'] as const),
     host: env,
     path: posixPath,

@@ -20,7 +20,6 @@ export class EnvironmentWorkspaceView {
     roots: EnvironmentWorkspaceRoots,
   ) {
     this.binding = {
-      workspaceId: environment.identity.workspaceId,
       environmentId: environment.identity.environmentId,
     };
     this.host = environment.host ?? DEFAULT_ENVIRONMENT_HOST;

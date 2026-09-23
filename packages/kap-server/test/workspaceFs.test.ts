@@ -1,3 +1,4 @@
+import { IEnvironmentService } from '@moonshot-ai/agent-core-v2';
 import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -505,16 +506,15 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
     if (created.code !== 0) throw new Error(`session create failed: ${created.msg}`);
     sessionId = created.data.id;
     workspaceId = created.data.workspace_id;
-    provider = await server!.core.accessor.get(IWorkspaceInstanceManager).addProvider({
+    provider = await server!.core.accessor.get(IEnvironmentService).addProvider({
       id: 'remote-test-provider',
-      attach: async (context, host) => {
-        const workspace = await host.get(IWorkspaceService).get(context.id);
+      attach: async (host) => {
         const environment = Object.assign(
           new FakeEnvironment(
-            { workspaceId: context.id, environmentId: 'remote-test', generation: 'remote-generation' },
+            { environmentId: 'remote-test', generation: 'remote-generation' },
             { capabilities: ['fs'] },
           ),
-          { fs: mappingHostFs(remoteRoots.get(workspace?.root ?? '') ?? (remoteRoot as string)) },
+          { fs: mappingHostFs(remoteRoot as string) },
         );
         const registration = host.registerEnvironment(environment);
         return { dispose: () => registration.remove() };
@@ -725,7 +725,7 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
     expect(body.code).toBe(40420);
   });
 
-  it('resolves the same environment id per workspace', async () => {
+  it('resolves one environment independently of the requesting workspace', async () => {
     const localRootB = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsrt-local-b-')));
     const remoteRootB = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsrt-remote-b-')));
     remoteRoots.set(localRootB, remoteRootB);
@@ -752,14 +752,14 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
       { headers: { connection: 'close', ...authHeaders(server as RunningServer) } } as never,
     );
     expect(fromB.status).toBe(200);
-    expect(await fromB.text()).toBe('workspace-b-bytes');
+    expect(await fromB.text()).toBe('workspace-a-bytes');
 
     const viaSessionB = await fetch(
       contentUrl('/shared.txt', 'remote-test', { session_id: createdB.data.id }),
       { headers: { connection: 'close', ...authHeaders(server as RunningServer) } } as never,
     );
     expect(viaSessionB.status).toBe(200);
-    expect(await viaSessionB.text()).toBe('workspace-b-bytes');
+    expect(await viaSessionB.text()).toBe('workspace-a-bytes');
 
     const mkdirBody = await postMkdir({
       path: '/made-on-b',
@@ -767,8 +767,8 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
       session_id: createdB.data.id,
     });
     expect(mkdirBody.code).toBe(0);
-    const statB = await stat(join(remoteRootB, 'made-on-b'));
+    const statB = await stat(join(remoteRoot as string, 'made-on-b'));
     expect(statB.isDirectory()).toBe(true);
-    await expect(stat(join(remoteRoot as string, 'made-on-b'))).rejects.toThrow();
+    await expect(stat(join(remoteRootB, 'made-on-b'))).rejects.toThrow();
   });
 });

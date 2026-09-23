@@ -10,6 +10,8 @@ import {
   IHostFileSystem,
   IHostFolderBrowser,
   ISessionIndex,
+  IEnvironmentService,
+  IWorkspaceService,
   isError2,
   type HostFileStat,
   type Scope,
@@ -25,7 +27,6 @@ import {
   guessMime,
 } from '@moonshot-ai/agent-core-v2/_base/utils/fileMeta';
 import { classifyTextSample } from '@moonshot-ai/agent-core-v2/_base/text/encoding';
-import { EnvironmentError } from '@moonshot-ai/agent-core-v2/environment/environmentRegistry';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -34,7 +35,7 @@ import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import { createEnvironmentReadStream, type EnvironmentReadStreamSource } from './fs';
-import { resolveWorkspaceInstance, sendEnvironmentError } from './environment';
+import { sendEnvironmentError } from './environment';
 
 interface FsContentReply {
   type(mime: string): FsContentReply;
@@ -211,20 +212,16 @@ async function acquireFsSource(
       lease: { track: (resource) => resource, dispose: () => {} },
     };
   }
-  const workspaceId = await resolveContextWorkspaceId(core, environmentId, context);
-  const instance = await resolveWorkspaceInstance(core, workspaceId);
-  if (instance.environments.current(environmentId) === undefined) {
-    throw new EnvironmentError('environment.not_found', `environment ${environmentId} does not exist`);
-  }
-  const lease = instance.environments.acquire({ workspaceId: instance.id, environmentId }, ['fs']);
+  await validateFsContext(core, environmentId, context);
+  const lease = core.accessor.get(IEnvironmentService).acquire({ environmentId }, ['fs']);
   return { hostFs: lease.environment.fs!, lease };
 }
 
-async function resolveContextWorkspaceId(
+async function validateFsContext(
   core: Scope,
   environmentId: string,
   context: FsEnvironmentContext,
-): Promise<string> {
+): Promise<void> {
   if (context.sessionId !== undefined) {
     const summary = await core.accessor.get(ISessionIndex).get(context.sessionId);
     if (summary === undefined) {
@@ -233,14 +230,16 @@ async function resolveContextWorkspaceId(
         `session ${context.sessionId} does not exist`,
       );
     }
-    return summary.workspaceId;
+    return;
   }
   if (context.workspaceId !== undefined) {
-    return context.workspaceId;
+    const workspace = await core.accessor.get(IWorkspaceService).get(context.workspaceId);
+    if (workspace === undefined) throw new Error2(ErrorCodes.WORKSPACE_NOT_FOUND, `workspace ${context.workspaceId} does not exist`);
+    return;
   }
   throw new Error2(
     ErrorCodes.VALIDATION_FAILED,
-    `environment_id ${environmentId} is workspace-scoped: pass workspace_id or session_id`,
+    `pass workspace_id or session_id to identify the request context for environment_id ${environmentId}`,
   );
 }
 

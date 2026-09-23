@@ -1,3 +1,4 @@
+import { IEnvironmentService } from '#/app/environment/environment';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -154,12 +155,12 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     createdUserTools = userToolsStub();
     createdReminder = { notify: vi.fn() };
     lease = {
-      environment: new FakeEnvironment({ workspaceId: 'w1', environmentId: 'acp:s1', generation: 'g1' }),
+      environment: new FakeEnvironment({ environmentId: 'acp:s1', generation: 'g1' }),
       track: (resource) => resource,
       dispose: vi.fn(),
     };
     acquireEnvironment = vi.fn(() => lease);
-    callerBinding = { workspaceId: 'w1', environmentId: 'acp:s1' };
+    callerBinding = { environmentId: 'acp:s1' };
     caller = {
       id: CALLER_ID,
       kind: LifecycleScope.Agent,
@@ -243,10 +244,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     } as unknown as IModelCatalog);
     ix.stub(ISessionContext, { _serviceBrand: undefined, cwd: '/repo', workspaceId: 'w1' } as unknown as ISessionContext);
     ix.stub(ILogService, stubLog());
-    ix.stub(IWorkspaceInstanceManager, {
-      _serviceBrand: undefined,
-      get: () => undefined,
-    } as unknown as IWorkspaceInstanceManager);
+    ix.stub(IEnvironmentService, new EnvironmentRegistry() as unknown as IEnvironmentService);
     ix.stub(IHostFileSystem, {} as IHostFileSystem);
     ix.stub(IAtomicDocumentStore, {
       _serviceBrand: undefined,
@@ -327,11 +325,8 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     });
   }
 
-  function stubWorkspaceManager(registry: EnvironmentRegistry): void {
-    ix.stub(IWorkspaceInstanceManager, {
-      _serviceBrand: undefined,
-      get: (workspaceId: string) => (workspaceId === 'w1' ? { environments: registry, root: '/repo' } : undefined),
-    } as unknown as IWorkspaceInstanceManager);
+  function stubEnvironments(registry: EnvironmentRegistry): void {
+    ix.stub(IEnvironmentService, Object.assign(registry, { ready: Promise.resolve() }) as unknown as IEnvironmentService);
   }
 
   function gitProcessForRepo(repoCwd: string): { process: IHostProcessService; git: IGitService; gitCwds: string[] } {
@@ -367,7 +362,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     git: { process: IHostProcessService; git: IGitService; gitCwds: string[] },
   ): Promise<SpawnedSubagent> {
     const environment = Object.assign(
-      new FakeEnvironment({ workspaceId: 'w1', environmentId: 'acp:s1', generation: 'g1' }),
+      new FakeEnvironment({ environmentId: 'acp:s1', generation: 'g1' }),
       { process: git.process },
     );
     lease = { environment, track: (resource) => resource, dispose: vi.fn() };
@@ -652,11 +647,11 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   });
 
   it('binds the child to the requested environment with the declaration defaultCwd', async () => {
-    const registry = new EnvironmentRegistry('w1');
+    const registry = new EnvironmentRegistry();
     const stats: string[] = [];
     registry.register(Object.assign(
       new FakeEnvironment(
-        { workspaceId: 'w1', environmentId: 'staging', generation: 'staging-one' },
+        { environmentId: 'staging', generation: 'staging-one' },
         { status: 'ready', capabilities: ['fs', 'process'] },
       ),
       {
@@ -669,7 +664,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
         process: {},
       },
     ));
-    stubWorkspaceManager(registry);
+    stubEnvironments(registry);
     const svc = service({ [ENVIRONMENTS_SECTION]: { staging: { type: 'ssh', host: 'staging', defaultCwd: '/srv/app' } } });
 
     await spawnCoderOnEnvironment(svc, 'staging');
@@ -681,7 +676,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   });
 
   it('inherits the caller binding when the requested environment matches the current one', async () => {
-    callerBinding = { workspaceId: 'w1', environmentId: 'acp:s1', cwd: '/remote/repo' };
+    callerBinding = { environmentId: 'acp:s1', cwd: '/remote/repo' };
     const svc = service();
 
     await spawnCoderOnEnvironment(svc, 'acp:s1');
@@ -692,9 +687,9 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   });
 
   it('binds the child to local without a cwd when local is requested', async () => {
-    const registry = new EnvironmentRegistry('w1');
+    const registry = new EnvironmentRegistry();
     registry.register(fakeEnvironment('local', 'local-one', { workspaceId: 'w1' }));
-    stubWorkspaceManager(registry);
+    stubEnvironments(registry);
     const svc = service();
 
     await spawnCoderOnEnvironment(svc, 'local');
@@ -705,10 +700,10 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   });
 
   it('rejects an unknown environment and lists the available ids', async () => {
-    const registry = new EnvironmentRegistry('w1');
+    const registry = new EnvironmentRegistry();
     registry.register(fakeEnvironment('local', 'local-one', { workspaceId: 'w1' }));
     registry.register(fakeEnvironment('staging', 'staging-one', { workspaceId: 'w1' }));
-    stubWorkspaceManager(registry);
+    stubEnvironments(registry);
     const svc = service();
 
     const error = await spawnCoderOnEnvironment(svc, 'ghost').then(
@@ -725,7 +720,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   });
 
   it('binds the child to the environment host cwd when the contract carries one', async () => {
-    const registry = new EnvironmentRegistry('w1');
+    const registry = new EnvironmentRegistry();
     registry.register(fakeEnvironment('ephemeral-box', 'ephemeral-one', {
       workspaceId: 'w1',
       host: { homeDir: '/home/remote', cwd: '/srv/box' },
@@ -734,7 +729,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       workspaceId: 'w1',
       host: { homeDir: '/home/remote' },
     }));
-    stubWorkspaceManager(registry);
+    stubEnvironments(registry);
     const svc = service();
 
     await spawnCoderOnEnvironment(svc, 'ephemeral-box');
@@ -751,10 +746,10 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   });
 
   it('connects a disconnected requested environment before binding', async () => {
-    const registry = new EnvironmentRegistry('w1');
+    const registry = new EnvironmentRegistry();
     const connectCalls: string[] = [];
     const staging = new FakeEnvironment(
-      { workspaceId: 'w1', environmentId: 'staging', generation: 'staging-pending' },
+      { environmentId: 'staging', generation: 'staging-pending' },
       { status: 'disconnected', capabilities: ['fs', 'process'] },
     );
     Object.assign(staging, {
@@ -768,7 +763,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       process: {},
     });
     registry.register(staging);
-    stubWorkspaceManager(registry);
+    stubEnvironments(registry);
     const svc = service();
 
     await spawnCoderOnEnvironment(svc, 'staging');
@@ -778,15 +773,15 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   });
 
   it('binds the host of the replaced view after connect swaps the registry generation', async () => {
-    const registry = new EnvironmentRegistry('w1');
+    const registry = new EnvironmentRegistry();
     const pending = new FakeEnvironment(
-      { workspaceId: 'w1', environmentId: 'staging', generation: 'staging-pending' },
+      { environmentId: 'staging', generation: 'staging-pending' },
       { status: 'disconnected', capabilities: ['fs', 'process'], host: { homeDir: '/' } },
     );
     Object.assign(pending, { fs: {}, process: {} });
     const registration = registry.register(pending);
     const connected = new FakeEnvironment(
-      { workspaceId: 'w1', environmentId: 'staging', generation: 'staging-connected' },
+      { environmentId: 'staging', generation: 'staging-connected' },
       { status: 'ready', capabilities: ['fs', 'process'], host: { homeDir: '/home/remote' } },
     );
     Object.assign(connected, { fs: {}, process: {} });
@@ -795,7 +790,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
         await registration.replace(connected);
       },
     });
-    stubWorkspaceManager(registry);
+    stubEnvironments(registry);
     const svc = service();
 
     await spawnCoderOnEnvironment(svc, 'staging');
@@ -837,7 +832,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   });
 
   it('collects the explore git context at the inherited binding cwd on the bound environment', async () => {
-    callerBinding = { workspaceId: 'w1', environmentId: 'acp:s1', cwd: '/remote/repo' };
+    callerBinding = { environmentId: 'acp:s1', cwd: '/remote/repo' };
     const git = gitProcessForRepo('/remote/repo');
     const svc = service();
 
@@ -849,7 +844,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(spawned.promptText).toContain('Project: owner/repo-only-there');
     expect(spawned.promptText).toContain('Survey the repo');
 
-    callerBinding = { workspaceId: 'w1', environmentId: 'acp:s1' };
+    callerBinding = { environmentId: 'acp:s1' };
     const sessionGit = gitProcessForRepo('/repo');
 
     const sessionSpawned = await spawnExploreWithGitContext(svc, sessionGit);
@@ -862,10 +857,10 @@ describe('SessionSubagentService planSpawn and spawn', () => {
 
   it('collects the prompt prefix git context on the requested environment instead of the caller one', async () => {
     const git = gitProcessForRepo('/srv/app');
-    const registry = new EnvironmentRegistry('w1');
+    const registry = new EnvironmentRegistry();
     registry.register(Object.assign(
       new FakeEnvironment(
-        { workspaceId: 'w1', environmentId: 'staging', generation: 'staging-one' },
+        { environmentId: 'staging', generation: 'staging-one' },
         { status: 'ready', capabilities: ['fs', 'process'] },
       ),
       {
@@ -873,7 +868,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
         process: git.process,
       },
     ));
-    stubWorkspaceManager(registry);
+    stubEnvironments(registry);
     profiles = [
       normalizeAgentProfile({
         name: 'explore',

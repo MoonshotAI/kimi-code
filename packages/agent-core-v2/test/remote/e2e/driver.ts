@@ -338,7 +338,6 @@ async function scenarioInstall(flags: Flags): Promise<void> {
     throw new Error('--scenario install requires a typed target (ssh or docker)');
   }
   const connectBase = {
-    workspaceId: 'remote-exec-e2e',
     environmentId: 'e2e-target',
     clientVersion,
   };
@@ -597,7 +596,6 @@ async function main(): Promise<void> {
     process.stdout.write(`connecting via ${flags.target ?? ''} launcher...\n`);
     const connect = (): Promise<RemoteEnvironment> =>
       RemoteEnvironment.connect({
-        workspaceId: 'remote-exec-e2e',
         environmentId: 'e2e-target',
         launcher,
         clientVersion: '0.0.0',

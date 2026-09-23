@@ -7,7 +7,6 @@ import { defineState } from '#/state/state';
 
 const environmentSetBindingSchema = z.object({
   agentId: z.string(),
-  workspaceId: z.string(),
   environmentId: z.string(),
   cwd: z.string().optional(),
 });
@@ -19,7 +18,6 @@ export class EnvironmentSetBinding extends AgentEvent2<z.infer<typeof environmen
 }
 export interface EnvironmentSetBinding {
   readonly agentId: string;
-  readonly workspaceId: string;
   readonly environmentId: string;
   readonly cwd?: string;
 }
@@ -29,4 +27,4 @@ export const environmentBindingKey = defineState(
   (): EnvironmentBinding | undefined => undefined,
 ).replayable({ schema: z.custom<EnvironmentBinding | undefined>() })
   .undoable()
-  .on(EnvironmentSetBinding, (_s, e) => ({ workspaceId: e.workspaceId, environmentId: e.environmentId, cwd: e.cwd }));
+  .on(EnvironmentSetBinding, (_s, e) => ({ environmentId: e.environmentId, cwd: e.cwd }));

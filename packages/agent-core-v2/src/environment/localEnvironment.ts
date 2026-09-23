@@ -8,7 +8,6 @@ import { IHostProcessService } from '#/os/interface/hostProcess';
 import { IHostTerminalService } from '#/os/interface/terminal';
 
 import type { Environment, EnvironmentCapability, EnvironmentPath, EnvironmentStatus } from './environment';
-import type { EnvironmentProviderAttachment, EnvironmentProviderContext, EnvironmentProviderFactory, EnvironmentProviderHost } from './environmentProvider';
 
 let nextGeneration = 1;
 
@@ -26,13 +25,12 @@ export class LocalEnvironment implements Environment {
   readonly onDidChangeStatus = this.statusEmitter.event;
 
   constructor(
-    workspaceId: string,
     environment: IHostEnvironment,
     fs: IHostFileSystem | undefined,
     process: IHostProcessService | undefined,
     terminal: IHostTerminalService | undefined,
   ) {
-    this.identity = { workspaceId, environmentId: 'local', generation: `local-${nextGeneration++}` };
+    this.identity = { environmentId: 'local', generation: `local-${nextGeneration++}` };
     const capabilities = new Set<EnvironmentCapability>();
     if (fs !== undefined) capabilities.add('fs');
     if (process !== undefined) capabilities.add('process');
@@ -77,20 +75,5 @@ export class LocalEnvironment implements Environment {
     this.currentStatus = 'disposed';
     this.statusEmitter.fire('disposed');
     this.statusEmitter.dispose();
-  }
-}
-
-export class LocalEnvironmentProviderFactory implements EnvironmentProviderFactory {
-  readonly id = 'local';
-
-  async attach(context: EnvironmentProviderContext, host: EnvironmentProviderHost): Promise<EnvironmentProviderAttachment> {
-    const handle = host.registerEnvironment(new LocalEnvironment(
-      context.id,
-      host.get(IHostEnvironment),
-      host.get(IHostFileSystem),
-      host.get(IHostProcessService),
-      host.get(IHostTerminalService),
-    ));
-    return { dispose: () => handle.remove() };
   }
 }

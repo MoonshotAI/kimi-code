@@ -15,7 +15,8 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
-import { IEnvironmentResolver, IWorkspaceInstanceManager, type WorkspaceInstanceChange } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IWorkspaceInstanceManager, type WorkspaceInstanceChange } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import { Event } from '#/_base/event';
 import type { Environment } from '#/environment/environment';
 import { normalize } from 'pathe';
@@ -49,7 +50,7 @@ describe('GitService', () => {
       additionalServices: (reg) => {
         reg.define(IHostProcessService, HostProcessService);
         reg.define(IHostFileSystem, HostFileSystem);
-        reg.defineInstance(IEnvironmentResolver, {
+        reg.definePartialInstance(IEnvironmentService, {
           _serviceBrand: undefined,
           inspect: () => environment,
           acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),

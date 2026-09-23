@@ -219,7 +219,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
       contextUsage: 0,
     })),
     getGoal: vi.fn(async () => ({ goal: null })),
-    getEnvironment: vi.fn(async () => ({ workspaceId: 'ws-1', environmentId: 'local' })),
+    getEnvironment: vi.fn(async () => ({ environmentId: 'local' })),
     listEnvironments: vi.fn(async () => ({ environments: [] })),
     setApprovalHandler: vi.fn(),
     setQuestionHandler: vi.fn(),
@@ -6846,7 +6846,6 @@ command = "vim"
   it('shows the initiating subagent environment badge on the approval panel', async () => {
     const session = makeSession({
       getEnvironment: vi.fn(async () => ({
-        workspaceId: 'ws-1',
         environmentId: 'sub-box',
         cwd: '/remote/sub',
       })),
@@ -6886,7 +6885,7 @@ command = "vim"
 
   it('renders no badge for a locally bound subagent under a remote main binding', async () => {
     const session = makeSession({
-      getEnvironment: vi.fn(async () => ({ workspaceId: 'ws-1', environmentId: 'local' })),
+      getEnvironment: vi.fn(async () => ({ environmentId: 'local' })),
       listEnvironments: vi.fn(async () => ({
         environments: [
           { environmentId: 'main-box', type: 'ssh', status: 'ready', generation: 'g1', capabilities: [] },
@@ -9360,7 +9359,6 @@ describe('KimiTUI environment slot', () => {
   function environmentSession(overrides: Record<string, unknown> = {}) {
     return makeSession({
       getEnvironment: vi.fn(async () => ({
-        workspaceId: 'ws-1',
         environmentId: 'dev-box',
         cwd: '/home/me/projects',
       })),

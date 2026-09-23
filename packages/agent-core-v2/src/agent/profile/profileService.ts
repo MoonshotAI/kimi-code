@@ -70,7 +70,7 @@ import { ENVIRONMENT_SWITCH_TOOL_NAMES } from '#/features/environmentTools/envir
 import { AGENT_ENVIRONMENT_TOOLS_FLAG_ID } from '#/features/environmentTools/flag';
 import { towerKey } from '#/features/tower/towerOps';
 import { IFlagService } from '#/app/flag/flag';
-import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentService } from '#/app/environment/environment';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { renderAgentProfilePrompt } from '#/app/agentProfileCatalog/profile-shared';
 import { getAgentToolContributions } from '#/agent/toolRegistry/toolContribution';
@@ -170,7 +170,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IAgentIdentity private readonly identity: IAgentIdentity,
     @IAgentAgentsMdReminderService private readonly agentsMdReminder: IAgentAgentsMdReminderService,
     @IFlagService private readonly flags: IFlagService,
-    @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
+    @IEnvironmentService private readonly environments: IEnvironmentService,
   ) {
     super();
     this.states.contributeState(profileKey);
@@ -913,9 +913,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   private resolveEnvironmentsInfo(currentEnvironmentId: string): string {
     if (!this.environmentToolsVisible()) return '';
-    const workspace = this.workspaces.get(this.sessionContext.workspaceId);
-    if (workspace === undefined) return '';
-    return buildEnvironmentsInfo(workspace.environments.snapshot(), currentEnvironmentId);
+    return buildEnvironmentsInfo(this.environments.snapshot(), currentEnvironmentId);
   }
 
   private async resolvePluginSections(): Promise<string> {

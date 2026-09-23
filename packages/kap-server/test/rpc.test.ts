@@ -1,3 +1,4 @@
+import { IEnvironmentService } from '@moonshot-ai/agent-core-v2';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -254,11 +255,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
       metadata: { id: workspaceId, root: home },
       lifecycle: 'active',
       program: {
-        binding: { workspaceId, environmentId: 'local' },
-      },
-      environments: {
-        workspaceId,
-        environments: [{ environmentId: 'local', status: 'ready' }],
+        binding: { environmentId: 'local' },
       },
     });
     expect(workspace.body.data).not.toHaveProperty('accessor');
@@ -279,7 +276,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
       `/api/v1/debug/session/${sessionId}/agent/main/environment-binding`,
     );
     expect(binding.body.data).toMatchObject({
-      binding: { workspaceId, environmentId: 'local' },
+      binding: { environmentId: 'local' },
       available: true,
       environment: { environmentId: 'local', status: 'ready' },
     });
@@ -402,11 +399,10 @@ describe('server-v2 /api/v1/debug RPC', () => {
     );
     expect(unchanged.body.data).toEqual(current.body.data);
 
-    const provider = await server!.core.accessor.get(IWorkspaceInstanceManager).addProvider({
+    const provider = await server!.core.accessor.get(IEnvironmentService).addProvider({
       id: 'debug-remote-provider',
-      attach: async (context, host) => {
+      attach: async (host) => {
         host.registerEnvironment(Object.assign(new FakeEnvironment({
-          workspaceId: context.id,
           environmentId: 'remote',
           generation: 'remote-two',
         }), { fs: new HostFileSystem() }));
@@ -425,7 +421,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
         `/api/v1/debug/session/${id}/agent/main/environment-binding`,
       );
       expect(snapshot.body.data).toMatchObject({
-        binding: { workspaceId: current.body.data.workspace_id, environmentId: 'remote' },
+        binding: { environmentId: 'remote' },
         available: true,
         environment: { environmentId: 'remote', generation: 'remote-two', status: 'ready' },
       });

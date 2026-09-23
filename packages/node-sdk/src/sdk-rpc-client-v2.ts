@@ -212,6 +212,7 @@ import {
   IWorkspaceAliases,
   ISessionActivityView,
   IWorkspaceInstanceManager,
+  IEnvironmentService,
   closeSessionById,
   followSessionLifecycles,
   getLiveSessionById,
@@ -503,7 +504,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     );
     this.app = app;
     this.remoteEnvironmentProvider = app.accessor
-      .get(IWorkspaceInstanceManager)
+      .get(IEnvironmentService)
       .addProvider(
         new RemoteEnvironmentProviderFactory({
           clientVersion: identity.version,
@@ -1967,17 +1968,15 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * The workspace instance's environment registry snapshot (status / generation /
+   * The app's environment registry snapshot (status / generation /
    * capabilities) joined with the resolved declarations (type / defaultCwd),
    * plus the ssh host candidates for the environment-add flow.
    */
   override async listEnvironments(input: SessionIdRpcInput): Promise<SessionEnvironmentsInfo> {
-    const session = this.requireLiveSession(input.sessionId);
-    const context = session.accessor.get(ISessionContext);
-    const instance = await this.sessionWorkspaceInstance(context);
+    this.requireLiveSession(input.sessionId);
     const declarations = await this.resolveEnvironmentDeclarationEntries();
     return {
-      environments: instance.environments.snapshot().environments.map((environment) =>
+      environments: this.engineAccessor.get(IEnvironmentService).snapshot().environments.map((environment) =>
         environmentEntryInfo(environment, declarations.get(environment.environmentId)),
       ),
       sshHosts: await this.resolveSshHostCandidates(),
@@ -1985,10 +1984,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   override async declareEnvironment(input: DeclareEnvironmentRpcInput): Promise<void> {
-    const session = this.requireLiveSession(input.sessionId);
-    const { workspaceId } = session.accessor.get(ISessionContext);
+    this.requireLiveSession(input.sessionId);
     await this.engineAccessor.get(IEnvironmentDeclarationService).declare({
-      workspaceId,
       id: input.id,
       entry: input.entry,
     });

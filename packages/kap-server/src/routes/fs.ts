@@ -3,18 +3,15 @@ import { Readable } from 'node:stream';
 
 import {
   ErrorCodes,
-  IEnvironmentResolver,
-  IHostEnvironment,
+  IEnvironmentService,
+  type EnvironmentResolver,
   IHostFileSystem,
-  IHostProcessService,
-  IHostTerminalService,
   ISessionContext,
   ISessionWorkspaceContext,
   ITelemetryService,
   IWorkspaceFsService,
   IWorkspaceInstanceManager,
   IWorkspaceService,
-  LocalEnvironment,
   getLiveSessionById,
   resumeSessionById,
   isError2,
@@ -22,7 +19,6 @@ import {
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
-import { EnvironmentError } from '@moonshot-ai/agent-core-v2/environment/environmentRegistry';
 import {
   fsDiffRequestSchema,
   fsGitStatusRequestSchema,
@@ -38,8 +34,8 @@ import {
   fsSuggestRequestSchema,
   fsSuggestResponseSchema,
 } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
-import { GitService, type GitWorkspaceLocator } from '@moonshot-ai/agent-core-v2/app/git/gitService';
-import type { Environment, EnvironmentCapability, EnvironmentLease } from '@moonshot-ai/agent-core-v2/environment/environment';
+import { GitService } from '@moonshot-ai/agent-core-v2/app/git/gitService';
+import type { EnvironmentCapability, EnvironmentLease } from '@moonshot-ai/agent-core-v2/environment/environment';
 import { WorkspaceFsService } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fsService';
 import { WorkspaceGitService } from '@moonshot-ai/agent-core-v2/workspace/workspaceGit/workspaceGitService';
 import type { IWorkspaceContext } from '@moonshot-ai/agent-core-v2/workspace/workspaceContext/workspaceContext';
@@ -148,49 +144,12 @@ function createEnvironmentFs(
   environmentId: string,
   required: readonly EnvironmentCapability[],
 ): EnvironmentFsScope {
-  const lease = core.accessor.get(IEnvironmentResolver).acquire(
-    { workspaceId, environmentId },
+  const lease = core.accessor.get(IEnvironmentService).acquire(
+    { environmentId },
     required,
   );
   try {
     return buildEnvironmentFsScope(core, workspaceId, roots, environmentId, lease);
-  } catch (error) {
-    lease.dispose();
-    throw error;
-  }
-}
-
-function environmentWorkspaceId(core: Scope, environmentId: string): string {
-  const instance = core.accessor.get(IWorkspaceInstanceManager)
-    .list()
-    .find((workspace) => workspace.environments.current(environmentId) !== undefined);
-  if (instance === undefined) {
-    throw new EnvironmentError('environment.not_found', `environment ${environmentId} is not registered in any materialized workspace`);
-  }
-  return instance.id;
-}
-
-function createLocalEnvironmentFs(
-  core: Scope,
-  roots: { readonly workDir: string; readonly additionalDirs?: readonly string[] },
-): EnvironmentFsScope {
-  const workspaceId = encodeWorkDirKey(roots.workDir);
-  const environment: Environment = new LocalEnvironment(
-    workspaceId,
-    core.accessor.get(IHostEnvironment),
-    core.accessor.get(IHostFileSystem),
-    core.accessor.get(IHostProcessService),
-    core.accessor.get(IHostTerminalService),
-  );
-  const lease: EnvironmentLease = {
-    environment,
-    track: (resource) => resource,
-    dispose: () => {
-      void environment.dispose();
-    },
-  };
-  try {
-    return buildEnvironmentFsScope(core, workspaceId, roots, 'local', lease);
   } catch (error) {
     lease.dispose();
     throw error;
@@ -222,7 +181,7 @@ function buildEnvironmentFsScope(
   const dirs: Pick<IWorkspaceDirs, 'additionalDirs'> = {
     additionalDirs: mapped.additionalDirs ?? [],
   };
-  const resolver: IEnvironmentResolver = {
+  const resolver: EnvironmentResolver = {
     _serviceBrand: undefined,
     inspect: () => lease.environment,
     acquire: (_binding, capabilities = []) => {
@@ -238,13 +197,10 @@ function buildEnvironmentFsScope(
       return Promise.resolve(this.acquire(_binding, capabilities));
     },
   };
-  const instances: GitWorkspaceLocator = {
-    findByRoot: (root: string) => root === mapped.workDir ? { id: workspaceId } : undefined,
-  };
   const git = new WorkspaceGitService(
     workspace,
     {
-      current: new GitService(resolver, instances, lease.environment.fs!),
+      current: new GitService(resolver, lease.environment.fs!),
       onDidChange: () => ({ dispose: () => {} }),
     },
   );
@@ -553,9 +509,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       const fsRoots = { workDir: roots[0]!, additionalDirs: roots.slice(1) };
       let environmentFs: EnvironmentFsScope | undefined;
       try {
-        environmentFs = environmentId === 'local'
-          ? createLocalEnvironmentFs(core, fsRoots)
-          : createEnvironmentFs(core, environmentWorkspaceId(core, environmentId), fsRoots, environmentId, ['fs']);
+        environmentFs = createEnvironmentFs(core, encodeWorkDirKey(fsRoots.workDir), fsRoots, environmentId, ['fs']);
         for (const root of [environmentFs.roots.workDir, ...environmentFs.roots.additionalDirs]) {
           let stat;
           try {

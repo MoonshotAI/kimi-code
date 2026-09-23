@@ -204,7 +204,7 @@ function createHarness(
       reg.defineInstance(IHostFileSystem, hostFs);
       reg.defineInstance(IHostEnvironment, hostEnvironment);
       const environment = {
-        identity: { workspaceId: 'workspace-1', environmentId: 'local', generation: 'test' },
+        identity: { environmentId: 'local', generation: 'test' },
         capabilities: new Set(['fs', 'process', 'terminal']),
         host: hostEnvironment,
         path: {

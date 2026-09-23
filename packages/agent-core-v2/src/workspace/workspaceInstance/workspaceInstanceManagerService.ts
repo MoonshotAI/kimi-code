@@ -1,4 +1,4 @@
-import { IInstantiationService, ref, type LiveRef, type ServiceIdentifier } from '#/_base/di/instantiation';
+import { IInstantiationService, ref, type LiveRef } from '#/_base/di/instantiation';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
@@ -30,24 +30,18 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { Error2, ErrorCodes } from '#/errors';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { LocalEnvironmentProviderFactory } from '#/environment/localEnvironment';
+import { IEnvironmentService } from '#/app/environment/environment';
 import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
-import type { Environment, EnvironmentBinding, EnvironmentCapability, EnvironmentLease } from '#/environment/environment';
-import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
-import { EnvironmentError, EnvironmentRegistry } from '#/environment/environmentRegistry';
-import type { EnvironmentProviderAttachment, EnvironmentProviderFactory, EnvironmentProviderHost } from '#/environment/environmentProvider';
 import { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 
 import { WorkspaceInstance } from './workspaceInstance';
-import { IEnvironmentResolver, IWorkspaceInstanceManager, type WorkspaceInstanceRef } from './workspaceInstanceManager';
+import { IWorkspaceInstanceManager, type WorkspaceInstanceRef } from './workspaceInstanceManager';
 
 export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
   declare readonly _serviceBrand: undefined;
   private readonly instances = new Map<string, WorkspaceInstance>();
   private readonly requests = new Map<string, Promise<WorkspaceInstance>>();
   private readonly inflight = new Map<string, Promise<WorkspaceInstance>>();
-  private readonly providers = new Map<string, EnvironmentProviderFactory>();
-  private readonly attachments = new Map<string, Map<string, EnvironmentProviderAttachment>>();
   private readonly changeEmitter = new Emitter<{ workspaceId: string; instance?: WorkspaceInstance }>();
   readonly onDidChange = this.changeEmitter.event;
 
@@ -80,10 +74,8 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
-  ) {
-    const localProvider = new LocalEnvironmentProviderFactory();
-    this.providers.set(localProvider.id, localProvider);
-  }
+    @IEnvironmentService private readonly environments: IEnvironmentService,
+  ) {}
 
   get(workspaceId: string): WorkspaceInstance | undefined {
     return this.instances.get(workspaceId);
@@ -155,32 +147,8 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     const instance = this.instances.get(workspaceId);
     if (instance === undefined) return;
     this.instances.delete(workspaceId);
-    const attachments = this.attachments.get(workspaceId);
-    this.attachments.delete(workspaceId);
-    if (attachments !== undefined) for (const attachment of [...attachments.values()].toReversed()) await attachment.dispose();
     await instance.dispose();
     this.changeEmitter.fire({ workspaceId });
-  }
-
-  async addProvider(factory: EnvironmentProviderFactory): Promise<{ dispose(): Promise<void> }> {
-    if (this.providers.has(factory.id)) throw new Error(`environment provider ${factory.id} already exists`);
-    this.providers.set(factory.id, factory);
-    const attached: WorkspaceInstance[] = [];
-    try {
-      for (const instance of this.instances.values()) {
-        await this.attach(instance, factory);
-        attached.push(instance);
-      }
-    } catch (error) {
-      this.providers.delete(factory.id);
-      for (const instance of attached.toReversed()) await this.detach(instance.id, factory.id);
-      throw error;
-    }
-    return { dispose: async () => {
-      if (this.providers.get(factory.id) !== factory) return;
-      this.providers.delete(factory.id);
-      for (const workspaceId of [...this.attachments.keys()].toReversed()) await this.detach(workspaceId, factory.id);
-    } };
   }
 
   async dispose(): Promise<void> {
@@ -190,10 +158,10 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
 
   private async materialize(workspace: Workspace): Promise<WorkspaceInstance> {
     await this.environment.ready;
-    const environments = new EnvironmentRegistry(workspace.id);
+    await this.environments.ready;
     const instance = new WorkspaceInstance(
       workspace,
-      environments,
+      this.environments,
       {
         _serviceBrand: undefined,
         workspaceId: workspace.id,
@@ -251,110 +219,11 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
         ),
       },
     );
-    try {
-      for (const provider of this.providers.values()) await this.attach(instance, provider);
-      if (instance.environments.current(LOCAL_ENVIRONMENT_ID) === undefined) throw new Error(`workspace ${workspace.id} has no local environment`);
-      instance.activate();
-      this.instances.set(workspace.id, instance);
-      this.changeEmitter.fire({ workspaceId: workspace.id, instance });
-      return instance;
-    } catch (error) {
-      const attachments = this.attachments.get(instance.id);
-      this.attachments.delete(instance.id);
-      if (attachments !== undefined) {
-        for (const attachment of [...attachments.values()].toReversed()) await attachment.dispose();
-      }
-      await instance.dispose();
-      throw error;
-    }
-  }
-
-  private async attach(instance: WorkspaceInstance, provider: EnvironmentProviderFactory): Promise<void> {
-    const existing = this.attachments.get(instance.id);
-    if (existing?.has(provider.id) === true) throw new Error(`environment provider ${provider.id} is already attached to workspace ${instance.id}`);
-    const handles: Array<{ remove(): Promise<void> }> = [];
-    let attachment: EnvironmentProviderAttachment;
-    try {
-      attachment = await provider.attach({
-        id: instance.id,
-      }, this.providerHost(instance, handles));
-    } catch (error) {
-      for (const handle of handles.toReversed()) await handle.remove();
-      throw error;
-    }
-    let attachments = this.attachments.get(instance.id);
-    if (attachments === undefined) {
-      attachments = new Map();
-      this.attachments.set(instance.id, attachments);
-    }
-    attachments.set(provider.id, {
-      dispose: async () => {
-        try {
-          await attachment.dispose();
-        } finally {
-          for (const handle of handles.toReversed()) await handle.remove();
-        }
-      },
-    });
-  }
-
-  private async detach(workspaceId: string, providerId: string): Promise<void> {
-    const attachments = this.attachments.get(workspaceId);
-    const attachment = attachments?.get(providerId);
-    if (attachments === undefined || attachment === undefined) return;
-    attachments.delete(providerId);
-    if (attachments.size === 0) this.attachments.delete(workspaceId);
-    await attachment.dispose();
-  }
-
-  private providerHost(
-    instance: WorkspaceInstance,
-    handles: Array<{ remove(): Promise<void> }>,
-  ): EnvironmentProviderHost {
-    return {
-      get: <T>(id: ServiceIdentifier<T>): T =>
-        this.instantiation.invokeFunction((accessor) => accessor.get(id)),
-      registerEnvironment: (environment) => {
-        const registration = instance.environments.register(environment);
-        const handle = {
-          environmentId: environment.identity.environmentId,
-          update: async (prepare: () => Environment | Promise<Environment>) => {
-            await registration.replace(await prepare());
-          },
-          remove: () => registration.remove(),
-        };
-        handles.push(handle);
-        return handle;
-      },
-    };
-  }
-}
-
-export class EnvironmentResolver implements IEnvironmentResolver {
-  declare readonly _serviceBrand: undefined;
-  constructor(@IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager) {}
-  inspect(binding: EnvironmentBinding): Environment {
-    const workspace = this.workspaces.get(binding.workspaceId);
-    if (workspace === undefined) {
-      throw new EnvironmentError('environment.not_found', `workspace ${binding.workspaceId} is not materialized`);
-    }
-    return workspace.environments.inspect(binding);
-  }
-  acquire(binding: EnvironmentBinding, required: readonly EnvironmentCapability[] = []): EnvironmentLease {
-    const workspace = this.workspaces.get(binding.workspaceId);
-    if (workspace === undefined) {
-      throw new EnvironmentError('environment.not_found', `workspace ${binding.workspaceId} is not materialized`);
-    }
-    return workspace.environments.acquire(binding, required);
-  }
-  async acquireWhenReady(binding: EnvironmentBinding, required: readonly EnvironmentCapability[] = []): Promise<EnvironmentLease> {
-    const workspace = this.workspaces.get(binding.workspaceId);
-    if (workspace === undefined) {
-      throw new EnvironmentError('environment.not_found', `workspace ${binding.workspaceId} is not materialized`);
-    }
-    return workspace.environments.acquireWhenReady(binding, required);
+    instance.activate();
+    this.instances.set(workspace.id, instance);
+    this.changeEmitter.fire({ workspaceId: workspace.id, instance });
+    return instance;
   }
 }
 
 registerScopedService(LifecycleScope.App, IWorkspaceInstanceManager, WorkspaceInstanceManager, ScopeActivation.OnScopeCreated, 'workspaceInstanceManager');
-registerScopedService(LifecycleScope.App, IEnvironmentResolver, EnvironmentResolver, ScopeActivation.OnScopeCreated, 'environmentResolver');

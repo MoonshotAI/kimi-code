@@ -35,7 +35,7 @@ import { createHooks } from '#/hooks';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
-import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentService } from '#/app/environment/environment';
 
 import {
   type AgentRunHandle,
@@ -80,7 +80,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ILogService private readonly log: ILogService,
-    @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
+    @IEnvironmentService private readonly environments: IEnvironmentService,
     @IEnvironmentDeclarationService private readonly environmentDeclarations: IEnvironmentDeclarationService,
   ) {
     super();
@@ -250,11 +250,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     if (spawnBinding.environmentId === callerBinding.environmentId) {
       return caller.accessor.get(IAgentEnvironmentService).acquire(['process']);
     }
-    const workspace = this.workspaces.get(this.sessionContext.workspaceId);
-    if (workspace === undefined) {
-      throw new EnvironmentError('environment.not_found', `workspace ${this.sessionContext.workspaceId} is not materialized`);
-    }
-    return workspace.environments.acquire(spawnBinding, ['process']);
+    return this.environments.acquire(spawnBinding, ['process']);
   }
 
   private async resolveSpawnBinding(
@@ -266,28 +262,26 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       return callerBinding;
     }
     if (environmentId === LOCAL_ENVIRONMENT_ID) {
-      return { workspaceId: callerBinding.workspaceId, environmentId: LOCAL_ENVIRONMENT_ID };
+      return { environmentId: LOCAL_ENVIRONMENT_ID };
     }
-    const workspace = this.workspaces.get(this.sessionContext.workspaceId);
-    const environment = workspace?.environments.current(environmentId);
-    if (workspace === undefined || environment === undefined) {
+    const environment = this.environments.current(environmentId);
+    if (environment === undefined) {
       const available =
-        workspace?.environments.list().map((entry) => entry.identity.environmentId).join(', ') ?? '';
+        this.environments.list().map((entry) => entry.identity.environmentId).join(', ') ?? '';
       throw new EnvironmentError(
         'environment.not_found',
-        `environment "${environmentId}" does not exist in this workspace. Available environments: ${available}.`,
+        `environment "${environmentId}" does not exist. Available environments: ${available}.`,
       );
     }
-    const connected = (await this.environmentDeclarations.ensureConnected(this.sessionContext.workspaceId, environmentId))!;
+    const connected = (await this.environmentDeclarations.ensureConnected(environmentId))!;
     const declaredDefaultCwd = await this.environmentDeclarations.declaredDefaultCwd(environmentId);
     if (declaredDefaultCwd !== undefined) {
       if (connected.fs !== undefined) {
-        await this.environmentDeclarations.assertCwdUsable(this.sessionContext.workspaceId, environmentId, declaredDefaultCwd);
+        await this.environmentDeclarations.assertCwdUsable(environmentId, declaredDefaultCwd);
       }
-      return { workspaceId: callerBinding.workspaceId, environmentId, cwd: declaredDefaultCwd };
+      return { environmentId, cwd: declaredDefaultCwd };
     }
     return {
-      workspaceId: callerBinding.workspaceId,
       environmentId,
       cwd: connected.host?.cwd ?? connected.host?.homeDir,
     };

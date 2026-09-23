@@ -50,7 +50,7 @@ export function fakeEnvironment(
 ): FakeEnvironment {
   const capabilities = options.capabilities ?? ['fs', 'process'];
   const value = new FakeEnvironment(
-    { workspaceId: options.workspaceId ?? 'workspace', environmentId, generation },
+    { environmentId, generation },
     {
       status: options.status ?? 'ready',
       capabilities,
@@ -81,7 +81,7 @@ export function connectableEnvironment(
 } {
   const environmentId = options.environmentId ?? 'connectable';
   const fake = new FakeEnvironment(
-    { workspaceId: options.workspaceId ?? 'workspace', environmentId, generation: `${environmentId}-pending` },
+    { environmentId, generation: `${environmentId}-pending` },
     { status: options.status ?? 'pending', capabilities: ['fs', 'process'] },
   );
   const calls: string[] = [];

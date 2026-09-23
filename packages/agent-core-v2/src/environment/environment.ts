@@ -10,7 +10,6 @@ export type EnvironmentCapability = 'fs' | 'process' | 'terminal';
 export const LOCAL_ENVIRONMENT_ID = 'local';
 
 export interface EnvironmentBinding {
-  readonly workspaceId: string;
   readonly environmentId: string;
   readonly cwd?: string;
 }

@@ -730,7 +730,7 @@ function bashTool(
   };
   const backend = Object.assign(
     new FakeEnvironment(
-      { workspaceId: ctx.workspaceId, environmentId: 'local', generation: 'test' },
+      { environmentId: 'local', generation: 'test' },
       { capabilities: ['process'], pathClass: env.pathClass },
     ),
     { host: env, process: processService },
@@ -890,7 +890,7 @@ describe('BashTool', () => {
     };
     const backend = Object.assign(
       new FakeEnvironment(
-        { workspaceId: ctx.workspaceId, environmentId: 'docker-dev', generation: 'remote-one' },
+        { environmentId: 'docker-dev', generation: 'remote-one' },
         { capabilities: ['process'], pathClass: 'posix' },
       ),
       { host: createTestEnv(), process: processService },

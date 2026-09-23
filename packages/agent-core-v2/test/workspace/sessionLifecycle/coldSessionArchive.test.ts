@@ -1,3 +1,5 @@
+import { EnvironmentRegistry } from '#/environment/environmentRegistry';
+import { IEnvironmentService } from '#/app/environment/environment';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -239,6 +241,7 @@ function sessionManagerResuming(sessionId: string): SessionManager {
     program: { sessionControllerGenerationFor: () => 'generation-1', createSessionController: () => controller },
   } as unknown as WorkspaceInstance;
   const workspaces = { getOrCreate: async () => workspace, get: () => workspace } as unknown as IWorkspaceInstanceManager;
+  const environments = new EnvironmentRegistry() as unknown as IEnvironmentService;
   return new SessionManager(
     workspaces,
     { get: async () => summary } as unknown as ISessionIndex,
@@ -246,10 +249,11 @@ function sessionManagerResuming(sessionId: string): SessionManager {
       { _serviceBrand: undefined, ready: Promise.resolve(), get: () => undefined } as unknown as IConfigService,
       { _serviceBrand: undefined, read: async function* () {} } as unknown as IAppendLogStore,
       { _serviceBrand: undefined, scope: (name: string) => name } as unknown as IBootstrapService,
-      workspaces,
+      environments,
       { _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService,
     ),
     { _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService,
+    environments,
   );
 }
 

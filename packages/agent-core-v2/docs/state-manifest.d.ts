@@ -943,13 +943,11 @@ export interface AgentStateSnapshot {
   // src/agent/environmentBinding/environmentBindingOps.ts
   // replayable · durable · undoable — folds: EnvironmentSetBinding
   'environmentBinding': /* EnvironmentBinding — packages/agent-core-v2/src/environment/environment.ts */ {
-    readonly workspaceId: string;
     readonly environmentId: string;
     readonly cwd?: string;
   } | undefined;
   // src/agent/environmentBinding/environmentBindingService.ts
   'environment.binding': /* EnvironmentBinding — packages/agent-core-v2/src/environment/environment.ts */ {
-    readonly workspaceId: string;
     readonly environmentId: string;
     readonly cwd?: string;
   };

@@ -18,7 +18,7 @@ import { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
 import { WorkspaceFsService } from '#/workspace/workspaceFs/fsService';
 import { getShareBinRgPath } from '#/workspace/workspaceFs/internal/rgLocator';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { ITelemetryService, type TelemetryProperties } from '#/app/telemetry/telemetry';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
@@ -408,9 +408,9 @@ function makeSession(
       ready: Promise.resolve(),
     }),
   ]);
-  const environment = new FakeEnvironment({ workspaceId: 'w', environmentId: 'local', generation: 'test' }, { capabilities: ['process'], pathClass });
+  const environment = new FakeEnvironment({ environmentId: 'local', generation: 'test' }, { capabilities: ['process'], pathClass });
   Object.defineProperty(environment, 'process', { value: runner ?? fakeRunner(handler) });
-  host.app.instantiation.provide(IEnvironmentResolver, resolverFor(environment));
+  host.app.instantiation.provide(IEnvironmentService, resolverFor(environment));
   const workspace = host.child('program', 'w1', [
     stubPair(IWorkspaceContext, stubWorkspaceContext()),
     stubPair(IWorkspaceDirs, stubWorkspaceDirs(additionalDirs)),
@@ -424,7 +424,7 @@ function makeSession(
 
 const emptyHandler: RunHandler = () => ({ stdout: '', exitCode: 0 });
 
-function resolverFor(environment: FakeEnvironment): IEnvironmentResolver {
+function resolverFor(environment: FakeEnvironment): EnvironmentResolver {
   return {
     _serviceBrand: undefined,
     inspect: () => environment,
@@ -442,7 +442,7 @@ function makeRemoteSession(
   hostFs?: IHostFileSystem,
 ): IWorkspaceFsService {
   const environment = new FakeEnvironment(
-    { workspaceId: 'w', environmentId, generation: 'test' },
+    { environmentId, generation: 'test' },
     { capabilities: ['process'], host: { homeDir } },
   );
   Object.defineProperty(environment, 'process', { value: fakeRunner(handler) });

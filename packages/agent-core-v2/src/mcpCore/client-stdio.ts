@@ -8,7 +8,7 @@ import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { EnvironmentError, environmentIsReady } from '#/environment/environmentRegistry';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { IHostProcess } from '#/os/interface/hostProcess';
-import type { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import type { EnvironmentResolver } from '#/app/environment/environment';
 
 import {
   buildRequestOptions,
@@ -29,8 +29,7 @@ export interface StdioMcpClientOptions {
   readonly startupTimeoutMs?: number;
   readonly toolCallTimeoutMs?: number;
   readonly defaultCwd?: string;
-  readonly environmentResolver: IEnvironmentResolver;
-  readonly workspaceId: string;
+  readonly environmentResolver: EnvironmentResolver;
   readonly environmentId: string;
   readonly sessionId?: string;
 }
@@ -163,7 +162,7 @@ class EnvironmentStdioTransport implements Transport {
   onmessage?: <T extends JSONRPCMessage>(message: T) => void;
   private readonly readBuffer = new ReadBuffer();
   private process: IHostProcess | undefined;
-  private lease: ReturnType<IEnvironmentResolver['acquire']> | undefined;
+  private lease: ReturnType<EnvironmentResolver['acquire']> | undefined;
   private tracked: { dispose(): void | Promise<void> } | undefined;
   private started = false;
   private closed = false;
@@ -179,7 +178,6 @@ class EnvironmentStdioTransport implements Transport {
     if (this.closed) throw new Error('Environment stdio transport is closed');
     this.started = true;
     const binding = {
-      workspaceId: this.options.workspaceId,
       environmentId: this.options.environmentId,
     };
     const required = ['process'] as const;

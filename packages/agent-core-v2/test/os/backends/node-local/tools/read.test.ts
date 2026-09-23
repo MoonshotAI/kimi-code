@@ -98,7 +98,7 @@ function createReadTool(
 ): ReadTool {
   const environment = Object.assign(
     new FakeEnvironment(
-      { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
+      { environmentId: 'local', generation: 'test' },
       { capabilities: ['fs'], pathClass: env.pathClass },
     ),
     { host: env, fs },
@@ -194,9 +194,9 @@ async function execute(tool: ReadTool, args: ReadInput): Promise<ExecutableToolR
 }
 
 function createRegistryBackedTool(environmentValue: FakeEnvironment) {
-  const registry = new EnvironmentRegistry('workspace');
+  const registry = new EnvironmentRegistry();
   registry.register(environmentValue);
-  const binding = { workspaceId: 'workspace', environmentId: 'local' } as const;
+  const binding = { environmentId: 'local' } as const;
   const environment: IAgentEnvironmentService = {
     _serviceBrand: undefined,
     onDidChange: (listener) => registry.onDidChange(() => listener()),
@@ -232,7 +232,7 @@ async function connectingReadExecution(status?: 'connecting') {
   const env = createTestEnv();
   const fs = createSpiedFs('visible').fs;
   const environmentValue = new FakeEnvironment(
-    { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
+    { environmentId: 'local', generation: 'test' },
     { capabilities: ['fs'], status },
   );
   Object.assign(environmentValue, { host: env, fs });

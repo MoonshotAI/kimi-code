@@ -20,14 +20,14 @@ function noRgProbe(): RgProbe & { exec: ReturnType<typeof vi.fn> } {
 
 function remoteEnvironment(environmentId: string, homeDir = '/home/remote'): FakeEnvironment {
   return new FakeEnvironment(
-    { workspaceId: 'workspace', environmentId, generation: `${environmentId}-g1` },
+    { environmentId, generation: `${environmentId}-g1` },
     { capabilities: ['process'], host: { homeDir } },
   );
 }
 
 function localEnvironment(): FakeEnvironment {
   return new FakeEnvironment(
-    { workspaceId: 'workspace', environmentId: 'local', generation: 'local-g1' },
+    { environmentId: 'local', generation: 'local-g1' },
     { capabilities: ['process'] },
   );
 }

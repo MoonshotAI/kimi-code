@@ -155,7 +155,6 @@ export class RemoteEphemeralEnvironmentConnector implements IEphemeralEnvironmen
       connectWithGuidance(
         (spec) =>
           this.connectFn({
-            workspaceId: request.workspaceId,
             environmentId: request.environmentId,
             launcher: spec,
             clientVersion,
@@ -164,7 +163,6 @@ export class RemoteEphemeralEnvironmentConnector implements IEphemeralEnvironmen
       );
     const inner = await connectInner();
     const environment = new EphemeralRemoteEnvironment(inner, connectInner, {
-      workspaceId: request.workspaceId,
       environmentId: request.environmentId,
       generation: `${request.environmentId}-${randomUUID()}`,
     });

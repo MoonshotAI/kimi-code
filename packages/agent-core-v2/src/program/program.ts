@@ -3,7 +3,7 @@ import { GitService } from '#/app/git/gitService';
 import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
 import type { Environment, EnvironmentBinding, EnvironmentLease, EnvironmentWorkspaceRoots } from '#/environment/environment';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
-import { EnvironmentError, type EnvironmentGenerationSnapshot, type EnvironmentRegistry, type EnvironmentRegistryChange } from '#/environment/environmentRegistry';
+import { EnvironmentError, type EnvironmentGenerationSnapshot, type EnvironmentRegistryChange } from '#/environment/environmentRegistry';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import type { IWorkspaceStateService } from '#/workspace/state/workspaceState';
@@ -39,7 +39,7 @@ import { WorkspaceRootSkillSource } from '#/features/skill/workspace/rootFileSki
 import { EnvironmentSkillDiscovery } from '#/features/skill/workspace/environmentSkillDiscovery';
 import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
 import { WorkspaceSkillCatalogService } from '#/features/skill/workspace/workspaceSkillCatalogService';
-import type { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { type IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
 import type { ProgramDependencies } from './programDependencies';
 
@@ -132,7 +132,7 @@ export class Program {
   private readonly trustChangeEmitter = new AsyncEmitter<WorkspaceTrustChange & IWaitUntil>();
   readonly onDidChangeTrust: Event<WorkspaceTrustChange & IWaitUntil> = this.trustChangeEmitter.event;
   private readonly registrySubscription;
-  private readonly resolver: IEnvironmentResolver;
+  private readonly resolver: EnvironmentResolver;
   private readonly generations = new Map<string, ProgramGeneration>();
   private readonly failedGenerations = new Set<string>();
   private readonly reconciledGenerations = new Map<string, { readonly environmentId: string; readonly cwd?: string }>();
@@ -143,11 +143,11 @@ export class Program {
 
   constructor(
     readonly workspaceId: string,
-    private readonly environments: EnvironmentRegistry,
+    private readonly environments: Pick<IEnvironmentService, 'inspect' | 'acquire' | 'acquireWhenReady' | 'onDidChange' | 'current' | 'snapshot' | 'drainSession'>,
     private readonly context: IWorkspaceContext,
     private readonly dependencies: ProgramDependencies,
   ) {
-    this.binding = Object.freeze({ workspaceId, environmentId: LOCAL_ENVIRONMENT_ID });
+    this.binding = Object.freeze({ environmentId: LOCAL_ENVIRONMENT_ID });
     this.resolver = {
       _serviceBrand: undefined,
       inspect: (binding) => this.environments.inspect(binding),
@@ -179,7 +179,7 @@ export class Program {
     roots: EnvironmentWorkspaceRoots,
     request: FsSuggestRequest,
   ): Promise<FsSuggestResponse> {
-    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, environmentId }, ['fs']);
+    const lease = this.resolver.acquire({ environmentId }, ['fs']);
     try {
       const workspace = lease.environment.workspace;
       if (workspace === undefined) {
@@ -205,7 +205,7 @@ export class Program {
 
   createSessionController(environmentId: string = LOCAL_ENVIRONMENT_ID, cwd?: string): SessionLifecycleService {
     const generation = this.requireGeneration(environmentId, cwd);
-    generation.lease ??= this.resolver.acquire({ workspaceId: this.workspaceId, environmentId }, PROGRAM_CAPABILITIES);
+    generation.lease ??= this.resolver.acquire({ environmentId }, PROGRAM_CAPABILITIES);
     generation.references += 1;
     let released = false;
     const release = (): void => {
@@ -348,7 +348,7 @@ export class Program {
   }
 
   private createGeneration(environmentId: string, cwd?: string): ProgramGeneration {
-    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, environmentId }, PROGRAM_CAPABILITIES);
+    const lease = this.resolver.acquire({ environmentId }, PROGRAM_CAPABILITIES);
     const environment = lease.environment;
     const disposables: { dispose(): void | Promise<void> }[] = [];
     const own = <T extends { dispose(): void | Promise<void> }>(value: T): T => {
@@ -377,11 +377,10 @@ export class Program {
             current: new GitService(
               {
                 _serviceBrand: undefined,
-                inspect: () => this.resolver.inspect({ workspaceId: this.workspaceId, environmentId }),
-                acquire: (_binding, required) => this.resolver.acquire({ workspaceId: this.workspaceId, environmentId }, required),
-                acquireWhenReady: (_binding, required) => this.resolver.acquireWhenReady({ workspaceId: this.workspaceId, environmentId }, required),
+                inspect: () => this.resolver.inspect({ environmentId }),
+                acquire: (_binding, required) => this.resolver.acquire({ environmentId }, required),
+                acquireWhenReady: (_binding, required) => this.resolver.acquireWhenReady({ environmentId }, required),
               },
-              { findByRoot: () => ({ id: this.workspaceId }) },
               targetFs,
             ),
             onDidChange: Event.None as Event<void>,

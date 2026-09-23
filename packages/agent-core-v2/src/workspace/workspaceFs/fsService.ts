@@ -51,7 +51,7 @@ import { IHostFileSystem, type HostDirEntry, type HostFileStat } from '#/os/inte
 import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import type { EnvironmentPath } from '#/environment/environment';
 import { POSIX_ENVIRONMENT_PATH } from '#/environment/environmentDefaults';
-import { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
@@ -108,13 +108,13 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     @IWorkspaceContext workspace: IWorkspaceContext,
     @IWorkspaceDirs private readonly workspaceDirs: Pick<IWorkspaceDirs, 'additionalDirs'>,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
-    @IEnvironmentResolver private readonly resolver: IEnvironmentResolver,
+    @IEnvironmentService private readonly resolver: EnvironmentResolver,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IWorkspaceGitService private readonly git: IWorkspaceGitService,
     private readonly environmentId = 'local',
   ) {
     this.workspaceId = workspace.workspaceId;
-    this.path = resolver.inspect({ workspaceId: workspace.workspaceId, environmentId }).path ?? POSIX_ENVIRONMENT_PATH;
+    this.path = resolver.inspect({ environmentId }).path ?? POSIX_ENVIRONMENT_PATH;
     this.workDir = this.path.resolve(workspace.cwd);
   }
 
@@ -676,7 +676,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     }
 
     const lease = this.resolver.acquire(
-      { workspaceId: this.workspaceId, environmentId: this.environmentId },
+      { environmentId: this.environmentId },
       ['process'],
     );
     const proc = await lease.environment.process!.spawn(rgBinary, args, { cwd: this.workDir });
@@ -899,7 +899,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     args.push(req.pattern);
     args.push('.');
 
-    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, environmentId: this.environmentId }, ['process']);
+    const lease = this.resolver.acquire({ environmentId: this.environmentId }, ['process']);
     const proc = await lease.environment.process!.spawn(rgPath, args, { cwd: this.workDir });
 
     const acc = new RgJsonAccumulator(req);
@@ -1084,7 +1084,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
 
   private async resolveRg(): Promise<RgResolution | null> {
     if (this.rgResolution !== undefined) return this.rgResolution;
-    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, environmentId: this.environmentId }, ['process']);
+    const lease = this.resolver.acquire({ environmentId: this.environmentId }, ['process']);
     const probe: RgProbe = {
       exec: (args) => runCommand(lease.environment.process!, args, { cwd: this.workDir }),
     };

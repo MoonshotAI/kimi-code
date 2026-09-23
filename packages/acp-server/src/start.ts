@@ -29,7 +29,7 @@ import {
   IHostProcessService,
   ISessionContext,
   ISessionIndexMirror,
-  IWorkspaceInstanceManager,
+  IEnvironmentService,
   logSeed,
   resolveConfigPath,
   resolveKimiHome,
@@ -142,9 +142,8 @@ export async function runAcpServerWithStream(
   // file IO. The `acp` `IHostFileSystem` reads it lazily via
   // `IAcpConnection.get()`.
   acpConnection.bind(client);
-  const workspaceManager = core.accessor.get(IWorkspaceInstanceManager);
   const acpEnvironmentProvider = new AcpEnvironmentProviderFactory(acpConnection, core.accessor.get(IHostEnvironment), core.accessor.get(IHostProcessService));
-  const acpProviderRegistration = await workspaceManager.addProvider(acpEnvironmentProvider);
+  const acpProviderRegistration = await core.accessor.get(IEnvironmentService).addProvider(acpEnvironmentProvider);
   const sessionWorkspaces = new Map<string, string>();
   server = new AcpServer(client, klient, acpConnection, {
     agentInfo: opts.agentInfo,
@@ -156,7 +155,7 @@ export async function runAcpServerWithStream(
       const handle = getLiveSessionById(core.accessor, sessionId);
       if (handle === undefined) throw new Error(`session ${sessionId} is not live`);
       const context = handle.accessor.get(ISessionContext);
-      const environmentId = acpEnvironmentProvider.bindSession(context.workspaceId, sessionId, context.cwd);
+      const environmentId = acpEnvironmentProvider.bindSession(sessionId, context.cwd);
       sessionWorkspaces.set(sessionId, context.workspaceId);
       const agentContext = await ensureMainAgent(handle, { environmentId });
       handle.accessor
@@ -169,7 +168,7 @@ export async function runAcpServerWithStream(
       const workspaceId = sessionWorkspaces.get(sessionId);
       if (workspaceId === undefined) return;
       sessionWorkspaces.delete(sessionId);
-      await acpEnvironmentProvider.unbindSession(workspaceId, sessionId);
+      await acpEnvironmentProvider.unbindSession(sessionId);
     },
     // Prompt-image compression persists originals into the session's own
     // media-originals dir (same resolution as kap-server's prompt route):

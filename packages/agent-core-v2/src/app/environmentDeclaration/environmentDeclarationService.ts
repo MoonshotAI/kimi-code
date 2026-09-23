@@ -18,7 +18,7 @@ import {
   sessionScopeOf,
   workspacePersistenceScope,
 } from '#/workspace/sessionLifecycle/internal/addressing';
-import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentService } from '#/app/environment/environment';
 import { AGENT_WIRE_RECORD_KEY, isWireRecord, type WireRecord } from '#/wire/record';
 import { parseTree, restorableChain, type WireLine } from '#/wire/tree/index';
 
@@ -26,30 +26,27 @@ import { IEnvironmentDeclarationService, type DeclareEnvironmentInput } from './
 
 export class EnvironmentDeclarationService implements IEnvironmentDeclarationService {
   declare readonly _serviceBrand: undefined;
-  private readonly reconcilers = new Map<string, () => Promise<void>>();
+  private reconcile: (() => Promise<void>) | undefined;
 
   constructor(
     @IConfigService private readonly config: IConfigService,
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
-    @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
+    @IEnvironmentService private readonly environments: IEnvironmentService,
     @ILogService private readonly log: ILogService,
   ) {}
 
-  registerReconciler(workspaceId: string, reconcile: () => Promise<void>): IDisposable {
-    if (this.reconcilers.has(workspaceId)) throw new Error(`workspace ${workspaceId} already has an environment reconciler`);
-    this.reconcilers.set(workspaceId, reconcile);
+  registerReconciler(reconcile: () => Promise<void>): IDisposable {
+    if (this.reconcile !== undefined) throw new Error('remote environment provider is already registered');
+    this.reconcile = reconcile;
     return { dispose: () => {
-      if (this.reconcilers.get(workspaceId) === reconcile) this.reconcilers.delete(workspaceId);
+      if (this.reconcile === reconcile) this.reconcile = undefined;
     } };
   }
 
   async declare(input: DeclareEnvironmentInput): Promise<void> {
-    const workspace = await this.workspaces.getOrCreate({ workspaceId: input.workspaceId });
-    const reconcile = this.reconcilers.get(workspace.id);
-    if (reconcile === undefined) {
-      throw new EnvironmentError('environment.unavailable', `workspace ${workspace.id} has no remote environment provider`);
-    }
+    const reconcile = this.reconcile;
+    if (reconcile === undefined) throw new EnvironmentError('environment.unavailable', 'remote environment provider is not registered');
     await this.config.ready;
     const declared = this.config.get<Record<string, unknown>>(ENVIRONMENTS_SECTION);
     if (declared?.[input.id] !== undefined) {
@@ -61,14 +58,10 @@ export class EnvironmentDeclarationService implements IEnvironmentDeclarationSer
       undefined,
       { expectedValues: { [ENVIRONMENTS_SECTION]: declared ?? null } },
     );
-    const results = await Promise.allSettled([...new Set([reconcile, ...this.reconcilers.values()])].map((refresh) => refresh()));
-    const failure = results.find((result) => result.status === 'rejected');
-    if (failure?.status === 'rejected') {
-      throw new EnvironmentError(
-        'environment.unavailable',
-        `Environment "${input.id}" was saved, but registration failed: ${failure.reason instanceof Error ? failure.reason.message : String(failure.reason)}`,
-        { cause: failure.reason },
-      );
+    try {
+      await reconcile();
+    } catch (error) {
+      throw new EnvironmentError('environment.unavailable', `Environment "${input.id}" was saved, but registration failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
   }
 
@@ -86,10 +79,10 @@ export class EnvironmentDeclarationService implements IEnvironmentDeclarationSer
     return declarations?.entries.find((entry) => entry.id === environmentId)?.entry.defaultCwd;
   }
 
-  async ensureConnected(workspaceId: string, environmentId: string): Promise<Environment | undefined> {
-    const workspace = this.workspaces.get(workspaceId);
-    const environment = workspace?.environments.current(environmentId);
-    if (workspace === undefined || environment === undefined) return undefined;
+  async ensureConnected(environmentId: string): Promise<Environment | undefined> {
+    await this.environments.ready;
+    const environment = this.environments.current(environmentId);
+    if (environment === undefined) return undefined;
     if (!environmentIsReady(environment)) {
       if (typeof environment.connect !== 'function') {
         throw new EnvironmentError('environment.unavailable', `environment ${environmentId} is ${environment.status}`);
@@ -104,15 +97,11 @@ export class EnvironmentDeclarationService implements IEnvironmentDeclarationSer
         );
       }
     }
-    return workspace.environments.current(environmentId);
+    return this.environments.current(environmentId);
   }
 
-  async assertCwdUsable(workspaceId: string, environmentId: string, cwd: string): Promise<void> {
-    const workspace = this.workspaces.get(workspaceId);
-    if (workspace === undefined) {
-      throw new EnvironmentError('environment.not_found', `workspace ${workspaceId} is not materialized`);
-    }
-    const lease = workspace.environments.acquire({ workspaceId, environmentId }, []);
+  async assertCwdUsable(environmentId: string, cwd: string): Promise<void> {
+    const lease = this.environments.acquire({ environmentId }, []);
     try {
       const fs = lease.environment.fs;
       if (fs === undefined) {
@@ -150,7 +139,6 @@ export class EnvironmentDeclarationService implements IEnvironmentDeclarationSer
       for (const { record } of restorableChain(entries, tree)) {
         if (record.type === EnvironmentSetBinding.type && typeof record['environmentId'] === 'string') {
           binding = {
-            workspaceId,
             environmentId: record['environmentId'],
             cwd: typeof record['cwd'] === 'string' ? record['cwd'] : undefined,
           };

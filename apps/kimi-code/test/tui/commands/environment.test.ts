@@ -46,14 +46,14 @@ function makeHost(options: {
   const session = {
     id: 'ses-1',
     listEnvironments: vi.fn(async () => currentList),
-    getEnvironment: vi.fn(async () => ({ workspaceId: 'ws-1', environmentId: options.currentEnvironmentId ?? 'local' })),
+    getEnvironment: vi.fn(async () => ({ environmentId: options.currentEnvironmentId ?? 'local' })),
     switchEnvironment: vi.fn(async (environmentId: string, opts?: { cwd?: string }) => {
       if (options.switchError !== undefined) throw options.switchError;
-      return { workspaceId: 'ws-1', environmentId, cwd: opts?.cwd };
+      return { environmentId, cwd: opts?.cwd };
     }),
     reconnectEnvironment: vi.fn(async () => {
       if (options.reconnectError !== undefined) throw options.reconnectError;
-      return { workspaceId: 'ws-1', environmentId: options.currentEnvironmentId ?? 'local' };
+      return { environmentId: options.currentEnvironmentId ?? 'local' };
     }),
     declareEnvironment: vi.fn(
       async (input: { id: string; entry: { type?: string; defaultCwd?: string } }) => {

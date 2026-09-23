@@ -16,7 +16,7 @@ import {
   ISessionIndexMirror,
   ICapabilityService,
   IPluginService,
-  IWorkspaceInstanceManager,
+  IEnvironmentService,
   IWorkspaceService,
   PluginChanged,
   logSeed,
@@ -223,7 +223,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     },
     [...logSeed(logging), ...(opts.seeds ?? [])],
   );
-  const remoteEnvironmentProvider = await core.accessor.get(IWorkspaceInstanceManager).addProvider(
+  const remoteEnvironmentProvider = await core.accessor.get(IEnvironmentService).addProvider(
     new RemoteEnvironmentProviderFactory({
       clientVersion: serverVersion,
     }),

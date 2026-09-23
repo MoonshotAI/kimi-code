@@ -17,7 +17,7 @@ import type {
 import { ErrorCodes, Error2 } from '#/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
 import type { EnvironmentLease } from '#/environment/environment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
@@ -64,7 +64,7 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
   private readonly records = new Map<string, TerminalRecord>();
 
   constructor(
-    @IEnvironmentResolver private readonly environmentResolver: IEnvironmentResolver,
+    @IEnvironmentService private readonly environmentResolver: EnvironmentResolver,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @ISessionContext private readonly sessionContext: ISessionContext,
   ) {
@@ -75,7 +75,7 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
     const cols = input.cols ?? DEFAULT_COLS;
     const rows = input.rows ?? DEFAULT_ROWS;
     const lease = this.environmentResolver.acquire(
-      { workspaceId: this.sessionContext.workspaceId, environmentId: input.environment_id },
+      { environmentId: input.environment_id },
       ['terminal'],
     );
     const view = new EnvironmentWorkspaceView(lease.environment, this.workspace);

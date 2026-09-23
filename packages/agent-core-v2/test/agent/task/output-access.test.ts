@@ -308,7 +308,7 @@ describe('AgentTaskService — spill target pinning', () => {
 
   function fakeEnvironment(fs: IHostFileSystem, tempDir: string): Environment {
     return {
-      identity: { workspaceId: 'workspace-1', environmentId: 'remote', generation: 'test' },
+      identity: { environmentId: 'remote', generation: 'test' },
       capabilities: new Set(['fs'] as const),
       host: { tempDir },
       path: posixPath,

@@ -8,6 +8,7 @@ import {
   IHostFileSystem,
   ISessionContext,
   IWorkspaceInstanceManager,
+  IEnvironmentService,
   IWorkspaceService,
   environmentEntryInfo,
   readSshConfigHosts,
@@ -71,7 +72,7 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
     async (req, reply) => {
       try {
         const agent = await resolveEnvironmentAgent(core, req.params.session_id);
-        reply.send(okEnvelope(toResponse(agent.accessor.get(IAgentEnvironmentBindingService).current), req.id));
+        reply.send(okEnvelope(toResponse(agent.accessor.get(IAgentEnvironmentBindingService).current, agent.accessor.get(ISessionContext).workspaceId), req.id));
       } catch (error) {
         sendEnvironmentRouteError(reply, req.id, error);
       }
@@ -101,7 +102,7 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
         const agent = await resolveEnvironmentAgent(core, req.params.session_id);
         const service = agent.accessor.get(IAgentEnvironmentBindingService);
         const binding = await service.connectAndSwitch(req.body.environment_id, req.body.cwd);
-        reply.send(okEnvelope(toResponse(binding), req.id));
+        reply.send(okEnvelope(toResponse(binding, agent.accessor.get(ISessionContext).workspaceId), req.id));
       } catch (error) {
         sendEnvironmentRouteError(reply, req.id, error);
       }
@@ -127,7 +128,7 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
       try {
         const agent = await resolveEnvironmentAgent(core, req.params.session_id);
         await agent.accessor.get(IAgentEnvironmentService).reconnect();
-        reply.send(okEnvelope(toResponse(agent.accessor.get(IAgentEnvironmentBindingService).current), req.id));
+        reply.send(okEnvelope(toResponse(agent.accessor.get(IAgentEnvironmentBindingService).current, agent.accessor.get(ISessionContext).workspaceId), req.id));
       } catch (error) {
         sendEnvironmentRouteError(reply, req.id, error);
       }
@@ -145,7 +146,7 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
       },
-      description: 'List the environments registered for the session workspace',
+      description: 'List the environments available to the session',
       tags: ['sessions'],
     },
     async (req, reply) => {
@@ -155,11 +156,10 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
           throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${req.params.session_id} does not exist`);
         }
         const workspaceId = session.accessor.get(ISessionContext).workspaceId;
-        const instance = await resolveWorkspaceInstance(core, workspaceId);
         const declarations = await resolveDeclarations(core);
         const payload: SessionEnvironmentsResponse = {
           workspace_id: workspaceId,
-          environments: instance.environments.snapshot().environments.map((environment) =>
+          environments: core.accessor.get(IEnvironmentService).snapshot().environments.map((environment) =>
             toEntry(environment, declarations.get(environment.environmentId)),
           ),
           ssh_hosts: [...await resolveSshHosts(core)],
@@ -197,7 +197,6 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
         const workspaceId = session.accessor.get(ISessionContext).workspaceId;
         const entry = toEngineEnvironmentEntry(req.body.entry);
         await core.accessor.get(IEnvironmentDeclarationService).declare({
-          workspaceId,
           id: req.body.environment_id,
           entry,
         });
@@ -314,8 +313,8 @@ function toEntry(environment: EnvironmentGenerationSnapshot, entry: RemoteEnviro
   };
 }
 
-function toResponse(binding: EnvironmentBinding): EnvironmentBindingResponse {
-  return { workspace_id: binding.workspaceId, environment_id: binding.environmentId, cwd: binding.cwd };
+function toResponse(binding: EnvironmentBinding, workspaceId: string): EnvironmentBindingResponse {
+  return { workspace_id: workspaceId, environment_id: binding.environmentId, cwd: binding.cwd };
 }
 
 function sendEnvironmentRouteError(

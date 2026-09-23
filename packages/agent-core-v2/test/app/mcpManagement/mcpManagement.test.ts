@@ -41,10 +41,8 @@ import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStor
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { WorkspaceInstance } from '#/workspace/workspaceInstance/workspaceInstance';
-import {
-  IEnvironmentResolver,
-  IWorkspaceInstanceManager,
-} from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
 import { stubLog } from '../../_base/log/stubs';
 import {
@@ -102,7 +100,7 @@ describe('McpManagementService', () => {
     const hostProcess = new HostProcessService();
     const environment = Object.assign(
       new FakeEnvironment(
-        { workspaceId: 'test-workspace', environmentId: 'local', generation: 'test-generation' },
+        { environmentId: 'local', generation: 'test-generation' },
         { capabilities: ['process'], host: { homeDir: home } },
       ),
       { process: hostProcess },
@@ -147,7 +145,7 @@ describe('McpManagementService', () => {
           resolved: () => identityReady,
           current: () => identitySnapshot,
         });
-        reg.defineInstance(IEnvironmentResolver, {
+        reg.definePartialInstance(IEnvironmentService, {
           _serviceBrand: undefined,
           inspect: () => environment,
           acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
@@ -722,11 +720,11 @@ describe('McpManagementService', () => {
       expect(result.success).toBe(true);
       expect(result.output).toContain('Available tools: 4');
       expect(result.output).toContain('- echo: Echoes input text');
-      expect(findContaining).toHaveBeenCalledWith(cwd);
+      expect(findContaining).not.toHaveBeenCalled();
       expect(getOrCreate).not.toHaveBeenCalled();
     }, 20000);
 
-    it('probes a nested cwd against the containing workspace environments', async () => {
+    it('probes a nested cwd without resolving a workspace', async () => {
       const cwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-management-nested-'));
       tempDirs.push(cwd);
       findContaining.mockReturnValue({ id: 'test-workspace' } as unknown as WorkspaceInstance);
@@ -743,11 +741,11 @@ describe('McpManagementService', () => {
 
       expect(result.success).toBe(true);
       expect(result.output).toContain('Available tools: 4');
-      expect(findContaining).toHaveBeenCalledWith(cwd);
+      expect(findContaining).not.toHaveBeenCalled();
       expect(getOrCreate).not.toHaveBeenCalled();
     }, 20000);
 
-    it('rejects a non-local environment_id probe when no workspace contains the cwd', async () => {
+    it('probes a registered non-local environment without a workspace', async () => {
       const cwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-management-remote-miss-'));
       tempDirs.push(cwd);
 
@@ -762,15 +760,12 @@ describe('McpManagementService', () => {
           },
           cwd,
         }),
-      ).rejects.toMatchObject({
-        code: ErrorCodes.REQUEST_INVALID,
-        message: expect.stringContaining('environment_id "remote"'),
-      });
-      expect(findContaining).toHaveBeenCalledWith(cwd);
+      ).resolves.toMatchObject({ success: true });
+      expect(findContaining).not.toHaveBeenCalled();
       expect(getOrCreate).not.toHaveBeenCalled();
     });
 
-    it('probes a non-local environment_id through the containing workspace', async () => {
+    it('probes the selected non-local environment', async () => {
       const cwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-management-remote-hit-'));
       tempDirs.push(cwd);
       findContaining.mockReturnValue({ id: 'test-workspace' } as unknown as WorkspaceInstance);
@@ -787,11 +782,11 @@ describe('McpManagementService', () => {
       });
 
       expect(result.success).toBe(true);
-      expect(findContaining).toHaveBeenCalledWith(cwd);
+      expect(findContaining).not.toHaveBeenCalled();
       expect(getOrCreate).not.toHaveBeenCalled();
     }, 20000);
 
-    it('keeps the transient local probe for an explicit local environment_id', async () => {
+    it('uses the app environment for an explicit local environment_id', async () => {
       const cwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-management-local-explicit-'));
       tempDirs.push(cwd);
 
@@ -807,7 +802,7 @@ describe('McpManagementService', () => {
       });
 
       expect(result.success).toBe(true);
-      expect(findContaining).toHaveBeenCalledWith(cwd);
+      expect(findContaining).not.toHaveBeenCalled();
       expect(getOrCreate).not.toHaveBeenCalled();
     }, 20000);
 
@@ -881,7 +876,7 @@ describe('McpManagementService', () => {
 
       releaseIdentity();
       await expect(probe).resolves.toMatchObject({ success: true });
-      expect(findContaining).toHaveBeenCalledWith(cwd);
+      expect(findContaining).not.toHaveBeenCalled();
       expect(getOrCreate).not.toHaveBeenCalled();
     }, 20000);
 

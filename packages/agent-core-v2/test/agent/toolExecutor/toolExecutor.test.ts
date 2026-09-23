@@ -1095,7 +1095,7 @@ describe('truncation pipeline', () => {
     await readConfig.ready;
     globProcess = new HostProcessService();
     const environment = Object.assign(new FakeEnvironment(
-      { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
+      { environmentId: 'local', generation: 'test' },
       { capabilities: ['fs', 'process'] },
     ), { fs: new HostFileSystem(), process: globProcess });
     const binding = stubAgentEnvironment(environment);

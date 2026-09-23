@@ -134,7 +134,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     getResumeState: vi.fn(() => null),
     listSkills: vi.fn(async () => []),
     close: vi.fn(async () => {}),
-    getEnvironment: vi.fn(async () => ({ workspaceId: 'ws-1', environmentId: 'local' })),
+    getEnvironment: vi.fn(async () => ({ environmentId: 'local' })),
     ...overrides,
   };
 }
@@ -545,7 +545,6 @@ describe('KimiTUI startup', () => {
   it('shows a synthetic connecting environment slot until the startup session takes over (v2)', async () => {
     const session = makeSession({
       getEnvironment: vi.fn(async () => ({
-        workspaceId: 'ws-1',
         environmentId: 'dev-box',
         cwd: '/remote/work',
       })),
@@ -598,7 +597,6 @@ describe('KimiTUI startup', () => {
   it('binds /new to the current session environment and cwd, not the startup flag', async () => {
     const session = makeSession({
       getEnvironment: vi.fn(async () => ({
-        workspaceId: 'ws-1',
         environmentId: 'dev-box',
         cwd: '/remote/custom',
       })),
@@ -674,7 +672,7 @@ describe('KimiTUI startup', () => {
 
   it('passes an explicit local binding so /new does not fall back to the config default', async () => {
     const session = makeSession({
-      getEnvironment: vi.fn(async () => ({ workspaceId: 'ws-1', environmentId: 'local', cwd: '/tmp/proj-a' })),
+      getEnvironment: vi.fn(async () => ({ environmentId: 'local', cwd: '/tmp/proj-a' })),
     });
     const harness = makeHarness(session, {
       getConfig: vi.fn(async () => ({
@@ -695,7 +693,7 @@ describe('KimiTUI startup', () => {
 
   it('fails /new when the current remote binding has no working directory', async () => {
     const session = makeSession({
-      getEnvironment: vi.fn(async () => ({ workspaceId: 'ws-1', environmentId: 'dev-box' })),
+      getEnvironment: vi.fn(async () => ({ environmentId: 'dev-box' })),
     });
     const harness = makeHarness(session, {
       getConfig: vi.fn(async () => ({
@@ -742,7 +740,6 @@ describe('KimiTUI startup', () => {
   it('marks the environment slot connecting while /new waits on a disconnected remote binding', async () => {
     const created = makeSession({
       getEnvironment: vi.fn(async () => ({
-        workspaceId: 'ws-1',
         environmentId: 'dev-box',
         cwd: '/remote/custom',
       })),
@@ -757,7 +754,6 @@ describe('KimiTUI startup', () => {
     });
     const current = makeSession({
       getEnvironment: vi.fn(async () => ({
-        workspaceId: 'ws-1',
         environmentId: 'dev-box',
         cwd: '/remote/custom',
       })),
@@ -811,7 +807,6 @@ describe('KimiTUI startup', () => {
   it('keeps the ready environment slot when /new reuses a live remote connection', async () => {
     const session = makeSession({
       getEnvironment: vi.fn(async () => ({
-        workspaceId: 'ws-1',
         environmentId: 'dev-box',
         cwd: '/remote/custom',
       })),
@@ -860,7 +855,6 @@ describe('KimiTUI startup', () => {
   it('restores the previous environment slot when /new creation fails', async () => {
     const session = makeSession({
       getEnvironment: vi.fn(async () => ({
-        workspaceId: 'ws-1',
         environmentId: 'dev-box',
         cwd: '/remote/custom',
       })),

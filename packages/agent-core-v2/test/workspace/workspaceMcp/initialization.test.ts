@@ -24,7 +24,7 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 import { IWorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
@@ -82,10 +82,10 @@ describe('Workspace MCP initialization', () => {
         reg.defineInstance(ILogService, stubLog());
         reg.defineInstance(ITelemetryService, noopTelemetryService);
         const environment = Object.assign(
-          new FakeEnvironment({ workspaceId: 'test-workspace', environmentId: 'local', generation: 'test-generation' }, { capabilities: ['process'] }),
+          new FakeEnvironment({ environmentId: 'local', generation: 'test-generation' }, { capabilities: ['process'] }),
           { process: new HostProcessService() },
         );
-        reg.defineInstance(IEnvironmentResolver, { _serviceBrand: undefined, inspect: () => environment, acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }), acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }) });
+        reg.definePartialInstance(IEnvironmentService, { _serviceBrand: undefined, inspect: () => environment, acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }), acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }) });
         reg.definePartialInstance(IConfigService, {
           ready,
           get: (<T = unknown>(domain: string): T =>

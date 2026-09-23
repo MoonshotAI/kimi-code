@@ -33,7 +33,7 @@ describe('EnvironmentWorkspaceView', () => {
 
   it('uses provider-owned workspace root mapping', () => {
     const mapped = new FakeEnvironment(
-      { workspaceId: 'workspace', environmentId: 'remote', generation: 'one' },
+      { environmentId: 'remote', generation: 'one' },
       {
         mapWorkspaceRoots: (roots) => ({
           workDir: roots.workDir.replace('/repo', '/remote/workspace'),
@@ -52,11 +52,11 @@ describe('EnvironmentWorkspaceView', () => {
 
   it('keeps heterogeneous provider mappings and allowlists isolated', () => {
     const posix = new FakeEnvironment(
-      { workspaceId: 'workspace', environmentId: 'remote-posix', generation: 'one' },
+      { environmentId: 'remote-posix', generation: 'one' },
       { mapWorkspaceRoots: () => ({ workDir: '/provider-a/repo', additionalDirs: ['/provider-a/shared'] }) },
     );
     const win32 = new FakeEnvironment(
-      { workspaceId: 'workspace', environmentId: 'remote-win32', generation: 'one' },
+      { environmentId: 'remote-win32', generation: 'one' },
       {
         pathClass: 'win32',
         mapWorkspaceRoots: () => ({ workDir: 'C:\\provider-b\\repo', additionalDirs: ['D:\\provider-b\\shared'] }),
@@ -76,7 +76,7 @@ describe('EnvironmentWorkspaceView', () => {
 
   it('translates Git Bash POSIX paths on win32 bash environments', () => {
     const winBash = new FakeEnvironment(
-      { workspaceId: 'workspace', environmentId: 'local', generation: 'one' },
+      { environmentId: 'local', generation: 'one' },
       {
         pathClass: 'win32',
         host: {
@@ -107,7 +107,7 @@ describe('EnvironmentWorkspaceView', () => {
       additionalDirs: ['/shared'],
     });
     expect(first.roots).toEqual(['/workspace', '/shared']);
-    expect(first.binding).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+    expect(first.binding).toEqual({ environmentId: 'local' });
     expect(second.environment).not.toBe(first.environment);
   });
 });

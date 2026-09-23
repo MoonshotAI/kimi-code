@@ -106,7 +106,7 @@ function createEnvironment(
 ): IAgentEnvironmentService {
   const backend = Object.assign(
     new FakeEnvironment(
-      { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
+      { environmentId: 'local', generation: 'test' },
       { capabilities: ['fs', 'process'], pathClass: environment.pathClass },
     ),
     { fs, host: environment, process },

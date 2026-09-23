@@ -126,7 +126,7 @@ describe('ensureRgPath remote environment branch', () => {
     options: { readonly generation?: string; readonly osKind?: string; readonly osArch?: string; readonly withFs?: boolean } = {},
   ): Environment {
     const environment = new FakeEnvironment(
-      { workspaceId: 'workspace', environmentId, generation: options.generation ?? `${environmentId}-g1` },
+      { environmentId, generation: options.generation ?? `${environmentId}-g1` },
       {
         capabilities: ['fs', 'process'],
         host: {
@@ -225,7 +225,7 @@ describe('ensureRgPath remote environment branch', () => {
   it('keeps the local flow for the local environment', async () => {
     const probe = noRgProbe();
     const environment = new FakeEnvironment(
-      { workspaceId: 'workspace', environmentId: 'local', generation: 'local-g1' },
+      { environmentId: 'local', generation: 'local-g1' },
       { capabilities: ['fs', 'process'] },
     );
     const fakeShare = join(tmpdir(), `kimi-rg-local-${String(Date.now())}-${String(Math.random()).slice(2)}`);

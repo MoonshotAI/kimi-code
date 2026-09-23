@@ -19,12 +19,11 @@ import type {
 } from '#/environment/environment';
 import type {
   EnvironmentProviderAttachment,
-  EnvironmentProviderContext,
-  EnvironmentProviderEnvironmentHandle,
   EnvironmentProviderFactory,
   EnvironmentProviderHost,
 } from '#/environment/environmentProvider';
 
+import type { EnvironmentRegistrationHandle } from '#/environment/environmentRegistry';
 import { connectWithGuidance } from './connectGuidance';
 import type { LocalRunner } from './executorDetect';
 import type { LauncherSpec } from './launchers';
@@ -49,7 +48,12 @@ function closeReasonOf(session: RemoteEnvironment): string | undefined {
   return connection?.closeReason?.reason;
 }
 
-class SharedRemoteConnection {
+class DeclaredRemoteEnvironment implements Environment {
+  private generation: string;
+
+  get identity(): EnvironmentIdentity {
+    return { environmentId: this.environmentId, generation: this.generation };
+  }
   private session: RemoteEnvironment | undefined;
   private launcher: LauncherSpec;
   private fingerprint: string;
@@ -57,34 +61,25 @@ class SharedRemoteConnection {
   private inflight: Promise<void> | undefined;
   private lastConnectError: string | undefined;
   private epoch = 0;
-  private refs = 0;
-  private readonly views = new Set<RemoteEnvironmentView>();
   private readonly statusEmitter = new Emitter<EnvironmentStatus>();
   readonly onDidChangeStatus = this.statusEmitter.event;
   private sessionSubscription: { dispose(): void } | undefined;
 
   constructor(
+    private readonly environmentId: string,
     launcher: LauncherSpec,
     fingerprint: string,
     private readonly open: (launcher: LauncherSpec) => Promise<RemoteEnvironment>,
-    private readonly onIdle: () => void,
   ) {
     this.launcher = launcher;
     this.fingerprint = fingerprint;
+    this.generation = `${environmentId}-${randomUUID()}`;
   }
 
-  retain(view: RemoteEnvironmentView): void {
-    this.refs += 1;
-    this.views.add(view);
-  }
-
-  release(view: RemoteEnvironmentView): Promise<void> {
-    if (!this.views.delete(view)) return Promise.resolve();
-    this.refs -= 1;
-    if (this.refs > 0) return Promise.resolve();
+  dispose(): Promise<void> {
+    if (this.currentStatus === 'disposed') return Promise.resolve();
     this.epoch += 1;
     this.inflight = undefined;
-    this.onIdle();
     this.setStatus('disposed');
     this.statusEmitter.dispose();
     return this.dropSession();
@@ -166,7 +161,7 @@ class SharedRemoteConnection {
     if (this.fingerprint === fingerprint) return;
     this.fingerprint = fingerprint;
     this.launcher = launcher;
-    for (const view of this.views) view.bumpGeneration();
+    this.generation = `${this.environmentId}-${randomUUID()}`;
     if (this.currentStatus === 'pending') return;
     this.disconnect();
   }
@@ -203,96 +198,6 @@ class SharedRemoteConnection {
   }
 }
 
-class RemoteEnvironmentView implements Environment {
-  private generation: string;
-  private released = false;
-  private readonly statusEmitter = new Emitter<EnvironmentStatus>();
-  readonly onDidChangeStatus = this.statusEmitter.event;
-  private readonly subscription: { dispose(): void };
-
-  constructor(
-    private readonly workspaceId: string,
-    private readonly environmentId: string,
-    private readonly shared: SharedRemoteConnection,
-  ) {
-    this.generation = `${environmentId}-${randomUUID()}`;
-    this.subscription = this.shared.onDidChangeStatus((status) => {
-      if (this.released) return;
-      this.statusEmitter.fire(status);
-    });
-  }
-
-  get identity(): EnvironmentIdentity {
-    return {
-      workspaceId: this.workspaceId,
-      environmentId: this.environmentId,
-      generation: this.generation,
-    };
-  }
-
-  bumpGeneration(): void {
-    this.generation = `${this.environmentId}-${randomUUID()}`;
-  }
-
-  noteDeclaration(launcher: LauncherSpec, fingerprint: string): void {
-    this.shared.applyLauncher(launcher, fingerprint);
-  }
-
-  get capabilities(): ReadonlySet<EnvironmentCapability> {
-    return this.released ? EMPTY_CAPABILITIES : this.shared.capabilities;
-  }
-
-  get host(): Environment['host'] {
-    return this.released ? undefined : this.shared.host;
-  }
-
-  get path(): Environment['path'] {
-    return this.released ? undefined : this.shared.path;
-  }
-
-  get workspace(): Environment['workspace'] {
-    return this.released ? undefined : this.shared.workspace;
-  }
-
-  get fs(): Environment['fs'] {
-    return this.released ? undefined : this.shared.fs;
-  }
-
-  get process(): Environment['process'] {
-    return this.released ? undefined : this.shared.process;
-  }
-
-  get status(): EnvironmentStatus {
-    return this.released ? 'disposed' : this.shared.status;
-  }
-
-  get whenReady(): Promise<void> | undefined {
-    return this.released ? undefined : this.shared.whenReady;
-  }
-
-  get connectError(): string | undefined {
-    return this.released ? undefined : this.shared.connectError;
-  }
-
-  connect(): Promise<void> {
-    if (this.released) return Promise.reject(new Error('remote environment is disposed'));
-    return this.shared.connect();
-  }
-
-  disconnect(): void {
-    if (this.released) return;
-    this.shared.disconnect();
-  }
-
-  async dispose(): Promise<void> {
-    if (this.released) return;
-    this.released = true;
-    this.subscription.dispose();
-    this.statusEmitter.dispose();
-    await this.shared.release(this);
-  }
-}
-
 export interface RemoteEnvironmentProviderFactoryOptions {
   readonly clientVersion?: string;
   readonly minExecutorVersion?: string;
@@ -302,19 +207,18 @@ export interface RemoteEnvironmentProviderFactoryOptions {
 }
 
 interface DeclaredEnvironmentRecord {
-  handle: EnvironmentProviderEnvironmentHandle;
-  view: RemoteEnvironmentView;
+  handle: EnvironmentRegistrationHandle;
+  environment: DeclaredRemoteEnvironment;
   declaration: RemoteEnvironmentDeclaration;
   fingerprint: string;
 }
 
 export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFactory {
   readonly id = 'remote-exec';
-  private readonly connections = new Map<string, SharedRemoteConnection>();
 
   constructor(private readonly options: RemoteEnvironmentProviderFactoryOptions = {}) {}
 
-  async attach(context: EnvironmentProviderContext, host: EnvironmentProviderHost): Promise<EnvironmentProviderAttachment> {
+  async attach(host: EnvironmentProviderHost): Promise<EnvironmentProviderAttachment> {
     const log = host.get(ILogService);
     const config = host.get(IConfigService);
     const resolve = () => resolveWorkspaceEnvironmentDeclarations(config);
@@ -329,7 +233,7 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
     }
     const records = new Map<string, DeclaredEnvironmentRecord>();
     for (const declaration of initial.entries) {
-      records.set(declaration.id, this.registerDeclaredEnvironment(context, host, declaration));
+      records.set(declaration.id, this.registerDeclaredEnvironment(host, declaration));
     }
 
     let disposed = false;
@@ -356,7 +260,7 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
           const record = records.get(declaration.id);
           if (record === undefined) {
             try {
-              records.set(declaration.id, this.registerDeclaredEnvironment(context, host, declaration));
+              records.set(declaration.id, this.registerDeclaredEnvironment(host, declaration));
             } catch (error) {
               failures.push(error);
             }
@@ -368,13 +272,13 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
           }
           record.declaration = declaration;
           record.fingerprint = fingerprint;
-          record.view.noteDeclaration(toLauncherSpec(declaration.entry), fingerprint);
+          record.environment.applyLauncher(toLauncherSpec(declaration.entry), fingerprint);
         }
         if (failures.length > 0) throw new AggregateError(failures, 'remote environment declarations failed to reconcile');
       });
       return tail;
     };
-    const reconciliation = host.get(IEnvironmentDeclarationService).registerReconciler(context.id, reconcile);
+    const reconciliation = host.get(IEnvironmentDeclarationService).registerReconciler(reconcile);
     const refresh = (): Promise<void> => reconcile().catch((error: unknown) => {
       log.warn('remote environment declarations failed to reload', { error });
     });
@@ -390,7 +294,7 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
           try {
             await record.handle.remove();
           } finally {
-            records.delete(record.view.identity.environmentId);
+            records.delete(record.environment.identity.environmentId);
           }
         }
         await tail.catch(() => {});
@@ -399,47 +303,23 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
   }
 
   private registerDeclaredEnvironment(
-    context: EnvironmentProviderContext,
     host: EnvironmentProviderHost,
     declaration: RemoteEnvironmentDeclaration,
   ): DeclaredEnvironmentRecord {
-    const shared = this.connectionFor(declaration);
-    const view = new RemoteEnvironmentView(context.id, declaration.id, shared);
-    shared.retain(view);
+    const fingerprint = declarationFingerprint(declaration.entry);
+    const environment = new DeclaredRemoteEnvironment(declaration.id, toLauncherSpec(declaration.entry), fingerprint, (launcher) => this.open(declaration.id, launcher));
     try {
-      const handle = host.registerEnvironment(view);
-      return {
-        handle,
-        view,
-        declaration,
-        fingerprint: declarationFingerprint(declaration.entry),
-      };
+      return { handle: host.registerEnvironment(environment), environment, declaration, fingerprint };
     } catch (error) {
-      void view.dispose();
+      void environment.dispose();
       throw error;
     }
-  }
-
-  private connectionFor(declaration: RemoteEnvironmentDeclaration): SharedRemoteConnection {
-    const fingerprint = declarationFingerprint(declaration.entry);
-    const launcher = toLauncherSpec(declaration.entry);
-    const existing = this.connections.get(declaration.id);
-    if (existing !== undefined) {
-      existing.applyLauncher(launcher, fingerprint);
-      return existing;
-    }
-    const shared = new SharedRemoteConnection(launcher, fingerprint, (next) => this.open(declaration.id, next), () => {
-      if (this.connections.get(declaration.id) === shared) this.connections.delete(declaration.id);
-    });
-    this.connections.set(declaration.id, shared);
-    return shared;
   }
 
   private open(environmentId: string, launcher: LauncherSpec): Promise<RemoteEnvironment> {
     const connect = this.options.connect ?? ((options: RemoteEnvironmentOptions) => RemoteEnvironment.connect(options));
     return connectWithGuidance(
       (spec) => connect({
-        workspaceId: '',
         environmentId,
         launcher: spec,
         clientVersion: this.options.clientVersion,

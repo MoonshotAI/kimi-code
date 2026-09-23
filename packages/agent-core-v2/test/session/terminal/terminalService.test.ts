@@ -22,7 +22,7 @@ import {
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { EnvironmentLease } from '#/environment/environment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
-import { IEnvironmentResolver, type IEnvironmentResolver as EnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
 vi.mock('node-pty', () => ({
   spawn: vi.fn(),
@@ -74,7 +74,7 @@ class FakeHostTerminalService implements IHostTerminalService {
 class FakeEnvironmentResolver implements EnvironmentResolver {
   declare readonly _serviceBrand: undefined;
   activeLeases = 0;
-  readonly bindings: Array<{ workspaceId: string; environmentId: string }> = [];
+  readonly bindings: Array<{ environmentId: string }> = [];
   readonly tracked: Array<{ resource: unknown; sessionId?: string; disposed: boolean }> = [];
   private readonly environment;
 
@@ -88,7 +88,7 @@ class FakeEnvironmentResolver implements EnvironmentResolver {
   ) {
     this.environment = Object.assign(
       new FakeEnvironment(
-        { workspaceId: 'w1', environmentId, generation: 'test' },
+        { environmentId, generation: 'test' },
         { capabilities: ['terminal'], mapWorkspaceRoots },
       ),
       { terminal },
@@ -99,7 +99,7 @@ class FakeEnvironmentResolver implements EnvironmentResolver {
     return this.environment;
   }
 
-  acquire(binding: { workspaceId: string; environmentId: string }): EnvironmentLease {
+  acquire(binding: { environmentId: string }): EnvironmentLease {
     this.bindings.push(binding);
     this.activeLeases += 1;
     let active = true;
@@ -129,7 +129,7 @@ class FakeEnvironmentResolver implements EnvironmentResolver {
     };
   }
 
-  acquireWhenReady(binding: { workspaceId: string; environmentId: string }): Promise<EnvironmentLease> {
+  acquireWhenReady(binding: { environmentId: string }): Promise<EnvironmentLease> {
     return Promise.resolve(this.acquire(binding));
   }
 }
@@ -175,7 +175,7 @@ describe('SessionTerminalService', () => {
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IHostTerminalService, host);
-        reg.defineInstance(IEnvironmentResolver, resolver);
+        reg.definePartialInstance(IEnvironmentService, resolver);
         reg.define(ISessionTerminalService, SessionTerminalService);
         reg.defineInstance(ISessionWorkspaceContext, stubWorkspace());
         reg.defineInstance(ISessionContext, stubSessionContext());
@@ -204,11 +204,11 @@ describe('SessionTerminalService', () => {
       'remote',
       (roots) => ({ ...roots, workDir: '/remote/workspace' }),
     );
-    ix.set(IEnvironmentResolver, resolver);
+    ix.stub(IEnvironmentService, resolver);
     const svc = ix.get(ISessionTerminalService);
     const terminal = await svc.create({ environment_id: 'remote', cwd: 'sub' });
 
-    expect(resolver.bindings).toEqual([{ workspaceId: 'w1', environmentId: 'remote' }]);
+    expect(resolver.bindings).toEqual([{ environmentId: 'remote' }]);
     expect(terminal.cwd).toBe('/remote/workspace/sub');
     expect(remoteHost.lastOptions[0]?.cwd).toBe('/remote/workspace/sub');
     expect(host.processes).toHaveLength(0);

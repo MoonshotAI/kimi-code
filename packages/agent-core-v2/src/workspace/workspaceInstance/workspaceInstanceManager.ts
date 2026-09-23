@@ -1,7 +1,5 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
-import type { Environment, EnvironmentBinding, EnvironmentCapability, EnvironmentLease } from '#/environment/environment';
-import type { EnvironmentProviderFactory } from '#/environment/environmentProvider';
 
 import type { WorkspaceInstance, WorkspaceInstanceSnapshot } from './workspaceInstance';
 
@@ -26,16 +24,6 @@ export interface IWorkspaceInstanceManager {
   list(): readonly WorkspaceInstance[];
   snapshot(): WorkspaceInstancesSnapshot;
   close(workspaceId: string): Promise<void>;
-  addProvider(factory: EnvironmentProviderFactory): Promise<{ dispose(): void | Promise<void> }>;
 }
 
 export const IWorkspaceInstanceManager: ServiceIdentifier<IWorkspaceInstanceManager> = createDecorator<IWorkspaceInstanceManager>('workspaceInstanceManager');
-
-export interface IEnvironmentResolver {
-  readonly _serviceBrand: undefined;
-  inspect(binding: EnvironmentBinding): Environment;
-  acquire(binding: EnvironmentBinding, required?: readonly EnvironmentCapability[]): EnvironmentLease;
-  acquireWhenReady(binding: EnvironmentBinding, required?: readonly EnvironmentCapability[]): Promise<EnvironmentLease>;
-}
-
-export const IEnvironmentResolver: ServiceIdentifier<IEnvironmentResolver> = createDecorator<IEnvironmentResolver>('environmentResolver');

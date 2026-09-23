@@ -51,10 +51,10 @@ function seedSession(service: SessionLifecycleService, sessionId: string): void 
 
 describe('SessionLifecycleService environment cleanup', () => {
   it('close drains only the closing session environment resources', async () => {
-    const registry = new EnvironmentRegistry('workspace');
+    const registry = new EnvironmentRegistry();
     registry.register(fakeEnvironment('local', 'one'));
-    const leaseA = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
-    const leaseB = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
+    const leaseA = registry.acquire({ environmentId: 'local' });
+    const leaseB = registry.acquire({ environmentId: 'local' });
     const killed: string[] = [];
     leaseA.track({ dispose: () => { killed.push('a'); } }, 'session-a');
     leaseB.track({ dispose: () => { killed.push('b'); } }, 'session-b');
@@ -69,10 +69,10 @@ describe('SessionLifecycleService environment cleanup', () => {
   });
 
   it('archive drains the archived session environment resources', async () => {
-    const registry = new EnvironmentRegistry('workspace');
+    const registry = new EnvironmentRegistry();
     registry.register(fakeEnvironment('local', 'one'));
-    const leaseA = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
-    const leaseB = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
+    const leaseA = registry.acquire({ environmentId: 'local' });
+    const leaseB = registry.acquire({ environmentId: 'local' });
     const killed: string[] = [];
     leaseA.track({ dispose: () => { killed.push('a'); } }, 'session-a');
     leaseB.track({ dispose: () => { killed.push('b'); } }, 'session-b');
@@ -87,9 +87,9 @@ describe('SessionLifecycleService environment cleanup', () => {
   });
 
   it('close without a live session leaves environment resources untouched', async () => {
-    const registry = new EnvironmentRegistry('workspace');
+    const registry = new EnvironmentRegistry();
     registry.register(fakeEnvironment('local', 'one'));
-    const lease = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
+    const lease = registry.acquire({ environmentId: 'local' });
     const killed: string[] = [];
     lease.track({ dispose: () => { killed.push('a'); } }, 'session-a');
 
