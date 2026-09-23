@@ -220,6 +220,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
       login: vi.fn(async () => {}),
       logout: vi.fn(),
       getManagedUsage: vi.fn(),
+      getCachedAccessToken: vi.fn(async () => undefined),
     },
     ...overrides,
   };
@@ -3021,6 +3022,43 @@ describe('KimiTUI startup', () => {
       process.env = { ...originalEnv };
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('still loads the banner when the access-token lookup fails', async () => {
+    const banner = {
+      key: 'new-banner',
+      tag: null,
+      mainText: 'Banner main',
+      subText: null,
+      display: 'always' as const,
+    };
+    let capturedAudience: unknown;
+    const loadSpy = vi.spyOn(BannerProvider.prototype, 'load').mockImplementation(async (options) => {
+      capturedAudience = await options?.audience;
+      return banner;
+    });
+    const session = makeSession({ id: 'ses-target' });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [{ id: 'ses-target', workDir: '/tmp/proj-a' }]),
+    });
+    harness.auth.getCachedAccessToken = vi.fn(async () => {
+      throw new Error('credential storage broken');
+    });
+    const driver = makeDriver(
+      harness,
+      makeStartupInput({ session: 'ses-target' }),
+    ) as unknown as MigrateExitDriver;
+
+    await driver.initMainTui();
+
+    await vi.waitFor(() => {
+      expect(
+        driver.state.transcriptContainer.children.some((child) => child instanceof BannerComponent),
+      ).toBe(true);
+    });
+    expect(capturedAudience).toEqual({ login: 'unknown' });
+
+    loadSpy.mockRestore();
   });
 
   it('resumes a startup session when Windows workdir uses backslashes', async () => {
