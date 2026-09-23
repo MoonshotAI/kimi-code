@@ -169,10 +169,11 @@ function messageIdsOf(events: readonly LlmRequestEvent[]): string[] {
 async function generateNonStream(
   requester: { generate: (...args: never[]) => Promise<void> },
   requestModel: LlmModel,
+  maxCompletionTokens?: number,
 ): Promise<LlmRequestEvent[]> {
   const events: LlmRequestEvent[] = [];
   await requester.generate(
-    { model: requestModel, stream: false },
+    { model: requestModel, stream: false, maxCompletionTokens },
     { messages },
     { signal: new AbortController().signal, onEvent: (event) => events.push(event) },
   );
@@ -286,7 +287,7 @@ describe('google-genai requester stream=false', () => {
   });
 });
 
-describe('openai default client headers timeout', () => {
+describe('default client headers timeout', () => {
   it('passes the configured headers-timeout dispatcher to fetch and fails the request on invalid values', async () => {
     const proxyEnvKeys = [
       'http_proxy',
@@ -302,34 +303,51 @@ describe('openai default client headers timeout', () => {
       [LLM_HEADERS_TIMEOUT_ENV, ...proxyEnvKeys].map((key) => [key, process.env[key]]),
     );
     for (const key of [LLM_HEADERS_TIMEOUT_ENV, ...proxyEnvKeys]) delete process.env[key];
+    let currentBody: Record<string, unknown> = chatCompletion;
     const fetchStub = vi.fn(
       async () =>
-        new Response(JSON.stringify(chatCompletion), {
+        new Response(JSON.stringify(currentBody), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         }),
     );
     vi.stubGlobal('fetch', fetchStub);
     try {
-      await generateNonStream(createOpenAIRequester(), model);
-      expect(fetchStub).toHaveBeenCalledTimes(1);
-      expect(fetchStub.mock.calls[0]?.[1]).not.toHaveProperty('dispatcher');
+      const protocols = [
+        { create: () => createOpenAIRequester(), body: chatCompletion },
+        { create: () => createOpenAIResponsesRequester(), body: responsesBody },
+        { create: () => createAnthropicRequester(), body: anthropicMessage },
+      ];
+      let calls = 0;
+      for (const protocol of protocols) {
+        currentBody = protocol.body;
+        await generateNonStream(protocol.create(), model, 128);
+        calls += 1;
+        expect(fetchStub).toHaveBeenCalledTimes(calls);
+        expect(fetchStub.mock.calls[calls - 1]?.[1]).not.toHaveProperty('dispatcher');
 
+        process.env[LLM_HEADERS_TIMEOUT_ENV] = '45000';
+        await generateNonStream(protocol.create(), model, 128);
+        calls += 1;
+        expect(fetchStub).toHaveBeenCalledTimes(calls);
+        expect(fetchStub.mock.calls[calls - 1]?.[1]).toHaveProperty('dispatcher');
+        delete process.env[LLM_HEADERS_TIMEOUT_ENV];
+      }
+
+      currentBody = chatCompletion;
       process.env[LLM_HEADERS_TIMEOUT_ENV] = '45000';
-      await generateNonStream(createOpenAIRequester(), model);
-      expect(fetchStub).toHaveBeenCalledTimes(2);
-      expect(fetchStub.mock.calls[1]?.[1]).toHaveProperty('dispatcher');
-
       process.env['HTTP_PROXY'] = 'http://127.0.0.1:3128';
       await generateNonStream(createOpenAIRequester(), model);
-      expect(fetchStub).toHaveBeenCalledTimes(3);
-      expect(fetchStub.mock.calls[2]?.[1]).toHaveProperty('dispatcher');
+      calls += 1;
+      expect(fetchStub).toHaveBeenCalledTimes(calls);
+      expect(fetchStub.mock.calls[calls - 1]?.[1]).toHaveProperty('dispatcher');
       delete process.env['HTTP_PROXY'];
 
       process.env['ALL_PROXY'] = 'socks5://127.0.0.1:1080';
       await generateNonStream(createOpenAIRequester(), model);
-      expect(fetchStub).toHaveBeenCalledTimes(4);
-      expect(fetchStub.mock.calls[3]?.[1]).not.toHaveProperty('dispatcher');
+      calls += 1;
+      expect(fetchStub).toHaveBeenCalledTimes(calls);
+      expect(fetchStub.mock.calls[calls - 1]?.[1]).not.toHaveProperty('dispatcher');
       delete process.env['ALL_PROXY'];
 
       process.env[LLM_HEADERS_TIMEOUT_ENV] = 'abc';

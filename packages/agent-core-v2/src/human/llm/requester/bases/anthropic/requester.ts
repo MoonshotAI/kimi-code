@@ -20,6 +20,10 @@ import {
   type LlmRequestEvent,
   type ToolCallIdPolicy,
 } from '#/llm/requester/requester';
+import {
+  getLlmHeadersTimeoutDispatcher,
+  resolveLlmHeadersTimeoutMs,
+} from '#/llm/requester/timeout';
 
 import {
   normalizeToolCallIdsForProvider,
@@ -84,12 +88,16 @@ function buildDefaultHeaders(
 }
 
 function createClient(model: LlmModel, headers: Record<string, string> | undefined): Anthropic {
+  const headersTimeoutMs = resolveLlmHeadersTimeoutMs();
+  const dispatcher =
+    headersTimeoutMs === undefined ? undefined : getLlmHeadersTimeoutDispatcher(headersTimeoutMs);
   return new Anthropic({
     apiKey: model.apiKey ?? 'unused',
     authToken: null,
     baseURL: model.baseUrl ?? null,
     defaultHeaders: buildDefaultHeaders(headers),
     maxRetries: 0,
+    fetchOptions: dispatcher === undefined ? undefined : { dispatcher },
   });
 }
 
