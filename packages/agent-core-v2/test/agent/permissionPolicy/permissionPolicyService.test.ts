@@ -596,6 +596,42 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
     });
   });
 
+  it('asks for .kimi-code/local.toml writes inside the git cwd', async () => {
+    await expect(evaluate({
+      toolName: 'Write',
+      args: { path: '.kimi-code/local.toml', content: 'x' },
+      accesses: ToolAccesses.writeFile(join(workspaceDir, '.kimi-code/local.toml')),
+    })).resolves.toMatchObject({
+      policyName: 'fallback-ask',
+      result: { kind: 'ask' },
+    });
+  });
+
+  it('asks for .kimi-code/local.toml edits inside the git cwd', async () => {
+    await expect(evaluate({
+      toolName: 'Edit',
+      args: { path: '.kimi-code/local.toml', old_string: 'a', new_string: 'b' },
+      accesses: ToolAccesses.readWriteFile(join(workspaceDir, '.kimi-code/local.toml')),
+    })).resolves.toMatchObject({
+      policyName: 'fallback-ask',
+      result: { kind: 'ask' },
+    });
+  });
+
+  it.each(['local.toml', '.kimi-code/local.toml.bak', '.kimi-code/other.toml'])(
+    'still approves %s inside the git cwd',
+    async (relativePath) => {
+      await expect(evaluate({
+        toolName: 'Write',
+        args: { path: relativePath, content: 'x' },
+        accesses: ToolAccesses.writeFile(join(workspaceDir, relativePath)),
+      })).resolves.toMatchObject({
+        policyName: 'git-cwd-write-approve',
+        result: { kind: 'approve' },
+      });
+    },
+  );
+
   it('asks for git control files before git-cwd approval', async () => {
     await expect(evaluate({
       toolName: 'Write',

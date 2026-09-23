@@ -1,12 +1,17 @@
 import { z } from 'zod';
 
-import { fetchClientConfig, type ClientConfigFetchOptions } from '#/utils/client-configs';
+import {
+  fetchClientConfig,
+  RESOURCE_CONFIGS_PATH,
+  type ClientConfigFetchOptions,
+} from '#/utils/client-configs';
 
-/** The tips/banner payload is one named config on the client-configs endpoint. */
+/** The tips/banner payload is one named resource on the resource-configs endpoint. */
 const CONFIG_NAME = 'client_banner';
 
-/** The payload keeps the legacy tips.json shape, which banner-provider parses
-    defensively; the schema only guarantees an object. */
+/** The payload is a `banner_tips` array (plus per-entry `kfc_audience`),
+    which banner-provider parses defensively; the schema only guarantees an
+    object. */
 const bannerConfigSchema = z.looseObject({});
 
 export type BannerConfig = z.infer<typeof bannerConfigSchema>;
@@ -20,5 +25,8 @@ export type BannerConfigFetchOptions = ClientConfigFetchOptions;
 export async function getBannerConfig(
   options: BannerConfigFetchOptions = {},
 ): Promise<BannerConfig | undefined> {
-  return fetchClientConfig(CONFIG_NAME, bannerConfigSchema, options);
+  return fetchClientConfig(CONFIG_NAME, bannerConfigSchema, {
+    ...options,
+    path: RESOURCE_CONFIGS_PATH,
+  });
 }

@@ -51,7 +51,8 @@ function fileStat(): HostFileStat {
 function createTestFs(opts: { stat?: ReturnType<typeof vi.fn>; readdir?: ReturnType<typeof vi.fn> } = {}) {
   const stat = opts.stat ?? vi.fn(async (): Promise<HostFileStat> => dirStat());
   const readdir = opts.readdir ?? vi.fn(async (): Promise<readonly string[]> => []);
-  const fs = { stat, readdir } as unknown as IHostFileSystem;
+  const realpath = vi.fn(async (path: string) => path);
+  const fs = { stat, readdir, realpath } as unknown as IHostFileSystem;
   return { fs, stat, readdir };
 }
 
@@ -1044,5 +1045,61 @@ describe('GlobTool integration (real ripgrep)', () => {
     } finally {
       await fs.rm(externalDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('GlobTool symlink escape', () => {
+  let tmpDir: string;
+  let wsDir: string;
+  let outsideDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'glob-symlink-'));
+    wsDir = path.join(tmpDir, 'ws');
+    outsideDir = path.join(tmpDir, 'outside');
+    await fs.mkdir(wsDir);
+    await fs.mkdir(outsideDir);
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeRealFsTool(spawn: ReturnType<typeof vi.fn>) {
+    return new GlobTool(
+      createRuntime(new HostFileSystem(), createTestEnv(), createTestProcessService(spawn)),
+      stubWorkspaceContext(wsDir),
+      noopTelemetryService,
+    );
+  }
+
+  it('rejects a search root symlink that points outside the workspace', async () => {
+    await fs.writeFile(path.join(outsideDir, 'secret.ts'), '');
+    await fs.symlink(outsideDir, path.join(wsDir, 'external'));
+    const spawn = execReturning('');
+    const tool = makeRealFsTool(spawn);
+
+    const result = await execute(tool, { pattern: '*.ts', path: path.join(wsDir, 'external') });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(toolContentString(result)).toMatch(/symbolic link/);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('allows searching when the workspace directory has a sensitive name', async () => {
+    const credDir = path.join(tmpDir, 'credentials');
+    await fs.mkdir(credDir);
+    await fs.writeFile(path.join(credDir, 'a.ts'), '');
+    const spawn = execReturning('');
+    const tool = new GlobTool(
+      createRuntime(new HostFileSystem(), createTestEnv(), createTestProcessService(spawn)),
+      stubWorkspaceContext(credDir),
+      noopTelemetryService,
+    );
+
+    const result = await execute(tool, { pattern: '*.ts' });
+
+    expect(result.isError).not.toBe(true);
+    expect(spawn).toHaveBeenCalled();
   });
 });

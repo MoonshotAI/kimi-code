@@ -4657,11 +4657,11 @@ describe('Agent tools', () => {
         [emit] turn.ended                  { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "completed" }
       `);
       expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
-      messages:
-        <last>
-        assistant: text "I will look it up."  calls call_lookup:Lookup { "query": "moon" }
-        tool[call_lookup]: text "moon-result"
-    `);
+        messages:
+          <last>
+          assistant: text "I will look it up."  calls call_lookup:Lookup { "query": "moon" }
+          tool[call_lookup]: text "moon-result"
+      `);
       await ctx.rpc.unregisterTool({ name: 'Lookup' });
       ctx.mockNextResponse({ type: 'text', text: 'No lookup tool is available.' });
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Can you still use Lookup?' }] });

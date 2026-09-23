@@ -1,7 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PathSecurityError } from '#/tool/path-access';
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
 import { type WriteInput, WriteInputSchema } from '#/agent/tools/os/write/write';
 import { WriteTool } from '#/agent/tools/os/write/writeTool';
@@ -56,18 +61,18 @@ function createWriteFs(options: WriteFsOptions = {}) {
     options.stat ?? (async () => ({ isFile: false, isDirectory: true, size: 0 })),
   );
   const mkdir = vi.fn(options.mkdir ?? (async () => {}));
-  const fs = { cwd: '/', readText, writeText, appendText, stat, mkdir } as unknown as IHostFileSystem;
+  const realpath = vi.fn(async (path: string) => path);
+  const fs = { cwd: '/', readText, writeText, appendText, stat, mkdir, realpath } as unknown as IHostFileSystem;
   return { fs, readText, writeText, appendText, stat, mkdir };
 }
 
-function makeTool(options: WriteFsOptions = {}, workspace = PERMISSIVE_WORKSPACE) {
-  const fakes = createWriteFs(options);
+function makeToolWithFs(fs: IHostFileSystem, workspace = PERMISSIVE_WORKSPACE) {
   const backend = Object.assign(
     new FakeRuntime(
       { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
       { capabilities: ['fs'] },
     ),
-    { fs: fakes.fs, environment: createTestEnv() },
+    { fs, environment: createTestEnv() },
   );
   const runtime: IAgentRuntimeService = {
     _serviceBrand: undefined,
@@ -76,7 +81,12 @@ function makeTool(options: WriteFsOptions = {}, workspace = PERMISSIVE_WORKSPACE
     inspect: () => backend,
     acquire: () => ({ runtime: backend, track: (resource) => resource, dispose: () => {} }),
   };
-  const tool = new WriteTool(runtime, workspace);
+  return new WriteTool(runtime, workspace);
+}
+
+function makeTool(options: WriteFsOptions = {}, workspace = PERMISSIVE_WORKSPACE) {
+  const fakes = createWriteFs(options);
+  const tool = makeToolWithFs(fakes.fs, workspace);
   return { tool, ...fakes };
 }
 
@@ -401,5 +411,61 @@ describe('WriteTool', () => {
 
     expect(result.isError).toBeFalsy();
     expect(writeText).toHaveBeenCalledWith('/workspace-sneaky/file.txt', 'content');
+  });
+});
+
+describe('WriteTool symlink escape', () => {
+  let tmpDir: string;
+  let wsDir: string;
+  let outsideDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'write-symlink-'));
+    wsDir = join(tmpDir, 'ws');
+    outsideDir = join(tmpDir, 'outside');
+    await mkdir(wsDir);
+    await mkdir(outsideDir);
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('rejects writes through a symlink that points outside the workspace', async () => {
+    const target = join(outsideDir, 'target.txt');
+    await writeFile(target, 'original');
+    const link = join(wsDir, 'link.txt');
+    await symlink(target, link);
+    const tool = makeToolWithFs(new HostFileSystem(), stubWorkspaceContext(wsDir));
+
+    const result = await execute(tool, { path: link, content: 'pwned' });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(toolContentString(result)).toMatch(/symbolic link/);
+    await expect(readFile(target, 'utf8')).resolves.toBe('original');
+  });
+
+  it('allows writes through a symlink that stays inside the workspace', async () => {
+    const target = join(wsDir, 'real.txt');
+    await writeFile(target, 'original');
+    const link = join(wsDir, 'alias.txt');
+    await symlink(target, link);
+    const tool = makeToolWithFs(new HostFileSystem(), stubWorkspaceContext(wsDir));
+
+    const result = await execute(tool, { path: link, content: 'updated' });
+
+    expect(result.isError).toBeFalsy();
+    await expect(readFile(target, 'utf8')).resolves.toBe('updated');
+  });
+
+  it('allows writes to the project config through its real path', async () => {
+    const configDir = join(wsDir, '.kimi-code');
+    await mkdir(configDir);
+    const tool = makeToolWithFs(new HostFileSystem(), stubWorkspaceContext(wsDir));
+
+    const result = await execute(tool, { path: join(configDir, 'local.toml'), content: 'updated' });
+
+    expect(result.isError).toBeFalsy();
+    await expect(readFile(join(configDir, 'local.toml'), 'utf8')).resolves.toBe('updated');
   });
 });

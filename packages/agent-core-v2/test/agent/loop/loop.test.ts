@@ -549,11 +549,11 @@ describe('Agent loop', () => {
       [emit] turn.ended                          { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "completed" }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
-    messages:
-      <last>
-      assistant: text "I will look it up."  calls call_lookup:Lookup { "query": "moon" }
-      tool[call_lookup]: text "lookup-result"
-  `);
+      messages:
+        <last>
+        assistant: text "I will look it up."  calls call_lookup:Lookup { "query": "moon" }
+        tool[call_lookup]: text "lookup-result"
+    `);
   });
 
   it('does not abort sibling tools when a parallel batch tool completes first', async () => {

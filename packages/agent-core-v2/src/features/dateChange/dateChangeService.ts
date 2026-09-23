@@ -38,15 +38,27 @@ interface DateChangeDiscloseEvent {
   readonly seed: DateDisclosure;
 }
 
+let cachedLocalDateFormat: { readonly timeZone: string; readonly format: Intl.DateTimeFormat } | undefined;
+
+function localDateFormat(timeZone: string): Intl.DateTimeFormat {
+  if (cachedLocalDateFormat?.timeZone !== timeZone) {
+    cachedLocalDateFormat = {
+      timeZone,
+      format: new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }),
+    };
+  }
+  return cachedLocalDateFormat.format;
+}
+
 function currentDateDisclosure(clock: IHostClock): Omit<DateDisclosure, 'renderGeneration'> {
   const date = clock.now();
   const timeZone = clock.timeZone();
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(date);
+  const parts = localDateFormat(timeZone).formatToParts(date);
   const part = (type: Intl.DateTimeFormatPartTypes): string =>
     parts.find((candidate) => candidate.type === type)?.value ?? '';
   return {
