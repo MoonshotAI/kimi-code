@@ -1,9 +1,8 @@
-import { createHash } from 'node:crypto';
-
 import { eq, gte, lt, valid } from 'semver';
 
 import type { BannerDisplay, BannerState } from '#/tui/types';
 
+import { meetsBannerAudience, type BannerAudienceContext, type KfcAudience } from './audience';
 import { getBannerConfig } from './banner-config';
 import type { BannerDisplayState } from './state';
 
@@ -13,71 +12,62 @@ interface BannerVersionFields {
   banner_version?: string | null;
 }
 
-interface TipsBannerFallbackItem extends BannerVersionFields {
+/** One entry of the remote `banner_tips` array. The types are the server
+    contract; the runtime parsers still normalize every field defensively,
+    since a mis-edited config can violate the contract at any time. */
+interface BannerTipItem extends BannerVersionFields {
   banner_id?: string | null;
-  enabled?: boolean;
+  banner_enabled?: boolean | null;
   banner_title?: string | null;
-  banner_maintext?: string;
+  banner_maintext?: string | null;
   banner_subtext?: string | null;
   banner_start_time?: string | null;
   banner_end_time?: string | null;
-  banner_display?: unknown;
-  banner_display_ttl_hours?: unknown;
+  banner_display?: string | null;
+  banner_display_ttl_hours?: number | null;
   banner_platform?: string | null;
+  banner_system?: string[] | null;
+  kfc_audience?: KfcAudience | null;
 }
 
-interface TipsBannerJson extends BannerVersionFields {
-  banner_id?: string | null;
-  banner_enabled?: boolean;
-  banner_title?: string | null;
-  banner_maintext?: string;
-  banner_subtext?: string | null;
-  banner_start_time?: string | null;
-  banner_end_time?: string | null;
-  banner_display?: unknown;
-  banner_display_ttl_hours?: unknown;
-  banner_fallback_enabled?: boolean;
-  banner_fallback_list?: unknown[];
-  banner_platform?: string | null;
-}
-
-interface BannerHashInput {
-  tag: string | null;
-  mainText: string;
-  subText: string | null;
-  startTime: string | null;
-  endTime: string | null;
-  display: BannerDisplay;
-  ttlHours?: number;
+interface BannerTipsJson {
+  banner_tips?: unknown;
 }
 
 interface BannerCandidateInput {
-  id: unknown;
-  tag: unknown;
-  mainText: string;
-  subText: unknown;
+  key: string;
+  tag: string | null;
+  mainText: string | null;
+  subText?: string | null;
   display: BannerDisplay;
   ttlHours?: number;
-  startTime?: unknown;
-  endTime?: unknown;
 }
 
-export interface SelectDisplayableBannerArgs {
+export interface SelectBannerStateArgs {
   json: unknown;
   clientVersion: string;
   now: Date;
   random: () => number;
+  audience: BannerAudienceContext;
+  system: string;
+}
+
+export interface SelectDisplayableBannerArgs extends SelectBannerStateArgs {
   state: BannerDisplayState;
 }
 
-interface BannerProviderLoadOptions {
+export interface BannerProviderLoadOptions {
   state?: BannerDisplayState;
   now?: Date;
   random?: () => number;
+  audience?: BannerAudienceContext | Promise<BannerAudienceContext>;
+  system?: string;
 }
 
 const HOUR_MS = 60 * 60 * 1000;
 export const DEFAULT_COOLDOWN_TTL_HOURS = 24;
+
+const UNKNOWN_AUDIENCE: BannerAudienceContext = { login: 'unknown' };
 
 function normalizeTag(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -142,6 +132,26 @@ function meetsPlatform(value: unknown): boolean {
   return platform === '' || platform === 'all' || platform === 'cli';
 }
 
+/** The current operating system as a banner_system token: 'mac' / 'win' /
+    'linux', with anything else passed through verbatim. */
+export function currentBannerSystem(platform: NodeJS.Platform = process.platform): string {
+  if (platform === 'darwin') return 'mac';
+  if (platform === 'win32') return 'win';
+  return platform;
+}
+
+/** A missing / empty / non-array banner_system targets every system;
+    otherwise the current system must be listed. */
+function meetsBannerSystem(value: unknown, system: string): boolean {
+  if (value === undefined || value === null) return true;
+  if (!Array.isArray(value)) return true;
+  const systems = value
+    .map((entry) => (typeof entry === 'string' ? entry.trim().toLowerCase() : ''))
+    .filter((entry) => entry.length > 0);
+  if (systems.length === 0) return true;
+  return systems.includes(system);
+}
+
 function parseBannerDisplay(value: unknown): BannerDisplay {
   if (value === 'once') return 'once';
   if (value === 'cooldown') return 'cooldown';
@@ -160,106 +170,52 @@ function normalizeBannerId(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function hashBannerIdentity(input: BannerHashInput): string {
-  const raw = JSON.stringify([
-    input.tag ?? '',
-    input.mainText,
-    input.subText ?? '',
-    input.startTime ?? '',
-    input.endTime ?? '',
-    input.display,
-    input.ttlHours ?? '',
-  ]);
-  return createHash('sha256').update(raw).digest('hex').slice(0, 32);
-}
-
-function getBannerKey(rawBannerId: unknown, input: BannerHashInput): string {
-  return normalizeBannerId(rawBannerId) ?? hashBannerIdentity(input);
-}
-
 function toBannerState(input: BannerCandidateInput): BannerState {
-  const tag = normalizeTag(input.tag);
-  const subText = normalizeText(input.subText);
-  const display = input.display;
-  const ttlHours = display === 'cooldown' ? parseBannerDisplayTtlHours(input.ttlHours) : undefined;
-  const startTime = normalizeText(input.startTime);
-  const endTime = normalizeText(input.endTime);
-  const key = getBannerKey(input.id, {
-    tag,
-    mainText: input.mainText,
-    subText,
-    startTime,
-    endTime,
-    display,
-    ttlHours,
-  });
-
   return {
-    key,
-    tag,
+    key: input.key,
+    tag: input.tag,
     mainText: input.mainText,
-    subText,
-    display,
-    ttlHours,
+    subText: normalizeText(input.subText),
+    display: input.display,
+    ttlHours: input.display === 'cooldown' ? parseBannerDisplayTtlHours(input.ttlHours) : undefined,
   };
 }
 
-function pickActiveBanner(
-  json: TipsBannerJson,
+function pickCandidates(
+  json: BannerTipsJson,
   clientVersion: string,
   now: Date,
-): BannerState | null {
-  if (json.banner_enabled !== true) return null;
-  if (!meetsVersion(json, clientVersion)) return null;
-  if (!meetsPlatform(json.banner_platform)) return null;
-  const start = parseDate(json.banner_start_time);
-  const end = parseDate(json.banner_end_time);
-  if (!isWithinWindow(start, end, now)) return null;
-  const mainText = normalizeText(json.banner_maintext);
-  if (mainText === null) return null;
-  const display = parseBannerDisplay(json.banner_display);
-  return toBannerState({
-    id: json.banner_id,
-    tag: json.banner_title,
-    mainText,
-    subText: json.banner_subtext,
-    display,
-    ttlHours: display === 'cooldown' ? parseBannerDisplayTtlHours(json.banner_display_ttl_hours) : undefined,
-    startTime: json.banner_start_time,
-    endTime: json.banner_end_time,
-  });
-}
-
-function pickFallbackCandidates(
-  json: TipsBannerJson,
-  clientVersion: string,
-  now: Date,
+  audience: BannerAudienceContext,
+  system: string,
 ): BannerState[] {
-  if (json.banner_fallback_enabled !== true) return [];
-  const list = Array.isArray(json.banner_fallback_list) ? json.banner_fallback_list : [];
+  const list = Array.isArray(json.banner_tips) ? json.banner_tips : [];
   const candidates: BannerState[] = [];
   for (const raw of list) {
-    if (typeof raw !== 'object' || raw === null) continue;
-    const item = raw as TipsBannerFallbackItem;
-    if (item.enabled !== true) continue;
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) continue;
+    const item = raw as BannerTipItem;
+    if (item.banner_enabled !== true) continue;
+    const key = normalizeBannerId(item.banner_id);
+    if (key === null) continue;
     if (!meetsVersion(item, clientVersion)) continue;
     if (!meetsPlatform(item.banner_platform)) continue;
+    if (!meetsBannerSystem(item.banner_system, system)) continue;
     const start = parseDate(item.banner_start_time);
     const end = parseDate(item.banner_end_time);
     if (!isWithinWindow(start, end, now)) continue;
     const mainText = normalizeText(item.banner_maintext);
-    if (mainText === null) continue;
+    const tag = normalizeTag(item.banner_title);
+    if (mainText === null && tag === null) continue;
+    if (!meetsBannerAudience(item.kfc_audience, audience)) continue;
     const display = parseBannerDisplay(item.banner_display);
     candidates.push(
       toBannerState({
-        id: item.banner_id,
-        tag: item.banner_title,
+        key,
+        tag,
         mainText,
         subText: item.banner_subtext,
         display,
-        ttlHours: display === 'cooldown' ? parseBannerDisplayTtlHours(item.banner_display_ttl_hours) : undefined,
-        startTime: item.banner_start_time,
-        endTime: item.banner_end_time,
+        ttlHours:
+          display === 'cooldown' ? parseBannerDisplayTtlHours(item.banner_display_ttl_hours) : undefined,
       }),
     );
   }
@@ -270,15 +226,6 @@ function pickRandomCandidate(candidates: BannerState[], random: () => number): B
   if (candidates.length === 0) return null;
   const index = Math.floor(random() * candidates.length);
   return candidates[index]!;
-}
-
-function pickFallbackBanner(
-  json: TipsBannerJson,
-  clientVersion: string,
-  now: Date,
-  random: () => number,
-): BannerState | null {
-  return pickRandomCandidate(pickFallbackCandidates(json, clientVersion, now), random);
 }
 
 function parseShownAt(value: string | undefined): Date | null {
@@ -305,52 +252,40 @@ export function shouldDisplayBanner(
   return now.getTime() - lastShownAt.getTime() >= getCooldownTtlHours(banner) * HOUR_MS;
 }
 
-export function selectBannerState(
-  json: unknown,
-  clientVersion: string,
-  now: Date,
-  random: () => number,
-): BannerState | null {
-  const typed = typeof json === 'object' && json !== null ? (json as TipsBannerJson) : {};
-  return (
-    pickActiveBanner(typed, clientVersion, now) ??
-    pickFallbackBanner(typed, clientVersion, now, random)
+export function selectBannerState(args: SelectBannerStateArgs): BannerState | null {
+  const typed = typeof args.json === 'object' && args.json !== null ? (args.json as BannerTipsJson) : {};
+  return pickRandomCandidate(
+    pickCandidates(typed, args.clientVersion, args.now, args.audience, args.system),
+    args.random,
   );
 }
 
-export function selectDisplayableBanner({
-  json,
-  clientVersion,
-  now,
-  random,
-  state,
-}: SelectDisplayableBannerArgs): BannerState | null {
-  const typed = typeof json === 'object' && json !== null ? (json as TipsBannerJson) : {};
-  const active = pickActiveBanner(typed, clientVersion, now);
-  if (active !== null && shouldDisplayBanner(active, state, now)) return active;
-  const candidates = pickFallbackCandidates(typed, clientVersion, now).filter((candidate) =>
-    shouldDisplayBanner(candidate, state, now),
+export function selectDisplayableBanner(args: SelectDisplayableBannerArgs): BannerState | null {
+  const typed = typeof args.json === 'object' && args.json !== null ? (args.json as BannerTipsJson) : {};
+  const candidates = pickCandidates(typed, args.clientVersion, args.now, args.audience, args.system).filter(
+    (candidate) => shouldDisplayBanner(candidate, args.state, args.now),
   );
-  return pickRandomCandidate(candidates, random);
+  return pickRandomCandidate(candidates, args.random);
 }
 
 export class BannerProvider {
   constructor(private readonly clientVersion: string) {}
 
   async load(options: BannerProviderLoadOptions = {}): Promise<BannerState | null> {
-    // getBannerConfig never throws; undefined means "config unavailable".
-    const json = await getBannerConfig();
+    // getBannerConfig never throws; undefined means "config unavailable". An
+    // audience promise that rejects unexpectedly downgrades to "unknown", the
+    // same classification as a userinfo network failure.
+    const [json, audience] = await Promise.all([
+      getBannerConfig(),
+      Promise.resolve(options.audience ?? UNKNOWN_AUDIENCE).catch(() => UNKNOWN_AUDIENCE),
+    ]);
     if (json === undefined) return null;
     const now = options.now ?? new Date();
     const random = options.random ?? Math.random;
+    const system = options.system ?? currentBannerSystem();
+    const args = { json, clientVersion: this.clientVersion, now, random, audience, system };
     return options.state === undefined
-      ? selectBannerState(json, this.clientVersion, now, random)
-      : selectDisplayableBanner({
-          json,
-          clientVersion: this.clientVersion,
-          now,
-          random,
-          state: options.state,
-        });
+      ? selectBannerState(args)
+      : selectDisplayableBanner({ ...args, state: options.state });
   }
 }

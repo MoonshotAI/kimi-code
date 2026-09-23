@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -171,6 +171,79 @@ describe('GitService', () => {
         service.diff(repo, 'missing.txt', join(repo, 'missing.txt')),
       ).rejects.toMatchObject({ code: ErrorCodes.FS_PATH_NOT_FOUND });
     });
+  });
+
+  describe('repo-local config hardening', () => {
+    it.skipIf(process.platform === 'win32')(
+      'does not execute fsmonitor or external diff commands from repo config',
+      async () => {
+        const outside = mkdtempSync(join(tmpdir(), 'git-service-evil-'));
+        try {
+          const marker = join(outside, 'ran');
+          const helper = join(outside, 'helper.sh');
+          writeFileSync(helper, `#!/bin/sh\ntouch "${marker}"\n`);
+          chmodSync(helper, 0o755);
+
+          writeFileSync(join(repo, 'a.txt'), 'line1\n');
+          commitAll('init');
+          git(repo, 'config', 'core.fsmonitor', helper);
+          git(repo, 'config', 'diff.external', helper);
+          writeFileSync(join(repo, 'a.txt'), 'line1\nline2\n');
+
+          const status = await service.status(repo);
+          expect(status.entries).toEqual({ 'a.txt': 'modified' });
+          const diff = await service.diff(repo, 'a.txt', join(repo, 'a.txt'));
+          expect(diff.diff).toContain('+line2');
+
+          expect(existsSync(marker)).toBe(false);
+        } finally {
+          rmSync(outside, { recursive: true, force: true });
+        }
+      },
+      15000,
+    );
+
+    it.skipIf(process.platform === 'win32')(
+      'does not execute repo-configured clean or process filters',
+      async () => {
+        const outside = mkdtempSync(join(tmpdir(), 'git-service-filter-'));
+        try {
+          const cleanMarker = join(outside, 'clean-ran');
+          const processMarker = join(outside, 'process-ran');
+          writeFileSync(
+            join(repo, '.gitattributes'),
+            '*.txt filter=evilclean\n*.md filter=evilproc\n',
+          );
+          writeFileSync(join(repo, 'a.txt'), 'line1\n');
+          writeFileSync(join(repo, 'b.md'), 'mark1\n');
+          commitAll('init');
+          git(repo, 'config', 'filter.evilclean.clean', `touch "${cleanMarker}"`);
+          git(repo, 'config', 'filter.evilclean.smudge', 'cat');
+          git(repo, 'config', 'filter.evilproc.process', `touch "${processMarker}"; cat`);
+
+          writeFileSync(join(repo, 'a.txt'), 'line2\n');
+          writeFileSync(join(repo, 'b.md'), 'mark2\n');
+
+          git(repo, 'status', '--porcelain');
+          expect(existsSync(cleanMarker)).toBe(true);
+          git(repo, 'diff', '--numstat', 'HEAD', '--');
+          expect(existsSync(processMarker)).toBe(true);
+          rmSync(cleanMarker);
+          rmSync(processMarker);
+
+          const status = await service.status(repo);
+          expect(status.entries).toEqual({ 'a.txt': 'modified', 'b.md': 'modified' });
+          const diff = await service.diff(repo, 'a.txt', join(repo, 'a.txt'));
+          expect(diff.diff).toContain('+line2');
+
+          expect(existsSync(cleanMarker)).toBe(false);
+          expect(existsSync(processMarker)).toBe(false);
+        } finally {
+          rmSync(outside, { recursive: true, force: true });
+        }
+      },
+      15000,
+    );
   });
 
   describe('findWorkTree', () => {

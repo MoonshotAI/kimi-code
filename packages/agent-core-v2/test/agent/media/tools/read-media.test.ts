@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import * as posixPath from 'node:path/posix';
 import { Readable } from 'node:stream';
 
@@ -5,7 +8,7 @@ import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm-adapter/contract
 import type { ContentPart } from '#human/llm/message';
 import { VideoUploadUnsupportedError } from '#/llm-adapter/contract/errors';
 import { Jimp } from 'jimp';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Emitter } from '#/_base/event';
 import {
@@ -13,6 +16,7 @@ import {
   setUnexpectedErrorHandler,
 } from '#/_base/errors/unexpectedError';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { Runtime } from '#/runtime/runtime';
@@ -159,6 +163,7 @@ function createTestFs(files: Record<string, FakeFile>): IHostFileSystem {
         size: file?.size ?? file?.data.length ?? 0,
       };
     }),
+    realpath: vi.fn(async (path: string) => path),
   } as unknown as IHostFileSystem;
 }
 
@@ -1259,4 +1264,43 @@ describe('createVideoUploader', () => {
     expect(result.output).toContain('image/avif');
     expect(result.output).toContain('Convert it to JPEG first');
   });
+});
+
+describe('ReadMediaFileTool symlink escape', () => {
+  let tmpDir: string;
+  let wsDir: string;
+  let outsideDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'read-media-symlink-'));
+    wsDir = join(tmpDir, 'ws');
+    outsideDir = join(tmpDir, 'outside');
+    await mkdir(wsDir);
+    await mkdir(outsideDir);
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeRealFsTool() {
+    return new ReadMediaFileTool(
+      runtimeFor(new HostFileSystem()),
+      { workspaceDir: wsDir, additionalDirs: [] },
+      capabilities(),
+    );
+  }
+
+  it('rejects reading media through a symlink that points outside the workspace', async () => {
+    const target = join(outsideDir, 'secret.png');
+    await writeFile(target, pngBuffer());
+    const link = join(wsDir, 'pic.png');
+    await symlink(target, link);
+
+    const result = await execute(makeRealFsTool(), { path: link });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('symbolic link');
+  });
+
 });

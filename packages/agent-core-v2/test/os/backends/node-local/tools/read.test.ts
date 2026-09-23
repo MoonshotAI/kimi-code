@@ -1,10 +1,15 @@
-import { describe, expect, it, vi } from 'vitest';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PathSecurityError } from '#/tool/path-access';
 import { MEDIA_SNIFF_BYTES } from '#/agent/media/file-type';
 import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import {
   type ReadInput,
   ReadInputSchema,
@@ -114,7 +119,8 @@ function createSpiedFs(content: string) {
   const readLines = vi.fn().mockImplementation(() => generateLines(content));
   const readText = vi.fn(async () => content);
   const stat = vi.fn(async () => ({ isFile: true, isDirectory: false, size: bytes.length }));
-  const fs = { cwd: '/', readBytes, readLines, readText, stat } as unknown as IHostFileSystem;
+  const realpath = vi.fn(async (path: string) => path);
+  const fs = { cwd: '/', readBytes, readLines, readText, stat, realpath } as unknown as IHostFileSystem;
   return { fs, readBytes, readLines, readText, stat };
 }
 
@@ -156,7 +162,7 @@ function createSpiedMapFs(files: Record<string, FakeFile>) {
       size: file.size ?? file.bytes.length,
     };
   });
-  const fs = { cwd: '/', readBytes, readLines, readText, stat } as unknown as IHostFileSystem;
+  const fs = { cwd: '/', readBytes, readLines, readText, stat, realpath: vi.fn(async (path: string) => path) } as unknown as IHostFileSystem;
   return { fs, readBytes, readLines, readText, stat };
 }
 
@@ -1258,7 +1264,8 @@ describe('ReadTool', () => {
       n === undefined ? bytes : bytes.subarray(0, n),
     );
     const stat = vi.fn(async () => ({ isFile: true, isDirectory: false, size: bytes.length }));
-    const fs = { cwd: '/', readBytes, readLines, readText, stat } as unknown as IHostFileSystem;
+    const realpath = vi.fn(async (path: string) => path);
+    const fs = { cwd: '/', readBytes, readLines, readText, stat, realpath } as unknown as IHostFileSystem;
     const tool = createReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, { path: '/tmp/large.txt' });
@@ -1499,4 +1506,78 @@ describe('ReadTool', () => {
       execution.execute({ turnId: 0, toolCallId: 'call_read_late', signal }),
     ).rejects.toMatchObject({ code: 'runtime.unavailable' });
   });
+});
+
+describe('ReadTool symlink escape', () => {
+  let tmpDir: string;
+  let wsDir: string;
+  let outsideDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'read-symlink-'));
+    wsDir = join(tmpDir, 'ws');
+    outsideDir = join(tmpDir, 'outside');
+    await mkdir(wsDir);
+    await mkdir(outsideDir);
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeRealFsTool(workDir: string, additionalDirs: readonly string[] = []) {
+    return createReadTool(new HostFileSystem(), createTestEnv(), stubWorkspaceContext(workDir, additionalDirs));
+  }
+
+  it('rejects reading through a symlink that points outside the workspace', async () => {
+    const target = join(outsideDir, 'secret.txt');
+    await writeFile(target, 'top-secret');
+    const link = join(wsDir, 'notes.md');
+    await symlink(target, link);
+
+    const result = await execute(makeRealFsTool(wsDir), { path: link });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(toolContentString(result)).toMatch(/symbolic link/);
+    expect(toolContentString(result)).not.toContain('top-secret');
+  });
+
+  it('blocks reading through a symlink that resolves to a sensitive file', async () => {
+    const target = join(outsideDir, 'id_rsa');
+    await writeFile(target, 'secret-key');
+    const link = join(wsDir, 'notes.md');
+    await symlink(target, link);
+
+    const result = await execute(makeRealFsTool(wsDir), { path: link });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(toolContentString(result)).toContain('sensitive-file pattern');
+    expect(toolContentString(result)).not.toContain('secret-key');
+  });
+
+  it('blocks reading an absolute outside symlink that resolves to a sensitive file', async () => {
+    const target = join(outsideDir, 'id_rsa');
+    await writeFile(target, 'secret-key');
+    const link = join(outsideDir, 'notes.md');
+    await symlink(target, link);
+
+    const result = await execute(makeRealFsTool(wsDir), { path: link });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(toolContentString(result)).toContain('sensitive-file pattern');
+    expect(toolContentString(result)).not.toContain('secret-key');
+  });
+
+  it('allows reading through a symlink that stays inside the workspace', async () => {
+    const target = join(wsDir, 'real.txt');
+    await writeFile(target, 'alpha\n');
+    const link = join(wsDir, 'alias.txt');
+    await symlink(target, link);
+
+    const result = await execute(makeRealFsTool(wsDir), { path: link });
+
+    expect(result.isError).not.toBe(true);
+    expect(toolContentString(result)).toContain('1\talpha');
+  });
+
 });

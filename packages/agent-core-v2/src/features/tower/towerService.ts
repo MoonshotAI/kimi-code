@@ -179,6 +179,20 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       }),
     );
     this._register(
+      toolExecutor.onBeforeExecuteTool((event) => {
+        if (!this.flags.enabled(TOWER_FLAG_ID)) return;
+        if (!this.isActive) return;
+        if (event.toolCall.name !== 'AgentSwarm') return;
+        event.veto(
+          denyToolExecution(
+            this.toolApproval.formatDenyMessage(
+              'AgentSwarm is not available while tower mode is active — swarm and tower modes are mutually exclusive, and the tower fleet runs through TowerSpawn, one mission per worker in its own worktree. If the work genuinely needs a swarm instead, exit tower mode first.',
+            ),
+          ),
+        );
+      }),
+    );
+    this._register(
       toolExecutor.onBeforeExecuteTool(async (event) => {
         if (!this.flags.enabled(TOWER_FLAG_ID)) return;
         if (!this.isActive) return;

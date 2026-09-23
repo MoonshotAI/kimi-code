@@ -1,5 +1,3 @@
-import { Readable, type Writable } from 'node:stream';
-
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -8,37 +6,25 @@ import {
   sanitizeRemoteUrl,
 } from '#/session/agentLifecycle/profile/gitContext';
 import type { ILogger } from '#/_base/log/log';
-import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
-
-function processWith(stdout: string, exitCode: number, stderr = ''): IHostProcess {
-  const stdoutStream = Readable.from([Buffer.from(stdout)]);
-  const stderrStream = Readable.from([Buffer.from(stderr)]);
-  return {
-    _serviceBrand: undefined,
-    stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
-    stdout: stdoutStream,
-    stderr: stderrStream,
-    pid: 1,
-    exitCode,
-    wait: vi.fn().mockResolvedValue(exitCode),
-    kill: vi.fn(async () => {}),
-    dispose: vi.fn(async () => {
-      stdoutStream.destroy();
-      stderrStream.destroy();
-    }),
-  };
-}
+import type { IGitService, RunGitResult } from '#/app/git/git';
 
 type GitScript = Record<string, { stdout?: string; exitCode?: number; stderr?: string }>;
 
-function gitRunner(script: GitScript): { process: IHostProcessService; spawn: ReturnType<typeof vi.fn> } {
-  const spawn = vi.fn(async (_command: string, args: readonly string[]) => {
-    const key = args.slice(2).join(' ');
+function gitService(script: GitScript): { git: IGitService; runGit: ReturnType<typeof vi.fn> } {
+  const runGit = vi.fn(async (_cwd: string, args: readonly string[]): Promise<RunGitResult> => {
+    const key = args.join(' ');
     const out = script[key];
-    if (out === undefined) return processWith('', 1);
-    return processWith(out.stdout ?? '', out.exitCode ?? 0, out.stderr ?? '');
+    if (out === undefined) return { exitCode: 1, stdout: '', stderr: '' };
+    return { exitCode: out.exitCode ?? 0, stdout: out.stdout ?? '', stderr: out.stderr ?? '' };
   });
-  return { process: { _serviceBrand: undefined, spawn } as IHostProcessService, spawn };
+  const git = {
+    _serviceBrand: undefined,
+    status: vi.fn(),
+    diff: vi.fn(),
+    findWorkTree: vi.fn(),
+    runGit,
+  } as unknown as IGitService;
+  return { git, runGit };
 }
 
 function spyLogger(): {
@@ -60,7 +46,7 @@ function spyLogger(): {
 
 describe('collectGitContext', () => {
   it('builds a git-context block with all sections', async () => {
-    const { process: hostProcess } = gitRunner({
+    const { git } = gitService({
       'rev-parse --is-inside-work-tree': { stdout: 'true\n' },
       'remote get-url origin': { stdout: 'git@github.com:owner/repo.git\n' },
       'symbolic-ref --short HEAD': { stdout: 'main\n' },
@@ -68,7 +54,7 @@ describe('collectGitContext', () => {
       'log -3 --format=%h %s': { stdout: 'abc123 Initial commit\ndef456 second commit' },
     });
 
-    const block = await collectGitContext(hostProcess, '/repo');
+    const block = await collectGitContext(git, '/repo');
 
     expect(block.startsWith('<git-context>\n')).toBe(true);
     expect(block.endsWith('\n</git-context>')).toBe(true);
@@ -83,7 +69,7 @@ describe('collectGitContext', () => {
   });
 
   it('returns an unavailable block when the directory is not a git repository', async () => {
-    const { process: hostProcess } = gitRunner({
+    const { git } = gitService({
       'rev-parse --is-inside-work-tree': {
         exitCode: 128,
         stderr: 'fatal: not a git repository (or any of the parent directories): .git',
@@ -91,7 +77,7 @@ describe('collectGitContext', () => {
     });
     const { logger, debug, warn } = spyLogger();
 
-    await expect(collectGitContext(hostProcess, '/not-a-repo', logger)).resolves.toBe(
+    await expect(collectGitContext(git, '/not-a-repo', logger)).resolves.toBe(
       '<git-context status="unavailable" reason="not-a-repo"/>',
     );
     expect(debug).not.toHaveBeenCalled();
@@ -99,12 +85,12 @@ describe('collectGitContext', () => {
   });
 
   it('returns an empty string when rev-parse fails for a reason other than not-a-repo', async () => {
-    const { process: hostProcess } = gitRunner({
+    const { git } = gitService({
       'rev-parse --is-inside-work-tree': { exitCode: 1, stderr: 'fatal: some other git error' },
     });
     const { logger, debug } = spyLogger();
 
-    await expect(collectGitContext(hostProcess, '/repo', logger)).resolves.toBe('');
+    await expect(collectGitContext(git, '/repo', logger)).resolves.toBe('');
     expect(debug).toHaveBeenCalledWith(
       'git context command failed',
       expect.objectContaining({
@@ -116,15 +102,12 @@ describe('collectGitContext', () => {
   });
 
   it('returns an empty string when git fails to spawn', async () => {
-    const hostProcess = {
-      _serviceBrand: undefined,
-      spawn: vi.fn(async (): Promise<IHostProcess> => {
-        throw new Error('spawn failed');
-      }),
-    } as IHostProcessService;
+    const { git } = gitService({
+      'rev-parse --is-inside-work-tree': { exitCode: -1, stderr: 'spawn failed' },
+    });
     const { logger, warn } = spyLogger();
 
-    await expect(collectGitContext(hostProcess, '/repo', logger)).resolves.toBe('');
+    await expect(collectGitContext(git, '/repo', logger)).resolves.toBe('');
     expect(warn).toHaveBeenCalledWith(
       'git context command failed to spawn',
       expect.objectContaining({ command: 'git rev-parse --is-inside-work-tree' }),
@@ -133,7 +116,7 @@ describe('collectGitContext', () => {
 
   it('caps dirty files at 20 and reports the remainder', async () => {
     const dirty = Array.from({ length: 25 }, (_, i) => ` M src/f${String(i)}.ts`).join('\n');
-    const { process: hostProcess } = gitRunner({
+    const { git } = gitService({
       'rev-parse --is-inside-work-tree': { stdout: 'true' },
       'remote get-url origin': { stdout: '' },
       'symbolic-ref --short HEAD': { stdout: '' },
@@ -141,22 +124,22 @@ describe('collectGitContext', () => {
       'log -3 --format=%h %s': { stdout: '' },
     });
 
-    const block = await collectGitContext(hostProcess, '/repo');
+    const block = await collectGitContext(git, '/repo');
 
     expect(block).toContain('Dirty files (25):');
     expect(block).toContain('  ... and 5 more');
   });
 
   it('returns an empty string when only the working directory is known', async () => {
-    const { process: hostProcess } = gitRunner({
+    const { git } = gitService({
       'rev-parse --is-inside-work-tree': { stdout: 'true' },
     });
 
-    await expect(collectGitContext(hostProcess, '/repo')).resolves.toBe('');
+    await expect(collectGitContext(git, '/repo')).resolves.toBe('');
   });
 
   it('omits both Remote and Project for a disallowed remote host', async () => {
-    const { process: hostProcess } = gitRunner({
+    const { git } = gitService({
       'rev-parse --is-inside-work-tree': { stdout: 'true' },
       'remote get-url origin': { stdout: 'git@internal.example.test:secret/repo.git' },
       'symbolic-ref --short HEAD': { stdout: 'main' },
@@ -164,7 +147,7 @@ describe('collectGitContext', () => {
       'log -3 --format=%h %s': { stdout: '' },
     });
 
-    const block = await collectGitContext(hostProcess, '/repo');
+    const block = await collectGitContext(git, '/repo');
 
     expect(block).not.toContain('Remote:');
     expect(block).not.toContain('Project:');
@@ -173,7 +156,7 @@ describe('collectGitContext', () => {
   });
 
   it('keeps branch and status when the origin remote is absent', async () => {
-    const { process: hostProcess } = gitRunner({
+    const { git } = gitService({
       'rev-parse --is-inside-work-tree': { stdout: 'true' },
       'remote get-url origin': { exitCode: 2, stderr: "error: No such remote 'origin'" },
       'symbolic-ref --short HEAD': { stdout: 'main' },
@@ -182,7 +165,7 @@ describe('collectGitContext', () => {
     });
     const { logger, debug } = spyLogger();
 
-    const block = await collectGitContext(hostProcess, '/repo', logger);
+    const block = await collectGitContext(git, '/repo', logger);
 
     expect(block).toContain('Branch: main');
     expect(block).toContain('Dirty files (1):');
@@ -196,7 +179,7 @@ describe('collectGitContext', () => {
   });
 
   it('keeps branch and status when the repository has no commits yet', async () => {
-    const { process: hostProcess } = gitRunner({
+    const { git } = gitService({
       'rev-parse --is-inside-work-tree': { stdout: 'true' },
       'remote get-url origin': { stdout: 'https://github.com/acme/widgets.git' },
       'symbolic-ref --short HEAD': { stdout: 'main' },
@@ -207,7 +190,7 @@ describe('collectGitContext', () => {
       },
     });
 
-    const block = await collectGitContext(hostProcess, '/repo');
+    const block = await collectGitContext(git, '/repo');
 
     expect(block).toContain('Branch: main');
     expect(block).toContain('Remote: https://github.com/acme/widgets.git');
@@ -216,7 +199,7 @@ describe('collectGitContext', () => {
   });
 
   it('omits the Branch section in detached HEAD state', async () => {
-    const { process: hostProcess } = gitRunner({
+    const { git } = gitService({
       'rev-parse --is-inside-work-tree': { stdout: 'true' },
       'symbolic-ref --short HEAD': {
         exitCode: 128,
@@ -227,50 +210,24 @@ describe('collectGitContext', () => {
       'log -3 --format=%h %s': { stdout: 'abc123 first commit' },
     });
 
-    const block = await collectGitContext(hostProcess, '/repo');
+    const block = await collectGitContext(git, '/repo');
 
     expect(block).not.toContain('Branch:');
     expect(block).toContain('Remote: https://github.com/acme/widgets.git');
     expect(block).toContain('Recent commits:');
   });
 
-  it('treats a hanging git command as a failure (timeout)', async () => {
-    vi.useFakeTimers();
-    try {
-      const hostProcess = {
-        _serviceBrand: undefined,
-        spawn: vi.fn(async (): Promise<IHostProcess> => {
-          let release: (code: number) => void = () => {};
-          const exited = new Promise<number>((resolve) => {
-            release = resolve;
-          });
-          return {
-            _serviceBrand: undefined,
-            stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
-            stdout: Readable.from(['']),
-            stderr: Readable.from(['']),
-            pid: 1,
-            exitCode: null,
-            wait: vi.fn(() => exited),
-            kill: vi.fn(async () => {
-              release(137);
-            }),
-            dispose: vi.fn(),
-          };
-        }),
-      } as IHostProcessService;
-      const { logger, debug } = spyLogger();
+  it('treats a timed-out git command as a failure', async () => {
+    const { git } = gitService({
+      'rev-parse --is-inside-work-tree': { exitCode: -1, stderr: '' },
+    });
+    const { logger, warn } = spyLogger();
 
-      const promise = collectGitContext(hostProcess, '/repo', logger);
-      await vi.advanceTimersByTimeAsync(6_000);
-      await expect(promise).resolves.toBe('');
-      expect(debug).toHaveBeenCalledWith(
-        'git context command timed out',
-        expect.objectContaining({ command: 'git rev-parse --is-inside-work-tree' }),
-      );
-    } finally {
-      vi.useRealTimers();
-    }
+    await expect(collectGitContext(git, '/repo', logger)).resolves.toBe('');
+    expect(warn).toHaveBeenCalledWith(
+      'git context command failed to spawn',
+      expect.objectContaining({ command: 'git rev-parse --is-inside-work-tree' }),
+    );
   });
 });
 
