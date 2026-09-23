@@ -16,6 +16,7 @@ import {
   IAuthSummaryService,
   IBootstrapService,
   IConfigService,
+  IEnvironmentService,
   IEventBus,
   IEventDispatcher,
   IEventService,
@@ -310,13 +311,13 @@ function makeFakeHarness() {
     [IAppendLogStore, { drainRetirements: vi.fn(async () => {}) }],
     [IFileSystemStorageService, {}],
     [IHostFileSystem, {}],
+    [IEnvironmentService, { addProvider: vi.fn(async () => ({ dispose: vi.fn() })) }],
     [
       IWorkspaceInstanceManager,
       {
         getOrCreate: vi.fn(async () => ({
           program: { trust: { get: vi.fn(async () => trustState.trusted) } },
         })),
-        addProvider: vi.fn(async () => ({ dispose: vi.fn() })),
       },
     ],
     [
@@ -382,10 +383,10 @@ describe('runV2Print', () => {
     const stdout = writer();
     const stderr = writer();
     const { app, appServices } = makeFakeHarness();
-    const workspaces = appServices.get(IWorkspaceInstanceManager) as {
+    const environments = appServices.get(IEnvironmentService) as {
       addProvider: ReturnType<typeof vi.fn>;
     };
-    workspaces.addProvider.mockRejectedValueOnce(new Error('provider unavailable'));
+    environments.addProvider.mockRejectedValueOnce(new Error('provider unavailable'));
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 

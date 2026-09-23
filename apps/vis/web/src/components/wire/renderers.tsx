@@ -1470,7 +1470,7 @@ export const WIRE_RENDERERS: RendererMap = {
       main: (
         <span className="flex items-center gap-2 min-w-0">
           <Mono>{r.environmentId}</Mono>
-          <Dim className="truncate">workspace {r.workspaceId}</Dim>
+          {r.cwd === undefined ? null : <Dim className="truncate">{r.cwd}</Dim>}
         </span>
       ),
     }),
