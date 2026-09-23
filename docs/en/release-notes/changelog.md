@@ -6,6 +6,24 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.1.0 (2026-09-23)
+
+### Features
+
+- Add a TUI mode setting to `/settings` with an experimental fullscreen layout; switching modes takes effect after restarting Kimi Code. You can also set `tui_mode` in `~/.kimi-code/tui.toml` directly: `"regular"` renders into the terminal scrollback, while `"fullscreen"` makes parts of the UI mouse-interactive for a smoother experience.
+- In fullscreen, click a folded block to open or close it.
+- Add a clickable "Jump to bottom" indicator to the fullscreen TUI.
+
+### Polish
+
+- Reduce the CLI's startup time and memory usage.
+- Turn off filesystem watchers for config and workspace files by default. Set `[watch] enabled` to `true` or `KIMI_CODE_WATCH=1` to turn them back on. See [`watch`](../configuration/config-files.md#watch) for details.
+
+### Bug Fixes
+
+- Harden workspace security: block file tools from accessing files outside the working directory through symlinks, apply project-local configuration only after the workspace is trusted, block repository git configuration from executing commands during background git operations, and reject additional directories that resolve to the home directory or filesystem root.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
 ## 2.0.2 (2026-09-19)
 
 ### Polish
