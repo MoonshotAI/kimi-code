@@ -103,6 +103,7 @@ timeout = 5
 | `extra_agent_dirs` | `array<string>` | — | 额外自定义 Agent 搜索目录，叠加到默认目录之上 |
 | `builtin_product_skills` | `boolean` | `true` | 是否向模型提供介绍 Kimi Code 自身的内置 Skills |
 | `repeat_breaker` | `boolean` | `true` | 同一工具调用连续重复多次时，是否注入提醒并最终强制停止该轮 |
+| `tool_dedupe` | `boolean` | `true` | 同一步骤内相同的工具调用是否合并为一次执行并共享结果 |
 | `telemetry` | `boolean` | `true` | 是否启用匿名遥测；显式设为 `false` 时关闭 |
 | `auto_session_title` | `boolean` | `true` | 是否允许客户端自动生成会话标题；显式设为 `false` 时关闭 |
 | [`providers`](#providers) | `table` | `{}` | API 供应商表 |
