@@ -44,7 +44,11 @@ export function flushTelemetrySync(): void {
 export async function shutdownTelemetry(
   options: { readonly timeoutMs?: number } = {},
 ): Promise<void> {
-  await shutdown(options);
+  try {
+    await shutdown(options);
+  } catch {
+    // A failed flush must not reject process shutdown.
+  }
 }
 
 export { initializeTelemetry, isTelemetryDisabledByEnv, shouldEnableTelemetry } from './bootstrap';

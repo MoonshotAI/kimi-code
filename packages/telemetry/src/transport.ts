@@ -29,7 +29,7 @@ export interface AsyncTransportOptions {
   readonly deviceId: string;
   /** Static endpoint, or a resolver invoked per flush so an in-process region
       switch (login/logout) takes effect without rebuilding the transport. */
-  readonly endpoint?: string | (() => string);
+  readonly endpoint?: string | (() => string | undefined);
   readonly getAccessToken?: () => string | null | Promise<string | null>;
   readonly fetchImpl?: typeof fetch;
   readonly retryBackoffsMs?: readonly number[];
@@ -48,7 +48,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 export class AsyncTransport {
   private readonly homeDir: string;
   private readonly deviceId: string;
-  private readonly endpoint: string | (() => string);
+  private readonly endpoint: string | (() => string | undefined);
   private readonly getAccessToken: (() => string | null | Promise<string | null>) | null;
   private readonly fetchImpl: typeof fetch;
   private readonly retryBackoffsMs: readonly number[];
@@ -68,8 +68,14 @@ export class AsyncTransport {
     this.now = options.now ?? Date.now;
   }
 
+  private resolvedEndpoint(): string | undefined {
+    const value = typeof this.endpoint === 'function' ? this.endpoint() : this.endpoint;
+    const trimmed = value?.trim();
+    return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
+  }
+
   async send(events: readonly EnrichedTelemetryEvent[], signal?: AbortSignal): Promise<void> {
-    if (events.length === 0) return;
+    if (events.length === 0 || this.resolvedEndpoint() === undefined) return;
     let savedToDisk = false;
     const saveEventsToDisk = (): void => {
       if (savedToDisk) return;
@@ -129,6 +135,7 @@ export class AsyncTransport {
   }
 
   async retryDiskEvents(): Promise<void> {
+    if (this.resolvedEndpoint() === undefined) return;
     let entries: string[];
     try {
       entries = readdirSync(this.telemetryDir());
@@ -200,7 +207,10 @@ export class AsyncTransport {
     signal?: AbortSignal,
   ): Promise<Response> {
     try {
-      const endpoint = typeof this.endpoint === 'function' ? this.endpoint() : this.endpoint;
+      const endpoint = this.resolvedEndpoint();
+      if (endpoint === undefined) {
+        throw new TransientTelemetryError('telemetry endpoint is disabled');
+      }
       return await fetchWithTimeout(
         this.fetchImpl,
         endpoint,

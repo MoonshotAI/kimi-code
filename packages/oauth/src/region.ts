@@ -4,8 +4,9 @@
  * client belongs to.
  *
  * A region is a bundle of endpoints (OAuth host, managed API base URL, CDN,
- * site, telemetry, Remote Control relay). The OAuth client_id is shared
- * across regions and stays in `./constants`.
+ * site, Remote Control relay, and telemetry when that region's collector is
+ * live). The OAuth client_id is shared across regions and stays in
+ * `./constants`.
  *
  * Resolution order (first match wins):
  *   1. env override (`KIMI_CODE_OAUTH_HOST` / `KIMI_OAUTH_HOST`)
@@ -48,7 +49,11 @@ export interface KimiRegionProfile {
   readonly cdnBase: string;
   /** Official site root (docs, console, signup, upgrade pages). */
   readonly siteBase: string;
-  readonly telemetryEndpoint: string;
+  /**
+   * Cloud telemetry collector. Absent when that collector is not live; callers
+   * must skip the send instead of falling back to another region's host.
+   */
+  readonly telemetryEndpoint?: string;
   /** Remote Control relay origin (`kimi rc` / `/web` public URL). */
   readonly relayOrigin: string;
 }
@@ -67,7 +72,6 @@ export const KIMI_REGION_PROFILES: Record<KimiRegion, KimiRegionProfile> = {
     baseUrl: 'https://api.kimi.ai/coding/v1',
     cdnBase: 'https://code.kimi.ai/kimi-code',
     siteBase: 'https://www.kimi.ai',
-    telemetryEndpoint: 'https://telemetry-logs.kimi.ai/v1/event',
     relayOrigin: 'https://code-rc.kimi.ai',
   },
 };

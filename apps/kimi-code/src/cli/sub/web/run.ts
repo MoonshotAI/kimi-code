@@ -410,7 +410,7 @@ async function runServerInProcess(
       await hooks.onShutdown?.('startup_failed');
     } finally {
       await running.close();
-      await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
+      await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS }).catch(() => {});
     }
     throw error;
   }

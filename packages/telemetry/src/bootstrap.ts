@@ -32,7 +32,7 @@ export interface TelemetryBootstrapOptions {
    * resolver is invoked per flush so an in-process region switch takes effect
    * without re-initialization.
    */
-  readonly endpoint?: string | (() => string);
+  readonly endpoint?: string | (() => string | undefined);
 }
 
 export function isTelemetryDisabledByEnv(env: NodeJS.ProcessEnv = process.env): boolean {
