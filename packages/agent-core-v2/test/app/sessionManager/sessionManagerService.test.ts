@@ -1178,25 +1178,37 @@ describe('SessionManager remote environment wiring', () => {
     expect(byEnvironment.has('remote')).toBe(true);
   });
 
-  it('opens a remote-bound session without waiting for an in-flight connect', async () => {
-    const { manager, byEnvironment, remoteConnect } = restoreSetup({
+  it('waits for an in-flight connect and resumes onto the remote controller once ready', async () => {
+    const { manager, byEnvironment, createCalls, remote, remoteConnect } = restoreSetup({
       remoteStatus: 'disconnected',
     });
-    remoteConnect.mockImplementation(() => new Promise<void>(() => {}));
+    let releaseConnect: () => void = () => undefined;
+    remoteConnect.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseConnect = () => {
+            remote.setStatus('ready');
+            resolve();
+          };
+        }),
+    );
 
-    const handle = await Promise.race([
-      manager.resume('session-1'),
-      new Promise<undefined>((_resolve, reject) => {
-        setTimeout(() => {
-          reject(new Error('resume blocked on connect'));
-        }, 200);
-      }),
-    ]);
-
-    expect(handle).toBeDefined();
+    let opened = false;
+    const resumePromise = manager.resume('session-1').then((handle) => {
+      opened = true;
+      return handle;
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    expect(opened).toBe(false);
     expect(remoteConnect).toHaveBeenCalledTimes(1);
-    expect(byEnvironment.has('local')).toBe(true);
     expect(byEnvironment.has('remote')).toBe(false);
+
+    releaseConnect();
+    const handle = await resumePromise;
+    expect(handle).toBeDefined();
+    expect(byEnvironment.has('remote')).toBe(true);
+    expect(byEnvironment.has('local')).toBe(false);
+    expect(createCalls).toEqual([{ environmentId: 'remote', cwd: '/remote/work' }]);
   });
 
   it('leaves a local restored binding untouched', async () => {

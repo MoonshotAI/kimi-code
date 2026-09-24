@@ -2896,6 +2896,9 @@ export class KimiTUI {
 
     let session: Session;
     try {
+      // A remote-bound session awaits the environment connect inside
+      // resumeSession (same as /new); say so before the UI goes quiet.
+      this.showStatus(`Resuming session ${targetSessionId}…`);
       session = await this.harness.resumeSession({
         id: targetSessionId,
         replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,

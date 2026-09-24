@@ -7,7 +7,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
 import { Error2, ErrorCodes } from '#/errors';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
-import { environmentIsReady } from '#/environment/environmentRegistry';
+import { EnvironmentError, environmentIsReady } from '#/environment/environmentRegistry';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import type {
@@ -357,23 +357,6 @@ export class SessionManager implements ISessionManager {
     return this.locateSession(sessionId);
   }
 
-  private beginResumeConnect(environmentId: string, sessionId: string): void {
-    const environment = this.environments.current(environmentId);
-    if (environment === undefined || environmentIsReady(environment)) return;
-    if (typeof environment.connect !== 'function') {
-      this.log.warn(
-        `resume could not connect environment ${environmentId}; session ${sessionId} loads with the binding kept and the environment left unconnected`,
-      );
-      return;
-    }
-    void environment.connect().catch((error: unknown) => {
-      this.log.warn(
-        `resume could not connect environment ${environmentId}; session ${sessionId} loads with the binding kept and the environment left unconnected`,
-        { error },
-      );
-    });
-  }
-
   private async locateSession(sessionId: string, options?: { readonly connect?: boolean }): Promise<SessionLifecycleService | undefined> {
     const live = this.owners.get(sessionId);
     if (live !== undefined) return live;
@@ -383,7 +366,15 @@ export class SessionManager implements ISessionManager {
     const persistedBinding = await this.environmentDeclarations.readPersistedEnvironmentBinding(workspace.id, sessionId);
     const boundEnvironmentId = persistedBinding?.environmentId ?? LOCAL_ENVIRONMENT_ID;
     if (options?.connect === true && boundEnvironmentId !== LOCAL_ENVIRONMENT_ID) {
-      this.beginResumeConnect(boundEnvironmentId, sessionId);
+      try {
+        await this.environmentDeclarations.ensureConnected(boundEnvironmentId);
+      } catch (error) {
+        if (!(error instanceof EnvironmentError)) throw error;
+        this.log.warn(
+          `resume could not connect environment ${boundEnvironmentId}; session ${sessionId} loads with the binding kept and the environment left unconnected`,
+          { error },
+        );
+      }
     }
     const controllerEnvironmentId = this.selectControllerEnvironmentId(boundEnvironmentId);
     return this.controllerForWorkspace(

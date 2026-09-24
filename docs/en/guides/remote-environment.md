@@ -110,7 +110,7 @@ There is **no silent fallback to the local environment** after a drop: a command
 
 An explicit reconnect is process-wide for that id: whichever workspace triggers it, Kimi Code drops the connection and opens a new one. A call still in flight fails; it is not retried on the new connection. Other environment ids are left alone.
 
-Resuming a session works the same way: the restored binding is connected in the background and does not delay opening the session. When the target is unreachable, or the handshake is still in progress, the session opens immediately with the binding kept and the environment left `connecting` or `disconnected`. The first tool call waits for that attempt or retries it, and there is never a silent fallback to `local`.
+Resuming a session works the same way: the restored binding is tried once at load, and when the target is unreachable the session still opens with the binding kept and the environment left `disconnected`. The first tool call retries the connection, and there is never a silent fallback to `local`.
 
 Every connect attempt is bounded to 10 seconds: a target that never answers the handshake fails with an `initialize timed out` error instead of hanging silently, and when the launcher wrote anything to stderr — a stuck password prompt, an `npx` download's progress — the error includes that tail, so the cause is visible.
 
