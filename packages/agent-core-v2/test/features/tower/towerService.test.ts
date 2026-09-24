@@ -2709,6 +2709,7 @@ describe('AgentTowerService', () => {
         bus,
         { list: () => [] } as unknown as IAgentTaskService,
         undefined as unknown as ISessionUsageService,
+        { handleOf: () => undefined } as unknown as IAgentLifecycleService,
       );
       const result = await executeTool(tool, { turnId: 0, toolCallId: 'call_send', args: input, signal });
       expect(result.isError).toBeFalsy();
