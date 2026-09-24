@@ -694,14 +694,13 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     const budgetParams = completionBudgetParams({
       budget: resolveCompletionBudget({
         maxOutputSize: overrides.maxOutputSize ?? resolved.maxOutputSize,
-        reservedContextSize: resolved.reservedContextSize,
         maxCompletionTokensCap:
           this.config.get<ModelOverrides>('modelOverrides')?.maxCompletionTokens,
       }),
       capability: resolved.modelCapabilities,
       usedContextTokens:
         overrides.messages === undefined
-          ? this.tokenCounting.get(this.scopeContext.agentContext).measured
+          ? this.tokenCounting.get(this.scopeContext.agentContext).size
           : undefined,
     });
     const requester = this.modelCatalog.getRequester(resolved.modelAlias);

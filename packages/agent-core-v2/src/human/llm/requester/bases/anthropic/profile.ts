@@ -133,7 +133,7 @@ const CEILING_BY_FAMILY_VERSION: Readonly<Record<string, number>> = {
   'haiku-3': 4096,
 };
 
-const FALLBACK_MAX_TOKENS = 128000;
+const FALLBACK_MAX_TOKENS = 64000;
 
 function lookupClaudeCeiling(version: AnthropicModelVersion): number | undefined {
   const { family, major, minor } = version;
