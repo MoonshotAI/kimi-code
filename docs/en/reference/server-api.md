@@ -769,6 +769,14 @@ Un-archives the session and resumes it.
 
 On success, `data` is [the session object](#the-session-object) with `archived: false`.
 
+#### `POST /api/v1/sessions/{session_id}:reload`
+
+Reloads the session with the latest on-disk configuration: re-reads `config.toml` and plugins, reloads the workspace skill and subagent catalogs, then closes and resumes the session from disk. The main agent is also notified of external changes to AGENTS.md files, skills, and subagent profiles or models via system reminders.
+
+On success, `data` is [the session object](#the-session-object).
+
+- `40901`: the session has an active turn and cannot be reloaded
+
 #### `GET /api/v1/sessions/{session_id}/children`
 
 Lists the session's children — the sessions created through `POST /api/v1/sessions/{session_id}/children`. Cursor pagination follows [Pagination](#pagination).
