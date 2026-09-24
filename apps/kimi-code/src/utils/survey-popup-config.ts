@@ -42,6 +42,17 @@ export const DEFAULT_SURVEY_POPUP_CONFIG: SurveyPopupConfig = {
   long_context_trigger_mode: 'virtual_context',
 };
 
+export type SurveyPopupOverride = Partial<Omit<SurveyPopupConfig, 'on_for_models'>>;
+
+export interface SurveyPopupPayload extends SurveyPopupConfig {
+  model_overrides: Record<string, SurveyPopupOverride>;
+}
+
+export const DEFAULT_SURVEY_POPUP_PAYLOAD: SurveyPopupPayload = {
+  ...DEFAULT_SURVEY_POPUP_CONFIG,
+  model_overrides: {},
+};
+
 const FIELD_SCHEMAS = {
   probability: z.number().min(0).max(1),
   on_for_models: z.array(z.string()),
@@ -55,7 +66,19 @@ const FIELD_SCHEMAS = {
   long_context_trigger_mode: z.enum(['cumulative', 'virtual_context']),
 } satisfies Record<keyof SurveyPopupConfig, z.ZodType>;
 
-const surveyPopupConfigSchema = z.unknown().transform((raw): Partial<SurveyPopupConfig> => {
+const surveyPopupOverrideSchema = z.object(FIELD_SCHEMAS).omit({ on_for_models: true }).partial();
+
+function parseModelOverrides(raw: unknown): Record<string, SurveyPopupOverride> {
+  if (typeof raw !== 'object' || raw === null) return {};
+  const overrides: Record<string, SurveyPopupOverride> = {};
+  for (const [model, entry] of Object.entries(raw)) {
+    const parsed = surveyPopupOverrideSchema.safeParse(entry);
+    if (parsed.success) overrides[model] = parsed.data;
+  }
+  return overrides;
+}
+
+const surveyPopupConfigSchema = z.unknown().transform((raw): Partial<SurveyPopupPayload> => {
   if (typeof raw !== 'object' || raw === null) return {};
   const record = raw as Record<string, unknown>;
   const partial: Record<string, unknown> = {};
@@ -65,21 +88,33 @@ const surveyPopupConfigSchema = z.unknown().transform((raw): Partial<SurveyPopup
     const parsed = schema.safeParse(value);
     if (parsed.success) partial[key] = parsed.data;
   }
-  return partial as Partial<SurveyPopupConfig>;
+  if (record['model_overrides'] !== undefined) {
+    partial['model_overrides'] = parseModelOverrides(record['model_overrides']);
+  }
+  return partial as Partial<SurveyPopupPayload>;
 });
 
-function withDefaults(partial: Partial<SurveyPopupConfig> | undefined): SurveyPopupConfig {
-  return { ...DEFAULT_SURVEY_POPUP_CONFIG, ...partial };
+function withDefaults(partial: Partial<SurveyPopupPayload> | undefined): SurveyPopupPayload {
+  return { ...DEFAULT_SURVEY_POPUP_PAYLOAD, ...partial };
 }
 
 export async function getSurveyPopupConfig(
   options: ClientConfigFetchOptions = {},
-): Promise<SurveyPopupConfig> {
+): Promise<SurveyPopupPayload> {
   return withDefaults(await getClientConfig(CONFIG_NAME, surveyPopupConfigSchema, options));
 }
 
-export function peekSurveyPopupConfig(now?: number): SurveyPopupConfig {
+export function peekSurveyPopupConfig(now?: number): SurveyPopupPayload {
   return withDefaults(peekClientConfig(CONFIG_NAME, surveyPopupConfigSchema, now));
+}
+
+export function resolveSurveyPopupConfig(
+  payload: SurveyPopupPayload,
+  kfcModelId: string | undefined,
+): SurveyPopupConfig {
+  const { model_overrides: modelOverrides, ...base } = payload;
+  const override = kfcModelId === undefined ? undefined : modelOverrides[kfcModelId];
+  return override === undefined ? base : { ...base, ...override };
 }
 
 export function peekSurveyPopupConfigFresh(now?: number): boolean {
