@@ -80,7 +80,6 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 - When designing changes, follow existing boundaries and local patterns first.
 - In public text and test data, replace real internal identifiers with neutral placeholders such as `example.com`, `example.test`, and `YOUR_API_KEY`. Before opening a PR, ask a read-only agent to audit the diff for context-specific internal identifiers.
 - When creating a PR, use the `write-pr` skill (`.agents/skills/write-pr/SKILL.md`) to write the PR description. The PR title must follow Conventional Commit style, e.g. `chore: remove legacy format commands`.
-- When reviewing a PR, use the `review-pr` skill (`.agents/skills/review-pr/SKILL.md`); its `surfaces.md` lists the user populations and contract files that the Code Review Rules below refer to.
 - When an AI agent opens or updates a PR, fill in `.github/pull_request_template.md` — link the related issue or explain the problem, then describe what changed. Do not leave placeholder text or submit a generic summary of the diff.
 - Do not submit vague AI-generated PR text. The human author must understand the change well enough to explain the code, edge cases, and why the approach fits this repository.
 - After finishing a task and before submitting a PR, you must run the `gen-changesets` skill (see `.agents/skills/gen-changesets/SKILL.md`) and generate a changeset under `.changeset/` according to its rules.
@@ -94,7 +93,7 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 
 ## Code Review Rules
 
-These rules apply to every pull request review, automated or human. The procedure, the user populations, and the contract files they refer to live in `.agents/skills/review-pr/` (`SKILL.md`, `surfaces.md`).
+These rules apply to every pull request review, automated or human. The user populations and contract files they refer to are listed in `.agents/skills/review-pr/surfaces.md`.
 
 ### Enumerate changed behavior, not just bugs
 
