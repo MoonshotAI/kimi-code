@@ -146,6 +146,7 @@ export class Program {
   get trust(): IWorkspaceTrust { return this.requireGeneration().trust; }
   get skills(): IWorkspaceSkillCatalog { return this.requireGeneration().skills; }
   get agentProfiles(): IWorkspaceAgentProfileLoader { return this.requireGeneration().agentProfiles; }
+  get userAgentProfiles(): IUserAgentProfileLoader { return this.requireGeneration().userAgentProfiles; }
   get sessionControllerGeneration(): string { return this.requireGeneration().id; }
 
   createSessionController(): SessionLifecycleService {

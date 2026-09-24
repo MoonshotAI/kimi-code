@@ -769,6 +769,14 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 成功时，`data` 为 `archived: false` 的 [session 对象](#session-对象)。
 
+#### `POST /api/v1/sessions/{session_id}:reload`
+
+以磁盘上的最新配置重新加载会话：重读 `config.toml` 与插件，重载工作区的 Skill 与 subagent 目录，然后关闭并从磁盘恢复会话。同时会通过系统提醒（system-reminder）把 AGENTS.md、Skill、subagent 及模型的外部变更告知 main agent。
+
+成功时，`data` 为 [session 对象](#session-对象)。
+
+- `40901`：会话有正在运行的轮次，无法重新加载
+
 #### `GET /api/v1/sessions/{session_id}/children`
 
 列出会话的子会话——即通过 `POST /api/v1/sessions/{session_id}/children` 创建的会话。游标分页遵循 [分页](#分页)。
