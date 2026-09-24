@@ -10,7 +10,7 @@ import type {
   ToolInputDisplay,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import type { MarkdownConfig, NotificationsConfig, StatusLineConfig, UpgradePreferences } from './config';
+import type { MarkdownConfig, NotificationsConfig, StatusLineConfig, TuiMode, UpgradePreferences } from './config';
 import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
 import type { ColorToken, ThemeName } from './theme';
 
@@ -19,7 +19,7 @@ export type BannerDisplay = 'always' | 'once' | 'cooldown';
 export interface BannerState {
   key: string;
   tag: string | null;
-  mainText: string;
+  mainText: string | null;
   subText: string | null;
   display: BannerDisplay;
   ttlHours?: number;
@@ -70,6 +70,7 @@ export interface AppState {
   /** Pending step retry backoff (fed by `turn.step.retrying`); null when no retry is in flight. */
   stepRetry: StepRetryState | null;
   theme: ThemeName;
+  tuiMode?: TuiMode;
   version: string;
   editorCommand: string | null;
   /** Mirrors the TUI config toggle; defaults to false when absent from older fixtures. */

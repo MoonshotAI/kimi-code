@@ -1,10 +1,6 @@
 import { randomBytes } from 'node:crypto';
 
-import {
-  KIMI_REGION_PROFILES,
-  kimiRegionProfile,
-  resolveKimiRegion,
-} from '@moonshot-ai/kimi-code-oauth';
+import { kimiRegionProfile, resolveKimiRegion } from '@moonshot-ai/kimi-code-oauth';
 
 import { isAbortError } from '#/_base/utils/abort';
 import type { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -47,7 +43,6 @@ export interface CloudTransportOptions {
   readonly now?: () => number;
 }
 
-export const TELEMETRY_ENDPOINT = KIMI_REGION_PROFILES['mainland-cn'].telemetryEndpoint;
 export const SERVER_EVENT_PREFIX = 'kfc_';
 export const USER_ID_PREFIX = 'kfc_device_id_';
 export const DISK_EVENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -61,7 +56,7 @@ const JSONL_SUFFIX = '.jsonl';
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
-function defaultTelemetryEndpoint(homeDir?: string, readMarker = true): string {
+function defaultTelemetryEndpoint(homeDir?: string, readMarker = true): string | undefined {
   return kimiRegionProfile(
     resolveKimiRegion({ readMarker, homeDir }),
   ).telemetryEndpoint;
@@ -70,7 +65,7 @@ function defaultTelemetryEndpoint(homeDir?: string, readMarker = true): string {
 export class CloudTransport {
   private readonly storage: IFileSystemStorageService;
   private readonly deviceId: string;
-  private readonly endpoint: string;
+  private readonly endpoint: string | undefined;
   private readonly getAccessToken: (() => string | null | Promise<string | null>) | null;
   private readonly fetchImpl: typeof fetch;
   private readonly retryBackoffsMs: readonly number[];
@@ -96,7 +91,7 @@ export class CloudTransport {
   }
 
   async send(events: readonly EnrichedCloudEvent[], signal?: AbortSignal): Promise<void> {
-    if (events.length === 0) return;
+    if (events.length === 0 || this.endpoint === undefined) return;
     let savedToDisk = false;
     const saveEventsToDisk = async (): Promise<void> => {
       if (savedToDisk) return;
@@ -151,6 +146,7 @@ export class CloudTransport {
   }
 
   async retryDiskEvents(): Promise<void> {
+    if (this.endpoint === undefined) return;
     const keys = await this.storage.list(TELEMETRY_SCOPE, FAILED_PREFIX);
     const now = this.now();
     for (const key of keys) {
@@ -219,10 +215,14 @@ export class CloudTransport {
     headers: Record<string, string>,
     signal?: AbortSignal,
   ): Promise<Response> {
+    const endpoint = this.endpoint;
+    if (endpoint === undefined) {
+      throw new TransientCloudError('telemetry endpoint is disabled');
+    }
     try {
       return await fetchWithTimeout(
         this.fetchImpl,
-        this.endpoint,
+        endpoint,
         {
           method: 'POST',
           headers: { ...headers },

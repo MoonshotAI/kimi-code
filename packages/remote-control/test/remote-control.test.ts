@@ -9,6 +9,7 @@ import { gunzipSync } from 'node:zlib';
 import {
   FileTokenStorage,
   KIMI_CODE_PROVIDER_NAME,
+  resolveKimiCodeOAuthRef,
   resolveKimiTokenStorageName,
   type TokenInfo,
 } from '@moonshot-ai/kimi-code-oauth';
@@ -46,7 +47,7 @@ afterEach(async () => {
 
 describe('Remote Control URLs', () => {
   it('builds the public device entry without a local token', () => {
-    const url = buildRemoteControlUrl('device/one');
+    const url = buildRemoteControlUrl('device/one', undefined, 'https://code-rc.kimi.com');
     expect(url).toBe(
       'https://code-rc.kimi.com/devices/device%2Fone/?rc=1&from=kimi_code_cli',
     );
@@ -54,7 +55,7 @@ describe('Remote Control URLs', () => {
   });
 
   it('builds an encoded session deep link before the query', () => {
-    expect(buildRemoteControlUrl('device-1', 'session/a b')).toBe(
+    expect(buildRemoteControlUrl('device-1', 'session/a b', 'https://code-rc.kimi.com')).toBe(
       'https://code-rc.kimi.com/devices/device-1/sessions/session%2Fa%20b?rc=1&from=kimi_code_cli',
     );
   });
@@ -64,12 +65,15 @@ describe('Remote Control URLs', () => {
     expect(
       resolveRemoteControlRelayOrigin({ KIMI_CODE_REMOTE_CONTROL_RELAY_URL: '  ' }),
     ).toBe('https://code-rc.kimi.com');
+    expect(resolveRemoteControlRelayOrigin({}, 'https://code-rc.kimi.ai')).toBe(
+      'https://code-rc.kimi.ai',
+    );
   });
 
   it('builds device URLs from the relay origin env override', () => {
     vi.stubEnv('KIMI_CODE_REMOTE_CONTROL_RELAY_URL', 'https://rc.example.test/coding-relay/');
     expect(resolveRemoteControlRelayOrigin()).toBe('https://rc.example.test/coding-relay/');
-    expect(buildRemoteControlUrl('device-1')).toBe(
+    expect(buildRemoteControlUrl('device-1', undefined, resolveRemoteControlRelayOrigin())).toBe(
       'https://rc.example.test/coding-relay/devices/device-1/?rc=1&from=kimi_code_cli',
     );
   });
@@ -179,7 +183,16 @@ describe('Remote Control tunnel', () => {
   });
 
   it('uses only Authorization when the refresh token is not a valid subprotocol token', async () => {
-    const homeDir = await createRemoteControlHome('invalid/token=');
+    const homeDir = mkdtempSync(join(tmpdir(), 'kimi-rc-auth-'));
+    cleanups.push(() => rmSync(homeDir, { recursive: true, force: true }));
+    const oauthRef = resolveKimiCodeOAuthRef({
+      oauthHost: 'https://auth.kimi.ai',
+      baseUrl: 'https://api.kimi.ai/coding/v1',
+    });
+    await new FileTokenStorage(join(homeDir, 'credentials')).save(
+      resolveKimiTokenStorageName({ oauthKey: oauthRef.key }),
+      { ...TOKEN, refreshToken: 'invalid/token=' },
+    );
     const relay = await startAuthRelay();
     let handle: RemoteControlHandle | undefined;
     cleanups.push(async () => handle?.close());
@@ -189,6 +202,8 @@ describe('Remote Control tunnel', () => {
       localOrigin: 'http://127.0.0.1:1',
       localServerToken: 'local-server-token',
       clientVersion: CLIENT_VERSION,
+      configuredOAuthKey: oauthRef.key,
+      configuredOAuthHost: oauthRef.oauthHost,
       relayOrigin: `http://127.0.0.1:${relay.port}/coding-relay`,
       stderr: { write: () => true },
     });

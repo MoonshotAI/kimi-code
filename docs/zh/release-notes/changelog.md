@@ -6,6 +6,34 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 2.1.1（2026-09-24）
+
+### 优化
+
+- 配置文件与工作区文件的监听默认恢复为开启。如需保持关闭，可将 `[watch] enabled` 设为 `false` 或设置 `KIMI_CODE_WATCH=0`，详见 [`watch`](../configuration/config-files.md#watch)。
+
+### 修复
+
+- 回退 2.1.0 中部分过于严格的防御性改动。
+
+## 2.1.0（2026-09-23）
+
+### 新功能
+
+- 新增实验性全屏模式开关，可在 `/settings` 的 TUI mode 设置中开启，或在 `~/.kimi-code/tui.toml` 中设置 `tui_mode = "fullscreen"`，重启 Kimi Code 后生效。
+- 全屏模式下，点击折叠块即可展开或收起。
+- 全屏界面新增可点击的 "Jump to bottom" 指示器。
+
+### 优化
+
+- 缩短 CLI 启动时间并降低内存占用。
+- 默认关闭对配置文件和工作区文件的监听，如需开启可将 `[watch] enabled` 设为 `true` 或设置 `KIMI_CODE_WATCH=1`，详见 [`watch`](../configuration/config-files.md#watch)。
+
+### 修复
+
+- 加强工作区安全限制：文件工具无法再通过符号链接访问工作目录外的文件，项目本地配置仅在工作区受信任后生效，后台 git 操作不再执行仓库 git 配置中的命令，并拒绝解析结果为 home 目录或文件系统根目录的附加目录。
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
 ## 2.0.2（2026-09-19）
 
 ### 优化

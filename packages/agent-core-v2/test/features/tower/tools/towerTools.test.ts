@@ -631,6 +631,173 @@ describe('TowerStatusTool', () => {
     expect(result.output).toContain('M1 owner w1 died (failed)');
     expect(result.output).toContain('Agent(resume="agent-w1", run_in_background=true');
   });
+
+  it('flags planned missions without a spawned worker in an Awaiting spawn section', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [
+        { title: 'Build engine', scope: ['src/engine/**'] },
+        { title: 'Build UI', scope: ['src/ui/**'] },
+      ],
+    });
+    const store = new TowerStore(repo);
+    await store.updateMission('tower', 'M2', { status: 'active', owner: 'w-ui' }, { silent: true });
+
+    const result = await run(ix.get(ITowerStatusTool), {});
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('## Awaiting spawn');
+    expect(result.output).toContain('M1 (feat/build-engine) — planned but no worker spawned yet');
+    expect(result.output).toContain('TowerSpawn(kind="worker", mission_id="M1"');
+    expect(result.output).not.toContain('M2 (feat/build-ui) — planned but no worker spawned yet');
+
+    await store.updateMission('tower', 'M1', { status: 'active', owner: 'w-engine' }, { silent: true });
+    const settled = await run(ix.get(ITowerStatusTool), {});
+    expect(settled.output).not.toContain('## Awaiting spawn');
+  });
+});
+
+describe('TowerReviewTool', () => {
+  async function setupReviewableBranch(options: { readonly withOwner?: boolean } = {}) {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Build engine', scope: ['src/engine/**'] }],
+    });
+    await git(repo, 'branch', 'feat/build-engine');
+    const store = new TowerStore(repo);
+    if (options.withOwner !== false) {
+      await store.registerAgent({
+        name: 'w1',
+        kind: 'worker',
+        agentId: 'agent-w1',
+        missionId: 'M1',
+        spawnedAt: new Date().toISOString(),
+      });
+      await store.updateMission('tower', 'M1', { status: 'active', owner: 'w1' }, { silent: true });
+    }
+    await store.registerAgent({
+      name: 'r1',
+      kind: 'reviewer',
+      agentId: 'agent-r1',
+      reviewTarget: 'feat/build-engine',
+      reviewMissionId: 'M1',
+      spawnedAt: new Date().toISOString(),
+    });
+    currentAgentId = 'agent-r1';
+    return store;
+  }
+
+  it('routes a non-clean verdict at the owning worker with the review file', async () => {
+    const store = await setupReviewableBranch();
+
+    const result = await run(ix.get(ITowerReviewTool), {
+      target: 'feat/build-engine',
+      status: 'p1-2items',
+      merge: 'hold',
+      findings: 'broken error handling',
+      decision: 'needs rework',
+    });
+
+    expect(result.isError).toBeFalsy();
+    const review = await store.latestReview('feat/build-engine');
+    expect(review).toBeDefined();
+    expect(result.output).toContain(`review submitted: ${review!.file}`);
+    expect(result.output).toContain(`next: resume w1 with this review file (${review!.file})`);
+    expect(result.output).toContain('Agent(resume="agent-w1", run_in_background=true');
+    expect(result.output).not.toContain('merge-ready');
+  });
+
+  it('reports a clean verdict as merge-ready for TowerMerge', async () => {
+    await setupReviewableBranch();
+
+    const result = await run(ix.get(ITowerReviewTool), {
+      target: 'feat/build-engine',
+      status: 'clean',
+      merge: 'merge',
+      findings: 'none',
+      decision: 'looks good',
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('next: feat/build-engine is merge-ready');
+    expect(result.output).toContain('TowerMerge');
+    expect(result.output).not.toContain('resume w1');
+  });
+
+  it('routes a non-clean verdict through the tower when no worker owns the branch', async () => {
+    await setupReviewableBranch({ withOwner: false });
+
+    const result = await run(ix.get(ITowerReviewTool), {
+      target: 'feat/build-engine',
+      status: 'p2-1items',
+      merge: 'fix-then-merge',
+      findings: 'minor cleanup',
+      decision: 'rework needed',
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('next: no worker on record owns feat/build-engine');
+    expect(result.output).not.toContain('Agent(resume=');
+  });
+});
+
+describe('TowerMergeTool', () => {
+  async function setupMergeableBranch() {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Build engine', scope: ['src/engine/**'] }],
+    });
+    await git(repo, 'checkout', '-b', 'feat/build-engine');
+    await commitFile(repo, 'src/engine/engine.ts', 'export const engine = 1;\n', 'engine work');
+    await git(repo, 'checkout', 'main');
+    const store = new TowerStore(repo);
+    await store.submitReview('tower', {
+      target: 'feat/build-engine',
+      status: 'clean',
+      merge: 'merge',
+      findings: 'none',
+      decision: 'ok',
+    });
+    return store;
+  }
+
+  it('points at TowerTeardown when the merge closes the last open mission', async () => {
+    await setupMergeableBranch();
+
+    const result = await run(ix.get(ITowerMergeTool), { branch: 'feat/build-engine' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('merged feat/build-engine');
+    expect(result.output).toContain('ready for TowerTeardown');
+    expect(result.output).not.toContain('Continue with the remaining missions');
+  });
+
+  it('points at the remaining missions while others are still open', async () => {
+    await setupMergeableBranch();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Build UI', scope: ['src/ui/**'] }],
+    });
+
+    const result = await run(ix.get(ITowerMergeTool), { branch: 'feat/build-engine' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('Continue with the remaining missions in Dependency Flow order');
+    expect(result.output).not.toContain('ready for TowerTeardown');
+  });
+
+  it('points at TowerTeardown when a survey noop-merge closes the last mission', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Survey engine', scope: ['src/engine/**'], kind: 'survey' }],
+    });
+    await git(repo, 'branch', 'feat/survey-engine');
+
+    const result = await run(ix.get(ITowerMergeTool), { branch: 'feat/survey-engine' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('read-only survey');
+    expect(result.output).toContain('ready for TowerTeardown');
+  });
 });
 
 describe('tool registration', () => {

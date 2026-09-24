@@ -16,8 +16,10 @@ import {
   WORKTREES_DIR,
   isReservedTowerAgentName,
   missionFileName,
+  parseFrontmatter,
   resolveMissionByBranch,
   resolveTowerRepoRoot,
+  type TowerInboxItem,
   type TowerMission,
   type TowerState,
 } from '#/features/tower/protocol/index';
@@ -53,6 +55,27 @@ import DESCRIPTION from './spawn.md?raw';
 type SubagentBinding = ReturnType<typeof resolveSubagentBinding>;
 
 const REVIEW_REQUEST_SCAN_LIMIT = 50;
+const REVIEW_HISTORY_ROUNDS = 5;
+const REVIEW_EXCERPT_MAX_CHARS = 8000;
+
+function truncateSection(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars)}\n…(truncated)`;
+}
+
+async function reviewExcerpt(store: TowerStore, file: string): Promise<string> {
+  const { body } = parseFrontmatter(await readFile(store.abs(file), 'utf8'));
+  return truncateSection(body.trim(), REVIEW_EXCERPT_MAX_CHARS);
+}
+
+async function findReviewRequest(
+  store: TowerStore,
+  author: string,
+): Promise<TowerInboxItem | undefined> {
+  return (await store.readInbox(TOWER_NAME, REVIEW_REQUEST_SCAN_LIMIT)).find(
+    (item) => item.from === author && item.subject.startsWith('review-request'),
+  );
+}
 
 export class TowerSpawnTool implements ITowerSpawnTool {
   declare readonly _serviceBrand: undefined;
@@ -401,7 +424,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         (mission.spawnBase !== undefined
           ? `- Your branch starts from snapshot commit ${mission.spawnBase.slice(0, 7)}: the base checkout's uncommitted changes (WIP), captured at spawn so you can build on them. That commit is your foundation — never revert, amend, or claim it as your own work; your own commits go on top of it.\n`
           : '') +
-        `- Your working directory is the main checkout, NOT your worktree — address the worktree explicitly: every Read/Write/Edit/Grep/Glob path must be absolute and under ${worktreeAbs}, and every Bash command must \`cd ${worktreeAbs}\` first. A permission guard hard-denies any Write/Edit outside it. Never touch the main checkout (${store.repoRoot}) or another agent's worktree slot.\n` +
+        `- Your working directory is the main checkout, NOT your worktree — address the worktree explicitly: every Read/Write/Edit/Grep/Glob path must be absolute and under ${worktreeAbs}, and every Bash command must \`cd ${worktreeAbs}\` first. A permission guard hard-denies any Write/Edit outside it; reads are unrestricted — you may read the main checkout (${store.repoRoot}) or another agent's worktree when coordination calls for it, but write only inside your own.\n` +
         (mission.kind === 'survey'
           ? `- Scope — what you investigate (read-only; reserves nothing): ${mission.scope.join(', ')}\n\n`
           : `- Scope — the only files you may change: ${mission.scope.join(', ')}\n\n`);
@@ -424,10 +447,12 @@ export class TowerSpawnTool implements ITowerSpawnTool {
           extra
         );
       }
+      const historySection = await this.workerHistorySection(store, mission, args.name);
       return (
         `You are "${args.name}", a tower worker agent in a multi-agent workspace.\n\n` +
         workplace +
         `# Your mission\n\n${missionText.trim()}\n\n` +
+        historySection +
         `# Communication protocol\n` +
         '- Coordinate through tower tools ONLY: TowerSend / TowerInbox / TowerFinding / TowerMission / TowerStatus. Reach the tower and sibling agents with TowerSend; check TowerInbox regularly.\n' +
         '- NEVER create or edit files under `.tower/` by hand — the tools are the only writers; hand-written protocol files break the merge gate.\n' +
@@ -435,7 +460,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         '- Keep your mission current with TowerMission: task_done as you finish tasks, note for decisions, blocker when stuck.\n' +
         '- Ambiguity is escalated, not guessed: if the mission and its Context leave substantive doubt about what to build, TowerSend(to="tower", subject="clarify-request", body=what needs pinning down) BEFORE acting — the tower relays to the human; you never ask the user directly.\n\n' +
         `# When the mission is done\n` +
-        '1. `git add` + `git commit` everything in your worktree (and `git push` only if a remote is configured).\n' +
+        "1. `git add` + `git commit` your mission's changes in the worktree (source files only — no build outputs).\n" +
         `2. Mark the mission completed: TowerMission(id="${mission.id}", status="completed").\n` +
         '3. Request review: TowerSend(to="tower", subject="review-request", body=what you changed and why, reconciled against the mission tasks item by item — the reviewer maps each task to your diff).\n' +
         '4. Finish with a structured final summary: files changed, key decisions, open follow-ups.' +
@@ -455,16 +480,12 @@ export class TowerSpawnTool implements ITowerSpawnTool {
             )
           ).trim()}\n\n`
         : '';
-    const reviewRequest =
-      author !== undefined
-        ? (await store.readInbox(TOWER_NAME, REVIEW_REQUEST_SCAN_LIMIT)).find(
-            (item) => item.from === author && item.subject.startsWith('review-request'),
-          )
-        : undefined;
+    const reviewRequest = author !== undefined ? await findReviewRequest(store, author) : undefined;
     const selfReportSection =
       reviewRequest !== undefined
         ? `# The author's own account (their review-request to the tower)\n${reviewRequest.body.trim()}\n\n`
         : '';
+    const historySection = await this.reviewHistorySection(store, target);
     const checklist =
       targetMission !== undefined
         ? '1. Intent — does the diff deliver the mission above? Map every task to the changes; healthy code that answers the wrong requirement or silently drops a task is a finding, not a pass.\n2. Security\n3. Data integrity\n4. Performance\n5. Error handling\n6. Code quality\n\n'
@@ -477,6 +498,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
       '- Do NOT modify any code, and never create or edit files under `.tower/` by hand — protocol artifacts go through the tower tools.\n\n' +
       missionSection +
       selfReportSection +
+      historySection +
       `# Review checklist (in priority order)\n` +
       checklist +
       `# When done — both steps are mandatory\n` +
@@ -487,5 +509,58 @@ export class TowerSpawnTool implements ITowerSpawnTool {
       'Then finish with a structured summary of the review.' +
       extra
     );
+  }
+
+  private async workerHistorySection(
+    store: TowerStore,
+    mission: TowerMission,
+    agentName: string,
+  ): Promise<string> {
+    const latest = await store.latestReview(mission.branch);
+    const predecessor =
+      mission.owner !== undefined && mission.owner !== agentName ? mission.owner : undefined;
+    const reviewRequest =
+      predecessor !== undefined ? await findReviewRequest(store, predecessor) : undefined;
+    if (latest === undefined && reviewRequest === undefined) return '';
+    const parts = [
+      '# Previous work on this branch',
+      'An earlier worker already ran on this branch — continue from its work instead of starting over, and address the review verdict below rather than re-opening what it already settled.',
+    ];
+    if (latest !== undefined) {
+      parts.push(
+        `## Latest review — round ${String(latest.round)} by ${latest.reviewer}: ${latest.status}, merge verdict "${latest.merge}"`,
+        await reviewExcerpt(store, latest.file),
+      );
+    }
+    if (reviewRequest !== undefined) {
+      parts.push(
+        "## The previous worker's review-request to the tower",
+        truncateSection(reviewRequest.body.trim(), REVIEW_EXCERPT_MAX_CHARS),
+      );
+    }
+    return `${parts.join('\n\n')}\n\n`;
+  }
+
+  private async reviewHistorySection(store: TowerStore, target: string): Promise<string> {
+    const reviews = await store.reviewsFor(target);
+    if (reviews.length === 0) return '';
+    const recent = reviews.slice(-REVIEW_HISTORY_ROUNDS);
+    const omitted = reviews.length - recent.length;
+    const parts = [
+      '# Review history on this branch',
+      'Earlier review rounds already ran on this branch — verify their findings against the current tip instead of reporting them again; re-report only what still reproduces.',
+    ];
+    if (omitted > 0) {
+      parts.push(
+        `(${String(omitted)} earlier round(s) omitted — the full record lives in .tower/comms/reviews/.)`,
+      );
+    }
+    for (const review of recent) {
+      parts.push(
+        `## Round ${String(review.round)} by ${review.reviewer}: ${review.status}, merge verdict "${review.merge}"`,
+        await reviewExcerpt(store, review.file),
+      );
+    }
+    return `${parts.join('\n\n')}\n\n`;
   }
 }

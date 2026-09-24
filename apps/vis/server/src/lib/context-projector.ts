@@ -556,6 +556,11 @@ export function projectContext(
       case 'task.started':
       case 'task.terminated':
       case 'task.waitDelivered':
+      case 'subagent.spawned':
+      case 'subagent.started':
+      case 'subagent.completed':
+      case 'subagent.failed':
+      case 'subagent.cancelled':
       case 'cron.add':
       case 'cron.cursor':
       case 'cron.delete':

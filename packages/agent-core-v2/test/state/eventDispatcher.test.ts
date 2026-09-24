@@ -22,6 +22,7 @@ import { EventBusService } from '#/app/event/eventBusService';
 import { Event2, event2FromRecord } from '#/app/event/event2';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { CycleError, EventDispatcherService } from '#/state/eventDispatcherService';
+import { SubagentSpawned, SubagentStarted, SubagentCompleted, SubagentFailed, SubagentCancelled } from '#/session/subagent/mirrorAgentRun';
 import { defineState } from '#/state/state';
 import { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
@@ -205,6 +206,24 @@ beforeEach(() => {
 afterEach(() => disposables.dispose());
 
 describe('EventDispatcherService', () => {
+  it('persists subagent lifecycle facts and replays them without publishing or rerunning work', async () => {
+    const seen: string[] = [];
+    disposables.add(bus.subscribe((event) => seen.push(event.type)));
+    const events = [
+      new SubagentSpawned({ subagentId: 'child', subagentName: 'explore', parentAgentId: 'main', callerAgentId: 'main', parentToolCallId: 'swarm-a', swarmIndex: 2, runInBackground: false }, 1000),
+      new SubagentStarted({ subagentId: 'child' }, 1100),
+      new SubagentCompleted({ subagentId: 'child', resultSummary: 'done' }, 1200),
+      new SubagentFailed({ subagentId: 'other', error: 'failed' }, 1300),
+      new SubagentCancelled({ subagentId: 'cancelled' }, 1400),
+    ];
+    for (const event of events) await dispatcher.dispatch(event);
+    expect(journal).toEqual(events.map((event) => event.serialize()));
+    expect(seen).toEqual(events.map((event) => event.type));
+    await dispatcher.restore();
+    expect(seen).toHaveLength(events.length);
+    expect(journal).toHaveLength(events.length);
+  });
+
   it('folds a durable event into state and appends the serialized record', async () => {
     await dispatcher.dispatch(new CounterAdd({ by: 3 }));
 

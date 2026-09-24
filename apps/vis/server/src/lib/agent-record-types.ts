@@ -54,6 +54,11 @@ import type {
   PromptAborted,
   PromptCompleted,
   PromptSteered,
+  SubagentCancelled,
+  SubagentCompleted,
+  SubagentFailed,
+  SubagentSpawned,
+  SubagentStarted,
   TaskStarted,
   TaskTerminated,
   TaskWaitDelivered,
@@ -195,6 +200,11 @@ export type AgentRecord =
   | WireRecordOf<'prompt.completed', PromptCompleted>
   | WireRecordOf<'prompt.steered', PromptSteered>
   | WireRecordOf<'runtime.set_binding', RuntimeSetBinding>
+  | WireRecordOf<'subagent.cancelled', SubagentCancelled>
+  | WireRecordOf<'subagent.completed', SubagentCompleted>
+  | WireRecordOf<'subagent.failed', SubagentFailed>
+  | WireRecordOf<'subagent.spawned', SubagentSpawned>
+  | WireRecordOf<'subagent.started', SubagentStarted>
   | WireRecordOf<'swarm_mode.enter', SwarmModeEnter>
   | WireRecordOf<'swarm_mode.exit', SwarmModeExit>
   | WireRecordOf<'task.started', TaskStarted>
