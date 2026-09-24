@@ -8,7 +8,9 @@ import {
   getSurveyPopupConfig,
   peekSurveyPopupConfig,
   peekSurveyPopupConfigFresh,
+  resolveSurveyPopupConfig,
   type SurveyPopupConfig,
+  type SurveyPopupPayload,
 } from '#/utils/survey-popup-config';
 import { readSurveyLastShownTime, writeSurveyLastShownTime } from '#/utils/survey-state-store';
 import { currentKimiRegion } from '#/utils/region';
@@ -94,7 +96,7 @@ function joinModels(models: ReadonlySet<string>): string | undefined {
 }
 
 export interface SurveyControllerDeps {
-  readonly config?: () => SurveyPopupConfig;
+  readonly config?: () => SurveyPopupPayload;
   readonly monotonicNow?: () => number;
   readonly wallNow?: () => number;
   readonly random?: () => number;
@@ -146,6 +148,7 @@ export class SurveyController {
   private appearanceCount = 0;
   private globalLastShownAt: number | undefined;
   private longContextRollConsumed = false;
+  private longContextRollConsumedFor: string | undefined;
   private generation = 0;
   private idleSince: number | undefined;
   private openedAt = 0;
@@ -197,6 +200,7 @@ export class SurveyController {
     this.userTurnsAtLastShown = undefined;
     this.appearanceCount = 0;
     this.longContextRollConsumed = false;
+    this.longContextRollConsumedFor = undefined;
     this.idleSince = undefined;
     this.stickySample = undefined;
     this.toolCallCount = 0;
@@ -444,6 +448,13 @@ export class SurveyController {
     return false;
   }
 
+  private currentConfig(): SurveyPopupConfig {
+    return resolveSurveyPopupConfig(
+      (this.deps.config ?? defaultDeps.config)(),
+      resolveKfcModelId(this.host.state.appState),
+    );
+  }
+
   private evaluate(): void {
     if (this.machine.phase !== 'closed') return;
     if (!this.configReady) return;
@@ -463,9 +474,13 @@ export class SurveyController {
     ) {
       return;
     }
-    const config = (this.deps.config ?? defaultDeps.config)();
-    const verdict = evaluateSurveyGate({ ...this.gateInputs(), config });
-    if (verdict.longContextRollConsumed === true) this.longContextRollConsumed = true;
+    const config = this.currentConfig();
+    const inputs = this.gateInputs();
+    const verdict = evaluateSurveyGate({ ...inputs, config });
+    if (verdict.longContextRollConsumed === true) {
+      this.longContextRollConsumed = true;
+      this.longContextRollConsumedFor = inputs.longContext.kfcModelId;
+    }
     if (!verdict.show) return;
     this.open(verdict.survey, config);
   }
@@ -508,7 +523,8 @@ export class SurveyController {
         ...shared,
         cumulativeTokens: appState.cumulativeTokens ?? 0,
         virtualContextTokens: appState.contextTokens,
-        mountRollConsumed: this.longContextRollConsumed,
+        mountRollConsumed:
+          this.longContextRollConsumed && this.longContextRollConsumedFor === shared.kfcModelId,
         drawMountRoll: () => (this.deps.random ?? defaultDeps.random)(),
       },
     };
@@ -598,7 +614,7 @@ export class SurveyController {
             response: effect.response,
           },
           this.appearanceSnapshot?.fields ?? this.environmentFields(),
-          this.appearanceConfig ?? (this.deps.config ?? defaultDeps.config)(),
+          this.appearanceConfig ?? this.currentConfig(),
         );
         const sessionId = this.appearanceSnapshot?.sessionId ?? '';
         if (sessionId.length > 0) {

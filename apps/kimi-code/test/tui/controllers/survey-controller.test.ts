@@ -7,7 +7,7 @@ import {
   type SurveyHost,
 } from '#/tui/controllers/survey-controller';
 import type { TranscriptEntry } from '#/tui/types';
-import { DEFAULT_SURVEY_POPUP_CONFIG } from '#/utils/survey-popup-config';
+import { DEFAULT_SURVEY_POPUP_PAYLOAD } from '#/utils/survey-popup-config';
 
 const mocks = vi.hoisted(() => ({
   getSurveyPopupConfig: vi.fn(() => Promise.resolve(undefined)),
@@ -541,7 +541,7 @@ describe('SurveyController long-context arm', () => {
   it('compares the cumulative counter when the trigger mode is cumulative', async () => {
     const harness = createHarness({
       config: () => ({
-        ...DEFAULT_SURVEY_POPUP_CONFIG,
+        ...DEFAULT_SURVEY_POPUP_PAYLOAD,
         long_context_trigger_mode: 'cumulative',
       }),
     });
@@ -565,7 +565,7 @@ describe('SurveyController long-context arm', () => {
 
   it('closes the arm on a non-positive effective threshold and produces no events', async () => {
     const harness = createHarness({
-      config: () => ({ ...DEFAULT_SURVEY_POPUP_CONFIG, long_context_survey_threshold: 0 }),
+      config: () => ({ ...DEFAULT_SURVEY_POPUP_PAYLOAD, long_context_survey_threshold: 0 }),
     });
     harness.state.appState.contextTokens = 500_000;
     await harness.flush();
@@ -580,7 +580,7 @@ describe('SurveyController long-context arm', () => {
 
   it('leaves the session arm running when the threshold closes the long-context arm', async () => {
     const harness = createHarness({
-      config: () => ({ ...DEFAULT_SURVEY_POPUP_CONFIG, long_context_survey_threshold: 0 }),
+      config: () => ({ ...DEFAULT_SURVEY_POPUP_PAYLOAD, long_context_survey_threshold: 0 }),
     });
     harness.state.appState.contextTokens = 500_000;
     await harness.flush();
@@ -816,7 +816,7 @@ describe('SurveyController kfc model gate', () => {
 
   it('opens for a kfc user when the real id is listed', async () => {
     const harness = createHarness({
-      config: () => ({ ...DEFAULT_SURVEY_POPUP_CONFIG, on_for_models: ['k2', 'k3'] }),
+      config: () => ({ ...DEFAULT_SURVEY_POPUP_PAYLOAD, on_for_models: ['k2', 'k3'] }),
     });
     useModel(harness);
     await harness.flush();
@@ -831,7 +831,7 @@ describe('SurveyController kfc model gate', () => {
 
   it('stays closed for a kfc user whose real id is not listed', async () => {
     const harness = createHarness({
-      config: () => ({ ...DEFAULT_SURVEY_POPUP_CONFIG, on_for_models: ['k3-256k'] }),
+      config: () => ({ ...DEFAULT_SURVEY_POPUP_PAYLOAD, on_for_models: ['k3-256k'] }),
     });
     useModel(harness);
     await harness.flush();
@@ -857,7 +857,7 @@ describe('SurveyController kfc model gate', () => {
 
   it('stays closed for a self-hosted model that happens to share the listed id', async () => {
     const harness = createHarness({
-      config: () => ({ ...DEFAULT_SURVEY_POPUP_CONFIG, on_for_models: ['k3'] }),
+      config: () => ({ ...DEFAULT_SURVEY_POPUP_PAYLOAD, on_for_models: ['k3'] }),
     });
     useModel(harness, { providerBaseUrl: GATEWAY_BASE_URL });
     await harness.flush();
@@ -882,7 +882,7 @@ describe('SurveyController kfc model gate', () => {
 
   it('stays closed on a concrete list when the alias cannot be resolved', async () => {
     const harness = createHarness({
-      config: () => ({ ...DEFAULT_SURVEY_POPUP_CONFIG, on_for_models: ['k2'] }),
+      config: () => ({ ...DEFAULT_SURVEY_POPUP_PAYLOAD, on_for_models: ['k2'] }),
     });
     await harness.flush();
     harness.appear();
@@ -913,7 +913,7 @@ describe('SurveyController kfc model gate', () => {
 
   it('prefers the entry baseUrl over the provider baseUrl when the entry is managed', async () => {
     const harness = createHarness({
-      config: () => ({ ...DEFAULT_SURVEY_POPUP_CONFIG, on_for_models: ['k3'] }),
+      config: () => ({ ...DEFAULT_SURVEY_POPUP_PAYLOAD, on_for_models: ['k3'] }),
     });
     useModel(harness, { entryBaseUrl: MANAGED_BASE_URL, providerBaseUrl: GATEWAY_BASE_URL });
     await harness.flush();
@@ -928,7 +928,7 @@ describe('SurveyController kfc model gate', () => {
 
   it('prefers the entry baseUrl over the provider baseUrl when the entry is self-hosted', async () => {
     const harness = createHarness({
-      config: () => ({ ...DEFAULT_SURVEY_POPUP_CONFIG, on_for_models: ['k3'] }),
+      config: () => ({ ...DEFAULT_SURVEY_POPUP_PAYLOAD, on_for_models: ['k3'] }),
     });
     useModel(harness, { entryBaseUrl: GATEWAY_BASE_URL, providerBaseUrl: MANAGED_BASE_URL });
     await harness.flush();
@@ -936,6 +936,220 @@ describe('SurveyController kfc model gate', () => {
 
     expect(harness.container.children).toHaveLength(0);
     expect(harness.track).not.toHaveBeenCalled();
+  });
+});
+
+describe('SurveyController model overrides', () => {
+  const MANAGED_BASE_URL = 'https://api.kimi.com/coding/v1';
+  const savedBaseUrl = process.env['KIMI_CODE_BASE_URL'];
+
+  beforeEach(() => {
+    delete process.env['KIMI_CODE_BASE_URL'];
+  });
+
+  afterEach(() => {
+    if (savedBaseUrl === undefined) {
+      delete process.env['KIMI_CODE_BASE_URL'];
+    } else {
+      process.env['KIMI_CODE_BASE_URL'] = savedBaseUrl;
+    }
+  });
+
+  function useManagedModel(harness: Harness, model = 'k3'): void {
+    harness.state.appState.model = 'main';
+    harness.state.appState.availableModels = {
+      main: { provider: 'managed:kimi-code', model, maxContextSize: 256_000 },
+    };
+    harness.state.appState.availableProviders = {
+      'managed:kimi-code': { type: 'kimi', baseUrl: MANAGED_BASE_URL },
+    };
+  }
+
+  it('opens for the targeted model under its override probability when the base samples out', async () => {
+    const harness = createHarness({
+      config: () => ({
+        ...DEFAULT_SURVEY_POPUP_PAYLOAD,
+        probability: 0,
+        model_overrides: { k3: { probability: 1 } },
+      }),
+    });
+    useManagedModel(harness);
+    await harness.flush();
+    harness.appear();
+
+    expect(harness.track).toHaveBeenCalledWith(
+      'feedback_survey',
+      expect.objectContaining({ event_type: 'appeared', config_probability: 1 }),
+    );
+  });
+
+  it('keeps the base policy for models without an override entry', async () => {
+    const harness = createHarness({
+      config: () => ({
+        ...DEFAULT_SURVEY_POPUP_PAYLOAD,
+        probability: 0,
+        model_overrides: { k3: { probability: 1 } },
+      }),
+    });
+    useManagedModel(harness, 'other-model');
+    await harness.flush();
+    harness.appear();
+
+    expect(harness.container.children).toHaveLength(0);
+    expect(harness.track).not.toHaveBeenCalled();
+  });
+
+  it('applies the override on the next evaluation after the model switches mid-session', async () => {
+    const harness = createHarness({
+      config: () => ({
+        ...DEFAULT_SURVEY_POPUP_PAYLOAD,
+        probability: 0,
+        model_overrides: { k3: { probability: 1 } },
+      }),
+    });
+    await harness.flush();
+    harness.appear();
+    expect(harness.container.children).toHaveLength(0);
+
+    useManagedModel(harness);
+    harness.runTurns(1);
+    harness.elapse(2000);
+    expect(harness.container.children).not.toHaveLength(0);
+    expect(harness.track).toHaveBeenCalledWith(
+      'feedback_survey',
+      expect.objectContaining({ event_type: 'appeared', kfc_model_id: 'k3' }),
+    );
+  });
+
+  it('honors the override global cooldown against the shared persisted clock', async () => {
+    const harness = createHarness({
+      readGlobalLastShown: async () => 1_700_000_000_000 - 1000,
+      config: () => ({
+        ...DEFAULT_SURVEY_POPUP_PAYLOAD,
+        model_overrides: { k3: { min_time_between_global_feedback_ms: 0 } },
+      }),
+    });
+    useManagedModel(harness);
+    await harness.flush();
+    harness.appear();
+
+    expect(harness.container.children).not.toHaveLength(0);
+    expect(harness.track).toHaveBeenCalledWith(
+      'feedback_survey',
+      expect.objectContaining({
+        event_type: 'appeared',
+        config_min_time_between_global_feedback_ms: 0,
+      }),
+    );
+  });
+
+  it('keeps on_for_models as the gate even when an override entry matches', async () => {
+    const harness = createHarness({
+      config: () => ({
+        ...DEFAULT_SURVEY_POPUP_PAYLOAD,
+        on_for_models: ['someone-else'],
+        model_overrides: { k3: { probability: 1 } },
+      }),
+    });
+    useManagedModel(harness);
+    await harness.flush();
+    harness.appear();
+
+    expect(harness.container.children).toHaveLength(0);
+    expect(harness.track).not.toHaveBeenCalled();
+  });
+
+  it('targets the long-context arm per model through the override', async () => {
+    const targeted = createHarness({
+      config: () => ({
+        ...DEFAULT_SURVEY_POPUP_PAYLOAD,
+        model_overrides: { k3: { long_context_probability: 0 } },
+      }),
+    });
+    useManagedModel(targeted);
+    targeted.state.appState.contextTokens = 250_000;
+    await targeted.flush();
+
+    targeted.controller.notifyTurnStarted(true);
+    targeted.controller.notifyTurnEnded();
+    targeted.elapse(2000);
+    expect(targeted.container.children).toHaveLength(0);
+    expect(targeted.track).not.toHaveBeenCalled();
+
+    const untargeted = createHarness({
+      config: () => ({
+        ...DEFAULT_SURVEY_POPUP_PAYLOAD,
+        model_overrides: { k3: { long_context_probability: 0 } },
+      }),
+    });
+    untargeted.state.appState.contextTokens = 250_000;
+    await untargeted.flush();
+
+    untargeted.controller.notifyTurnStarted(true);
+    untargeted.controller.notifyTurnEnded();
+    untargeted.elapse(2000);
+    expect(untargeted.track).toHaveBeenCalledWith(
+      'long_context_survey',
+      expect.objectContaining({ event_type: 'appeared' }),
+    );
+  });
+
+  it('treats the long-context roll as consumed per model across a mid-session switch', async () => {
+    const harness = createHarness({
+      config: () => ({
+        ...DEFAULT_SURVEY_POPUP_PAYLOAD,
+        model_overrides: { k3: { long_context_probability: 0 } },
+      }),
+    });
+    useManagedModel(harness);
+    harness.state.appState.contextTokens = 250_000;
+    await harness.flush();
+
+    harness.controller.notifyTurnStarted(true);
+    harness.controller.notifyTurnEnded();
+    harness.elapse(2000);
+    expect(harness.container.children).toHaveLength(0);
+
+    useManagedModel(harness, 'other-model');
+    harness.controller.notifyTurnStarted(true);
+    harness.controller.notifyTurnEnded();
+    harness.elapse(2000);
+    expect(harness.track).toHaveBeenCalledWith(
+      'long_context_survey',
+      expect.objectContaining({ event_type: 'appeared', kfc_model_id: 'other-model' }),
+    );
+
+    useManagedModel(harness);
+    harness.controller.notifyTurnStarted(true);
+    harness.controller.notifyTurnEnded();
+    harness.elapse(2000);
+    expect(
+      harness.track.mock.calls.filter(
+        (call) => (call[1] as { event_type?: string }).event_type === 'appeared',
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('reports the merged effective config in the policy snapshot', async () => {
+    const harness = createHarness({
+      config: () => ({
+        ...DEFAULT_SURVEY_POPUP_PAYLOAD,
+        model_overrides: { k3: { probability: 0.5, min_user_turns_before_feedback: 1 } },
+      }),
+    });
+    useManagedModel(harness);
+    await harness.flush();
+    harness.appear();
+
+    expect(harness.track).toHaveBeenCalledWith(
+      'feedback_survey',
+      expect.objectContaining({
+        event_type: 'appeared',
+        config_probability: 0.5,
+        config_min_user_turns_before_feedback: 1,
+        config_min_time_before_feedback_ms: 600_000,
+      }),
+    );
   });
 });
 
@@ -1888,7 +2102,7 @@ describe('SurveyController event payload', () => {
   });
 
   it('snapshots the config that produced the appearance, not a later refresh', async () => {
-    let cloudConfig = { ...DEFAULT_SURVEY_POPUP_CONFIG, probability: 0.5 };
+    let cloudConfig = { ...DEFAULT_SURVEY_POPUP_PAYLOAD, probability: 0.5 };
     const harness = createHarness({ config: () => cloudConfig });
     await harness.flush();
     harness.appear();
@@ -2005,7 +2219,7 @@ describe('SurveyController event payload', () => {
 
   it('defers the evaluation that triggers a refresh so a stale policy cannot open the survey', async () => {
     let region = 'region-a';
-    let config = { ...DEFAULT_SURVEY_POPUP_CONFIG, probability: 1 };
+    let config = { ...DEFAULT_SURVEY_POPUP_PAYLOAD, probability: 1 };
     const refreshConfig = vi.fn(() => {
       config = { ...config, probability: 0 };
     });
@@ -2034,7 +2248,7 @@ describe('SurveyController event payload', () => {
 
   it('evaluates with the refreshed policy on the next turn after the deferred evaluation', async () => {
     let region = 'region-a';
-    let config = { ...DEFAULT_SURVEY_POPUP_CONFIG, probability: 1, on_for_models: ['other-model'] };
+    let config = { ...DEFAULT_SURVEY_POPUP_PAYLOAD, probability: 1, on_for_models: ['other-model'] };
     const refreshConfig = vi.fn(() => {
       config = { ...config, on_for_models: ['*'] };
     });
@@ -2094,7 +2308,7 @@ describe('SurveyController event payload', () => {
 
   it('applies the cloud model gate at evaluation time', async () => {
     const harness = createHarness({
-      config: () => ({ ...DEFAULT_SURVEY_POPUP_CONFIG, on_for_models: ['other-model'] }),
+      config: () => ({ ...DEFAULT_SURVEY_POPUP_PAYLOAD, on_for_models: ['other-model'] }),
     });
     await harness.flush();
     harness.appear();
