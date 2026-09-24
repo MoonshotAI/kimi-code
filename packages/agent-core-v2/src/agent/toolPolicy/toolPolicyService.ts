@@ -15,6 +15,7 @@ import { IAgentToolPolicyService } from './toolPolicy';
 
 export class AgentToolPolicyService extends Disposable implements IAgentToolPolicyService {
   declare readonly _serviceBrand: undefined;
+  private globalPolicy: ToolsConfig | undefined;
 
   constructor(
     @IAgentProfileService private readonly profile: IAgentProfileService,
@@ -24,6 +25,13 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
   ) {
     super();
+    this.globalPolicy = this.config.get<ToolsConfig | undefined>(TOOLS_SECTION);
+    this._register(
+      this.config.onDidSectionChange((event) => {
+        if (event.domain !== TOOLS_SECTION) return;
+        this.globalPolicy = this.config.get<ToolsConfig | undefined>(TOOLS_SECTION);
+      }),
+    );
     this._register(
       toolExecutor.registerToolCallGuard(({ name, source }) => {
         const active =
@@ -55,7 +63,7 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
       {
         workspaceDisabledTools: this.toolPolicyGate.disabledTools,
         profile: { disallowedTools: profile.disallowedTools },
-        global: this.config.get<ToolsConfig>(TOOLS_SECTION),
+        global: this.globalPolicy,
         sessionDisabledTools: this.sessionToolPolicy.disabledTools(),
       },
       name,
@@ -72,7 +80,7 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
       {
         workspaceDisabledTools: this.toolPolicyGate.disabledTools,
         profile,
-        global: this.config.get<ToolsConfig>(TOOLS_SECTION),
+        global: this.globalPolicy,
         sessionDisabledTools: this.sessionToolPolicy.disabledTools(),
       },
       name,

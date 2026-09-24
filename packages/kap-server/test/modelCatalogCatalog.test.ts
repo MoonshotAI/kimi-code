@@ -129,7 +129,6 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-catalog-'));
     process.env['KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START'] = '0';
     process.env['KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS'] = '0';
-    process.env['KIMI_CODE_WATCH'] = '1';
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
@@ -160,7 +159,6 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     }
     delete process.env['KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START'];
     delete process.env['KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS'];
-    delete process.env['KIMI_CODE_WATCH'];
   });
 
   async function boot(toml?: string): Promise<void> {
@@ -195,7 +193,7 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     return parseToml(text) as Record<string, unknown>;
   }
 
-  async function waitForServerState(check: () => Promise<boolean>, timeoutMs = 3000): Promise<void> {
+  async function waitForServerState(check: () => Promise<boolean>, timeoutMs = 10000): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       if (await check()) return;

@@ -148,7 +148,10 @@ function createHarness(
         dispatch: async () => {},
       } as unknown as IEventDispatcher;
       reg.defineInstance(IEventDispatcher, dispatcher);
-      reg.defineInstance(IBootstrapService, { homeDir } as unknown as IBootstrapService);
+      reg.defineInstance(IBootstrapService, {
+        homeDir,
+        getEnv: () => undefined,
+      } as unknown as IBootstrapService);
       const agentState = new AgentStateService();
       agentState.contributeState(profileKey);
       agentState.set(profileKey, {

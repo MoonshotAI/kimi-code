@@ -22,11 +22,12 @@ import { PermissionSelectorComponent } from '../components/dialogs/permission-se
 import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
 import { SurveyPreferenceSelectorComponent } from '../components/dialogs/survey-preference-selector';
 import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
+import { TuiModeSelectorComponent } from '../components/dialogs/tui-mode-selector';
 import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-preference-selector';
-import { DEFAULT_MARKDOWN_CONFIG, DEFAULT_TUI_CONFIG, saveTuiConfig, type MarkdownConfig, type TuiConfig } from '../config';
+import { DEFAULT_MARKDOWN_CONFIG, DEFAULT_TUI_CONFIG, saveTuiConfig, type MarkdownConfig, type TuiConfig, type TuiMode } from '../config';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
-import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
+import { NO_ACTIVE_SESSION_MESSAGE, TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import { setMarkdownMermaidMode, type MermaidRenderMode } from '../utils/markdown-options';
 import { PERMISSION_MODE_DESCRIPTIONS, PERMISSION_MODE_DISPLAY_NAMES } from '../utils/permission-mode';
@@ -59,6 +60,7 @@ function hasConversationHistory(host: SlashCommandHost): boolean {
 export function currentTuiConfig(host: Pick<SlashCommandHost, 'state'>): TuiConfig {
   return {
     theme: host.state.appState.theme,
+    tuiMode: host.state.appState.tuiMode,
     editorCommand: host.state.appState.editorCommand,
     disablePasteBurst: host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     renderLatex: host.state.appState.renderLatex ?? DEFAULT_TUI_CONFIG.renderLatex ?? true,
@@ -946,6 +948,54 @@ export async function applyMermaidPreferenceChoice(
   host.showStatus(`Mermaid diagrams ${enabled ? 'enabled' : 'disabled'}.`);
 }
 
+export function showTuiModePicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new TuiModeSelectorComponent({
+      currentValue: host.state.appState.tuiMode ?? 'regular',
+      onSelect: (value) => {
+        host.restoreEditor();
+        void applyTuiModeChoice(host, value);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+type TuiModeHost = {
+  readonly state: {
+    readonly appState: Pick<SlashCommandHost['state']['appState'], 'tuiMode'>;
+    readonly ui: Pick<SlashCommandHost['state']['ui'], 'mode'>;
+  };
+  setAppState(patch: Pick<SlashCommandHost['state']['appState'], 'tuiMode'>): void;
+  showStatus(msg: string, color?: string): void;
+  showNotice(msg: string): void;
+};
+
+export async function applyTuiModeChoice(host: TuiModeHost, tuiMode: TuiMode): Promise<void> {
+  if (tuiMode === (host.state.appState.tuiMode ?? 'regular')) {
+    host.showStatus(`TUI mode already ${tuiMode}.`);
+    return;
+  }
+
+  try {
+    await saveTuiConfig({
+      ...currentTuiConfig(host as unknown as SlashCommandHost),
+      tuiMode,
+    });
+  } catch (error) {
+    host.showStatus(`Failed to save TUI mode: ${formatErrorMessage(error)}`, 'error');
+    return;
+  }
+
+  host.setAppState({ tuiMode });
+  host.showStatus(`TUI mode set to ${tuiMode}.`, 'success');
+  if (tuiMode !== host.state.ui.mode) {
+    host.showNotice(TUI_MODE_RESTART_NOTICE);
+  }
+}
+
 export function showSettingsSelector(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new SettingsSelectorComponent({
@@ -965,6 +1015,7 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'model': showModelPicker(host); return;
     case 'permission': showPermissionPicker(host); return;
     case 'theme': showThemePicker(host); return;
+    case 'tuiMode': showTuiModePicker(host); return;
     case 'mermaid': showMermaidPreferencePicker(host); return;
     case 'editor': showEditorPicker(host); return;
     case 'survey': showSurveyPreferencePicker(host); return;
