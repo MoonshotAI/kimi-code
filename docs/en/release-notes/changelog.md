@@ -6,6 +6,16 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.1.1 (2026-09-24)
+
+### Polish
+
+- Revert filesystem watchers for config and workspace files to on by default. Set `[watch] enabled` to `false` or `KIMI_CODE_WATCH=0` to keep them off. See [`watch`](../configuration/config-files.md#watch) for details.
+
+### Bug Fixes
+
+- Roll back some of the overly defensive changes in 2.1.0.
+
 ## 2.1.0 (2026-09-23)
 
 ### Features
