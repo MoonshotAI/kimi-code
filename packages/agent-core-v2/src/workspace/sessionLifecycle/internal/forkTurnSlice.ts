@@ -28,10 +28,7 @@ export function sliceMainRecordsAtTurn(
   sourceSessionId: string,
   turnIndex: number,
 ): MainTurnSlice {
-  const turnStarts: number[] = [];
-  for (let index = 0; index < records.length; index += 1) {
-    if (isUserVisibleTurnRecord(records[index]!)) turnStarts.push(index);
-  }
+  const turnStarts = userVisibleTurnStartIndices(records);
   const start = turnStarts[turnIndex];
   if (start === undefined) {
     throw new Error2(
@@ -75,6 +72,30 @@ export function sliceSubagentRecordsAtTime(
     }
   }
   return records.slice(0, end);
+}
+
+export function countCompletedUserVisibleTurns(records: readonly WireRecord[]): number {
+  const turnStarts = userVisibleTurnStartIndices(records);
+  let completed = 0;
+  for (let start = 0; start < turnStarts.length; start += 1) {
+    const from = turnStarts[start]! + 1;
+    const to = turnStarts[start + 1] ?? records.length;
+    for (let index = from; index < to; index += 1) {
+      if (records[index]!.type === 'turn.ended') {
+        completed += 1;
+        break;
+      }
+    }
+  }
+  return completed;
+}
+
+function userVisibleTurnStartIndices(records: readonly WireRecord[]): number[] {
+  const turnStarts: number[] = [];
+  for (let index = 0; index < records.length; index += 1) {
+    if (isUserVisibleTurnRecord(records[index]!)) turnStarts.push(index);
+  }
+  return turnStarts;
 }
 
 function isUserVisibleTurnRecord(record: WireRecord): boolean {

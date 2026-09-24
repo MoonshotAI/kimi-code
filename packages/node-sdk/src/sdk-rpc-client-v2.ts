@@ -1439,12 +1439,13 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   /**
    * Through `engineAccessor` (the handler chain's `ISessionLifecycleService.fork`) because the
    * klient facade fork takes no explicit target id. `turnIndex` truncation and
-   * the live-source busy rejection (v1's `SESSION_FORK_ACTIVE_TURN`) are the
-   * engine's own now, so their failures cross the in-process call with v1's
-   * codes and details (`request.invalid` with `{turnIndex, availableTurns}` /
-   * `session.fork_active_turn`). The default title still differs by design
-   * (v1: "New Session", v2: "Fork: <source>") — pass an explicit title for
-   * identical results.
+   * the busy-source handling (a live session mid-turn forks through its last
+   * completed turn; v1's `SESSION_FORK_ACTIVE_TURN` only when no turn has
+   * completed yet) are the engine's own now, so their failures cross the
+   * in-process call with v1's codes and details (`request.invalid` with
+   * `{turnIndex, availableTurns}` / `session.fork_active_turn`). The default
+   * title still differs by design (v1: "New Session", v2: "Fork: <source>") —
+   * pass an explicit title for identical results.
    */
   override async forkSession(input: ForkSessionInput): Promise<SessionSummary> {
     // The source session's reads (metadata, wire flush) stay atomic against
