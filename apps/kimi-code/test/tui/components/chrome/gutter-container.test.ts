@@ -2,11 +2,10 @@ import type { Component, TuiMouseEvent } from '@moonshot-ai/pi-tui';
 import { describe, expect, it, vi } from 'vitest';
 
 import { GutterContainer } from '#/tui/components/chrome/gutter-container';
+import { isRenderCacheEnabled, setRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 class FakeChild implements Component {
-  constructor(
-    private readonly lines: (innerWidth: number) => string[],
-  ) {}
+  constructor(private readonly lines: (innerWidth: number) => string[]) {}
   invalidate(): void {}
   render(width: number): string[] {
     return this.lines(width);
@@ -39,6 +38,55 @@ function clickAt(x: number, y: number, width: number, height: number): TuiMouseE
 }
 
 describe('GutterContainer', () => {
+  it('exposes completed child geometry without rendering again and preserves it while heights stay equal', () => {
+    let lines = ['first'];
+    const render = vi.fn(() => lines);
+    const child = new FakeChild(render);
+    const container = new GutterContainer(2, 3);
+    container.addChild(child);
+    expect(container.getRenderedLayout()).toBeUndefined();
+    container.render(20);
+    const initial = container.getRenderedLayout();
+    expect(initial).toEqual({ contentWidth: 15, children: [{ component: child, height: 1 }] });
+    expect(render).toHaveBeenCalledTimes(1);
+
+    lines = ['updated'];
+    container.render(20);
+    expect(container.getRenderedLayout()).toBe(initial);
+    lines = ['first', 'second'];
+    container.render(20);
+    expect(container.getRenderedLayout()?.children[0]?.height).toBe(2);
+    expect(initial?.children[0]?.height).toBe(1);
+    const taller = container.getRenderedLayout();
+    container.render(21);
+    expect(container.getRenderedLayout()).not.toBe(taller);
+    expect(container.getRenderedLayout()?.contentWidth).toBe(16);
+
+    const replacement = new FakeChild(() => ['first', 'second']);
+    container.children[0] = replacement;
+    container.render(21);
+    expect(container.getRenderedLayout()?.children[0]?.component).toBe(replacement);
+    container.clear();
+    container.render(21);
+    expect(container.getRenderedLayout()?.children).toEqual([]);
+  });
+
+  it('records current geometry even with render caching disabled', () => {
+    const enabled = isRenderCacheEnabled();
+    setRenderCacheEnabled(false);
+    try {
+      const container = new GutterContainer(2, 2);
+      container.addChild(new FakeChild(() => ['one', 'two']));
+      container.render(20);
+      const initial = container.getRenderedLayout();
+      expect(initial?.children[0]?.height).toBe(2);
+      container.render(20);
+      expect(container.getRenderedLayout()).toBe(initial);
+    } finally {
+      setRenderCacheEnabled(enabled);
+    }
+  });
+
   it('prefixes every child line with `left` spaces', () => {
     const c = new GutterContainer(2, 2);
     c.addChild(new FakeChild(() => ['hello', 'world']));

@@ -34,8 +34,14 @@ interface TranscriptRenderCache {
   out: string[];
 }
 
+export interface GutterLayout {
+  readonly contentWidth: number;
+  readonly children: readonly { readonly component: Component; readonly height: number }[];
+}
+
 export class GutterContainer extends Container {
   private renderCache: TranscriptRenderCache | undefined;
+  private renderedLayout: GutterLayout | undefined;
   private unhandledClick: ((index: number) => TuiMouseEventResult | undefined) | undefined;
 
   setUnhandledClick(handler: (index: number) => TuiMouseEventResult | undefined): void {
@@ -54,6 +60,10 @@ export class GutterContainer extends Container {
     super.invalidate();
   }
 
+  getRenderedLayout(): GutterLayout | undefined {
+    return this.renderedLayout;
+  }
+
   override render(width: number): string[] {
     const inner = Math.max(1, width - this.leftPad - this.rightPad);
     const lead = ' '.repeat(this.leftPad);
@@ -69,13 +79,22 @@ export class GutterContainer extends Container {
     const childRenderRefs: string[][] = [];
     const prefixed: string[][] = [];
     let allReused = cacheValid;
+    const previousLayout = this.renderedLayout;
+    let sameLayout =
+      previousLayout?.contentWidth === inner &&
+      previousLayout.children.length === this.children.length;
 
     let i = 0;
     for (const child of this.children) {
       const lines = child.render(inner);
+      sameLayout =
+        sameLayout &&
+        previousLayout!.children[i]!.component === child &&
+        previousLayout!.children[i]!.height === lines.length;
       childRefs.push(child);
       childRenderRefs.push(lines);
-      const reused = cacheValid && cache.childRefs[i] === child && cache.childRenderRefs[i] === lines;
+      const reused =
+        cacheValid && cache.childRefs[i] === child && cache.childRenderRefs[i] === lines;
       if (reused) {
         prefixed.push(cache.prefixed[i]!);
       } else {
@@ -85,6 +104,16 @@ export class GutterContainer extends Container {
         prefixed.push(lines.map((line) => prefixPreservingOsc133Zone(line, lead)));
       }
       i++;
+    }
+
+    if (!sameLayout) {
+      this.renderedLayout = {
+        contentWidth: inner,
+        children: childRefs.map((component, index) => ({
+          component,
+          height: childRenderRefs[index]!.length,
+        })),
+      };
     }
 
     let out: string[];
