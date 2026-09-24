@@ -8,6 +8,7 @@ export const CTRL_D_HINT = 'Press Ctrl+D again to exit';
 export const CTRL_C_HINT = 'Press Ctrl+C again to exit';
 export const MAIN_AGENT_ID = 'main';
 export const OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE = 'OAuth login expired. Send /login to login.';
+export const TUI_MODE_RESTART_NOTICE = 'TUI mode takes effect after restarting Kimi Code.';
 export const SESSIONLESS_STARTUP_NOTICE =
   'No session yet — one will be created on your first message.';
 export const TOWER_STATUS_PROMPT =

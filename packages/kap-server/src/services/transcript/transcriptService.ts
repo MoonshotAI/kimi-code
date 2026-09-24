@@ -6,6 +6,7 @@ import {
   IAgentLifecycleService,
   IAgentContextMemoryService,
   IFlagService,
+  IWireService,
   ISessionIndex,
   ISessionManager,
   ISessionMetadata,
@@ -39,6 +40,7 @@ import {
   type TranscriptChangeEvent,
   type TranscriptMarker,
   type TranscriptOperation,
+  type TranscriptTask,
   type TranscriptTaskRef,
   type TranscriptTurn,
 } from '@moonshot-ai/transcript';
@@ -555,6 +557,9 @@ export class TranscriptService {
       agentId,
       WIRE_FILE,
     );
+    const liveAgents = getLiveSessionById(this.deps.core.accessor, sessionId)
+      ?.accessor.get(IAgentLifecycleService);
+    await this.drainLiveWire(liveAgents, sessionId, agentId);
     let records: ContextRecord[];
     try {
       records = flattenChain(await this.wireCache.read(wirePath));
@@ -655,16 +660,23 @@ export class TranscriptService {
         : undefined,
     );
     const folded = foldWireRecordFacts(projectQuestionInteractionRecords(records, sessionId), base, {
+      agentId,
       resolvePlanRevisionKey: (key) =>
         join(SESSIONS_ROOT, summary.workspaceId, sessionId, AGENTS_DIR, agentId, key),
     });
-    const status = getLiveSessionById(this.deps.core.accessor, sessionId)
-      ?.accessor.get(IAgentLifecycleService)
-      .handleOf(agentId)
+    const status = liveAgents
+      ?.handleOf(agentId)
       ?.accessor.get(IAgentLoopService)
       .snapshot();
     const activity: ActivityMeta = status?.state === 'running' ? 'turn' : 'idle';
-    const snapshot = { ...folded, meta: { ...folded.meta, activity } };
+    const snapshot = {
+      ...folded,
+      tasks: markLostSubagentTasks(folded, activity, (memberId) =>
+        liveAgents?.handleOf(memberId)?.accessor.get(IAgentLoopService).snapshot().state ===
+        'running',
+      ),
+      meta: { ...folded.meta, activity },
+    };
     if (snapshot.meta.modes?.tower === undefined) return snapshot;
     const flags = this.deps.core.accessor.get(IFlagService);
     if (
@@ -678,6 +690,23 @@ export class TranscriptService {
     const modes = { ...snapshot.meta.modes, tower: undefined };
     const cleared = modes.plan === undefined && modes.swarm === undefined && modes.tower === undefined;
     return { ...snapshot, meta: { ...snapshot.meta, modes: cleared ? undefined : modes } };
+  }
+
+  private async drainLiveWire(
+    agents: IAgentLifecycleService | undefined,
+    sessionId: string,
+    agentId: string,
+  ): Promise<void> {
+    const wire = agents?.handleOf(agentId)?.accessor.get(IWireService);
+    if (wire === undefined) return;
+    try {
+      await wire.flush();
+    } catch (error) {
+      this.deps.logger?.warn(
+        { sessionId, agentId, err: error instanceof Error ? error.message : error },
+        'transcript: draining the live wire before a cold read failed',
+      );
+    }
   }
 
   private async coldTowerOwnedHere(sessionId: string, cwd: string | undefined): Promise<boolean> {
@@ -761,6 +790,48 @@ const TERMINAL_TURN_STATES: ReadonlySet<TranscriptTurn['state']> = new Set([
   'failed',
   'cancelled',
 ]);
+
+function memberTurnOrdinals(snapshot: AgentTranscriptSnapshot): ReadonlyMap<string, number> {
+  const ordinals = new Map<string, number>();
+  for (const item of snapshot.items) {
+    if (item.kind !== 'turn') continue;
+    for (const step of item.steps) {
+      for (const frame of step.frames) {
+        if (frame.kind !== 'tool') continue;
+        for (const ref of frame.agentRefs ?? []) ordinals.set(ref.agentId, item.ordinal);
+      }
+    }
+  }
+  return ordinals;
+}
+
+function latestTurnOrdinal(snapshot: AgentTranscriptSnapshot): number | undefined {
+  let latest: number | undefined;
+  for (const item of snapshot.items) {
+    if (item.kind !== 'turn') continue;
+    if (latest === undefined || item.ordinal > latest) latest = item.ordinal;
+  }
+  return latest;
+}
+
+function markLostSubagentTasks(
+  snapshot: AgentTranscriptSnapshot,
+  activity: ActivityMeta,
+  isMemberRunning: (memberId: string) => boolean,
+): readonly TranscriptTask[] {
+  const ordinals = memberTurnOrdinals(snapshot);
+  const latest = latestTurnOrdinal(snapshot);
+  const interrupted = (task: TranscriptTask): boolean => {
+    if (task.kind !== 'subagent' || task.detached || task.state !== 'running') return false;
+    if (task.agentId !== undefined && isMemberRunning(task.agentId)) return false;
+    if (activity !== 'turn') return true;
+    const owner = task.agentId === undefined ? undefined : ordinals.get(task.agentId);
+    return owner !== undefined && owner !== latest;
+  };
+  return snapshot.tasks.map((task) =>
+    interrupted(task) ? { ...task, state: 'lost' as const } : task,
+  );
+}
 
 function projectQuestionInteractionRecords(
   records: readonly ContextRecord[],

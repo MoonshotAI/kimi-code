@@ -218,7 +218,9 @@ export class FooterComponent implements Component {
     this.state = state;
     this.onRefresh = onRefresh;
     this.gitCacheWorkDir = state.workDir;
-    this.gitCache = createGitStatusCache(state.workDir, { onChange: this.onRefresh });
+    this.gitCache = createGitStatusCache(state.workDir, {
+      onChange: this.onRefresh,
+    });
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);
     this.syncStatusLineRunner(state);
@@ -227,7 +229,9 @@ export class FooterComponent implements Component {
   setState(state: AppState): void {
     if (state.workDir !== this.gitCacheWorkDir) {
       this.gitCacheWorkDir = state.workDir;
-      this.gitCache = createGitStatusCache(state.workDir, { onChange: this.onRefresh });
+      this.gitCache = createGitStatusCache(state.workDir, {
+        onChange: this.onRefresh,
+      });
     }
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);

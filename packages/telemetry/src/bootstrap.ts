@@ -28,11 +28,11 @@ export interface TelemetryBootstrapOptions {
   readonly onUnexpectedError?: (error: Error) => void;
   /**
    * Region-aware endpoint derived by the composition root (this package stays
-   * dependency-free and keeps the cn default in `TELEMETRY_ENDPOINT`). A
-   * resolver is invoked per flush so an in-process region switch takes effect
-   * without re-initialization.
+   * dependency-free). A resolver is invoked per flush so an in-process region
+   * switch takes effect without re-initialization; an absent endpoint skips
+   * the send instead of falling back to another region's host.
    */
-  readonly endpoint?: string | (() => string);
+  readonly endpoint?: string | (() => string | undefined);
 }
 
 export function isTelemetryDisabledByEnv(env: NodeJS.ProcessEnv = process.env): boolean {

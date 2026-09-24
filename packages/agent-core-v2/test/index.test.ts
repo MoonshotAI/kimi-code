@@ -104,6 +104,11 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'token_counting.turn_recorded',
   'turn.step.retrying',
   'turn.step.interrupted',
+  'subagent.spawned',
+  'subagent.started',
+  'subagent.completed',
+  'subagent.failed',
+  'subagent.cancelled',
 ]);
 
 describe('v1 wire vocabulary', () => {
@@ -285,14 +290,14 @@ describe('conversation-time checkpoint registration', () => {
   it('registers every context-reacting state as checkpointed or explicitly exempt', () => {
     const violations: string[] = [];
     let entries = 0;
-    const undoable = BUILTIN_REPLAYABLE_STATE_KEYS.filter(
+    const undoable = new Set(BUILTIN_REPLAYABLE_STATE_KEYS.filter(
       (key) => key.replayable.undoable !== undefined,
-    );
+    ));
     for (const key of BUILTIN_REPLAYABLE_STATE_KEYS) {
       if (key.name === CONTEXT_OWNER_STATE) continue;
       if (!CONTEXT_EVENTS.some((cls) => key.replayable.folds.has(cls))) continue;
       entries += 1;
-      if (undoable.includes(key)) continue;
+      if (undoable.has(key)) continue;
       if (CHECKPOINT_EXEMPT_STATES.has(key.name)) continue;
       violations.push(key.name);
     }

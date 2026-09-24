@@ -107,7 +107,8 @@ describe('ChoicePickerComponent', () => {
     const settingsOutput = settings.render(120).map(strip);
     expect(settingsOutput).toContain('  ❯ Model');
     expect(settingsOutput).toContain('    Switch the active model and thinking mode.');
-    expect(settingsOutput).toContain('    Turn automatic CLI updates on or off.');
+    expect(settingsOutput).toContain('    TUI mode');
+    expect(settingsOutput).toContain('    Choose the regular or fullscreen layout.');
 
     const upgradePreference = new UpdatePreferenceSelectorComponent({
       currentValue: true,
