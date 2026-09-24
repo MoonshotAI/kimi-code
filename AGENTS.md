@@ -105,7 +105,7 @@ Everyone on the old default is affected. Require the changeset to name the behav
 
 ### Prompt text is behavior
 
-Editing or deleting sentences under `packages/agent-core-v2/src/**/*.md` (system prompt, tool descriptions, reminders, overlays, built-in skills) changes agent behavior for every user. "No test references the sentence" is not evidence of no impact. Require the PR to state what the sentence enforced, who relied on it, and what enforces it now.
+Editing or deleting sentences under `packages/agent-core-v2/src/**/*.md` (system prompt, tool descriptions, reminders, overlays, built-in skills) changes agent behavior for every user who receives that prompt. "No test references the sentence" is not evidence of no impact. Require the PR to name the population that receives the text (every session, plan mode, a flag-gated feature such as Tower), what the sentence enforced, who relied on it, and what enforces it now.
 
 ### Contract files are tripwires
 

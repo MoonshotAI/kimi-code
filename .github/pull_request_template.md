@@ -40,6 +40,6 @@ See https://github.com/MoonshotAI/kimi-code/blob/main/CONTRIBUTING.md for more.
 - [ ] I have read the [CONTRIBUTING](https://github.com/MoonshotAI/kimi-code/blob/main/CONTRIBUTING.md) document.
 - [ ] I have linked a related issue (external PRs: issue must have a maintainer's `/approve`).
 - [ ] I have added tests that prove my feature works.
-- [ ] The behavior-change table above is complete, and every removed behavior or flipped default is named in the changeset with an escape hatch.
+- [ ] The behavior-change table above is complete, and every removed behavior or flipped default is named in the changeset and either has an escape hatch or was explicitly approved by a maintainer in this PR.
 - [ ] Ran `gen-changesets` skill, or this PR needs no changeset.
 - [ ] Ran `gen-docs` skill, or this PR needs no doc update.
