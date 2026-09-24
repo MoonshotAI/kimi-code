@@ -94,9 +94,11 @@ export async function discoverFileSkills(
     }
 
     if (isTopLevel) {
+      let rootIsBundle = false;
       if (root.plugin !== undefined) {
         const rootSkillMd = path.join(dirPath, 'SKILL.md');
         if (await isFile(rootSkillMd)) {
+          rootIsBundle = true;
           await parseAndRegister({
             byDiscoveryKey,
             skipped,
@@ -108,21 +110,23 @@ export async function discoverFileSkills(
         }
       }
 
-      for (const entry of entries) {
-        if (!entry.endsWith('.md')) continue;
-        if (entry === 'SKILL.md') continue;
-        const skillName = entry.slice(0, -'.md'.length);
-        if (directorySkills.has(skillName)) continue;
-        const skillMdPath = path.join(dirPath, entry);
-        if (!(await isFile(skillMdPath))) continue;
-        await parseAndRegister({
-          byDiscoveryKey,
-          skipped,
-          warn,
-          skillMdPath,
-          skillDirName: skillName,
-          root,
-        });
+      if (!rootIsBundle) {
+        for (const entry of entries) {
+          if (!entry.endsWith('.md')) continue;
+          if (entry === 'SKILL.md') continue;
+          const skillName = entry.slice(0, -'.md'.length);
+          if (directorySkills.has(skillName)) continue;
+          const skillMdPath = path.join(dirPath, entry);
+          if (!(await isFile(skillMdPath))) continue;
+          await parseAndRegister({
+            byDiscoveryKey,
+            skipped,
+            warn,
+            skillMdPath,
+            skillDirName: skillName,
+            root,
+          });
+        }
       }
     }
 
