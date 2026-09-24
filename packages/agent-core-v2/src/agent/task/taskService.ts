@@ -13,6 +13,7 @@ import {
   userCancellationReason,
 } from '#/_base/utils/abort';
 import { setClampedTimeout } from '#/_base/utils/timer';
+import { monoNowMs } from '#/_base/utils/monotonic';
 import { escapeXml, escapeXmlAttr, escapeXmlTags } from '#/_base/utils/xml-escape';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { Error2, ErrorCodes } from '#/errors';
@@ -126,6 +127,8 @@ interface ManagedTask {
   options: RegisterAgentTaskOptions & { description?: string };
   readonly startedAt: number;
   endedAt: number | null;
+  readonly monoStartedAt: number;
+  monoEndedAt?: number | null;
   foregroundRelease?: ForegroundRelease;
   stopReason?: string;
   terminalNotificationSuppressed?: boolean;
@@ -347,6 +350,8 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       options: entryOptions,
       startedAt: Date.now(),
       endedAt: null,
+      monoStartedAt: monoNowMs(),
+      monoEndedAt: null,
       foregroundRelease: detached ? undefined : createForegroundRelease(),
       abortController: new AbortController(),
       lifecyclePromise: Promise.resolve(),
@@ -423,6 +428,8 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       options: { detached, timeoutMs, detachTimeoutMs: options.detachTimeoutMs, signal: detached ? undefined : options.signal, description: options.description },
       startedAt: Date.now(),
       endedAt: null,
+      monoStartedAt: monoNowMs(),
+      monoEndedAt: null,
       foregroundRelease: detached ? undefined : createForegroundRelease(),
       abortController: new AbortController(),
       lifecyclePromise: Promise.resolve(),
@@ -933,8 +940,9 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     const persistence = this.persistence;
     for (const [taskId, info] of this.ghosts) {
       if (TERMINAL_STATUSES.has(info.status)) continue;
+      const { durationMs: _durationMs, ...rest } = info;
       const updated: AgentTaskInfo = {
-        ...info,
+        ...rest,
         status: 'lost',
         endedAt: info.endedAt ?? Date.now(),
       };
@@ -1025,6 +1033,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     if (TERMINAL_STATUSES.has(entry.status)) return false;
     entry.status = settlement.status;
     entry.endedAt = Date.now();
+    entry.monoEndedAt = monoNowMs();
     entry.stopReason =
       settlement.stopReason ?? (settlement.status === 'killed' ? entry.stopReason : undefined);
     entry.foregroundSignalCleanup?.();
@@ -1097,7 +1106,9 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     this.telemetry.track2('background_task_completed', {
       task_id: info.taskId,
       kind: info.kind,
-      duration_ms: info.endedAt !== null ? info.endedAt - info.startedAt : null,
+      duration_ms:
+        info.durationMs ??
+        (info.endedAt !== null ? info.endedAt - info.startedAt : null),
       status: info.status,
     });
   }
@@ -1376,6 +1387,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       detached: this.isDetached(entry) ? true : false,
       startedAt: entry.startedAt,
       endedAt: entry.endedAt,
+      durationMs: Math.max(0, (entry.monoEndedAt ?? monoNowMs()) - entry.monoStartedAt),
       stopReason: entry.stopReason,
       terminalNotificationSuppressed: entry.terminalNotificationSuppressed,
       timeoutMs: entry.options.timeoutMs,
