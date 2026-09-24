@@ -216,7 +216,14 @@
             '';
 
             postInstall = ''
-              wrapProgram $out/bin/kimi --prefix PATH : ${lib.makeBinPath [ pkgs.ripgrep pkgs.fd ]}
+              wrapProgram $out/bin/kimi --prefix PATH : ${lib.makeBinPath [
+                pkgs.ripgrep
+                pkgs.fd
+                # procps supplies pgrep (darwin) / ps (linux) for process
+                # management in minimal environments (nix-built containers,
+                # bare nix profiles) where the system tools are absent.
+                pkgs.procps
+              ]}
             '';
 
             meta = {
@@ -237,9 +244,9 @@
       apps = forAllSystems (pkgs: {
         kimi-code = {
           type = "app";
-          program = "${self.packages.${pkgs.system}.kimi-code}/bin/kimi";
+          program = "${self.packages.${pkgs.stdenv.hostPlatform.system}.kimi-code}/bin/kimi";
         };
-        default = self.apps.${pkgs.system}.kimi-code;
+        default = self.apps.${pkgs.stdenv.hostPlatform.system}.kimi-code;
       });
 
       devShells = forAllSystems (pkgs: {

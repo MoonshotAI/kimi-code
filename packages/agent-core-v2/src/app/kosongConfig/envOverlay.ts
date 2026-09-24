@@ -96,6 +96,7 @@ export const kimiModelEnvOverlay: ConfigEffectiveOverlay = {
     const maxCompletionTokens =
       parseCompletionTokens(getEnv('KIMI_MODEL_MAX_COMPLETION_TOKENS')) ??
       parseCompletionTokens(getEnv('KIMI_MODEL_MAX_TOKENS'));
+    const stream = parseBooleanVar(getEnv('KIMI_CODE_MODEL_STREAM'), 'KIMI_CODE_MODEL_STREAM');
 
     const changed: string[] = [];
 
@@ -105,6 +106,7 @@ export const kimiModelEnvOverlay: ConfigEffectiveOverlay = {
         topP,
         thinkingKeep,
         maxCompletionTokens,
+        stream,
       });
       if (modelOverrides !== undefined) {
         effective['modelOverrides'] = modelOverrides;
@@ -178,6 +180,7 @@ export const kimiModelEnvOverlay: ConfigEffectiveOverlay = {
       topP,
       thinkingKeep,
       maxCompletionTokens,
+      stream,
     });
     if (modelOverrides !== undefined) {
       effective['modelOverrides'] = modelOverrides;
@@ -215,6 +218,7 @@ function collectModelOverrides(input: {
   readonly topP: number | undefined;
   readonly thinkingKeep: string | undefined;
   readonly maxCompletionTokens: number | undefined;
+  readonly stream: boolean | undefined;
 }): Record<string, unknown> | undefined {
   const modelOverrides: Record<string, unknown> = {};
   if (input.temperature !== undefined) modelOverrides['temperature'] = input.temperature;
@@ -223,6 +227,7 @@ function collectModelOverrides(input: {
   if (input.maxCompletionTokens !== undefined) {
     modelOverrides['maxCompletionTokens'] = input.maxCompletionTokens;
   }
+  if (input.stream !== undefined) modelOverrides['stream'] = input.stream;
   return Object.keys(modelOverrides).length > 0 ? modelOverrides : undefined;
 }
 

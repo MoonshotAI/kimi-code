@@ -236,6 +236,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     this._register(
       loop.hooks.onDidFinishStep.register('externalHooks', async (ctx, next) => {
         await next();
+        await this.runStepFinished(ctx);
         if (
           ctx.finishReason === 'tool_calls' ||
           ctx.finishReason === 'filtered' ||
@@ -407,6 +408,23 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
       payload.name,
       signal,
     );
+  }
+
+  private async runStepFinished(ctx: AfterStepContext): Promise<void> {
+    ctx.signal.throwIfAborted();
+    await this.runner.trigger('StepFinished', {
+      matcherValue: ctx.finishReason,
+      signal: ctx.signal,
+      sessionId: this.sessionContext.sessionId,
+      inputData: this.withSessionFacts({
+        turnId: ctx.turnId,
+        step: ctx.step,
+        firstStepOfTurn: ctx.firstStepOfTurn,
+        finishReason: ctx.finishReason,
+        usage: ctx.usage,
+      }),
+    });
+    ctx.signal.throwIfAborted();
   }
 
   private async runStop(ctx: AfterStepContext): Promise<string | undefined> {
