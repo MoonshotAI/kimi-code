@@ -323,6 +323,36 @@ describe('SessionTitleService', () => {
     expect(metadata.meta.title).toBe('已生成的标题');
   });
 
+  it('skips generation for a forked session and keeps its Fork: title', async () => {
+    await metadata.update({
+      title: 'Fork: 源会话标题',
+      titleKind: 'replaceable',
+      forkedFrom: 'sess-0',
+    });
+    titlePrompts = ['hello'];
+
+    await expect(ix.get(ISessionTitleService).generateTitle()).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(metadata.meta.title).toBe('Fork: 源会话标题');
+    expect(metadata.meta.titleKind).toBe('replaceable');
+  });
+
+  it('force still regenerates the title of a forked session', async () => {
+    await metadata.update({
+      title: 'Fork: 源会话标题',
+      titleKind: 'replaceable',
+      forkedFrom: 'sess-0',
+    });
+    titlePrompts = ['hello'];
+
+    await expect(
+      ix.get(ISessionTitleService).generateTitle({ force: true }),
+    ).resolves.toBe('生成的标题');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(metadata.meta.title).toBe('生成的标题');
+    expect(metadata.meta.titleKind).toBe('generated');
+  });
+
   it('force regenerates an already-generated title', async () => {
     await metadata.setGeneratedTitleIfUncustomized('已生成的标题');
     titlePrompts = ['hello'];
