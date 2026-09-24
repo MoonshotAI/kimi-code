@@ -46,7 +46,11 @@ export interface TowerMission {
   readonly branch: string;
   readonly worktree: string;
   spawnBase?: string;
-  readonly deps: readonly string[];
+  deps: string[];
+  lastRebase?: {
+    readonly fromCommit: string;
+    readonly toCommit: string;
+  };
   status: TowerMissionStatus;
   owner?: string;
   context?: string;

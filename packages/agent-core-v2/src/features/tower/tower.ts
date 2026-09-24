@@ -4,6 +4,7 @@ export const TOWER_TOOL_NAMES = [
   'TowerPlan',
   'TowerSpawn',
   'TowerMerge',
+  'TowerRebase',
   'TowerTeardown',
   'TowerSend',
   'TowerInbox',

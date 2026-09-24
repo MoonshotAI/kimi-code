@@ -189,7 +189,14 @@ export async function isWorktreeDirty(path: string): Promise<boolean> {
 }
 
 export async function mergeNoFf(cwd: string, branch: string): Promise<string> {
-  await git(cwd, ['merge', '--no-ff', branch]);
+  try {
+    await git(cwd, ['merge', '--no-ff', branch]);
+  } catch (error) {
+    if (error instanceof GitError) {
+      await tryGit(cwd, ['merge', '--abort']);
+    }
+    throw error;
+  }
   return branchTip(cwd, 'HEAD');
 }
 

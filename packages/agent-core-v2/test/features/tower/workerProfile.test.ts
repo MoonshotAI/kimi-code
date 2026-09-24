@@ -31,7 +31,7 @@ describe('tower-worker profile', () => {
     ]) {
       expect(tools).toContain(name);
     }
-    for (const name of ['TowerInit', 'TowerPlan', 'TowerSpawn', 'TowerMerge', 'TowerTeardown']) {
+    for (const name of ['TowerInit', 'TowerPlan', 'TowerSpawn', 'TowerMerge', 'TowerRebase', 'TowerTeardown']) {
       expect(tools).not.toContain(name);
     }
   });

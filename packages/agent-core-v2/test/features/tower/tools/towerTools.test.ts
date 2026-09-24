@@ -11,12 +11,14 @@ import type { ServiceIdentifier } from '#/_base/di/instantiation';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTaskService, type AgentTaskInfo } from '#/agent/task/task';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import type { AnyAgentTool } from '#/agent/toolRegistry/toolContribution';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { TOWER_TOOL_CONTRIBUTIONS } from '#/features/tower/towerFeature';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
 import { TowerStore, parseFrontmatter } from '#/features/tower/protocol/index';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import type { ExecutableTool } from '#/tool/toolContract';
@@ -28,6 +30,8 @@ import { ITowerPlanTool } from '#/features/tower/tools/plan/plan';
 import { TowerPlanTool } from '#/features/tower/tools/plan/planTool';
 import { ITowerMergeTool } from '#/features/tower/tools/merge/merge';
 import { TowerMergeTool } from '#/features/tower/tools/merge/mergeTool';
+import { ITowerRebaseTool } from '#/features/tower/tools/rebase/rebase';
+import { TowerRebaseTool } from '#/features/tower/tools/rebase/rebaseTool';
 import { ITowerTeardownTool } from '#/features/tower/tools/teardown/teardown';
 import { TowerTeardownTool } from '#/features/tower/tools/teardown/teardownTool';
 import { ITowerSendTool } from '#/features/tower/tools/send/send';
@@ -80,6 +84,7 @@ let liveSessionIds: string[];
 let liveAgentTaskIds: string[];
 let usageTotal: TokenUsage | undefined;
 const agentContexts = new Map<string, AgentContext>();
+const agentLoops = new Map<string, { state: 'idle' | 'running'; submitted: string[] }>();
 
 beforeEach(async () => {
   repo = await mkdtemp(join(tmpdir(), 'tower-tools-test-'));
@@ -96,6 +101,7 @@ beforeEach(async () => {
   usageTotal = undefined;
   currentSessionId = 'session-test';
   agentContexts.clear();
+  agentLoops.clear();
 
   disposables = new DisposableStore();
   ix = createServices(disposables, {
@@ -159,9 +165,32 @@ beforeEach(async () => {
             (agentId) => ({ kind: 'agent', agentId }) as unknown as AgentTaskInfo,
           ),
       });
+      reg.definePartialInstance(IAgentLifecycleService, {
+        handleOf: ((agentId: string) => {
+          const loop = agentLoops.get(agentId);
+          if (loop === undefined) return undefined;
+          return {
+            accessor: {
+              get: (token: unknown) =>
+                token === IAgentLoopService
+                  ? {
+                      snapshot: () => ({ state: loop.state }),
+                      submit: (entry: unknown) => {
+                        const text = (entry as { message: { content: { text: string }[] } })
+                          .message.content[0]!.text;
+                        loop.submitted.push(text);
+                        return { id: 'prompt-1' };
+                      },
+                    }
+                  : undefined,
+            },
+          };
+        }) as unknown as IAgentLifecycleService['handleOf'],
+      });
       reg.define(ITowerInitTool, TowerInitTool);
       reg.define(ITowerPlanTool, TowerPlanTool);
       reg.define(ITowerMergeTool, TowerMergeTool);
+      reg.define(ITowerRebaseTool, TowerRebaseTool);
       reg.define(ITowerTeardownTool, TowerTeardownTool);
       reg.define(ITowerSendTool, TowerSendTool);
       reg.define(ITowerInboxTool, TowerInboxTool);
@@ -592,6 +621,58 @@ describe('TowerSendTool + TowerInboxTool', () => {
     const fromWorker = await run(ix.get(ITowerSendTool), { to: 'w2', subject: 'b', body: 'x' });
     expect(fromWorker.output).not.toContain('has no running task');
   });
+
+  it('steers a message into a running agent loop so it lands at the next step boundary', async () => {
+    agentLoops.set('agent-w1', { state: 'running', submitted: [] });
+
+    const result = await run(ix.get(ITowerSendTool), {
+      to: 'w1',
+      subject: 'rebase now',
+      body: 'rebase onto latest main',
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('steered into its running turn');
+    const loop = agentLoops.get('agent-w1')!;
+    expect(loop.submitted).toHaveLength(1);
+    expect(loop.submitted[0]).toContain('new message from tower: "rebase now"');
+    expect(loop.submitted[0]).toContain('TowerInbox');
+  });
+
+  it('does not steer into an idle loop — the message waits in the inbox', async () => {
+    agentLoops.set('agent-w1', { state: 'idle', submitted: [] });
+
+    const result = await run(ix.get(ITowerSendTool), { to: 'w1', subject: 'later', body: 'x' });
+
+    expect(agentLoops.get('agent-w1')!.submitted).toHaveLength(0);
+    expect(result.output).not.toContain('steered into its running turn');
+  });
+
+  it('steers worker-to-worker sends into the sibling loop', async () => {
+    agentLoops.set('agent-w2', { state: 'running', submitted: [] });
+    currentAgentId = 'agent-w1';
+
+    const result = await run(ix.get(ITowerSendTool), { to: 'w2', subject: 'contract', body: 'x' });
+
+    expect(result.output).toContain('steered into its running turn');
+    expect(agentLoops.get('agent-w2')!.submitted[0]).toContain('new message from w1');
+  });
+
+  it('urgent sends steer the same way, are worded as interruptions, and hint at the abort path', async () => {
+    agentLoops.set('agent-w1', { state: 'running', submitted: [] });
+
+    const result = await run(ix.get(ITowerSendTool), {
+      to: 'w1',
+      subject: 'stop and rebase',
+      body: 'x',
+      urgent: true,
+    });
+
+    expect(result.output).toContain('steered into its running turn');
+    expect(result.output).toContain('TaskStop');
+    const loop = agentLoops.get('agent-w1')!;
+    expect(loop.submitted[0]).toContain('URGENT');
+  });
 });
 
 describe('TowerStatusTool', () => {
@@ -800,6 +881,71 @@ describe('TowerMergeTool', () => {
   });
 });
 
+describe('TowerRebaseTool', () => {
+  async function setupRebasableMission() {
+    await initViaTool();
+    const store = new TowerStore(repo);
+    const [mission] = await store.plan([
+      { title: 'Build engine', scope: ['src/engine/**'] },
+    ]);
+    const state = await store.load();
+    await store.addWorktree(mission!.worktree, mission!.branch, state.base);
+    const worktree = join(repo, '.tower/worktrees', mission!.worktree);
+    await commitFile(worktree, 'src/engine/engine.ts', 'export const engine = 1;\n', 'engine work');
+    return { store, mission: mission! };
+  }
+
+  it('rebases a stale branch and points at the waived re-review', async () => {
+    const { mission } = await setupRebasableMission();
+    await commitFile(repo, 'docs/readme.md', 'docs\n', 'base moves on');
+
+    const result = await run(ix.get(ITowerRebaseTool), { mission: mission.id });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain(`rebased mission ${mission.id}`);
+    expect(result.output).toContain('waives the re-review');
+  });
+
+  it('reports up-to-date branches without touching them', async () => {
+    const { mission } = await setupRebasableMission();
+
+    const result = await run(ix.get(ITowerRebaseTool), { mission: mission.id });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('already up to date');
+  });
+
+  it('refuses while the worker is mid-turn', async () => {
+    const { store, mission } = await setupRebasableMission();
+    await store.registerAgent({
+      name: 'w1',
+      kind: 'worker',
+      agentId: 'agent-w1',
+      missionId: mission.id,
+      spawnedAt: new Date().toISOString(),
+    });
+    liveAgentTaskIds.push('agent-w1');
+    await commitFile(repo, 'docs/readme.md', 'docs\n', 'base moves on');
+
+    const result = await run(ix.get(ITowerRebaseTool), { mission: mission.id });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('mid-turn');
+  });
+
+  it('reports a conflicting rebase and marks the mission blocked', async () => {
+    const { store, mission } = await setupRebasableMission();
+    await commitFile(repo, 'src/engine/engine.ts', 'export const engine = 2;\n', 'base conflicts');
+
+    const result = await run(ix.get(ITowerRebaseTool), { mission: mission.id });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('conflicted and was aborted');
+    expect(result.output).toContain('src/engine/engine.ts');
+    expect((await store.load()).missions[0]?.status).toBe('blocked');
+  });
+});
+
 describe('tool registration', () => {
   it('declares no when gate on any tower tool contribution', () => {
     for (const contribution of TOWER_TOOL_CONTRIBUTIONS) {
@@ -813,6 +959,7 @@ describe('tool registration', () => {
       [ITowerInitTool, {}],
       [ITowerPlanTool, { missions: [] }],
       [ITowerMergeTool, { branch: 'tower/x' }],
+      [ITowerRebaseTool, { mission: 'M1' }],
       [ITowerTeardownTool, {}],
     ];
     for (const [id, args] of cases) {

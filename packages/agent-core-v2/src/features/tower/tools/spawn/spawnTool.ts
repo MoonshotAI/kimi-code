@@ -437,7 +437,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
           '- Your scope marks what you investigate, not what you may change. You MUST NOT modify, add, or delete any file in the repo, and your branch must end with zero commits — a changed file makes the merge gate reject your mission as a read-only violation.\n' +
           '- Your deliverables are knowledge: record findings as TowerMission notes, send summaries to the tower and to dependent agents with TowerSend, and file TowerFinding for out-of-scope discoveries.\n\n' +
           `# Communication protocol\n` +
-          '- Coordinate through tower tools ONLY: TowerSend / TowerInbox / TowerFinding / TowerMission / TowerStatus. Reach the tower and sibling agents with TowerSend; check TowerInbox regularly.\n' +
+          '- Coordinate through tower tools ONLY: TowerSend / TowerInbox / TowerFinding / TowerMission / TowerStatus. Reach the tower and sibling agents with TowerSend. Messages sent to you while you run are steered into your turn as injected messages — act on them at the next step boundary; run long Bash commands (installs, builds, test suites) with run_in_background=true and poll them with TaskOutput so you stay responsive.\n' +
           '- NEVER create or edit files under `.tower/` by hand — the tools are the only writers.\n' +
           '- Ambiguity is escalated, not guessed: if the mission leaves substantive doubt about what to investigate, TowerSend(to="tower", subject="clarify-request", body=what needs pinning down) BEFORE acting — the tower relays to the human; you never ask the user directly.\n\n' +
           `# When the survey is done\n` +
@@ -454,7 +454,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         `# Your mission\n\n${missionText.trim()}\n\n` +
         historySection +
         `# Communication protocol\n` +
-        '- Coordinate through tower tools ONLY: TowerSend / TowerInbox / TowerFinding / TowerMission / TowerStatus. Reach the tower and sibling agents with TowerSend; check TowerInbox regularly.\n' +
+        '- Coordinate through tower tools ONLY: TowerSend / TowerInbox / TowerFinding / TowerMission / TowerStatus. Reach the tower and sibling agents with TowerSend. Messages sent to you while you run are steered into your turn as injected messages — act on them at the next step boundary; run long Bash commands (installs, builds, test suites) with run_in_background=true and poll them with TaskOutput so you stay responsive.\n' +
         '- NEVER create or edit files under `.tower/` by hand — the tools are the only writers; hand-written protocol files break the merge gate.\n' +
         '- Found something notable outside your scope? File it with TowerFinding instead of fixing it.\n' +
         '- Keep your mission current with TowerMission: task_done as you finish tasks, note for decisions, blocker when stuck.\n' +

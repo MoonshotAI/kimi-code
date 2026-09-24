@@ -62,7 +62,7 @@ export class TowerMergeTool implements ITowerMergeTool {
               ...conflictsWith.map(
                 (conflict) => `- ${conflict.branch}: ${conflict.files.join(', ')}`,
               ),
-              'Tell each affected worker (Agent resume with run_in_background=true — never foreground: their output flows back through the tower protocol files) to rebase onto the updated base, resolve, push, and request a re-review.',
+              'Run TowerRebase(mission=...) for each affected mission once its worker is idle (or TowerSend the worker to rebase when it is mid-turn) — a conflict-free rebase waives the re-review; a conflict marks the mission blocked for the worker to resolve. Merging them also requires TowerRebase first: the gate refuses branches that are behind the base.',
             );
           } else if (allClosed) {
             lines.push(`The mission is now marked merged. ${teardownHint}`);

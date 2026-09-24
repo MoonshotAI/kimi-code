@@ -24,6 +24,8 @@ import { ITowerMissionTool } from './tools/mission/mission';
 import { TowerMissionTool } from './tools/mission/missionTool';
 import { ITowerPlanTool } from './tools/plan/plan';
 import { TowerPlanTool } from './tools/plan/planTool';
+import { ITowerRebaseTool } from './tools/rebase/rebase';
+import { TowerRebaseTool } from './tools/rebase/rebaseTool';
 import { ITowerReviewTool } from './tools/review/review';
 import { TowerReviewTool } from './tools/review/reviewTool';
 import { ITowerSendTool } from './tools/send/send';
@@ -47,6 +49,7 @@ export const TOWER_TOOL_CONTRIBUTIONS: readonly TowerToolContribution[] = [
   { id: ITowerPlanTool, ctor: TowerPlanTool, name: 'TowerPlan' },
   { id: ITowerSpawnTool, ctor: TowerSpawnTool, name: 'TowerSpawn' },
   { id: ITowerMergeTool, ctor: TowerMergeTool, name: 'TowerMerge' },
+  { id: ITowerRebaseTool, ctor: TowerRebaseTool, name: 'TowerRebase' },
   { id: ITowerTeardownTool, ctor: TowerTeardownTool, name: 'TowerTeardown' },
   { id: ITowerSendTool, ctor: TowerSendTool, name: 'TowerSend' },
   { id: ITowerInboxTool, ctor: TowerInboxTool, name: 'TowerInbox' },

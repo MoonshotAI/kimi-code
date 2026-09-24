@@ -13,6 +13,7 @@ import {
   TowerStore,
   commitPaths,
   isWorktreeDirty,
+  mergeNoFf,
   parseFrontmatter,
   worktreeAddNewBranch,
 } from '../../../src/features/tower/protocol';
@@ -619,13 +620,41 @@ describe('plan', () => {
     expect(missionFile).not.toContain('## Context');
   });
 
-  it('rejects overlapping scopes', async () => {
-    const attempt = store.plan([
+  it('serializes overlapping scopes with an auto dependency instead of rejecting them', async () => {
+    const missions = await store.plan([
       { title: 'outer', scope: ['src/a/**'] },
       { title: 'inner', scope: ['src/a/b/**'] },
     ]);
-    await expect(attempt).rejects.toThrow(TowerProtocolError);
-    await expect(attempt).rejects.toThrow(/scopes overlap/);
+    expect(missions.map((m) => m.id)).toEqual(['M1', 'M2']);
+    expect(missions[1]!.deps).toEqual(['M1']);
+    expect(missions[1]!.notes.join('\n')).toContain('auto dependency on M1');
+
+    const index = await readFile(join(repo, '.tower/comms/MISSIONS.md'), 'utf8');
+    expect(index).toContain('M1 → M2');
+  });
+
+  it('auto-dependencies on overlap chain transitively and gate the merge order', async () => {
+    const first = await setupMission({
+      title: 'first config',
+      scope: 'config/**',
+      file: 'config/settings.go',
+      content: 'package config\n',
+    });
+    const second = await setupMission({
+      title: 'second config',
+      scope: 'config/**',
+      file: 'config/settings.go',
+      content: 'package config\n// second\n',
+    });
+    expect(second.deps).toEqual([first.id]);
+
+    await store.registerAgent(
+      rosterEntry({ name: 'rev-2', kind: 'reviewer', reviewTarget: second.branch }),
+    );
+    await cleanReview('rev-2', second.branch);
+    await expect(store.merge(second.branch)).rejects.toThrow(
+      new RegExp(`dependencies not merged yet \\(${first.id}\\)`),
+    );
   });
 
   it('rejects deps referencing unknown missions', async () => {
@@ -640,10 +669,10 @@ describe('plan', () => {
 
     const missions = await store.plan([{ title: 'implement', scope: ['src/a/b/**'] }]);
     expect(missions[0]?.id).toBe('M2');
+    expect(missions[0]?.deps).toEqual([]);
 
-    await expect(store.plan([{ title: 'clash', scope: ['src/a/**'] }])).rejects.toThrow(
-      /scopes overlap/,
-    );
+    const [clash] = await store.plan([{ title: 'clash', scope: ['src/a/**'] }]);
+    expect(clash!.deps).toEqual(['M2']);
   });
 
   it('survey missions reserve no scope and may overlap builds and each other', async () => {
@@ -654,9 +683,10 @@ describe('plan', () => {
     ]);
     expect(missions.map((m) => m.kind)).toEqual(['survey', 'survey', 'build']);
 
-    await expect(
-      store.plan([{ title: 'touch layers too', scope: ['src/layer/vulkan/shader/**'] }]),
-    ).rejects.toThrow(/scopes overlap/);
+    const [overlap] = await store.plan([
+      { title: 'touch layers too', scope: ['src/layer/vulkan/shader/**'] },
+    ]);
+    expect(overlap!.deps).toEqual(['M3']);
   });
 
   it('rejects a new mission whose slugged branch collides with an existing mission, even a closed one', async () => {
@@ -1078,6 +1108,9 @@ describe('merge gate', () => {
 
     await cleanReview('rev-base', base.branch);
     await store.merge(base.branch);
+    await expect(store.merge(consumer.branch)).rejects.toThrow(/behind base "main"/);
+    const rebased = await store.rebaseMission('tower', consumer.id);
+    expect(rebased.status).toBe('rebased');
     await store.merge(consumer.branch);
     const state = await store.load();
     expect(state.missions.find((m) => m.id === consumer.id)?.status).toBe('merged');
@@ -1104,10 +1137,14 @@ describe('merge gate', () => {
     await expect(
       store.updateMission('w1', mission.id, { scope: ['src/x/**', 'src/outside.ts'] }),
     ).rejects.toThrow(/cannot change mission scope/);
-    await expect(
-      store.updateMission('tower', mission.id, { scope: ['src/x/**', 'src/other/**'] }),
-    ).rejects.toThrow(/scopes overlap/);
 
+    const widened = await store.updateMission('tower', mission.id, {
+      scope: ['src/x/**', 'src/other/**'],
+    });
+    expect(widened.deps).toEqual(['M2']);
+    expect(widened.notes.join('\n')).toContain('auto dependency on M2');
+
+    await store.updateMission('tower', 'M2', { status: 'abandoned' });
     await store.updateMission('tower', mission.id, { scope: ['src/x/**', 'src/outside.ts'] });
     const log = (await store.recentLog(5)).join('\n');
     expect(log).toContain('mission.update');
@@ -1616,6 +1653,124 @@ describe('merge gate', () => {
   });
 });
 
+describe('rebaseMission', () => {
+  beforeEach(async () => {
+    await store.init();
+  });
+
+  it('refuses non-tower callers', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+    });
+    await expect(store.rebaseMission('w1', mission.id)).rejects.toThrow(/only the tower/);
+  });
+
+  it('reports up-to-date when the branch already contains the base tip', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+    });
+    const result = await store.rebaseMission('tower', mission.id);
+    expect(result.status).toBe('up-to-date');
+  });
+
+  it('rebases a stale branch cleanly and the merge gate waives the re-review', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+    });
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: mission.branch }),
+    );
+    await cleanReview('rev', mission.branch);
+    await commitFile(repo, 'docs/readme.md', 'docs\n', 'base moves on');
+
+    await expect(store.merge(mission.branch)).rejects.toThrow(/behind base "main"/);
+    const result = await store.rebaseMission('tower', mission.id);
+    expect(result.status).toBe('rebased');
+
+    await store.merge(mission.branch);
+    expect((await store.load()).missions.find((m) => m.id === mission.id)?.status).toBe('merged');
+    const log = (await store.recentLog(10)).join('\n');
+    expect(log).toContain('rebase.mission');
+    expect(log).toContain('review_waived=yes');
+  });
+
+  it('a worker commit after the tower rebase voids the review waiver', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+    });
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: mission.branch }),
+    );
+    await cleanReview('rev', mission.branch);
+    await commitFile(repo, 'docs/readme.md', 'docs\n', 'base moves on');
+    await store.rebaseMission('tower', mission.id);
+
+    await commitFile(worktreeOf(mission), 'src/x/x.ts', 'x2\n', 'worker adds more');
+    await expect(store.merge(mission.branch)).rejects.toThrow(/moved since the clean review/);
+  });
+
+  it('aborts a conflicting rebase, marks the mission blocked, and reports the conflicted files', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/shared.ts',
+      content: 'from branch\n',
+    });
+    const tipBefore = await git(repo, 'rev-parse', mission.branch);
+    await commitFile(repo, 'src/x/shared.ts', 'from base\n', 'base touches the same file');
+
+    const result = await store.rebaseMission('tower', mission.id);
+    expect(result.status).toBe('conflict');
+    expect(result.files).toEqual(['src/x/shared.ts']);
+
+    const after = (await store.load()).missions.find((m) => m.id === mission.id)!;
+    expect(after.status).toBe('blocked');
+    expect(after.blockers.join('\n')).toContain('src/x/shared.ts');
+    expect(await git(worktreeOf(mission), 'status', '--porcelain')).toBe('');
+    expect(await git(repo, 'rev-parse', mission.branch)).toBe(tipBefore);
+  });
+
+  it('refuses while the worktree has uncommitted changes', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+    });
+    await commitFile(repo, 'docs/readme.md', 'docs\n', 'base moves on');
+    await writeFile(join(worktreeOf(mission), 'src/x/x.ts'), 'dirty\n');
+
+    await expect(store.rebaseMission('tower', mission.id)).rejects.toThrow(
+      /uncommitted changes/,
+    );
+  });
+
+  it('mergeNoFf aborts a conflicting merge and leaves the checkout clean', async () => {
+    await git(repo, 'checkout', '-b', 'conflicting');
+    await commitFile(repo, 'README.md', '# conflicting\n', 'conflict change');
+    await git(repo, 'checkout', 'main');
+    const mainTip = await git(repo, 'rev-parse', 'HEAD');
+    await commitFile(repo, 'README.md', '# main change\n', 'main change');
+
+    await expect(mergeNoFf(repo, 'conflicting')).rejects.toThrow();
+    expect(await git(repo, 'status', '--porcelain')).toBe('');
+    expect(await git(repo, 'rev-parse', 'HEAD')).toBe(await git(repo, 'rev-parse', 'main'));
+    expect(mainTip).not.toBe(await git(repo, 'rev-parse', 'HEAD'));
+  });
+});
+
 describe('rework loop closure', () => {
   beforeEach(async () => {
     await store.init();
@@ -1890,6 +2045,8 @@ describe('dirty base checkout', () => {
     await git(repo, 'add', 'wip.ts');
     await git(repo, 'commit', '-m', 'commit my wip');
 
+    const rebased = await store.rebaseMission('tower', mission!.id);
+    expect(rebased.status).toBe('rebased');
     const { mergeCommit } = await store.merge(mission!.branch);
     expect(mergeCommit).toBe(await git(repo, 'rev-parse', 'HEAD'));
     expect((await store.load()).missions[0]?.status).toBe('merged');
@@ -2038,26 +2195,30 @@ describe('updateMission', () => {
     expect(log).toContain('status=abandoned');
   });
 
-  it('frees an abandoned mission\'s scope for new plans', async () => {
-    await expect(store.plan([{ title: 'gamma', scope: ['src/alpha/**'] }])).rejects.toThrow(
-      /scopes overlap/,
-    );
+  it('serializes new plans into an open mission\'s scope with an auto dependency, and frees it on abandon', async () => {
+    const [overlapping] = await store.plan([{ title: 'gamma overlap', scope: ['src/alpha/**'] }]);
+    expect(overlapping!.deps).toEqual(['M1']);
 
     await store.updateMission('tower', 'M1', { status: 'abandoned' });
+    const [chained] = await store.plan([{ title: 'gamma chained', scope: ['src/alpha/**'] }]);
+    expect(chained!.deps).toEqual(['M3']);
 
-    const [gamma] = await store.plan([{ title: 'gamma', scope: ['src/alpha/**'] }]);
-    expect(gamma!.id).toBe('M3');
+    await store.updateMission('tower', 'M3', { status: 'abandoned' });
+    await store.updateMission('tower', 'M4', { status: 'abandoned' });
+    const [gamma] = await store.plan([{ title: 'gamma fresh', scope: ['src/alpha/**'] }]);
+    expect(gamma!.id).toBe('M5');
+    expect(gamma!.deps).toEqual([]);
   });
 
   it('frees an abandoned mission\'s scope for scope patches', async () => {
-    await expect(
-      store.updateMission('tower', 'M2', { scope: ['src/alpha/**'] }),
-    ).rejects.toThrow(/scopes overlap/);
+    const patched = await store.updateMission('tower', 'M2', { scope: ['src/alpha/**'] });
+    expect(patched.deps).toEqual(['M1']);
 
     await store.updateMission('tower', 'M1', { status: 'abandoned' });
 
-    const patched = await store.updateMission('tower', 'M2', { scope: ['src/alpha/**'] });
-    expect(patched.scope).toEqual(['src/alpha/**']);
+    const repatched = await store.updateMission('tower', 'M2', { scope: ['src/alpha/**'] });
+    expect(repatched.scope).toEqual(['src/alpha/**']);
+    expect(repatched.deps).toEqual(['M1']);
   });
 });
 
