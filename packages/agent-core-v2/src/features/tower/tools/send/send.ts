@@ -16,6 +16,12 @@ export const TowerSendToolInputSchema = z
       .string()
       .optional()
       .describe('Optional reference to a consent/approval record this message relies on'),
+    urgent: z
+      .boolean()
+      .optional()
+      .describe(
+        'Mark the message as an interruption directive. It is still delivered the same way (steered into the running turn, seen at the next step boundary) — urgent does not abort the recipient\'s in-flight tool call; for a hard abort, TaskStop the recipient\'s task and resume it with this message instead',
+      ),
   })
   .strict();
 

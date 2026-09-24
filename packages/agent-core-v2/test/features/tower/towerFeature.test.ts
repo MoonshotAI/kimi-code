@@ -113,6 +113,7 @@ describe('TowerFeature — experimental flag gating', () => {
         'TowerMerge',
         'TowerMission',
         'TowerPlan',
+        'TowerRebase',
         'TowerReview',
         'TowerSend',
         'TowerSpawn',
@@ -196,7 +197,7 @@ describe('TowerFeature — config-sourced flag assembly', () => {
         ),
     ).toHaveLength(1);
     const agent = host.child(LifecycleScope.Agent, 'agent-1');
-    expect(collectionViewOf(agent, AgentToolContribution).items).toHaveLength(11);
+    expect(collectionViewOf(agent, AgentToolContribution).items).toHaveLength(12);
     host.dispose();
   });
 

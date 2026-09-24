@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { appendFile, mkdir, open, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 import picomatch from 'picomatch';
 
@@ -14,6 +14,7 @@ import {
   commitPaths,
   currentBranch,
   diffNameOnly,
+  git,
   hasAnyCommit,
   initRepository,
   isAncestor,
@@ -155,6 +156,63 @@ function missionNumber(id: string): number {
   return Number.isNaN(n) ? 0 : n;
 }
 
+function scopeStem(raw: string): string {
+  return raw.replace(/\/\*\*?$/, '').replace(/\*$/, '').replace(/\/+$/, '');
+}
+
+function scopesOverlap(a: readonly string[], b: readonly string[]): boolean {
+  for (const rawA of a) {
+    const stemA = scopeStem(rawA);
+    if (stemA.length === 0) continue;
+    for (const rawB of b) {
+      const stemB = scopeStem(rawB);
+      if (stemB.length === 0) continue;
+      if (stemA === stemB || stemA.startsWith(`${stemB}/`) || stemB.startsWith(`${stemA}/`)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function depPathExists(fromId: string, toId: string, byId: ReadonlyMap<string, TowerMission>): boolean {
+  const seen = new Set<string>();
+  const queue = [fromId];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (current === toId) return true;
+    if (seen.has(current)) continue;
+    seen.add(current);
+    const mission = byId.get(current);
+    if (mission === undefined || !isOpenMission(mission)) continue;
+    for (const dep of mission.deps) {
+      if (!seen.has(dep)) queue.push(dep);
+    }
+  }
+  return false;
+}
+
+function autoDepNote(mission: TowerMission, other: TowerMission): string {
+  return `auto dependency on ${other.id}: scope overlaps ${other.id} ("${other.scope.join(', ')}") — merges are serialized so shared files land in dependency order instead of colliding`;
+}
+
+function addAutoDeps(
+  mission: TowerMission,
+  candidates: readonly TowerMission[],
+  byId: ReadonlyMap<string, TowerMission>,
+): void {
+  if (mission.kind === 'survey') return;
+  for (const other of candidates) {
+    if (other.id === mission.id || other.kind === 'survey') continue;
+    if (!scopesOverlap(mission.scope, other.scope)) continue;
+    if (depPathExists(mission.id, other.id, byId) || depPathExists(other.id, mission.id, byId)) {
+      continue;
+    }
+    mission.deps.push(other.id);
+    mission.notes.push(autoDepNote(mission, other));
+  }
+}
+
 export function resolveMissionByBranch(
   state: TowerState,
   branch: string,
@@ -171,6 +229,15 @@ export function resolveMissionByBranch(
 
 function unownedBranchMessage(branch: string): string {
   return `branch "${branch}" exists in git but is not owned by any tower mission (it appeared after planning) — refusing to build the worker on unrelated history; delete or rename that branch if it is stale, or re-plan the mission under a new title`;
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function assertLocalBaseBranch(repoRoot: string, base: string): Promise<void> {
@@ -526,7 +593,7 @@ export class TowerStore {
         scope: [...item.scope],
         branch: `feat/${slug}`,
         worktree: `wt-${n}`,
-        deps: item.deps ?? [],
+        deps: [...(item.deps ?? [])],
         status: 'planned',
         context:
           item.context !== undefined && item.context.trim().length > 0
@@ -563,8 +630,18 @@ export class TowerStore {
       }
       takenBranches.set(mission.branch, mission);
     }
+    const openExisting = state.missions.filter(isOpenMission);
+    const byId = new Map<string, TowerMission>();
+    for (const existing of [...openExisting, ...missions]) byId.set(existing.id, existing);
+    for (const mission of missions) {
+      const older = [
+        ...openExisting,
+        ...missions.filter((m) => missionNumber(m.id) < missionNumber(mission.id)),
+      ];
+      addAutoDeps(mission, older, byId);
+    }
     this.assertScopesDisjoint([
-      ...state.missions.filter(isOpenMission),
+      ...openExisting,
       ...missions,
     ]);
 
@@ -588,7 +665,7 @@ export class TowerStore {
     for (const mission of missions) {
       if (mission.kind === 'survey') continue;
       for (const raw of mission.scope) {
-        const stem = raw.replace(/\/\*\*?$/, '').replace(/\*$/, '').replace(/\/+$/, '');
+        const stem = scopeStem(raw);
         if (stem.length === 0) {
           throw new TowerProtocolError(
             `mission ${mission.id} scope "${raw}" covers the whole repo — narrow it down`,
@@ -597,14 +674,16 @@ export class TowerStore {
         scopes.push({ id: mission.id, raw, stem });
       }
     }
+    const byId = new Map(missions.map((m) => [m.id, m]));
     for (let i = 0; i < scopes.length; i++) {
       for (let j = i + 1; j < scopes.length; j++) {
         const a = scopes[i]!;
         const b = scopes[j]!;
         if (a.id === b.id) continue;
         if (a.stem === b.stem || a.stem.startsWith(`${b.stem}/`) || b.stem.startsWith(`${a.stem}/`)) {
+          if (depPathExists(a.id, b.id, byId) || depPathExists(b.id, a.id, byId)) continue;
           throw new TowerProtocolError(
-            `mission scopes overlap: ${a.id} ("${a.raw}") vs ${b.id} ("${b.raw}") — split the shared files into exactly one mission; if one of them is stale finished work, abandon it first (TowerMission status=abandoned)`,
+            `mission scopes overlap: ${a.id} ("${a.raw}") vs ${b.id} ("${b.raw}") without a dependency between them — split the shared files into exactly one mission, or wire a dependency so the merges serialize (TowerPlan and scope widening auto-add one when scopes overlap; if one of them is stale finished work, abandon it first (TowerMission status=abandoned))`,
           );
         }
       }
@@ -666,10 +745,12 @@ export class TowerStore {
           `agent "${callerName}" cannot change mission scope — only the tower widens a scope, and every change is logged`,
         );
       }
-      this.assertScopesDisjoint([
-        ...state.missions.filter((m) => m.id !== id && isOpenMission(m)),
-        { ...mission, scope: [...patch.scope] },
-      ]);
+      const patched: TowerMission = { ...mission, scope: [...patch.scope] };
+      const others = state.missions.filter((m) => m.id !== id && isOpenMission(m));
+      const byId = new Map(state.missions.map((m) => [m.id, m]));
+      byId.set(id, patched);
+      addAutoDeps(patched, others, byId);
+      this.assertScopesDisjoint([...others, patched]);
       mission.scope = [...patch.scope];
     }
     if (patch.status !== undefined) {
@@ -1134,6 +1215,16 @@ export class TowerStore {
       return { mergeCommit: tip, conflictsWith: [], noop: true };
     }
 
+    if (
+      (await branchExists(this.repoRoot, branch)) &&
+      !(await isAncestor(this.repoRoot, state.base, branch))
+    ) {
+      throw await block(
+        'stale-base',
+        `merge blocked: ${branch} is behind base "${state.base}" — the base moved after this branch spawned, so merging now could land code that was never built or reviewed against the current base; run TowerRebase(mission="${mission.id}") first (it rebases in the mission worktree, refuses while the worker is mid-turn or the worktree is dirty, and a conflict-free rebase waives the re-review), then retry the merge`,
+      );
+    }
+
     const reviews = await this.reviewsFor(branch);
     const siblingMissions = state.missions.filter((m) => m.branch === branch && m.id !== mission.id);
     const stamped = reviews.filter((r) => r.mission === mission.id);
@@ -1158,11 +1249,19 @@ export class TowerStore {
       );
     }
     const tip = await branchTip(this.repoRoot, branch);
+    let reviewWaived = false;
     if (review.reviewedCommit !== tip) {
-      throw await block(
-        'tip-moved',
-        `merge blocked: ${branch} moved since the clean review (reviewed ${review.reviewedCommit.slice(0, 7)}, tip ${tip.slice(0, 7)}) — re-review required`,
-      );
+      const waiver = mission.lastRebase;
+      reviewWaived =
+        waiver !== undefined &&
+        waiver.fromCommit === review.reviewedCommit &&
+        waiver.toCommit === tip;
+      if (!reviewWaived) {
+        throw await block(
+          'tip-moved',
+          `merge blocked: ${branch} moved since the clean review (reviewed ${review.reviewedCommit.slice(0, 7)}, tip ${tip.slice(0, 7)}) — re-review required`,
+        );
+      }
     }
     if (review.mission === undefined && siblingMissions.length > 0) {
       throw await block(
@@ -1228,8 +1327,98 @@ export class TowerStore {
     await this.save(state);
     await this.renderMissionsIndex(state);
     await this.renderMissionFile(mission);
-    await this.appendLog(TOWER_NAME, 'merge', { branch, base: state.base, merge_commit: mergeCommit.slice(0, 7) });
+    await this.appendLog(TOWER_NAME, 'merge', { branch, base: state.base, merge_commit: mergeCommit.slice(0, 7), review_waived: reviewWaived ? 'yes' : undefined });
     return { mergeCommit, conflictsWith };
+  }
+
+  async rebaseMission(callerName: string, id: string): Promise<{
+    readonly status: 'up-to-date' | 'rebased' | 'conflict';
+    readonly fromCommit?: string;
+    readonly toCommit?: string;
+    readonly files?: readonly string[];
+  }> {
+    if (callerName !== TOWER_NAME) {
+      throw new TowerProtocolError(
+        `agent "${callerName}" cannot rebase a mission branch — only the tower runs TowerRebase; a worker rebases only when the tower asks it to`,
+      );
+    }
+    const state = await this.load();
+    const mission = state.missions.find((m) => m.id === id);
+    if (mission === undefined) {
+      throw new TowerProtocolError(`unknown mission "${id}"`);
+    }
+    if (!isOpenMission(mission)) {
+      throw new TowerProtocolError(
+        `mission ${id} is ${mission.status} — only open missions rebase; closed missions are historical records`,
+      );
+    }
+    if (mission.kind === 'survey') {
+      throw new TowerProtocolError(
+        `mission ${id} is a read-only survey — it has no work branch to rebase`,
+      );
+    }
+    if (!(await branchExists(this.repoRoot, mission.branch))) {
+      throw new TowerProtocolError(
+        `mission ${id} has no branch "${mission.branch}" yet — spawn a worker to create it before rebasing`,
+      );
+    }
+    const worktreeAbs = this.abs(join(WORKTREES_DIR, mission.worktree));
+    if (!(await isRegisteredWorktree(this.repoRoot, worktreeAbs))) {
+      throw new TowerProtocolError(
+        `mission ${id} has no registered worktree at ${join(WORKTREES_DIR, mission.worktree)} — spawn a worker to create it before rebasing`,
+      );
+    }
+    if (await isWorktreeDirty(worktreeAbs)) {
+      throw new TowerProtocolError(
+        `worktree ${mission.worktree} has uncommitted changes — rebasing under uncommitted work could lose it; have the worker commit or stash first, then retry`,
+      );
+    }
+    const gitDirRaw = (await tryGit(worktreeAbs, ['rev-parse', '--git-dir']))?.trim();
+    if (gitDirRaw !== undefined && gitDirRaw.length > 0) {
+      const gitDir = resolve(worktreeAbs, gitDirRaw);
+      if ((await pathExists(join(gitDir, 'rebase-merge'))) || (await pathExists(join(gitDir, 'rebase-apply')))) {
+        throw new TowerProtocolError(
+          `worktree ${mission.worktree} already has a rebase in progress — finish or abort it (git rebase --continue / --abort in the worktree) before the tower rebases the branch`,
+        );
+      }
+    }
+    const fromCommit = await branchTip(this.repoRoot, mission.branch);
+    if (await isAncestor(this.repoRoot, state.base, fromCommit)) {
+      await this.appendLog(TOWER_NAME, 'rebase.mission', { id, result: 'up-to-date' });
+      return { status: 'up-to-date' };
+    }
+    try {
+      await git(worktreeAbs, ['rebase', state.base]);
+    } catch {
+      const conflicted = (await tryGit(worktreeAbs, ['diff', '--name-only', '--diff-filter=U'])) ?? '';
+      await tryGit(worktreeAbs, ['rebase', '--abort']);
+      const files = conflicted.split('\n').filter((file) => file.trim().length > 0);
+      mission.blockers.push(
+        `tower rebase onto ${state.base} conflicted in: ${files.join(', ')} — the rebase was aborted; resolve by rebasing in the worktree and re-requesting review`,
+      );
+      mission.status = 'blocked';
+      await this.save(state);
+      await this.renderMissionsIndex(state);
+      await this.renderMissionFile(mission);
+      await this.appendLog(TOWER_NAME, 'rebase.mission', {
+        id,
+        result: 'conflict',
+        files: files.join(','),
+      });
+      return { status: 'conflict', fromCommit, files };
+    }
+    const toCommit = await branchTip(this.repoRoot, mission.branch);
+    mission.lastRebase = { fromCommit, toCommit };
+    await this.save(state);
+    await this.renderMissionsIndex(state);
+    await this.renderMissionFile(mission);
+    await this.appendLog(TOWER_NAME, 'rebase.mission', {
+      id,
+      result: 'clean',
+      from: fromCommit.slice(0, 7),
+      to: toCommit.slice(0, 7),
+    });
+    return { status: 'rebased', fromCommit, toCommit };
   }
 
   async diffBase(state: TowerState, mission: TowerMission): Promise<string> {
