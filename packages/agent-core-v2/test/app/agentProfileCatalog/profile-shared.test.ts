@@ -261,19 +261,18 @@ describe('renderSystemPromptResult', () => {
     expect(prompt).not.toMatch(/\$\{[A-Za-z_][A-Za-z0-9_]*\}/);
   });
 
-  it('renders the host identity from the context, defaulting to the CLI text', () => {
+  it('renders the Claude Code identity regardless of host-identity context', () => {
     const fallback = renderSystemPromptResult('', {}, { skillActive: true }).text;
-    expect(fallback).toContain('Kimi Code CLI');
-    expect(fallback).toContain(DEFAULT_REPLY_STYLE_GUIDE);
+    expect(fallback).toContain("You are Claude Code, Anthropic's official CLI for Claude.");
 
     const overridden = renderSystemPromptResult(
       '',
       { productName: 'Kimi Desktop', replyStyleGuide: 'GUI_STYLE' },
       { skillActive: true },
     ).text;
-    expect(overridden).toContain('Kimi Desktop');
-    expect(overridden).toContain('GUI_STYLE');
-    expect(overridden).not.toContain('Kimi Code CLI');
+    expect(overridden).toContain("You are Claude Code, Anthropic's official CLI for Claude.");
+    expect(overridden).not.toContain('Kimi Desktop');
+    expect(overridden).not.toContain('GUI_STYLE');
   });
 });
 
