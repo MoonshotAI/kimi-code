@@ -25,15 +25,21 @@ See https://github.com/MoonshotAI/kimi-code/blob/main/CONTRIBUTING.md for more.
 
 <!-- Describe the code changes in plain, easy-to-understand language for the reviewer. -->
 
-## Impact Scope
+## Behavior Changes and Affected Users
 
-<!-- Describe which modules / functionality paths are affected;
-     what test coverage exists. -->
+<!-- List every observable behavior this PR changes, one row each, including behavior you
+     consider "unchanged" whose branch conditions moved, and prompt-text edits sentence by sentence.
+     | Behavior | Before | After | Who relies on the old behavior | Escape hatch |
+     Name affected users concretely (client, provider dialect, platform, config state, data written
+     by older versions, external scripts); see .agents/skills/review-pr/surfaces.md.
+     Write "None" with evidence if nothing observable changes.
+     Then list affected modules and the test coverage for each row. -->
 
 ## Checklist
 
 - [ ] I have read the [CONTRIBUTING](https://github.com/MoonshotAI/kimi-code/blob/main/CONTRIBUTING.md) document.
 - [ ] I have linked a related issue (external PRs: issue must have a maintainer's `/approve`).
 - [ ] I have added tests that prove my feature works.
+- [ ] The behavior-change table above is complete, and every removed behavior or flipped default is named in the changeset with an escape hatch.
 - [ ] Ran `gen-changesets` skill, or this PR needs no changeset.
 - [ ] Ran `gen-docs` skill, or this PR needs no doc update.

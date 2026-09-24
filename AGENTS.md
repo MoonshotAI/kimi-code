@@ -80,6 +80,7 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 - When designing changes, follow existing boundaries and local patterns first.
 - In public text and test data, replace real internal identifiers with neutral placeholders such as `example.com`, `example.test`, and `YOUR_API_KEY`. Before opening a PR, ask a read-only agent to audit the diff for context-specific internal identifiers.
 - When creating a PR, use the `write-pr` skill (`.agents/skills/write-pr/SKILL.md`) to write the PR description. The PR title must follow Conventional Commit style, e.g. `chore: remove legacy format commands`.
+- When reviewing a PR, use the `review-pr` skill (`.agents/skills/review-pr/SKILL.md`); its `surfaces.md` lists the user populations and contract files that the Code Review Rules below refer to.
 - When an AI agent opens or updates a PR, fill in `.github/pull_request_template.md` — link the related issue or explain the problem, then describe what changed. Do not leave placeholder text or submit a generic summary of the diff.
 - Do not submit vague AI-generated PR text. The human author must understand the change well enough to explain the code, edge cases, and why the approach fits this repository.
 - After finishing a task and before submitting a PR, you must run the `gen-changesets` skill (see `.agents/skills/gen-changesets/SKILL.md`) and generate a changeset under `.changeset/` according to its rules.
@@ -90,3 +91,31 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
   - Agent working notes or handoff/summary documents (e.g. `HANDOVER-*.md`, `HANDOFF-*.md`, `handoff.md`).
   - Throwaway UI/UX prototypes or design mockups (e.g. `*-designs.html`, `*-mockup.html`, `*-demo(s).html`) at the repo root or under a `design/` folder. The only tracked `.html` files should be Vite `index.html` entrypoints.
   Before committing or opening a PR, run `git status` and `git diff --staged --stat` and remove anything matching these patterns. Put scratch work under `.tmp/` (gitignored) instead of the repo root or the source tree.
+
+## Code Review Rules
+
+These rules apply to every pull request review, automated or human. The procedure, the user populations, and the contract files they refer to live in `.agents/skills/review-pr/` (`SKILL.md`, `surfaces.md`).
+
+### Enumerate changed behavior, not just bugs
+
+Any input that worked before the change — a config key, env var, CLI flag, provider response shape, session written by an older version, client request, or hook payload — must behave the same after it unless the PR declares the change. For every deleted or narrowed branch, condition, default, or prompt sentence, ask who reached it before and where they go now; for every new condition, ask which existing inputs now match it first. Flag a PR that calls a path "unchanged" when its branch condition moved.
+
+### A flipped default or removed behavior needs a named loss and an escape hatch
+
+Everyone on the old default is affected. Require the changeset to name the behavior users lose, not only the new default; a config, env, or flag escape hatch or a maintainer's explicit sign-off in the PR; and a test that pins the old behavior for the population that keeps it.
+
+### Prompt text is behavior
+
+Editing or deleting sentences under `packages/agent-core-v2/src/**/*.md` (system prompt, tool descriptions, reminders, overlays, built-in skills) changes agent behavior for every user. "No test references the sentence" is not evidence of no impact. Require the PR to state what the sentence enforced, who relied on it, and what enforces it now.
+
+### Contract files are tripwires
+
+The manifests under `packages/agent-core-v2/docs/` (`config-manifest.toml`, `wire-manifest.d.ts`, `state-manifest.d.ts`), `packages/kap-server/test/__snapshots__/apiSurface.snapshot.test.ts.snap`, `packages/node-sdk/src/index.ts`, `packages/agent-core-v2/src/features/externalHooks/`, `packages/acp-server/`, and `apps/kimi-code/src/cli/` are consumed outside this repository: desktop and web in code-app, the VS Code extension, ACP clients such as Zed, SDK users, hook scripts, and headless-output parsers. When they change, require the PR to name the consumers and how data and clients from the previous release keep working.
+
+### Ports and refactors carry the old path's feature inventory
+
+When a change replaces or bypasses an existing path, require a list of what the old path did — env vars honored, fallbacks, accepted inputs — and where each item lives in the new path. A silently dropped item is a regression, not a cleanup.
+
+### Silent failure outranks a crash
+
+A change that makes the product silently ignore configuration, silently approve or skip an action, or silently drop data is the most severe finding: users get no signal to report.
