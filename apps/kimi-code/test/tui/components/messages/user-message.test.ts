@@ -1,7 +1,11 @@
 import { resetCapabilitiesCache, setCapabilities, visibleWidth } from '@moonshot-ai/pi-tui';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { UserMessageComponent } from '#/tui/components/messages/user-message';
+import {
+  UserMessageComponent,
+  userMessageContentOffset,
+  userMessageLineHeights,
+} from '#/tui/components/messages/user-message';
 import type { ImageAttachment } from '#/tui/utils/image-attachment-store';
 
 function stripAnsi(text: string): string {
@@ -96,13 +100,13 @@ describe('UserMessageComponent', () => {
     setCapabilities({ images: null, trueColor: true, hyperlinks: true });
 
     const withBullet = stripAnsi(new UserMessageComponent('hello', []).render(80).join('\n'));
-    expect(withBullet).toContain('✨');
+    expect(withBullet).toContain('❯');
     expect(withBullet).toContain('hello');
 
     const lines = new UserMessageComponent('$ ls', [], '').render(80).map(stripAnsi);
     const contentLine = lines.find((l) => l.includes('$ ls'));
     expect(contentLine).toBeDefined();
-    expect(stripAnsi(lines.join('\n'))).not.toContain('✨');
+    expect(stripAnsi(lines.join('\n'))).not.toContain('❯');
     // The `$` sits at the leading column where the bullet used to be.
     expect(contentLine?.startsWith('$ ls')).toBe(true);
   });
@@ -113,9 +117,72 @@ describe('UserMessageComponent', () => {
 
     const lines = component.render(80);
     expect(lines[0]).toMatch(/^\u001B\]133;A\u0007/);
-    expect(lines[lines.length - 1]).toMatch(/^\u001B\]133;B\u0007\u001B\]133;C\u0007/);
+    expect(lines.at(-1)).toMatch(/^\u001B\]133;B\u0007\u001B\]133;C\u0007/);
 
     const cached = component.render(80);
     expect(cached[0]).toBe(lines[0]);
+  });
+
+  describe('bullet', () => {
+    it('renders ❯ as the default bullet', () => {
+      setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+
+      const rendered = stripAnsi(new UserMessageComponent('hello', []).render(80).join('\n'));
+      expect(rendered).toContain('❯');
+    });
+
+    it('indents continuation lines by the marker width', () => {
+      setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+
+      const wrapped = new UserMessageComponent('word '.repeat(40).trim(), [])
+        .render(20)
+        .map(stripAnsi)
+        .filter((line) => line.includes('word'));
+      expect(wrapped[0]?.startsWith('❯ ')).toBe(true);
+      expect(wrapped[1]?.startsWith('  word')).toBe(true);
+    });
+
+    it('keeps an explicit bullet override', () => {
+      setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+
+      const lines = new UserMessageComponent('$ ls', [], '').render(80).map(stripAnsi);
+      expect(lines.join('\n')).not.toContain('❯');
+      expect(lines.find((l) => l.includes('$ ls'))?.startsWith('$ ls')).toBe(true);
+    });
+  });
+});
+
+describe('userMessageLineHeights', () => {
+  it('counts one visual row per short logical line', () => {
+    expect(userMessageLineHeights('one\ntwo\nthree', 80)).toEqual([1, 1, 1]);
+  });
+
+  it('skips leading blank lines, matching the rendered content offset', () => {
+    expect(userMessageLineHeights('\n\none\ntwo', 80)).toEqual([1, 1]);
+  });
+
+  it('counts wrapped rows for long logical lines at the bullet-adjusted width', () => {
+    // Width 12 minus the 2-cell bullet leaves 10 columns for text.
+    expect(userMessageLineHeights('a'.repeat(25), 12)).toEqual([3]);
+  });
+
+  it('expands tabs like the Text component does before wrapping', () => {
+    expect(userMessageLineHeights('\t' + 'a'.repeat(8), 12)).toEqual([2]);
+  });
+
+  it('honours an explicit bullet when measuring the content width', () => {
+    expect(userMessageLineHeights('a'.repeat(11), 12, '')).toEqual([1]);
+    expect(userMessageLineHeights('a'.repeat(11), 12)).toEqual([2]);
+  });
+});
+
+describe('userMessageContentOffset', () => {
+  it('points at the first text line right after the spacer row', () => {
+    expect(userMessageContentOffset('one\ntwo')).toBe(1);
+  });
+
+  it('counts one extra row per leading blank line', () => {
+    expect(userMessageContentOffset('\n\none\ntwo')).toBe(3);
+    expect(userMessageContentOffset('  \n\t\none')).toBe(3);
   });
 });

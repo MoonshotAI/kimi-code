@@ -17,12 +17,15 @@ import { NotifyPanelComponent } from './components/chrome/notify-panel';
 import { TodoPanelComponent } from './components/chrome/todo-panel';
 import type { SessionRow } from './components/dialogs/session-picker';
 import { CustomEditor } from './components/editor/custom-editor';
+import { StickyUserMessageComponent } from './components/messages/sticky-user-message';
+import { userMessageContentOffset, userMessageLineHeights } from './components/messages/user-message';
 import { DEFAULT_MARKDOWN_CONFIG, DEFAULT_TUI_CONFIG } from './config';
 import { CHROME_GUTTER } from './constant/rendering';
 import type { TasksBrowserState } from './controllers/tasks-browser';
 import { currentTheme, type Theme } from './theme';
 import { setMarkdownAltScreenActive, setMarkdownMermaidMode, setMarkdownRenderLatex, setMarkdownRenderRequester } from './utils/markdown-options';
 import { createTerminalState, type TerminalState } from './utils/terminal-state';
+import { getTranscriptComponentEntry } from './utils/transcript-component-metadata';
 import {
   INITIAL_LIVE_PANE,
   type AppState,
@@ -160,6 +163,30 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
       overscroll: 'chain',
       scrollbar: 'auto',
     });
+    const stickyUserMessage = new StickyUserMessageComponent({
+      measure: (width) =>
+        transcriptContainer.children.map((child) => {
+          const entry = getTranscriptComponentEntry(child);
+          const lines = child.render(width);
+          const isUserMessage = entry?.kind === 'user' && entry.bullet !== '';
+          return {
+            kind: entry?.kind,
+            bullet: entry?.bullet,
+            content: entry?.content ?? '',
+            height: lines.length,
+            contentOffset: isUserMessage ? userMessageContentOffset(entry.content) : undefined,
+            lineHeights: isUserMessage
+              ? userMessageLineHeights(entry.content, width, entry.bullet)
+              : [],
+          };
+        }),
+      scrollState: () => ({ scrollTop: ui.viewportTop, following: ui.isFollowingOutput }),
+      scrollTo: (y) => {
+        scrollView.scrollTo(y);
+      },
+    });
+    const stickyUserMessageContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
+    stickyUserMessageContainer.addChild(stickyUserMessage);
     dockContainer = new VStack();
     dockContainer.addChild(activityContainer, { shrink: 1, minSize: 0 });
     dockContainer.addChild(todoPanelContainer, { shrink: 1, minSize: 0 });
@@ -169,6 +196,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     dockContainer.addChild(surveyContainer, { shrink: 0, minSize: 0 });
     dockContainer.addChild(editorContainer, { shrink: 1, minSize: 3 });
     const root = new VStack();
+    root.addChild(stickyUserMessageContainer, { shrink: 0, minSize: 0 });
     root.addChild(scrollView, { basis: 0, grow: 1, shrink: 1, minSize: 1 });
     root.addChild(dockContainer, { basis: 'auto', grow: 0, shrink: 1, minSize: 1 });
     ui.setLayoutRoot(root);

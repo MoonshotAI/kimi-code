@@ -2,7 +2,7 @@
  * Renders a user message in the transcript.
  */
 
-import { Spacer, Text, truncateToWidth, visibleWidth, type Component } from '@moonshot-ai/pi-tui';
+import { Spacer, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from '@moonshot-ai/pi-tui';
 
 import { ImageThumbnail } from '#/tui/components/media/image-thumbnail';
 import { USER_MESSAGE_BULLET } from '#/tui/constant/symbols';
@@ -10,6 +10,38 @@ import { currentTheme } from '#/tui/theme';
 import type { ImageAttachment } from '#/tui/utils/image-attachment-store';
 import { markOsc133Zone } from '#/tui/utils/osc133';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
+
+function firstContentLineIndex(lines: string[]): number {
+  let first = 0;
+  while (first < lines.length && lines[first]!.trim() === '') first++;
+  return first;
+}
+
+/**
+ * Visual row index of the message's first visible text line: one leading
+ * Spacer row plus one row per leading blank logical line. The sticky pill
+ * anchors its pin threshold and click target to this row. It must be derived
+ * from the raw content rather than the rendered lines: the bullet prefix
+ * makes even a blank first text row visibly non-empty, so scanning rendered
+ * rows for the first non-blank one would miss leading blank lines.
+ */
+export function userMessageContentOffset(text: string): number {
+  return 1 + firstContentLineIndex(text.split(/\r?\n/));
+}
+
+/**
+ * Visual row count of each logical content line after the leading blanks, at
+ * the width the message would render with its bullet. The sticky pill uses
+ * this to map "visual rows scrolled out" back to logical lines.
+ */
+export function userMessageLineHeights(text: string, width: number, bullet?: string): number[] {
+  const marker = bullet ?? USER_MESSAGE_BULLET;
+  const contentWidth = Math.max(1, width - visibleWidth(marker));
+  const lines = text.split(/\r?\n/);
+  return lines
+    .slice(firstContentLineIndex(lines))
+    .map((line) => wrapTextWithAnsi(line.replaceAll('\t', '   '), contentWidth).length);
+}
 
 export class UserMessageComponent implements Component {
   private text: string;
