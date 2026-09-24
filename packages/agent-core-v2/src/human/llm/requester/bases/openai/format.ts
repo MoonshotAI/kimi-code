@@ -303,11 +303,13 @@ export function createOpenAIFormat(): OpenAIProtocolFormat {
           if (reasoning.key === 'reasoning_content') {
             seenReasoningContent = true;
           }
-          sink.onDelta({
-            type: 'think',
-            think: reasoning.value,
-            reasoningKey: reasoning.key,
-          });
+          if (reasoning.value) {
+            sink.onDelta({
+              type: 'think',
+              think: reasoning.value,
+              reasoningKey: reasoning.key,
+            });
+          }
         }
         if (reasoningDetails !== undefined) {
           for (const part of convertReasoningDetails(reasoningDetails, seenReasoningContent)) {
