@@ -1282,6 +1282,68 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(forkedState.titleKind).toBe('custom');
   });
 
+  it('passes turn_index through :fork to the session manager fork', async () => {
+    const cwd = home as string;
+    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const parentId = parent.body.data.id;
+    const manager = (server as RunningServer).core.accessor.get(ISessionManager);
+    const fork = vi
+      .spyOn(manager, 'fork')
+      .mockRejectedValue(new Error2(ErrorCodes.SESSION_BUSY, 'session is busy'));
+
+    try {
+      const response = await postJson<null>(`/api/v1/sessions/${parentId}:fork`, {
+        turn_index: 2,
+      });
+
+      expect(response.body.code).toBe(40901);
+      expect(fork).toHaveBeenCalledWith({
+        sourceSessionId: parentId,
+        title: undefined,
+        metadata: undefined,
+        turnIndex: 2,
+      });
+    } finally {
+      fork.mockRestore();
+    }
+  });
+
+  it('forks through :fork without turn_index as before', async () => {
+    const cwd = home as string;
+    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const parentId = parent.body.data.id;
+    const manager = (server as RunningServer).core.accessor.get(ISessionManager);
+    const fork = vi.spyOn(manager, 'fork');
+
+    try {
+      const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
+
+      expect(forked.body.code).toBe(0);
+      expect(fork).toHaveBeenCalledWith({
+        sourceSessionId: parentId,
+        title: undefined,
+        metadata: undefined,
+        turnIndex: undefined,
+      });
+    } finally {
+      fork.mockRestore();
+    }
+  });
+
+  it.each([{ turn_index: 1.5 }, { turn_index: -1 }])(
+    'rejects an out-of-contract turn_index on :fork (%s)',
+    async (body) => {
+      const cwd = home as string;
+      const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+      const response = await postJson<null>(
+        `/api/v1/sessions/${parent.body.data.id}:fork`,
+        body,
+      );
+      expect(response.body.code).toBe(40001);
+      expect(response.body.details?.[0]?.path).toBe('turn_index');
+    },
+  );
+
   it.each([
     { count: 1, code: 0, prompts: [] as string[], texts: [] as string[] },
     { count: 2, code: 40911, prompts: ['original prompt'], texts: ['answer before steer', 'steered prompt', 'answer after steer', 'second steer', 'answer after second steer'] },
