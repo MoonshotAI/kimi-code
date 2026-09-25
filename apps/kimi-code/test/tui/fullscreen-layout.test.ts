@@ -18,7 +18,8 @@ import { UserMessageComponent } from '#/tui/components/messages/user-message';
 import { ActivityPaneComponent } from '#/tui/components/panes/activity-pane';
 import { CHROME_GUTTER } from '#/tui/constant/rendering';
 import { createTUIState, type KimiTUIOptions } from '#/tui/kimi-tui';
-import type { AppState } from '#/tui/types';
+import type { AppState, TranscriptEntry } from '#/tui/types';
+import { markTranscriptComponent } from '#/tui/utils/transcript-component-metadata';
 
 const WIDTH = 120;
 const HEIGHT = 30;
@@ -57,7 +58,7 @@ function fakeInitialAppState(): AppState {
 
 function stripAnsi(s: string): string {
   // eslint-disable-next-line no-control-regex
-  return s.replaceAll(/\x1B\[[0-9;?]*[a-zA-Z]|\x1B\][^\x07]*\x07/g, '');
+  return s.replaceAll(/\u001B\[[0-9;?]*[a-zA-Z]|\u001B\][^\u0007]*\u0007/g, '');
 }
 
 const LONG_MARKDOWN = Array.from(
@@ -152,17 +153,254 @@ describe('fullscreen layout', () => {
     // Zones anchor every user/assistant message, so the nearest previous zone
     // below the fold is the current turn's assistant message, then the user
     // message that started the turn.
-    vt.sendInput('\x1B[1;6A'); // ctrl+shift+up = previous prompt
+    vt.sendInput('\u001B[1;6A'); // ctrl+shift+up = previous prompt
     await vt.waitForRender();
     expect(topRows()[1]).toContain('回答二');
 
-    vt.sendInput('\x1B[1;6A');
+    vt.sendInput('\u001B[1;6A');
     await vt.waitForRender();
     expect(topRows()[1]).toContain('第二轮提问');
 
-    vt.sendInput('\x1B[1;6B'); // ctrl+shift+down = next prompt
+    vt.sendInput('\u001B[1;6B'); // ctrl+shift+down = next prompt
     await vt.waitForRender();
     expect(topRows()[1]).toContain('回答二');
+
+    state.ui.stop();
+  });
+
+  it('pins the scrolled-past user message above the transcript and keeps it pinned on click jump', async () => {
+    const { state, vt } = await mountFullscreen();
+
+    const userEntry: TranscriptEntry = {
+      id: 'u1',
+      kind: 'user',
+      renderMode: 'plain',
+      content: '第一轮问题',
+    };
+    const userComponent = new UserMessageComponent(userEntry.content);
+    markTranscriptComponent(userComponent, userEntry);
+    state.transcriptContainer.addChild(userComponent);
+    const assistant = new AssistantMessageComponent();
+    state.transcriptContainer.addChild(assistant);
+    assistant.updateContent(LONG_MARKDOWN, { transient: false });
+    state.ui.requestRender(true);
+    await vt.waitForRender();
+    // The first frame's layout pass is what pulls the follow-end scroll to the
+    // bottom; the sticky judgment reads it on the next frame.
+    state.ui.requestRender();
+    await vt.waitForRender();
+
+    const alt = state.ui as TuiAltScreen;
+    const topRow = () => stripAnsi(vt.getViewport()[0] ?? '').trimEnd();
+    const messageRowCount = () =>
+      Array.from({ length: HEIGHT }, (_, i) => stripAnsi(vt.getViewport()[i] ?? '')).filter(
+        (line) => line.includes('第一轮问题'),
+      ).length;
+
+    // Following at the bottom: the latest message's first line has scrolled
+    // out, so it is pinned.
+    expect(alt.isFollowingOutput).toBe(true);
+    expect(alt.viewportTop).toBeGreaterThan(1);
+    expect(topRow()).toContain('❯ 第一轮问题');
+    expect(messageRowCount()).toBe(1);
+
+    // Top of the transcript: no candidate, no pill, no slot row.
+    alt.scrollToTop();
+    await vt.waitForRender();
+    expect(alt.viewportTop).toBe(0);
+    expect(topRow()).not.toContain('❯ 第一轮问题');
+
+    // scrollTop lands on the message's first content line: the message itself
+    // sits at the top of the screen — no pill, no blank slot row above it.
+    alt.scrollBy(1);
+    await vt.waitForRender();
+    expect(alt.viewportTop).toBe(1);
+    expect(topRow()).toContain('❯ 第一轮问题');
+    expect(messageRowCount()).toBe(1);
+
+    alt.scrollBy(10);
+    await vt.waitForRender();
+    const scrolledTop = alt.viewportTop;
+    expect(scrolledTop).toBeGreaterThan(1);
+    expect(topRow()).toContain('❯ 第一轮问题');
+    expect(messageRowCount()).toBe(1);
+
+    vt.sendInput('\u001B[<65;5;1M'); // wheel down over the pill row
+    await vt.waitForRender();
+    expect(alt.viewportTop).toBeGreaterThan(scrolledTop);
+
+    vt.sendInput('\u001B[<0;5;1M'); // press + release = click on the pill row
+    vt.sendInput('\u001B[<0;5;1m');
+    await vt.waitForRender();
+    // Invisible landing: the jump targets one line past the message's first
+    // content line, so the pill stays pinned with the same text.
+    expect(alt.viewportTop).toBe(2);
+    expect(topRow()).toContain('❯ 第一轮问题');
+    expect(messageRowCount()).toBe(1);
+
+    state.ui.stop();
+  });
+
+  it('grows the pill summary as more lines of a multi-line message scroll out', async () => {
+    const { state, vt } = await mountFullscreen();
+
+    const userEntry: TranscriptEntry = {
+      id: 'u1',
+      kind: 'user',
+      renderMode: 'plain',
+      content: '第一行\n第二行\n第三行',
+    };
+    const userComponent = new UserMessageComponent(userEntry.content);
+    markTranscriptComponent(userComponent, userEntry);
+    state.transcriptContainer.addChild(userComponent);
+    const assistant = new AssistantMessageComponent();
+    state.transcriptContainer.addChild(assistant);
+    assistant.updateContent(LONG_MARKDOWN, { transient: false });
+    state.ui.requestRender(true);
+    await vt.waitForRender();
+    state.ui.requestRender();
+    await vt.waitForRender();
+
+    const alt = state.ui as TuiAltScreen;
+    const topRow = () => stripAnsi(vt.getViewport()[0] ?? '').trim();
+
+    // Following at the bottom: the whole message scrolled out — full merge.
+    expect(topRow()).toBe('❯ 第一行 第二行 第三行');
+
+    alt.scrollToTop();
+    await vt.waitForRender();
+    expect(topRow()).not.toContain('❯');
+
+    alt.scrollBy(2); // the first content line is out
+    await vt.waitForRender();
+    expect(topRow()).toBe('❯ 第一行');
+
+    alt.scrollBy(1); // the second line joins the pill
+    await vt.waitForRender();
+    expect(topRow()).toBe('❯ 第一行 第二行');
+
+    alt.scrollBy(1); // the third line joins — the whole message is merged
+    await vt.waitForRender();
+    expect(topRow()).toBe('❯ 第一行 第二行 第三行');
+
+    state.ui.stop();
+  });
+
+  it('anchors the pill to the first visible text line of a message with leading blank lines', async () => {
+    const { state, vt } = await mountFullscreen();
+
+    const userEntry: TranscriptEntry = {
+      id: 'u1',
+      kind: 'user',
+      renderMode: 'plain',
+      content: '\n\n第一行\n第二行',
+    };
+    const userComponent = new UserMessageComponent(userEntry.content);
+    markTranscriptComponent(userComponent, userEntry);
+    state.transcriptContainer.addChild(userComponent);
+    const assistant = new AssistantMessageComponent();
+    state.transcriptContainer.addChild(assistant);
+    assistant.updateContent(LONG_MARKDOWN, { transient: false });
+    state.ui.requestRender(true);
+    await vt.waitForRender();
+    state.ui.requestRender();
+    await vt.waitForRender();
+
+    const alt = state.ui as TuiAltScreen;
+    const topRow = () => stripAnsi(vt.getViewport()[0] ?? '').trim();
+    const countRows = (text: string) =>
+      Array.from({ length: HEIGHT }, (_, i) => stripAnsi(vt.getViewport()[i] ?? '')).filter(
+        (line) => line.includes(text),
+      ).length;
+
+    alt.scrollToTop();
+    await vt.waitForRender();
+    expect(alt.viewportTop).toBe(0);
+
+    alt.scrollBy(2); // only the spacer and the two leading blank lines are out
+    await vt.waitForRender();
+    expect(alt.viewportTop).toBe(2);
+    expect(topRow()).not.toContain('第一行');
+    expect(countRows('第一行')).toBe(1);
+
+    alt.scrollBy(1); // the message's own first text line sits at the top: still no pill
+    await vt.waitForRender();
+    expect(alt.viewportTop).toBe(3);
+    expect(topRow()).toContain('第一行');
+    expect(topRow()).not.toContain('❯');
+    expect(countRows('第一行')).toBe(1);
+
+    alt.scrollBy(1); // the first text line is out: the pill takes over
+    await vt.waitForRender();
+    expect(alt.viewportTop).toBe(4);
+    expect(topRow()).toBe('❯ 第一行');
+    expect(countRows('第一行')).toBe(1);
+
+    alt.scrollBy(1); // the second line joins the pill
+    await vt.waitForRender();
+    expect(alt.viewportTop).toBe(5);
+    expect(topRow()).toBe('❯ 第一行 第二行');
+
+    state.ui.stop();
+  });
+
+  it('pins the previous message after navigating onto a later message head', async () => {
+    const { state, vt } = await mountFullscreen();
+
+    const addUser = (id: string, text: string) => {
+      const entry: TranscriptEntry = { id, kind: 'user', renderMode: 'plain', content: text };
+      const component = new UserMessageComponent(entry.content);
+      markTranscriptComponent(component, entry);
+      state.transcriptContainer.addChild(component);
+    };
+    const addAssistant = () => {
+      const component = new AssistantMessageComponent();
+      state.transcriptContainer.addChild(component);
+      component.updateContent(LONG_MARKDOWN, { transient: false });
+    };
+    addUser('u1', '第一轮问题');
+    addAssistant();
+    addUser('u2', '第二轮问题');
+    addAssistant();
+    state.ui.requestRender(true);
+    await vt.waitForRender();
+    // First layout pass establishes the follow-end scroll position; the sticky
+    // judgment reads it on the next frame.
+    state.ui.requestRender();
+    await vt.waitForRender();
+
+    const alt = state.ui as TuiAltScreen;
+    const topRow = () => stripAnsi(vt.getViewport()[0] ?? '').trimEnd();
+    const countRows = (text: string) =>
+      Array.from({ length: HEIGHT }, (_, i) => stripAnsi(vt.getViewport()[i] ?? '')).filter(
+        (line) => line.includes(text),
+      ).length;
+
+    expect(topRow()).toContain('❯ 第二轮问题');
+
+    vt.sendInput('\u001B[1;6A'); // lands on the second assistant's zone; 第二轮问题 first line out
+    await vt.waitForRender();
+    expect(topRow()).toContain('❯ 第二轮问题');
+    expect(countRows('第二轮问题')).toBe(1);
+
+    // Lands on 第二轮问题's own head (its spacer line): 第二轮's first content
+    // line is still visible below the top, so the pill switches to 第一轮问题 —
+    // CSS-sticky semantics, not a duplicate.
+    vt.sendInput('\u001B[1;6A');
+    await vt.waitForRender();
+    expect(topRow()).toContain('❯ 第一轮问题');
+    expect(countRows('第二轮问题')).toBe(1);
+    expect(countRows('第一轮问题')).toBe(1);
+
+    vt.sendInput('\u001B[1;6A'); // lands on the first assistant's zone; 第一轮问题 stays pinned
+    await vt.waitForRender();
+    expect(topRow()).toContain('❯ 第一轮问题');
+    expect(countRows('第一轮问题')).toBe(1);
+
+    vt.sendInput('\u001B[1;6A'); // lands on 第一轮问题's head: no candidate above -> no pill
+    await vt.waitForRender();
+    expect(topRow()).not.toContain('❯');
+    expect(countRows('第一轮问题')).toBe(1);
 
     state.ui.stop();
   });
