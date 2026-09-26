@@ -5,13 +5,14 @@ import { createUserMessage, type Message } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
 import { createAnthropicRequester } from '#/llm/requester/bases/anthropic/requester';
 import { createOpenAIRequester } from '#/llm/requester/bases/openai/requester';
+import { createOpenAIResponsesRequester } from '#/llm/requester/bases/openai-responses/requester';
 import type { LlmClientContext } from '#/llm/requester/requester';
 
 const model: LlmModel = {
   provider: 'test',
   model: 'test-model',
   capability: UNKNOWN_CAPABILITY,
-  baseUrl: 'https://example.test/v1',
+  baseUrl: 'https://api.openai.com/v1',
 };
 const messages: readonly Message[] = [createUserMessage('hi')];
 
@@ -32,6 +33,17 @@ const anthropicStreamEvents: readonly Record<string, unknown>[] = [
   { type: 'content_block_stop', index: 0 },
   { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 2 } },
   { type: 'message_stop' },
+];
+
+const responsesStreamEvents: readonly Record<string, unknown>[] = [
+  {
+    type: 'response.completed',
+    response: {
+      id: 'resp_1',
+      status: 'completed',
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+    },
+  },
 ];
 
 function createAsyncStream<T>(chunks: readonly T[]): AsyncIterable<T> {
@@ -63,6 +75,34 @@ function stubOpenAIClient(chunks: readonly Record<string, unknown>[]): {
                 }),
               };
             },
+          },
+        },
+      }) as never,
+    body: () => {
+      const last = captured.at(-1);
+      if (last === undefined) throw new Error('expected client to be called');
+      return last;
+    },
+  };
+}
+
+function stubResponsesClient(events: readonly Record<string, unknown>[]): {
+  clientFactory: (request: LlmClientContext) => never;
+  body: () => Record<string, unknown>;
+} {
+  const captured: Record<string, unknown>[] = [];
+  return {
+    clientFactory: () =>
+      ({
+        responses: {
+          create: (params: Record<string, unknown>) => {
+            captured.push(params);
+            return {
+              withResponse: async () => ({
+                data: createAsyncStream(events),
+                response: new Response(null),
+              }),
+            };
           },
         },
       }) as never,
@@ -121,6 +161,20 @@ describe('openai requester cacheKey', () => {
     expect(client.body()['extra_body']).toEqual({ trace_id: 't1' });
   });
 
+  it('omits prompt_cache_key for third-party OpenAI endpoints', async () => {
+    const client = stubOpenAIClient(chatCompletionChunks);
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
+    await requester.generate(
+      {
+        model: { ...model, baseUrl: 'https://integrate.api.nvidia.com/v1' },
+        cacheKey: 'session-1',
+      },
+      { messages },
+      { signal: new AbortController().signal },
+    );
+    expect(client.body()['prompt_cache_key']).toBeUndefined();
+  });
+
   it('lets a trait override the cache key params', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
     const requester = createOpenAIRequester({
@@ -161,3 +215,39 @@ describe('anthropic requester cacheKey', () => {
     expect(client.body()['top_k']).toBe(5);
   });
 });
+
+describe('openai-responses requester cacheKey', () => {
+  it('omits prompt_cache_key for third-party endpoints', async () => {
+    const client = stubResponsesClient(responsesStreamEvents);
+    const requester = createOpenAIResponsesRequester({ clientFactory: client.clientFactory });
+    await requester.generate(
+      {
+        model: { ...model, baseUrl: 'https://integrate.api.nvidia.com/v1' },
+        cacheKey: 'session-1',
+      },
+      { messages },
+      { signal: new AbortController().signal },
+    );
+    expect(client.body()['prompt_cache_key']).toBeUndefined();
+  });
+
+  it('preserves prompt_cache_key when a trait provides encodeCacheKey (e.g. Kimi)', async () => {
+    const client = stubResponsesClient(responsesStreamEvents);
+    const requester = createOpenAIResponsesRequester({
+      clientFactory: client.clientFactory,
+      trait: {
+        encodeCacheKey: (key) => ({ prompt_cache_key: key }),
+      },
+    });
+    await requester.generate(
+      {
+        model: { ...model, baseUrl: 'https://api.moonshot.ai/v1' },
+        cacheKey: 'session-1',
+      },
+      { messages },
+      { signal: new AbortController().signal },
+    );
+    expect(client.body()['prompt_cache_key']).toBe('session-1');
+  });
+});
+
