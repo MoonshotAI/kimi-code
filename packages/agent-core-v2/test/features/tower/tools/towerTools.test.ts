@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import type { ServiceIdentifier } from '#/_base/di/instantiation';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
+import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTaskService, type AgentTaskInfo } from '#/agent/task/task';
 import type { AnyAgentTool } from '#/agent/toolRegistry/toolContribution';
@@ -466,6 +467,78 @@ describe('TowerTeardownTool', () => {
     expect(result.isError).toBeFalsy();
     expect(result.output).toContain('tower teardown:');
   });
+
+  it('keeps worktrees whose roster agent has a running task, even with force', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Build engine', scope: ['src/engine/**'] }],
+    });
+    const store = new TowerStore(repo);
+    const state = await store.load();
+    const mission = state.missions[0]!;
+    await store.addWorktree(mission.worktree, mission.branch, state.base);
+    await store.registerAgent({
+      name: 'w1',
+      kind: 'worker',
+      agentId: 'agent-w1',
+      worktree: mission.worktree,
+      spawnedAt: new Date().toISOString(),
+    });
+    liveAgentTaskIds.push('agent-w1');
+
+    const result = await run(ix.get(ITowerTeardownTool), { force: true });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain(
+      `kept .tower/worktrees/${mission.worktree} (live agent: w1)`,
+    );
+    expect(
+      (await stat(join(repo, '.tower/worktrees', mission.worktree))).isDirectory(),
+    ).toBe(true);
+
+    liveAgentTaskIds.length = 0;
+    const settled = await run(ix.get(ITowerTeardownTool), {});
+    expect(settled.output).toContain(`removed .tower/worktrees/${mission.worktree}`);
+  });
+
+  it('dry run reports the decisions and changes nothing', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Build engine', scope: ['src/engine/**'] }],
+    });
+    const store = new TowerStore(repo);
+    const state = await store.load();
+    const mission = state.missions[0]!;
+    await store.addWorktree(mission.worktree, mission.branch, state.base);
+
+    const result = await run(ix.get(ITowerTeardownTool), { dry_run: true });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('tower teardown (dry run');
+    expect(result.output).toContain(`would remove .tower/worktrees/${mission.worktree}`);
+    expect(
+      (await stat(join(repo, '.tower/worktrees', mission.worktree))).isDirectory(),
+    ).toBe(true);
+  });
+
+  it('keeps worktrees named in exclude', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Build engine', scope: ['src/engine/**'] }],
+    });
+    const store = new TowerStore(repo);
+    const state = await store.load();
+    const mission = state.missions[0]!;
+    await store.addWorktree(mission.worktree, mission.branch, state.base);
+
+    const result = await run(ix.get(ITowerTeardownTool), { exclude: [mission.worktree] });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain(`kept .tower/worktrees/${mission.worktree} (excluded)`);
+    expect(
+      (await stat(join(repo, '.tower/worktrees', mission.worktree))).isDirectory(),
+    ).toBe(true);
+  });
 });
 
 describe('TowerSendTool + TowerInboxTool', () => {
@@ -592,6 +665,49 @@ describe('TowerSendTool + TowerInboxTool', () => {
     const fromWorker = await run(ix.get(ITowerSendTool), { to: 'w2', subject: 'b', body: 'x' });
     expect(fromWorker.output).not.toContain('has no running task');
   });
+
+  it('marks the caller inbox read, so a completion refused for unread messages passes after TowerInbox', async () => {
+    const store = new TowerStore(repo);
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Build engine', scope: ['src/engine/**'] }],
+    });
+    await git(repo, 'checkout', '-b', 'feat/build-engine');
+    await commitFile(repo, 'src/engine/engine.ts', 'export const engine = 1;\n', 'engine work');
+    await git(repo, 'checkout', 'main');
+    await store.registerAgent({
+      name: 'w3',
+      kind: 'worker',
+      agentId: 'agent-w3',
+      missionId: 'M1',
+      branch: 'feat/build-engine',
+      spawnedAt: '2026-09-20T00:00:00.000Z',
+    });
+    await store.updateMission('tower', 'M1', { status: 'active', owner: 'w3' }, { silent: true });
+    const sent = await run(ix.get(ITowerSendTool), {
+      to: 'w3',
+      subject: 'requirement change',
+      body: 'add tests',
+    });
+    expect(sent.isError).toBeFalsy();
+
+    currentAgentId = 'agent-w3';
+    const refused = await run(ix.get(ITowerMissionTool), { id: 'M1', status: 'completed' });
+    expect(refused.isError).toBe(true);
+    expect(refused.output).toContain('1 unread inbox message(s) for w3');
+    expect(refused.output).toContain('call TowerInbox');
+
+    const inbox = await run(ix.get(ITowerInboxTool), {});
+    expect(inbox.isError).toBeFalsy();
+    expect(inbox.output).toContain('subject: requirement change');
+    const entry = (await store.load()).roster.agents.find((agent) => agent.name === 'w3');
+    expect(Date.parse(entry!.lastInboxReadAt!)).toBeGreaterThan(
+      Date.parse('2026-09-20T00:00:00.000Z'),
+    );
+
+    const accepted = await run(ix.get(ITowerMissionTool), { id: 'M1', status: 'completed' });
+    expect(accepted.isError).toBeFalsy();
+    expect(accepted.output).toContain('status: completed');
+  });
 });
 
 describe('TowerStatusTool', () => {
@@ -629,7 +745,63 @@ describe('TowerStatusTool', () => {
     expect(result.output).toContain('💀 failed');
     expect(result.output).toContain('## Dead workers');
     expect(result.output).toContain('M1 owner w1 died (failed)');
-    expect(result.output).toContain('Agent(resume="agent-w1", run_in_background=true');
+    expect(result.output).toContain('diagnose first: check why it died');
+    expect(result.output).toContain('lost contact, timeout, OOM');
+    expect(result.output).toMatch(
+      /died \(failed\) — diagnose first[\s\S]*Agent\(resume="agent-w1", run_in_background=true/,
+    );
+  });
+
+  it('advises fixing or escalating a systematic death cause before any revive', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'engine', scope: ['src/engine/**'] }],
+    });
+    const store = new TowerStore(repo);
+    await store.registerAgent({
+      name: 'w1',
+      kind: 'worker',
+      agentId: 'agent-w1',
+      missionId: 'M1',
+      spawnedAt: new Date().toISOString(),
+    });
+    await store.updateMission('tower', 'M1', { status: 'active', owner: 'w1' }, { silent: true });
+    await store.markAgentDied('agent-w1', 'failed', 'TS2304: Cannot find name');
+
+    const result = await run(ix.get(ITowerStatusTool), {});
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('M1 owner w1 died (failed)');
+    expect(result.output).toContain('systematic cause');
+    expect(result.output).toContain('fixed or escalated to the human before any revive');
+  });
+
+  it('shows a user-stopped roster agent without the recovery hint', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'engine', scope: ['src/engine/**'] }],
+    });
+    const store = new TowerStore(repo);
+    await store.registerAgent({
+      name: 'w1',
+      kind: 'worker',
+      agentId: 'agent-w1',
+      missionId: 'M1',
+      spawnedAt: new Date().toISOString(),
+    });
+    await store.updateMission('tower', 'M1', { status: 'active', owner: 'w1' }, { silent: true });
+    await store.markAgentDied('agent-w1', 'killed', userCancellationReason().message);
+
+    const result = await run(ix.get(ITowerStatusTool), {});
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('w1 (worker) — agent agent-w1, mission M1');
+    expect(result.output).toContain('💀 killed');
+    expect(result.output).toContain('## Dead workers');
+    expect(result.output).toContain('M1 owner w1 was stopped by the user (killed)');
+    expect(result.output).toContain('dead by intent');
+    expect(result.output).not.toContain('diagnose first');
+    expect(result.output).not.toContain('Agent(resume=');
   });
 
   it('flags planned missions without a spawned worker in an Awaiting spawn section', async () => {

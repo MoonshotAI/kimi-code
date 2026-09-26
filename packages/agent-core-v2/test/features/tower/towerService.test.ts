@@ -16,6 +16,10 @@ import { createReminderStub } from '../reminder/stubs';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { TurnStarted } from '#/agent/loop/turnEvents';
+import { TurnEnded } from '#/agent/loop/turnOps';
+import { PromptSubmitted } from '#/agent/prompt/promptEvents';
+import { isUserCancellation } from '#/_base/utils/abort';
 import { runWillBeginStepHooks, stubLoopWithHooks, type StubLoop } from '../../agent/loop/stubs';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
@@ -26,7 +30,7 @@ import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
-import { TowerStore } from '#/features/tower/protocol/index';
+import { STATE_FILE, TowerStore, type TowerState } from '#/features/tower/protocol/index';
 import { TowerSendTool } from '#/features/tower/tools/send/sendTool';
 import {
   IAgentTowerService,
@@ -611,8 +615,16 @@ describe('AgentTowerService', () => {
         missionId: 'M1',
         spawnedAt: new Date().toISOString(),
       });
+      const infos: { msg: string; payload?: unknown }[] = [];
+      ix.stub(ILogService, {
+        ...stubLog(),
+        info: (msg: string, payload?: unknown) => {
+          infos.push({ msg, payload });
+        },
+      });
       ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-main' } as unknown as ISessionContext);
-      ix.get(IAgentTowerService);
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
 
       publishAsMain(
         ix,
@@ -639,6 +651,22 @@ describe('AgentTowerService', () => {
       const state = await store.load();
       expect(state.roster.agents[0]?.diedAt).toBeDefined();
       expect(state.roster.agents[0]?.deathReason).toBe('provider blew up');
+
+      const activityLog = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
+      expect(activityLog).toContain(' died ');
+      expect(activityLog).toContain('session=session-main');
+      expect(activityLog).toContain(`pid=${String(process.pid)}`);
+
+      const notice = infos.find((entry) => entry.msg === 'tower: marking roster agent died');
+      expect(notice?.payload).toMatchObject({
+        event: 'TaskTerminatedNotice',
+        agentId: 'agent-w1',
+        taskId: 'agent-dead1',
+        status: 'failed',
+        stopReason: 'provider blew up',
+        sessionId: 'session-main',
+        pid: process.pid,
+      });
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
@@ -661,7 +689,8 @@ describe('AgentTowerService', () => {
         spawnedAt: new Date().toISOString(),
       });
       ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-main' } as unknown as ISessionContext);
-      ix.get(IAgentTowerService);
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
 
       const info = {
         taskId: 'agent-fine1',
@@ -676,8 +705,8 @@ describe('AgentTowerService', () => {
       const originalMarkDied = TowerStore.prototype.markAgentDied;
       const markSpy = vi
         .spyOn(TowerStore.prototype, 'markAgentDied')
-        .mockImplementation(function (this: TowerStore, agentId, status, reason) {
-          const pending = originalMarkDied.call(this, agentId, status, reason);
+        .mockImplementation(function (this: TowerStore, agentId, status, reason, sessionId) {
+          const pending = originalMarkDied.call(this, agentId, status, reason, sessionId);
           deathSettled = pending.then(
             () => undefined,
             () => undefined,
@@ -698,7 +727,7 @@ describe('AgentTowerService', () => {
         );
 
         await vi.waitFor(() => expect(markSpy).toHaveBeenCalledTimes(1));
-        expect(markSpy).toHaveBeenCalledWith('agent-stranger', 'failed', undefined);
+        expect(markSpy).toHaveBeenCalledWith('agent-stranger', 'failed', undefined, 'session-main');
         await deathSettled;
         const state = await store.load();
         expect(state.roster.agents[0]?.diedAt).toBeUndefined();
@@ -728,8 +757,16 @@ describe('AgentTowerService', () => {
         spawnedAt: new Date().toISOString(),
       });
       await store.markAgentDied('agent-w1', 'failed', 'provider blew up');
+      const infos: { msg: string; payload?: unknown }[] = [];
+      ix.stub(ILogService, {
+        ...stubLog(),
+        info: (msg: string, payload?: unknown) => {
+          infos.push({ msg, payload });
+        },
+      });
       ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-main' } as unknown as ISessionContext);
-      ix.get(IAgentTowerService);
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
 
       publishAsMain(ix, new SubagentStarted({ subagentId: 'agent-w1' }));
 
@@ -741,6 +778,167 @@ describe('AgentTowerService', () => {
       expect(state.roster.agents[0]?.deathStatus).toBeUndefined();
       const log = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
       expect(log).toContain('revived');
+      expect(log).toContain('session=session-main');
+      expect(log).toContain(`pid=${String(process.pid)}`);
+
+      const notice = infos.find((entry) => entry.msg === 'tower: clearing roster agent death mark');
+      expect(notice?.payload).toMatchObject({
+        event: 'SubagentStarted',
+        agentId: 'agent-w1',
+        sessionId: 'session-main',
+        pid: process.pid,
+      });
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('does not record or clear deaths while tower mode is inactive', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'tower-death-inactive-'));
+    try {
+      await initGitRepo(repo);
+      await writeFile(join(repo, 'README.md'), '# fixture\n');
+      await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
+      await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+      const store = new TowerStore(repo);
+      await store.init('session-main');
+      await store.registerAgent({
+        name: 'w1',
+        kind: 'worker',
+        agentId: 'agent-w1',
+        sessionId: 'session-main',
+        spawnedAt: new Date().toISOString(),
+      });
+      await store.markAgentDied('agent-w1', 'failed', 'provider blew up');
+      const infos: { msg: string; payload?: unknown }[] = [];
+      ix.stub(ILogService, {
+        ...stubLog(),
+        info: (msg: string, payload?: unknown) => {
+          infos.push({ msg, payload });
+        },
+      });
+      ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-main' } as unknown as ISessionContext);
+      const tower = ix.get(IAgentTowerService);
+      expect(tower.isActive).toBe(false);
+
+      const markSpy = vi.spyOn(TowerStore.prototype, 'markAgentDied');
+      const clearSpy = vi.spyOn(TowerStore.prototype, 'clearAgentDied');
+      try {
+        publishAsMain(
+          ix,
+          new TaskTerminatedNotice({
+            agentId: 'main',
+            info: {
+              taskId: 'agent-dead2',
+              kind: 'agent',
+              description: 'tower worker w1: engine',
+              status: 'failed',
+              stopReason: 'provider blew up',
+              startedAt: 1,
+              endedAt: 2,
+              agentId: 'agent-w1',
+              subagentType: 'tower-worker',
+            },
+          }),
+        );
+        publishAsMain(ix, new SubagentStarted({ subagentId: 'agent-w1' }));
+
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(markSpy).not.toHaveBeenCalled();
+        expect(clearSpy).not.toHaveBeenCalled();
+      } finally {
+        markSpy.mockRestore();
+        clearSpy.mockRestore();
+      }
+      const state = await store.load();
+      expect(state.roster.agents[0]?.diedAt).toBeDefined();
+      expect(infos.some((entry) => entry.msg.startsWith('tower:'))).toBe(false);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves the roster untouched when another session owns the tower store', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'tower-death-foreign-'));
+    try {
+      await initGitRepo(repo);
+      await writeFile(join(repo, 'README.md'), '# fixture\n');
+      await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
+      await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+      const store = new TowerStore(repo);
+      await store.init('session-main');
+      await store.registerAgent({
+        name: 'w1',
+        kind: 'worker',
+        agentId: 'agent-w1',
+        sessionId: 'session-main',
+        spawnedAt: new Date().toISOString(),
+      });
+      await store.registerAgent({
+        name: 'w2',
+        kind: 'worker',
+        agentId: 'agent-w2',
+        sessionId: 'session-main',
+        spawnedAt: new Date().toISOString(),
+      });
+      const infos: { msg: string; payload?: unknown }[] = [];
+      ix.stub(ILogService, {
+        ...stubLog(),
+        info: (msg: string, payload?: unknown) => {
+          infos.push({ msg, payload });
+        },
+      });
+      ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-main' } as unknown as ISessionContext);
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+      expect(tower.isActive).toBe(true);
+
+      const stateFile = store.abs(STATE_FILE);
+      const owned = JSON.parse(await readFile(stateFile, 'utf8')) as TowerState;
+      owned.sessionId = 'session-other';
+      await writeFile(stateFile, `${JSON.stringify(owned, null, 2)}\n`);
+      await store.markAgentDied('agent-w2', 'failed', 'provider blew up');
+
+      publishAsMain(
+        ix,
+        new TaskTerminatedNotice({
+          agentId: 'main',
+          info: {
+            taskId: 'agent-dead3',
+            kind: 'agent',
+            description: 'tower worker w1: engine',
+            status: 'failed',
+            stopReason: 'provider blew up',
+            startedAt: 1,
+            endedAt: 2,
+            agentId: 'agent-w1',
+            subagentType: 'tower-worker',
+          },
+        }),
+      );
+      publishAsMain(ix, new SubagentStarted({ subagentId: 'agent-w2' }));
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const state = await store.load();
+      expect(state.roster.agents[0]?.diedAt).toBeUndefined();
+      expect(state.roster.agents[1]?.diedAt).toBeDefined();
+
+      const activityLog = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
+      expect(activityLog.split('\n').filter((line) => line.includes(' died '))).toHaveLength(1);
+      expect(activityLog).not.toContain(' revived ');
+
+      const skips = infos.filter((entry) => entry.msg.includes('skipping'));
+      expect(skips.map((entry) => entry.msg)).toEqual([
+        'tower: skipping roster agent death mark — tower store is owned by another session',
+        'tower: skipping roster agent death clear — tower store is owned by another session',
+      ]);
+      expect(skips[0]?.payload).toMatchObject({
+        event: 'TaskTerminatedNotice',
+        agentId: 'agent-w1',
+        sessionId: 'session-main',
+        owner: 'session-other',
+        pid: process.pid,
+      });
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
@@ -2715,6 +2913,111 @@ describe('AgentTowerService', () => {
       expect(drainWakeMessages()).toEqual([]);
       expect(loop.snapshot().hasPendingRequests).toBe(false);
     });
+
+    function publishUserPrompt(promptId: string): void {
+      publishAsMain(
+        ix,
+        new PromptSubmitted({
+          agentId: 'main',
+          promptId,
+          userMessageId: promptId,
+          status: 'queued',
+          content: [{ type: 'text', text: 'hold on' }],
+          createdAt: new Date().toISOString(),
+        }),
+      );
+    }
+
+    it('cancels the inbox wake turn when a user prompt is submitted', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      const wakeTurn = loop.startTurn();
+      publishAsMain(
+        ix,
+        new TurnStarted({
+          agentId: 'main',
+          turnId: wakeTurn.id,
+          origin: { kind: 'injection', variant: TOWER_INBOX_WAKE_VARIANT },
+        }),
+      );
+      publishUserPrompt('p1');
+      await flushWake();
+
+      expect(loop.cancels).toHaveLength(1);
+      expect(loop.cancels[0]?.turnId).toBe(wakeTurn.id);
+      expect(isUserCancellation(loop.cancels[0]?.reason)).toBe(true);
+    });
+
+    it('ignores turns seeded by other notification origins', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      const cronTurn = loop.startTurn();
+      publishAsMain(
+        ix,
+        new TurnStarted({
+          agentId: 'main',
+          turnId: cronTurn.id,
+          origin: { kind: 'injection', variant: 'cron' },
+        }),
+      );
+      publishUserPrompt('p1');
+      await flushWake();
+
+      expect(loop.cancels).toEqual([]);
+    });
+
+    it('does not cancel after the wake turn has already ended', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      const wakeTurn = loop.startTurn();
+      publishAsMain(
+        ix,
+        new TurnStarted({
+          agentId: 'main',
+          turnId: wakeTurn.id,
+          origin: { kind: 'injection', variant: TOWER_INBOX_WAKE_VARIANT },
+        }),
+      );
+      publishAsMain(ix, new TurnEnded({ agentId: 'main', turnId: wakeTurn.id, reason: 'completed' }));
+      publishUserPrompt('p1');
+      await flushWake();
+
+      expect(loop.cancels).toEqual([]);
+    });
+
+    it('re-arms the inbox wake after the interrupting user turn ends', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      publishInbox({ from: 'w1', to: 'tower', subject: 'need review' });
+      await flushWake();
+      expect(drainWakeMessages()).toHaveLength(1);
+
+      const wakeTurn = loop.startTurn();
+      publishAsMain(
+        ix,
+        new TurnStarted({
+          agentId: 'main',
+          turnId: wakeTurn.id,
+          origin: { kind: 'injection', variant: TOWER_INBOX_WAKE_VARIANT },
+        }),
+      );
+      publishUserPrompt('p1');
+      await flushWake();
+      expect(loop.cancels).toHaveLength(1);
+
+      publishAsMain(ix, new TurnEnded({ agentId: 'main', turnId: wakeTurn.id, reason: 'cancelled' }));
+      publishAsMain(ix, new TurnEnded({ agentId: 'main', turnId: 99, reason: 'completed' }));
+      await flushWake();
+
+      const rearmed = drainWakeMessages();
+      expect(rearmed).toHaveLength(1);
+      expect(wakeText(rearmed[0]!)).toContain('1 new tower inbox message');
+      expect(wakeText(rearmed[0]!)).toContain('w1');
+    });
   });
 
   describe('roster resume veto', () => {
@@ -2917,6 +3220,8 @@ describe('TowerModeInjection', () => {
     expect(text).toContain('Tower mode is active');
     expect(text).toContain('TowerSpawn');
     expect(text).toContain('TowerMerge');
+    expect(text).toContain('TowerSend` is delivery, not interruption');
+    expect(text).toContain('verify the delivery actually includes the change');
   });
 
   it('injects the exit reminder when tower mode turns off after being active', async () => {

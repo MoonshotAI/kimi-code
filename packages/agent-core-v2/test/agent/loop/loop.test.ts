@@ -1255,6 +1255,25 @@ describe('Agent loop', () => {
       [{ kind: 'file', name: 'note.txt', mediaType: 'text/plain', size: 21, path: '/data/note.txt' }],
     ]);
   });
+
+  it('settles the waiter of a notification-seeded turn', async () => {
+    ctx.mockNextResponse({ type: 'text', text: 'seeded answer' });
+    loop.notify({
+      message: {
+        role: 'user',
+        id: 'seed-1',
+        content: [{ type: 'text', text: 'wake up' }],
+        toolCalls: [],
+      },
+    });
+    await vi.waitFor(() => {
+      expect(loop.promptHandle('seed-1')).toBeDefined();
+    });
+    await expect(loop.promptHandle('seed-1')!.completion).resolves.toMatchObject({
+      state: 'completed',
+    });
+    await loop.settled();
+  });
 });
 
 describe('turn telemetry', () => {
