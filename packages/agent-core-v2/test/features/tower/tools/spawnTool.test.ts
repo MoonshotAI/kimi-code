@@ -307,7 +307,12 @@ describe('TowerSpawnTool', () => {
     expect(result.output).toContain('task_id: task-1');
     expect(result.output).toContain('status: running');
     expect(result.output).toContain(`worktree: ${worktreeAbs}`);
-    expect(result.output).toContain('Agent(resume="agent-7", run_in_background=true');
+    expect(result.output).toContain('diagnose first: check why it died');
+    expect(result.output).toContain('lost contact, timeout, OOM');
+    expect(result.output).toContain('fixed or escalated to the human before any revive');
+    expect(result.output).toMatch(
+      /diagnose first[\s\S]*Agent\(resume="agent-7", run_in_background=true/,
+    );
 
     expect(createAgent).toHaveBeenCalledWith({
       binding: { profile: 'tower-worker', model: 'kimi-code', thinking: 'off' },
@@ -698,6 +703,35 @@ describe('TowerSpawnTool', () => {
     expect(prompt).toContain('Keep the tone friendly. Do not document internals.');
     expect(prompt).toContain('Ambiguity is escalated, not guessed');
     expect(prompt).toContain('subject="clarify-request"');
+  });
+
+  it('briefs the worker to read the inbox and re-read its mission before completing', async () => {
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBeUndefined();
+    const prompt = (runAgent.mock.calls.at(-1)?.[1] as { prompt: string }).prompt;
+    expect(prompt).toContain('# When the mission is done');
+    expect(prompt).toContain(
+      'call TowerInbox once and incorporate anything new into the delivery',
+    );
+    expect(prompt).toContain(
+      'the store refuses status="completed" while unread messages wait in your inbox',
+    );
+    expect(prompt).toContain('Re-read your mission too (TowerMission(id="M1") with no patch fields)');
+    expect(prompt).toContain('split them into chunks and check TowerInbox between chunks');
+  });
+
+  it('briefs the survey worker to read the inbox before completing', async () => {
+    const [survey] = await store.plan([
+      { title: 'Scan apis', scope: ['src/**'], kind: 'survey' },
+    ]);
+
+    const result = await execute({ name: 'agent-scan', kind: 'worker', mission_id: survey!.id });
+
+    expect(result.isError).toBeUndefined();
+    const prompt = (runAgent.mock.calls.at(-1)?.[1] as { prompt: string }).prompt;
+    expect(prompt).toContain('# When the survey is done');
+    expect(prompt).toContain('Call TowerInbox once and fold anything new into your summary');
   });
 
   it('briefs the reviewer with the mission text and the worker self-report', async () => {
