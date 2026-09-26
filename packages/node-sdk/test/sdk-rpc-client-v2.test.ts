@@ -781,6 +781,117 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  describe('createSession agent profile selection', () => {
+    async function makeConfiguredClient(): Promise<SDKRpcClientV2> {
+      const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-agent-'));
+      tempDirs.push(homeDir);
+      const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+      await client.setConfig({
+        providers: {
+          stub: {
+            type: 'openai',
+            baseUrl: 'https://model.example.test/v1',
+            apiKey: 'YOUR_API_KEY',
+          },
+        },
+        models: { stub: { provider: 'stub', model: 'stub', maxContextSize: 32000 } },
+        defaultModel: 'stub',
+      });
+      return client;
+    }
+
+    function mainProfileName(client: SDKRpcClientV2, sessionId: string): string | undefined {
+      const session = getLiveSessionById(client.engineAccessor, sessionId);
+      const agent = session?.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
+      return agent?.accessor.get(IAgentProfileService).data().profileName;
+    }
+
+    const REVIEWER_AGENT_FILE = [
+      '---',
+      'name: reviewer',
+      'description: Reviews code changes',
+      '---',
+      '',
+      'You are a code reviewer.',
+      '',
+    ].join('\n');
+
+    it('binds the profile named by agentProfile from the user agent directory', async () => {
+      const client = await makeConfiguredClient();
+      const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+      tempDirs.push(workDir);
+      try {
+        await mkdir(join(client.homeDir, 'agents'), { recursive: true });
+        await writeFile(join(client.homeDir, 'agents', 'reviewer.md'), REVIEWER_AGENT_FILE, 'utf-8');
+
+        const summary = await client.createSession({
+          id: 'ses_agent_profile',
+          workDir,
+          model: 'stub',
+          agentProfile: 'reviewer',
+        });
+
+        expect(mainProfileName(client, summary.id)).toBe('reviewer');
+      } finally {
+        await client.close();
+      }
+    });
+
+    it('loads explicit agentFiles and binds the profile they define', async () => {
+      const client = await makeConfiguredClient();
+      const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+      const agentDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-agentfile-'));
+      tempDirs.push(workDir, agentDir);
+      try {
+        const agentFile = join(agentDir, 'reviewer.md');
+        await writeFile(agentFile, REVIEWER_AGENT_FILE, 'utf-8');
+
+        const summary = await client.createSession({
+          id: 'ses_agent_file',
+          workDir,
+          model: 'stub',
+          agentProfile: 'reviewer',
+          agentFiles: [agentFile],
+        });
+
+        expect(mainProfileName(client, summary.id)).toBe('reviewer');
+      } finally {
+        await client.close();
+      }
+    });
+
+    it('rejects an unknown agentProfile name', async () => {
+      const client = await makeConfiguredClient();
+      const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+      tempDirs.push(workDir);
+      try {
+        await expect(
+          client.createSession({
+            id: 'ses_agent_unknown',
+            workDir,
+            model: 'stub',
+            agentProfile: 'no-such-profile',
+          }),
+        ).rejects.toThrow(/Unknown agent profile/);
+      } finally {
+        await client.close();
+      }
+    });
+
+    it('binds the default profile when no agent option is given', async () => {
+      const client = await makeConfiguredClient();
+      const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+      tempDirs.push(workDir);
+      try {
+        const summary = await client.createSession({ id: 'ses_agent_default', workDir, model: 'stub' });
+
+        expect(mainProfileName(client, summary.id)).toBe('agent');
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
   it('reports the title state in the resumed summary', async () => {
     const { harness } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
