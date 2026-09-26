@@ -6,6 +6,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { IFileService } from '#/app/file/fileService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
+import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { IAgentLoopService, type PromptHandle } from '#/agent/loop/loop';
 import { TurnSteer } from '#/agent/loop/turnOps';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
@@ -31,6 +32,10 @@ import {
 
 function message(text: string): ContextMessage {
   return { role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' } };
+}
+
+function textOf(entry: ContextMessage): string {
+  return entry.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
 }
 
 function bundledMessage(skillName: string, user: string, extra: readonly ContentPart[] = []): ContextMessage {
@@ -906,5 +911,72 @@ describe('prompt queue', () => {
     expect(loop.snapshot().activePromptId).toBe('a');
     expect(pendingIds(loop)).toEqual(['b']);
     await loop.settled();
+  });
+
+  it('revives an unconsumed steer as the opening prompt of the next turn after cancel', async () => {
+    setup();
+    await ctx.restorePersisted();
+    const hold = holdNextStep();
+    ctx.mockNextResponse({ type: 'text', text: 'first response' });
+    ctx.mockNextResponse({ type: 'text', text: 'second response' });
+
+    const active = await enqueue(loop, { message: message('opening') });
+    await hold.started;
+    const steered = await enqueue(loop, { id: 'steer-1', message: message('follow up') });
+    await loop.steer([steered.id]);
+
+    expect(loop.cancel({ promptId: active.id })).toBe(true);
+    hold.release();
+
+    const handle = loop.promptHandle('steer-1')!;
+    expect((await handle.launched)?.id).toBe(1);
+    await loop.settled();
+
+    const userTexts = () =>
+      ctx.context.get()
+        .filter((entry) => entry.role === 'user' && entry.origin?.kind === 'user')
+        .map(textOf);
+    expect(userTexts()).toEqual(['opening', 'follow up']);
+    const followUp = ctx.context.get().find((entry) => entry.role === 'user' && textOf(entry) === 'follow up');
+    expect(followUp?.origin).toEqual({ kind: 'user' });
+    await expect(handle.completion).resolves.toMatchObject({ promptId: 'steer-1', state: 'completed' });
+
+    const undo = ctx.get(IAgentConversationUndoService);
+    expect(undo.availability().maxTurns).toBe(2);
+    await undo.undo(1);
+    expect(userTexts()).toEqual(['opening']);
+    await ctx.expectResumeMatches();
+  });
+
+  it('revives a merged multi-steer as one opening prompt bound to the first child after cancel', async () => {
+    setup();
+    const hold = holdNextStep();
+    ctx.mockNextResponse({ type: 'text', text: 'first response' });
+    ctx.mockNextResponse({ type: 'text', text: 'merged response' });
+
+    const active = await enqueue(loop, { message: message('opening') });
+    await hold.started;
+    const a = await enqueue(loop, { id: 'a', message: message('a') });
+    const b = await enqueue(loop, { id: 'b', message: message('b') });
+    await loop.steer(['a', 'b']);
+
+    expect(loop.cancel({ promptId: active.id })).toBe(true);
+    hold.release();
+
+    const aHandle = loop.promptHandle('a')!;
+    const bHandle = loop.promptHandle('b')!;
+    expect((await aHandle.launched)?.id).toBe(1);
+    await loop.settled();
+
+    const userEntries = ctx.context.get().filter(
+      (entry) => entry.role === 'user' && entry.origin?.kind === 'user',
+    );
+    expect(userEntries).toHaveLength(2);
+    const merged = textOf(userEntries[1]!);
+    expect(merged).toContain('a');
+    expect(merged).toContain('b');
+    await expect(aHandle.completion).resolves.toMatchObject({ state: 'completed' });
+    await expect(bHandle.completion).resolves.toMatchObject({ state: 'completed' });
+    await ctx.expectResumeMatches();
   });
 });

@@ -404,9 +404,25 @@ export function createAgentMachine({
           }
         }
       }),
-      rememberAbortReason: assign(({ event }) => ({
-        abortReason: event.type === 'input.abort' ? event.reason : undefined,
-      })),
+      rememberAbortReason: assign(({ context, event }) => {
+        const revived: UserEntry[] = [];
+        const notifications: UserEntry[] = [];
+        for (const entry of context.notifications) {
+          const origin = entry.meta?.origin;
+          if (origin?.inTurn !== true) {
+            notifications.push(entry);
+            continue;
+          }
+          const nextOrigin = { ...origin };
+          delete nextOrigin.inTurn;
+          revived.push({ ...entry, meta: { ...entry.meta, origin: nextOrigin } });
+        }
+        return {
+          abortReason: event.type === 'input.abort' ? event.reason : undefined,
+          queue: [...revived, ...context.queue],
+          notifications,
+        };
+      }),
       abortTurn: sendTo('turn', ({ context }) => ({
         type: 'turn.abort' as const,
         reason: context.abortReason,
@@ -498,7 +514,7 @@ export function createAgentMachine({
           const merged = mergeSteerMessages(
             steered.map((item) => ({ content: item.message.content, origin: item.meta?.origin })),
           );
-          const promptId = steered.length === 1 ? steered[0]?.meta?.promptId : undefined;
+          const promptId = steered[0]?.meta?.promptId;
           enqueue.assign({
             queue: context.queue.filter((item) => !steered.includes(item)),
             notifications: [
