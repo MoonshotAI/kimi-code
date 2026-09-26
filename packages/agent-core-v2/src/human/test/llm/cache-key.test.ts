@@ -230,4 +230,24 @@ describe('openai-responses requester cacheKey', () => {
     );
     expect(client.body()['prompt_cache_key']).toBeUndefined();
   });
+
+  it('preserves prompt_cache_key when a trait provides encodeCacheKey (e.g. Kimi)', async () => {
+    const client = stubResponsesClient(responsesStreamEvents);
+    const requester = createOpenAIResponsesRequester({
+      clientFactory: client.clientFactory,
+      trait: {
+        encodeCacheKey: (key) => ({ prompt_cache_key: key }),
+      },
+    });
+    await requester.generate(
+      {
+        model: { ...model, baseUrl: 'https://api.moonshot.ai/v1' },
+        cacheKey: 'session-1',
+      },
+      { messages },
+      { signal: new AbortController().signal },
+    );
+    expect(client.body()['prompt_cache_key']).toBe('session-1');
+  });
 });
+

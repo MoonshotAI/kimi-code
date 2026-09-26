@@ -9,6 +9,7 @@ import type {
   OpenAIWireToolCall,
 } from '#/llm/requester/bases/openai/contract';
 import type { OpenAITrait } from '#/llm/requester/bases/openai/trait';
+import type { OpenAIResponsesTrait } from '#/llm/requester/bases/openai-responses/trait';
 
 import { normalizeKimiToolSchema } from './schema';
 
@@ -161,3 +162,8 @@ export const kimiAnthropicTrait: AnthropicTrait = {
     };
   },
 };
+
+export const kimiOpenAIResponsesTrait: OpenAIResponsesTrait = {
+  encodeCacheKey: (key) => ({ prompt_cache_key: key }),
+};
+

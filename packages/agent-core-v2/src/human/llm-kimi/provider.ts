@@ -3,7 +3,12 @@ import { anthropicBetaBase } from '#/llm/requester/bases/anthropic/requester';
 import { openAIBase } from '#/llm/requester/bases/openai/requester';
 import { openAIResponsesBase } from '#/llm/requester/bases/openai-responses/requester';
 
-import { kimiAnthropicTrait, kimiConnection, kimiOpenAITrait } from './trait';
+import {
+  kimiAnthropicTrait,
+  kimiConnection,
+  kimiOpenAITrait,
+  kimiOpenAIResponsesTrait,
+} from './trait';
 import { classifyKimiQuotaError } from './errors';
 import { kimiMediaContribution } from './media';
 
@@ -24,6 +29,7 @@ export const kimiProvider = createProvider({
     },
     openai_responses: {
       base: openAIResponsesBase,
+      trait: kimiOpenAIResponsesTrait,
       connection: kimiConnection,
       classifyError: classifyKimiQuotaError,
     },
