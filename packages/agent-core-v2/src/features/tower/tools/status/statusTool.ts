@@ -1,5 +1,11 @@
 import { branchExists, branchTip } from '#/features/tower/protocol/index';
-import type { TowerMission, TowerState, TowerStore } from '#/features/tower/protocol/index';
+import type {
+  TowerMission,
+  TowerRosterEntry,
+  TowerState,
+  TowerStore,
+} from '#/features/tower/protocol/index';
+import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import {
   ITowerRateLimitService,
@@ -202,10 +208,16 @@ function renderDeathWarnings(state: TowerState): string[] {
     const entry = deadByName.get(mission.owner);
     if (entry === undefined) continue;
     lines.push(
-      `- ⚠️ ${mission.id} owner ${entry.name} died (${entry.deathStatus ?? 'unknown'}) — recover with Agent(resume="${entry.agentId}", run_in_background=true, prompt="...") (never foreground: its output flows back through the tower protocol files) or reassign the mission`,
+      isStoppedByUser(entry)
+        ? `- 🛑 ${mission.id} owner ${entry.name} was stopped by the user (${entry.deathStatus ?? 'unknown'}) — dead by intent: never resume it and do not reassign the mission unless the human asks`
+        : `- ⚠️ ${mission.id} owner ${entry.name} died (${entry.deathStatus ?? 'unknown'}) — diagnose first: check why it died (the died entry's status/reason, its task state) before reviving anything. Resume with Agent(resume="${entry.agentId}", run_in_background=true, prompt="...") (never foreground: its output flows back through the tower protocol files) or reassign the mission only when the cause is transient (lost contact, timeout, OOM); a systematic cause (code or environment defect) is fixed or escalated to the human before any revive`,
     );
   }
   if (lines.length === 0) return lines;
   return ['', '## Dead workers', '', ...lines];
+}
+
+function isStoppedByUser(entry: TowerRosterEntry): boolean {
+  return entry.deathReason?.trim() === userCancellationReason().message;
 }
 

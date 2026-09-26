@@ -279,7 +279,12 @@ export class TowerSpawnTool implements ITowerSpawnTool {
           isAgentTaskTerminal(settled.status) &&
           settled.status !== 'completed'
         ) {
-          await store.markAgentDied(handle.agentId, settled.status, settled.stopReason);
+          await store.markAgentDied(
+            handle.agentId,
+            settled.status,
+            settled.stopReason,
+            this.sessionContext.sessionId,
+          );
         }
         if (mission !== undefined) {
           await store.updateMission(
@@ -322,7 +327,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
               : [`review_target: ${reviewTarget ?? ''}`]),
             ...notes,
             '',
-            `The ${args.kind} runs detached in the background; its completion arrives as a notification. Track progress with TowerStatus / TowerInbox; recover a dead agent with Agent(resume="${handle.agentId}", run_in_background=true, prompt="...") — never foreground: its output flows back through the tower protocol files.`,
+            `The ${args.kind} runs detached in the background; its completion arrives as a notification. Track progress with TowerStatus / TowerInbox. If it dies, diagnose first: check why it died (the died entry's status/reason, its task state) before reviving. Resume with Agent(resume="${handle.agentId}", run_in_background=true, prompt="...") — never foreground: its output flows back through the tower protocol files — or reassign its work, but only when the cause is transient (lost contact, timeout, OOM); a systematic cause (code or environment defect) is fixed or escalated to the human before any revive.`,
           ].join('\n'),
         };
       } finally {
@@ -441,9 +446,10 @@ export class TowerSpawnTool implements ITowerSpawnTool {
           '- NEVER create or edit files under `.tower/` by hand — the tools are the only writers.\n' +
           '- Ambiguity is escalated, not guessed: if the mission leaves substantive doubt about what to investigate, TowerSend(to="tower", subject="clarify-request", body=what needs pinning down) BEFORE acting — the tower relays to the human; you never ask the user directly.\n\n' +
           `# When the survey is done\n` +
-          `1. Mark the mission completed: TowerMission(id="${mission.id}", status="completed").\n` +
-          '2. Send the tower your summary: TowerSend(to="tower", subject="survey-summary", body=the full survey result).\n' +
-          '3. Finish with a structured final summary: what you covered, key facts with file:line references, open questions.' +
+          '1. Call TowerInbox once and fold anything new into your summary — the store refuses status="completed" while unread messages wait in your inbox.\n' +
+          `2. Mark the mission completed: TowerMission(id="${mission.id}", status="completed").\n` +
+          '3. Send the tower your summary: TowerSend(to="tower", subject="survey-summary", body=the full survey result).\n' +
+          '4. Finish with a structured final summary: what you covered, key facts with file:line references, open questions.' +
           extra
         );
       }
@@ -461,9 +467,11 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         '- Ambiguity is escalated, not guessed: if the mission and its Context leave substantive doubt about what to build, TowerSend(to="tower", subject="clarify-request", body=what needs pinning down) BEFORE acting — the tower relays to the human; you never ask the user directly.\n\n' +
         `# When the mission is done\n` +
         "1. `git add` + `git commit` your mission's changes in the worktree (source files only — no build outputs).\n" +
-        `2. Mark the mission completed: TowerMission(id="${mission.id}", status="completed").\n` +
-        '3. Request review: TowerSend(to="tower", subject="review-request", body=what you changed and why, reconciled against the mission tasks item by item — the reviewer maps each task to your diff).\n' +
-        '4. Finish with a structured final summary: files changed, key decisions, open follow-ups.' +
+        `2. Before marking completed or sending the review-request, call TowerInbox once and incorporate anything new into the delivery — the store refuses status="completed" while unread messages wait in your inbox. Re-read your mission too (TowerMission(id="${mission.id}") with no patch fields): the tower may have changed its tasks mid-flight.\n` +
+        `3. Mark the mission completed: TowerMission(id="${mission.id}", status="completed").\n` +
+        '4. Request review: TowerSend(to="tower", subject="review-request", body=what you changed and why, reconciled against the mission tasks item by item — the reviewer maps each task to your diff).\n' +
+        '5. Finish with a structured final summary: files changed, key decisions, open follow-ups.\n' +
+        'Long blocking operations (sleep, builds, test runs) hide inbox messages for their whole duration — split them into chunks and check TowerInbox between chunks.' +
         extra
       );
     }

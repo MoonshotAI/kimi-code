@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -427,6 +427,28 @@ describe('markAgentDied', () => {
     expect(revivedLine).toContain('name=w1');
     expect(revivedLine).toContain('agent=agent-w1');
   });
+
+  it('ignores died/revived writes from a session that does not own the store', async () => {
+    await store.init('session-a');
+    await store.registerAgent(rosterEntry({ name: 'w1', kind: 'worker', agentId: 'agent-w1' }));
+
+    expect(await store.markAgentDied('agent-w1', 'failed', 'boom', 'session-b')).toBeUndefined();
+    let state = await store.load();
+    expect(state.roster.agents[0]?.diedAt).toBeUndefined();
+
+    await store.markAgentDied('agent-w1', 'failed', 'boom', 'session-a');
+    state = await store.load();
+    expect(state.roster.agents[0]?.diedAt).toBeDefined();
+
+    expect(await store.clearAgentDied('agent-w1', 'session-b')).toBe(false);
+    state = await store.load();
+    expect(state.roster.agents[0]?.diedAt).toBeDefined();
+
+    expect(await store.clearAgentDied('agent-w1', 'session-a')).toBe(true);
+    const log = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
+    expect(log.split('\n').filter((line) => line.includes(' died '))).toHaveLength(1);
+    expect(log.split('\n').filter((line) => line.includes(' revived '))).toHaveLength(1);
+  });
 });
 
 describe('rebase', () => {
@@ -734,6 +756,114 @@ describe('readInbox', () => {
       'for w2',
       'report',
     ]);
+  });
+});
+
+describe('inbox read tracking', () => {
+  beforeEach(async () => {
+    await store.init();
+  });
+
+  async function seedOwnedMission(spawnedAt = '2026-09-20T00:00:00.000Z'): Promise<TowerMission> {
+    const [mission] = await store.plan([{ title: 'feature x', scope: ['src/feature-x/**'] }]);
+    const state = await store.load();
+    await store.addWorktree(mission!.worktree, mission!.branch, state.base);
+    await commitFile(worktreeOf(mission!), 'src/feature-x/x.ts', 'x\n', `work on ${mission!.id}`);
+    await store.registerAgent(
+      rosterEntry({
+        name: 'w1',
+        kind: 'worker',
+        missionId: mission!.id,
+        worktree: mission!.worktree,
+        branch: mission!.branch,
+        spawnedAt,
+      }),
+    );
+    return mission!;
+  }
+
+  it('seeds lastInboxReadAt from spawnedAt at registration', async () => {
+    await store.registerAgent(
+      rosterEntry({ name: 'w1', kind: 'worker', spawnedAt: '2026-09-20T10:00:00.000Z' }),
+    );
+
+    expect((await store.load()).roster.agents[0]?.lastInboxReadAt).toBe(
+      '2026-09-20T10:00:00.000Z',
+    );
+  });
+
+  it('markInboxRead advances to the newest seen sent_at, falls back to now, and never regresses', async () => {
+    await store.registerAgent(
+      rosterEntry({ name: 'w1', kind: 'worker', spawnedAt: '2026-09-20T10:00:00.000Z' }),
+    );
+
+    await store.markInboxRead('w1', '2026-09-21T00:00:00.000Z');
+    expect((await store.load()).roster.agents[0]?.lastInboxReadAt).toBe('2026-09-21T00:00:00.000Z');
+
+    await store.markInboxRead('w1', '2026-09-20T12:00:00.000Z');
+    expect((await store.load()).roster.agents[0]?.lastInboxReadAt).toBe('2026-09-21T00:00:00.000Z');
+
+    await store.markInboxRead('w1');
+    const at = (await store.load()).roster.agents[0]?.lastInboxReadAt;
+    expect(Date.parse(at!)).toBeGreaterThan(Date.parse('2026-09-21T00:00:00.000Z'));
+
+    await store.markInboxRead('ghost', '2030-01-01T00:00:00.000Z');
+    expect((await store.load()).roster.agents).toHaveLength(1);
+  });
+
+  it('refuses a worker completion while unread inbox messages wait and names the count', async () => {
+    const mission = await seedOwnedMission();
+    await store.registerAgent(
+      rosterEntry({ name: 'w2', kind: 'worker', spawnedAt: '2026-09-20T00:00:00.000Z' }),
+    );
+    await store.send('tower', { to: 'w1', subject: 'requirement change', body: 'add a poem' });
+    await store.send('tower', { to: 'w1', subject: 'one more', body: 'and tests' });
+    await store.send('tower', { to: 'w2', subject: 'not for w1', body: 'ignore me' });
+
+    await expect(store.updateMission('w1', mission.id, { status: 'completed' })).rejects.toThrow(
+      /cannot transition to completed — 2 unread inbox message\(s\) for w1.*call TowerInbox/s,
+    );
+    expect((await store.load()).missions.find((m) => m.id === mission.id)?.status).toBe('planned');
+  });
+
+  it('lets the worker complete once the inbox is read', async () => {
+    const mission = await seedOwnedMission();
+    await store.send('tower', { to: 'w1', subject: 'requirement change', body: 'add a poem' });
+
+    await expect(store.updateMission('w1', mission.id, { status: 'completed' })).rejects.toThrow(
+      /unread inbox message/,
+    );
+
+    const items = await store.readInbox('w1', 20);
+    await store.markInboxRead('w1', items[0]?.sentAt);
+
+    const completed = await store.updateMission('w1', mission.id, { status: 'completed' });
+    expect(completed.status).toBe('completed');
+  });
+
+  it('counts broadcasts as unread for the completing worker', async () => {
+    const mission = await seedOwnedMission();
+    await store.send('tower', { to: 'all', subject: 'policy update', body: 'new rule' });
+
+    await expect(store.updateMission('w1', mission.id, { status: 'completed' })).rejects.toThrow(
+      /1 unread inbox message\(s\) for w1/,
+    );
+  });
+
+  it('does not block on messages that predate the worker registration', async () => {
+    await store.send('tower', { to: 'all', subject: 'old broadcast', body: 'before spawn' });
+    const mission = await seedOwnedMission(new Date().toISOString());
+
+    const completed = await store.updateMission('w1', mission.id, { status: 'completed' });
+    expect(completed.status).toBe('completed');
+  });
+
+  it('does not gate the tower completing a mission with unread worker messages', async () => {
+    const mission = await seedOwnedMission();
+    await store.send('tower', { to: 'w1', subject: 'requirement change', body: 'add a poem' });
+
+    const completed = await store.updateMission('tower', mission.id, { status: 'completed' });
+    expect(completed.status).toBe('completed');
   });
 });
 
@@ -1969,6 +2099,137 @@ describe('updateMission', () => {
   });
 });
 
+describe('concurrent state writes', () => {
+  beforeEach(async () => {
+    await store.init();
+    await store.plan([
+      { title: 'alpha', scope: ['src/alpha/**'], tasks: ['scaffold', 'implement'] },
+    ]);
+  });
+
+  async function expectNoLockOrTmpLeftovers(): Promise<void> {
+    const comms = await readdir(join(repo, '.tower/comms'));
+    expect(comms.filter((name) => name.startsWith('state.json.'))).toEqual([]);
+  }
+
+  it('serializes same-process concurrent updateMission calls without lost updates or a torn state file', async () => {
+    const notes = Array.from({ length: 8 }, (_, i) => `note-${String(i)}`);
+    let reading = true;
+    const reader = (async () => {
+      for (;;) {
+        if (!reading) return;
+        JSON.parse(await readFile(store.abs(STATE_FILE), 'utf8'));
+      }
+    })();
+
+    try {
+      await Promise.all(notes.map((note) => store.updateMission('tower', 'M1', { note })));
+    } finally {
+      reading = false;
+      await reader;
+    }
+
+    const state = await store.load();
+    expect(state.missions[0]?.notes).toHaveLength(notes.length);
+    expect(state.missions[0]?.notes).toEqual(expect.arrayContaining(notes));
+    JSON.parse(await readFile(store.abs(STATE_FILE), 'utf8'));
+    await expectNoLockOrTmpLeftovers();
+  });
+
+  it('serializes concurrent updateMission calls from two separate TowerStore instances', async () => {
+    const other = new TowerStore(repo);
+    const fromStore = Array.from({ length: 5 }, (_, i) => `store-${String(i)}`);
+    const fromOther = Array.from({ length: 5 }, (_, i) => `other-${String(i)}`);
+
+    await Promise.all([
+      ...fromStore.map((note) => store.updateMission('tower', 'M1', { note })),
+      ...fromOther.map((note) => other.updateMission('tower', 'M1', { note })),
+    ]);
+
+    const state = await store.load();
+    expect(state.missions[0]?.notes).toHaveLength(fromStore.length + fromOther.length);
+    expect(state.missions[0]?.notes).toEqual(
+      expect.arrayContaining([...fromStore, ...fromOther]),
+    );
+    JSON.parse(await readFile(store.abs(STATE_FILE), 'utf8'));
+    await expectNoLockOrTmpLeftovers();
+  });
+
+  it('surfaces a held state lock as a clear error instead of a hang or a silent skip', async () => {
+    const lockPath = `${store.abs(STATE_FILE)}.lock`;
+    await writeFile(lockPath, 'pid=999999 since=2026-09-26T00:00:00.000Z', 'utf8');
+    const blocked = new TowerStore(repo, { stateLockTimeoutMs: 200, stateLockPollMs: 20 });
+
+    await expect(blocked.updateMission('tower', 'M1', { note: 'x' })).rejects.toThrow(
+      /timed out.*tower state lock.*held by pid=999999/s,
+    );
+
+    expect((await store.load()).missions[0]?.notes).toEqual([]);
+
+    await rm(lockPath, { force: true });
+    await store.updateMission('tower', 'M1', { note: 'after stale lock removed' });
+    expect((await store.load()).missions[0]?.notes).toEqual(['after stale lock removed']);
+    await expectNoLockOrTmpLeftovers();
+  });
+
+  it('a stale release cannot delete another holder\'s state lock', async () => {
+    type LockDriver = { withStateLock: <T>(fn: () => Promise<T>) => Promise<T> };
+    const drive = <T>(s: TowerStore, fn: () => Promise<T>): Promise<T> =>
+      (s as unknown as LockDriver).withStateLock(fn);
+    const lockPath = `${store.abs(STATE_FILE)}.lock`;
+    const first = new TowerStore(repo);
+    const impatient = new TowerStore(repo, { stateLockTimeoutMs: 150, stateLockPollMs: 20 });
+    const second = new TowerStore(repo);
+
+    let markEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      markEntered = resolve;
+    });
+    let openGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    const firstRun = drive(first, async () => {
+      markEntered();
+      await gate;
+    });
+    await entered;
+
+    await expect(drive(impatient, async () => undefined)).rejects.toThrow(/tower state lock/);
+
+    await rm(lockPath, { force: true });
+    let releaseSecond!: () => void;
+    const secondGate = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    const secondRun = drive(second, async () => {
+      await secondGate;
+    });
+
+    let heldContent = '';
+    for (;;) {
+      try {
+        heldContent = await readFile(lockPath, 'utf8');
+        break;
+      } catch {
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 10);
+        });
+      }
+    }
+    expect(heldContent).toMatch(/pid=\d+ since=\S+ token=[0-9a-f-]+/);
+
+    openGate();
+    await firstRun;
+
+    expect(await readFile(lockPath, 'utf8')).toBe(heldContent);
+
+    releaseSecond();
+    await secondRun;
+    await expect(readFile(lockPath, 'utf8')).rejects.toThrow(/ENOENT/);
+  });
+});
+
 describe('completion invariants', () => {
   beforeEach(async () => {
     await store.init();
@@ -2312,6 +2573,22 @@ describe('roster', () => {
     state = await store.load();
     expect(state.roster.agents[1]?.diedAt).toBeUndefined();
   });
+
+  it('attributes died and revived activity-log entries with the writing session and pid', async () => {
+    await store.registerAgent(rosterEntry({ name: 'w1', kind: 'worker', agentId: 'agent-w1' }));
+
+    await store.markAgentDied('agent-w1', 'killed', 'stopped by the user', 'session-writer');
+    const diedLog = (await store.recentLog(5)).join('\n');
+    expect(diedLog).toContain(' died ');
+    expect(diedLog).toContain('session=session-writer');
+    expect(diedLog).toContain(`pid=${String(process.pid)}`);
+
+    expect(await store.clearAgentDied('agent-w1', 'session-writer')).toBe(true);
+    const revivedLog = (await store.recentLog(5)).join('\n');
+    expect(revivedLog).toContain(' revived ');
+    expect(revivedLog).toContain('session=session-writer');
+    expect(revivedLog).toContain(`pid=${String(process.pid)}`);
+  });
 });
 
 describe('adopt', () => {
@@ -2509,6 +2786,116 @@ describe('teardown', () => {
     } finally {
       await rm(subRepo, { recursive: true, force: true });
     }
+  });
+
+  it('keeps worktrees whose roster agent is live, and force does not override that', async () => {
+    const mission = await setupMission({
+      title: 'feature live',
+      scope: 'src/live/**',
+      file: 'src/live/l.ts',
+      content: 'l\n',
+    });
+    await store.registerAgent(
+      rosterEntry({
+        name: 'w-live',
+        kind: 'worker',
+        agentId: 'agent-live',
+        worktree: mission.worktree,
+      }),
+    );
+    const live = new Set(['agent-live']);
+
+    const report = await store.teardown({ liveAgentIds: live });
+    expect(report.join('\n')).toContain(
+      `kept .tower/worktrees/${mission.worktree} (live agent: w-live)`,
+    );
+    expect((await stat(worktreeOf(mission))).isDirectory()).toBe(true);
+
+    const forced = await store.teardown({ force: true, liveAgentIds: live });
+    expect(forced.join('\n')).toContain(
+      `kept .tower/worktrees/${mission.worktree} (live agent: w-live)`,
+    );
+    expect((await stat(worktreeOf(mission))).isDirectory()).toBe(true);
+
+    const settled = await store.teardown({ liveAgentIds: new Set() });
+    expect(settled.join('\n')).toContain(`removed .tower/worktrees/${mission.worktree}`);
+    await expect(stat(worktreeOf(mission))).rejects.toThrow();
+  });
+
+  it('skips worktrees named in exclude and reports excluded names that match nothing', async () => {
+    const mission = await setupMission({
+      title: 'feature excluded',
+      scope: 'src/excluded/**',
+      file: 'src/excluded/e.ts',
+      content: 'e\n',
+    });
+
+    const report = await store.teardown({ exclude: [mission.worktree, 'wt-999'] });
+    expect(report.join('\n')).toContain(`kept .tower/worktrees/${mission.worktree} (excluded)`);
+    expect(report.join('\n')).toContain('excluded worktree "wt-999" matched no mission worktree');
+    expect((await stat(worktreeOf(mission))).isDirectory()).toBe(true);
+
+    const after = await store.teardown();
+    expect(after.join('\n')).toContain(`removed .tower/worktrees/${mission.worktree}`);
+  });
+
+  it('dry run reports the decisions without changing worktrees, state, or the log', async () => {
+    const clean = await setupMission({
+      title: 'feature dry clean',
+      scope: 'src/dry-clean/**',
+      file: 'src/dry-clean/c.ts',
+      content: 'c\n',
+    });
+    const dirty = await setupMission({
+      title: 'feature dry dirty',
+      scope: 'src/dry-dirty/**',
+      file: 'src/dry-dirty/d.ts',
+      content: 'd\n',
+    });
+    await writeFile(join(worktreeOf(dirty), 'uncommitted.txt'), 'dirty\n');
+    const gone = await setupMission({
+      title: 'feature dry gone',
+      scope: 'src/dry-gone/**',
+      file: 'src/dry-gone/g.ts',
+      content: 'g\n',
+    });
+    await git(repo, 'worktree', 'remove', '--force', worktreeOf(gone));
+    const live = await setupMission({
+      title: 'feature dry live',
+      scope: 'src/dry-live/**',
+      file: 'src/dry-live/l.ts',
+      content: 'l\n',
+    });
+    await store.registerAgent(
+      rosterEntry({
+        name: 'w-dry-live',
+        kind: 'worker',
+        agentId: 'agent-dry-live',
+        worktree: live.worktree,
+      }),
+    );
+    const logBefore = await store.recentLog(200);
+
+    const report = await store.teardown({
+      dryRun: true,
+      exclude: [gone.worktree],
+      liveAgentIds: new Set(['agent-dry-live']),
+    });
+    const text = report.join('\n');
+    expect(text).toContain(`would remove .tower/worktrees/${clean.worktree}`);
+    expect(text).toContain(`would keep .tower/worktrees/${dirty.worktree} (uncommitted changes`);
+    expect(text).toContain(`would keep .tower/worktrees/${live.worktree} (live agent: w-dry-live)`);
+    expect(text).toContain(`already removed .tower/worktrees/${gone.worktree}`);
+    expect(text).not.toMatch(/(^|\n)removed \.tower\/worktrees/);
+    expect(text).not.toContain(`excluded worktree "${gone.worktree}" matched no mission worktree`);
+    expect((await stat(worktreeOf(clean))).isDirectory()).toBe(true);
+    expect((await stat(worktreeOf(dirty))).isDirectory()).toBe(true);
+    expect((await stat(worktreeOf(live))).isDirectory()).toBe(true);
+    expect(await store.recentLog(200)).toEqual(logBefore);
+
+    const real = await store.teardown({ liveAgentIds: new Set(['agent-dry-live']) });
+    expect(real.join('\n')).toContain(`removed .tower/worktrees/${clean.worktree}`);
+    expect(real.join('\n')).toContain(`kept .tower/worktrees/${live.worktree} (live agent: w-dry-live)`);
   });
 });
 
