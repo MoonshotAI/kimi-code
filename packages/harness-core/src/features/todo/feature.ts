@@ -32,6 +32,7 @@ export const todo = createFeature('todo', {
       if (current.todos.every((item) => item.status === 'done')) return;
       if (current.currentTurn - current.lastWriteTurn !== STALE_TURNS) return;
       void agent.remind(
+        'todo-stale',
         createHistoryMessageBuilder()
           .systemReminder(
             `The todo list has not been updated recently. If the work is still in progress, update the list to reflect the current progress.\n${renderTodoList(current.todos)}`,
