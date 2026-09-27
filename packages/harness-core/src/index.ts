@@ -11,3 +11,6 @@ export * from './features/kimi-trace/index';
 export * from './features/kimi/index';
 export * from './features/interaction/index';
 export * from './features/compaction/index';
+export * from './features/spawn/index';
+export * from './features/btw/index';
+export * from './features/dateChange/index';

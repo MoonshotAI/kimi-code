@@ -16,6 +16,7 @@ import {
 import {
   createCompaction,
   createHttp,
+  createSpawn,
   createSummarize,
   createToolSelect,
   features,
@@ -45,6 +46,7 @@ export function mountExample(options?: { http?: boolean }): ExampleApp {
     features: [
       ...features,
       bindExampleLlm(config, credentialProvider, requester),
+      createSpawn(),
       createMedia({
         source: createMemoryMediaSource(),
         cache: createMemoryMediaUploadCache(),

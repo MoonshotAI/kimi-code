@@ -1,5 +1,7 @@
 import { providerCatalog, waitFor, type FeatureSpec } from '@moonshot-ai/agent-core';
 
+import { createBtw } from '#/features/btw/feature';
+import { createDateChange } from '#/features/dateChange/feature';
 import { interaction } from '#/features/interaction/feature';
 import { kimi } from '#/features/kimi/feature';
 import { kimiTrace } from '#/features/kimi-trace/feature';
@@ -16,4 +18,6 @@ export const features: readonly FeatureSpec[] = [
   kimiTrace,
   kimi,
   interaction,
+  createBtw(),
+  createDateChange(),
 ];
