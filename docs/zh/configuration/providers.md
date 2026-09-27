@@ -155,6 +155,9 @@ kimi
 如需让 Vertex 请求走自定义（如代理）端点，可设置 `base_url`（或 `GOOGLE_VERTEX_BASE_URL` 环境变量）；不填时使用 SDK 默认的区域化 `*-aiplatform.googleapis.com` 地址。与 `google-genai` 一样，只填主机根地址。SDK 会自行追加 `/v1beta1/publishers/google/models/…`。
 
 
+## OAuth 与凭证注入
+Kimi Code 托管服务使用 OAuth，而不是固定的 API 密钥。运行 `/login` 后，内置认证工具链会自动写入并刷新凭证，因此无需在 `config.toml` 里手动配置。
+
 ## 下一步
 
 - [配置文件](./config-files.md) — `providers` 和 `models` 表的完整字段参考
