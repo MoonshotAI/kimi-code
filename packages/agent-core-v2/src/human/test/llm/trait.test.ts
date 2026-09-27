@@ -821,6 +821,12 @@ describe('withMaxCompletionTokens', () => {
       { signal: new AbortController().signal },
     );
     expect(client.body()['max_tokens']).toBe(128000);
+    await requester.generate(
+      { model, maxCompletionTokens: 1048576 },
+      { messages },
+      { signal: new AbortController().signal },
+    );
+    expect(client.body()['max_tokens']).toBe(128000);
 
     const sonnet35 = { ...model, model: 'claude-3-5-sonnet-20241022' };
     await requester.generate(
