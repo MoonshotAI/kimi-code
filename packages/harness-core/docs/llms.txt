@@ -17,6 +17,7 @@
 - [HistoryMessage 与 Delta](reference/history-message.md)
 - [事件表](reference/events.md)
 - [贡献 hook](reference/contribution-hooks.md)
+- [产品 Feature 一览](reference/product-features.md)
 - [Agent 状态机](explanation/agent-machine.md)
 - [Store 模型](explanation/store-model.md)
 - [provider-catalog](explanation/provider-catalog.md)

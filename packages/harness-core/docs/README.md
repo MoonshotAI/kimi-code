@@ -55,6 +55,7 @@ HTTP 装配见 [getting-started](getting-started.md)。
 | HistoryMessage / Delta | [history-message](reference/history-message.md) |
 | 持久化事件与机器事件 | [events](reference/events.md) |
 | Feature 贡献 hook（扩展点） | [contribution-hooks](reference/contribution-hooks.md) |
+| 产品 Feature 一览（spawn / btw / dateChange 等） | [product-features](reference/product-features.md) |
 | setup 调用边界 | [setup-context](reference/setup-context.md) |
 | 命名：`use*` 与实例 `get` | [naming](reference/naming.md) |
 | `createUnit` / `mountRoot` | [create-unit](reference/create-unit.md) · [mount-root](reference/mount-root.md) |
