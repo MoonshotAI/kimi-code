@@ -868,11 +868,9 @@ describe('BashTool', () => {
 
     await executeTool(tool, context({ command: 'sleep 1 & pwd', timeout: 60 }));
 
-    // `cd /d && sleep 1 & pwd` parses as `{ cd /d && sleep 1 } & pwd`, which
-    // leaves `pwd` running in the shell's original directory.
     const shellCommand = exec.mock.calls[0]?.[1]?.[1] ?? '';
     expect(shellCommand).toBe("cd '/workspace' || exit 1\nsleep 1 & pwd");
-    expect(shellCommand).not.toContain('&& sleep 1 & pwd');
+    expect(shellCommand).not.toContain("cd '/workspace' && sleep 1 & pwd");
   });
 
   it('accepts args.cwd outside the workspace roots', async () => {
