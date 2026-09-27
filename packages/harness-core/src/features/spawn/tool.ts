@@ -281,12 +281,7 @@ function buildSpawnDescription(deps: SpawnToolDeps): string {
         ? `- ${entry.name}`
         : `- ${entry.name}: ${entry.description}`,
     );
-    const callerModel = deps.agent.config?.model.model;
-    lines.push(
-      callerModel === undefined
-        ? '- primary: your current model and thinking level'
-        : `- primary (= ${callerModel}): your current model and thinking level`,
-    );
+    lines.push('- primary: your current model and thinking level');
     sections.push(`Available models (pass via model):\n${lines.join('\n')}`);
   }
   return sections.join('\n\n');

@@ -87,13 +87,13 @@ function createMockRequester(script: LlmScript): { requester: LlmRequester; call
 const script: LlmScript = (call) => {
   const last = call.messages.at(-1);
   const text = last !== undefined && last.role === 'user' ? extractText(last) : '';
-  if (call.systemPrompt === 'main-host') {
-    if (text.startsWith('AGENT:')) {
-      return { toolCall: { name: 'Agent', arguments: text.slice('AGENT:'.length) } };
-    }
-    return { text: 'parent done' };
+  if (text.startsWith('AGENT:')) {
+    return { toolCall: { name: 'Agent', arguments: text.slice('AGENT:'.length) } };
   }
-  return { text: `echo:${text}` };
+  if (text.startsWith('SUB:')) {
+    return { text: `echo:${text.slice('SUB:'.length)}` };
+  }
+  return { text: 'parent done' };
 };
 
 function bindTestLlm(requester: LlmRequester): FeatureSpec {
@@ -273,7 +273,7 @@ describe('spawn tool', () => {
     const richTool = rich.calls[0]!.tools.find((tool) => tool.name === 'Agent');
     expect(richTool!.description).toContain('Available models (pass via model):');
     expect(richTool!.description).toContain('- fast: Fast test model');
-    expect(richTool!.description).toContain('- primary (= test-model)');
+    expect(richTool!.description).toContain('- primary: your current model and thinking level');
     const richProperties = richTool!.parameters['properties'] as Record<string, unknown>;
     expect(Object.keys(richProperties)).toContain('fork');
     expect(Object.keys(richProperties)).toContain('model');
@@ -292,7 +292,7 @@ describe('spawn tool', () => {
       completedEvents.push(event);
     });
     const done = nextTurnDone(main);
-    await main.submit(createUserMessage(agentCall({ prompt: 'do the task', description: 'run the task' })));
+    await main.submit(createUserMessage(agentCall({ prompt: 'SUB:do the task', description: 'run the task' })));
     await done;
     await env.stores.flush();
 
@@ -318,7 +318,7 @@ describe('spawn tool', () => {
     expect(results[0]).toContain('echo:do the task');
     expect(results[0]).toContain(`resume_hint: Continue with Agent(resume="${agentId}"`);
 
-    expect(userTexts(env.stores, agentId)).toEqual(['do the task']);
+    expect(userTexts(env.stores, agentId)).toEqual(['SUB:do the task']);
     const history = env.stores.get(agentId)?.getState().history ?? [];
     expect(history.some((entry) => extractText(entry.message) === 'echo:do the task')).toBe(true);
 
@@ -337,7 +337,7 @@ describe('spawn tool', () => {
     await main.submit(createUserMessage('hello'));
     await first;
     const second = nextTurnDone(main);
-    await main.submit(createUserMessage(agentCall({ prompt: 'continue it', description: 'fork task', fork: true })));
+    await main.submit(createUserMessage(agentCall({ prompt: 'SUB:continue it', description: 'fork task', fork: true })));
     await second;
     await env.stores.flush();
 
@@ -350,7 +350,7 @@ describe('spawn tool', () => {
 
     const texts = userTexts(env.stores, agentId);
     expect(texts).toContain('hello');
-    expect(texts).toContain('continue it');
+    expect(texts).toContain('SUB:continue it');
     const history = env.stores.get(agentId)?.getState().history ?? [];
     expect(history.some((entry) => extractText(entry.message) === 'parent done')).toBe(true);
     expect(history.some((entry) => extractText(entry.message) === 'echo:continue it')).toBe(true);
@@ -376,7 +376,7 @@ describe('spawn tool', () => {
     const done = nextTurnDone(main);
     await main.submit(
       createUserMessage(
-        agentCall({ prompt: 'bg task', description: 'bg task', run_in_background: true }),
+        agentCall({ prompt: 'SUB:bg task', description: 'bg task', run_in_background: true }),
       ),
     );
     await done;
@@ -416,17 +416,17 @@ describe('spawn tool', () => {
       spawnedEvents.push(event);
     });
     const first = nextTurnDone(main);
-    await main.submit(createUserMessage(agentCall({ prompt: 'first task', description: 'first task' })));
+    await main.submit(createUserMessage(agentCall({ prompt: 'SUB:first task', description: 'first task' })));
     await first;
     const agentId = spawnedEvents[0]!.agentId;
 
     const second = nextTurnDone(main);
     await main.submit(
-      createUserMessage(agentCall({ resume: agentId, prompt: 'follow up', description: 'follow up' })),
+      createUserMessage(agentCall({ resume: agentId, prompt: 'SUB:follow up', description: 'follow up' })),
     );
     await second;
     await env.stores.flush();
-    expect(userTexts(env.stores, agentId)).toEqual(['first task', 'follow up']);
+    expect(userTexts(env.stores, agentId)).toEqual(['SUB:first task', 'SUB:follow up']);
     const results = toolResults(env.stores, MAIN_AGENT_ID);
     expect(results[1]).toContain('status: completed');
     expect(results[1]).toContain('echo:follow up');
