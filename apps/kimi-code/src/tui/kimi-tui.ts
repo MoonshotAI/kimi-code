@@ -2087,7 +2087,8 @@ export class KimiTUI {
   /** `onFailure`, when given, runs after a rejected steer once its staged
    *  media is handed back to raw ownership and the user entries added for it
    *  are removed again, so the caller can requeue the input instead of losing
-   *  it behind an error. */
+   *  it behind an error. If the turn already ended, the requeued input is
+   *  dispatched right away; if the session changed, it is dropped. */
   steerMessage(session: Session, input: readonly SteerInputItem[], onFailure?: () => void): void {
     if (this.deferUserMessages || this.state.appState.isCompacting) {
       for (const item of input) {
@@ -2144,9 +2145,19 @@ export class KimiTUI {
     );
     this.staging.trackDispatch(stagingLease, session.steer(combineSteerInput(resolvedInput)), (error) => {
       if (onFailure !== undefined) {
+        // The session was switched while the steer was in flight: its input
+        // belongs to the closed session, so it is dropped with it.
+        if (this.session !== session) return;
         this.staging.defer(stagingLease);
         this.removeTranscriptEntries(steeredEntries);
         onFailure();
+        if (
+          this.state.appState.streamingPhase === 'idle' &&
+          !this.deferUserMessages &&
+          !this.state.appState.isCompacting
+        ) {
+          this.drainOneQueuedMessage();
+        }
       }
       this.showError(`Failed to steer: ${formatErrorMessage(error)}`);
     });

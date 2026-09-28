@@ -3853,6 +3853,70 @@ command = "vim"
     });
   });
 
+  function startWaitFor(driver: MessageDriver): void {
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_wait',
+        name: 'WaitFor',
+        args: { timeout: 60 },
+      } as Event,
+      () => {},
+    );
+  }
+
+  it('dispatches failed WaitFor input right away when the turn ended meanwhile', async () => {
+    let rejectSteer!: (error: Error) => void;
+    const session = makeSession({
+      steer: vi.fn(
+        () =>
+          new Promise<never>((_resolve, reject) => {
+            rejectSteer = reject;
+          }),
+      ),
+    });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.streamingPhase = 'waiting';
+    startWaitFor(driver);
+    driver.handleUserInput('check this first');
+
+    driver.state.appState.streamingPhase = 'idle';
+    rejectSteer(new Error('turn cancelled'));
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('check this first', expect.anything());
+    });
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('drops failed WaitFor input when the session changed meanwhile', async () => {
+    let rejectSteer!: (error: Error) => void;
+    const session = makeSession({
+      steer: vi.fn(
+        () =>
+          new Promise<never>((_resolve, reject) => {
+            rejectSteer = reject;
+          }),
+      ),
+    });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.streamingPhase = 'waiting';
+    startWaitFor(driver);
+    driver.handleUserInput('for the old session');
+
+    const next = makeSession();
+    (driver as unknown as { session: unknown }).session = next;
+    rejectSteer(new Error('session closed'));
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(driver.state.queuedMessages).toEqual([]);
+    expect(next.prompt).not.toHaveBeenCalled();
+  });
+
   it('keeps a queue with a bash command queued when a WaitFor starts', async () => {
     const { driver, session } = await makeDriver();
     const sendQueued = vi.fn();
