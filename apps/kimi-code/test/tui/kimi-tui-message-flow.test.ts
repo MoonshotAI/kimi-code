@@ -3697,6 +3697,162 @@ command = "vim"
     ]);
   });
 
+  it('steers fresh input into the running turn while a WaitFor call is running', async () => {
+    const { driver, session } = await makeDriver();
+    const sendQueued = vi.fn();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_wait',
+        name: 'WaitFor',
+        args: { timeout: 60 },
+      } as Event,
+      sendQueued,
+    );
+
+    driver.handleUserInput('stop waiting and check this');
+
+    expect(session.steer).toHaveBeenCalledWith('stop waiting and check this');
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('steers messages queued before a WaitFor starts into the running turn', async () => {
+    const { driver, session } = await makeDriver();
+    const sendQueued = vi.fn();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('first note');
+    driver.handleUserInput('second note');
+    expect(driver.state.queuedMessages).toHaveLength(2);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_wait',
+        name: 'WaitFor',
+        args: { timeout: 60 },
+      } as Event,
+      sendQueued,
+    );
+
+    expect(session.steer).toHaveBeenCalledTimes(1);
+    expect(session.steer).toHaveBeenCalledWith('first note\n\nsecond note');
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('keeps a queue with a bash command queued when a WaitFor starts', async () => {
+    const { driver, session } = await makeDriver();
+    const sendQueued = vi.fn();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.queuedMessages = [
+      { text: 'note', agentId: 'main' },
+      { text: 'make build', agentId: 'main', mode: 'bash' },
+    ];
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_wait',
+        name: 'WaitFor',
+        args: { timeout: 60 },
+      } as Event,
+      sendQueued,
+    );
+
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toHaveLength(2);
+  });
+
+  it('leaves queued messages alone when a tool other than WaitFor starts', async () => {
+    const { driver, session } = await makeDriver();
+    const sendQueued = vi.fn();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('queued note');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_read',
+        name: 'Read',
+        args: { path: 'README.md' },
+      } as Event,
+      sendQueued,
+    );
+
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([{ text: 'queued note', agentId: 'main' }]);
+  });
+
+  it('queues input again once the WaitFor call has returned', async () => {
+    const { driver, session } = await makeDriver();
+    const sendQueued = vi.fn();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_wait',
+        name: 'WaitFor',
+        args: { timeout: 60 },
+      } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.result',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_wait',
+        output: 'wait_status: timed_out',
+      } as Event,
+      sendQueued,
+    );
+
+    driver.handleUserInput('after the wait');
+
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([{ text: 'after the wait', agentId: 'main' }]);
+  });
+
+  it('queues input while only a subagent is running WaitFor', async () => {
+    const { driver, session } = await makeDriver();
+    const sendQueued = vi.fn();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'agent-child',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_child_wait',
+        name: 'WaitFor',
+        args: { timeout: 60 },
+      } as Event,
+      sendQueued,
+    );
+
+    driver.handleUserInput('main agent is busy');
+
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([{ text: 'main agent is busy', agentId: 'main' }]);
+  });
+
   it('prompts immediately while tower mode is active and the session is idle', async () => {
     const { driver, session } = await makeDriver();
     driver.state.appState.towerMode = true;

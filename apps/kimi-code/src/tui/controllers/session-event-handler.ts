@@ -122,6 +122,7 @@ export interface SessionEventHost {
   updateTerminalTitle(): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
   shiftQueuedMessage(): QueuedMessage | undefined;
+  steerQueuedMessagesIntoRunningTurn(): void;
   handleTurnStarted?(event: TurnStartedEvent): void;
   handleTurnEnded?(event: TurnEndedEvent): void;
   readonly btwPanelController: BtwPanelController;
@@ -637,6 +638,9 @@ export class SessionEventHandler {
     if (event.name === 'AgentSwarm') {
       this.subAgentEventHandler.handleAgentSwarmToolCallStarted(event.toolCallId, toolCall.args);
     }
+    // Input queued before the wait began would otherwise sit until the wait
+    // returns; steering it now ends the wait so the model reads it first.
+    if (event.name === 'WaitFor') this.host.steerQueuedMessagesIntoRunningTurn();
     this.host.patchLivePane({
       mode: 'tool',
       pendingApproval: null,

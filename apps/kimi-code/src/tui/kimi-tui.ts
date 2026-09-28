@@ -1974,11 +1974,13 @@ export class KimiTUI {
     // Tower mode keeps the main agent as a long-lived coordinator: while its
     // turn is live, new input steers into that turn instead of queueing
     // behind it, so consecutive /tower objectives are accepted immediately
-    // rather than serialized one turn at a time. A foreground shell command
-    // ('shell') has no turn to steer into and keeps queue semantics, as do
-    // input deferral and compaction.
-    const steerIntoCoordinator =
-      this.state.appState.towerMode &&
+    // rather than serialized one turn at a time. A running WaitFor steers the
+    // same way: the steer ends the wait at once and the model reads the new
+    // input, instead of the input queueing until the wait times out. A
+    // foreground shell command ('shell') has no turn to steer into and keeps
+    // queue semantics, as do input deferral and compaction.
+    const steerIntoRunningTurn =
+      (this.state.appState.towerMode || this.streamingUI.hasActiveToolCallNamed('WaitFor')) &&
       phase !== 'idle' &&
       phase !== 'shell' &&
       !this.deferUserMessages &&
@@ -1989,22 +1991,14 @@ export class KimiTUI {
     // Prompt-only backlog rides along in the same steer batch, ahead of the
     // new input; a non-steerable backlog (bash, slash-skill, inline-skill
     // bundle) cannot, and then this input queues behind it instead.
-    const backlog = this.state.queuedMessages;
-    const backlogSteerable = backlog.every(
-      (m) => m.inlineSkillActivations === undefined && m.mode !== 'bash' && m.mode !== 'skill',
-    );
-    if (steerIntoCoordinator && backlogSteerable) {
+    const backlog = this.steerableBacklog();
+    if (steerIntoRunningTurn && backlog !== undefined) {
       // Same lease hand-off as the queue path below: the pre-dispatch lease
       // defers to the raw ids on the steer item, which re-leases inside
       // steerMessage and binds to the running turn.
       this.staging.defer(options?.lease);
       const items: SteerInputItem[] = [
-        ...backlog.map((m) => ({
-          text: m.text,
-          parts: m.parts,
-          imageAttachmentIds: m.imageAttachmentIds,
-          videoAttachmentIds: m.videoAttachmentIds,
-        })),
+        ...backlog,
         {
           text: input,
           parts: options?.parts,
@@ -2031,6 +2025,46 @@ export class KimiTUI {
       return;
     }
     this.sendMessageInternal(session, input, options);
+  }
+
+  /** Steers the queued backlog into the running turn (used when a WaitFor
+   *  starts, so input typed before the wait ends it instead of waiting it
+   *  out). Same eligibility as fresh input in `sendMessage`: the backlog must
+   *  be prompt-only, and the turn must be live and not compacting. */
+  steerQueuedMessagesIntoRunningTurn(): void {
+    const session = this.session;
+    const phase = this.state.appState.streamingPhase;
+    if (
+      session === undefined ||
+      phase === 'idle' ||
+      phase === 'shell' ||
+      this.deferUserMessages ||
+      this.state.appState.isCompacting
+    ) {
+      return;
+    }
+    const backlog = this.steerableBacklog();
+    if (backlog === undefined || backlog.length === 0) return;
+    this.state.queuedMessages = [];
+    this.updateQueueDisplay();
+    this.steerMessage(session, backlog);
+  }
+
+  /** The queued backlog as steer items, or undefined when any item cannot be
+   *  steered (bash, slash-skill, inline-skill bundle) — steering the rest
+   *  ahead of it would reorder the conversation. */
+  private steerableBacklog(): SteerInputItem[] | undefined {
+    const backlog = this.state.queuedMessages;
+    const steerable = backlog.every(
+      (m) => m.inlineSkillActivations === undefined && m.mode !== 'bash' && m.mode !== 'skill',
+    );
+    if (!steerable) return undefined;
+    return backlog.map((m) => ({
+      text: m.text,
+      parts: m.parts,
+      imageAttachmentIds: m.imageAttachmentIds,
+      videoAttachmentIds: m.videoAttachmentIds,
+    }));
   }
 
   steerMessage(session: Session, input: readonly SteerInputItem[]): void {
