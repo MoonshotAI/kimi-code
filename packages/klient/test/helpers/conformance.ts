@@ -1,4 +1,3 @@
-import { IEnvironmentService } from '@moonshot-ai/agent-core-v2';
 /**
  * Shared conformance suite — the guarantee that the ipc and memory
  * transports are interchangeable. Every transport test file runs the exact
@@ -15,9 +14,6 @@ import { join } from 'node:path';
 import { Service } from '@moonshot-ai/agent-core-v2/_base/di/service';
 import { CommandContribution } from '@moonshot-ai/agent-core-v2/agent/command/commandContribution';
 import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
-import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
-import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
-import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
 import { IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2/workspace/workspaceInstance/workspaceInstanceManager';
 import {
   resetModelsDevUpstreamForTest,
@@ -551,49 +547,9 @@ export function defineKlientConformance(
         const binding = await agent.getEnvironment();
         expect(binding.environmentId).toBe('local');
         expect(binding).toEqual({ environmentId: 'local' });
-        await expect(agent.switchEnvironment('missing-environment')).rejects.toThrow(/missing-environment/);
         expect(await agent.getEnvironment()).toEqual(binding);
       } finally {
         await target.klient.session(created.id).close();
-      }
-    });
-
-    it('connects an environment with cwd and preserves the binding when a later switch fails', async () => {
-      const remoteCwd = await mkdtemp(join(tmpdir(), 'klient-environment-'));
-      let connections = 0;
-      const provider = await target.app.accessor.get(IEnvironmentService).addProvider({
-        id: 'conformance-environment',
-        attach: async (host) => {
-          const environment = new FakeEnvironment(
-            { environmentId: 'remote-box', generation: 'conformance' },
-            { status: 'pending', capabilities: ['fs', 'process'] },
-          );
-          const registration = host.registerEnvironment(Object.assign(environment, {
-            fs: new HostFileSystem(),
-            process: new HostProcessService(),
-            connect: async () => { connections += 1; environment.setStatus('ready'); },
-          }));
-          return { dispose: () => registration.remove() };
-        },
-      });
-      const created = await target.klient.global.sessions.create({ workDir: process.cwd() });
-      try {
-        const agent = target.klient.session(created.id).agent('main');
-        const binding = await agent.switchEnvironment('remote-box', { cwd: remoteCwd });
-        expect(binding).toMatchObject({ environmentId: 'remote-box', cwd: remoteCwd });
-        expect(await agent.getEnvironment()).toEqual(binding);
-        expect(connections).toBe(1);
-        await expect(agent.switchEnvironment('remote-box', { cwd: join(remoteCwd, 'missing') })).rejects.toThrow(/missing/);
-        expect(await agent.getEnvironment()).toEqual(binding);
-        expect(await agent.reconnectEnvironment()).toEqual(binding);
-        expect(connections).toBe(2);
-        const local = await agent.switchEnvironment('local');
-        expect(local).toMatchObject({ environmentId: 'local' });
-        expect(local.cwd).toBeUndefined();
-      } finally {
-        await target.klient.session(created.id).close();
-        await provider.dispose();
-        await rm(remoteCwd, { recursive: true, force: true });
       }
     });
 

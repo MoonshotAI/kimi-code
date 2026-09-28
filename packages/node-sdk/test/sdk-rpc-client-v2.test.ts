@@ -190,7 +190,6 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       const binding = await session.getEnvironment();
       expect(binding.environmentId).toBe('local');
       expect(binding).toEqual({ environmentId: 'local' });
-      await expect(session.switchEnvironment('missing-environment')).rejects.toThrow(/missing-environment/);
       expect(await session.getEnvironment()).toEqual(binding);
     } finally {
       await harness.close();
@@ -209,8 +208,6 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       await expect(harness.createSession({ workDir, environmentCwd: '/remote' })).rejects.toThrow(
         /environmentCwd requires environmentId/,
       );
-      const session = await harness.createSession({ workDir });
-      await expect(session.switchEnvironment('box', { cwd: '/remote' })).rejects.toThrow(/box/);
     } finally {
       await harness.close();
       vi.unstubAllEnvs();
@@ -368,36 +365,6 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
         environmentId: 'fake-box',
         cwd: remoteDir,
       });
-    } finally {
-      await provider.dispose();
-      await harness.close();
-      vi.unstubAllEnvs();
-    }
-  });
-
-  it('switches with cwd through connectAndSwitch and reconnects explicitly', async () => {
-    const { harness, client } = await makeEnvironmentHarness();
-    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
-    tempDirs.push(workDir);
-    const connect = vi.fn(async () => {});
-    const provider = await attachFakeBoxEnvironment(client, { connect });
-    try {
-      const session = await harness.createSession({ workDir });
-      const switched = await session.switchEnvironment('fake-box', { cwd: workDir });
-      expect(switched.environmentId).toBe('fake-box');
-      expect(switched.cwd).toBe(workDir);
-      expect((await session.getEnvironment()).cwd).toBe(workDir);
-
-      const listed = await session.listEnvironments();
-      const fakeBox = listed.environments.find((entry) => entry.environmentId === 'fake-box');
-      expect(fakeBox).toMatchObject({ type: 'ssh', status: 'ready', defaultCwd: '/remote/work' });
-
-      const reconnected = await session.reconnectEnvironment();
-      expect(reconnected.environmentId).toBe('fake-box');
-      expect(connect).toHaveBeenCalledTimes(1);
-
-      await session.switchEnvironment('local');
-      await expect(session.reconnectEnvironment()).rejects.toThrow(/does not support reconnect/);
     } finally {
       await provider.dispose();
       await harness.close();
@@ -1269,220 +1236,6 @@ key = "${titleOAuthRef.key}"
       await expect(harness.trustWorkspace(missing)).rejects.toMatchObject({ code: ErrorCodes.FS_PATH_NOT_FOUND });
     } finally {
       await harness.close();
-    }
-  });
-
-  it('serves session.suggestFiles from the live session workspace context', async () => {
-    const { harness } = await makeHarness();
-    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
-    tempDirs.push(workDir);
-    await mkdir(join(workDir, 'src'), { recursive: true });
-    await writeFile(join(workDir, 'src', 'app.ts'), 'app');
-    await writeFile(join(workDir, 'src', 'index.ts'), 'index');
-    await writeFile(join(workDir, 'README.md'), 'readme');
-    try {
-      const session = await harness.createSession({ workDir });
-      const matched = await session.suggestFiles({ query: 'app', limit: 20 });
-      expect(matched?.items).toContainEqual(
-        expect.objectContaining({ kind: 'file', path: 'src/app.ts', name: 'app.ts' }),
-      );
-      const appItem = matched?.items.find((item) => item.name === 'app.ts');
-      expect(appItem?.matchPositions.length).toBeGreaterThan(0);
-
-      const topLevel = await session.suggestFiles({ query: '', limit: 20 });
-      expect(topLevel?.items).toContainEqual(expect.objectContaining({ kind: 'directory', name: 'src' }));
-
-      for (const limit of [0, -1, 201, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
-        await expect(session.suggestFiles({ query: 'a', limit })).rejects.toMatchObject({
-          code: ErrorCodes.REQUEST_INVALID,
-        });
-      }
-      await session.close();
-    } finally {
-      await harness.close();
-    }
-  });
-
-  it('serves session.suggestFiles from the bound environment fs after a remote switch', async () => {
-    const { harness, client } = await makeEnvironmentHarness();
-    const localDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-local-'));
-    const remoteDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-remote-'));
-    tempDirs.push(localDir, remoteDir);
-    await writeFile(join(localDir, 'local-only.ts'), 'local');
-    await writeFile(join(remoteDir, 'remote-only.ts'), 'remote');
-    const provider = await attachFakeBoxEnvironment(client);
-    try {
-      const session = await harness.createSession({ workDir: localDir });
-      const before = await session.suggestFiles({ query: 'local-only', limit: 20 });
-      expect(before?.items).toContainEqual(expect.objectContaining({ name: 'local-only.ts' }));
-
-      await session.switchEnvironment('fake-box', { cwd: remoteDir });
-      const after = await session.suggestFiles({ query: 'remote-only', limit: 20 });
-      expect(after?.items).toContainEqual(expect.objectContaining({ name: 'remote-only.ts' }));
-      const stale = await session.suggestFiles({ query: 'local-only', limit: 20 });
-      expect(stale?.items.find((item) => item.name === 'local-only.ts')).toBeUndefined();
-      await session.close();
-    } finally {
-      await provider.dispose();
-      await harness.close();
-      vi.unstubAllEnvs();
-    }
-  });
-
-  it('declares a global environment byte-identically to the setConfig patch flow', async () => {
-    const viaDeclare = await makeEnvironmentHarness();
-    const viaPatch = await makeEnvironmentHarness();
-    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
-    tempDirs.push(workDir);
-    // The payload mirrors the /environment Add form: defaultCwd stays undefined
-    // when the field is left empty.
-    const entry = { type: 'ssh', host: 'new-box', defaultCwd: undefined } as const;
-    try {
-      const declareSession = await viaDeclare.harness.createSession({ workDir });
-      const patchSession = await viaPatch.harness.createSession({ workDir });
-      // The default scope is global.
-      await declareSession.declareEnvironment({ id: 'new-box', entry });
-      await viaPatch.harness.setConfig({ environments: { 'new-box': entry } });
-      const [declareToml, patchToml] = await Promise.all([
-        readFile(join(viaDeclare.homeDir, 'config.toml'), 'utf-8'),
-        readFile(join(viaPatch.homeDir, 'config.toml'), 'utf-8'),
-      ]);
-      expect(declareToml).toBe(patchToml);
-      expect(declareToml).toContain('[environments.new-box]');
-      await vi.waitFor(async () => {
-        const listed = await declareSession.listEnvironments();
-        expect(listed.environments.some((environment) => environment.environmentId === 'new-box')).toBe(true);
-      });
-      await declareSession.close();
-      await patchSession.close();
-    } finally {
-      await viaDeclare.harness.close();
-      await viaPatch.harness.close();
-      vi.unstubAllEnvs();
-    }
-  });
-
-  it('declares a global environment when another open workspace has an invalid project declaration', async () => {
-    vi.stubEnv('KIMI_CODE_WATCH', '0');
-    const { harness } = await makeEnvironmentHarness();
-    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
-    const otherWorkDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-other-work-'));
-    tempDirs.push(workDir, otherWorkDir);
-    try {
-      await harness.trustWorkspace(workDir);
-      await harness.trustWorkspace(otherWorkDir);
-      const session = await harness.createSession({ workDir });
-      const otherSession = await harness.createSession({ workDir: otherWorkDir });
-      await mkdir(join(otherWorkDir, '.kimi-code'), { recursive: true });
-      await writeFile(join(otherWorkDir, '.kimi-code', 'environments.toml'), 'broken = [toml', 'utf-8');
-
-      await session.declareEnvironment({
-        id: 'shared-box',
-        entry: { type: 'ssh', host: 'shared-box' },
-      });
-
-      for (const openedSession of [session, otherSession]) {
-        const listed = await openedSession.listEnvironments();
-        expect(listed.environments.find((environment) => environment.environmentId === 'shared-box')).toMatchObject({
-          type: 'ssh',
-          status: 'pending',
-        });
-      }
-      await session.close();
-      await otherSession.close();
-    } finally {
-      await harness.close();
-      vi.unstubAllEnvs();
-    }
-  });
-
-  it('finishes environment registration when the declaring workspace closes during the config write', async () => {
-    vi.stubEnv('KIMI_CODE_WATCH', '0');
-    const { harness, client, homeDir } = await makeEnvironmentHarness();
-    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
-    tempDirs.push(workDir);
-    const written = Promise.withResolvers<void>();
-    const release = Promise.withResolvers<void>();
-    let outcome: Promise<unknown> | undefined;
-    try {
-      const session = await harness.createSession({ workDir });
-      const workspaceId = client.engineAccessor.get(IWorkspaceInstanceManager).findByRoot(workDir)!.id;
-      const config = client.engineAccessor.get(IConfigService);
-      const replaceSections = config.replaceSections.bind(config);
-      vi.spyOn(config, 'replaceSections').mockImplementation(async (...args) => {
-        await replaceSections(...args);
-        written.resolve();
-        await release.promise;
-      });
-      outcome = session.declareEnvironment({
-        id: 'closing-box',
-        entry: { type: 'ssh', host: 'closing-box' },
-      }).then(() => undefined, (error: unknown) => error);
-
-      await written.promise;
-      await client.engineAccessor.get(IWorkspaceInstanceManager).close(workspaceId);
-      release.resolve();
-
-      expect(await outcome).toBeUndefined();
-      expect(client.engineAccessor.get(IEnvironmentService).current('closing-box')?.status).toBe('pending');
-      expect(await readFile(join(homeDir, 'config.toml'), 'utf-8')).toContain('[environments.closing-box]');
-    } finally {
-      release.resolve();
-      await outcome;
-      await harness.close();
-      vi.unstubAllEnvs();
-    }
-  });
-
-  it('fails one of two concurrent global declares with the same id instead of silently overwriting', async () => {
-    const { harness, homeDir } = await makeEnvironmentHarness();
-    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
-    tempDirs.push(workDir);
-    try {
-      const session = await harness.createSession({ workDir });
-      const outcomes = await Promise.allSettled([
-        session.declareEnvironment({ id: 'race-box', entry: { type: 'ssh', host: 'first-box' } }),
-        session.declareEnvironment({ id: 'race-box', entry: { type: 'ssh', host: 'second-box' } }),
-      ]);
-      expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
-      expect(outcomes.filter((outcome) => outcome.status === 'rejected')).toHaveLength(1);
-      const toml = await readFile(join(homeDir, 'config.toml'), 'utf-8');
-      expect(toml.split('[environments.race-box]').length - 1).toBe(1);
-      await session.close();
-    } finally {
-      await harness.close();
-      vi.unstubAllEnvs();
-    }
-  });
-
-  it('reports a saved declaration whose registration fails without rolling back the file', async () => {
-    vi.stubEnv('KIMI_CODE_WATCH', '0');
-    const { harness, client } = await makeEnvironmentHarness();
-    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
-    tempDirs.push(workDir);
-    const provider = await client.engineAccessor.get(IEnvironmentService).addProvider({
-      id: 'conflicting-environment',
-      attach: async (host) => {
-        const registration = host.registerEnvironment(new FakeEnvironment({
-          environmentId: 'taken-box',
-          generation: 'existing-generation',
-        }));
-        return { dispose: () => registration.remove() };
-      },
-    });
-    try {
-      await harness.trustWorkspace(workDir);
-      const session = await harness.createSession({ workDir });
-      await expect(session.declareEnvironment({
-        id: 'taken-box',
-        entry: { type: 'ssh', host: 'taken-box' },
-      })).rejects.toThrow(/was saved, but registration failed/);
-      expect(await readFile(join(harness.homeDir, 'config.toml'), 'utf-8')).toContain('[environments.taken-box]');
-      await session.close();
-    } finally {
-      await provider.dispose();
-      await harness.close();
-      vi.unstubAllEnvs();
     }
   });
 

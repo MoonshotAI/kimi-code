@@ -69,7 +69,6 @@ import type {
   SessionSummary,
   SessionSummaryPage,
   SessionEnvironmentsInfo,
-  RemoteEnvironmentEntry,
   SkillSummary,
   PluginCommandDef,
   SuggestFilesInput,
@@ -153,16 +152,6 @@ export interface ActivatePluginCommandRpcInput extends SessionIdRpcInput {
 export interface RunCommandRpcInput extends SessionIdRpcInput {
   readonly name: string;
   readonly args?: string | undefined;
-}
-
-export interface SwitchSessionEnvironmentRpcInput extends SessionIdRpcInput {
-  readonly environmentId: string;
-  readonly cwd?: string;
-}
-
-export interface DeclareEnvironmentRpcInput extends SessionIdRpcInput {
-  readonly id: string;
-  readonly entry: RemoteEnvironmentEntry;
 }
 
 export interface ReconnectMcpServerRpcInput extends SessionIdRpcInput {
@@ -410,19 +399,6 @@ export abstract class SDKRpcClientBase {
     input: SuggestFilesInput,
   ): Promise<SuggestFilesResult | undefined>;
 
-  /**
-   * Session-scoped file suggestions rooted at the session's workspace
-   * context and served by the session's currently bound environment. Only the
-   * agent-core-v2 engine implements it; the v1 engine reports `undefined`
-   * (capability absent), same convention as the session-less variant.
-   */
-  async suggestSessionFiles(
-    input: SessionIdRpcInput & SuggestFilesInput,
-  ): Promise<SuggestFilesResult | undefined> {
-    void input;
-    return undefined;
-  }
-
   abstract listBackgroundTasks(
     input: SessionIdRpcInput & { activeOnly?: boolean; limit?: number },
   ): Promise<readonly BackgroundTaskInfo[]>;
@@ -493,13 +469,7 @@ export abstract class SDKRpcClientBase {
 
   abstract getEnvironment(input: SessionIdRpcInput): Promise<AgentEnvironmentBinding>;
 
-  abstract switchEnvironment(input: SwitchSessionEnvironmentRpcInput): Promise<AgentEnvironmentBinding>;
-
-  abstract reconnectEnvironment(input: SessionIdRpcInput): Promise<AgentEnvironmentBinding>;
-
   abstract listEnvironments(input: SessionIdRpcInput): Promise<SessionEnvironmentsInfo>;
-
-  abstract declareEnvironment(input: DeclareEnvironmentRpcInput): Promise<void>;
 
   onEvent(listener: (event: Event) => void): Unsubscribe {
     this.eventListeners.add(listener);

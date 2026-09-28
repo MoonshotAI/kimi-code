@@ -49,11 +49,6 @@ export interface SessionEnvironmentsInfo {
 
 export type { RemoteEnvironmentEntry };
 
-export interface DeclareEnvironmentInput {
-  readonly id: string;
-  readonly entry: RemoteEnvironmentEntry;
-}
-
 export type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
 
 export type {

@@ -176,7 +176,6 @@ import {
   IAgentPluginCommandService,
   IAgentProfileService,
   IAgentReminderService,
-  IAgentEnvironmentBindingService,
   IAgentSkillService,
   IAgentSwarmService,
   IAgentTaskService,
@@ -187,7 +186,6 @@ import {
   IAgentTowerService,
   IBootstrapService,
   IConfigService,
-  IEnvironmentDeclarationService,
   IEventService,
   IFlagService,
   IHostEnvironment,
@@ -274,13 +272,11 @@ import {
   SDKRpcClientBase,
   type ActivatePluginCommandRpcInput,
   type ActivateSkillRpcInput,
-  type DeclareEnvironmentRpcInput,
   type ImportContextRpcInput,
   type ReconnectMcpServerRpcInput,
   type ReloadSessionRpcInput,
   type RunCommandRpcInput,
   type SessionIdRpcInput,
-  type SwitchSessionEnvironmentRpcInput,
   type SessionPromptRpcInput,
   type SessionPromptWithSkillsRpcInput,
   type SetSessionModelRpcInput,
@@ -692,11 +688,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return this.engineAccessor.get(IWorkspaceInstanceManager).getOrCreate({ root });
   }
 
-  private async sessionWorkspaceInstance(context: ISessionContext): Promise<WorkspaceInstance> {
-    const manager = this.engineAccessor.get(IWorkspaceInstanceManager);
-    return manager.get(context.workspaceId) ?? (await manager.getOrCreate({ root: context.cwd }));
-  }
-
   /**
    * Through the workspace handler's `IWorkspaceSkillCatalog` — the engine's
    * own merged view (builtin / user / explicit / extra / workspace-root /
@@ -721,31 +712,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const parsed = parseSuggestFilesInput(input);
     const handler = await this.workspaceHandlerFor('suggestFiles', workDir);
     return toSuggestFilesResult(await handler.program.fs.suggest(parsed));
-  }
-
-  /**
-   * Session-scoped twin of {@link suggestFiles}: roots come from the live
-   * session's workspace context (a remote binding's cwd already lives there)
-   * and the suggest runs on the session's currently bound environment through
-   * the workspace program's per-environment fs accessor. A local binding serves
-   * the same candidates as the session-less variant.
-   */
-  override async suggestSessionFiles(
-    input: SessionIdRpcInput & SuggestFilesInput,
-  ): Promise<SuggestFilesResult | undefined> {
-    const parsed = parseSuggestFilesInput(input);
-    const session = this.requireLiveSession(input.sessionId);
-    const agent = await this.agentScope(input.sessionId);
-    const binding = agent.accessor.get(IAgentEnvironmentBindingService).current;
-    const workspace = session.accessor.get(ISessionWorkspaceContext);
-    const context = session.accessor.get(ISessionContext);
-    const instance = await this.sessionWorkspaceInstance(context);
-    const result = await instance.program.suggestFiles(
-      binding.environmentId,
-      { workDir: workspace.workDir, additionalDirs: workspace.additionalDirs },
-      parsed,
-    );
-    return toSuggestFilesResult(result);
   }
 
   /**
@@ -1957,16 +1923,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return agent.getEnvironment();
   }
 
-  override async switchEnvironment(input: SwitchSessionEnvironmentRpcInput): Promise<AgentEnvironmentBinding> {
-    const agent = await this.agentFacade(input.sessionId);
-    return agent.switchEnvironment(input.environmentId, { cwd: input.cwd });
-  }
-
-  override async reconnectEnvironment(input: SessionIdRpcInput): Promise<AgentEnvironmentBinding> {
-    const agent = await this.agentFacade(input.sessionId);
-    return agent.reconnectEnvironment();
-  }
-
   /**
    * The app's environment registry snapshot (status / generation /
    * capabilities) joined with the resolved declarations (type / defaultCwd),
@@ -1981,14 +1937,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       ),
       sshHosts: await this.resolveSshHostCandidates(),
     };
-  }
-
-  override async declareEnvironment(input: DeclareEnvironmentRpcInput): Promise<void> {
-    this.requireLiveSession(input.sessionId);
-    await this.engineAccessor.get(IEnvironmentDeclarationService).declare({
-      id: input.id,
-      entry: input.entry,
-    });
   }
 
   private async resolveEnvironmentDeclarationEntries(): Promise<ReadonlyMap<string, RemoteEnvironmentEntry>> {
