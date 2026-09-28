@@ -129,8 +129,8 @@ describe('feature DSL', () => {
           parameters: { type: 'object', properties: {} },
           execute: async () => {
             state.calls.value += 1;
-            await agent.notify(createUserMessage('notified'));
-            await agent.remind('probe', createUserMessage('reminded'));
+            agent.notify(createUserMessage('notified'));
+            agent.remind('probe', createUserMessage('reminded'));
             return { content: [{ type: 'text', text: `count=${state.calls.value}` }] };
           },
         });
@@ -194,7 +194,7 @@ describe('feature DSL', () => {
     agent.setConfig({ model });
     agent.setRequester(requester);
     const first = turnDone(agent);
-    await agent.submit(createUserMessage('run'));
+    agent.submit(createUserMessage('run'));
     await first;
     const store = env.stores.get('agent-0');
     await env.stores.flush();
@@ -230,7 +230,7 @@ describe('feature DSL', () => {
     installed.value = [lateSpec];
     await session.ready();
     const second = turnDone(agent);
-    await agent.submit(createUserMessage('again'));
+    agent.submit(createUserMessage('again'));
     await second;
     await vi.waitFor(() => { expect(requests).toHaveLength(3); });
     expect(requests[2]?.tools).toEqual(['increment']);
@@ -251,7 +251,7 @@ describe('feature DSL', () => {
     resumed.setConfig({ model });
     resumed.setRequester(requester);
     const third = turnDone(resumed);
-    await resumed.submit(createUserMessage('resume'));
+    resumed.submit(createUserMessage('resume'));
     await third;
     await vi.waitFor(() => { expect(requests).toHaveLength(4); });
     expect(requests[3]?.tools).toEqual(['increment']);
@@ -270,7 +270,7 @@ describe('feature DSL', () => {
     const failed = new Promise<unknown>((resolve) => {
       failing.on('turn.failed', (event) => resolve(event.failure.reason === 'error' ? event.failure.error : undefined));
     });
-    await failing.submit(createUserMessage('fail'));
+    failing.submit(createUserMessage('fail'));
     await expect(failed).resolves.toBe(stepError);
     expect(requests).toHaveLength(4);
     const missing: string[] = [];
@@ -283,7 +283,7 @@ describe('feature DSL', () => {
     degraded.setConfig({ model });
     degraded.setRequester(requester);
     const fourth = turnDone(degraded);
-    await degraded.submit(createUserMessage('degraded'));
+    degraded.submit(createUserMessage('degraded'));
     await fourth;
     await vi.waitFor(() => { expect(requests).toHaveLength(6); });
     expect(requests[4]?.tools).toEqual(['increment']);
@@ -293,7 +293,7 @@ describe('feature DSL', () => {
       execute: async () => ({ content: [{ type: 'text', text: 'revived' }] }),
     });
     const fifth = turnDone(degraded);
-    await degraded.submit(createUserMessage('revive'));
+    degraded.submit(createUserMessage('revive'));
     await fifth;
     await vi.waitFor(() => { expect(requests).toHaveLength(8); });
     expect(requests[6]?.tools).toEqual(['increment']);

@@ -197,16 +197,16 @@ export function useSessionRoutes(prefix: string): void {
           return;
         }
         if (parsed.action === 'abort') {
-          await agent.abort();
+          agent.abort();
           sendOk(request, response, { aborted: true });
           return;
         }
         if (parsed.action === 'pause') {
-          await agent.pause();
+          agent.pause();
           sendOk(request, response, { paused: true });
           return;
         }
-        await agent.continue();
+        agent.continue();
         sendOk(request, response, { continued: true });
       } catch (error) {
         if (sendFacadeErr(request, response, error)) return;

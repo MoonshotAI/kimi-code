@@ -31,7 +31,7 @@ export const todo = createFeature('todo', {
       if (current.todos.length === 0) return;
       if (current.todos.every((item) => item.status === 'done')) return;
       if (current.currentTurn - current.lastWriteTurn !== STALE_TURNS) return;
-      void agent.remind(
+      agent.remind(
         'todo-stale',
         createHistoryMessageBuilder()
           .systemReminder(

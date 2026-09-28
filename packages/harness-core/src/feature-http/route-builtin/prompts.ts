@@ -29,7 +29,7 @@ export function usePromptRoutes(prefix: string): void {
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
       const agent = session.get(agentId) ?? await session.create({ agentId });
-      await agent.submit(message, {
+      agent.submit(message, {
         promptId,
         origin: { kind: 'user' },
         tracked: true,
@@ -68,7 +68,7 @@ export function usePromptRoutes(prefix: string): void {
         sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`, 404);
         return;
       }
-      await agent.steer(ids);
+      agent.steer(ids);
       sendOk(request, response, { steered: true, prompt_ids: ids });
     },
   });
@@ -115,11 +115,11 @@ export function usePromptRoutes(prefix: string): void {
         return;
       }
       if (parsed.action === 'abort') {
-        await agent.cancel(parsed.id);
+        agent.cancel(parsed.id);
         sendOk(request, response, { aborted: true });
         return;
       }
-      await agent.steer([parsed.id]);
+      agent.steer([parsed.id]);
       sendOk(request, response, { steered: true, prompt_ids: [parsed.id] });
     },
   });
@@ -146,7 +146,7 @@ export function usePromptRoutes(prefix: string): void {
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
       const agent = session.get(agentId) ?? await session.create({ agentId });
-      await agent.notify(message);
+      agent.notify(message);
       sendOk(request, response, { notified: true, agent_id: agent.agentId });
     },
   });
@@ -182,7 +182,7 @@ export function usePromptRoutes(prefix: string): void {
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
       const agent = session.get(agentId) ?? await session.create({ agentId });
-      await agent.remind(key, message);
+      agent.remind(key, message);
       sendOk(request, response, { reminded: true, key, agent_id: agent.agentId });
     },
   });

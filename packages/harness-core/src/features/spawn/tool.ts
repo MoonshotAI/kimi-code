@@ -137,7 +137,7 @@ export function createSpawnTool(deps: SpawnToolDeps): ToolDefinition {
           systemPrompt: plan.profile?.systemPrompt({ callerAgentId }),
         });
     if (plan.fork) {
-      await target.remind(FORK_REMIND_KEY, createUserMessage(FORK_CONTEXT_NOTICE));
+      target.remind(FORK_REMIND_KEY, createUserMessage(FORK_CONTEXT_NOTICE));
     }
     if (plan.model.kind === 'explicit') {
       const callerConfig = agent.config;
@@ -308,8 +308,8 @@ async function runAndWait(
     resolveTerminal(outcome);
   };
   const onAbort = (): void => {
-    if (started) void target.abort(signal.reason);
-    else void target.cancel(promptId);
+    if (started) target.abort(signal.reason);
+    else target.cancel(promptId);
     finish({ type: 'aborted', reason: signal.reason });
   };
   const subscriptions = [
@@ -328,7 +328,8 @@ async function runAndWait(
   ];
   signal.addEventListener('abort', onAbort, { once: true });
   try {
-    await target.submit(createUserMessage(prompt), { promptId, origin: { kind: 'subagent' } });
+    const accepted = target.submit(createUserMessage(prompt), { promptId, origin: { kind: 'subagent' } });
+    if (accepted === undefined) throw new Error('agent is not running');
   } catch (error) {
     cleanup();
     throw error;

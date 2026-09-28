@@ -251,7 +251,7 @@ describe('spawn tool', () => {
   it('lists catalog profiles in the tool description and gates schema parameters', async () => {
     const plain = await startApp();
     const first = nextTurnDone(plain.main);
-    await plain.main.submit(createUserMessage('hello'));
+    plain.main.submit(createUserMessage('hello'));
     await first;
     const agentTool = plain.calls[0]!.tools.find((tool) => tool.name === 'Agent');
     expect(agentTool).toBeDefined();
@@ -268,7 +268,7 @@ describe('spawn tool', () => {
     process.env['KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK'] = 'true';
     const rich = await startApp({ models: [fastModel] });
     const second = nextTurnDone(rich.main);
-    await rich.main.submit(createUserMessage('hello'));
+    rich.main.submit(createUserMessage('hello'));
     await second;
     const richTool = rich.calls[0]!.tools.find((tool) => tool.name === 'Agent');
     expect(richTool!.description).toContain('Available models (pass via model):');
@@ -292,7 +292,7 @@ describe('spawn tool', () => {
       completedEvents.push(event);
     });
     const done = nextTurnDone(main);
-    await main.submit(createUserMessage(agentCall({ prompt: 'SUB:do the task', description: 'run the task' })));
+    main.submit(createUserMessage(agentCall({ prompt: 'SUB:do the task', description: 'run the task' })));
     await done;
     await env.stores.flush();
 
@@ -334,10 +334,10 @@ describe('spawn tool', () => {
       spawnedEvents.push(event);
     });
     const first = nextTurnDone(main);
-    await main.submit(createUserMessage('hello'));
+    main.submit(createUserMessage('hello'));
     await first;
     const second = nextTurnDone(main);
-    await main.submit(createUserMessage(agentCall({ prompt: 'SUB:continue it', description: 'fork task', fork: true })));
+    main.submit(createUserMessage(agentCall({ prompt: 'SUB:continue it', description: 'fork task', fork: true })));
     await second;
     await env.stores.flush();
 
@@ -374,7 +374,7 @@ describe('spawn tool', () => {
       completedEvents.push(event);
     });
     const done = nextTurnDone(main);
-    await main.submit(
+    main.submit(
       createUserMessage(
         agentCall({ prompt: 'SUB:bg task', description: 'bg task', run_in_background: true }),
       ),
@@ -416,12 +416,12 @@ describe('spawn tool', () => {
       spawnedEvents.push(event);
     });
     const first = nextTurnDone(main);
-    await main.submit(createUserMessage(agentCall({ prompt: 'SUB:first task', description: 'first task' })));
+    main.submit(createUserMessage(agentCall({ prompt: 'SUB:first task', description: 'first task' })));
     await first;
     const agentId = spawnedEvents[0]!.agentId;
 
     const second = nextTurnDone(main);
-    await main.submit(
+    main.submit(
       createUserMessage(agentCall({ resume: agentId, prompt: 'SUB:follow up', description: 'follow up' })),
     );
     await second;
@@ -432,7 +432,7 @@ describe('spawn tool', () => {
     expect(results[1]).toContain('echo:follow up');
 
     const third = nextTurnDone(main);
-    await main.submit(
+    main.submit(
       createUserMessage(
         agentCall({ resume: 'subagent-missing', prompt: 'x', description: 'x' }),
       ),

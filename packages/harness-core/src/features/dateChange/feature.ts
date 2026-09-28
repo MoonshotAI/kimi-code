@@ -37,12 +37,10 @@ export function createDateChange(props: CreateDateChangeProps = {}): FeatureSpec
         if (current === disclosed) return;
         const text = disclosed === undefined ? initialDateReminder(current) : dateChangeReminder(current);
         disclosed = current;
-        void agent
-          .remind(
-            DATE_CHANGE_REMIND_KEY,
-            createHistoryMessageBuilder().systemReminder(text).userMessage(),
-          )
-          .catch(() => {});
+        agent.remind(
+          DATE_CHANGE_REMIND_KEY,
+          createHistoryMessageBuilder().systemReminder(text).userMessage(),
+        );
       });
     },
   });

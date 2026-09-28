@@ -144,7 +144,7 @@ describe('dateChange feature', () => {
     let main = session.get(MAIN_AGENT_ID) as AgentHandle;
 
     const first = nextTurnDone(main);
-    await main.submit(createUserMessage('run'));
+    main.submit(createUserMessage('run'));
     await first;
     await env.stores.flush();
 
@@ -153,7 +153,7 @@ describe('dateChange feature', () => {
     ]);
 
     const second = nextTurnDone(main);
-    await main.submit(createUserMessage('run'));
+    main.submit(createUserMessage('run'));
     await second;
     await env.stores.flush();
 
@@ -162,7 +162,7 @@ describe('dateChange feature', () => {
     await session.close(MAIN_AGENT_ID);
     main = await session.create({ agentId: MAIN_AGENT_ID, systemPrompt: 'main-host' });
     const third = nextTurnDone(main);
-    await main.submit(createUserMessage('run'));
+    main.submit(createUserMessage('run'));
     await third;
     await env.stores.flush();
 
@@ -177,13 +177,13 @@ describe('dateChange feature', () => {
     const { app, env, main, calls } = await startApp(() => current);
 
     const first = nextTurnDone(main);
-    await main.submit(createUserMessage('run'));
+    main.submit(createUserMessage('run'));
     await first;
     await env.stores.flush();
 
     current = new Date('2026-09-28T10:00:00Z');
     const second = nextTurnDone(main);
-    await main.submit(createUserMessage('run'));
+    main.submit(createUserMessage('run'));
     await second;
     await env.stores.flush();
 
@@ -199,7 +199,7 @@ describe('dateChange feature', () => {
     ).toBe(true);
 
     const third = nextTurnDone(main);
-    await main.submit(createUserMessage('run'));
+    main.submit(createUserMessage('run'));
     await third;
     await env.stores.flush();
 

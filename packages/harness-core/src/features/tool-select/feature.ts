@@ -31,13 +31,13 @@ export function createToolSelect(options: CreateToolSelectStateOptions): Feature
         if (!state.enabled()) return;
         const announcement = state.announcement();
         if (announcement === undefined) return;
-        void agent.remind(LOADABLE_TOOLS_REMINDER_KEY, createUserMessage(announcement));
+        agent.remind(LOADABLE_TOOLS_REMINDER_KEY, createUserMessage(announcement));
       });
       const pushSchemas = (): void => {
         if (!state.enabled()) return;
         const tools = state.pendingSchemas();
         if (tools.length === 0) return;
-        void agent.remind(DYNAMIC_TOOL_SCHEMA_REMINDER_KEY, { role: 'system', content: [], tools });
+        agent.remind(DYNAMIC_TOOL_SCHEMA_REMINDER_KEY, { role: 'system', content: [], tools });
       };
       agent.on('tool.done', pushSchemas);
       agent.on('tool.failed', pushSchemas);

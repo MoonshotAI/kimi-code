@@ -94,7 +94,7 @@ export async function runCli(args: CliArgs): Promise<void> {
       writeDomain(event, args.json);
     });
     const ended = session.wait('turn.ended');
-    await agent.submit(createUserMessage(args.prompt), {
+    agent.submit(createUserMessage(args.prompt), {
       origin: { kind: 'user' },
       tracked: true,
     });

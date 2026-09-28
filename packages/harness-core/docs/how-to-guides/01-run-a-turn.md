@@ -56,7 +56,7 @@ agent.setCredentialProvider(createStaticCredentialProvider(model.apiKey));
 agent.setRequester(openaiProvider.requesters.openai);
 
 const ended = session.wait('turn.ended');
-const submitted = await agent.submit(createUserMessage('你好'), {
+const submitted = agent.submit(createUserMessage('你好'), {
   promptId: 'p1',
   origin: { kind: 'user' },
   tracked: true,
@@ -83,7 +83,7 @@ if (event['outcome'] !== 'done') {
 }
 ```
 
-`submit` 先订再 `send`，等到机器 `prompt.submitted` 才把该事件返回——表示命令已被接收，**不**写 journal 的 `input.submitted`，也**不**等 turn 结束。等 UI 事实用 `session.wait('turn.ended')`：它是已落盘的节点事件（`agent.on('turn.done')` 是机器载荷，区别见「两个 `on`」）。`wait` 只等之后发生的事件，先订再 `submit`。本步 assistant 落盘看 `session.on('message.appended')`；一个 turn 可以有多条。
+`submit` 先订再 `send`（同步派发），把机器 `prompt.submitted` 同步返回——表示命令已被接收，**不**写 journal 的 `input.submitted`，也**不**等 turn 结束。actor 未运行时返回 `undefined`。等 UI 事实用 `session.wait('turn.ended')`：它是已落盘的节点事件（`agent.on('turn.done')` 是机器载荷，区别见「两个 `on`」）。`wait` 只等之后发生的事件，先订再 `submit`。本步 assistant 落盘看 `session.on('message.appended')`；一个 turn 可以有多条。
 
 `get` 失败是 `undefined`。catalog 里有、树还没挂时也是 `undefined`（ensure-open 未做）。agent 用到时再 `session.create({ agentId })`：活表按 demand 生长。
 
@@ -101,20 +101,20 @@ const off = agent.on('llm.streaming.part', (event) => {
 
 ## 其余命令
 
-`setConfig` / `setCredentialProvider` / `setRequester` 不进机器，仍是同步。其余命令都是「先订再 `send`，再等对应机器回执」的 async 翻译器。
+`setConfig` / `setCredentialProvider` / `setRequester` 不进机器，仍是同步。其余命令都是「先订再 `send`，同步返回对应机器回执」的同步封装；actor 未运行时返回 `undefined`。
 
 | 要做什么 | 调用 | 进哪 |
 |---|---|---|
 | 模型 / thinking / 采样 | `setConfig(config)` | 下次 `generate` |
 | 凭证 | `setCredentialProvider(provider)` | 下次 `generate` |
 | 协议传输 | `setRequester(requester)` | 下次 `generate` |
-| 用户 prompt（占队列、可撤/可并） | `await submit(message, meta?)` → `prompt.submitted` | `queue` |
-| 不占队列的旁路说明 | `await notify(message)` → `prompt.notified` | `notifications` |
-| 按 key 覆盖一条 reminder | `await remind(key, message)` → `prompt.reminded` | `reminders` |
-| 丢掉还没开跑的一条 prompt | `await cancel(promptId)` → `prompt.cancelled` | 从 `queue` 删 |
-| 把若干排队 prompt 合成一条通知 | `await steer(id \| ids)` → `prompt.steered` | 取出后当 `notify` |
-| 打断当前 turn | `await abort(reason?)` → `agent.aborted` | `aborting` → `turn.ended` `aborted` |
-| 暂停 / 继续 | `await pause()` / `await continue()` → `agent.paused` / `agent.continued` | 立 `paused` |
+| 用户 prompt（占队列、可撤/可并） | `submit(message, meta?)` → `prompt.submitted` | `queue` |
+| 不占队列的旁路说明 | `notify(message)` → `prompt.notified` | `notifications` |
+| 按 key 覆盖一条 reminder | `remind(key, message)` → `prompt.reminded` | `reminders` |
+| 丢掉还没开跑的一条 prompt | `cancel(promptId)` → `prompt.cancelled` | 从 `queue` 删 |
+| 把若干排队 prompt 合成一条通知 | `steer(id \| ids)` → `prompt.steered` | 取出后当 `notify` |
+| 打断当前 turn | `abort(reason?)` → `agent.aborted` | `aborting` → `turn.ended` `aborted` |
+| 暂停 / 继续 | `pause()` / `continue()` → `agent.paused` / `agent.continued` | 立 `paused` |
 
 `notify` 不会单独开一个「用户回合」。`remind` 等到下一次 `turn.drain` 才进 history。已经 `running` 的那条 `cancel` 撤不掉。
 
