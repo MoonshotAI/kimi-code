@@ -197,6 +197,7 @@ async function launchTui(name: string, baseUrl: string, root: string): Promise<T
     KIMI_MODEL_PROVIDER_TYPE: 'openai',
     KIMI_MODEL_BASE_URL: baseUrl,
     KIMI_MODEL_API_KEY: 'test-key',
+    KIMI_DISABLE_TELEMETRY: '1',
   };
   const argv = [
     join(APP_ROOT, 'node_modules/.bin/tsx'),
