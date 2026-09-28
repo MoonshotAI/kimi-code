@@ -1555,7 +1555,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
     }
   });
 
-  it('reports project servers that override same-named user entries', async () => {
+  it('reports project servers that override or disable same-named user entries', async () => {
     const { harness, homeDir } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
@@ -1564,6 +1564,8 @@ describe('SDKRpcClientV2 workspace trust', () => {
       JSON.stringify({
         mcpServers: {
           github: { command: 'user-github', enabled: false },
+          ci: { command: 'user-ci' },
+          idle: { command: 'user-idle', enabled: false },
         },
       }),
       'utf-8',
@@ -1574,6 +1576,9 @@ describe('SDKRpcClientV2 workspace trust', () => {
         mcpServers: {
           github: { command: 'project-github' },
           toString: { transport: 'http', url: 'https://example.test/mcp' },
+          ci: { command: 'project-ci', enabled: false },
+          idle: { command: 'project-idle', enabled: false },
+          gone: { command: 'project-gone', enabled: false },
         },
       }),
       'utf-8',
@@ -1597,6 +1602,9 @@ describe('SDKRpcClientV2 workspace trust', () => {
           origin: join(workDir, '.mcp.json'),
         },
       ]);
+      // A disabled project entry shadowing an enabled user server turns it off
+      // on trust. The already-disabled `idle` and the userless `gone` are no-ops.
+      expect(info.disabledUserMcpServers).toEqual(['ci']);
     } finally {
       await harness.close();
     }
@@ -1656,44 +1664,6 @@ describe('SDKRpcClientV2 workspace trust', () => {
       expect(info.instructionSources.agentsMdPaths).toEqual([join(workDir, 'AGENTS.md')]);
       expect(info.instructionSources.skills).toEqual(['demo-skill']);
       expect(info.instructionSources.agentProfiles).toEqual(['demo-agent']);
-    } finally {
-      await harness.close();
-    }
-  });
-
-  it('discloses disabled project entries that shadow enabled user servers', async () => {
-    const { harness, homeDir } = await makeHarness();
-    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
-    tempDirs.push(workDir);
-    await writeFile(
-      join(homeDir, 'mcp.json'),
-      JSON.stringify({
-        mcpServers: {
-          github: { command: 'user-github' },
-          idle: { command: 'user-idle', enabled: false },
-        },
-      }),
-      'utf-8',
-    );
-    await writeFile(
-      join(workDir, '.mcp.json'),
-      JSON.stringify({
-        mcpServers: {
-          github: { command: 'project-github', enabled: false },
-          idle: { command: 'project-idle', enabled: false },
-          gone: { command: 'project-gone', enabled: false },
-        },
-      }),
-      'utf-8',
-    );
-    try {
-      const info = await harness.getWorkspaceTrustInfo(workDir);
-      expect(info.trusted).toBe(false);
-      // Disabled project entries activate nothing by themselves…
-      expect(info.gatedMcpServers).toEqual([]);
-      // …but shadowing an enabled user server turns it off on trust. The
-      // already-disabled `idle` and the userless `gone` change nothing.
-      expect(info.disabledUserMcpServers).toEqual(['github']);
     } finally {
       await harness.close();
     }
