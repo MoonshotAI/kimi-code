@@ -11,8 +11,13 @@ export type HistoryMediaSource =
   | { readonly kind: 'base64'; readonly media_type: string; readonly data: string }
   | { readonly kind: 'file' | 'session_media'; readonly file_id: string };
 
+export interface HistoryTextPartMeta {
+  readonly source?: string;
+  readonly contentType?: string;
+}
+
 export type HistoryContentPart =
-  | { readonly type: 'text'; readonly text: string }
+  | { readonly type: 'text'; readonly text: string; readonly meta?: HistoryTextPartMeta }
   | { readonly type: 'think'; readonly think: string; readonly hidden?: boolean }
   | { readonly type: 'image' | 'video' | 'audio'; readonly source: HistoryMediaSource; readonly name?: string }
   | {
@@ -23,6 +28,23 @@ export type HistoryContentPart =
       readonly size: number;
     }
   | { readonly type: string };
+
+const USER_PROMPT_SUBMIT_HOOK_SOURCE = 'user prompt submit hook';
+
+export function isUserPromptSubmitHookPart(part: { readonly type: string }): boolean {
+  return (
+    part.type === 'text' &&
+    (part as { readonly meta?: HistoryTextPartMeta }).meta?.source ===
+      USER_PROMPT_SUBMIT_HOOK_SOURCE
+  );
+}
+
+export function withoutUserPromptSubmitHookParts<T extends { readonly type: string }>(
+  content: readonly T[],
+): readonly T[] {
+  if (!content.some(isUserPromptSubmitHookPart)) return content;
+  return content.filter((part) => !isUserPromptSubmitHookPart(part));
+}
 
 export interface HistoryToolCall {
   readonly id: string;
@@ -225,7 +247,10 @@ export function groupMessagesIntoSnapshot(
   };
 
   let prevNonTaskRole: string | undefined;
-  for (const message of messages) {
+  for (const entry of messages) {
+    const content =
+      entry.content === undefined ? undefined : withoutUserPromptSubmitHookParts(entry.content);
+    const message = content === entry.content ? entry : { ...entry, content };
     if (message.role === 'system') continue;
     const originKind = message.origin?.kind;
     const isTaskOrigin =

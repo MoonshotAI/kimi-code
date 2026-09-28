@@ -369,12 +369,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
 
     const append = renderUserPromptHookResult(results);
     if (append !== undefined) {
-      this.context.append({
-        role: 'user',
-        content: [{ type: 'text', text: append.text }],
-        toolCalls: [],
-        origin: { kind: 'hook_result', event: append.event },
-      });
+      ctx.hookParts.push(...append.parts);
       void this.dispatcher.dispatch(
         new HookResult({
           agentId: this.scopeContext.agentId,

@@ -7,6 +7,7 @@ import { IFileService } from '#/app/file/fileService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type PromptHandle } from '#/agent/loop/loop';
+import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnSteer } from '#/agent/loop/turnOps';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -469,8 +470,17 @@ describe('prompt queue', () => {
     const entered = new Promise<void>((resolve) => {
       markEntered = resolve;
     });
-    loop.hooks.onBeforeSubmitPrompt.register('gate', async (_hookCtx, next) => {
+    const started: string[] = [];
+    ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
+      if (event.prompt !== undefined) started.push(event.prompt);
+    });
+    loop.hooks.onBeforeSubmitPrompt.register('gate', async (hookCtx, next) => {
       markEntered();
+      hookCtx.hookParts.push({
+        type: 'text',
+        text: '<hook_result hook_event="UserPromptSubmit">\nfrom hook\n</hook_result>',
+        meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+      });
       await new Promise<void>((resolve) => {
         releaseHook = resolve;
       });
@@ -488,6 +498,24 @@ describe('prompt queue', () => {
     await loop.promptHandle(id)!.launched;
     expect(loop.snapshot().queue).toHaveLength(0);
     await loop.settled();
+
+    const history = ctx.context.get();
+    expect(history[0]?.role).toBe('user');
+    expect(history[0]?.content).toEqual([
+      {
+        type: 'text',
+        text: '<hook_result hook_event="UserPromptSubmit">\nfrom hook\n</hook_result>',
+        meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+      },
+      { type: 'text', text: 'launching' },
+    ]);
+    expect(started).toEqual(['launching']);
+    const turnPrompt = (await ctx.persistedWireRecords()).find(
+      (record) => record.type === 'turn.prompt',
+    );
+    expect((turnPrompt as { input?: unknown } | undefined)?.input).toEqual([
+      { type: 'text', text: 'launching' },
+    ]);
   });
 
   it('delivers a blocked prompt’s compression captions inline in their host message', async () => {
