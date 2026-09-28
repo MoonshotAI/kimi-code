@@ -2006,11 +2006,16 @@ export class KimiTUI {
           videoAttachmentIds: options?.videoAttachmentIds,
         },
       ];
+      const queued = this.state.queuedMessages;
       if (backlog.length > 0) {
         this.state.queuedMessages = [];
         this.updateQueueDisplay();
       }
-      this.steerMessage(session, items);
+      this.steerMessage(session, items, () => {
+        this.requeueMessages(queued);
+        this.enqueueMessage(input, options);
+        this.updateQueueDisplay();
+      });
       return;
     }
     if (
@@ -2045,9 +2050,19 @@ export class KimiTUI {
     }
     const backlog = this.steerableBacklog();
     if (backlog === undefined || backlog.length === 0) return;
+    const queued = this.state.queuedMessages;
     this.state.queuedMessages = [];
     this.updateQueueDisplay();
-    this.steerMessage(session, backlog);
+    this.steerMessage(session, backlog, () => {
+      this.requeueMessages(queued);
+      this.updateQueueDisplay();
+    });
+  }
+
+  /** Puts messages taken out of the queue for a failed steer back at its
+   *  front, ahead of anything queued while the steer was in flight. */
+  private requeueMessages(messages: readonly QueuedMessage[]): void {
+    this.state.queuedMessages = [...messages, ...this.state.queuedMessages];
   }
 
   /** The queued backlog as steer items, or undefined when any item cannot be
@@ -2067,7 +2082,10 @@ export class KimiTUI {
     }));
   }
 
-  steerMessage(session: Session, input: readonly SteerInputItem[]): void {
+  /** `onFailure`, when given, runs after a rejected steer once the user
+   *  entries added for it are removed again, so the caller can requeue the
+   *  input instead of losing it behind an error. */
+  steerMessage(session: Session, input: readonly SteerInputItem[], onFailure?: () => void): void {
     if (this.deferUserMessages || this.state.appState.isCompacting) {
       for (const item of input) {
         this.enqueueMessage(item.text, item);
@@ -2081,8 +2099,9 @@ export class KimiTUI {
       return;
     }
 
+    const steeredEntries: TranscriptEntry[] = [];
     for (const item of input) {
-      this.appendTranscriptEntry({
+      const entry: TranscriptEntry = {
         id: nextTranscriptId(),
         kind: 'user',
         turnId: this.streamingUI.getTurnContext().turnId,
@@ -2092,7 +2111,9 @@ export class KimiTUI {
           item.imageAttachmentIds !== undefined && item.imageAttachmentIds.length > 0
             ? item.imageAttachmentIds
             : undefined,
-      });
+      };
+      steeredEntries.push(entry);
+      this.appendTranscriptEntry(entry);
     }
 
     // Dedupe per item, not across the batch: each queued message retained a
@@ -2119,8 +2140,26 @@ export class KimiTUI {
           },
     );
     this.staging.trackDispatch(stagingLease, session.steer(combineSteerInput(resolvedInput)), (error) => {
+      if (onFailure !== undefined) {
+        this.removeTranscriptEntries(steeredEntries);
+        onFailure();
+      }
       this.showError(`Failed to steer: ${formatErrorMessage(error)}`);
     });
+  }
+
+  private removeTranscriptEntries(entries: readonly TranscriptEntry[]): void {
+    const doomed = new Set(entries);
+    for (const child of [...this.state.transcriptContainer.children]) {
+      const entry = getTranscriptComponentEntry(child);
+      if (entry === undefined || !doomed.has(entry)) continue;
+      // pi-tui Container.removeChild (not a DOM node); `child.remove()` does not exist.
+      // oxlint-disable-next-line unicorn/prefer-dom-node-remove
+      this.state.transcriptContainer.removeChild(child);
+      if (hasDispose(child)) child.dispose();
+    }
+    this.state.transcriptEntries = this.state.transcriptEntries.filter((e) => !doomed.has(e));
+    this.state.ui.requestRender();
   }
 
   steerSkillActivation(session: Session, skillName: string, skillArgs: string): void {

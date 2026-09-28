@@ -3747,6 +3747,38 @@ command = "vim"
     expect(driver.state.queuedMessages).toEqual([]);
   });
 
+  it('restores the queue when steering it into a starting WaitFor fails', async () => {
+    const session = makeSession({
+      steer: vi.fn(async () => {
+        throw new Error('session closed');
+      }),
+    });
+    const { driver } = await makeDriver(session);
+    const sendQueued = vi.fn();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('first note');
+    driver.handleUserInput('second note');
+    const queued = [...driver.state.queuedMessages];
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_wait',
+        name: 'WaitFor',
+        args: { timeout: 60 },
+      } as Event,
+      sendQueued,
+    );
+
+    await vi.waitFor(() => {
+      expect(driver.state.queuedMessages).toEqual(queued);
+    });
+    expect(driver.state.transcriptEntries.filter((entry) => entry.kind === 'user')).toEqual([]);
+  });
+
   it('keeps a queue with a bash command queued when a WaitFor starts', async () => {
     const { driver, session } = await makeDriver();
     const sendQueued = vi.fn();
