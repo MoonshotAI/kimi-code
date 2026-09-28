@@ -14,6 +14,8 @@ export type HistoryMediaSource =
 export interface HistoryTextPartMeta {
   readonly source?: string;
   readonly contentType?: string;
+  readonly activationId?: string;
+  readonly [key: string]: unknown;
 }
 
 export type HistoryContentPart =
@@ -37,6 +39,41 @@ export function isUserPromptSubmitHookPart(part: { readonly type: string }): boo
     (part as { readonly meta?: HistoryTextPartMeta }).meta?.source ===
       USER_PROMPT_SUBMIT_HOOK_SOURCE
   );
+}
+
+const SKILL_ACTIVATION_PART_SOURCE = 'skill activation';
+
+export function isSkillActivationPart(part: { readonly type: string }): boolean {
+  return (
+    part.type === 'text' &&
+    (part as { readonly meta?: HistoryTextPartMeta }).meta?.source ===
+      SKILL_ACTIVATION_PART_SOURCE
+  );
+}
+
+function annotateBundledSkillParts<T extends { readonly type: string }>(
+  content: readonly T[],
+  bundledActivations: readonly BundledSkillActivation[],
+): T[] {
+  if (bundledActivations.length === 0 || content.some(isSkillActivationPart)) {
+    return [...content];
+  }
+  let index = 0;
+  return content.map((part) => {
+    const activation = bundledActivations[index];
+    if (
+      activation !== undefined &&
+      part.type === 'text' &&
+      (part as { readonly meta?: HistoryTextPartMeta }).meta?.source === undefined
+    ) {
+      index += 1;
+      return {
+        ...part,
+        meta: { source: SKILL_ACTIVATION_PART_SOURCE, activationId: activation.activationId },
+      } as T;
+    }
+    return part;
+  });
 }
 
 export function withoutUserPromptSubmitHookParts<T extends { readonly type: string }>(
@@ -259,6 +296,20 @@ export function groupMessagesIntoSnapshot(
     items.push(item);
   };
 
+  const extractBundledSkillMarkers = (message: HistoryMessage): HistoryMessage => {
+    const bundled = bundledSkillActivations(message);
+    const annotated = annotateBundledSkillParts(message.content ?? [], bundled);
+    const skillParts = annotated.filter(isSkillActivationPart);
+    bundled.forEach((activation, index) => {
+      const block = skillParts[index];
+      pushMarker('skill', {
+        text: block !== undefined && block.type === 'text' && 'text' in block ? block.text : '',
+        origin: { kind: 'skill_activation', trigger: 'user-slash', ...activation },
+      });
+    });
+    return { ...message, content: annotated.filter((part) => !isSkillActivationPart(part)) };
+  };
+
   let prevNonTaskRole: string | undefined;
   for (const entry of messages) {
     const content =
@@ -308,16 +359,7 @@ export function groupMessagesIntoSnapshot(
       const steeredRemaining = steeredByKind?.get(steerKind) ?? 0;
       if (steeredById || (steeredByKind !== undefined && steeredRemaining > 0)) {
         if (!steeredById) steeredByKind!.set(steerKind, steeredRemaining - 1);
-        const bundled = bundledSkillActivations(message);
-        const parts = message.content ?? [];
-        bundled.forEach((activation, index) => {
-          const block = parts[index];
-          pushMarker('skill', {
-            text: block !== undefined && block.type === 'text' && 'text' in block ? block.text : '',
-            origin: { kind: 'skill_activation', trigger: 'user-slash', ...activation },
-          });
-        });
-        const opening = foldTurnOpeningInput({ ...message, content: parts.slice(bundled.length) });
+        const opening = foldTurnOpeningInput(extractBundledSkillMarkers(message));
         pendingNotificationFrames.push({
           text: opening.text,
           taskId: undefined,
@@ -357,15 +399,7 @@ export function groupMessagesIntoSnapshot(
       }
       const bundled = bundledSkillActivations(message);
       if (bundled.length > 0) {
-        const parts = message.content ?? [];
-        bundled.forEach((activation, index) => {
-          const block = parts[index];
-          pushMarker('skill', {
-            text: block !== undefined && block.type === 'text' && 'text' in block ? block.text : '',
-            origin: { kind: 'skill_activation', trigger: 'user-slash', ...activation },
-          });
-        });
-        const callerMessage = { ...message, content: parts.slice(bundled.length) };
+        const callerMessage = extractBundledSkillMarkers(message);
         const opening = foldTurnOpeningInput(callerMessage);
         startTurn(mapOrigin(message), opening.text, opening.attachmentIds, triggerPromptIdOf(message));
         continue;

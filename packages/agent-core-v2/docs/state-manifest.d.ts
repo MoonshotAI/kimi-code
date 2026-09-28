@@ -727,6 +727,8 @@ export interface AgentStateSnapshot {
       meta?: /* TextPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
         source?: string;
         contentType?: string;
+        activationId?: string;
+        [key: string]: unknown;
       };
     } | /* ThinkPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'think';
@@ -1041,6 +1043,8 @@ export interface AgentStateSnapshot {
     meta?: /* TextPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
       source?: string;
       contentType?: string;
+      activationId?: string;
+      [key: string]: unknown;
     };
   } | /* ThinkPart — packages/agent-core-v2/src/human/llm/message.ts */ {
     type: 'think';
