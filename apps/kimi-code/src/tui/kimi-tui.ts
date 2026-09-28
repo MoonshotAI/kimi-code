@@ -2038,13 +2038,13 @@ export class KimiTUI {
    *  The steered items stay at the front of the queue while the steer is in
    *  flight, and the queue holds (see `shiftQueuedMessage`) so nothing queued
    *  behind them dispatches first: success removes them, failure leaves them
-   *  queued in place. Either way a queue left behind by an ended turn drains
-   *  once the steer settles. */
+   *  queued in place, and a queue left behind by an ended turn drains once
+   *  the failure lands. */
   steerQueuedMessagesIntoRunningTurn(): void {
     const session = this.session;
     if (session === undefined || this.steeringQueuedMessages.size > 0) return;
     if (!this.canSteerQueueIntoRunningTurn()) return;
-    const batch = this.state.queuedMessages;
+    const batch = [...this.state.queuedMessages];
     if (batch.length === 0 || !batch.every(isSteerableQueuedMessage)) return;
     for (const message of batch) this.steeringQueuedMessages.add(message);
     this.steerMessage(session, batch.map(toSteerInputItem), (steered) => {
@@ -2055,11 +2055,14 @@ export class KimiTUI {
         this.state.queuedMessages = this.state.queuedMessages.filter((m) => !done.has(m));
       }
       this.updateQueueDisplay();
-      if (steered && this.canSteerQueueIntoRunningTurn()) {
-        this.steerQueuedMessagesIntoRunningTurn();
+      // A successful steer is consumed by a turn — the running one, or one the
+      // engine launches for it if the loop just ended — whose end drains the
+      // rest of the queue; only a failed steer can leave the queue stranded.
+      if (!steered) {
+        this.drainQueueIfIdle();
         return;
       }
-      this.drainQueueIfIdle();
+      if (this.canSteerQueueIntoRunningTurn()) this.steerQueuedMessagesIntoRunningTurn();
     });
   }
 

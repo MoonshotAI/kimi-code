@@ -3841,6 +3841,24 @@ command = "vim"
     ]);
   });
 
+  it('steers input typed while an earlier WaitFor steer is in flight once it succeeds', async () => {
+    const steer = pendingSteer();
+    const { driver } = await makeDriver(steer.session);
+    driver.state.appState.streamingPhase = 'waiting';
+    startWaitFor(driver);
+
+    driver.handleUserInput('first');
+    driver.handleUserInput('second');
+    expect(steer.session.steer).toHaveBeenCalledTimes(1);
+    steer.resolve();
+
+    await vi.waitFor(() => {
+      expect(steer.session.steer).toHaveBeenCalledTimes(2);
+    });
+    expect(steer.session.steer).toHaveBeenNthCalledWith(2, 'second');
+    expect(driver.state.queuedMessages).toEqual([{ text: 'second', agentId: 'main' }]);
+  });
+
   it('holds the queue behind an in-flight WaitFor steer across turn end', async () => {
     const steer = pendingSteer();
     const { driver, session } = await makeDriver(steer.session);
