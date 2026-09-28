@@ -1251,6 +1251,41 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(slashTurn.steps).toHaveLength(2);
   });
 
+  it('keeps a prompt-hook injection on the user turn that triggered it', () => {
+    const hookText = '<hook_result hook_event="UserPromptSubmit">\ninjected\n</hook_result>';
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        role: 'user',
+        content: [{ type: 'text', text: hookText }],
+        toolCalls: [],
+        origin: { kind: 'hook_result', event: 'UserPromptSubmit' },
+      },
+      { role: 'user', content: [{ type: 'text', text: 'real prompt' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'real reply' }], toolCalls: [] },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: hookText }],
+        toolCalls: [],
+        origin: { kind: 'hook_result', event: 'UserPromptSubmit' },
+      },
+      { role: 'user', content: [{ type: 'text', text: 'second prompt' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'second reply' }], toolCalls: [] },
+    ]);
+
+    expect(snapshot.items.map((item) => item.kind)).toEqual(['marker', 'turn', 'marker', 'turn']);
+    const [firstMarker, firstTurn, secondMarker, secondTurn] = snapshot.items;
+    if (firstMarker?.kind !== 'marker' || secondMarker?.kind !== 'marker') throw new Error('expected marker');
+    if (firstTurn?.kind !== 'turn' || secondTurn?.kind !== 'turn') throw new Error('expected turn');
+    expect(firstMarker.marker).toBe('hook');
+    expect(firstMarker.payload).toMatchObject({ text: hookText, origin: { kind: 'hook_result' } });
+    expect(firstTurn.ordinal).toBe(0);
+    expect(firstTurn.prompt).toBe('real prompt');
+    expect(firstTurn.steps).toHaveLength(1);
+    expect(secondTurn.ordinal).toBe(1);
+    expect(secondTurn.prompt).toBe('second prompt');
+    expect(secondTurn.steps[0]?.frames[0]).toMatchObject({ kind: 'text', text: 'second reply' });
+  });
+
   it('keeps model-tool skill activations as markers even when their content matches a steer record', () => {
     const skillContent = [{ type: 'text', text: 'skill body' }];
     const snapshot = groupMessagesIntoSnapshot(
