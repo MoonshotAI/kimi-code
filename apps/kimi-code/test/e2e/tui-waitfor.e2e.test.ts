@@ -6,7 +6,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { after, bash, completeGoal, echo, hasTmux, say, scenario, waitFor } from './tui-sandbox';
+import { after, agent, bash, completeGoal, echo, hasTmux, say, scenario, waitFor } from './tui-sandbox';
 
 const ENABLED = process.env['KIMI_E2E'] === '1' && (await hasTmux());
 const WARNING = '[wait_warning]';
@@ -52,6 +52,109 @@ describe.skipIf(!ENABLED)('TUI e2e — WaitFor', () => {
 
         expect(model.userText(2)).not.toBe('Queued follow-up');
         expect(model.userText(3)).toBe('Queued follow-up');
+      },
+    ));
+  });
+
+  describe('normal mode, more', () => {
+    it('A WaitFor with nothing to wait for does not steer the queue', scenario(
+      [bash('sleep 1; echo quick ok', 'quick build'), after(4_000, waitFor(30)), after(2_000, say('Nothing to wait for.')), echo('Next turn got: ')],
+      async ({ tui, model }) => {
+        await tui.submit('Run the quick build');
+        await tui.see('bash task started in background');
+        await tui.submit('Queued follow-up');
+        await tui.see('No background tasks running', 'no-tasks-queue-intact');
+        await tui.see('Next turn got: Queued follow-up', 'follow-up-ran-as-next-turn');
+
+        expect(model.toolResult(2)).toContain('wait_status: no_tasks');
+        expect(model.userTexts(2)).not.toContain('Queued follow-up');
+      },
+    ));
+
+    it('Two messages typed during a wait both reach the model in order', scenario(
+      [build, waitFor(60), say('Got a message.'), say('Got another message.')],
+      async ({ tui, model }) => {
+        await tui.submit('Run the build and wait for it');
+        await tui.see(/Waiting \d+s \/ 1m/);
+        await tui.submit('first note');
+        await tui.submit('second note');
+
+        const delivered = (): string[] => model.sent.flatMap((request) => request.userTexts);
+        await vi.waitFor(() => expect(delivered()).toContain('second note'), { timeout: 30_000, interval: 200 });
+        await tui.see('second note', 'both-notes-delivered');
+        expect(delivered().indexOf('first note')).toBeGreaterThan(-1);
+        expect(delivered().indexOf('first note')).toBeLessThan(delivered().indexOf('second note'));
+        expect(model.toolResult(2)).toContain('wait_status: interrupted');
+      },
+    ));
+
+    it('A queued shell command keeps later input queued during a wait', scenario(
+      [build, waitFor(5), say('Wait is over.'), echo('Next turn got: ')],
+      async ({ tui, model }) => {
+        await tui.submit('Run the build and wait for it');
+        await tui.see(/Waiting \d+s \/ 5s/);
+        await tui.submit('!echo hi');
+        await tui.see('will send after current task');
+        await tui.submit('a note');
+        await tui.see('a note', 'shell-and-note-queued');
+        await tui.see('Next turn got: a note', 'ran-after-the-wait');
+
+        expect(model.toolResult(2)).toContain('wait_status: timed_out');
+        expect(model.userText(3)).toBe('a note');
+      },
+    ));
+
+    it('A finished build ends the wait and its result is delivered once', scenario(
+      [bash('sleep 3; echo build ok'), waitFor(30), say('Build finished.')],
+      async ({ tui, model }) => {
+        await tui.submit('Run the build and wait for it');
+        await tui.see('Build finished.', 'build-finished-during-wait');
+        await new Promise((done) => setTimeout(done, 3_000));
+
+        expect(model.toolResult(2)).toContain('wait_status: completed');
+        expect(model.toolResult(2)).toContain('build ok');
+        expect(model.sent).toHaveLength(3);
+      },
+    ));
+
+    it('Esc cancels a wait but leaves the build running', scenario(
+      [build, waitFor(60)],
+      async ({ tui, model }) => {
+        await tui.submit('Run the build and wait for it');
+        await tui.see(/Waiting \d+s \/ 1m/);
+        await tui.press('Escape');
+        const screen = await tui.see('Interrupted by user', 'wait-cancelled');
+        await new Promise((done) => setTimeout(done, 2_000));
+
+        expect(screen).toContain('1 task running');
+        expect(model.sent).toHaveLength(2);
+      },
+    ));
+
+    it('Repeated WaitFor with nothing to wait for still warns', scenario(
+      [waitFor(5), waitFor(5), say('Nothing was running.')],
+      async ({ tui, model }) => {
+        await tui.submit('Wait for any background work');
+        await tui.see('Nothing was running.', 'two-empty-waits');
+
+        expect(model.toolResult(1)).not.toContain(WARNING);
+        expect(model.toolResult(2)).toContain(WARNING);
+      },
+    ));
+  });
+
+  describe('subagents', () => {
+    it("Typing during a subagent's wait does not interrupt it", scenario(
+      [agent('Run the build'), build, waitFor(6), say('Sub done.'), say('Main done.'), echo('Next turn got: ')],
+      async ({ tui, model }) => {
+        await tui.submit('Delegate the build');
+        await tui.see(/Waiting \d+s \/ 6s/, undefined, 40_000);
+        await tui.submit('hello main');
+        await tui.see('ctrl-s to steer immediately', 'queued-during-subagent-wait');
+        await tui.see('Next turn got: hello main', 'ran-after-main-turn');
+
+        expect(model.toolResult(3)).toContain('wait_status: timed_out');
+        expect(model.userText(5)).toBe('hello main');
       },
     ));
   });
