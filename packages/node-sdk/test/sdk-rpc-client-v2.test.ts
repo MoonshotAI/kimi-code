@@ -1651,6 +1651,11 @@ describe('SDKRpcClientV2 workspace trust', () => {
       '---\nname: demo-agent\ndescription: Demo agent\n---\n\nYou are demo-agent.\n',
       'utf-8',
     );
+    await writeFile(
+      join(workDir, '.kimi-code', 'agents', 'clash-agent.md'),
+      '---\nname: agent\ndescription: Clashes with the builtin default without override\n---\n\nYou are not loaded.\n',
+      'utf-8',
+    );
     try {
       const info = await harness.getWorkspaceTrustInfo(workDir);
       expect(info.trusted).toBe(false);
@@ -1660,6 +1665,8 @@ describe('SDKRpcClientV2 workspace trust', () => {
       ]);
       expect(info.instructionSources.agentsMdPaths).toEqual([join(workDir, 'AGENTS.md')]);
       expect(info.instructionSources.skills).toEqual(['demo-skill']);
+      // The agent file clashing with the builtin default without override is
+      // suppressed by the session catalog, so it is not part of the disclosure.
       expect(info.instructionSources.agentProfiles).toEqual(['demo-agent']);
     } finally {
       await harness.close();

@@ -127,11 +127,7 @@ export type { AgentCommandInfo } from '@moonshot-ai/agent-core-v2/agent/command/
 
 export type { PermissionMode };
 
-/**
- * Safe description of one project-level MCP server that trusting the
- * workspace would enable. Values come from untrusted project files; secret
- * values are redacted to their key names.
- */
+/** One project-level MCP server that trusting would start; secret values are redacted to key names. */
 export interface WorkspaceTrustMcpServerInfo {
   readonly name: string;
   readonly transport: 'stdio' | 'http' | 'sse';
@@ -149,23 +145,13 @@ export interface WorkspaceTrustMcpServerInfo {
   readonly origin: string;
 }
 
-/**
- * A configured workspace.additional_dir entry that trusting would grant the
- * agent access to. `path` is the resolved configured directory; `realPath`
- * is its canonical form with symlinks resolved — the engine authorizes
- * against `realPath`, so a symlink inside the project can grant access to a
- * directory outside it.
- */
+/** A configured additional_dir entry; the engine authorizes against `realPath` (symlinks resolved). */
 export interface WorkspaceTrustAdditionalDir {
   readonly path: string;
   readonly realPath: string;
 }
 
-/**
- * Project-sourced instruction inputs that load into the agent context once
- * the workspace is trusted. They steer model behavior (prompt-level), they
- * do not execute code by themselves.
- */
+/** Project-sourced instruction inputs that steer the agent once trusted (prompt-level, no code execution). */
 export interface WorkspaceTrustInstructionSources {
   /** AGENTS.md files inside the project that will be injected into context. */
   readonly agentsMdPaths: readonly string[];
@@ -175,11 +161,7 @@ export interface WorkspaceTrustInstructionSources {
   readonly agentProfiles: readonly string[];
 }
 
-/**
- * Trust state of a workspace directory, plus everything trusting it would
- * activate. Only meaningful on the agent-core-v2 engine; the v1 engine has
- * no workspace-trust concept and reports trusted with empty lists.
- */
+/** Trust state of a workspace directory, plus everything trusting it would activate. */
 export interface WorkspaceTrustInfo {
   readonly trusted: boolean;
   /** Project-level MCP servers that trusting would start. */

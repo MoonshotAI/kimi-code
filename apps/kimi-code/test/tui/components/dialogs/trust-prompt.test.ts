@@ -69,10 +69,23 @@ describe('TrustPromptComponent', () => {
             bearerTokenEnvVar: 'MCP_TOKEN',
             origin: '/tmp/demo-workspace/.kimi-code/mcp.json',
           },
+          {
+            name: 'evil',
+            transport: 'stdio',
+            command: 'cmd\u001B[2J\u0007evil',
+            envKeys: ['SAFE', 'BAD\u0007'],
+            origin: '/tmp/demo-workspace/.mcp.json',
+          },
+          {
+            name: 'multi\nline',
+            transport: 'http',
+            url: 'https://example.test/\u001B]8;;https://evil.test\u0007',
+            origin: '/tmp/demo-workspace/.mcp.json',
+          },
         ],
         instructionSources: {
           agentsMdPaths: [],
-          skills: Array.from({ length: 12 }, (_, i) => `skill-${i}`),
+          skills: ['ski\u001B[2Jll', ...Array.from({ length: 12 }, (_, i) => `skill-${i}`)],
           agentProfiles: [],
         },
       }),
@@ -87,7 +100,13 @@ describe('TrustPromptComponent', () => {
     expect(text).toContain('root-server (http): url=https://example.test/mcp');
     expect(text).toContain('header keys: Authorization · bearer token from env MCP_TOKEN');
     expect(text).toContain('from .kimi-code/mcp.json');
-    expect(text).toContain('+4 more');
+    expect(text).toContain('+5 more');
+    // ESC and BEL are dropped, defusing the sequences into harmless literal text.
+    expect(text).toContain('evil (stdio): command=cmd[2Jevil');
+    expect(text).toContain('multiline (http): url=https://example.test/]8;;https://evil.test');
+    expect(text).toContain('env keys: SAFE, BAD');
+    expect(text).toContain('skills: ski[2Jll, skill-0');
+    expect(text).not.toContain('\u001B]8;;https://evil.test');
   });
 
   it('renders the directory and instruction sections', () => {
@@ -113,40 +132,6 @@ describe('TrustPromptComponent', () => {
     expect(text).toContain('AGENTS.md: AGENTS.md');
     expect(text).toContain('skills: deploy-prod, lint-fix');
     expect(text).toContain('agent profiles: release-manager');
-  });
-
-  it('strips terminal control characters from workspace-supplied text', () => {
-    const lines = renderLines(
-      makeInfo({
-        gatedMcpServers: [
-          {
-            name: 'evil',
-            transport: 'stdio',
-            command: 'cmd\u001B[2J\u0007evil',
-            envKeys: ['SAFE', 'BAD\u0007'],
-            origin: '/tmp/demo-workspace/.mcp.json',
-          },
-          {
-            name: 'multi\nline',
-            transport: 'http',
-            url: 'https://example.test/\u001B]8;;https://evil.test\u0007',
-            origin: '/tmp/demo-workspace/.mcp.json',
-          },
-        ],
-        instructionSources: {
-          agentsMdPaths: [],
-          skills: ['ski\u001B[2Jll'],
-          agentProfiles: [],
-        },
-      }),
-    );
-    const text = lines.join('\n');
-    // ESC and BEL are dropped, defusing the sequences into harmless literal text.
-    expect(text).toContain('evil (stdio): command=cmd[2Jevil');
-    expect(text).toContain('multiline (http): url=https://example.test/]8;;https://evil.test');
-    expect(text).toContain('env keys: SAFE, BAD');
-    expect(text).toContain('skills: ski[2Jll');
-    expect(text).not.toContain('\u001B]8;;https://evil.test');
   });
 
   it('handles key input: default trust, cursor moves, and Esc', () => {
