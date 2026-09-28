@@ -4492,6 +4492,7 @@ command = "vim"
   });
 
   it.each(['enter', 'steer'])('preserves literal leading multiline input and editor tab normalization (%s)', async (delivery) => {
+    const anyPromptId = expect.any(String);
     for (const separator of ['\n', '\t']) {
       const session = makeSession({
         listSkills: vi.fn(async () => [
@@ -4521,7 +4522,9 @@ command = "vim"
           '/skill:review    explain this', [{ name: 'review', args: 'explain this' }],
         );
         else expect(session.promptWithSkills).toHaveBeenCalledWith(
-          '/skill:review    explain this', [{ name: 'review', args: 'explain this' }], { steerIfActive: true },
+          '/skill:review    explain this',
+          [{ name: 'review', args: 'explain this' }],
+          { steerIfActive: true, promptId: anyPromptId },
         );
       }
     }
@@ -5057,7 +5060,7 @@ command = "vim"
       expect(session.promptWithSkills).toHaveBeenCalledWith(
         '/skill:review src/app.ts',
         [{ name: 'review', args: 'src/app.ts' }],
-        { steerIfActive: true },
+        { steerIfActive: true, promptId: expect.any(String) },
       );
       expect(driver.state.queuedMessages).toEqual([]);
     });
@@ -5087,7 +5090,7 @@ command = "vim"
     await vi.waitFor(() => {
       expect(session.promptWithSkills).toHaveBeenCalledWith('/skill:review', [
         expect.objectContaining({ name: 'review', path }),
-      ], { steerIfActive: true });
+      ], { steerIfActive: true, promptId: expect.any(String) });
     });
     const entry = driver.state.transcriptEntries.find((item) => item.kind === 'user' && item.content === '/skill:review');
     expect(entry?.inlineSkillActivations).toEqual([
@@ -5527,7 +5530,7 @@ command = "vim"
     expect(driver.state.livePane.mode).toBe('idle');
     expect(driver.state.queuedMessages).toEqual([]);
     expect(session.steer).toHaveBeenCalledTimes(2);
-    expect(session.steer).toHaveBeenLastCalledWith('later');
+    expect(session.steer).toHaveBeenLastCalledWith('later', { promptId: expect.any(String) });
     expect(session.promptWithSkills).not.toHaveBeenCalled();
     expect(session.prompt).not.toHaveBeenCalled();
   });
@@ -5570,8 +5573,12 @@ command = "vim"
       kind: 'user', content: 'later',
     }));
     expect(session.steer).toHaveBeenCalledTimes(2);
-    expect(session.steer).toHaveBeenLastCalledWith('later');
+    expect(session.steer).toHaveBeenLastCalledWith('later', { promptId: expect.any(String) });
     expect(session.promptWithSkills).toHaveBeenCalledOnce();
+    expect(session.promptWithSkills).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+      steerIfActive: true,
+      promptId: expect.any(String),
+    });
     expect(session.prompt).not.toHaveBeenCalled();
   });
 
@@ -5589,7 +5596,7 @@ command = "vim"
     await vi.waitFor(() => {
       expect(stripSgr(renderTranscript(driver))).toContain('Input unavailable');
     });
-    expect(session.steer).toHaveBeenCalledWith('keep this input');
+    expect(session.steer).toHaveBeenCalledWith('keep this input', { promptId: expect.any(String) });
     expect(driver.state.queuedMessages).toEqual([]);
     expect(driver.state.transcriptEntries).toContainEqual(expect.objectContaining({
       kind: 'user', content: 'keep this input',
@@ -6672,7 +6679,14 @@ command = "vim"
   });
 
   it('steers only messages ahead of a queued model switch on Ctrl-S', async () => {
-    const { driver, session } = await makeDriver();
+    let resolveSteer!: () => void;
+    const steer = vi.fn((_input: unknown, _options?: { promptId?: string }) =>
+      new Promise<void>((resolve) => {
+        resolveSteer = resolve;
+      }),
+    );
+    const session = makeSession({ steer });
+    const { driver } = await makeDriver(session);
     driver.state.appState.streamingPhase = 'waiting';
     driver.streamingUI.setTurnId('1');
     driver.handleUserInput('msg1');
@@ -6680,13 +6694,41 @@ command = "vim"
     driver.handleUserInput('msg2');
 
     driver.state.editor.onCtrlS?.();
-    await new Promise((resolve) => setImmediate(resolve));
 
-    expect(session.steer).toHaveBeenCalledWith('msg1');
+    const promptId = steer.mock.calls[0]?.[1]?.promptId;
+    expect(promptId).toEqual(expect.any(String));
+    expect(steer).toHaveBeenCalledWith('msg1', { promptId });
+    const emitQueued = (id: string) => {
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'prompt.queued',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          promptId: id,
+          content: [{ type: 'text', text: 'msg1' }],
+          queueLength: 1,
+        } as unknown as Event,
+        () => {},
+      );
+    };
+    emitQueued('another-client-prompt');
+    expect(driver.state.queuedMessages).toHaveLength(3);
+
+    vi.mocked(driver.state.ui.requestRender).mockClear();
+    emitQueued(promptId!);
+
     expect(driver.state.queuedMessages.map((item) => item.text)).toEqual([
       '/model model-b',
       'msg2',
     ]);
+    expect(driver.state.ui.requestRender).toHaveBeenCalled();
+    expect(driver.state.transcriptEntries).toContainEqual(expect.objectContaining({
+      kind: 'user',
+      content: 'msg1',
+      steerPending: true,
+    }));
+    resolveSteer();
+    await new Promise((resolve) => setImmediate(resolve));
   });
 
   it('recalls a queued model switch into the editor on up arrow', async () => {
@@ -6947,7 +6989,7 @@ command = "vim"
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(session.steer).toHaveBeenCalledTimes(1);
-    expect(session.steer).toHaveBeenCalledWith('msg1');
+    expect(session.steer).toHaveBeenCalledWith('msg1', { promptId: expect.any(String) });
     expect(driver.state.queuedMessages.map((m) => m.text)).toEqual(['/compact foo', 'msg2']);
   });
 
@@ -6981,7 +7023,7 @@ command = "vim"
       driver.state.editor.onCtrlS?.();
       await new Promise((resolve) => setImmediate(resolve));
 
-      expect(session.steer).toHaveBeenCalledWith('msg1');
+      expect(session.steer).toHaveBeenCalledWith('msg1', { promptId: expect.any(String) });
       expect(setProgramStatus).not.toHaveBeenCalledWith({ state: 'clear', id: expect.any(String) });
 
       driver.sessionEventHandler.handleEvent(
@@ -7018,7 +7060,7 @@ command = "vim"
     startWaitFor(driver);
 
     expect(session.steer).toHaveBeenCalledTimes(1);
-    expect(session.steer).toHaveBeenCalledWith('msg1');
+    expect(session.steer).toHaveBeenCalledWith('msg1', { promptId: expect.any(String) });
     await vi.waitFor(() => {
       expect(driver.state.queuedMessages.map((m) => m.text)).toEqual(['/compact foo', 'msg2']);
     });
@@ -7269,7 +7311,7 @@ command = "vim"
 
     driver.handleUserInput('second objective');
 
-    expect(session.steer).toHaveBeenCalledWith('second objective');
+    expect(session.steer).toHaveBeenCalledWith('second objective', { promptId: expect.any(String) });
     expect(session.prompt).not.toHaveBeenCalled();
     await vi.waitFor(() => {
       expect(driver.state.queuedMessages).toEqual([]);
@@ -7332,7 +7374,7 @@ command = "vim"
 
     driver.handleUserInput('stop waiting and check this');
 
-    expect(session.steer).toHaveBeenCalledWith('stop waiting and check this');
+    expect(session.steer).toHaveBeenCalledWith('stop waiting and check this', { promptId: expect.any(String) });
     expect(session.prompt).not.toHaveBeenCalled();
     await vi.waitFor(() => {
       expect(driver.state.queuedMessages).toEqual([]);
@@ -7349,7 +7391,7 @@ command = "vim"
     startWaitFor(driver);
 
     expect(session.steer).toHaveBeenCalledTimes(1);
-    expect(session.steer).toHaveBeenCalledWith('first note\n\nsecond note');
+    expect(session.steer).toHaveBeenCalledWith('first note\n\nsecond note', { promptId: expect.any(String) });
     await vi.waitFor(() => {
       expect(driver.state.queuedMessages).toEqual([]);
     });
@@ -7426,6 +7468,20 @@ command = "vim"
     driver.handleUserInput(`describe ${attachment.placeholder}`);
 
     startWaitFor(driver);
+    const promptId = (steer.session.steer.mock.calls[0] as [unknown, { promptId: string }] | undefined)?.[1].promptId;
+    expect(promptId).toEqual(expect.any(String));
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'prompt.queued',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        promptId,
+        content: [{ type: 'text', text: 'describe this video' }],
+        queueLength: 1,
+      } as unknown as Event,
+      () => {},
+    );
+    expect(driver.state.queuedMessages).toEqual([]);
     steer.reject(new Error('session closed'));
     await (driver as unknown as { staging: { drain(): Promise<void> } }).staging.drain();
     driver.sessionEventHandler.handleEvent(
@@ -7470,7 +7526,7 @@ command = "vim"
     await vi.waitFor(() => {
       expect(steer.session.steer).toHaveBeenCalledTimes(2);
     });
-    expect(steer.session.steer).toHaveBeenNthCalledWith(2, 'second');
+    expect(steer.session.steer).toHaveBeenNthCalledWith(2, 'second', { promptId: expect.any(String) });
     expect(driver.state.queuedMessages).toEqual([{ text: 'second', agentId: 'main' }]);
   });
 
@@ -7801,7 +7857,7 @@ command = "vim"
       await vi.waitFor(() => {
         expect(steer.session.steer).toHaveBeenCalledTimes(2);
       });
-      expect(steer.session.steer).toHaveBeenNthCalledWith(2, 'next objective');
+      expect(steer.session.steer).toHaveBeenNthCalledWith(2, 'next objective', { promptId: expect.any(String) });
     });
 
     it('lets the /btw panel take the draft instead of steering', async () => {
@@ -7948,7 +8004,7 @@ command = "vim"
         press(driver, 'after this turn', CTRL_Q);
         driver.state.editor.handleInput('\u0013');
 
-        expect(session.steer).toHaveBeenCalledExactlyOnceWith('after this turn');
+        expect(session.steer).toHaveBeenCalledExactlyOnceWith('after this turn', { promptId: expect.any(String) });
       });
 
       it.each([undefined, 'queue'] as const)('keeps tower Enter steering the queue with follow_up_behavior %s', async (followUpBehavior) => {
@@ -7960,7 +8016,7 @@ command = "vim"
 
         press(driver, 'next objective', '\r');
 
-        expect(session.steer).toHaveBeenCalledExactlyOnceWith('queued objective\n\nnext objective');
+        expect(session.steer).toHaveBeenCalledExactlyOnceWith('queued objective\n\nnext objective', { promptId: expect.any(String) });
         await vi.waitFor(() => {
           expect(driver.state.queuedMessages).toEqual([]);
         });
@@ -8190,7 +8246,7 @@ command = "vim"
     driver.state.appState.isCompacting = false;
     driver.handleUserInput('objective two');
 
-    expect(session.steer).toHaveBeenCalledWith('objective one\n\nobjective two');
+    expect(session.steer).toHaveBeenCalledWith('objective one\n\nobjective two', { promptId: expect.any(String) });
     expect(session.prompt).not.toHaveBeenCalled();
     await vi.waitFor(() => {
       expect(driver.state.queuedMessages).toEqual([]);
@@ -8632,7 +8688,7 @@ capabilities = ["image_in", "video_in"]
 
     driver.state.editor.onCtrlS?.();
 
-    expect(session.steer).toHaveBeenCalledWith('focus on tests');
+    expect(session.steer).toHaveBeenCalledWith('focus on tests', { promptId: expect.any(String) });
     await vi.waitFor(() => {
       expect(driver.state.queuedMessages).toEqual([
         { text: 'ls', agentId: 'main', mode: 'bash' },
@@ -8712,7 +8768,7 @@ capabilities = ["image_in", "video_in"]
     expect(session.steer).toHaveBeenCalledWith([
       { type: 'text', text: 'check ' },
       { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
-    ]);
+    ], { promptId: expect.any(String) });
   });
 
   it('steers queued image messages with their media parts', async () => {
@@ -8740,7 +8796,7 @@ capabilities = ["image_in", "video_in"]
     expect(session.steer).toHaveBeenCalledWith([
       { type: 'text', text: 'look ' },
       { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
-    ]);
+    ], { promptId: expect.any(String) });
     await vi.waitFor(() => { expect(driver.state.queuedMessages).toEqual([]); });
   });
 
@@ -8883,7 +8939,10 @@ capabilities = ["image_in", "video_in"]
 
     driver.state.editor.onCtrlS?.();
 
-    expect(session.steer).toHaveBeenCalledWith([imagePart(first.bytes), imagePart(second.bytes)]);
+    expect(session.steer).toHaveBeenCalledWith(
+      [imagePart(first.bytes), imagePart(second.bytes)],
+      { promptId: expect.any(String) },
+    );
   });
 
   it('steers a media item followed by plain text with a blank-line separator', async () => {
@@ -8913,7 +8972,7 @@ capabilities = ["image_in", "video_in"]
       { type: 'text', text: 'look ' },
       { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
       { type: 'text', text: '\n\nfocus on tests' },
-    ]);
+    ], { promptId: expect.any(String) });
   });
 
   it('steers plain text followed by a media item with a blank-line separator', async () => {
@@ -8939,7 +8998,7 @@ capabilities = ["image_in", "video_in"]
     expect(session.steer).toHaveBeenCalledWith([
       { type: 'text', text: 'hello\n\n' },
       { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
-    ]);
+    ], { promptId: expect.any(String) });
   });
 
   it('reports failed skill media argument materialization without requeuing', async () => {

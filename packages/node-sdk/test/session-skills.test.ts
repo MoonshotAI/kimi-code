@@ -323,7 +323,7 @@ describe('Session skills', () => {
     const result = await session.promptWithSkills(
       '/review src/app.ts',
       [{ name: 'review', args: 'src/app.ts' }],
-      { steerIfActive: true },
+      { steerIfActive: true, promptId: 'prompt-client-skill' },
     );
     expect(result).toEqual(submission);
     expect(promptWithSkills).toHaveBeenLastCalledWith({
@@ -331,6 +331,7 @@ describe('Session skills', () => {
       input: [{ type: 'text', text: '/review src/app.ts' }],
       skills: [{ name: 'review', args: 'src/app.ts' }],
       steerIfActive: true,
+      promptId: 'prompt-client-skill',
     });
 
     await session.promptWithSkills('again', [{ name: 'review' }], { steerIfActive: false });
