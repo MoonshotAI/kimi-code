@@ -110,7 +110,6 @@ export function startWaitProgress(
   const tick = (): void => {
     onUpdate(waitForProgressUpdate(args, tasks.list(true).length, startedAt, Date.now()));
   };
-  tick();
   const interval = setInterval(tick, PROGRESS_INTERVAL_MS);
   interval.unref?.();
   return {

@@ -866,6 +866,22 @@ describe('WaitForTool', () => {
     });
   });
 
+  it('reports no progress for a wait that returns at once', async () => {
+    const tasks = new FakeTaskService();
+    const taskId = tasks.add(
+      processTask({ taskId: 'bash-done0003', status: 'completed', endedAt: 1_700_000_001_000, exitCode: 0 }),
+      outputSnapshot('DONE\n'),
+    );
+    const onUpdate = vi.fn();
+
+    await executeTool(new WaitForTool(tasks, recordingTelemetry([]), stubFlag(true), stubGoal(), agentScope()), {
+      ...context('wait_done_at_once', { timeout: 10, task_id: taskId }),
+      onUpdate,
+    });
+
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+
   it('reports tasks that finished during the wait and marks all of them delivered', async () => {
     const tasks = new FakeTaskService();
     tasks.add(processTask({ taskId: 'bash-wait001', description: 'main wait' }), outputSnapshot('WAITED-OUT\n'));
