@@ -3868,7 +3868,7 @@ command = "vim"
     );
   }
 
-  it('dispatches failed WaitFor input right away when the turn ended meanwhile', async () => {
+  it('dispatches failed WaitFor input with its media right away when the turn ended meanwhile', async () => {
     let rejectSteer!: (error: Error) => void;
     const session = makeSession({
       steer: vi.fn(
@@ -3878,17 +3878,28 @@ command = "vim"
           }),
       ),
     });
-    const { driver } = await makeDriver(session);
+    const { driver, harness } = await makeDriver(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addVideo('video/mp4', '/tmp/clip.mp4');
+    imageStore.completeVideo(attachment, { fileId: 'file-v1' });
     driver.state.appState.streamingPhase = 'waiting';
     startWaitFor(driver);
-    driver.handleUserInput('check this first');
+    driver.handleUserInput(`describe ${attachment.placeholder}`);
 
-    driver.state.appState.streamingPhase = 'idle';
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'cancelled' } as Event,
+      () => {},
+    );
+    expect(harness.deleteFile).not.toHaveBeenCalledWith('file-v1');
     rejectSteer(new Error('turn cancelled'));
 
     await vi.waitFor(() => {
-      expect(session.prompt).toHaveBeenCalledWith('check this first', expect.anything());
+      expect(session.prompt).toHaveBeenCalledTimes(1);
     });
+    const parts = vi.mocked(session.prompt).mock.calls[0]?.[0] as Array<{ type: string; videoUrl?: { url: string } }>;
+    expect(parts).toContainEqual({ type: 'video_url', videoUrl: { url: 'kimi-file://file-v1' } });
+    await (driver as unknown as { staging: { drain(): Promise<void> } }).staging.drain();
+    expect(harness.deleteFile).not.toHaveBeenCalledWith('file-v1');
     expect(driver.state.queuedMessages).toEqual([]);
   });
 
