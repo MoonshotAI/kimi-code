@@ -533,15 +533,19 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     ]);
 
     const kinds = snapshot.items.map((i) => i.kind);
-    expect(kinds).toEqual(['turn', 'turn', 'marker', 'turn']);
-    const firstTurn = snapshot.items[0];
+    expect(kinds).toEqual(['marker', 'turn', 'turn', 'marker', 'turn']);
+    const hookMarker = snapshot.items[0];
+    if (hookMarker?.kind !== 'marker') throw new Error('expected marker');
+    expect(hookMarker.marker).toBe('hook');
+    expect(hookMarker.payload).toEqual({ hookEvent: 'UserPromptSubmit', content: 'noise' });
+    const firstTurn = snapshot.items[1];
     if (firstTurn?.kind !== 'turn') throw new Error('expected turn');
     expect(firstTurn.prompt).toBe('hello');
     expect(firstTurn.steps).toHaveLength(2);
     const tool = firstTurn.steps[0]?.frames.find((f) => f.kind === 'tool');
     expect(tool?.kind === 'tool' && tool.output).toBe('file body');
     expect(tool?.kind === 'tool' && tool.input).toEqual({ path: '/a' });
-    const marker = snapshot.items[2];
+    const marker = snapshot.items[3];
     expect(marker?.kind === 'marker' && marker.marker).toBe('compaction');
   });
 
@@ -670,7 +674,10 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
       { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), new Map([['user', 1]])]]) },
     );
 
-    expect(snapshot.items.map((i) => i.kind)).toEqual(['turn']);
+    expect(snapshot.items.map((i) => i.kind)).toEqual(['turn', 'marker']);
+    const hookMarker = snapshot.items[1];
+    if (hookMarker?.kind !== 'marker') throw new Error('expected marker');
+    expect(hookMarker.marker).toBe('hook');
     const turn = snapshot.items[0];
     if (turn?.kind !== 'turn') throw new Error('expected turn');
     const lastStep = turn.steps.at(-1);

@@ -46,6 +46,19 @@ export function withoutUserPromptSubmitHookParts<T extends { readonly type: stri
   return content.filter((part) => !isUserPromptSubmitHookPart(part));
 }
 
+const USER_PROMPT_HOOK_RESULT_WRAPPER_RE =
+  /^<hook_result hook_event="UserPromptSubmit">\n([\s\S]*)\n<\/hook_result>$/;
+
+function userPromptSubmitHookMarkerPayload(part: { readonly type: string }): {
+  readonly hookEvent: string;
+  readonly content: string;
+} {
+  const text = (part as { readonly text?: unknown }).text;
+  const raw = typeof text === 'string' ? text : '';
+  const match = USER_PROMPT_HOOK_RESULT_WRAPPER_RE.exec(raw);
+  return { hookEvent: 'UserPromptSubmit', content: match?.[1] ?? raw };
+}
+
 export interface HistoryToolCall {
   readonly id: string;
   readonly name: string;
@@ -250,6 +263,10 @@ export function groupMessagesIntoSnapshot(
   for (const entry of messages) {
     const content =
       entry.content === undefined ? undefined : withoutUserPromptSubmitHookParts(entry.content);
+    const hookParts =
+      entry.content === undefined || content === entry.content
+        ? []
+        : entry.content.filter(isUserPromptSubmitHookPart);
     const message = content === entry.content ? entry : { ...entry, content };
     if (message.role === 'system') continue;
     const originKind = message.origin?.kind;
@@ -259,6 +276,9 @@ export function groupMessagesIntoSnapshot(
     if (!isTaskOrigin) prevNonTaskRole = message.role;
 
     if (message.role === 'user') {
+      for (const part of hookParts) {
+        pushMarker('hook', userPromptSubmitHookMarkerPayload(part));
+      }
       if (originKind !== undefined && HIDDEN_USER_ORIGINS.has(originKind)) {
         if (opensOwnTurn(message)) {
           const opening =

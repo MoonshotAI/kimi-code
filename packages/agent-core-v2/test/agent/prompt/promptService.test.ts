@@ -509,11 +509,18 @@ describe('prompt queue', () => {
       },
       { type: 'text', text: 'launching' },
     ]);
-    expect(started).toEqual(['launching']);
+    expect(started).toEqual([
+      '<hook_result hook_event="UserPromptSubmit">\nfrom hook\n</hook_result>launching',
+    ]);
     const turnPrompt = (await ctx.persistedWireRecords()).find(
       (record) => record.type === 'turn.prompt',
     );
     expect((turnPrompt as { input?: unknown } | undefined)?.input).toEqual([
+      {
+        type: 'text',
+        text: '<hook_result hook_event="UserPromptSubmit">\nfrom hook\n</hook_result>',
+        meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+      },
       { type: 'text', text: 'launching' },
     ]);
   });

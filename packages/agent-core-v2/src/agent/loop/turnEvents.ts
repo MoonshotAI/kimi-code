@@ -51,9 +51,9 @@ export function turnPromptText(
   origin?: PromptOrigin,
 ): string | undefined {
   const bundledBlocks = origin?.kind === 'user' ? (origin.skillActivations?.length ?? 0) : 0;
-  const text = input
-    .filter((part): part is TextPart => part.type === 'text' && !isUserPromptSubmitHookPart(part))
-    .slice(bundledBlocks)
+  const parts = input.filter((part): part is TextPart => part.type === 'text');
+  const callerParts = parts.filter((part) => !isUserPromptSubmitHookPart(part));
+  const text = [...parts.filter(isUserPromptSubmitHookPart), ...callerParts.slice(bundledBlocks)]
     .map((part) => part.text)
     .join('');
   return text.length > 0 ? text : undefined;

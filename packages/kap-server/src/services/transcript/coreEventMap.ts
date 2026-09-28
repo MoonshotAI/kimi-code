@@ -525,7 +525,7 @@ export class AgentTranscriptProjector {
       ordinal,
       state: 'running',
       origin: mapTurnOrigin(event.origin),
-      prompt: event.prompt,
+      prompt: stripLeadingUserPromptHookResults(event.prompt),
       attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
       startedAt: nowIso(),
     };
@@ -1661,6 +1661,15 @@ export class AgentTranscriptProjector {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+const LEADING_USER_PROMPT_HOOK_RESULTS_RE =
+  /^(?:<hook_result hook_event="UserPromptSubmit">\n[\s\S]*?\n<\/hook_result>)+/;
+
+function stripLeadingUserPromptHookResults(prompt: string | undefined): string | undefined {
+  if (prompt === undefined) return undefined;
+  const stripped = prompt.replace(LEADING_USER_PROMPT_HOOK_RESULTS_RE, '');
+  return stripped.length > 0 ? stripped : undefined;
 }
 
 function isTerminalPromptStatus(status: TranscriptPrompt['status']): boolean {

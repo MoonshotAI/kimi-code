@@ -1200,6 +1200,14 @@ describe('KimiTUI resume message replay', () => {
       message('user', [{ type: 'text', text: hookResult }], {
         origin: { kind: 'hook_result', event: 'UserPromptSubmit' },
       }),
+      message('user', [
+        {
+          type: 'text',
+          text: '<hook_result hook_event="UserPromptSubmit">\nmerged hook note\n</hook_result>',
+          meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+        } as ContentPart,
+        { type: 'text', text: 'merged prompt' },
+      ]),
     ]);
 
     const transcript = driver.state.transcriptContainer.render(120).join('\n');
@@ -1207,6 +1215,12 @@ describe('KimiTUI resume message replay', () => {
     expect(transcript).toContain('UserPromptSubmit hook');
     expect(transcript).toContain('hook response 1');
     expect(transcript).toContain('hook response 2');
+    expect(transcript).toContain('merged hook note');
+    expect(
+      driver.state.transcriptEntries
+        .filter((entry) => entry.kind === 'user')
+        .map((entry) => entry.content),
+    ).toEqual(['prompt', 'merged prompt']);
   });
 
   it('renders replayed compaction records as completed compaction blocks', async () => {
