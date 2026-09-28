@@ -6,9 +6,7 @@ import type { HistoryMessage } from './turn';
 const textPartSchema = z.object({
   type: z.literal('text'),
   text: z.string(),
-  meta: z
-    .looseObject({ source: z.string().optional(), contentType: z.string().optional() })
-    .optional(),
+  meta: z.record(z.string(), z.unknown()).optional(),
 });
 const thinkPartSchema = z.object({
   type: z.literal('think'),
