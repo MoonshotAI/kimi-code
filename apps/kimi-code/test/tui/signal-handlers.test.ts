@@ -50,8 +50,8 @@ function makeHarness() {
     getWorkspaceTrustInfo: vi.fn(async () => ({
       trusted: true,
       gatedMcpServers: [],
-      gatedAdditionalDirs: [], disabledUserMcpServers: [],
-      instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] }, disclosureComplete: true,
+      gatedAdditionalDirs: [],
+      instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
     })),
     auth: {
       status: vi.fn(async () => ({ providers: [] })),

@@ -210,7 +210,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
     getExperimentalFeatures: vi.fn(async () => []),
-    getWorkspaceTrustInfo: vi.fn(async () => ({ trusted: true, gatedMcpServers: [], gatedAdditionalDirs: [], disabledUserMcpServers: [], instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] }, disclosureComplete: true })),
+    getWorkspaceTrustInfo: vi.fn(async () => ({ trusted: true, gatedMcpServers: [], gatedAdditionalDirs: [], instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] } })),
     supportsAtomicSectionReplace: vi.fn(() => false),
     auth: {
       status: vi.fn(async () => ({ providers: [] })),
@@ -2428,8 +2428,8 @@ describe('KimiTUI startup', () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: true,
       gatedMcpServers: [],
-      gatedAdditionalDirs: [], disabledUserMcpServers: [],
-      instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] }, disclosureComplete: true,
+      gatedAdditionalDirs: [],
+      instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
       }));
     const harness = makeHarness(makeSession(), { getWorkspaceTrustInfo });
     const driver = makeDriver(harness, {
@@ -2459,8 +2459,8 @@ describe('KimiTUI startup', () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: false,
       gatedMcpServers: [],
-      gatedAdditionalDirs: [], disabledUserMcpServers: [],
-      instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] }, disclosureComplete: true,
+      gatedAdditionalDirs: [],
+      instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
       }));
     const trustWorkspace = vi.fn(async () => {});
     const harness = makeHarness(makeSession(), { getWorkspaceTrustInfo, trustWorkspace });
@@ -2533,8 +2533,8 @@ describe('KimiTUI startup', () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: false,
       gatedMcpServers: [],
-      gatedAdditionalDirs: [], disabledUserMcpServers: [],
-      instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] }, disclosureComplete: true,
+      gatedAdditionalDirs: [],
+      instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
       }));
     const trustWorkspace = vi.fn(async (): Promise<void> => {
       throw new Error('disk full');

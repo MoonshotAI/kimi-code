@@ -1,0 +1,167 @@
+import { isAbsolute, relative } from 'pathe';
+
+import type { ILogService } from '#/_base/log/log';
+import type { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
+import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { findGitWorkTree } from '#/app/git/workTree';
+import { loadMcpServersDetailed, resolveMcpJsonPaths } from '#/app/mcpConfig/configLoader';
+import type { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
+import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
+import type { McpServerConfig } from '#/mcpCore/config-schema';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
+import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
+
+import type {
+  IWorkspaceTrustDisclosure,
+  TrustGatedActivation,
+  TrustGatedAdditionalDir,
+  TrustGatedInstructionSources,
+  TrustGatedMcpServer,
+} from './trustDisclosure';
+import type { IWorkspaceTrust } from './workspaceTrust';
+
+const EMPTY_INSTRUCTION_SOURCES: TrustGatedInstructionSources = {
+  agentsMdPaths: [],
+  skills: [],
+  agentProfiles: [],
+};
+
+const EMPTY_ACTIVATION: TrustGatedActivation = {
+  mcpServers: [],
+  additionalDirs: [],
+  instructionSources: EMPTY_INSTRUCTION_SOURCES,
+};
+
+export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosure {
+  declare readonly _serviceBrand: undefined;
+
+  constructor(
+    private readonly workspaceId: string,
+    private readonly context: IWorkspaceContext,
+    private readonly fs: IHostFileSystem,
+    private readonly bootstrap: IBootstrapService,
+    private readonly localConfig: IProjectLocalConfigService,
+    private readonly trust: IWorkspaceTrust,
+    private readonly skills: IWorkspaceSkillCatalog,
+    private readonly agentProfilesLoader: IWorkspaceAgentProfileLoader,
+    private readonly agentProfilesRegistry: IAgentProfileRegistry,
+    private readonly instructions: IWorkspaceInstructionsService,
+    private readonly log: ILogService,
+  ) {}
+
+  async describeGatedActivation(): Promise<TrustGatedActivation> {
+    await this.trust.ready;
+    if (this.trust.isTrusted()) return EMPTY_ACTIVATION;
+    const [mcpServers, additionalDirs, instructionSources] = await Promise.all([
+      this.describeGatedMcpServers().catch((error: unknown) => {
+        this.log.warn(`trust disclosure: MCP scan failed: ${String(error)}`);
+        return [];
+      }),
+      this.readGatedAdditionalDirs().catch((error: unknown) => {
+        this.log.warn(`trust disclosure: additional dirs scan failed: ${String(error)}`);
+        return [];
+      }),
+      this.describeInstructionSources().catch((error: unknown) => {
+        this.log.warn(`trust disclosure: instruction sources scan failed: ${String(error)}`);
+        return EMPTY_INSTRUCTION_SOURCES;
+      }),
+    ]);
+    return { mcpServers, additionalDirs, instructionSources };
+  }
+
+  private async describeGatedMcpServers(): Promise<readonly TrustGatedMcpServer[]> {
+    const cwd = this.context.cwd;
+    const homeDir = this.bootstrap.homeDir;
+    const [paths, loaded] = await Promise.all([
+      resolveMcpJsonPaths({ fs: this.fs, cwd, homeDir }),
+      loadMcpServersDetailed({ fs: this.fs, cwd, homeDir, includeProject: true }),
+    ]);
+    const projectPaths = new Set([paths.projectRoot, paths.project]);
+    return Object.entries(loaded.servers)
+      .filter(([name]) => projectPaths.has(loaded.origins[name] ?? ''))
+      .filter(([, config]) => config.enabled !== false)
+      .map(([name, config]) => describeMcpServer(name, config, loaded.origins[name] ?? ''))
+      .toSorted((a, b) => a.name.localeCompare(b.name));
+  }
+
+  private async readGatedAdditionalDirs(): Promise<readonly TrustGatedAdditionalDir[]> {
+    const result = await this.localConfig.readAdditionalDirs(this.context.cwd);
+    const realRoot = await realpathOrSelf(this.fs, result.projectRoot);
+    const dirs: TrustGatedAdditionalDir[] = [];
+    for (const dir of result.additionalDirs) {
+      const realPath = await realpathOrSelf(this.fs, dir);
+      if (isInsideOrEqualDir(realPath, realRoot)) continue;
+      dirs.push({ path: dir, realPath });
+    }
+    return dirs;
+  }
+
+  private async describeInstructionSources(): Promise<TrustGatedInstructionSources> {
+    await Promise.all([
+      this.skills.ready,
+      this.agentProfilesLoader.ready,
+      this.instructions.ready,
+    ]);
+    const projectRoot =
+      (await findGitWorkTree(this.fs, this.context.cwd))?.root ?? this.context.cwd;
+    const skills = this.skills.catalog
+      .listSkills()
+      .filter((skill) => skill.source === 'project')
+      .map((skill) => skill.name)
+      .toSorted();
+    const agentProfiles = this.agentProfilesRegistry
+      .entries()
+      .filter(
+        (entry) =>
+          entry.sourceId === 'workspace' &&
+          (entry.workspaceKey === undefined || entry.workspaceKey === this.workspaceId),
+      )
+      .flatMap((entry) => entry.contribution.profiles.map((profile) => profile.name))
+      .toSorted();
+    const agentsMdPaths = (this.instructions.snapshot.agentsMdPaths ?? [])
+      .filter((path) => isInsideOrEqualDir(path, projectRoot))
+      .toSorted();
+    return { agentsMdPaths, skills, agentProfiles };
+  }
+}
+
+function describeMcpServer(
+  name: string,
+  config: McpServerConfig,
+  origin: string,
+): TrustGatedMcpServer {
+  if (config.transport === 'stdio') {
+    return {
+      name,
+      transport: config.transport,
+      command: config.command,
+      args: config.args,
+      cwd: config.cwd,
+      envKeys: config.env === undefined ? undefined : Object.keys(config.env),
+      origin,
+    };
+  }
+  return {
+    name,
+    transport: config.transport,
+    url: config.url,
+    headerKeys: config.headers === undefined ? undefined : Object.keys(config.headers),
+    bearerTokenEnvVar: config.bearerTokenEnvVar,
+    origin,
+  };
+}
+
+async function realpathOrSelf(fs: IHostFileSystem, dir: string): Promise<string> {
+  try {
+    return await fs.realpath(dir);
+  } catch {
+    return dir;
+  }
+}
+
+function isInsideOrEqualDir(child: string, parent: string): boolean {
+  const rel = relative(parent, child);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}

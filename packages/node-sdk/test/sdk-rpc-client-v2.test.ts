@@ -1555,7 +1555,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
     }
   });
 
-  it('reports project servers that override or disable same-named user entries', async () => {
+  it('reports project servers that override same-named user entries', async () => {
     const { harness, homeDir } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
@@ -1564,8 +1564,6 @@ describe('SDKRpcClientV2 workspace trust', () => {
       JSON.stringify({
         mcpServers: {
           github: { command: 'user-github', enabled: false },
-          ci: { command: 'user-ci' },
-          idle: { command: 'user-idle', enabled: false },
         },
       }),
       'utf-8',
@@ -1576,9 +1574,6 @@ describe('SDKRpcClientV2 workspace trust', () => {
         mcpServers: {
           github: { command: 'project-github' },
           toString: { transport: 'http', url: 'https://example.test/mcp' },
-          ci: { command: 'project-ci', enabled: false },
-          idle: { command: 'project-idle', enabled: false },
-          gone: { command: 'project-gone', enabled: false },
         },
       }),
       'utf-8',
@@ -1602,9 +1597,6 @@ describe('SDKRpcClientV2 workspace trust', () => {
           origin: join(workDir, '.mcp.json'),
         },
       ]);
-      // A disabled project entry shadowing an enabled user server turns it off
-      // on trust. The already-disabled `idle` and the userless `gone` are no-ops.
-      expect(info.disabledUserMcpServers).toEqual(['ci']);
     } finally {
       await harness.close();
     }
@@ -1621,9 +1613,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
         trusted: false,
         gatedMcpServers: [],
         gatedAdditionalDirs: [],
-        disabledUserMcpServers: [],
         instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
-        disclosureComplete: false,
       });
     } finally {
       await harness.close();
@@ -1659,7 +1649,6 @@ describe('SDKRpcClientV2 workspace trust', () => {
     try {
       const info = await harness.getWorkspaceTrustInfo(workDir);
       expect(info.trusted).toBe(false);
-      expect(info.disclosureComplete).toBe(true);
       expect(info.gatedAdditionalDirs).toEqual([
         { path: outsideDir, realPath: await realpath(outsideDir) },
       ]);
@@ -1692,7 +1681,6 @@ describe('SDKRpcClientV2 workspace trust', () => {
     try {
       const info = await harness.getWorkspaceTrustInfo(workDir);
       expect(info.trusted).toBe(false);
-      expect(info.disclosureComplete).toBe(true);
       expect(info.gatedAdditionalDirs).toEqual([
         { path: join(workDir, 'linked-dir'), realPath: await realpath(join(workDir, 'linked-dir')) },
       ]);
@@ -1711,9 +1699,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
         trusted: true,
         gatedMcpServers: [],
         gatedAdditionalDirs: [],
-        disabledUserMcpServers: [],
         instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
-        disclosureComplete: true,
       });
       // The trust marker lives in the kimi home, never in the checkout.
       const markers = await readdir(join(homeDir, 'workspace-trust'));

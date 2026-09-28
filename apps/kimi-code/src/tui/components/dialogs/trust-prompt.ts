@@ -107,13 +107,7 @@ export class TrustPromptComponent implements Component, Focusable {
   }
 
   private renderDisclosure(width: number): string[] {
-    const {
-      gatedMcpServers,
-      gatedAdditionalDirs,
-      disabledUserMcpServers,
-      instructionSources,
-      disclosureComplete,
-    } = this.opts.info;
+    const { gatedMcpServers, gatedAdditionalDirs, instructionSources } = this.opts.info;
     const lines: string[] = [];
     const wrap = (text: string, indent: number): string[] =>
       wrapTextWithAnsi(text, Math.max(20, width - indent)).map(
@@ -123,18 +117,14 @@ export class TrustPromptComponent implements Component, Focusable {
     const hasContent =
       gatedMcpServers.length > 0 ||
       gatedAdditionalDirs.length > 0 ||
-      disabledUserMcpServers.length > 0 ||
       instructionSources.agentsMdPaths.length > 0 ||
       instructionSources.skills.length > 0 ||
       instructionSources.agentProfiles.length > 0;
 
     if (!hasContent) {
-      // The empty claim is only honest when discovery actually finished;
-      // a timed-out or failed scan must say so instead of claiming nothing.
-      const text = disclosureComplete
-        ? 'No project-level config found here. Kimi Code will read, edit, and run files in this folder, subject to your approvals. Project config added later (MCP servers, extra directories, instructions) applies automatically once this folder is trusted.'
-        : "Still scanning this folder's project config, so disclosure may be incomplete.";
-      return wrapTextWithAnsi(text, Math.max(20, width - 2)).map(
+      const empty =
+        'No project-level config found here. Kimi Code will read, edit, and run files in this folder, subject to your approvals. Project config added later (MCP servers, extra directories, instructions) applies automatically once this folder is trusted.';
+      return wrapTextWithAnsi(empty, Math.max(20, width - 2)).map(
         (line) => ` ${currentTheme.fg('textMuted', line)}`,
       );
     }
@@ -154,22 +144,6 @@ export class TrustPromptComponent implements Component, Focusable {
       }
       if (gatedMcpServers.length > MAX_MCP_SERVERS) {
         lines.push(...wrap(`…and ${gatedMcpServers.length - MAX_MCP_SERVERS} more`, 3));
-      }
-    }
-
-    if (disabledUserMcpServers.length > 0) {
-      lines.push('');
-      lines.push(
-        ...wrap(
-          `Turn off ${disabledUserMcpServers.length} user-level MCP ${disabledUserMcpServers.length === 1 ? 'server' : 'servers'} (disabled by project config):`,
-          1,
-        ),
-      );
-      for (const name of disabledUserMcpServers.slice(0, MAX_MCP_SERVERS)) {
-        lines.push(...wrap(sanitizeForDisplay(name), 3));
-      }
-      if (disabledUserMcpServers.length > MAX_MCP_SERVERS) {
-        lines.push(...wrap(`…and ${disabledUserMcpServers.length - MAX_MCP_SERVERS} more`, 3));
       }
     }
 
@@ -198,13 +172,6 @@ export class TrustPromptComponent implements Component, Focusable {
         ...wrap('Feed the agent instructions that steer its behavior; approvals still apply:', 1),
       );
       lines.push(...instructionLines);
-    }
-
-    if (!disclosureComplete) {
-      lines.push('');
-      lines.push(
-        ...wrap("Still scanning this folder's project config, so disclosure may be incomplete.", 1),
-      );
     }
 
     return lines;

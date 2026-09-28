@@ -128,19 +128,13 @@
  *   interaction bridge already relies on.
  */
 import { readdir } from 'node:fs/promises';
-import { isAbsolute, join, relative } from 'node:path';
+import { join } from 'node:path';
 
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
-import {
-  loadMcpServers,
-  loadMcpServersDetailed,
-  resolveMcpJsonPaths,
-} from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
-import { findGitWorkTree } from '@moonshot-ai/agent-core-v2/app/git/workTree';
+import { loadMcpServers } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
 import { fsSuggestRequestSchema } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
 import { IAppendLogStore } from '@moonshot-ai/agent-core-v2/persistence/interface/appendLogStore';
-import type { McpServerConfig as WorkspaceMcpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
 import {
   bootstrap,
   DEFAULT_AGENT_PROFILE_NAME,
@@ -212,10 +206,8 @@ import {
   PRINT_WAIT_CEILING_S_DEFAULT,
   ProfileError,
   ProfileErrors,
-  type Program,
   Error2 as V2Error2,
   ErrorCodes as V2ErrorCodes,
-  FileProjectLocalConfigService,
   resolveAgentTaskConfig,
   resolveConfigPath,
   resolveKimiHome,
@@ -325,10 +317,8 @@ import type {
   SuggestFilesResult,
   TelemetryClient,
   UploadFileOptions,
-  WorkspaceTrustAdditionalDir,
   WorkspaceTrustInfo,
   WorkspaceTrustInstructionSources,
-  WorkspaceTrustMcpServerInfo,
 } from '#/types';
 import {
   diagnosticsToConfigDiagnostics,
@@ -693,14 +683,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * klient has no workspace-trust facade; composed directly from the engine
    * via {@link engineAccessor} — the same `handlerFor({ root })` path
    * `createSession` takes (materializing the workspace handler is a no-op
-   * cost here: session creation does it anyway). The disclosure lists what
-   * trusting would activate: the gated-server list is the final merged
-   * config entries whose origins are project files (the workspaceTrust gate
-   * inside the engine's `workspaceMcpConfig`), excluding disabled entries
-   * that never connect, plus the project's additional directories and
-   * instruction sources. Every section is
-   * computed best-effort: an unreadable/invalid project file degrades that
-   * section to an empty list rather than failing the caller.
+   * cost here: session creation does it anyway). The disclosure of what
+   * trusting would activate is computed inside the engine by
+   * `WorkspaceTrustDisclosureService`, best-effort per section.
    */
   override async getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo> {
     const handler = await this.engineAccessor
@@ -712,37 +697,15 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         trusted: true,
         gatedMcpServers: [],
         gatedAdditionalDirs: [],
-        disabledUserMcpServers: [],
         instructionSources: EMPTY_INSTRUCTION_SOURCES,
-        disclosureComplete: true,
       };
     }
-    const fs = this.engineAccessor.get(IHostFileSystem);
-    const bootstrap = this.engineAccessor.get(IBootstrapService);
-    const [mcp, dirs, instructions] = await Promise.all([
-      withDisclosureDeadline(
-        describeGatedMcpServers(fs, workDir, this.homeDir).then((v) => ({ complete: true, v })),
-        { servers: [], disabledUserServers: [] },
-      ),
-      withDisclosureDeadline(
-        readGatedAdditionalDirs(fs, bootstrap, workDir).then((v) => ({ complete: true, v })),
-        [],
-      ),
-      withDisclosureDeadline(
-        describeInstructionSources(handler.program, fs, workDir).then(({ sources, complete }) => ({
-          complete,
-          v: sources,
-        })),
-        EMPTY_INSTRUCTION_SOURCES,
-      ),
-    ]);
+    const activation = await handler.program.trustDisclosure.describeGatedActivation();
     return {
       trusted: false,
-      gatedMcpServers: mcp.v.servers,
-      gatedAdditionalDirs: dirs.v,
-      disabledUserMcpServers: mcp.v.disabledUserServers,
-      instructionSources: instructions.v,
-      disclosureComplete: mcp.complete && dirs.complete && instructions.complete,
+      gatedMcpServers: activation.mcpServers,
+      gatedAdditionalDirs: activation.additionalDirs,
+      instructionSources: activation.instructionSources,
     };
   }
 
@@ -2903,166 +2866,3 @@ const EMPTY_INSTRUCTION_SOURCES: WorkspaceTrustInstructionSources = {
   agentProfiles: [],
 };
 
-interface GatedMcpServers {
-  readonly servers: readonly WorkspaceTrustMcpServerInfo[];
-  readonly disabledUserServers: readonly string[];
-}
-
-async function describeGatedMcpServers(
-  fs: IHostFileSystem,
-  workDir: string,
-  homeDir: string | undefined,
-): Promise<GatedMcpServers> {
-  const [paths, projectLoad, userLoad] = await Promise.all([
-    resolveMcpJsonPaths({ fs, cwd: workDir, homeDir }),
-    loadMcpServersDetailed({ fs, cwd: workDir, homeDir, includeProject: true }),
-    loadMcpServersDetailed({ fs, cwd: workDir, homeDir, includeProject: false }),
-  ]);
-  const projectPaths = new Set([paths.projectRoot, paths.project]);
-  const enabledUserNames = new Set(
-    Object.entries(userLoad.servers)
-      .filter(([, config]) => config.enabled !== false)
-      .map(([name]) => name),
-  );
-  const servers: WorkspaceTrustMcpServerInfo[] = [];
-  const disabledUserServers: string[] = [];
-  for (const [name, config] of Object.entries(projectLoad.servers)) {
-    if (!projectPaths.has(projectLoad.origins[name] ?? '')) continue;
-    if (config.enabled === false) {
-      // A disabled project entry activates nothing by itself, but when it
-      // shadows an enabled user-level server, trusting turns that server off.
-      if (enabledUserNames.has(name)) disabledUserServers.push(name);
-      continue;
-    }
-    servers.push(describeWorkspaceMcpServer(name, config, projectLoad.origins[name] ?? ''));
-  }
-  servers.sort((a, b) => a.name.localeCompare(b.name));
-  disabledUserServers.sort();
-  return { servers, disabledUserServers };
-}
-
-const DISCLOSURE_SECTION_TIMEOUT_MS = 5_000;
-
-interface DisclosureSection<T> {
-  readonly complete: boolean;
-  readonly v: T;
-}
-
-// The trust prompt is a startup gate: a hung filesystem (dead network mount,
-// frozen FUSE) must not keep the dialog — and its "Don't trust" choice —
-// from mounting. A section that hangs or fails falls back to an incomplete
-// empty result; its loaders keep running in the background.
-async function withDisclosureDeadline<T>(
-  section: Promise<DisclosureSection<T>>,
-  fallback: T,
-): Promise<DisclosureSection<T>> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      section.catch(() => ({ complete: false, v: fallback })),
-      new Promise<DisclosureSection<T>>((resolve) => {
-        timer = setTimeout(
-          () => resolve({ complete: false, v: fallback }),
-          DISCLOSURE_SECTION_TIMEOUT_MS,
-        );
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function readGatedAdditionalDirs(
-  fs: IHostFileSystem,
-  bootstrap: IBootstrapService,
-  workDir: string,
-): Promise<readonly WorkspaceTrustAdditionalDir[]> {
-  const localConfig = new FileProjectLocalConfigService(bootstrap, fs);
-  const result = await localConfig.readAdditionalDirs(workDir);
-  // The engine authorizes against each root's realpath (symlinks resolved),
-  // so the outside-project test must compare canonical paths too: a symlink
-  // lexically inside the project can still grant access outside it.
-  const realRoot = await realpathOrSelf(fs, result.projectRoot);
-  const dirs: WorkspaceTrustAdditionalDir[] = [];
-  for (const dir of result.additionalDirs) {
-    const realPath = await realpathOrSelf(fs, dir);
-    if (isInsideOrEqualDir(realPath, realRoot)) continue;
-    dirs.push({ path: dir, realPath });
-  }
-  return dirs;
-}
-
-async function realpathOrSelf(fs: IHostFileSystem, dir: string): Promise<string> {
-  try {
-    return await fs.realpath(dir);
-  } catch {
-    return dir;
-  }
-}
-
-function isInsideOrEqualDir(child: string, parent: string): boolean {
-  const rel = relative(parent, child);
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
-}
-
-const INSTRUCTION_DISCOVERY_TIMEOUT_MS = 2_000;
-
-async function describeInstructionSources(
-  program: Program,
-  fs: IHostFileSystem,
-  workDir: string,
-): Promise<{ sources: WorkspaceTrustInstructionSources; complete: boolean }> {
-  const projectRoot = (await findGitWorkTree(fs, workDir))?.root ?? normalizeWorkDir(workDir);
-  // The trust prompt is a startup gate: never block it on slow discovery.
-  // After the budget, read whatever the loaders have so far (possibly empty)
-  // and report the disclosure as incomplete.
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const complete = await Promise.race([
-    Promise.all([program.skills.ready, program.agentProfiles.ready, program.instructions.ready])
-      .then(() => true),
-    new Promise<boolean>((resolve) => {
-      timer = setTimeout(() => resolve(false), INSTRUCTION_DISCOVERY_TIMEOUT_MS);
-    }),
-  ]);
-  clearTimeout(timer);
-  const skills = program.skills.catalog
-    .listSkills()
-    .filter((skill) => skill.source === 'project')
-    .map((skill) => skill.name)
-    .toSorted();
-  const snapshot = program.snapshot();
-  const agentProfiles = snapshot.sources.agentProfiles
-    .filter((entry) => entry.sourceId === 'workspace')
-    .flatMap((entry) => entry.profiles)
-    .toSorted();
-  const agentsMdPaths = snapshot.sources.instructionPaths
-    .filter((path) => isInsideOrEqualDir(path, projectRoot))
-    .toSorted();
-  return { sources: { agentsMdPaths, skills, agentProfiles }, complete };
-}
-
-function describeWorkspaceMcpServer(
-  name: string,
-  config: WorkspaceMcpServerConfig,
-  origin: string,
-): WorkspaceTrustMcpServerInfo {
-  if (config.transport === 'stdio') {
-    return {
-      name,
-      transport: config.transport,
-      command: config.command,
-      args: config.args,
-      cwd: config.cwd,
-      envKeys: config.env === undefined ? undefined : Object.keys(config.env),
-      origin,
-    };
-  }
-  return {
-    name,
-    transport: config.transport,
-    url: config.url,
-    headerKeys: config.headers === undefined ? undefined : Object.keys(config.headers),
-    bearerTokenEnvVar: config.bearerTokenEnvVar,
-    origin,
-  };
-}

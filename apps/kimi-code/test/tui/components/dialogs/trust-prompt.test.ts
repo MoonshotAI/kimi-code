@@ -15,9 +15,7 @@ function makeInfo(overrides: Partial<WorkspaceTrustInfo> = {}): WorkspaceTrustIn
     trusted: false,
     gatedMcpServers: [],
     gatedAdditionalDirs: [],
-    disabledUserMcpServers: [],
     instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
-    disclosureComplete: true,
     ...overrides,
   };
 }
@@ -43,10 +41,11 @@ describe('TrustPromptComponent', () => {
     expect(lines.some((l) => l.includes('/tmp/demo-workspace'))).toBe(true);
   });
 
-  it('does not present the finished empty state while discovery is incomplete', () => {
-    const complete = renderLines();
-    const partial = renderLines(makeInfo({ disclosureComplete: false }));
-    expect(partial).not.toEqual(complete);
+  it('explains what an unconfigured folder means when trusted', () => {
+    const text = renderLines().join('\n');
+    expect(text).toContain('No project-level config found here');
+    expect(text).toContain('subject to your approvals');
+    expect(text).toContain('applies automatically once this folder is trusted');
   });
 
   it('lists the gated project MCP servers with keys and origin', () => {
@@ -83,7 +82,7 @@ describe('TrustPromptComponent', () => {
     expect(text).toContain('from .kimi-code/mcp.json');
   });
 
-  it('renders the directory, instruction, and disabled-server sections', () => {
+  it('renders the directory and instruction sections', () => {
     const lines = renderLines(
       makeInfo({
         gatedAdditionalDirs: [
@@ -91,7 +90,6 @@ describe('TrustPromptComponent', () => {
           { path: '/opt/toolchain', realPath: '/opt/toolchain' },
           { path: '/tmp/demo-workspace/linked-dir', realPath: '/Users/alice/Documents' },
         ],
-        disabledUserMcpServers: ['github', 'ci-runner'],
         instructionSources: {
           agentsMdPaths: ['/tmp/demo-workspace/AGENTS.md'],
           skills: ['deploy-prod', 'lint-fix'],
@@ -104,8 +102,6 @@ describe('TrustPromptComponent', () => {
     expect(text).toContain('/opt/toolchain');
     // A symlinked entry renders its real target so the grant is not disguised.
     expect(text).toContain('/tmp/demo-workspace/linked-dir → /Users/alice/Documents');
-    expect(text).toContain('github');
-    expect(text).toContain('ci-runner');
     expect(text).toContain('AGENTS.md: AGENTS.md');
     expect(text).toContain('skills: deploy-prod, lint-fix');
     expect(text).toContain('agent profiles: release-manager');
