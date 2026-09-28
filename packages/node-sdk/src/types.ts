@@ -175,6 +175,12 @@ export interface WorkspaceTrustInfo {
   /** Resolved directories outside the project that trusting grants access to. */
   readonly gatedAdditionalDirs: readonly string[];
   readonly instructionSources: WorkspaceTrustInstructionSources;
+  /**
+   * False when any disclosure section failed or was still discovering after
+   * its time budget — the lists above may be incomplete and consumers must
+   * not present them as the full picture.
+   */
+  readonly disclosureComplete: boolean;
 }
 
 /**

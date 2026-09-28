@@ -51,7 +51,7 @@ function makeHarness() {
       trusted: true,
       gatedMcpServers: [],
       gatedAdditionalDirs: [],
-      instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
+      instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] }, disclosureComplete: true,
     })),
     auth: {
       status: vi.fn(async () => ({ providers: [] })),

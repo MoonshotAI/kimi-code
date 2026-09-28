@@ -1608,6 +1608,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
         gatedMcpServers: [],
         gatedAdditionalDirs: [],
         instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
+        disclosureComplete: false,
       });
     } finally {
       await harness.close();
@@ -1643,6 +1644,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
     try {
       const info = await harness.getWorkspaceTrustInfo(workDir);
       expect(info.trusted).toBe(false);
+      expect(info.disclosureComplete).toBe(true);
       expect(info.gatedAdditionalDirs).toEqual([outsideDir]);
       expect(info.instructionSources.agentsMdPaths).toEqual([join(workDir, 'AGENTS.md')]);
       expect(info.instructionSources.skills).toEqual(['demo-skill']);
@@ -1663,6 +1665,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
         gatedMcpServers: [],
         gatedAdditionalDirs: [],
         instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
+        disclosureComplete: true,
       });
       // The trust marker lives in the kimi home, never in the checkout.
       const markers = await readdir(join(homeDir, 'workspace-trust'));

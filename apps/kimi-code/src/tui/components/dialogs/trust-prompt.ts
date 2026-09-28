@@ -107,7 +107,8 @@ export class TrustPromptComponent implements Component, Focusable {
   }
 
   private renderDisclosure(width: number): string[] {
-    const { gatedMcpServers, gatedAdditionalDirs, instructionSources } = this.opts.info;
+    const { gatedMcpServers, gatedAdditionalDirs, instructionSources, disclosureComplete } =
+      this.opts.info;
     const lines: string[] = [];
     const wrap = (text: string, indent: number): string[] =>
       wrapTextWithAnsi(text, Math.max(20, width - indent)).map(
@@ -122,9 +123,12 @@ export class TrustPromptComponent implements Component, Focusable {
       instructionSources.agentProfiles.length > 0;
 
     if (!hasContent) {
-      const empty =
-        'No project-level config found here. Kimi Code will read, edit, and run files in this folder, subject to your approvals. Project config added later (MCP servers, extra directories, instructions) applies automatically once this folder is trusted.';
-      return wrapTextWithAnsi(empty, Math.max(20, width - 2)).map(
+      // The empty claim is only honest when discovery actually finished;
+      // a timed-out or failed scan must say so instead of claiming nothing.
+      const text = disclosureComplete
+        ? 'No project-level config found here. Kimi Code will read, edit, and run files in this folder, subject to your approvals. Project config added later (MCP servers, extra directories, instructions) applies automatically once this folder is trusted.'
+        : "Still scanning this folder's project config — disclosure may be incomplete.";
+      return wrapTextWithAnsi(text, Math.max(20, width - 2)).map(
         (line) => ` ${currentTheme.fg('textMuted', line)}`,
       );
     }
@@ -170,6 +174,13 @@ export class TrustPromptComponent implements Component, Focusable {
         ...wrap('Feed instructions to the agent — they steer behavior; approvals still apply:', 1),
       );
       lines.push(...instructionLines);
+    }
+
+    if (!disclosureComplete) {
+      lines.push('');
+      lines.push(
+        ...wrap("Still scanning this folder's project config — disclosure may be incomplete.", 1),
+      );
     }
 
     return lines;

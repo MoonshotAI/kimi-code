@@ -16,6 +16,7 @@ function makeInfo(overrides: Partial<WorkspaceTrustInfo> = {}): WorkspaceTrustIn
     gatedMcpServers: [],
     gatedAdditionalDirs: [],
     instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
+    disclosureComplete: true,
     ...overrides,
   };
 }
@@ -47,6 +48,13 @@ describe('TrustPromptComponent', () => {
     expect(text).toContain('No project-level config found here');
     expect(text).toContain('subject to your approvals');
     expect(text).toContain('applies automatically once this folder is trusted');
+  });
+
+  it('admits incomplete discovery instead of claiming an unconfigured folder', () => {
+    const lines = renderLines(makeInfo({ disclosureComplete: false }));
+    const text = lines.join('\n');
+    expect(text).toContain('disclosure may be incomplete');
+    expect(text).not.toContain('No project-level config found here');
   });
 
   it('lists the gated project MCP servers with keys and origin', () => {

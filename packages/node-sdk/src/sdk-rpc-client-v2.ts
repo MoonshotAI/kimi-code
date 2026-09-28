@@ -711,18 +711,29 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         gatedMcpServers: [],
         gatedAdditionalDirs: [],
         instructionSources: EMPTY_INSTRUCTION_SOURCES,
+        disclosureComplete: true,
       };
     }
     const fs = this.engineAccessor.get(IHostFileSystem);
     const bootstrap = this.engineAccessor.get(IBootstrapService);
-    const [gatedMcpServers, gatedAdditionalDirs, instructionSources] = await Promise.all([
-      describeGatedMcpServers(fs, workDir, this.homeDir).catch(() => []),
-      readGatedAdditionalDirs(fs, bootstrap, workDir).catch(() => []),
-      describeInstructionSources(handler.program, fs, workDir).catch(
-        () => EMPTY_INSTRUCTION_SOURCES,
-      ),
+    const [mcp, dirs, instructions] = await Promise.all([
+      describeGatedMcpServers(fs, workDir, this.homeDir)
+        .then((v) => ({ complete: true, v }))
+        .catch(() => ({ complete: false, v: [] as readonly WorkspaceTrustMcpServerInfo[] })),
+      readGatedAdditionalDirs(fs, bootstrap, workDir)
+        .then((v) => ({ complete: true, v }))
+        .catch(() => ({ complete: false, v: [] as readonly string[] })),
+      describeInstructionSources(handler.program, fs, workDir)
+        .then(({ sources, complete }) => ({ complete, v: sources }))
+        .catch(() => ({ complete: false, v: EMPTY_INSTRUCTION_SOURCES })),
     ]);
-    return { trusted: false, gatedMcpServers, gatedAdditionalDirs, instructionSources };
+    return {
+      trusted: false,
+      gatedMcpServers: mcp.v,
+      gatedAdditionalDirs: dirs.v,
+      instructionSources: instructions.v,
+      disclosureComplete: mcp.complete && dirs.complete && instructions.complete,
+    };
   }
 
   /**
@@ -2917,13 +2928,17 @@ async function describeInstructionSources(
   program: Program,
   fs: IHostFileSystem,
   workDir: string,
-): Promise<WorkspaceTrustInstructionSources> {
+): Promise<{ sources: WorkspaceTrustInstructionSources; complete: boolean }> {
   const projectRoot = (await findGitWorkTree(fs, workDir))?.root ?? normalizeWorkDir(workDir);
   // The trust prompt is a startup gate: never block it on slow discovery.
-  // After the budget, read whatever the loaders have so far (possibly empty).
-  await Promise.race([
-    Promise.all([program.skills.ready, program.agentProfiles.ready, program.instructions.ready]),
-    new Promise((resolve) => setTimeout(resolve, INSTRUCTION_DISCOVERY_TIMEOUT_MS)),
+  // After the budget, read whatever the loaders have so far (possibly empty)
+  // and report the disclosure as incomplete.
+  const complete = await Promise.race([
+    Promise.all([program.skills.ready, program.agentProfiles.ready, program.instructions.ready])
+      .then(() => true),
+    new Promise<boolean>((resolve) =>
+      setTimeout(() => resolve(false), INSTRUCTION_DISCOVERY_TIMEOUT_MS),
+    ),
   ]);
   const skills = program.skills.catalog
     .listSkills()
@@ -2938,7 +2953,7 @@ async function describeInstructionSources(
   const agentsMdPaths = snapshot.sources.instructionPaths
     .filter((path) => path.startsWith(`${projectRoot}/`))
     .toSorted();
-  return { agentsMdPaths, skills, agentProfiles };
+  return { sources: { agentsMdPaths, skills, agentProfiles }, complete };
 }
 
 function describeWorkspaceMcpServer(

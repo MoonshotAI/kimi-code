@@ -210,7 +210,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
     getExperimentalFeatures: vi.fn(async () => []),
-    getWorkspaceTrustInfo: vi.fn(async () => ({ trusted: true, gatedMcpServers: [], gatedAdditionalDirs: [], instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] } })),
+    getWorkspaceTrustInfo: vi.fn(async () => ({ trusted: true, gatedMcpServers: [], gatedAdditionalDirs: [], instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] }, disclosureComplete: true })),
     supportsAtomicSectionReplace: vi.fn(() => false),
     auth: {
       status: vi.fn(async () => ({ providers: [] })),
@@ -2429,7 +2429,7 @@ describe('KimiTUI startup', () => {
       trusted: true,
       gatedMcpServers: [],
       gatedAdditionalDirs: [],
-      instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
+      instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] }, disclosureComplete: true,
       }));
     const harness = makeHarness(makeSession(), { getWorkspaceTrustInfo });
     const driver = makeDriver(harness, {
@@ -2460,7 +2460,7 @@ describe('KimiTUI startup', () => {
       trusted: false,
       gatedMcpServers: [],
       gatedAdditionalDirs: [],
-      instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
+      instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] }, disclosureComplete: true,
       }));
     const trustWorkspace = vi.fn(async () => {});
     const harness = makeHarness(makeSession(), { getWorkspaceTrustInfo, trustWorkspace });
@@ -2534,7 +2534,7 @@ describe('KimiTUI startup', () => {
       trusted: false,
       gatedMcpServers: [],
       gatedAdditionalDirs: [],
-      instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
+      instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] }, disclosureComplete: true,
       }));
     const trustWorkspace = vi.fn(async (): Promise<void> => {
       throw new Error('disk full');

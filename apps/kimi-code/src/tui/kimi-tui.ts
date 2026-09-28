@@ -3893,6 +3893,7 @@ export class KimiTUI {
         gatedMcpServers: [],
         gatedAdditionalDirs: [],
         instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
+        disclosureComplete: false,
       };
     }
     if (info.trusted) {
