@@ -131,7 +131,26 @@ describe('TrustPromptComponent', () => {
     expect(text).toContain('/tmp/demo-workspace/linked-dir → /Users/alice/Documents');
     expect(text).toContain('AGENTS.md: AGENTS.md');
     expect(text).toContain('skills: deploy-prod, lint-fix');
-    expect(text).toContain('agent profiles: release-manager');
+    expect(text).toContain('agent profiles available as subagents: release-manager');
+  });
+
+  it('caps overlong MCP target fields from untrusted config', () => {
+    const lines = renderLines(
+      makeInfo({
+        gatedMcpServers: [
+          {
+            name: 'fat',
+            transport: 'stdio',
+            command: 'x'.repeat(200),
+            args: ['--safe'],
+            origin: '/tmp/demo-workspace/.mcp.json',
+          },
+        ],
+      }),
+    );
+    const text = lines.join('\n');
+    expect(text).toContain('…');
+    expect(text).not.toContain('x'.repeat(200));
   });
 
   it('handles key input: default trust, cursor moves, and Esc', () => {

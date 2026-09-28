@@ -199,7 +199,7 @@ export class TrustPromptComponent implements Component, Focusable {
       lines.push(...wrap(`skills: ${formatNameList(skills)}`, 3));
     }
     if (agentProfiles.length > 0) {
-      lines.push(...wrap(`agent profiles: ${formatNameList(agentProfiles)}`, 3));
+      lines.push(...wrap(`agent profiles available as subagents: ${formatNameList(agentProfiles)}`, 3));
     }
     return lines;
   }
@@ -211,13 +211,23 @@ function wrapWarning(text: string, indent: number, width: number): string[] {
   );
 }
 
+const MAX_FIELD_LENGTH = 80;
+
+function capField(value: string): string {
+  return value.length > MAX_FIELD_LENGTH ? `${value.slice(0, MAX_FIELD_LENGTH)}…` : value;
+}
+
 function formatMcpTarget(server: WorkspaceTrustMcpServerInfo): string {
   if (server.transport === 'stdio') {
-    const args = server.args === undefined ? '' : ` args=${JSON.stringify(server.args)}`;
-    const cwd = server.cwd === undefined ? '' : ` cwd=${server.cwd}`;
-    return sanitizeForDisplay(`${server.name} (stdio): command=${server.command ?? ''}${args}${cwd}`);
+    const args = server.args === undefined ? '' : ` args=${capField(JSON.stringify(server.args))}`;
+    const cwd = server.cwd === undefined ? '' : ` cwd=${capField(server.cwd)}`;
+    return sanitizeForDisplay(
+      `${capField(server.name)} (stdio): command=${capField(server.command ?? '')}${args}${cwd}`,
+    );
   }
-  return sanitizeForDisplay(`${server.name} (${server.transport}): url=${server.url ?? ''}`);
+  return sanitizeForDisplay(
+    `${capField(server.name)} (${server.transport}): url=${capField(server.url ?? '')}`,
+  );
 }
 
 const MAX_KEY_LIST = 10;
