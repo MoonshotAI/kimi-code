@@ -2006,14 +2006,16 @@ export class KimiTUI {
           videoAttachmentIds: options?.videoAttachmentIds,
         },
       ];
-      const queued = this.state.queuedMessages;
+      const queued = [...this.state.queuedMessages];
       if (backlog.length > 0) {
         this.state.queuedMessages = [];
         this.updateQueueDisplay();
       }
       this.steerMessage(session, items, () => {
-        this.requeueMessages(queued);
+        const queuedMeanwhile = this.state.queuedMessages;
+        this.state.queuedMessages = [...queued];
         this.enqueueMessage(input, options);
+        this.state.queuedMessages.push(...queuedMeanwhile);
         this.updateQueueDisplay();
       });
       return;

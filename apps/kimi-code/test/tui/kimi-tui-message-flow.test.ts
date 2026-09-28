@@ -3816,6 +3816,43 @@ command = "vim"
     expect(harness.deleteFile).not.toHaveBeenCalledWith('file-v1');
   });
 
+  it('requeues failed input during a WaitFor ahead of items queued while the steer was in flight', async () => {
+    let rejectSteer!: (error: Error) => void;
+    const session = makeSession({
+      steer: vi.fn(
+        () =>
+          new Promise<never>((_resolve, reject) => {
+            rejectSteer = reject;
+          }),
+      ),
+    });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_wait',
+        name: 'WaitFor',
+        args: { timeout: 60 },
+      } as Event,
+      () => {},
+    );
+
+    driver.handleUserInput('check this first');
+    driver.state.queuedMessages.push({ text: 'make build', agentId: 'main', mode: 'bash' });
+    rejectSteer(new Error('session closed'));
+
+    await vi.waitFor(() => {
+      expect(driver.state.queuedMessages).toEqual([
+        { text: 'check this first', agentId: 'main' },
+        { text: 'make build', agentId: 'main', mode: 'bash' },
+      ]);
+    });
+  });
+
   it('keeps a queue with a bash command queued when a WaitFor starts', async () => {
     const { driver, session } = await makeDriver();
     const sendQueued = vi.fn();
