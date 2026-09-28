@@ -11,6 +11,7 @@ import { createServices } from '#/_base/di/test';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
@@ -19,6 +20,7 @@ import {
   type WorkspaceTrustChange,
 } from '#/workspace/workspaceTrust/workspaceTrust';
 import {
+  TRUST_WORKSPACE_ENV,
   WorkspaceTrustService,
   workspaceTrustTrustedKey,
 } from '#/workspace/workspaceTrust/workspaceTrustService';
@@ -28,6 +30,7 @@ import {
   writeWorkspaceTrust,
 } from '#/workspace/workspaceTrust/trustRecord';
 
+import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { registerStateServices } from '../../state/stubs';
 
 describe('WorkspaceTrustService', () => {
@@ -52,12 +55,14 @@ describe('WorkspaceTrustService', () => {
   function createService(
     root: string,
     events?: WorkspaceTrustChange[],
+    env: NodeJS.ProcessEnv = {},
   ): { service: IWorkspaceTrust; states: IWorkspaceStateService } {
     const ix = createServices(disposables, {
       strict: true,
       additionalServices: (reg) => {
         registerStateServices(reg);
         reg.definePartialInstance(IWorkspaceContext, { cwd: root });
+        reg.defineInstance(IBootstrapService, stubBootstrap(homeDir, env));
         reg.defineInstance(
           IAtomicDocumentStore,
           new JsonAtomicDocumentStore(new FileStorageService(homeDir)),
@@ -79,6 +84,42 @@ describe('WorkspaceTrustService', () => {
 
     expect(service.isTrusted()).toBe(false);
     expect(await service.get()).toBe(false);
+  });
+
+  it('trusts the workspace when KIMI_CODE_TRUST_WORKSPACE is set', async () => {
+    const { service } = createService(cwd, undefined, {
+      [TRUST_WORKSPACE_ENV]: '1',
+    });
+    await service.ready;
+
+    expect(service.isTrusted()).toBe(true);
+    expect(await service.get()).toBe(true);
+  });
+
+  it('ignores KIMI_CODE_TRUST_WORKSPACE values that do not parse as true', async () => {
+    const { service } = createService(cwd, undefined, {
+      [TRUST_WORKSPACE_ENV]: '0',
+    });
+    await service.ready;
+
+    expect(service.isTrusted()).toBe(false);
+    expect(await service.get()).toBe(false);
+  });
+
+  it('keeps persistence semantics under KIMI_CODE_TRUST_WORKSPACE', async () => {
+    const events: WorkspaceTrustChange[] = [];
+    const { service, states } = createService(cwd, events, {
+      [TRUST_WORKSPACE_ENV]: '1',
+    });
+    await service.ready;
+
+    await service.trust();
+    expect(states.get(workspaceTrustTrustedKey)).toBe(true);
+
+    await service.untrust();
+    expect(states.get(workspaceTrustTrustedKey)).toBe(false);
+    expect(service.isTrusted()).toBe(true);
+    expect(events).toEqual([{ trusted: true }, { trusted: false }]);
   });
 
   it('trust() flips the state, fires once, and stays idempotent', async () => {
