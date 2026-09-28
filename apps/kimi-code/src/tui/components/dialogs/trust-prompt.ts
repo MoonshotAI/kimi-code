@@ -133,7 +133,7 @@ export class TrustPromptComponent implements Component, Focusable {
       // a timed-out or failed scan must say so instead of claiming nothing.
       const text = disclosureComplete
         ? 'No project-level config found here. Kimi Code will read, edit, and run files in this folder, subject to your approvals. Project config added later (MCP servers, extra directories, instructions) applies automatically once this folder is trusted.'
-        : "Still scanning this folder's project config — disclosure may be incomplete.";
+        : "Still scanning this folder's project config, so disclosure may be incomplete.";
       return wrapTextWithAnsi(text, Math.max(20, width - 2)).map(
         (line) => ` ${currentTheme.fg('textMuted', line)}`,
       );
@@ -145,7 +145,7 @@ export class TrustPromptComponent implements Component, Focusable {
       lines.push('');
       lines.push(
         ...wrap(
-          `Run ${gatedMcpServers.length} project MCP ${gatedMcpServers.length === 1 ? 'server' : 'servers'} — they start automatically, without asking:`,
+          `Run ${gatedMcpServers.length} project MCP ${gatedMcpServers.length === 1 ? 'server that starts' : 'servers that start'} automatically, without asking:`,
           1,
         ),
       );
@@ -195,7 +195,7 @@ export class TrustPromptComponent implements Component, Focusable {
     if (instructionLines.length > 0) {
       lines.push('');
       lines.push(
-        ...wrap('Feed instructions to the agent — they steer behavior; approvals still apply:', 1),
+        ...wrap('Feed the agent instructions that steer its behavior; approvals still apply:', 1),
       );
       lines.push(...instructionLines);
     }
@@ -203,7 +203,7 @@ export class TrustPromptComponent implements Component, Focusable {
     if (!disclosureComplete) {
       lines.push('');
       lines.push(
-        ...wrap("Still scanning this folder's project config — disclosure may be incomplete.", 1),
+        ...wrap("Still scanning this folder's project config, so disclosure may be incomplete.", 1),
       );
     }
 

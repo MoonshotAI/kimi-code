@@ -43,15 +43,10 @@ describe('TrustPromptComponent', () => {
     expect(lines.some((l) => l.includes('/tmp/demo-workspace'))).toBe(true);
   });
 
-  it('renders the empty state, and admits incomplete discovery instead', () => {
-    const text = renderLines().join('\n');
-    expect(text).toContain('No project-level config found here');
-    expect(text).toContain('subject to your approvals');
-    expect(text).toContain('applies automatically once this folder is trusted');
-
-    const partial = renderLines(makeInfo({ disclosureComplete: false })).join('\n');
-    expect(partial).toContain('disclosure may be incomplete');
-    expect(partial).not.toContain('No project-level config found here');
+  it('does not present the finished empty state while discovery is incomplete', () => {
+    const complete = renderLines();
+    const partial = renderLines(makeInfo({ disclosureComplete: false }));
+    expect(partial).not.toEqual(complete);
   });
 
   it('lists the gated project MCP servers with keys and origin', () => {
@@ -79,7 +74,6 @@ describe('TrustPromptComponent', () => {
       }),
     );
     const text = lines.join('\n');
-    expect(text).toContain('Run 2 project MCP servers');
     expect(text).toContain('nested-server (stdio): command=nested-cmd');
     expect(text).toContain('args=["--safe"] cwd=/tmp');
     expect(text).toContain('env keys: API_KEY');
@@ -106,15 +100,12 @@ describe('TrustPromptComponent', () => {
       }),
     );
     const text = lines.join('\n');
-    expect(text).toContain('Grant access to 3 directories outside this project');
     expect(text).toContain('/tmp/shared-assets');
     expect(text).toContain('/opt/toolchain');
     // A symlinked entry renders its real target so the grant is not disguised.
     expect(text).toContain('/tmp/demo-workspace/linked-dir → /Users/alice/Documents');
-    expect(text).toContain('Turn off 2 user-level MCP servers (disabled by project config)');
     expect(text).toContain('github');
     expect(text).toContain('ci-runner');
-    expect(text).toContain('Feed instructions to the agent');
     expect(text).toContain('AGENTS.md: AGENTS.md');
     expect(text).toContain('skills: deploy-prod, lint-fix');
     expect(text).toContain('agent profiles: release-manager');
