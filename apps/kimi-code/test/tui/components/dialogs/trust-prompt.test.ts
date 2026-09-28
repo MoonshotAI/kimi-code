@@ -43,19 +43,15 @@ describe('TrustPromptComponent', () => {
     expect(lines.some((l) => l.includes('/tmp/demo-workspace'))).toBe(true);
   });
 
-  it('explains what an unconfigured folder means when trusted', () => {
-    const lines = renderLines();
-    const text = lines.join('\n');
+  it('renders the empty state, and admits incomplete discovery instead', () => {
+    const text = renderLines().join('\n');
     expect(text).toContain('No project-level config found here');
     expect(text).toContain('subject to your approvals');
     expect(text).toContain('applies automatically once this folder is trusted');
-  });
 
-  it('admits incomplete discovery instead of claiming an unconfigured folder', () => {
-    const lines = renderLines(makeInfo({ disclosureComplete: false }));
-    const text = lines.join('\n');
-    expect(text).toContain('disclosure may be incomplete');
-    expect(text).not.toContain('No project-level config found here');
+    const partial = renderLines(makeInfo({ disclosureComplete: false })).join('\n');
+    expect(partial).toContain('disclosure may be incomplete');
+    expect(partial).not.toContain('No project-level config found here');
   });
 
   it('lists the gated project MCP servers with keys and origin', () => {
@@ -93,27 +89,11 @@ describe('TrustPromptComponent', () => {
     expect(text).toContain('from .kimi-code/mcp.json');
   });
 
-  it('lists user-level MCP servers that trusting would turn off', () => {
-    const lines = renderLines(makeInfo({ disabledUserMcpServers: ['github', 'ci-runner'] }));
-    const text = lines.join('\n');
-    expect(text).toContain('Turn off 2 user-level MCP servers (disabled by project config)');
-    expect(text).toContain('github');
-    expect(text).toContain('ci-runner');
-  });
-
-  it('lists additional directories outside the project', () => {
-    const lines = renderLines(
-      makeInfo({ gatedAdditionalDirs: ['/tmp/shared-assets', '/opt/toolchain'] }),
-    );
-    const text = lines.join('\n');
-    expect(text).toContain('Grant access to 2 directories outside this project');
-    expect(text).toContain('/tmp/shared-assets');
-    expect(text).toContain('/opt/toolchain');
-  });
-
-  it('lists instruction sources feeding the agent', () => {
+  it('renders the directory, instruction, and disabled-server sections', () => {
     const lines = renderLines(
       makeInfo({
+        gatedAdditionalDirs: ['/tmp/shared-assets', '/opt/toolchain'],
+        disabledUserMcpServers: ['github', 'ci-runner'],
         instructionSources: {
           agentsMdPaths: ['/tmp/demo-workspace/AGENTS.md'],
           skills: ['deploy-prod', 'lint-fix'],
@@ -122,6 +102,12 @@ describe('TrustPromptComponent', () => {
       }),
     );
     const text = lines.join('\n');
+    expect(text).toContain('Grant access to 2 directories outside this project');
+    expect(text).toContain('/tmp/shared-assets');
+    expect(text).toContain('/opt/toolchain');
+    expect(text).toContain('Turn off 2 user-level MCP servers (disabled by project config)');
+    expect(text).toContain('github');
+    expect(text).toContain('ci-runner');
     expect(text).toContain('Feed instructions to the agent');
     expect(text).toContain('AGENTS.md: AGENTS.md');
     expect(text).toContain('skills: deploy-prod, lint-fix');
@@ -162,21 +148,7 @@ describe('TrustPromptComponent', () => {
     expect(text).not.toContain('\u001B]8;;https://evil.test');
   });
 
-  it('caps long lists with a "+N more" suffix', () => {
-    const lines = renderLines(
-      makeInfo({
-        instructionSources: {
-          agentsMdPaths: [],
-          skills: Array.from({ length: 12 }, (_, i) => `skill-${i}`),
-          agentProfiles: [],
-        },
-      }),
-    );
-    const text = lines.join('\n');
-    expect(text).toContain('+4 more');
-  });
-
-  it('caps untrusted MCP key lists', () => {
+  it('caps long lists and untrusted MCP key lists with a "+N more" suffix', () => {
     const lines = renderLines(
       makeInfo({
         gatedMcpServers: [
@@ -188,12 +160,18 @@ describe('TrustPromptComponent', () => {
             origin: '/tmp/demo-workspace/.mcp.json',
           },
         ],
+        instructionSources: {
+          agentsMdPaths: [],
+          skills: Array.from({ length: 12 }, (_, i) => `skill-${i}`),
+          agentProfiles: [],
+        },
       }),
     );
     const text = lines.join('\n');
     expect(text).toContain('env keys: KEY_0, KEY_1');
     expect(text).toContain('+15 more');
     expect(text).not.toContain('KEY_24');
+    expect(text).toContain('+4 more');
   });
 
   it('defaults to Trust this folder', () => {
