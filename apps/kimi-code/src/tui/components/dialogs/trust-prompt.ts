@@ -232,18 +232,28 @@ function formatMcpTarget(server: WorkspaceTrustMcpServerInfo): string {
   return sanitizeForDisplay(`${server.name} (${server.transport}): url=${server.url ?? ''}`);
 }
 
+const MAX_KEY_LIST = 10;
+
 function formatMcpKeys(server: WorkspaceTrustMcpServerInfo): string | undefined {
   const parts: string[] = [];
   if (server.envKeys !== undefined && server.envKeys.length > 0) {
-    parts.push(`env keys: ${server.envKeys.map(sanitizeForDisplay).join(', ')}`);
+    parts.push(`env keys: ${formatKeyList(server.envKeys)}`);
   }
   if (server.headerKeys !== undefined && server.headerKeys.length > 0) {
-    parts.push(`header keys: ${server.headerKeys.map(sanitizeForDisplay).join(', ')}`);
+    parts.push(`header keys: ${formatKeyList(server.headerKeys)}`);
   }
   if (server.bearerTokenEnvVar !== undefined) {
     parts.push(`bearer token from env ${sanitizeForDisplay(server.bearerTokenEnvVar)}`);
   }
   return parts.length === 0 ? undefined : parts.join(' · ');
+}
+
+// A crafted .mcp.json can declare thousands of keys; cap before joining so
+// the prompt stays usable (same threat class as the control-char sanitizer).
+function formatKeyList(keys: readonly string[]): string {
+  const shown = keys.slice(0, MAX_KEY_LIST).map(sanitizeForDisplay);
+  const suffix = keys.length > MAX_KEY_LIST ? `, +${keys.length - MAX_KEY_LIST} more` : '';
+  return `${shown.join(', ')}${suffix}`;
 }
 
 function formatNameList(names: readonly string[]): string {

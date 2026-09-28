@@ -167,6 +167,26 @@ describe('TrustPromptComponent', () => {
     expect(text).toContain('+4 more');
   });
 
+  it('caps untrusted MCP key lists', () => {
+    const lines = renderLines(
+      makeInfo({
+        gatedMcpServers: [
+          {
+            name: 'fat',
+            transport: 'stdio',
+            command: 'cmd',
+            envKeys: Array.from({ length: 25 }, (_, i) => `KEY_${i}`),
+            origin: '/tmp/demo-workspace/.mcp.json',
+          },
+        ],
+      }),
+    );
+    const text = lines.join('\n');
+    expect(text).toContain('env keys: KEY_0, KEY_1');
+    expect(text).toContain('+15 more');
+    expect(text).not.toContain('KEY_24');
+  });
+
   it('defaults to Trust this folder', () => {
     const onSelect = vi.fn();
     const prompt = new TrustPromptComponent({

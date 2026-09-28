@@ -695,8 +695,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * cost here: session creation does it anyway). The disclosure lists what
    * trusting would activate: the gated-server list is the final merged
    * config entries whose origins are project files (the workspaceTrust gate
-   * inside the engine's `workspaceMcpConfig`), plus the project's
-   * additional directories and instruction sources. Every section is
+   * inside the engine's `workspaceMcpConfig`), excluding disabled entries
+   * that never connect, plus the project's additional directories and
+   * instruction sources. Every section is
    * computed best-effort: an unreadable/invalid project file degrades that
    * section to an empty list rather than failing the caller.
    */
@@ -2905,6 +2906,7 @@ async function describeGatedMcpServers(
   const projectPaths = new Set([paths.projectRoot, paths.project]);
   return Object.entries(loaded.servers)
     .filter(([name]) => projectPaths.has(loaded.origins[name] ?? ''))
+    .filter(([, config]) => config.enabled !== false)
     .map(([name, config]) => describeWorkspaceMcpServer(name, config, loaded.origins[name] ?? ''))
     .toSorted((a, b) => a.name.localeCompare(b.name));
 }

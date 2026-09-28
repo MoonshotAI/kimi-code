@@ -1495,6 +1495,10 @@ describe('SDKRpcClientV2 workspace trust', () => {
             cwd: '/tmp/root',
             env: { SECRET: 'hidden' },
           },
+          'disabled-server': {
+            command: 'never-runs',
+            enabled: false,
+          },
           'http-server': {
             transport: 'http',
             url: 'https://example.test/mcp',
@@ -1544,6 +1548,8 @@ describe('SDKRpcClientV2 workspace trust', () => {
       expect(serialized).not.toContain('hidden');
       expect(serialized).toContain('SECRET');
       expect(serialized).toContain('TOKEN');
+      // Disabled servers never connect, so they are not part of the disclosure.
+      expect(serialized).not.toContain('disabled-server');
     } finally {
       await harness.close();
     }
@@ -1566,8 +1572,8 @@ describe('SDKRpcClientV2 workspace trust', () => {
       join(workDir, '.mcp.json'),
       JSON.stringify({
         mcpServers: {
-          github: { command: 'project-github', enabled: false },
-          toString: { transport: 'http', url: 'https://example.test/mcp', enabled: false },
+          github: { command: 'project-github' },
+          toString: { transport: 'http', url: 'https://example.test/mcp' },
         },
       }),
       'utf-8',
