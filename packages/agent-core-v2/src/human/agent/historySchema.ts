@@ -3,7 +3,13 @@ import { z } from 'zod';
 import type { PromptOrigin } from './origin';
 import type { HistoryMessage } from './turn';
 
-const textPartSchema = z.object({ type: z.literal('text'), text: z.string() });
+const textPartSchema = z.object({
+  type: z.literal('text'),
+  text: z.string(),
+  meta: z
+    .looseObject({ source: z.string().optional(), contentType: z.string().optional() })
+    .optional(),
+});
 const thinkPartSchema = z.object({
   type: z.literal('think'),
   think: z.string(),

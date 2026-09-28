@@ -498,7 +498,19 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
   it('groups flat messages into turns with folded tool results', () => {
     const snapshot = groupMessagesIntoSnapshot([
       { role: 'system', content: [{ type: 'text', text: 'sys' }] },
-      { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [], origin: { kind: 'user' } },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: '<hook_result hook_event="UserPromptSubmit">\nnoise\n</hook_result>',
+            meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+          },
+          { type: 'text', text: 'hello' },
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
       {
         role: 'assistant',
         content: [{ type: 'think', think: 'hmm' }, { type: 'text', text: 'checking' }],
@@ -641,7 +653,19 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
       [
         { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } },
         { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
-        { role: 'user', content: [{ type: 'text', text: 'steered in' }], toolCalls: [], origin: { kind: 'user' } },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: '<hook_result hook_event="UserPromptSubmit">\nnoise\n</hook_result>',
+              meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+            },
+            { type: 'text', text: 'steered in' },
+          ],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
       ],
       { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), new Map([['user', 1]])]]) },
     );
