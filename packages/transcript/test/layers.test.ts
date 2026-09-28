@@ -2493,4 +2493,236 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(real.state).toBe('failed');
     expect(real.error).toBe('real failure');
   });
+
+  it('fills turn startedAt from turn.prompt records even when the turn never ended', () => {
+    const base = groupMessagesIntoSnapshot([
+      { id: 'prompt-1', role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', turnId: 0, input: [{ type: 'text', text: 'hi' }], origin: { kind: 'user' }, promptId: 'prompt-1', time: 1000 },
+      ],
+      base,
+    );
+    const turn = folded.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.startedAt).toBe(new Date(1000).toISOString());
+    expect(turn.endedAt).toBeUndefined();
+    expect(folded.items).not.toBe(base.items);
+  });
+
+  it('prefers turn.prompt over agent.turn.started for turn startedAt, falling back when no prompt exists', () => {
+    const base = groupMessagesIntoSnapshot([
+      { id: 'prompt-1', role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'cron tick' }], toolCalls: [], origin: { kind: 'cron_job' } as { kind: string } },
+      { role: 'assistant', content: [{ type: 'text', text: 'cron answer' }], toolCalls: [] },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'agent.turn.started', turnId: 0, time: 900 },
+        { type: 'turn.prompt', turnId: 0, input: [{ type: 'text', text: 'hi' }], origin: { kind: 'user' }, promptId: 'prompt-1', time: 1000 },
+        { type: 'turn.ended', turnId: 0, reason: 'completed', time: 2000 },
+        { type: 'agent.turn.started', turnId: 1, time: 2500 },
+        { type: 'turn.ended', turnId: 1, reason: 'completed', time: 3000 },
+      ],
+      base,
+    );
+    const first = folded.items[0];
+    const second = folded.items[1];
+    if (first?.kind !== 'turn' || second?.kind !== 'turn') throw new Error('expected turns');
+    expect(first.startedAt).toBe(new Date(1000).toISOString());
+    expect(second.startedAt).toBe(new Date(2500).toISOString());
+  });
+
+  it('fills step times from step.begin/step.end loop events, ignoring unknown turns and steps', () => {
+    const base = groupMessagesIntoSnapshot([
+      { id: 'prompt-1', role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'first' }], toolCalls: [] },
+      { role: 'assistant', content: [{ type: 'text', text: 'second' }], toolCalls: [] },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', turnId: 0, input: [{ type: 'text', text: 'hi' }], origin: { kind: 'user' }, promptId: 'prompt-1', time: 1000 },
+        { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 's1', turnId: '0', step: 1 }, time: 1100 },
+        { type: 'context.append_loop_event', event: { type: 'step.end', uuid: 's1', turnId: '0', step: 1, finishReason: 'tool_use' }, time: 1500 },
+        { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 's2', turnId: '0', step: 2 }, time: 1600 },
+        { type: 'context.append_loop_event', event: { type: 'step.end', uuid: 's2', turnId: '0', step: 2, finishReason: 'end_turn' }, time: 1900 },
+        { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 's3', turnId: '7', step: 1 }, time: 1950 },
+        { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 's4', turnId: '0', step: 9 }, time: 1975 },
+        { type: 'turn.ended', turnId: 0, reason: 'completed', time: 2000 },
+      ],
+      base,
+    );
+    const turn = folded.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps).toHaveLength(2);
+    expect(turn.steps[0]).toMatchObject({
+      startedAt: new Date(1100).toISOString(),
+      endedAt: new Date(1500).toISOString(),
+    });
+    expect(turn.steps[1]).toMatchObject({
+      startedAt: new Date(1600).toISOString(),
+      endedAt: new Date(1900).toISOString(),
+    });
+  });
+
+  it('lets turn.step.interrupted win over the step.end time fill', () => {
+    const base = groupMessagesIntoSnapshot([
+      { id: 'prompt-1', role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'first' }], toolCalls: [] },
+      { role: 'assistant', content: [{ type: 'text', text: 'second' }], toolCalls: [] },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', turnId: 0, input: [{ type: 'text', text: 'hi' }], origin: { kind: 'user' }, promptId: 'prompt-1', time: 1000 },
+        { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 's1', turnId: '0', step: 1 }, time: 1100 },
+        { type: 'context.append_loop_event', event: { type: 'step.end', uuid: 's1', turnId: '0', step: 1, finishReason: 'interrupted' }, time: 1500 },
+        { type: 'turn.step.interrupted', turnId: 0, step: 1, reason: 'user_cancelled', time: 1800 },
+        { type: 'turn.ended', turnId: 0, reason: 'cancelled', time: 2000 },
+      ],
+      base,
+    );
+    const turn = folded.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps[0]).toMatchObject({
+      state: 'interrupted',
+      startedAt: new Date(1100).toISOString(),
+      endedAt: new Date(1800).toISOString(),
+    });
+    expect(turn.steps[1]).toMatchObject({ state: 'completed' });
+    expect(turn.steps[1]?.startedAt).toBeUndefined();
+  });
+
+  it('builds prompt entries from turn.prompt and prompt.completed records', () => {
+    const base = groupMessagesIntoSnapshot([
+      { id: 'msg-1', role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        {
+          type: 'turn.prompt',
+          turnId: 0,
+          input: [{ type: 'text', text: 'hi' }],
+          origin: { kind: 'user', clientMetadata: [{ composer: { version: 1 } }] },
+          promptId: 'msg-1',
+          time: 1000,
+        },
+        { type: 'prompt.completed', promptId: 'msg-1', finishedAt: '2026-01-01T00:00:02.000Z', reason: 'failed', time: 2000 },
+      ],
+      base,
+    );
+    expect(folded.prompts).toEqual([
+      {
+        promptId: 'msg-1',
+        status: 'failed',
+        userMessageId: 'msg-1',
+        content: [{ type: 'text', text: 'hi' }],
+        clientMetadata: [{ composer: { version: 1 } }],
+        createdAt: new Date(1000).toISOString(),
+        finishedAt: '2026-01-01T00:00:02.000Z',
+      },
+    ]);
+  });
+
+  it('resolves prompt status from prompt.aborted, then turn.ended, defaulting to running', () => {
+    const base = groupMessagesIntoSnapshot([
+      { id: 'p1', role: 'user', content: [{ type: 'text', text: 'one' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'a1' }], toolCalls: [] },
+      { id: 'p2', role: 'user', content: [{ type: 'text', text: 'two' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'a2' }], toolCalls: [] },
+      { id: 'p3', role: 'user', content: [{ type: 'text', text: 'three' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'a3' }], toolCalls: [] },
+    ]);
+    const prompt = (turnId: number, promptId: string, time: number): HistoryWireRecord => ({
+      type: 'turn.prompt', turnId, input: [{ type: 'text', text: promptId }], origin: { kind: 'user' }, promptId, time,
+    });
+    const folded = foldWireRecordFacts(
+      [
+        prompt(0, 'p1', 1000),
+        { type: 'turn.ended', turnId: 0, reason: 'completed', time: 2000 },
+        prompt(1, 'p2', 3000),
+        prompt(2, 'p3', 4000),
+        { type: 'prompt.aborted', promptId: 'p3', abortedAt: '2026-01-01T00:00:05.000Z', time: 5000 },
+      ],
+      base,
+    );
+    expect(folded.prompts.map((entry) => [entry.promptId, entry.status])).toEqual([
+      ['p1', 'completed'],
+      ['p2', 'running'],
+      ['p3', 'aborted'],
+    ]);
+    expect(folded.prompts[2]?.finishedAt).toBe('2026-01-01T00:00:05.000Z');
+  });
+
+  it('builds steer prompt entries from turn.steer and marks them via prompt.steered in any record order', () => {
+    const base = groupMessagesIntoSnapshot([
+      { id: 'p1', role: 'user', content: [{ type: 'text', text: 'run' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', turnId: 0, input: [{ type: 'text', text: 'run' }], origin: { kind: 'user' }, promptId: 'p1', time: 1000 },
+        { type: 'prompt.steered', activePromptId: 'p1', promptIds: ['p2'], steeredAt: '2026-01-01T00:00:01.500Z', time: 1500 },
+        { type: 'turn.steer', turnId: 0, promptIds: ['p2'], messageId: 'p2', input: [{ type: 'text', text: 'also this' }], origin: { kind: 'user' }, time: 1500 },
+        { type: 'turn.ended', turnId: 0, reason: 'completed', time: 2000 },
+        { type: 'prompt.completed', promptId: 'p1', finishedAt: '2026-01-01T00:00:02.000Z', reason: 'completed', time: 2000 },
+      ],
+      base,
+    );
+    expect(folded.prompts).toEqual([
+      {
+        promptId: 'p1',
+        status: 'completed',
+        userMessageId: 'p1',
+        content: [{ type: 'text', text: 'run' }],
+        createdAt: new Date(1000).toISOString(),
+        finishedAt: '2026-01-01T00:00:02.000Z',
+        steeredAt: '2026-01-01T00:00:01.500Z',
+      },
+      {
+        promptId: 'p2',
+        status: 'completed',
+        userMessageId: 'p2',
+        content: [{ type: 'text', text: 'also this' }],
+        createdAt: new Date(1500).toISOString(),
+        finishedAt: '2026-01-01T00:00:01.500Z',
+        steeredAt: '2026-01-01T00:00:01.500Z',
+      },
+    ]);
+  });
+
+  it('keeps the base prompts when no prompt fact records exist', () => {
+    const base = groupMessagesIntoSnapshot([
+      { id: 'prompt-1', role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
+    ]);
+    const folded = foldWireRecordFacts(
+      [{ type: 'turn.ended', turnId: 0, reason: 'completed', time: 2000 }],
+      base,
+    );
+    expect(folded.prompts).toEqual([]);
+    expect(folded.prompts).toBe(base.prompts);
+  });
+
+  it('drops prompts of turns removed by a context undo', () => {
+    const base = groupMessagesIntoSnapshot([
+      { id: 'p2', role: 'user', content: [{ type: 'text', text: 'replacement' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'a2' }], toolCalls: [] },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', turnId: 0, input: [{ type: 'text', text: 'undone' }], origin: { kind: 'user' }, promptId: 'p1', time: 1 },
+        { type: 'context.append_message', message: { id: 'p1', role: 'user', origin: { kind: 'user' } }, time: 2 },
+        { type: 'turn.ended', turnId: 0, reason: 'completed', time: 3 },
+        { type: 'context.undo', count: 1, time: 4 },
+        { type: 'turn.prompt', turnId: 1, input: [{ type: 'text', text: 'replacement' }], origin: { kind: 'user' }, promptId: 'p2', time: 5 },
+        { type: 'turn.ended', turnId: 1, reason: 'completed', time: 6 },
+      ],
+      base,
+    );
+    expect(folded.prompts.map((entry) => entry.promptId)).toEqual(['p2']);
+  });
 });

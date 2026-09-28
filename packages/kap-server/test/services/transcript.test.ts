@@ -2911,6 +2911,92 @@ describe('AgentTranscriptProjector', () => {
     }
   });
 
+  it('readColdSnapshot fills turn startedAt, step times, and prompts from the wire', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-times-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        {
+          type: 'turn.prompt',
+          turnId: 0,
+          input: [{ type: 'text', text: 'hi' }],
+          origin: { kind: 'user', clientMetadata: [{ composer: { version: 1 } }] },
+          promptId: 'msg-1',
+          time: 1000,
+        },
+        {
+          type: 'context.append_message',
+          message: {
+            id: 'msg-1',
+            role: 'user',
+            content: [{ type: 'text', text: 'hi' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+          time: 1000,
+        },
+        {
+          type: 'context.append_loop_event',
+          event: { type: 'step.begin', uuid: 's1', turnId: '0', step: 1 },
+          time: 1100,
+        },
+        {
+          type: 'context.append_loop_event',
+          event: { type: 'content.part', stepUuid: 's1', part: { type: 'text', text: 'done' } },
+          time: 1400,
+        },
+        {
+          type: 'context.append_loop_event',
+          event: {
+            type: 'step.end',
+            uuid: 's1',
+            turnId: '0',
+            step: 1,
+            finishReason: 'end_turn',
+            usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
+          },
+          time: 1500,
+        },
+        { type: 'turn.ended', turnId: 0, reason: 'completed', durationMs: 1000, time: 2000 },
+        {
+          type: 'prompt.completed',
+          promptId: 'msg-1',
+          finishedAt: '2026-01-01T00:00:02.000Z',
+          reason: 'completed',
+          time: 2000,
+        },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+
+      const snapshot = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
+      const turn = snapshot?.items[0];
+      if (turn?.kind !== 'turn') throw new Error('expected turn');
+      expect(turn.triggerPromptId).toBe('msg-1');
+      expect(turn.state).toBe('completed');
+      expect(turn.startedAt).toBe(new Date(1000).toISOString());
+      expect(turn.endedAt).toBe(new Date(2000).toISOString());
+      expect(turn.steps).toHaveLength(1);
+      expect(turn.steps[0]).toMatchObject({
+        startedAt: new Date(1100).toISOString(),
+        endedAt: new Date(1500).toISOString(),
+      });
+      expect(snapshot?.prompts).toEqual([
+        {
+          promptId: 'msg-1',
+          status: 'completed',
+          userMessageId: 'msg-1',
+          content: [{ type: 'text', text: 'hi' }],
+          clientMetadata: [{ composer: { version: 1 } }],
+          createdAt: new Date(1000).toISOString(),
+          finishedAt: '2026-01-01T00:00:02.000Z',
+        },
+      ]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('readColdSnapshot projects question requests onto the wire shape without rewriting the log', async () => {
     const home = await mkdtemp(join(tmpdir(), 'transcript-cold-question-'));
     try {
