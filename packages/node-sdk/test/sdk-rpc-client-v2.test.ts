@@ -1515,14 +1515,35 @@ describe('SDKRpcClientV2 workspace trust', () => {
       const info = await harness.getWorkspaceTrustInfo(workDir);
       expect(info.trusted).toBe(false);
       expect(info.gatedMcpServers).toEqual([
-        { name: 'http-server', transport: 'http', url: 'https://example.test/mcp' },
-        { name: 'nested-server', transport: 'stdio', command: 'nested-cmd' },
-        { name: 'root-server', transport: 'stdio', command: 'root-cmd', args: ['--safe'], cwd: '/tmp/root' },
+        {
+          name: 'http-server',
+          transport: 'http',
+          url: 'https://example.test/mcp',
+          headerKeys: ['Authorization'],
+          bearerTokenEnvVar: 'TOKEN',
+          origin: join(workDir, '.mcp.json'),
+        },
+        {
+          name: 'nested-server',
+          transport: 'stdio',
+          command: 'nested-cmd',
+          origin: join(workDir, '.kimi-code', 'mcp.json'),
+        },
+        {
+          name: 'root-server',
+          transport: 'stdio',
+          command: 'root-cmd',
+          args: ['--safe'],
+          cwd: '/tmp/root',
+          envKeys: ['SECRET'],
+          origin: join(workDir, '.mcp.json'),
+        },
       ]);
       const serialized = JSON.stringify(info);
+      // Secret values stay redacted; key names are disclosed deliberately.
       expect(serialized).not.toContain('hidden');
-      expect(serialized).not.toContain('SECRET');
-      expect(serialized).not.toContain('TOKEN');
+      expect(serialized).toContain('SECRET');
+      expect(serialized).toContain('TOKEN');
     } finally {
       await harness.close();
     }
@@ -1561,8 +1582,14 @@ describe('SDKRpcClientV2 workspace trust', () => {
           command: 'project-github',
           args: undefined,
           cwd: workDir,
+          origin: join(workDir, '.mcp.json'),
         },
-        { name: 'toString', transport: 'http', url: 'https://example.test/mcp' },
+        {
+          name: 'toString',
+          transport: 'http',
+          url: 'https://example.test/mcp',
+          origin: join(workDir, '.mcp.json'),
+        },
       ]);
     } finally {
       await harness.close();
@@ -1576,7 +1603,48 @@ describe('SDKRpcClientV2 workspace trust', () => {
     await writeFile(join(workDir, '.mcp.json'), '{not json', 'utf-8');
     try {
       const info = await harness.getWorkspaceTrustInfo(workDir);
-      expect(info).toEqual({ trusted: false, gatedMcpServers: [] });
+      expect(info).toEqual({
+        trusted: false,
+        gatedMcpServers: [],
+        gatedAdditionalDirs: [],
+        instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('discloses additional directories and instruction sources of an untrusted workspace', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    const outsideDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-outside-'));
+    tempDirs.push(workDir, outsideDir);
+    await mkdir(join(workDir, '.kimi-code'), { recursive: true });
+    await writeFile(
+      join(workDir, '.kimi-code', 'local.toml'),
+      `[workspace]\nadditional_dir = [${JSON.stringify(outsideDir)}]\n`,
+      'utf-8',
+    );
+    await writeFile(join(workDir, 'AGENTS.md'), '# Demo\n', 'utf-8');
+    await mkdir(join(workDir, '.kimi-code', 'skills', 'demo-skill'), { recursive: true });
+    await writeFile(
+      join(workDir, '.kimi-code', 'skills', 'demo-skill', 'SKILL.md'),
+      '---\nname: demo-skill\ndescription: Demo skill\n---\n\nDo demo things.\n',
+      'utf-8',
+    );
+    await mkdir(join(workDir, '.kimi-code', 'agents'), { recursive: true });
+    await writeFile(
+      join(workDir, '.kimi-code', 'agents', 'demo-agent.md'),
+      '---\nname: demo-agent\ndescription: Demo agent\n---\n\nYou are demo-agent.\n',
+      'utf-8',
+    );
+    try {
+      const info = await harness.getWorkspaceTrustInfo(workDir);
+      expect(info.trusted).toBe(false);
+      expect(info.gatedAdditionalDirs).toEqual([outsideDir]);
+      expect(info.instructionSources.agentsMdPaths).toEqual([join(workDir, 'AGENTS.md')]);
+      expect(info.instructionSources.skills).toEqual(['demo-skill']);
+      expect(info.instructionSources.agentProfiles).toEqual(['demo-agent']);
     } finally {
       await harness.close();
     }
@@ -1591,6 +1659,8 @@ describe('SDKRpcClientV2 workspace trust', () => {
       expect(await harness.getWorkspaceTrustInfo(workDir)).toEqual({
         trusted: true,
         gatedMcpServers: [],
+        gatedAdditionalDirs: [],
+        instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
       });
       // The trust marker lives in the kimi home, never in the checkout.
       const markers = await readdir(join(homeDir, 'workspace-trust'));

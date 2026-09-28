@@ -47,7 +47,12 @@ function makeHarness() {
     close: vi.fn(async () => {}),
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
-    getWorkspaceTrustInfo: vi.fn(async () => ({ trusted: true, gatedMcpServers: [] })),
+    getWorkspaceTrustInfo: vi.fn(async () => ({
+      trusted: true,
+      gatedMcpServers: [],
+      gatedAdditionalDirs: [],
+      instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
+    })),
     auth: {
       status: vi.fn(async () => ({ providers: [] })),
       login: vi.fn(),

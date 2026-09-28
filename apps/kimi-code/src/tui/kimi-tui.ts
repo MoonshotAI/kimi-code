@@ -3888,7 +3888,12 @@ export class KimiTUI {
     try {
       info = await this.harness.getWorkspaceTrustInfo(workDir);
     } catch {
-      info = { trusted: false, gatedMcpServers: [] };
+      info = {
+        trusted: false,
+        gatedMcpServers: [],
+        gatedAdditionalDirs: [],
+        instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
+      };
     }
     if (info.trusted) {
       return false;
@@ -3899,7 +3904,7 @@ export class KimiTUI {
       this.mountEditorReplacement(
         new TrustPromptComponent({
           workDir,
-          gatedMcpServers: info.gatedMcpServers,
+          info,
           onSelect: (c) => {
             resolve(c);
           },

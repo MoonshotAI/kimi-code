@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { WorkspaceTrustMcpServerInfo } from '@moonshot-ai/kimi-code-sdk';
+import type { WorkspaceTrustInfo } from '@moonshot-ai/kimi-code-sdk';
 
 import { TrustPromptComponent } from '#/tui/components/dialogs/trust-prompt';
 
@@ -10,10 +10,20 @@ function strip(text: string): string {
   return text.replaceAll(ANSI_SGR, '');
 }
 
-function renderLines(gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[] = []): string[] {
+function makeInfo(overrides: Partial<WorkspaceTrustInfo> = {}): WorkspaceTrustInfo {
+  return {
+    trusted: false,
+    gatedMcpServers: [],
+    gatedAdditionalDirs: [],
+    instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
+    ...overrides,
+  };
+}
+
+function renderLines(info: WorkspaceTrustInfo = makeInfo()): string[] {
   const prompt = new TrustPromptComponent({
     workDir: '/tmp/demo-workspace',
-    gatedMcpServers,
+    info,
     onSelect: vi.fn(),
   });
   return prompt.render(100).map(strip);
@@ -31,35 +41,129 @@ describe('TrustPromptComponent', () => {
     expect(lines.some((l) => l.includes('/tmp/demo-workspace'))).toBe(true);
   });
 
-  it('lists the gated project MCP servers when present', () => {
-    const lines = renderLines([
-      { name: 'nested-server', transport: 'stdio', command: 'nested-cmd', args: ['--safe'], cwd: '/tmp' },
-      { name: 'root-server', transport: 'http', url: 'https://example.test/mcp' },
-    ]);
-    expect(lines.some((l) => l.includes('Project MCP targets'))).toBe(true);
-    expect(lines.some((l) => l.includes('nested-server (stdio): command=nested-cmd'))).toBe(true);
-    expect(lines.some((l) => l.includes('args=["--safe"] cwd=/tmp'))).toBe(true);
-    expect(lines.some((l) => l.includes('root-server (http): url=https://example.test/mcp'))).toBe(true);
-    expect(renderLines().some((l) => l.includes('This folder defines'))).toBe(false);
+  it('explains what an unconfigured folder means when trusted', () => {
+    const lines = renderLines();
+    const text = lines.join('\n');
+    expect(text).toContain('No project-level config found here');
+    expect(text).toContain('subject to your approvals');
+    expect(text).toContain('applies automatically once this folder is trusted');
   });
 
-  it('strips terminal control characters from workspace-supplied MCP targets', () => {
-    const lines = renderLines([
-      { name: 'evil', transport: 'stdio', command: 'cmd\u001B[2J\u0007evil' },
-      { name: 'multi\nline', transport: 'http', url: 'https://example.test/\u001B]8;;https://evil.test\u0007' },
-    ]);
+  it('lists the gated project MCP servers with keys and origin', () => {
+    const lines = renderLines(
+      makeInfo({
+        gatedMcpServers: [
+          {
+            name: 'nested-server',
+            transport: 'stdio',
+            command: 'nested-cmd',
+            args: ['--safe'],
+            cwd: '/tmp',
+            envKeys: ['API_KEY'],
+            origin: '/tmp/demo-workspace/.mcp.json',
+          },
+          {
+            name: 'root-server',
+            transport: 'http',
+            url: 'https://example.test/mcp',
+            headerKeys: ['Authorization'],
+            bearerTokenEnvVar: 'MCP_TOKEN',
+            origin: '/tmp/demo-workspace/.kimi-code/mcp.json',
+          },
+        ],
+      }),
+    );
+    const text = lines.join('\n');
+    expect(text).toContain('Run 2 project MCP servers');
+    expect(text).toContain('nested-server (stdio): command=nested-cmd');
+    expect(text).toContain('args=["--safe"] cwd=/tmp');
+    expect(text).toContain('env keys: API_KEY');
+    expect(text).toContain('from .mcp.json');
+    expect(text).toContain('root-server (http): url=https://example.test/mcp');
+    expect(text).toContain('header keys: Authorization · bearer token from env MCP_TOKEN');
+    expect(text).toContain('from .kimi-code/mcp.json');
+  });
+
+  it('lists additional directories outside the project', () => {
+    const lines = renderLines(
+      makeInfo({ gatedAdditionalDirs: ['/tmp/shared-assets', '/opt/toolchain'] }),
+    );
+    const text = lines.join('\n');
+    expect(text).toContain('Grant access to 2 directories outside this project');
+    expect(text).toContain('/tmp/shared-assets');
+    expect(text).toContain('/opt/toolchain');
+  });
+
+  it('lists instruction sources feeding the agent', () => {
+    const lines = renderLines(
+      makeInfo({
+        instructionSources: {
+          agentsMdPaths: ['/tmp/demo-workspace/AGENTS.md'],
+          skills: ['deploy-prod', 'lint-fix'],
+          agentProfiles: ['release-manager'],
+        },
+      }),
+    );
+    const text = lines.join('\n');
+    expect(text).toContain('Feed instructions to the agent');
+    expect(text).toContain('AGENTS.md: AGENTS.md');
+    expect(text).toContain('skills: deploy-prod, lint-fix');
+    expect(text).toContain('agent profiles: release-manager');
+  });
+
+  it('strips terminal control characters from workspace-supplied text', () => {
+    const lines = renderLines(
+      makeInfo({
+        gatedMcpServers: [
+          {
+            name: 'evil',
+            transport: 'stdio',
+            command: 'cmd\u001B[2J\u0007evil',
+            envKeys: ['SAFE', 'BAD\u0007'],
+            origin: '/tmp/demo-workspace/.mcp.json',
+          },
+          {
+            name: 'multi\nline',
+            transport: 'http',
+            url: 'https://example.test/\u001B]8;;https://evil.test\u0007',
+            origin: '/tmp/demo-workspace/.mcp.json',
+          },
+        ],
+        instructionSources: {
+          agentsMdPaths: [],
+          skills: ['ski\u001B[2Jll'],
+          agentProfiles: [],
+        },
+      }),
+    );
     const text = lines.join('\n');
     // ESC and BEL are dropped, defusing the sequences into harmless literal text.
     expect(text).toContain('evil (stdio): command=cmd[2Jevil');
     expect(text).toContain('multiline (http): url=https://example.test/]8;;https://evil.test');
+    expect(text).toContain('env keys: SAFE, BAD');
+    expect(text).toContain('skills: ski[2Jll');
     expect(text).not.toContain('\u001B]8;;https://evil.test');
+  });
+
+  it('caps long lists with a "+N more" suffix', () => {
+    const lines = renderLines(
+      makeInfo({
+        instructionSources: {
+          agentsMdPaths: [],
+          skills: Array.from({ length: 12 }, (_, i) => `skill-${i}`),
+          agentProfiles: [],
+        },
+      }),
+    );
+    const text = lines.join('\n');
+    expect(text).toContain('+4 more');
   });
 
   it('defaults to Trust this folder', () => {
     const onSelect = vi.fn();
     const prompt = new TrustPromptComponent({
       workDir: '/tmp/demo-workspace',
-      gatedMcpServers: [],
+      info: makeInfo(),
       onSelect,
     });
     prompt.handleInput('\r');
@@ -70,7 +174,7 @@ describe('TrustPromptComponent', () => {
     const onSelect = vi.fn();
     const prompt = new TrustPromptComponent({
       workDir: '/tmp/demo-workspace',
-      gatedMcpServers: [],
+      info: makeInfo(),
       onSelect,
     });
     prompt.handleInput('\u001B[A');
@@ -82,7 +186,7 @@ describe('TrustPromptComponent', () => {
     const onSelect = vi.fn();
     const prompt = new TrustPromptComponent({
       workDir: '/tmp/demo-workspace',
-      gatedMcpServers: [],
+      info: makeInfo(),
       onSelect,
     });
     prompt.handleInput('\u001B[B');
@@ -94,7 +198,7 @@ describe('TrustPromptComponent', () => {
     const onSelect = vi.fn();
     const prompt = new TrustPromptComponent({
       workDir: '/tmp/demo-workspace',
-      gatedMcpServers: [],
+      info: makeInfo(),
       onSelect,
     });
     prompt.handleInput('\u001B');

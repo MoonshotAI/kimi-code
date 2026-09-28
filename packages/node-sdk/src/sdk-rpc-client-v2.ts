@@ -137,6 +137,7 @@ import {
   loadMcpServersDetailed,
   resolveMcpJsonPaths,
 } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
+import { findGitWorkTree } from '@moonshot-ai/agent-core-v2/app/git/workTree';
 import { fsSuggestRequestSchema } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
 import { IAppendLogStore } from '@moonshot-ai/agent-core-v2/persistence/interface/appendLogStore';
 import type { McpServerConfig as WorkspaceMcpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
@@ -211,8 +212,10 @@ import {
   PRINT_WAIT_CEILING_S_DEFAULT,
   ProfileError,
   ProfileErrors,
+  type Program,
   Error2 as V2Error2,
   ErrorCodes as V2ErrorCodes,
+  FileProjectLocalConfigService,
   resolveAgentTaskConfig,
   resolveConfigPath,
   resolveKimiHome,
@@ -323,6 +326,8 @@ import type {
   TelemetryClient,
   UploadFileOptions,
   WorkspaceTrustInfo,
+  WorkspaceTrustInstructionSources,
+  WorkspaceTrustMcpServerInfo,
 } from '#/types';
 import {
   diagnosticsToConfigDiagnostics,
@@ -687,38 +692,37 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * klient has no workspace-trust facade; composed directly from the engine
    * via {@link engineAccessor} — the same `handlerFor({ root })` path
    * `createSession` takes (materializing the workspace handler is a no-op
-   * cost here: session creation does it anyway). The gated-server list is
-   * the final merged config entries whose origins are project files (the
-   * workspaceTrust gate inside the engine's `workspaceMcpConfig`),
-   * computed best-effort: an unreadable/invalid project file degrades to an
-   * empty list rather than failing the caller.
+   * cost here: session creation does it anyway). The disclosure lists what
+   * trusting would activate: the gated-server list is the final merged
+   * config entries whose origins are project files (the workspaceTrust gate
+   * inside the engine's `workspaceMcpConfig`), plus the project's
+   * additional directories and instruction sources. Every section is
+   * computed best-effort: an unreadable/invalid project file degrades that
+   * section to an empty list rather than failing the caller.
    */
   override async getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo> {
     const handler = await this.engineAccessor
       .get(IWorkspaceInstanceManager)
       .getOrCreate({ root: workDir });
     const trusted = await handler.program.trust.get();
-    if (trusted) return { trusted: true, gatedMcpServers: [] };
-    try {
-      const fs = this.engineAccessor.get(IHostFileSystem);
-      const [paths, loaded] = await Promise.all([
-        resolveMcpJsonPaths({ fs, cwd: workDir, homeDir: this.homeDir }),
-        loadMcpServersDetailed({
-          fs,
-          cwd: workDir,
-          homeDir: this.homeDir,
-          includeProject: true,
-        }),
-      ]);
-      const projectPaths = new Set([paths.projectRoot, paths.project]);
-      const gatedMcpServers = Object.entries(loaded.servers)
-        .filter(([name]) => projectPaths.has(loaded.origins[name] ?? ''))
-        .map(([name, config]) => describeWorkspaceMcpServer(name, config))
-        .toSorted((a, b) => a.name.localeCompare(b.name));
-      return { trusted: false, gatedMcpServers };
-    } catch {
-      return { trusted: false, gatedMcpServers: [] };
+    if (trusted) {
+      return {
+        trusted: true,
+        gatedMcpServers: [],
+        gatedAdditionalDirs: [],
+        instructionSources: EMPTY_INSTRUCTION_SOURCES,
+      };
     }
+    const fs = this.engineAccessor.get(IHostFileSystem);
+    const bootstrap = this.engineAccessor.get(IBootstrapService);
+    const [gatedMcpServers, gatedAdditionalDirs, instructionSources] = await Promise.all([
+      describeGatedMcpServers(fs, workDir, this.homeDir).catch(() => []),
+      readGatedAdditionalDirs(fs, bootstrap, workDir).catch(() => []),
+      describeInstructionSources(handler.program, fs, workDir).catch(
+        () => EMPTY_INSTRUCTION_SOURCES,
+      ),
+    ]);
+    return { trusted: false, gatedMcpServers, gatedAdditionalDirs, instructionSources };
   }
 
   /**
@@ -2872,10 +2876,70 @@ function toManagedServerInfo(server: McpManagedServer): McpManagedServerInfo {
   } as McpManagedServerInfo;
 }
 
+const EMPTY_INSTRUCTION_SOURCES: WorkspaceTrustInstructionSources = {
+  agentsMdPaths: [],
+  skills: [],
+  agentProfiles: [],
+};
+
+async function describeGatedMcpServers(
+  fs: IHostFileSystem,
+  workDir: string,
+  homeDir: string | undefined,
+): Promise<readonly WorkspaceTrustMcpServerInfo[]> {
+  const [paths, loaded] = await Promise.all([
+    resolveMcpJsonPaths({ fs, cwd: workDir, homeDir }),
+    loadMcpServersDetailed({ fs, cwd: workDir, homeDir, includeProject: true }),
+  ]);
+  const projectPaths = new Set([paths.projectRoot, paths.project]);
+  return Object.entries(loaded.servers)
+    .filter(([name]) => projectPaths.has(loaded.origins[name] ?? ''))
+    .map(([name, config]) => describeWorkspaceMcpServer(name, config, loaded.origins[name] ?? ''))
+    .toSorted((a, b) => a.name.localeCompare(b.name));
+}
+
+async function readGatedAdditionalDirs(
+  fs: IHostFileSystem,
+  bootstrap: IBootstrapService,
+  workDir: string,
+): Promise<readonly string[]> {
+  const localConfig = new FileProjectLocalConfigService(bootstrap, fs);
+  const result = await localConfig.readAdditionalDirs(workDir);
+  return result.additionalDirs;
+}
+
+async function describeInstructionSources(
+  program: Program,
+  fs: IHostFileSystem,
+  workDir: string,
+): Promise<WorkspaceTrustInstructionSources> {
+  const projectRoot = (await findGitWorkTree(fs, workDir))?.root ?? normalizeWorkDir(workDir);
+  await Promise.all([
+    program.skills.ready,
+    program.agentProfiles.ready,
+    program.instructions.ready,
+  ]);
+  const skills = program.skills.catalog
+    .listSkills()
+    .filter((skill) => skill.source === 'project')
+    .map((skill) => skill.name)
+    .toSorted();
+  const snapshot = program.snapshot();
+  const agentProfiles = snapshot.sources.agentProfiles
+    .filter((entry) => entry.sourceId === 'workspace')
+    .flatMap((entry) => entry.profiles)
+    .toSorted();
+  const agentsMdPaths = snapshot.sources.instructionPaths
+    .filter((path) => path.startsWith(`${projectRoot}/`))
+    .toSorted();
+  return { agentsMdPaths, skills, agentProfiles };
+}
+
 function describeWorkspaceMcpServer(
   name: string,
   config: WorkspaceMcpServerConfig,
-): WorkspaceTrustInfo['gatedMcpServers'][number] {
+  origin: string,
+): WorkspaceTrustMcpServerInfo {
   if (config.transport === 'stdio') {
     return {
       name,
@@ -2883,7 +2947,16 @@ function describeWorkspaceMcpServer(
       command: config.command,
       args: config.args,
       cwd: config.cwd,
+      envKeys: config.env === undefined ? undefined : Object.keys(config.env),
+      origin,
     };
   }
-  return { name, transport: config.transport, url: config.url };
+  return {
+    name,
+    transport: config.transport,
+    url: config.url,
+    headerKeys: config.headers === undefined ? undefined : Object.keys(config.headers),
+    bearerTokenEnvVar: config.bearerTokenEnvVar,
+    origin,
+  };
 }

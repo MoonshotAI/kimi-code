@@ -128,9 +128,9 @@ export type { AgentCommandInfo } from '@moonshot-ai/agent-core-v2/agent/command/
 export type { PermissionMode };
 
 /**
- * Trust state of a workspace directory. Only meaningful on the agent-core-v2
- * engine; the v1 engine has no workspace-trust concept and reports
- * `{ trusted: true, gatedMcpServers: [] }`.
+ * Safe description of one project-level MCP server that trusting the
+ * workspace would enable. Values come from untrusted project files; secret
+ * values are redacted to their key names.
  */
 export interface WorkspaceTrustMcpServerInfo {
   readonly name: string;
@@ -139,12 +139,42 @@ export interface WorkspaceTrustMcpServerInfo {
   readonly args?: readonly string[];
   readonly cwd?: string;
   readonly url?: string;
+  /** Names of environment variables the stdio config sets (values redacted). */
+  readonly envKeys?: readonly string[];
+  /** Names of HTTP headers the config sets (values redacted). */
+  readonly headerKeys?: readonly string[];
+  /** Env var an http/sse config reads its bearer token from. */
+  readonly bearerTokenEnvVar?: string;
+  /** Absolute path of the config file declaring this server. */
+  readonly origin: string;
 }
 
+/**
+ * Project-sourced instruction inputs that load into the agent context once
+ * the workspace is trusted. They steer model behavior (prompt-level), they
+ * do not execute code by themselves.
+ */
+export interface WorkspaceTrustInstructionSources {
+  /** AGENTS.md files inside the project that will be injected into context. */
+  readonly agentsMdPaths: readonly string[];
+  /** Names of project-level skills that will load. */
+  readonly skills: readonly string[];
+  /** Names of project-level agent profiles that will load. */
+  readonly agentProfiles: readonly string[];
+}
+
+/**
+ * Trust state of a workspace directory, plus everything trusting it would
+ * activate. Only meaningful on the agent-core-v2 engine; the v1 engine has
+ * no workspace-trust concept and reports trusted with empty lists.
+ */
 export interface WorkspaceTrustInfo {
   readonly trusted: boolean;
-  /** Safe descriptions of project-level MCP servers that trusting would enable. */
+  /** Project-level MCP servers that trusting would start. */
   readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
+  /** Resolved directories outside the project that trusting grants access to. */
+  readonly gatedAdditionalDirs: readonly string[];
+  readonly instructionSources: WorkspaceTrustInstructionSources;
 }
 
 /**

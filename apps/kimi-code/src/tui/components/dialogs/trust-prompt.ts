@@ -7,7 +7,7 @@ import {
   type Focusable,
 } from '@moonshot-ai/pi-tui';
 
-import type { WorkspaceTrustMcpServerInfo } from '@moonshot-ai/kimi-code-sdk';
+import type { WorkspaceTrustInfo, WorkspaceTrustMcpServerInfo } from '@moonshot-ai/kimi-code-sdk';
 
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
@@ -16,8 +16,8 @@ export type TrustPromptChoice = 'trust' | 'distrust';
 
 export interface TrustPromptOptions {
   readonly workDir: string;
-  /** Project-level MCP servers that trusting would enable; may be empty. */
-  readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
+  /** What trusting would activate; rendered before the workspace is trusted. */
+  readonly info: WorkspaceTrustInfo;
   /** Esc resolves to 'distrust' as well. */
   readonly onSelect: (choice: TrustPromptChoice) => void;
 }
@@ -28,11 +28,16 @@ interface TrustPromptOption {
   readonly description: string;
 }
 
+const MAX_MCP_SERVERS = 8;
+const MAX_ADDITIONAL_DIRS = 6;
+const MAX_NAME_LIST = 8;
+const MAX_AGENTS_MD_PATHS = 4;
+
 const OPTIONS: readonly TrustPromptOption[] = [
   {
     value: 'trust',
     label: 'Trust this folder',
-    description: 'Enable project MCP servers. Remembered for this folder.',
+    description: 'Load everything listed above. Remembered for this folder.',
   },
   {
     value: 'distrust',
@@ -80,20 +85,7 @@ export class TrustPromptComponent implements Component, Focusable {
       '',
     ];
 
-    const notice =
-      'Project-level MCP servers are disabled until you explicitly choose Trust. Trust starts the listed project MCP targets and remembers this folder.';
-    for (const line of wrapTextWithAnsi(notice, Math.max(20, width - 2))) {
-      lines.push(` ${currentTheme.fg('textMuted', line)}`);
-    }
-    if (this.opts.gatedMcpServers.length > 0) {
-      lines.push(` ${currentTheme.fg('warning', 'Project MCP targets:')}`);
-      for (const server of this.opts.gatedMcpServers) {
-        const details = formatMcpTarget(server);
-        for (const line of wrapTextWithAnsi(details, Math.max(20, width - 4))) {
-          lines.push(`   ${currentTheme.fg('warning', line)}`);
-        }
-      }
-    }
+    lines.push(...this.renderDisclosure(width));
     lines.push('');
 
     for (let i = 0; i < OPTIONS.length; i += 1) {
@@ -113,6 +105,111 @@ export class TrustPromptComponent implements Component, Focusable {
     lines.push(rule);
     return lines.map((line) => truncateToWidth(line, width));
   }
+
+  private renderDisclosure(width: number): string[] {
+    const { gatedMcpServers, gatedAdditionalDirs, instructionSources } = this.opts.info;
+    const lines: string[] = [];
+    const wrap = (text: string, indent: number): string[] =>
+      wrapTextWithAnsi(text, Math.max(20, width - indent)).map(
+        (line) => `${' '.repeat(indent)}${currentTheme.fg('warning', line)}`,
+      );
+
+    const hasContent =
+      gatedMcpServers.length > 0 ||
+      gatedAdditionalDirs.length > 0 ||
+      instructionSources.agentsMdPaths.length > 0 ||
+      instructionSources.skills.length > 0 ||
+      instructionSources.agentProfiles.length > 0;
+
+    if (!hasContent) {
+      const empty =
+        'No project-level config found here. Kimi Code will read, edit, and run files in this folder, subject to your approvals. Project config added later (MCP servers, extra directories, instructions) applies automatically once this folder is trusted.';
+      return wrapTextWithAnsi(empty, Math.max(20, width - 2)).map(
+        (line) => ` ${currentTheme.fg('textMuted', line)}`,
+      );
+    }
+
+    lines.push(` ${currentTheme.fg('text', 'Once trusted, this folder will:')}`);
+
+    if (gatedMcpServers.length > 0) {
+      lines.push('');
+      lines.push(
+        ...wrap(
+          `Run ${gatedMcpServers.length} project MCP ${gatedMcpServers.length === 1 ? 'server' : 'servers'} — they start automatically, without asking:`,
+          1,
+        ),
+      );
+      for (const server of gatedMcpServers.slice(0, MAX_MCP_SERVERS)) {
+        lines.push(...this.renderMcpServer(server, width));
+      }
+      if (gatedMcpServers.length > MAX_MCP_SERVERS) {
+        lines.push(...wrap(`…and ${gatedMcpServers.length - MAX_MCP_SERVERS} more`, 3));
+      }
+    }
+
+    if (gatedAdditionalDirs.length > 0) {
+      lines.push('');
+      lines.push(
+        ...wrap(
+          `Grant access to ${gatedAdditionalDirs.length} ${gatedAdditionalDirs.length === 1 ? 'directory' : 'directories'} outside this project (from .kimi-code/local.toml):`,
+          1,
+        ),
+      );
+      for (const dir of gatedAdditionalDirs.slice(0, MAX_ADDITIONAL_DIRS)) {
+        lines.push(...wrap(sanitizeForDisplay(dir), 3));
+      }
+      if (gatedAdditionalDirs.length > MAX_ADDITIONAL_DIRS) {
+        lines.push(...wrap(`…and ${gatedAdditionalDirs.length - MAX_ADDITIONAL_DIRS} more`, 3));
+      }
+    }
+
+    const instructionLines = this.renderInstructionSources(width);
+    if (instructionLines.length > 0) {
+      lines.push('');
+      lines.push(
+        ...wrap('Feed instructions to the agent — they steer behavior; approvals still apply:', 1),
+      );
+      lines.push(...instructionLines);
+    }
+
+    return lines;
+  }
+
+  private renderMcpServer(server: WorkspaceTrustMcpServerInfo, width: number): string[] {
+    const lines: string[] = [];
+    const wrap = (text: string, indent: number): string[] =>
+      wrapTextWithAnsi(text, Math.max(20, width - indent)).map(
+        (line) => `${' '.repeat(indent)}${currentTheme.fg('warning', line)}`,
+      );
+    lines.push(...wrap(formatMcpTarget(server), 3));
+    const keys = formatMcpKeys(server);
+    if (keys !== undefined) lines.push(...wrap(keys, 5));
+    lines.push(...wrap(`from ${relativize(this.opts.workDir, server.origin)}`, 5));
+    return lines;
+  }
+
+  private renderInstructionSources(width: number): string[] {
+    const { agentsMdPaths, skills, agentProfiles } = this.opts.info.instructionSources;
+    const wrap = (text: string, indent: number): string[] =>
+      wrapTextWithAnsi(text, Math.max(20, width - indent)).map(
+        (line) => `${' '.repeat(indent)}${currentTheme.fg('warning', line)}`,
+      );
+    const lines: string[] = [];
+    if (agentsMdPaths.length > 0) {
+      const shown = agentsMdPaths
+        .slice(0, MAX_AGENTS_MD_PATHS)
+        .map((path) => sanitizeForDisplay(relativize(this.opts.workDir, path)));
+      const suffix = agentsMdPaths.length > MAX_AGENTS_MD_PATHS ? `, +${agentsMdPaths.length - MAX_AGENTS_MD_PATHS} more` : '';
+      lines.push(...wrap(`AGENTS.md: ${shown.join(', ')}${suffix}`, 3));
+    }
+    if (skills.length > 0) {
+      lines.push(...wrap(`skills: ${formatNameList(skills)}`, 3));
+    }
+    if (agentProfiles.length > 0) {
+      lines.push(...wrap(`agent profiles: ${formatNameList(agentProfiles)}`, 3));
+    }
+    return lines;
+  }
 }
 
 function formatMcpTarget(server: WorkspaceTrustMcpServerInfo): string {
@@ -122,6 +219,31 @@ function formatMcpTarget(server: WorkspaceTrustMcpServerInfo): string {
     return sanitizeForDisplay(`${server.name} (stdio): command=${server.command ?? ''}${args}${cwd}`);
   }
   return sanitizeForDisplay(`${server.name} (${server.transport}): url=${server.url ?? ''}`);
+}
+
+function formatMcpKeys(server: WorkspaceTrustMcpServerInfo): string | undefined {
+  const parts: string[] = [];
+  if (server.envKeys !== undefined && server.envKeys.length > 0) {
+    parts.push(`env keys: ${server.envKeys.map(sanitizeForDisplay).join(', ')}`);
+  }
+  if (server.headerKeys !== undefined && server.headerKeys.length > 0) {
+    parts.push(`header keys: ${server.headerKeys.map(sanitizeForDisplay).join(', ')}`);
+  }
+  if (server.bearerTokenEnvVar !== undefined) {
+    parts.push(`bearer token from env ${sanitizeForDisplay(server.bearerTokenEnvVar)}`);
+  }
+  return parts.length === 0 ? undefined : parts.join(' · ');
+}
+
+function formatNameList(names: readonly string[]): string {
+  const shown = names.slice(0, MAX_NAME_LIST).map(sanitizeForDisplay);
+  const suffix = names.length > MAX_NAME_LIST ? `, +${names.length - MAX_NAME_LIST} more` : '';
+  return `${shown.join(', ')}${suffix}`;
+}
+
+function relativize(workDir: string, path: string): string {
+  const prefix = workDir.endsWith('/') ? workDir : `${workDir}/`;
+  return path.startsWith(prefix) ? path.slice(prefix.length) : path;
 }
 
 /**
