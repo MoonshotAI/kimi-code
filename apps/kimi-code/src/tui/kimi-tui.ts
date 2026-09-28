@@ -2039,7 +2039,7 @@ export class KimiTUI {
    *  flight, and the queue holds (see `shiftQueuedMessage`) so nothing queued
    *  behind them dispatches first: success removes them, failure leaves them
    *  queued in place, and a queue left behind by an ended turn drains once
-   *  the failure lands. */
+   *  the steer settles. */
   steerQueuedMessagesIntoRunningTurn(): void {
     const session = this.session;
     if (session === undefined || this.steeringQueuedMessages.size > 0) return;
@@ -2047,6 +2047,7 @@ export class KimiTUI {
     const batch = [...this.state.queuedMessages];
     if (batch.length === 0 || !batch.every(isSteerableQueuedMessage)) return;
     for (const message of batch) this.steeringQueuedMessages.add(message);
+    this.updateQueueDisplay();
     this.steerMessage(session, batch.map(toSteerInputItem), (steered) => {
       for (const message of batch) this.steeringQueuedMessages.delete(message);
       if (this.session !== session) return;
@@ -2055,14 +2056,15 @@ export class KimiTUI {
         this.state.queuedMessages = this.state.queuedMessages.filter((m) => !done.has(m));
       }
       this.updateQueueDisplay();
-      // A successful steer is consumed by a turn — the running one, or one the
-      // engine launches for it if the loop just ended — whose end drains the
-      // rest of the queue; only a failed steer can leave the queue stranded.
-      if (!steered) {
-        this.drainQueueIfIdle();
+      if (steered && this.canSteerQueueIntoRunningTurn()) {
+        this.steerQueuedMessagesIntoRunningTurn();
         return;
       }
-      if (this.canSteerQueueIntoRunningTurn()) this.steerQueuedMessagesIntoRunningTurn();
+      // A turn that ended while the steer was in flight could not drain the
+      // held queue. A prompt dispatched now while the engine still runs a
+      // turn launched by the steer is queued behind it by the engine, so the
+      // order holds either way.
+      this.drainQueueIfIdle();
     });
   }
 
@@ -3569,7 +3571,7 @@ export class KimiTUI {
         messages: queued,
         isCompacting: this.state.appState.isCompacting,
         isStreaming: this.state.appState.streamingPhase !== 'idle',
-        canSteerImmediately: !this.deferUserMessages,
+        canSteerImmediately: !this.deferUserMessages && !this.isSteeringQueuedMessages(),
       }),
     );
   }

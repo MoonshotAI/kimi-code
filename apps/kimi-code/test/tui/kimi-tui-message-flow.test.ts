@@ -3859,6 +3859,45 @@ command = "vim"
     expect(driver.state.queuedMessages).toEqual([{ text: 'second', agentId: 'main' }]);
   });
 
+  it('drains input queued behind a steer that succeeds after the turn ended', async () => {
+    const steer = pendingSteer();
+    const { driver, session } = await makeDriver(steer.session);
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('earlier note');
+    startWaitFor(driver);
+    driver.state.queuedMessages.push({ text: 'later note', agentId: 'main' });
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+      () => {},
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(session.prompt).not.toHaveBeenCalled();
+
+    steer.resolve();
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledTimes(1);
+    });
+    expect(vi.mocked(session.prompt).mock.calls[0]?.[0]).toBe('later note');
+  });
+
+  it('does not offer Ctrl-S in the queue pane while a queue steer is in flight', async () => {
+    const steer = pendingSteer();
+    const { driver } = await makeDriver(steer.session);
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('queued note');
+    expect(stripSgr(driver.state.queueContainer.render(120).join('\n'))).toContain(
+      'ctrl-s to steer immediately',
+    );
+
+    startWaitFor(driver);
+
+    expect(stripSgr(driver.state.queueContainer.render(120).join('\n'))).not.toContain(
+      'ctrl-s to steer immediately',
+    );
+  });
+
   it('holds the queue behind an in-flight WaitFor steer across turn end', async () => {
     const steer = pendingSteer();
     const { driver, session } = await makeDriver(steer.session);
