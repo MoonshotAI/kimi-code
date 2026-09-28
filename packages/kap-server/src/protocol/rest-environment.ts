@@ -6,11 +6,6 @@ export const environmentBindingResponseSchema = z.object({
   cwd: z.string().optional(),
 });
 
-export const switchEnvironmentRequestSchema = z.object({
-  environment_id: z.string().min(1),
-  cwd: z.string().min(1).optional(),
-});
-
 export const sessionEnvironmentParamsSchema = z.object({
   session_id: z.string().min(1),
 });

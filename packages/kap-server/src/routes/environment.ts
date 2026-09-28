@@ -2,7 +2,6 @@ import {
   Error2,
   ErrorCodes,
   IAgentEnvironmentBindingService,
-  IAgentEnvironmentService,
   IBootstrapService,
   IEnvironmentDeclarationService,
   IHostFileSystem,
@@ -23,7 +22,6 @@ import {
   type WorkspaceInstance,
 } from '@moonshot-ai/agent-core-v2';
 import { HandshakeError } from '@moonshot-ai/agent-core-v2/remote';
-import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
@@ -32,7 +30,6 @@ import {
   environmentBindingResponseSchema,
   sessionEnvironmentParamsSchema,
   sessionEnvironmentsResponseSchema,
-  switchEnvironmentRequestSchema,
   type EnvironmentBindingResponse,
   type SessionEnvironmentEntry,
   type SessionEnvironmentsResponse,
@@ -45,14 +42,6 @@ interface EnvironmentRouteHost {
     options: { schema?: Record<string, unknown> },
     handler: (
       req: { id: string; params: unknown },
-      reply: { send(payload: unknown): void },
-    ) => Promise<void> | void,
-  ): unknown;
-  post(
-    path: string,
-    options: { schema?: Record<string, unknown> },
-    handler: (
-      req: { id: string; params: unknown; body: unknown },
       reply: { send(payload: unknown): void },
     ) => Promise<void> | void,
   ): unknown;
@@ -79,62 +68,6 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
     },
   );
   app.get(getRoute.path, getRoute.options, getRoute.handler as Parameters<EnvironmentRouteHost['get']>[2]);
-
-  const switchRoute = defineRoute(
-    {
-      method: 'POST',
-      path: '/sessions/{session_id}/environment',
-      params: sessionEnvironmentParamsSchema,
-      body: switchEnvironmentRequestSchema,
-      success: { data: environmentBindingResponseSchema },
-      errors: {
-        [ErrorCode.VALIDATION_FAILED]: {},
-        [ErrorCode.SESSION_NOT_FOUND]: {},
-        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
-        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
-        [ErrorCode.SESSION_BUSY]: {},
-      },
-      description: 'Switch the main agent environment binding',
-      tags: ['sessions'],
-    },
-    async (req, reply) => {
-      try {
-        const agent = await resolveEnvironmentAgent(core, req.params.session_id);
-        const service = agent.accessor.get(IAgentEnvironmentBindingService);
-        const binding = await service.connectAndSwitch(req.body.environment_id, req.body.cwd);
-        reply.send(okEnvelope(toResponse(binding, agent.accessor.get(ISessionContext).workspaceId), req.id));
-      } catch (error) {
-        sendEnvironmentRouteError(reply, req.id, error);
-      }
-    },
-  );
-  app.post(switchRoute.path, switchRoute.options, switchRoute.handler as Parameters<EnvironmentRouteHost['post']>[2]);
-
-  const reconnectRoute = defineRoute(
-    {
-      method: 'POST',
-      path: '/sessions/{session_id}/environment/reconnect',
-      params: sessionEnvironmentParamsSchema,
-      success: { data: environmentBindingResponseSchema },
-      errors: {
-        [ErrorCode.SESSION_NOT_FOUND]: {},
-        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
-        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
-      },
-      description: 'Reconnect the main agent environment',
-      tags: ['sessions'],
-    },
-    async (req, reply) => {
-      try {
-        const agent = await resolveEnvironmentAgent(core, req.params.session_id);
-        await agent.accessor.get(IAgentEnvironmentService).reconnect();
-        reply.send(okEnvelope(toResponse(agent.accessor.get(IAgentEnvironmentBindingService).current, agent.accessor.get(ISessionContext).workspaceId), req.id));
-      } catch (error) {
-        sendEnvironmentRouteError(reply, req.id, error);
-      }
-    },
-  );
-  app.post(reconnectRoute.path, reconnectRoute.options, reconnectRoute.handler as Parameters<EnvironmentRouteHost['post']>[2]);
 
   const listRoute = defineRoute(
     {
@@ -171,96 +104,6 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
     },
   );
   app.get(listRoute.path, listRoute.options, listRoute.handler as Parameters<EnvironmentRouteHost['get']>[2]);
-
-  const declareRoute = defineRoute(
-    {
-      method: 'POST',
-      path: '/sessions/{session_id}/environments',
-      params: sessionEnvironmentParamsSchema,
-      body: declareEnvironmentRequestSchema,
-      success: { data: declareEnvironmentResponseSchema },
-      errors: {
-        [ErrorCode.VALIDATION_FAILED]: {},
-        [ErrorCode.SESSION_NOT_FOUND]: {},
-        [ErrorCode.WORKSPACE_NOT_FOUND]: {},
-        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
-      },
-      description: 'Declare an environment for the session workspace',
-      tags: ['sessions'],
-    },
-    async (req, reply) => {
-      try {
-        const session = await resumeSessionById(core.accessor, req.params.session_id);
-        if (session === undefined) {
-          throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${req.params.session_id} does not exist`);
-        }
-        const workspaceId = session.accessor.get(ISessionContext).workspaceId;
-        const entry = toEngineEnvironmentEntry(req.body.entry);
-        await core.accessor.get(IEnvironmentDeclarationService).declare({
-          id: req.body.environment_id,
-          entry,
-        });
-        reply.send(okEnvelope({ workspace_id: workspaceId, environment_id: req.body.environment_id }, req.id));
-      } catch (error) {
-        sendEnvironmentRouteError(reply, req.id, error);
-      }
-    },
-  );
-  app.post(declareRoute.path, declareRoute.options, declareRoute.handler as Parameters<EnvironmentRouteHost['post']>[2]);
-}
-
-const declareEnvironmentEntrySchema = z.union([
-  z
-    .object({
-      type: z.literal('ssh'),
-      host: z.string().min(1),
-      remote_bin: z.string().min(1).optional(),
-      default_cwd: z.string().min(1).optional(),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal('docker'),
-      container: z.string().min(1),
-      context: z.string().min(1).optional(),
-      remote_bin: z.string().min(1).optional(),
-      default_cwd: z.string().min(1).optional(),
-    })
-    .strict(),
-  z
-    .object({
-      command: z.string().min(1),
-      args: z.array(z.string()).optional(),
-      env: z.record(z.string(), z.string()).optional(),
-      default_cwd: z.string().min(1).optional(),
-    })
-    .strict(),
-]);
-
-const declareEnvironmentRequestSchema = z.object({
-  environment_id: z.string().min(1),
-  entry: declareEnvironmentEntrySchema,
-});
-
-const declareEnvironmentResponseSchema = z.object({
-  workspace_id: z.string(),
-  environment_id: z.string(),
-});
-
-function toEngineEnvironmentEntry(entry: z.infer<typeof declareEnvironmentEntrySchema>): RemoteEnvironmentEntry {
-  if ('command' in entry) {
-    return { command: entry.command, args: entry.args, env: entry.env, defaultCwd: entry.default_cwd };
-  }
-  if (entry.type === 'ssh') {
-    return { type: 'ssh', host: entry.host, remoteBin: entry.remote_bin, defaultCwd: entry.default_cwd };
-  }
-  return {
-    type: 'docker',
-    container: entry.container,
-    context: entry.context,
-    remoteBin: entry.remote_bin,
-    defaultCwd: entry.default_cwd,
-  };
 }
 
 async function resolveEnvironmentAgent(core: Scope, sessionId: string): Promise<IAgentScopeHandle> {
