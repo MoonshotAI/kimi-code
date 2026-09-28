@@ -25,7 +25,6 @@ import type {
   TrustGatedActivation,
   TrustGatedInstructionSources,
   TrustGatedMcpServer,
-  TrustGatedPath,
 } from './trustDisclosure';
 import type { IWorkspaceTrust } from './workspaceTrust';
 
@@ -79,12 +78,9 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
         return EMPTY_INSTRUCTION_SOURCES;
       }),
     ]);
-    const seen = new Set<string>();
-    const additionalDirs = [...configuredDirs, ...skillRoots].filter((entry) => {
-      if (seen.has(entry.path)) return false;
-      seen.add(entry.path);
-      return true;
-    });
+    const additionalDirs = [...configuredDirs, ...skillRoots].filter(
+      (dir, index, all) => all.indexOf(dir) === index,
+    );
     return { mcpServers, additionalDirs, instructionSources };
   }
 
@@ -103,19 +99,19 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
       .toSorted((a, b) => a.name.localeCompare(b.name));
   }
 
-  private async readGatedAdditionalDirs(): Promise<readonly TrustGatedPath[]> {
+  private async readGatedAdditionalDirs(): Promise<readonly string[]> {
     const result = await this.localConfig.readAdditionalDirs(this.context.cwd);
     const realRoot = await realpathOrSelf(this.fs, result.projectRoot);
-    const dirs: TrustGatedPath[] = [];
+    const dirs: string[] = [];
     for (const dir of result.additionalDirs) {
       const realPath = await realpathOrSelf(this.fs, dir);
       if (isInsideOrEqualDir(realPath, realRoot)) continue;
-      dirs.push({ path: dir, realPath });
+      dirs.push(realPath);
     }
     return dirs;
   }
 
-  private async readGatedSkillRoots(): Promise<readonly TrustGatedPath[]> {
+  private async readGatedSkillRoots(): Promise<readonly string[]> {
     if ((this.bootstrap.args.skillDirs?.length ?? 0) > 0) return [];
     const mergeAllAvailableSkills =
       this.config.get<MergeAllAvailableSkillsConfig>(MERGE_ALL_AVAILABLE_SKILLS_SECTION) ?? true;
@@ -127,7 +123,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     ]);
     return roots
       .filter((root) => !isInsideOrEqualDir(root.path, realRoot))
-      .map((root) => ({ path: root.path, realPath: root.path }));
+      .map((root) => root.path);
   }
 
   private async describeInstructionSources(): Promise<TrustGatedInstructionSources> {
@@ -144,12 +140,12 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
       .map((skill) => skill.name)
       .toSorted();
     const agentProfiles = this.effectiveWorkspaceProfiles();
-    const agentsMdPaths: TrustGatedPath[] = [];
+    const agentsMdPaths: string[] = [];
     for (const path of this.instructions.snapshot.agentsMdPaths ?? []) {
       if (!isInsideOrEqualDir(path, projectRoot)) continue;
-      agentsMdPaths.push({ path, realPath: await realpathOrSelf(this.fs, path) });
+      agentsMdPaths.push(await realpathOrSelf(this.fs, path));
     }
-    agentsMdPaths.sort((a, b) => a.path.localeCompare(b.path));
+    agentsMdPaths.sort();
     return { agentsMdPaths, skills, agentProfiles };
   }
 

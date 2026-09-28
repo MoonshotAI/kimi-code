@@ -10,7 +10,6 @@ import {
 import type {
   WorkspaceTrustInfo,
   WorkspaceTrustMcpServerInfo,
-  WorkspaceTrustPath,
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { SELECT_POINTER } from '#/tui/constant/symbols';
@@ -157,7 +156,7 @@ export class TrustPromptComponent implements Component, Focusable {
         ),
       );
       for (const dir of gatedAdditionalDirs.slice(0, MAX_ADDITIONAL_DIRS)) {
-        lines.push(...wrap(sanitizeForDisplay(revealRealTarget(dir.path, dir)), 3));
+        lines.push(...wrap(sanitizeForDisplay(dir), 3));
       }
       if (gatedAdditionalDirs.length > MAX_ADDITIONAL_DIRS) {
         lines.push(...wrap(`…and ${gatedAdditionalDirs.length - MAX_ADDITIONAL_DIRS} more`, 3));
@@ -193,9 +192,7 @@ export class TrustPromptComponent implements Component, Focusable {
     if (agentsMdPaths.length > 0) {
       const shown = agentsMdPaths
         .slice(0, MAX_AGENTS_MD_PATHS)
-        .map((entry) =>
-          sanitizeForDisplay(revealRealTarget(relativize(this.opts.workDir, entry.path), entry)),
-        );
+        .map((path) => sanitizeForDisplay(relativize(this.opts.workDir, path)));
       const suffix = agentsMdPaths.length > MAX_AGENTS_MD_PATHS ? `, +${agentsMdPaths.length - MAX_AGENTS_MD_PATHS} more` : '';
       lines.push(...wrap(`AGENTS.md: ${shown.join(', ')}${suffix}`, 3));
     }
@@ -267,10 +264,6 @@ function formatNameList(names: readonly string[]): string {
 function relativize(workDir: string, path: string): string {
   const prefix = workDir.endsWith('/') ? workDir : `${workDir}/`;
   return path.startsWith(prefix) ? path.slice(prefix.length) : path;
-}
-
-function revealRealTarget(shown: string, entry: WorkspaceTrustPath): string {
-  return entry.path === entry.realPath ? shown : `${shown} → ${entry.realPath}`;
 }
 
 /**

@@ -112,16 +112,9 @@ describe('TrustPromptComponent', () => {
   it('renders the directory and instruction sections', () => {
     const lines = renderLines(
       makeInfo({
-        gatedAdditionalDirs: [
-          { path: '/tmp/shared-assets', realPath: '/tmp/shared-assets' },
-          { path: '/opt/toolchain', realPath: '/opt/toolchain' },
-          { path: '/tmp/demo-workspace/linked-dir', realPath: '/Users/alice/Documents' },
-        ],
+        gatedAdditionalDirs: ['/tmp/shared-assets', '/opt/toolchain', '/Users/alice/Documents'],
         instructionSources: {
-          agentsMdPaths: [
-            { path: '/tmp/demo-workspace/AGENTS.md', realPath: '/tmp/demo-workspace/AGENTS.md' },
-            { path: '/tmp/demo-workspace/docs/AGENTS.md', realPath: '/Users/alice/shared/AGENTS.md' },
-          ],
+          agentsMdPaths: ['/tmp/demo-workspace/AGENTS.md', '/Users/alice/shared/AGENTS.md'],
           skills: ['deploy-prod', 'lint-fix'],
           agentProfiles: ['release-manager'],
         },
@@ -130,10 +123,9 @@ describe('TrustPromptComponent', () => {
     const text = lines.join('\n');
     expect(text).toContain('/tmp/shared-assets');
     expect(text).toContain('/opt/toolchain');
-    // A symlinked entry renders its real target so the grant is not disguised.
-    expect(text).toContain('/tmp/demo-workspace/linked-dir → /Users/alice/Documents');
+    expect(text).toContain('/Users/alice/Documents');
     expect(text).toContain('AGENTS.md: AGENTS.md');
-    expect(text).toContain('docs/AGENTS.md → /Users/alice/shared/AGENTS.md');
+    expect(text).toContain('/Users/alice/shared/AGENTS.md');
     expect(text).toContain('skills: deploy-prod, lint-fix');
     expect(text).toContain('agent profiles available as subagents: release-manager');
   });

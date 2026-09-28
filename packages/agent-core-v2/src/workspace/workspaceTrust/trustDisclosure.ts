@@ -13,20 +13,15 @@ export interface TrustGatedMcpServer {
   readonly origin: string;
 }
 
-export interface TrustGatedPath {
-  readonly path: string;
-  readonly realPath: string;
-}
-
 export interface TrustGatedInstructionSources {
-  readonly agentsMdPaths: readonly TrustGatedPath[];
+  readonly agentsMdPaths: readonly string[];
   readonly skills: readonly string[];
   readonly agentProfiles: readonly string[];
 }
 
 export interface TrustGatedActivation {
   readonly mcpServers: readonly TrustGatedMcpServer[];
-  readonly additionalDirs: readonly TrustGatedPath[];
+  readonly additionalDirs: readonly string[];
   readonly instructionSources: TrustGatedInstructionSources;
 }
 

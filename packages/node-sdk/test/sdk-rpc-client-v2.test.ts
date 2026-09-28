@@ -1664,18 +1664,14 @@ describe('SDKRpcClientV2 workspace trust', () => {
       const info = await harness.getWorkspaceTrustInfo(workDir);
       expect(info.trusted).toBe(false);
       expect(info.gatedAdditionalDirs).toEqual([
-        { path: outsideDir, realPath: await realpath(outsideDir) },
-        { path: join(workDir, 'linked-dir'), realPath: await realpath(join(workDir, 'linked-dir')) },
+        await realpath(outsideDir),
         // The symlinked .kimi-code/skills grants access to its real target.
-        { path: await realpath(outsideSkills), realPath: await realpath(outsideSkills) },
+        await realpath(outsideSkills),
       ]);
       // The project AGENTS.md is a symlink escaping the project, so its real
-      // target is disclosed instead of being hidden behind the lexical path.
+      // target is disclosed instead of the lexical link path.
       expect(info.instructionSources.agentsMdPaths).toEqual([
-        {
-          path: join(workDir, 'AGENTS.md'),
-          realPath: await realpath(join(outsideDir, 'AGENTS.md')),
-        },
+        await realpath(join(outsideDir, 'AGENTS.md')),
       ]);
       expect(info.instructionSources.skills).toEqual(['demo-skill']);
       // The agent file clashing with the builtin default without override is
