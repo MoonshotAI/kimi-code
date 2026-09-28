@@ -1,1 +1,1 @@
-Read your tower inbox: messages addressed to you plus broadcasts, newest first. The tower sees all messages. Full bodies are included — reply with TowerSend.
+Read your tower inbox: messages addressed to you plus broadcasts, newest first. The tower sees all messages. Full bodies are included — reply with TowerSend. Reading marks your inbox as read: the store refuses a roster agent's own TowerMission status=completed while unread messages wait, so always read before completing.
