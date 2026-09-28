@@ -1638,7 +1638,8 @@ describe('SDKRpcClientV2 workspace trust', () => {
       `[workspace]\nadditional_dir = [${JSON.stringify(outsideDir)}, ".", "sub", "linked-dir", "inner-link"]\n`,
       'utf-8',
     );
-    await writeFile(join(workDir, 'AGENTS.md'), '# Demo\n', 'utf-8');
+    await writeFile(join(outsideDir, 'AGENTS.md'), '# Demo\n', 'utf-8');
+    await symlink(join(outsideDir, 'AGENTS.md'), join(workDir, 'AGENTS.md'), 'file');
     await mkdir(join(workDir, '.kimi-code', 'skills', 'demo-skill'), { recursive: true });
     await writeFile(
       join(workDir, '.kimi-code', 'skills', 'demo-skill', 'SKILL.md'),
@@ -1663,11 +1664,36 @@ describe('SDKRpcClientV2 workspace trust', () => {
         { path: outsideDir, realPath: await realpath(outsideDir) },
         { path: join(workDir, 'linked-dir'), realPath: await realpath(join(workDir, 'linked-dir')) },
       ]);
-      expect(info.instructionSources.agentsMdPaths).toEqual([join(workDir, 'AGENTS.md')]);
+      // The project AGENTS.md is a symlink escaping the project, so its real
+      // target is disclosed instead of being hidden behind the lexical path.
+      expect(info.instructionSources.agentsMdPaths).toEqual([
+        {
+          path: join(workDir, 'AGENTS.md'),
+          realPath: await realpath(join(outsideDir, 'AGENTS.md')),
+        },
+      ]);
       expect(info.instructionSources.skills).toEqual(['demo-skill']);
       // The agent file clashing with the builtin default without override is
       // suppressed by the session catalog, so it is not part of the disclosure.
       expect(info.instructionSources.agentProfiles).toEqual(['demo-agent']);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('discloses a workspace profile that overrides a same-name builtin', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    await mkdir(join(workDir, '.kimi-code', 'agents'), { recursive: true });
+    await writeFile(
+      join(workDir, '.kimi-code', 'agents', 'override-agent.md'),
+      '---\nname: agent\noverride: true\ndescription: Replaces the builtin default\n---\n\nYou are the override.\n',
+      'utf-8',
+    );
+    try {
+      const info = await harness.getWorkspaceTrustInfo(workDir);
+      expect(info.instructionSources.agentProfiles).toEqual(['agent']);
     } finally {
       await harness.close();
     }

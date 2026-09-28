@@ -17,9 +17,9 @@ import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstruc
 import type {
   IWorkspaceTrustDisclosure,
   TrustGatedActivation,
-  TrustGatedAdditionalDir,
   TrustGatedInstructionSources,
   TrustGatedMcpServer,
+  TrustGatedPath,
 } from './trustDisclosure';
 import type { IWorkspaceTrust } from './workspaceTrust';
 
@@ -86,10 +86,10 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
       .toSorted((a, b) => a.name.localeCompare(b.name));
   }
 
-  private async readGatedAdditionalDirs(): Promise<readonly TrustGatedAdditionalDir[]> {
+  private async readGatedAdditionalDirs(): Promise<readonly TrustGatedPath[]> {
     const result = await this.localConfig.readAdditionalDirs(this.context.cwd);
     const realRoot = await realpathOrSelf(this.fs, result.projectRoot);
-    const dirs: TrustGatedAdditionalDir[] = [];
+    const dirs: TrustGatedPath[] = [];
     for (const dir of result.additionalDirs) {
       const realPath = await realpathOrSelf(this.fs, dir);
       if (isInsideOrEqualDir(realPath, realRoot)) continue;
@@ -112,9 +112,12 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
       .map((skill) => skill.name)
       .toSorted();
     const agentProfiles = this.effectiveWorkspaceProfiles();
-    const agentsMdPaths = (this.instructions.snapshot.agentsMdPaths ?? [])
-      .filter((path) => isInsideOrEqualDir(path, projectRoot))
-      .toSorted();
+    const agentsMdPaths: TrustGatedPath[] = [];
+    for (const path of this.instructions.snapshot.agentsMdPaths ?? []) {
+      if (!isInsideOrEqualDir(path, projectRoot)) continue;
+      agentsMdPaths.push({ path, realPath: await realpathOrSelf(this.fs, path) });
+    }
+    agentsMdPaths.sort((a, b) => a.path.localeCompare(b.path));
     return { agentsMdPaths, skills, agentProfiles };
   }
 
@@ -139,8 +142,8 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
       for (const profile of entry.contribution.profiles) {
         if (seen.has(profile.name)) continue;
         seen.add(profile.name);
-        if (winners.has(profile.name)) continue;
-        if (builtinNames.has(profile.name) && profile.override !== true) continue;
+        const taken = winners.has(profile.name) || builtinNames.has(profile.name);
+        if (taken && profile.override !== true) continue;
         winners.set(profile.name, entry.sourceId);
       }
     }

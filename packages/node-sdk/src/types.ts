@@ -145,8 +145,8 @@ export interface WorkspaceTrustMcpServerInfo {
   readonly origin: string;
 }
 
-/** A configured additional_dir entry; the engine authorizes against `realPath` (symlinks resolved). */
-export interface WorkspaceTrustAdditionalDir {
+/** A gated path and its canonical form with symlinks resolved — what the engine actually acts on. */
+export interface WorkspaceTrustPath {
   readonly path: string;
   readonly realPath: string;
 }
@@ -154,7 +154,7 @@ export interface WorkspaceTrustAdditionalDir {
 /** Project-sourced instruction inputs that steer the agent once trusted (prompt-level, no code execution). */
 export interface WorkspaceTrustInstructionSources {
   /** AGENTS.md files inside the project that will be injected into context. */
-  readonly agentsMdPaths: readonly string[];
+  readonly agentsMdPaths: readonly WorkspaceTrustPath[];
   /** Names of project-level skills that will load. */
   readonly skills: readonly string[];
   /** Names of project-level agent profiles that will load. */
@@ -167,7 +167,7 @@ export interface WorkspaceTrustInfo {
   /** Project-level MCP servers that trusting would start. */
   readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
   /** Configured directories outside the project that trusting grants access to. */
-  readonly gatedAdditionalDirs: readonly WorkspaceTrustAdditionalDir[];
+  readonly gatedAdditionalDirs: readonly WorkspaceTrustPath[];
   readonly instructionSources: WorkspaceTrustInstructionSources;
 }
 

@@ -118,7 +118,10 @@ describe('TrustPromptComponent', () => {
           { path: '/tmp/demo-workspace/linked-dir', realPath: '/Users/alice/Documents' },
         ],
         instructionSources: {
-          agentsMdPaths: ['/tmp/demo-workspace/AGENTS.md'],
+          agentsMdPaths: [
+            { path: '/tmp/demo-workspace/AGENTS.md', realPath: '/tmp/demo-workspace/AGENTS.md' },
+            { path: '/tmp/demo-workspace/docs/AGENTS.md', realPath: '/Users/alice/shared/AGENTS.md' },
+          ],
           skills: ['deploy-prod', 'lint-fix'],
           agentProfiles: ['release-manager'],
         },
@@ -130,6 +133,7 @@ describe('TrustPromptComponent', () => {
     // A symlinked entry renders its real target so the grant is not disguised.
     expect(text).toContain('/tmp/demo-workspace/linked-dir → /Users/alice/Documents');
     expect(text).toContain('AGENTS.md: AGENTS.md');
+    expect(text).toContain('docs/AGENTS.md → /Users/alice/shared/AGENTS.md');
     expect(text).toContain('skills: deploy-prod, lint-fix');
     expect(text).toContain('agent profiles available as subagents: release-manager');
   });
