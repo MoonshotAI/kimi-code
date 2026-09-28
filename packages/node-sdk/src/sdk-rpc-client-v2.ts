@@ -2905,8 +2905,13 @@ async function readGatedAdditionalDirs(
 ): Promise<readonly string[]> {
   const localConfig = new FileProjectLocalConfigService(bootstrap, fs);
   const result = await localConfig.readAdditionalDirs(workDir);
-  return result.additionalDirs;
+  const prefix = `${result.projectRoot}/`;
+  return result.additionalDirs.filter(
+    (dir) => dir !== result.projectRoot && !dir.startsWith(prefix),
+  );
 }
+
+const INSTRUCTION_DISCOVERY_TIMEOUT_MS = 2_000;
 
 async function describeInstructionSources(
   program: Program,
@@ -2914,10 +2919,11 @@ async function describeInstructionSources(
   workDir: string,
 ): Promise<WorkspaceTrustInstructionSources> {
   const projectRoot = (await findGitWorkTree(fs, workDir))?.root ?? normalizeWorkDir(workDir);
-  await Promise.all([
-    program.skills.ready,
-    program.agentProfiles.ready,
-    program.instructions.ready,
+  // The trust prompt is a startup gate: never block it on slow discovery.
+  // After the budget, read whatever the loaders have so far (possibly empty).
+  await Promise.race([
+    Promise.all([program.skills.ready, program.agentProfiles.ready, program.instructions.ready]),
+    new Promise((resolve) => setTimeout(resolve, INSTRUCTION_DISCOVERY_TIMEOUT_MS)),
   ]);
   const skills = program.skills.catalog
     .listSkills()

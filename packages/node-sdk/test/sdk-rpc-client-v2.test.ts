@@ -1619,10 +1619,12 @@ describe('SDKRpcClientV2 workspace trust', () => {
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     const outsideDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-outside-'));
     tempDirs.push(workDir, outsideDir);
+    const insideDir = join(workDir, 'sub');
+    await mkdir(insideDir, { recursive: true });
     await mkdir(join(workDir, '.kimi-code'), { recursive: true });
     await writeFile(
       join(workDir, '.kimi-code', 'local.toml'),
-      `[workspace]\nadditional_dir = [${JSON.stringify(outsideDir)}]\n`,
+      `[workspace]\nadditional_dir = [${JSON.stringify(outsideDir)}, ".", "sub"]\n`,
       'utf-8',
     );
     await writeFile(join(workDir, 'AGENTS.md'), '# Demo\n', 'utf-8');
