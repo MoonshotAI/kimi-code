@@ -199,7 +199,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       }
       const promptText = plan.fork
         ? opts.prompt
-        : await this.applyPromptPrefix(plan.profileName, opts.prompt, lease!.environment, spawnBinding.cwd);
+        : await this.applyPromptPrefix(plan.profileName, opts.prompt, lease!.environment, callerBinding.cwd);
       return {
         agentId: created.id,
         profileName: plan.profileName,
