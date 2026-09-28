@@ -2,6 +2,7 @@ import { isAbsolute, relative } from 'pathe';
 
 import type { ILogService } from '#/_base/log/log';
 import type { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
+import { BUILTIN_AGENT_PROFILE_SOURCE_ID } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { findGitWorkTree } from '#/app/git/workTree';
 import { loadMcpServersDetailed, resolveMcpJsonPaths } from '#/app/mcpConfig/configLoader';
@@ -38,7 +39,6 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    private readonly workspaceId: string,
     private readonly context: IWorkspaceContext,
     private readonly fs: IHostFileSystem,
     private readonly bootstrap: IBootstrapService,
@@ -111,19 +111,43 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
       .filter((skill) => skill.source === 'project')
       .map((skill) => skill.name)
       .toSorted();
-    const agentProfiles = this.agentProfilesRegistry
-      .entries()
-      .filter(
-        (entry) =>
-          entry.sourceId === 'workspace' &&
-          (entry.workspaceKey === undefined || entry.workspaceKey === this.workspaceId),
-      )
-      .flatMap((entry) => entry.contribution.profiles.map((profile) => profile.name))
-      .toSorted();
+    const agentProfiles = this.effectiveWorkspaceProfiles();
     const agentsMdPaths = (this.instructions.snapshot.agentsMdPaths ?? [])
       .filter((path) => isInsideOrEqualDir(path, projectRoot))
       .toSorted();
     return { agentsMdPaths, skills, agentProfiles };
+  }
+
+  private effectiveWorkspaceProfiles(): readonly string[] {
+    const entries = this.agentProfilesRegistry
+      .entries()
+      .filter(
+        (entry) =>
+          entry.workspaceKey === undefined || entry.workspaceKey === this.context.workspaceId,
+      );
+    const builtinNames = new Set(
+      entries
+        .find((entry) => entry.sourceId === BUILTIN_AGENT_PROFILE_SOURCE_ID)
+        ?.contribution.profiles.map((profile) => profile.name) ?? [],
+    );
+    const winners = new Map<string, string>();
+    const ordered = entries
+      .filter((entry) => entry.sourceId !== BUILTIN_AGENT_PROFILE_SOURCE_ID)
+      .toSorted((a, b) => b.priority - a.priority);
+    for (const entry of ordered) {
+      const seen = new Set<string>();
+      for (const profile of entry.contribution.profiles) {
+        if (seen.has(profile.name)) continue;
+        seen.add(profile.name);
+        if (winners.has(profile.name)) continue;
+        if (builtinNames.has(profile.name) && profile.override !== true) continue;
+        winners.set(profile.name, entry.sourceId);
+      }
+    }
+    return [...winners]
+      .filter(([, sourceId]) => sourceId === 'workspace')
+      .map(([name]) => name)
+      .toSorted();
   }
 }
 

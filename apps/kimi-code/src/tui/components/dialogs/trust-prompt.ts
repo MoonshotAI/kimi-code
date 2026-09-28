@@ -109,10 +109,7 @@ export class TrustPromptComponent implements Component, Focusable {
   private renderDisclosure(width: number): string[] {
     const { gatedMcpServers, gatedAdditionalDirs, instructionSources } = this.opts.info;
     const lines: string[] = [];
-    const wrap = (text: string, indent: number): string[] =>
-      wrapTextWithAnsi(text, Math.max(20, width - indent)).map(
-        (line) => `${' '.repeat(indent)}${currentTheme.fg('warning', line)}`,
-      );
+    const wrap = (text: string, indent: number): string[] => wrapWarning(text, indent, width);
 
     const hasContent =
       gatedMcpServers.length > 0 ||
@@ -179,10 +176,7 @@ export class TrustPromptComponent implements Component, Focusable {
 
   private renderMcpServer(server: WorkspaceTrustMcpServerInfo, width: number): string[] {
     const lines: string[] = [];
-    const wrap = (text: string, indent: number): string[] =>
-      wrapTextWithAnsi(text, Math.max(20, width - indent)).map(
-        (line) => `${' '.repeat(indent)}${currentTheme.fg('warning', line)}`,
-      );
+    const wrap = (text: string, indent: number): string[] => wrapWarning(text, indent, width);
     lines.push(...wrap(formatMcpTarget(server), 3));
     const keys = formatMcpKeys(server);
     if (keys !== undefined) lines.push(...wrap(keys, 5));
@@ -192,10 +186,7 @@ export class TrustPromptComponent implements Component, Focusable {
 
   private renderInstructionSources(width: number): string[] {
     const { agentsMdPaths, skills, agentProfiles } = this.opts.info.instructionSources;
-    const wrap = (text: string, indent: number): string[] =>
-      wrapTextWithAnsi(text, Math.max(20, width - indent)).map(
-        (line) => `${' '.repeat(indent)}${currentTheme.fg('warning', line)}`,
-      );
+    const wrap = (text: string, indent: number): string[] => wrapWarning(text, indent, width);
     const lines: string[] = [];
     if (agentsMdPaths.length > 0) {
       const shown = agentsMdPaths
@@ -212,6 +203,12 @@ export class TrustPromptComponent implements Component, Focusable {
     }
     return lines;
   }
+}
+
+function wrapWarning(text: string, indent: number, width: number): string[] {
+  return wrapTextWithAnsi(text, Math.max(20, width - indent)).map(
+    (line) => `${' '.repeat(indent)}${currentTheme.fg('warning', line)}`,
+  );
 }
 
 function formatMcpTarget(server: WorkspaceTrustMcpServerInfo): string {

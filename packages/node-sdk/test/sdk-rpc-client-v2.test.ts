@@ -1627,10 +1627,15 @@ describe('SDKRpcClientV2 workspace trust', () => {
     tempDirs.push(workDir, outsideDir);
     const insideDir = join(workDir, 'sub');
     await mkdir(insideDir, { recursive: true });
+    // linked-dir lexically sits inside the project but points outside it, so
+    // trusting would grant access to the target; inner-link points back into
+    // the project and grants nothing new.
+    await symlink(outsideDir, join(workDir, 'linked-dir'), 'dir');
+    await symlink(insideDir, join(workDir, 'inner-link'), 'dir');
     await mkdir(join(workDir, '.kimi-code'), { recursive: true });
     await writeFile(
       join(workDir, '.kimi-code', 'local.toml'),
-      `[workspace]\nadditional_dir = [${JSON.stringify(outsideDir)}, ".", "sub"]\n`,
+      `[workspace]\nadditional_dir = [${JSON.stringify(outsideDir)}, ".", "sub", "linked-dir", "inner-link"]\n`,
       'utf-8',
     );
     await writeFile(join(workDir, 'AGENTS.md'), '# Demo\n', 'utf-8');
@@ -1651,39 +1656,11 @@ describe('SDKRpcClientV2 workspace trust', () => {
       expect(info.trusted).toBe(false);
       expect(info.gatedAdditionalDirs).toEqual([
         { path: outsideDir, realPath: await realpath(outsideDir) },
+        { path: join(workDir, 'linked-dir'), realPath: await realpath(join(workDir, 'linked-dir')) },
       ]);
       expect(info.instructionSources.agentsMdPaths).toEqual([join(workDir, 'AGENTS.md')]);
       expect(info.instructionSources.skills).toEqual(['demo-skill']);
       expect(info.instructionSources.agentProfiles).toEqual(['demo-agent']);
-    } finally {
-      await harness.close();
-    }
-  });
-
-  it('discloses a symlinked additional dir that escapes the project, with its real target', async () => {
-    const { harness } = await makeHarness();
-    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
-    const outsideDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-outside-'));
-    tempDirs.push(workDir, outsideDir);
-    const insideDir = join(workDir, 'sub');
-    await mkdir(insideDir, { recursive: true });
-    // linked-dir lexically sits inside the project but points outside it, so
-    // trusting would grant access to the target; inner-link points back into
-    // the project and grants nothing new.
-    await symlink(outsideDir, join(workDir, 'linked-dir'), 'dir');
-    await symlink(insideDir, join(workDir, 'inner-link'), 'dir');
-    await mkdir(join(workDir, '.kimi-code'), { recursive: true });
-    await writeFile(
-      join(workDir, '.kimi-code', 'local.toml'),
-      '[workspace]\nadditional_dir = ["linked-dir", "inner-link"]\n',
-      'utf-8',
-    );
-    try {
-      const info = await harness.getWorkspaceTrustInfo(workDir);
-      expect(info.trusted).toBe(false);
-      expect(info.gatedAdditionalDirs).toEqual([
-        { path: join(workDir, 'linked-dir'), realPath: await realpath(join(workDir, 'linked-dir')) },
-      ]);
     } finally {
       await harness.close();
     }

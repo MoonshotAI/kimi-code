@@ -21,17 +21,18 @@ import { stubLog } from '../../_base/log/stubs';
 describe('WorkspaceTrustDisclosureService', () => {
   let homeDir: string;
   let workDir: string;
+  let outsideDir: string;
 
   beforeEach(() => {
     homeDir = mkdtempSync(join(tmpdir(), 'kimi-trust-disclosure-home-'));
     workDir = mkdtempSync(join(tmpdir(), 'kimi-trust-disclosure-work-'));
+    outsideDir = mkdtempSync(join(tmpdir(), 'kimi-trust-disclosure-outside-'));
   });
 
   afterEach(async () => {
-    await Promise.all([
-      rm(homeDir, { recursive: true, force: true }),
-      rm(workDir, { recursive: true, force: true }),
-    ]);
+    await Promise.all(
+      [homeDir, workDir, outsideDir].map((dir) => rm(dir, { recursive: true, force: true })),
+    );
   });
 
   function createService(overrides: {
@@ -41,34 +42,22 @@ describe('WorkspaceTrustDisclosureService', () => {
     instructions?: IWorkspaceInstructionsService;
   } = {}): WorkspaceTrustDisclosureService {
     const fs = new HostFileSystem();
-    const bootstrap = { homeDir, osHomeDir: homeDir } as IBootstrapService;
-    const trust = {
-      ready: Promise.resolve(),
-      isTrusted: () => overrides.trusted ?? false,
-    } as IWorkspaceTrust;
-    const skills = overrides.skills ?? ({
-      ready: Promise.resolve(),
-      catalog: { listSkills: () => [] },
-    } as unknown as IWorkspaceSkillCatalog);
-    const agentProfilesLoader = { ready: Promise.resolve() } as IWorkspaceAgentProfileLoader;
-    const agentProfilesRegistry = overrides.agentProfilesRegistry ?? ({
-      entries: () => [],
-    } as IAgentProfileRegistry);
-    const instructions = overrides.instructions ?? ({
-      ready: Promise.resolve(),
-      snapshot: { agentsMd: undefined, agentsMdWarning: undefined, agentsMdPaths: [] },
-    } as IWorkspaceInstructionsService);
+    const bootstrap = { homeDir, osHomeDir: homeDir } as unknown as IBootstrapService;
     return new WorkspaceTrustDisclosureService(
-      'test-workspace',
-      { cwd: workDir } as IWorkspaceContext,
+      { cwd: workDir, workspaceId: 'test-workspace' } as unknown as IWorkspaceContext,
       fs,
       bootstrap,
       new FileProjectLocalConfigService(bootstrap, fs),
-      trust,
-      skills,
-      agentProfilesLoader,
-      agentProfilesRegistry,
-      instructions,
+      { ready: Promise.resolve(), isTrusted: () => overrides.trusted ?? false } as unknown as IWorkspaceTrust,
+      overrides.skills ??
+        ({ ready: Promise.resolve(), catalog: { listSkills: () => [] } } as unknown as IWorkspaceSkillCatalog),
+      { ready: Promise.resolve() } as unknown as IWorkspaceAgentProfileLoader,
+      overrides.agentProfilesRegistry ?? ({ entries: () => [] } as unknown as IAgentProfileRegistry),
+      overrides.instructions ??
+        ({
+          ready: Promise.resolve(),
+          snapshot: { agentsMd: undefined, agentsMdWarning: undefined, agentsMdPaths: [] },
+        } as unknown as IWorkspaceInstructionsService),
       stubLog(),
     );
   }
@@ -79,27 +68,21 @@ describe('WorkspaceTrustDisclosureService', () => {
       JSON.stringify({ mcpServers: { github: { command: 'github-mcp' } } }),
       'utf-8',
     );
-    const activation = await createService({ trusted: true }).describeGatedActivation();
-    expect(activation).toEqual({
+    expect(await createService({ trusted: true }).describeGatedActivation()).toEqual({
       mcpServers: [],
       additionalDirs: [],
       instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
     });
   });
 
-  it('describes project MCP servers with redacted keys and origin', async () => {
+  it('describes gated MCP servers, outside dirs, and instruction sources', async () => {
     await writeFile(
       join(workDir, '.mcp.json'),
       JSON.stringify({
         mcpServers: {
-          github: { command: 'github-mcp', args: ['--safe'], env: { TOKEN: 'hidden' } },
+          github: { command: 'github-mcp', env: { TOKEN: 'hidden' } },
           disabled: { command: 'never-runs', enabled: false },
-          remote: {
-            transport: 'http',
-            url: 'https://example.test/mcp',
-            headers: { Authorization: 'Bearer x' },
-            bearerTokenEnvVar: 'MCP_TOKEN',
-          },
+          remote: { transport: 'http', url: 'https://example.test/mcp', headers: { Authorization: 'Bearer x' } },
         },
       }),
       'utf-8',
@@ -109,34 +92,6 @@ describe('WorkspaceTrustDisclosureService', () => {
       JSON.stringify({ mcpServers: { userOnly: { command: 'user-mcp' } } }),
       'utf-8',
     );
-    const activation = await createService().describeGatedActivation();
-    expect(activation.mcpServers).toEqual([
-      {
-        name: 'github',
-        transport: 'stdio',
-        command: 'github-mcp',
-        args: ['--safe'],
-        cwd: workDir,
-        envKeys: ['TOKEN'],
-        origin: join(workDir, '.mcp.json'),
-      },
-      {
-        name: 'remote',
-        transport: 'http',
-        url: 'https://example.test/mcp',
-        headerKeys: ['Authorization'],
-        bearerTokenEnvVar: 'MCP_TOKEN',
-        origin: join(workDir, '.mcp.json'),
-      },
-    ]);
-    const serialized = JSON.stringify(activation);
-    expect(serialized).not.toContain('hidden');
-    expect(serialized).not.toContain('userOnly');
-    expect(serialized).not.toContain('never-runs');
-  });
-
-  it('discloses additional dirs outside the project by real target', async () => {
-    const outsideDir = mkdtempSync(join(tmpdir(), 'kimi-trust-disclosure-outside-'));
     const insideDir = join(workDir, 'sub');
     await mkdir(insideDir, { recursive: true });
     await symlink(outsideDir, join(workDir, 'linked-dir'), 'dir');
@@ -146,88 +101,87 @@ describe('WorkspaceTrustDisclosureService', () => {
       `[workspace]\nadditional_dir = [${JSON.stringify(outsideDir)}, "sub", "linked-dir"]\n`,
       'utf-8',
     );
-    try {
-      const activation = await createService().describeGatedActivation();
-      expect(activation.additionalDirs).toEqual([
-        { path: outsideDir, realPath: await realpath(outsideDir) },
-        {
-          path: join(workDir, 'linked-dir'),
-          realPath: await realpath(join(workDir, 'linked-dir')),
+    const activation = await createService({
+      skills: {
+        ready: Promise.resolve(),
+        catalog: {
+          listSkills: () => [
+            { name: 'deploy-prod', source: 'project' },
+            { name: 'user-skill', source: 'user' },
+          ],
         },
-      ]);
-    } finally {
-      await rm(outsideDir, { recursive: true, force: true });
-    }
-  });
-
-  it('collects project instruction sources', async () => {
-    const skills = {
-      ready: Promise.resolve(),
-      catalog: {
-        listSkills: () => [
-          { name: 'deploy-prod', source: 'project' },
-          { name: 'user-skill', source: 'user' },
+      } as unknown as IWorkspaceSkillCatalog,
+      agentProfilesRegistry: {
+        entries: () => [
+          { sourceId: 'builtin', priority: -1, contribution: { profiles: [{ name: 'clash' }] } },
+          { sourceId: 'explicit', priority: 10, contribution: { profiles: [{ name: 'outranked' }] } },
+          {
+            sourceId: 'workspace',
+            priority: 0,
+            workspaceKey: 'test-workspace',
+            contribution: { profiles: [{ name: 'release-manager' }, { name: 'clash' }, { name: 'outranked' }] },
+          },
+          { sourceId: 'workspace', priority: 0, workspaceKey: 'other-workspace', contribution: { profiles: [{ name: 'stranger' }] } },
+          { sourceId: 'user', priority: 0, contribution: { profiles: [{ name: 'user-profile' }] } },
         ],
-      },
-    } as unknown as IWorkspaceSkillCatalog;
-    const agentProfilesRegistry = {
-      entries: () => [
+      } as unknown as IAgentProfileRegistry,
+      instructions: {
+        ready: Promise.resolve(),
+        snapshot: {
+          agentsMd: undefined,
+          agentsMdWarning: undefined,
+          agentsMdPaths: [join(workDir, 'AGENTS.md'), join(homeDir, 'AGENTS.md')],
+        },
+      } as unknown as IWorkspaceInstructionsService,
+    }).describeGatedActivation();
+    expect(activation).toEqual({
+      mcpServers: [
         {
-          sourceId: 'workspace',
-          priority: 0,
-          workspaceKey: 'test-workspace',
-          contribution: { profiles: [{ name: 'release-manager' }] },
+          name: 'github',
+          transport: 'stdio',
+          command: 'github-mcp',
+          args: undefined,
+          cwd: workDir,
+          envKeys: ['TOKEN'],
+          origin: join(workDir, '.mcp.json'),
         },
         {
-          sourceId: 'workspace',
-          priority: 0,
-          workspaceKey: 'other-workspace',
-          contribution: { profiles: [{ name: 'stranger' }] },
-        },
-        {
-          sourceId: 'user',
-          priority: 0,
-          contribution: { profiles: [{ name: 'user-profile' }] },
+          name: 'remote',
+          transport: 'http',
+          url: 'https://example.test/mcp',
+          headerKeys: ['Authorization'],
+          bearerTokenEnvVar: undefined,
+          origin: join(workDir, '.mcp.json'),
         },
       ],
-    } as unknown as IAgentProfileRegistry;
-    const instructions = {
-      ready: Promise.resolve(),
-      snapshot: {
-        agentsMd: undefined,
-        agentsMdWarning: undefined,
-        agentsMdPaths: [join(workDir, 'AGENTS.md'), join(homeDir, 'AGENTS.md')],
+      additionalDirs: [
+        { path: outsideDir, realPath: await realpath(outsideDir) },
+        { path: join(workDir, 'linked-dir'), realPath: await realpath(join(workDir, 'linked-dir')) },
+      ],
+      instructionSources: {
+        agentsMdPaths: [join(workDir, 'AGENTS.md')],
+        skills: ['deploy-prod'],
+        agentProfiles: ['release-manager'],
       },
-    } as IWorkspaceInstructionsService;
-    const activation = await createService({
-      skills,
-      agentProfilesRegistry,
-      instructions,
-    }).describeGatedActivation();
-    expect(activation.instructionSources).toEqual({
-      agentsMdPaths: [join(workDir, 'AGENTS.md')],
-      skills: ['deploy-prod'],
-      agentProfiles: ['release-manager'],
     });
+    const serialized = JSON.stringify(activation);
+    expect(serialized).not.toContain('hidden');
+    expect(serialized).not.toContain('userOnly');
+    expect(serialized).not.toContain('never-runs');
   });
 
   it('degrades one section without failing the others', async () => {
     await writeFile(join(workDir, '.mcp.json'), '{not json', 'utf-8');
     await mkdir(join(workDir, '.kimi-code'), { recursive: true });
-    const outsideDir = mkdtempSync(join(tmpdir(), 'kimi-trust-disclosure-outside-'));
     await writeFile(
       join(workDir, '.kimi-code', 'local.toml'),
       `[workspace]\nadditional_dir = [${JSON.stringify(outsideDir)}]\n`,
       'utf-8',
     );
-    try {
-      const activation = await createService().describeGatedActivation();
-      expect(activation.mcpServers).toEqual([]);
-      expect(activation.additionalDirs).toEqual([
-        { path: outsideDir, realPath: await realpath(outsideDir) },
-      ]);
-    } finally {
-      await rm(outsideDir, { recursive: true, force: true });
-    }
+    const activation = await createService().describeGatedActivation();
+    expect(activation.mcpServers).toEqual([]);
+    expect(activation.additionalDirs).toEqual([
+      { path: outsideDir, realPath: await realpath(outsideDir) },
+    ]);
   });
 });

@@ -682,10 +682,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   /**
    * klient has no workspace-trust facade; composed directly from the engine
    * via {@link engineAccessor} — the same `handlerFor({ root })` path
-   * `createSession` takes (materializing the workspace handler is a no-op
-   * cost here: session creation does it anyway). The disclosure of what
-   * trusting would activate is computed inside the engine by
-   * `WorkspaceTrustDisclosureService`, best-effort per section.
+   * `createSession` takes. The disclosure of what trusting would activate is
+   * computed inside the engine by `WorkspaceTrustDisclosureService`.
    */
   override async getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo> {
     const handler = await this.engineAccessor

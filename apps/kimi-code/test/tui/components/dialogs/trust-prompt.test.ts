@@ -48,7 +48,7 @@ describe('TrustPromptComponent', () => {
     expect(text).toContain('applies automatically once this folder is trusted');
   });
 
-  it('lists the gated project MCP servers with keys and origin', () => {
+  it('lists the gated project MCP servers with keys, origin, and caps', () => {
     const lines = renderLines(
       makeInfo({
         gatedMcpServers: [
@@ -58,7 +58,7 @@ describe('TrustPromptComponent', () => {
             command: 'nested-cmd',
             args: ['--safe'],
             cwd: '/tmp',
-            envKeys: ['API_KEY'],
+            envKeys: Array.from({ length: 25 }, (_, i) => `KEY_${i}`),
             origin: '/tmp/demo-workspace/.mcp.json',
           },
           {
@@ -70,16 +70,24 @@ describe('TrustPromptComponent', () => {
             origin: '/tmp/demo-workspace/.kimi-code/mcp.json',
           },
         ],
+        instructionSources: {
+          agentsMdPaths: [],
+          skills: Array.from({ length: 12 }, (_, i) => `skill-${i}`),
+          agentProfiles: [],
+        },
       }),
     );
     const text = lines.join('\n');
     expect(text).toContain('nested-server (stdio): command=nested-cmd');
     expect(text).toContain('args=["--safe"] cwd=/tmp');
-    expect(text).toContain('env keys: API_KEY');
+    expect(text).toContain('env keys: KEY_0, KEY_1');
+    expect(text).toContain('+15 more');
+    expect(text).not.toContain('KEY_24');
     expect(text).toContain('from .mcp.json');
     expect(text).toContain('root-server (http): url=https://example.test/mcp');
     expect(text).toContain('header keys: Authorization · bearer token from env MCP_TOKEN');
     expect(text).toContain('from .kimi-code/mcp.json');
+    expect(text).toContain('+4 more');
   });
 
   it('renders the directory and instruction sections', () => {
@@ -141,75 +149,22 @@ describe('TrustPromptComponent', () => {
     expect(text).not.toContain('\u001B]8;;https://evil.test');
   });
 
-  it('caps long lists and untrusted MCP key lists with a "+N more" suffix', () => {
-    const lines = renderLines(
-      makeInfo({
-        gatedMcpServers: [
-          {
-            name: 'fat',
-            transport: 'stdio',
-            command: 'cmd',
-            envKeys: Array.from({ length: 25 }, (_, i) => `KEY_${i}`),
-            origin: '/tmp/demo-workspace/.mcp.json',
-          },
-        ],
-        instructionSources: {
-          agentsMdPaths: [],
-          skills: Array.from({ length: 12 }, (_, i) => `skill-${i}`),
-          agentProfiles: [],
-        },
-      }),
-    );
-    const text = lines.join('\n');
-    expect(text).toContain('env keys: KEY_0, KEY_1');
-    expect(text).toContain('+15 more');
-    expect(text).not.toContain('KEY_24');
-    expect(text).toContain('+4 more');
-  });
-
-  it('defaults to Trust this folder', () => {
-    const onSelect = vi.fn();
-    const prompt = new TrustPromptComponent({
-      workDir: '/tmp/demo-workspace',
-      info: makeInfo(),
-      onSelect,
-    });
-    prompt.handleInput('\r');
-    expect(onSelect).toHaveBeenCalledWith('trust');
-  });
-
-  it('stays on trust when moving up past the top', () => {
-    const onSelect = vi.fn();
-    const prompt = new TrustPromptComponent({
-      workDir: '/tmp/demo-workspace',
-      info: makeInfo(),
-      onSelect,
-    });
-    prompt.handleInput('\u001B[A');
-    prompt.handleInput('\r');
-    expect(onSelect).toHaveBeenCalledWith('trust');
-  });
-
-  it('selects distrust after moving the cursor down', () => {
-    const onSelect = vi.fn();
-    const prompt = new TrustPromptComponent({
-      workDir: '/tmp/demo-workspace',
-      info: makeInfo(),
-      onSelect,
-    });
-    prompt.handleInput('\u001B[B');
-    prompt.handleInput('\r');
-    expect(onSelect).toHaveBeenCalledWith('distrust');
-  });
-
-  it('treats Esc as distrust', () => {
-    const onSelect = vi.fn();
-    const prompt = new TrustPromptComponent({
-      workDir: '/tmp/demo-workspace',
-      info: makeInfo(),
-      onSelect,
-    });
-    prompt.handleInput('\u001B');
-    expect(onSelect).toHaveBeenCalledWith('distrust');
+  it('handles key input: default trust, cursor moves, and Esc', () => {
+    const cases: { keys: string[]; expected: string }[] = [
+      { keys: ['\r'], expected: 'trust' },
+      { keys: ['\u001B[A', '\r'], expected: 'trust' },
+      { keys: ['\u001B[B', '\r'], expected: 'distrust' },
+      { keys: ['\u001B'], expected: 'distrust' },
+    ];
+    for (const { keys, expected } of cases) {
+      const onSelect = vi.fn();
+      const prompt = new TrustPromptComponent({
+        workDir: '/tmp/demo-workspace',
+        info: makeInfo(),
+        onSelect,
+      });
+      for (const key of keys) prompt.handleInput(key);
+      expect(onSelect).toHaveBeenCalledWith(expected);
+    }
   });
 });
