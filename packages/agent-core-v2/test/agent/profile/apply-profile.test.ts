@@ -1,4 +1,3 @@
-import { IEnvironmentService } from '#/app/environment/environment';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'pathe';
@@ -9,9 +8,7 @@ import { Emitter, Event } from '#/_base/event';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { IAgentPlanService } from '#/features/plan/plan';
 import type { Environment, EnvironmentCapability, EnvironmentStatus } from '#/environment/environment';
 import { stubAgentEnvironment } from '../../environment/stubs';
 import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
@@ -26,13 +23,8 @@ import {
 } from '#/features/skill/catalog/skillSource';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { DEFAULT_PRODUCT_NAME } from '#/app/agentProfileCatalog/profile-shared';
-import { IFlagService } from '#/app/flag/flag';
-import { EnvironmentRegistry } from '#/environment/environmentRegistry';
-import { AGENT_ENVIRONMENT_TOOLS_FLAG_ID } from '#/features/environmentTools/flag';
 import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { fakeEnvironment } from '../../environment/stubs';
-import { stubFlag } from '../../app/flag/stubs';
 
 import { stubAgentIdentity } from '../../app/agentIdentity/stubs';
 
@@ -156,50 +148,6 @@ describe('AgentProfileService.applyProfile', () => {
     expect(svc.data().systemPrompt).toContain('project instructions');
     expect(svc.data().systemPrompt).toContain(`<!-- From: ${join(workDir, 'AGENTS.md')} -->`);
     expect(svc.getAgentsMdWarning()).toBeUndefined();
-  });
-
-  describe('available environments', () => {
-    const environmentsProfile: ResolvedAgentProfile = normalizeAgentProfile({
-      name: 'environments-profile',
-      systemPrompt: (context) => `envs:${context.environmentsInfo ?? ''}`,
-      tools: [],
-    });
-
-    it('injects the environment list when the agent_environment_tools flag is on', async () => {
-      const registry = new EnvironmentRegistry();
-      registry.register(fakeEnvironment('local', 'local-one', { workspaceId: 'test-workspace' }));
-      registry.register(fakeEnvironment('staging', 'staging-one', { workspaceId: 'test-workspace', status: 'disconnected' }));
-      const { ctx, profile: svc } = buildContext(
-        appService(IFlagService, stubFlag((id) => id === AGENT_ENVIRONMENT_TOOLS_FLAG_ID)),
-        appService(IEnvironmentService, registry as unknown as IEnvironmentService),
-        agentService(IAgentEnvironmentBindingService, {
-          _serviceBrand: undefined,
-          onDidChange: Event.None,
-          get current() {
-            return { environmentId: 'local' };
-          },
-        } as unknown as IAgentEnvironmentBindingService),
-        agentService(IAgentPlanService, {
-          _serviceBrand: undefined,
-          status: async () => null,
-        } as unknown as IAgentPlanService),
-      );
-
-      await svc.applyProfile(environmentsProfile);
-
-      expect(svc.data().systemPrompt).toBe('envs:- `local` (ready, current)\n- `staging` (disconnected)');
-      const tools = ctx.get(IAgentToolRegistryService);
-      expect(tools.resolve('change_environment')).toBeDefined();
-      expect(tools.resolve('connect')).toBeDefined();
-    });
-
-    it('omits the environment list when the flag is off', async () => {
-      const { profile: svc } = buildContext();
-
-      await svc.applyProfile(environmentsProfile);
-
-      expect(svc.data().systemPrompt).toBe('envs:');
-    });
   });
 
   it('renders the complete environment context exactly', async () => {
