@@ -1015,7 +1015,11 @@ describe('KimiTUI message flow', () => {
               message: {
                 role: 'user',
                 content: [
-                  { type: 'text', text: 'skill card C body' },
+                  {
+                    type: 'text',
+                    text: 'skill card C body',
+                    meta: { source: 'skill activation', activationId: 'act-3' },
+                  },
                   { type: 'text', text: 'please /commit' },
                 ],
                 toolCalls: [],
