@@ -3779,6 +3779,43 @@ command = "vim"
     expect(driver.state.transcriptEntries.filter((entry) => entry.kind === 'user')).toEqual([]);
   });
 
+  it('keeps a queued video upload when steering it into a starting WaitFor fails', async () => {
+    const session = makeSession({
+      steer: vi.fn(async () => {
+        throw new Error('session closed');
+      }),
+    });
+    const { driver, harness } = await makeDriver(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addVideo('video/mp4', '/tmp/clip.mp4');
+    imageStore.completeVideo(attachment, { fileId: 'file-v1' });
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput(`describe ${attachment.placeholder}`);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_wait',
+        name: 'WaitFor',
+        args: { timeout: 60 },
+      } as Event,
+      () => {},
+    );
+    await vi.waitFor(() => {
+      expect(driver.state.queuedMessages).toHaveLength(1);
+    });
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+      () => {},
+    );
+    await (driver as unknown as { staging: { drain(): Promise<void> } }).staging.drain();
+
+    expect(harness.deleteFile).not.toHaveBeenCalledWith('file-v1');
+  });
+
   it('keeps a queue with a bash command queued when a WaitFor starts', async () => {
     const { driver, session } = await makeDriver();
     const sendQueued = vi.fn();
