@@ -149,7 +149,22 @@ export class Tui {
     writeFileSync(join(this.framesDir, `${String(this.frames).padStart(2, '0')}-${label}.txt`), text);
   }
 
+  /**
+   * Quits through `/exit` so the CLI shuts down normally and stops the
+   * background tasks it started; killing the tmux session is only the
+   * fallback (a dead terminal takes the emergency exit, which leaves them).
+   */
   async close(): Promise<void> {
+    const alive = (): Promise<boolean> =>
+      run('tmux', ['has-session', '-t', this.session]).then(
+        () => true,
+        () => false,
+      );
+    await this.submit('/exit').catch(() => {});
+    const deadline = Date.now() + 15_000;
+    while ((await alive()) && Date.now() < deadline) {
+      await new Promise((done) => setTimeout(done, 200));
+    }
     await run('tmux', ['kill-session', '-t', this.session]).catch(() => {});
   }
 
@@ -183,8 +198,12 @@ async function launchTui(name: string, baseUrl: string, root: string): Promise<T
     join(APP_ROOT, 'src/main.ts'),
     '--yolo',
   ];
+  // Drop every inherited KIMI_* variable (e.g. KIMI_SHARE_DIR, which would point
+  // legacy-migration detection back at the developer's real data) and TMUX.
+  const unset = ['TMUX', ...Object.keys(process.env).filter((key) => key.startsWith('KIMI_'))];
   const command = [
-    'env -u TMUX',
+    'env',
+    ...unset.map((key) => `-u ${key}`),
     ...Object.entries(env).map(([key, value]) => `${key}=${JSON.stringify(value)}`),
     ...argv.map((arg) => JSON.stringify(arg)),
     `2>${JSON.stringify(join(root, 'cli.err'))}`,
@@ -195,9 +214,14 @@ async function launchTui(name: string, baseUrl: string, root: string): Promise<T
   const framesDir = framesRoot === undefined ? undefined : join(framesRoot, name);
   if (framesDir !== undefined) mkdirSync(framesDir, { recursive: true });
   const tui = new Tui(session, framesDir);
-  await tui.see('Trust this folder?', undefined, 60_000);
-  await tui.press('C-m');
-  await tui.see('Model:     mock');
+  try {
+    await tui.see('Trust this folder?', undefined, 60_000);
+    await tui.press('C-m');
+    await tui.see('Model:     mock');
+  } catch (error) {
+    await tui.close();
+    throw error;
+  }
   return tui;
 }
 
