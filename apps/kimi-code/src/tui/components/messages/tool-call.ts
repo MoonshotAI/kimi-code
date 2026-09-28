@@ -114,8 +114,6 @@ export interface ToolCallSubagentSnapshot {
   readonly model?: string;
   /** Thinking effort, present only for concrete levels (on/off hidden). */
   readonly effort?: string;
-  /** Remote environment the subagent runs in (the Agent tool's `environment` arg), absent for local. */
-  readonly environment?: string;
   readonly phase: SubagentPhase | undefined;
   readonly toolCount: number;
   readonly elapsedSeconds: number | undefined;
@@ -158,11 +156,6 @@ function backgroundFailureMessage(
 
 function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
-}
-
-function subagentEnvironment(args: Readonly<Record<string, unknown>>): string | undefined {
-  const raw = str(args['environment']).trim();
-  return raw.length > 0 && raw !== 'local' ? raw : undefined;
 }
 
 function formatSubagentContextTokens(contextTokens: number | undefined): string | undefined {
@@ -1169,7 +1162,6 @@ export class ToolCallComponent extends Container {
       agentName: this.subagentAgentName,
       model: this.subagentModel,
       effort: this.subagentEffort,
-      environment: subagentEnvironment(this.toolCall.args),
       phase: derivedPhase,
       toolCount: finished,
       elapsedSeconds: this.getSubagentElapsedSeconds(),
@@ -2133,8 +2125,6 @@ export class ToolCallComponent extends Container {
     const parts: string[] = [];
     if (this.subagentModel !== undefined) parts.push(this.subagentModel);
     if (this.subagentEffort !== undefined) parts.push(this.subagentEffort);
-    const environment = subagentEnvironment(this.toolCall.args);
-    if (environment !== undefined) parts.push(`env ${environment}`);
     parts.push(`${String(this.subToolActivities.size)} tool${this.subToolActivities.size === 1 ? '' : 's'}`);
     const elapsed = this.getSubagentElapsedSeconds();
     if (elapsed !== undefined) parts.push(formatElapsed(elapsed));

@@ -278,13 +278,6 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
-    name: 'environment',
-    aliases: ['environments'],
-    description: 'Manage environments (local machine and remote environments)',
-    priority: 60,
-    availability: 'idle-only',
-  },
-  {
     name: 'add-dir',
     aliases: [],
     description: 'Add or list an additional workspace directory',

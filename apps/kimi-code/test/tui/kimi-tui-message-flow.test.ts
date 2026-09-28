@@ -54,7 +54,6 @@ import type { SessionReplayRenderer } from '#/tui/controllers/session-replay';
 import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
 import type { SurveyController } from '#/tui/controllers/survey-controller';
 import { handleFeedbackCommand } from '#/tui/commands/info';
-import { EnvironmentManagerComponent } from '#/tui/components/dialogs/environment-manager';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { openUrl } from '#/utils/open-url';
 import { createFeedbackArchivePath } from '../../src/feedback/archive';
@@ -9490,14 +9489,6 @@ describe('KimiTUI environment slot', () => {
 
     expect(driver.state.appState.environment?.connectError).toContain('executor stderr: Password:');
     expect(stripSgr(renderTranscript(driver))).not.toContain('Environment ssh:dev-box disconnected');
-  });
-
-  it('opens the environment manager when /environment is typed', async () => {
-    const { driver } = await makeDriver(environmentSession());
-    driver.handleUserInput('/environment');
-    await vi.waitFor(() => {
-      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EnvironmentManagerComponent);
-    });
   });
 
   it('marks the environment connecting while the first prompt awaits the startup session', async () => {

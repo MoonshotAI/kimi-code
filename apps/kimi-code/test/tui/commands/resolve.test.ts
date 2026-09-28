@@ -277,13 +277,6 @@ describe('resolveSlashCommandInput', () => {
     });
   });
 
-  it('resolves /environment to the builtin command', () => {
-    expect(resolve('/environment')).toMatchObject({
-      kind: 'builtin',
-      name: 'environment',
-      args: '',
-    });
-  });
 });
 
 describe('goal command resolution', () => {

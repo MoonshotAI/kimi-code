@@ -53,7 +53,6 @@ import {
   type BuiltinSlashCommandName,
 } from './registry';
 import { handleReloadCommand, handleReloadTuiCommand } from './reload';
-import { handleEnvironmentCommand } from './environment';
 import type { SkillListSession } from './skills';
 import {
   canRestoreSubmittedInput,
@@ -100,7 +99,6 @@ export { handleTowerCommand } from './tower';
 export { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 export { handlePluginsCommand } from './plugins';
 export { handleReloadCommand, handleReloadTuiCommand } from './reload';
-export { handleEnvironmentCommand } from './environment';
 export { handleGoalCommand } from './goal';
 export {
   handleExportDebugZipCommand,
@@ -423,7 +421,6 @@ const SESSION_REQUIRING_COMMANDS: ReadonlySet<BuiltinSlashCommandName> = new Set
   'goal',
   'init',
   'plan',
-  'environment',
   'swarm',
   'undo',
   'web',
@@ -521,9 +518,6 @@ async function handleBuiltInSlashCommand(
       return;
     case 'reload-tui':
       await handleReloadTuiCommand(host);
-      return;
-    case 'environment':
-      await handleEnvironmentCommand(host);
       return;
     case 'editor':
       await handleEditorCommand(host, args);

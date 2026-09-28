@@ -186,7 +186,6 @@ import { combineSteerInput } from './utils/steer-input';
 import { startupTrace } from '#/utils/startup-trace';
 import { REPLAY_FETCH_TURN_LIMIT } from './utils/message-replay';
 import { hasPatchChanges } from './utils/object-patch';
-import { remoteMentionSuggester } from './utils/remote-mention-suggest';
 import { beginScreenTakeover, endScreenTakeover, type ScreenTakeover } from './utils/screen-takeover';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
 import { formatStepRetryDetail, formatStepRetryLabel } from './utils/step-retry';
@@ -549,7 +548,6 @@ export class KimiTUI {
       this.state.appState.additionalDirs,
       () => this.state.appState.inputMode,
       skillCommandNames,
-      remoteMentionSuggester(this.session, this.state.appState.environment),
     );
     this.state.editor.setAutocompleteProvider(provider);
 
