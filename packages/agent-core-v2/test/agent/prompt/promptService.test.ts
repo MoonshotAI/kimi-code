@@ -885,7 +885,7 @@ describe('prompt queue', () => {
     await loop.settled();
   });
 
-  it('leaves the queue untouched after a rejected steer and lets it proceed afterwards', async () => {
+  it('leaves the queue untouched after a rejected steer and batches it afterwards', async () => {
     setup();
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'active' });
@@ -895,16 +895,18 @@ describe('prompt queue', () => {
     await enqueue(loop, { message: message('active') });
     await hold.started;
     const a = await enqueue(loop, { id: 'a', message: message('a') });
-    await enqueue(loop, { id: 'b', message: message('b') });
+    const b = await enqueue(loop, { id: 'b', message: message('b') });
 
     await expect(loop.steer(['a', 'missing'])).rejects.toMatchObject({ code: 'prompt.not_found' });
     expect(pendingIds(loop)).toEqual(['a', 'b']);
 
     hold.release();
     await expect(a.launched).resolves.toBeDefined();
+    await expect(b.launched).resolves.toBeDefined();
     expect((await a.launched)?.id).toBe(1);
+    expect((await b.launched)?.id).toBe(1);
     expect(loop.snapshot().activePromptId).toBe('a');
-    expect(pendingIds(loop)).toEqual(['b']);
+    expect(pendingIds(loop)).toEqual([]);
     await loop.settled();
   });
 });
