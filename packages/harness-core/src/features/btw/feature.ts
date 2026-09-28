@@ -7,11 +7,11 @@ import {
   useAgent,
   useBeforeTool,
   useSession,
+  useSessionStore,
   type FeatureSpec,
 } from '@moonshot-ai/agent-core';
 import {
   createToken,
-  inject,
   useExpose,
   useFire,
   type RuntimeEvent,
@@ -41,7 +41,7 @@ export interface BtwFace {
 
 export const BtwRef = createToken<BtwFace>('btw');
 
-const BtwRegistryRef = createToken<Map<string, string>>('btw.registry');
+const BTW_SOURCE = 'btw';
 
 export interface CreateBtwProps {
   readonly sourceAgentId?: string;
@@ -56,9 +56,10 @@ export function createBtw(props: CreateBtwProps = {}): FeatureSpec<BtwEvent> {
   return createFeature<BtwEvent>('btw', {
     session() {
       const session = useSession();
+      const store = useSessionStore();
       const fire = useFire();
-      const registry = new Map<string, string>();
-      useExpose(BtwRegistryRef, registry);
+      const isBtw = (agentId: string): boolean =>
+        store.getState().roster.agents[agentId]?.source === BTW_SOURCE;
       useExpose(BtwRef, {
         ask: async () => {
           if (session.get(sourceAgentId) === undefined) {
@@ -67,24 +68,23 @@ export function createBtw(props: CreateBtwProps = {}): FeatureSpec<BtwEvent> {
             );
           }
           const agentId = `btw-${randomUUID().slice(0, 8)}`;
-          const child = await session.fork(sourceAgentId, { agentId });
-          await child.remind(
+          const child = await session.fork(sourceAgentId, { agentId, source: BTW_SOURCE });
+          child.remind(
             BTW_REMIND_KEY,
             createHistoryMessageBuilder().systemReminder(reminder).userMessage(),
           );
-          registry.set(agentId, sourceAgentId);
           fire({ type: 'btw.created', agentId, sourceId: sourceAgentId });
           return { agentId };
         },
-        list: () => [...registry.keys()],
-        isBtw: (agentId) => registry.has(agentId),
+        list: () => Object.keys(store.getState().roster.agents).filter(isBtw),
+        isBtw,
       });
     },
     agent() {
-      const registry = inject(BtwRegistryRef);
+      const store = useSessionStore();
       const agent = useAgent();
       useBeforeTool(({ toolCall }) => {
-        if (!registry.has(agent.agentId)) return undefined;
+        if (store.getState().roster.agents[agent.agentId]?.source !== BTW_SOURCE) return undefined;
         if (readonlyTools.has(toolCall.name)) return undefined;
         return {
           type: 'denied',

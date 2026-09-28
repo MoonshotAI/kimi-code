@@ -180,7 +180,7 @@ describe('btw feature', () => {
       createdEvents.push(event);
     });
     const done = nextTurnDone(main);
-    await main.submit(createUserMessage('hello'));
+    main.submit(createUserMessage('hello'));
     await done;
     await env.stores.flush();
 
@@ -212,7 +212,7 @@ describe('btw feature', () => {
     const child = session.get(agentId) as AgentHandle;
 
     const first = nextTurnDone(child);
-    await child.submit(createUserMessage('run bash'));
+    child.submit(createUserMessage('run bash'));
     await first;
     await env.stores.flush();
 
@@ -229,7 +229,7 @@ describe('btw feature', () => {
 
     executed.length = 0;
     const second = nextTurnDone(main);
-    await main.submit(createUserMessage('run bash'));
+    main.submit(createUserMessage('run bash'));
     await second;
     await env.stores.flush();
 
@@ -255,5 +255,44 @@ describe('btw feature', () => {
     );
     await missingSource.app.disposeAsync();
     await missingSource.env.stores.dispose();
+  });
+
+  it('recovers membership and the readonly guard from the persisted roster after remount', async () => {
+    const backend = new MemoryBackend();
+    const openStores = async (): Promise<SessionStores> => {
+      const trees = await Trees.open(backend.trees, {});
+      const tree = await trees.tree('sess');
+      return openSessionStores(tree, openBlobs(backend.blobs));
+    };
+    const { requester } = createMockRequester(script);
+    const executed: string[] = [];
+    const features: FeatureSpec[] = [createBtw(), bindTestTools(executed), bindTestLlm(requester)];
+
+    const firstStores = await openStores();
+    const first = mountApp({ features });
+    const firstSession = await first.create({ sessionId: 'sess', stores: firstStores });
+    await firstSession.create({ agentId: MAIN_AGENT_ID, systemPrompt: 'main-host' });
+    const { agentId } = await firstSession.resolve(BtwRef).ask();
+    await first.disposeAsync();
+    await firstStores.flush();
+    await firstStores.dispose();
+
+    const secondStores = await openStores();
+    const second = mountApp({ features });
+    const secondSession = await second.create({ sessionId: 'sess', stores: secondStores });
+    const face = secondSession.resolve(BtwRef);
+    expect(face.isBtw(agentId)).toBe(true);
+    expect(face.list()).toEqual([agentId]);
+
+    const child = await secondSession.create({ agentId });
+    const done = nextTurnDone(child);
+    child.submit(createUserMessage('run bash'));
+    await done;
+    await secondStores.flush();
+    expect(executed).toEqual(['Read']);
+    expect(toolTexts(secondStores, agentId)[0]).toBe(BTW_TOOL_DENIED_MESSAGE);
+
+    await second.disposeAsync();
+    await secondStores.dispose();
   });
 });

@@ -71,7 +71,7 @@ async function runTurn(host: AgentHandle, store: AgentStore, text: string, histo
   const done = new Promise<void>((resolve) => {
     host.on('turn.done', () => { resolve(); });
   });
-  await host.submit(createUserMessage(text));
+  host.submit(createUserMessage(text));
   await done;
   expect(store.getState().history.length).toBe(historyLength);
   expect(store.getState().history.some((entry) => entry.message.role === 'assistant')).toBe(true);
@@ -84,7 +84,7 @@ function historyTexts(store: AgentStore): string[] {
 describe('SessionStores open/fork', () => {
   it('folds history and turnIndex for opened and forked agents, then diverges', async () => {
     const env = await testEnv();
-    const main = await env.stores.open('main');
+    const main = await env.stores.open('main', { source: 'test-source' });
     const actor = await startAgent(main, { agentId: 'main', branchId: env.stores.branch('main') });
     await runTurn(actor, main, 'hi', 2);
     await env.stores.flush();
@@ -99,7 +99,7 @@ describe('SessionStores open/fork', () => {
 
     expect(env.stores.session.getState().roster.agents).toEqual({
       fork: { branch: 'fork' },
-      main: { branch: 'main' },
+      main: { branch: 'main', source: 'test-source' },
     });
 
     const forkActor = await startAgent(fork, { agentId: 'fork', branchId: env.stores.branch('fork') });
@@ -137,7 +137,7 @@ describe('SessionStores open/fork', () => {
 describe('SessionStores undo', () => {
   it('rolls back to the turn boundary, forks with a parent ref, and updates the roster', async () => {
     const env = await testEnv();
-    const main = await env.stores.open('main');
+    const main = await env.stores.open('main', { source: 'test-source' });
     const actor = await startAgent(main, { agentId: 'main', branchId: env.stores.branch('main') });
     await runTurn(actor, main, 'first', 2);
     await runTurn(actor, main, 'second', 4);
@@ -156,7 +156,10 @@ describe('SessionStores undo', () => {
     const header = env.tree.openBranch('main~2').header;
     expect(header.parentBranch).toBe('main');
     expect(header.parentSeq).toBe((cutStart as { seq: number }).seq - 1);
-    expect(env.stores.session.getState().roster.agents['main']?.branch).toBe('main~2');
+    expect(env.stores.session.getState().roster.agents['main']).toEqual({
+      branch: 'main~2',
+      source: 'test-source',
+    });
     expect(env.tree.openBranch('main').head).toBe(8);
 
     await actor.disposeAsync();

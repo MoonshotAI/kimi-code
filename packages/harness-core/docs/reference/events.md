@@ -26,7 +26,7 @@
 
 ```ts
 const ended = session.wait('turn.ended');
-await agent.submit(message);
+agent.submit(message);
 const event = await ended;
 if (event['outcome'] !== 'done') {
   throw new Error(String(event['errorMessage'] ?? event['outcome']));
@@ -39,7 +39,7 @@ if (event['outcome'] !== 'done') {
 
 | type | 字段 | 谁写 |
 |---|---|---|
-| `agent.opened` | `agentId`，`branch` | `SessionStores.open` 首次登记 |
+| `agent.opened` | `agentId`，`branch`，`features?`，`source?` | `SessionStores.open` 首次登记 |
 | `agent.closed` | `agentId` | `SessionStores.close` |
 | `agent.switched` | `agentId`，`branch`，`reason?`，`stats?` | `undo` / `switchBranch` |
 | `session.meta_updated` | `meta` | `app.open` 写 catalog 记录；`app.updateSession` |
@@ -121,7 +121,7 @@ session.on(interaction, 'interaction.requested', (event) => {
 
 ## 机器输入（只给 `send`，不是订阅面）
 
-`input.submit` / `notify` / `remind` / `steer` / `cancel` / `abort` / `pause` / `continue` / `close`。宿主用 `AgentCommands` 的同名方法：方法内部先订回执再 `send`，再把上表对应回执 `return` 出来，type 由命令面封装。`setConfig` / `setCredentialProvider` / `setRequester` 也在命令面上，但不进机器，仍是同步。
+`input.submit` / `notify` / `remind` / `steer` / `cancel` / `abort` / `pause` / `continue` / `close`。宿主用 `AgentCommands` 的同名方法：方法内部先订回执再 `send`（同步派发），同步把上表对应回执 `return` 出来，type 由命令面封装；actor 未运行（done / stopped / unmounted）时返回 `undefined`。`setConfig` / `setCredentialProvider` / `setRequester` 也在命令面上，但不进机器，仍是同步。
 
 ## 相关文档
 

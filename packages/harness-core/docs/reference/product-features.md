@@ -18,8 +18,8 @@
 `createBtw(props?)`：旁路问题。从 main（默认）fork 一个只读子代理，等宿主把用户的旁路问题直接提交给它。
 
 - props：`sourceAgentId?`（默认 `MAIN_AGENT_ID`）、`readonlyTools?`（只读工具白名单，默认 `['Read', 'Grep', 'Glob', 'WaitFor']`）。
-- facade：`BtwRef`（`session.resolve(BtwRef)`）：`ask(): Promise<{ agentId }>` 做 fork + 注入旁路 reminder + 登记；`list()` / `isBtw(agentId)`。
-- 约束：btw agent 上白名单外的工具调用一律 denied（`useBeforeTool`），main 与其它 agent 不受影响。
+- facade：`BtwRef`（`session.resolve(BtwRef)`）：`ask(): Promise<{ agentId }>` 做 fork（把 `source: 'btw'` 登记进 roster）+ 注入旁路 reminder；`list()` / `isBtw(agentId)` 从 roster 的 `source` 字段派生，remount 与 undo/compaction 换分支（`agent.switched` 保留 source）后仍然成立。
+- 约束：btw agent 上白名单外的工具调用一律 denied（`useBeforeTool` 查 roster `source`），main 与其它 agent 不受影响。
 - 事件：`btw.created`（`agentId` / `sourceId`）。
 
 ## dateChange（默认名单）

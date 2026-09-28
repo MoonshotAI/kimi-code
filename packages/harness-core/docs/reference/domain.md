@@ -20,12 +20,12 @@
 
 ## Session：`session<C>()` / `decodeSession`
 
-状态：`roster.agents`（agentId → branch 名）、`sessionMeta.value`。
+状态：`roster.agents`（agentId → branch 名 + `features?` + `source?` 创建者标记）、`sessionMeta.value`。
 
 | 事件 | reduce |
 |---|---|
-| `agent.opened` / `agent.switched` | 登记 branch |
-| `agent.closed` | 从 roster 删 |
+| `agent.opened` / `agent.switched` | 登记 branch（switched 保留 features/source） |
+| `agent.closed` | 保留 roster 条目 |
 | `session.meta_updated` | 覆盖 `sessionMeta` |
 
 catalog（title / workspaceId）在 `SessionSpace`，旁路 `meta.json`。活 session 的同一份记录也会 `dispatch` 进 session journal。

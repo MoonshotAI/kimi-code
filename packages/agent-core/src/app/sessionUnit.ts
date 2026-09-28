@@ -17,7 +17,9 @@ import type { SessionStores } from '#/stores/session';
 import type { BranchRef } from '#/store/tree';
 import { AgentUnit, agentHandle, type AgentHandle, type AgentUnitProps } from './agentUnit';
 
-export type CreateAgentProps = Omit<AgentUnitProps, 'sessionId' | 'store'>;
+export type CreateAgentProps = Omit<AgentUnitProps, 'sessionId' | 'store'> & {
+  readonly source?: string;
+};
 
 export interface SessionUnitProps {
   readonly sessionId: string;
@@ -56,6 +58,7 @@ export const SessionUnit = createUnit<SessionUnitProps>('session', (props) => {
     if (agents.has(createProps.agentId)) {
       throw new Error(`agent '${createProps.agentId}' already exists`);
     }
+    const { source, ...unitProps } = createProps;
     const registered = props.stores.session.getState().roster.agents[createProps.agentId];
     const pool = dedupFeatures([...toValue(available), ...toValue(createProps.features ?? [])]);
     const features =
@@ -76,11 +79,12 @@ export const SessionUnit = createUnit<SessionUnitProps>('session', (props) => {
     const store = await props.stores.open(createProps.agentId, {
       from,
       features: features.map((feature) => feature.featureName),
+      source,
     });
     let handle: UnitHandle | undefined;
     try {
       handle = node.mount(AgentUnit, {
-        ...createProps,
+        ...unitProps,
         features,
         sessionId: props.sessionId,
         store,
@@ -110,7 +114,7 @@ export const SessionUnit = createUnit<SessionUnitProps>('session', (props) => {
     },
     create: (createProps) => create(createProps),
     fork: async (sourceId, forkProps) => {
-      await props.stores.fork(sourceId, forkProps.agentId);
+      await props.stores.fork(sourceId, forkProps.agentId, { source: forkProps.source });
       return create(forkProps);
     },
     close: async (agentId) => {
