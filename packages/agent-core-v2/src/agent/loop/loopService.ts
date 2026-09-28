@@ -84,7 +84,6 @@ import {
   type TurnResult,
 } from './loop';
 import { mergeSteerMessages, stripBundledSkillBlocks } from '#human/agent/origin';
-import { withoutUserPromptSubmitHookParts } from '#/agent/contextMemory/hookParts';
 import { createUserEntry, type UserEntry } from '#human/agent/turn';
 import {
   AssistantDelta,
@@ -1198,7 +1197,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     void this.dispatcher.dispatch(
       new TurnPrompt({
         agentId: this.scopeContext.agentId,
-        input: withoutUserPromptSubmitHookParts(prompt.message.content),
+        input: prompt.message.content,
         origin: prompt.origin,
         promptId: prompt.promptId,
         turnId: id,
@@ -1214,6 +1213,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         prompt: isDisplayablePromptOrigin(prompt.origin)
           ? turnPromptText(prompt.message.content, prompt.origin)
           : undefined,
+        promptContent: isDisplayablePromptOrigin(prompt.origin) ? prompt.message.content : undefined,
         promptAttachments: turnPromptAttachments(prompt.message.content, prompt.origin),
       }),
     );

@@ -1219,6 +1219,22 @@ describe('IExternalHooksRunnerService integration', () => {
           origin: { kind: 'system_trigger', name: 'goal' },
         }),
       );
+      eventBus.publish(
+        new TurnStarted({
+          agentId: 'main',
+          turnId: 4,
+          origin: { kind: 'user' },
+          prompt: '<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>user text',
+          promptContent: [
+            {
+              type: 'text',
+              text: '<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>',
+              meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+            },
+            { type: 'text', text: 'user text' },
+          ],
+        }),
+      );
       const queuedContent = [{ type: 'text' as const, text: 'later' }];
       eventBus.publish(
         new PromptQueued({
@@ -1252,6 +1268,17 @@ describe('IExternalHooksRunnerService integration', () => {
             originKind: 'system_trigger',
             originName: 'goal',
             prompt: undefined,
+          },
+        },
+        {
+          event: 'TurnStarted',
+          matcherValue: 'user',
+          inputData: {
+            sessionTitle: 'My Session',
+            turnId: 4,
+            originKind: 'user',
+            originName: undefined,
+            prompt: 'user text',
           },
         },
         {

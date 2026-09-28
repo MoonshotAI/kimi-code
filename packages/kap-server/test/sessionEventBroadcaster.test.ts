@@ -853,6 +853,7 @@ describe('SessionEventBroadcaster', () => {
         origin: { kind: 'user' },
         prompt: 'summarize this clip',
         promptAttachments: [{ kind: 'video', fileId: 'file_vid_1' }],
+        promptContent: [{ type: 'text', text: 'summarize this clip' }],
       }),
     );
     await bc.getCursor('s1');

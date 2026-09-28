@@ -7,6 +7,10 @@ import type {
   CompactionStarted,
 } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
 import { daemonFileRefFromPart, type ContentPart, type ContextUndone, type CronFired, type GoalUpdated } from '@moonshot-ai/agent-core-v2';
+import type { PromptOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
+import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
+import { annotateBundledSkillParts, isSkillActivationPart } from '@moonshot-ai/agent-core-v2/human/agent/origin';
+import { turnPromptText } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type {
   AssistantDelta,
   ThinkingDelta,
@@ -470,6 +474,7 @@ export class AgentTranscriptProjector {
     promptId?: string;
     origin: unknown;
     prompt?: string;
+    promptContent?: readonly ContentPart[];
     promptAttachments?: readonly (
       | { kind: 'image' | 'video' | 'audio'; fileId: string; name?: string }
       | { kind: 'file'; name: string; mediaType: string; size: number; path: string }
@@ -525,7 +530,7 @@ export class AgentTranscriptProjector {
       ordinal,
       state: 'running',
       origin: mapTurnOrigin(event.origin),
-      prompt: event.prompt,
+      prompt: turnTitleFromStarted(event),
       attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
       startedAt: nowIso(),
     };
@@ -1521,8 +1526,10 @@ export class AgentTranscriptProjector {
     if (frameOrigin === undefined) return [];
     const turn = this.currentTurn;
     if (turn !== undefined && turn.state !== 'running') return [];
-    const skip = origin.kind === 'user' ? origin.skillActivations?.length ?? 0 : 0;
-    const input = skip > 0 ? event.input.slice(skip) : event.input;
+    const input = annotateBundledSkillParts(
+      event.input,
+      origin.kind === 'user' ? (origin.skillActivations ?? []) : [],
+    ).filter((part) => !isSkillActivationPart(part) && !isUserPromptSubmitHookPart(part));
     const files = origin.attachments ?? [];
     const promptIds = origin.kind === 'user' ? event.promptIds : undefined;
     const step = this.currentStep;
@@ -1661,6 +1668,28 @@ export class AgentTranscriptProjector {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+const LEADING_USER_PROMPT_HOOK_RESULTS_RE =
+  /^(?:<hook_result hook_event="UserPromptSubmit">\n[\s\S]*?\n<\/hook_result>)+/;
+
+function stripLeadingUserPromptHookResults(prompt: string | undefined): string | undefined {
+  if (prompt === undefined) return undefined;
+  const stripped = prompt.replace(LEADING_USER_PROMPT_HOOK_RESULTS_RE, '');
+  return stripped.length > 0 ? stripped : undefined;
+}
+
+function turnTitleFromStarted(event: {
+  origin: unknown;
+  prompt?: string;
+  promptContent?: readonly ContentPart[];
+}): string | undefined {
+  const content = event.promptContent;
+  if (content === undefined) return stripLeadingUserPromptHookResults(event.prompt);
+  return turnPromptText(
+    content.filter((part) => !isUserPromptSubmitHookPart(part)),
+    event.origin as PromptOrigin | undefined,
+  );
 }
 
 function isTerminalPromptStatus(status: TranscriptPrompt['status']): boolean {

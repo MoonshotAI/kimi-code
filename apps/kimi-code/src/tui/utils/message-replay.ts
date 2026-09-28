@@ -239,6 +239,21 @@ export function contentPartsToText(content: readonly ContentPart[]): string {
   return content.map(contentPartToText).join('');
 }
 
+export function isUserPromptSubmitHookPart(
+  part: ContentPart,
+): part is Extract<ContentPart, { type: 'text' }> {
+  return (
+    part.type === 'text' &&
+    (part as { meta?: { source?: unknown } }).meta?.source === 'user prompt submit hook'
+  );
+}
+
+export function withoutUserPromptSubmitHookParts(
+  content: readonly ContentPart[],
+): ContentPart[] {
+  return content.filter((part) => !isUserPromptSubmitHookPart(part));
+}
+
 /**
  * agent-core-v2's task domain persists the terminal notification under the
  * 'task' spelling (v1 used 'background_task'); both reach replay verbatim.

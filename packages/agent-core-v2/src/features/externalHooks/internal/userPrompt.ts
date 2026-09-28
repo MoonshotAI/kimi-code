@@ -15,7 +15,7 @@ export interface RenderedHookResult {
 
 export interface RenderedUserPromptHookParts {
   readonly event: string;
-  readonly message: string;
+  readonly messages: readonly string[];
   readonly parts: readonly TextPart[];
 }
 
@@ -31,7 +31,7 @@ export function renderUserPromptHookResult(
   if (messages.length === 0) return undefined;
   return {
     event: 'UserPromptSubmit',
-    message: messages.join('\n\n'),
+    messages,
     parts: messages.map((message) =>
       userPromptSubmitHookPart(renderHookResult('UserPromptSubmit', message)),
     ),

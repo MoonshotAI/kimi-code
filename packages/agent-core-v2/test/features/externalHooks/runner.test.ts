@@ -73,12 +73,23 @@ describe('runHook process runner', () => {
       {},
       { timeout: 5 },
     );
-    const rendered = renderUserPromptHookResult([plainText]);
-    expect(rendered?.message).toBe('hook note');
+    const secondNote = await runHook(
+      hostProcess,
+      nodeCommand('process.stdout.write("second note");'),
+      {},
+      { timeout: 5 },
+    );
+    const rendered = renderUserPromptHookResult([plainText, secondNote]);
+    expect(rendered?.messages).toEqual(['hook note', 'second note']);
     expect(rendered?.parts).toEqual([
       {
         type: 'text',
         text: '<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>',
+        meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+      },
+      {
+        type: 'text',
+        text: '<hook_result hook_event="UserPromptSubmit">\nsecond note\n</hook_result>',
         meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
       },
     ]);

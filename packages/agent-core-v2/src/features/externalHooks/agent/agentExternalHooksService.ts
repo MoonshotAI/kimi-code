@@ -14,7 +14,8 @@ import {
 } from '#/agent/fullCompaction/fullCompaction';
 import type { CompactionResult } from '#/agent/fullCompaction/types';
 import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
-import { TurnStarted } from '#/agent/loop/turnEvents';
+import { TurnStarted, turnPromptText } from '#/agent/loop/turnEvents';
+import { isUserPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { type PromptSubmitContext } from '#/agent/loop/loop';
 import { PromptQueued } from '#/agent/prompt/promptEvents';
@@ -226,7 +227,12 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
         turnId: event.turnId,
         originKind: event.origin.kind,
         originName: 'name' in event.origin ? event.origin.name : undefined,
-        prompt: event.prompt,
+        prompt: event.promptContent !== undefined
+          ? turnPromptText(
+              event.promptContent.filter((part) => !isUserPromptSubmitHookPart(part)),
+              event.origin,
+            )
+          : event.prompt,
       },
       event.origin.kind,
     );
@@ -370,13 +376,15 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     const append = renderUserPromptHookResult(results);
     if (append !== undefined) {
       ctx.hookParts.push(...append.parts);
-      void this.dispatcher.dispatch(
-        new HookResult({
-          agentId: this.scopeContext.agentId,
-          hookEvent: append.event,
-          content: append.message,
-        }),
-      );
+      for (const message of append.messages) {
+        void this.dispatcher.dispatch(
+          new HookResult({
+            agentId: this.scopeContext.agentId,
+            hookEvent: append.event,
+            content: message,
+          }),
+        );
+      }
     }
     return false;
   }
