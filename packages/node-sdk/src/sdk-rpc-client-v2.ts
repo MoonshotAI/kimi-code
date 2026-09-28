@@ -128,7 +128,7 @@
  *   interaction bridge already relies on.
  */
 import { readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
@@ -720,18 +720,21 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const fs = this.engineAccessor.get(IHostFileSystem);
     const bootstrap = this.engineAccessor.get(IBootstrapService);
     const [mcp, dirs, instructions] = await Promise.all([
-      describeGatedMcpServers(fs, workDir, this.homeDir)
-        .then((v) => ({ complete: true, v }))
-        .catch(() => ({
-          complete: false,
-          v: { servers: [] as readonly WorkspaceTrustMcpServerInfo[], disabledUserServers: [] as readonly string[] },
+      withDisclosureDeadline(
+        describeGatedMcpServers(fs, workDir, this.homeDir).then((v) => ({ complete: true, v })),
+        { servers: [], disabledUserServers: [] },
+      ),
+      withDisclosureDeadline(
+        readGatedAdditionalDirs(fs, bootstrap, workDir).then((v) => ({ complete: true, v })),
+        [],
+      ),
+      withDisclosureDeadline(
+        describeInstructionSources(handler.program, fs, workDir).then(({ sources, complete }) => ({
+          complete,
+          v: sources,
         })),
-      readGatedAdditionalDirs(fs, bootstrap, workDir)
-        .then((v) => ({ complete: true, v }))
-        .catch(() => ({ complete: false, v: [] as readonly WorkspaceTrustAdditionalDir[] })),
-      describeInstructionSources(handler.program, fs, workDir)
-        .then(({ sources, complete }) => ({ complete, v: sources }))
-        .catch(() => ({ complete: false, v: EMPTY_INSTRUCTION_SOURCES })),
+        EMPTY_INSTRUCTION_SOURCES,
+      ),
     ]);
     return {
       trusted: false,
@@ -2938,6 +2941,37 @@ async function describeGatedMcpServers(
   return { servers, disabledUserServers };
 }
 
+const DISCLOSURE_SECTION_TIMEOUT_MS = 5_000;
+
+interface DisclosureSection<T> {
+  readonly complete: boolean;
+  readonly v: T;
+}
+
+// The trust prompt is a startup gate: a hung filesystem (dead network mount,
+// frozen FUSE) must not keep the dialog — and its "Don't trust" choice —
+// from mounting. A section that hangs or fails falls back to an incomplete
+// empty result; its loaders keep running in the background.
+async function withDisclosureDeadline<T>(
+  section: Promise<DisclosureSection<T>>,
+  fallback: T,
+): Promise<DisclosureSection<T>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      section.catch(() => ({ complete: false, v: fallback })),
+      new Promise<DisclosureSection<T>>((resolve) => {
+        timer = setTimeout(
+          () => resolve({ complete: false, v: fallback }),
+          DISCLOSURE_SECTION_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function readGatedAdditionalDirs(
   fs: IHostFileSystem,
   bootstrap: IBootstrapService,
@@ -2967,7 +3001,8 @@ async function realpathOrSelf(fs: IHostFileSystem, dir: string): Promise<string>
 }
 
 function isInsideOrEqualDir(child: string, parent: string): boolean {
-  return child === parent || child.startsWith(`${parent}/`);
+  const rel = relative(parent, child);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 }
 
 const INSTRUCTION_DISCOVERY_TIMEOUT_MS = 2_000;
@@ -3001,7 +3036,7 @@ async function describeInstructionSources(
     .flatMap((entry) => entry.profiles)
     .toSorted();
   const agentsMdPaths = snapshot.sources.instructionPaths
-    .filter((path) => path.startsWith(`${projectRoot}/`))
+    .filter((path) => isInsideOrEqualDir(path, projectRoot))
     .toSorted();
   return { sources: { agentsMdPaths, skills, agentProfiles }, complete };
 }
