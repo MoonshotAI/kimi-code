@@ -4,9 +4,15 @@ import type { ILogService } from '#/_base/log/log';
 import type { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { BUILTIN_AGENT_PROFILE_SOURCE_ID } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import type { IConfigService } from '#/app/config/config';
 import { findGitWorkTree } from '#/app/git/workTree';
 import { loadMcpServersDetailed, resolveMcpJsonPaths } from '#/app/mcpConfig/configLoader';
 import type { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
+import {
+  MERGE_ALL_AVAILABLE_SKILLS_SECTION,
+  type MergeAllAvailableSkillsConfig,
+} from '#/features/skill/catalog/configSection';
+import { projectRoots } from '#/features/skill/catalog/skillRoots';
 import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -42,6 +48,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     private readonly context: IWorkspaceContext,
     private readonly fs: IHostFileSystem,
     private readonly bootstrap: IBootstrapService,
+    private readonly config: IConfigService,
     private readonly localConfig: IProjectLocalConfigService,
     private readonly trust: IWorkspaceTrust,
     private readonly skills: IWorkspaceSkillCatalog,
@@ -54,7 +61,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
   async describeGatedActivation(): Promise<TrustGatedActivation> {
     await this.trust.ready;
     if (this.trust.isTrusted()) return EMPTY_ACTIVATION;
-    const [mcpServers, additionalDirs, instructionSources] = await Promise.all([
+    const [mcpServers, configuredDirs, skillRoots, instructionSources] = await Promise.all([
       this.describeGatedMcpServers().catch((error: unknown) => {
         this.log.warn(`trust disclosure: MCP scan failed: ${String(error)}`);
         return [];
@@ -63,11 +70,21 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
         this.log.warn(`trust disclosure: additional dirs scan failed: ${String(error)}`);
         return [];
       }),
+      this.readGatedSkillRoots().catch((error: unknown) => {
+        this.log.warn(`trust disclosure: skill roots scan failed: ${String(error)}`);
+        return [];
+      }),
       this.describeInstructionSources().catch((error: unknown) => {
         this.log.warn(`trust disclosure: instruction sources scan failed: ${String(error)}`);
         return EMPTY_INSTRUCTION_SOURCES;
       }),
     ]);
+    const seen = new Set<string>();
+    const additionalDirs = [...configuredDirs, ...skillRoots].filter((entry) => {
+      if (seen.has(entry.path)) return false;
+      seen.add(entry.path);
+      return true;
+    });
     return { mcpServers, additionalDirs, instructionSources };
   }
 
@@ -96,6 +113,21 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
       dirs.push({ path: dir, realPath });
     }
     return dirs;
+  }
+
+  private async readGatedSkillRoots(): Promise<readonly TrustGatedPath[]> {
+    if ((this.bootstrap.args.skillDirs?.length ?? 0) > 0) return [];
+    const mergeAllAvailableSkills =
+      this.config.get<MergeAllAvailableSkillsConfig>(MERGE_ALL_AVAILABLE_SKILLS_SECTION) ?? true;
+    const projectRoot =
+      (await findGitWorkTree(this.fs, this.context.cwd))?.root ?? this.context.cwd;
+    const [roots, realRoot] = await Promise.all([
+      projectRoots(this.context.cwd, { mergeAllAvailableSkills }),
+      realpathOrSelf(this.fs, projectRoot),
+    ]);
+    return roots
+      .filter((root) => !isInsideOrEqualDir(root.path, realRoot))
+      .map((root) => ({ path: root.path, realPath: root.path }));
   }
 
   private async describeInstructionSources(): Promise<TrustGatedInstructionSources> {

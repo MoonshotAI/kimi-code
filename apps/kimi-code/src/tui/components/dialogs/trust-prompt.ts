@@ -152,7 +152,7 @@ export class TrustPromptComponent implements Component, Focusable {
       lines.push('');
       lines.push(
         ...wrap(
-          `Grant access to ${gatedAdditionalDirs.length} ${gatedAdditionalDirs.length === 1 ? 'directory' : 'directories'} outside this project (from .kimi-code/local.toml):`,
+          `Grant access to ${gatedAdditionalDirs.length} ${gatedAdditionalDirs.length === 1 ? 'directory' : 'directories'} outside this project (from project config):`,
           1,
         ),
       );
@@ -253,7 +253,7 @@ function formatMcpKeys(server: WorkspaceTrustMcpServerInfo): string | undefined 
 // A crafted .mcp.json can declare thousands of keys; cap before joining so
 // the prompt stays usable (same threat class as the control-char sanitizer).
 function formatKeyList(keys: readonly string[]): string {
-  const shown = keys.slice(0, MAX_KEY_LIST).map(sanitizeForDisplay);
+  const shown = keys.slice(0, MAX_KEY_LIST).map((key) => capField(sanitizeForDisplay(key)));
   const suffix = keys.length > MAX_KEY_LIST ? `, +${keys.length - MAX_KEY_LIST} more` : '';
   return `${shown.join(', ')}${suffix}`;
 }

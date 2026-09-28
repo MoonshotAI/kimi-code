@@ -1640,12 +1640,15 @@ describe('SDKRpcClientV2 workspace trust', () => {
     );
     await writeFile(join(outsideDir, 'AGENTS.md'), '# Demo\n', 'utf-8');
     await symlink(join(outsideDir, 'AGENTS.md'), join(workDir, 'AGENTS.md'), 'file');
-    await mkdir(join(workDir, '.kimi-code', 'skills', 'demo-skill'), { recursive: true });
+    const outsideSkills = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-skills-'));
+    tempDirs.push(outsideSkills);
+    await mkdir(join(outsideSkills, 'demo-skill'), { recursive: true });
     await writeFile(
-      join(workDir, '.kimi-code', 'skills', 'demo-skill', 'SKILL.md'),
+      join(outsideSkills, 'demo-skill', 'SKILL.md'),
       '---\nname: demo-skill\ndescription: Demo skill\n---\n\nDo demo things.\n',
       'utf-8',
     );
+    await symlink(outsideSkills, join(workDir, '.kimi-code', 'skills'), 'dir');
     await mkdir(join(workDir, '.kimi-code', 'agents'), { recursive: true });
     await writeFile(
       join(workDir, '.kimi-code', 'agents', 'demo-agent.md'),
@@ -1663,6 +1666,8 @@ describe('SDKRpcClientV2 workspace trust', () => {
       expect(info.gatedAdditionalDirs).toEqual([
         { path: outsideDir, realPath: await realpath(outsideDir) },
         { path: join(workDir, 'linked-dir'), realPath: await realpath(join(workDir, 'linked-dir')) },
+        // The symlinked .kimi-code/skills grants access to its real target.
+        { path: await realpath(outsideSkills), realPath: await realpath(outsideSkills) },
       ]);
       // The project AGENTS.md is a symlink escaping the project, so its real
       // target is disclosed instead of being hidden behind the lexical path.
