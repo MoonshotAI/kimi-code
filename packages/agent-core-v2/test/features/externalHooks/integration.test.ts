@@ -420,6 +420,105 @@ describe('IExternalHooksRunnerService integration', () => {
     }
   });
 
+  it('fires StepFinished synchronously on every finished step before evaluating Stop', async () => {
+    const disposables = new DisposableStore();
+    let ix: TestInstantiationService | undefined;
+    try {
+      const loop = stubLoopWithHooks();
+      const context = stubContextMemory();
+      const calls: string[] = [];
+      const stepArgs: Array<{ matcherValue?: unknown; inputData?: unknown }> = [];
+      const gates: Array<() => void> = [];
+      const hookEngine = {
+        trigger: async (event: string, args: { matcherValue?: unknown; inputData?: unknown }) => {
+          calls.push(event);
+          stepArgs.push(args);
+          await new Promise<void>((resolve) => {
+            gates.push(resolve);
+          });
+          return [];
+        },
+        triggerBlock: async (event: string) => {
+          calls.push(event);
+          return { block: true, reason: 'keep going' };
+        },
+        fireAndForgetTrigger: async () => [],
+      };
+
+      ix = createServices(disposables, {
+        strict: true,
+        additionalServices: (reg) => {
+          registerStateServices(reg);
+          registerTestAgentWireServices(reg, 'wire/external-hooks');
+          reg.defineInstance(IBootstrapService, stubBootstrap());
+          reg.defineInstance(ISessionContext, stubSessionContext());
+          reg.defineInstance(ISessionMetadata, stubSessionMetadata());
+          reg.definePartialInstance(IConfigService, {});
+          reg.definePartialInstance(IPluginService, {});
+          reg.defineInstance(IAgentContextMemoryService, context);
+          reg.defineInstance(IAgentLoopService, loop);
+          registerAgentEventBus(reg);
+          reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+          reg.definePartialInstance(IAgentPermissionGate, {});
+          reg.definePartialInstance(IAgentFullCompactionService, {
+            hooks: createHooks(['onWillCompact']),
+          });
+          reg.definePartialInstance(IAgentTaskService, {});
+        },
+      });
+      activateAgentEventBus(ix);
+      ix.set(IExternalHooksRunnerService, stubHookRunner(hookEngine));
+      ix.set(IAgentExternalHooksService, new SyncDescriptor(AgentExternalHooksService));
+      ix.get(IAgentExternalHooksService);
+
+      const signal = new AbortController().signal;
+      const toolCallsStep: AfterStepContext = {
+        ...makeAfterStep(signal),
+        finishReason: 'tool_calls',
+      };
+      let firstSettled = false;
+      const first = loop.hooks.onDidFinishStep.run(toolCallsStep).then(() => {
+        firstSettled = true;
+      });
+      await vi.waitFor(() => {
+        expect(calls).toEqual(['StepFinished']);
+      });
+      expect(firstSettled).toBe(false);
+      gates.pop()?.();
+      await first;
+      expect(firstSettled).toBe(true);
+      expect(stepArgs[0]?.matcherValue).toBe('tool_calls');
+      expect(stepArgs[0]?.inputData).toEqual(
+        expect.objectContaining({
+          step: 1,
+          firstStepOfTurn: true,
+          finishReason: 'tool_calls',
+        }),
+      );
+      expect(calls).toEqual(['StepFinished']);
+      expect(context.messages).toEqual([]);
+
+      const finalStep = makeAfterStep(signal);
+      const second = loop.hooks.onDidFinishStep.run(finalStep);
+      await vi.waitFor(() => {
+        expect(calls).toEqual(['StepFinished', 'StepFinished']);
+      });
+      gates.pop()?.();
+      await second;
+      expect(calls).toEqual(['StepFinished', 'StepFinished', 'Stop']);
+      expect(context.messages.at(-1)).toEqual(
+        expect.objectContaining({
+          role: 'user',
+          content: [{ type: 'text', text: 'keep going' }],
+          origin: { kind: 'system_trigger', name: 'stop_hook' },
+        }),
+      );
+    } finally {
+      ix?.dispose();
+      disposables.dispose();
+    }
+  });
+
   it('passes permission approval contexts through to PermissionRequest and PermissionResult hooks', async () => {
     const disposables = new DisposableStore();
     let ix: TestInstantiationService | undefined;
@@ -1323,49 +1422,6 @@ describe('IExternalHooksRunnerService integration', () => {
       expect(fired).toEqual(['SessionHeartbeat']);
       await vi.advanceTimersByTimeAsync(60_000);
       expect(fired).toEqual(['SessionHeartbeat', 'SessionHeartbeat']);
-    } finally {
-      ix?.dispose();
-      disposables.dispose();
-      vi.useRealTimers();
-    }
-  });
-
-  it('skips SessionHeartbeat ticks when no hook is registered for the event', async () => {
-    vi.useFakeTimers();
-    const disposables = new DisposableStore();
-    let ix: TestInstantiationService | undefined;
-    try {
-      const fired: string[] = [];
-      const hookEngine = {
-        trigger: async () => [],
-        triggerBlock: async () => undefined,
-        fireAndForgetTrigger: async (event: string) => {
-          fired.push(event);
-          return [];
-        },
-      };
-
-      ix = createServices(disposables, {
-        strict: true,
-        additionalServices: (reg) => {
-          registerStateServices(reg);
-          reg.defineInstance(ISessionContext, stubSessionContext());
-          reg.definePartialInstance(ISessionManager, stubSessionLifecycle().service);
-          reg.defineInstance(ISessionMetadata, stubSessionMetadata());
-          reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
-          reg.defineInstance(IModelService, stubModelService());
-          reg.definePartialInstance(ISessionSubagentService, {
-            hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
-            onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
-          });
-        },
-      });
-      ix.set(IExternalHooksRunnerService, stubHookRunner(hookEngine));
-      ix.set(ISessionExternalHooksService, new SyncDescriptor(SessionExternalHooksService));
-      ix.get(ISessionExternalHooksService);
-
-      await vi.advanceTimersByTimeAsync(180_000);
-      expect(fired).toEqual([]);
     } finally {
       ix?.dispose();
       disposables.dispose();

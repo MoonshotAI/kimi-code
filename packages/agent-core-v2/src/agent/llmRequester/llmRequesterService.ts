@@ -710,7 +710,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     return {
       requester,
       model: requester.model,
-      params: { ...baseParams, ...budgetParams },
+      params: { ...baseParams, ...budgetParams, stream: overrides.stream ?? baseParams.stream },
       modelAlias: resolved.modelAlias,
       thinkingEffort: resolved.thinkingLevel,
       systemPrompt: overrides.systemPrompt ?? turnConfig?.systemPrompt ?? this.profile.getSystemPrompt(),

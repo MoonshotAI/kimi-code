@@ -66,6 +66,7 @@ export interface LlmRequestConfig {
   readonly maxContextTokens?: number;
   readonly extraParams?: ExtraParams;
   readonly toolMessageConversion?: ToolMessageConversion;
+  readonly stream?: boolean;
 }
 
 export interface LlmRequestContent {

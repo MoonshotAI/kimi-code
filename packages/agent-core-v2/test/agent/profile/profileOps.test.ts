@@ -517,7 +517,7 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     });
     const host = buildHost('profile-thinking-keep');
     host.svc.configure({ emitStatusUpdated: () => undefined });
-    configValues['modelOverrides'] = { temperature: 0.3, thinkingKeep: 'all' };
+    configValues['modelOverrides'] = { temperature: 0.3, thinkingKeep: 'all', stream: false };
 
     host.svc.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
 
@@ -526,6 +526,7 @@ describe('AgentProfileService (wire-backed config.update)', () => {
       sampling: { temperature: 0.3 },
       thinkingEffort: 'high',
       thinkingKeep: 'all',
+      stream: false,
     });
   });
 

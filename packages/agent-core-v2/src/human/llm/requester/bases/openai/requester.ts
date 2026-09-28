@@ -7,7 +7,11 @@ import { toLlmSyntaxErrorMessage } from '#/llm/syntax-errors';
 import type { ProtocolBase, ProtocolRequesterOptions, TraitContext } from '#/llm/protocol/base';
 import { resolveModelConnection } from '#/llm/protocol/connection';
 import { applyThinking } from '#/llm/protocol/thinking';
-import { resolveMaxCompletionCap, type FormatRequestInput } from '#/llm/protocol/format';
+import {
+  resolveMaxCompletionCap,
+  type FormatRequestInput,
+  type StreamParseSink,
+} from '#/llm/protocol/format';
 import { encodeReasoningEffortFallback } from '#/llm/thinking';
 import {
   mergeRequestHeaders,
@@ -20,6 +24,10 @@ import {
   type LlmRequestEvent,
   type ToolCallIdPolicy,
 } from '#/llm/requester/requester';
+import {
+  getLlmHeadersTimeoutDispatcher,
+  resolveLlmHeadersTimeoutMs,
+} from '#/llm/requester/timeout';
 
 import {
   normalizeToolCallIdsForProvider,
@@ -38,6 +46,7 @@ import {
   encodeOpenAIRequest,
   encodeOpenAIThinkHistoryKwargs,
   lowerOpenAIMessages,
+  openAIChatCompletionToChunk,
   parseOpenAIUsage,
   responseFormatToOpenAI,
   type OpenAIRequestParams,
@@ -50,11 +59,15 @@ const OPENAI_CHAT_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
 };
 
 function createClient(model: LlmModel, headers: Record<string, string> | undefined): OpenAI {
+  const headersTimeoutMs = resolveLlmHeadersTimeoutMs();
+  const dispatcher =
+    headersTimeoutMs === undefined ? undefined : getLlmHeadersTimeoutDispatcher(headersTimeoutMs);
   return new OpenAI({
     apiKey: model.apiKey ?? 'unused',
     baseURL: model.baseUrl,
     defaultHeaders: headers,
     maxRetries: 0,
+    fetchOptions: dispatcher === undefined ? undefined : { dispatcher },
   });
 }
 
@@ -127,7 +140,7 @@ export function prepareOpenAIRequest(
   );
   const params = assembleOpenAIRequest(input, { messages: merged, tools, kwargs });
   const finalParams = trait?.buildParams?.(params, ctx) ?? params;
-  return encodeOpenAIRequest(finalParams);
+  return encodeOpenAIRequest(finalParams, input.stream !== false);
 }
 
 interface OpenAITransport {
@@ -154,10 +167,6 @@ async function executeOpenAIRequest(
     ),
   });
   onEvent?.({ type: 'llm.sent' });
-  const { data: stream, response } = await client.chat.completions
-    .create(request.params, { signal })
-    .withResponse();
-  onEvent?.({ type: 'llm.streaming.headers', headers: headersToRecord(response.headers) ?? {} });
   const parse = format.createStreamParser({
     reasoningKey: trait?.reasoningKey,
     resolveUsage:
@@ -169,23 +178,45 @@ async function executeOpenAIRequest(
           },
   });
   let messageId: string | undefined;
+  let failed = false;
+  const sink: StreamParseSink = {
+    onDelta: (part) => onEvent?.({ type: 'llm.streaming.part', part }),
+    onFinish: (finish) => onEvent?.({ type: 'llm.streaming.finish', finish }),
+    onMessageId: (id) => {
+      if (id === messageId) return;
+      messageId = id;
+      onEvent?.({ type: 'llm.streaming.message_id', messageId: id });
+    },
+    onUsage: (usage) => onEvent?.({ type: 'llm.streaming.usage', usage }),
+    onError: (message) => {
+      failed = true;
+      onEvent?.({ type: 'llm.failed.remote', error: message });
+    },
+  };
+  if (!request.stream) {
+    const { data: completion, response } = await client.chat.completions
+      .create(
+        request.params as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
+        { signal },
+      )
+      .withResponse();
+    onEvent?.({ type: 'llm.streaming.headers', headers: headersToRecord(response.headers) ?? {} });
+    reasoning.observe(completion.choices[0]?.message);
+    parse(openAIChatCompletionToChunk(completion), sink);
+    if (failed) {
+      return;
+    }
+    onEvent?.({ type: 'llm.done' });
+    return;
+  }
+  const { data: stream, response } = await client.chat.completions
+    .create(request.params, { signal })
+    .withResponse();
+  onEvent?.({ type: 'llm.streaming.headers', headers: headersToRecord(response.headers) ?? {} });
   for await (const chunk of stream) {
     reasoning.observe(chunk.choices?.[0]?.delta);
-    let failed = false;
-    parse(chunk, {
-      onDelta: (part) => onEvent?.({ type: 'llm.streaming.part', part }),
-      onFinish: (finish) => onEvent?.({ type: 'llm.streaming.finish', finish }),
-      onMessageId: (id) => {
-        if (id === messageId) return;
-        messageId = id;
-        onEvent?.({ type: 'llm.streaming.message_id', messageId: id });
-      },
-      onUsage: (usage) => onEvent?.({ type: 'llm.streaming.usage', usage }),
-      onError: (message) => {
-        failed = true;
-        onEvent?.({ type: 'llm.failed.remote', error: message });
-      },
-    });
+    failed = false;
+    parse(chunk, sink);
     if (failed) {
       return;
     }

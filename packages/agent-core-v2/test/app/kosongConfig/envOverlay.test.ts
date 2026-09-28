@@ -23,6 +23,7 @@ describe('kimiModelEnvOverlay.apply', () => {
       KIMI_MODEL_TOP_P: '0.95',
       KIMI_MODEL_THINKING_KEEP: 'all',
       KIMI_MODEL_MAX_COMPLETION_TOKENS: '8192',
+      KIMI_CODE_MODEL_STREAM: 'false',
     });
     expect(changed).toEqual(['modelOverrides']);
     expect(effective['modelOverrides']).toEqual({
@@ -30,6 +31,7 @@ describe('kimiModelEnvOverlay.apply', () => {
       topP: 0.95,
       thinkingKeep: 'all',
       maxCompletionTokens: 8192,
+      stream: false,
     });
   });
 
@@ -88,6 +90,7 @@ describe('kimiModelEnvOverlay.apply', () => {
       KIMI_MODEL_DISPLAY_NAME: 'Mine',
       KIMI_MODEL_REASONING_KEY: 'reasoning_content',
       KIMI_MODEL_ADAPTIVE_THINKING: 'true',
+      KIMI_CODE_MODEL_STREAM: 'false',
     });
     expect((effective['models'] as Record<string, unknown>)[ENV_MODEL_ALIAS_KEY]).toEqual({
       provider: ENV_MODEL_PROVIDER_KEY,
@@ -99,12 +102,16 @@ describe('kimiModelEnvOverlay.apply', () => {
       reasoningKey: 'reasoning_content',
       adaptiveThinking: true,
     });
+    expect(effective['modelOverrides']).toEqual({ stream: false });
 
     expect(() => apply({}, { KIMI_MODEL_NAME: 'm', KIMI_MODEL_MAX_CONTEXT_SIZE: 'abc' })).toThrowError(
       /KIMI_MODEL_MAX_CONTEXT_SIZE must be a positive integer/,
     );
     expect(() => apply({}, { KIMI_MODEL_TEMPERATURE: 'hot' })).toThrowError(
       /KIMI_MODEL_TEMPERATURE must be a number/,
+    );
+    expect(() => apply({}, { KIMI_CODE_MODEL_STREAM: 'maybe' })).toThrowError(
+      /KIMI_CODE_MODEL_STREAM must be a boolean/,
     );
   });
 });

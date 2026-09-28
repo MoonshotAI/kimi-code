@@ -103,7 +103,7 @@ function stubAnthropicClient(events: readonly Record<string, unknown>[]): {
 }
 
 describe('openai requester cacheKey', () => {
-  it('encodes the cache key as prompt_cache_key by default', async () => {
+  it('encodes the cache key as prompt_cache_key only when given', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
     const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
@@ -119,6 +119,13 @@ describe('openai requester cacheKey', () => {
     expect(client.body()['stop']).toEqual(['END']);
     expect(client.body()['presence_penalty']).toBe(0.5);
     expect(client.body()['extra_body']).toEqual({ trace_id: 't1' });
+
+    await requester.generate(
+      { model },
+      { messages },
+      { signal: new AbortController().signal },
+    );
+    expect(client.body()['prompt_cache_key']).toBeUndefined();
   });
 
   it('lets a trait override the cache key params', async () => {
@@ -133,17 +140,6 @@ describe('openai requester cacheKey', () => {
       { signal: new AbortController().signal },
     );
     expect(client.body()['custom_cache']).toBe('session-1');
-    expect(client.body()['prompt_cache_key']).toBeUndefined();
-  });
-
-  it('omits prompt_cache_key when no cache key is given', async () => {
-    const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
-    await requester.generate(
-      { model },
-      { messages },
-      { signal: new AbortController().signal },
-    );
     expect(client.body()['prompt_cache_key']).toBeUndefined();
   });
 });

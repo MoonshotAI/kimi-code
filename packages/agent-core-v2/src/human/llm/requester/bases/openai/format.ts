@@ -140,6 +140,7 @@ export function parseOpenAIUsage(usage: OpenAIRawUsage | null | undefined): Toke
 export interface OpenAIRequestParams {
   readonly params: OpenAI.Chat.ChatCompletionCreateParamsStreaming;
   readonly headers?: Record<string, string>;
+  readonly stream: boolean;
 }
 
 export interface OpenAILowerOptions {
@@ -185,18 +186,48 @@ export function assembleOpenAIRequest(
   input: FormatRequestInput,
   parts: OpenAIRequestParts,
 ): Record<string, unknown> {
+  const stream = input.stream !== false;
   return {
     model: input.model.model,
     messages: parts.messages,
     tools: parts.tools.length === 0 ? undefined : parts.tools,
-    stream: true,
-    stream_options: { include_usage: true },
+    stream,
+    stream_options: stream ? { include_usage: true } : undefined,
     ...parts.kwargs,
   };
 }
 
-export function encodeOpenAIRequest(params: Record<string, unknown>): OpenAIRequestParams {
-  return { params: params as unknown as OpenAI.Chat.ChatCompletionCreateParamsStreaming };
+export function encodeOpenAIRequest(
+  params: Record<string, unknown>,
+  stream: boolean,
+): OpenAIRequestParams {
+  return {
+    params: params as unknown as OpenAI.Chat.ChatCompletionCreateParamsStreaming,
+    stream,
+  };
+}
+
+export function openAIChatCompletionToChunk(
+  completion: OpenAI.Chat.ChatCompletion,
+): OpenAIRawChunk {
+  const choice = completion.choices[0];
+  return {
+    id: completion.id,
+    choices:
+      choice === undefined
+        ? []
+        : [
+            {
+              delta: choice.message as unknown as {
+                content?: string | null;
+                reasoning_content?: string | null;
+                tool_calls?: OpenAIRawStreamToolCallDelta[];
+              },
+              finish_reason: choice.finish_reason,
+            },
+          ],
+    usage: completion.usage,
+  };
 }
 
 export interface OpenAIStreamParserOptions extends StreamParserOptions<OpenAIRawChunk> {

@@ -477,6 +477,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         thinkingConfig?.keep,
         thinking.effective,
       ),
+      stream: overrides?.stream,
     };
   }
 

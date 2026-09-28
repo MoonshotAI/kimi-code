@@ -543,10 +543,13 @@ describe('AgentTaskService', () => {
       expect(info?.status).toBe('killed');
       expect(info?.stopReason).toBe('Session closed');
       expect(info?.terminalNotificationSuppressed).toBe(true);
-      expect(writes.filter((write) => write.taskId === taskId).at(-1)).toMatchObject({
+      const lastWrite = writes.filter((write) => write.taskId === taskId).at(-1);
+      expect(lastWrite).toMatchObject({
         status: 'killed',
         terminalNotificationSuppressed: true,
       });
+      expect(lastWrite).not.toHaveProperty('monoStartedAt');
+      expect(lastWrite).not.toHaveProperty('monoEndedAt');
     }
     expect(stubLoop().snapshot().hasPendingRequests).toBe(false);
   });

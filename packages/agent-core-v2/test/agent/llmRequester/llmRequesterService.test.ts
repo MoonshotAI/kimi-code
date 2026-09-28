@@ -58,6 +58,7 @@ import { IModelService } from '#/llm-adapter/model/model';
 import {
   type ModelRequestEvent,
   type ModelRequestInput,
+  type ModelRequestParams,
   type ModelRequester,
 } from '#/llm-adapter/model/model-requester';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -215,6 +216,7 @@ function createService(
     readonly mediaResolver?: Partial<IAgentMediaResolverService>;
     readonly contextMessages?: Message[];
     readonly env?: Record<string, string>;
+    readonly requestParams?: ModelRequestParams;
   } = {},
 ) {
   const ix = disposables.add(new TestInstantiationService());
@@ -232,7 +234,7 @@ function createService(
       compactionTriggerRatio: undefined,
       compactionMaxAttempts: undefined,
     }),
-    resolveRequestParams: () => ({}),
+    resolveRequestParams: () => options.requestParams ?? {},
     getSystemPrompt: () => 'system',
     data: () => ({
       cwd: '',
@@ -357,6 +359,26 @@ describe('AgentLLMRequesterService measured anchors', () => {
 
     expect(measuredCalls).toHaveLength(1);
     expect(measuredCalls[0]?.usage.inputOther).toBe(40);
+  });
+});
+
+describe('AgentLLMRequesterService request params', () => {
+  it('passes the configured stream to the requester unless the request overrides it', async () => {
+    const seen: (ModelRequestParams | undefined)[] = [];
+    const requester = createRequester({ value: 0 }, null);
+    const base = requester.request.bind(requester);
+    requester.request = async function* (input, signal, params) {
+      seen.push(params);
+      yield* base(input, signal, params);
+    };
+    const { service } = createService(requester, undefined, {
+      requestParams: { stream: false },
+    });
+
+    await service.request();
+    await service.request({ stream: true });
+
+    expect(seen.map((params) => params?.stream)).toEqual([false, true]);
   });
 });
 

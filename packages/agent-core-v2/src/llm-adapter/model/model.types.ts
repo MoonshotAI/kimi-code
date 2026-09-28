@@ -6,6 +6,7 @@ export interface ModelOverrides {
   readonly topP?: number;
   readonly thinkingKeep?: string;
   readonly maxCompletionTokens?: number;
+  readonly stream?: boolean;
 }
 
 export interface CompletionBudgetConfig {

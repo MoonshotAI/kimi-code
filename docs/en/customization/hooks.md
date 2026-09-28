@@ -45,19 +45,19 @@ All hook rules are written in the `[[hooks]]` array in `~/.kimi-code/config.toml
 | --- | --- | --- | --- |
 | `event` | `string` | Yes | Trigger event name; must be one of the events in the [event reference](#event-reference) |
 | `matcher` | `string` | No | A regular expression to filter event targets; if omitted, matches all |
-| `command` | `string` | Yes | The shell command to run when triggered |
-| `timeout` | `integer` | No | Timeout in seconds, range 1–600; defaults to 30 seconds |
+| `command` | `string` | Yes | The shell command to run when triggered; a path to a `.js`/`.mjs`/`.cjs` file instead runs inside the CLI's own Node.js runtime (a worker thread — no shell, no external Node.js required) |
+| `timeout` | `integer` | No | Timeout in seconds, range 0–600; `0` means no timeout; defaults to 30 seconds |
 
 `[[hooks]]` only allows these four fields; extra fields will cause the config file to fail to load.
 
 **When multiple rules match the same event**, all matching hooks run in parallel; multiple rules with identical `command` values run only once.
 
-The working directory for hook commands is the current session's project directory.
+The working directory for hook commands is the current session's project directory. Hooks configured as a `.js` file path are the exception: they run in a worker thread of the CLI process and inherit that process's working directory — use the `cwd` field of the [event payload](#event-data-format) when the script needs the session directory.
 
 <details>
 <summary>Process group and timeout handling</summary>
 
-On non-Windows platforms, hook processes run in a separate process group; on timeout, the CLI first sends a signal to give the script a chance to clean up, then forcibly terminates it.
+On non-Windows platforms, hook processes run in a separate process group; on timeout, the CLI first sends a signal to give the script a chance to clean up, then forcibly terminates it. Hooks configured as a `.js` file path run in a worker thread instead of a child process: on timeout the worker is terminated immediately without a grace period, and any child processes the script itself spawned are not cleaned up.
 
 </details>
 
@@ -100,7 +100,7 @@ You can also return a JSON object via stdout to block:
 ```
 
 ::: info Which events support blocking?
-Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return values that affect the main flow. All other events are **observation-only events**: they fire and forget, and the main flow is unaffected regardless of what the script returns.
+Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return values that affect the main flow. All other events are **observation-only events**: whatever the script returns is ignored. Observation-only events are fire-and-forget — the main flow does not wait for them — except `StepFinished`, which the agent loop waits for before starting the next model request.
 :::
 
 ## Event Reference
@@ -112,6 +112,7 @@ Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return
 | `PreToolUse` | Tool name | ✓ | Triggered before a tool call (before permission checks); the tool will not execute if blocked |
 | `Stop` | Empty string | ✓ | Triggered when the model is about to end the turn; if blocked, a message can be appended to let the model continue |
 | `TurnStarted` | Turn origin kind (e.g. `user`, `task`, `system_trigger`) | — | Triggered when a new turn begins; payload includes `turn_id`, `origin_kind`, `origin_name`, `prompt` |
+| `StepFinished` | Finish reason (e.g. `tool_calls`, `completed`) | — | Triggered when a step finishes: after all of its tool calls complete and before the next model request; the agent loop waits for the hook to finish, but its return value is ignored; payload includes `turn_id`, `step`, `first_step_of_turn`, `finish_reason`, `usage` |
 | `PostToolUse` | Tool name | — | Triggered after a tool executes successfully |
 | `PostToolUseFailure` | Tool name | — | Triggered after a tool fails or is blocked |
 | `PermissionRequest` | Tool name | — | Triggered just before waiting for user approval |
@@ -136,7 +137,7 @@ The following hook checks the command content before the Agent calls the `Bash` 
 [[hooks]]
 event = "PreToolUse"
 matcher = "Bash"
-command = "node ~/.kimi-code/hooks/block-dangerous-bash.mjs"
+command = "~/.kimi-code/hooks/block-dangerous-bash.mjs"
 timeout = 5
 ```
 

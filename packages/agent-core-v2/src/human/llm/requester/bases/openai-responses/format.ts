@@ -387,6 +387,7 @@ function extractEventUsage(event: RawObject): RawObject | undefined {
 export interface OpenAIResponsesRequestParams {
   readonly params: OpenAI.Responses.ResponseCreateParamsStreaming;
   readonly headers?: Record<string, string>;
+  readonly stream: boolean;
 }
 
 export interface OpenAIResponsesLowerOptions {
@@ -418,15 +419,64 @@ export function assembleOpenAIResponsesRequest(
     input: parts.input,
     tools: parts.tools.length === 0 ? undefined : parts.tools,
     store: false,
-    stream: true,
+    stream: input.stream !== false,
     ...parts.kwargs,
   };
 }
 
 export function encodeOpenAIResponsesRequest(
   params: Record<string, unknown>,
+  stream: boolean,
 ): OpenAIResponsesRequestParams {
-  return { params: params as unknown as OpenAI.Responses.ResponseCreateParamsStreaming };
+  return {
+    params: params as unknown as OpenAI.Responses.ResponseCreateParamsStreaming,
+    stream,
+  };
+}
+
+export function openAIResponsesToStreamEvents(response: RawObject): RawObject[] {
+  const events: RawObject[] = [];
+  const output = readObjectArrayField(response, 'output') ?? [];
+  for (const [outputIndex, item] of output.entries()) {
+    const type = readStringField(item, 'type');
+    if (type === 'message') {
+      for (const part of readObjectArrayField(item, 'content') ?? []) {
+        if (readStringField(part, 'type') !== 'output_text') continue;
+        const text = readStringField(part, 'text');
+        if (text !== undefined && text.length > 0) {
+          events.push({ type: 'response.output_text.delta', delta: text });
+        }
+      }
+      continue;
+    }
+    if (type === 'function_call') {
+      events.push({ type: 'response.output_item.added', item, output_index: outputIndex });
+      events.push({ type: 'response.output_item.done', item, output_index: outputIndex });
+      continue;
+    }
+    if (type === 'reasoning') {
+      for (const part of readObjectArrayField(item, 'summary') ?? []) {
+        const text = readStringField(part, 'text');
+        if (text === undefined) continue;
+        events.push({ type: 'response.reasoning_summary_part.added' });
+        if (text.length > 0) {
+          events.push({ type: 'response.reasoning_summary_text.delta', delta: text });
+        }
+      }
+      events.push({ type: 'response.output_item.done', item, output_index: outputIndex });
+      continue;
+    }
+  }
+  const status = readStringField(response, 'status');
+  if (status === 'failed') {
+    events.push({ type: 'response.failed', response });
+  } else {
+    events.push({
+      type: status === 'incomplete' ? 'response.incomplete' : 'response.completed',
+      response,
+    });
+  }
+  return events;
 }
 
 export function createOpenAIResponsesFormat(): ProtocolFormat {

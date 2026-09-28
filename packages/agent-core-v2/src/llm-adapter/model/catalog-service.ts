@@ -33,6 +33,7 @@ import {
   IModelCatalog,
   type Model,
   type ModelCatalogItem,
+  type ModelPingOptions,
   type ModelPingResult,
   type ProviderCatalogItem,
   type ProviderCredentialState,
@@ -160,7 +161,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     );
   }
 
-  async ping(id: string): Promise<ModelPingResult> {
+  async ping(id: string, options?: ModelPingOptions): Promise<ModelPingResult> {
     const { requester } = this.entry(id);
     const startedAt = Date.now();
     try {
@@ -175,7 +176,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
             messages: [{ role: 'user', content: [{ type: 'text', text: 'ping' }], toolCalls: [] }],
           },
           undefined,
-          { maxCompletionTokens: 512 },
+          { maxCompletionTokens: 512, stream: options?.stream },
         )) {
           if (event.type === 'part' && event.part.type === 'text') {
             text += event.part.text;

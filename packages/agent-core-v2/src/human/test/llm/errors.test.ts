@@ -87,17 +87,17 @@ describe('convertOpenAIError', () => {
     expect(convertOpenAIError(raw)).toMatchObject({ kind: 'context_overflow', statusCode: 400 });
   });
 
-  it('maps 413 too-large messages to request_too_large', () => {
-    const raw = new RawOpenAISDKAPIError(
+  it('maps remaining status errors to their kinds', () => {
+    const tooLarge = new RawOpenAISDKAPIError(
       413,
       { message: 'request entity too large' },
       undefined,
       new Headers(),
     );
-    expect(convertOpenAIError(raw)).toMatchObject({ kind: 'request_too_large', statusCode: 413 });
-  });
-
-  it('maps remaining status errors to their kinds', () => {
+    expect(convertOpenAIError(tooLarge)).toMatchObject({
+      kind: 'request_too_large',
+      statusCode: 413,
+    });
     const overloaded = new RawOpenAISDKAPIError(529, {}, 'overloaded', new Headers());
     expect(convertOpenAIError(overloaded)).toMatchObject({ kind: 'overloaded', statusCode: 529 });
     const generic = new RawOpenAISDKAPIError(500, {}, 'server error', new Headers());
@@ -232,13 +232,10 @@ describe('classifyKimiQuotaError', () => {
     expect(classified).toMatchObject({ kind: 'quota_exhausted', statusCode: 429 });
   });
 
-  it('ignores 429 without quota signals', () => {
+  it('ignores errors without quota signals', () => {
     expect(
       classifyKimiQuotaError({ status: 429, message: 'slow down', headers: new Headers() }),
     ).toBeUndefined();
-  });
-
-  it('ignores non-429 errors', () => {
     expect(
       classifyKimiQuotaError({ status: 400, message: 'insufficient balance' }),
     ).toBeUndefined();

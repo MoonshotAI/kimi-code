@@ -24,6 +24,7 @@ import type { TokenUsage } from '#/llm/usage';
 
 import { CONTEXT_MANAGEMENT_BETA } from './contract';
 import type {
+  AnthropicRawContentBlock,
   AnthropicRawStreamEvent,
   AnthropicRawUsage,
   AnthropicWireMessage,
@@ -203,6 +204,7 @@ export interface AnthropicRequestParams {
   readonly params: Anthropic.MessageCreateParamsStreaming;
   readonly betas: readonly string[];
   readonly useBetaApi: boolean;
+  readonly stream: boolean;
 }
 
 export interface AnthropicFormatOptions {
@@ -220,6 +222,7 @@ export interface AnthropicRequestAssembly {
   readonly params: Record<string, unknown>;
   readonly betas: readonly string[];
   readonly useBetaApi: boolean;
+  readonly stream: boolean;
 }
 
 export function assembleAnthropicRequest(
@@ -248,9 +251,9 @@ export function assembleAnthropicRequest(
     messages,
     tools: tools.length === 0 ? undefined : tools,
     betas: useBetaApi && betas.length > 0 ? betas : undefined,
-    stream: true,
+    stream: input.stream !== false,
   };
-  return { params, betas, useBetaApi };
+  return { params, betas, useBetaApi, stream: input.stream !== false };
 }
 
 export function encodeAnthropicRequest(
@@ -260,7 +263,55 @@ export function encodeAnthropicRequest(
     params: assembly.params as unknown as Anthropic.MessageCreateParamsStreaming,
     betas: assembly.betas,
     useBetaApi: assembly.useBetaApi,
+    stream: assembly.stream,
   };
+}
+
+export interface AnthropicRawMessage {
+  readonly id?: string;
+  readonly content?: readonly AnthropicRawContentBlock[];
+  readonly stop_reason?: string | null;
+  readonly stop_sequence?: string | null;
+  readonly usage?: AnthropicRawUsage;
+}
+
+export function anthropicMessageToStreamEvents(
+  message: AnthropicRawMessage,
+): AnthropicRawStreamEvent[] {
+  const events: AnthropicRawStreamEvent[] = [
+    { type: 'message_start', message: { id: message.id, usage: message.usage } },
+  ];
+  for (const [index, block] of (message.content ?? []).entries()) {
+    events.push({ type: 'content_block_start', index, content_block: block });
+    if (block.type === 'tool_use' && block.input !== undefined) {
+      events.push({
+        type: 'content_block_delta',
+        index,
+        delta: {
+          type: 'input_json_delta',
+          partial_json:
+            typeof block.input === 'string' ? block.input : JSON.stringify(block.input),
+        },
+      });
+    }
+    if (
+      block.type === 'thinking' &&
+      typeof block.signature === 'string' &&
+      block.signature.length > 0
+    ) {
+      events.push({
+        type: 'content_block_delta',
+        index,
+        delta: { type: 'signature_delta', signature: block.signature },
+      });
+    }
+  }
+  events.push({
+    type: 'message_delta',
+    delta: { stop_reason: message.stop_reason, stop_sequence: message.stop_sequence },
+    usage: message.usage,
+  });
+  return events;
 }
 
 export function createAnthropicFormat(): ProtocolFormat<AnthropicRawStreamEvent> {

@@ -34,6 +34,7 @@ import { ConfigSectionContribution } from '#/app/config/configSectionContributio
 import { CRON_SECTION, DEFAULT_CRON_CONFIG, type CronConfig } from '#/features/cron/configSection';
 import '#/features/skill/catalog/configSection';
 import { BUILTIN_PRODUCT_SKILLS_SECTION } from '#/features/skill/catalog/configSection';
+import { TOOLS_SECTION, type ToolsConfig } from '#/agent/toolPolicy/configSection';
 import {
   EXTRA_SKILL_DIRS_SECTION,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
@@ -536,7 +537,7 @@ describe('ConfigService env overlay (live)', () => {
     disposables.dispose();
   });
 
-  it('applies a scalar section env binding and keeps it out of the file', async () => {
+  it('applies section env bindings and keeps them out of the file', async () => {
     const env: Record<string, string> = {};
     const disposables = new DisposableStore();
     const ix = disposables.add(new TestInstantiationService());
@@ -557,6 +558,19 @@ describe('ConfigService env overlay (live)', () => {
     await config.replace(BUILTIN_PRODUCT_SKILLS_SECTION, true);
     delete env['KIMI_CODE_BUILTIN_PRODUCT_SKILLS'];
     expect(config.get(BUILTIN_PRODUCT_SKILLS_SECTION)).toBe(true);
+
+    await config.replace(TOOLS_SECTION, { disabled: ['Bash'] });
+    expect(config.get<ToolsConfig>(TOOLS_SECTION)?.disabled).toEqual(['Bash']);
+
+    env['KIMI_CODE_TOOLS_DISABLED'] = 'Agent, AgentSwarm ,mcp__github__*,';
+    expect(config.get<ToolsConfig>(TOOLS_SECTION)?.disabled).toEqual([
+      'Agent',
+      'AgentSwarm',
+      'mcp__github__*',
+    ]);
+
+    delete env['KIMI_CODE_TOOLS_DISABLED'];
+    expect(config.get<ToolsConfig>(TOOLS_SECTION)?.disabled).toEqual(['Bash']);
 
     disposables.dispose();
   });
