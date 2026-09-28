@@ -92,7 +92,11 @@ describe('TrustPromptComponent', () => {
   it('renders the directory, instruction, and disabled-server sections', () => {
     const lines = renderLines(
       makeInfo({
-        gatedAdditionalDirs: ['/tmp/shared-assets', '/opt/toolchain'],
+        gatedAdditionalDirs: [
+          { path: '/tmp/shared-assets', realPath: '/tmp/shared-assets' },
+          { path: '/opt/toolchain', realPath: '/opt/toolchain' },
+          { path: '/tmp/demo-workspace/linked-dir', realPath: '/Users/alice/Documents' },
+        ],
         disabledUserMcpServers: ['github', 'ci-runner'],
         instructionSources: {
           agentsMdPaths: ['/tmp/demo-workspace/AGENTS.md'],
@@ -102,9 +106,11 @@ describe('TrustPromptComponent', () => {
       }),
     );
     const text = lines.join('\n');
-    expect(text).toContain('Grant access to 2 directories outside this project');
+    expect(text).toContain('Grant access to 3 directories outside this project');
     expect(text).toContain('/tmp/shared-assets');
     expect(text).toContain('/opt/toolchain');
+    // A symlinked entry renders its real target so the grant is not disguised.
+    expect(text).toContain('/tmp/demo-workspace/linked-dir → /Users/alice/Documents');
     expect(text).toContain('Turn off 2 user-level MCP servers (disabled by project config)');
     expect(text).toContain('github');
     expect(text).toContain('ci-runner');

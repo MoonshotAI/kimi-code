@@ -150,6 +150,18 @@ export interface WorkspaceTrustMcpServerInfo {
 }
 
 /**
+ * A configured workspace.additional_dir entry that trusting would grant the
+ * agent access to. `path` is the resolved configured directory; `realPath`
+ * is its canonical form with symlinks resolved — the engine authorizes
+ * against `realPath`, so a symlink inside the project can grant access to a
+ * directory outside it.
+ */
+export interface WorkspaceTrustAdditionalDir {
+  readonly path: string;
+  readonly realPath: string;
+}
+
+/**
  * Project-sourced instruction inputs that load into the agent context once
  * the workspace is trusted. They steer model behavior (prompt-level), they
  * do not execute code by themselves.
@@ -172,8 +184,8 @@ export interface WorkspaceTrustInfo {
   readonly trusted: boolean;
   /** Project-level MCP servers that trusting would start. */
   readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
-  /** Resolved directories outside the project that trusting grants access to. */
-  readonly gatedAdditionalDirs: readonly string[];
+  /** Configured directories outside the project that trusting grants access to. */
+  readonly gatedAdditionalDirs: readonly WorkspaceTrustAdditionalDir[];
   /** User-level MCP servers that trusting would turn off (shadowed by a disabled project entry). */
   readonly disabledUserMcpServers: readonly string[];
   readonly instructionSources: WorkspaceTrustInstructionSources;

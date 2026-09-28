@@ -8,7 +8,7 @@
  * Wiring: real v2 engine bootstrapped on a temp KIMI_CODE_HOME; remote provider calls are stubbed.
  * Run: pnpm exec vitest run test/sdk-rpc-client-v2.test.ts
  */
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -1660,10 +1660,42 @@ describe('SDKRpcClientV2 workspace trust', () => {
       const info = await harness.getWorkspaceTrustInfo(workDir);
       expect(info.trusted).toBe(false);
       expect(info.disclosureComplete).toBe(true);
-      expect(info.gatedAdditionalDirs).toEqual([outsideDir]);
+      expect(info.gatedAdditionalDirs).toEqual([
+        { path: outsideDir, realPath: await realpath(outsideDir) },
+      ]);
       expect(info.instructionSources.agentsMdPaths).toEqual([join(workDir, 'AGENTS.md')]);
       expect(info.instructionSources.skills).toEqual(['demo-skill']);
       expect(info.instructionSources.agentProfiles).toEqual(['demo-agent']);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('discloses a symlinked additional dir that escapes the project, with its real target', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    const outsideDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-outside-'));
+    tempDirs.push(workDir, outsideDir);
+    const insideDir = join(workDir, 'sub');
+    await mkdir(insideDir, { recursive: true });
+    // linked-dir lexically sits inside the project but points outside it, so
+    // trusting would grant access to the target; inner-link points back into
+    // the project and grants nothing new.
+    await symlink(outsideDir, join(workDir, 'linked-dir'), 'dir');
+    await symlink(insideDir, join(workDir, 'inner-link'), 'dir');
+    await mkdir(join(workDir, '.kimi-code'), { recursive: true });
+    await writeFile(
+      join(workDir, '.kimi-code', 'local.toml'),
+      '[workspace]\nadditional_dir = ["linked-dir", "inner-link"]\n',
+      'utf-8',
+    );
+    try {
+      const info = await harness.getWorkspaceTrustInfo(workDir);
+      expect(info.trusted).toBe(false);
+      expect(info.disclosureComplete).toBe(true);
+      expect(info.gatedAdditionalDirs).toEqual([
+        { path: join(workDir, 'linked-dir'), realPath: await realpath(join(workDir, 'linked-dir')) },
+      ]);
     } finally {
       await harness.close();
     }

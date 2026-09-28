@@ -325,6 +325,7 @@ import type {
   SuggestFilesResult,
   TelemetryClient,
   UploadFileOptions,
+  WorkspaceTrustAdditionalDir,
   WorkspaceTrustInfo,
   WorkspaceTrustInstructionSources,
   WorkspaceTrustMcpServerInfo,
@@ -727,7 +728,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         })),
       readGatedAdditionalDirs(fs, bootstrap, workDir)
         .then((v) => ({ complete: true, v }))
-        .catch(() => ({ complete: false, v: [] as readonly string[] })),
+        .catch(() => ({ complete: false, v: [] as readonly WorkspaceTrustAdditionalDir[] })),
       describeInstructionSources(handler.program, fs, workDir)
         .then(({ sources, complete }) => ({ complete, v: sources }))
         .catch(() => ({ complete: false, v: EMPTY_INSTRUCTION_SOURCES })),
@@ -2941,13 +2942,32 @@ async function readGatedAdditionalDirs(
   fs: IHostFileSystem,
   bootstrap: IBootstrapService,
   workDir: string,
-): Promise<readonly string[]> {
+): Promise<readonly WorkspaceTrustAdditionalDir[]> {
   const localConfig = new FileProjectLocalConfigService(bootstrap, fs);
   const result = await localConfig.readAdditionalDirs(workDir);
-  const prefix = `${result.projectRoot}/`;
-  return result.additionalDirs.filter(
-    (dir) => dir !== result.projectRoot && !dir.startsWith(prefix),
-  );
+  // The engine authorizes against each root's realpath (symlinks resolved),
+  // so the outside-project test must compare canonical paths too: a symlink
+  // lexically inside the project can still grant access outside it.
+  const realRoot = await realpathOrSelf(fs, result.projectRoot);
+  const dirs: WorkspaceTrustAdditionalDir[] = [];
+  for (const dir of result.additionalDirs) {
+    const realPath = await realpathOrSelf(fs, dir);
+    if (isInsideOrEqualDir(realPath, realRoot)) continue;
+    dirs.push({ path: dir, realPath });
+  }
+  return dirs;
+}
+
+async function realpathOrSelf(fs: IHostFileSystem, dir: string): Promise<string> {
+  try {
+    return await fs.realpath(dir);
+  } catch {
+    return dir;
+  }
+}
+
+function isInsideOrEqualDir(child: string, parent: string): boolean {
+  return child === parent || child.startsWith(`${parent}/`);
 }
 
 const INSTRUCTION_DISCOVERY_TIMEOUT_MS = 2_000;

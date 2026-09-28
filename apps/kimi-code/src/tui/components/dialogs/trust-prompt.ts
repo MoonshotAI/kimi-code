@@ -182,7 +182,9 @@ export class TrustPromptComponent implements Component, Focusable {
         ),
       );
       for (const dir of gatedAdditionalDirs.slice(0, MAX_ADDITIONAL_DIRS)) {
-        lines.push(...wrap(sanitizeForDisplay(dir), 3));
+        const display =
+          dir.path === dir.realPath ? dir.path : `${dir.path} → ${dir.realPath}`;
+        lines.push(...wrap(sanitizeForDisplay(display), 3));
       }
       if (gatedAdditionalDirs.length > MAX_ADDITIONAL_DIRS) {
         lines.push(...wrap(`…and ${gatedAdditionalDirs.length - MAX_ADDITIONAL_DIRS} more`, 3));
