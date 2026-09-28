@@ -66,9 +66,6 @@ const MARKER_USER_ORIGINS: Readonly<Record<string, string>> = {
   skill_activation: 'skill',
   plugin_command: 'skill',
   compaction_summary: 'compaction',
-  // A prompt hook appends context beside the real user prompt. It does not
-  // open an engine turn (live `hook.result` is a marker), so counting it as a
-  // turn shifts later ordinals and pairs the reply with the hook note.
   hook_result: 'hook',
 };
 
