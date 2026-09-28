@@ -5827,6 +5827,35 @@ command = "vim"
     expect(countOccurrences(transcript, 'Swarm ended')).toBe(0);
   });
 
+  it('syncs permission mode from agent.status.updated events', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.permissionMode = 'manual';
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        permission: 'auto',
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(driver.state.appState.permissionMode).toBe('auto');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        permission: 'yolo',
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(driver.state.appState.permissionMode).toBe('yolo');
+  });
+
   it('renders an ended marker when a one-shot /swarm task exits', async () => {
     const { driver, session } = await makeDriver(undefined);
     driver.state.appState.permissionMode = 'auto';
