@@ -1,5 +1,6 @@
 import { type CollectionView } from '#/_base/di/collection';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
+import { IInstantiationService } from '#/_base/di/instantiation';
 import {
   isAbortError,
   isUserCancellation,
@@ -22,6 +23,7 @@ import {
 } from '#/agent/toolPolicy/evaluate';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import {
@@ -35,6 +37,7 @@ import {
   AgentToolContribution,
   registerAgentToolService,
 } from '#/agent/toolRegistry/toolContribution';
+import { isToolAvailable } from '#/agent/toolActivation/toolAvailability';
 import { IAgentToolRegistryService, type ToolReference } from '#/agent/toolRegistry/toolRegistry';
 import { type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -47,8 +50,6 @@ import { ILogService } from '#/_base/log/log';
 import { hasPinnedPermissionMode } from '#/features/tower/tower';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
-import { ISessionNotify } from '#/features/notify/sessionNotify';
-import { NOTIFY_USER_TOOL_NAME } from '#/features/notify/tools/notify-user/notify-user';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { createAgentAwaitingClose } from '#/session/agentLifecycle/createAwaitingClose';
 import {
@@ -126,6 +127,8 @@ export class SubagentTool implements ISubagentTool {
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
+    @IInstantiationService private readonly instantiationService: IInstantiationService,
+    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
@@ -136,7 +139,6 @@ export class SubagentTool implements ISubagentTool {
     @ILogService private readonly log: ILogService,
     @IConfigService private readonly config: IConfigService,
     @IFlagService private readonly flags: IFlagService,
-    @ISessionNotify private readonly notify: ISessionNotify,
     @AgentToolContribution private readonly contributions: CollectionView<AgentToolContribution>,
   ) {
     this.callerAgentId = scopeContext.agentId;
@@ -164,8 +166,7 @@ export class SubagentTool implements ISubagentTool {
       allowlist === undefined
         ? catalogProfiles
         : catalogProfiles.filter((profile) => allowlist.includes(profile.name));
-    const notifyAvailable = this.notify.enabled;
-    const knownTools = this.knownToolReferences();
+    const knownTools = this.availableToolReferences();
     const available = new Set(knownTools.map((ref) => ref.name));
     const anyMediaModel = this.anyMediaCapableModel();
     const typeLines = buildProfileDescriptions(
@@ -173,7 +174,6 @@ export class SubagentTool implements ISubagentTool {
         ...profile,
         tools: profile.tools?.filter(
           (name) =>
-            (name !== NOTIFY_USER_TOOL_NAME || notifyAvailable) &&
             (isToolNamePattern(name) ||
               (name === READ_MEDIA_FILE_TOOL_NAME
                 ? anyMediaModel && this.toolPolicy.isToolActiveForProfile(profile, name, 'builtin')
@@ -231,17 +231,18 @@ export class SubagentTool implements ISubagentTool {
     return withoutDelegatingTargets(this.catalog, allowlist);
   }
 
-  private knownToolReferences(): ToolReference[] {
-    const refs = new Map<string, ToolReference>();
-    for (const contribution of this.contributions.items) {
-      refs.set(contribution.options.name, {
-        name: contribution.options.name,
-        source: contribution.options.source ?? 'builtin',
-      });
-    }
-    for (const ref of this.toolRegistry.listReferences()) {
-      if (!refs.has(ref.name)) refs.set(ref.name, ref);
-    }
+  private availableToolReferences(): ToolReference[] {
+    const refs = new Map(this.toolRegistry.listReferences().map((ref) => [ref.name, ref]));
+    this.instantiationService.invokeFunction((accessor) => {
+      for (const { options } of this.contributions.items) {
+        if (refs.get(options.name)?.source === 'user') continue;
+        if (isToolAvailable(options, accessor, this.runtime)) {
+          refs.set(options.name, { name: options.name, source: options.source ?? 'builtin' });
+        } else {
+          refs.delete(options.name);
+        }
+      }
+    });
     return [...refs.values()];
   }
 
@@ -706,7 +707,7 @@ function buildProfileDescriptions(
           evaluateToolActive(profile, tool.name, tool.source) &&
           !isToolActive(profile, tool.name, tool.source),
       );
-      if (externallyRestricted) {
+      if (externallyRestricted || activeTools === undefined) {
         const effectiveTools = tools
           .filter((tool) => isToolActive(profile, tool.name, tool.source))
           .map((tool) => tool.name);
@@ -714,12 +715,6 @@ function buildProfileDescriptions(
           return `${header}\n  Tools: none`;
         }
         return `${header}\n  Tools: ${effectiveTools.join(', ')}`;
-      }
-      if (activeTools === undefined) {
-        if ((profile.disallowedTools?.length ?? 0) > 0) {
-          return `${header}\n  Tools: all except ${profile.disallowedTools!.join(', ')}`;
-        }
-        return `${header}\n  Tools: all`;
       }
       if (activeTools.length === 0) {
         return `${header}\n  Tools: none`;

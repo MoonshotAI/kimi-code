@@ -15,6 +15,7 @@ import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionT
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 
 import { IAgentToolActivationService } from './toolActivation';
+import { isToolAvailable } from './toolAvailability';
 
 export class AgentToolActivationService extends Service implements IAgentToolActivationService {
   declare readonly _serviceBrand: undefined;
@@ -36,7 +37,11 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
         void this.activate();
       }),
     );
-    this._register(this.runtime.onDidChange(() => this.refreshRuntimeRecords()));
+    this._register(
+      this.runtime.onDidChange(() => {
+        this.activateRecords(this.contributions.items);
+      }),
+    );
     this._register(
       this.contributions.onDidChange((change) => {
         this.activateRecords(change.added);
@@ -62,15 +67,19 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
       for (const record of records) {
         const { id, options } = record;
         const source = options.source ?? 'builtin';
-        if (this.toolRegistry.resolve(options.name) !== undefined) continue;
-        if (!this.runtimeAllows(record)) continue;
+        if (this.toolRegistry.resolve(options.name) !== undefined) {
+          if (this.registrations.has(record) && !isToolAvailable(options, accessor, this.runtime)) {
+            this.deactivateRecord(record);
+          }
+          continue;
+        }
         if (!isToolActive(workspaceVeto, options.name, source)) continue;
         const activeByProfile =
           options.name === SELECT_TOOLS_TOOL_NAME
             ? isToolActive(disclosurePolicy, options.name, source)
             : isToolActive(policy, options.name, source);
         if (!activeByProfile) continue;
-        if (options.when !== undefined && !options.when(accessor)) continue;
+        if (!isToolAvailable(options, accessor, this.runtime)) continue;
         const tool = accessor.get(id);
         const registration = this.toolRegistry.register(tool, {
           source: options.source,
@@ -80,18 +89,6 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
         this._register(registration);
       }
     });
-  }
-
-  private refreshRuntimeRecords(): void {
-    for (const record of this.contributions.items) {
-      if (!this.runtimeAllows(record)) this.deactivateRecord(record);
-    }
-    this.activateRecords(this.contributions.items);
-  }
-
-  private runtimeAllows(record: AgentToolContribution): boolean {
-    const required = record.options.requiredRuntimeCapabilities;
-    return required === undefined || this.runtime.isAvailable(required);
   }
 
   private deactivateRecord(record: AgentToolContribution): void {
