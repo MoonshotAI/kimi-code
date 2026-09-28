@@ -57,6 +57,7 @@ export interface EditorKeyboardHost {
   }): boolean;
   releaseStagingMedia(mediaAttachmentIds: readonly number[]): void;
   recallLastQueued(): QueuedMessage | undefined;
+  isQueuedMessageSteering(message: QueuedMessage): boolean;
   showError(msg: string): void;
   track(event: string, props?: Record<string, unknown>): void;
   updateEditorBorderHighlight(text?: string): void;
@@ -334,7 +335,9 @@ export class EditorKeyboardController {
       // order. Everything else steers in queue order — plain text as a
       // steered message, slash-skill items as activations fired into the
       // running turn (never as literal text).
-      const queued = host.state.queuedMessages;
+      // Items an automatic steer already carries stay put at the front.
+      const inFlight = host.state.queuedMessages.filter((m) => host.isQueuedMessageSteering(m));
+      const queued = host.state.queuedMessages.filter((m) => !host.isQueuedMessageSteering(m));
       const firstBundle = queued.findIndex((m) => m.inlineSkillActivations !== undefined);
       const windowBeforeFirstBundle = firstBundle === -1 ? queued : queued.slice(0, firstBundle);
       const steerable = windowBeforeFirstBundle.filter((m) => m.mode !== 'bash');
@@ -425,9 +428,12 @@ export class EditorKeyboardController {
           host.showError(LLM_NOT_SET_MESSAGE);
           return;
         }
-        host.state.queuedMessages = queued.filter(
-          (m, index) => m.mode === 'bash' || (firstBundle !== -1 && index >= firstBundle),
-        );
+        host.state.queuedMessages = [
+          ...inFlight,
+          ...queued.filter(
+            (m, index) => m.mode === 'bash' || (firstBundle !== -1 && index >= firstBundle),
+          ),
+        ];
         if (!editorIsBash && !editorHasInlineSkills && firstBundle === -1) editor.setText('');
         for (const run of runs) {
           if (run.kind === 'text') {

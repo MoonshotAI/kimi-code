@@ -513,6 +513,7 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
       steerMessage,
       steerSkillActivation,
       updateQueueDisplay,
+      isQueuedMessageSteering: vi.fn(() => false),
       validateMediaCapabilities: vi.fn(() => true),
       showError: vi.fn(),
       track: vi.fn(),

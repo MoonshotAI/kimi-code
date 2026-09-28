@@ -3691,122 +3691,128 @@ command = "vim"
 
     expect(session.steer).toHaveBeenCalledWith('second objective');
     expect(session.prompt).not.toHaveBeenCalled();
-    expect(driver.state.queuedMessages).toEqual([]);
+    await vi.waitFor(() => {
+      expect(driver.state.queuedMessages).toEqual([]);
+    });
     expect(driver.state.transcriptEntries).toEqual([
       expect.objectContaining({ kind: 'user', content: 'second objective' }),
     ]);
   });
 
+  function waitForEvent(
+    type: 'tool.call.started' | 'tool.progress' | 'tool.result',
+    extra: Record<string, unknown> = {},
+  ): Event {
+    const base = { agentId: 'main', sessionId: 'ses-1', turnId: 1, toolCallId: 'call_wait' };
+    if (type === 'tool.call.started') {
+      return { type, ...base, name: 'WaitFor', args: { timeout: 60 }, ...extra } as Event;
+    }
+    if (type === 'tool.progress') {
+      return {
+        type,
+        ...base,
+        update: { kind: 'status', text: 'Waiting 0s / 1m · 1 background task still running', replace: true },
+        ...extra,
+      } as Event;
+    }
+    return { type, ...base, output: 'wait_status: timed_out', ...extra } as Event;
+  }
+
+  function startWaitFor(driver: MessageDriver, extra: Record<string, unknown> = {}): void {
+    driver.sessionEventHandler.handleEvent(waitForEvent('tool.call.started', extra), () => {});
+    driver.sessionEventHandler.handleEvent(waitForEvent('tool.progress', extra), () => {});
+  }
+
+  function pendingSteer(): { session: ReturnType<typeof makeSession>; resolve: () => void; reject: (error: Error) => void } {
+    let resolve!: () => void;
+    let reject!: (error: Error) => void;
+    const session = makeSession({
+      steer: vi.fn(
+        () =>
+          new Promise<void>((res, rej) => {
+            resolve = res;
+            reject = rej;
+          }),
+      ),
+    });
+    return { session, resolve: () => resolve(), reject: (error) => reject(error) };
+  }
+
   it('steers fresh input into the running turn while a WaitFor call is running', async () => {
     const { driver, session } = await makeDriver();
-    const sendQueued = vi.fn();
     driver.state.appState.streamingPhase = 'waiting';
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'tool.call.started',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_wait',
-        name: 'WaitFor',
-        args: { timeout: 60 },
-      } as Event,
-      sendQueued,
-    );
+    startWaitFor(driver);
 
     driver.handleUserInput('stop waiting and check this');
 
     expect(session.steer).toHaveBeenCalledWith('stop waiting and check this');
     expect(session.prompt).not.toHaveBeenCalled();
-    expect(driver.state.queuedMessages).toEqual([]);
+    await vi.waitFor(() => {
+      expect(driver.state.queuedMessages).toEqual([]);
+    });
   });
 
   it('steers messages queued before a WaitFor starts into the running turn', async () => {
     const { driver, session } = await makeDriver();
-    const sendQueued = vi.fn();
     driver.state.appState.streamingPhase = 'waiting';
     driver.handleUserInput('first note');
     driver.handleUserInput('second note');
     expect(driver.state.queuedMessages).toHaveLength(2);
 
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'tool.call.started',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_wait',
-        name: 'WaitFor',
-        args: { timeout: 60 },
-      } as Event,
-      sendQueued,
-    );
+    startWaitFor(driver);
 
     expect(session.steer).toHaveBeenCalledTimes(1);
     expect(session.steer).toHaveBeenCalledWith('first note\n\nsecond note');
-    expect(driver.state.queuedMessages).toEqual([]);
+    await vi.waitFor(() => {
+      expect(driver.state.queuedMessages).toEqual([]);
+    });
   });
 
-  it('restores the queue when steering it into a starting WaitFor fails', async () => {
-    const session = makeSession({
-      steer: vi.fn(async () => {
-        throw new Error('session closed');
-      }),
-    });
-    const { driver } = await makeDriver(session);
-    const sendQueued = vi.fn();
+  it('does not steer the queue for a WaitFor call that never starts waiting', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('queued note');
+
+    driver.sessionEventHandler.handleEvent(waitForEvent('tool.call.started', { args: { timeout: 600 } }), () => {});
+    driver.handleUserInput('typed while the call was rejected');
+    driver.sessionEventHandler.handleEvent(waitForEvent('tool.result', { output: 'invalid arguments', isError: true }), () => {});
+
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      { text: 'queued note', agentId: 'main' },
+      { text: 'typed while the call was rejected', agentId: 'main' },
+    ]);
+  });
+
+  it('keeps the queue in place when steering it into a WaitFor fails', async () => {
+    const steer = pendingSteer();
+    const { driver } = await makeDriver(steer.session);
     driver.state.appState.streamingPhase = 'waiting';
     driver.handleUserInput('first note');
     driver.handleUserInput('second note');
     const queued = [...driver.state.queuedMessages];
 
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'tool.call.started',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_wait',
-        name: 'WaitFor',
-        args: { timeout: 60 },
-      } as Event,
-      sendQueued,
-    );
+    startWaitFor(driver);
+    steer.reject(new Error('session closed'));
 
     await vi.waitFor(() => {
-      expect(driver.state.queuedMessages).toEqual(queued);
+      expect(driver.state.transcriptEntries.filter((entry) => entry.kind === 'user')).toEqual([]);
     });
-    expect(driver.state.transcriptEntries.filter((entry) => entry.kind === 'user')).toEqual([]);
+    expect(driver.state.queuedMessages).toEqual(queued);
   });
 
-  it('keeps a queued video upload when steering it into a starting WaitFor fails', async () => {
-    const session = makeSession({
-      steer: vi.fn(async () => {
-        throw new Error('session closed');
-      }),
-    });
-    const { driver, harness } = await makeDriver(session);
+  it('keeps a queued video upload when steering it into a WaitFor fails', async () => {
+    const steer = pendingSteer();
+    const { driver, harness } = await makeDriver(steer.session);
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
     const attachment = imageStore.addVideo('video/mp4', '/tmp/clip.mp4');
     imageStore.completeVideo(attachment, { fileId: 'file-v1' });
     driver.state.appState.streamingPhase = 'waiting';
     driver.handleUserInput(`describe ${attachment.placeholder}`);
 
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'tool.call.started',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_wait',
-        name: 'WaitFor',
-        args: { timeout: 60 },
-      } as Event,
-      () => {},
-    );
-    await vi.waitFor(() => {
-      expect(driver.state.queuedMessages).toHaveLength(1);
-    });
+    startWaitFor(driver);
+    steer.reject(new Error('session closed'));
+    await (driver as unknown as { staging: { drain(): Promise<void> } }).staging.drain();
     driver.sessionEventHandler.handleEvent(
       { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
       () => {},
@@ -3816,69 +3822,52 @@ command = "vim"
     expect(harness.deleteFile).not.toHaveBeenCalledWith('file-v1');
   });
 
-  it('requeues failed input during a WaitFor ahead of items queued while the steer was in flight', async () => {
-    let rejectSteer!: (error: Error) => void;
-    const session = makeSession({
-      steer: vi.fn(
-        () =>
-          new Promise<never>((_resolve, reject) => {
-            rejectSteer = reject;
-          }),
-      ),
-    });
-    const { driver } = await makeDriver(session);
+  it('keeps submission order when a WaitFor steer fails after later input was queued', async () => {
+    const steer = pendingSteer();
+    const { driver } = await makeDriver(steer.session);
     driver.state.appState.streamingPhase = 'waiting';
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'tool.call.started',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_wait',
-        name: 'WaitFor',
-        args: { timeout: 60 },
-      } as Event,
-      () => {},
-    );
+    startWaitFor(driver);
 
     driver.handleUserInput('check this first');
     driver.state.queuedMessages.push({ text: 'make build', agentId: 'main', mode: 'bash' });
-    rejectSteer(new Error('session closed'));
+    steer.reject(new Error('session closed'));
 
     await vi.waitFor(() => {
-      expect(driver.state.queuedMessages).toEqual([
-        { text: 'check this first', agentId: 'main' },
-        { text: 'make build', agentId: 'main', mode: 'bash' },
-      ]);
+      expect(driver.state.transcriptEntries.filter((entry) => entry.kind === 'user')).toEqual([]);
     });
+    expect(driver.state.queuedMessages).toEqual([
+      { text: 'check this first', agentId: 'main' },
+      { text: 'make build', agentId: 'main', mode: 'bash' },
+    ]);
   });
 
-  function startWaitFor(driver: MessageDriver): void {
+  it('holds the queue behind an in-flight WaitFor steer across turn end', async () => {
+    const steer = pendingSteer();
+    const { driver, session } = await makeDriver(steer.session);
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('earlier note');
+    startWaitFor(driver);
+    driver.state.queuedMessages.push({ text: 'later note', agentId: 'main' });
+
     driver.sessionEventHandler.handleEvent(
-      {
-        type: 'tool.call.started',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_wait',
-        name: 'WaitFor',
-        args: { timeout: 60 },
-      } as Event,
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'cancelled' } as Event,
       () => {},
     );
-  }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(session.prompt).not.toHaveBeenCalled();
+
+    steer.reject(new Error('turn cancelled'));
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledTimes(1);
+    });
+    expect(vi.mocked(session.prompt).mock.calls[0]?.[0]).toBe('earlier note');
+    expect(driver.state.queuedMessages).toEqual([{ text: 'later note', agentId: 'main' }]);
+  });
 
   it('dispatches failed WaitFor input with its media right away when the turn ended meanwhile', async () => {
-    let rejectSteer!: (error: Error) => void;
-    const session = makeSession({
-      steer: vi.fn(
-        () =>
-          new Promise<never>((_resolve, reject) => {
-            rejectSteer = reject;
-          }),
-      ),
-    });
-    const { driver, harness } = await makeDriver(session);
+    const steer = pendingSteer();
+    const { driver, harness, session } = await makeDriver(steer.session);
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
     const attachment = imageStore.addVideo('video/mp4', '/tmp/clip.mp4');
     imageStore.completeVideo(attachment, { fileId: 'file-v1' });
@@ -3891,7 +3880,7 @@ command = "vim"
       () => {},
     );
     expect(harness.deleteFile).not.toHaveBeenCalledWith('file-v1');
-    rejectSteer(new Error('turn cancelled'));
+    steer.reject(new Error('turn cancelled'));
 
     await vi.waitFor(() => {
       expect(session.prompt).toHaveBeenCalledTimes(1);
@@ -3904,24 +3893,16 @@ command = "vim"
   });
 
   it('drops failed WaitFor input when the session changed meanwhile', async () => {
-    let rejectSteer!: (error: Error) => void;
-    const session = makeSession({
-      steer: vi.fn(
-        () =>
-          new Promise<never>((_resolve, reject) => {
-            rejectSteer = reject;
-          }),
-      ),
-    });
-    const { driver } = await makeDriver(session);
+    const steer = pendingSteer();
+    const { driver } = await makeDriver(steer.session);
     driver.state.appState.streamingPhase = 'waiting';
     startWaitFor(driver);
     driver.handleUserInput('for the old session');
 
     const next = makeSession();
+    (driver as unknown as { resetSessionRuntime(): void }).resetSessionRuntime();
     (driver as unknown as { session: unknown }).session = next;
-    rejectSteer(new Error('session closed'));
-    await Promise.resolve();
+    steer.reject(new Error('session closed'));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(driver.state.queuedMessages).toEqual([]);
@@ -3930,48 +3911,24 @@ command = "vim"
 
   it('keeps a queue with a bash command queued when a WaitFor starts', async () => {
     const { driver, session } = await makeDriver();
-    const sendQueued = vi.fn();
     driver.state.appState.streamingPhase = 'waiting';
     driver.state.queuedMessages = [
       { text: 'note', agentId: 'main' },
       { text: 'make build', agentId: 'main', mode: 'bash' },
     ];
 
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'tool.call.started',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_wait',
-        name: 'WaitFor',
-        args: { timeout: 60 },
-      } as Event,
-      sendQueued,
-    );
+    startWaitFor(driver);
 
     expect(session.steer).not.toHaveBeenCalled();
     expect(driver.state.queuedMessages).toHaveLength(2);
   });
 
-  it('leaves queued messages alone when a tool other than WaitFor starts', async () => {
+  it('leaves queued messages alone when a tool other than WaitFor reports progress', async () => {
     const { driver, session } = await makeDriver();
-    const sendQueued = vi.fn();
     driver.state.appState.streamingPhase = 'waiting';
     driver.handleUserInput('queued note');
 
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'tool.call.started',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_read',
-        name: 'Read',
-        args: { path: 'README.md' },
-      } as Event,
-      sendQueued,
-    );
+    startWaitFor(driver, { toolCallId: 'call_bash', name: 'Bash', args: { command: 'sleep 5' } });
 
     expect(session.steer).not.toHaveBeenCalled();
     expect(driver.state.queuedMessages).toEqual([{ text: 'queued note', agentId: 'main' }]);
@@ -3979,31 +3936,9 @@ command = "vim"
 
   it('queues input again once the WaitFor call has returned', async () => {
     const { driver, session } = await makeDriver();
-    const sendQueued = vi.fn();
     driver.state.appState.streamingPhase = 'waiting';
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'tool.call.started',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_wait',
-        name: 'WaitFor',
-        args: { timeout: 60 },
-      } as Event,
-      sendQueued,
-    );
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'tool.result',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_wait',
-        output: 'wait_status: timed_out',
-      } as Event,
-      sendQueued,
-    );
+    startWaitFor(driver);
+    driver.sessionEventHandler.handleEvent(waitForEvent('tool.result'), () => {});
 
     driver.handleUserInput('after the wait');
 
@@ -4013,20 +3948,8 @@ command = "vim"
 
   it('queues input while only a subagent is running WaitFor', async () => {
     const { driver, session } = await makeDriver();
-    const sendQueued = vi.fn();
     driver.state.appState.streamingPhase = 'waiting';
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'tool.call.started',
-        agentId: 'agent-child',
-        sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_child_wait',
-        name: 'WaitFor',
-        args: { timeout: 60 },
-      } as Event,
-      sendQueued,
-    );
+    startWaitFor(driver, { agentId: 'agent-child', toolCallId: 'call_child_wait' });
 
     driver.handleUserInput('main agent is busy');
 
@@ -4086,7 +4009,9 @@ command = "vim"
 
     expect(session.steer).toHaveBeenCalledWith('objective one\n\nobjective two');
     expect(session.prompt).not.toHaveBeenCalled();
-    expect(driver.state.queuedMessages).toEqual([]);
+    await vi.waitFor(() => {
+      expect(driver.state.queuedMessages).toEqual([]);
+    });
   });
 
   it('queues fresh input behind a non-steerable backlog instead of jumping ahead', async () => {

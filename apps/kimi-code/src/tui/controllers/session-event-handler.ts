@@ -638,9 +638,6 @@ export class SessionEventHandler {
     if (event.name === 'AgentSwarm') {
       this.subAgentEventHandler.handleAgentSwarmToolCallStarted(event.toolCallId, toolCall.args);
     }
-    // Input queued before the wait began would otherwise sit until the wait
-    // returns; steering it now ends the wait so the model reads it first.
-    if (event.name === 'WaitFor') this.host.steerQueuedMessagesIntoRunningTurn();
     this.host.patchLivePane({
       mode: 'tool',
       pendingApproval: null,
@@ -674,6 +671,11 @@ export class SessionEventHandler {
   }
 
   private handleToolProgress(event: ToolProgressEvent): void {
+    // Input queued before the wait began would otherwise sit until the wait
+    // returns; steering it now ends the wait so the model reads it first.
+    if (this.host.streamingUI.markWaitForRunning(event.toolCallId)) {
+      this.host.steerQueuedMessagesIntoRunningTurn();
+    }
     const text = event.update.text;
     if (text === undefined || text.length === 0) return;
     const tc = this.host.streamingUI.getToolComponent(event.toolCallId);
