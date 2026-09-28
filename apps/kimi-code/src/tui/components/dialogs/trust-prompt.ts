@@ -245,7 +245,7 @@ function formatMcpKeys(server: WorkspaceTrustMcpServerInfo): string | undefined 
     parts.push(`header keys: ${formatKeyList(server.headerKeys)}`);
   }
   if (server.bearerTokenEnvVar !== undefined) {
-    parts.push(`bearer token from env ${sanitizeForDisplay(server.bearerTokenEnvVar)}`);
+    parts.push(`bearer token from env ${capField(sanitizeForDisplay(server.bearerTokenEnvVar))}`);
   }
   return parts.length === 0 ? undefined : parts.join(' · ');
 }
