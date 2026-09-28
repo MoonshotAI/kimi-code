@@ -330,74 +330,25 @@ describe('server-v2 /api/v1/workspaces', () => {
     const { body } = await postJson<null>(`/api/v1/workspaces/${id}/add-dir`, {});
     expect(body.code).toBe(40001);
   });
-});
 
-
-describe('server-v2 /api/v1/workspaces trust with KIMI_CODE_TRUST_WORKSPACE', () => {
-  let server: RunningServer | undefined;
-  let home: string | undefined;
-  let base: string;
-
-  beforeAll(async () => {
-    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-trust-env-'));
+  it('reports the effective trust state after untrust while KIMI_CODE_TRUST_WORKSPACE is set', async () => {
     vi.stubEnv('KIMI_CODE_TRUST_WORKSPACE', '1');
-    server = await startServer({
-      hostIdentity: TEST_HOST_IDENTITY,
-      host: '127.0.0.1',
-      port: 0,
-      homeDir: home,
-      logLevel: 'silent',
-    });
-    base = `http://127.0.0.1:${server.port}`;
-  });
+    const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-trust-env-'));
+    try {
+      const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
+      expect(created.body.code).toBe(0);
+      const id = created.body.data.id;
 
-  afterAll(async () => {
-    if (server !== undefined) {
-      await server.close();
-      server = undefined;
+      const revoked = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/untrust`);
+      expect(revoked.body.code).toBe(0);
+      expect(revoked.body.data.trusted).toBe(true);
+
+      const read = await getJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`);
+      expect(read.body.code).toBe(0);
+      expect(read.body.data.trusted).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(root, { recursive: true, force: true });
     }
-    vi.unstubAllEnvs();
-    if (home !== undefined) {
-      await rm(home, { recursive: true, force: true });
-      home = undefined;
-    }
-  });
-
-  async function postJson<T>(
-    path: string,
-    body?: unknown,
-  ): Promise<{ status: number; body: Envelope<T> }> {
-    const hasBody = body !== undefined;
-    const res = await fetch(`${base}${path}`, {
-      method: 'POST',
-      headers: authHeaders(
-        server as RunningServer,
-        hasBody ? { 'content-type': 'application/json' } : {},
-      ),
-      body: hasBody ? JSON.stringify(body) : undefined,
-    } as never);
-    return { status: res.status, body: (await res.json()) as Envelope<T> };
-  }
-
-  async function getJson<T>(path: string): Promise<{ status: number; body: Envelope<T> }> {
-    const res = await fetch(`${base}${path}`, {
-      headers: authHeaders(server as RunningServer),
-    } as never);
-    return { status: res.status, body: (await res.json()) as Envelope<T> };
-  }
-
-  it('reports the effective trust state after untrust while the env override is active', async () => {
-    const root = home as string;
-    const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
-    expect(created.body.code).toBe(0);
-    const id = created.body.data.id;
-
-    const revoked = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/untrust`);
-    expect(revoked.body.code).toBe(0);
-    expect(revoked.body.data.trusted).toBe(true);
-
-    const read = await getJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`);
-    expect(read.body.code).toBe(0);
-    expect(read.body.data.trusted).toBe(true);
   });
 });
