@@ -222,6 +222,11 @@ export interface KimiHarnessOptions {
   readonly uiMode?: string;
   readonly skillDirs?: readonly string[];
   /**
+   * Explicit agentfiles (`--agent-file`) loaded for every session this harness
+   * hosts, with the highest precedence; an invalid file fails session creation.
+   */
+  readonly agentFiles?: readonly string[];
+  /**
    * UI surfaces this host can render, declared once per process and passed
    * into the engine through `BootstrapInput.args.uiCapabilities`. Engine
    * features gate on them at tool-table build time; nothing is persisted, so

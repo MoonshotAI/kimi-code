@@ -352,6 +352,11 @@ export interface SDKRpcClientV2Options {
    * source. Passed into the engine through `BootstrapInput.args.skillDirs`.
    */
   readonly skillDirs?: readonly string[];
+  /**
+   * Explicit agentfiles (`--agent-file`) for this process, registered with the
+   * highest precedence. Passed into the engine through `BootstrapInput.args.agentFiles`.
+   */
+  readonly agentFiles?: readonly string[];
   readonly telemetry?: TelemetryClient;
   readonly onOAuthRefresh?: (outcome: OAuthRefreshOutcome) => void;
   readonly uiMode?: string;
@@ -456,6 +461,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
           // `--skills-dir` (v1 parity): explicit skill dirs replace default
           // user / project discovery for every session this client hosts.
           skillDirs: options.skillDirs,
+          // `--agent-file`: explicit agentfiles registered with the highest
+          // precedence for every session this client hosts.
+          agentFiles: options.agentFiles,
           uiCapabilities: options.uiCapabilities,
         },
       },

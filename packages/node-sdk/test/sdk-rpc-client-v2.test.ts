@@ -1700,6 +1700,46 @@ describe('SDKRpcClientV2 workspace trust', () => {
     }
   });
 
+  it('does not disclose a workspace profile suppressed by an explicit agent file', async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-explicit-'));
+    tempDirs.push(agentDir);
+    const agentFile = join(agentDir, 'clash.md');
+    await writeFile(
+      agentFile,
+      '---\nname: clash\ndescription: Explicit winner\n---\n\nYou are the explicit clash.\n',
+      'utf-8',
+    );
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const harness = createKimiHarness({
+      homeDir,
+      identity: TEST_IDENTITY,
+      agentFiles: [agentFile],
+    });
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    await mkdir(join(workDir, '.kimi-code', 'agents'), { recursive: true });
+    // The workspace file declares override: true, but the session catalog still
+    // suppresses it: the explicit file wins by precedence and override only
+    // beats builtins, so trusting does not activate the workspace profile.
+    await writeFile(
+      join(workDir, '.kimi-code', 'agents', 'clash.md'),
+      '---\nname: clash\noverride: true\ndescription: Loses to the explicit file\n---\n\nYou are not loaded.\n',
+      'utf-8',
+    );
+    await writeFile(
+      join(workDir, '.kimi-code', 'agents', 'demo-agent.md'),
+      '---\nname: demo-agent\ndescription: Demo agent\n---\n\nYou are demo-agent.\n',
+      'utf-8',
+    );
+    try {
+      const info = await harness.getWorkspaceTrustInfo(workDir);
+      expect(info.instructionSources.agentProfiles).toEqual(['demo-agent']);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('trustWorkspace flips the state and persists the marker in the kimi home', async () => {
     const { harness, homeDir } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));

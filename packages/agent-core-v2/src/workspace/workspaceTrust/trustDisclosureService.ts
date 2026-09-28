@@ -1,6 +1,7 @@
 import { isAbsolute, relative } from 'pathe';
 
 import type { ILogService } from '#/_base/log/log';
+import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import type { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { BUILTIN_AGENT_PROFILE_SOURCE_ID } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -166,12 +167,13 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
       .filter((entry) => entry.sourceId !== BUILTIN_AGENT_PROFILE_SOURCE_ID)
       .toSorted((a, b) => b.priority - a.priority);
     for (const entry of ordered) {
-      const seen = new Set<string>();
+      const entryProfiles = new Map<string, AgentProfile>();
       for (const profile of entry.contribution.profiles) {
-        if (seen.has(profile.name)) continue;
-        seen.add(profile.name);
-        const taken = winners.has(profile.name) || builtinNames.has(profile.name);
-        if (taken && profile.override !== true) continue;
+        entryProfiles.set(profile.name, profile);
+      }
+      for (const profile of entryProfiles.values()) {
+        if (winners.has(profile.name)) continue;
+        if (builtinNames.has(profile.name) && profile.override !== true) continue;
         winners.set(profile.name, entry.sourceId);
       }
     }
