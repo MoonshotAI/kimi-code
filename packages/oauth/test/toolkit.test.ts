@@ -86,6 +86,9 @@ describe('resolveKimiTokenStorageName', () => {
       }),
     ).toBe('kimi-code');
     expect(resolveKimiTokenStorageName({ oauthKey: 'kimi-code' })).toBe('kimi-code');
+    expect(
+      resolveKimiTokenStorageName({ oauthKey: 'oauth/kimi-code-env-0123456789abcdef' }),
+    ).toBe('kimi-code-env-0123456789abcdef');
   });
 
   it('accepts non-managed providers with a valid key and rejects unsafe token keys', () => {

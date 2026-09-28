@@ -29,6 +29,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import {
   createKimiDefaultHeaders,
+  KIMI_CODE_PROVIDER_NAME,
   kimiRegionProfile,
   type KimiHostIdentity,
 } from '@moonshot-ai/kimi-code-oauth';
@@ -196,18 +197,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
   let boundPort = port;
   const localOriginHost = host.includes(':') ? `[${host}]` : host;
-  const remoteControlManager = createRemoteControlManager({
-    homeDir,
-    localOrigin: () => `http://${localOriginHost}:${boundPort}`,
-    localServerToken: () => authTokenService.getToken(),
-    clientVersion: `kimi-code/${serverVersion}`,
-    stderr: {
-      write: (text) => {
-        logger.warn(String(text).trimEnd());
-        return true;
-      },
-    },
-  });
   const { app: core } = bootstrap(
     {
       homeDir,
@@ -228,6 +217,26 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       clientVersion: serverVersion,
     }),
   );
+
+  const readManagedOAuth = (): { key?: string; oauthHost?: string } | undefined =>
+    core.accessor
+      .get(IConfigService)
+      .inspect<Record<string, { oauth?: { key: string; oauthHost?: string } }>>('providers')
+      .userValue?.[KIMI_CODE_PROVIDER_NAME]?.oauth;
+  const remoteControlManager = createRemoteControlManager({
+    homeDir,
+    localOrigin: () => `http://${localOriginHost}:${boundPort}`,
+    localServerToken: () => authTokenService.getToken(),
+    clientVersion: `kimi-code/${serverVersion}`,
+    configuredOAuthKey: () => readManagedOAuth()?.key,
+    configuredOAuthHost: () => readManagedOAuth()?.oauthHost,
+    stderr: {
+      write: (text) => {
+        logger.warn(String(text).trimEnd());
+        return true;
+      },
+    },
+  });
 
   let telemetry: ServerTelemetry = {};
   if (opts.telemetry === true) {

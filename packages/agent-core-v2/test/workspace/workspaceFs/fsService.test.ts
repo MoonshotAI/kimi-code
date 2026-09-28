@@ -380,7 +380,6 @@ function defaultGitStub(): IGitService {
     }),
     diff: async () => ({ path: '', diff: '', truncated: false }),
     findWorkTree: async () => null,
-    runGit: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
   };
 }
 
@@ -477,7 +476,6 @@ describe('WorkspaceFsService.gitStatus', () => {
       },
       diff: async () => ({ path: '', diff: '', truncated: false }),
       findWorkTree: async () => null,
-      runGit: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     };
     const fs = makeSession({}, emptyHandler, [], git);
     const result = await fs.gitStatus({ paths: ['src/a.ts'] });
@@ -497,7 +495,6 @@ describe('WorkspaceFsService.gitStatus', () => {
       },
       diff: async () => ({ path: '', diff: '', truncated: false }),
       findWorkTree: async () => null,
-      runGit: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     };
     const fs = makeSession({}, emptyHandler, [], git);
     await expect(fs.gitStatus({})).rejects.toMatchObject({ code: 'fs.git_unavailable' });
@@ -523,7 +520,6 @@ describe('WorkspaceFsService.diff', () => {
         return { path: rel, diff: '-old\n+new\n', truncated: false };
       },
       findWorkTree: async () => null,
-      runGit: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     };
     const fs = makeSession({ 'src/a.ts': 'content' }, emptyHandler, [], git);
     const result = await fs.diff({ path: 'src/a.ts' });

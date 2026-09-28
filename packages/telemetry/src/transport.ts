@@ -13,12 +13,6 @@ import { join } from 'node:path';
 import type { EnrichedTelemetryEvent, TelemetryPrimitive } from './types';
 import { isTelemetryPrimitive } from './types';
 
-// Mainland-China telemetry endpoint, mirroring
-// `KIMI_REGION_PROFILES['mainland-cn'].telemetryEndpoint` in
-// `@moonshot-ai/kimi-code-oauth` (the region source of truth). This package
-// deliberately has no dependency on it — region-aware callers pass `endpoint`
-// explicitly (e.g. through `initializeTelemetry`).
-export const TELEMETRY_ENDPOINT = 'https://telemetry-logs.kimi.com/v1/event';
 export const SERVER_EVENT_PREFIX = 'kfc_';
 export const USER_ID_PREFIX = 'kfc_device_id_';
 export const DISK_EVENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -29,7 +23,7 @@ export interface AsyncTransportOptions {
   readonly deviceId: string;
   /** Static endpoint, or a resolver invoked per flush so an in-process region
       switch (login/logout) takes effect without rebuilding the transport. */
-  readonly endpoint?: string | (() => string);
+  readonly endpoint?: string | (() => string | undefined);
   readonly getAccessToken?: () => string | null | Promise<string | null>;
   readonly fetchImpl?: typeof fetch;
   readonly retryBackoffsMs?: readonly number[];
@@ -48,7 +42,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 export class AsyncTransport {
   private readonly homeDir: string;
   private readonly deviceId: string;
-  private readonly endpoint: string | (() => string);
+  private readonly endpoint: string | (() => string | undefined) | undefined;
   private readonly getAccessToken: (() => string | null | Promise<string | null>) | null;
   private readonly fetchImpl: typeof fetch;
   private readonly retryBackoffsMs: readonly number[];
@@ -59,7 +53,7 @@ export class AsyncTransport {
   constructor(options: AsyncTransportOptions) {
     this.homeDir = options.homeDir;
     this.deviceId = options.deviceId;
-    this.endpoint = options.endpoint ?? TELEMETRY_ENDPOINT;
+    this.endpoint = options.endpoint;
     this.getAccessToken = options.getAccessToken ?? null;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.retryBackoffsMs = options.retryBackoffsMs ?? RETRY_BACKOFFS_MS;
@@ -68,8 +62,14 @@ export class AsyncTransport {
     this.now = options.now ?? Date.now;
   }
 
+  private resolvedEndpoint(): string | undefined {
+    const value = typeof this.endpoint === 'function' ? this.endpoint() : this.endpoint;
+    const trimmed = value?.trim();
+    return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
+  }
+
   async send(events: readonly EnrichedTelemetryEvent[], signal?: AbortSignal): Promise<void> {
-    if (events.length === 0) return;
+    if (events.length === 0 || this.resolvedEndpoint() === undefined) return;
     let savedToDisk = false;
     const saveEventsToDisk = (): void => {
       if (savedToDisk) return;
@@ -129,6 +129,7 @@ export class AsyncTransport {
   }
 
   async retryDiskEvents(): Promise<void> {
+    if (this.resolvedEndpoint() === undefined) return;
     let entries: string[];
     try {
       entries = readdirSync(this.telemetryDir());
@@ -200,7 +201,10 @@ export class AsyncTransport {
     signal?: AbortSignal,
   ): Promise<Response> {
     try {
-      const endpoint = typeof this.endpoint === 'function' ? this.endpoint() : this.endpoint;
+      const endpoint = this.resolvedEndpoint();
+      if (endpoint === undefined) {
+        throw new TransientTelemetryError('telemetry endpoint is disabled');
+      }
       return await fetchWithTimeout(
         this.fetchImpl,
         endpoint,

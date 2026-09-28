@@ -9,7 +9,7 @@ import { gzip } from 'node:zlib';
 import {
   createKimiDeviceId,
   FileTokenStorage,
-  KIMI_CODE_PROVIDER_NAME,
+  resolveKimiRemoteControlAuth,
   resolveKimiTokenStorageName,
 } from '@moonshot-ai/kimi-code-oauth';
 import { WebSocket, type RawData } from 'ws';
@@ -22,9 +22,10 @@ export const REMOTE_CONTROL_RELAY_URL_ENV = 'KIMI_CODE_REMOTE_CONTROL_RELAY_URL'
 
 export function resolveRemoteControlRelayOrigin(
   env: Readonly<Record<string, string | undefined>> = process.env,
+  fallback: string = REMOTE_CONTROL_RELAY_ORIGIN,
 ): string {
   const value = env[REMOTE_CONTROL_RELAY_URL_ENV]?.trim();
-  return value === undefined || value.length === 0 ? REMOTE_CONTROL_RELAY_ORIGIN : value;
+  return value === undefined || value.length === 0 ? fallback : value;
 }
 
 const MAX_HTTP_HEADER_BYTES = 64 * 1024;
@@ -100,6 +101,8 @@ export interface RemoteControlOptions {
   readonly localServerToken: string | (() => string);
   readonly clientVersion: string;
   readonly relayOrigin?: string;
+  readonly configuredOAuthKey?: string;
+  readonly configuredOAuthHost?: string;
   readonly stderr?: Pick<NodeJS.WriteStream, 'write'>;
   readonly onStatus?: (status: RemoteControlStatus) => void;
   readonly pingIntervalMs?: number;
@@ -110,6 +113,7 @@ export interface RemoteControlHandle {
   readonly deviceId: string;
   readonly deviceName: string;
   readonly url: string;
+  readonly relayOrigin: string;
   readonly closed: Promise<void>;
   close(): Promise<void>;
 }
@@ -123,8 +127,8 @@ class RegistrationError extends Error {}
 
 export function buildRemoteControlUrl(
   deviceId: string,
-  sessionId?: string,
-  relayOrigin = resolveRemoteControlRelayOrigin(),
+  sessionId: string | undefined,
+  relayOrigin: string,
 ): string {
   const url = new URL(relayOrigin);
   const relayPath = url.pathname.replace(/\/+$/, '');
@@ -257,13 +261,13 @@ function requestMatchesETag(
   headers: readonly [string, string][],
   etag: string,
 ): boolean {
-  const candidates = [etag, etag.replace(/^W\//, '')];
+  const candidates = new Set([etag, etag.replace(/^W\//, '')]);
   for (const [name, value] of headers) {
     if (name.toLowerCase() !== 'if-none-match') continue;
     for (const token of value.split(',')) {
       const candidate = token.trim();
       if (candidate === '*') return true;
-      if (candidates.includes(candidate)) return true;
+      if (candidates.has(candidate)) return true;
     }
   }
   return false;
@@ -279,14 +283,18 @@ export async function startRemoteControl(
   if (localServerToken().length === 0) {
     throw new Error('Remote Control requires local server authentication.');
   }
+  const auth = resolveKimiRemoteControlAuth({
+    configuredOAuthHost: options.configuredOAuthHost,
+    configuredOAuthKey: options.configuredOAuthKey,
+    homeDir: options.homeDir,
+  });
   const storage = new FileTokenStorage(join(options.homeDir, 'credentials'));
-  const token = await storage.load(
-    resolveKimiTokenStorageName({ providerName: KIMI_CODE_PROVIDER_NAME }),
-  );
+  const token = await storage.load(resolveKimiTokenStorageName({ oauthKey: auth.oauthKey }));
   if (token?.refreshToken === undefined || token.refreshToken.length === 0) {
     throw new Error('Remote Control requires a Kimi login. Run `kimi login` first.');
   }
-  const relayOrigin = options.relayOrigin ?? resolveRemoteControlRelayOrigin();
+  const relayOrigin =
+    options.relayOrigin ?? resolveRemoteControlRelayOrigin(process.env, auth.relayOrigin);
   const deviceId = createKimiDeviceId(options.homeDir);
   const deviceName = hostname();
   const url = buildRemoteControlUrl(deviceId, undefined, relayOrigin);
@@ -315,6 +323,7 @@ export async function startRemoteControl(
     deviceId,
     deviceName,
     url,
+    relayOrigin,
     closed,
     close: async () => {
       await client.close();
@@ -904,11 +913,11 @@ function requestLocalHttp(
               let varyCovers = false;
               for (let index = 0; index < headers.length; index += 2) {
                 if (headers[index]!.toLowerCase() !== 'vary') continue;
-                const tokens = headers[index + 1]!
+                const tokens = new Set(headers[index + 1]!
                   .toLowerCase()
                   .split(',')
-                  .map((token) => token.trim());
-                if (tokens.includes('*') || tokens.includes('accept-encoding')) varyCovers = true;
+                  .map((token) => token.trim()));
+                if (tokens.has('*') || tokens.has('accept-encoding')) varyCovers = true;
               }
               if (!varyCovers) headers.push('Vary', 'Accept-Encoding');
             }

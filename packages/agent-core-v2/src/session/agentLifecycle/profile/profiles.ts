@@ -115,10 +115,9 @@ registerAgentProfile({
   tools: EXPLORE_TOOLS,
   renderSystemPrompt: (context) =>
     renderSystemPromptResult(EXPLORE_ROLE, context, { skillActive: skillActiveFor(EXPLORE_TOOLS) }),
-  promptPrefix: async ({ cwd, git, log }) => {
-    if (git === undefined) return '';
+  promptPrefix: async ({ cwd, process, log }) => {
     try {
-      return await collectGitContext(git, cwd, log);
+      return await collectGitContext(process, cwd, log);
     } catch {
       return '';
     }

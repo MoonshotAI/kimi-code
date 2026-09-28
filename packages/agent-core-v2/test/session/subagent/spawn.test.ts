@@ -1,4 +1,6 @@
 import { IEnvironmentService } from '#/app/environment/environment';
+import { Readable, type Writable } from 'node:stream';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -23,8 +25,7 @@ import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/envi
 import { Error2, ErrorCodes, isError2 } from '#/errors';
 import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
-import type { IHostProcessService } from '#/os/interface/hostProcess';
-import type { IGitService } from '#/app/git/git';
+import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { EnvironmentBinding, EnvironmentLease } from '#/environment/environment';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -305,7 +306,26 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     });
   }
 
-  function gitProcessForRepo(repoCwd: string): { process: IHostProcessService; git: IGitService; gitCwds: string[] } {
+  function processWith(stdout: string, exitCode: number, stderr = ''): IHostProcess {
+    const stdoutStream = Readable.from([Buffer.from(stdout)]);
+    const stderrStream = Readable.from([Buffer.from(stderr)]);
+    return {
+      _serviceBrand: undefined,
+      stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
+      stdout: stdoutStream,
+      stderr: stderrStream,
+      pid: 1,
+      exitCode,
+      wait: vi.fn().mockResolvedValue(exitCode),
+      kill: vi.fn(async () => {}),
+      dispose: vi.fn(async () => {
+        stdoutStream.destroy();
+        stderrStream.destroy();
+      }),
+    };
+  }
+
+  function gitProcessForRepo(repoCwd: string): { process: IHostProcessService; gitCwds: string[] } {
     const gitCwds: string[] = [];
     const script: Record<string, { stdout?: string; exitCode?: number; stderr?: string }> = {
       'rev-parse --is-inside-work-tree': { stdout: 'true' },
@@ -314,28 +334,22 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       'status --porcelain': { stdout: '' },
       'log -3 --format=%h %s': { stdout: 'abc123 a commit' },
     };
-    const runGit = async (cwd: string, args: readonly string[]) => {
+    const spawn = vi.fn(async (_command: string, args: readonly string[]) => {
+      const cwd = args[1] as string;
       gitCwds.push(cwd);
       if (cwd !== repoCwd) {
-        return { exitCode: 128, stdout: '', stderr: 'fatal: not a git repository (or any of the parent directories): .git' };
+        return processWith('', 128, 'fatal: not a git repository (or any of the parent directories): .git');
       }
-      const out = script[args.join(' ')];
-      if (out === undefined) return { exitCode: 1, stdout: '', stderr: '' };
-      return { exitCode: out.exitCode ?? 0, stdout: out.stdout ?? '', stderr: out.stderr ?? '' };
-    };
-    const git = {
-      _serviceBrand: undefined,
-      status: vi.fn(),
-      diff: vi.fn(),
-      findWorkTree: vi.fn(),
-      runGit,
-    } as unknown as IGitService;
-    return { process: { _serviceBrand: undefined, spawn: vi.fn() } as IHostProcessService, git, gitCwds };
+      const out = script[args.slice(2).join(' ')];
+      if (out === undefined) return processWith('', 1);
+      return processWith(out.stdout ?? '', out.exitCode ?? 0, out.stderr ?? '');
+    });
+    return { process: { _serviceBrand: undefined, spawn } as unknown as IHostProcessService, gitCwds };
   }
 
   function spawnExploreWithGitContext(
     svc: ISessionSubagentService,
-    git: { process: IHostProcessService; git: IGitService; gitCwds: string[] },
+    git: { process: IHostProcessService; gitCwds: string[] },
   ): Promise<SpawnedSubagent> {
     const environment = Object.assign(
       new FakeEnvironment({ environmentId: 'acp:s1', generation: 'g1' }),
@@ -349,7 +363,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
         systemPrompt: () => 'explore',
         promptPrefix: async ({ cwd, process, log }) => {
           try {
-            return await collectGitContext(git.git, cwd, log);
+            return await collectGitContext(process, cwd, log);
           } catch {
             return '';
           }

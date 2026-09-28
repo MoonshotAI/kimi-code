@@ -370,7 +370,7 @@ export class Program {
       const state = own(new WorkspaceStateService(this.dependencies.appState));
       const localConfig = new FileProjectLocalConfigService(this.dependencies.bootstrap, targetFs);
       const { trust, mcpConfig, mcp, userAgentProfiles, pluginAgentProfiles, explicitAgentProfiles, extraAgentProfiles, explicitSkills, extraSkills, pluginSkills } = shared;
-      const dirs = own(new WorkspaceDirsService(context, localConfig, this.dependencies.log, state, trust));
+      const dirs = own(new WorkspaceDirsService(context, localConfig, this.dependencies.log, state));
       const git = environmentId === LOCAL_ENVIRONMENT_ID
         ? new WorkspaceGitService(this.context, this.dependencies.git)
         : new WorkspaceGitService(context, {

@@ -3,10 +3,14 @@ import { join } from 'node:path';
 import { Disposable, toDisposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
+import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentLoopService, type LoopNotifyHandle } from '#/agent/loop/loop';
+import { TurnStarted } from '#/agent/loop/turnEvents';
+import { TurnEnded } from '#/agent/loop/turnOps';
+import { PromptSubmitted } from '#/agent/prompt/promptEvents';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -146,6 +150,47 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         }),
       );
     }
+    this._register(
+      eventBus.subscribe(TurnStarted, (event) => {
+        if (this.agentCtx.agentId !== 'main') return;
+        if (!this.isActive) return;
+        if (event.agentId !== this.agentCtx.agentId) return;
+        if (event.origin.kind !== 'injection' || event.origin.variant !== TOWER_INBOX_WAKE_VARIANT) {
+          return;
+        }
+        this.wakeTurnId = event.turnId;
+      }),
+    );
+    this._register(
+      eventBus.subscribe(TurnEnded, (event) => {
+        if (this.agentCtx.agentId !== 'main') return;
+        if (event.agentId !== this.agentCtx.agentId) return;
+        if (event.turnId === this.wakeTurnId) {
+          this.wakeTurnId = undefined;
+          return;
+        }
+        if (!this.wakeAbortedForUserPrompt) return;
+        if (this.loop === undefined || this.loop.snapshot().queue.length > 0) return;
+        this.wakeAbortedForUserPrompt = false;
+        this.inboxWakeSignals = Math.max(this.inboxWakeSignals, 1);
+        this.scheduleInboxWake();
+      }),
+    );
+    this._register(
+      eventBus.subscribe(PromptSubmitted, (event) => {
+        if (this.agentCtx.agentId !== 'main') return;
+        if (!this.isActive) return;
+        if (event.agentId !== this.agentCtx.agentId) return;
+        const turnId = this.wakeTurnId;
+        if (turnId === undefined) return;
+        queueMicrotask(() => {
+          if (this.wakeDisposed || !this.isActive || this.loop === undefined) return;
+          if (this.loop.cancel({ turnId }, userCancellationReason())) {
+            this.wakeAbortedForUserPrompt = true;
+          }
+        });
+      }),
+    );
     this._register(
       toDisposable(() => {
         this.wakeDisposed = true;
@@ -466,19 +511,66 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     if (info.kind !== 'agent') return;
     if (info.agentId === undefined) return;
     if (info.status === 'completed') return;
+    if (!this.isActive) return;
     const store = new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd));
-    await store.markAgentDied(info.agentId, info.status, info.stopReason).then(
+    const foreignOwner = await this.resolveForeignStoreOwner(store);
+    if (foreignOwner !== undefined) {
+      this.log.info('tower: skipping roster agent death mark — tower store is owned by another session', {
+        event: 'TaskTerminatedNotice',
+        agentId: info.agentId,
+        sessionId: this.sessionCtx.sessionId,
+        owner: foreignOwner,
+        pid: process.pid,
+      });
+      return;
+    }
+    this.log.info('tower: marking roster agent died', {
+      event: 'TaskTerminatedNotice',
+      agentId: info.agentId,
+      taskId: info.taskId,
+      status: info.status,
+      stopReason: info.stopReason,
+      sessionId: this.sessionCtx.sessionId,
+      pid: process.pid,
+    });
+    await store.markAgentDied(info.agentId, info.status, info.stopReason, this.sessionCtx.sessionId).then(
       () => undefined,
       () => undefined,
     );
   }
 
   private async clearTowerAgentDeath(agentId: string): Promise<void> {
+    if (!this.isActive) return;
     const store = new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd));
-    await store.clearAgentDied(agentId).then(
+    const foreignOwner = await this.resolveForeignStoreOwner(store);
+    if (foreignOwner !== undefined) {
+      this.log.info('tower: skipping roster agent death clear — tower store is owned by another session', {
+        event: 'SubagentStarted',
+        agentId,
+        sessionId: this.sessionCtx.sessionId,
+        owner: foreignOwner,
+        pid: process.pid,
+      });
+      return;
+    }
+    this.log.info('tower: clearing roster agent death mark', {
+      event: 'SubagentStarted',
+      agentId,
+      sessionId: this.sessionCtx.sessionId,
+      pid: process.pid,
+    });
+    await store.clearAgentDied(agentId, this.sessionCtx.sessionId).then(
       () => undefined,
       () => undefined,
     );
+  }
+
+  private async resolveForeignStoreOwner(store: TowerStore): Promise<string | undefined> {
+    const owner = await store.load().then(
+      (state) => state.sessionId,
+      () => undefined,
+    );
+    return owner !== undefined && owner !== this.sessionCtx.sessionId ? owner : undefined;
   }
 
   private inboxWakeSignals = 0;
@@ -487,6 +579,8 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   private inboxWakePending = false;
   private inboxWakeHandle: LoopNotifyHandle | undefined;
   private wakeDisposed = false;
+  private wakeTurnId: number | undefined;
+  private wakeAbortedForUserPrompt = false;
 
   private onTowerInboxSent(event: TowerInboxSent): void {
     if (this.agentCtx.agentId !== 'main') return;
