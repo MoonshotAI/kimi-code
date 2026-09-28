@@ -2048,7 +2048,21 @@ export class KimiTUI {
     if (batch.length === 0 || !batch.every(isSteerableQueuedMessage)) return;
     for (const message of batch) this.steeringQueuedMessages.add(message);
     this.updateQueueDisplay();
-    this.steerMessage(session, batch.map(toSteerInputItem), (steered) => {
+    // Same expiring-upload refresh as the queue drain (`sendQueuedMessage`):
+    // an image whose daemon upload expired falls back to its retained bytes.
+    const items = batch.map((message) => {
+      const item = toSteerInputItem(message);
+      if (message.parts === undefined) return item;
+      return {
+        ...item,
+        parts: refreshExpiringImageFileRefs(
+          message.parts,
+          message.imageAttachmentIds ?? [],
+          this.imageStore,
+        ),
+      };
+    });
+    this.steerMessage(session, items, (steered) => {
       for (const message of batch) this.steeringQueuedMessages.delete(message);
       if (this.session !== session) return;
       if (steered) {

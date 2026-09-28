@@ -3768,6 +3768,34 @@ command = "vim"
     });
   });
 
+  it('refreshes an expired queued image upload before steering it into a WaitFor', async () => {
+    const { driver, session } = await makeDriver();
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addImage(
+      new Uint8Array([0xaa, 0xbb]),
+      'image/png',
+      1,
+      1,
+      undefined,
+      'file-expired',
+      1,
+    );
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.queuedMessages.push({
+      text: `describe ${attachment.placeholder}`,
+      agentId: 'main',
+      parts: [{ type: 'image_url', imageUrl: { url: 'kimi-file://file-expired' } }],
+      imageAttachmentIds: [attachment.id],
+    });
+
+    startWaitFor(driver);
+
+    expect(session.steer).toHaveBeenCalledTimes(1);
+    const steered = JSON.stringify(vi.mocked(session.steer).mock.calls[0]);
+    expect(steered).toContain('data:image/png;base64,qrs=');
+    expect(steered).not.toContain('kimi-file://file-expired');
+  });
+
   it('does not steer the queue for a WaitFor call that never starts waiting', async () => {
     const { driver, session } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';
