@@ -2165,9 +2165,11 @@ export class KimiTUI {
 
   private removeTranscriptEntries(entries: readonly TranscriptEntry[]): void {
     const doomed = new Set(entries);
-    for (const child of [...this.state.transcriptContainer.children]) {
+    const componentsToRemove = this.state.transcriptContainer.children.filter((child) => {
       const entry = getTranscriptComponentEntry(child);
-      if (entry === undefined || !doomed.has(entry)) continue;
+      return entry !== undefined && doomed.has(entry);
+    });
+    for (const child of componentsToRemove) {
       // pi-tui Container.removeChild (not a DOM node); `child.remove()` does not exist.
       // oxlint-disable-next-line unicorn/prefer-dom-node-remove
       this.state.transcriptContainer.removeChild(child);
