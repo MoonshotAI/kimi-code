@@ -82,10 +82,12 @@ export function createMaxStepsExceeded(maxSteps: number, message?: string): MaxS
   };
 }
 
-export type TurnOutput =
-  | { type: 'done'; produced: HistoryMessage[] }
-  | { type: 'failed'; failure: TurnFailure; produced: HistoryMessage[] }
-  | { type: 'aborted'; produced: HistoryMessage[] };
+export type TurnOutcome =
+  | { type: 'done' }
+  | { type: 'failed'; failure: TurnFailure }
+  | { type: 'aborted' };
+
+export type TurnOutput = TurnOutcome & { produced: HistoryMessage[] };
 
 export interface TurnMachineContext {
   input: TurnInput;

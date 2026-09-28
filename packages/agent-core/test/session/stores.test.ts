@@ -68,11 +68,14 @@ async function startAgent(
 }
 
 async function runTurn(host: AgentHandle, store: AgentStore, text: string, historyLength: number): Promise<void> {
+  const ids: { started?: number; done?: number } = {};
   const done = new Promise<void>((resolve) => {
-    host.on('turn.done', () => { resolve(); });
+    host.on('turn.started', (event) => { ids.started = event.turnId; });
+    host.on('turn.done', (event) => { ids.done = event.turnId; resolve(); });
   });
   host.submit(createUserMessage(text));
   await done;
+  expect(ids.done).toBe(ids.started);
   expect(store.getState().history.length).toBe(historyLength);
   expect(store.getState().history.some((entry) => entry.message.role === 'assistant')).toBe(true);
 }
