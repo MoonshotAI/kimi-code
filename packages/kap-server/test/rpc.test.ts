@@ -32,6 +32,7 @@ import type {
 } from '@moonshot-ai/agent-core-v2';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
+import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -386,39 +387,27 @@ describe('server-v2 /api/v1/debug RPC', () => {
     );
     expect(current.body.data).toMatchObject({ environment_id: 'local' });
 
-    const invalid = await call<null>(
-      'POST',
-      `/api/v1/sessions/${id}/environment`,
-      { environment_id: 'missing-environment', cwd: home },
-    );
-    expect(invalid.body.code).toBe(40420);
-
-    const unchanged = await call<{ workspace_id: string; environment_id: string }>(
-      'GET',
-      `/api/v1/sessions/${id}/environment`,
-    );
-    expect(unchanged.body.data).toEqual(current.body.data);
-
     const provider = await server!.core.accessor.get(IEnvironmentService).addProvider({
       id: 'debug-remote-provider',
       attach: async (host) => {
         host.registerEnvironment(Object.assign(new FakeEnvironment({
           environmentId: 'remote',
           generation: 'remote-two',
-        }), { fs: new HostFileSystem() }));
+        }, { capabilities: ['fs', 'process'] }), { fs: new HostFileSystem(), process: new HostProcessService() }));
         return { dispose: () => {} };
       },
     });
     try {
-      const switched = await call<{ workspace_id: string; environment_id: string }>(
-        'POST',
-        `/api/v1/sessions/${id}/environment`,
-        { environment_id: 'remote', cwd: home },
-      );
-      expect(switched.body.data.environment_id).toBe('remote');
+      const created = await call<{ id: string }>('POST', '/api/v1/sessions', {
+        metadata: { cwd: home },
+        environment_id: 'remote',
+        environment_cwd: home,
+      });
+      expect(created.body.code).toBe(0);
+      const remoteId = created.body.data.id;
       const snapshot = await call<AgentEnvironmentBindingSnapshot>(
         'GET',
-        `/api/v1/debug/session/${id}/agent/main/environment-binding`,
+        `/api/v1/debug/session/${remoteId}/agent/main/environment-binding`,
       );
       expect(snapshot.body.data).toMatchObject({
         binding: { environmentId: 'remote' },

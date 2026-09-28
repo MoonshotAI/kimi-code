@@ -941,7 +941,7 @@ export interface AgentStateSnapshot {
   // src/agent/contextProjector/contextProjectorService.ts
   'contextProjector.lastRepairSignature': string | null;
   // src/agent/environmentBinding/environmentBindingOps.ts
-  // replayable · durable · undoable — folds: EnvironmentSetBinding
+  // replayable · durable — folds: EnvironmentSetBinding
   'environmentBinding': /* EnvironmentBinding — packages/agent-core-v2/src/environment/environment.ts */ {
     readonly environmentId: string;
     readonly cwd?: string;
