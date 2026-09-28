@@ -76,12 +76,6 @@ describe('TrustPromptComponent', () => {
             envKeys: ['SAFE', 'BAD\u0007'],
             origin: '/tmp/demo-workspace/.mcp.json',
           },
-          {
-            name: 'multi\nline',
-            transport: 'http',
-            url: 'https://example.test/\u001B]8;;https://evil.test\u0007',
-            origin: '/tmp/demo-workspace/.mcp.json',
-          },
         ],
         instructionSources: {
           agentsMdPaths: [],
@@ -94,18 +88,34 @@ describe('TrustPromptComponent', () => {
     expect(text).toContain('nested-server (stdio): command=nested-cmd');
     expect(text).toContain('args=["--safe"] cwd=/tmp');
     expect(text).toContain('env keys: KEY_0, KEY_1');
-    expect(text).toContain('+21 more');
+    expect(text).toContain('+22 more');
     expect(text).not.toContain('KEY_24');
     expect(text).toContain('from .mcp.json');
     expect(text).toContain('root-server (http): url=https://example.test/mcp');
     expect(text).toContain('header keys: Authorization · bearer token from env MCP_TOKEN');
     expect(text).toContain('from .kimi-code/mcp.json');
-    expect(text).toContain('+5 more');
+    expect(text).toContain('+7 more');
     // ESC and BEL are dropped, defusing the sequences into harmless literal text.
     expect(text).toContain('evil (stdio): command=cmd[2Jevil');
-    expect(text).toContain('multiline (http): url=https://example.test/]8;;https://evil.test');
     expect(text).toContain('env keys: SAFE, BAD');
     expect(text).toContain('skills: ski[2Jll, skill-0');
+  });
+
+  it('sanitizes control characters in http server fields', () => {
+    const lines = renderLines(
+      makeInfo({
+        gatedMcpServers: [
+          {
+            name: 'multi\nline',
+            transport: 'http',
+            url: 'https://example.test/\u001B]8;;https://evil.test\u0007',
+            origin: '/tmp/demo-workspace/.mcp.json',
+          },
+        ],
+      }),
+    );
+    const text = lines.join('\n');
+    expect(text).toContain('multiline (http): url=https://example.test/]8;;https://evil.test');
     expect(text).not.toContain('\u001B]8;;https://evil.test');
   });
 

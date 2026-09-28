@@ -31,10 +31,10 @@ interface TrustPromptOption {
   readonly description: string;
 }
 
-const MAX_MCP_SERVERS = 5;
-const MAX_ADDITIONAL_DIRS = 4;
-const MAX_NAME_LIST = 8;
-const MAX_AGENTS_MD_PATHS = 4;
+const MAX_MCP_SERVERS = 3;
+const MAX_ADDITIONAL_DIRS = 3;
+const MAX_NAME_LIST = 6;
+const MAX_AGENTS_MD_PATHS = 3;
 
 const OPTIONS: readonly TrustPromptOption[] = [
   {
@@ -231,7 +231,7 @@ function formatMcpTarget(server: WorkspaceTrustMcpServerInfo): string {
   );
 }
 
-const MAX_KEY_LIST = 4;
+const MAX_KEY_LIST = 3;
 
 function formatMcpKeys(server: WorkspaceTrustMcpServerInfo): string | undefined {
   const parts: string[] = [];
