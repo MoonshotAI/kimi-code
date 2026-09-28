@@ -433,7 +433,7 @@ export class Program {
     try {
       const fs = local.fs!;
       const state = own(new WorkspaceStateService(this.dependencies.appState));
-      const trust = own(new WorkspaceTrustService(this.context, this.dependencies.docs, state, this.dependencies.telemetry));
+      const trust = own(new WorkspaceTrustService(this.context, this.dependencies.docs, state, this.dependencies.telemetry, this.dependencies.bootstrap));
       own(trust.onDidChange((change) => {
         change.waitUntil(this.trustChangeEmitter.fireAsync({ trusted: change.trusted }, change.signal));
       }));

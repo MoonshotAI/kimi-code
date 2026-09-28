@@ -618,7 +618,7 @@ async function localityFixture(options: { readonly remoteCwd?: string; readonly 
   const profileContainer = new InstantiationService(new ServiceCollection(), true);
   const profileRegistry = profileContainer.createInstance(AgentProfileRegistryService);
   const profileRegistrations: { readonly sourceId: string; readonly profiles: readonly string[] }[] = [];
-  const bootstrap = { _serviceBrand: undefined, homeDir: kimiHome, osHomeDir: homeDir, args: {} };
+  const bootstrap = { _serviceBrand: undefined, homeDir: kimiHome, osHomeDir: homeDir, args: {}, getEnv: () => undefined };
   const config = {
     _serviceBrand: undefined,
     ready: Promise.resolve(),

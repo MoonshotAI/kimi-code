@@ -166,6 +166,7 @@ kimi
 | `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` | 会话索引使用基于 minidb 的读模型，优先级高于 `[database] base`（默认 `true`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_MCP_STARTUP_TIMEOUT_MS` | MCP server 全局默认连接超时（毫秒）；优先级高于配置文件，低于 `mcp.json` 的 `startupTimeoutMs` | `1` 到 `2147483647` 的整数；非法值被忽略 |
 | `KIMI_MCP_TOOL_TIMEOUT_MS` | MCP server 全局默认单次工具调用超时（毫秒）；优先级高于配置文件，低于 `mcp.json` 的 `toolTimeoutMs` | `1` 到 `2147483647` 的整数；非法值被忽略 |
+| `KIMI_CODE_TRUST_WORKSPACE` | 将当前工作区标记为受信任，等效于在交互式信任提示中选择 "Trust this folder"；按进程生效，不写入持久化的信任记录 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_LOOP_MAX_STEPS_PER_TURN` | Agent 单轮最大步数，优先级高于 `config.toml` 的 `[loop_control] max_steps_per_turn`；`0` 表示无上限 | 非负整数；非法值被忽略 |
 | `KIMI_LOOP_MAX_ATTEMPTS_PER_STEP` | 单步失败后的最大总尝试次数（含首次尝试），优先级高于 `config.toml` 的 `[loop_control] max_attempts_per_step` | 非负整数；非法值被忽略 |
 | `KIMI_CODE_INFINITE_RETRY` | 让所有失败的 LLM 请求无限重试而不是终止任务；指数退避（32 秒封顶）并尊重 `Retry-After`，等待期间中断仍生效 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
