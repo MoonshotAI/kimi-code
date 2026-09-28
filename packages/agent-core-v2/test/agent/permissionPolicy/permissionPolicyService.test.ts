@@ -224,66 +224,6 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
-  it('asks for environment switching tools in manual mode', async () => {
-    await expect(evaluate({
-      toolName: 'change_environment',
-      args: { id: 'staging' },
-    })).resolves.toMatchObject({
-      policyName: 'environment-switch-ask',
-      result: { kind: 'ask' },
-    });
-    await expect(evaluate({
-      toolName: 'connect',
-      args: { type: 'ssh', host: 'dev-box' },
-    })).resolves.toMatchObject({
-      policyName: 'environment-switch-ask',
-      result: { kind: 'ask' },
-    });
-  });
-
-  it('approves environment switching tools in yolo mode', async () => {
-    mode = 'yolo';
-
-    await expect(evaluate({
-      toolName: 'change_environment',
-      args: { id: 'staging' },
-    })).resolves.toMatchObject({
-      policyName: 'yolo-mode-approve',
-      result: { kind: 'approve' },
-    });
-    await expect(evaluate({
-      toolName: 'connect',
-      args: { type: 'ssh', host: 'dev-box' },
-    })).resolves.toMatchObject({
-      policyName: 'yolo-mode-approve',
-      result: { kind: 'approve' },
-    });
-  });
-
-  it('approves environment switching tools in auto mode', async () => {
-    mode = 'auto';
-
-    await expect(evaluate({
-      toolName: 'change_environment',
-      args: { id: 'staging' },
-    })).resolves.toMatchObject({
-      policyName: 'auto-mode-approve',
-      result: { kind: 'approve' },
-    });
-  });
-
-  it('reuses approve-for-session for environment switching tools', async () => {
-    sessionApprovalRulePatterns.push('change_environment');
-
-    await expect(evaluate({
-      toolName: 'change_environment',
-      args: { id: 'staging' },
-    })).resolves.toMatchObject({
-      policyName: 'session-approval-history',
-      result: { kind: 'approve' },
-    });
-  });
-
   it.each(['manual', 'yolo'] as const)(
     'asks for shutdown in %s mode',
     async (currentMode) => {

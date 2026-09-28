@@ -1348,10 +1348,7 @@ export class AgentTestContext {
               get current() {
                 return harnessBinding;
               },
-              set: (next: EnvironmentBinding) => next,
-              switch: (environmentId: string, cwd?: string) => ({ ...harnessBinding, environmentId, cwd }),
-              connectAndSwitch: async (environmentId: string, cwd?: string) => ({ ...harnessBinding, environmentId, cwd }),
-              connectAndSwitchInTurn: async (environmentId: string, cwd?: string) => ({ ...harnessBinding, environmentId, cwd }),
+              bind: (environmentId: string, cwd?: string) => ({ ...harnessBinding, environmentId, cwd }),
             });
             const environment = new LocalEnvironment(this.root.accessor.get(IHostEnvironment),
               this.root.accessor.get(IHostFileSystem),

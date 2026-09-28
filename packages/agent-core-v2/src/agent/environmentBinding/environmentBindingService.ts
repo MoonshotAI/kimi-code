@@ -1,20 +1,14 @@
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import type { IDisposable } from '#/_base/di/lifecycle';
-import { ref, type LiveRef } from '#/_base/di/instantiation';
 import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
 import { LifecycleScope } from '#/app/scopes';
-import { IAgentLoopService } from '#/agent/loop/loop';
 import { loadAgentsMdDetailed } from '#/agent/profile/context';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentConversationUndoParticipantRegistry, type AgentConversationUndoParticipant } from '#/agent/contextMemory/conversationUndoParticipants';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
-import { CHANGE_ENVIRONMENT_TOOL_NAME } from '#/features/environmentTools/environmentTools';
-import { planKey } from '#/features/plan/planOps';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import { DEFAULT_ENVIRONMENT_HOST } from '#/environment/environmentDefaults';
 import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding, type EnvironmentLease } from '#/environment/environment';
@@ -75,7 +69,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
   private readonly changeEmitter = new Emitter<EnvironmentBinding>();
   readonly onDidChange = this.changeEmitter.event;
   private readonly restoreHook: IDisposable;
-  private readonly undoParticipant: IDisposable;
   private readonly visitedViews = new Set<string>();
 
   constructor(
@@ -86,11 +79,8 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     @ISessionWorkspaceContext private readonly workspaceContext: ISessionWorkspaceContext,
     @IEnvironmentService private readonly resolver: EnvironmentResolver,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @ref(IAgentLoopService) private readonly loop: LiveRef<IAgentLoopService>,
     @IAgentReminderService private readonly reminder: IAgentReminderService,
-    @IEnvironmentDeclarationService private readonly environmentDeclarations: IEnvironmentDeclarationService,
     @ILogService private readonly log: ILogService,
-    @IAgentConversationUndoParticipantRegistry undoParticipants: IAgentConversationUndoParticipantRegistry,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {
     this.state.contributeState(agentEnvironmentBindingKey);
@@ -118,11 +108,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
       this.markProjectContextVisited(this.current);
       await next();
     });
-    const participant: AgentConversationUndoParticipant = {
-      id: 'agent-environment-binding',
-      reconcileAfterUndo: () => this.reconcileAfterUndo(),
-    };
-    this.undoParticipant = undoParticipants.register(participant);
   }
 
   private isSeedRoundTrip(binding: EnvironmentBinding): boolean {
@@ -134,30 +119,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     );
   }
 
-  private assertNotInPlanMode(): void {
-    if (!this.state.has(planKey) || !this.state.get(planKey).active) return;
-    throw new EnvironmentError(
-      'environment.conflict',
-      'cannot switch environment while plan mode is active; exit plan mode first',
-    );
-  }
-
-  private assertSwitchAllowed(): void {
-    const busy = this.loop.current?.snapshot().turn?.activeToolCalls.length ?? 0;
-    if (busy > 0) {
-      throw new EnvironmentError(
-        'environment.conflict',
-        `cannot switch environment while ${busy} tool call(s) are executing or pending approval; retry at the next turn boundary`,
-      );
-    }
-  }
-
-  private foreignInFlightToolCallCount(): number {
-    const activeToolCalls = this.loop.current?.snapshot().turn?.activeToolCalls ?? [];
-    const self = activeToolCalls.some((call) => call.name === CHANGE_ENVIRONMENT_TOOL_NAME) ? 1 : 0;
-    return activeToolCalls.length - self;
-  }
-
   private applySessionWorkDir(binding: EnvironmentBinding): void {
     if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
     this.workspaceContext.setWorkDir(binding.cwd ?? this.session.cwd);
@@ -167,43 +128,11 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     return this.state.get(agentEnvironmentBindingKey);
   }
 
-  set(binding: EnvironmentBinding): EnvironmentBinding {
-    this.assertNotInPlanMode();
-    this.assertSwitchAllowed();
+  bind(environmentId: string, cwd?: string): EnvironmentBinding {
+    const binding: EnvironmentBinding = { environmentId, cwd };
     const lease = this.resolver.acquire(binding, []);
     lease.dispose();
     return this.commit(binding);
-  }
-
-  async connectAndSwitch(environmentId: string, cwd?: string): Promise<EnvironmentBinding> {
-    const binding: EnvironmentBinding = { environmentId, cwd };
-    this.assertNotInPlanMode();
-    this.assertSwitchAllowed();
-    await this.prepareSwitch(binding);
-    return this.commit(binding);
-  }
-
-  async connectAndSwitchInTurn(environmentId: string, cwd?: string): Promise<EnvironmentBinding> {
-    const binding: EnvironmentBinding = { environmentId, cwd };
-    this.assertNotInPlanMode();
-    const foreign = this.foreignInFlightToolCallCount();
-    if (foreign > 0) {
-      throw new EnvironmentError(
-        'environment.conflict',
-        `cannot switch environment while ${foreign} other tool call(s) are in flight; retry when no other calls are running`,
-      );
-    }
-    await this.prepareSwitch(binding);
-    return this.commit(binding);
-  }
-
-  private async prepareSwitch(binding: EnvironmentBinding): Promise<void> {
-    if (binding.environmentId !== LOCAL_ENVIRONMENT_ID && binding.cwd === undefined) {
-      throw new EnvironmentError('environment.invalid_cwd', `binding environment ${binding.environmentId} requires a cwd`);
-    }
-    await this.environmentDeclarations.ensureConnected(binding.environmentId);
-    if (binding.environmentId === LOCAL_ENVIRONMENT_ID || binding.cwd === undefined) return;
-    await this.environmentDeclarations.assertCwdUsable(binding.environmentId, binding.cwd);
   }
 
   private commit(binding: EnvironmentBinding): EnvironmentBinding {
@@ -244,23 +173,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     } catch {
       return true;
     }
-  }
-
-  private async reconcileAfterUndo(): Promise<void> {
-    const target = this.state.get(environmentBindingKey) ?? this.seed.binding;
-    const previous = this.current;
-    if (
-      target.environmentId === previous.environmentId &&
-      target.cwd === previous.cwd
-    ) {
-      return;
-    }
-    this.state.set(agentEnvironmentBindingKey, target);
-    this.applySessionWorkDir(target);
-    if (this.machineIdentityChanged(previous, target)) {
-      this.emitEnvironmentReminder(target);
-    }
-    this.changeEmitter.fire(target);
   }
 
   private emitEnvironmentReminder(binding: EnvironmentBinding): void {
@@ -322,12 +234,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     }
   }
 
-  switch(environmentId: string, cwd?: string): EnvironmentBinding {
-    return this.set({ environmentId, cwd });
-  }
-
   dispose(): void {
-    this.undoParticipant.dispose();
     this.restoreHook.dispose();
     this.changeEmitter.dispose();
   }

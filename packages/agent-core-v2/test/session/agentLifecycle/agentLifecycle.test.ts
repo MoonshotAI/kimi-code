@@ -1441,15 +1441,15 @@ describe('AgentLifecycleService', () => {
     const svc = ix.get(IAgentLifecycleService);
     const source = await svc.create({ agentId: 'main' });
     const sourceEnvironment = svc.handleOf('main')!.accessor.get(IAgentEnvironmentBindingService);
-    sourceEnvironment.switch('remote');
+    sourceEnvironment.bind('remote');
 
     const child = await svc.fork(source, { agentId: 'forked-environment' });
     const childEnvironment = svc.handleOf(child.agentId)!.accessor.get(IAgentEnvironmentBindingService);
     expect(childEnvironment.current.environmentId).toBe('remote');
 
-    sourceEnvironment.switch('local');
+    sourceEnvironment.bind('local');
     expect(childEnvironment.current.environmentId).toBe('remote');
-    childEnvironment.switch('local');
+    childEnvironment.bind('local');
     expect(sourceEnvironment.current.environmentId).toBe('local');
   });
 

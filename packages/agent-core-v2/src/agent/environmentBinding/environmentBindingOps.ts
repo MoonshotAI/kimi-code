@@ -26,5 +26,4 @@ export const environmentBindingKey = defineState(
   'environmentBinding',
   (): EnvironmentBinding | undefined => undefined,
 ).replayable({ schema: z.custom<EnvironmentBinding | undefined>() })
-  .undoable()
   .on(EnvironmentSetBinding, (_s, e) => ({ environmentId: e.environmentId, cwd: e.cwd }));

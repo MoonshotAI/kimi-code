@@ -6,10 +6,7 @@ export interface IAgentEnvironmentBindingService {
   readonly _serviceBrand: undefined;
   readonly current: EnvironmentBinding;
   readonly onDidChange: Event<EnvironmentBinding>;
-  set(binding: EnvironmentBinding): EnvironmentBinding;
-  switch(environmentId: string, cwd?: string): EnvironmentBinding;
-  connectAndSwitch(environmentId: string, cwd?: string): Promise<EnvironmentBinding>;
-  connectAndSwitchInTurn(environmentId: string, cwd?: string): Promise<EnvironmentBinding>;
+  bind(environmentId: string, cwd?: string): EnvironmentBinding;
 }
 
 export const IAgentEnvironmentBindingService: ServiceIdentifier<IAgentEnvironmentBindingService> = createDecorator<IAgentEnvironmentBindingService>('agentEnvironmentBindingService');
