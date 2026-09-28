@@ -11,6 +11,7 @@ export type AgentOpened = {
   readonly agentId: string;
   readonly branch: string;
   readonly features?: readonly string[];
+  readonly source?: string;
 };
 
 export type AgentClosed = {
@@ -50,6 +51,7 @@ export function decodeSession(record: RecordEvent): SessionEvent | undefined {
 export interface RosterEntry {
   readonly branch: string;
   readonly features?: readonly string[];
+  readonly source?: string;
 }
 
 export interface SessionLogState {
@@ -69,7 +71,7 @@ export function session<C>(): Projection<SessionLogState, RecordEvent, C> {
           roster: {
             agents: {
               ...state.roster.agents,
-              [event.agentId]: { branch: event.branch, features: event.features },
+              [event.agentId]: { branch: event.branch, features: event.features, source: event.source },
             },
           },
         };
@@ -83,6 +85,7 @@ export function session<C>(): Projection<SessionLogState, RecordEvent, C> {
               [event.agentId]: {
                 branch: event.branch,
                 features: state.roster.agents[event.agentId]?.features,
+                source: state.roster.agents[event.agentId]?.source,
               },
             },
           },
@@ -148,8 +151,8 @@ export interface SessionStores {
   readonly session: SessionStore;
   get(agentId: string): AgentStore | undefined;
   branch(agentId: string): string | undefined;
-  open(agentId: string, opts?: { from?: BranchRef; features?: readonly string[] }): Promise<AgentStore>;
-  fork(sourceId: string, agentId: string): Promise<AgentStore>;
+  open(agentId: string, opts?: { from?: BranchRef; features?: readonly string[]; source?: string }): Promise<AgentStore>;
+  fork(sourceId: string, agentId: string, opts?: { source?: string }): Promise<AgentStore>;
   close(agentId: string): Promise<void>;
   undo(agentId: string, turns: number): Promise<{ branchId: string }>;
   switchBranch(
@@ -170,7 +173,7 @@ export async function openSessionStores(tree: Tree, blobs: Blobs): Promise<Sessi
 
   const open = async (
     agentId: string,
-    opts?: { from?: BranchRef; features?: readonly string[] },
+    opts?: { from?: BranchRef; features?: readonly string[]; source?: string },
   ): Promise<AgentStore> => {
     const existing = agents.get(agentId);
     if (existing !== undefined) {
@@ -197,6 +200,7 @@ export async function openSessionStores(tree: Tree, blobs: Blobs): Promise<Sessi
         agentId,
         branch: branch.name,
         features: opts?.features,
+        source: opts?.source,
       });
     }
     return store;
@@ -209,7 +213,7 @@ export async function openSessionStores(tree: Tree, blobs: Blobs): Promise<Sessi
     get: (agentId) => agents.get(agentId)?.store,
     branch: (agentId) => agents.get(agentId)?.journal.branch,
     open,
-    fork: async (sourceId, agentId) => {
+    fork: async (sourceId, agentId, opts) => {
       const source = agents.get(sourceId);
       if (source === undefined) {
         throw new StoreError('unknown-agent', `unknown agent '${sourceId}'`);
@@ -219,6 +223,7 @@ export async function openSessionStores(tree: Tree, blobs: Blobs): Promise<Sessi
       return open(agentId, {
         from: head === null ? undefined : { branch: sourceBranch.name, seq: head },
         features: session.getState().roster.agents[sourceId]?.features,
+        source: opts?.source,
       });
     },
     close: async (agentId) => {
