@@ -107,8 +107,13 @@ export class TrustPromptComponent implements Component, Focusable {
   }
 
   private renderDisclosure(width: number): string[] {
-    const { gatedMcpServers, gatedAdditionalDirs, instructionSources, disclosureComplete } =
-      this.opts.info;
+    const {
+      gatedMcpServers,
+      gatedAdditionalDirs,
+      disabledUserMcpServers,
+      instructionSources,
+      disclosureComplete,
+    } = this.opts.info;
     const lines: string[] = [];
     const wrap = (text: string, indent: number): string[] =>
       wrapTextWithAnsi(text, Math.max(20, width - indent)).map(
@@ -118,6 +123,7 @@ export class TrustPromptComponent implements Component, Focusable {
     const hasContent =
       gatedMcpServers.length > 0 ||
       gatedAdditionalDirs.length > 0 ||
+      disabledUserMcpServers.length > 0 ||
       instructionSources.agentsMdPaths.length > 0 ||
       instructionSources.skills.length > 0 ||
       instructionSources.agentProfiles.length > 0;
@@ -148,6 +154,22 @@ export class TrustPromptComponent implements Component, Focusable {
       }
       if (gatedMcpServers.length > MAX_MCP_SERVERS) {
         lines.push(...wrap(`…and ${gatedMcpServers.length - MAX_MCP_SERVERS} more`, 3));
+      }
+    }
+
+    if (disabledUserMcpServers.length > 0) {
+      lines.push('');
+      lines.push(
+        ...wrap(
+          `Turn off ${disabledUserMcpServers.length} user-level MCP ${disabledUserMcpServers.length === 1 ? 'server' : 'servers'} (disabled by project config):`,
+          1,
+        ),
+      );
+      for (const name of disabledUserMcpServers.slice(0, MAX_MCP_SERVERS)) {
+        lines.push(...wrap(sanitizeForDisplay(name), 3));
+      }
+      if (disabledUserMcpServers.length > MAX_MCP_SERVERS) {
+        lines.push(...wrap(`…and ${disabledUserMcpServers.length - MAX_MCP_SERVERS} more`, 3));
       }
     }
 

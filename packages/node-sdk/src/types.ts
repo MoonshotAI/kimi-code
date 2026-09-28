@@ -174,6 +174,8 @@ export interface WorkspaceTrustInfo {
   readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
   /** Resolved directories outside the project that trusting grants access to. */
   readonly gatedAdditionalDirs: readonly string[];
+  /** User-level MCP servers that trusting would turn off (shadowed by a disabled project entry). */
+  readonly disabledUserMcpServers: readonly string[];
   readonly instructionSources: WorkspaceTrustInstructionSources;
   /**
    * False when any disclosure section failed or was still discovering after

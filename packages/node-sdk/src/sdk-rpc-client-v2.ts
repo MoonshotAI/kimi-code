@@ -711,6 +711,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         trusted: true,
         gatedMcpServers: [],
         gatedAdditionalDirs: [],
+        disabledUserMcpServers: [],
         instructionSources: EMPTY_INSTRUCTION_SOURCES,
         disclosureComplete: true,
       };
@@ -720,7 +721,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const [mcp, dirs, instructions] = await Promise.all([
       describeGatedMcpServers(fs, workDir, this.homeDir)
         .then((v) => ({ complete: true, v }))
-        .catch(() => ({ complete: false, v: [] as readonly WorkspaceTrustMcpServerInfo[] })),
+        .catch(() => ({
+          complete: false,
+          v: { servers: [] as readonly WorkspaceTrustMcpServerInfo[], disabledUserServers: [] as readonly string[] },
+        })),
       readGatedAdditionalDirs(fs, bootstrap, workDir)
         .then((v) => ({ complete: true, v }))
         .catch(() => ({ complete: false, v: [] as readonly string[] })),
@@ -730,8 +734,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     ]);
     return {
       trusted: false,
-      gatedMcpServers: mcp.v,
+      gatedMcpServers: mcp.v.servers,
       gatedAdditionalDirs: dirs.v,
+      disabledUserMcpServers: mcp.v.disabledUserServers,
       instructionSources: instructions.v,
       disclosureComplete: mcp.complete && dirs.complete && instructions.complete,
     };
@@ -2894,21 +2899,42 @@ const EMPTY_INSTRUCTION_SOURCES: WorkspaceTrustInstructionSources = {
   agentProfiles: [],
 };
 
+interface GatedMcpServers {
+  readonly servers: readonly WorkspaceTrustMcpServerInfo[];
+  readonly disabledUserServers: readonly string[];
+}
+
 async function describeGatedMcpServers(
   fs: IHostFileSystem,
   workDir: string,
   homeDir: string | undefined,
-): Promise<readonly WorkspaceTrustMcpServerInfo[]> {
-  const [paths, loaded] = await Promise.all([
+): Promise<GatedMcpServers> {
+  const [paths, projectLoad, userLoad] = await Promise.all([
     resolveMcpJsonPaths({ fs, cwd: workDir, homeDir }),
     loadMcpServersDetailed({ fs, cwd: workDir, homeDir, includeProject: true }),
+    loadMcpServersDetailed({ fs, cwd: workDir, homeDir, includeProject: false }),
   ]);
   const projectPaths = new Set([paths.projectRoot, paths.project]);
-  return Object.entries(loaded.servers)
-    .filter(([name]) => projectPaths.has(loaded.origins[name] ?? ''))
-    .filter(([, config]) => config.enabled !== false)
-    .map(([name, config]) => describeWorkspaceMcpServer(name, config, loaded.origins[name] ?? ''))
-    .toSorted((a, b) => a.name.localeCompare(b.name));
+  const enabledUserNames = new Set(
+    Object.entries(userLoad.servers)
+      .filter(([, config]) => config.enabled !== false)
+      .map(([name]) => name),
+  );
+  const servers: WorkspaceTrustMcpServerInfo[] = [];
+  const disabledUserServers: string[] = [];
+  for (const [name, config] of Object.entries(projectLoad.servers)) {
+    if (!projectPaths.has(projectLoad.origins[name] ?? '')) continue;
+    if (config.enabled === false) {
+      // A disabled project entry activates nothing by itself, but when it
+      // shadows an enabled user-level server, trusting turns that server off.
+      if (enabledUserNames.has(name)) disabledUserServers.push(name);
+      continue;
+    }
+    servers.push(describeWorkspaceMcpServer(name, config, projectLoad.origins[name] ?? ''));
+  }
+  servers.sort((a, b) => a.name.localeCompare(b.name));
+  disabledUserServers.sort();
+  return { servers, disabledUserServers };
 }
 
 async function readGatedAdditionalDirs(
@@ -2935,13 +2961,15 @@ async function describeInstructionSources(
   // The trust prompt is a startup gate: never block it on slow discovery.
   // After the budget, read whatever the loaders have so far (possibly empty)
   // and report the disclosure as incomplete.
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const complete = await Promise.race([
     Promise.all([program.skills.ready, program.agentProfiles.ready, program.instructions.ready])
       .then(() => true),
-    new Promise<boolean>((resolve) =>
-      setTimeout(() => resolve(false), INSTRUCTION_DISCOVERY_TIMEOUT_MS),
-    ),
+    new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(false), INSTRUCTION_DISCOVERY_TIMEOUT_MS);
+    }),
   ]);
+  clearTimeout(timer);
   const skills = program.skills.catalog
     .listSkills()
     .filter((skill) => skill.source === 'project')

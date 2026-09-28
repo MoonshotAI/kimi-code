@@ -15,6 +15,7 @@ function makeInfo(overrides: Partial<WorkspaceTrustInfo> = {}): WorkspaceTrustIn
     trusted: false,
     gatedMcpServers: [],
     gatedAdditionalDirs: [],
+    disabledUserMcpServers: [],
     instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
     disclosureComplete: true,
     ...overrides,
@@ -90,6 +91,14 @@ describe('TrustPromptComponent', () => {
     expect(text).toContain('root-server (http): url=https://example.test/mcp');
     expect(text).toContain('header keys: Authorization · bearer token from env MCP_TOKEN');
     expect(text).toContain('from .kimi-code/mcp.json');
+  });
+
+  it('lists user-level MCP servers that trusting would turn off', () => {
+    const lines = renderLines(makeInfo({ disabledUserMcpServers: ['github', 'ci-runner'] }));
+    const text = lines.join('\n');
+    expect(text).toContain('Turn off 2 user-level MCP servers (disabled by project config)');
+    expect(text).toContain('github');
+    expect(text).toContain('ci-runner');
   });
 
   it('lists additional directories outside the project', () => {

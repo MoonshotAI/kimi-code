@@ -210,7 +210,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
     getExperimentalFeatures: vi.fn(async () => []),
-    getWorkspaceTrustInfo: vi.fn(async () => ({ trusted: true, gatedMcpServers: [], gatedAdditionalDirs: [], instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] }, disclosureComplete: true })),
+    getWorkspaceTrustInfo: vi.fn(async () => ({ trusted: true, gatedMcpServers: [], gatedAdditionalDirs: [], disabledUserMcpServers: [], instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] }, disclosureComplete: true })),
     supportsAtomicSectionReplace: vi.fn(() => false),
     auth: {
       status: vi.fn(async () => ({ providers: [] })),
@@ -2428,7 +2428,7 @@ describe('KimiTUI startup', () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: true,
       gatedMcpServers: [],
-      gatedAdditionalDirs: [],
+      gatedAdditionalDirs: [], disabledUserMcpServers: [],
       instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] }, disclosureComplete: true,
       }));
     const harness = makeHarness(makeSession(), { getWorkspaceTrustInfo });
@@ -2459,7 +2459,7 @@ describe('KimiTUI startup', () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: false,
       gatedMcpServers: [],
-      gatedAdditionalDirs: [],
+      gatedAdditionalDirs: [], disabledUserMcpServers: [],
       instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] }, disclosureComplete: true,
       }));
     const trustWorkspace = vi.fn(async () => {});
@@ -2533,7 +2533,7 @@ describe('KimiTUI startup', () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: false,
       gatedMcpServers: [],
-      gatedAdditionalDirs: [],
+      gatedAdditionalDirs: [], disabledUserMcpServers: [],
       instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] }, disclosureComplete: true,
       }));
     const trustWorkspace = vi.fn(async (): Promise<void> => {

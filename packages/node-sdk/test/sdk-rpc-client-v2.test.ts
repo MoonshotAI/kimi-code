@@ -1613,6 +1613,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
         trusted: false,
         gatedMcpServers: [],
         gatedAdditionalDirs: [],
+        disabledUserMcpServers: [],
         instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
         disclosureComplete: false,
       });
@@ -1660,6 +1661,44 @@ describe('SDKRpcClientV2 workspace trust', () => {
     }
   });
 
+  it('discloses disabled project entries that shadow enabled user servers', async () => {
+    const { harness, homeDir } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    await writeFile(
+      join(homeDir, 'mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          github: { command: 'user-github' },
+          idle: { command: 'user-idle', enabled: false },
+        },
+      }),
+      'utf-8',
+    );
+    await writeFile(
+      join(workDir, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          github: { command: 'project-github', enabled: false },
+          idle: { command: 'project-idle', enabled: false },
+          gone: { command: 'project-gone', enabled: false },
+        },
+      }),
+      'utf-8',
+    );
+    try {
+      const info = await harness.getWorkspaceTrustInfo(workDir);
+      expect(info.trusted).toBe(false);
+      // Disabled project entries activate nothing by themselves…
+      expect(info.gatedMcpServers).toEqual([]);
+      // …but shadowing an enabled user server turns it off on trust. The
+      // already-disabled `idle` and the userless `gone` change nothing.
+      expect(info.disabledUserMcpServers).toEqual(['github']);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('trustWorkspace flips the state and persists the marker in the kimi home', async () => {
     const { harness, homeDir } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
@@ -1670,6 +1709,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
         trusted: true,
         gatedMcpServers: [],
         gatedAdditionalDirs: [],
+        disabledUserMcpServers: [],
         instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
         disclosureComplete: true,
       });
