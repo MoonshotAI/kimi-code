@@ -195,11 +195,13 @@ export function createCompactionController(deps: CompactionControllerDeps): Comp
   };
 
   const subscriptions: Subscription[] = [
-    deps.agent.on('turn.done', () => {
-      overflowAttempts = 0;
-    }),
-    deps.agent.on('turn.failed', (event) => {
-      const error = event.failure.reason === 'error' ? event.failure.error : undefined;
+    deps.agent.on('turn.done', (event) => {
+      if (event.outcome.type === 'done') {
+        overflowAttempts = 0;
+        return;
+      }
+      if (event.outcome.type !== 'failed') return;
+      const error = event.outcome.failure.reason === 'error' ? event.outcome.failure.error : undefined;
       if (!isContextOverflowError(error) || overflowAttempts >= maxAutoAttempts) {
         return;
       }

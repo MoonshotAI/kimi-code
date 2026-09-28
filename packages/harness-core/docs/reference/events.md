@@ -75,9 +75,7 @@ session.on(interaction, 'interaction.requested', (event) => {
 | `turn.spawn_tools` | `toolCalls` |
 | `turn.drained` | `messages`：本步 drain 进 history 的 notify / reminder |
 | `turn.aborting` | 已发 abort，还在等 turn 收尾 |
-| `turn.done` | `messages`（整段 history）/ `branchId` |
-| `turn.failed` | `failure: TurnFailure`（`max_steps` 或 `{ reason: 'error', error }`） |
-| `turn.aborted` | 用户 / scope abort |
+| `turn.done` | `turnId` / `outcome: TurnOutcome`（`done`，或 `failed` 带 `failure: TurnFailure`——`max_steps` 或 `{ reason: 'error', error }`，或 `aborted`）/ `messages`（整段 history）/ `branchId` |
 | `prompt.blocked` | `reason: 'gate' \| 'error'` |
 | `prompt.submitted` | `entry`，`submit` 的接收回执 |
 | `prompt.notified` | `entry`，`notify` 的接收回执 |
@@ -88,7 +86,7 @@ session.on(interaction, 'interaction.requested', (event) => {
 | `agent.aborted` | `abort` 的接收回执；idle / 已在 aborting 也发 |
 | `agent.failed` | 机器级失败 |
 
-`agent.on('turn.done'|'turn.failed'|'turn.aborted')` 会等到 journal 这次写入链结束。
+`agent.on('turn.done')` 会等到 journal 这次写入链结束。
 
 ### LLM
 

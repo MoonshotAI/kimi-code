@@ -5,6 +5,7 @@ import {
   createUserMessage,
   extractText,
   type AgentCommands,
+  type AgentEmitted,
   type AgentHandle,
   type AssistantMeta,
   type HistoryMessage,
@@ -72,6 +73,22 @@ interface LaunchedSubagent {
   readonly historyBefore: number;
 }
 
+export const SPAWN_SOURCE_PREFIX = 'spawn:';
+
+export function spawnSource(parentAgentId: string, profileName: string): string {
+  return `${SPAWN_SOURCE_PREFIX}${parentAgentId}:${profileName}`;
+}
+
+export function parseSpawnSource(
+  source: string | undefined,
+): { readonly parentAgentId: string; readonly profileName: string } | undefined {
+  if (source === undefined || !source.startsWith(SPAWN_SOURCE_PREFIX)) return undefined;
+  const rest = source.slice(SPAWN_SOURCE_PREFIX.length);
+  const sep = rest.indexOf(':');
+  if (sep <= 0 || sep === rest.length - 1) return undefined;
+  return { parentAgentId: rest.slice(0, sep), profileName: rest.slice(sep + 1) };
+}
+
 export function createSpawnTool(deps: SpawnToolDeps): ToolDefinition {
   const { catalog, models, registry, session, agent, fire, forkEnabled } = deps;
   const callerAgentId = agent.agentId;
@@ -79,27 +96,35 @@ export function createSpawnTool(deps: SpawnToolDeps): ToolDefinition {
   const historyLength = (agentId: string): number =>
     session.stores.get(agentId)?.getState().history.length ?? 0;
 
-  const resume = (resumeAgentId: string, prompt: string): LaunchedSubagent | string => {
-    const record = registry.get(resumeAgentId);
-    const live = session.get(resumeAgentId);
-    if (record === undefined) {
-      if (live === undefined) {
-        return `Agent instance "${resumeAgentId}" does not exist or is not running in this process. Resume only works for live subagents of the current process; persisted agents cannot be reopened yet.`;
-      }
-      return `Agent instance "${resumeAgentId}" is not a subagent.`;
+  const resume = async (resumeAgentId: string, prompt: string): Promise<LaunchedSubagent | string> => {
+    const identity = parseSpawnSource(session.stores.session.getState().roster.agents[resumeAgentId]?.source);
+    if (identity === undefined) {
+      return `Agent instance "${resumeAgentId}" does not exist or is not a subagent.`;
     }
-    if (record.parentAgentId !== callerAgentId) {
+    if (identity.parentAgentId !== callerAgentId) {
       return `Agent instance "${resumeAgentId}" does not belong to this parent agent.`;
     }
-    if (live === undefined) {
-      return `Agent instance "${resumeAgentId}" is no longer running in this process. Persisted subagents cannot be reopened yet; start a new subagent instead.`;
-    }
+    const record = registry.get(resumeAgentId) ?? {
+      parentAgentId: identity.parentAgentId,
+      profileName: identity.profileName,
+      running: false,
+    };
     if (record.running) {
       return `Agent instance "${resumeAgentId}" is already running and cannot run concurrently.`;
     }
     record.running = true;
+    registry.set(resumeAgentId, record);
+    let target = session.get(resumeAgentId);
+    if (target === undefined) {
+      try {
+        target = await session.create({ agentId: resumeAgentId });
+      } catch (error) {
+        record.running = false;
+        return `Agent instance "${resumeAgentId}" could not be reopened: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    }
     return {
-      target: live,
+      target,
       agentId: resumeAgentId,
       profileName: record.profileName,
       promptText: prompt,
@@ -130,22 +155,27 @@ export function createSpawnTool(deps: SpawnToolDeps): ToolDefinition {
     );
     if (!plan.ok) return plan.error;
     const agentId = `subagent-${randomUUID().slice(0, 8)}`;
+    const source = spawnSource(callerAgentId, plan.profileName);
     const target = plan.fork
-      ? await session.fork(callerAgentId, { agentId })
+      ? await session.fork(callerAgentId, { agentId, source })
       : await session.create({
           agentId,
           systemPrompt: plan.profile?.systemPrompt({ callerAgentId }),
+          source,
         });
     if (plan.fork) {
       target.remind(FORK_REMIND_KEY, createUserMessage(FORK_CONTEXT_NOTICE));
     }
-    if (plan.model.kind === 'explicit') {
-      const callerConfig = agent.config;
-      if (callerConfig === undefined) {
+    const callerConfig = agent.config;
+    if (callerConfig === undefined) {
+      if (plan.model.kind === 'explicit') {
         await session.close(agentId).catch(() => {});
         return MODEL_NOT_CONFIGURED_MESSAGE;
       }
-      target.setConfig({ ...callerConfig, model: plan.model.model });
+    } else {
+      target.setConfig(
+        plan.model.kind === 'explicit' ? { ...callerConfig, model: plan.model.model } : callerConfig,
+      );
     }
     registry.set(agentId, {
       parentAgentId: callerAgentId,
@@ -294,47 +324,61 @@ async function runAndWait(
 ): Promise<RunOutcome> {
   if (signal.aborted) return { type: 'aborted', reason: signal.reason };
   const promptId = `spawn-${randomUUID()}`;
-  let started = false;
-  let resolveTerminal!: (outcome: RunOutcome) => void;
-  const terminal = new Promise<RunOutcome>((resolve) => {
-    resolveTerminal = resolve;
-  });
-  const cleanup = (): void => {
-    for (const subscription of subscriptions) subscription.unsubscribe();
-    signal.removeEventListener('abort', onAbort);
-  };
-  const finish = (outcome: RunOutcome): void => {
-    cleanup();
-    resolveTerminal(outcome);
-  };
-  const onAbort = (): void => {
-    if (started) target.abort(signal.reason);
-    else target.cancel(promptId);
-    finish({ type: 'aborted', reason: signal.reason });
-  };
-  const subscriptions = [
-    target.on('turn.started', (event) => {
-      if (event.queueItemId === promptId) started = true;
-    }),
-    target.on('turn.done', () => {
-      if (started) finish({ type: 'done' });
-    }),
-    target.on('turn.failed', (event) => {
-      if (started) finish({ type: 'failed', failure: event.failure });
-    }),
-    target.on('turn.aborted', () => {
-      if (started) finish({ type: 'aborted' });
-    }),
-  ];
+  const scope = new AbortController();
+  const onAbort = (): void => scope.abort();
   signal.addEventListener('abort', onAbort, { once: true });
   try {
+    const started = waitAgentEvent(target, 'turn.started', (event) => event.queueItemId === promptId, scope.signal);
+    void started.catch(() => {});
     const accepted = target.submit(createUserMessage(prompt), { promptId, origin: { kind: 'subagent' } });
     if (accepted === undefined) throw new Error('agent is not running');
-  } catch (error) {
-    cleanup();
-    throw error;
+    let turnId: number;
+    try {
+      turnId = (await started).turnId;
+    } catch {
+      target.cancel(promptId);
+      return { type: 'aborted', reason: signal.reason };
+    }
+    try {
+      return await waitAgentEvent(target, 'turn.done', (event) => event.turnId === turnId, scope.signal).then(
+        (event): RunOutcome => event.outcome,
+      );
+    } catch {
+      target.abort(signal.reason);
+      return { type: 'aborted', reason: signal.reason };
+    }
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+    scope.abort();
   }
-  return terminal;
+}
+
+function waitAgentEvent<T extends AgentEmitted['type']>(
+  target: AgentHandle,
+  type: T,
+  match: (event: Extract<AgentEmitted, { type: T }>) => boolean,
+  signal: AbortSignal,
+): Promise<Extract<AgentEmitted, { type: T }>> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new Error('aborted'));
+      return;
+    }
+    const cleanup = (): void => {
+      subscription.unsubscribe();
+      signal.removeEventListener('abort', onAbort);
+    };
+    const onAbort = (): void => {
+      cleanup();
+      reject(new Error('aborted'));
+    };
+    const subscription = target.on(type, (event) => {
+      if (!match(event)) return;
+      cleanup();
+      resolve(event);
+    });
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 function latestAssistantText(messages: readonly HistoryMessage[]): string {

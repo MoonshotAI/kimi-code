@@ -268,7 +268,10 @@ describe('feature DSL', () => {
     failing.setConfig({ model });
     failing.setRequester(requester);
     const failed = new Promise<unknown>((resolve) => {
-      failing.on('turn.failed', (event) => resolve(event.failure.reason === 'error' ? event.failure.error : undefined));
+      failing.on('turn.done', (event) => {
+        const outcome = event.outcome;
+        resolve(outcome.type === 'failed' && outcome.failure.reason === 'error' ? outcome.failure.error : undefined);
+      });
     });
     failing.submit(createUserMessage('fail'));
     await expect(failed).resolves.toBe(stepError);

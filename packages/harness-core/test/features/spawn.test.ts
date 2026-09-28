@@ -440,9 +440,75 @@ describe('spawn tool', () => {
     await third;
     await env.stores.flush();
     const afterResume = toolResults(env.stores, MAIN_AGENT_ID);
-    expect(afterResume[2]).toContain('"subagent-missing" does not exist or is not running in this process');
+    expect(afterResume[2]).toContain('"subagent-missing" does not exist or is not a subagent');
 
     await app.disposeAsync();
     await env.stores.dispose();
+  });
+
+  it('inherits the caller model when the tool call omits model', async () => {
+    const { app, env, main, session, spawn } = await startApp({ models: [fastModel] });
+    main.setConfig({ model: fastModel.model });
+    const spawnedEvents: SubagentSpawnedEvent[] = [];
+    session.on(spawn, 'subagent.spawned', (event) => {
+      spawnedEvents.push(event);
+    });
+    const done = nextTurnDone(main);
+    main.submit(createUserMessage(agentCall({ prompt: 'SUB:inherit', description: 'inherit model' })));
+    await done;
+    const agentId = spawnedEvents[0]!.agentId;
+    expect(session.get(agentId)?.config?.model.model).toBe('fast-model');
+
+    await app.disposeAsync();
+    await env.stores.dispose();
+  });
+
+  it('resumes a non-live subagent by reopening it from the persisted roster', async () => {
+    const backend = new MemoryBackend();
+    const openStores = async (): Promise<SessionStores> => {
+      const trees = await Trees.open(backend.trees, {});
+      const tree = await trees.tree('sess');
+      return openSessionStores(tree, openBlobs(backend.blobs));
+    };
+    const { requester } = createMockRequester(script);
+    const spawn = createSpawn();
+    const features: FeatureSpec[] = [spawn, bindTestLlm(requester)];
+
+    const firstStores = await openStores();
+    const firstApp = mountApp({ features });
+    const firstSession = await firstApp.create({ sessionId: 'sess', stores: firstStores });
+    const firstMain = await firstSession.create({ agentId: MAIN_AGENT_ID, systemPrompt: 'main-host' });
+    const spawnedEvents: SubagentSpawnedEvent[] = [];
+    firstSession.on(spawn, 'subagent.spawned', (event) => {
+      spawnedEvents.push(event);
+    });
+    const firstTurn = nextTurnDone(firstMain);
+    firstMain.submit(createUserMessage(agentCall({ prompt: 'SUB:first task', description: 'first task' })));
+    await firstTurn;
+    const agentId = spawnedEvents[0]!.agentId;
+    expect(firstStores.session.getState().roster.agents[agentId]?.source).toBe(`spawn:${MAIN_AGENT_ID}:coder`);
+    await firstApp.disposeAsync();
+    await firstStores.flush();
+    await firstStores.dispose();
+
+    const secondStores = await openStores();
+    const secondApp = mountApp({ features });
+    const secondSession = await secondApp.create({ sessionId: 'sess', stores: secondStores });
+    const secondMain = await secondSession.create({ agentId: MAIN_AGENT_ID, systemPrompt: 'main-host' });
+    expect(secondSession.get(agentId)).toBeUndefined();
+    const secondTurn = nextTurnDone(secondMain);
+    secondMain.submit(
+      createUserMessage(agentCall({ resume: agentId, prompt: 'SUB:follow up', description: 'follow up' })),
+    );
+    await secondTurn;
+    await secondStores.flush();
+
+    expect(userTexts(secondStores, agentId)).toEqual(['SUB:first task', 'SUB:follow up']);
+    const results = toolResults(secondStores, MAIN_AGENT_ID);
+    expect(results.at(-1)).toContain('status: completed');
+    expect(results.at(-1)).toContain('echo:follow up');
+
+    await secondApp.disposeAsync();
+    await secondStores.dispose();
   });
 });

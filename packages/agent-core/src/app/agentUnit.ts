@@ -112,23 +112,19 @@ function bindAgentLog(actor: AgentActor, store: AgentStore): { settled(): Promis
     if (context.activeTurnId !== undefined) activeTurnId = context.activeTurnId;
     write({ type: 'turn.started', turnId: activeTurnId, queueItemId: context.drainedId });
   });
-  const writeOutcome = (outcome: 'done' | 'failed' | 'aborted', error?: unknown): void => {
+  actor.on('turn.done', (event) => {
+    const outcome = event.outcome;
     persistMessages(actor.getSnapshot().context.messages);
     write({
       type: 'turn.ended',
       turnId: activeTurnId,
-      outcome,
-      errorMessage: outcome === 'failed' ? String(error) : undefined,
+      outcome: outcome.type,
+      errorMessage:
+        outcome.type === 'failed'
+          ? String(outcome.failure.reason === 'max_steps' ? outcome.failure.message : outcome.failure.error)
+          : undefined,
     });
-  };
-  actor.on('turn.done', () => writeOutcome('done'));
-  actor.on('turn.failed', (event) =>
-    writeOutcome(
-      'failed',
-      event.failure.reason === 'max_steps' ? event.failure.message : event.failure.error,
-    ),
-  );
-  actor.on('turn.aborted', () => writeOutcome('aborted'));
+  });
   return { settled: () => chain };
 }
 
@@ -258,7 +254,7 @@ export const AgentUnit = createUnit<AgentUnitProps>('agent', (props) => {
     continue: () => acceptEmitted(actor, node, 'agent.continued', () => send({ type: 'input.continue' })),
     on: (type, handler) => {
       const subscription = actor.on(type, (event) => {
-        if (type === 'turn.done' || type === 'turn.failed' || type === 'turn.aborted') {
+        if (type === 'turn.done') {
           void log.settled().then(() => handler(event as Parameters<typeof handler>[0]));
           return;
         }

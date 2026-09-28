@@ -89,7 +89,7 @@ turn 内部一步是「LLM →（可选）工具 → drain」。
 - 空 notify 且超过 `maxSteps` → `failed`（`TurnFailure.reason = 'max_steps'`）
 - 否则回到 `gating` 开下一步（有 notify 则 steps 重置为 1）
 
-turn 结束（`done` / `failed` / `aborted`）后 agent 回到 `idle`，并 emit `turn.done` | `turn.failed` | `turn.aborted`。
+turn 结束（`done` / `failed` / `aborted`）后 agent 回到 `idle`，并 emit `turn.done`（终局由 `outcome` 区分）。
 
 ## Tool
 
@@ -104,13 +104,13 @@ turn 结束（`done` / `failed` / `aborted`）后 agent 回到 `idle`，并 emit
 | `llm.done` | 立刻 `message.appended`（这一步的 assistant） |
 | `turn.drained` | 把 turn history 里新出现的 tool / drain 消息 `message.appended` |
 | `turn.started` | `turn.started`（`turnId` / `queueItemId`） |
-| `turn.done` / `failed` / `aborted` | `turn.ended`（`outcome` / `errorMessage`） |
+| `turn.done` | `turn.ended`（`outcome` / `errorMessage`） |
 
 `store.onCommit` 之后 `node.fire(entry.event)`。所以 `session.on('message.appended')` 看到的是已落盘对象。一个 turn 可以有多条 `message.appended`，不是整 turn 一条。
 
 `agent.submit` / `notify` / `remind` / `cancel` / `steer` / `abort` / `pause` / `continue` 是 XState `send` 的同步封装：先订对应 `emit`，再 `send`（同步派发），把回执事件同步返回；actor 未运行（done / stopped / unmounted）时返回 `undefined`。`submit` **不**写 `input.submitted`。投影里的 queue 字段因此跨重启是空的；活着的 queue 在机器 context 里。并发 `submit` 用 entry 对象身份匹配回执；`steer` 用请求的 `ids`。每一条命令路径都必须 `emit`，否则回执为 `undefined`。
 
-`agent.on('turn.done'|'turn.failed'|'turn.aborted')` 会等到这次 dispatch 链 `settled` 再回调，避免 UI 先于 journal。
+`agent.on('turn.done')` 会等到这次 dispatch 链 `settled` 再回调，避免 UI 先于 journal。
 
 ## 相关文档
 

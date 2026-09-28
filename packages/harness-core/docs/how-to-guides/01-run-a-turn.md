@@ -125,7 +125,7 @@ const off = agent.on('llm.streaming.part', (event) => {
 | 已落盘事实、Feature `fire` | `session.on` / `session.wait('message.appended' \| 'turn.ended' \| …)` |
 | streaming / retry / 工具中间态 | `agent.on('llm.streaming.part' \| 'tool.update' \| …)` |
 
-`agent.on('turn.done'|'turn.failed'|'turn.aborted')` 会等到这次 journal 写入链结束，但仍是机器载荷，和节点上的 `turn.ended` 不是同一条。事件总表见 [events](../reference/events.md)。
+`agent.on('turn.done')` 会等到这次 journal 写入链结束，但仍是机器载荷，和节点上的 `turn.ended` 不是同一条。事件总表见 [events](../reference/events.md)。
 
 退出：`await app.disposeAsync()`。
 

@@ -4,14 +4,14 @@ How-to：自己写 compact。订机器事件、拦 `useBeforeStep`，另开一�
 
 ## 要听哪一面
 
-触发要订 `agent.on` 这一面：overflow 发生在机器 `turn.failed` 上，载荷是 `failure`，节点事件只有 `outcome` / `errorMessage`。streaming / retry / tool 中间态同样只在 `agent.on`。
+触发要订 `agent.on` 这一面：overflow 发生在机器 `turn.done` 的 `outcome.type === 'failed'` 上，载荷是 `failure`，节点事件只有 `outcome` / `errorMessage`。streaming / retry / tool 中间态同样只在 `agent.on`。
 
 | 触发 | 订什么 | 然后做什么 |
 |---|---|---|
 | 本步超预算 | `useBeforeStep`：算 `usedContextTokens`，超 `max * triggerRatio` | `queueMicrotask` 跑 compact，并抛错让当前 turn `failed` |
-| 远端 context overflow | `agent.on('turn.failed')`，`failure.error.kind === 'context_overflow'` | 再开 compact，最多 3 次 |
+| 远端 context overflow | `agent.on('turn.done')`，`outcome.failure.error.kind === 'context_overflow'` | 再开 compact，最多 3 次 |
 | 用户 abort | `agent.on('turn.aborting')` | abort 正在跑的摘要 turn |
-| 回合正常结束 | `agent.on('turn.done')` | 清 overflow 计数 |
+| 回合正常结束 | `agent.on('turn.done')`，`outcome.type === 'done'` | 清 overflow 计数 |
 
 `useBeforeStep` 跑在每步 LLM **之前**。抛错后 turn 直接失败，不会带着超预算的 history 再请求一次。
 
@@ -104,15 +104,16 @@ useBeforeStep(({ messages, tools, systemPrompt }) => {
   throw new Error('context budget exceeded; compacting before next step');
 });
 
-agent.on('turn.failed', (event) => {
-  const error = event.failure.reason === 'error' ? event.failure.error : undefined;
+agent.on('turn.done', (event) => {
+  if (event.outcome.type === 'done') {
+    overflowAttempts = 0;
+    return;
+  }
+  if (event.outcome.type !== 'failed') return;
+  const error = event.outcome.failure.reason === 'error' ? event.outcome.failure.error : undefined;
   if (!isOverflow(error) || overflowAttempts >= 3) return;
   overflowAttempts += 1;
   queueMicrotask(() => void run('overflow'));
-});
-
-agent.on('turn.done', () => {
-  overflowAttempts = 0;
 });
 
 agent.on('turn.aborting', () => {

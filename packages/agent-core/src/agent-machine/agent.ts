@@ -25,9 +25,9 @@ import { createToolMachine, type ToolEvent, type ToolOutput } from './tool';
 import { createAbortScope, withAbort, type AbortScope } from '#/utils/abort';
 
 import {
-  type TurnFailure,
   type TurnLlmEvent,
   type TurnLogic,
+  type TurnOutcome,
   type TurnOutput,
 } from './turn';
 
@@ -144,14 +144,7 @@ export type AgentEmitted =
   | { type: 'turn.aborting' }
   | { type: 'turn.spawn_tools'; toolCalls: ToolCall[] }
   | { type: 'turn.drained'; messages: HistoryMessage[] }
-  | { type: 'turn.done'; messages: HistoryMessage[]; branchId: string }
-  | {
-      type: 'turn.failed';
-      failure: TurnFailure;
-      messages: HistoryMessage[];
-      branchId: string;
-    }
-  | { type: 'turn.aborted'; messages: HistoryMessage[]; branchId: string }
+  | { type: 'turn.done'; turnId: number; outcome: TurnOutcome; messages: HistoryMessage[]; branchId: string }
   | {
       type: 'prompt.blocked';
       queueItemId?: string;
@@ -253,18 +246,10 @@ function turnOutputPatch(
 }
 
 function turnOutcomeEvent(context: AgentMachineContext, output: TurnOutput): AgentEmitted {
-  if (output.type === 'failed') {
-    return {
-      type: 'turn.failed',
-      failure: output.failure,
-      messages: context.messages,
-      branchId: context.branchId,
-    };
-  }
-  if (output.type === 'aborted') {
-    return { type: 'turn.aborted', messages: context.messages, branchId: context.branchId };
-  }
-  return { type: 'turn.done', messages: context.messages, branchId: context.branchId };
+  const turnId = context.activeTurnId ?? context.turnId;
+  const outcome: TurnOutcome =
+    output.type === 'failed' ? { type: 'failed', failure: output.failure } : { type: output.type };
+  return { type: 'turn.done', turnId, outcome, messages: context.messages, branchId: context.branchId };
 }
 
 function hasPendingWork(context: AgentMachineContext): boolean {

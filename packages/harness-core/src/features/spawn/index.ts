@@ -42,6 +42,8 @@ export {
   createSpawnTool,
   FORK_REMIND_KEY,
   MODEL_NOT_CONFIGURED_MESSAGE,
+  parseSpawnSource,
   SPAWN_TOOL_NAME,
+  spawnSource,
 } from './tool';
 export type { SpawnRecord, SpawnRegistry, SpawnToolDeps } from './tool';
