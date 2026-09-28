@@ -13,6 +13,12 @@ import { deleteWorkspaceTrust, readWorkspaceTrust, writeWorkspaceTrust } from '.
 
 export const TRUST_WORKSPACE_ENV = 'KIMI_CODE_TRUST_WORKSPACE';
 
+export function trustWorkspaceEnvTrusted(
+  getEnv: (name: string) => string | undefined,
+): boolean {
+  return parseBooleanEnv(getEnv(TRUST_WORKSPACE_ENV)) === true;
+}
+
 export const workspaceTrustTrustedKey = defineState<boolean>(
   'workspaceTrust.trusted',
   () => false,
@@ -37,7 +43,7 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
     super();
     this.states.contributeState(workspaceTrustTrustedKey);
     this.root = workspace.cwd;
-    this.envTrusted = parseBooleanEnv(bootstrap.getEnv(TRUST_WORKSPACE_ENV)) === true;
+    this.envTrusted = trustWorkspaceEnvTrusted((name) => bootstrap.getEnv(name));
     this.ready = this.initialize();
   }
 
