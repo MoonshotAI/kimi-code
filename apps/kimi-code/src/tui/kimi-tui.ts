@@ -2066,8 +2066,8 @@ export class KimiTUI {
     });
   }
 
-  isQueuedMessageSteering(message: QueuedMessage): boolean {
-    return this.steeringQueuedMessages.has(message);
+  isSteeringQueuedMessages(): boolean {
+    return this.steeringQueuedMessages.size > 0;
   }
 
   private drainQueueIfIdle(): void {
