@@ -7,6 +7,9 @@ import type {
   CompactionStarted,
 } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
 import { daemonFileRefFromPart, type ContentPart, type ContextUndone, type CronFired, type GoalUpdated } from '@moonshot-ai/agent-core-v2';
+import type { PromptOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
+import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
+import { turnPromptText } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type {
   AssistantDelta,
   ThinkingDelta,
@@ -470,6 +473,7 @@ export class AgentTranscriptProjector {
     promptId?: string;
     origin: unknown;
     prompt?: string;
+    promptContent?: readonly ContentPart[];
     promptAttachments?: readonly (
       | { kind: 'image' | 'video' | 'audio'; fileId: string; name?: string }
       | { kind: 'file'; name: string; mediaType: string; size: number; path: string }
@@ -525,7 +529,7 @@ export class AgentTranscriptProjector {
       ordinal,
       state: 'running',
       origin: mapTurnOrigin(event.origin),
-      prompt: event.prompt,
+      prompt: turnTitleFromStarted(event),
       attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
       startedAt: nowIso(),
     };
@@ -1661,6 +1665,28 @@ export class AgentTranscriptProjector {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+const LEADING_USER_PROMPT_HOOK_RESULTS_RE =
+  /^(?:<hook_result hook_event="UserPromptSubmit">\n[\s\S]*?\n<\/hook_result>)+/;
+
+function stripLeadingUserPromptHookResults(prompt: string | undefined): string | undefined {
+  if (prompt === undefined) return undefined;
+  const stripped = prompt.replace(LEADING_USER_PROMPT_HOOK_RESULTS_RE, '');
+  return stripped.length > 0 ? stripped : undefined;
+}
+
+function turnTitleFromStarted(event: {
+  origin: unknown;
+  prompt?: string;
+  promptContent?: readonly ContentPart[];
+}): string | undefined {
+  const content = event.promptContent;
+  if (content === undefined) return stripLeadingUserPromptHookResults(event.prompt);
+  return turnPromptText(
+    content.filter((part) => !isUserPromptSubmitHookPart(part)),
+    event.origin as PromptOrigin | undefined,
+  );
 }
 
 function isTerminalPromptStatus(status: TranscriptPrompt['status']): boolean {

@@ -312,7 +312,15 @@ describe('AgentTranscriptProjector', () => {
       turnId: 0,
       promptId: 'prompt-1',
       origin: { kind: 'user' },
-      prompt: 'fix the bug',
+      prompt: '<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>fix the bug',
+      promptContent: [
+        {
+          type: 'text',
+          text: '<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>',
+          meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+        },
+        { type: 'text', text: 'fix the bug' },
+      ],
     }));
     feed(ev({ type: 'assistant.delta', turnId: 0, delta: 'on it' }));
     feed(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));

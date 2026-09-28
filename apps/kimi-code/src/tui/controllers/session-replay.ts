@@ -37,6 +37,7 @@ import {
   createReplayRenderContext,
   formatHookResultMessageForTranscript,
   isTerminalBackgroundTask,
+  isUserPromptSubmitHookPart,
   limitReplayRecordsByTurn,
   REPLAY_TURN_LIMIT,
   replayBackgroundProjection,
@@ -46,6 +47,7 @@ import {
   pluginCommandFromOrigin,
   toolCallFromReplayMessage,
   toolResultOutput,
+  withoutUserPromptSubmitHookParts,
   type BackgroundTaskNotificationOrigin,
   type ReplayRenderContext,
   type SkillActivationProjection,
@@ -426,8 +428,19 @@ export class SessionReplayRenderer {
       return;
     }
     this.advanceTurn(context);
+    for (const part of message.content.filter(isUserPromptSubmitHookPart)) {
+      this.renderHookResultEntry(
+        context,
+        formatHookResultMessageForTranscript(part.text, 'UserPromptSubmit', false),
+      );
+    }
     this.host.appendTranscriptEntry(
-      replayEntry(context, 'user', contentPartsToText(message.content), 'plain'),
+      replayEntry(
+        context,
+        'user',
+        contentPartsToText(withoutUserPromptSubmitHookParts(message.content)),
+        'plain',
+      ),
     );
   }
 
@@ -444,8 +457,15 @@ export class SessionReplayRenderer {
     for (const hookResult of hookResults) {
       this.renderHookResult(context, hookResult);
     }
+    for (const part of message.content.filter(isUserPromptSubmitHookPart)) {
+      this.renderHookResultEntry(
+        context,
+        formatHookResultMessageForTranscript(part.text, 'UserPromptSubmit', false),
+      );
+    }
+    const callerMessage = { ...message, content: withoutUserPromptSubmitHookParts(message.content) };
     this.host.appendTranscriptEntry(
-      replayEntry(context, 'user', contentPartsToText(stripBundledSkillParts(message)), 'plain'),
+      replayEntry(context, 'user', contentPartsToText(stripBundledSkillParts(callerMessage)), 'plain'),
     );
   }
 
@@ -636,18 +656,20 @@ export class SessionReplayRenderer {
 
   private renderHookResult(context: ReplayRenderContext, message: ContextMessage): void {
     if (message.origin?.kind !== 'hook_result') return;
+    this.renderHookResultEntry(
+      context,
+      formatHookResultMessageForTranscript(
+        contentPartsToText(message.content),
+        message.origin.event,
+        message.origin.blocked === true,
+      ),
+    );
+  }
+
+  private renderHookResultEntry(context: ReplayRenderContext, formatted: string): void {
     this.flushAssistant(context);
     this.host.appendTranscriptEntry({
-      ...replayEntry(
-        context,
-        'assistant',
-        formatHookResultMessageForTranscript(
-          contentPartsToText(message.content),
-          message.origin.event,
-          message.origin.blocked === true,
-        ),
-        'markdown',
-      ),
+      ...replayEntry(context, 'assistant', formatted, 'markdown'),
       hookResult: true,
     });
   }

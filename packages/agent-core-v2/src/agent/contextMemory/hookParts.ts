@@ -17,10 +17,3 @@ export function userPromptSubmitHookPart(text: string): TextPart {
 export function isUserPromptSubmitHookPart(part: ContentPart): boolean {
   return part.type === 'text' && part.meta?.source === USER_PROMPT_SUBMIT_HOOK_SOURCE;
 }
-
-export function withoutUserPromptSubmitHookParts(
-  content: readonly ContentPart[],
-): readonly ContentPart[] {
-  if (!content.some(isUserPromptSubmitHookPart)) return content;
-  return content.filter((part) => !isUserPromptSubmitHookPart(part));
-}
