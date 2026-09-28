@@ -28,6 +28,9 @@ export const bash = (command: string, description = 'slow build'): Step =>
   call('Bash', { command, run_in_background: true, description });
 export const waitFor = (timeout: number): Step => call('WaitFor', { timeout });
 export const completeGoal = (): Step => call('UpdateGoal', { status: 'complete' });
+/** A foreground coder subagent; its own requests consume the following script steps. */
+export const agent = (prompt: string): Step =>
+  call('Agent', { prompt, description: 'helper task', subagent_type: 'coder' });
 export const say = (text: string): Step => ({ text });
 /** Replies with `prefix` followed by the latest user message. */
 export const echo = (prefix: string): Step => ({ text: prefix, echo: true });
@@ -43,9 +46,14 @@ const textOf = (content: Message['content']): string =>
 
 /** What the model was sent on each scripted request. */
 export class MockModel {
-  readonly sent: { readonly userText: string; readonly toolResult: string }[] = [];
+  readonly sent: { readonly userTexts: readonly string[]; readonly toolResult: string }[] = [];
+  /** The latest user message in request `request`. */
   userText(request: number): string {
-    return this.sent[request]?.userText ?? '';
+    return this.sent[request]?.userTexts.at(-1) ?? '';
+  }
+  /** Every user message sent after the model's previous reply. */
+  userTexts(request: number): readonly string[] {
+    return this.sent[request]?.userTexts ?? [];
   }
   toolResult(request: number): string {
     return this.sent[request]?.toolResult ?? '';
@@ -65,14 +73,11 @@ async function startMockModel(script: readonly Step[]) {
       const lastUser = textOf(messages.findLast((m) => m.role === 'user')?.content);
       let step: Step = { text: 'Mock session' };
       if ((body.tools ?? []).length > 0) {
-        const lastAssistant = messages.findLastIndex((m) => m.role === 'assistant');
-        const toolResult = messages
-          .slice(lastAssistant + 1)
-          .filter((m) => m.role === 'tool')
-          .map((m) => textOf(m.content))
-          .join('\n');
+        const sinceReply = messages.slice(messages.findLastIndex((m) => m.role === 'assistant') + 1);
+        const texts = (role: string): string[] =>
+          sinceReply.filter((m) => m.role === role).map((m) => textOf(m.content));
         step = script[model.sent.length] ?? { text: 'Done.' };
-        model.sent.push({ userText: lastUser, toolResult });
+        model.sent.push({ userTexts: texts('user'), toolResult: texts('tool').join('\n') });
       }
       const id = model.sent.length;
       setTimeout(() => {
@@ -150,9 +155,10 @@ export class Tui {
   }
 
   /**
-   * Quits through `/exit` so the CLI shuts down normally and stops the
-   * background tasks it started; killing the tmux session is only the
-   * fallback (a dead terminal takes the emergency exit, which leaves them).
+   * Cancels any active turn and quits through `/exit`, so the CLI shuts down
+   * normally and stops the background tasks it started; killing the tmux
+   * session is only the fallback (a dead terminal takes the emergency exit,
+   * which leaves them).
    */
   async close(): Promise<void> {
     const alive = (): Promise<boolean> =>
@@ -160,6 +166,9 @@ export class Tui {
         () => true,
         () => false,
       );
+    // `/exit` only runs when idle: cancel any turn still in flight first.
+    await this.press('Escape').catch(() => {});
+    await new Promise((done) => setTimeout(done, 500));
     await this.submit('/exit').catch(() => {});
     const deadline = Date.now() + 15_000;
     while ((await alive()) && Date.now() < deadline) {
