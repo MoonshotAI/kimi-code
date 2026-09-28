@@ -201,9 +201,40 @@ describe('server-v2 /api/v1 fs routes', () => {
     const id = await createSession();
     const body = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {});
     expect(body.code).toBe(0);
-    const names = body.data.items.map((i) => i.name).sort();
+    const names = body.data.items.map((i) => i.name).toSorted();
     expect(names).toEqual(['a.txt', 'b.txt']);
     expect(body.data.truncated).toBe(false);
+  });
+
+  it('fs:list keeps gitignored paths hidden unless allowed via allow_ignored_globs', async () => {
+    await writeFile(join(work!, '.gitignore'), 'ignored-dir/\n.tmp/\n');
+    await mkdir(join(work!, 'ignored-dir'));
+    await mkdir(join(work!, '.tmp'));
+    await writeFile(join(work!, '.tmp/keep.txt'), '');
+    await writeFile(join(work!, 'visible.txt'), '');
+    const id = await createSession();
+
+    const filtered = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {});
+    const filteredNames = filtered.data.items.map((i) => i.name);
+    expect(filteredNames).not.toContain('ignored-dir');
+    expect(filteredNames).not.toContain('.tmp');
+    expect(filteredNames).toContain('visible.txt');
+
+    const allowed = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {
+      show_hidden: true,
+      allow_ignored_globs: ['ignored-dir', '.tmp', '.tmp/**'],
+    });
+    const allowedNames = allowed.data.items.map((i) => i.name);
+    expect(allowedNames).toContain('ignored-dir');
+    expect(allowedNames).toContain('.tmp');
+    expect(allowedNames).toContain('visible.txt');
+
+    const children = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {
+      path: '.tmp',
+      show_hidden: true,
+      allow_ignored_globs: ['.tmp', '.tmp/**'],
+    });
+    expect(children.data.items.map((i) => i.name)).toContain('keep.txt');
   });
 
   it('fs:mkdir creates a directory and rejects duplicates', async () => {
@@ -580,13 +611,13 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(body.code).toBe(0);
     expect(body.data.items.map((i) => i.path)).toContain('kappa.ts');
 
-    const workAliases = [work!, await realpath(work!)];
-    expect((await listWorkspaces()).some((w) => workAliases.includes(w.root))).toBe(false);
+    const workAliases = new Set([work!, await realpath(work!)]);
+    expect((await listWorkspaces()).some((w) => workAliases.has(w.root))).toBe(false);
     expect(
       server!.core.accessor
         .get(IWorkspaceInstanceManager)
         .list()
-        .some((w) => workAliases.includes(w.root)),
+        .some((w) => workAliases.has(w.root)),
     ).toBe(false);
 
     const again = await postRootSuggest<{ items: SuggestItemWire[] }>({
@@ -594,7 +625,7 @@ describe('server-v2 /api/v1 fs routes', () => {
       query: 'kappa',
     });
     expect(again.code).toBe(0);
-    expect((await listWorkspaces()).some((w) => workAliases.includes(w.root))).toBe(false);
+    expect((await listWorkspaces()).some((w) => workAliases.has(w.root))).toBe(false);
   });
 
   it('fs:suggest matches the workspace route for the same single root', async () => {
