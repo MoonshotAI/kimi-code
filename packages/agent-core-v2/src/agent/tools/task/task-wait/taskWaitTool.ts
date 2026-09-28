@@ -174,16 +174,19 @@ export class WaitForTool implements IWaitForTool {
       if (runningAtStart.length === 0) {
         this.track(args, startedAt, timeoutMs, 'completed', 0);
         return {
-          output: [
-            formatPlainObject({ waitStatus: 'no_tasks', waitedMs: 0, timeoutMs }),
-            'No background tasks are running, so there is nothing to wait for. Finished tasks report back via automatic notification.',
-          ].join('\n\n'),
+          output: this.withRepeatWarning(
+            [
+              formatPlainObject({ waitStatus: 'no_tasks', waitedMs: 0, timeoutMs }),
+              'No background tasks are running, so there is nothing to wait for. Finished tasks report back via automatic notification.',
+            ].join('\n\n'),
+            tally,
+          ),
           isError: false,
         };
       }
     } else if (this.tasks.getTask(args.task_id) === undefined) {
       this.track(args, startedAt, timeoutMs, 'task_not_found', 0);
-      return { isError: true, output: `Task not found: ${args.task_id}` };
+      return { isError: true, output: this.withRepeatWarning(`Task not found: ${args.task_id}`, tally) };
     }
 
     let waited: AgentTaskInfo | undefined;
@@ -202,18 +205,22 @@ export class WaitForTool implements IWaitForTool {
         (error === ctx.steerSignal.reason || isAbortError(error))
       ) {
         this.track(args, startedAt, timeoutMs, 'interrupted', 0);
-        return { output: this.formatInterrupted(args, startedAt, timeoutMs), isError: false };
+        tally.waitedMs += Date.now() - startedAt;
+        return {
+          output: this.withRepeatWarning(this.formatInterrupted(args, startedAt, timeoutMs), tally),
+          isError: false,
+        };
       }
       this.track(args, startedAt, timeoutMs, 'aborted', 0);
       throw error;
     } finally {
       progress.stop();
-      tally.waitedMs += Date.now() - startedAt;
     }
+    tally.waitedMs += Date.now() - startedAt;
 
     if (waited === undefined) {
       this.track(args, startedAt, timeoutMs, 'task_not_found', 0);
-      return { isError: true, output: `Task not found: ${args.task_id ?? ''}` };
+      return { isError: true, output: this.withRepeatWarning(`Task not found: ${args.task_id ?? ''}`, tally) };
     }
 
     if (!TERMINAL_STATUSES.has(waited.status)) {
