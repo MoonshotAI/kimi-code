@@ -86,7 +86,7 @@ session.on(interaction, 'interaction.requested', (event) => {
 | `agent.aborted` | `abort` 的接收回执；idle / 已在 aborting 也发 |
 | `agent.failed` | 机器级失败 |
 
-`agent.on('turn.done')` 会等到 journal 这次写入链结束。
+`agent.on('turn.done')` 会等到 journal 这次写入链结束；`agent.wait(type, { match, timeoutMs, signal })` 是同语义的 Promise 化，超时或中止即 reject。
 
 ### LLM
 

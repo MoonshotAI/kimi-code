@@ -229,4 +229,23 @@ describe('app-session-agent units', () => {
     expect(copy.state).toBe('unmounted');
     await env.stores.dispose();
   });
+
+  it('waits machine events with match, timeout, and abort signal', async () => {
+    const env = await testStores();
+    const app = mountApp({});
+    const session = await app.create({ sessionId: 'sess', stores: env.stores });
+    const agent = await session.create({ agentId: 'main' });
+    agent.setConfig({ model });
+    agent.setRequester(createEchoRequester());
+    const done = agent.wait('turn.done', { match: (event) => event.outcome.type === 'done' });
+    agent.submit(createUserMessage('hello'));
+    await expect(done).resolves.toMatchObject({ outcome: { type: 'done' } });
+    await expect(agent.wait('turn.done', { timeoutMs: 10 })).rejects.toThrow("wait 'turn.done' timed out after 10ms");
+    const controller = new AbortController();
+    const pending = agent.wait('turn.done', { signal: controller.signal });
+    controller.abort(new Error('stop'));
+    await expect(pending).rejects.toThrow('stop');
+    await app.disposeAsync();
+    await env.stores.dispose();
+  });
 });

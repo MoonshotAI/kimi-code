@@ -110,7 +110,7 @@ turn 结束（`done` / `failed` / `aborted`）后 agent 回到 `idle`，并 emit
 
 `agent.submit` / `notify` / `remind` / `cancel` / `steer` / `abort` / `pause` / `continue` 是 XState `send` 的同步封装：先订对应 `emit`，再 `send`（同步派发），把回执事件同步返回；actor 未运行（done / stopped / unmounted）时返回 `undefined`。`submit` **不**写 `input.submitted`。投影里的 queue 字段因此跨重启是空的；活着的 queue 在机器 context 里。并发 `submit` 用 entry 对象身份匹配回执；`steer` 用请求的 `ids`。每一条命令路径都必须 `emit`，否则回执为 `undefined`。
 
-`agent.on('turn.done')` 会等到这次 dispatch 链 `settled` 再回调，避免 UI 先于 journal。
+`agent.on('turn.done')` 会等到这次 dispatch 链 `settled` 再回调，避免 UI 先于 journal。`agent.wait(type, { match, timeoutMs, signal })` 是 `on` 的 Promise 化：匹配到即 resolve（`turn.done` 同样等 settled），`timeoutMs` 超时或 `signal` 中止即 reject 并自动清理订阅。
 
 ## 相关文档
 

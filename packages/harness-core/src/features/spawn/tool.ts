@@ -5,7 +5,6 @@ import {
   createUserMessage,
   extractText,
   type AgentCommands,
-  type AgentEmitted,
   type AgentHandle,
   type AssistantMeta,
   type HistoryMessage,
@@ -328,7 +327,10 @@ async function runAndWait(
   const onAbort = (): void => scope.abort();
   signal.addEventListener('abort', onAbort, { once: true });
   try {
-    const started = waitAgentEvent(target, 'turn.started', (event) => event.queueItemId === promptId, scope.signal);
+    const started = target.wait('turn.started', {
+      match: (event) => event.queueItemId === promptId,
+      signal: scope.signal,
+    });
     void started.catch(() => {});
     const accepted = target.submit(createUserMessage(prompt), { promptId, origin: { kind: 'subagent' } });
     if (accepted === undefined) throw new Error('agent is not running');
@@ -340,9 +342,9 @@ async function runAndWait(
       return { type: 'aborted', reason: signal.reason };
     }
     try {
-      return await waitAgentEvent(target, 'turn.done', (event) => event.turnId === turnId, scope.signal).then(
-        (event): RunOutcome => event.outcome,
-      );
+      return await target
+        .wait('turn.done', { match: (event) => event.turnId === turnId, signal: scope.signal })
+        .then((event): RunOutcome => event.outcome);
     } catch {
       target.abort(signal.reason);
       return { type: 'aborted', reason: signal.reason };
@@ -351,34 +353,6 @@ async function runAndWait(
     signal.removeEventListener('abort', onAbort);
     scope.abort();
   }
-}
-
-function waitAgentEvent<T extends AgentEmitted['type']>(
-  target: AgentHandle,
-  type: T,
-  match: (event: Extract<AgentEmitted, { type: T }>) => boolean,
-  signal: AbortSignal,
-): Promise<Extract<AgentEmitted, { type: T }>> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new Error('aborted'));
-      return;
-    }
-    const cleanup = (): void => {
-      subscription.unsubscribe();
-      signal.removeEventListener('abort', onAbort);
-    };
-    const onAbort = (): void => {
-      cleanup();
-      reject(new Error('aborted'));
-    };
-    const subscription = target.on(type, (event) => {
-      if (!match(event)) return;
-      cleanup();
-      resolve(event);
-    });
-    signal.addEventListener('abort', onAbort, { once: true });
-  });
 }
 
 function latestAssistantText(messages: readonly HistoryMessage[]): string {

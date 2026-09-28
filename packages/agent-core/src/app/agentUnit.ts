@@ -81,6 +81,11 @@ function acceptEmitted<T extends AgentEmitted['type']>(
   return accepted;
 }
 
+function abortReason(signal: AbortSignal | undefined): Error {
+  const reason = signal?.reason;
+  return reason instanceof Error ? reason : new Error(reason === undefined ? 'aborted' : String(reason));
+}
+
 function invokedHistory(actor: AgentActor): readonly HistoryMessage[] {
   const child = actor.getSnapshot().children['turn'];
   if (child === undefined) return [];
@@ -144,6 +149,12 @@ export interface AgentUnitProps {
 
 export type AgentSnapshot = SnapshotFrom<ReturnType<typeof createAgentMachine>>;
 
+export interface AgentWaitOpts<T extends AgentEmitted['type']> {
+  readonly match?: (event: Extract<AgentEmitted, { type: T }>) => boolean;
+  readonly timeoutMs?: number;
+  readonly signal?: AbortSignal;
+}
+
 export interface AgentCommands {
   readonly agentId: string;
   readonly snapshot: Ref<AgentSnapshot | undefined>;
@@ -163,6 +174,10 @@ export interface AgentCommands {
     type: T,
     handler: (event: Extract<AgentEmitted, { type: T }>) => void,
   ): Subscription;
+  wait<T extends AgentEmitted['type']>(
+    type: T,
+    opts?: AgentWaitOpts<T>,
+  ): Promise<Extract<AgentEmitted, { type: T }>>;
 }
 
 export interface AgentHandle extends UnitHandle, AgentCommands {
@@ -208,6 +223,19 @@ export const AgentUnit = createUnit<AgentUnitProps>('agent', (props) => {
   pushCleanup(node, props.store.onCommit((entry) => {
     node.fire(entry.event);
   }));
+  const onEmitted: AgentCommands['on'] = (type, handler) => {
+    const subscription = actor.on(type, (event) => {
+      if (type === 'turn.done') {
+        void log.settled().then(() => handler(event as Parameters<typeof handler>[0]));
+        return;
+      }
+      handler(event as Parameters<typeof handler>[0]);
+    });
+    if (hasCurrentUnit()) {
+      pushCleanup(currentUnit(), () => subscription.unsubscribe());
+    }
+    return subscription;
+  };
   const commands: AgentCommands = {
     agentId: props.agentId,
     snapshot,
@@ -252,19 +280,37 @@ export const AgentUnit = createUnit<AgentUnitProps>('agent', (props) => {
     abort: (reason) => acceptEmitted(actor, node, 'agent.aborted', () => send({ type: 'input.abort', reason })),
     pause: () => acceptEmitted(actor, node, 'agent.paused', () => send({ type: 'input.pause' })),
     continue: () => acceptEmitted(actor, node, 'agent.continued', () => send({ type: 'input.continue' })),
-    on: (type, handler) => {
-      const subscription = actor.on(type, (event) => {
-        if (type === 'turn.done') {
-          void log.settled().then(() => handler(event as Parameters<typeof handler>[0]));
+    on: onEmitted,
+    wait: (type, opts) =>
+      new Promise((resolve, reject) => {
+        let subscription: Subscription | undefined;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const cleanup = (): void => {
+          subscription?.unsubscribe();
+          if (timer !== undefined) clearTimeout(timer);
+          opts?.signal?.removeEventListener('abort', onAbort);
+        };
+        subscription = onEmitted(type, (event) => {
+          if (opts?.match !== undefined && !opts.match(event)) return;
+          cleanup();
+          resolve(event);
+        });
+        if (opts?.timeoutMs !== undefined) {
+          timer = setTimeout(() => {
+            cleanup();
+            reject(new Error(`wait '${type}' timed out after ${opts.timeoutMs}ms`));
+          }, opts.timeoutMs);
+        }
+        const onAbort = (): void => {
+          cleanup();
+          reject(abortReason(opts?.signal));
+        };
+        if (opts?.signal?.aborted) {
+          onAbort();
           return;
         }
-        handler(event as Parameters<typeof handler>[0]);
-      });
-      if (hasCurrentUnit()) {
-        pushCleanup(currentUnit(), () => subscription.unsubscribe());
-      }
-      return subscription;
-    },
+        opts?.signal?.addEventListener('abort', onAbort, { once: true });
+      }),
   };
   provide(EventContext, { sessionId: props.sessionId, agentId: props.agentId });
   provide(AgentStoreRef, props.store);
@@ -321,6 +367,7 @@ export function agentHandle(handle: UnitHandle): AgentHandle {
     pause: () => commands().pause(),
     continue: () => commands().continue(),
     on: (type, handler) => commands().on(type, handler),
+    wait: (type, opts) => commands().wait(type, opts),
   };
 }
 
