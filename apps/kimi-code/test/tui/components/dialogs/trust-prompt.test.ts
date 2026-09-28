@@ -94,7 +94,7 @@ describe('TrustPromptComponent', () => {
     expect(text).toContain('nested-server (stdio): command=nested-cmd');
     expect(text).toContain('args=["--safe"] cwd=/tmp');
     expect(text).toContain('env keys: KEY_0, KEY_1');
-    expect(text).toContain('+15 more');
+    expect(text).toContain('+21 more');
     expect(text).not.toContain('KEY_24');
     expect(text).toContain('from .mcp.json');
     expect(text).toContain('root-server (http): url=https://example.test/mcp');
