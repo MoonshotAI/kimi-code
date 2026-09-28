@@ -7,12 +7,12 @@ import { settleLlmRequest } from '#/llm/requester/settle';
 import type {
   CatalogModel,
   CatalogModelBinding,
+  CatalogModelConfig,
   CatalogModelDefinition,
   CatalogModelOverrides,
   CatalogProviderEntry,
   CatalogProviderInfo,
   CatalogSnapshot,
-  ProviderCatalogPersist,
 } from './types';
 
 export interface ProviderStore {
@@ -21,36 +21,25 @@ export interface ProviderStore {
   providerInfo(providerId: string): CatalogProviderInfo | undefined;
   models(providerId: string): readonly CatalogModel[];
   resolve(providerId: string, model: string): CatalogModelBinding | undefined;
-  hydrate(snapshot: CatalogSnapshot): void;
   upsert(input: {
     provider: Provider;
     info?: CatalogProviderInfo;
     models?: readonly CatalogModelDefinition[];
   }): void;
-  upsertEntry(input: {
+  configure(input: {
     providerId: string;
     info?: CatalogProviderInfo;
-    models?: readonly CatalogModelDefinition[];
+    models?: readonly CatalogModelConfig[];
   }): void;
   remove(providerId: string): void;
-  refresh(provider: Provider): void;
+  isLive(providerId: string): boolean;
+  refresh(provider: Provider | string): void;
   ping(providerId: string, model: string): void;
   dispose(): void;
 }
 
-export function createMemoryProviderCatalogStore(): ProviderCatalogPersist {
-  let snapshot: CatalogSnapshot | undefined;
-  return {
-    load: () => Promise.resolve(snapshot),
-    save: (value) => {
-      snapshot = value;
-      return Promise.resolve();
-    },
-  };
-}
-
-export function createProviderStore(options: { snapshot?: CatalogSnapshot } = {}): ProviderStore {
-  const snapshot = shallowRef(options.snapshot ?? { providers: {} });
+export function createProviderStore(): ProviderStore {
+  const snapshot = shallowRef<CatalogSnapshot>({ providers: {} });
   const live = new Map<string, Provider>();
   let closed = false;
   let pending = Promise.resolve();
@@ -83,6 +72,25 @@ export function createProviderStore(options: { snapshot?: CatalogSnapshot } = {}
           info,
           discovered: {},
           override: Object.fromEntries((models ?? []).map((model) => [model.model, model])),
+        },
+      },
+    });
+  };
+
+  const configureEntry = (
+    providerId: string,
+    info: CatalogProviderInfo | undefined,
+    models: readonly CatalogModelConfig[] | undefined,
+  ): void => {
+    const entry = snapshot.value.providers[providerId];
+    write({
+      providers: {
+        ...snapshot.value.providers,
+        [providerId]: {
+          info,
+          discovered: entry?.discovered ?? {},
+          override: Object.fromEntries((models ?? []).map((model) => [model.model, model])),
+          pingErrors: entry?.pingErrors,
         },
       },
     });
@@ -152,27 +160,28 @@ export function createProviderStore(options: { snapshot?: CatalogSnapshot } = {}
         return undefined;
       }
     },
-    hydrate: (next) => {
-      write(next);
-    },
     upsert: (input) => {
       bind(input.provider);
       writeEntry(input.provider.id, input.info, input.models);
       pull(input.provider);
     },
-    upsertEntry: (input) => {
-      writeEntry(input.providerId, input.info, input.models);
+    configure: (input) => {
+      configureEntry(input.providerId, input.info, input.models);
     },
     remove: (providerId) => {
+      if (!live.has(providerId) && snapshot.value.providers[providerId] === undefined) return;
       live.delete(providerId);
       const providers = { ...snapshot.value.providers };
       delete providers[providerId];
       write({ providers });
     },
-    refresh: (provider) => {
+    refresh: (input: Provider | string) => {
+      const provider = typeof input === 'string' ? live.get(input) : input;
+      if (provider === undefined) return;
       bind(provider);
       pull(provider);
     },
+    isLive: (providerId) => live.has(providerId),
     ping: (providerId, model) => {
       enqueue(async () => {
         const provider = live.get(providerId);
@@ -194,10 +203,10 @@ function resolveCatalogModel(
 ): CatalogModelDefinition | undefined {
   if (entry === undefined) return undefined;
   const override = entry.override[modelId];
-  if (override !== undefined) return mergeModel(override, entry.discovered[modelId]);
+  if (override !== undefined) return mergeModel(override, entry.discovered[modelId], entry.info);
   const discovered = entry.discovered[modelId];
   if (discovered === undefined) return undefined;
-  return mergeModel({ ...discovered }, undefined);
+  return mergeModel({ ...discovered }, undefined, entry.info);
 }
 
 function mergeEntryModels(entry: CatalogProviderEntry): CatalogModel[] {
@@ -206,11 +215,11 @@ function mergeEntryModels(entry: CatalogProviderEntry): CatalogModel[] {
     return pingError === undefined ? model : { ...model, pingError };
   };
   const merged = Object.values(entry.override).map((record) =>
-    attach(mergeModel(record, entry.discovered[record.model])),
+    attach(mergeModel(record, entry.discovered[record.model], entry.info)),
   );
   const discoveredOnly = Object.values(entry.discovered)
     .filter((model) => entry.override[model.model] === undefined)
-    .map((model) => attach(mergeModel({ ...model }, undefined)));
+    .map((model) => attach(mergeModel({ ...model }, undefined, entry.info)));
   return [...merged, ...discoveredOnly].toSorted((a, b) => a.model.localeCompare(b.model));
 }
 
@@ -265,8 +274,9 @@ function applyModelOverrides(
 }
 
 function mergeModel(
-  record: CatalogModelDefinition,
+  record: CatalogModelConfig,
   discovered: LlmModel | undefined,
+  info: CatalogProviderInfo | undefined,
 ): CatalogModelDefinition {
   const merged: CatalogModelDefinition = {
     provider: record.provider,
@@ -274,9 +284,9 @@ function mergeModel(
     capability: mergeCapability(discovered?.capability, record.capability),
     maxContextSize: record.maxContextSize ?? discovered?.maxContextSize,
     maxInputSize: record.maxInputSize ?? discovered?.maxInputSize,
-    baseUrl: record.baseUrl ?? discovered?.baseUrl,
-    apiKey: record.apiKey ?? discovered?.apiKey,
-    defaultHeaders: record.defaultHeaders ?? discovered?.defaultHeaders,
+    baseUrl: record.baseUrl ?? discovered?.baseUrl ?? info?.baseUrl,
+    apiKey: record.apiKey ?? discovered?.apiKey ?? info?.apiKey,
+    defaultHeaders: record.defaultHeaders ?? discovered?.defaultHeaders ?? info?.customHeaders,
     displayName: record.displayName,
     maxOutputSize: record.maxOutputSize,
     reasoningKey: record.reasoningKey,

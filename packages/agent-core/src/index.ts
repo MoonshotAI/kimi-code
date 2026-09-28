@@ -27,6 +27,7 @@ export * from './llm/protocol/tool-call-id';
 export * from './llm/protocol/tool-result-text';
 export * from './llm/provider';
 export * from './llm/builtin/provider';
+export * from './builtin/config/index';
 export * from './builtin/provider-catalog/index';
 export * from './builtin/wait-for/index';
 export * from './builtin/media/index';
