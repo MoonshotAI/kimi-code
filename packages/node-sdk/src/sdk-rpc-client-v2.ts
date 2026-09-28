@@ -55,8 +55,8 @@
  *   the engine has no import capability of its own. `createSession`'s
  *   `model` / `thinking` / `permission` options are applied in this batch
  *   too (default-profile bind + permission mode).
- * - `getEnvironment` / `switchEnvironment` / `reconnectEnvironment` use the
- *   klient agent facade; `listEnvironments` reads the workspace registry.
+ * - `getEnvironment` uses the klient agent facade; `listEnvironments`
+ *   reads the workspace registry.
  *   `createSession`'s `environmentId` / `environmentCwd` options ride the
  *   engine's own `mainAgentBinding` + environment seed path. The constructor
  *   attaches the `remote-exec` environment provider with the region CDN
