@@ -390,7 +390,7 @@ export class UnitNode implements NodeRef {
   }
 }
 
-function* lineage(start: UnitNode): Generator<UnitNode, void, unknown> {
+export function* lineage(start: UnitNode): Generator<UnitNode, void, unknown> {
   let node: UnitNode | null = start;
   while (node !== null) {
     yield node;

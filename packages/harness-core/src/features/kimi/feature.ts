@@ -1,9 +1,10 @@
-import { createFeature, useProvider } from '@moonshot-ai/agent-core';
+import { createFeature, useProvider, useProviderProtocol } from '@moonshot-ai/agent-core';
 
-import { kimiProvider } from './provider';
+import { kimiProtocolBindings, kimiProvider } from './provider';
 
 export const kimi = createFeature('kimi', {
   app() {
     useProvider({ provider: kimiProvider });
+    useProviderProtocol({ type: 'kimi', protocols: () => kimiProtocolBindings() });
   },
 });

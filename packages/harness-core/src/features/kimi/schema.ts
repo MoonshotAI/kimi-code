@@ -1,6 +1,6 @@
 import { SyntaxRequestFormatError } from '@moonshot-ai/agent-core';
 
-export function derefJsonSchema(schema: Record<string, unknown>): Record<string, unknown> {
+function derefJsonSchema(schema: Record<string, unknown>): Record<string, unknown> {
   const visited = new Set<string>();
   const result = resolveNode(schema, schema, visited) as Record<string, unknown>;
 

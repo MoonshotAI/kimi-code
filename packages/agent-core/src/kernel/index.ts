@@ -6,6 +6,7 @@ export {
   createUnit,
   currentUnit,
   hasCurrentUnit,
+  lineage,
   mountRoot,
   pushCleanup,
   removeCleanup,

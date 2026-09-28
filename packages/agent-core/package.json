@@ -34,6 +34,7 @@
     "@vue/reactivity": "^3.5.35",
     "openai": "^6.34.0",
     "radashi": "^12.9.1",
+    "smol-toml": "^1.6.1",
     "xstate": "^5.32.5",
     "zod": "^4.3.6"
   }

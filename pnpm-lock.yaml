@@ -507,6 +507,9 @@ importers:
       radashi:
         specifier: ^12.9.1
         version: 12.9.1
+      smol-toml:
+        specifier: ^1.6.1
+        version: 1.6.1
       xstate:
         specifier: ^5.32.5
         version: 5.32.5

@@ -10,14 +10,6 @@ import type {
   VideoUploadInput,
 } from '@moonshot-ai/agent-core';
 
-import { KIMI_DEFAULT_BASE_URL } from './trait';
-
-export function kimiFilesBaseUrl(model: LlmModel): string {
-  const base = model.baseUrl ?? KIMI_DEFAULT_BASE_URL;
-  if (model.provider !== 'anthropic') return base;
-  return /\/v1\/?$/.test(base) ? base : `${base.replace(/\/$/, '')}/v1`;
-}
-
 export interface KimiUploadOptions {
   signal?: AbortSignal;
 }

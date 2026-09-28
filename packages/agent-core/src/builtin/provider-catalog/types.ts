@@ -40,6 +40,10 @@ export interface CatalogModelDefinition extends LlmModel {
   readonly extras?: Readonly<Record<string, unknown>>;
 }
 
+export type CatalogModelConfig = Omit<CatalogModelDefinition, 'capability'> & {
+  readonly capability?: ModelCapability;
+};
+
 export interface CatalogProviderInfo {
   readonly type?: string;
   readonly apiKey?: string;
@@ -50,12 +54,13 @@ export interface CatalogProviderInfo {
   readonly env?: Readonly<Record<string, string>>;
   readonly modelSource?: 'static' | 'discover' | 'oauth-catalog';
   readonly source?: Readonly<Record<string, unknown>>;
+  readonly aliasScope?: string;
 }
 
 export interface CatalogProviderEntry {
   readonly info?: CatalogProviderInfo;
   readonly discovered: Readonly<Record<string, LlmModel>>;
-  readonly override: Readonly<Record<string, CatalogModelDefinition>>;
+  readonly override: Readonly<Record<string, CatalogModelConfig>>;
   readonly pingErrors?: Readonly<Record<string, string>>;
 }
 
@@ -65,11 +70,6 @@ export interface CatalogModel extends CatalogModelDefinition {
 
 export interface CatalogSnapshot {
   readonly providers: Readonly<Record<string, CatalogProviderEntry>>;
-}
-
-export interface ProviderCatalogPersist {
-  load(): Promise<CatalogSnapshot | undefined>;
-  save(snapshot: CatalogSnapshot): Promise<void>;
 }
 
 export interface CatalogModelBinding {
