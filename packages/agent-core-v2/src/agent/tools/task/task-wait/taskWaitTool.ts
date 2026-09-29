@@ -8,17 +8,21 @@ import {
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTaskService } from '#/agent/task/task';
 import type { AgentTaskInfo, AgentTaskOutputSnapshot } from '#/agent/task/task';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
 import { formatPlainObject, formatTaskRecord } from '#/agent/task/tools/format';
 import { formatTaskList } from '#/agent/tools/task/task-list/taskListTool';
 import { IFlagService } from '#/app/flag/flag';
+import { IAgentGoalService } from '#/features/goal/goalService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { abortError, isAbortError, linkAbortSignal } from '#/_base/utils/abort';
 import { WAIT_FOR_FLAG_ID } from './flag';
 import { IWaitForTool, WaitForInputSchema, type WaitForInput } from './task-wait';
 import WAIT_FOR_DESCRIPTION from './task-wait.md?raw';
+import WAIT_FOR_SUBAGENT_GUIDANCE from './task-wait-subagent.md?raw';
 
 const OUTPUT_PREVIEW_BYTES = 32 * 1024;
 
@@ -27,6 +31,12 @@ const PAGING_HINT_LINES = 300;
 const PROGRESS_INTERVAL_MS = 1_000;
 
 type WaitForOutcome = 'completed' | 'timed_out' | 'task_not_found' | 'aborted' | 'interrupted';
+
+interface TurnWaitTally {
+  readonly turnId: number;
+  calls: number;
+  waitedMs: number;
+}
 
 function terminalReason(info: AgentTaskInfo): 'timed_out' | 'stopped' | 'failed' | undefined {
   if (info.status === 'timed_out') return 'timed_out';
@@ -100,7 +110,6 @@ export function startWaitProgress(
   const tick = (): void => {
     onUpdate(waitForProgressUpdate(args, tasks.list(true).length, startedAt, Date.now()));
   };
-  tick();
   const interval = setInterval(tick, PROGRESS_INTERVAL_MS);
   interval.unref?.();
   return {
@@ -114,14 +123,24 @@ export function startWaitProgress(
 export class WaitForTool implements IWaitForTool {
   declare readonly _serviceBrand: undefined;
   readonly name = 'WaitFor' as const;
-  readonly description: string = WAIT_FOR_DESCRIPTION;
+  readonly description: string;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(WaitForInputSchema);
+
+  private readonly isSubagent: boolean;
+  private tally: TurnWaitTally | undefined;
 
   constructor(
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IFlagService private readonly flags: IFlagService,
-  ) {}
+    @IAgentGoalService private readonly goals: IAgentGoalService,
+    @IAgentScopeContext scopeContext: IAgentScopeContext,
+  ) {
+    this.isSubagent = scopeContext.agentId !== MAIN_AGENT_ID;
+    this.description = this.isSubagent
+      ? `${WAIT_FOR_DESCRIPTION.trimEnd()}\n${WAIT_FOR_SUBAGENT_GUIDANCE}`
+      : WAIT_FOR_DESCRIPTION;
+  }
 
   resolveExecution(args: WaitForInput): ToolExecution {
     return {
@@ -145,6 +164,7 @@ export class WaitForTool implements IWaitForTool {
         output: 'WaitFor is disabled: the wait_for experimental flag is off.',
       };
     }
+    const tally = this.countCall(ctx.turnId);
     const startedAt = Date.now();
     const timeoutMs = args.timeout * 1000;
     const runningAtStart = this.tasks.list(true);
@@ -153,16 +173,19 @@ export class WaitForTool implements IWaitForTool {
       if (runningAtStart.length === 0) {
         this.track(args, startedAt, timeoutMs, 'completed', 0);
         return {
-          output: [
-            formatPlainObject({ waitStatus: 'no_tasks', waitedMs: 0, timeoutMs }),
-            'No background tasks are running, so there is nothing to wait for. Finished tasks report back via automatic notification.',
-          ].join('\n\n'),
+          output: this.withRepeatWarning(
+            [
+              formatPlainObject({ waitStatus: 'no_tasks', waitedMs: 0, timeoutMs }),
+              'No background tasks are running, so there is nothing to wait for. Finished tasks report back via automatic notification.',
+            ].join('\n\n'),
+            tally,
+          ),
           isError: false,
         };
       }
     } else if (this.tasks.getTask(args.task_id) === undefined) {
       this.track(args, startedAt, timeoutMs, 'task_not_found', 0);
-      return { isError: true, output: `Task not found: ${args.task_id}` };
+      return { isError: true, output: this.withRepeatWarning(`Task not found: ${args.task_id}`, tally) };
     }
 
     let waited: AgentTaskInfo | undefined;
@@ -181,22 +204,30 @@ export class WaitForTool implements IWaitForTool {
         (error === ctx.steerSignal.reason || isAbortError(error))
       ) {
         this.track(args, startedAt, timeoutMs, 'interrupted', 0);
-        return { output: this.formatInterrupted(args, startedAt, timeoutMs), isError: false };
+        tally.waitedMs += Date.now() - startedAt;
+        return {
+          output: this.withRepeatWarning(this.formatInterrupted(args, startedAt, timeoutMs), tally),
+          isError: false,
+        };
       }
       this.track(args, startedAt, timeoutMs, 'aborted', 0);
       throw error;
     } finally {
       progress.stop();
     }
+    tally.waitedMs += Date.now() - startedAt;
 
     if (waited === undefined) {
       this.track(args, startedAt, timeoutMs, 'task_not_found', 0);
-      return { isError: true, output: `Task not found: ${args.task_id ?? ''}` };
+      return { isError: true, output: this.withRepeatWarning(`Task not found: ${args.task_id ?? ''}`, tally) };
     }
 
     if (!TERMINAL_STATUSES.has(waited.status)) {
       this.track(args, startedAt, timeoutMs, 'timed_out', 0);
-      return { output: this.formatTimeout(args, startedAt, timeoutMs), isError: false };
+      return {
+        output: this.withRepeatWarning(this.formatTimeout(args, startedAt, timeoutMs), tally),
+        isError: false,
+      };
     }
 
     const extras = this.collectExtras(runningAtStart, waited.taskId);
@@ -205,7 +236,32 @@ export class WaitForTool implements IWaitForTool {
       [waited, ...extras].map((info) => ({ taskId: info.taskId, status: info.status })),
     );
     this.track(args, startedAt, timeoutMs, 'completed', extras.length);
-    return { output, isError: false };
+    return { output: this.withRepeatWarning(output, tally), isError: false };
+  }
+
+  private countCall(turnId: number): TurnWaitTally {
+    if (this.tally?.turnId !== turnId) {
+      this.tally = { turnId, calls: 0, waitedMs: 0 };
+    }
+    this.tally.calls += 1;
+    return this.tally;
+  }
+
+  private withRepeatWarning(output: string, tally: TurnWaitTally): string {
+    if (tally.calls < 2) return output;
+    const waited = formatWaitSeconds(Math.round(tally.waitedMs / 1000));
+    const summary = `This is WaitFor call ${String(tally.calls)} in this turn, and you have already spent ${waited} waiting.`;
+    return [output, '', '[wait_warning]', `${summary} ${this.repeatWaitAdvice()}`].join('\n');
+  }
+
+  private repeatWaitAdvice(): string {
+    if (this.isSubagent) {
+      return "Stop waiting by reflex: repeated waits burn time your caller is waiting on. Before calling WaitFor again, do every part of your task that does not depend on the running background task. Wait again only for a result you truly cannot finish without — ending your turn is your final hand-off, so do not hand off without it, but never wait for tasks you do not need.";
+    }
+    if (this.goals.getGoal().goal?.status === 'active') {
+      return 'Stop waiting by reflex: repeated waits stall the goal. Before calling WaitFor again, do every piece of remaining goal work that does not depend on the running background task — there is almost always some. Wait again only if nothing else can proceed until it finishes; even then, WaitFor beats polling with Bash sleep or ending the turn only to be continued again.';
+    }
+    return 'Stop calling WaitFor. Repeated waiting wastes the user\'s time and is almost never the right move. Do not call it again in this turn unless the user explicitly asked you to wait. Do something useful now — another part of the task, or verifying earlier work — or end your turn with a progress update. Finished background tasks notify you automatically, so you will not miss the result.';
   }
 
   private async waitAny(
@@ -255,7 +311,9 @@ export class WaitForTool implements IWaitForTool {
         waitedMs: Date.now() - startedAt,
         timeoutMs,
       }),
-      'The wait ended before the task finished — a timeout is not an error. Call WaitFor again to keep waiting, or continue with other work; completion also arrives via automatic notification.',
+      this.isSubagent
+        ? 'The wait ended before the task finished — a timeout is not an error. If you need its result, call WaitFor again: ending your turn is your hand-off, and a completion notification after it reaches no one.'
+        : 'The wait ended before the task finished — a timeout is not an error. Prefer continuing with other work over waiting again; completion arrives via automatic notification.',
     ];
     const running = this.tasks.list(true);
     if (running.length > 0) {

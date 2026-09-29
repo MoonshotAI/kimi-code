@@ -57,6 +57,7 @@ export interface EditorKeyboardHost {
   }): boolean;
   releaseStagingMedia(mediaAttachmentIds: readonly number[]): void;
   recallLastQueued(): QueuedMessage | undefined;
+  isSteeringQueuedMessages(): boolean;
   showError(msg: string): void;
   track(event: string, props?: Record<string, unknown>): void;
   updateEditorBorderHighlight(text?: string): void;
@@ -321,6 +322,10 @@ export class EditorKeyboardController {
         host.state.appState.isCompacting
       )
         return;
+      // An automatic steer of the queue is still in flight: steering more now
+      // could reach the model ahead of it, so the keypress is ignored for
+      // that brief window and the draft stays in the editor.
+      if (host.isSteeringQueuedMessages()) return;
       const text = editor.getText().trim();
       const editorIsBash = editor.inputMode === 'bash';
 
