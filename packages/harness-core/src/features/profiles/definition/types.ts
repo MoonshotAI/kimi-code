@@ -1,0 +1,89 @@
+import type { OsProcessPort } from '#/features/os/host/index';
+
+export const DEFAULT_AGENT_PROFILE_NAME = 'agent';
+
+export const DEFAULT_PRODUCT_NAME = 'Kimi Code CLI';
+
+export interface AgentProfilePromptPrefixContext {
+  readonly cwd: string;
+  readonly process: OsProcessPort;
+  readonly log?: (message: string) => void;
+}
+
+export interface AgentProfileContext {
+  readonly cwd?: string;
+  readonly cwdListing?: string;
+  readonly agentsMd?: string;
+  readonly additionalDirsInfo?: string;
+  readonly osKind?: string;
+  readonly shellName?: string;
+  readonly shellPath?: string;
+  readonly skills?: string;
+  readonly skillActive?: boolean;
+  readonly pluginSections?: string;
+  readonly productName?: string;
+  readonly replyStyleGuide?: string;
+  readonly notifyUserActive?: boolean;
+  readonly [key: string]: unknown;
+}
+
+export interface EnvironmentDisclosureSnapshot {
+  readonly cwd: string;
+}
+
+export interface SystemPromptRenderResult {
+  readonly text: string;
+  readonly environment: EnvironmentDisclosureSnapshot;
+}
+
+export interface AgentProfile {
+  readonly name: string;
+  readonly description?: string;
+  readonly whenToUse?: string;
+  readonly override?: boolean;
+  readonly tools?: readonly string[];
+  readonly disallowedTools?: readonly string[];
+  readonly subagents?: readonly string[];
+  readonly systemPrompt: (context: AgentProfileContext) => string;
+  readonly renderSystemPrompt: (context: AgentProfileContext) => SystemPromptRenderResult;
+  readonly promptPrefix?: (ctx: AgentProfilePromptPrefixContext) => Promise<string>;
+}
+
+export type AgentProfileInput = Omit<AgentProfile, 'systemPrompt' | 'renderSystemPrompt'> &
+  (
+    | {
+        readonly systemPrompt: (context: AgentProfileContext) => string;
+        readonly renderSystemPrompt?: (
+          context: AgentProfileContext,
+        ) => SystemPromptRenderResult;
+      }
+    | {
+        readonly systemPrompt?: (context: AgentProfileContext) => string;
+        readonly renderSystemPrompt: (context: AgentProfileContext) => SystemPromptRenderResult;
+      }
+  );
+
+export function normalizeAgentProfile(input: AgentProfileInput): AgentProfile {
+  if (input.renderSystemPrompt !== undefined) {
+    const render = input.renderSystemPrompt.bind(input);
+    return {
+      ...input,
+      renderSystemPrompt: render,
+      systemPrompt: (context) => render(context).text,
+    };
+  }
+  if (input.systemPrompt !== undefined) {
+    const systemPrompt = input.systemPrompt.bind(input);
+    return {
+      ...input,
+      systemPrompt,
+      renderSystemPrompt: (context) => ({
+        text: systemPrompt(context),
+        environment: { cwd: context.cwd ?? '' },
+      }),
+    };
+  }
+  throw new Error(
+    `Agent profile "${input.name}" must define systemPrompt or renderSystemPrompt.`,
+  );
+}
