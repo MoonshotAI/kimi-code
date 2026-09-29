@@ -14,6 +14,7 @@ import {
 import { bindHandleOn, type FeatureHandleOn, type FeatureSpec } from '#/feature/feature';
 import { AppUnitRef } from '#/feature/contribution-hooks';
 import { useFeatureSlot } from '#/feature/hooks';
+import { AppNodeRef } from '#/feature/tierNodes';
 
 import { openSession, updateSession, type OpenSessionInput } from './open-session';
 import type { SessionRecord, SessionRecordDraft, SessionSpace } from './session-space';
@@ -119,6 +120,7 @@ export const AppUnit = createUnit<AppUnitProps>('app', (props, ctx) => {
     },
   };
   provide(AppUnitRef, commands);
+  provide(AppNodeRef, ctx.node);
   props.provide?.(ctx.node);
   useFeatureSlot('app', appFeatures);
   return commands;

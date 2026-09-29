@@ -13,6 +13,7 @@ import {
 import { bindHandleOn, Features, type FeatureHandleOn, type FeatureSpec } from '#/feature/feature';
 import { BlobsRef, SessionStoreRef, SessionUnitRef } from '#/feature/contribution-hooks';
 import { dedupFeatures, useFeatureSlot } from '#/feature/hooks';
+import { SessionNodeRef } from '#/feature/tierNodes';
 import type { SessionStores } from '#/stores/session';
 import type { BranchRef } from '#/store/tree';
 import { AgentUnit, agentHandle, type AgentHandle, type AgentUnitProps } from './agentUnit';
@@ -143,6 +144,7 @@ export const SessionUnit = createUnit<SessionUnitProps>('session', (props) => {
   };
   provide(EventContext, { sessionId: props.sessionId });
   provide(SessionUnitRef, commands);
+  provide(SessionNodeRef, node);
   provide(SessionStoreRef, props.stores.session);
   provide(BlobsRef, props.stores.blobs);
   props.provide?.(node);

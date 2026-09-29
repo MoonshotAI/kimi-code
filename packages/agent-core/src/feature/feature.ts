@@ -3,14 +3,21 @@ import type { MaybeRefOrGetter } from '@vue/reactivity';
 import {
   createToken,
   createUnit,
+  currentUnit,
+  inject,
+  pushCleanup,
   type EventHandler,
   type NodeRef,
   type RuntimeEvent,
+  type Token,
+  type UnitNode,
   type UnitRecipe,
   type UnitSetup,
   type Unsubscribe,
   type WaitOpts,
 } from '#/kernel/index';
+
+import { AgentNodeRef, AppNodeRef, SessionNodeRef } from './tierNodes';
 
 export type { WaitOpts };
 
@@ -89,6 +96,83 @@ export function bindHandleOn(node: NodeRef): Pick<FeatureHandleOn, 'on' | 'wait'
       opts?: WaitOpts,
     ) => waitOn(node, featureOrType, typeOrOpts, opts)) as FeatureHandleOn['wait'],
   };
+}
+
+export function useOnApp<E extends RuntimeEvent, T extends E['type']>(
+  feature: FeatureSpec<E>,
+  type: T,
+  handler: EventHandler<Extract<E, { type: T }>>,
+  opts?: ListenOpts,
+): void;
+export function useOnApp<E extends RuntimeEvent>(
+  feature: FeatureSpec<E>,
+  type: '*',
+  handler: EventHandler<E>,
+  opts?: ListenOpts,
+): void;
+export function useOnApp(type: string, handler: EventHandler, opts?: ListenOpts): void;
+export function useOnApp(
+  featureOrType: FeatureSpec | string,
+  typeOrHandler?: string | EventHandler,
+  handlerOrOpts?: EventHandler | ListenOpts,
+  opts?: ListenOpts,
+): void {
+  useTierOn(AppNodeRef, featureOrType, typeOrHandler, handlerOrOpts, opts);
+}
+
+export function useOnSession<E extends RuntimeEvent, T extends E['type']>(
+  feature: FeatureSpec<E>,
+  type: T,
+  handler: EventHandler<Extract<E, { type: T }>>,
+  opts?: ListenOpts,
+): void;
+export function useOnSession<E extends RuntimeEvent>(
+  feature: FeatureSpec<E>,
+  type: '*',
+  handler: EventHandler<E>,
+  opts?: ListenOpts,
+): void;
+export function useOnSession(type: string, handler: EventHandler, opts?: ListenOpts): void;
+export function useOnSession(
+  featureOrType: FeatureSpec | string,
+  typeOrHandler?: string | EventHandler,
+  handlerOrOpts?: EventHandler | ListenOpts,
+  opts?: ListenOpts,
+): void {
+  useTierOn(SessionNodeRef, featureOrType, typeOrHandler, handlerOrOpts, opts);
+}
+
+export function useOnAgent<E extends RuntimeEvent, T extends E['type']>(
+  feature: FeatureSpec<E>,
+  type: T,
+  handler: EventHandler<Extract<E, { type: T }>>,
+  opts?: ListenOpts,
+): void;
+export function useOnAgent<E extends RuntimeEvent>(
+  feature: FeatureSpec<E>,
+  type: '*',
+  handler: EventHandler<E>,
+  opts?: ListenOpts,
+): void;
+export function useOnAgent(type: string, handler: EventHandler, opts?: ListenOpts): void;
+export function useOnAgent(
+  featureOrType: FeatureSpec | string,
+  typeOrHandler?: string | EventHandler,
+  handlerOrOpts?: EventHandler | ListenOpts,
+  opts?: ListenOpts,
+): void {
+  useTierOn(AgentNodeRef, featureOrType, typeOrHandler, handlerOrOpts, opts);
+}
+
+function useTierOn(
+  token: Token<UnitNode>,
+  featureOrType: FeatureSpec | string,
+  typeOrHandler?: string | EventHandler,
+  handlerOrOpts?: EventHandler | ListenOpts,
+  opts?: ListenOpts,
+): void {
+  const node = currentUnit();
+  pushCleanup(node, listenOn(inject(token), featureOrType, typeOrHandler, handlerOrOpts, opts));
 }
 
 function listenOn(

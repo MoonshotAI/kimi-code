@@ -36,13 +36,17 @@ import {
   pushCleanup,
   useNode,
   useReady,
+  type EventHandler,
   type MountRootOptions,
   type NodeRef,
   type Ref,
+  type RuntimeEvent,
   type UnitHandle,
   type UnitNode,
+  type Unsubscribe,
+  type WaitOpts,
 } from '#/kernel/index';
-import type { FeatureSpec } from '#/feature/feature';
+import { bindHandleOn, type FeatureSpec, type ListenOpts } from '#/feature/feature';
 import {
   AgentPort,
   AgentStoreRef,
@@ -53,6 +57,7 @@ import {
   createAgentPorts,
 } from '#/feature/contribution-hooks';
 import { useFeatureSlot } from '#/feature/hooks';
+import { AgentNodeRef } from '#/feature/tierNodes';
 
 type AgentActor = ActorRefFrom<ReturnType<typeof createAgentMachine>>;
 
@@ -208,7 +213,40 @@ export interface AgentCommands {
   run(message: UserMessage, opts?: AgentRunOpts): Promise<AgentRunResult>;
 }
 
-export interface AgentHandle extends UnitHandle, AgentCommands {
+export interface AgentHandleOn {
+  on<T extends AgentEmitted['type']>(
+    type: T,
+    handler: (event: Extract<AgentEmitted, { type: T }>) => void,
+  ): Subscription;
+  on<E extends RuntimeEvent, T extends E['type']>(
+    feature: FeatureSpec<E>,
+    type: T,
+    handler: EventHandler<Extract<E, { type: T }>>,
+    opts?: ListenOpts,
+  ): Unsubscribe;
+  on<E extends RuntimeEvent>(
+    feature: FeatureSpec<E>,
+    type: '*',
+    handler: EventHandler<E>,
+    opts?: ListenOpts,
+  ): Unsubscribe;
+  wait<T extends AgentEmitted['type']>(
+    type: T,
+    opts?: AgentWaitOpts<T>,
+  ): Promise<Extract<AgentEmitted, { type: T }>>;
+  wait<E extends RuntimeEvent, T extends E['type']>(
+    feature: FeatureSpec<E>,
+    type: T,
+    opts?: WaitOpts<Extract<E, { type: T }>>,
+  ): Promise<Extract<E, { type: T }>>;
+  wait<E extends RuntimeEvent>(
+    feature: FeatureSpec<E>,
+    type: '*',
+    opts?: WaitOpts<E>,
+  ): Promise<E>;
+}
+
+export interface AgentHandle extends UnitHandle, Omit<AgentCommands, 'on' | 'wait'>, AgentHandleOn {
   disposeAsync(): Promise<void>;
 }
 
@@ -418,6 +456,7 @@ export const AgentUnit = createUnit<AgentUnitProps>('agent', (props) => {
   provide(AgentPort, ports);
   provide(WaitForTasksRef, createWaitForTasks(actor));
   provide(AgentUnitRef, commands);
+  provide(AgentNodeRef, node);
   props.provide?.(node);
   const slots = useFeatureSlot('agent', props.features ?? []);
   let started = false;
@@ -444,6 +483,18 @@ export const AgentUnit = createUnit<AgentUnitProps>('agent', (props) => {
 
 export function agentHandle(handle: UnitHandle): AgentHandle {
   const commands = (): AgentCommands => (handle.node as UnitNode).setupResult as AgentCommands;
+  const nodeOn = bindHandleOn(handle.node);
+  const onFeature = nodeOn.on as unknown as (
+    feature: FeatureSpec,
+    type: string,
+    handler: EventHandler,
+    opts?: ListenOpts,
+  ) => Unsubscribe;
+  const waitFeature = nodeOn.wait as unknown as (
+    feature: FeatureSpec,
+    type: string,
+    opts?: WaitOpts,
+  ) => Promise<RuntimeEvent>;
   return {
     get name() { return handle.name; },
     get state() { return handle.state; },
@@ -468,8 +519,33 @@ export function agentHandle(handle: UnitHandle): AgentHandle {
     abortTool: (toolCallId, reason) => commands().abortTool(toolCallId, reason),
     pause: () => commands().pause(),
     continue: () => commands().continue(),
-    on: (type, handler) => commands().on(type, handler),
-    wait: (type, opts) => commands().wait(type, opts),
+    on: ((
+      featureOrType: FeatureSpec | string,
+      typeOrHandler?: string | ((event: AgentEmitted) => void),
+      handlerOrOpts?: EventHandler | ListenOpts,
+      opts?: ListenOpts,
+    ) => {
+      if (typeof featureOrType === 'string') {
+        return commands().on(
+          featureOrType as AgentEmitted['type'],
+          typeOrHandler as (event: AgentEmitted) => void,
+        );
+      }
+      return onFeature(featureOrType, typeOrHandler as string, handlerOrOpts as EventHandler, opts);
+    }) as AgentHandle['on'],
+    wait: ((
+      featureOrType: FeatureSpec | string,
+      typeOrOpts?: string | AgentWaitOpts<AgentEmitted['type']>,
+      opts?: WaitOpts,
+    ) => {
+      if (typeof featureOrType === 'string') {
+        return commands().wait(
+          featureOrType as AgentEmitted['type'],
+          typeOrOpts as AgentWaitOpts<AgentEmitted['type']>,
+        );
+      }
+      return waitFeature(featureOrType, typeOrOpts as string, opts);
+    }) as AgentHandle['wait'],
     run: (message, opts) => commands().run(message, opts),
   };
 }
