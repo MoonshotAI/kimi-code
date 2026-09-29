@@ -7,7 +7,7 @@ How it works:
 - stderr is not delivered as events. It is kept in the task output, which TaskOutput reads.
 - The monitor stops when the command exits, when `timeout` passes (default ${DEFAULT_TIMEOUT_S}s, max ${MAX_TIMEOUT_S}s), or when you call TaskStop. With `persistent: true` it runs until TaskStop or the end of the session. You are notified when it stops.
 - A monitor that prints more than ${MAX_LINES_PER_MINUTE} lines in a minute is stopped automatically.
-- WaitFor on a monitor returns as soon as its next event is ready.
+- WaitFor with a monitor's `task_id` returns as soon as its next event is ready. WaitFor without a `task_id` does not wait for monitors.
 
 Writing the command:
 

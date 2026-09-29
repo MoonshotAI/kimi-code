@@ -26,13 +26,14 @@ import {
   IMonitorTool,
   MONITOR_DEFAULT_TIMEOUT_S,
   MONITOR_MAX_TIMEOUT_S,
+  MONITOR_TASK_ID_PREFIX,
   type MonitorInput,
   MonitorInputSchema,
 } from './monitor';
 import MONITOR_DESCRIPTION from './monitor.md?raw';
 
 export class MonitorProcessTask extends ProcessTask {
-  override readonly idPrefix = 'monitor';
+  override readonly idPrefix = MONITOR_TASK_ID_PREFIX;
   protected override readonly stdoutEvents = true;
 }
 

@@ -3,7 +3,12 @@ import { z } from 'zod';
 import { createDecorator } from '#/_base/di/instantiation';
 import { type AgentTool } from '#/tool/toolContract';
 
+export const MONITOR_TASK_ID_PREFIX = 'monitor';
 export const MONITOR_DEFAULT_TIMEOUT_S = 5 * 60;
+
+export function isMonitorTaskId(taskId: string): boolean {
+  return taskId.startsWith(`${MONITOR_TASK_ID_PREFIX}-`);
+}
 export const MONITOR_MAX_TIMEOUT_S = 60 * 60;
 
 export const MonitorInputSchema = z.object({

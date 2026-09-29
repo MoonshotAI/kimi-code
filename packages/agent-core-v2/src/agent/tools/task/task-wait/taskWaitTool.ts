@@ -20,6 +20,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { abortError, isAbortError, linkAbortSignal } from '#/_base/utils/abort';
 import { WAIT_FOR_FLAG_ID } from './flag';
+import { isMonitorTaskId } from '#/agent/tools/task/monitor/monitor';
 import { IWaitForTool, WaitForInputSchema, type WaitForInput } from './task-wait';
 import WAIT_FOR_DESCRIPTION from './task-wait.md?raw';
 import WAIT_FOR_SUBAGENT_GUIDANCE from './task-wait-subagent.md?raw';
@@ -167,16 +168,20 @@ export class WaitForTool implements IWaitForTool {
     const tally = this.countCall(ctx.turnId);
     const startedAt = Date.now();
     const timeoutMs = args.timeout * 1000;
-    const runningAtStart = this.tasks.list(true);
+    const running = this.tasks.list(true);
+    const runningAtStart = running.filter((task) => !isMonitorTaskId(task.taskId));
 
     if (args.task_id === undefined) {
       if (runningAtStart.length === 0) {
         this.track(args, startedAt, timeoutMs, 'completed', 0);
+        const monitorNote = running.length > 0
+          ? ' Running monitors are not waited for: their output arrives as notifications. Pass a monitor\'s task_id to wait for its next event.'
+          : '';
         return {
           output: this.withRepeatWarning(
             [
               formatPlainObject({ waitStatus: 'no_tasks', waitedMs: 0, timeoutMs }),
-              'No background tasks are running, so there is nothing to wait for. Finished tasks report back via automatic notification.',
+              `No background tasks are running, so there is nothing to wait for. Finished tasks report back via automatic notification.${monitorNote}`,
             ].join('\n\n'),
             tally,
           ),
@@ -188,14 +193,10 @@ export class WaitForTool implements IWaitForTool {
       return { isError: true, output: this.withRepeatWarning(`Task not found: ${args.task_id}`, tally) };
     }
 
-    const watched = new Set(
-      args.task_id === undefined ? runningAtStart.map((task) => task.taskId) : [args.task_id],
-    );
-    const queuedEventTaskId = [...watched].find((taskId) => this.tasks.hasQueuedEvent(taskId));
-    if (queuedEventTaskId !== undefined) {
+    if (args.task_id !== undefined && this.tasks.hasQueuedEvent(args.task_id)) {
       this.track(args, startedAt, timeoutMs, 'event', 0);
       return {
-        output: this.withRepeatWarning(this.formatEvent(args, queuedEventTaskId, startedAt, timeoutMs), tally),
+        output: this.withRepeatWarning(this.formatEvent(args, args.task_id, startedAt, timeoutMs), tally),
         isError: false,
       };
     }
@@ -204,7 +205,7 @@ export class WaitForTool implements IWaitForTool {
     let eventTaskId: string | undefined;
     const eventController = new AbortController();
     const eventSubscription = this.tasks.onDidQueueEvent((taskId) => {
-      if (eventTaskId !== undefined || !watched.has(taskId)) return;
+      if (eventTaskId !== undefined || taskId !== args.task_id) return;
       eventTaskId = taskId;
       eventController.abort(abortError());
     });
