@@ -543,9 +543,11 @@ describe('AgentTaskService', () => {
       expect(info?.status).toBe('killed');
       expect(info?.stopReason).toBe('Session closed');
       expect(info?.terminalNotificationSuppressed).toBe(true);
-      expect(writes.filter((write) => write.taskId === taskId).at(-1)).toMatchObject({
+      const lastWrite = writes.filter((write) => write.taskId === taskId).at(-1);
+      expect(lastWrite).toMatchObject({
         status: 'killed',
         terminalNotificationSuppressed: true,
+        durationMs: expect.any(Number),
       });
     }
     expect(stubLoop().snapshot().hasPendingRequests).toBe(false);
@@ -900,6 +902,7 @@ describe('AgentTaskService', () => {
       pid: 4242,
       startedAt: 1,
       endedAt: null,
+      durationMs: 5_000,
       exitCode: null,
       status: 'running',
       detached: true,
@@ -926,6 +929,7 @@ describe('AgentTaskService', () => {
     const subLost = await sub.reconcile();
     expect(subLost.map((info) => info.taskId)).toEqual(['bash-abcdef01']);
     expect(subLost[0]?.status).toBe('lost');
+    expect(subLost[0]).not.toHaveProperty('durationMs');
   });
 
   it('main restore claims a previous v2 session task with its legacy output path', async () => {

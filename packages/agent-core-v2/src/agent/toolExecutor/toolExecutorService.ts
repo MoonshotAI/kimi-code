@@ -15,6 +15,7 @@ import {
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { PathSecurityError } from '#/tool/path-access';
 import { isAbortError, isUserCancellation } from '#/_base/utils/abort';
+import { monoNowMs } from '#/_base/utils/monotonic';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
   ToolAccesses,
@@ -468,13 +469,13 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       const pendingResult = scheduler.add({
         accesses: task.accesses,
         start: async () => {
-          const startedAt = Date.now();
+          const startedAt = monoNowMs();
           return {
             result: task.execute(signal).then(({ result, outcome }) => ({
               index,
               result,
               outcome,
-              durationMs: Math.max(0, Date.now() - startedAt),
+              durationMs: Math.max(0, monoNowMs() - startedAt),
             })),
           };
         },

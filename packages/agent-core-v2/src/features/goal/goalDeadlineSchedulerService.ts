@@ -1,4 +1,5 @@
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import { monoNowMs } from '#/_base/utils/monotonic';
 
 import { IGoalDeadlineScheduler } from './goalDeadlineScheduler';
 
@@ -6,7 +7,7 @@ export class GoalDeadlineSchedulerService implements IGoalDeadlineScheduler {
   declare readonly _serviceBrand: undefined;
 
   now(): number {
-    return Number(process.hrtime.bigint() / 1_000_000n);
+    return monoNowMs();
   }
 
   schedule(delayMs: number, callback: () => void): IDisposable {
