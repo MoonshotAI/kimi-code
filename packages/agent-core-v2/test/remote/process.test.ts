@@ -241,9 +241,9 @@ describe('process group over a subprocess loopback', () => {
         resolve({ exitCode: event.exitCode });
       });
     });
-    await expect(connection.call('process/terminate', { processId })).resolves.toEqual({
-      running: true,
-    });
+    await expect(
+      connection.call('process/signal', { processId, signal: 'terminate' }),
+    ).resolves.toEqual({});
     const result = await Promise.race([
       exited,
       new Promise<never>((_resolve, reject) => {
@@ -318,7 +318,7 @@ describe('process output backpressure', () => {
 });
 
 describe('stdin write chain recovery', () => {
-  it('retries a timed-out write with the same writeId and keeps later writes flowing', async () => {
+  it('exempts process/write from the request timeout and settles pending writes when the process dies', async () => {
     const { connection, loopback } = await connectInProcess({
       connect: { requestCallTimeoutMs: 400 },
     });
@@ -326,12 +326,20 @@ describe('stdin write chain recovery', () => {
     const proc = await processes.spawn('sleep', ['300']);
 
     const chunk = Buffer.alloc(1024 * 1024, 0x61);
-    const firstError = await new Promise<Error | null>((resolve) => {
+    let firstSettled = false;
+    const firstWrite = new Promise<Error | null>((resolve) => {
       proc.stdin.write(chunk, (error) => {
+        firstSettled = true;
         resolve(error ?? null);
       });
     });
-    expect(firstError).toBeNull();
+    await delay(1_000);
+    expect(firstSettled).toBe(false);
+    expect(connection.closed).toBe(false);
+
+    await proc.kill('SIGKILL');
+    await expect(firstWrite).resolves.toBeNull();
+    await proc.wait();
 
     const secondError = await new Promise<Error | null>((resolve) => {
       proc.stdin.write(Buffer.from('x'), (error) => {
@@ -339,8 +347,6 @@ describe('stdin write chain recovery', () => {
       });
     });
     expect(secondError).toBeNull();
-    await proc.kill('SIGKILL');
-    await proc.wait();
     connection.close();
     await loopback.host.done;
   }, 15_000);

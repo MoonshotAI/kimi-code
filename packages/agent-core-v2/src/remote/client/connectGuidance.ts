@@ -1,12 +1,7 @@
 import { MIN_EXECUTOR_VERSION } from '#/remote/protocol/methods';
 
 import { HandshakeError } from './connection';
-import {
-  defaultLocalRunner,
-  launcherLabel,
-  resolveTildeRemoteBin,
-  type LocalRunner,
-} from './executorDetect';
+import { launcherLabel } from './executorDetect';
 import { DEFAULT_REMOTE_BIN, type LauncherSpec } from './launchers';
 
 export type HandshakeFailureClass = 'missing' | 'timeout' | 'incompatible' | 'other';
@@ -73,14 +68,13 @@ function withGuidance(error: unknown, guidance: string): HandshakeError {
 export interface ConnectWithGuidanceOptions {
   readonly launcher: LauncherSpec;
   readonly minExecutorVersion?: string;
-  readonly runner?: LocalRunner;
 }
 
 export async function connectWithGuidance<T>(
   attempt: (launcher: LauncherSpec) => Promise<T>,
   options: ConnectWithGuidanceOptions,
 ): Promise<T> {
-  const launcher = await resolveTildeRemoteBin(options.launcher, options.runner ?? defaultLocalRunner);
+  const launcher = options.launcher;
   try {
     return await attempt(launcher);
   } catch (error) {

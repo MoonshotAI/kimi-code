@@ -60,7 +60,6 @@ MCP server 配置写在 `mcp.json` 中，分两层：
 | 字段 | 类型 | 适用方式 | 说明 |
 | --- | --- | --- | --- |
 | `env` | `Record<string, string>` | stdio | 注入子进程的环境变量 |
-| `envVars` | `Array<string \| { name, source? }>` | stdio | 转发给在远程环境中运行的 stdio server 的环境变量，见 [在远程环境中运行 stdio server](#在远程环境中运行-stdio-server) |
 | `environment_id` | `string` | stdio | 启动该 server 的 [远程环境](../guides/remote-environment.md) id，默认 `local` |
 | `cwd` | `string` | stdio | 子进程工作目录 |
 | `headers` | `Record<string, string>` | HTTP、SSE | 附加到每次请求的静态请求头 |
@@ -110,11 +109,7 @@ defaultCwd = "/srv/work"
 
 ### 远程 stdio server 的环境变量
 
-远程 stdio server 的 `PATH`、`HOME` 等基础环境变量来自目标环境，而不是你的机器，本机路径不会泄漏到远程进程中。CLI 只发送一份显式覆盖层，其余变量都由目标环境解析：
-
-- `env` 条目，按字面量值发送。
-- `source` 为 `"local"`（默认值）的 `envVars` 条目：从本机 CLI 进程的环境中取值，按字面量发送。
-- `source` 为 `"remote"` 的 `envVars` 条目：不发送任何内容，该变量由目标环境自身解析。
+远程 stdio server 的 `PATH`、`HOME` 等基础环境变量来自目标环境，而不是你的机器，本机路径不会泄漏到远程进程中。CLI 只把 `env` 覆盖层按字面量值发送，其余变量都由目标环境解析。
 
 ```json
 {
@@ -122,18 +117,13 @@ defaultCwd = "/srv/work"
     "remote-db": {
       "command": "db-mcp-server",
       "environment_id": "dev-box",
-      "env": { "LOG_LEVEL": "debug" },
-      "envVars": [
-        "GITHUB_TOKEN",
-        { "name": "PGPASSWORD", "source": "local" },
-        { "name": "SSH_AUTH_SOCK", "source": "remote" }
-      ]
+      "env": { "LOG_LEVEL": "debug" }
     }
   }
 }
 ```
 
-在这个例子中，server 会收到来自 `env` 的 `LOG_LEVEL=debug`、取值为本机当前值的 `GITHUB_TOKEN` 与 `PGPASSWORD`，以及在目标环境上解析的 `SSH_AUTH_SOCK`。对于使用默认 `local` 环境的 server，`envVars` 没有效果，因为子进程本就会继承 CLI 的完整环境。
+在这个例子中，server 会收到来自 `env` 的 `LOG_LEVEL=debug`，其余变量都由目标环境自身解析。
 
 ## 按需加载工具
 

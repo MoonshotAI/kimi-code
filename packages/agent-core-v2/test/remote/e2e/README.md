@@ -53,7 +53,9 @@ npx tsx test/remote/e2e/driver.ts --target ssh --host dev-box \
   --remote-bin "node ~/executor.mjs"
 ```
 
-docker — use the generic command launcher (docker exec takes argv, no shell):
+docker — the node-wrapped bundle is not a single binary path, so use the
+generic command launcher for it (the stock docker launcher execs one quoted
+`remoteBin` through `sh -c`):
 
 ```bash
 npx tsx test/remote/e2e/driver.ts --target command --program docker \

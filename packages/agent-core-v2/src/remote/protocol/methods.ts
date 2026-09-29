@@ -1,5 +1,4 @@
 export const INITIALIZE_METHOD = 'initialize';
-export const INITIALIZED_METHOD = 'initialized';
 
 export const FS_READ_FILE_METHOD = 'fs/readFile';
 export const FS_WRITE_FILE_METHOD = 'fs/writeFile';
@@ -16,7 +15,6 @@ export const PROCESS_EXITED_METHOD = 'process/exited';
 export const PROCESS_CLOSED_METHOD = 'process/closed';
 export const PROCESS_WRITE_METHOD = 'process/write';
 export const PROCESS_SIGNAL_METHOD = 'process/signal';
-export const PROCESS_TERMINATE_METHOD = 'process/terminate';
 export const PROCESS_FLOW_METHOD = 'process/flow';
 
 export const SERVER_NOTIFICATION_METHODS: ReadonlySet<string> = new Set([
@@ -157,11 +155,10 @@ export interface ProcessClosedNotification {
 export interface ProcessWriteParams {
   readonly processId: string;
   readonly chunkBase64: string;
-  readonly writeId: string;
   readonly eof?: boolean;
 }
 
-export type ProcessWriteStatus = 'accepted' | 'unknownProcess' | 'stdinClosed' | 'starting';
+export type ProcessWriteStatus = 'accepted' | 'unknownProcess' | 'stdinClosed';
 
 export interface ProcessWriteResult {
   readonly status: ProcessWriteStatus;
@@ -172,14 +169,6 @@ export type ProcessSignalKind = 'interrupt' | 'terminate' | 'kill';
 export interface ProcessSignalParams {
   readonly processId: string;
   readonly signal: ProcessSignalKind;
-}
-
-export interface ProcessTerminateParams {
-  readonly processId: string;
-}
-
-export interface ProcessTerminateResult {
-  readonly running: boolean;
 }
 
 export const MIN_EXECUTOR_VERSION = '0.1.0';
@@ -198,6 +187,5 @@ export const FS_READ_FILE_MAX_BYTES = 1024 * 1024;
 export const FS_READ_FILE_WHOLE_MAX_BYTES = 32 * 1024 * 1024;
 export const FS_WRITE_FILE_CHUNK_BYTES = 1024 * 1024;
 export const FS_READ_DIRECTORY_MAX_ENTRIES = 50_000;
-export const PROCESS_WRITE_ID_CACHE_SIZE = 4096;
 export const MAX_IN_FLIGHT_CALLS = 256;
 export const MAX_PENDING_SEND_BYTES = 64 * 1024 * 1024;

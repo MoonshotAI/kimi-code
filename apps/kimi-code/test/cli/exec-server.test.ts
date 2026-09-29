@@ -287,7 +287,6 @@ async function runExecServerHandshake(
   try {
     send({ method: 'initialize', id: 1, params: { clientName: 'vitest', clientVersion: '0.0.0' } });
     const initialize = await nextLine();
-    send({ method: 'initialized' });
     send({ method: 'fs/getMetadata', id: 2, params: { path: '/' } });
     const status = await nextLine();
     child.stdin.end();

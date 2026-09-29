@@ -6,7 +6,7 @@ import { ILogService } from '#/_base/log/log';
 import { LifecycleScope } from '#/app/scopes';
 import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
 import { Error2, ErrorCodes } from '#/errors';
-import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
+import { environmentBindingId, LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { EnvironmentError, environmentIsReady } from '#/environment/environmentRegistry';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
@@ -114,7 +114,8 @@ export class SessionManager implements ISessionManager {
         : { ...options, environmentId, environmentCwd };
     const create = async () => {
       if (environmentId !== undefined) await this.connectForCreate(environmentId, environmentCwd);
-      const controllerEnvironmentId = this.selectControllerEnvironmentId(environmentId ?? LOCAL_ENVIRONMENT_ID);
+      const controllerEnvironmentId = environmentId ?? LOCAL_ENVIRONMENT_ID;
+      if (controllerEnvironmentId !== LOCAL_ENVIRONMENT_ID) this.assertControllerEnvironmentReady(controllerEnvironmentId);
       const controllerCwd = controllerEnvironmentId === LOCAL_ENVIRONMENT_ID ? undefined : environmentCwd ?? options.workDir;
       return this.controllerForWorkspace(workspace.id, controllerEnvironmentId, controllerCwd).create(effective);
     };
@@ -127,6 +128,15 @@ export class SessionManager implements ISessionManager {
     const environment = await this.environmentDeclarations.ensureConnected(environmentId);
     if (environment === undefined || environmentCwd === undefined) return;
     await this.environmentDeclarations.assertCwdUsable(environmentId, environmentCwd);
+  }
+
+  private assertControllerEnvironmentReady(environmentId: string): void {
+    const environment = this.environments.current(environmentId);
+    if (environment !== undefined && environmentIsReady(environment)) return;
+    throw new EnvironmentError(
+      'environment.unavailable',
+      `environment ${environmentId} is ${environment === undefined ? 'not registered' : environment.status}`,
+    );
   }
 
   private selectControllerEnvironmentId(environmentId: string): string {
@@ -309,7 +319,7 @@ export class SessionManager implements ISessionManager {
   private controllerForWorkspace(workspaceId: string, environmentId: string = LOCAL_ENVIRONMENT_ID, cwd?: string): SessionLifecycleService {
     const workspace = this.workspaces.get(workspaceId);
     if (workspace === undefined) throw new Error(`workspace ${workspaceId} is not materialized`);
-    const key = `${workspaceId}\0${environmentId}\0${cwd ?? ''}`;
+    const key = `${workspaceId}\0${environmentBindingId(environmentId, cwd)}`;
     const generation = workspace.program.sessionControllerGenerationFor(environmentId, cwd);
     const existing = this.controllers.get(key);
     if (existing?.generation === generation) return existing.controller;
@@ -371,9 +381,14 @@ export class SessionManager implements ISessionManager {
       } catch (error) {
         if (!(error instanceof EnvironmentError)) throw error;
         this.log.warn(
-          `resume could not connect environment ${boundEnvironmentId}; session ${sessionId} loads with the binding kept and the environment left unconnected`,
+          `resume could not connect environment ${boundEnvironmentId}; session ${sessionId} cannot be loaded until the environment is available`,
           { error },
         );
+        throw error;
+      }
+      if (this.environments.current(boundEnvironmentId) !== undefined) {
+        this.assertControllerEnvironmentReady(boundEnvironmentId);
+        return this.controllerForWorkspace(workspace.id, boundEnvironmentId, persistedBinding?.cwd);
       }
     }
     const controllerEnvironmentId = this.selectControllerEnvironmentId(boundEnvironmentId);

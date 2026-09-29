@@ -205,7 +205,7 @@ class EnvironmentStdioTransport implements Transport {
       const env =
         this.options.environmentId === LOCAL_ENVIRONMENT_ID
           ? mergeStdioEnv(this.config.env)
-          : mergeRemoteStdioEnv(this.config);
+          : (this.config.env ?? {});
       const process = lease.track(
         await lease.environment.process!.spawn(this.config.command, this.config.args, { cwd, env }),
         this.options.sessionId,
@@ -329,20 +329,5 @@ export function mergeStdioEnv(
   if (configEnv !== undefined) Object.assign(merged, configEnv);
   Object.assign(merged, proxyEnvForChild(merged));
   reconcileChildNoProxy(merged, configEnv);
-  return merged;
-}
-
-export function mergeRemoteStdioEnv(
-  config: Pick<McpServerStdioConfig, 'env' | 'envVars'>,
-  parentEnv: Readonly<Record<string, string | undefined>> = process.env,
-): Record<string, string> {
-  const merged: Record<string, string> = {};
-  for (const entry of config.envVars ?? []) {
-    if (typeof entry !== 'string' && entry.source === 'remote') continue;
-    const name = typeof entry === 'string' ? entry : entry.name;
-    const value = parentEnv[name];
-    if (value !== undefined) merged[name] = value;
-  }
-  if (config.env !== undefined) Object.assign(merged, config.env);
   return merged;
 }

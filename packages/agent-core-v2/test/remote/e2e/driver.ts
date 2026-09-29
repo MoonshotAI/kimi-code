@@ -11,8 +11,21 @@ import {
   dockerBaseArgs,
   RemoteEnvironment,
   type LauncherSpec,
-  type LocalRunner,
 } from '#/remote/client/index';
+
+interface DriverRunRequest {
+  readonly program: string;
+  readonly args: readonly string[];
+}
+
+interface DriverRunResult {
+  readonly code: number | null;
+  readonly signal: NodeJS.Signals | null;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+type DriverRunner = (request: DriverRunRequest) => Promise<DriverRunResult>;
 
 interface ExecutorArtifact {
   readonly version: string;
@@ -205,10 +218,7 @@ async function scenarioTermIgnore(environment: RemoteEnvironment, cwd: string): 
       });
     });
     const started = Date.now();
-    const terminate = (await environment.connection.call('process/terminate', { processId })) as {
-      running: boolean;
-    };
-    expectEqual(terminate.running, true, 'terminate.running');
+    await environment.connection.call('process/signal', { processId, signal: 'terminate' });
     const exitCode = await Promise.race([
       exited,
       new Promise<never>((_resolve, reject) => {
@@ -363,7 +373,7 @@ async function scenarioInstall(flags: Flags): Promise<void> {
         attempts += 1;
         return RemoteEnvironment.connect({ ...connectBase, launcher: retryLauncher });
       },
-      { launcher, runner: driverRunner },
+      { launcher },
     ).then(
       () => 'connected' as const,
       (error: unknown) => error,
@@ -407,7 +417,7 @@ async function scenarioInstall(flags: Flags): Promise<void> {
         attempts += 1;
         return RemoteEnvironment.connect({ ...connectBase, launcher: retryLauncher });
       },
-      { launcher, runner: driverRunner },
+      { launcher },
     );
     try {
       if (attempts !== 1) {
@@ -427,7 +437,7 @@ async function scenarioInstall(flags: Flags): Promise<void> {
   });
 }
 
-const driverRunner: LocalRunner = (request) =>
+const driverRunner: DriverRunner = (request) =>
   new Promise((resolve, reject) => {
     const child = localSpawn(request.program, [...request.args], {
       stdio: ['ignore', 'pipe', 'pipe'],

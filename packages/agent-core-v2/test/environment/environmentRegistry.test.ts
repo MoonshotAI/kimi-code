@@ -36,12 +36,13 @@ describe('EnvironmentRegistry', () => {
     expect(() => registry.register(fakeEnvironment('local', 'two'))).toThrow(EnvironmentError);
   });
 
-  it('replaces the current environment without waiting on held leases', async () => {
+  it('removes the current environment without waiting on held leases', async () => {
     const first = fakeEnvironment('local', 'one');
     const second = fakeEnvironment('local', 'two');
     const registration = registry.register(first);
     const lease = registry.acquire({ environmentId: 'local' }, ['fs']);
-    await registration.replace(second);
+    await registration.remove();
+    registry.register(second);
     expect(lease.environment).toBe(first);
     expect(first.disposed).toBe(true);
     expect(registry.acquire({ environmentId: 'local' }).environment).toBe(second);
@@ -65,19 +66,18 @@ describe('EnvironmentRegistry', () => {
     expect(statuses).toEqual(['ready', 'disconnected', 'ready']);
   });
 
-  it('keeps the current generation when replacement preparation fails', async () => {
+  it('keeps the current generation when a conflicting registration fails validation', () => {
     const first = fakeEnvironment('local', 'one');
     const invalid = new FakeEnvironment(
       { environmentId: 'local', generation: 'two' },
       { capabilities: ['fs'] },
     );
-    const registration = registry.register(first);
-    await expect(registration.replace(invalid)).rejects.toThrow('without an implementation');
-    expect(invalid.disposed).toBe(true);
+    registry.register(first);
+    expect(() => registry.register(invalid)).toThrow('without an implementation');
     expect(registry.current('local')).toBe(first);
   });
 
-  it('keeps a published replacement current when previous generation cleanup fails', async () => {
+  it('drops the entry when environment cleanup fails, allowing a new registration', async () => {
     const first = fakeEnvironment('local', 'one');
     const second = fakeEnvironment('local', 'two');
     Object.assign(first, {
@@ -86,10 +86,12 @@ describe('EnvironmentRegistry', () => {
         throw new Error('old environment cleanup failed');
       }),
     });
-    const registration = registry.register(first);
+    registry.register(first);
 
-    await expect(registration.replace(second)).rejects.toThrow('old environment cleanup failed');
+    await expect(registry.remove('local')).rejects.toThrow('old environment cleanup failed');
 
+    expect(registry.current('local')).toBeUndefined();
+    const registration = registry.register(second);
     expect(registry.current('local')).toBe(second);
     const lease = registry.acquire({ environmentId: 'local' }, ['process']);
     expect(lease.environment).toBe(second);
@@ -98,19 +100,21 @@ describe('EnvironmentRegistry', () => {
     await registration.remove();
   });
 
-  it('replaces then removes', async () => {
+  it('removes then re-registers then removes', async () => {
     const first = fakeEnvironment('local', 'one');
     const second = fakeEnvironment('local', 'two');
     const registration = registry.register(first);
-    await registration.replace(second);
-    expect(registry.current('local')).toBe(second);
-    expect(first.disposed).toBe(true);
     await registration.remove();
+    expect(registry.current('local')).toBeUndefined();
+    expect(first.disposed).toBe(true);
+    const secondRegistration = registry.register(second);
+    expect(registry.current('local')).toBe(second);
+    await secondRegistration.remove();
     expect(registry.current('local')).toBeUndefined();
     expect(second.disposed).toBe(true);
   });
 
-  it('closes tracked resources in reverse order when the environment is replaced', async () => {
+  it('closes tracked resources in reverse order when the environment is removed', async () => {
     const first = fakeEnvironment('local', 'one');
     const registration = registry.register(first);
     const lease = registry.acquire({ environmentId: 'local' });
@@ -118,31 +122,29 @@ describe('EnvironmentRegistry', () => {
     for (const name of ['terminal', 'watch', 'mcp', 'background']) {
       lease.track({ dispose: async () => { order.push(name); } });
     }
-    await registration.replace(fakeEnvironment('local', 'two'));
+    await registration.remove();
     expect(order).toEqual(['background', 'mcp', 'watch', 'terminal']);
     lease.dispose();
   });
 
-  it('disposes a replaced environment even when a lease remains', async () => {
+  it('disposes a removed environment even when a lease remains', async () => {
     const first = fakeEnvironment('local', 'one');
     const originalDispose = first.dispose.bind(first);
     const dispose = vi.fn(originalDispose);
     Object.assign(first, { dispose });
     const registration = registry.register(first);
     const lease = registry.acquire({ environmentId: 'local' });
-    await registration.replace(fakeEnvironment('local', 'two'));
+    await registration.remove();
     expect(dispose).toHaveBeenCalledTimes(1);
     lease.dispose();
     await registration.remove();
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects replacement after the registry is disposed', async () => {
-    const registration = registry.register(fakeEnvironment('local', 'one'));
+  it('rejects registration after the registry is disposed', async () => {
+    registry.register(fakeEnvironment('local', 'one'));
     await registry.dispose();
-    const queued = fakeEnvironment('local', 'three');
-    await expect(registration.replace(queued)).rejects.toThrow('disposing');
-    expect(queued.disposed).toBe(true);
+    expect(() => registry.register(fakeEnvironment('local', 'three'))).toThrow('disposing');
     expect(registry.current('local')).toBeUndefined();
   });
 
@@ -162,7 +164,8 @@ describe('EnvironmentRegistry', () => {
     first.setStatus('disconnected');
     expect(registry.snapshot().environments[0]?.status).toBe('disconnected');
 
-    await registration.replace(fakeEnvironment('local', 'two'));
+    await registration.remove();
+    registry.register(fakeEnvironment('local', 'two'));
     expect(registry.snapshot().environments[0]).toMatchObject({
       generation: 'two',
       status: 'ready',
@@ -190,7 +193,7 @@ describe('EnvironmentRegistry', () => {
     const c = lease.track(resource('c'));
     b.dispose();
     b.dispose();
-    await registration.replace(fakeEnvironment('local', 'two'));
+    await registration.remove();
     lease.dispose();
     expect(order).toEqual(['b', 'c', 'a']);
     expect(counts.get('a')).toBe(1);
@@ -198,10 +201,10 @@ describe('EnvironmentRegistry', () => {
     expect(counts.get('c')).toBe(1);
   });
 
-  it('rejects track once the environment has been replaced', async () => {
+  it('rejects track once the environment has been removed', async () => {
     const registration = registry.register(fakeEnvironment('local', 'one'));
     const lease = registry.acquire({ environmentId: 'local' });
-    await registration.replace(fakeEnvironment('local', 'two'));
+    await registration.remove();
     expect(() => lease.track({ dispose: () => {} })).toThrow('unavailable');
     lease.dispose();
   });
@@ -274,7 +277,7 @@ describe('EnvironmentRegistry', () => {
     sshLease.dispose();
   });
 
-  it('closes every tracked resource when the environment is replaced', async () => {
+  it('closes every tracked resource when the environment is removed', async () => {
     const registration = registry.register(fakeEnvironment('local', 'one'));
     const leaseA = registry.acquire({ environmentId: 'local' });
     const leaseB = registry.acquire({ environmentId: 'local' });
@@ -282,7 +285,7 @@ describe('EnvironmentRegistry', () => {
     leaseA.track({ dispose: () => { order.push('a'); } }, 'session-a');
     leaseB.track({ dispose: () => { order.push('b'); } }, 'session-b');
 
-    await registration.replace(fakeEnvironment('local', 'two'));
+    await registration.remove();
     leaseA.dispose();
     leaseB.dispose();
     expect(order).toEqual(['b', 'a']);

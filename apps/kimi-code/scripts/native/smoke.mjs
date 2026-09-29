@@ -90,7 +90,6 @@ async function runExecServerSmoke() {
     if (result.environment?.osKind === undefined || result.environment.osKind === 'windows') {
       fail(`exec-server reported a non-posix environment: ${JSON.stringify(result.environment)}`);
     }
-    send({ method: 'initialized' });
     send({ method: 'fs/getMetadata', id: 2, params: { path: '/' } });
     const metadata = await nextFrame();
     if (metadata.id !== 2 || metadata.result?.isDirectory !== true) {

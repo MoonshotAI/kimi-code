@@ -578,7 +578,7 @@ The optional top-level `default` names the environment a session binds to when c
 | `type` | `string` | Yes | `"docker"` |
 | `container` | `string` | Yes | Running container name or id; attached with `docker exec` |
 | `context` | `string` | No | Docker context (for example `orbstack`) |
-| `remoteBin` | `string` | No | Executor path inside the container; defaults to `~/.kimi-code/bin/kimi` under the container user's home. A `~/`-prefixed value is resolved to that absolute home path at connect time, because `docker exec` performs no shell expansion |
+| `remoteBin` | `string` | No | Executor path inside the container; defaults to `~/.kimi-code/bin/kimi` under the container user's home. The launcher runs through `docker exec … sh -c`, so a leading `~` is expanded by the container's shell |
 | `defaultCwd` | `string` | No | Working-directory prefill when binding a session |
 
 ### Command entries

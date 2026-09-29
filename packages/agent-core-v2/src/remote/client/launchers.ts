@@ -58,7 +58,7 @@ export function shQuote(value: string): string {
 
 const TILDE_PREFIX = /^~[a-zA-Z0-9._-]*/;
 
-function sshRemoteCommand(remoteBin: string): string {
+function execServerShellCommand(remoteBin: string): string {
   const tilde = TILDE_PREFIX.exec(remoteBin);
   let quotedBin = shQuote(remoteBin);
   if (tilde !== null && remoteBin.length === tilde[0].length) {
@@ -108,7 +108,7 @@ export function resolveLauncher(spec: LauncherSpec): ResolvedLauncher {
       assertLauncherOperand('ssh host', spec.host);
       return {
         program: 'ssh',
-        args: [...sshBaseArgs(), spec.host, sshRemoteCommand(spec.remoteBin ?? DEFAULT_REMOTE_BIN)],
+        args: [...sshBaseArgs(), spec.host, execServerShellCommand(spec.remoteBin ?? DEFAULT_REMOTE_BIN)],
       };
     case 'docker':
       assertLauncherOperand('docker container', spec.container);
@@ -119,8 +119,9 @@ export function resolveLauncher(spec: LauncherSpec): ResolvedLauncher {
           'exec',
           '-i',
           spec.container,
-          spec.remoteBin ?? DEFAULT_REMOTE_BIN,
-          ...EXEC_SERVER_ARGV,
+          'sh',
+          '-c',
+          `exec ${execServerShellCommand(spec.remoteBin ?? DEFAULT_REMOTE_BIN)}`,
         ],
       };
     case 'command':

@@ -255,7 +255,6 @@ export class RawClient {  private readonly decoder = new LineFrameDecoder();
         throw new Error(`unexpected executor version ${response.result.executorVersion}`);
       }
     }
-    this.send({ method: 'initialized' });
   }
 }
 

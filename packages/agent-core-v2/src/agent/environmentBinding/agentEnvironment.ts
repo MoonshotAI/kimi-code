@@ -7,7 +7,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { Environment, EnvironmentBinding, EnvironmentCapability, EnvironmentLease, EnvironmentPath, EnvironmentWorkspaceRoots } from '#/environment/environment';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
-import { EnvironmentError, environmentIsReady, type EnvironmentGenerationSnapshot, type EnvironmentRegistryChange } from '#/environment/environmentRegistry';
+import { environmentIsReady, type EnvironmentGenerationSnapshot, type EnvironmentRegistryChange } from '#/environment/environmentRegistry';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -33,7 +33,6 @@ export interface IAgentEnvironmentService {
   isAvailable(required?: readonly EnvironmentCapability[]): boolean;
   acquire(required?: readonly EnvironmentCapability[]): EnvironmentLease;
   acquireWhenReady(required?: readonly EnvironmentCapability[]): Promise<EnvironmentLease>;
-  reconnect(): Promise<void>;
   workspaceRoots(): EnvironmentWorkspaceRoots;
 }
 
@@ -61,6 +60,7 @@ export interface EnvironmentTempTarget {
 export function environmentTempTarget(
   service: IAgentEnvironmentService,
   subdir: string,
+  localTempDir?: string,
 ): EnvironmentTempTarget | undefined {
   let lease: EnvironmentLease;
   try {
@@ -72,7 +72,9 @@ export function environmentTempTarget(
     const environment = lease.environment;
     const fs = environment.fs;
     const path = environment.path;
-    const tempDir = environment.host?.tempDir;
+    const tempDir =
+      environment.host?.tempDir ??
+      (environment.identity.environmentId === LOCAL_ENVIRONMENT_ID ? localTempDir : undefined);
     if (fs === undefined || path === undefined || tempDir === undefined) return undefined;
     return { fs, path, dir: path.join(tempDir, 'kimi-code', subdir) };
   } finally {
@@ -129,18 +131,6 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
 
   inspect(): Environment {
     return this.resolver.inspect(this.binding.current);
-  }
-
-  async reconnect(): Promise<void> {
-    const environment = this.resolver.inspect(this.binding.current);
-    if (typeof environment.connect !== 'function') {
-      throw new EnvironmentError(
-        'environment.unavailable',
-        `environment ${this.binding.current.environmentId} does not support reconnect`,
-      );
-    }
-    environment.disconnect?.();
-    await environment.connect();
   }
 
   workspaceRoots(): EnvironmentWorkspaceRoots {

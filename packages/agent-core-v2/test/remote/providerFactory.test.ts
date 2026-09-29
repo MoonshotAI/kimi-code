@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
 import { IConfigService, type ConfigSectionChangedEvent } from '#/app/config/config';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -16,8 +15,6 @@ import type {
 } from '#/environment/environmentProvider';
 
 import { HandshakeError } from '#/remote/client/connection';
-import { RemoteEphemeralEnvironmentConnector } from '#/remote/client/ephemeralEnvironmentConnector';
-import type { LocalRunner, LocalRunRequest } from '#/remote/client/executorDetect';
 import {
   RemoteEnvironmentProviderFactory,
   type RemoteEnvironmentProviderFactoryOptions,
@@ -118,9 +115,6 @@ function fakeHost(services: HostServices, registry: EnvironmentRegistry): Enviro
       const registration = registry.register(environment);
       return {
         environmentId: environment.identity.environmentId,
-        update: async (prepare: () => Environment | Promise<Environment>) => {
-          await registration.replace(await prepare());
-        },
         remove: () => registration.remove(),
       };
     },
@@ -584,35 +578,6 @@ describe('shared connection', () => {
     await attachment.dispose();
     await registry.dispose();
   });
-
-  it('does not pool ephemeral environment connections with declared ones', async () => {
-    const registry = new EnvironmentRegistry();
-    const { connect } = producingConnect();
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
-    const attachment = await factory.attach(fakeHost(poolServices(), registry));
-
-    await registry.current('dev-box')!.connect!();
-    expect(connect).toHaveBeenCalledTimes(1);
-
-    const connector = new RemoteEphemeralEnvironmentConnector(
-      {
-        _serviceBrand: undefined,
-        clientIdentity: { productName: 'Kimi Code CLI', version: '1.2.3', platform: 'kimi_code_cli' },
-      } as unknown as IBootstrapService,
-      connect,
-    );
-    const ephemeralRegistry = new EnvironmentRegistry();
-    await connector.connect({
-      environmentId: 'eph-box',
-      entry: { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me' },
-      registry: ephemeralRegistry,
-    });
-    expect(connect).toHaveBeenCalledTimes(2);
-
-    await ephemeralRegistry.dispose();
-    await attachment.dispose();
-    await registry.dispose();
-  });
 });
 
 describe('declaration watch', () => {
@@ -813,16 +778,14 @@ describe('factory executor detection', () => {
     );
   }
 
-  it('fails a missing executor with static install guidance and never probes', async () => {
+  it('fails a missing executor with static install guidance', async () => {
     const registry = new EnvironmentRegistry();
     const connect = vi.fn(async () => {
       throw missingExecutorError();
     });
-    const runner = vi.fn() as unknown as LocalRunner;
     const factory = new RemoteEnvironmentProviderFactory(factoryOptions({
       connect,
       clientVersion: '1.2.3',
-      probeRunner: runner,
     }));
     const attachment = await factory.attach(fakeHost(baseServices(), registry));
 
@@ -841,34 +804,27 @@ describe('factory executor detection', () => {
     expect(registry.current('dev-box')).toBe(placeholder);
     expect(registry.current('dev-box')!.status).toBe('disconnected');
 
-    expect(runner).not.toHaveBeenCalled();
-
     await attachment.dispose();
     await registry.dispose();
   });
 
-  it('fails command environments with guidance and never probes', async () => {
+  it('fails command environments with guidance', async () => {
     const registry = new EnvironmentRegistry();
     const services = baseServices({
       config: configService({
         sandbox: { command: 'sandbox', args: ['ssh'], defaultCwd: '/home/me' },
       }),
     });
-    const runner = vi.fn() as unknown as LocalRunner;
     const connect = vi.fn(async () => {
       throw missingExecutorError();
     });
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({
-      connect,
-      probeRunner: runner,
-    }));
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
     const attachment = await factory.attach(fakeHost(services, registry));
 
     await expect(registry.current('sandbox')!.connect!()).rejects.toThrow(
       /code 127[\s\S]*the absolute path your launcher command invokes/,
     );
     expect(connect).toHaveBeenCalledTimes(1);
-    expect(runner).not.toHaveBeenCalled();
 
     await attachment.dispose();
     await registry.dispose();
@@ -876,75 +832,46 @@ describe('factory executor detection', () => {
 
   it('answers a too-old executor with upgrade guidance', async () => {
     const registry = new EnvironmentRegistry();
-    const runner = vi.fn() as unknown as LocalRunner;
     const connect = vi.fn(async () => {
       throw new HandshakeError(
         'executor version 0.0.4 is below the minimum 0.1.0; upgrade the remote executor (kimi exec-server) and retry',
         { kind: 'incompatible', executorVersion: '0.0.4', minExecutorVersion: '0.1.0' },
       );
     });
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({
-      connect,
-      probeRunner: runner,
-    }));
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
     const attachment = await factory.attach(fakeHost(baseServices(), registry));
 
     await expect(registry.current('dev-box')!.connect!()).rejects.toThrow(
       /0\.0\.4[\s\S]*Upgrade the executor/,
     );
     expect(connect).toHaveBeenCalledTimes(1);
-    expect(runner).not.toHaveBeenCalled();
 
     await attachment.dispose();
     await registry.dispose();
   });
 });
 
-describe('factory docker remoteBin resolution', () => {
-  const HOME_PROBE = 'printf "%s" "$HOME"';
-
-  function dockerServices(): HostServices {
-    return baseServices({
-      config: configService({ 'app-box': { type: 'docker', container: 'myapp' } }),
-    });
-  }
-
-  it('resolves the current container home once for each connection', async () => {
+describe('factory docker launcher pass-through', () => {
+  it('connects with the declared docker launcher untouched, tilde remoteBin included', async () => {
     const registry = new EnvironmentRegistry();
-    let probes = 0;
-    const probeRunner: LocalRunner = async (request: LocalRunRequest) => {
-      if (request.args.at(-1) === HOME_PROBE) {
-        probes += 1;
-        return { code: 0, signal: null, stdout: probes === 1 ? '/root' : '/home/user', stderr: '' };
-      }
-      return { code: 0, signal: null, stdout: '', stderr: '' };
-    };
-    let generation = 0;
-    const connect = vi.fn(async (options: RemoteEnvironmentOptions) => {
-      generation += 1;
-      return closingEnvironment(options, `connected-${generation}`, 'control call environment/status timed out after 60000ms; closing the connection');
+    const services = baseServices({
+      config: configService({
+        'app-box': { type: 'docker', container: 'myapp', remoteBin: '~/bin/kimi' },
+        'stock-box': { type: 'docker', container: 'stock' },
+      }),
     });
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect, probeRunner }));
-    const attachment = await factory.attach(fakeHost(dockerServices(), registry));
+    const connect = vi.fn(async (options: RemoteEnvironmentOptions) => connectedEnvironment(options, 'connected-1'));
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
+    const attachment = await factory.attach(fakeHost(services, registry));
 
     await registry.current('app-box')!.connect!();
-    const resolved = { type: 'docker', container: 'myapp', context: undefined, remoteBin: '/root/.kimi-code/bin/kimi' };
-    expect(connect).toHaveBeenCalledWith(expect.objectContaining({ launcher: resolved }));
-    expect(probes).toBe(1);
-
-    registry.current('app-box')!.disconnect?.();
-    await registry.current('app-box')!.connect!();
-    expect(connect).toHaveBeenCalledTimes(2);
-    const currentLauncher = { ...resolved, remoteBin: '/home/user/.kimi-code/bin/kimi' };
-    expect(connect).toHaveBeenLastCalledWith(expect.objectContaining({ launcher: currentLauncher }));
-    expect(probes).toBe(2);
-
-    const secondInner = connect.mock.results[1]!.value as unknown as Promise<FakeEnvironment>;
-    (await secondInner).setStatus('disconnected');
-    await registry.current('app-box')!.connect!();
-    expect(connect).toHaveBeenCalledTimes(3);
-    expect(connect).toHaveBeenLastCalledWith(expect.objectContaining({ launcher: currentLauncher }));
-    expect(probes).toBe(3);
+    expect(connect).toHaveBeenLastCalledWith(expect.objectContaining({
+      launcher: { type: 'docker', container: 'myapp', context: undefined, remoteBin: '~/bin/kimi' },
+    }));
+    await registry.current('stock-box')!.connect!();
+    expect(connect).toHaveBeenLastCalledWith(expect.objectContaining({
+      launcher: { type: 'docker', container: 'stock', context: undefined, remoteBin: undefined },
+    }));
 
     await attachment.dispose();
     await registry.dispose();

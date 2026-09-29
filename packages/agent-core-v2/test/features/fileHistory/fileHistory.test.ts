@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, posix, win32 } from 'node:path';
+import { join, posix } from 'node:path';
 
 import { Immer } from 'immer';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -10,11 +10,7 @@ import { popConstructionFrame, pushConstructionFrame } from '#/_base/di/fiber';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { AgentStateService } from '#/agent/state/agentStateService';
-import type { EnvironmentPath } from '#/environment/environment';
-import { EnvironmentError } from '#/environment/environmentRegistry';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
@@ -59,20 +55,6 @@ const WORK_DIR = '/ws';
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-function environmentPath(pathClass: 'posix' | 'win32'): EnvironmentPath {
-  const path = pathClass === 'win32' ? win32 : posix;
-  return {
-    separator: path.sep as '/' | '\\',
-    delimiter: path.delimiter as ':' | ';',
-    isAbsolute: (value: string) => path.isAbsolute(value),
-    join: (...values: readonly string[]) => path.join(...values),
-    relative: (from: string, to: string) => path.relative(from, to),
-    resolve: (...values: readonly string[]) => path.resolve(...values),
-    basename: (value: string) => path.basename(value),
-    dirname: (value: string) => path.dirname(value),
-  };
-}
-
 describe('AgentFileHistoryService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
@@ -109,9 +91,9 @@ describe('AgentFileHistoryService', () => {
     disposables.dispose();
   });
 
-  function stubEnvironment(remoteShape = false, filesMap: Map<string, Uint8Array> = files): IAgentEnvironmentService {
+  function stubEnvironment(remoteShape = false): IAgentEnvironmentService {
     const environment = {
-      fs: hostFs(remoteShape, filesMap),
+      fs: hostFs(remoteShape),
       path: posix,
       workspace: { mapRoots: (roots: unknown) => roots },
     };
@@ -124,7 +106,7 @@ describe('AgentFileHistoryService', () => {
     } as unknown as IAgentEnvironmentService;
   }
 
-  function hostFs(remoteShape = false, filesMap: Map<string, Uint8Array> = files): IHostFileSystem {
+  function hostFs(remoteShape = false): IHostFileSystem {
     const missing = (path: string): Error =>
       remoteShape
         ? new HostFsError('os.fs.not_found', 'stat failed: path does not exist', {
@@ -133,87 +115,28 @@ describe('AgentFileHistoryService', () => {
         : Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
     return createFakeHostFs({
       stat: async (path: string) => {
-        const content = filesMap.get(path);
+        const content = files.get(path);
         if (content === undefined) throw missing(path);
         return { isFile: true, isDirectory: false, size: content.byteLength };
       },
       readBytes: async (path: string) => {
-        const content = filesMap.get(path);
+        const content = files.get(path);
         if (content === undefined) throw missing(path);
         return content;
       },
     });
   }
 
-  interface CreateServiceOptions {
-    readonly environmentId?: string;
-    readonly workDir?: string;
-    readonly executorEvents?: ToolExecutorEventStubs;
-    readonly localFiles?: Map<string, Uint8Array>;
-    readonly remoteFiles?: Map<string, Uint8Array>;
-    readonly remotePathClass?: 'posix' | 'win32';
-    readonly mainService?: AgentFileHistoryService;
-    readonly mainEnvironmentId?: string;
-    readonly stateService?: IAgentStateService;
-    readonly remoteUnavailable?: { current: boolean };
-  }
-
-  function createService(agentId = 'main', remoteShape = false, options: CreateServiceOptions = {}): AgentFileHistoryService {
+  function createService(agentId = 'main', remoteShape = false): AgentFileHistoryService {
     const ctx =
       agentId === scopeCtx.agentId
         ? scopeCtx
         : makeAgentScopeContext({ agentId, agentScope: testWireScope(SCOPE, KEY) });
-    const workDir = options.workDir ?? WORK_DIR;
     const workspace = {
-      workDir,
+      workDir: WORK_DIR,
       additionalDirs: [],
-      resolve: (rel: string) => resolveWorkspacePath(posix, workDir, rel),
+      resolve: (rel: string) => resolveWorkspacePath(posix, WORK_DIR, rel),
     } as unknown as ISessionWorkspaceContext;
-    const environmentId = options.environmentId ?? 'local';
-    const environmentBinding = {
-      _serviceBrand: undefined,
-      current: { environmentId },
-    };
-    const remoteEnvironment = {
-      fs: hostFs(remoteShape, options.remoteFiles ?? options.localFiles ?? files),
-      path: options.remotePathClass === 'win32' ? environmentPath('win32') : posix,
-      workspace: { mapRoots: (roots: unknown) => roots },
-    };
-    const resolver = {
-      _serviceBrand: undefined,
-      inspect: () => {
-        if (options.remoteUnavailable?.current === true) {
-          throw new EnvironmentError('environment.unavailable', 'environment is disconnected');
-        }
-        return remoteEnvironment;
-      },
-      acquire: (binding: { environmentId: string }) => {
-        if (options.remoteUnavailable?.current === true) {
-          throw new EnvironmentError('environment.unavailable', `environment ${binding.environmentId} is disconnected`);
-        }
-        return {
-          environment: remoteEnvironment,
-          track: (resource: unknown) => resource,
-          dispose: () => {},
-        };
-      },
-    };
-    const mainHandle = options.mainService === undefined
-      ? undefined
-      : {
-          accessor: {
-            get: (serviceId: unknown) => {
-              if (serviceId === IAgentFileHistoryService) return options.mainService;
-              if (serviceId === IAgentEnvironmentBindingService) {
-                return {
-                  _serviceBrand: undefined,
-                  current: { environmentId: options.mainEnvironmentId ?? 'local' },
-                };
-              }
-              return undefined;
-            },
-          },
-        };
     pushConstructionFrame({
       ctor: AgentFileHistoryService,
       config: undefined,
@@ -223,13 +146,13 @@ describe('AgentFileHistoryService', () => {
     try {
       return disposables.add(
         new AgentFileHistoryService(
-        ctx,
-        options.stateService ?? ix.get(IAgentStateService),
-        (options.executorEvents ?? executorEvents).executor,
-        eventBus,
-        ix.get(IEventDispatcher),
-        stubEnvironment(remoteShape, options.localFiles ?? files),
-            blobs,
+          ctx,
+          ix.get(IAgentStateService),
+          executorEvents.executor,
+          eventBus,
+          ix.get(IEventDispatcher),
+          stubEnvironment(remoteShape),
+          blobs,
           workspace,
           {
             _serviceBrand: undefined,
@@ -237,7 +160,7 @@ describe('AgentFileHistoryService', () => {
             workspaceId: 'wd_test',
             sessionDir: '/history-home/sessions/wd_test/test-session',
             metaScope: 'sessions/wd_test/test-session/session-meta',
-            cwd: workDir,
+            cwd: WORK_DIR,
             scope: (subKey?: string): string =>
               subKey === undefined || subKey === ''
                 ? 'sessions/wd_test/test-session'
@@ -248,9 +171,7 @@ describe('AgentFileHistoryService', () => {
             readdir: async () => [],
             remove: async () => {},
           } as unknown as IHostFileSystem,
-          { handleOf: (agentId: string) => (agentId === 'main' ? mainHandle : undefined) } as unknown as IAgentLifecycleService,
-          environmentBinding as never,
-          resolver as never,
+          { handleOf: () => undefined } as unknown as IAgentLifecycleService,
         ),
       );
     } finally {
@@ -491,135 +412,6 @@ describe('AgentFileHistoryService', () => {
     await service.settled();
 
     expect(service.history().checkpoints).toEqual([]);
-  });
-
-  it('captures subagent edits through the subagent environment when it differs from the main one', async () => {
-    const localFiles = new Map<string, Uint8Array>();
-    const remoteFiles = new Map<string, Uint8Array>();
-    const mainService = createService('main', false, { localFiles, remoteFiles });
-    const subagentEvents = stubToolExecutorEvents();
-    createService('sub-1', false, {
-      environmentId: 'remote-b',
-      workDir: '/remote',
-      executorEvents: subagentEvents,
-      mainService,
-      stateService: new AgentStateService(),
-    });
-    remoteFiles.set('/remote/src/x.ts', encoder.encode('before\n'));
-
-    startTurn(1);
-    const toolCall: ToolCall = { type: 'function', id: 'call-1', name: 'Edit', arguments: null };
-    const execution: RunnableToolExecution = {
-      approvalRule: 'Edit',
-      display: { kind: 'file_io', operation: 'edit', path: 'src/x.ts' },
-      execute: async () => ({ output: '' }),
-    };
-    await subagentEvents.fireWillExecute(
-      { turnId: 1, toolCall, execution, args: {} },
-      new AbortController().signal,
-    );
-    await mainService.settled();
-
-    const startEntry = mainService.history().checkpoints.find((c) => c.turnId === 1)?.entries['/remote/src/x.ts'];
-    expect(startEntry?.environmentId).toBe('remote-b');
-    expect(await blobText(startEntry!.key!)).toBe('before\n');
-
-    remoteFiles.set('/remote/src/x.ts', encoder.encode('after\n'));
-    endTurn(1);
-    await mainService.settled();
-
-    expect(await mainService.changes(1)).toEqual([
-      { path: '/remote/src/x.ts', status: 'modified', additions: 1, deletions: 1 },
-    ]);
-    const endEntry = mainService.history().checkpoints
-      .find((c) => c.turnId === 1 && c.phase === 'end')?.entries['/remote/src/x.ts'];
-    expect(endEntry?.environmentId).toBe('remote-b');
-  });
-
-  it('completes the end checkpoint for local paths when the subagent environment is gone before turn end', async () => {
-    const localFiles = new Map<string, Uint8Array>();
-    const remoteFiles = new Map<string, Uint8Array>();
-    const remoteUnavailable = { current: false };
-    const mainService = createService('main', false, { localFiles, remoteFiles, remoteUnavailable });
-    const subagentEvents = stubToolExecutorEvents();
-    createService('sub-1', false, {
-      environmentId: 'remote-b',
-      workDir: '/remote',
-      executorEvents: subagentEvents,
-      mainService,
-      stateService: new AgentStateService(),
-    });
-    remoteFiles.set('/remote/src/x.ts', encoder.encode('before\n'));
-    localFiles.set('/ws/a.txt', encoder.encode('local-one\n'));
-
-    startTurn(1);
-    await fireEdit(mainService, '/ws/a.txt', 1);
-    const toolCall: ToolCall = { type: 'function', id: 'call-1', name: 'Edit', arguments: null };
-    const execution: RunnableToolExecution = {
-      approvalRule: 'Edit',
-      display: { kind: 'file_io', operation: 'edit', path: 'src/x.ts' },
-      execute: async () => ({ output: '' }),
-    };
-    await subagentEvents.fireWillExecute(
-      { turnId: 1, toolCall, execution, args: {} },
-      new AbortController().signal,
-    );
-    await mainService.settled();
-
-    remoteUnavailable.current = true;
-    localFiles.set('/ws/a.txt', encoder.encode('local-two\n'));
-    endTurn(1);
-    await mainService.settled();
-
-    expect(await mainService.changes(1)).toEqual([
-      { path: 'a.txt', status: 'modified', additions: 1, deletions: 1 },
-    ]);
-    const end = mainService.history().checkpoints.find((c) => c.turnId === 1 && c.phase === 'end');
-    expect(end?.entries['/remote/src/x.ts']).toBeUndefined();
-    expect(await mainService.turnRecorded(1)).toBe(true);
-  });
-
-  it('keeps posix capture paths absolute and case-sensitive when the main workspace is win32', async () => {
-    const localFiles = new Map<string, Uint8Array>();
-    const remoteFiles = new Map<string, Uint8Array>();
-    const mainService = createService('main', false, {
-      workDir: 'C:\\ws',
-      localFiles,
-      remoteFiles,
-    });
-    remoteFiles.set('/remote/src/Config.ts', encoder.encode('upper\n'));
-    remoteFiles.set('/remote/src/config.ts', encoder.encode('lower\n'));
-
-    startTurn(1);
-    await mainService.captureForActiveTurn('/remote/src/Config.ts', { environmentId: 'remote-b' });
-    await mainService.captureForActiveTurn('/remote/src/config.ts', { environmentId: 'remote-b' });
-
-    expect(mainService.history().tracked).toEqual(['/remote/src/Config.ts', '/remote/src/config.ts']);
-    const entries = mainService.history().checkpoints.find((c) => c.turnId === 1)?.entries ?? {};
-    expect(entries['/remote/src/Config.ts']?.environmentId).toBe('remote-b');
-    expect(await blobText(entries['/remote/src/Config.ts']!.key!)).toBe('upper\n');
-    expect(await blobText(entries['/remote/src/config.ts']!.key!)).toBe('lower\n');
-  });
-
-  it('folds case for captures forwarded from a win32 environment', async () => {
-    const localFiles = new Map<string, Uint8Array>();
-    const remoteFiles = new Map<string, Uint8Array>();
-    const mainService = createService('main', false, {
-      localFiles,
-      remoteFiles,
-      remotePathClass: 'win32',
-    });
-    remoteFiles.set('C:\\remote\\src\\App.ts', encoder.encode('one\n'));
-
-    startTurn(1);
-    await mainService.captureForActiveTurn('C:\\remote\\src\\App.ts', { environmentId: 'remote-b' });
-    await mainService.captureForActiveTurn('c:\\remote\\src\\app.ts', { environmentId: 'remote-b' });
-
-    expect(mainService.history().tracked).toEqual(['C:\\remote\\src\\App.ts']);
-    const entry = mainService.history().checkpoints.find((c) => c.turnId === 1)
-      ?.entries['C:\\remote\\src\\App.ts'];
-    expect(entry?.environmentId).toBe('remote-b');
-    expect(await blobText(entry!.key!)).toBe('one\n');
   });
 
   it('drops turns outside the retention window and re-baselines returning files', async () => {

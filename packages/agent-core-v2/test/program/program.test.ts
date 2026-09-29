@@ -18,6 +18,7 @@ import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { Program } from '#/program/program';
 import type { ProgramSessionControllerInput } from '#/program/programDependencies';
+import { environmentBindingId } from '#/environment/environment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { EnvironmentRegistry } from '#/environment/environmentRegistry';
 import { FileSkillDiscovery } from '#/features/skill/catalog/fileSkillDiscovery';
@@ -169,13 +170,14 @@ describe('Program', () => {
     await registry.dispose();
   });
 
-  it('switches the program generation when the environment is replaced', async () => {
+  it('switches the program generation when the environment is re-registered', async () => {
     const { registry, program } = setup();
     const first = fakeEnvironment('local', 'one');
     const registration = registry.register(first);
     await program.ready;
     const controller = program.createSessionController();
-    await registration.replace(fakeEnvironment('local', 'two'));
+    await registration.remove();
+    registry.register(fakeEnvironment('local', 'two'));
     expect(program.sessionControllerGenerationFor('local')).toBe('two');
     expect(first.disposed).toBe(true);
     controller.dispose();
@@ -183,7 +185,7 @@ describe('Program', () => {
     await registry.dispose();
   });
 
-  it('stops serving new sessions from the previous generation when its replacement is unavailable', async () => {
+  it('stops serving new sessions from the previous generation when its successor is unavailable', async () => {
     const order: string[] = [];
     const { registry, program, create } = setup(new Map(), order);
     const first = fakeEnvironment('local', 'one');
@@ -193,7 +195,8 @@ describe('Program', () => {
     expect(program.sessionControllerGenerationFor('local')).toBe('one');
 
     const second = fakeEnvironment('local', 'two', { status: 'disconnected' });
-    await registration.replace(second);
+    await registration.remove();
+    registry.register(second);
     await Promise.resolve();
 
     expect(create).toHaveBeenCalledTimes(2);
@@ -215,7 +218,7 @@ describe('Program', () => {
     await registry.dispose();
   });
 
-  it('retries a transient replacement failure on the next environment change and recovers', async () => {
+  it('retries a transient generation build failure on the next environment change and recovers', async () => {
     const { registry, program, create } = setup();
     const registration = registry.register(fakeEnvironment('local', 'one'));
     await program.ready;
@@ -225,7 +228,8 @@ describe('Program', () => {
       throw new Error('boom');
     });
     const second = fakeEnvironment('local', 'two');
-    await registration.replace(second);
+    await registration.remove();
+    registry.register(second);
     second.setStatus('disconnected');
     second.setStatus('ready');
 
@@ -240,7 +244,7 @@ describe('Program', () => {
     await registry.dispose();
   });
 
-  it('marks the program degraded and serves no new sessions while the replacement build keeps failing', async () => {
+  it('marks the program degraded and serves no new sessions while the new generation build keeps failing', async () => {
     const { registry, program, create } = setup();
     const registration = registry.register(fakeEnvironment('local', 'one'));
     await program.ready;
@@ -249,7 +253,8 @@ describe('Program', () => {
     create.mockImplementation(() => {
       throw new Error('boom');
     });
-    await registration.replace(fakeEnvironment('local', 'two'));
+    await registration.remove();
+    registry.register(fakeEnvironment('local', 'two'));
     await Promise.resolve();
 
     expect(program.status).toBe('degraded');
@@ -313,16 +318,18 @@ describe('Program', () => {
     await registry.dispose();
   });
 
-  it('replaces generations atomically and disposes behavior before releasing its lease', async () => {
+  it('switches generations and disposes behavior before releasing its lease', async () => {
     const firstReady = deferred();
     const order: string[] = [];
     const { registry, program } = setup(new Map([['one', firstReady.promise]]), order);
     const registration = registry.register(fakeEnvironment('local', 'one'));
-    const replacement = registration.replace(fakeEnvironment('local', 'two'));
-    await replacement;
+    await registration.remove();
+    registry.register(fakeEnvironment('local', 'two'));
     await Promise.resolve();
     expect(program.sessionControllerGenerationFor('local')).toBe('two');
-    expect(program.status).toBe('ready');
+    await vi.waitFor(() => {
+      expect(program.status).toBe('ready');
+    });
     expect(order).toEqual(['behavior:one']);
 
     firstReady.resolve();
@@ -509,10 +516,6 @@ interface LocalityFixture {
   readonly replaceLocal: (generation: string) => Promise<void>;
   readonly replaceRemote: (generation: string, cwd: string) => Promise<void>;
   readonly cleanup: () => Promise<void>;
-}
-
-function generationKey(environmentId: string, cwd?: string): string {
-  return cwd === undefined ? environmentId : `${environmentId}\0${cwd}`;
 }
 
 function scopedFs(base: string, realBase: string, inner: IHostFileSystem, additionalRoots: readonly string[] = []): IHostFileSystem {
@@ -710,7 +713,8 @@ async function localityFixture(options: { readonly remoteCwd?: string; readonly 
     remoteRoot,
     remoteAltRoot,
     replaceLocal: async (generation: string) => {
-      await localRegistration.replace(Object.assign(
+      await localRegistration.remove();
+      registry.register(Object.assign(
         new FakeEnvironment(
           { environmentId: 'local', generation },
           { capabilities: ['fs', 'process'], host: { homeDir } },
@@ -719,7 +723,8 @@ async function localityFixture(options: { readonly remoteCwd?: string; readonly 
       ) as FakeEnvironment);
     },
     replaceRemote: async (generation: string, cwd: string) => {
-      await remoteRegistration.replace(Object.assign(
+      await remoteRegistration.remove();
+      registry.register(Object.assign(
         new FakeEnvironment(
           { environmentId: 'remote', generation },
           { capabilities: ['fs', 'process'], host: { homeDir: remoteHomeDir } },
@@ -784,7 +789,7 @@ describe('Program.createGeneration workspace and user locality', () => {
       await awaitLocality(fixture.generations.get('local')!);
       const localProfilesBefore = fixture.profileRegistrations.length;
       fixture.program.createSessionController('remote', fixture.remoteRoot);
-      const remote = fixture.generations.get(generationKey('remote', fixture.remoteRoot))!;
+      const remote = fixture.generations.get(environmentBindingId('remote', fixture.remoteRoot))!;
       await awaitLocality(remote);
       const remoteProfiles = fixture.profileRegistrations.slice(localProfilesBefore);
 
@@ -900,8 +905,8 @@ describe('Program remote generation activation', () => {
       fixture.program.createSessionController('remote', fixture.remoteRoot);
       fixture.program.createSessionController('remote', fixture.remoteAltRoot);
 
-      const target = fixture.generations.get(generationKey('remote', fixture.remoteRoot))!;
-      const alt = fixture.generations.get(generationKey('remote', fixture.remoteAltRoot))!;
+      const target = fixture.generations.get(environmentBindingId('remote', fixture.remoteRoot))!;
+      const alt = fixture.generations.get(environmentBindingId('remote', fixture.remoteAltRoot))!;
       expect(target).not.toBe(alt);
       await awaitLocality(target);
       await awaitLocality(alt);
@@ -929,7 +934,7 @@ describe('Program remote generation activation', () => {
       const first = fixture.program.createSessionController('remote', fixture.remoteRoot);
       expect(fixture.program.sessionControllerGenerationFor('remote', fixture.remoteRoot)).toBe('remote-one');
       expect(fixture.controllerInputs).toHaveLength(1);
-      const stale = fixture.generations.get(generationKey('remote', fixture.remoteRoot))!;
+      const stale = fixture.generations.get(environmentBindingId('remote', fixture.remoteRoot))!;
       await awaitLocality(stale);
       expect(stale.instructions.snapshot.agentsMd).toContain('target project instructions');
       expect(stale.dirs.additionalDirs).toEqual([join(fixture.remoteRoot, 'targetextra')]);
@@ -939,7 +944,7 @@ describe('Program remote generation activation', () => {
       expect(fixture.program.sessionControllerGenerationFor('remote', fixture.remoteRoot)).toBe('remote-two');
       fixture.program.createSessionController('remote', fixture.remoteRoot);
       expect(fixture.controllerInputs).toHaveLength(2);
-      const remote = fixture.generations.get(generationKey('remote', fixture.remoteRoot))!;
+      const remote = fixture.generations.get(environmentBindingId('remote', fixture.remoteRoot))!;
       await awaitLocality(remote);
 
       const agentsMd = remote.instructions.snapshot.agentsMd ?? '';

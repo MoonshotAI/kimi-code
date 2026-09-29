@@ -11,7 +11,7 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import { DEFAULT_ENVIRONMENT_HOST } from '#/environment/environmentDefaults';
-import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding, type EnvironmentLease } from '#/environment/environment';
+import { environmentBindingId, LOCAL_ENVIRONMENT_ID, type EnvironmentBinding, type EnvironmentLease } from '#/environment/environment';
 import { EnvironmentError } from '#/environment/environmentRegistry';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -29,7 +29,7 @@ export const ENVIRONMENT_BINDING_REMINDER_VARIANT = 'environment_binding';
 export const PROJECT_CONTEXT_REMINDER_VARIANT = 'project_context';
 
 function projectContextViewKey(binding: EnvironmentBinding, fallbackCwd: string): string {
-  return `${binding.environmentId}\n${binding.cwd ?? fallbackCwd}`;
+  return environmentBindingId(binding.environmentId, binding.cwd ?? fallbackCwd);
 }
 
 function projectContextReminderText(binding: EnvironmentBinding, cwd: string, paths: readonly string[]): string {

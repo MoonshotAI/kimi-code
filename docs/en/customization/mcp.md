@@ -60,7 +60,6 @@ Optional fields:
 | Field | Type | Applies to | Description |
 | --- | --- | --- | --- |
 | `env` | `Record<string, string>` | stdio | Environment variables injected into the child process |
-| `envVars` | `Array<string \| { name, source? }>` | stdio | Environment variables forwarded to a stdio server running in a remote environment; see [Running stdio servers in a remote environment](#running-stdio-servers-in-a-remote-environment) |
 | `environment_id` | `string` | stdio | Id of the [remote environment](../guides/remote-environment.md) that starts the server; defaults to `local` |
 | `cwd` | `string` | stdio | Working directory for the child process |
 | `headers` | `Record<string, string>` | HTTP, SSE | Static request headers appended to every request |
@@ -110,11 +109,7 @@ defaultCwd = "/srv/work"
 
 ### Environment variables for remote stdio servers
 
-A remote stdio server inherits `PATH`, `HOME`, and the rest of its base environment from the target — not from your machine — so local paths never leak into a remote process. The CLI sends only an explicit overlay, and the target resolves everything else:
-
-- `env` entries, sent as literal values.
-- `envVars` entries whose `source` is `"local"` (the default): the value is read from the CLI process's environment on this machine and sent as a literal.
-- `envVars` entries whose `source` is `"remote"`: nothing is sent; the variable is resolved from the target's own environment.
+A remote stdio server inherits `PATH`, `HOME`, and the rest of its base environment from the target — not from your machine — so local paths never leak into a remote process. The CLI sends only the `env` overlay as literal values, and the target resolves everything else.
 
 ```json
 {
@@ -122,18 +117,13 @@ A remote stdio server inherits `PATH`, `HOME`, and the rest of its base environm
     "remote-db": {
       "command": "db-mcp-server",
       "environment_id": "dev-box",
-      "env": { "LOG_LEVEL": "debug" },
-      "envVars": [
-        "GITHUB_TOKEN",
-        { "name": "PGPASSWORD", "source": "local" },
-        { "name": "SSH_AUTH_SOCK", "source": "remote" }
-      ]
+      "env": { "LOG_LEVEL": "debug" }
     }
   }
 }
 ```
 
-In this example the server receives `LOG_LEVEL=debug` from `env`, `GITHUB_TOKEN` and `PGPASSWORD` with the values they have on this machine, plus `SSH_AUTH_SOCK` resolved from the target's environment. For servers on the default `local` environment, `envVars` has no effect because the child process already inherits the CLI's full environment.
+In this example the server receives `LOG_LEVEL=debug` from `env`; every other variable is resolved from the target's own environment.
 
 ## Loading tools on demand
 

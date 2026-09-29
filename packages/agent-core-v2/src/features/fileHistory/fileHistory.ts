@@ -40,16 +40,12 @@ export interface FileHistoryContent {
   readonly binary?: boolean;
 }
 
-export interface FileHistoryCaptureSource {
-  readonly environmentId: string;
-}
-
 export interface IAgentFileHistoryService {
   readonly _serviceBrand: undefined;
 
   history(): FileHistoryState;
   settled(): Promise<void>;
-  captureForActiveTurn(path: string, source?: FileHistoryCaptureSource): Promise<void>;
+  captureForActiveTurn(path: string): Promise<void>;
   changes(turnId: number): Promise<FileHistoryChange[]>;
   turnRecorded(turnId: number): Promise<boolean>;
   contentAt(

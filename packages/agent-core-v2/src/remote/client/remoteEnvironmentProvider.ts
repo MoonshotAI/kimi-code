@@ -25,7 +25,6 @@ import type {
 
 import type { EnvironmentRegistrationHandle } from '#/environment/environmentRegistry';
 import { connectWithGuidance } from './connectGuidance';
-import type { LocalRunner } from './executorDetect';
 import type { LauncherSpec } from './launchers';
 import { RemoteEnvironment, type RemoteEnvironmentOptions } from './remoteEnvironment';
 
@@ -203,7 +202,6 @@ export interface RemoteEnvironmentProviderFactoryOptions {
   readonly minExecutorVersion?: string;
   readonly initializeTimeoutMs?: number;
   readonly connect?: (options: RemoteEnvironmentOptions) => Promise<RemoteEnvironment>;
-  readonly probeRunner?: LocalRunner;
 }
 
 interface DeclaredEnvironmentRecord {
@@ -329,7 +327,6 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
       {
         launcher,
         minExecutorVersion: this.options.minExecutorVersion,
-        runner: this.options.probeRunner,
       },
     );
   }

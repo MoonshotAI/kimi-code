@@ -14,6 +14,10 @@ export interface EnvironmentBinding {
   readonly cwd?: string;
 }
 
+export function environmentBindingId(environmentId: string, cwd?: string): string {
+  return cwd === undefined ? environmentId : `${environmentId}\0${cwd}`;
+}
+
 export interface EnvironmentIdentity extends EnvironmentBinding {
   readonly generation: string;
 }

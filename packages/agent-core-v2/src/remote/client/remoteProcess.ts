@@ -18,7 +18,6 @@ import {
   PROCESS_OUTPUT_METHOD,
   PROCESS_SIGNAL_METHOD,
   PROCESS_START_METHOD,
-  PROCESS_TERMINATE_METHOD,
   PROCESS_WRITE_METHOD,
   type ProcessClosedNotification,
   type ProcessExitedNotification,
@@ -31,8 +30,6 @@ import { ConnectionClosedError, RequestTimeoutError, type RemoteExecConnection }
 import { rpcDomainError } from './rpcDomainError';
 
 const HOST_PROCESS_CODES: ReadonlySet<string> = new Set(Object.values(OsProcessErrors.codes));
-
-const WRITE_TIMEOUT_RETRIES = 2;
 
 const OUTPUT_BUFFER_BYTES = 256 * 1024;
 
@@ -139,8 +136,7 @@ export class RemoteProcess implements IHostProcess {
     eof: boolean,
     callback: (error?: Error | null) => void,
   ): void {
-    const writeId = randomUUID();
-    const run = this.writeChain.then(() => this.sendWriteWithRetry(chunk, eof, writeId));
+    const run = this.writeChain.then(() => this.sendWrite(chunk, eof));
 
     this.writeChain = run.then(
       () => undefined,
@@ -156,33 +152,15 @@ export class RemoteProcess implements IHostProcess {
     );
   }
 
-  private async sendWriteWithRetry(chunk: Buffer, eof: boolean, writeId: string): Promise<void> {
-    for (let timeouts = 0; ; timeouts += 1) {
-      try {
-        await this.sendWrite(chunk, eof, writeId);
-        return;
-      } catch (error) {
-
-        if (!(error instanceof RequestTimeoutError) || timeouts >= WRITE_TIMEOUT_RETRIES) {
-          throw error;
-        }
-      }
-    }
-  }
-
-  private async sendWrite(chunk: Buffer, eof: boolean, writeId: string): Promise<void> {
+  private async sendWrite(chunk: Buffer, eof: boolean): Promise<void> {
     const result = (await this.connection.call(PROCESS_WRITE_METHOD, {
       processId: this.processId,
       chunkBase64: chunk.toString('base64'),
-      writeId,
       eof: eof || undefined,
     })) as ProcessWriteResult;
     switch (result.status) {
       case 'accepted':
         return;
-      case 'starting':
-        throw new Error('process did not reach running state');
-
       case 'stdinClosed':
       case 'unknownProcess':
         return;
@@ -324,7 +302,7 @@ export class RemoteProcessService implements IHostProcessService {
       this.processes.delete(processId);
       if (error instanceof RequestTimeoutError) {
 
-        void this.connection.call(PROCESS_TERMINATE_METHOD, { processId }).catch(() => {});
+        void this.connection.call(PROCESS_SIGNAL_METHOD, { processId, signal: 'terminate' }).catch(() => {});
       }
       if (error instanceof ConnectionClosedError) {
         proc.onConnectionClose();

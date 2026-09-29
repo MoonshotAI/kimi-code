@@ -12,9 +12,8 @@ import {
 import {
   compareVersions,
   INITIALIZE_METHOD,
-  INITIALIZED_METHOD,
-  MAX_IN_FLIGHT_CALLS,
   MIN_EXECUTOR_VERSION,
+  PROCESS_WRITE_METHOD,
   SERVER_NOTIFICATION_METHODS,
   type InitializeResult,
   type RemoteEnvironmentInfo,
@@ -90,9 +89,7 @@ export class RemoteExecConnection {
   private readonly pending = new Map<RequestId, PendingCall>();
   private readonly notificationHandlers = new Map<string, Set<(params: unknown) => void>>();
   private readonly closeListeners = new Set<(info: ConnectionCloseInfo) => void>();
-  private readonly callQueue: Array<() => void> = [];
   private nextId = 1;
-  private inFlight = 0;
   private state: 'handshake' | 'ready' | 'closed' = 'handshake';
   private handshakeComplete = false;
   private handshakeTimer: NodeJS.Timeout | undefined;
@@ -156,7 +153,6 @@ export class RemoteExecConnection {
           return;
         }
         this.state = 'ready';
-        this.pipe.write(encodeFrame({ method: INITIALIZED_METHOD }));
         resolve(this);
       };
 
@@ -259,13 +255,6 @@ export class RemoteExecConnection {
         ),
       );
     }
-    if (this.inFlight >= MAX_IN_FLIGHT_CALLS) {
-      return new Promise<unknown>((resolve, reject) => {
-        this.callQueue.push(() => {
-          this.call(method, params).then(resolve, reject);
-        });
-      });
-    }
     const id = this.nextId++;
     let frame: Uint8Array;
     try {
@@ -273,13 +262,14 @@ export class RemoteExecConnection {
     } catch (error) {
       return Promise.reject(error instanceof Error ? error : new Error(String(error)));
     }
-    this.inFlight += 1;
     return new Promise<unknown>((resolve, reject) => {
       const pending: PendingCall = { resolve, reject };
-      pending.timer = setTimeout(() => {
-        this.expireRequest(id, method);
-      }, this.requestCallTimeoutMs);
-      pending.timer.unref?.();
+      if (method !== PROCESS_WRITE_METHOD) {
+        pending.timer = setTimeout(() => {
+          this.expireRequest(id, method);
+        }, this.requestCallTimeoutMs);
+        pending.timer.unref?.();
+      }
       this.pending.set(id, pending);
       this.pipe.write(frame);
     });
@@ -344,7 +334,6 @@ export class RemoteExecConnection {
       }
       this.pending.delete(message.id);
       if (pending.timer !== undefined) clearTimeout(pending.timer);
-      if (this.handshakeComplete) this.releaseSlot();
       if (isResponse(message)) {
         pending.resolve(message.result);
       } else {
@@ -379,17 +368,10 @@ export class RemoteExecConnection {
     }
   }
 
-  private releaseSlot(): void {
-    this.inFlight = Math.max(0, this.inFlight - 1);
-    const next = this.callQueue.shift();
-    if (next !== undefined) next();
-  }
-
   private expireRequest(id: RequestId, method: string): void {
     const pending = this.pending.get(id);
     if (pending === undefined) return;
     this.pending.delete(id);
-    this.releaseSlot();
     pending.reject(new RequestTimeoutError(method, this.requestCallTimeoutMs));
   }
 
@@ -415,9 +397,6 @@ export class RemoteExecConnection {
     }
     this.pending.clear();
 
-    for (const run of this.callQueue.splice(0)) {
-      run();
-    }
     for (const listener of this.closeListeners) listener(this.closeInfo);
     this.closeListeners.clear();
     this.teardown();

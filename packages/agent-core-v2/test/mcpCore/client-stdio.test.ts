@@ -9,12 +9,11 @@ import type { EnvironmentLease, EnvironmentStatus } from '#/environment/environm
 import { EnvironmentError, environmentIsReady } from '#/environment/environmentRegistry';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import {
-  mergeRemoteStdioEnv,
   mergeStdioEnv,
   StdioMcpClient,
   type StdioMcpClientOptions,
 } from '#/mcpCore/client-stdio';
-import { McpServerStdioConfigSchema, type McpServerStdioConfig } from '#/mcpCore/config-schema';
+import type { McpServerStdioConfig } from '#/mcpCore/config-schema';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
@@ -176,28 +175,21 @@ describe('StdioMcpClient', () => {
   }, 15000);
 
   it('sends only the configured env overlay to a non-local environment', async () => {
-    const localVar = `KIMI_TEST_LOCAL_${Date.now()}`;
-    const remoteVar = `KIMI_TEST_REMOTE_${Date.now()}`;
-    process.env[localVar] = 'resolved-locally';
-    process.env[remoteVar] = 'stays-local';
     const harness = createEnvironmentClient(
       {
         transport: 'stdio',
         command: process.execPath,
         args: [stdioFixture],
         env: { KIMI_TEST_LITERAL: 'literal' },
-        envVars: [localVar, { name: remoteVar, source: 'remote' }],
       },
       { environmentId: 'dev-box' },
     );
     try {
       await harness.client.connect();
-      expect(harness.spawnEnvs).toEqual([{ KIMI_TEST_LITERAL: 'literal', [localVar]: 'resolved-locally' }]);
+      expect(harness.spawnEnvs).toEqual([{ KIMI_TEST_LITERAL: 'literal' }]);
       const result = await harness.client.callTool('read_env', { name: 'KIMI_TEST_LITERAL' });
       expect(result.content).toEqual([{ type: 'text', text: 'literal' }]);
     } finally {
-      delete process.env[localVar];
-      delete process.env[remoteVar];
       await harness.client.close();
     }
   }, 15000);
@@ -629,60 +621,5 @@ describe('mergeStdioEnv', () => {
     const dir = mkdtempSync(join(tmpdir(), 'kimi-mcp-env-'));
     await rm(dir, { recursive: true, force: true });
     expect(mergeStdioEnv(undefined, { PATH: dir })['PATH']).toBe(dir);
-  });
-});
-
-describe('mergeRemoteStdioEnv', () => {
-  it('sends only literal env plus source=local values resolved from the parent env', () => {
-    const merged = mergeRemoteStdioEnv(
-      {
-        env: { LITERAL: 'literal' },
-        envVars: ['INHERIT', { name: 'ALSO_INHERIT' }, { name: 'SKIP', source: 'remote' }],
-      },
-      { INHERIT: 'a', ALSO_INHERIT: 'b', SKIP: 'c', PATH: '/usr/bin', HOME: '/home/x' },
-    );
-    expect(merged).toEqual({ INHERIT: 'a', ALSO_INHERIT: 'b', LITERAL: 'literal' });
-  });
-
-  it('lets literal env override an envVars-resolved value', () => {
-    const merged = mergeRemoteStdioEnv({ env: { A: 'literal' }, envVars: ['A'] }, { A: 'parent' });
-    expect(merged['A']).toBe('literal');
-  });
-
-  it('omits unnamed parent variables and never injects proxy variables', () => {
-    const merged = mergeRemoteStdioEnv({}, { HTTP_PROXY: 'http://corp:3128', PATH: '/x' });
-    expect(merged).toEqual({});
-  });
-
-  it('skips envVars entries missing from the parent env', () => {
-    expect(mergeRemoteStdioEnv({ envVars: ['MISSING'] }, {})).toEqual({});
-  });
-});
-
-describe('McpServerStdioConfigSchema envVars', () => {
-  it('accepts string and object entries, with source defaulting to local', () => {
-    const parsed = McpServerStdioConfigSchema.parse({
-      transport: 'stdio',
-      command: 'x',
-      envVars: ['A', { name: 'B' }, { name: 'C', source: 'remote' }],
-    });
-    expect(parsed.envVars).toEqual(['A', { name: 'B' }, { name: 'C', source: 'remote' }]);
-  });
-
-  it('rejects invalid envVars entries', () => {
-    expect(() =>
-      McpServerStdioConfigSchema.parse({
-        transport: 'stdio',
-        command: 'x',
-        envVars: [{ name: 'A', source: 'elsewhere' }],
-      }),
-    ).toThrow();
-    expect(() =>
-      McpServerStdioConfigSchema.parse({
-        transport: 'stdio',
-        command: 'x',
-        envVars: [{ source: 'local' }],
-      }),
-    ).toThrow();
   });
 });

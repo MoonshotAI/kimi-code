@@ -7,4 +7,3 @@ export * from './remoteFileSystem';
 export * from './remoteProcess';
 export * from './remoteEnvironment';
 export * from './remoteEnvironmentProvider';
-export * from './ephemeralEnvironmentConnector';

@@ -35,15 +35,14 @@ describe('launcher lowering', () => {
     expect(resolved.args.at(-1)).toBe(`'/opt/kimi/bin/kimi' 'exec-server' '--listen' 'stdio'`);
   });
 
-  it('lowers docker with and without a context', () => {
+  it('lowers docker to a sh -c exec line, with and without a context', () => {
     expect(resolveLauncher({ type: 'docker', container: 'myapp' }).args).toEqual([
       'exec',
       '-i',
       'myapp',
-      '~/.kimi-code/bin/kimi',
-      'exec-server',
-      '--listen',
-      'stdio',
+      'sh',
+      '-c',
+      `exec ~'/.kimi-code/bin/kimi' 'exec-server' '--listen' 'stdio'`,
     ]);
     expect(
       resolveLauncher({ type: 'docker', container: 'myapp', context: 'orbstack', remoteBin: '/root/.kimi-code/bin/kimi' }).args,
@@ -53,11 +52,19 @@ describe('launcher lowering', () => {
       'exec',
       '-i',
       'myapp',
-      '/root/.kimi-code/bin/kimi',
-      'exec-server',
-      '--listen',
-      'stdio',
+      'sh',
+      '-c',
+      `exec '/root/.kimi-code/bin/kimi' 'exec-server' '--listen' 'stdio'`,
     ]);
+  });
+
+  it('expands a leading tilde inside the container while quoting the rest of remoteBin', () => {
+    expect(
+      resolveLauncher({ type: 'docker', container: 'myapp', remoteBin: '~/bin/kimi' }).args.at(-1),
+    ).toBe(`exec ~'/bin/kimi' 'exec-server' '--listen' 'stdio'`);
+    expect(
+      resolveLauncher({ type: 'docker', container: 'myapp', remoteBin: '/opt/$(whoami)/kimi' }).args.at(-1),
+    ).toBe(`exec '/opt/$(whoami)/kimi' 'exec-server' '--listen' 'stdio'`);
   });
 
   it('lowers command launchers through PATH resolution with a scrubbed environment', () => {

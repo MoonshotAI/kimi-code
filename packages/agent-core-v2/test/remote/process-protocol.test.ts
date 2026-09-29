@@ -71,8 +71,8 @@ describe('process protocol semantics', () => {
       });
       childPid = Number(raw.notifications('process/output').map((event) => fromB64(event['chunkBase64'] as string)).join('').trim());
       expect(childPid).toBeGreaterThan(0);
-      raw.send({ id: 2, method: 'process/terminate', params: { processId: 'finished-group' } });
-      expect((await raw.nextResponse(2))['result']).toEqual({ running: false });
+      raw.send({ id: 2, method: 'process/signal', params: { processId: 'finished-group', signal: 'terminate' } });
+      expect((await raw.nextResponse(2))['result']).toEqual({});
       const reused = await startProcess(raw, 3, { processId: 'finished-group', argv: ['true'], cwd: '/tmp' });
       expect(reused['error']).toMatchObject({ code: -32600, message: 'duplicate process id finished-group' });
       await waitForDeath(childPid);
@@ -81,6 +81,34 @@ describe('process protocol semantics', () => {
       await loopback.host.done;
       if (childPid !== undefined && childPid > 0 && isAlive(childPid)) process.kill(childPid, 'SIGKILL');
     }
+  });
+
+  it('rejects a start whose id is terminated while the start is still in flight', async () => {
+    const loopback = createInProcessLoopback();
+    const raw = new RawClient(loopback);
+    await raw.handshake();
+    raw.sendRaw(
+      `${JSON.stringify({ id: 1, method: 'process/start', params: { processId: 'late', argv: ['sleep', '300'], cwd: '/tmp', pipeStdin: false } })}\n` +
+        `${JSON.stringify({ id: 2, method: 'process/signal', params: { processId: 'late', signal: 'terminate' } })}\n`,
+    );
+    expect((await raw.nextResponse(2))['result']).toEqual({});
+    const error = (await raw.nextResponse(1))['error'] as { code: number; message: string };
+    expect(error.code).toBe(-32600);
+    expect(error.message).toContain('terminated before it started');
+    loopback.clientInput.end();
+    await loopback.host.done;
+  });
+
+  it('still rejects a signal for a never-started id with -32600 when it is not terminate', async () => {
+    const loopback = createInProcessLoopback();
+    const raw = new RawClient(loopback);
+    await raw.handshake();
+    raw.send({ id: 1, method: 'process/signal', params: { processId: 'ghost', signal: 'kill' } });
+    const error = (await raw.nextResponse(1))['error'] as { code: number; message: string };
+    expect(error.code).toBe(-32600);
+    expect(error.message).toContain('unknown process id');
+    loopback.clientInput.end();
+    await loopback.host.done;
   });
 
   it('allows empty arguments after argv[0] but rejects an empty argv[0]', async () => {
@@ -182,35 +210,16 @@ describe('process protocol semantics', () => {
     await loopback.host.done;
   });
 
-  it('replays a writeId without double-writing', async () => {
-    const loopback = createInProcessLoopback();
-    const raw = new RawClient(loopback);
-    await raw.handshake();
-    await startProcess(raw, 1, { processId: 'cat', argv: ['cat'], cwd: '/tmp', pipeStdin: true });
-    raw.send({ id: 2, method: 'process/write', params: { processId: 'cat', chunkBase64: b64('abc'), writeId: 'w1' } });
-    expect((await raw.nextResponse(2))['result']).toEqual({ status: 'accepted' });
-    raw.send({ id: 3, method: 'process/write', params: { processId: 'cat', chunkBase64: b64('abc'), writeId: 'w1' } });
-    expect((await raw.nextResponse(3))['result']).toEqual({ status: 'accepted' });
-    raw.send({ id: 4, method: 'process/write', params: { processId: 'cat', chunkBase64: '', writeId: 'w2', eof: true } });
-    expect((await raw.nextResponse(4))['result']).toEqual({ status: 'accepted' });
-    await vi.waitFor(() => {
-      expect(raw.notifications('process/closed')).toHaveLength(1);
-    });
-    expect(raw.notifications('process/output').map((chunk) => fromB64(chunk['chunkBase64'] as string)).join('')).toBe('abc');
-    loopback.clientInput.end();
-    await loopback.host.done;
-  });
-
   it('refuses writes after stdin EOF and reports unknown processes', async () => {
     const loopback = createInProcessLoopback();
     const raw = new RawClient(loopback);
     await raw.handshake();
     await startProcess(raw, 1, { processId: 'cat', argv: ['cat'], cwd: '/tmp', pipeStdin: true });
-    raw.send({ id: 2, method: 'process/write', params: { processId: 'cat', chunkBase64: '', writeId: 'eof-1', eof: true } });
+    raw.send({ id: 2, method: 'process/write', params: { processId: 'cat', chunkBase64: '', eof: true } });
     expect((await raw.nextResponse(2))['result']).toEqual({ status: 'accepted' });
-    raw.send({ id: 3, method: 'process/write', params: { processId: 'cat', chunkBase64: b64('x'), writeId: 'after-eof' } });
+    raw.send({ id: 3, method: 'process/write', params: { processId: 'cat', chunkBase64: b64('x') } });
     expect((await raw.nextResponse(3))['result']).toEqual({ status: 'stdinClosed' });
-    raw.send({ id: 4, method: 'process/write', params: { processId: 'ghost', chunkBase64: b64('x'), writeId: 'w' } });
+    raw.send({ id: 4, method: 'process/write', params: { processId: 'ghost', chunkBase64: b64('x') } });
     expect((await raw.nextResponse(4))['result']).toEqual({ status: 'unknownProcess' });
     loopback.clientInput.end();
     await loopback.host.done;
@@ -267,7 +276,6 @@ describe('process protocol semantics', () => {
     const write = connection.call('process/write', {
       processId: 'cat',
       chunkBase64: b64('ping'),
-      writeId: 'ping-1',
     });
     const signal = connection.call('process/signal', { processId: 'flood', signal: 'kill' });
     await expect(write).resolves.toEqual({ status: 'accepted' });
@@ -337,30 +345,12 @@ describe('process protocol semantics', () => {
     raw.send({
       id: 100,
       method: 'process/write',
-      params: { processId: 'blocker', chunkBase64: chunk, writeId: 'flood-1' },
+      params: { processId: 'blocker', chunkBase64: chunk },
     });
     raw.send({ id: 200, method: 'process/signal', params: { processId: 'blocker', signal: 'kill' } });
     await raw.nextResponse(200, 30_000);
     const settled = (await raw.nextResponse(100, 30_000))['result'] as { status: string };
     expect(settled.status).toBe('stdinClosed');
-    loopback.clientInput.end();
-    await loopback.host.done;
-  });
-
-  it('refuses a start whose id was terminated before it ran', async () => {
-    const loopback = createInProcessLoopback();
-    const raw = new RawClient(loopback);
-    await raw.handshake();
-    raw.send({ id: 1, method: 'process/terminate', params: { processId: 'late' } });
-    expect((await raw.nextResponse(1))['result']).toEqual({ running: false });
-    raw.send({
-      id: 2,
-      method: 'process/start',
-      params: { processId: 'late', argv: ['sleep', '300'], cwd: '/tmp', pipeStdin: false },
-    });
-    const error = (await raw.nextResponse(2))['error'] as { code: number; message: string };
-    expect(error.code).toBe(-32600);
-    expect(error.message).toContain('terminated before it started');
     loopback.clientInput.end();
     await loopback.host.done;
   });

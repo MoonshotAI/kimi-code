@@ -8,7 +8,7 @@ the engine `Environment` interface (`src/environment/`).
 ```text
 packages/agent-core-v2/src/remote/
 ├── protocol/   message types, error codes, NDJSON codec (self-contained)
-├── client/     execBridge, launchers, connection, fs/process stubs, remoteEnvironment, remoteConnectionPool,
+├── client/     execBridge, launchers, connection, fs/process stubs, remoteEnvironment,
 │               remoteEnvironmentProvider, executorDetect, connectGuidance (executor detection + guidance)
 └── server/     stdioHost, fsHandler, processManager, environment, entry, standalone
 ```
@@ -46,9 +46,13 @@ deviations per the design spec, plus one forced addition:
   exposing an incomplete directory; the current limit is 50,000 entries.
 - Added `fs/rename` (no codex counterpart).
 - `process/signal` is three-state (`interrupt|terminate|kill`, codex only
-  interrupt); signal/terminate act on the whole process group, and group
-  residue is cleaned even when the leader has already exited (spec §5.3 —
-  codex no-ops signals on exited processes).
+  interrupt); signals act on the whole process group, and group residue is
+  cleaned even when the leader has already exited (spec §5.3 — codex no-ops
+  signals on exited processes). `terminate` is SIGTERM with a 1s SIGKILL
+  escalation: against a starting process it is applied once the process runs,
+  against an exited leader's group it escalates the residue, and against an id
+  that has not started yet the id is remembered so the late start is rejected
+  instead of leaking the process.
 - `process/write` accepts `eof: true` (with an empty chunk) to close remote
   stdin. Codex has no stdin close on the wire; our `IHostProcess.stdin.end()`
   makes it necessary. After EOF, writes report `stdinClosed`.
@@ -72,30 +76,36 @@ Client-surface notes beyond the wire protocol:
 
 - `RemoteEnvironment.environment` is the handshake payload (adds `cwd`/`tempDir`
   to `HostEnvironmentInfo`).
-- `RemoteEnvironment.connection` is public as the protocol escape hatch for calls
-  the `Environment` interface cannot express (e.g. `process/terminate` with its
-  TERM-then-KILL escalation, which `IHostProcess.kill`'s single signal does
-  not cover).
-- Bounded business calls (fs/*, process/start, process/write, …) carry a
-  per-request timeout (default 60s): a stall fails only that request with
-  `RequestTimeoutError`, and a late response is discarded — the connection
-  survives.
+- `RemoteEnvironment.connection` is public as the protocol escape hatch for raw
+  calls the `Environment` interface does not model (e.g. starting a process
+  without an `IHostProcess` wrapper, as the e2e fault-injection scenarios do).
+- Bounded business calls (fs/*, process/start, …) carry a per-request timeout
+  (default 60s): a stall fails only that request with `RequestTimeoutError`,
+  and a late response is discarded — the connection survives. `process/write`
+  is exempt: its response is deliberately suspended until the child's stdin
+  drains, so it carries no timeout and is never retried — a hung write fails
+  only with the connection.
 - Whole-file reads without `maxBytes` are rejected server-side above 32MiB
   (base64 of the response must fit the 64MiB frame cap); larger files are read
   through `offset`/`maxBytes` range reads.
-- `RemoteEnvironmentProviderFactory` holds one connection per environment id
-  for the process. Each workspace registers a view of that connection; the last
-  view to release closes it. Registration is still `pending` — no connection is
-  opened until `connect()`. A temporary `connect` does not enter this table.
-- `connect()` while `ready` is a no-op. A drop is process-wide for that id.
-  The next `connect()` opens a new process; explicit reconnect is `disconnect()`
-  then `connect()`, and it does not change a view's generation. A different id
+- `RemoteEnvironmentProviderFactory` registers one `DeclaredRemoteEnvironment`
+  per declaration id in the `EnvironmentRegistry`, and that declaration holds
+  the connection one-to-one: at most one `RemoteEnvironment` (one executor
+  process) per id at a time. There is no per-workspace view or refcount —
+  registry leases only point at the registered environment. Registration is
+  still `pending` — no connection is opened until `connect()`. A temporary
+  `RemoteEnvironment.connect` does not enter the registry.
+- `connect()` while `ready` is a no-op, and concurrent connects share one
+  in-flight attempt. A drop is process-wide for that id. The next `connect()`
+  opens a new process; explicit reconnect is `disconnect()` then `connect()`,
+  and it does not change the registered identity's generation. A different id
   is unaffected. SSH liveness is the ssh process (`ServerAliveInterval`); there
   is no protocol heartbeat and no merge by host or declaration fingerprint. A
-  changed declaration replaces the launcher, bumps every view's generation, and
-  drops the live process; an in-flight spawn from the old launcher is discarded.
-  In-flight tool calls are not retried on the new process. The connection's
-  in-flight call cap (256) is shared by every workspace using that id.
+  changed declaration replaces the launcher, bumps the identity's generation,
+  and drops the live process; an in-flight connect from the old launcher is
+  discarded. In-flight tool calls are not retried on the new process. The
+  server bounds in-flight calls per connection (256); the client queues
+  nothing.
 
 ## Executor detection and version guidance
 
@@ -103,19 +113,16 @@ The connect path (`connectWithGuidance`, wired into the factory) classifies
 handshake failures and attaches per-launcher install/upgrade guidance to the
 error. **The executor is never installed automatically**: a missing or too-old
 executor fails the connect, and the error text tells the user where to get the
-binary and where to put it. Before the first exec attempt, a docker launcher
-whose `remoteBin` is `~`-prefixed (the default
-`~/.kimi-code/bin/kimi` is) is resolved to the container user's absolute home
-path with one `docker exec … sh -c` probe — `docker exec` passes argv to
-execve without a shell, so the tilde would reach execve literally and every
-connect would open with a failing exit-126 handshake. The provider caches the
-resolved path per declaration fingerprint, so reconnects skip both the probe
-and the failing handshake, and a
-missing-executor classification below means the executor is genuinely absent
-at the resolved path.
+binary and where to put it. Both typed launchers go through a remote shell, so
+a `~`-prefixed `remoteBin` (the default `~/.kimi-code/bin/kimi` is) expands on
+the target: ssh runs the command line in the remote shell, and docker runs
+`docker exec -i <container> sh -c 'exec <remoteBin> exec-server --listen
+stdio'` — the same word-initial tilde expansion on both, with the remainder of
+`remoteBin` single-quoted against shell re-parsing.
 
-- **Missing executor** — the launcher exited 127 (ssh remote shell) or 126
-  (docker exec "executable file not found"), or the handshake **timed out**.
+- **Missing executor** — the launcher exited 127 (the remote shell could not
+  find the executor binary) or 126 (the remote shell found the executor but
+  could not execute it, e.g. a missing exec bit), or the handshake **timed out**.
   The error gains install guidance: download the `kimi` binary for the target
   platform from the Kimi Code release CDN and install it at the executor path
   the launcher invokes (named in the message; `command` environments are
@@ -125,8 +132,6 @@ at the resolved path.
   MIN_EXECUTOR_VERSION`. The client rejects with *upgrade* guidance (current
   vs minimum version, then the same install wording), deliberately
   distinct from the missing-executor guidance; no auto-upgrade is performed.
-
-`probeRunner` is the test seam for the docker home probe.
 
 Wire discipline: NDJSON frames (`\n`-terminated, `\r\n` tolerated, blank lines
 skipped, strict UTF-8), one message capped at 64MiB (disconnect on exceed),

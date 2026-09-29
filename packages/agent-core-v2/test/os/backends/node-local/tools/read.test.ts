@@ -206,7 +206,6 @@ function createRegistryBackedTool(environmentValue: FakeEnvironment) {
     inspect: () => registry.inspect(binding),
     acquire: (required = []) => registry.acquire(binding, required),
     acquireWhenReady: (required = []) => registry.acquireWhenReady(binding, required),
-    reconnect: async () => {},
     workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
   };
   const tool = new ReadTool(

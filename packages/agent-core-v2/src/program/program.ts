@@ -2,7 +2,7 @@ import { AsyncEmitter, Emitter, Event, type IWaitUntil } from '#/_base/event';
 import { GitService } from '#/app/git/gitService';
 import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
 import type { Environment, EnvironmentBinding, EnvironmentLease, EnvironmentWorkspaceRoots } from '#/environment/environment';
-import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
+import { environmentBindingId, LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { EnvironmentError, type EnvironmentGenerationSnapshot, type EnvironmentRegistryChange } from '#/environment/environmentRegistry';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
@@ -293,7 +293,7 @@ export class Program {
   }
 
   private requireGeneration(environmentId: string, cwd?: string): ProgramGeneration {
-    const key = generationKey(environmentId, cwd);
+    const key = environmentBindingId(environmentId, cwd);
     let generation = this.generations.get(key);
     if (generation === undefined && !this.reconciledGenerations.has(key)) {
       this.reconcileGeneration(environmentId, cwd);
@@ -315,7 +315,7 @@ export class Program {
   }
 
   private reconcileGeneration(environmentId: string, cwd?: string): void {
-    const key = generationKey(environmentId, cwd);
+    const key = environmentBindingId(environmentId, cwd);
     this.reconciledGenerations.set(key, { environmentId, cwd });
     const current = this.environments.current(environmentId);
     if (current === undefined) {
@@ -387,7 +387,7 @@ export class Program {
           });
       const fs = new WorkspaceFsService(context, dirs, targetFs, this.resolver, this.dependencies.telemetry, git, environmentId);
       const instructions = own(new WorkspaceInstructionsService(context, targetFs, localEnvironment.host, this.dependencies.bootstrap, this.dependencies.log, state, localFs));
-      const profileContextKey = JSON.stringify([environmentId, root]);
+      const profileContextKey = environmentBindingId(environmentId, root);
       const agentProfiles = own(new WorkspaceAgentProfileLoaderService(context, targetFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles, profileContextKey));
       const targetSkillDiscovery = new EnvironmentSkillDiscovery(this.dependencies.log, targetFs);
       const userSkills = this.dependencies.userSkills;
@@ -518,10 +518,6 @@ export class Program {
     else this.currentStatus = local.status === 'ready' ? 'ready' : 'degraded';
     this.changeEmitter.fire(this.snapshot());
   }
-}
-
-function generationKey(environmentId: string, cwd?: string): string {
-  return cwd === undefined ? environmentId : `${environmentId}\0${cwd}`;
 }
 
 function readiness(value: unknown): Promise<void> {

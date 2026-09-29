@@ -11,7 +11,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { PlanModeInjection } from '#/features/plan/injection/planModeInjection';
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { environmentTempTarget, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -26,7 +26,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import { IBlobStore } from '#/persistence/interface/blobStore';
-import type { EnvironmentLease, EnvironmentPath } from '#/environment/environment';
+import type { EnvironmentPath } from '#/environment/environment';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { ContextUndone } from '#/agent/undo/undoService';
@@ -247,31 +247,13 @@ export class AgentPlanService extends Service implements IAgentPlanService {
   }
 
   private planFileTarget(id: string): PlanFileTarget | undefined {
-    let lease: EnvironmentLease;
-    try {
-      lease = this.environment.acquire(['fs']);
-    } catch {
-      return undefined;
-    }
-    try {
-      const fs = lease.environment.fs;
-      const environmentPath = lease.environment.path;
-      if (fs === undefined || environmentPath === undefined) return undefined;
-      const tempDir = lease.environment.host?.tempDir ?? tmpdir();
-      return {
-        fs,
-        environmentPath,
-        path: environmentPath.join(
-          tempDir,
-          'kimi-code',
-          'plans',
-          this.agentCtx.agentId,
-          `${id}.md`,
-        ),
-      };
-    } finally {
-      lease.dispose();
-    }
+    const target = environmentTempTarget(this.environment, 'plans', tmpdir());
+    if (target === undefined) return undefined;
+    return {
+      fs: target.fs,
+      environmentPath: target.path,
+      path: target.path.join(target.dir, this.agentCtx.agentId, `${id}.md`),
+    };
   }
 
   private async writesOnlyPlanFile(

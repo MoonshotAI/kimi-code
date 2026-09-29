@@ -82,7 +82,6 @@ function registryBackedService(registry: EnvironmentRegistry): IAgentEnvironment
       }
       return registry.acquireWhenReady(BINDING, required);
     },
-    reconnect: async () => {},
     workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
   };
 }
@@ -106,7 +105,8 @@ function connectSwappingHarness(readyFs: IHostFileSystem) {
     {
       connect: async () => {
         calls.push('connect');
-        await registration.replace(ready);
+        await registration.remove();
+        registry.register(ready);
       },
     },
   );
@@ -124,7 +124,7 @@ function readyHarness(fs: IHostFileSystem) {
     { fs, process: {} },
   );
   const registration = registry.register(ready);
-  return { registration, service: registryBackedService(registry) };
+  return { registry, registration, service: registryBackedService(registry) };
 }
 
 function replacementReadyEnvironment(): Environment {
@@ -291,7 +291,8 @@ describe('tool environment generation guard', () => {
       const harness = readyHarness(tool.fs);
       const resolved = tool.resolve(harness.service);
 
-      await harness.registration.replace(replacementReadyEnvironment());
+      await harness.registration.remove();
+      harness.registry.register(replacementReadyEnvironment());
 
       const result = await finish(resolved);
       expect(result.isError).toBe(true);

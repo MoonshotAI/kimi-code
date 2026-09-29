@@ -84,7 +84,6 @@ export function environmentEntryInfo(
 
 export interface EnvironmentRegistrationHandle {
   readonly environmentId: string;
-  replace(environment: Environment): Promise<void>;
   remove(): Promise<void>;
 }
 
@@ -132,27 +131,6 @@ export class EnvironmentRegistry {
     this.entries.set(environmentId, this.createEntry(environment));
     this.publish(environment);
     return this.createHandle(environmentId);
-  }
-
-  async replace(environmentId: string, environment: Environment): Promise<void> {
-    if (this.disposing) {
-      await environment.dispose();
-      throw new EnvironmentError('environment.unavailable', `environment registry is disposing`);
-    }
-    const previous = this.entries.get(environmentId);
-    if (previous === undefined) {
-      await environment.dispose();
-      throw new Error(`environment ${environmentId} is not registered`);
-    }
-    try {
-      this.assertReady(environment, environmentId);
-    } catch (error) {
-      await environment.dispose();
-      throw error;
-    }
-    this.entries.set(environmentId, this.createEntry(environment));
-    this.publish(environment);
-    await this.retire(previous);
   }
 
   async remove(environmentId: string): Promise<void> {
@@ -251,7 +229,6 @@ export class EnvironmentRegistry {
   private createHandle(environmentId: string): EnvironmentRegistrationHandle {
     return {
       environmentId,
-      replace: (environment) => this.replace(environmentId, environment),
       remove: () => this.remove(environmentId),
     };
   }
@@ -278,8 +255,7 @@ export class EnvironmentRegistry {
     });
   }
 
-  private assertReady(environment: Environment, expectedEnvironmentId?: string): void {
-    if (expectedEnvironmentId !== undefined && environment.identity.environmentId !== expectedEnvironmentId) throw new Error(`replacement environment id must remain ${expectedEnvironmentId}`);
+  private assertReady(environment: Environment): void {
     if (environment.status === 'disposed') throw new EnvironmentError('environment.unavailable', `environment ${environment.identity.environmentId} is ${environment.status}`);
     for (const capability of environment.capabilities) {
       if (environment[capability] === undefined) throw new EnvironmentError('environment.capability_unavailable', `environment ${environment.identity.environmentId} declares ${capability} without an implementation`);

@@ -909,7 +909,6 @@ describe('AgentMediaToolsRegistrar', () => {
       },
       acquire: (required = []) => baseEnvironment.acquire(required),
       acquireWhenReady: async (required = []) => baseEnvironment.acquire(required),
-      reconnect: async () => {},
       workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
     };
     const registrar = new AgentMediaToolsRegistrar(

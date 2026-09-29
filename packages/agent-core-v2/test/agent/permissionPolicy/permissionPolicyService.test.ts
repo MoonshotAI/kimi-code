@@ -118,7 +118,6 @@ describe('AgentPermissionPolicyService chain', () => {
             dispose: () => {},
           }),
           acquireWhenReady() { return Promise.resolve((this as IAgentEnvironmentService).acquire()); },
-          reconnect: async () => {},
           workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
         });
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
@@ -535,7 +534,6 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
             };
           },
           acquireWhenReady() { return Promise.resolve((this as IAgentEnvironmentService).acquire()); },
-          reconnect: async () => {},
           workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
         });
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));

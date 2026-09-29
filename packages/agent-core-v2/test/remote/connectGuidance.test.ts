@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { classifyHandshakeFailure, connectWithGuidance } from '#/remote/client/connectGuidance';
 import { HandshakeError } from '#/remote/client/connection';
-import type { LocalRunner } from '#/remote/client/executorDetect';
 import type { LauncherSpec } from '#/remote/client/launchers';
 
 const SSH: LauncherSpec = { type: 'ssh', host: 'dev-box' };
@@ -76,17 +75,16 @@ describe('connectWithGuidance', () => {
     expect(message).not.toContain('/tmp/kimi-install');
   });
 
-  it('resolves a docker tilde remoteBin before detecting, and names the resolved path', async () => {
-    const runner: LocalRunner = async () => ({ code: 0, signal: null, stdout: '/home/container\n', stderr: '' });
+  it('names the declared docker tilde remoteBin in the missing-executor guidance', async () => {
     const error = await connectWithGuidance(
       async () => {
         throw missingExecutorError(126);
       },
-      { launcher: DOCKER, runner },
+      { launcher: DOCKER },
     ).catch((error: unknown) => error);
     const message = (error as Error).message;
     expect(message).toContain('docker:myapp-dev');
-    expect(message).toContain('executor path (/home/container/.kimi-code/bin/kimi)');
+    expect(message).toContain('executor path (~/.kimi-code/bin/kimi)');
   });
 
   it('answers a handshake timeout with timeout wording plus install guidance', async () => {

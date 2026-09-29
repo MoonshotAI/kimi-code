@@ -277,12 +277,13 @@ describe('AgentEnvironmentBindingService', () => {
     newLease.dispose();
   });
 
-  it('persists no generation and resolves the current generation after replacement', async () => {
+  it('persists no generation and resolves the current generation after re-registration', async () => {
     const { registry, state, binding, agentEnvironment } = setup();
     binding.bind('remote');
     const registration = registry.register(environment('replaceable', 'one'));
     binding.bind('replaceable');
-    await registration.replace(environment('replaceable', 'two'));
+    await registration.remove();
+    registry.register(environment('replaceable', 'two'));
 
     expect(state.get(agentEnvironmentBindingKey)).toEqual({
       environmentId: 'replaceable',
@@ -395,19 +396,20 @@ describe('AgentEnvironmentBindingService', () => {
     expect(agentEnvironment.isAvailable(['fs'])).toBe(false);
   });
 
-  it('tracks current-generation replacement without observing the drained generation', async () => {
-    const { local, localRegistration, agentEnvironment } = setup();
+  it('tracks the re-registered generation without observing the drained generation', async () => {
+    const { registry, local, localRegistration, agentEnvironment } = setup();
     const changes: void[] = [];
     agentEnvironment.onDidChange(() => changes.push(undefined));
 
-    await localRegistration.replace(environment('local', 'local-two', 'ready', ['process']));
+    await localRegistration.remove();
+    registry.register(environment('local', 'local-two', 'ready', ['process']));
 
-    expect(changes).toHaveLength(1);
+    expect(changes).toHaveLength(2);
     expect(agentEnvironment.inspect().identity.generation).toBe('local-two');
     expect(agentEnvironment.isAvailable(['fs'])).toBe(false);
     expect(agentEnvironment.isAvailable(['process'])).toBe(true);
     local.setStatus('ready');
-    expect(changes).toHaveLength(1);
+    expect(changes).toHaveLength(2);
   });
 
   it('carries cwd through switch and the persisted op payload', () => {
@@ -825,34 +827,6 @@ describe('AgentEnvironmentService workspaceRoots', () => {
   });
 });
 
-describe('AgentEnvironmentService reconnect', () => {
-  it('delegates to the connect method of the bound environment', async () => {
-    const { registry, binding, agentEnvironment } = setup();
-    const calls: string[] = [];
-    const fake = new FakeEnvironment(
-      { environmentId: 'reconnectable', generation: 'reconnectable-one' },
-      { status: 'ready', capabilities: ['process'] },
-    );
-    registry.register(Object.assign(fake, {
-      connect: async () => {
-        calls.push('connect');
-      },
-      process: {},
-    }));
-    binding.bind('reconnectable');
-
-    await agentEnvironment.reconnect();
-    expect(calls).toEqual(['connect']);
-  });
-
-  it('raises environment.unavailable when the bound environment cannot reconnect', async () => {
-    const { agentEnvironment } = setup();
-    await expect(agentEnvironment.reconnect()).rejects.toThrowError(
-      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.unavailable' }),
-    );
-  });
-});
-
 describe('acquireOrWhenReady', () => {
   it('returns the current environment lease when it is already available', async () => {
     const { agentEnvironment } = setup();
@@ -906,7 +880,8 @@ describe('AgentEnvironmentService on-demand connect', () => {
         calls.push('connect');
         attempts += 1;
         if (options.failFirst === true && attempts === 1) throw new Error('connect failed');
-        await registration.replace(Object.assign(new FakeEnvironment(
+        await registration.remove();
+        registry.register(Object.assign(new FakeEnvironment(
           { environmentId, generation: `${environmentId}-ready` },
           { status: 'ready', capabilities: ['fs', 'process'] },
         ), { fs: {}, process: {} }));

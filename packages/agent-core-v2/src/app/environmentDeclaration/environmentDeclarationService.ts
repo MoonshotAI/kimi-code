@@ -6,11 +6,9 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { LifecycleScope } from '#/app/scopes';
 import type { Environment, EnvironmentBinding } from '#/environment/environment';
-import { ENVIRONMENTS_SECTION } from '#/environment/configSection';
 import { resolveWorkspaceEnvironmentDeclarations } from '#/environment/environmentDeclarations';
 import { EnvironmentError, environmentIsReady } from '#/environment/environmentRegistry';
 import type { EnvironmentDeclarationSet } from '#/environment/remoteEnvironmentDeclaration';
-import { Error2, ErrorCodes } from '#/errors';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import {
@@ -22,7 +20,7 @@ import { IEnvironmentService } from '#/app/environment/environment';
 import { AGENT_WIRE_RECORD_KEY, isWireRecord, type WireRecord } from '#/wire/record';
 import { parseTree, restorableChain, type WireLine } from '#/wire/tree/index';
 
-import { IEnvironmentDeclarationService, type DeclareEnvironmentInput } from './environmentDeclaration';
+import { IEnvironmentDeclarationService } from './environmentDeclaration';
 
 export class EnvironmentDeclarationService implements IEnvironmentDeclarationService {
   declare readonly _serviceBrand: undefined;
@@ -42,27 +40,6 @@ export class EnvironmentDeclarationService implements IEnvironmentDeclarationSer
     return { dispose: () => {
       if (this.reconcile === reconcile) this.reconcile = undefined;
     } };
-  }
-
-  async declare(input: DeclareEnvironmentInput): Promise<void> {
-    const reconcile = this.reconcile;
-    if (reconcile === undefined) throw new EnvironmentError('environment.unavailable', 'remote environment provider is not registered');
-    await this.config.ready;
-    const declared = this.config.get<Record<string, unknown>>(ENVIRONMENTS_SECTION);
-    if (declared?.[input.id] !== undefined) {
-      throw new Error2(ErrorCodes.CONFIG_INVALID, `Environment id "${input.id}" is already declared in ${this.bootstrap.configPath}.`);
-    }
-    const entry = Object.fromEntries(Object.entries(input.entry).filter(([, value]) => value !== undefined));
-    await this.config.replaceSections(
-      { [ENVIRONMENTS_SECTION]: { ...declared, [input.id]: entry } },
-      undefined,
-      { expectedValues: { [ENVIRONMENTS_SECTION]: declared ?? null } },
-    );
-    try {
-      await reconcile();
-    } catch (error) {
-      throw new EnvironmentError('environment.unavailable', `Environment "${input.id}" was saved, but registration failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-    }
   }
 
   async declarations(): Promise<EnvironmentDeclarationSet | undefined> {

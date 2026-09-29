@@ -7,10 +7,8 @@ import {
   PROCESS_OUTPUT_METHOD,
   PROCESS_EXITED_METHOD,
   PROCESS_CLOSED_METHOD,
-  PROCESS_WRITE_ID_CACHE_SIZE,
   type ProcessOutputStream,
   type ProcessStartResult,
-  type ProcessTerminateResult,
   type ProcessWriteResult,
 } from '#/remote/protocol/methods';
 import {
@@ -26,11 +24,6 @@ interface ExitedProcessGroup {
   expiryTimer: NodeJS.Timeout | undefined;
 }
 
-interface AcceptedWriteIds {
-  readonly ids: Set<string>;
-  readonly order: string[];
-}
-
 interface ManagedProcess {
   readonly processId: string;
   readonly pipeStdin: boolean;
@@ -43,7 +36,6 @@ interface ManagedProcess {
   exitCode: number | null;
   closed: boolean;
   openStreams: number;
-  readonly writeIds: AcceptedWriteIds;
   readonly stdinWaiters: Set<() => void>;
   killTimer: NodeJS.Timeout | undefined;
 }
@@ -53,17 +45,6 @@ const EMPTY: Record<string, never> = {};
 const TERMINATED_ID_CACHE_SIZE = 4096;
 const EXITED_GROUP_CACHE_SIZE = 4096;
 const EXITED_GROUP_RETENTION_MS = 5_000;
-
-function rememberWriteId(writeIds: AcceptedWriteIds, writeId: string): void {
-  if (writeIds.ids.has(writeId)) return;
-  writeIds.ids.add(writeId);
-  writeIds.order.push(writeId);
-  while (writeIds.order.length > PROCESS_WRITE_ID_CACHE_SIZE) {
-    const evicted = writeIds.order.shift();
-    if (evicted === undefined) break;
-    writeIds.ids.delete(evicted);
-  }
-}
 
 export class ProcessManager {
   private readonly processes = new Map<string, ManagedProcess>();
@@ -137,7 +118,6 @@ export class ProcessManager {
       exitCode: null,
       closed: false,
       openStreams: 2,
-      writeIds: { ids: new Set(), order: [] },
       stdinWaiters: new Set(),
       killTimer: undefined,
     };
@@ -293,7 +273,6 @@ export class ProcessManager {
     if (typeof chunkBase64 !== 'string') {
       throw new RpcError(RpcErrorCode.InvalidParams, 'chunkBase64 must be a string');
     }
-    const writeId = requireString(params, 'writeId');
     const eof = optionalBoolean(params, 'eof') ?? false;
     if (eof && chunkBase64.length > 0) {
       throw new RpcError(RpcErrorCode.InvalidParams, 'eof writes must carry an empty chunk');
@@ -302,20 +281,12 @@ export class ProcessManager {
     if (entry === undefined) {
       return { status: this.exitedGroups.has(processId) ? 'stdinClosed' : 'unknownProcess' };
     }
-    if (entry.state !== 'running') {
-      return { status: 'starting' };
-    }
     if (!entry.pipeStdin) {
       return { status: 'stdinClosed' };
     }
     if (!entry.stdinOpen) {
       return { status: 'stdinClosed' };
     }
-    if (entry.writeIds.ids.has(writeId)) {
-      return { status: 'accepted' };
-    }
-
-    rememberWriteId(entry.writeIds, writeId);
     if (eof) {
       entry.stdinOpen = false;
       entry.child?.stdin?.end();
@@ -361,60 +332,48 @@ export class ProcessManager {
     if (signal !== 'interrupt' && signal !== 'terminate' && signal !== 'kill') {
       throw new RpcError(RpcErrorCode.InvalidParams, 'signal must be interrupt, terminate or kill');
     }
-    const nodeSignal = signal === 'interrupt' ? 'SIGINT' : signal === 'terminate' ? 'SIGTERM' : 'SIGKILL';
-    const entry = this.processes.get(processId);
-    if (entry === undefined) {
-      const group = this.exitedGroups.get(processId);
-      if (group === undefined) {
-        throw new RpcError(RpcErrorCode.InvalidRequest, `unknown process id ${processId}`);
-      }
-      this.killOrphanedGroup(group.pid, nodeSignal);
-      return EMPTY;
-    }
-    if (entry.state !== 'running') {
-      throw new RpcError(RpcErrorCode.InvalidRequest, `process id ${processId} is starting`);
-    }
-    this.killGroup(entry, nodeSignal);
-    return EMPTY;
-  }
-
-  async terminate(rawParams: unknown): Promise<ProcessTerminateResult> {
-    const params = requireParams(rawParams);
-    const processId = requireString(params, 'processId');
     const entry = this.processes.get(processId);
     if (entry === undefined) {
       const group = this.exitedGroups.get(processId);
       if (group !== undefined) {
-        this.killOrphanedGroup(group.pid, 'SIGTERM');
-        if (group.killTimer === undefined) {
-          group.killTimer = setTimeout(() => {
-            this.killOrphanedGroup(group.pid, 'SIGKILL');
-            group.killTimer = undefined;
-          }, 1_000);
-          group.killTimer.unref?.();
+        if (signal === 'terminate') {
+          this.killOrphanedGroup(group.pid, 'SIGTERM');
+          if (group.killTimer === undefined) {
+            group.killTimer = setTimeout(() => {
+              this.killOrphanedGroup(group.pid, 'SIGKILL');
+              group.killTimer = undefined;
+            }, 1_000);
+            group.killTimer.unref?.();
+          }
+          return EMPTY;
         }
-        return { running: false };
+        this.killOrphanedGroup(group.pid, signal === 'interrupt' ? 'SIGINT' : 'SIGKILL');
+        return EMPTY;
       }
-
-      this.terminatedIds.add(processId);
-      while (this.terminatedIds.size > TERMINATED_ID_CACHE_SIZE) {
-        const oldest = this.terminatedIds.values().next();
-        if (oldest.done) break;
-        this.terminatedIds.delete(oldest.value);
+      if (signal === 'terminate') {
+        this.terminatedIds.add(processId);
+        while (this.terminatedIds.size > TERMINATED_ID_CACHE_SIZE) {
+          const oldest = this.terminatedIds.values().next();
+          if (oldest.done) break;
+          this.terminatedIds.delete(oldest.value);
+        }
+        return EMPTY;
       }
-      return { running: false };
+      throw new RpcError(RpcErrorCode.InvalidRequest, `unknown process id ${processId}`);
     }
     if (entry.state !== 'running') {
-      entry.terminateAfterStart = true;
-      return { running: true };
+      if (signal === 'terminate') {
+        entry.terminateAfterStart = true;
+        return EMPTY;
+      }
+      throw new RpcError(RpcErrorCode.InvalidRequest, `process id ${processId} is starting`);
     }
-    if (entry.exitCode !== null) {
-
+    if (signal === 'terminate') {
       this.beginTermination(entry);
-      return { running: false };
+      return EMPTY;
     }
-    this.beginTermination(entry);
-    return { running: true };
+    this.killGroup(entry, signal === 'interrupt' ? 'SIGINT' : 'SIGKILL');
+    return EMPTY;
   }
 
   private beginTermination(entry: ManagedProcess): void {

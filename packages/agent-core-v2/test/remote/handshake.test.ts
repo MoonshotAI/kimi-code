@@ -15,8 +15,8 @@ import {
   PROCESS_CLOSED_METHOD,
   PROCESS_EXITED_METHOD,
   PROCESS_OUTPUT_METHOD,
+  PROCESS_SIGNAL_METHOD,
   PROCESS_START_METHOD,
-  PROCESS_TERMINATE_METHOD,
 } from '#/remote/protocol/methods';
 import { RemoteProcessService } from '#/remote/client/remoteProcess';
 import {
@@ -32,7 +32,7 @@ import {
 } from './helpers/loopback';
 
 describe('handshake', () => {
-  it('completes initialize/initialized and answers fs/getMetadata', async () => {
+  it('completes initialize and answers fs/getMetadata', async () => {
     const { connection, loopback } = await connectInProcess();
     expect(connection.executorVersion).toBe('9.9.9-test');
     expect(connection.environment).toEqual(TEST_ENVIRONMENT);
@@ -40,19 +40,6 @@ describe('handshake', () => {
       isDirectory: true,
     });
     connection.close();
-    await loopback.host.done;
-  });
-
-  it('rejects business calls before initialized with -32600', async () => {
-    const loopback = createInProcessLoopback();
-    const raw = new RawClient(loopback);
-    raw.send({ id: 1, method: 'initialize', params: { clientName: 'raw', clientVersion: '0.0.0' } });
-    await raw.nextFrame();
-    raw.send({ id: 2, method: 'fs/readFile', params: { path: '/etc/hostname' } });
-    const response = (await raw.nextFrame()) as { id: number; error: { code: number } };
-    expect(response.id).toBe(2);
-    expect(response.error.code).toBe(-32600);
-    loopback.clientInput.end();
     await loopback.host.done;
   });
 
@@ -145,7 +132,7 @@ describe('handshake', () => {
     await expect(pending).rejects.toThrow(ConnectionClosedError);
   });
 
-  it('settles queued calls beyond the in-flight cap when the connection closes', async () => {
+  it('settles a burst of pending calls when the connection closes', async () => {
     const pipe = createScriptedServer((frame, reply) => {
       if (frame.method === INITIALIZE_METHOD) {
         reply({ id: frame.id, result: testInitializeResult() });
@@ -222,8 +209,8 @@ describe('request call timeout', () => {
       }
       seen.push(frame);
 
-      if (frame.method === PROCESS_TERMINATE_METHOD) {
-        reply({ id: frame.id, result: { running: false } });
+      if (frame.method === PROCESS_SIGNAL_METHOD) {
+        reply({ id: frame.id, result: {} });
       }
     });
     const connection = await RemoteExecConnection.connect(pipe, {
@@ -236,12 +223,13 @@ describe('request call timeout', () => {
 
     await vi.waitFor(() => {
       const start = seen.find((frame) => frame.method === PROCESS_START_METHOD);
-      const terminate = seen.find((frame) => frame.method === PROCESS_TERMINATE_METHOD);
+      const cancel = seen.find((frame) => frame.method === PROCESS_SIGNAL_METHOD);
       expect(start).toBeDefined();
-      expect(terminate).toBeDefined();
-      expect((terminate?.params as { processId: string }).processId).toBe(
-        (start?.params as { processId: string }).processId,
-      );
+      expect(cancel).toBeDefined();
+      expect(cancel?.params).toMatchObject({
+        processId: (start?.params as { processId: string }).processId,
+        signal: 'terminate',
+      });
     });
     expect(connection.closed).toBe(false);
     await expect(connection.call(FS_GET_METADATA_METHOD, { path: '/' })).resolves.toMatchObject({ isDirectory: true });
@@ -366,9 +354,6 @@ describe('notification dispatch', () => {
     return createScriptedServer((frame, reply) => {
       if (frame.method === INITIALIZE_METHOD) {
         reply({ id: frame.id, result: testInitializeResult() });
-        return;
-      }
-      if (frame.method === 'initialized') {
         script((value: unknown) => {
           reply(value);
         });

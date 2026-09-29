@@ -29,7 +29,6 @@ export function stubAgentEnvironment(
     inspect: resolve,
     acquire: lease,
     acquireWhenReady: async () => lease(),
-    reconnect: async () => {},
     workspaceRoots: () => ({
       workDir: options.workDir ?? '/workspace',
       additionalDirs: options.additionalDirs ?? [],

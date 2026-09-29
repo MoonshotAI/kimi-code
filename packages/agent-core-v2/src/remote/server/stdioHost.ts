@@ -21,13 +21,11 @@ import {
   FS_RENAME_METHOD,
   FS_WRITE_FILE_METHOD,
   INITIALIZE_METHOD,
-  INITIALIZED_METHOD,
   MAX_IN_FLIGHT_CALLS,
   MAX_PENDING_SEND_BYTES,
   PROCESS_FLOW_METHOD,
   PROCESS_SIGNAL_METHOD,
   PROCESS_START_METHOD,
-  PROCESS_TERMINATE_METHOD,
   PROCESS_WRITE_METHOD,
   type InitializeResult,
   type RemoteEnvironmentInfo,
@@ -50,7 +48,6 @@ type Handler = (params: unknown) => Promise<unknown>;
 const CONTROL_METHODS: ReadonlySet<string> = new Set([
   PROCESS_WRITE_METHOD,
   PROCESS_SIGNAL_METHOD,
-  PROCESS_TERMINATE_METHOD,
 ]);
 
 class OutboundWriter {
@@ -132,7 +129,7 @@ export class StdioHost {
   private readonly processManager: ProcessManager;
   private readonly fsHandler = new FsHandler();
   private readonly handlers: ReadonlyMap<string, Handler>;
-  private state: 'pre-init' | 'awaiting-initialized' | 'ready' = 'pre-init';
+  private state: 'pre-init' | 'ready' = 'pre-init';
   private inFlight = 0;
   private readonly waiting: Array<() => void> = [];
   private shuttingDown = false;
@@ -168,7 +165,6 @@ export class StdioHost {
       [PROCESS_START_METHOD, (p) => pm.start(p)],
       [PROCESS_WRITE_METHOD, (p) => pm.write(p)],
       [PROCESS_SIGNAL_METHOD, (p) => pm.signal(p)],
-      [PROCESS_TERMINATE_METHOD, (p) => pm.terminate(p)],
     ]);
     this.donePromise = new Promise<void>((resolve) => {
       this.resolveDone = resolve;
@@ -230,11 +226,7 @@ export class StdioHost {
     }
 
     if (isNotification(message)) {
-      if (message.method === INITIALIZED_METHOD && this.state === 'awaiting-initialized') {
-        this.state = 'ready';
-        return;
-      }
-      if (message.method === PROCESS_FLOW_METHOD && this.state === 'ready') {
+      if (message.method === PROCESS_FLOW_METHOD) {
         this.onProcessFlow(message.params);
         return;
       }
@@ -261,7 +253,7 @@ export class StdioHost {
       environment: this.options.environment,
     };
     this.respond(message.id, result, 'control');
-    this.state = 'awaiting-initialized';
+    this.state = 'ready';
   }
 
   private onProcessFlow(params: unknown): void {
@@ -275,13 +267,6 @@ export class StdioHost {
   private onRequest(message: JsonRpcRequest): void {
     if (message.method === INITIALIZE_METHOD) {
       this.respondError(message.id, new RpcError(RpcErrorCode.InvalidRequest, 'already initialized'));
-      return;
-    }
-    if (this.state !== 'ready') {
-      this.respondError(
-        message.id,
-        new RpcError(RpcErrorCode.InvalidRequest, 'connection is not initialized'),
-      );
       return;
     }
     const handler = this.handlers.get(message.method);

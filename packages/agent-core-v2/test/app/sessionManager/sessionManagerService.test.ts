@@ -694,7 +694,8 @@ describe('SessionManager controller retirement', () => {
     const manager = managerFor(program, registry);
 
     const handleOne = await manager.create({ workDir: '/workspace' });
-    await registration.replace(fakeEnvironment('local', 'two'));
+    await registration.remove();
+    registry.register(fakeEnvironment('local', 'two'));
     const handleTwo = await manager.create({ workDir: '/workspace' });
     expect(manager.list()).toEqual([handleOne, handleTwo]);
     expect(first.disposed).toBe(true);
@@ -851,25 +852,29 @@ describe('SessionManager remote environment wiring', () => {
         default: 'sandbox',
         sandbox: { command: 'sandbox', args: ['ssh'], defaultCwd: '/home/me/sandbox' },
       },
+      remote: {},
     });
 
     await manager.create({ workDir: '/workspace' });
-    expect(byEnvironment.has('local')).toBe(true);
-    expect(byEnvironment.get('local')!.options[0]).toMatchObject({ environmentId: 'sandbox', environmentCwd: '/home/me/sandbox' });
+    expect(byEnvironment.has('sandbox')).toBe(true);
+    expect(byEnvironment.get('sandbox')!.options[0]).toMatchObject({ environmentId: 'sandbox', environmentCwd: '/home/me/sandbox' });
   });
 
   it('applies the declaration defaultCwd for an explicit environment id and rejects undeclared ids', async () => {
-    const { manager, registry, byEnvironment } = remoteWiringSetup({
+    const { manager, registry, byEnvironment, createCalls } = remoteWiringSetup({
       config: {
         sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' },
       },
+      remote: { status: 'ready' },
     });
 
     await manager.create({ workDir: '/workspace', environmentId: 'sandbox' });
-    expect(byEnvironment.get('local')!.options[0]).toMatchObject({ environmentId: 'sandbox', environmentCwd: '/home/me/sandbox' });
-
     await manager.create({ workDir: '/workspace', environmentId: 'sandbox', environmentCwd: '/elsewhere' });
-    expect(byEnvironment.get('local')!.options[1]).toMatchObject({ environmentId: 'sandbox', environmentCwd: '/elsewhere' });
+    expect(createCalls).toEqual([
+      { environmentId: 'sandbox', cwd: '/home/me/sandbox' },
+      { environmentId: 'sandbox', cwd: '/elsewhere' },
+    ]);
+    expect(byEnvironment.get('sandbox')!.options[0]).toMatchObject({ environmentId: 'sandbox', environmentCwd: '/elsewhere' });
 
     await expect(manager.create({ workDir: '/workspace', environmentId: 'missing' })).rejects.toMatchObject({
       code: 'config.invalid',
@@ -935,6 +940,7 @@ describe('SessionManager remote environment wiring', () => {
   it('rejects an explicit environment id whose declaration does not set defaultCwd', async () => {
     const { manager, registry, byEnvironment } = remoteWiringSetup({
       config: { sandbox: { command: 'sandbox' } },
+      remote: { status: 'ready' },
     });
 
     await expect(manager.create({ workDir: '/workspace', environmentId: 'sandbox' })).rejects.toMatchObject({
@@ -943,7 +949,24 @@ describe('SessionManager remote environment wiring', () => {
     expect(byEnvironment.size).toBe(0);
 
     await manager.create({ workDir: '/workspace', environmentId: 'sandbox', environmentCwd: '/elsewhere' });
-    expect(byEnvironment.get('local')!.options[0]).toMatchObject({ environmentId: 'sandbox', environmentCwd: '/elsewhere' });
+    expect(byEnvironment.get('sandbox')!.options[0]).toMatchObject({ environmentId: 'sandbox', environmentCwd: '/elsewhere' });
+  });
+
+  it('rejects creation on a declared environment that is not registered instead of falling back to local', async () => {
+    const { manager, byEnvironment } = remoteWiringSetup({
+      config: {
+        default: 'sandbox',
+        sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' },
+      },
+    });
+
+    await expect(manager.create({ workDir: '/workspace', environmentId: 'sandbox' })).rejects.toMatchObject({
+      code: 'environment.unavailable',
+    });
+    await expect(manager.create({ workDir: '/workspace' })).rejects.toMatchObject({
+      code: 'environment.unavailable',
+    });
+    expect(byEnvironment.size).toBe(0);
   });
 
   it('rejects an explicit environment id when declaration resolution fails', async () => {
@@ -1136,21 +1159,35 @@ describe('SessionManager remote environment wiring', () => {
     registry.acquire({ environmentId: 'remote' }).dispose();
   });
 
-  it('resumes with the binding kept on a local controller when the persisted environment cannot connect', async () => {
-    const { manager, byEnvironment, createCalls, registry, remoteConnect, warn } = restoreSetup({
+  it('fails the resume loudly when the persisted environment cannot connect', async () => {
+    const { manager, byEnvironment, registry, remoteConnect, warn } = restoreSetup({
       remoteStatus: 'disconnected',
       connectFails: true,
     });
 
-    const handle = await manager.resume('session-1');
-    expect(handle).toBeDefined();
+    const failure = await manager.resume('session-1').catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: 'environment.unavailable' });
+    expect((failure as Error).message).toContain('remote');
     expect(remoteConnect).toHaveBeenCalledTimes(1);
-    expect(byEnvironment.has('local')).toBe(true);
+    expect(byEnvironment.has('local')).toBe(false);
     expect(byEnvironment.has('remote')).toBe(false);
-    expect(createCalls).toEqual([{ environmentId: 'local', cwd: undefined }]);
     expect(registry.current('remote')!.status).toBe('disconnected');
     expect(warn).toHaveBeenCalledTimes(1);
-    await expect(manager.whenResumeSettled('session-1')).resolves.toBeUndefined();
+    await expect(manager.whenResumeSettled('session-1')).rejects.toThrow('ssh unreachable');
+  });
+
+  it('restores on the local controller when the persisted environment is not registered yet', async () => {
+    const { manager, byEnvironment, createCalls, remoteConnect, warn } = restoreSetup({
+      remoteStatus: 'disconnected',
+      persistedEnvironmentId: 'lazy-env',
+    });
+
+    const handle = await manager.resume('session-1');
+    expect(handle).toBeDefined();
+    expect(remoteConnect).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+    expect(createCalls).toEqual([{ environmentId: 'local', cwd: undefined }]);
+    expect(byEnvironment.has('lazy-env')).toBe(false);
   });
 
   it('recovers a degraded remote binding on demand and resumes onto the remote controller once reconnected', async () => {
@@ -1159,22 +1196,17 @@ describe('SessionManager remote environment wiring', () => {
       connectFails: true,
     });
 
-    await manager.resume('session-1');
-    expect(createCalls).toEqual([{ environmentId: 'local', cwd: undefined }]);
+    await expect(manager.resume('session-1')).rejects.toMatchObject({ code: 'environment.unavailable' });
+    expect(createCalls).toEqual([]);
 
     remoteConnect.mockImplementation(async () => {
       remote.setStatus('ready');
     });
-    await remoteConnect();
+    await manager.resume('session-1');
     expect(remoteConnect).toHaveBeenCalledTimes(2);
     expect(registry.current('remote')!.status).toBe('ready');
     registry.acquire({ environmentId: 'remote' }).dispose();
-
-    await manager.resume('session-1');
-    expect(createCalls).toEqual([
-      { environmentId: 'local', cwd: undefined },
-      { environmentId: 'remote', cwd: '/remote/work' },
-    ]);
+    expect(createCalls).toEqual([{ environmentId: 'remote', cwd: '/remote/work' }]);
     expect(byEnvironment.has('remote')).toBe(true);
   });
 
