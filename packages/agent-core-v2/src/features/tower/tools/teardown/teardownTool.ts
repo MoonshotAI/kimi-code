@@ -1,4 +1,5 @@
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { TowerProtocolError } from '#/features/tower/protocol/index';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -24,6 +25,7 @@ export class TowerTeardownTool implements ITowerTeardownTool {
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ISessionManager private readonly sessions: ISessionManager,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    @IAgentTaskService private readonly tasks: IAgentTaskService,
   ) {}
 
   resolveExecution(args: TowerTeardownToolInput): ToolExecution {
@@ -34,7 +36,7 @@ export class TowerTeardownTool implements ITowerTeardownTool {
       };
     }
     return {
-      description: `Tearing down tower workspace${args.force === true ? ' (force)' : ''}`,
+      description: `Tearing down tower workspace${args.dry_run === true ? ' (dry run)' : args.force === true ? ' (force)' : ''}`,
       approvalRule: this.name,
       execute: () =>
         runTowerTool(async () => {
@@ -52,10 +54,23 @@ export class TowerTeardownTool implements ITowerTeardownTool {
               `tower workspace is owned by a live session (${priorOwner}) — tearing it down would dismantle that session's fleet. Use TowerTeardown from that session, or close it first.`,
             );
           }
-          const report = await store.teardown({ force: args.force });
+          const liveAgentIds = new Set(
+            this.tasks
+              .list(true)
+              .map((task) => (task.kind === 'agent' ? task.agentId : undefined))
+              .filter((agentId): agentId is string => agentId !== undefined),
+          );
+          const report = await store.teardown({
+            force: args.force,
+            exclude: args.exclude,
+            dryRun: args.dry_run,
+            liveAgentIds,
+          });
           return {
             output: [
-              'tower teardown:',
+              args.dry_run === true
+                ? 'tower teardown (dry run — nothing was changed):'
+                : 'tower teardown:',
               ...report.map((line) => `- ${line}`),
               '',
               'Tower mode stays active — the next objective starts with TowerInit, and the human can turn the mode off with /tower off. .tower/comms/ (state, inbox, findings, reviews, activity log) is kept as the audit trail — remove it by hand only if you are sure.',
