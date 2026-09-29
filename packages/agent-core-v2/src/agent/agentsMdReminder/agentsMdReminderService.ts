@@ -244,7 +244,8 @@ export class AgentAgentsMdReminderService
       case 'Glob':
       case 'Grep':
         return this.targetDirsFromAccesses(ctx);
-      case 'Bash': {
+      case 'Bash':
+      case 'Monitor': {
         const args = ctx.args;
         const command = stringArg(args, 'command');
         if (command === undefined) return { dirs: [], selfKnown };

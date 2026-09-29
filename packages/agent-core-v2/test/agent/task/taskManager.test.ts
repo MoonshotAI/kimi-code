@@ -1614,11 +1614,11 @@ describe('AgentTaskService monitor events', () => {
     expect(queued).toEqual([taskId]);
     expect(manager.hasQueuedEvent(taskId)).toBe(true);
 
-    event!.consume();
-    expect(manager.hasQueuedEvent(taskId)).toBe(false);
     await vi.waitFor(() => {
       expect(fixture.ctx.allEvents.filter((e) => e.event === 'background.task.event')).toHaveLength(1);
     });
+    event!.consume();
+    expect(manager.hasQueuedEvent(taskId)).toBe(false);
     expect(fixture.ctx.allEvents.find((e) => e.event === 'background.task.event')?.args).toMatchObject({
       taskId,
       description: 'watch app log',
@@ -1634,6 +1634,14 @@ describe('AgentTaskService monitor events', () => {
     });
     expect(noteText(notes[1]!)).toContain('last words without newline');
     expect(noteText(notes[2]!)).toContain('type="task.completed"');
+    await vi.waitFor(() => {
+      expect(fixture.ctx.allEvents.some((e) => e.event === 'task.terminated')).toBe(true);
+    });
+    const order = fixture.ctx.allEvents
+      .filter((e) => e.event === 'background.task.event' || e.event === 'task.terminated')
+      .map((e) => e.event);
+    expect(order.at(-1)).toBe('task.terminated');
+    expect(order.filter((e) => e === 'background.task.event')).toHaveLength(2);
     await fixture.ctx.dispose();
   });
 
