@@ -1,0 +1,86 @@
+import {
+  buildMediaRefUrl,
+  type ContentPart,
+  type MediaStore,
+  type PromptGate,
+} from '@moonshot-ai/agent-core';
+
+import type { ImageLimits } from '../state/configSection';
+import { buildImageCompressionCaption, compressBase64ForModel } from '../transform/compress';
+import { parseImageDataUrl } from '../inspect/format-policy';
+import { persistOriginalImage } from '../transform/originals';
+
+export interface CreateMediaPromptGateProps {
+  readonly store: MediaStore;
+  readonly limits: () => ImageLimits;
+  readonly originalsDir?: string;
+}
+
+export function createMediaPromptGate(props: CreateMediaPromptGateProps): PromptGate {
+  return async (_queueItemId, message) => {
+    const { readByteBudget, maxEdgePx } = props.limits();
+    const content: ContentPart[] = [];
+    let changed = false;
+    for (const part of message.content) {
+      if (part.type !== 'image_url') {
+        content.push(part);
+        continue;
+      }
+      const parsed = parseImageDataUrl(part.imageUrl.url);
+      if (parsed === null) {
+        content.push(part);
+        continue;
+      }
+      const approxBytes = Math.floor((parsed.base64.length * 3) / 4);
+      if (approxBytes <= readByteBudget) {
+        content.push(part);
+        continue;
+      }
+      const compressed = await compressBase64ForModel(parsed.base64, parsed.mimeType, {
+        byteBudget: readByteBudget,
+        maxEdge: maxEdgePx,
+      });
+      if (!compressed.changed) {
+        content.push(part);
+        continue;
+      }
+      const originalPath =
+        props.originalsDir === undefined
+          ? null
+          : await persistOriginalImage(
+              Buffer.from(parsed.base64, 'base64'),
+              parsed.mimeType,
+              { dir: props.originalsDir },
+            );
+      const ref = await props.store.put({
+        bytes: Buffer.from(compressed.base64, 'base64'),
+        mimeType: compressed.mimeType,
+        filename: part.imageUrl.name,
+      });
+      content.push({
+        type: 'text',
+        text: buildImageCompressionCaption({
+          original: {
+            width: compressed.originalWidth,
+            height: compressed.originalHeight,
+            byteLength: compressed.originalByteLength,
+            mimeType: parsed.mimeType,
+          },
+          final: {
+            width: compressed.width,
+            height: compressed.height,
+            byteLength: compressed.finalByteLength,
+            mimeType: compressed.mimeType,
+          },
+          originalPath,
+        }),
+      });
+      content.push({
+        type: 'image_url',
+        imageUrl: { ...part.imageUrl, url: buildMediaRefUrl(ref) },
+      });
+      changed = true;
+    }
+    return changed ? { block: false, message: { ...message, content } } : { block: false, message };
+  };
+}
