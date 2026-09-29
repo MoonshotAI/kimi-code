@@ -9,11 +9,12 @@ import {
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
-import { NOTIFY_USER_FLAG_ID } from './flag';
+import { notifyUserAvailable } from './notifyUserAvailability';
 import {
   NOTIFY_USER_NUDGE_VARIANT,
   lastMidResponsePosition,
@@ -38,11 +39,13 @@ const notifyUserNudgeReminders = fromCallback(({
   };
 }) => {
   const runtime = input.runtime;
-  if (!runtime.get(IFlagService).enabled(NOTIFY_USER_FLAG_ID)) return () => {};
+  const available = (): boolean =>
+    notifyUserAvailable(runtime.get(IFlagService), runtime.get(IBootstrapService));
+  if (!available()) return () => {};
   const registration = runtime.get(IAgentReminderService).register(
     NOTIFY_USER_NUDGE_VARIANT,
     ({ lastInjectedAt }): string | undefined => {
-      if (!runtime.get(IFlagService).enabled(NOTIFY_USER_FLAG_ID)) return undefined;
+      if (!available()) return undefined;
       if (runtime.get(IAgentToolRegistryService).resolve(NOTIFY_USER_TOOL_NAME) === undefined) {
         return undefined;
       }

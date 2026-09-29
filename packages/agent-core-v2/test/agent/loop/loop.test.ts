@@ -1255,6 +1255,25 @@ describe('Agent loop', () => {
       [{ kind: 'file', name: 'note.txt', mediaType: 'text/plain', size: 21, path: '/data/note.txt' }],
     ]);
   });
+
+  it('settles the waiter of a notification-seeded turn', async () => {
+    ctx.mockNextResponse({ type: 'text', text: 'seeded answer' });
+    loop.notify({
+      message: {
+        role: 'user',
+        id: 'seed-1',
+        content: [{ type: 'text', text: 'wake up' }],
+        toolCalls: [],
+      },
+    });
+    await vi.waitFor(() => {
+      expect(loop.promptHandle('seed-1')).toBeDefined();
+    });
+    await expect(loop.promptHandle('seed-1')!.completion).resolves.toMatchObject({
+      state: 'completed',
+    });
+    await loop.settled();
+  });
 });
 
 describe('turn telemetry', () => {
@@ -1962,22 +1981,56 @@ describe('interruption reminder', () => {
 
     await ctx.undoHistory(1);
 
-    expect(
-      ctx.contextData().history.map((message) => ({
-        role: message.role,
-        origin: message.origin,
-      })),
-    ).toEqual([
-      {
-        role: 'user',
-        origin: { kind: 'injection', variant: 'interruption', ownerPromptId: undefined },
-      },
-    ]);
+    expect(ctx.contextData().history).toEqual([]);
+    await ctx.expectResumeMatches();
 
     ctx.mockNextResponse({ type: 'text', text: 'second answer' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Next' }] });
     await ctx.untilTurnEnd();
+    expect(interruptionReminders()).toHaveLength(0);
+  });
+
+  it('keeps an interruption reminder when undo only removes a later turn', async () => {
+    ctx.mockNextResponse({ type: 'text', text: 'partial answer' });
+    const subscription = cancelOnFirstDelta();
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+    await ctx.untilTurnEnd();
+    subscription.dispose();
+    const interruptedHistory = ctx.contextData().history;
+
+    ctx.mockNextResponse({ type: 'text', text: 'second answer' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Next' }] });
+    await ctx.untilTurnEnd();
+
+    await ctx.undoHistory(1);
+
+    expect(ctx.contextData().history).toEqual(interruptedHistory);
     expect(interruptionReminders()).toHaveLength(1);
+    await ctx.expectResumeMatches();
+
+    await ctx.undoHistory(1);
+
+    expect(ctx.contextData().history).toEqual([]);
+  });
+
+  it('undo removes a cancelled retry reminder with its preceding user prompt', async () => {
+    ctx.mockNextResponse({ type: 'text', text: 'first answer' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+    await ctx.untilTurnEnd();
+
+    ctx.mockNextResponse({ type: 'text', text: 'partial retry' });
+    const subscription = cancelOnFirstDelta();
+    const retry = submitPromptTurn(loop, {
+      message: { role: 'user', content: [] },
+      meta: { origin: { kind: 'retry' } },
+    }).turn;
+    await expect(retry.result).resolves.toMatchObject({ type: 'cancelled' });
+    subscription.dispose();
+    expect(interruptionReminders()).toHaveLength(1);
+
+    await ctx.undoHistory(1);
+
+    expect(ctx.contextData().history).toEqual([]);
   });
 
   it('drops unsigned thinking but keeps signed thinking on user cancel', async () => {
