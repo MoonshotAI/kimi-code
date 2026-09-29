@@ -487,6 +487,7 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
     editorText: string;
     queued: Array<Record<string, unknown>>;
     skillCommandMap?: Map<string, string>;
+    steering?: boolean;
   }) {
     const steerMessage = vi.fn();
     const steerSkillActivation = vi.fn();
@@ -513,6 +514,7 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
       steerMessage,
       steerSkillActivation,
       updateQueueDisplay,
+      isSteeringQueuedMessages: vi.fn(() => options.steering ?? false),
       validateMediaCapabilities: vi.fn(() => true),
       showError: vi.fn(),
       track: vi.fn(),
@@ -564,6 +566,25 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
     expect(steerSkillActivation).toHaveBeenCalledWith(host.session, 'tower', 'status');
     expect(host.state.queuedMessages).toEqual([{ text: '!ls', agentId: 'main', mode: 'bash' }]);
     expect(updateQueueDisplay).toHaveBeenCalled();
+  });
+
+  it('ignores Ctrl-S while an automatic queue steer is still in flight', () => {
+    const queued = [
+      { text: 'already steering', agentId: 'main' },
+      { text: 'later text', agentId: 'main' },
+    ];
+    const { host, setText, steerMessage, steerSkillActivation, onCtrlS } = createCtrlSHarness({
+      editorText: 'draft',
+      queued,
+      steering: true,
+    });
+
+    onCtrlS();
+
+    expect(steerMessage).not.toHaveBeenCalled();
+    expect(steerSkillActivation).not.toHaveBeenCalled();
+    expect(setText).not.toHaveBeenCalled();
+    expect(host.state.queuedMessages).toEqual(queued);
   });
 
   it('steers plain queued messages but keeps grouped inline-skill submissions queued', () => {
