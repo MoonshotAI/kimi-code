@@ -58,4 +58,27 @@ describe('BackgroundAgentStatusComponent', () => {
       }
     }
   });
+
+  it('renders a monitor event with its latest lines under the headline', () => {
+    const lines = Array.from({ length: 8 }, (_, i) => `line ${String(i + 1)}`);
+    const rendered = new BackgroundAgentStatusComponent({
+      phase: 'event',
+      headline: 'monitor event',
+      detail: 'watch app log',
+      lines,
+    })
+      .render(120)
+      .map((line) => strip(line).trim());
+
+    expect(rendered[1]).toBe(`${STATUS_BULLET}monitor event (watch app log)`);
+    expect(rendered.slice(2)).toEqual([
+      '… 2 earlier lines',
+      'line 3',
+      'line 4',
+      'line 5',
+      'line 6',
+      'line 7',
+      'line 8',
+    ]);
+  });
 });

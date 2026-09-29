@@ -291,3 +291,34 @@ describe('SessionEventHandler — background.task.terminated', () => {
     expect(store.get('agent-7')).toBeUndefined();
   });
 });
+
+describe('SessionEventHandler — background.task.event', () => {
+  it('appends a monitor event row with the delivered lines', () => {
+    const host = makeSessionEventHost() as unknown as { appendTranscriptEntry: ReturnType<typeof vi.fn> };
+    const handler = new SessionEventHandler(host as never);
+
+    handler.handleEvent(
+      {
+        sessionId: 's1',
+        agentId: 'main',
+        type: 'background.task.event',
+        taskId: 'monitor-log00000',
+        description: 'watch app log',
+        lines: ['ERROR <db> refused'],
+        omitted: 2,
+      } as unknown as Event,
+      vi.fn(),
+    );
+
+    expect(host.appendTranscriptEntry).toHaveBeenCalledTimes(1);
+    expect(host.appendTranscriptEntry.mock.calls[0]![0]).toMatchObject({
+      kind: 'status',
+      backgroundAgentStatus: {
+        phase: 'event',
+        headline: 'monitor event',
+        detail: 'watch app log',
+        lines: ['(2 earlier lines omitted; the full log is in the task output.)', 'ERROR <db> refused'],
+      },
+    });
+  });
+});

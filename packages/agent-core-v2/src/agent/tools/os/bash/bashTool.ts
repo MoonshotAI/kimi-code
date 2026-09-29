@@ -1,14 +1,12 @@
 import { IAgentTaskService } from '#/agent/task/task';
 import { resolveAgentTaskConfig } from '#/agent/task/configSection';
 import { IConfigService } from '#/app/config/config';
-import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
-import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
+import type { IHostProcess } from '#/os/interface/hostProcess';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
 import {
   DEFAULT_TOOL_RESULT_MAX_CHARS,
   type ExecutableToolResult,
@@ -26,6 +24,7 @@ import { renderPrompt } from '#/_base/utils/render-prompt';
 import { userCancellationReason } from '#/_base/utils/abort';
 import bashDescriptionTemplate from './bash.md?raw';
 import { ProcessTask } from './process-task';
+import { closeProcessStdin, killSpawnedProcess, shellCommandFor, spawnShellCommand } from './shellProcess';
 import {
   type BashInput,
   BashInputSchema,
@@ -53,13 +52,6 @@ function normalizeTimeoutMs(timeout: number | undefined, isBackground: boolean):
   const defaultSeconds = isBackground ? DEFAULT_BACKGROUND_TIMEOUT_S : DEFAULT_TIMEOUT_S;
   const value = timeout ?? defaultSeconds;
   return Math.min(value, timeoutCapS(isBackground)) * MS_PER_SECOND;
-}
-
-async function disposeProcess(proc: IHostProcess): Promise<void> {
-  try {
-    await proc.dispose();
-  } catch {
-  }
 }
 
 function renderBashDescription(shellName: string): string {
@@ -154,24 +146,6 @@ export class BashTool implements IBashTool {
     };
   }
 
-  private spawn(
-    processService: IHostProcessService,
-    env: HostEnvironmentInfo,
-    effectiveCwd: string,
-    command: string,
-  ): Promise<IHostProcess> {
-    const shellCwd = getShellPathBridge(env).toShellPath(effectiveCwd);
-    const shellCommand = `cd ${shellQuote(shellCwd)} && ${command}`;
-    const noninteractiveEnv: Record<string, string> = {
-      NO_COLOR: '1',
-      TERM: 'dumb',
-      GIT_TERMINAL_PROMPT: process.env['GIT_TERMINAL_PROMPT'] ?? '0',
-      SHELL: env.shellPath,
-    };
-
-    return processService.spawn(env.shellPath, ['-c', shellCommand], { env: noninteractiveEnv });
-  }
-
   private async execution(
     args: BashInput,
     signal: AbortSignal,
@@ -187,7 +161,7 @@ export class BashTool implements IBashTool {
     const lease = this.runtime.acquire(['process']);
     const view = new RuntimeWorkspaceView(lease.runtime, this.workspaceCtx);
     const env = lease.runtime.environment;
-    const command = env.osKind === 'Windows' ? rewriteWindowsNullRedirect(args.command) : args.command;
+    const command = shellCommandFor(env, args.command);
     const effectiveCwd = view.resolve(args.cwd ?? view.workDir);
     const description = startsInBackground ? args.description!.trim() : foregroundDescription(args);
     const timeoutMs = startsInBackground
@@ -199,7 +173,7 @@ export class BashTool implements IBashTool {
     const builder = new ToolOutputAccumulator();
     let proc: IHostProcess;
     try {
-      proc = lease.track(await this.spawn(lease.runtime.process!, env, effectiveCwd, command));
+      proc = lease.track(await spawnShellCommand(lease.runtime.process!, env, effectiveCwd, command));
     } catch (error) {
       lease.dispose();
       return {
@@ -451,30 +425,4 @@ function foregroundDescription(args: BashInput): string {
   if (explicit !== undefined && explicit.length > 0) return explicit;
   const preview = args.command.length > 60 ? `${args.command.slice(0, 60)}…` : args.command;
   return `Bash: ${preview}`;
-}
-
-function closeProcessStdin(proc: IHostProcess): void {
-  try {
-    proc.stdin.end();
-  } catch {
-  }
-}
-
-async function killSpawnedProcess(proc: IHostProcess): Promise<void> {
-  try {
-    await proc.kill('SIGTERM');
-  } catch {
-  } finally {
-    await disposeProcess(proc);
-  }
-}
-
-function shellQuote(s: string): string {
-  return `'${s.replaceAll("'", "'\\''")}'`;
-}
-
-const WINDOWS_NUL_REDIRECT = /(\d?&?>+\s*)[Nn][Uu][Ll](?=\s|$|[|&;)\n])/g;
-
-function rewriteWindowsNullRedirect(command: string): string {
-  return command.replace(WINDOWS_NUL_REDIRECT, '$1/dev/null');
 }

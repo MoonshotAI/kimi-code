@@ -287,7 +287,7 @@ export interface BackgroundTaskCompletedEvent {
 }
 
 export interface WaitForCompletedEvent {
-  outcome: 'completed' | 'timed_out' | 'task_not_found' | 'aborted' | 'interrupted';
+  outcome: 'completed' | 'timed_out' | 'task_not_found' | 'aborted' | 'interrupted' | 'event';
   timeout_ms: number;
   waited_ms: number;
   has_task_id: boolean;
@@ -935,7 +935,7 @@ export const telemetryEventDefinitions = {
     comment: 'A WaitFor tool call returns.',
     properties: {
       outcome:
-        'How the wait ended: the waited task finished, the wait timed out, the task id was unknown, or the wait was aborted',
+        'How the wait ended: the waited task finished, the wait timed out, the task id was unknown, the wait was aborted, new input interrupted it, or a monitor had a new event',
       timeout_ms: 'Timeout argument in milliseconds',
       waited_ms: 'Actual wall-clock wait time in milliseconds',
       has_task_id: 'Whether a specific task id was given',

@@ -2167,6 +2167,31 @@ describe('ToolCallComponent', () => {
     }
   });
 
+  describe('Monitor header', () => {
+    it('shows the command while starting and after the monitor started', () => {
+      const args = { command: 'tail -F app.log | grep --line-buffered ERROR', description: 'app errors' };
+      const pending = new ToolCallComponent({ id: 'call_mon', name: 'Monitor', args }, undefined, stubTui(30));
+      expect(strip(pending.render(100).join('\n'))).toContain(
+        'Starting a monitor · $ tail -F app.log | grep --line-buffered ERROR',
+      );
+      pending.dispose();
+
+      const started = new ToolCallComponent(
+        { id: 'call_mon', name: 'Monitor', args },
+        { tool_call_id: 'call_mon', output: 'task_id: monitor-log00000', is_error: false },
+      );
+      expect(strip(started.render(100).join('\n'))).toContain('Started a monitor · $ tail -F');
+    });
+
+    it('says the monitor could not start on an error result', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_mon_err', name: 'Monitor', args: { command: 'tail -F x', description: 'x' } },
+        { tool_call_id: 'call_mon_err', output: 'Monitor is only supported by the main agent.', is_error: true },
+      );
+      expect(strip(component.render(100).join('\n'))).toContain('Could not start a monitor');
+    });
+  });
+
   describe('WaitFor header', () => {
     const waitForCompletedOutput = [
       'wait_status: completed',
@@ -2228,6 +2253,21 @@ describe('ToolCallComponent', () => {
       const out = strip(component.render(100).join('\n'));
       expect(out).toContain('Waited for background task (question-80w0h7nw)');
       expect(out).toContain('10s');
+    });
+
+    it('names the monitor whose output ended the wait', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_wait_event', name: 'WaitFor', args: { timeout: 60 } },
+        {
+          tool_call_id: 'call_wait_event',
+          output: 'wait_status: event\nevent_task_id: monitor-log00000\nwaited_ms: 1200\ntimeout_ms: 60000',
+          is_error: false,
+        },
+      );
+
+      expect(strip(component.render(100).join('\n'))).toContain(
+        'Wait ended by monitor output (monitor-log00000)',
+      );
     });
 
     it('renders a timeout as its own non-error header', () => {

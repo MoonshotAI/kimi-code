@@ -168,12 +168,14 @@ export interface BackgroundAgentMetadata {
   readonly effort?: string;
 }
 
-export type BackgroundAgentStatusPhase = 'started' | 'completed' | 'failed' | 'killed';
+export type BackgroundAgentStatusPhase = 'started' | 'completed' | 'failed' | 'killed' | 'event';
 
 export interface BackgroundAgentStatusData {
   readonly phase: BackgroundAgentStatusPhase;
   readonly headline: string;
   readonly detail?: string;
+  /** Output lines shown under the headline; set for monitor events. */
+  readonly lines?: readonly string[];
 }
 
 export interface CompactionTranscriptData {

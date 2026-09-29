@@ -35,6 +35,13 @@ function task(overrides: Partial<BackgroundTaskInfo> = {}): BackgroundTaskInfo {
 }
 
 describe('formatBackgroundTaskTranscript', () => {
+  it('names monitor tasks as monitors', () => {
+    expect(formatBackgroundTaskTranscript(task({ taskId: 'monitor-abcd1234', status: 'running' })).headline)
+      .toBe('monitor started in background');
+    expect(formatBackgroundTaskTranscript(task({ taskId: 'monitor-abcd1234', status: 'killed' })).headline)
+      .toBe('monitor stopped');
+  });
+
   it('renders a bash started entry', () => {
     const data = formatBackgroundTaskTranscript(task({ status: 'running' }));
     expect(data.phase).toBe('started');

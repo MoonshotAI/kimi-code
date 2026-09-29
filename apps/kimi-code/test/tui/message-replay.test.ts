@@ -1039,6 +1039,46 @@ describe('KimiTUI resume message replay', () => {
     ).toBe(false);
   });
 
+  it('renders replayed monitor events as event rows with their lines', async () => {
+    const driver = await replayIntoDriver(
+      [
+        message(
+          'user',
+          [
+            {
+              type: 'text',
+              text: '<notification id="task:monitor-log00000:event:1" category="task" type="task.event" source_kind="background_task" source_id="monitor-log00000">\nTitle: Monitor event: watch app log\nSeverity: info\n<event>\nERROR &lt;db&gt; refused\nretrying\n</event>\nThese lines are new output from the monitored command.\n</notification>',
+            },
+          ],
+          {
+            origin: {
+              kind: 'task',
+              taskId: 'monitor-log00000',
+              status: 'running',
+              notificationId: 'task:monitor-log00000:event:1',
+            },
+          },
+        ),
+      ],
+      {
+        background: [backgroundTask('monitor-log00000', 'watch app log', 'running')],
+      },
+    );
+
+    const statuses = driver.state.transcriptEntries.flatMap((entry) =>
+      entry.backgroundAgentStatus === undefined ? [] : [entry.backgroundAgentStatus],
+    );
+
+    expect(statuses).toEqual([
+      { phase: 'event', headline: 'monitor event', detail: 'watch app log', lines: ['ERROR <db> refused', 'retrying'] },
+    ]);
+    expect(
+      driver.state.transcriptEntries.some(
+        (entry) => entry.kind === 'user' && entry.content.includes('<notification'),
+      ),
+    ).toBe(false);
+  });
+
   it('renders only the most recent ten visible user turns', async () => {
     const replay = Array.from({ length: 12 }, (_, index) => [
       message('user', [{ type: 'text', text: `prompt ${index}` }]),

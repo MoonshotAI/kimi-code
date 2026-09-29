@@ -16,6 +16,16 @@ import {
   type SubagentHandle,
 } from '#/agent/tools/agent/subagent-task';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
+import { MonitorProcessTask } from '#/agent/tools/task/monitor/monitorTool';
+import { IAgentLoopService, type LoopNotify, type LoopNotifyHandle } from '#/agent/loop/loop';
+import {
+  TASK_EVENT_BATCH_MS,
+  TASK_EVENT_MAX_BATCH_LINES,
+  TASK_EVENT_MAX_LINE_CHARS,
+  TASK_EVENT_MAX_LINES_PER_WINDOW,
+  type TaskEventBatch,
+  TaskEventStream,
+} from '#/agent/task/taskEvents';
 import { isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import {
@@ -1384,4 +1394,249 @@ describe('AgentTaskService', () => {
     expect(info).toMatchObject({ kind: 'process', status: 'completed', exitCode: 0 });
     expect(await manager.readOutput(taskId)).toContain('bg-ok');
   }, 15_000);
+});
+
+function eventStream(): {
+  stream: TaskEventStream;
+  batches: TaskEventBatch[];
+  settle: (index: number) => void;
+  overflow: ReturnType<typeof vi.fn>;
+} {
+  const batches: TaskEventBatch[] = [];
+  const settlers: Array<() => void> = [];
+  const overflow = vi.fn();
+  const stream = new TaskEventStream({
+    deliver: (batch, settled) => {
+      batches.push(batch);
+      settlers.push(settled);
+    },
+    overflow,
+  });
+  const settle = (index: number): void => {
+    settlers[index]!();
+  };
+  return { stream, batches, settle, overflow };
+}
+
+describe('TaskEventStream', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('splits chunks into lines and batches the lines of one window into one delivery', () => {
+    vi.useFakeTimers();
+    const { stream, batches } = eventStream();
+
+    stream.append('first li');
+    stream.append('ne\r\n\n   \nsecond line\nthi');
+    expect(batches).toHaveLength(0);
+
+    vi.advanceTimersByTime(TASK_EVENT_BATCH_MS);
+    expect(batches).toEqual([{ seq: 1, lines: ['first line', 'second line'], omitted: 0 }]);
+  });
+
+  it('holds new lines while a batch is undelivered and sends them after it settles', () => {
+    vi.useFakeTimers();
+    const { stream, batches, settle } = eventStream();
+
+    stream.append('one\n');
+    vi.advanceTimersByTime(TASK_EVENT_BATCH_MS);
+    stream.append('two\nthree\n');
+    vi.advanceTimersByTime(TASK_EVENT_BATCH_MS * 5);
+    expect(stream.hasQueuedBatch).toBe(true);
+    expect(batches).toHaveLength(1);
+
+    settle(0);
+    expect(stream.hasQueuedBatch).toBe(false);
+    vi.advanceTimersByTime(TASK_EVENT_BATCH_MS);
+    expect(batches[1]).toEqual({ seq: 2, lines: ['two', 'three'], omitted: 0 });
+  });
+
+  it('flushes the unterminated last line on close even while a batch is undelivered', () => {
+    vi.useFakeTimers();
+    const { stream, batches } = eventStream();
+
+    stream.append('one\n');
+    vi.advanceTimersByTime(TASK_EVENT_BATCH_MS);
+    stream.append('two\npartial');
+    stream.close();
+
+    expect(batches.map((batch) => batch.lines)).toEqual([['one'], ['two', 'partial']]);
+    stream.append('late\n');
+    vi.advanceTimersByTime(TASK_EVENT_BATCH_MS);
+    expect(batches).toHaveLength(2);
+  });
+
+  it('keeps the newest lines of a large batch and cuts very long lines', () => {
+    vi.useFakeTimers();
+    const { stream, batches } = eventStream();
+
+    const lines = Array.from({ length: TASK_EVENT_MAX_BATCH_LINES + 3 }, (_, i) => `line ${String(i)}`);
+    stream.append(`${lines.join('\n')}\n${'x'.repeat(TASK_EVENT_MAX_LINE_CHARS + 10)}\n`);
+    vi.advanceTimersByTime(TASK_EVENT_BATCH_MS);
+
+    const [batch] = batches;
+    expect(batch!.lines).toHaveLength(TASK_EVENT_MAX_BATCH_LINES);
+    expect(batch!.omitted).toBe(4);
+    expect(batch!.lines.at(-1)).toBe(`${'x'.repeat(TASK_EVENT_MAX_LINE_CHARS)}…`);
+  });
+
+  it('delivers what it has and reports an overflow once the per-minute line limit is passed', () => {
+    vi.useFakeTimers();
+    const { stream, batches, overflow } = eventStream();
+
+    const lines = Array.from({ length: TASK_EVENT_MAX_LINES_PER_WINDOW + 5 }, (_, i) => `l${String(i)}`);
+    stream.append(`${lines.join('\n')}\n`);
+
+    expect(overflow).toHaveBeenCalledTimes(1);
+    expect(batches).toHaveLength(1);
+    stream.append('after\n');
+    vi.advanceTimersByTime(TASK_EVENT_BATCH_MS);
+    expect(batches).toHaveLength(1);
+  });
+});
+
+function controllableProcess(): {
+  proc: IHostProcess;
+  stdout: PassThrough;
+  stderr: PassThrough;
+  exit: (exitCode: number) => void;
+} {
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  let currentExitCode: number | null = null;
+  let resolveWait: (n: number) => void = () => {};
+  const waitPromise = new Promise<number>((resolve) => {
+    resolveWait = resolve;
+  });
+  const exit = (exitCode: number): void => {
+    if (currentExitCode !== null) return;
+    currentExitCode = exitCode;
+    stdout.end();
+    stderr.end();
+    resolveWait(exitCode);
+  };
+  return {
+    proc: {
+      _serviceBrand: undefined,
+      stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
+      stdout,
+      stderr,
+      pid: 4242,
+      get exitCode(): number | null {
+        return currentExitCode;
+      },
+      wait: () => waitPromise,
+      kill: vi.fn(async () => {
+        exit(143);
+      }) as unknown as IHostProcess['kill'],
+      dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
+    },
+    stdout,
+    stderr,
+    exit,
+  };
+}
+
+function captureNotifications(fixture: TaskServiceFixture): Array<LoopNotify & { consume: () => void }> {
+  const notes: Array<LoopNotify & { consume: () => void }> = [];
+  vi.spyOn(fixture.ctx.get(IAgentLoopService), 'notify').mockImplementation((note: LoopNotify = {}) => {
+    notes.push({ ...note, consume: () => note.onConsume?.() });
+    const handle: LoopNotifyHandle = { dropped: false, drop: () => note.onDrop?.() };
+    return handle;
+  });
+  return notes;
+}
+
+function noteText(note: LoopNotify): string {
+  return (note.message?.content ?? [])
+    .map((part) => (part.type === 'text' ? part.text : ''))
+    .join('');
+}
+
+describe('AgentTaskService monitor events', () => {
+  it('delivers stdout lines of a monitor task as running-task notifications', async () => {
+    const fixture = createAgentTaskService();
+    const notes = captureNotifications(fixture);
+    const { manager } = fixture;
+    const { proc, stdout, stderr, exit } = controllableProcess();
+    const queued: string[] = [];
+    manager.onDidQueueEvent((taskId) => queued.push(taskId));
+
+    const taskId = manager.registerTask(new MonitorProcessTask(proc, 'tail -F app.log', 'watch app log'));
+    expect(taskId).toMatch(/^monitor-[0-9a-z]{8}$/);
+
+    stdout.write('server listening on :3000\n');
+    stderr.write('stderr noise\n');
+    await vi.waitFor(() => {
+      expect(notes).toHaveLength(1);
+    }, { timeout: TASK_EVENT_BATCH_MS * 3 });
+
+    const [event] = notes;
+    expect(event!.turnScoped).toBe(false);
+    expect(event!.message?.origin).toEqual({
+      kind: 'task',
+      taskId,
+      status: 'running',
+      notificationId: `task:${taskId}:event:1`,
+    });
+    expect(noteText(event!)).toContain('type="task.event"');
+    expect(noteText(event!)).toContain('server listening on :3000');
+    expect(noteText(event!)).not.toContain('stderr noise');
+    expect(queued).toEqual([taskId]);
+    expect(manager.hasQueuedEvent(taskId)).toBe(true);
+
+    event!.consume();
+    expect(manager.hasQueuedEvent(taskId)).toBe(false);
+    await vi.waitFor(() => {
+      expect(fixture.ctx.allEvents.filter((e) => e.event === 'background.task.event')).toHaveLength(1);
+    });
+    expect(fixture.ctx.allEvents.find((e) => e.event === 'background.task.event')?.args).toMatchObject({
+      taskId,
+      description: 'watch app log',
+      lines: ['server listening on :3000'],
+      omitted: 0,
+    });
+
+    stdout.write('last words without newline');
+    exit(0);
+    await waitForTerminal(manager, taskId);
+    await vi.waitFor(() => {
+      expect(notes.length).toBeGreaterThanOrEqual(3);
+    });
+    expect(noteText(notes[1]!)).toContain('last words without newline');
+    expect(noteText(notes[2]!)).toContain('type="task.completed"');
+    await fixture.ctx.dispose();
+  });
+
+  it('does not turn stdout of an ordinary background command into events', async () => {
+    const fixture = createAgentTaskService();
+    const notes = captureNotifications(fixture);
+    const { proc, stdout, exit } = controllableProcess();
+
+    const taskId = fixture.manager.registerTask(new ProcessTask(proc, 'make', 'build'));
+    stdout.write('compiling\n');
+    exit(0);
+    await waitForTerminal(fixture.manager, taskId);
+    await vi.waitFor(() => {
+      expect(notes).toHaveLength(1);
+    });
+    expect(noteText(notes[0]!)).toContain('type="task.completed"');
+    await fixture.ctx.dispose();
+  });
+
+  it('stops a monitor that prints more lines per minute than the limit', async () => {
+    const fixture = createAgentTaskService();
+    captureNotifications(fixture);
+    const { proc, stdout } = controllableProcess();
+
+    const taskId = fixture.manager.registerTask(new MonitorProcessTask(proc, 'yes', 'noisy'));
+    const lines = Array.from({ length: TASK_EVENT_MAX_LINES_PER_WINDOW + 1 }, () => 'y');
+    stdout.write(`${lines.join('\n')}\n`);
+
+    const info = await waitForTerminal(fixture.manager, taskId);
+    expect(info).toMatchObject({ status: 'killed' });
+    expect(info?.stopReason).toContain('Event limit exceeded');
+    await fixture.ctx.dispose();
+  });
 });

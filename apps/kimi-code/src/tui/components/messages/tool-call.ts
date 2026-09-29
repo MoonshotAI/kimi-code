@@ -459,6 +459,7 @@ export function extractKeyArgumentDetail(
 ): KeyArgument | null {
   const keyMap: Record<string, string[]> = {
     Bash: ['command'],
+    Monitor: ['description', 'command'],
     Read: ['path', 'file_path'],
     Write: ['path', 'file_path'],
     Edit: ['path', 'file_path'],
@@ -1785,6 +1786,23 @@ export class ToolCallComponent extends Container {
         head: `${head}${currentTheme.dim(' · $ ')}`,
         flex: { text: command.text, style: dimHeaderStyle, keep: 'head' },
         tail: chipStr,
+      };
+    }
+
+    if (toolCall.name === 'Monitor' && !isTruncated) {
+      const label = isError
+        ? 'Could not start a monitor'
+        : isFinished
+          ? 'Started a monitor'
+          : 'Starting a monitor';
+      const tone = isError ? 'error' : 'primary';
+      const command = extractKeyArgumentDetail('Bash', toolCall.args, this.workspaceDir);
+      const head = `${bullet}${currentTheme.boldFg(tone, label)}`;
+      if (command === null) return head;
+      return {
+        head: `${head}${currentTheme.dim(' · $ ')}`,
+        flex: { text: command.text, style: dimHeaderStyle, keep: 'head' },
+        tail: '',
       };
     }
 

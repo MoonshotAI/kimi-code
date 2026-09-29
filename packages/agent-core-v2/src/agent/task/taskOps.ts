@@ -59,6 +59,24 @@ export class TaskNotified extends AgentEvent2<AgentTaskNotificationContext> {
 }
 export interface TaskNotified extends AgentTaskNotificationContext {}
 
+export interface TaskEventDeliveredPayload {
+  readonly agentId: string;
+  readonly taskId: string;
+  readonly description: string;
+  readonly lines: readonly string[];
+  readonly omitted: number;
+}
+
+export class TaskEventDelivered extends AgentEvent2<TaskEventDeliveredPayload> {
+  static override readonly type = 'background.task.event';
+  static override readonly observable = true;
+}
+export interface TaskEventDelivered extends TaskEventDeliveredPayload {}
+
+export interface BackgroundTaskEventDeliveredEvent extends Omit<TaskEventDeliveredPayload, 'agentId'> {
+  readonly type: 'background.task.event';
+}
+
 const taskWaitDeliveredSchema = z.object({
   agentId: z.string(),
   keys: z.array(z.string()),

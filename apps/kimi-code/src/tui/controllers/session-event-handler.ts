@@ -8,6 +8,7 @@ import type {
   CompactionCancelledEvent,
   CompactionCompletedEvent,
   CompactionStartedEvent,
+  BackgroundTaskEventDeliveredEvent,
   CronFiredEvent,
   ErrorEvent,
   Event,
@@ -60,6 +61,7 @@ import {
   type UpcomingGoal,
 } from '../goal-queue-store';
 import { formatBackgroundTaskTranscript } from '../utils/background-task-status';
+import { formatMonitorEvent } from '../utils/monitor-event';
 import { formatHookResultMarkdown } from '../utils/hook-result-format';
 import { McpOAuthAuthorizationUrlOpener } from '../utils/mcp-oauth';
 import {
@@ -315,6 +317,7 @@ export class SessionEventHandler {
       case 'background.task.terminated':
         this.handleBackgroundTaskEvent(event); break;
       case 'cron.fired': this.handleCronFired(event); break;
+      case 'background.task.event': this.handleMonitorEvent(event); break;
       case 'mcp.server.status': this.renderMcpServerStatus(event.server); break;
       case 'tool.list.updated': break;
       default: break;
@@ -349,6 +352,24 @@ export class SessionEventHandler {
     this.host.setAppState({
       streamingPhase: 'waiting',
       streamingStartTime: Date.now(),
+    });
+  }
+
+  private handleMonitorEvent(event: BackgroundTaskEventDeliveredEvent): void {
+    const omitted =
+      event.omitted > 0
+        ? [`(${String(event.omitted)} earlier ${event.omitted === 1 ? 'line' : 'lines'} omitted; the full log is in the task output.)`]
+        : [];
+    const status = formatMonitorEvent(event.description, [...omitted, ...event.lines]);
+    this.host.streamingUI.flushNow();
+    this.host.appendTranscriptEntry({
+      id: nextTranscriptId(),
+      kind: 'status',
+      turnId: this.host.streamingUI.getTurnContext().turnId,
+      renderMode: 'plain',
+      content: status.headline,
+      detail: status.detail,
+      backgroundAgentStatus: status,
     });
   }
 

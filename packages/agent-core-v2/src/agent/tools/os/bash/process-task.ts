@@ -36,7 +36,8 @@ const STREAM_DRAIN_GRACE_MS = 250;
 
 export class ProcessTask implements AgentTask {
   readonly kind = 'process' as const;
-  readonly idPrefix = 'bash';
+  readonly idPrefix: string = 'bash';
+  protected readonly stdoutEvents: boolean = false;
   private exitCode: number | null = null;
 
   constructor(
@@ -50,8 +51,8 @@ export class ProcessTask implements AgentTask {
 
   async start(sink: AgentTaskSink): Promise<void> {
     const streamDrained = Promise.all([
-      observeProcessStream(this.proc.stdout, 'stdout', sink, this.onOutput),
-      observeProcessStream(this.proc.stderr, 'stderr', sink, this.onOutput),
+      observeProcessStream(this.proc.stdout, 'stdout', sink, this.onOutput, this.stdoutEvents),
+      observeProcessStream(this.proc.stderr, 'stderr', sink, this.onOutput, false),
     ]).then(() => undefined);
     void streamDrained.catch(() => {});
 
@@ -144,13 +145,15 @@ function observeProcessStream(
   stream: Readable,
   kind: ProcessTaskOutputKind,
   sink: AgentTaskSink,
-  onOutput?: ProcessTaskOutputCallback,
+  onOutput: ProcessTaskOutputCallback | undefined,
+  events: boolean,
 ): Promise<void> {
   stream.setEncoding('utf8');
   const onData = (chunk: string): void => {
     if (chunk.length === 0) return;
     sink.appendOutput(chunk);
     if (sink.signal.aborted) return;
+    if (events) sink.appendEvent?.(chunk);
     onOutput?.(kind, chunk);
   };
   stream.on('data', onData);

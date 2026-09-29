@@ -30,7 +30,7 @@ const PAGING_HINT_LINES = 300;
 
 const PROGRESS_INTERVAL_MS = 1_000;
 
-type WaitForOutcome = 'completed' | 'timed_out' | 'task_not_found' | 'aborted' | 'interrupted';
+type WaitForOutcome = 'completed' | 'timed_out' | 'task_not_found' | 'aborted' | 'interrupted' | 'event';
 
 interface TurnWaitTally {
   readonly turnId: number;
@@ -188,10 +188,31 @@ export class WaitForTool implements IWaitForTool {
       return { isError: true, output: this.withRepeatWarning(`Task not found: ${args.task_id}`, tally) };
     }
 
+    const watched = new Set(
+      args.task_id === undefined ? runningAtStart.map((task) => task.taskId) : [args.task_id],
+    );
+    const queuedEventTaskId = [...watched].find((taskId) => this.tasks.hasQueuedEvent(taskId));
+    if (queuedEventTaskId !== undefined) {
+      this.track(args, startedAt, timeoutMs, 'event', 0);
+      return {
+        output: this.withRepeatWarning(this.formatEvent(args, queuedEventTaskId, startedAt, timeoutMs), tally),
+        isError: false,
+      };
+    }
+
     let waited: AgentTaskInfo | undefined;
-    const signal = ctx.steerSignal === undefined
-      ? ctx.signal
-      : AbortSignal.any([ctx.signal, ctx.steerSignal]);
+    let eventTaskId: string | undefined;
+    const eventController = new AbortController();
+    const eventSubscription = this.tasks.onDidQueueEvent((taskId) => {
+      if (eventTaskId !== undefined || !watched.has(taskId)) return;
+      eventTaskId = taskId;
+      eventController.abort(abortError());
+    });
+    const signal = AbortSignal.any(
+      ctx.steerSignal === undefined
+        ? [ctx.signal, eventController.signal]
+        : [ctx.signal, ctx.steerSignal, eventController.signal],
+    );
     const progress = startWaitProgress(args, this.tasks, ctx.onUpdate, startedAt);
     try {
       waited =
@@ -210,9 +231,18 @@ export class WaitForTool implements IWaitForTool {
           isError: false,
         };
       }
+      if (!ctx.signal.aborted && eventTaskId !== undefined) {
+        this.track(args, startedAt, timeoutMs, 'event', 0);
+        tally.waitedMs += Date.now() - startedAt;
+        return {
+          output: this.withRepeatWarning(this.formatEvent(args, eventTaskId, startedAt, timeoutMs), tally),
+          isError: false,
+        };
+      }
       this.track(args, startedAt, timeoutMs, 'aborted', 0);
       throw error;
     } finally {
+      eventSubscription.dispose();
       progress.stop();
     }
     tally.waitedMs += Date.now() - startedAt;
@@ -332,6 +362,29 @@ export class WaitForTool implements IWaitForTool {
         timeoutMs,
       }),
       'New input ended this wait early. Read the new input before deciding what to do next. Background tasks have not been stopped; completion still arrives via automatic notification.',
+    ];
+    const running = this.tasks.list(true);
+    if (running.length > 0) {
+      lines.push('', '[still_running]', formatTaskList(running, true));
+    }
+    return lines.join('\n');
+  }
+
+  private formatEvent(
+    args: WaitForInput,
+    eventTaskId: string,
+    startedAt: number,
+    timeoutMs: number,
+  ): string {
+    const lines = [
+      formatPlainObject({
+        waitStatus: 'event',
+        taskId: args.task_id,
+        eventTaskId,
+        waitedMs: Date.now() - startedAt,
+        timeoutMs,
+      }),
+      `Monitor ${eventTaskId} has new output. It is delivered as a notification right after this result; read it before deciding what to do next. The monitor keeps running.`,
     ];
     const running = this.tasks.list(true);
     if (running.length > 0) {
