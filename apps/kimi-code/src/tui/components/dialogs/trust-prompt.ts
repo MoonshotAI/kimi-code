@@ -75,8 +75,10 @@ export class TrustPromptComponent implements Component, Focusable {
       this.selectedIndex = Math.min(OPTIONS.length - 1, this.selectedIndex + 1);
       return;
     }
-    if (matchesKey(data, Key.pageUp) || matchesKey(data, Key.pageDown)) {
-      const direction = matchesKey(data, Key.pageUp) ? -1 : 1;
+    const previousPage = matchesKey(data, Key.left) || matchesKey(data, Key.pageUp);
+    const nextPage = matchesKey(data, Key.right) || matchesKey(data, Key.pageDown);
+    if (previousPage || nextPage) {
+      const direction = previousPage ? -1 : 1;
       this.disclosureIndex = Math.max(0, this.disclosureIndex + direction * this.disclosurePageSize);
       return;
     }
@@ -142,7 +144,7 @@ export class TrustPromptComponent implements Component, Focusable {
     const lines = [...header, ...body.slice(page.start, page.end)];
     while (lines.length < header.length + this.disclosurePageSize) lines.push('');
     if (page.pageCount > 1) {
-      lines.push(currentTheme.fg('textMuted', ` PgUp/PgDn page · ${page.page + 1} / ${page.pageCount}`));
+      lines.push(currentTheme.fg('textMuted', ` ←→ page · ${page.page + 1} / ${page.pageCount}`));
     }
     lines.push(...footer);
     return lines.map((line) => truncateToWidth(line, width));
