@@ -82,7 +82,7 @@ export function createMaxStepsExceeded(maxSteps: number, message?: string): MaxS
 export type TurnOutcome =
   | { type: 'done' }
   | { type: 'failed'; failure: TurnFailure }
-  | { type: 'aborted' };
+  | { type: 'aborted'; reason?: unknown };
 
 export type TurnOutput = TurnOutcome & { produced: HistoryMessage[] };
 
