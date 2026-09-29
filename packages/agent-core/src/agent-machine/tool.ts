@@ -5,7 +5,7 @@ import type { ToolExecutor, ToolInput, ToolResult, ToolUpdate } from '#/tool';
 
 export type ToolEvent =
   | { type: 'tool.update'; toolCallId: string; update: ToolUpdate }
-  | { type: 'tool.detached'; toolCallId: string; text: string }
+  | { type: 'tool.detached'; toolCallId: string; text: string; toolCall: ToolCall }
   | { type: 'tool.done'; toolCallId: string; outcome: ToolOutput }
   | { type: 'tool.abort' };
 
@@ -49,7 +49,7 @@ function createExecuteActor(executor: ToolExecutor) {
           detach: (text) => {
             if (detached) return;
             detached = true;
-            sendBack({ type: 'tool.detached', toolCallId, text });
+            sendBack({ type: 'tool.detached', toolCallId, text, toolCall: input.toolCall });
           },
         });
         sendBack({ type: 'tool.done', toolCallId, outcome: { type: 'succeeded', result } });

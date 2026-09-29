@@ -52,7 +52,11 @@ export const SessionUnit = createUnit<SessionUnitProps>('session', (props) => {
       }
     }
   };
-  const create = async (createProps: CreateAgentProps, from?: BranchRef): Promise<AgentHandle> => {
+  const create = async (
+    createProps: CreateAgentProps,
+    from?: BranchRef,
+    wasRegistered?: boolean,
+  ): Promise<AgentHandle> => {
     await node.ready();
     sweep();
     if (agents.has(createProps.agentId)) {
@@ -60,6 +64,7 @@ export const SessionUnit = createUnit<SessionUnitProps>('session', (props) => {
     }
     const { source, ...unitProps } = createProps;
     const registered = props.stores.session.getState().roster.agents[createProps.agentId];
+    const reopen = wasRegistered ?? registered !== undefined;
     const pool = dedupFeatures([...toValue(available), ...toValue(createProps.features ?? [])]);
     const features =
       registered?.features === undefined
@@ -93,6 +98,12 @@ export const SessionUnit = createUnit<SessionUnitProps>('session', (props) => {
       const agent = agentHandle(handle);
       agents.set(createProps.agentId, agent);
       await agent.ready();
+      node.fire({
+        type: 'agent.opened',
+        agentId: createProps.agentId,
+        source: source ?? registered?.source,
+        reopened: reopen ? true : undefined,
+      });
       return agent;
     } catch (error) {
       agents.delete(createProps.agentId);
@@ -114,8 +125,10 @@ export const SessionUnit = createUnit<SessionUnitProps>('session', (props) => {
     },
     create: (createProps) => create(createProps),
     fork: async (sourceId, forkProps) => {
+      const wasRegistered =
+        props.stores.session.getState().roster.agents[forkProps.agentId] !== undefined;
       await props.stores.fork(sourceId, forkProps.agentId, { source: forkProps.source });
-      return create(forkProps);
+      return create(forkProps, undefined, wasRegistered);
     },
     close: async (agentId) => {
       const agent = agents.get(agentId);
@@ -125,6 +138,7 @@ export const SessionUnit = createUnit<SessionUnitProps>('session', (props) => {
       } finally {
         await props.stores.close(agentId);
       }
+      if (agent !== undefined) node.fire({ type: 'agent.closed', agentId });
     },
   };
   provide(EventContext, { sessionId: props.sessionId });

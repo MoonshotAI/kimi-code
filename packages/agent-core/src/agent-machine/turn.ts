@@ -33,7 +33,7 @@ export interface TurnInput {
 }
 
 export type TurnToolEvent =
-  | { type: 'tool.detached'; toolCallId: string; text: string }
+  | { type: 'tool.detached'; toolCallId: string; text: string; toolCall: ToolCall }
   | { type: 'tool.done'; toolCallId: string; outcome: ToolOutput };
 
 export type TurnEvent =
