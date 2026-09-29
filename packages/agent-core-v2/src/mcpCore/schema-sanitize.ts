@@ -42,7 +42,7 @@ const NUMERIC_KEYWORDS = [
 ] as const;
 
 function decodePointerSegment(segment: string): string {
-  return segment.replace(/~1/g, '/').replace(/~0/g, '~');
+  return segment.replaceAll(/~1/g, '/').replaceAll(/~0/g, '~');
 }
 
 function jsonTypeOf(value: Json): string {
@@ -234,6 +234,21 @@ function recurseSchema(node: Json): void {
     }
   }
 
+  const prefixItems = record['prefixItems'];
+  if (Array.isArray(prefixItems)) {
+    for (const value of prefixItems) normalizeProperty(value);
+    if (!('items' in record) || typeof record['items'] === 'boolean') {
+      if (prefixItems.length === 0) {
+        delete record['items'];
+      } else if (prefixItems.length === 1) {
+        record['items'] = prefixItems[0] as Json;
+      } else {
+        record['items'] = { anyOf: prefixItems };
+      }
+    }
+    delete record['prefixItems'];
+  }
+
   const items = record['items'];
   if (Array.isArray(items)) {
     for (const value of items) normalizeProperty(value);
@@ -246,11 +261,8 @@ function recurseSchema(node: Json): void {
     }
   } else if (typeof items === 'object' && items !== null) {
     normalizeProperty(items);
-  }
-
-  const prefixItems = record['prefixItems'];
-  if (Array.isArray(prefixItems)) {
-    for (const value of prefixItems) normalizeProperty(value);
+  } else if (typeof items === 'boolean' || (items !== undefined && typeof items !== 'object')) {
+    delete record['items'];
   }
 
   const additional = record['additionalProperties'];
@@ -261,7 +273,16 @@ function recurseSchema(node: Json): void {
   for (const key of ['anyOf', 'oneOf', 'allOf'] as const) {
     const branches = record[key];
     if (Array.isArray(branches)) {
-      for (const value of branches) normalizeProperty(value);
+      const normalizedBranches: Json[] = [];
+      for (const value of branches) {
+        if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+          normalizeProperty(value);
+          normalizedBranches.push(value);
+        } else if (typeof value === 'string') {
+          normalizedBranches.push({ type: value });
+        }
+      }
+      record[key] = normalizedBranches;
     }
   }
 }

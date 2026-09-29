@@ -130,6 +130,72 @@ describe('sanitizeMcpSchema — tuple items to object', () => {
     const tagsProp = prop(result, 'tags');
     expect(tagsProp['items']).toEqual({ type: 'string' });
   });
+
+  it('normalizes nested union with tuple array inside anyOf (pageSetup.size reproduction)', () => {
+    const result = sanitizeMcpSchema({
+      type: 'object',
+      properties: {
+        pageSetup: {
+          type: 'object',
+          properties: {
+            size: {
+              anyOf: [
+                { type: 'string', enum: ['LETTER', 'A4', 'LEGAL'] },
+                {
+                  type: 'array',
+                  items: [{ type: 'number' }, { type: 'number' }],
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+    const pageSetup = prop(result, 'pageSetup');
+    const size = prop(pageSetup, 'size');
+    const branches = size['anyOf'] as Record<string, unknown>[];
+    expect(branches).toHaveLength(2);
+    expect(branches[0]?.['type']).toBe('string');
+    expect(branches[1]?.['type']).toBe('array');
+    const arrayBranchItems = branches[1]?.['items'] as Record<string, unknown>;
+    expect(typeof arrayBranchItems).toBe('object');
+    expect(Array.isArray(arrayBranchItems)).toBe(false);
+    expect(arrayBranchItems).toEqual({
+      anyOf: [{ type: 'number' }, { type: 'number' }],
+    });
+  });
+
+  it('converts prefixItems with boolean items to object items', () => {
+    const result = sanitizeMcpSchema({
+      type: 'object',
+      properties: {
+        coords: {
+          type: 'array',
+          prefixItems: [{ type: 'number' }, { type: 'number' }],
+          items: false,
+        },
+      },
+    });
+    const coords = prop(result, 'coords');
+    expect(coords['prefixItems']).toBeUndefined();
+    expect(typeof coords['items']).toBe('object');
+    expect(coords['items']).toEqual({
+      anyOf: [{ type: 'number' }, { type: 'number' }],
+    });
+  });
+
+  it('normalizes string branches in combinator lists to schema objects', () => {
+    const result = sanitizeMcpSchema({
+      type: 'object',
+      properties: {
+        mixed: {
+          anyOf: [{ type: 'number' }, 'string' as unknown as Record<string, unknown>],
+        },
+      },
+    });
+    const mixed = prop(result, 'mixed');
+    expect(mixed['anyOf']).toEqual([{ type: 'number' }, { type: 'string' }]);
+  });
 });
 
 describe('sanitizeMcpSchema — mixed enums', () => {
