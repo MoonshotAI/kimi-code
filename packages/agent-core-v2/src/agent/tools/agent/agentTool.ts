@@ -168,16 +168,11 @@ export class SubagentTool implements ISubagentTool {
         : catalogProfiles.filter((profile) => allowlist.includes(profile.name));
     const knownTools = this.availableToolReferences();
     const available = new Set(knownTools.map((ref) => ref.name));
-    const anyMediaModel = this.anyMediaCapableModel();
     const typeLines = buildProfileDescriptions(
       profiles.map((profile) => ({
         ...profile,
         tools: profile.tools?.filter(
-          (name) =>
-            (isToolNamePattern(name) ||
-              (name === READ_MEDIA_FILE_TOOL_NAME
-                ? anyMediaModel && this.toolPolicy.isToolActiveForProfile(profile, name, 'builtin')
-                : available.has(name))),
+          (name) => isToolNamePattern(name) || available.has(name),
         ),
       })),
       knownTools,
@@ -243,6 +238,13 @@ export class SubagentTool implements ISubagentTool {
         }
       }
     });
+    if (refs.get(READ_MEDIA_FILE_TOOL_NAME)?.source !== 'user') {
+      if (this.anyMediaCapableModel()) {
+        refs.set(READ_MEDIA_FILE_TOOL_NAME, { name: READ_MEDIA_FILE_TOOL_NAME, source: 'builtin' });
+      } else {
+        refs.delete(READ_MEDIA_FILE_TOOL_NAME);
+      }
+    }
     return [...refs.values()];
   }
 
