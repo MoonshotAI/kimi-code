@@ -13,7 +13,9 @@ import {
   type UnitNode,
 } from '#/kernel/index';
 import { createFeature } from '#/feature/feature';
+import { useAgent } from '#/feature/contribution-hooks';
 import { ConfigRef, deepEqual, omitUndefined, useConfigSection, type ConfigStore } from '#/builtin/config/index';
+import { createStaticCredentialProvider } from '#/llm/builtin/requester/credentials';
 import type { LlmModel } from '#/llm/model';
 
 import { createProviderStore, type ProviderStore } from './store';
@@ -25,10 +27,15 @@ import type {
 } from './types';
 import { materializeProvider, ProviderProtocols } from './materialize';
 import {
+  CredentialResolvers,
+  resolveCredentialProvider,
+  useCredentialResolver,
+} from './credentials';
+import {
+  DEFAULT_MODEL_CONFIG_SECTION,
   MODELS_CONFIG_SECTION,
-  MODEL_CATALOG_CONFIG_SECTION,
   PROVIDERS_CONFIG_SECTION,
-  THINKING_CONFIG_SECTION,
+  defaultModelConfigSection,
   modelCatalogConfigSection,
   modelsConfigSection,
   providersConfigSection,
@@ -51,6 +58,8 @@ export function useProvider(contribution: ProviderContribution, priority = 0): v
 export function useProviderCatalog(): ProviderStore {
   return inject(ProviderCatalogRef);
 }
+
+const STATIC_CREDENTIAL_RESOLVER_PRIORITY = 1000;
 
 const CatalogModelUnit = createUnit<CatalogModelBinding>('catalog-model', (props) => {
   const node = useNode();
@@ -86,8 +95,18 @@ export const providerCatalog = createFeature('provider-catalog', {
     useConfigSection(modelsConfigSection);
     useConfigSection(thinkingConfigSection);
     useConfigSection(modelCatalogConfigSection);
+    useConfigSection(defaultModelConfigSection);
     const configEntries = node.providerRef(ConfigRef);
     const protocolFactories = useCollection(ProviderProtocols);
+    useCredentialResolver(
+      {
+        resolve: (info) => {
+          const apiKey = resolveProviderInfo(info, configEntries.value.at(-1)?.value)?.apiKey;
+          return apiKey === undefined ? undefined : createStaticCredentialProvider(apiKey);
+        },
+      },
+      STATIC_CREDENTIAL_RESOLVER_PRIORITY,
+    );
     let managed = new Set<string>();
     const reconcileConfig = (): void => {
       const config = configEntries.value.at(-1)?.value;
@@ -188,6 +207,46 @@ export const providerCatalog = createFeature('provider-catalog', {
     pushCleanup(node, () => {
       store.dispose();
     });
+  },
+  agent() {
+    const agent = useAgent();
+    const node = useNode();
+    const store = inject(ProviderCatalogRef);
+    const configEntries = node.providerRef(ConfigRef);
+    const bindings = useCollection(CatalogModels);
+    const resolvers = useCollection(CredentialResolvers);
+    const restore = (): boolean => {
+      if (agent.config !== undefined) return true;
+      const config = configEntries.value.at(-1)?.value;
+      if (config === undefined) return false;
+      const alias = config.section<string>(DEFAULT_MODEL_CONFIG_SECTION).value;
+      if (typeof alias !== 'string' || alias.length === 0) return false;
+      const binding = bindings.value.find((candidate) => {
+        const scope = store.providerInfo(candidate.providerId)?.aliasScope ?? candidate.providerId;
+        return `${scope}/${candidate.model.model}` === alias;
+      });
+      if (binding === undefined) return false;
+      agent.setConfig({ model: binding.model });
+      agent.setRequester(binding.requester);
+      const info = store.providerInfo(binding.providerId);
+      const credential =
+        info === undefined ? undefined : resolveCredentialProvider(info, resolvers.value);
+      if (credential !== undefined) agent.setCredentialProvider(credential);
+      return true;
+    };
+    if (restore()) return;
+    const stop = watch(
+      () => [
+        configEntries.value,
+        configEntries.value.at(-1)?.value.section(DEFAULT_MODEL_CONFIG_SECTION).value,
+        bindings.value,
+        resolvers.value,
+      ],
+      () => {
+        if (restore()) stop();
+      },
+    );
+    pushCleanup(node, stop);
   },
 });
 

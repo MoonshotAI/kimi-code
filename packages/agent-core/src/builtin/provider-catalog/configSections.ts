@@ -10,6 +10,8 @@ export const THINKING_CONFIG_SECTION = 'thinking';
 
 export const MODEL_CATALOG_CONFIG_SECTION = 'modelCatalog';
 
+export const DEFAULT_MODEL_CONFIG_SECTION = 'defaultModel';
+
 const StringRecordSchema = z.record(z.string(), z.string());
 
 const UnknownRecordSchema = z.record(z.string(), z.unknown());
@@ -136,4 +138,9 @@ export const thinkingConfigSection: ConfigSectionContribution<ThinkingConfig> = 
 export const modelCatalogConfigSection: ConfigSectionContribution<ModelCatalogConfig> = {
   name: MODEL_CATALOG_CONFIG_SECTION,
   schema: ModelCatalogConfigSchema,
+};
+
+export const defaultModelConfigSection: ConfigSectionContribution<string> = {
+  name: DEFAULT_MODEL_CONFIG_SECTION,
+  schema: z.string().min(1),
 };
