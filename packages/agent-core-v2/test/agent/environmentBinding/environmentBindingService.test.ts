@@ -21,6 +21,7 @@ import { SessionStateService } from '#/session/state/sessionStateService';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { WireRecord } from '#/wire/record';
+import type { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   workspaceContextAdditionalDirsKey,
@@ -126,7 +127,12 @@ interface RestoreHook {
   (ctx: unknown, next: () => Promise<void>): Promise<void>;
 }
 
-function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: EnvironmentBinding } = {}) {
+function setup(options: {
+  agentId?: string;
+  sessionCwd?: string;
+  seedBinding?: EnvironmentBinding;
+  persistedBinding?: { readonly environmentId?: string; readonly environmentCwd?: string };
+} = {}) {
   const registry = new EnvironmentRegistry();
   const local = environment('local', 'local-one', 'ready', ['fs', 'process'], LOCAL_HOST);
   const remote = environment('remote', 'remote-one', 'ready', ['process'], REMOTE_HOST);
@@ -157,6 +163,21 @@ function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: E
       },
     },
   } as unknown as IEventDispatcher;
+  const metadataUpdates: { environmentId?: string; environmentCwd?: string }[] = [];
+  const metadata = {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    read: async () => ({
+      id: 'session',
+      createdAt: 0,
+      updatedAt: 0,
+      archived: false,
+      ...options.persistedBinding,
+    }),
+    update: async (patch: { environmentId?: string; environmentCwd?: string }) => {
+      metadataUpdates.push(patch);
+    },
+  } as unknown as ISessionMetadata;
   const workDirWrites: string[] = [];
   const workspaceContext = stubWorkspaceContext(session.cwd, workDirWrites);
   const activeToolCalls: { toolCallId: string; name: string }[] = [];
@@ -207,6 +228,7 @@ function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: E
       reminder,
       noopLogger,
       stubBootstrap(),
+      metadata,
     );
     return {
       binding: agentBinding,
@@ -234,6 +256,7 @@ function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: E
     published,
     sessionState,
     reminders,
+    metadataUpdates,
     appendLogRecords,
     makeAgent,
     agentEnvironment: main.agentEnvironment,
@@ -241,6 +264,28 @@ function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: E
 }
 
 describe('AgentEnvironmentBindingService', () => {
+  it('persists a changed main-agent binding and a restore that disagrees with session meta', async () => {
+    const switched = setup();
+    switched.binding.bind('remote', '/remote/work');
+    await vi.waitFor(() => {
+      expect(switched.metadataUpdates).toEqual([{ environmentId: 'remote', environmentCwd: '/remote/work' }]);
+    });
+
+    const restored = setup({
+      persistedBinding: { environmentId: 'remote', environmentCwd: '/remote/work' },
+    });
+    restored.state.set(environmentBindingKey, { environmentId: 'local' });
+    await restored.restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
+    expect(restored.metadataUpdates).toEqual([{ environmentId: 'local', environmentCwd: undefined }]);
+
+    const unchanged = setup({
+      persistedBinding: { environmentId: 'remote', environmentCwd: '/remote/work' },
+    });
+    unchanged.state.set(environmentBindingKey, { environmentId: 'remote', cwd: '/remote/work' });
+    await unchanged.restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
+    expect(unchanged.metadataUpdates).toEqual([]);
+  });
+
   it('switches only after the target can be acquired and emits the committed binding', () => {
     const { binding } = setup();
     const changes: EnvironmentBinding[] = [];

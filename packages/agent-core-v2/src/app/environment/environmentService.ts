@@ -13,9 +13,14 @@ import { IEnvironmentService } from './environment';
 
 export class EnvironmentService extends EnvironmentRegistry implements IEnvironmentService {
   declare readonly _serviceBrand: undefined;
-  readonly ready: Promise<void>;
+  private readonly localReady: Promise<void>;
+  private providerSettled: Promise<void> = Promise.resolve();
   private readonly providers = new Map<string, Promise<{ dispose(): Promise<void> }>>();
   private stopped = false;
+
+  get ready(): Promise<void> {
+    return Promise.all([this.localReady, this.providerSettled]).then(() => undefined);
+  }
 
   constructor(
     @IInstantiationService private readonly instantiation: IInstantiationService,
@@ -25,7 +30,7 @@ export class EnvironmentService extends EnvironmentRegistry implements IEnvironm
     @IHostTerminalService terminal: IHostTerminalService,
   ) {
     super();
-    this.ready = environment.ready.then(() => {
+    this.localReady = environment.ready.then(() => {
       if (!this.stopped) this.register(new LocalEnvironment(environment, fs, process, terminal));
     });
   }
@@ -34,6 +39,8 @@ export class EnvironmentService extends EnvironmentRegistry implements IEnvironm
     if (this.stopped) throw new Error('environment service is disposed');
     if (this.providers.has(factory.id)) throw new Error(`environment provider ${factory.id} already exists`);
     const pending = this.attach(factory);
+    const settled = pending.then(() => undefined, () => undefined);
+    this.providerSettled = Promise.all([this.providerSettled, settled]).then(() => undefined);
     this.providers.set(factory.id, pending);
     try {
       const attachment = await pending;
@@ -49,7 +56,7 @@ export class EnvironmentService extends EnvironmentRegistry implements IEnvironm
   }
 
   private async attach(factory: EnvironmentProviderFactory): Promise<{ dispose(): Promise<void> }> {
-    await this.ready;
+    await this.localReady;
     const handles: Array<{ remove(): Promise<void> }> = [];
     try {
       const attachment = await factory.attach({

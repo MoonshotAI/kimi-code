@@ -251,11 +251,10 @@ export function registerSessionsRoutes(
           environmentCwd: body.environment_cwd,
         });
         if (body.environment_id !== undefined && body.environment_id !== 'local') {
+          const declarations = await core.accessor.get(IEnvironmentDeclarationService).declarations();
           const environmentCwd =
             body.environment_cwd ??
-            (await core.accessor
-              .get(IEnvironmentDeclarationService)
-              .declaredDefaultCwd(body.environment_id));
+            declarations?.entries.find((entry) => entry.id === body.environment_id)?.entry.defaultCwd;
           await ensureMainAgentContext(handle, {
             environmentId: body.environment_id,
             environmentCwd,

@@ -660,6 +660,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         titleKind: opts.title !== undefined ? 'custom' : sourceMeta?.titleKind,
         forkedFrom: sourceId,
         agents,
+        environmentId: sourceMeta?.environmentId,
+        environmentCwd: sourceMeta?.environmentCwd,
         custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
         lastPrompt: turnSlice === undefined ? sourceMeta?.lastPrompt : turnSlice.lastPrompt,
         lastTurnReason: sourceMeta?.lastTurnReason,

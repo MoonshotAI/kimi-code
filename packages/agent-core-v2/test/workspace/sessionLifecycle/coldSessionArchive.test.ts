@@ -20,7 +20,6 @@ import {
 } from '#/app/sessionIndex/sessionIndex';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import type { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import {
   setSessionArchived,
@@ -247,9 +246,6 @@ function sessionManagerResuming(sessionId: string): SessionManager {
     { get: async () => summary } as unknown as ISessionIndex,
     new EnvironmentDeclarationService(
       { _serviceBrand: undefined, ready: Promise.resolve(), get: () => undefined } as unknown as IConfigService,
-      { _serviceBrand: undefined, read: async function* () {} } as unknown as IAppendLogStore,
-      { _serviceBrand: undefined, scope: (name: string) => name } as unknown as IBootstrapService,
-      environments,
       { _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService,
     ),
     { _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService,
@@ -259,6 +255,8 @@ function sessionManagerResuming(sessionId: string): SessionManager {
       stat: async () => ({ isFile: false, isDirectory: true, size: 0 }),
       realpath: async (path: string) => path,
     } as unknown as IHostFileSystem,
+    { _serviceBrand: undefined, get: async () => undefined } as unknown as IAtomicDocumentStore,
+    { _serviceBrand: undefined, scope: (name: string) => name } as unknown as IBootstrapService,
   );
 }
 

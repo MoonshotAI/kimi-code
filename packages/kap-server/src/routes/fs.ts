@@ -16,6 +16,7 @@ import {
   resumeSessionById,
   isError2,
   Error2,
+  resolvedEnvironmentId,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
@@ -313,7 +314,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
           return;
         }
         const { environment_id, runtime_id, ...request } = result.data;
-        const environmentId = environment_id ?? runtime_id ?? 'local';
+        const environmentId = resolvedEnvironmentId({ environment_id, runtime_id }, 'local');
         req.body = request;
         const required: EnvironmentCapability[] = ['fs'];
         if (fsAction === 'search' || fsAction === 'grep' || fsAction === 'git_status' || fsAction === 'diff') {
@@ -409,7 +410,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       const { workspace, environment_id, runtime_id, ...searchRequest } = req.body;
       let environmentFs: EnvironmentFsScope | undefined;
       try {
-        environmentFs = await resolveWorkspaceFs(core, workspace, environment_id ?? runtime_id ?? 'local', ['fs', 'process']);
+        environmentFs = await resolveWorkspaceFs(core, workspace, resolvedEnvironmentId({ environment_id, runtime_id }, 'local'), ['fs', 'process']);
         if (environmentFs === undefined) {
           reply.send(
             errEnvelope(
@@ -456,7 +457,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       const { workspace, environment_id, runtime_id, ...suggestRequest } = req.body;
       let environmentFs: EnvironmentFsScope | undefined;
       try {
-        environmentFs = await resolveWorkspaceFs(core, workspace, environment_id ?? runtime_id ?? 'local', ['fs']);
+        environmentFs = await resolveWorkspaceFs(core, workspace, resolvedEnvironmentId({ environment_id, runtime_id }, 'local'), ['fs']);
         if (environmentFs === undefined) {
           reply.send(
             errEnvelope(
@@ -509,7 +510,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
           return;
         }
       }
-      const environmentId = environment_id ?? runtime_id ?? 'local';
+      const environmentId = resolvedEnvironmentId({ environment_id, runtime_id }, 'local');
       const fsRoots = { workDir: roots[0]!, additionalDirs: roots.slice(1) };
       let environmentFs: EnvironmentFsScope | undefined;
       try {
@@ -592,7 +593,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       let resolved: Awaited<ReturnType<IWorkspaceFsService['resolveDownload']>>;
       let environmentFs: EnvironmentFsScope | undefined;
       try {
-        environmentFs = acquireSessionFs(core, session_id, req.query.environment_id ?? req.query.runtime_id ?? 'local', ['fs']);
+        environmentFs = acquireSessionFs(core, session_id, resolvedEnvironmentId(req.query, 'local'), ['fs']);
         resolved = await environmentFs.fs.resolveDownload(relPath);
       } catch (error) {
         environmentFs?.lease.dispose();

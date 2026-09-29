@@ -15,6 +15,7 @@ import { environmentBindingId, LOCAL_ENVIRONMENT_ID, type EnvironmentBinding, ty
 import { EnvironmentError } from '#/environment/environmentRegistry';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
@@ -82,6 +83,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     @IAgentReminderService private readonly reminder: IAgentReminderService,
     @ILogService private readonly log: ILogService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @ISessionMetadata private readonly metadata: ISessionMetadata,
   ) {
     this.state.contributeState(agentEnvironmentBindingKey);
     this.state.contributeState(environmentBindingKey);
@@ -106,8 +108,20 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
         }
       }
       this.markProjectContextVisited(this.current);
+      await this.persistIfChanged(this.current);
       await next();
     });
+  }
+
+  private async persistIfChanged(binding: EnvironmentBinding): Promise<void> {
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
+    const persisted = await this.metadata.read();
+    const persistedId = persisted.environmentId ?? LOCAL_ENVIRONMENT_ID;
+    if (persistedId === binding.environmentId && persisted.environmentCwd === binding.cwd) return;
+    await this.metadata.update(
+      { environmentId: binding.environmentId, environmentCwd: binding.cwd },
+      { touchUpdatedAt: false },
+    );
   }
 
   private isSeedRoundTrip(binding: EnvironmentBinding): boolean {
@@ -154,6 +168,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     }
     this.emitProjectContextReminder(next);
     this.changeEmitter.fire(next);
+    void this.persistIfChanged(next);
     return next;
   }
 
