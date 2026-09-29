@@ -98,6 +98,8 @@ Kimi Code CLI 的 TUI 交互模式支持一套键盘快捷键。键位按使用�
 | `PageUp` / `PageDown` | 每次滚动 10 行 |
 | `Esc` / `Enter` / `q` / `Q` | 关闭面板 |
 
+在工作区信任提示中，使用 `PageUp` / `PageDown` 翻阅详情，信任选项会保持可见。使用 `↑` / `↓` 选择，按 `Enter` 确认或 `Esc` 退出。如果终端高度不足以显示提示，请先增大窗口再确认。
+
 ## 下一步
 
 - [斜杠命令](./slash-commands.md) — TUI 内置的控制命令速查

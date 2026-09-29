@@ -98,6 +98,8 @@ After opening the help panel with `/help`, use the following keys to navigate an
 | `PageUp` / `PageDown` | Scroll 10 lines at a time |
 | `Esc` / `Enter` / `q` / `Q` | Close the panel |
 
+In the workspace trust prompt, use `PageUp` / `PageDown` to page through details while the trust choices remain visible. Use `↑` / `↓` to choose, `Enter` to confirm, or `Esc` to exit. If the terminal is too short to show the prompt, enlarge it before confirming.
+
 ## Next steps
 
 - [Slash Commands](./slash-commands.md) — Quick reference for built-in TUI control commands

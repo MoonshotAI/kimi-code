@@ -3905,6 +3905,8 @@ export class KimiTUI {
         new TrustPromptComponent({
           workDir,
           info,
+          getAvailableRows: () =>
+            this.state.terminal.rows - (this.state.ui instanceof TuiAltScreen ? 1 : 0),
           onSelect: (c) => {
             resolve(c);
           },

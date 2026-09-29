@@ -14,6 +14,7 @@ import type {
 
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
+import { pageView } from '#/tui/utils/paging';
 
 export type TrustPromptChoice = 'trust' | 'distrust';
 
@@ -21,6 +22,7 @@ export interface TrustPromptOptions {
   readonly workDir: string;
   /** What trusting would activate; rendered before the workspace is trusted. */
   readonly info: WorkspaceTrustInfo;
+  readonly getAvailableRows?: () => number;
   /** Esc resolves to 'distrust' as well. */
   readonly onSelect: (choice: TrustPromptChoice) => void;
 }
@@ -52,6 +54,9 @@ const OPTIONS: readonly TrustPromptOption[] = [
 export class TrustPromptComponent implements Component, Focusable {
   focused = false;
   private selectedIndex = 0;
+  private disclosureIndex = 0;
+  private disclosurePageSize = 1;
+  private canConfirm = true;
 
   constructor(private readonly opts: TrustPromptOptions) {}
 
@@ -70,26 +75,35 @@ export class TrustPromptComponent implements Component, Focusable {
       this.selectedIndex = Math.min(OPTIONS.length - 1, this.selectedIndex + 1);
       return;
     }
-    if (matchesKey(data, Key.enter) || matchesKey(data, Key.space)) {
+    if (matchesKey(data, Key.pageUp) || matchesKey(data, Key.pageDown)) {
+      const direction = matchesKey(data, Key.pageUp) ? -1 : 1;
+      this.disclosureIndex = Math.max(0, this.disclosureIndex + direction * this.disclosurePageSize);
+      return;
+    }
+    if (this.canConfirm && (matchesKey(data, Key.enter) || matchesKey(data, Key.space))) {
       this.opts.onSelect(OPTIONS[this.selectedIndex]!.value);
     }
   }
 
   render(width: number): string[] {
     const rule = currentTheme.fg('primary', '─'.repeat(width));
-    const lines = [
+    const availableRows = Math.max(0, Math.floor(this.opts.getAvailableRows?.() ?? Infinity));
+    const header = [
       rule,
       currentTheme.boldFg('primary', ' Trust this folder?'),
       currentTheme.fg('textMuted', ' ↑↓ navigate · Enter select · Esc exit'),
       '',
+    ];
+    const body = [
       ...wrapTextWithAnsi(this.opts.workDir, Math.max(20, width - 2)).map(
         (line) => ` ${currentTheme.fg('textStrong', line)}`,
       ),
       '',
+      ...this.renderDisclosure(width),
+      '',
     ];
-
-    lines.push(...this.renderDisclosure(width));
-    lines.push('');
+    const labels: string[] = [];
+    let footer: string[] = [];
 
     for (let i = 0; i < OPTIONS.length; i += 1) {
       const option = OPTIONS[i]!;
@@ -98,14 +112,39 @@ export class TrustPromptComponent implements Component, Focusable {
       const label = selected
         ? currentTheme.boldFg('primary', option.label)
         : currentTheme.fg('text', option.label);
-      lines.push(currentTheme.fg(selected ? 'primary' : 'textDim', `  ${pointer} `) + label);
+      const optionLine = currentTheme.fg(selected ? 'primary' : 'textDim', `  ${pointer} `) + label;
+      labels.push(optionLine);
+      footer.push(optionLine);
       for (const line of wrapTextWithAnsi(option.description, Math.max(20, width - 4))) {
-        lines.push(`    ${currentTheme.fg('textMuted', line)}`);
+        footer.push(`    ${currentTheme.fg('textMuted', line)}`);
       }
-      lines.push('');
+      footer.push('');
+    }
+    footer.push(rule);
+
+    if (header.length + footer.length + 2 > availableRows) {
+      header.pop();
+      footer = [...labels, rule];
+    }
+    this.canConfirm = header.length + footer.length + 2 <= availableRows;
+    if (!this.canConfirm) {
+      return [header[1]!, ' Enlarge terminal to review details. Esc exit.']
+        .slice(0, availableRows)
+        .map((line) => truncateToWidth(line, width));
     }
 
-    lines.push(rule);
+    const needsPaging = header.length + body.length + footer.length > availableRows;
+    this.disclosurePageSize = needsPaging
+      ? availableRows - header.length - footer.length - 1
+      : body.length;
+    const page = pageView(body.length, this.disclosureIndex, this.disclosurePageSize);
+    this.disclosureIndex = page.start;
+    const lines = [...header, ...body.slice(page.start, page.end)];
+    while (lines.length < header.length + this.disclosurePageSize) lines.push('');
+    if (page.pageCount > 1) {
+      lines.push(currentTheme.fg('textMuted', ` PgUp/PgDn page · ${page.page + 1} / ${page.pageCount}`));
+    }
+    lines.push(...footer);
     return lines.map((line) => truncateToWidth(line, width));
   }
 

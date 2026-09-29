@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-The workspace trust prompt now shows what trusting a folder activates.
+Show what trusting a folder activates in a paged prompt with visible trust choices.
