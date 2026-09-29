@@ -17,7 +17,6 @@ import { createRequestActor } from './llm-actor';
 import type { LlmCredentialProvider, LlmRequestConfig } from '#/llm/requester/requester';
 import type { LlmOutput } from '#/llm/requester/settle';
 import { ToolCallIdNormalizer } from '#/llm/requester/tool-call-id';
-import type { ToolResult } from '#/tool';
 import type { ToolOutput } from './tool';
 import { createAbortScope, withAbort, type AbortScope } from '#/utils/abort';
 
@@ -35,9 +34,7 @@ export interface TurnInput {
 
 export type TurnToolEvent =
   | { type: 'tool.detached'; toolCallId: string; text: string }
-  | { type: 'tool.done'; toolCallId: string; result: ToolResult }
-  | { type: 'tool.failed'; toolCallId: string; error: unknown }
-  | { type: 'tool.aborted'; toolCallId: string };
+  | { type: 'tool.done'; toolCallId: string; outcome: ToolOutput };
 
 export type TurnEvent =
   | LlmEvent
@@ -527,23 +524,7 @@ export function createTurnMachine(
             actions: assign({
               outcomes: ({ context, event }) => ({
                 ...context.outcomes,
-                [event.toolCallId]: { type: 'succeeded', result: event.result },
-              }),
-            }),
-          },
-          'tool.failed': {
-            actions: assign({
-              outcomes: ({ context, event }) => ({
-                ...context.outcomes,
-                [event.toolCallId]: { type: 'failed', error: event.error },
-              }),
-            }),
-          },
-          'tool.aborted': {
-            actions: assign({
-              outcomes: ({ context, event }) => ({
-                ...context.outcomes,
-                [event.toolCallId]: { type: 'aborted' },
+                [event.toolCallId]: event.outcome,
               }),
             }),
           },

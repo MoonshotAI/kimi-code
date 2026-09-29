@@ -20,7 +20,6 @@ import {
   type UserEntry,
   type UserMessage,
 } from '#/llm/message';
-import type { ToolResult } from '#/tool';
 import { createToolMachine, type ToolEvent, type ToolOutput } from './tool';
 import { createAbortScope, withAbort, type AbortScope } from '#/utils/abort';
 
@@ -218,20 +217,19 @@ function completionNotification(toolCall: ToolCall, output: ToolOutput): UserEnt
 
 function completionPatch(
   context: AgentMachineContext,
-  event: { toolCallId: string } & ({ result: ToolResult } | { error: unknown }),
+  event: { toolCallId: string; outcome: ToolOutput },
 ): { notifications?: UserEntry[]; background?: AgentMachineContext['background'] } {
   const entry = context.background[event.toolCallId];
   if (entry === undefined) {
     return {};
   }
-  const output: ToolOutput =
-    'result' in event
-      ? { type: 'succeeded', result: event.result }
-      : { type: 'failed', error: event.error };
   const background = { ...context.background };
   delete background[event.toolCallId];
   return {
-    notifications: [...context.notifications, completionNotification(entry.toolCall, output)],
+    notifications: [
+      ...context.notifications,
+      completionNotification(entry.toolCall, event.outcome),
+    ],
     background,
   };
 }
@@ -498,14 +496,6 @@ export function createAgentMachine({
           'forwardToParent',
         ],
       },
-      'tool.failed': {
-        guard: ({ context, event }) => context.background[event.toolCallId] !== undefined,
-        actions: [
-          assign(({ context, event }) => completionPatch(context, event)),
-          emit(({ event }) => event),
-          'forwardToParent',
-        ],
-      },
     },
     states: {
       idle: {
@@ -716,26 +706,6 @@ export function createAgentMachine({
             ],
           },
           'tool.done': {
-            guard: ({ context, event }) =>
-              context.background[event.toolCallId] === undefined &&
-              context.turnTools[event.toolCallId] !== undefined,
-            actions: [
-              sendTo('turn', ({ event }) => event),
-              emit(({ event }) => event),
-              'forwardToParent',
-            ],
-          },
-          'tool.failed': {
-            guard: ({ context, event }) =>
-              context.background[event.toolCallId] === undefined &&
-              context.turnTools[event.toolCallId] !== undefined,
-            actions: [
-              sendTo('turn', ({ event }) => event),
-              emit(({ event }) => event),
-              'forwardToParent',
-            ],
-          },
-          'tool.aborted': {
             guard: ({ context, event }) =>
               context.background[event.toolCallId] === undefined &&
               context.turnTools[event.toolCallId] !== undefined,

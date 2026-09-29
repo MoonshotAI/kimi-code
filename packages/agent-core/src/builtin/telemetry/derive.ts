@@ -79,13 +79,13 @@ export function deriveAgentTelemetry(agent: AgentCommands, telemetry: TelemetryF
     }
   });
   agent.on('tool.done', (event) => {
-    finishTool(event.toolCallId, 'success');
-  });
-  agent.on('tool.failed', (event) => {
-    finishTool(event.toolCallId, 'error');
-  });
-  agent.on('tool.aborted', (event) => {
-    finishTool(event.toolCallId, 'cancelled');
+    const outcome =
+      event.outcome.type === 'succeeded'
+        ? 'success'
+        : event.outcome.type === 'failed'
+          ? 'error'
+          : 'cancelled';
+    finishTool(event.toolCallId, outcome);
   });
   agent.on('llm.failed.remote', (event) => {
     telemetry.track('api_error', { error_type: event.error.kind, model: agent.config?.model.model });

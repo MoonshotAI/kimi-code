@@ -6,9 +6,7 @@ import type { ToolExecutor, ToolInput, ToolResult, ToolUpdate } from '#/tool';
 export type ToolEvent =
   | { type: 'tool.update'; toolCallId: string; update: ToolUpdate }
   | { type: 'tool.detached'; toolCallId: string; text: string }
-  | { type: 'tool.done'; toolCallId: string; result: ToolResult }
-  | { type: 'tool.failed'; toolCallId: string; error: unknown }
-  | { type: 'tool.aborted'; toolCallId: string }
+  | { type: 'tool.done'; toolCallId: string; outcome: ToolOutput }
   | { type: 'tool.abort' };
 
 export type ToolOutput =
@@ -53,13 +51,13 @@ function createExecuteActor(executor: ToolExecutor) {
             sendBack({ type: 'tool.detached', toolCallId, text });
           },
         });
-        sendBack({ type: 'tool.done', toolCallId, result });
+        sendBack({ type: 'tool.done', toolCallId, outcome: { type: 'succeeded', result } });
       } catch (error) {
-        sendBack(
-          input.signal.aborted
-            ? { type: 'tool.aborted', toolCallId }
-            : { type: 'tool.failed', toolCallId, error },
-        );
+        sendBack({
+          type: 'tool.done',
+          toolCallId,
+          outcome: input.signal.aborted ? { type: 'aborted' } : { type: 'failed', error },
+        });
       }
     })();
   });
@@ -125,15 +123,15 @@ export function createToolMachine(executor: CreateToolMachineOptions) {
             actions: [
               assign({ outcome: 'failed', error: ({ event }) => event.error }),
               emit(({ context, event }) => ({
-                type: 'tool.failed' as const,
+                type: 'tool.done' as const,
                 toolCallId: context.toolCall.id,
-                error: event.error,
+                outcome: { type: 'failed' as const, error: event.error },
               })),
               ({ self, context, event }) => {
                 self._parent?.send({
-                  type: 'tool.failed',
+                  type: 'tool.done',
                   toolCallId: context.toolCall.id,
-                  error: event.error,
+                  outcome: { type: 'failed', error: event.error },
                 });
               },
             ],
@@ -145,13 +143,15 @@ export function createToolMachine(executor: CreateToolMachineOptions) {
             actions: [
               assign({ outcome: 'aborted' as const }),
               emit(({ context }) => ({
-                type: 'tool.aborted' as const,
+                type: 'tool.done' as const,
                 toolCallId: context.toolCall.id,
+                outcome: { type: 'aborted' as const },
               })),
               ({ self, context }) => {
                 self._parent?.send({
-                  type: 'tool.aborted',
+                  type: 'tool.done',
                   toolCallId: context.toolCall.id,
+                  outcome: { type: 'aborted' },
                 });
               },
             ],
@@ -174,26 +174,35 @@ export function createToolMachine(executor: CreateToolMachineOptions) {
           'tool.detached': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
-          'tool.done': {
-            target: 'finishing',
-            actions: assign({ result: ({ event }) => event.result }),
-          },
-          'tool.failed': {
-            target: 'failed',
-            actions: [
-              assign({ outcome: 'failed', error: ({ event }) => event.error }),
-              emit(({ event }) => event),
-              'forwardToParent',
-            ],
-          },
-          'tool.aborted': {
-            target: 'aborted',
-            actions: [
-              assign({ outcome: 'aborted' as const }),
-              emit(({ event }) => event),
-              'forwardToParent',
-            ],
-          },
+          'tool.done': [
+            {
+              guard: ({ event }) => event.outcome.type === 'succeeded',
+              target: 'finishing',
+              actions: assign({
+                result: ({ event }) => (event.outcome as { result: ToolResult }).result,
+              }),
+            },
+            {
+              guard: ({ event }) => event.outcome.type === 'failed',
+              target: 'failed',
+              actions: [
+                assign({
+                  outcome: 'failed' as const,
+                  error: ({ event }) => (event.outcome as { error: unknown }).error,
+                }),
+                emit(({ event }) => event),
+                'forwardToParent',
+              ],
+            },
+            {
+              target: 'aborted',
+              actions: [
+                assign({ outcome: 'aborted' as const }),
+                emit(({ event }) => event),
+                'forwardToParent',
+              ],
+            },
+          ],
         },
       },
       finishing: {
@@ -210,13 +219,13 @@ export function createToolMachine(executor: CreateToolMachineOptions) {
               emit(({ context, event }) => ({
                 type: 'tool.done' as const,
                 toolCallId: context.toolCall.id,
-                result: event.output,
+                outcome: { type: 'succeeded' as const, result: event.output },
               })),
               ({ self, context, event }) => {
                 self._parent?.send({
                   type: 'tool.done',
                   toolCallId: context.toolCall.id,
-                  result: event.output,
+                  outcome: { type: 'succeeded', result: event.output },
                 });
               },
             ],
@@ -226,15 +235,15 @@ export function createToolMachine(executor: CreateToolMachineOptions) {
             actions: [
               assign({ outcome: 'failed', error: ({ event }) => event.error }),
               emit(({ context, event }) => ({
-                type: 'tool.failed' as const,
+                type: 'tool.done' as const,
                 toolCallId: context.toolCall.id,
-                error: event.error,
+                outcome: { type: 'failed' as const, error: event.error },
               })),
               ({ self, context, event }) => {
                 self._parent?.send({
-                  type: 'tool.failed',
+                  type: 'tool.done',
                   toolCallId: context.toolCall.id,
-                  error: event.error,
+                  outcome: { type: 'failed', error: event.error },
                 });
               },
             ],
