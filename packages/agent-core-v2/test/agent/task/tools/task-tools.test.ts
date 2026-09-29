@@ -1012,17 +1012,58 @@ describe('WaitForTool', () => {
     expect(lastEvent(records)?.properties).toMatchObject({ outcome: 'event', has_task_id: true });
   });
 
-  it('returns at once when a watched monitor already has an undelivered event', async () => {
+  it('returns at once when the named monitor already has an undelivered event', async () => {
     const tasks = new FakeTaskService();
     tasks.add(processTask({ taskId: 'monitor-ready1' }));
     tasks.queueEvent('monitor-ready1');
 
     const result = await executeTool(
       new WaitForTool(tasks, recordingTelemetry([]), stubFlag(true), stubGoal(), agentScope()),
-      context('wait_ready', { timeout: 60 }),
+      context('wait_ready', { timeout: 60, task_id: 'monitor-ready1' }),
     );
 
     expect(outputString(result)).toContain('wait_status: event');
+    expect(tasks.waitCalls).toHaveLength(0);
+  });
+
+  it('without a task_id, waits for the other tasks and is not ended by monitor events', async () => {
+    const tasks = new FakeTaskService();
+    tasks.add(processTask({ taskId: 'monitor-dev01', description: 'dev server log' }));
+    tasks.add(processTask({ taskId: 'bash-build1', description: 'build' }));
+    const buildDone = createControlledPromise<void>();
+    tasks.waitDelegate = async (taskId) => {
+      await buildDone;
+      tasks.settle(taskId);
+      return tasks.getTask(taskId);
+    };
+
+    const pending = executeTool(
+      new WaitForTool(tasks, recordingTelemetry([]), stubFlag(true), stubGoal(), agentScope()),
+      context('wait_build', { timeout: 60 }),
+    );
+    await vi.waitFor(() => {
+      expect(tasks.waitCalls).toHaveLength(1);
+    });
+    tasks.queueEvent('monitor-dev01');
+    buildDone.resolve();
+    const output = outputString(await pending);
+
+    expect(tasks.waitCalls.map((call) => call.taskId)).toEqual(['bash-build1']);
+    expect(output).toContain('wait_status: completed');
+    expect(output).toContain('task_id: bash-build1');
+  });
+
+  it('without a task_id and only monitors running, has nothing to wait for', async () => {
+    const tasks = new FakeTaskService();
+    tasks.add(processTask({ taskId: 'monitor-dev01' }));
+    tasks.queueEvent('monitor-dev01');
+
+    const result = await executeTool(
+      new WaitForTool(tasks, recordingTelemetry([]), stubFlag(true), stubGoal(), agentScope()),
+      context('wait_monitors_only', { timeout: 60 }),
+    );
+
+    expect(outputString(result)).toContain('wait_status: no_tasks');
     expect(tasks.waitCalls).toHaveLength(0);
   });
 
