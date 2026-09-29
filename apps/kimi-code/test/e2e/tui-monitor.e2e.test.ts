@@ -12,6 +12,7 @@ import { promisify } from 'node:util';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 
 import {
+  bash,
   foreground,
   hasTmux,
   monitor,
@@ -71,8 +72,8 @@ describe.skipIf(!ENABLED)('TUI e2e — Monitor', () => {
     MONITOR_ON,
   ));
 
-  it('WaitFor returns as soon as a monitor prints', scenario(
-    [monitor('sleep 2; echo "tests passed"; sleep 60'), waitFor(60), say('Tests passed, moving on.')],
+  it('WaitFor on a monitor returns as soon as it prints', scenario(
+    [monitor('sleep 2; echo "tests passed"; sleep 60'), waitForMonitor(60, 'ticker'), say('Tests passed, moving on.')],
     async ({ tui, model }) => {
       await tui.submit('Watch the tests and wait for the result');
       await tui.see('Wait ended by monitor output', 'wait-ended-by-event');
@@ -80,6 +81,28 @@ describe.skipIf(!ENABLED)('TUI e2e — Monitor', () => {
 
       expect(model.toolResult(2)).toContain('wait_status: event');
       expect(model.userTexts(2).join('\n')).toContain('tests passed');
+    },
+    MONITOR_ON,
+  ));
+
+  it('WaitFor without a task id waits for the build, not for monitor output', scenario(
+    [
+      bash('sleep 6; echo build ok'),
+      monitor(`${gate('crash')}; echo "dev: 500 on /api"; sleep 60`, 'dev server'),
+      waitFor(30),
+      say('Build done; now the 500.'),
+    ],
+    async ({ tui, model, workDir }) => {
+      await tui.submit('Build, and keep an eye on the dev server');
+      await tui.see(/Waiting \d+s/);
+      writeFileSync(join(workDir, 'crash'), '');
+      await pause(2_500);
+      expect(await tui.screen()).toMatch(/Waiting \d+s/);
+      await tui.see('Build done; now the 500.', 'build-then-event');
+
+      expect(model.toolResult(3)).toContain('wait_status: completed');
+      expect(model.toolResult(3)).toContain('build ok');
+      expect(model.userTexts(3).join('\n')).toContain('dev: 500 on /api');
     },
     MONITOR_ON,
   ));
