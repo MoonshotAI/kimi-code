@@ -362,6 +362,7 @@ export class KimiTUI {
   sessionEventUnsubscribe: (() => void) | undefined;
   cancelInFlight: (() => void) | undefined;
   deferUserMessages = false;
+  private skillSteerBatchInFlight = false;
   aborted = false;
   private terminalFocusTrackingDispose: (() => void) | undefined;
   private terminalThemeTrackingDispose: (() => void) | undefined;
@@ -1367,6 +1368,7 @@ export class KimiTUI {
   }
 
   private drainOneQueuedMessage(): void {
+    if (this.skillSteerBatchInFlight) return;
     const session = this.session;
     if (session === undefined) return;
     const item = this.shiftQueuedMessage();
@@ -1482,6 +1484,7 @@ export class KimiTUI {
     if (this.btwPanelController.sendUserInput(text, activations)) return;
     if (this.state.appState.model.trim().length === 0) {
       this.showError(LLM_NOT_SET_MESSAGE);
+      if (this.state.editor.getText().length === 0) this.restoreInputText(text);
       return;
     }
     let extraction: ReturnType<typeof extractMediaAttachments>;
@@ -1489,19 +1492,31 @@ export class KimiTUI {
       extraction = preExtracted ?? extractMediaAttachments(text, this.imageStore);
     } catch (error) {
       this.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
+      if (this.state.editor.getText().length === 0) this.restoreInputText(text);
       return;
     }
-    if (!this.validateMediaCapabilities(extraction)) return;
+    if (!this.validateMediaCapabilities(extraction)) {
+      this.staging.releaseRecalled([
+        ...extraction.imageAttachmentIds,
+        ...extraction.videoAttachmentIds,
+      ]);
+      if (this.state.editor.getText().length === 0) this.restoreInputText(text);
+      return;
+    }
     if (this.cacheHint.maybeInterceptOnSubmit(text, extraction, activations)) return;
     let session = this.session;
     if (session === undefined) {
       // Dispatch only routes here on the v2 engine, so the session is created
       // lazily on first use exactly like a normal prompt.
       session = await this.ensureSession();
-      if (session === undefined) return;
+      if (session === undefined) {
+        this.recoverRejectedSkillInput(text, activations, extraction);
+        return;
+      }
     }
     if (
       this.deferUserMessages ||
+      this.skillSteerBatchInFlight ||
       this.state.appState.goal?.status === 'active' ||
       this.state.appState.streamingPhase !== 'idle' ||
       this.state.appState.isCompacting
@@ -1526,8 +1541,34 @@ export class KimiTUI {
     void this.runInlineSkillActivations(session, text, activations, extraction).catch(
       (error: unknown) => {
         this.failSessionRequest(`Skill activation failed: ${formatErrorMessage(error)}`);
+        this.recoverRejectedSkillInput(text, activations, extraction);
       },
     );
+  }
+
+  private recoverRejectedSkillInput(
+    text: string,
+    activations: readonly InlineSkillActivation[],
+    extraction: ExtractionResult,
+  ): void {
+    if (this.state.editor.getText().length === 0) {
+      this.staging.releaseRecalled([
+        ...extraction.imageAttachmentIds,
+        ...extraction.videoAttachmentIds,
+      ]);
+      this.restoreInputText(text);
+      return;
+    }
+    this.state.queuedMessages.unshift({
+      text,
+      agentId: this.harness.interactiveAgentId,
+      parts: extraction.hasMedia ? extraction.parts : undefined,
+      imageAttachmentIds: extraction.imageAttachmentIds,
+      videoAttachmentIds: extraction.videoAttachmentIds,
+      inlineSkillActivations: activations,
+    });
+    this.updateQueueDisplay();
+    this.state.ui.requestRender();
   }
 
   private async runInlineSkillActivations(
@@ -1535,19 +1576,75 @@ export class KimiTUI {
     text: string,
     activations: readonly InlineSkillActivation[],
     extraction: ReturnType<typeof extractMediaAttachments>,
+    steerIfActive = false,
   ): Promise<void> {
     const knownEntryIds = new Set(this.state.transcriptEntries.map((entry) => entry.id));
-    await session.promptWithSkills(
-      extraction.hasMedia
+    const rewritten = activations.map((activation) => ({
+      name: activation.skillName,
+      args:
+        activation.args === undefined
+          ? undefined
+          : rewriteMediaPlaceholders(activation.args, this.imageStore, 'plain'),
+    }));
+    const lease = this.staging.create(
+      [...new Set([...extraction.imageAttachmentIds, ...extraction.videoAttachmentIds])],
+      [],
+      'user',
+    );
+    const activeTurnId = steerIfActive ? this.streamingUI.getTurnContext().turnId : undefined;
+    let turnId: string | undefined;
+    try {
+      const soleArgs = rewritten.length === 1 ? rewritten[0]?.args : undefined;
+      if (
+        soleArgs !== undefined &&
+        (extraction.imageAttachmentIds.some((id) => !soleArgs.imageAttachmentIds.includes(id)) ||
+          extraction.videoAttachmentIds.some((id) => !soleArgs.videoAttachmentIds.includes(id)))
+      ) {
+        throw new Error('Skill argument media is no longer available');
+      }
+      const input = extraction.hasMedia
         ? resolveOriginalCaptions(
             extraction.parts,
             extraction.imageAttachmentIds,
             this.imageStore,
             originalsDirForSession(session),
           )
-        : text,
-      activations.map((activation) => ({ name: activation.skillName, args: activation.args })),
-    );
+        : text;
+      const skills = rewritten.map((activation) => ({
+        name: activation.name,
+        args: activation.args?.text,
+      }));
+      const submission = steerIfActive
+        ? await session.promptWithSkills(input, skills, { steerIfActive: true })
+        : await session.promptWithSkills(input, skills);
+      turnId = submission?.turn_id === undefined ? undefined : String(submission.turn_id);
+      if (
+        steerIfActive &&
+        turnId !== undefined &&
+        turnId === activeTurnId &&
+        this.streamingUI.getTurnContext().turnId !== activeTurnId
+      ) {
+        this.staging.release(lease);
+      } else if (turnId !== undefined) {
+        this.staging.bindToTurn(lease, turnId);
+      }
+      for (const activation of rewritten) {
+        if (activation.args !== undefined) {
+          this.staging.releaseRecalled(
+            activation.args.imageAttachmentIds,
+            activation.args.stagingPaths,
+          );
+        }
+      }
+    } catch (error) {
+      this.staging.defer(lease);
+      for (const activation of rewritten) {
+        if (activation.args !== undefined) {
+          this.staging.releaseMedia(activation.args.imageAttachmentIds, activation.args.stagingPaths);
+        }
+      }
+      throw error;
+    }
     // The engine bundles the activations into the prompt's own message, and
     // the `skill.activated` events land synchronously during the call — so
     // the cards appended for this submission are the skill_activation entries
@@ -1566,7 +1663,7 @@ export class KimiTUI {
     this.appendTranscriptEntry({
       id: nextTranscriptId(),
       kind: 'user',
-      turnId: undefined,
+      turnId,
       renderMode: 'plain',
       content: text,
       imageAttachmentIds:
@@ -1764,6 +1861,8 @@ export class KimiTUI {
         },
       ).catch((error: unknown) => {
         this.failSessionRequest(`Skill activation failed: ${formatErrorMessage(error)}`);
+        this.state.queuedMessages.unshift(item);
+        this.updateQueueDisplay();
       });
       return;
     }
@@ -2003,6 +2102,7 @@ export class KimiTUI {
     }
     if (
       this.deferUserMessages ||
+      this.skillSteerBatchInFlight ||
       this.state.appState.streamingPhase !== 'idle' ||
       this.state.appState.isCompacting
     ) {
@@ -2030,6 +2130,7 @@ export class KimiTUI {
       phase !== 'idle' &&
       phase !== 'shell' &&
       !this.deferUserMessages &&
+      !this.skillSteerBatchInFlight &&
       !this.state.appState.isCompacting
     );
   }
@@ -2062,7 +2163,7 @@ export class KimiTUI {
         ),
       };
     });
-    this.steerMessage(session, items, (steered) => {
+    void this.steerMessage(session, items, (steered) => {
       for (const message of batch) this.steeringQueuedMessages.delete(message);
       if (this.session !== session) return;
       if (steered) {
@@ -2107,18 +2208,18 @@ export class KimiTUI {
     session: Session,
     input: readonly SteerInputItem[],
     onSettled?: (steered: boolean) => void,
-  ): void {
+  ): Promise<boolean> {
     if (this.deferUserMessages || this.state.appState.isCompacting) {
       for (const item of input) {
         this.enqueueMessage(item.text, item);
       }
-      return;
+      return Promise.resolve(true);
     }
     if (this.state.appState.streamingPhase === 'idle') {
       for (const item of input) {
         this.sendMessageInternal(session, item.text, item);
       }
-      return;
+      return Promise.resolve(true);
     }
 
     const steeredEntries: TranscriptEntry[] = [];
@@ -2180,6 +2281,7 @@ export class KimiTUI {
       }
       this.showError(`Failed to steer: ${formatErrorMessage(error)}`);
     });
+    return request.then(() => true, () => false);
   }
 
   private removeTranscriptEntries(entries: readonly TranscriptEntry[]): void {
@@ -2198,13 +2300,52 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  steerSkillActivation(session: Session, skillName: string, skillArgs: string): void {
+  async steerSkillMessage(session: Session, item: QueuedMessage): Promise<boolean> {
+    const activations = item.inlineSkillActivations;
+    if (activations === undefined || activations.length === 0) return false;
+    if (this.deferUserMessages || this.state.appState.isCompacting) {
+      this.state.queuedMessages.push(item);
+      this.updateQueueDisplay();
+      return true;
+    }
+    const parts =
+      item.parts === undefined
+        ? []
+        : refreshExpiringImageFileRefs(item.parts, item.imageAttachmentIds ?? [], this.imageStore);
+    try {
+      await this.runInlineSkillActivations(
+        session,
+        item.text,
+        activations,
+        {
+          parts: [...parts],
+          hasMedia: item.parts !== undefined,
+          imageAttachmentIds: [...(item.imageAttachmentIds ?? [])],
+          videoAttachmentIds: [...(item.videoAttachmentIds ?? [])],
+          imageSnapshots: [],
+        },
+        true,
+      );
+      return true;
+    } catch (error) {
+      this.showError(`Failed to steer skill message: ${formatErrorMessage(error)}`);
+      return false;
+    }
+  }
+
+  async steerSkillActivation(
+    session: Session,
+    skillName: string,
+    skillArgs: string,
+  ): Promise<void> {
     // Ctrl-S on a queued slash-skill item: the activation fires into the
     // running turn (the engine steers it there, never the literal text). No
     // beginSessionRequest — the live pane belongs to the running turn.
-    void session.activateSkill(skillName, skillArgs).catch((error: unknown) => {
+    try {
+      await session.activateSkill(skillName, skillArgs);
+    } catch (error) {
       this.showError(`Skill "${skillName}" failed: ${formatErrorMessage(error)}`);
-    });
+    }
   }
 
   // =========================================================================
@@ -2221,7 +2362,32 @@ export class KimiTUI {
     this.staging.releaseQueued(queued);
   }
 
+  isSteerBatchInFlight(): boolean {
+    return this.skillSteerBatchInFlight;
+  }
+
+  shouldDeferSteerBatch(): boolean {
+    return this.deferUserMessages || this.state.appState.isCompacting;
+  }
+
+  beginSteerBatch(): void {
+    this.skillSteerBatchInFlight = true;
+  }
+
+  finishSteerBatch(drainQueued: boolean): void {
+    this.skillSteerBatchInFlight = false;
+    if (
+      drainQueued &&
+      this.state.appState.streamingPhase === 'idle' &&
+      !this.deferUserMessages &&
+      !this.state.appState.isCompacting
+    ) {
+      this.drainOneQueuedMessage();
+    }
+  }
+
   shiftQueuedMessage(): QueuedMessage | undefined {
+    if (this.skillSteerBatchInFlight) return undefined;
     if (this.state.queuedMessages.length === 0) return undefined;
     const [first, ...rest] = this.state.queuedMessages;
     if (this.steeringQueuedMessages.has(first!)) return undefined;

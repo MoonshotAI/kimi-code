@@ -118,11 +118,13 @@ function stripSgr(text: string): string {
 }
 
 interface MessageDriver {
+  deferUserMessages: boolean;
   state: TUIState;
   surveyController: SurveyController;
   streamingUI: StreamingUIController;
   sessionReplay: SessionReplayRenderer;
   pluginCommandMap: Map<string, string>;
+  skillCommandMap: Map<string, string>;
   sessionEventHandler: {
     notifications: import('#/tui/controllers/notify').NotifyController;
     startSubscription(): void;
@@ -591,7 +593,7 @@ describe('KimiTUI message flow', () => {
   });
 
   it('lazily creates the session for skill commands (v2 engine)', async () => {
-    const session = makeSession({ id: 'ses-lazy', activateSkill: vi.fn(async () => {}) });
+    const session = makeSession({ id: 'ses-lazy' });
     const startupInput: KimiTUIStartupInput = {
       ...makeStartupInput(),
       cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
@@ -620,7 +622,9 @@ describe('KimiTUI message flow', () => {
     driver.handleUserInput('/skill:my-skill');
 
     await vi.waitFor(() => {
-      expect(session.activateSkill).toHaveBeenCalledWith('my-skill', '');
+      expect(session.promptWithSkills).toHaveBeenCalledWith('/skill:my-skill', [
+        { name: 'my-skill', args: '' },
+      ]);
     });
     expect(harness.createSession).toHaveBeenCalledTimes(1);
     expect(driver.getCurrentSessionId()).toBe('ses-lazy');
@@ -689,6 +693,82 @@ describe('KimiTUI message flow', () => {
       );
     });
     expect(session.activateSkill).not.toHaveBeenCalled();
+  });
+
+  it('submits a sole leading skill with its arguments as one user message', async () => {
+    const session = makeSession({
+      listSkills: vi.fn(async () => [
+        { name: 'demo', description: 'Demo skill', path: 'builtin://demo', source: 'builtin', type: 'inline' },
+      ]),
+    });
+    const { driver } = await makeDriver(session);
+    await (driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }).refreshSkillCommands(session);
+
+    driver.handleUserInput('/demo review the patch');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith('/demo review the patch', [
+        { name: 'demo', args: 'review the patch' },
+      ]);
+    });
+    expect(session.activateSkill).not.toHaveBeenCalled();
+    expect(driver.state.transcriptEntries).toContainEqual(
+      expect.objectContaining({ kind: 'user', content: '/demo review the patch' }),
+    );
+  });
+
+  it('keeps leading skill media in the prompt and expands its argument reference', async () => {
+    const session = makeSession({
+      listSkills: vi.fn(async () => [
+        { name: 'demo', description: 'Demo skill', path: 'builtin://demo', source: 'builtin', type: 'inline' },
+      ]),
+    });
+    const { driver } = await makeDriver(session);
+    await (driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }).refreshSkillCommands(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addImage(new Uint8Array([0xaa, 0xbb]), 'image/png', 1, 1);
+    const input = `/demo inspect ${attachment.placeholder}`;
+
+    driver.handleUserInput(input);
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalled();
+    });
+    expect(session.promptWithSkills).toHaveBeenCalledWith(
+      [
+        { type: 'text', text: '/demo inspect ' },
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
+      ],
+      [{ name: 'demo', args: expect.stringContaining('image') }],
+    );
+    const skills = (session.promptWithSkills as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as
+      | Array<{ args?: string }>
+      | undefined;
+    expect(skills?.[0]?.args).not.toContain(attachment.placeholder);
+    expect(driver.state.transcriptEntries).toContainEqual(
+      expect.objectContaining({ kind: 'user', content: input }),
+    );
+  });
+
+  it('restores a leading skill input when its media cannot be prepared', async () => {
+    const session = makeSession({
+      listSkills: vi.fn(async () => [
+        { name: 'demo', description: 'Demo skill', path: 'builtin://demo', source: 'builtin', type: 'inline' },
+      ]),
+    });
+    const { driver } = await makeDriver(session);
+    await (driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }).refreshSkillCommands(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const missing = imageStore.addVideo('video/quicktime', '/tmp/kimi-missing-source.mov');
+    const input = `/demo inspect ${missing.placeholder}`;
+
+    driver.handleUserInput(input);
+
+    await vi.waitFor(() => {
+      expect(driver.state.editor.getText()).toBe(input);
+    });
+    expect(session.promptWithSkills).not.toHaveBeenCalled();
+    expect(stripSgr(renderTranscript(driver))).toContain('Failed to prepare media attachment');
   });
 
   it('bundles a repeated leading skill as one bundled submission (v2 engine)', async () => {
@@ -930,6 +1010,32 @@ describe('KimiTUI message flow', () => {
       expect(driver.state.appState.streamingPhase).toBe('idle');
     });
     expect(driver.state.transcriptEntries.filter((entry) => entry.kind === 'user')).toHaveLength(0);
+    expect(driver.state.editor.getText()).toBe('please /skill:review');
+  });
+
+  it('keeps a rejected skill input when a newer draft already exists', async () => {
+    let rejectSubmission!: (error: Error) => void;
+    const session = makeSession({
+      promptWithSkills: vi.fn(() => new Promise<void>((_resolve, reject) => {
+        rejectSubmission = reject;
+      })),
+    });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.skillCommandMap.set('skill:review', 'review');
+
+    driver.handleUserInput('check /skill:review');
+    await vi.waitFor(() => expect(session.promptWithSkills).toHaveBeenCalledOnce());
+    driver.state.editor.setText('new draft');
+    rejectSubmission(new Error('Skill missing'));
+
+    await vi.waitFor(() => {
+      expect(driver.state.queuedMessages).toContainEqual(expect.objectContaining({
+        text: 'check /skill:review',
+        inlineSkillActivations: [{ skillName: 'review' }],
+      }));
+    });
+    expect(driver.state.editor.getText()).toBe('new draft');
   });
 
   it('renders a bundled replay submission as a single turn', async () => {
@@ -3587,7 +3693,7 @@ command = "vim"
     expect(harness.track).toHaveBeenCalledWith('input_queue', undefined);
   });
 
-  it('queues a slash-skill activation while a turn is streaming (like any other input) and activates on drain', async () => {
+  it('queues a leading skill message while a turn is streaming and submits it on drain', async () => {
     const session = makeSession({
       listSkills: vi.fn(async () => [
         {
@@ -3610,13 +3716,11 @@ command = "vim"
 
     expect(session.activateSkill).not.toHaveBeenCalled();
     expect(driver.state.queuedMessages).toEqual([
-      {
+      expect.objectContaining({
         text: '/demo refactor auth and ui',
         agentId: 'main',
-        mode: 'skill',
-        skillName: 'demo',
-        skillArgs: 'refactor auth and ui',
-      },
+        inlineSkillActivations: [{ skillName: 'demo', args: 'refactor auth and ui' }],
+      }),
     ]);
     expect(harness.track).toHaveBeenCalledWith('input_queue', undefined);
 
@@ -3625,10 +3729,14 @@ command = "vim"
     driver.state.queuedMessages = [];
     driver.sendQueuedMessage(session, queued);
 
-    expect(session.activateSkill).toHaveBeenCalledWith('demo', 'refactor auth and ui');
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith('/demo refactor auth and ui', [
+        { name: 'demo', args: 'refactor auth and ui' },
+      ]);
+    });
   });
 
-  it('queues a slash-skill activation while compacting and activates it on drain', async () => {
+  it('queues a leading skill message while compacting and submits it on drain', async () => {
     const session = makeSession({
       listSkills: vi.fn(async () => [
         {
@@ -3651,13 +3759,11 @@ command = "vim"
 
     expect(session.activateSkill).not.toHaveBeenCalled();
     expect(driver.state.queuedMessages).toEqual([
-      {
+      expect.objectContaining({
         text: '/demo refactor auth and ui',
         agentId: 'main',
-        mode: 'skill',
-        skillName: 'demo',
-        skillArgs: 'refactor auth and ui',
-      },
+        inlineSkillActivations: [{ skillName: 'demo', args: 'refactor auth and ui' }],
+      }),
     ]);
     expect(driver.state.queueContainer.children.length).toBeGreaterThan(0);
     expect(harness.track).toHaveBeenCalledWith('input_queue', undefined);
@@ -3667,7 +3773,11 @@ command = "vim"
     driver.state.queuedMessages = [];
     driver.sendQueuedMessage(session, queued);
 
-    expect(session.activateSkill).toHaveBeenCalledWith('demo', 'refactor auth and ui');
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith('/demo refactor auth and ui', [
+        { name: 'demo', args: 'refactor auth and ui' },
+      ]);
+    });
   });
 
   it('steers fresh input while a goal is active even when the streaming phase is idle', async () => {
@@ -4317,6 +4427,248 @@ command = "vim"
     expect(driver.state.queuedMessages).toEqual([
       { text: 'ls', agentId: 'main', mode: 'bash' },
     ]);
+  });
+
+  it('steers plain and skill messages in their queue order', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    driver.state.queuedMessages = [
+      { text: 'first', agentId: 'main' },
+      { text: 'check /skill:review', agentId: 'main', inlineSkillActivations: [{ skillName: 'review' }] },
+      { text: 'last', agentId: 'main' },
+    ];
+
+    driver.state.editor.onCtrlS?.();
+
+    await vi.waitFor(() => {
+      expect(session.steer).toHaveBeenCalledTimes(2);
+      expect(session.promptWithSkills).toHaveBeenCalledWith(
+        'check /skill:review',
+        [{ name: 'review', args: undefined }],
+        { steerIfActive: true },
+      );
+    });
+    expect(session.steer).toHaveBeenNthCalledWith(1, 'first');
+    expect(session.steer).toHaveBeenNthCalledWith(2, 'last');
+    expect((session.steer as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]).toBeLessThan(
+      (session.promptWithSkills as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]!,
+    );
+    expect((session.promptWithSkills as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]).toBeLessThan(
+      (session.steer as ReturnType<typeof vi.fn>).mock.invocationCallOrder[1]!,
+    );
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('holds later input behind an in-flight mixed steer batch', async () => {
+    let finishFirstSteer!: () => void;
+    const session = makeSession({
+      steer: vi.fn(() => new Promise<void>((resolve) => { finishFirstSteer = resolve; })),
+    });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.queuedMessages = [
+      { text: 'first', agentId: 'main' },
+      { text: 'check /skill:review', agentId: 'main', inlineSkillActivations: [{ skillName: 'review' }] },
+      { text: 'third', agentId: 'main' },
+    ];
+
+    driver.state.editor.onCtrlS?.();
+    expect(session.steer).toHaveBeenCalledWith('first');
+    driver.state.appState.streamingPhase = 'idle';
+    driver.handleUserInput('later');
+    expect(driver.state.queuedMessages.map((item) => item.text)).toEqual(['later']);
+    driver.state.editor.onCtrlS?.();
+    expect(session.steer).toHaveBeenCalledOnce();
+    expect(session.promptWithSkills).not.toHaveBeenCalled();
+    finishFirstSteer();
+
+    await vi.waitFor(() => expect(session.promptWithSkills).toHaveBeenCalledOnce());
+    expect((session.promptWithSkills as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]).toBeLessThan(
+      (session.prompt as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]!,
+    );
+    expect((session.prompt as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toBe('third');
+    expect(driver.state.queuedMessages.map((item) => item.text)).toEqual(['later']);
+  });
+
+  it('restores unsent skill messages before newer input when a steer batch is deferred', async () => {
+    let finishFirstSteer!: () => void;
+    const session = makeSession({
+      steer: vi.fn(() => new Promise<void>((resolve) => { finishFirstSteer = resolve; })),
+    });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.queuedMessages = [
+      { text: 'first', agentId: 'main' },
+      { text: 'check /skill:review', agentId: 'main', inlineSkillActivations: [{ skillName: 'review' }] },
+      { text: 'third', agentId: 'main' },
+    ];
+
+    driver.state.editor.onCtrlS?.();
+    driver.handleUserInput('later');
+    driver.deferUserMessages = true;
+    finishFirstSteer();
+
+    await vi.waitFor(() => expect(driver.state.queuedMessages.map((item) => item.text)).toEqual([
+      'check /skill:review', 'third', 'later',
+    ]));
+    expect(session.promptWithSkills).not.toHaveBeenCalled();
+  });
+
+  it('steers a leading skill draft with its arguments', async () => {
+    const session = makeSession({
+      listSkills: vi.fn(async () => [
+        { name: 'demo', description: 'Demo skill', path: 'builtin://demo', source: 'builtin', type: 'inline' },
+      ]),
+    });
+    const { driver } = await makeDriver(session);
+    await (driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }).refreshSkillCommands(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    driver.state.editor.setText('/demo inspect the patch');
+
+    driver.state.editor.onCtrlS?.();
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith(
+        '/demo inspect the patch',
+        [{ name: 'demo', args: 'inspect the patch' }],
+        { steerIfActive: true },
+      );
+    });
+    expect(driver.state.editor.getText()).toBe('');
+    expect(session.steer).not.toHaveBeenCalled();
+  });
+
+  it('uses the engine turn when a skill steer starts a new turn', async () => {
+    const session = makeSession({
+      promptWithSkills: vi.fn(async () => ({
+        turn_id: 2,
+        prompt_id: 'prompt-2',
+        created_at: 'now',
+        state: 'running' as const,
+      })),
+    });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    driver.state.queuedMessages = [{
+      text: 'check /skill:review',
+      agentId: 'main',
+      inlineSkillActivations: [{ skillName: 'review' }],
+    }];
+
+    driver.state.editor.onCtrlS?.();
+
+    await vi.waitFor(() => expect(driver.state.transcriptEntries).toContainEqual(
+      expect.objectContaining({ kind: 'user', content: 'check /skill:review', turnId: '2' }),
+    ));
+  });
+
+  it('keeps media parts when a queued skill message steers', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addImage(new Uint8Array([0xaa, 0xbb]), 'image/png', 1, 1);
+    driver.state.queuedMessages = [{
+      text: `check /skill:review ${attachment.placeholder}`,
+      agentId: 'main',
+      parts: [
+        { type: 'text', text: 'check /skill:review ' },
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
+      ],
+      imageAttachmentIds: [attachment.id],
+      inlineSkillActivations: [{ skillName: 'review' }],
+    }];
+
+    driver.state.editor.onCtrlS?.();
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith(
+        [
+          { type: 'text', text: 'check /skill:review ' },
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
+        ],
+        [{ name: 'review', args: undefined }],
+        { steerIfActive: true },
+      );
+    });
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('restores a rejected skill steer and leaves later queued input in order', async () => {
+    const session = makeSession({ promptWithSkills: vi.fn(async () => { throw new Error('Skill missing'); }) });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.queuedMessages = [
+      { text: 'check /skill:missing', agentId: 'main', inlineSkillActivations: [{ skillName: 'missing' }] },
+      { text: 'later', agentId: 'main' },
+    ];
+
+    driver.state.editor.onCtrlS?.();
+
+    await vi.waitFor(() => {
+      expect(driver.state.queuedMessages).toHaveLength(2);
+    });
+    expect(driver.state.queuedMessages.map((item) => item.text)).toEqual([
+      'check /skill:missing', 'later',
+    ]);
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(stripSgr(renderTranscript(driver))).toContain('Failed to steer skill message');
+  });
+
+  it('does not send later skills after a plain steer fails in a mixed batch', async () => {
+    const session = makeSession({ steer: vi.fn(async () => { throw new Error('Turn closed'); }) });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.queuedMessages = [
+      { text: 'first', agentId: 'main' },
+      { text: 'check /skill:review', agentId: 'main', inlineSkillActivations: [{ skillName: 'review' }] },
+    ];
+
+    driver.state.editor.onCtrlS?.();
+
+    await vi.waitFor(() => expect(driver.state.queuedMessages.map((item) => item.text)).toEqual([
+      'check /skill:review',
+    ]));
+    expect(session.steer).toHaveBeenCalledOnce();
+    expect(session.promptWithSkills).not.toHaveBeenCalled();
+  });
+
+  it('does not retry a rejected skill steer when the original turn has ended', async () => {
+    let rejectSubmission!: (error: Error) => void;
+    const session = makeSession({
+      promptWithSkills: vi.fn(() => new Promise<void>((_resolve, reject) => {
+        rejectSubmission = reject;
+      })),
+    });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.queuedMessages = [{
+      text: 'check /skill:review',
+      agentId: 'main',
+      inlineSkillActivations: [{ skillName: 'review' }],
+    }];
+
+    driver.state.editor.onCtrlS?.();
+    await vi.waitFor(() => expect(session.promptWithSkills).toHaveBeenCalledOnce());
+    driver.state.appState.streamingPhase = 'idle';
+    rejectSubmission(new Error('Skill missing'));
+
+    await vi.waitFor(() => expect(driver.state.queuedMessages).toHaveLength(1));
+    expect(session.promptWithSkills).toHaveBeenCalledOnce();
   });
 
   it('does not steer while a shell command is running', async () => {
@@ -6272,6 +6624,33 @@ command = "vim"
       expect(session.prompt).toHaveBeenCalledWith('apply after init', { promptId: undefined });
     });
     expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('queues a Ctrl-S skill draft while /init is running', async () => {
+    let resolveInit!: () => void;
+    const session = makeSession({
+      init: vi.fn(() => new Promise<void>((resolve) => { resolveInit = resolve; })),
+    });
+    const { driver } = await makeDriver(session);
+    driver.skillCommandMap.set('skill:review', 'review');
+
+    driver.handleUserInput('/init');
+    await vi.waitFor(() => expect(session.init).toHaveBeenCalledOnce());
+    driver.state.editor.setText('check /skill:review');
+    driver.state.editor.onCtrlS?.();
+
+    await vi.waitFor(() => {
+      expect(driver.state.queuedMessages).toContainEqual(expect.objectContaining({
+        text: 'check /skill:review',
+        inlineSkillActivations: [{ skillName: 'review' }],
+      }));
+    });
+    expect(session.promptWithSkills).not.toHaveBeenCalled();
+    resolveInit();
+    await vi.waitFor(() => expect(session.promptWithSkills).toHaveBeenCalledWith(
+      'check /skill:review',
+      [{ name: 'review', args: undefined }],
+    ));
   });
 
   it('cancels the active /init request through the session', async () => {

@@ -1,4 +1,5 @@
 import type { SwarmModeTrigger } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
+import type { PromptWithSkillsResult } from '@moonshot-ai/agent-core-v2/features/skill/skill';
 
 import type { AgentContextData } from '#/context';
 import { ErrorCodes, KimiError, type KimiErrorCode } from '#/errors';
@@ -154,16 +155,28 @@ export class Session {
    * turn, and the bundle undoes as a single anchor. Requires the
    * agent-core-v2 engine.
    */
+  promptWithSkills(
+    input: string | PromptInput,
+    skills: readonly PromptSkillActivation[],
+  ): Promise<void>;
+  promptWithSkills(
+    input: string | PromptInput,
+    skills: readonly PromptSkillActivation[],
+    options: { steerIfActive: true },
+  ): Promise<PromptWithSkillsResult>;
   async promptWithSkills(
     input: string | PromptInput,
     skills: readonly PromptSkillActivation[],
-  ): Promise<void> {
+    options?: { steerIfActive?: boolean },
+  ): Promise<void | PromptWithSkillsResult> {
     this.ensureOpen();
-    await this.rpc.promptWithSkills({
+    const result = await this.rpc.promptWithSkills({
       sessionId: this.id,
       input: normalizePromptInput(input),
       skills,
+      steerIfActive: options?.steerIfActive,
     });
+    if (options?.steerIfActive === true) return result;
   }
 
   /** Execute a user-initiated `!` shell command (silent — does not prompt the

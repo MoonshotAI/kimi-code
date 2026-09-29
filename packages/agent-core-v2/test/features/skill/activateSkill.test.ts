@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
+import { IAgentLoopService } from '#/agent/loop/loop';
 
 import { stubSkill } from './catalog/stubs';
 import { createTestAgent, skillServices, type TestAgentContext } from '../../harness';
@@ -113,6 +114,46 @@ describe('promptWithSkills', () => {
     ).toEqual(['review', 'security']);
     const started = events[2]?.args as { readonly prompt?: string };
     expect(started.prompt).toBe('Review this change.');
+  });
+
+  it('steers a bundled skill message into the running turn with its arguments', async () => {
+    ctx = agentWithSkills();
+    let markStarted!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    ctx.get(IAgentLoopService).hooks.onWillBeginStep.register('hold-for-skill-steer', async (_context, next) => {
+      markStarted();
+      await gate;
+      await next();
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'starting' });
+    ctx.mockNextResponse({ type: 'text', text: 'reviewed' });
+
+    const first = ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start the review.' }] });
+    await started;
+    await first;
+    const steered = await ctx.rpc.promptWithSkills({
+      input: [{ type: 'text', text: '/review focus on auth' }],
+      skills: [{ name: 'review', args: 'focus on auth' }],
+      steerIfActive: true,
+    });
+    expect(steered.state).toBe('running');
+    expect(steered.turn_id).toBeDefined();
+    release();
+    await ctx.untilTurnEnd();
+
+    expect(ctx.allEvents.filter((event) => event.type === '[rpc]' && event.event === 'turn.started')).toHaveLength(1);
+    const bundled = ctx.context.get().find((message) => message.origin?.kind === 'user' && message.origin.skillActivations !== undefined);
+    expect(bundled?.origin).toMatchObject({
+      kind: 'user',
+      skillActivations: [{ skillName: 'review', skillArgs: 'focus on auth' }],
+    });
+    expect(bundled?.content[0]).toMatchObject({ type: 'text', text: expect.stringContaining('# Review body') });
+    expect(bundled?.content).toContainEqual({ type: 'text', text: '/review focus on auth' });
+    const llmInput = JSON.stringify(ctx.llmInputs());
+    expect(llmInput).toContain('ARGUMENTS: focus on auth');
+    expect(llmInput).toContain('/review focus on auth');
   });
 
   it('rejects the whole submission when any skill is unknown', async () => {
