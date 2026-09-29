@@ -7,9 +7,6 @@ export interface TrustGatedMcpServer {
   readonly args?: readonly string[];
   readonly cwd?: string;
   readonly url?: string;
-  readonly envKeys?: readonly string[];
-  readonly headerKeys?: readonly string[];
-  readonly bearerTokenEnvVar?: string;
   readonly origin: string;
 }
 
@@ -20,16 +17,11 @@ export interface TrustGatedInstructionSources {
   readonly paths: readonly string[];
 }
 
-export interface TrustDisclosureWarning {
-  readonly source: string;
-  readonly path?: string;
-}
-
 export interface TrustGatedActivation {
   readonly mcpServers: readonly TrustGatedMcpServer[];
   readonly additionalDirs: readonly string[];
   readonly additionalDirSources: readonly string[];
-  readonly warnings: readonly TrustDisclosureWarning[];
+  readonly warnings: readonly string[];
   readonly instructionSources: TrustGatedInstructionSources;
 }
 

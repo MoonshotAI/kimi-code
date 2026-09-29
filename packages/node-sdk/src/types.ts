@@ -127,7 +127,7 @@ export type { AgentCommandInfo } from '@moonshot-ai/agent-core-v2/agent/command/
 
 export type { PermissionMode };
 
-/** One project-level MCP server that trusting would start; secret values are redacted to key names. */
+/** One project-level MCP server that trusting would start. */
 export interface WorkspaceTrustMcpServerInfo {
   readonly name: string;
   readonly transport: 'stdio' | 'http' | 'sse';
@@ -135,12 +135,6 @@ export interface WorkspaceTrustMcpServerInfo {
   readonly args?: readonly string[];
   readonly cwd?: string;
   readonly url?: string;
-  /** Names of environment variables the stdio config sets (values redacted). */
-  readonly envKeys?: readonly string[];
-  /** Names of HTTP headers the config sets (values redacted). */
-  readonly headerKeys?: readonly string[];
-  /** Env var an http/sse config reads its bearer token from. */
-  readonly bearerTokenEnvVar?: string;
   /** Absolute path of the config file declaring this server. */
   readonly origin: string;
 }
@@ -153,12 +147,8 @@ export interface WorkspaceTrustInstructionSources {
   readonly skills: readonly string[];
   /** Names of project-level agent profiles that will load. */
   readonly agentProfiles: readonly string[];
+  /** Files and configuration directories to inspect; directories end in a slash. */
   readonly paths: readonly string[];
-}
-
-export interface WorkspaceTrustDisclosureWarning {
-  readonly source: string;
-  readonly path?: string;
 }
 
 /** Trust state of a workspace directory, plus everything trusting it would activate. */
@@ -169,7 +159,7 @@ export interface WorkspaceTrustInfo {
   /** Directories outside the project that trusting grants access to (symlink-resolved). */
   readonly gatedAdditionalDirs: readonly string[];
   readonly additionalDirSources: readonly string[];
-  readonly warnings: readonly WorkspaceTrustDisclosureWarning[];
+  readonly warnings: readonly string[];
   readonly instructionSources: WorkspaceTrustInstructionSources;
 }
 

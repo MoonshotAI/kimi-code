@@ -25,7 +25,6 @@ function mixedInfo(): WorkspaceTrustInfo {
         transport: 'stdio',
         command: 'npx',
         args: ['--private-argument'],
-        envKeys: ['PRIVATE_KEY'],
         origin: `${workDir}/.mcp.json`,
       },
       {
@@ -43,8 +42,8 @@ function mixedInfo(): WorkspaceTrustInfo {
       agentProfiles: ['reviewer'],
       paths: [
         `${workDir}/AGENTS.md`,
-        `${workDir}/.kimi-code/skills`,
-        `${workDir}/.kimi-code/agents`,
+        `${workDir}/.kimi-code/skills/`,
+        `${workDir}/.kimi-code/agents/`,
       ],
     },
   });
@@ -68,7 +67,8 @@ describe('TrustPromptComponent', () => {
       'Config: .kimi-code/local.toml',
       'AGENTS.md',
       '.kimi-code/skills',
-      '.kimi-code/agents',
+      '.kimi-code/agents/',
+      'Check:',
       'future project config changes',
       'Trust and continue',
     ])
@@ -89,11 +89,11 @@ describe('TrustPromptComponent', () => {
     );
     const failed = new TrustPromptComponent({
       workDir,
-      info: info({ warnings: [{ source: 'MCP configuration', path: `${workDir}/.mcp.json` }] }),
+      info: info({ warnings: ['Could not inspect MCP configuration.'] }),
       onSelect: vi.fn(),
     });
     const text = render(failed).join('\n');
-    expect(text).toContain('.mcp.json — could not read');
+    expect(text).toContain('Could not inspect MCP configuration.');
     expect(text).not.toContain('No project integrations');
     expect(text).not.toContain('No project-level config');
     expect(text).toContain('future project config changes');

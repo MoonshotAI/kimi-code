@@ -1,8 +1,6 @@
 import { isAbsolute, relative } from 'pathe';
 
 import type { ILogService } from '#/_base/log/log';
-import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { Error2 } from '#/errors';
 import type { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { BUILTIN_AGENT_PROFILE_SOURCE_ID } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -27,7 +25,6 @@ import type {
   TrustGatedActivation,
   TrustGatedInstructionSources,
   TrustGatedMcpServer,
-  TrustDisclosureWarning,
 } from './trustDisclosure';
 import type { IWorkspaceTrust } from './workspaceTrust';
 
@@ -66,26 +63,26 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
   async describeGatedActivation(): Promise<TrustGatedActivation> {
     await this.trust.ready;
     if (this.trust.isTrusted()) return EMPTY_ACTIVATION;
-    const warnings: TrustDisclosureWarning[] = [];
+    const warnings: string[] = [];
     const [mcpServers, configuredDirs, skillRoots, instructionSources] = await Promise.all([
       this.describeGatedMcpServers().catch((error: unknown) => {
         this.log.warn(`trust disclosure: MCP scan failed: ${String(error)}`);
-        warnings.push(disclosureWarning('MCP configuration', error));
+        warnings.push('Could not inspect MCP configuration.');
         return [];
       }),
       this.readGatedAdditionalDirs().catch((error: unknown) => {
         this.log.warn(`trust disclosure: additional dirs scan failed: ${String(error)}`);
-        warnings.push(disclosureWarning('Additional directory configuration', error));
+        warnings.push('Could not inspect additional directory configuration.');
         return { dirs: [], sources: [] };
       }),
       this.readGatedSkillRoots().catch((error: unknown) => {
         this.log.warn(`trust disclosure: skill roots scan failed: ${String(error)}`);
-        warnings.push(disclosureWarning('Project skill directories', error));
+        warnings.push('Could not inspect project skill directories.');
         return [];
       }),
       this.describeInstructionSources(warnings).catch((error: unknown) => {
         this.log.warn(`trust disclosure: instruction sources scan failed: ${String(error)}`);
-        warnings.push(disclosureWarning('Project instructions', error));
+        warnings.push('Could not inspect project instructions.');
         return EMPTY_INSTRUCTION_SOURCES;
       }),
     ]);
@@ -151,14 +148,13 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
   }
 
   private async describeInstructionSources(
-    warnings: TrustDisclosureWarning[],
+    warnings: string[],
   ): Promise<TrustGatedInstructionSources> {
     await Promise.all([this.skills.ready, this.agentProfilesLoader.ready, this.instructions.ready]);
     const projectRoot =
       (await findGitWorkTree(this.fs, this.context.cwd))?.root ?? this.context.cwd;
-    for (const path of this.instructions.snapshot.agentsMdUnreadablePaths ?? []) {
-      if (isInsideOrEqualDir(path, projectRoot))
-        warnings.push({ source: 'Project instructions', path });
+    if (this.instructions.snapshot.agentsMdWarning !== undefined) {
+      warnings.push(this.instructions.snapshot.agentsMdWarning);
     }
     const skills = this.skills.catalog.listSkills().filter((skill) => skill.source === 'project');
     const profiles = this.effectiveWorkspaceProfiles();
@@ -179,17 +175,15 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
         skills.map((skill) => skill.path),
         this.skills.catalog.getSkillRoots(),
       ),
-      this.sourceLocations(
-        profiles.flatMap((profile) =>
-          profile.sourcePath === undefined ? [] : [profile.sourcePath],
-        ),
-        workspaceProfiles?.contribution.scannedRoots ?? [],
+      Promise.all(
+        (profiles.length > 0 ? workspaceProfiles?.contribution.scannedRoots ?? [] : [])
+          .map(async (root) => `${await realpathOrSelf(this.fs, root)}/`),
       ),
     ]);
     return {
       agentsMdPaths,
       skills: skills.map((skill) => skill.name).toSorted(),
-      agentProfiles: profiles.map((profile) => profile.name).toSorted(),
+      agentProfiles: profiles,
       paths: [...new Set([...agentsMdPaths, ...skillPaths, ...profilePaths])],
     };
   }
@@ -203,13 +197,14 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     const locations = await Promise.all(
       paths.map(async (path) => {
         const realPath = await realpathOrSelf(this.fs, path);
-        return realRoots.find((root) => isInsideOrEqualDir(realPath, root)) ?? realPath;
+        const root = realRoots.find((root) => isInsideOrEqualDir(realPath, root));
+        return root === undefined ? realPath : `${root}/`;
       }),
     );
     return [...new Set(locations)].toSorted();
   }
 
-  private effectiveWorkspaceProfiles(): readonly AgentProfile[] {
+  private effectiveWorkspaceProfiles(): readonly string[] {
     const entries = this.agentProfilesRegistry
       .entries()
       .filter(
@@ -221,7 +216,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
         .find((entry) => entry.sourceId === BUILTIN_AGENT_PROFILE_SOURCE_ID)
         ?.contribution.profiles.map((profile) => profile.name) ?? [],
     );
-    const winners = new Map<string, { sourceId: string; profile: AgentProfile }>();
+    const winners = new Map<string, string>();
     const ordered = entries
       .filter((entry) => entry.sourceId !== BUILTIN_AGENT_PROFILE_SOURCE_ID)
       .toSorted((a, b) => b.priority - a.priority);
@@ -232,12 +227,13 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
         seen.add(profile.name);
         if (winners.has(profile.name)) continue;
         if (builtinNames.has(profile.name) && profile.override !== true) continue;
-        winners.set(profile.name, { sourceId: entry.sourceId, profile });
+        winners.set(profile.name, entry.sourceId);
       }
     }
-    return [...winners.values()]
-      .filter(({ sourceId }) => sourceId === 'workspace')
-      .map(({ profile }) => profile);
+    return [...winners]
+      .filter(([, sourceId]) => sourceId === 'workspace')
+      .map(([name]) => name)
+      .toSorted();
   }
 }
 
@@ -253,7 +249,6 @@ function describeMcpServer(
       command: config.command,
       args: config.args,
       cwd: config.cwd,
-      envKeys: config.env === undefined ? undefined : Object.keys(config.env),
       origin,
     };
   }
@@ -261,8 +256,6 @@ function describeMcpServer(
     name,
     transport: config.transport,
     url: config.url,
-    headerKeys: config.headers === undefined ? undefined : Object.keys(config.headers),
-    bearerTokenEnvVar: config.bearerTokenEnvVar,
     origin,
   };
 }
@@ -278,9 +271,4 @@ async function realpathOrSelf(fs: IHostFileSystem, dir: string): Promise<string>
 function isInsideOrEqualDir(child: string, parent: string): boolean {
   const rel = relative(parent, child);
   return rel === '' || (rel !== '..' && !rel.startsWith('../') && !isAbsolute(rel));
-}
-
-function disclosureWarning(source: string, error: unknown): TrustDisclosureWarning {
-  const path = error instanceof Error2 ? error.details?.['path'] : undefined;
-  return { source, path: typeof path === 'string' ? path : undefined };
 }

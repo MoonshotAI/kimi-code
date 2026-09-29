@@ -18,7 +18,6 @@ export function agentProfileFromFile(
     !(definition.disallowedTools ?? []).includes('Skill');
   return normalizeAgentProfile({
     name: definition.name,
-    sourcePath: definition.path,
     description: definition.description,
     whenToUse: definition.whenToUse,
     override: definition.override || definition.source === 'explicit',

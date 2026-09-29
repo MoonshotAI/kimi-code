@@ -185,7 +185,7 @@ export class TrustPromptComponent implements Component, Focusable {
       lines.push(...wrap(`Load project ${subject}`, 1, width, 'text'));
       lines.push(
         ...wrap(
-          instructionSources.paths.map((path) => relativize(this.opts.workDir, path)).join(' · '),
+          `Check: ${instructionSources.paths.map((path) => relativize(this.opts.workDir, path)).join(' · ')}`,
           3,
           width,
           'textMuted',
@@ -193,11 +193,7 @@ export class TrustPromptComponent implements Component, Focusable {
         '',
       );
     }
-    for (const warning of warnings) {
-      const source =
-        warning.path === undefined ? warning.source : relativize(this.opts.workDir, warning.path);
-      lines.push(...wrap(`${source} — could not read`, 1, width, 'warning'));
-    }
+    for (const warning of warnings) lines.push(...wrap(warning, 1, width, 'warning'));
     if (lines.length === 0)
       lines.push(
         ...wrap('No project integrations or instructions to activate.', 1, width, 'textMuted'),

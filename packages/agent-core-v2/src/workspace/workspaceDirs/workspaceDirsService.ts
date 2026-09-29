@@ -50,10 +50,7 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
     this.projectRoot = workspace.cwd;
     this.configPath = '';
     this.ready = this.enqueue(() => this.reloadFromDisk());
-    void this.ready.then(
-      () => { this.watchLocalToml(); },
-      (error) => { this.log.warn(`cannot load project-local directories: ${String(error)}`); },
-    );
+    void this.ready.then(() => this.watchLocalToml());
   }
 
   private get fileDirs(): readonly string[] {

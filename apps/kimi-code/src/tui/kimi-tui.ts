@@ -3893,7 +3893,7 @@ export class KimiTUI {
         gatedMcpServers: [],
         gatedAdditionalDirs: [],
         additionalDirSources: [],
-        warnings: [{ source: 'Project settings' }],
+        warnings: ['Could not inspect project settings.'],
         instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] },
       };
     }

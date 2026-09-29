@@ -97,7 +97,6 @@ async function readMcpJson(
       `Failed to read ${filePath}: ${describeError(error)}`,
       {
         cause: error,
-        details: { path: filePath },
       },
     );
   }
@@ -113,7 +112,6 @@ async function readMcpJson(
       `Invalid JSON in ${filePath}: ${describeError(error)}`,
       {
         cause: error,
-        details: { path: filePath },
       },
     );
   }
@@ -126,7 +124,6 @@ async function readMcpJson(
       `Invalid MCP server config in ${filePath}: ${describeError(error)}`,
       {
         cause: error,
-        details: { path: filePath },
       },
     );
   }
