@@ -394,15 +394,13 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(body.code).toBe(40410);
   });
 
-  it('creates a session for a missing metadata.cwd and defers root validation to the first environment binding', async () => {
+  it('rejects a session for a missing metadata.cwd for a local binding', async () => {
     const missing = join(home as string, 'never-created');
-    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: missing } });
-    expect(created.body.code).toBe(0);
+    const created = await postJson<null>('/api/v1/sessions', { metadata: { cwd: missing } });
+    expect(created.body.code).toBe(40409);
 
-    const workspaces = await getJson<{ items: { root: string }[] }>('/api/v1/workspaces');
-    expect(workspaces.body.data.items.some((w) => w.root === missing)).toBe(true);
     const sessions = await getJson<PageWire>('/api/v1/sessions');
-    expect(sessions.body.data.items.some((s) => s.metadata.cwd === missing)).toBe(true);
+    expect(sessions.body.data.items.some((s) => s.metadata.cwd === missing)).toBe(false);
   });
 
   it('rejects create when metadata.cwd is not a directory (40409)', async () => {

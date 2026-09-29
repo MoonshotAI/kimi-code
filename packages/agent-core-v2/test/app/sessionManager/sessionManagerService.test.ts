@@ -10,6 +10,7 @@ import type { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
 import { EnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclarationService';
 import { SessionManager } from '#/app/sessionManager/sessionManagerService';
 import type { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { Program } from '#/program/program';
 import type { ProgramSessionControllerInput } from '#/program/programDependencies';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
@@ -34,6 +35,7 @@ function makeSessionManager(
     readonly appendLogStore?: IAppendLogStore;
     readonly bootstrap?: IBootstrapService;
     readonly log?: ILogService;
+    readonly hostFs?: IHostFileSystem;
   } = {},
 ): SessionManager {
   const log =
@@ -58,6 +60,12 @@ function makeSessionManager(
     ),
     log,
     environments,
+    overrides.hostFs ??
+      ({
+        _serviceBrand: undefined,
+        stat: async () => ({ isFile: false, isDirectory: true, size: 0 }),
+        realpath: async (path: string) => path,
+      } as unknown as IHostFileSystem),
   );
 }
 
@@ -913,6 +921,69 @@ describe('SessionManager remote environment wiring', () => {
     expect((byEnvironment.get('local')!.options[0] as { environmentId?: string }).environmentId).toBeUndefined();
   });
 
+  it('rejects a missing workDir for a local binding', async () => {
+    const { manager, byEnvironment } = remoteWiringSetup({
+      config: undefined,
+      hostFs: {
+        stat: async () => {
+          throw Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
+        },
+      } as unknown as IHostFileSystem,
+    });
+
+    const failure = await manager.create({ workDir: '/missing' }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: 'fs.path_not_found' });
+    expect((failure as Error).message).toContain('does not exist');
+    expect(byEnvironment.size).toBe(0);
+  });
+
+  it('rejects a non-directory workDir for a local binding', async () => {
+    const { manager, byEnvironment } = remoteWiringSetup({
+      config: undefined,
+      hostFs: {
+        stat: async () => ({ isFile: true, isDirectory: false, size: 0 }),
+        realpath: async (path: string) => path,
+      } as unknown as IHostFileSystem,
+    });
+
+    const failure = await manager.create({ workDir: '/file' }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: 'fs.path_not_found' });
+    expect((failure as Error).message).toContain('is not a directory');
+    expect(byEnvironment.size).toBe(0);
+  });
+
+  it('propagates host fs errors other than a missing path for a local binding', async () => {
+    const { manager, byEnvironment } = remoteWiringSetup({
+      config: undefined,
+      hostFs: {
+        stat: async () => {
+          throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+        },
+      } as unknown as IHostFileSystem,
+    });
+
+    await expect(manager.create({ workDir: '/denied' })).rejects.toThrow('EACCES');
+    expect(byEnvironment.size).toBe(0);
+  });
+
+  it('skips the local workDir check for a remote binding', async () => {
+    const { manager, byEnvironment } = remoteWiringSetup({
+      config: {
+        default: 'sandbox',
+        sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' },
+      },
+      remote: { status: 'ready' },
+      hostFs: {
+        stat: async () => {
+          throw Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
+        },
+      } as unknown as IHostFileSystem,
+    });
+
+    await manager.create({ workDir: '/missing-local' });
+    expect(byEnvironment.has('sandbox')).toBe(true);
+  });
+
   function remoteWiringSetup(options: {
     readonly config: unknown;
     readonly remote?: {
@@ -921,6 +992,7 @@ describe('SessionManager remote environment wiring', () => {
       readonly connect?: () => Promise<void>;
       readonly stat?: (path: string) => Promise<{ isDirectory: boolean }>;
     };
+    readonly hostFs?: IHostFileSystem;
   }) {
     registry = localRegistry();
     const remote = options.remote === undefined
@@ -932,6 +1004,7 @@ describe('SessionManager remote environment wiring', () => {
       { get: async () => undefined } as unknown as ISessionIndex,
       {
         config: configWith(options.config),
+        hostFs: options.hostFs,
       },
     );
     return { manager, registry, byEnvironment, createCalls, remote };

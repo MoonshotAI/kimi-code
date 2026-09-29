@@ -239,11 +239,17 @@ describe('server-v2 /api/v1 environment routes', () => {
       expect(entry?.connect_error).toContain('kimi: command not found');
     }, 90_000);
 
-    it('defers workspace root validation to the first environment binding', async () => {
+    it('rejects a missing workspace root for a local binding but defers it for a remote binding', async () => {
       const missingRoot = join(home as string, 'never-created');
-      const created = await call<SessionWire>('POST', '/api/v1/sessions', { metadata: { cwd: missingRoot } });
-      expect(created.body.code).toBe(0);
-      const id = created.body.data.id;
+      const local = await call<null>('POST', '/api/v1/sessions', { metadata: { cwd: missingRoot } });
+      expect(local.body.code).toBe(40409);
+      expect(local.body.msg).toContain(missingRoot);
+
+      const remote = await call<SessionWire>('POST', '/api/v1/sessions', {
+        metadata: { cwd: missingRoot },
+        environment_id: 'loop',
+      });
+      expect(remote.body.code).toBe(0);
 
       const bound = await call<null>('POST', '/api/v1/sessions', {
         metadata: { cwd: home as string },
@@ -253,8 +259,11 @@ describe('server-v2 /api/v1 environment routes', () => {
       expect(bound.body.code).toBe(40001);
       expect(bound.body.msg).toContain(missingRoot);
 
-      const binding = await call<EnvironmentBindingWire>('GET', `/api/v1/sessions/${id}/environment`);
-      expect(binding.body.data.environment_id).toBe('local');
+      const binding = await call<EnvironmentBindingWire>(
+        'GET',
+        `/api/v1/sessions/${remote.body.data.id}/environment`,
+      );
+      expect(binding.body.data.environment_id).toBe('loop');
     }, 90_000);
   });
 });

@@ -66,6 +66,7 @@ import {
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
+import { RemoteEnvironmentProviderFactory } from '@moonshot-ai/agent-core-v2/remote';
 
 import { McpOAuthService as McpOAuthServiceV2 } from '@moonshot-ai/agent-core-v2/mcpCore/oauth/service';
 
@@ -368,6 +369,104 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     } finally {
       await provider.dispose();
       await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  function stubGatedFakeBoxAttach(): { release(): void; restore(): void } {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const spy = vi
+      .spyOn(RemoteEnvironmentProviderFactory.prototype, 'attach')
+      .mockImplementation(async (host) => {
+        await gate;
+        const fake = new FakeEnvironment(
+          { environmentId: 'fake-box', generation: 'fake-generation' },
+          { capabilities: ['fs', 'process'] },
+        );
+        const environment = Object.assign(fake, {
+          fs: new HostFileSystem(),
+          process: new HostProcessService(),
+        });
+        const registration = host.registerEnvironment(environment);
+        return { dispose: () => registration.remove() };
+      });
+    return { release, restore: () => spy.mockRestore() };
+  }
+
+  it('waits for the remote environment provider attach before creating a declared remote session', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-race-work-'));
+    const remoteDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-race-remote-'));
+    tempDirs.push(workDir, remoteDir);
+    const gated = stubGatedFakeBoxAttach();
+    const { harness } = await makeEnvironmentHarness({ defaultCwd: remoteDir });
+    try {
+      let settled = false;
+      const createPromise = harness.createSession({ workDir, environmentId: 'fake-box' }).then(
+        (session) => {
+          settled = true;
+          return session;
+        },
+        (error: unknown) => {
+          settled = true;
+          throw error;
+        },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(settled).toBe(false);
+      gated.release();
+      const session = await createPromise;
+      expect(await session.getEnvironment()).toMatchObject({ environmentId: 'fake-box', cwd: remoteDir });
+    } finally {
+      gated.restore();
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('waits for the remote environment provider attach before resuming a remote-bound session', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-race-work-'));
+    const remoteDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-race-remote-'));
+    tempDirs.push(workDir, remoteDir);
+    const { harness, client, homeDir } = await makeEnvironmentHarness({ defaultCwd: remoteDir });
+    const provider = await attachFakeBoxEnvironment(client);
+    let sessionId: string;
+    try {
+      const session = await harness.createSession({ workDir, environmentId: 'fake-box' });
+      sessionId = session.id;
+      await client.engineAccessor.get(ISessionManager).close(sessionId);
+    } finally {
+      await provider.dispose();
+      await harness.close();
+    }
+
+    const gated = stubGatedFakeBoxAttach();
+    const freshClient = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      let settled = false;
+      const resumePromise = freshClient.resumeSession({ id: sessionId }).then(
+        (summary) => {
+          settled = true;
+          return summary;
+        },
+        (error: unknown) => {
+          settled = true;
+          throw error;
+        },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(settled).toBe(false);
+      gated.release();
+      await resumePromise;
+      expect(await freshClient.getEnvironment({ sessionId })).toMatchObject({
+        environmentId: 'fake-box',
+        cwd: remoteDir,
+      });
+    } finally {
+      gated.restore();
+      await freshClient.close();
       vi.unstubAllEnvs();
     }
   });

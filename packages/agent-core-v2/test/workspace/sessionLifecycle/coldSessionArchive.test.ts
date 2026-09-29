@@ -254,6 +254,11 @@ function sessionManagerResuming(sessionId: string): SessionManager {
     ),
     { _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService,
     environments,
+    {
+      _serviceBrand: undefined,
+      stat: async () => ({ isFile: false, isDirectory: true, size: 0 }),
+      realpath: async (path: string) => path,
+    } as unknown as IHostFileSystem,
   );
 }
 

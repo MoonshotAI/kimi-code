@@ -1025,6 +1025,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     action: () => Promise<T>,
   ): Promise<T> {
     if (this.liveSession(sessionId) !== undefined) return action();
+    await this.remoteEnvironmentProvider;
     const handle = await resumeSessionById(this.engineAccessor, sessionId);
     if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
     try {
@@ -1398,6 +1399,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         );
       }
     }
+    await this.remoteEnvironmentProvider;
     const handle = await this.engineAccessor.get(ISessionManager).create({
       sessionId: input.id,
       workDir,
@@ -1494,6 +1496,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       input.forkId === undefined ? [input.id] : [input.id, input.forkId],
       async () => {
         try {
+          await this.remoteEnvironmentProvider;
           const program = await programForSession(this.engineAccessor, input.id);
           if (program === undefined) throw SDKRpcClientV2.sessionNotFound(input.id);
           const meta = await this.engineAccessor.get(ISessionManager).fork({
@@ -1571,6 +1574,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       // the restore outcome, so it starts as soon as the wire path is known
       // and overlaps the engine's materialization.
       const mainWireFold = this.startMainWireFold(input.id, input.replayTurnLimit);
+      await this.remoteEnvironmentProvider;
       const handle = await resumeSessionById(this.engineAccessor, input.id, {
         additionalDirs: input.additionalDirs,
       });
@@ -1659,6 +1663,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       if (live !== undefined) {
         await closeSessionById(this.engineAccessor, sessionId);
       }
+      await this.remoteEnvironmentProvider;
       const handle = await resumeSessionById(this.engineAccessor, sessionId);
       if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
       const main = handle.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
