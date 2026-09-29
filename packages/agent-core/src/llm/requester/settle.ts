@@ -5,14 +5,14 @@ import {
   type AssistantMessage,
   type StreamedMessagePart,
 } from '#/llm/message';
-import { emptyUsage, mergeUsagePatch, NO_FINISH, type FinishInfo, type TokenUsage } from '#/llm/usage';
+import { mergeUsagePatch, NO_FINISH, type FinishInfo, type TokenUsage } from '#/llm/usage';
 
 import type { LlmRequestConfig, LlmRequestContent, LlmRequestEvent, LlmRequester } from './requester';
 import type { ToolCallIdNormalizer } from './tool-call-id';
 
 export interface LlmOutput {
   readonly message: AssistantMessage;
-  readonly usage: TokenUsage;
+  readonly usage?: TokenUsage;
   readonly headers?: Record<string, string>;
   readonly finish?: FinishInfo;
   readonly messageId?: string;
@@ -107,7 +107,7 @@ export async function settleLlmRequest(
   };
 
   const extras = () => ({
-    usage: usage ?? emptyUsage(),
+    usage,
     headers,
     finish,
     messageId,

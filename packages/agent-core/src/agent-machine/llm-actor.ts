@@ -5,7 +5,6 @@ import type { LlmRequester } from '#/llm/requester/requester';
 import type { LlmEvent, LlmInput } from '#/llm/requester/input';
 import { runLlmRequest, type LlmPolicy } from '#/llm/requester/policy';
 import type { LlmResult } from '#/llm/requester/settle';
-import { emptyUsage } from '#/llm/usage';
 
 function eventOf(result: LlmResult): LlmEvent {
   if (result.type === 'done') {
@@ -71,7 +70,7 @@ export function createRequestActor(
         sendBack(eventOf(result));
       } catch (error) {
         if (isAbortError(error) || input.signal.aborted) {
-          sendBack({ type: 'llm.aborted', message: null, usage: emptyUsage() });
+          sendBack({ type: 'llm.aborted', message: null, usage: undefined });
           return;
         }
         sendBack({ type: 'llm.failed.remote', error: toLlmErrorMessage(error), rawError: error });

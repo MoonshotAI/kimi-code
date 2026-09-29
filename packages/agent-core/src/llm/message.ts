@@ -448,13 +448,11 @@ export type ToolMeta = EntryMeta;
 
 export interface AssistantMeta extends EntryMeta {
   model?: { provider: string; model: string };
-  usage: TokenUsage;
+  usage?: TokenUsage;
   headers?: Record<string, string>;
   finish?: FinishInfo;
   messageId?: string;
 }
-
-export type AssistantMetaInput = Omit<AssistantMeta, 'usage'> & { usage?: TokenUsage };
 
 export interface HistoryEntry<T extends Message, F extends EntryMeta> {
   message: T;

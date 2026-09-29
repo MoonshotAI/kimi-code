@@ -1,7 +1,6 @@
 import type { LlmErrorMessage, LlmRemoteErrorMessage } from '#/llm/errors';
 import type { MediaLowerPorts } from '#/llm/media/materialize';
 import type { Message } from '#/llm/message';
-import { emptyUsage } from '#/llm/usage';
 
 import { applyCredential } from './credentials';
 import type { MessageResolver } from './input';
@@ -69,7 +68,7 @@ function abortedOf(result: Extract<LlmResult, { type: 'failed' }>): LlmResult {
   return {
     type: 'aborted',
     message: result.message ?? null,
-    usage: result.usage ?? emptyUsage(),
+    usage: result.usage,
     headers: result.headers,
     finish: result.finish,
     messageId: result.messageId,
@@ -108,7 +107,7 @@ export async function runLlmRequest(
         signal: input.signal,
       });
       if (input.signal.aborted) {
-        return { type: 'aborted', message: null, usage: emptyUsage() };
+        return { type: 'aborted', message: null, usage: undefined };
       }
     }
 
@@ -175,5 +174,5 @@ export async function runLlmRequest(
     return result;
   }
 
-  return { type: 'aborted', message: null, usage: emptyUsage() };
+  return { type: 'aborted', message: null, usage: undefined };
 }
