@@ -356,11 +356,7 @@ export class SessionEventHandler {
   }
 
   private handleMonitorEvent(event: BackgroundTaskEventDeliveredEvent): void {
-    const omitted =
-      event.omitted > 0
-        ? [`(${String(event.omitted)} earlier ${event.omitted === 1 ? 'line' : 'lines'} omitted; the full log is in the task output.)`]
-        : [];
-    const status = formatMonitorEvent(event.description, [...omitted, ...event.lines]);
+    const status = formatMonitorEvent(event.description, event.lines, event.omitted);
     this.host.streamingUI.flushNow();
     this.host.appendTranscriptEntry({
       id: nextTranscriptId(),

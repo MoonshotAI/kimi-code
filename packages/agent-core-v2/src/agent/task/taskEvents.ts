@@ -22,7 +22,7 @@ export class TaskEventStream {
   private omitted = 0;
   private seq = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
-  private inFlight = false;
+  private inFlight = 0;
   private windowStartedAt = 0;
   private windowLines = 0;
   private closed = false;
@@ -33,7 +33,7 @@ export class TaskEventStream {
   ) {}
 
   get hasQueuedBatch(): boolean {
-    return this.inFlight;
+    return this.inFlight > 0;
   }
 
   append(chunk: string): void {
@@ -105,7 +105,7 @@ export class TaskEventStream {
   }
 
   private schedule(): void {
-    if (this.closed || this.timer !== undefined || this.inFlight) return;
+    if (this.closed || this.timer !== undefined || this.inFlight > 0) return;
     this.timer = setTimeout(() => {
       this.timer = undefined;
       this.flush();
@@ -118,12 +118,12 @@ export class TaskEventStream {
     const batch: TaskEventBatch = { seq: ++this.seq, lines: this.pending, omitted: this.omitted };
     this.pending = [];
     this.omitted = 0;
-    this.inFlight = true;
+    this.inFlight += 1;
     let settled = false;
     this.host.deliver(batch, () => {
       if (settled) return;
       settled = true;
-      this.inFlight = false;
+      this.inFlight -= 1;
       this.schedule();
     });
   }

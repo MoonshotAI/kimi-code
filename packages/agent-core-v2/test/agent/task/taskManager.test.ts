@@ -1467,6 +1467,21 @@ describe('TaskEventStream', () => {
     expect(batches).toHaveLength(2);
   });
 
+  it('stays queued until every undelivered batch is consumed', () => {
+    vi.useFakeTimers();
+    const { stream, settle } = eventStream();
+
+    stream.append('one\n');
+    vi.advanceTimersByTime(TASK_EVENT_BATCH_MS);
+    stream.append('two\n');
+    stream.close();
+
+    settle(0);
+    expect(stream.hasQueuedBatch).toBe(true);
+    settle(1);
+    expect(stream.hasQueuedBatch).toBe(false);
+  });
+
   it('keeps the newest lines of a large batch and cuts very long lines', () => {
     vi.useFakeTimers();
     const { stream, batches } = eventStream();
