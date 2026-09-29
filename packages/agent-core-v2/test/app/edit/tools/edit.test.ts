@@ -43,15 +43,27 @@ function createTestEnv(home = '/home'): IHostEnvironment {
 
 function createSpiedEditFs(
   options: {
+    content?: string;
+    bom?: boolean;
+    readBytes?: ReturnType<typeof vi.fn>;
     readText?: ReturnType<typeof vi.fn>;
     writeText?: ReturnType<typeof vi.fn>;
   } = {},
 ) {
-  const readText = options.readText ?? vi.fn(async () => '');
+  const body = Buffer.from(options.content ?? '', 'utf8');
+  const readBytes =
+    options.readBytes ??
+    vi.fn(async (_path: string, n?: number) =>
+      (options.bom === true ? Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), body]) : body).subarray(
+        0,
+        n ?? Number.MAX_SAFE_INTEGER,
+      ),
+    );
+  const readText = options.readText ?? vi.fn(async () => options.content ?? '');
   const writeText = options.writeText ?? vi.fn(async () => undefined);
   const stat = vi.fn(async () => ({ isFile: true, isDirectory: false, size: 0 }));
-  const fs = { readText, writeText, stat } as unknown as IHostFileSystem;
-  return { fs, readText, writeText };
+  const fs = { readBytes, readText, writeText, stat } as unknown as IHostFileSystem;
+  return { fs, readBytes, readText, writeText };
 }
 
 function buildTool(
@@ -195,7 +207,7 @@ describe('EditTool', () => {
   it('replaces a unique first occurrence and writes the updated content', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const { fs } = createSpiedEditFs({
-      readText: vi.fn().mockResolvedValue('alpha beta'),
+      content: 'alpha beta',
       writeText,
     });
     const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
@@ -213,12 +225,17 @@ describe('EditTool', () => {
   it('executes against the selected runtime filesystem instead of the App filesystem', async () => {
     const runtimeWrite = vi.fn().mockResolvedValue(undefined);
     const { fs: runtimeFs } = createSpiedEditFs({
-      readText: vi.fn().mockResolvedValue('runtime content'),
+      content: 'runtime content',
       writeText: runtimeWrite,
     });
-    const appRead = vi.fn().mockRejectedValue(new Error('App filesystem bypass'));
+    const appReadBytes = vi.fn().mockRejectedValue(new Error('App filesystem bypass'));
+    const appReadText = vi.fn().mockRejectedValue(new Error('App filesystem bypass'));
     const appWrite = vi.fn().mockRejectedValue(new Error('App filesystem bypass'));
-    const { fs: appFs } = createSpiedEditFs({ readText: appRead, writeText: appWrite });
+    const { fs: appFs } = createSpiedEditFs({
+      readBytes: appReadBytes,
+      readText: appReadText,
+      writeText: appWrite,
+    });
     const tool = buildTool(runtimeFs, createTestEnv(), PERMISSIVE_WORKSPACE, appFs);
 
     const result = await execute(tool, {
@@ -229,14 +246,14 @@ describe('EditTool', () => {
 
     expect(result.output).toContain('Replaced 1 occurrence');
     expect(runtimeWrite).toHaveBeenCalledWith('/tmp/a.txt', 'runtime generation');
-    expect(appRead).not.toHaveBeenCalled();
+    expect(appReadBytes).not.toHaveBeenCalled();
+    expect(appReadText).not.toHaveBeenCalled();
     expect(appWrite).not.toHaveBeenCalled();
   });
 
   it('expands leading tilde paths using the kaos home directory', async () => {
-    const readText = vi.fn().mockResolvedValue('alpha beta');
     const writeText = vi.fn().mockResolvedValue(undefined);
-    const { fs } = createSpiedEditFs({ readText, writeText });
+    const { fs, readBytes, readText } = createSpiedEditFs({ content: 'alpha beta', writeText });
     const tool = buildTool(fs, createTestEnv('/home/test'), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, {
@@ -246,6 +263,7 @@ describe('EditTool', () => {
     });
 
     expect(result.output).toContain('Replaced 1 occurrence');
+    expect(readBytes).toHaveBeenCalledWith('/home/test/notes/today.txt');
     expect(readText).toHaveBeenCalledWith('/home/test/notes/today.txt', { errors: 'strict' });
     expect(writeText).toHaveBeenCalledWith('/home/test/notes/today.txt', 'alpha gamma');
   });
@@ -253,7 +271,7 @@ describe('EditTool', () => {
   it('treats replacement dollar sequences literally for single edits', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const { fs } = createSpiedEditFs({
-      readText: vi.fn().mockResolvedValue('alpha beta gamma'),
+      content: 'alpha beta gamma',
       writeText,
     });
     const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
@@ -271,7 +289,7 @@ describe('EditTool', () => {
   it('treats replacement dollar sequences literally for replace_all edits', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const { fs } = createSpiedEditFs({
-      readText: vi.fn().mockResolvedValue('a b a'),
+      content: 'a b a',
       writeText,
     });
     const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
@@ -290,7 +308,7 @@ describe('EditTool', () => {
   it('matches pure CRLF files through the LF model view and writes back CRLF', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const { fs } = createSpiedEditFs({
-      readText: vi.fn().mockResolvedValue('alpha\r\nbeta\r\ngamma\r\n'),
+      content: 'alpha\r\nbeta\r\ngamma\r\n',
       writeText,
     });
     const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
@@ -308,7 +326,7 @@ describe('EditTool', () => {
   it('does not double carriage returns when editing pure CRLF files', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const { fs } = createSpiedEditFs({
-      readText: vi.fn().mockResolvedValue('alpha\r\nbeta\r\n'),
+      content: 'alpha\r\nbeta\r\n',
       writeText,
     });
     const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
@@ -326,7 +344,7 @@ describe('EditTool', () => {
   it('keeps mixed line ending files on the raw exact path', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const { fs } = createSpiedEditFs({
-      readText: vi.fn().mockResolvedValue('alpha\r\nbeta\ngamma\r\n'),
+      content: 'alpha\r\nbeta\ngamma\r\n',
       writeText,
     });
     const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
@@ -345,7 +363,7 @@ describe('EditTool', () => {
   it('allows exact raw edits in mixed line ending files without normalizing the rest', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const { fs } = createSpiedEditFs({
-      readText: vi.fn().mockResolvedValue('alpha\r\nbeta\ngamma\r\n'),
+      content: 'alpha\r\nbeta\ngamma\r\n',
       writeText,
     });
     const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
@@ -363,7 +381,7 @@ describe('EditTool', () => {
   it('replace_all replaces every occurrence', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const { fs } = createSpiedEditFs({
-      readText: vi.fn().mockResolvedValue('a b a'),
+      content: 'a b a',
       writeText,
     });
     const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
@@ -380,9 +398,8 @@ describe('EditTool', () => {
   });
 
   it('rejects no-op edits before file I/O', async () => {
-    const readText = vi.fn().mockResolvedValue('same');
     const writeText = vi.fn().mockResolvedValue(undefined);
-    const { fs } = createSpiedEditFs({ readText, writeText });
+    const { fs, readBytes } = createSpiedEditFs({ content: 'same', writeText });
     const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, {
@@ -394,14 +411,14 @@ describe('EditTool', () => {
 
     expect(result).toMatchObject({ isError: true });
     expect(result.output).toContain('No changes to make');
-    expect(readText).not.toHaveBeenCalled();
+    expect(readBytes).not.toHaveBeenCalled();
     expect(writeText).not.toHaveBeenCalled();
   });
 
   it('errors when old_string is missing', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const { fs } = createSpiedEditFs({
-      readText: vi.fn().mockResolvedValue('alpha beta'),
+      content: 'alpha beta',
       writeText,
     });
     const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
@@ -420,7 +437,7 @@ describe('EditTool', () => {
   it('errors when old_string is not unique and replace_all is false', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const { fs } = createSpiedEditFs({
-      readText: vi.fn().mockResolvedValue('same same'),
+      content: 'same same',
       writeText,
     });
     const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
@@ -439,8 +456,7 @@ describe('EditTool', () => {
   });
 
   it('rejects relative traversal edits before reading', async () => {
-    const readText = vi.fn().mockResolvedValue('secret');
-    const { fs } = createSpiedEditFs({ readText });
+    const { fs, readBytes } = createSpiedEditFs({ content: 'secret' });
     const tool = buildTool(fs, createTestEnv(), stubWorkspaceContext('/workspace/project'));
 
     const result = await execute(tool, {
@@ -451,13 +467,13 @@ describe('EditTool', () => {
 
     expect(result).toMatchObject({ isError: true });
     expect(result.output).toContain('absolute path');
-    expect(readText).not.toHaveBeenCalled();
+    expect(readBytes).not.toHaveBeenCalled();
   });
 
   it('replaces unicode strings (CJK) and round-trips the surrounding text', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const { fs } = createSpiedEditFs({
-      readText: vi.fn().mockResolvedValue('Hello 世界! café'),
+      content: 'Hello 世界! café',
       writeText,
     });
     const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
@@ -476,7 +492,7 @@ describe('EditTool', () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const original = 'Hello world!';
     const { fs } = createSpiedEditFs({
-      readText: vi.fn().mockResolvedValue(original),
+      content: original,
       writeText,
     });
     const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
@@ -493,7 +509,7 @@ describe('EditTool', () => {
 
   it('errors with an is-not-a-file phrasing when the path resolves to a directory', async () => {
     const { fs } = createSpiedEditFs({
-      readText: vi.fn().mockRejectedValue(
+      readBytes: vi.fn().mockRejectedValue(
         Object.assign(new Error('EISDIR: illegal operation on a directory'), {
           code: 'EISDIR',
         }),
@@ -513,7 +529,7 @@ describe('EditTool', () => {
 
   it('maps a HostFsError-wrapped EISDIR to the is-not-a-file phrasing', async () => {
     const { fs } = createSpiedEditFs({
-      readText: vi.fn().mockRejectedValue(
+      readBytes: vi.fn().mockRejectedValue(
         new HostFsError(OsFsErrors.codes.OS_FS_IS_DIRECTORY, 'read failed: path is a directory', {
           details: { path: '/tmp/dir', op: 'read', errno: 'EISDIR' },
           cause: Object.assign(new Error('EISDIR: illegal operation on a directory'), {
@@ -537,7 +553,7 @@ describe('EditTool', () => {
   it('replaces a substring with an empty new_string (deletion)', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const { fs } = createSpiedEditFs({
-      readText: vi.fn().mockResolvedValue('Hello world!'),
+      content: 'Hello world!',
       writeText,
     });
     const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
@@ -555,7 +571,7 @@ describe('EditTool', () => {
   it('allows absolute edits outside the workspace under default policy', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const { fs } = createSpiedEditFs({
-      readText: vi.fn().mockResolvedValue('old content'),
+      content: 'old content',
       writeText,
     });
     const tool = buildTool(fs, createTestEnv(), stubWorkspaceContext('/workspace'));
@@ -573,7 +589,7 @@ describe('EditTool', () => {
   it('allows absolute edits to a sibling dir that merely shares the work-dir prefix', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const { fs } = createSpiedEditFs({
-      readText: vi.fn().mockResolvedValue('content'),
+      content: 'content',
       writeText,
     });
     const tool = buildTool(fs, createTestEnv(), stubWorkspaceContext('/workspace'));
@@ -600,6 +616,324 @@ describe('EditTool', () => {
         displayPath: file,
         old_string: 'foo',
         new_string: 'bar',
+        replace_all: false,
+      });
+
+      expect(result.ok).toBe(false);
+      const after = await readFile(file);
+      expect(Buffer.compare(after, original)).toBe(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves a UTF-8 BOM across edits without exposing it to matching', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { fs } = createSpiedEditFs({
+      content: 'alpha beta',
+      bom: true,
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/bom.txt',
+      old_string: 'beta',
+      new_string: 'gamma',
+    });
+
+    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(writeText).toHaveBeenCalledWith('/tmp/bom.txt', '\uFEFFalpha gamma');
+  });
+
+  it('preserves a UTF-8 BOM together with the CRLF line ending style', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { fs } = createSpiedEditFs({
+      content: 'alpha\r\nbeta\r\n',
+      bom: true,
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/bom-crlf.txt',
+      old_string: 'alpha\nbeta',
+      new_string: 'one\ntwo',
+    });
+
+    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(writeText).toHaveBeenCalledWith('/tmp/bom-crlf.txt', '\uFEFFone\r\ntwo\r\n');
+  });
+
+  it('does not double the BOM when the text source already returns one', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { fs } = createSpiedEditFs({
+      bom: true,
+      readText: vi.fn(async () => '\uFEFFalpha beta'),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/bom.txt',
+      old_string: 'alpha',
+      new_string: 'one',
+    });
+
+    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(writeText).toHaveBeenCalledWith('/tmp/bom.txt', '\uFEFFone beta');
+  });
+
+  it('rejects a complete UTF-8 BOM file ending in a partial sequence even when the text source decodes it', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { fs } = createSpiedEditFs({
+      readBytes: vi.fn(async () => Buffer.from([0xef, 0xbb, 0xbf, 0x61, 0xc2])),
+      readText: vi.fn(async () => 'a'),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/bom-partial.txt',
+      old_string: 'a',
+      new_string: 'b',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('is not a UTF-8 text file');
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it('rejects a file whose invalid bytes sit past the probe window even when the text source decodes it', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { fs } = createSpiedEditFs({
+      readBytes: vi.fn(async () =>
+        Buffer.concat([Buffer.from('a'.repeat(600), 'utf8'), Buffer.from([0xff])]),
+      ),
+      readText: vi.fn(async () => 'a'.repeat(600) + '\uFFFD'),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/late-invalid.txt',
+      old_string: 'a',
+      new_string: 'b',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('is not a UTF-8 text file');
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it('edits through the text source when the BOM probe finds nothing on disk', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { fs } = createSpiedEditFs({
+      content: 'alpha beta',
+      readBytes: vi.fn(async () => {
+        throw Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
+      }),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/buffer.txt',
+      old_string: 'beta',
+      new_string: 'gamma',
+    });
+
+    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(writeText).toHaveBeenCalledWith('/tmp/buffer.txt', 'alpha gamma');
+  });
+
+  it('rejects a UTF-16LE file even when the text source decodes it', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { fs } = createSpiedEditFs({
+      readBytes: vi.fn(async () => Buffer.from([0xff, 0xfe])),
+      readText: vi.fn(async () => '$Value = 1\n'),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/utf16.txt',
+      old_string: '$Value',
+      new_string: '$Number',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('is not a UTF-8 text file');
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it('rejects a BOM-less UTF-16LE file even when the text source decodes it', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { fs } = createSpiedEditFs({
+      readBytes: vi.fn(async () => Buffer.from('$Value = 1\n', 'utf16le')),
+      readText: vi.fn(async () => '$Value = 1\n'),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/utf16-nobom.txt',
+      old_string: '$Value',
+      new_string: '$Number',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('is not a UTF-8 text file');
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it('rejects a UTF-8 BOM file whose body is binary even when the text source decodes it', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { fs } = createSpiedEditFs({
+      readBytes: vi.fn(async () => Buffer.from([0xef, 0xbb, 0xbf, 0x00, 0xd8])),
+      readText: vi.fn(async () => 'a'),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/bom-binary.txt',
+      old_string: 'a',
+      new_string: 'b',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('is not a UTF-8 text file');
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it('rejects a UTF-8 BOM glued onto UTF-16 bytes even when the text source decodes it', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { fs } = createSpiedEditFs({
+      readBytes: vi.fn(async () =>
+        Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('a\n', 'utf16le')]),
+      ),
+      readText: vi.fn(async () => 'a\n'),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/bom-utf16.txt',
+      old_string: 'a',
+      new_string: 'b',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('is not a UTF-8 text file');
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it('edits BOM-less UTF-16 bytes that are also valid UTF-8 as a UTF-8 file', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { fs } = createSpiedEditFs({
+      readBytes: vi.fn(async () => Buffer.from('你好世界', 'utf16le')),
+      readText: vi.fn(async () => '`O}Y\u0016NLu'),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/ambig.txt',
+      old_string: 'NLu',
+      new_string: 'NLx',
+    });
+
+    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(writeText).toHaveBeenCalledWith('/tmp/ambig.txt', '`O}Y\u0016NLx');
+  });
+
+  it('edits a real UTF-8 BOM file on disk and keeps the BOM', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'edit-bom-'));
+    const file = join(dir, 'sample.ps1');
+    const original = Buffer.concat([
+      Buffer.from([0xef, 0xbb, 0xbf]),
+      Buffer.from('# 中文注释\n$Value = 1\n', 'utf8'),
+    ]);
+    await writeFile(file, original);
+    try {
+      const service = new FileEditService(new HostFileSystem());
+      const result = await service.edit({
+        path: file,
+        displayPath: file,
+        old_string: '$Value = 1',
+        new_string: '$Value = 2',
+        replace_all: false,
+      });
+
+      expect(result.ok).toBe(true);
+      const after = await readFile(file);
+      expect([...after.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+      expect(after.indexOf(0xef)).toBe(0);
+      expect(after.toString('utf8')).toBe('\uFEFF# 中文注释\n$Value = 2\n');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects editing a UTF-16LE BOM file and leaves its bytes untouched', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'edit-utf16-'));
+    const file = join(dir, 'sample.txt');
+    const original = Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from('$Value = 1\n', 'utf16le'),
+    ]);
+    await writeFile(file, original);
+    try {
+      const service = new FileEditService(new HostFileSystem());
+      const result = await service.edit({
+        path: file,
+        displayPath: file,
+        old_string: '$Value',
+        new_string: '$Number',
+        replace_all: false,
+      });
+
+      expect(result.ok).toBe(false);
+      const after = await readFile(file);
+      expect(Buffer.compare(after, original)).toBe(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a UTF-32BE file even when the text source decodes it', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { fs } = createSpiedEditFs({
+      readBytes: vi.fn(async () => Buffer.from([0x00, 0x00, 0xfe, 0xff])),
+      readText: vi.fn(async () => '$Value = 1\n'),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/utf32.txt',
+      old_string: '$Value',
+      new_string: '$Number',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('is not a UTF-8 text file');
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it('rejects editing a UTF-32BE BOM file and leaves its bytes untouched', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'edit-utf32-'));
+    const file = join(dir, 'sample.txt');
+    const original = Buffer.from([0x00, 0x00, 0xfe, 0xff, 0x00, 0x00, 0x00, 0x61]);
+    await writeFile(file, original);
+    try {
+      const service = new FileEditService(new HostFileSystem());
+      const result = await service.edit({
+        path: file,
+        displayPath: file,
+        old_string: 'a',
+        new_string: 'b',
         replace_all: false,
       });
 

@@ -12,13 +12,13 @@ export const WriteInputSchema = z.object({
   content: z
     .string()
     .describe(
-      'Raw full file content to write exactly as provided. This does not use the Read/Edit text view.',
+      'Raw full file content to write. This does not use the Read/Edit text view. Encoding and line endings may be adjusted to preserve an existing file\'s style or to follow repo conventions for new files (see tool description).',
     ),
   mode: z
     .enum(['overwrite', 'append'])
     .optional()
     .describe(
-      'Write mode. Defaults to overwrite. append adds content to the end exactly as provided and does not add a newline.',
+      'Write mode. Defaults to overwrite. append adds content to the end of an existing file literally and does not add a newline; a file created by append follows the same new-file conventions as overwrite.',
     ),
 });
 

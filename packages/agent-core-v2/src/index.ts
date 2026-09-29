@@ -10,6 +10,7 @@ export * from '#/_base/di/serviceCollection';
 export * from '#/_base/di/cascadeEngine';
 export * from '#/_base/di/dependencyGraph';
 export * from '#/_base/lifecycle/ledger';
+export * from '#/_base/text/encoding';
 export {
   collection,
   isCollectionToken,
