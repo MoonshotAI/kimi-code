@@ -277,7 +277,7 @@ async function realpathOrSelf(fs: IHostFileSystem, dir: string): Promise<string>
 
 function isInsideOrEqualDir(child: string, parent: string): boolean {
   const rel = relative(parent, child);
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+  return rel === '' || (rel !== '..' && !rel.startsWith('../') && !isAbsolute(rel));
 }
 
 function disclosureWarning(source: string, error: unknown): TrustDisclosureWarning {

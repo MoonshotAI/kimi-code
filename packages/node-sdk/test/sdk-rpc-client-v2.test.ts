@@ -1640,6 +1640,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
     tempDirs.push(workDir, outsideDir);
     const insideDir = join(workDir, 'sub');
     await mkdir(insideDir, { recursive: true });
+    await mkdir(join(workDir, '..cache'));
     // linked-dir lexically sits inside the project but points outside it, so
     // trusting would grant access to the target; inner-link points back into
     // the project and grants nothing new.
@@ -1648,7 +1649,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
     await mkdir(join(workDir, '.kimi-code'), { recursive: true });
     await writeFile(
       join(workDir, '.kimi-code', 'local.toml'),
-      `[workspace]\nadditional_dir = [${JSON.stringify(outsideDir)}, ".", "sub", "linked-dir", "inner-link"]\n`,
+      `[workspace]\nadditional_dir = [${JSON.stringify(outsideDir)}, ".", "sub", "..cache", "linked-dir", "inner-link"]\n`,
       'utf-8',
     );
     await writeFile(join(outsideDir, 'AGENTS.md'), '# Demo\n', 'utf-8');
