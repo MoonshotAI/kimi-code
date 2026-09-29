@@ -27,6 +27,9 @@ const call = (name: string, args: unknown): Step => ({ calls: [{ name, args }] }
 export const bash = (command: string, description = 'slow build'): Step =>
   call('Bash', { command, run_in_background: true, description });
 export const waitFor = (timeout: number): Step => call('WaitFor', { timeout });
+export const monitor = (command: string, description = 'ticker'): Step =>
+  call('Monitor', { command, description });
+export const foreground = (command: string): Step => call('Bash', { command, timeout: 60 });
 export const completeGoal = (): Step => call('UpdateGoal', { status: 'complete' });
 /** A foreground coder subagent; its own requests consume the following script steps. */
 export const agent = (prompt: string): Step =>
@@ -185,7 +188,12 @@ export class Tui {
   }
 }
 
-async function launchTui(name: string, baseUrl: string, root: string): Promise<Tui> {
+async function launchTui(
+  name: string,
+  baseUrl: string,
+  root: string,
+  extraEnv: Readonly<Record<string, string>>,
+): Promise<Tui> {
   const home = join(root, 'home');
   const work = join(root, 'work');
   mkdirSync(home);
@@ -198,6 +206,7 @@ async function launchTui(name: string, baseUrl: string, root: string): Promise<T
     KIMI_MODEL_BASE_URL: baseUrl,
     KIMI_MODEL_API_KEY: 'test-key',
     KIMI_DISABLE_TELEMETRY: '1',
+    ...extraEnv,
   };
   const argv = [
     join(APP_ROOT, 'node_modules/.bin/tsx'),
@@ -246,13 +255,14 @@ export async function hasTmux(): Promise<boolean> {
 export function scenario(
   script: readonly Step[],
   body: (ctx: { readonly tui: Tui; readonly model: MockModel }) => Promise<void>,
+  options: { readonly env?: Readonly<Record<string, string>> } = {},
 ): (ctx: { readonly task: { readonly name: string } }) => Promise<void> {
   return async ({ task }) => {
     const name = task.name.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-').slice(0, 48);
     const mock = await startMockModel(script);
     const root = mkdtempSync(join(tmpdir(), 'kimi-tui-e2e-'));
     try {
-      const tui = await launchTui(name, mock.baseUrl, root);
+      const tui = await launchTui(name, mock.baseUrl, root, options.env ?? {});
       try {
         await body({ tui, model: mock.model });
       } finally {
