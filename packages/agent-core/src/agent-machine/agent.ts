@@ -125,7 +125,7 @@ export type AgentEvent =
   | ToolEvent
   | { type: 'input.submit'; entry: UserEntry }
   | { type: 'input.notify'; entry: UserEntry }
-  | { type: 'input.remind'; key: string; entry: SystemEntry | UserEntry }
+  | { type: 'input.remind'; entry: SystemEntry | UserEntry }
   | { type: 'input.steer'; id: string | readonly string[] }
   | { type: 'input.cancel'; id: string }
   | { type: 'input.abort'; reason?: unknown }
@@ -154,7 +154,7 @@ export type AgentEmitted =
     }
   | { type: 'prompt.submitted'; entry: UserEntry }
   | { type: 'prompt.notified'; entry: UserEntry }
-  | { type: 'prompt.reminded'; key: string; entry: SystemEntry | UserEntry }
+  | { type: 'prompt.reminded'; entry: SystemEntry | UserEntry }
   | { type: 'prompt.cancelled'; id: string; cancelled: boolean }
   | { type: 'prompt.steered'; ids: string[]; queueItemIds: string[]; entries: UserEntry[] }
   | { type: 'agent.paused' }
@@ -432,13 +432,8 @@ export function createAgentMachine({
       'input.remind': {
         actions: enqueueActions(({ context, event, enqueue }) => {
           if (event.type !== 'input.remind') return;
-          enqueue.assign({
-            reminders: [
-              ...context.reminders.filter((entry) => entry.meta?.key !== event.key),
-              event.entry,
-            ],
-          });
-          enqueue.emit({ type: 'prompt.reminded' as const, key: event.key, entry: event.entry });
+          enqueue.assign({ reminders: [...context.reminders, event.entry] });
+          enqueue.emit({ type: 'prompt.reminded' as const, entry: event.entry });
         }),
       },
       'input.steer': {

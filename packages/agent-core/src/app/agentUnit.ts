@@ -112,10 +112,10 @@ function bindAgentLog(actor: AgentActor, store: AgentStore): { settled(): Promis
     persistMessages(event.messages);
   });
   actor.on('turn.started', () => {
-    persistMessages(actor.getSnapshot().context.messages);
     const context = actor.getSnapshot().context;
     if (context.activeTurnId !== undefined) activeTurnId = context.activeTurnId;
     write({ type: 'turn.started', turnId: activeTurnId, queueItemId: context.drainedId });
+    persistMessages(context.messages);
   });
   actor.on('turn.done', (event) => {
     const outcome = event.outcome;
@@ -164,7 +164,7 @@ export interface AgentCommands {
   setCredentialProvider(provider?: LlmCredentialProvider): void;
   submit(message: UserMessage, meta?: UserMeta): AgentAck<'prompt.submitted'> | undefined;
   notify(message: UserMessage): AgentAck<'prompt.notified'> | undefined;
-  remind(key: string, message: UserMessage | SystemMessage): AgentAck<'prompt.reminded'> | undefined;
+  remind(message: UserMessage | SystemMessage, meta?: UserMeta): AgentAck<'prompt.reminded'> | undefined;
   cancel(id: string): AgentAck<'prompt.cancelled'> | undefined;
   steer(ids: string | readonly string[]): AgentAck<'prompt.steered'> | undefined;
   abort(reason?: unknown): AgentAck<'agent.aborted'> | undefined;
@@ -259,11 +259,11 @@ export const AgentUnit = createUnit<AgentUnitProps>('agent', (props) => {
       const entry = createUserEntry(message, { source: 'notify' });
       return acceptEmitted(actor, node, 'prompt.notified', () => send({ type: 'input.notify', entry }), (event) => event.entry === entry);
     },
-    remind: (key, message) => {
+    remind: (message, meta) => {
       const entry = message.role === 'system'
-        ? createSystemEntry(message, { source: 'reminder', key })
-        : createUserEntry(message, { source: 'reminder', key });
-      return acceptEmitted(actor, node, 'prompt.reminded', () => send({ type: 'input.remind', key, entry }), (event) => event.entry === entry);
+        ? createSystemEntry(message, { source: 'reminder', key: meta?.key })
+        : createUserEntry(message, { source: 'reminder', ...meta });
+      return acceptEmitted(actor, node, 'prompt.reminded', () => send({ type: 'input.remind', entry }), (event) => event.entry === entry);
     },
     cancel: (id) =>
       acceptEmitted(actor, node, 'prompt.cancelled', () => send({ type: 'input.cancel', id }), (event) => event.id === id),
@@ -360,7 +360,7 @@ export function agentHandle(handle: UnitHandle): AgentHandle {
     setCredentialProvider: (provider) => commands().setCredentialProvider(provider),
     submit: (message, meta) => commands().submit(message, meta),
     notify: (message) => commands().notify(message),
-    remind: (key, message) => commands().remind(key, message),
+    remind: (message, meta) => commands().remind(message, meta),
     cancel: (id) => commands().cancel(id),
     steer: (ids) => commands().steer(ids),
     abort: (reason) => commands().abort(reason),

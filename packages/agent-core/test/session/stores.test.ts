@@ -88,8 +88,16 @@ describe('SessionStores open/fork', () => {
   it('folds history and turnIndex for opened and forked agents, then diverges', async () => {
     const env = await testEnv();
     const main = await env.stores.open('main', { source: 'test-source' });
+    const journal: string[] = [];
+    main.onCommit((entry) => {
+      const type = entry.event.type as string;
+      if (type === 'turn.started' || type === 'message.appended' || type === 'turn.ended') {
+        journal.push(type);
+      }
+    });
     const actor = await startAgent(main, { agentId: 'main', branchId: env.stores.branch('main') });
     await runTurn(actor, main, 'hi', 2);
+    expect(journal).toEqual(['turn.started', 'message.appended', 'message.appended', 'turn.ended']);
     await env.stores.flush();
 
     const fork = await env.stores.fork('main', 'fork');
@@ -152,7 +160,7 @@ describe('SessionStores undo', () => {
 
     expect(result.branchId).toBe('main~2');
     expect(env.stores.branch('main')).toBe('main~2');
-    expect(historyTexts(main)).toEqual(['first', 'echo:first', 'second']);
+    expect(historyTexts(main)).toEqual(['first', 'echo:first']);
     expect(main.getState().queue).toEqual([]);
     expect(main.getState().turnIndex.turns).toHaveLength(1);
     expect(main.getState().turnIndex.nextTurnId).toBe(1);
@@ -167,8 +175,8 @@ describe('SessionStores undo', () => {
 
     await actor.disposeAsync();
     const resumed = await startAgent(main, { agentId: 'main', branchId: env.stores.branch('main') });
-    await runTurn(resumed, main, 'third', 5);
-    expect(historyTexts(main)).toEqual(['first', 'echo:first', 'second', 'third', 'echo:third']);
+    await runTurn(resumed, main, 'third', 4);
+    expect(historyTexts(main)).toEqual(['first', 'echo:first', 'third', 'echo:third']);
     expect(env.tree.openBranch('main').head).toBe(8);
     expect(main.getState().turnIndex.nextTurnId).toBe(2);
 
@@ -212,7 +220,7 @@ describe('SessionStores reopen', () => {
     });
     const restoredMain = await restored.stores.open('main');
     expect(restored.stores.branch('main')).toBe('main~2');
-    expect(historyTexts(restoredMain)).toEqual(['first', 'echo:first', 'second']);
+    expect(historyTexts(restoredMain)).toEqual(['first', 'echo:first']);
     expect(restoredMain.getState().turnIndex.nextTurnId).toBe(1);
     const restoredFork = await restored.stores.open('fork');
     expect(historyTexts(restoredFork)).toEqual([
@@ -226,11 +234,10 @@ describe('SessionStores reopen', () => {
     expect(restoredFork.getState().turnIndex.nextTurnId).toBe(3);
 
     const actor2 = await startAgent(restoredMain, { agentId: 'main', branchId: restored.stores.branch('main') });
-    await runTurn(actor2, restoredMain, 'again', 5);
+    await runTurn(actor2, restoredMain, 'again', 4);
     expect(historyTexts(restoredMain)).toEqual([
       'first',
       'echo:first',
-      'second',
       'again',
       'echo:again',
     ]);
