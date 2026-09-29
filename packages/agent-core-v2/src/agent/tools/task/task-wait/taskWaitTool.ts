@@ -20,9 +20,11 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { abortError, isAbortError, linkAbortSignal } from '#/_base/utils/abort';
 import { WAIT_FOR_FLAG_ID } from './flag';
+import { MONITOR_FLAG_ID } from '#/agent/tools/task/monitor/flag';
 import { isMonitorTaskId } from '#/agent/tools/task/monitor/monitor';
 import { IWaitForTool, WaitForInputSchema, type WaitForInput } from './task-wait';
 import WAIT_FOR_DESCRIPTION from './task-wait.md?raw';
+import WAIT_FOR_MONITOR_GUIDANCE from './task-wait-monitor.md?raw';
 import WAIT_FOR_SUBAGENT_GUIDANCE from './task-wait-subagent.md?raw';
 
 const OUTPUT_PREVIEW_BYTES = 32 * 1024;
@@ -140,7 +142,9 @@ export class WaitForTool implements IWaitForTool {
     this.isSubagent = scopeContext.agentId !== MAIN_AGENT_ID;
     this.description = this.isSubagent
       ? `${WAIT_FOR_DESCRIPTION.trimEnd()}\n${WAIT_FOR_SUBAGENT_GUIDANCE}`
-      : WAIT_FOR_DESCRIPTION;
+      : flags.enabled(MONITOR_FLAG_ID)
+        ? `${WAIT_FOR_DESCRIPTION.trimEnd()}\n${WAIT_FOR_MONITOR_GUIDANCE}`
+        : WAIT_FOR_DESCRIPTION;
   }
 
   resolveExecution(args: WaitForInput): ToolExecution {
@@ -174,15 +178,13 @@ export class WaitForTool implements IWaitForTool {
     if (args.task_id === undefined) {
       if (runningAtStart.length === 0) {
         this.track(args, startedAt, timeoutMs, 'completed', 0);
-        const monitorNote = running.length > 0
-          ? ' Running monitors are not waited for: their output arrives as notifications. Pass a monitor\'s task_id to wait for its next event.'
-          : '';
+        const runningMonitors = running.length > 0 ? running.length : undefined;
+        const message = runningMonitors === undefined
+          ? 'No background tasks are running, so there is nothing to wait for. Finished tasks report back via automatic notification.'
+          : `No background tasks to wait for: only monitors are running (${String(runningMonitors)}), and a WaitFor without task_id does not wait for monitors. Their output arrives as notifications; pass a monitor's task_id to wait for its next event.`;
         return {
           output: this.withRepeatWarning(
-            [
-              formatPlainObject({ waitStatus: 'no_tasks', waitedMs: 0, timeoutMs }),
-              `No background tasks are running, so there is nothing to wait for. Finished tasks report back via automatic notification.${monitorNote}`,
-            ].join('\n\n'),
+            [formatPlainObject({ waitStatus: 'no_tasks', waitedMs: 0, timeoutMs, runningMonitors }), message].join('\n\n'),
             tally,
           ),
           isError: false,

@@ -2270,6 +2270,21 @@ describe('ToolCallComponent', () => {
       );
     });
 
+    it('says only monitors are running when a wait has nothing else to wait for', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_wait_monitors', name: 'WaitFor', args: { timeout: 60 } },
+        {
+          tool_call_id: 'call_wait_monitors',
+          output: 'wait_status: no_tasks\nwaited_ms: 0\ntimeout_ms: 60000\nrunning_monitors: 1',
+          is_error: false,
+        },
+      );
+
+      const out = strip(component.render(100).join('\n'));
+      expect(out).toContain('Nothing to wait for (only monitors running)');
+      expect(out).not.toContain('No background tasks running');
+    });
+
     it('renders a timeout as its own non-error header', () => {
       const component = new ToolCallComponent(
         {

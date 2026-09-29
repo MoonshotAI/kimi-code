@@ -92,6 +92,12 @@ export class MonitorTool implements IMonitorTool {
       return { isError: true, output: 'description cannot be empty.' };
     }
 
+    try {
+      this.tasks.assertCanRegister(true);
+    } catch (error) {
+      return { isError: true, output: error instanceof Error ? error.message : String(error) };
+    }
+
     const lease = this.runtime.acquire(['process']);
     const view = new RuntimeWorkspaceView(lease.runtime, this.workspaceCtx);
     const env = lease.runtime.environment;

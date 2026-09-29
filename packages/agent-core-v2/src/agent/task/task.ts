@@ -78,6 +78,7 @@ export interface IAgentTaskService {
   readonly onDidQueueEvent: Event<string>;
 
   track(handle: ITaskHandle, options: AgentTaskTrackOptions): IAgentTaskEntry;
+  assertCanRegister(detached: boolean): void;
   registerTask(task: AgentTask, options?: RegisterAgentTaskOptions): string;
   getTask(taskId: string): AgentTaskInfo | undefined;
   list(activeOnly?: boolean, limit?: number): readonly AgentTaskInfo[];

@@ -910,7 +910,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     return reason;
   }
 
-  private assertCanRegister(detached: boolean): void {
+  assertCanRegister(detached: boolean): void {
     const maxRunningTasks = resolveAgentTaskConfig(this.config)?.maxRunningTasks;
     if (maxRunningTasks === undefined) return;
     if (!detached) return;
