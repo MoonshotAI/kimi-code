@@ -1649,12 +1649,15 @@ describe('AgentTaskService monitor events', () => {
     const fixture = createAgentTaskService();
     const notes = captureNotifications(fixture);
     const { proc, stdout, stderr } = controllableProcess();
-    const shellExit = Promise.withResolvers<number>();
+    let exitShell: (exitCode: number) => void = () => {};
+    const shellExit = new Promise<number>((resolve) => {
+      exitShell = resolve;
+    });
 
     const taskId = fixture.manager.registerTask(
-      new MonitorProcessTask({ ...proc, wait: () => shellExit.promise }, 'tail -F app.log &', 'watch app log'),
+      new MonitorProcessTask({ ...proc, wait: () => shellExit }, 'tail -F app.log &', 'watch app log'),
     );
-    shellExit.resolve(0);
+    exitShell(0);
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(fixture.manager.getTask(taskId)?.status).toBe('running');
 
@@ -1673,12 +1676,15 @@ describe('AgentTaskService monitor events', () => {
     const fixture = createAgentTaskService();
     captureNotifications(fixture);
     const { proc } = controllableProcess();
-    const shellExit = Promise.withResolvers<number>();
+    let exitShell: (exitCode: number) => void = () => {};
+    const shellExit = new Promise<number>((resolve) => {
+      exitShell = resolve;
+    });
 
     const taskId = fixture.manager.registerTask(
-      new MonitorProcessTask({ ...proc, wait: () => shellExit.promise }, 'tail -F app.log &', 'watch app log'),
+      new MonitorProcessTask({ ...proc, wait: () => shellExit }, 'tail -F app.log &', 'watch app log'),
     );
-    shellExit.resolve(0);
+    exitShell(0);
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     expect(await fixture.manager.stop(taskId)).toMatchObject({ status: 'killed' });
