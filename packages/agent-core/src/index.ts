@@ -32,6 +32,7 @@ export * from './builtin/provider-catalog/index';
 export * from './builtin/wait-for/index';
 export * from './builtin/media/index';
 export * from './builtin/telemetry/index';
+export * from './builtin/undo/index';
 
 export * from './agent-machine/agent';
 export * from './agent-machine/turn';
