@@ -43,6 +43,10 @@ export type ToolBeforeHook = (
   input: ToolBeforeInput,
 ) => void | ToolBeforeDecision | Promise<void | ToolBeforeDecision>;
 
+export type ToolPermissionHook = (
+  input: ToolBeforeInput,
+) => void | ToolBeforeDecision | Promise<void | ToolBeforeDecision>;
+
 export type ToolAfterHook = (
   input: ToolAfterInput,
 ) => void | ToolResult | Promise<void | ToolResult>;
@@ -57,6 +61,7 @@ export interface AgentPorts {
   readonly retryables: readonly LlmRetryable[];
   readonly beforeSteps: readonly TurnBeforeStep[];
   readonly beforeTools: readonly ToolBeforeHook[];
+  readonly toolPermissions: readonly ToolPermissionHook[];
   readonly afterTools: readonly ToolAfterHook[];
   readonly promptGates: readonly PromptGate[];
   readonly media: MediaLowerPorts | undefined;
@@ -71,6 +76,7 @@ export interface AgentPorts {
   registerRetryable(retryable: LlmRetryable): () => void;
   registerBeforeStep(hook: TurnBeforeStep): () => void;
   registerBeforeTool(hook: ToolBeforeHook): () => void;
+  registerToolPermission(hook: ToolPermissionHook): () => void;
   registerAfterTool(hook: ToolAfterHook): () => void;
   registerPromptGate(gate: PromptGate): () => void;
   registerMedia(ports: MediaLowerPorts): () => void;
@@ -166,6 +172,7 @@ export function createAgentPorts(): AgentPorts {
   const retryables: LlmRetryable[] = [];
   const beforeSteps: TurnBeforeStep[] = [];
   const beforeTools: ToolBeforeHook[] = [];
+  const toolPermissions: ToolPermissionHook[] = [];
   const afterTools: ToolAfterHook[] = [];
   const promptGates: PromptGate[] = [];
   let media: MediaLowerPorts | undefined;
@@ -183,6 +190,7 @@ export function createAgentPorts(): AgentPorts {
     retryables,
     beforeSteps,
     beforeTools,
+    toolPermissions,
     afterTools,
     promptGates,
     get media() {
@@ -246,6 +254,7 @@ export function createAgentPorts(): AgentPorts {
     registerRetryable: (retryable) => register(retryables, [retryable]),
     registerBeforeStep: (hook) => register(beforeSteps, [hook]),
     registerBeforeTool: (hook) => register(beforeTools, [hook]),
+    registerToolPermission: (hook) => register(toolPermissions, [hook]),
     registerAfterTool: (hook) => register(afterTools, [hook]),
     registerPromptGate: (gate) => register(promptGates, [gate]),
     registerMedia: (value) => {
@@ -286,11 +295,13 @@ export function bindToolLogic(ports: AgentPorts): ReturnType<typeof createToolMa
     },
     onBefore: async (input) => {
       let toolCall = input.toolCall;
-      for (const hook of ports.beforeTools.slice()) {
-        const decision = await hook({ toolCall });
-        if (decision === undefined) continue;
-        if (decision.type === 'denied') return decision;
-        if (decision.toolCall !== undefined) toolCall = decision.toolCall;
+      for (const hooks of [ports.beforeTools, ports.toolPermissions]) {
+        for (const hook of hooks.slice()) {
+          const decision = await hook({ toolCall });
+          if (decision === undefined) continue;
+          if (decision.type === 'denied') return decision;
+          if (decision.toolCall !== undefined) toolCall = decision.toolCall;
+        }
       }
       return { type: 'proceed', toolCall };
     },
@@ -444,6 +455,10 @@ export function useBeforeStep(hook: TurnBeforeStep): void {
 
 export function useBeforeTool(hook: ToolBeforeHook): void {
   pushCleanup(currentUnit(), inject(AgentPort).registerBeforeTool(hook));
+}
+
+export function useToolPermission(hook: ToolPermissionHook): void {
+  pushCleanup(currentUnit(), inject(AgentPort).registerToolPermission(hook));
 }
 
 export function useAfterTool(hook: ToolAfterHook): void {
