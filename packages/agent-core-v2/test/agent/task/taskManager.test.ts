@@ -1645,6 +1645,47 @@ describe('AgentTaskService monitor events', () => {
     await fixture.ctx.dispose();
   });
 
+  it('keeps delivering monitor lines after the shell exits until stdout closes', async () => {
+    const fixture = createAgentTaskService();
+    const notes = captureNotifications(fixture);
+    const { proc, stdout, stderr } = controllableProcess();
+    const shellExit = Promise.withResolvers<number>();
+
+    const taskId = fixture.manager.registerTask(
+      new MonitorProcessTask({ ...proc, wait: () => shellExit.promise }, 'tail -F app.log &', 'watch app log'),
+    );
+    shellExit.resolve(0);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(fixture.manager.getTask(taskId)?.status).toBe('running');
+
+    stdout.end('late line\n');
+    stderr.end();
+    await waitForTerminal(fixture.manager, taskId);
+    await vi.waitFor(() => {
+      expect(notes).toHaveLength(2);
+    });
+    expect(noteText(notes[0]!)).toContain('late line');
+    expect(noteText(notes[1]!)).toContain('type="task.completed"');
+    await fixture.ctx.dispose();
+  });
+
+  it('stops a monitor whose shell exited while its stdout is still open', async () => {
+    const fixture = createAgentTaskService();
+    captureNotifications(fixture);
+    const { proc } = controllableProcess();
+    const shellExit = Promise.withResolvers<number>();
+
+    const taskId = fixture.manager.registerTask(
+      new MonitorProcessTask({ ...proc, wait: () => shellExit.promise }, 'tail -F app.log &', 'watch app log'),
+    );
+    shellExit.resolve(0);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(await fixture.manager.stop(taskId)).toMatchObject({ status: 'killed' });
+    expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
+    await fixture.ctx.dispose();
+  });
+
   it('does not turn stdout of an ordinary background command into events', async () => {
     const fixture = createAgentTaskService();
     const notes = captureNotifications(fixture);
