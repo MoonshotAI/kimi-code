@@ -55,7 +55,7 @@ class AcpProcessService implements IHostProcessService {
     args: readonly string[] = [],
     options?: HostProcessOptions,
   ): Promise<IHostProcess> {
-    if (!this.connection.terminalEnabled || !isBashToolInvocation(args, options)) {
+    if (!this.connection.terminalEnabled || options?.mergeStderr === false || !isBashToolInvocation(args, options)) {
       return this.local.spawn(command, args, { ...options, cwd: options?.cwd ?? this.cwd });
     }
 

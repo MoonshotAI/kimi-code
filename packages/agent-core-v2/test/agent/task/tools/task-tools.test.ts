@@ -25,6 +25,7 @@ import { TaskStopTool } from '#/agent/tools/task/task-stop/taskStopTool';
 import { WaitForInputSchema } from '#/agent/tools/task/task-wait/task-wait';
 import { WaitForTool, startWaitProgress, waitForProgressUpdate } from '#/agent/tools/task/task-wait/taskWaitTool';
 import { abortError } from '#/_base/utils/abort';
+import { Emitter } from '#/_base/event';
 import type { ITaskHandle } from '#/app/task/task';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import { compileToolArgsValidator, validateToolArgs } from '#/tool/args-validator';
@@ -135,6 +136,20 @@ class FakeTaskService implements IAgentTaskService {
     | undefined;
 
   private readonly entries = new Map<string, FakeTaskEntry>();
+  private readonly eventEmitter = new Emitter<string>();
+  readonly onDidQueueEvent = this.eventEmitter.event;
+  readonly queuedEvents = new Set<string>();
+
+  queueEvent(taskId: string): void {
+    this.queuedEvents.add(taskId);
+    this.eventEmitter.fire(taskId);
+  }
+
+  hasQueuedEvent(taskId: string): boolean {
+    return this.queuedEvents.has(taskId);
+  }
+
+  assertCanRegister(): void {}
 
   add(
     info: AgentTaskInfo,
@@ -968,6 +983,91 @@ describe('WaitForTool', () => {
       timeout_ms: 10_000,
       has_task_id: true,
     });
+  });
+
+  it('ends the wait when a watched monitor queues an event', async () => {
+    const tasks = new FakeTaskService();
+    tasks.add(processTask({ taskId: 'monitor-log01', description: 'watch log' }));
+    tasks.add(processTask({ taskId: 'bash-other1', description: 'other' }));
+    tasks.waitDelegate = (_taskId, _timeoutMs, waitSignal) =>
+      new Promise<never>((_resolve, reject) => {
+        waitSignal?.addEventListener('abort', () => {
+          reject(abortError());
+        }, { once: true });
+      });
+
+    const { records, telemetry } = waitTelemetry();
+    const pending = executeTool(
+      new WaitForTool(tasks, telemetry, stubFlag(true), stubGoal(), agentScope()),
+      context('wait_event', { timeout: 60, task_id: 'monitor-log01' }),
+    );
+    await vi.waitFor(() => {
+      expect(tasks.waitCalls).toHaveLength(1);
+    });
+    tasks.queueEvent('bash-other1');
+    tasks.queueEvent('monitor-log01');
+    const output = outputString(await pending);
+
+    expect(output).toContain('wait_status: event');
+    expect(output).toContain('event_task_id: monitor-log01');
+    expect(tasks.waitDeliveries).toEqual([]);
+    expect(lastEvent(records)?.properties).toMatchObject({ outcome: 'event', has_task_id: true });
+  });
+
+  it('returns at once when the named monitor already has an undelivered event', async () => {
+    const tasks = new FakeTaskService();
+    tasks.add(processTask({ taskId: 'monitor-ready1' }));
+    tasks.queueEvent('monitor-ready1');
+
+    const result = await executeTool(
+      new WaitForTool(tasks, recordingTelemetry([]), stubFlag(true), stubGoal(), agentScope()),
+      context('wait_ready', { timeout: 60, task_id: 'monitor-ready1' }),
+    );
+
+    expect(outputString(result)).toContain('wait_status: event');
+    expect(tasks.waitCalls).toHaveLength(0);
+  });
+
+  it('without a task_id, waits for the other tasks and is not ended by monitor events', async () => {
+    const tasks = new FakeTaskService();
+    tasks.add(processTask({ taskId: 'monitor-dev01', description: 'dev server log' }));
+    tasks.add(processTask({ taskId: 'bash-build1', description: 'build' }));
+    const buildDone = createControlledPromise<void>();
+    tasks.waitDelegate = async (taskId) => {
+      await buildDone;
+      tasks.settle(taskId);
+      return tasks.getTask(taskId);
+    };
+
+    const pending = executeTool(
+      new WaitForTool(tasks, recordingTelemetry([]), stubFlag(true), stubGoal(), agentScope()),
+      context('wait_build', { timeout: 60 }),
+    );
+    await vi.waitFor(() => {
+      expect(tasks.waitCalls).toHaveLength(1);
+    });
+    tasks.queueEvent('monitor-dev01');
+    buildDone.resolve();
+    const output = outputString(await pending);
+
+    expect(tasks.waitCalls.map((call) => call.taskId)).toEqual(['bash-build1']);
+    expect(output).toContain('wait_status: completed');
+    expect(output).toContain('task_id: bash-build1');
+  });
+
+  it('without a task_id and only monitors running, has nothing to wait for', async () => {
+    const tasks = new FakeTaskService();
+    tasks.add(processTask({ taskId: 'monitor-dev01' }));
+    tasks.queueEvent('monitor-dev01');
+
+    const result = await executeTool(
+      new WaitForTool(tasks, recordingTelemetry([]), stubFlag(true), stubGoal(), agentScope()),
+      context('wait_monitors_only', { timeout: 60 }),
+    );
+
+    expect(outputString(result)).toContain('wait_status: no_tasks');
+    expect(outputString(result)).toContain('running_monitors: 1');
+    expect(tasks.waitCalls).toHaveLength(0);
   });
 
   it('propagates an abort of the execution signal and tracks the aborted outcome', async () => {

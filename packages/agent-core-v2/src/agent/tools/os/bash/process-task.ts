@@ -36,7 +36,8 @@ const STREAM_DRAIN_GRACE_MS = 250;
 
 export class ProcessTask implements AgentTask {
   readonly kind = 'process' as const;
-  readonly idPrefix = 'bash';
+  readonly idPrefix: string = 'bash';
+  protected readonly stdoutEvents: boolean = false;
   private exitCode: number | null = null;
 
   constructor(
@@ -50,8 +51,8 @@ export class ProcessTask implements AgentTask {
 
   async start(sink: AgentTaskSink): Promise<void> {
     const streamDrained = Promise.all([
-      observeProcessStream(this.proc.stdout, 'stdout', sink, this.onOutput),
-      observeProcessStream(this.proc.stderr, 'stderr', sink, this.onOutput),
+      observeProcessStream(this.proc.stdout, 'stdout', sink, this.onOutput, this.stdoutEvents),
+      observeProcessStream(this.proc.stderr, 'stderr', sink, this.onOutput, false),
     ]).then(() => undefined);
     void streamDrained.catch(() => {});
 
@@ -67,6 +68,7 @@ export class ProcessTask implements AgentTask {
     let settlement: AgentTaskSettlement;
     try {
       const exitCode = await this.proc.wait();
+      if (this.stdoutEvents) await waitForStreamEndOrAbort(streamDrained, sink.signal);
       await waitForStreamDrain(streamDrained);
       this.exitCode = exitCode;
       settlement = {
@@ -133,6 +135,22 @@ async function waitForStreamDrain(streamDrained: Promise<void>): Promise<void> {
   }
 }
 
+async function waitForStreamEndOrAbort(streamDrained: Promise<void>, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return;
+  let onAbort: (() => void) | undefined;
+  try {
+    await Promise.race([
+      streamDrained.catch(() => {}),
+      new Promise<void>((resolve) => {
+        onAbort = resolve;
+        signal.addEventListener('abort', onAbort, { once: true });
+      }),
+    ]);
+  } finally {
+    if (onAbort !== undefined) signal.removeEventListener('abort', onAbort);
+  }
+}
+
 async function waitForStreamDrainSettled(streamDrained: Promise<void>): Promise<void> {
   try {
     await waitForStreamDrain(streamDrained);
@@ -144,13 +162,15 @@ function observeProcessStream(
   stream: Readable,
   kind: ProcessTaskOutputKind,
   sink: AgentTaskSink,
-  onOutput?: ProcessTaskOutputCallback,
+  onOutput: ProcessTaskOutputCallback | undefined,
+  events: boolean,
 ): Promise<void> {
   stream.setEncoding('utf8');
   const onData = (chunk: string): void => {
     if (chunk.length === 0) return;
     sink.appendOutput(chunk);
     if (sink.signal.aborted) return;
+    if (events) sink.appendEvent?.(chunk);
     onOutput?.(kind, chunk);
   };
   stream.on('data', onData);

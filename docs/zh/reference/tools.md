@@ -124,6 +124,7 @@ Plan 模式是一种受约束的工作状态：进入后 `Write` 与 `Edit` 只�
 | `TaskOutput` | 自动放行 | 查看后台任务的输出 |
 | `TaskStop` | 需审批 | 停止正在运行的后台任务 |
 | `WaitFor` | 自动放行 | 等待后台任务结束 |
+| `Monitor` | 需审批 | 在后台运行命令，输出的每一行随时送达 Agent（实验特性） |
 
 **`TaskList`** 返回后台任务列表。可选参数 `active_only`（默认 true，仅列出运行中的任务）和 `limit`（默认 20，取值范围 1–100）。
 
@@ -132,6 +133,8 @@ Plan 模式是一种受约束的工作状态：进入后 `Write` 与 `Edit` 只�
 **`TaskStop`** 接受 `task_id` 和可选的 `reason`（默认 `Stopped by TaskStop`）。对已处于终止状态的任务也能安全调用。
 
 **`WaitFor`** 把当前轮次挂起，直到后台任务结束、超时或收到 steer 消息。参数：`timeout`（必填，单位秒，上限 90）和可选的 `task_id`。不传 `task_id` 时，调用时刻运行中的任意一个后台任务结束即返回；当前没有运行中的后台任务时立即返回。超时不是错误——结果会列出仍在运行的任务，Agent 可以再次等待，也可以先处理其他工作。新消息会提前结束本次等待——在终端中，Agent 等待期间按 `Enter` 会把消息 steer 进当前轮次（`Ctrl-S` 同样有效），等待开始时已在队列中的消息也会被 steer 进来（队列中若有 shell 命令或 skill，则整个队列和新输入仍排队到轮次结束）；后台任务继续运行，完成后仍会自动通知。已通过 `WaitFor` 汇报结果的任务不会再推送自动完成通知。
+
+**`Monitor`** 在后台启动一条命令，其 stdout 的每一行会在 Agent 继续工作的同时送达，让 Agent 在日志出现某行、测试失败或状态变化时立即做出反应。参数：`command`、`description`、可选的 `timeout`（单位秒，默认 300，上限 3600）和可选的 `persistent`（一直运行到 `TaskStop` 或会话结束）。相隔很近的多行会合并为一条通知；Agent 空闲时会为它开启新轮次，忙碌时在下一步看到它。stderr 不会送达，只保存在任务输出中。一分钟内输出超过 300 行的 monitor 会被停止。`WaitFor` 传入 monitor 的 `task_id` 时，下一批输出一旦就绪即返回；不传 `task_id` 的 `WaitFor` 不会等待 monitor。只有主 Agent 拥有此工具。这是默认关闭的实验特性：通过 `KIMI_CODE_EXPERIMENTAL_MONITOR=1`、`config.toml` 中的 `[experimental] monitor = true` 或 `/experiments` 启用。
 
 ## 定时任务
 

@@ -13,6 +13,7 @@ import {
 } from '#/agent/task/task';
 import type { AgentTaskSettlement } from '#/agent/task/types';
 import { userCancellationReason } from '#/_base/utils/abort';
+import { Event } from '#/_base/event';
 import type { IConfigService } from '#/app/config/config';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -24,6 +25,10 @@ import { type ISessionContext, makeSessionContext } from '#/session/sessionConte
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { type BashInput, BashInputSchema } from '#/agent/tools/os/bash/bash';
 import { BashTool } from '#/agent/tools/os/bash/bashTool';
+import { MonitorInputSchema, type MonitorInput } from '#/agent/tools/task/monitor/monitor';
+import { MonitorTool } from '#/agent/tools/task/monitor/monitorTool';
+import { MONITOR_MAIN_AGENT_ONLY } from '#/agent/tools/mainAgentOnly';
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
 const posixEnv: IHostEnvironment = {
@@ -467,17 +472,23 @@ function createFakeTaskService(
 
   const service: IAgentTaskService = {
     _serviceBrand: undefined,
+    onDidQueueEvent: Event.None as Event<string>,
+    hasQueuedEvent: () => false,
     track(): never {
       throw new Error('fake IAgentTaskService.track is not implemented');
     },
 
-    registerTask(task: AgentTask, registerOptions: RegisterAgentTaskOptions = {}): string {
-      const detached = registerOptions.detached ?? true;
+    assertCanRegister(detached: boolean): void {
       if (detached && options.maxRunningTasks !== undefined) {
         if (activeDetachedCount() >= options.maxRunningTasks) {
           throw new Error('Too many background tasks are already running.');
         }
       }
+    },
+
+    registerTask(task: AgentTask, registerOptions: RegisterAgentTaskOptions = {}): string {
+      const detached = registerOptions.detached ?? true;
+      service.assertCanRegister(detached);
 
       const taskId = nextId(task.idPrefix);
       const abortController = new AbortController();
@@ -718,6 +729,14 @@ function bashTool(
   toolPolicy: IAgentToolPolicyService = stubToolPolicy(),
   config: IConfigService = stubConfig(),
 ): BashTool {
+  return new BashTool(stubRuntime(runner, env, ctx), ctx, stubWorkspaceContext(ctx.cwd), background, toolPolicy, config);
+}
+
+function stubRuntime(
+  runner: IHostProcessService,
+  env: IHostEnvironment,
+  ctx: ISessionContext,
+): IAgentRuntimeService {
   const processService: IHostProcessService = {
     _serviceBrand: undefined,
     spawn: async (command, args = [], options) => runner.spawn(command, args, options),
@@ -729,7 +748,7 @@ function bashTool(
     ),
     { environment: env, process: processService },
   );
-  const runtime: IAgentRuntimeService = {
+  return {
     _serviceBrand: undefined,
     onDidChange: () => ({ dispose: () => {} }),
     isAvailable: () => true,
@@ -740,7 +759,6 @@ function bashTool(
       dispose: () => {},
     }),
   };
-  return new BashTool(runtime, ctx, stubWorkspaceContext(ctx.cwd), background, toolPolicy, config);
 }
 
 describe('BashTool', () => {
@@ -1895,5 +1913,144 @@ describe('BashTool prompt / runtime consistency', () => {
       expect(promptToolNames).toContain(name);
     }
     expect(errorToolNames.length).toBeGreaterThan(0);
+  });
+});
+
+function monitorTool(
+  runner: IHostProcessService,
+  background: IAgentTaskService,
+  options: { agentId?: string; toolPolicy?: IAgentToolPolicyService } = {},
+): MonitorTool {
+  const ctx = createTestCtx();
+  const agentId = options.agentId ?? 'main';
+  return new MonitorTool(
+    stubRuntime(runner, createTestEnv(), ctx),
+    ctx,
+    stubWorkspaceContext(ctx.cwd),
+    background,
+    options.toolPolicy ?? stubToolPolicy(),
+    makeAgentScopeContext({ agentId, agentScope: agentId }),
+  );
+}
+
+async function startMonitor(tool: MonitorTool, args: MonitorInput): Promise<ExecutableToolResult> {
+  const execution = tool.resolveExecution(MonitorInputSchema.parse(args));
+  if (execution.isError === true) return execution;
+  return execution.execute({
+    turnId: 0,
+    toolCallId: 'call_monitor',
+    signal: new AbortController().signal,
+  } as ExecutableToolContext);
+}
+
+describe('MonitorTool', () => {
+  it('starts a detached monitor task with the default timeout and returns its id', async () => {
+    const { proc } = pendingProcess();
+    const { runner, exec } = createTestRunner(proc);
+    const { service, tasks } = createFakeTaskService();
+
+    const result = await startMonitor(monitorTool(runner, service), {
+      command: 'tail -F app.log | grep --line-buffered ERROR',
+      description: 'app errors',
+    });
+
+    expect(exec).toHaveBeenCalledWith(expect.any(String), expect.any(Array), expect.objectContaining({ mergeStderr: false }));
+
+    const [entry] = [...tasks.values()];
+    expect(entry!.taskId).toMatch(/^monitor-/);
+    expect(entry!.startedDetached).toBe(true);
+    expect(entry!.options.timeoutMs).toBe(300_000);
+    expect(result).toMatchObject({ isError: false });
+    expect(result.output).toContain(`task_id: ${entry!.taskId}`);
+    expect(result.output).toContain('timeout: 300s');
+  });
+
+  it('registers a persistent monitor without a timeout', async () => {
+    const { proc } = pendingProcess();
+    const { runner } = createTestRunner(proc);
+    const { service, tasks } = createFakeTaskService();
+
+    const result = await startMonitor(monitorTool(runner, service), {
+      command: 'tail -F app.log',
+      description: 'app log',
+      persistent: true,
+      timeout: 60,
+    });
+
+    expect([...tasks.values()][0]!.options.timeoutMs).toBeUndefined();
+    expect(result.output).toContain('timeout: none (persistent)');
+  });
+
+  it('refuses to start in a subagent', async () => {
+    const { proc } = pendingProcess();
+    const { runner } = createTestRunner(proc);
+    const { service, tasks } = createFakeTaskService();
+
+    const result = await startMonitor(monitorTool(runner, service, { agentId: 'agent-1' }), {
+      command: 'tail -F app.log',
+      description: 'app log',
+    });
+
+    expect(result).toEqual({ isError: true, output: MONITOR_MAIN_AGENT_ONLY });
+    expect(tasks.size).toBe(0);
+  });
+
+  it('refuses to start when the agent cannot stop tasks', async () => {
+    const { proc } = pendingProcess();
+    const { runner } = createTestRunner(proc);
+    const { service, tasks } = createFakeTaskService();
+
+    const result = await startMonitor(
+      monitorTool(runner, service, { toolPolicy: stubToolPolicy((name) => name !== 'TaskStop') }),
+      { command: 'tail -F app.log', description: 'app log' },
+    );
+
+    expect(result.isError).toBe(true);
+    expect(tasks.size).toBe(0);
+  });
+
+  it('refuses to start without running the command when the task limit is reached', async () => {
+    const { service } = createFakeTaskService({ maxRunningTasks: 1 });
+    service.registerTask(new ProcessTask(processWithOutput(), 'sleep 10', 'existing task'));
+    const { proc } = pendingProcess();
+    const { runner, exec } = createTestRunner(proc);
+
+    const result = await startMonitor(monitorTool(runner, service), {
+      command: 'tail -F app.log',
+      description: 'app log',
+    });
+
+    expect(result).toEqual({ isError: true, output: 'Too many background tasks are already running.' });
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('kills the command instead of registering it when the call is aborted during spawn', async () => {
+    const { proc } = pendingProcess();
+    const controller = new AbortController();
+    const exec = vi.fn(async () => {
+      controller.abort();
+      return proc;
+    });
+    const { runner } = createTestRunner(exec);
+    const { service, tasks } = createFakeTaskService();
+    const execution = monitorTool(runner, service).resolveExecution(
+      MonitorInputSchema.parse({ command: 'tail -F app.log', description: 'app log' }),
+    );
+    if (execution.isError === true) throw new Error('expected an executable monitor');
+
+    const result = await execution.execute({
+      turnId: 0,
+      toolCallId: 'call_monitor',
+      signal: controller.signal,
+    } as ExecutableToolContext);
+
+    expect(result).toEqual({ isError: true, output: 'Aborted before the monitor started.' });
+    expect(tasks.size).toBe(0);
+    expect(proc.kill).toHaveBeenCalled();
+  });
+
+  it('caps the timeout at an hour', () => {
+    expect(MonitorInputSchema.safeParse({ command: 'x', description: 'y', timeout: 3600 }).success).toBe(true);
+    expect(MonitorInputSchema.safeParse({ command: 'x', description: 'y', timeout: 3601 }).success).toBe(false);
   });
 });

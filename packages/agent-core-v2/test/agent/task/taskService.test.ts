@@ -606,6 +606,19 @@ describe('AgentTaskService', () => {
     expect(stubLoop().snapshot().hasPendingRequests).toBe(false);
   });
 
+  it('stopAllOnExit still stops tasks that stop with the session when keepAliveOnExit is set', async () => {
+    stubTaskConfig({ keepAliveOnExit: true });
+    const svc = ix.get(IAgentTaskService);
+    const kept = svc.registerTask(fakeProcessTask());
+    const monitor = svc.registerTask({ ...fakeProcessTask(), stopsWithSession: true });
+
+    const stopped = await svc.stopAllOnExit('Session closed');
+
+    expect(stopped.map((info) => info.taskId)).toEqual([monitor]);
+    expect(svc.getTask(monitor)?.status).toBe('killed');
+    expect(svc.getTask(kept)?.status).toBe('running');
+  });
+
   it('dispose aborts live tasks as a last resort', async () => {
     const svc = ix.get(IAgentTaskService);
     let abortReason: unknown;
@@ -668,6 +681,21 @@ describe('AgentTaskService', () => {
 
     expect(aborted).toBe(false);
     expect(forceStop).not.toHaveBeenCalled();
+  });
+
+  it('dispose still aborts tasks that stop with the session when keepAliveOnExit is set', async () => {
+    stubTaskConfig({ keepAliveOnExit: true });
+    const svc = ix.get(IAgentTaskService);
+    let keptAborted = false;
+    let monitorAborted = false;
+    svc.registerTask(abortObservingTask(() => (keptAborted = true)));
+    svc.registerTask({ ...abortObservingTask(() => (monitorAborted = true)), stopsWithSession: true });
+    await Promise.resolve();
+
+    disposables.dispose();
+
+    expect(keptAborted).toBe(false);
+    expect(monitorAborted).toBe(true);
   });
 
   it('scope disposal leaves a process running when keepAliveOnExit is set, and its late settle stays silent after deactivation', async () => {
