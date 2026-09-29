@@ -964,11 +964,9 @@ export class SessionEventBroadcaster {
 
     let wireEvent: Event;
     if (event.type === 'turn.started') {
-      const { promptAttachments: _internal, promptContent: _internalContent, ...wireFields } =
-        event as typeof event & {
-          promptAttachments?: unknown;
-          promptContent?: unknown;
-        };
+      const { promptAttachments: _internal, ...wireFields } = event as typeof event & {
+        promptAttachments?: unknown;
+      };
       wireEvent = Object.assign({}, wireFields, { agentId, sessionId }) as unknown as Event;
     } else if (event.type === 'prompt.steered' || event.type === 'prompt.queued' || event.type === 'prompt.submitted') {
       const content = (event as unknown as { content: Parameters<typeof projectPromptContentParts>[0] }).content;

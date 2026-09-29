@@ -37,7 +37,6 @@ export interface TurnStartedPayload {
   readonly promptId?: string;
   readonly origin: PromptOrigin;
   readonly prompt?: string;
-  readonly promptContent?: readonly ContentPart[];
   readonly promptAttachments?: readonly TurnPromptAttachment[];
 }
 

@@ -1224,15 +1224,7 @@ describe('IExternalHooksRunnerService integration', () => {
           agentId: 'main',
           turnId: 4,
           origin: { kind: 'user' },
-          prompt: '<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>user text',
-          promptContent: [
-            {
-              type: 'text',
-              text: '<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>',
-              meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
-            },
-            { type: 'text', text: 'user text' },
-          ],
+          prompt: 'user text',
         }),
       );
       const queuedContent = [{ type: 'text' as const, text: 'later' }];

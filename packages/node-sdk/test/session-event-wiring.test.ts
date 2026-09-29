@@ -180,7 +180,6 @@ describe('SessionEventWiring status snapshot fold', () => {
         origin: { kind: 'user' },
         prompt: 'describe this',
         promptAttachments: [{ kind: 'image', fileId: 'f_1' }],
-        promptContent: [{ type: 'text', text: 'describe this' }],
       });
     } finally {
       wiring.dispose();
@@ -195,6 +194,5 @@ describe('SessionEventWiring status snapshot fold', () => {
       prompt: 'describe this',
     });
     expect(events[0]).not.toHaveProperty('promptAttachments');
-    expect(events[0]).not.toHaveProperty('promptContent');
   });
 });

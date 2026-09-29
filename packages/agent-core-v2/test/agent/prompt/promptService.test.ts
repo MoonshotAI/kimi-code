@@ -479,10 +479,8 @@ describe('prompt queue', () => {
       markEntered = resolve;
     });
     const started: string[] = [];
-    const startedContent: unknown[] = [];
     ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
       if (event.prompt !== undefined) started.push(event.prompt);
-      startedContent.push(event.promptContent);
     });
     loop.hooks.onBeforeSubmitPrompt.register('gate', async (hookCtx, next) => {
       markEntered();
@@ -521,20 +519,7 @@ describe('prompt queue', () => {
       { type: 'text', text: '<skill>review</skill>' },
       { type: 'text', text: 'launching' },
     ]);
-    expect(started).toEqual([
-      '<hook_result hook_event="UserPromptSubmit">\nfrom hook\n</hook_result>launching',
-    ]);
-    expect(startedContent).toEqual([
-      [
-        {
-          type: 'text',
-          text: '<hook_result hook_event="UserPromptSubmit">\nfrom hook\n</hook_result>',
-          meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
-        },
-        { type: 'text', text: '<skill>review</skill>' },
-        { type: 'text', text: 'launching' },
-      ],
-    ]);
+    expect(started).toEqual(['launching']);
     const turnPrompt = (await ctx.persistedWireRecords()).find(
       (record) => record.type === 'turn.prompt',
     );
