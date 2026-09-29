@@ -73,10 +73,12 @@ describe.skipIf(!ENABLED)('TUI e2e — Monitor', () => {
 
   it('A monitor that floods output is stopped', scenario(
     [monitor('yes flood', 'flood'), say('Started.'), say('It was stopped.'), say('Noted.')],
-    async ({ tui }) => {
+    async ({ tui, model }) => {
       await tui.submit('Watch the flood');
       await tui.see('monitor stopped', 'flood-stopped');
       await tui.see('Event limit exceeded');
+
+      expect(model.sent.flatMap((request) => request.userTexts).join('\n')).toContain('Event limit exceeded');
     },
     MONITOR_ON,
   ));
