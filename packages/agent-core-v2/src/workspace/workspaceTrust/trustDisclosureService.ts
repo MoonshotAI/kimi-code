@@ -170,8 +170,8 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
       for (const profile of entry.contribution.profiles) {
         if (seen.has(profile.name)) continue;
         seen.add(profile.name);
-        const taken = winners.has(profile.name) || builtinNames.has(profile.name);
-        if (taken && profile.override !== true) continue;
+        if (winners.has(profile.name)) continue;
+        if (builtinNames.has(profile.name) && profile.override !== true) continue;
         winners.set(profile.name, entry.sourceId);
       }
     }
