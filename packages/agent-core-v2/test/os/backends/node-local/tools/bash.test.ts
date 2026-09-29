@@ -2022,6 +2022,31 @@ describe('MonitorTool', () => {
     expect(exec).not.toHaveBeenCalled();
   });
 
+  it('kills the command instead of registering it when the call is aborted during spawn', async () => {
+    const { proc } = pendingProcess();
+    const controller = new AbortController();
+    const exec = vi.fn(async () => {
+      controller.abort();
+      return proc;
+    });
+    const { runner } = createTestRunner(exec);
+    const { service, tasks } = createFakeTaskService();
+    const execution = monitorTool(runner, service).resolveExecution(
+      MonitorInputSchema.parse({ command: 'tail -F app.log', description: 'app log' }),
+    );
+    if (execution.isError === true) throw new Error('expected an executable monitor');
+
+    const result = await execution.execute({
+      turnId: 0,
+      toolCallId: 'call_monitor',
+      signal: controller.signal,
+    } as ExecutableToolContext);
+
+    expect(result).toEqual({ isError: true, output: 'Aborted before the monitor started.' });
+    expect(tasks.size).toBe(0);
+    expect(proc.kill).toHaveBeenCalled();
+  });
+
   it('caps the timeout at an hour', () => {
     expect(MonitorInputSchema.safeParse({ command: 'x', description: 'y', timeout: 3600 }).success).toBe(true);
     expect(MonitorInputSchema.safeParse({ command: 'x', description: 'y', timeout: 3601 }).success).toBe(false);

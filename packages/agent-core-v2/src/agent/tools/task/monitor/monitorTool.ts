@@ -34,6 +34,7 @@ import MONITOR_DESCRIPTION from './monitor.md?raw';
 
 export class MonitorProcessTask extends ProcessTask {
   override readonly idPrefix = MONITOR_TASK_ID_PREFIX;
+  readonly stopsWithSession = true;
   protected override readonly stdoutEvents = true;
 }
 
@@ -108,6 +109,11 @@ export class MonitorTool implements IMonitorTool {
     } catch (error) {
       lease.dispose();
       return { isError: true, output: error instanceof Error ? error.message : String(error) };
+    }
+    if (signal.aborted) {
+      await killSpawnedProcess(proc);
+      lease.dispose();
+      return { isError: true, output: 'Aborted before the monitor started.' };
     }
     closeProcessStdin(proc);
 

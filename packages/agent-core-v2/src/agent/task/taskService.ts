@@ -798,25 +798,27 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
   async stopAllOnExit(reason: string): Promise<readonly AgentTaskInfo[]> {
     await this.suppressAllTerminalNotifications();
-    if (this.keepAliveOnExit()) return [];
-    return this.stopAll(reason);
+    const results = await Promise.all(
+      Array.from(this.tasks.values())
+        .filter((entry) => this.stopsOnExit(entry))
+        .map((entry) => this.stop(entry.taskId, reason)),
+    );
+    return results.filter((info): info is AgentTaskInfo => info !== undefined);
   }
 
   override dispose(): void {
-    if (!this.keepAliveOnExit()) {
-      for (const entry of this.tasks.values()) {
-        if (TERMINAL_STATUSES.has(entry.status)) continue;
-        if (entry.timeoutHandle !== undefined) {
-          clearTimeout(entry.timeoutHandle);
-          entry.timeoutHandle = undefined;
-        }
-        if (entry.handle !== undefined) {
-          entry.handle.cancel();
-        } else {
-          entry.abortController.abort(SESSION_CLOSED_REASON);
-        }
-        this.forceStopOnDispose(entry);
+    for (const entry of this.tasks.values()) {
+      if (TERMINAL_STATUSES.has(entry.status) || !this.stopsOnExit(entry)) continue;
+      if (entry.timeoutHandle !== undefined) {
+        clearTimeout(entry.timeoutHandle);
+        entry.timeoutHandle = undefined;
       }
+      if (entry.handle !== undefined) {
+        entry.handle.cancel();
+      } else {
+        entry.abortController.abort(SESSION_CLOSED_REASON);
+      }
+      this.forceStopOnDispose(entry);
     }
     super.dispose();
   }
@@ -831,8 +833,8 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     } catch {}
   }
 
-  private keepAliveOnExit(): boolean {
-    return resolveAgentTaskConfig(this.config)?.keepAliveOnExit === true;
+  private stopsOnExit(entry: ManagedTask): boolean {
+    return entry.task?.stopsWithSession === true || resolveAgentTaskConfig(this.config)?.keepAliveOnExit !== true;
   }
 
   private lifecycleActive(): boolean {
@@ -840,7 +842,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private marksTerminalNotificationSuppressed(entry: ManagedTask): boolean {
-    return this.exitSuppressionArmed && !this.keepAliveOnExit() && this.isDetached(entry);
+    return this.exitSuppressionArmed && this.stopsOnExit(entry) && this.isDetached(entry);
   }
 
   async wait(
