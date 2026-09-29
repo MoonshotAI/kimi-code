@@ -12,7 +12,7 @@ export type ToolEvent =
 export type ToolOutput =
   | { type: 'succeeded'; result: ToolResult }
   | { type: 'failed'; error: unknown }
-  | { type: 'aborted' };
+  | { type: 'aborted'; reason?: unknown };
 
 export interface ToolBeforeInput {
   toolCall: ToolCall;
@@ -56,7 +56,7 @@ function createExecuteActor(executor: ToolExecutor) {
         sendBack({
           type: 'tool.done',
           toolCallId,
-          outcome: input.signal.aborted ? { type: 'aborted' } : { type: 'failed', error },
+          outcome: input.signal.aborted ? { type: 'aborted', reason: input.signal.reason } : { type: 'failed', error },
         });
       }
     })();
@@ -145,13 +145,13 @@ export function createToolMachine(executor: CreateToolMachineOptions) {
               emit(({ context }) => ({
                 type: 'tool.done' as const,
                 toolCallId: context.toolCall.id,
-                outcome: { type: 'aborted' as const },
+                outcome: { type: 'aborted' as const, reason: context.input.signal.reason },
               })),
               ({ self, context }) => {
                 self._parent?.send({
                   type: 'tool.done',
                   toolCallId: context.toolCall.id,
-                  outcome: { type: 'aborted' },
+                  outcome: { type: 'aborted', reason: context.input.signal.reason },
                 });
               },
             ],
@@ -258,7 +258,7 @@ export function createToolMachine(executor: CreateToolMachineOptions) {
       context.outcome === 'failed'
         ? { type: 'failed', error: context.error }
         : context.outcome === 'aborted'
-          ? { type: 'aborted' }
+          ? { type: 'aborted', reason: context.input.signal.reason }
           : { type: 'succeeded', result: context.result as ToolResult },
   });
 }

@@ -128,6 +128,7 @@ export type AgentEvent =
   | { type: 'input.steer'; id: string | readonly string[] }
   | { type: 'input.cancel'; id: string }
   | { type: 'input.abort'; reason?: unknown }
+  | { type: 'input.abort_tool'; toolCallId: string; reason?: unknown }
   | { type: 'input.pause' }
   | { type: 'input.continue' }
   | { type: 'input.close' }
@@ -478,6 +479,15 @@ export function createAgentMachine({
           type: 'agent.aborted' as const,
           reason: event.type === 'input.abort' ? event.reason : undefined,
         })),
+      },
+      'input.abort_tool': {
+        actions: enqueueActions(({ context, event, enqueue }) => {
+          if (event.type !== 'input.abort_tool') return;
+          const entry = context.background[event.toolCallId];
+          if (entry === undefined) return;
+          entry.scope.abort(event.reason);
+          enqueue.sendTo(entry.ref, { type: 'tool.abort' as const });
+        }),
       },
       'input.pause': {
         actions: [assign({ paused: true }), emit({ type: 'agent.paused' as const })],
