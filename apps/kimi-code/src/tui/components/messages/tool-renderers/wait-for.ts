@@ -76,7 +76,10 @@ export function buildWaitForHeader(options: {
     return `${currentTheme.fg('warning', STATUS_BULLET)}${currentTheme.boldFg('warning', 'Wait timed out')}${argText}${chip}`;
   }
   if (status === 'no_tasks') {
-    return `${bullet}${currentTheme.boldFg('primary', 'No background tasks running')}${chip}`;
+    const label = field(result.output, 'running_monitors') === undefined
+      ? 'No background tasks running'
+      : 'Nothing to wait for (only monitors running)';
+    return `${bullet}${currentTheme.boldFg('primary', label)}${chip}`;
   }
   if (status === 'interrupted') {
     return `${bullet}${currentTheme.boldFg('primary', 'Wait interrupted by new input')}${argText}${chip}`;

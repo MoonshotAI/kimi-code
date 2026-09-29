@@ -68,6 +68,7 @@ export class ProcessTask implements AgentTask {
     let settlement: AgentTaskSettlement;
     try {
       const exitCode = await this.proc.wait();
+      if (this.stdoutEvents) await waitForStreamEndOrAbort(streamDrained, sink.signal);
       await waitForStreamDrain(streamDrained);
       this.exitCode = exitCode;
       settlement = {
@@ -131,6 +132,22 @@ async function waitForStreamDrain(streamDrained: Promise<void>): Promise<void> {
     ]);
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
+async function waitForStreamEndOrAbort(streamDrained: Promise<void>, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return;
+  let onAbort: (() => void) | undefined;
+  try {
+    await Promise.race([
+      streamDrained.catch(() => {}),
+      new Promise<void>((resolve) => {
+        onAbort = resolve;
+        signal.addEventListener('abort', onAbort, { once: true });
+      }),
+    ]);
+  } finally {
+    if (onAbort !== undefined) signal.removeEventListener('abort', onAbort);
   }
 }
 

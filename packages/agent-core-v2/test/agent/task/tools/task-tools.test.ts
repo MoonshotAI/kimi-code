@@ -149,6 +149,8 @@ class FakeTaskService implements IAgentTaskService {
     return this.queuedEvents.has(taskId);
   }
 
+  assertCanRegister(): void {}
+
   add(
     info: AgentTaskInfo,
     output: AgentTaskOutputSnapshot = outputSnapshot(),
@@ -1064,6 +1066,7 @@ describe('WaitForTool', () => {
     );
 
     expect(outputString(result)).toContain('wait_status: no_tasks');
+    expect(outputString(result)).toContain('running_monitors: 1');
     expect(tasks.waitCalls).toHaveLength(0);
   });
 

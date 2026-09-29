@@ -349,7 +349,7 @@ k3-max = "同一模型的 max Thinking 档位。适合最难的子任务。"
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `max_running_tasks` | `integer` | — | 同时运行的最大后台任务数 |
-| `keep_alive_on_exit` | `boolean` | `false` | 会话关闭时是否保留仍在运行的后台任务；print 模式下仅作 `print_background_mode` 的回退：`true` 等价于 `drain` |
+| `keep_alive_on_exit` | `boolean` | `false` | 会话关闭时是否保留仍在运行的后台任务（`Monitor` 启动的 monitor 总会停止）；print 模式下仅作 `print_background_mode` 的回退：`true` 等价于 `drain` |
 | `kill_grace_period_ms` | `integer` | `5000` | 任务被请求正常终止后，等待自行结束的宽限时间（毫秒），超时后强制停止 |
 | `bash_auto_background_on_timeout` | `boolean` | `true` | 前台 `Bash` 命令超时后转为后台任务而非终止；设为 `false` 恢复超时即终止 |
 | `bash_task_timeout_s` | `integer` | `600` | 后台 `Bash` 任务默认超时（秒）；`0` 表示无超时，任务运行到自行结束或被手动停止；显式传入的 timeout 不受影响，print 模式默认 0 |

@@ -350,7 +350,7 @@ Retries only apply to transient failures: connection errors, timeouts, HTTP 429 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `max_running_tasks` | `integer` | — | Maximum number of background tasks running concurrently |
-| `keep_alive_on_exit` | `boolean` | `false` | Whether to keep still-running background tasks when the session closes; in print mode only a fallback when `print_background_mode` is unset (`true` = `drain`) |
+| `keep_alive_on_exit` | `boolean` | `false` | Whether to keep still-running background tasks when the session closes (monitors started with `Monitor` always stop); in print mode only a fallback when `print_background_mode` is unset (`true` = `drain`) |
 | `kill_grace_period_ms` | `integer` | `5000` | Grace period in milliseconds after a task is asked to terminate; still-running tasks are force-stopped when it elapses |
 | `bash_auto_background_on_timeout` | `boolean` | `true` | Move a foreground `Bash` command to a background task on timeout instead of killing it; set to `false` to kill timed-out foreground commands instead |
 | `bash_task_timeout_s` | `integer` | `600` | Default timeout (seconds) for background `Bash` tasks when the call omits `timeout`; `0` means no timeout. Explicit per-call `timeout` values are unaffected; print mode defaults to `0` |

@@ -34,6 +34,7 @@ import MONITOR_DESCRIPTION from './monitor.md?raw';
 
 export class MonitorProcessTask extends ProcessTask {
   override readonly idPrefix = MONITOR_TASK_ID_PREFIX;
+  readonly stopsWithSession = true;
   protected override readonly stdoutEvents = true;
 }
 
@@ -92,6 +93,12 @@ export class MonitorTool implements IMonitorTool {
       return { isError: true, output: 'description cannot be empty.' };
     }
 
+    try {
+      this.tasks.assertCanRegister(true);
+    } catch (error) {
+      return { isError: true, output: error instanceof Error ? error.message : String(error) };
+    }
+
     const lease = this.runtime.acquire(['process']);
     const view = new RuntimeWorkspaceView(lease.runtime, this.workspaceCtx);
     const env = lease.runtime.environment;
@@ -102,6 +109,11 @@ export class MonitorTool implements IMonitorTool {
     } catch (error) {
       lease.dispose();
       return { isError: true, output: error instanceof Error ? error.message : String(error) };
+    }
+    if (signal.aborted) {
+      await killSpawnedProcess(proc);
+      lease.dispose();
+      return { isError: true, output: 'Aborted before the monitor started.' };
     }
     closeProcessStdin(proc);
 

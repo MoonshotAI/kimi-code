@@ -51,6 +51,7 @@ export interface AgentTask {
   readonly kind: AgentTaskKind;
   readonly description: string;
   readonly timeoutMs?: number;
+  readonly stopsWithSession?: boolean;
 
   start(sink: AgentTaskSink): void | Promise<void>;
   onDetach?(): void;
