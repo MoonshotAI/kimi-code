@@ -89,6 +89,10 @@ export class StagingLeaseTracker {
   private readonly leasesByTurn = new Map<string, Set<StagingLease>>();
   /** Leases carrying a client-chosen submission id, for exact `promptId` binding. */
   private readonly leasesBySubmissionId = new Map<string, StagingLease>();
+  /** Leases whose dispatch RPC has not settled yet (see {@link trackDispatch}). */
+  private readonly inFlight = new Set<StagingLease>();
+  /** In-flight leases whose turn already ended; released once the RPC settles. */
+  private readonly endedInFlight = new Set<StagingLease>();
   /**
    * Cache copies whose consuming turn already ended. Persisted history may
    * still reference their paths (skill/plugin args carry them as plain
@@ -167,29 +171,51 @@ export class StagingLeaseTracker {
     const turnId = String(event.turnId);
     const leases = this.leasesByTurn.get(turnId);
     if (leases === undefined) return;
-    for (const lease of leases) this.releaseConsumed(lease);
-    this.leasesByTurn.delete(turnId);
+    for (const lease of leases) {
+      if (this.inFlight.has(lease)) {
+        this.endedInFlight.add(lease);
+        continue;
+      }
+      this.releaseConsumed(lease);
+    }
+    if (this.leasesByTurn.get(turnId)?.size === 0) this.leasesByTurn.delete(turnId);
   }
 
   /**
    * Track a dispatch RPC carrying staged media. When it rejects, run
    * `onError` and release the lease — but only while no turn has claimed it:
-   * a bound lease is owned by the turn and released at turn end, whatever the
-   * RPC's later outcome.
+   * a bound lease is owned by the turn and released at turn end. A turn that
+   * ends while the RPC is still in flight leaves the lease alone until the RPC
+   * settles: success releases it as consumed, failure as never consumed —
+   * unless `onError` handed it back to raw ownership via {@link defer}, as a
+   * caller that requeues the failed input does.
    */
   trackDispatch(
     lease: StagingLease | undefined,
     request: Promise<unknown>,
     onError: (error: unknown) => void,
   ): void {
+    if (lease !== undefined) this.inFlight.add(lease);
     this.track(
-      request
-        .catch((error: unknown) => {
+      request.then(
+        () => {
+          this.settleInFlight(lease, true);
+        },
+        (error: unknown) => {
           onError(error);
           if (lease?.turnId === undefined) this.release(lease);
-        })
-        .then(() => undefined),
+          this.settleInFlight(lease, false);
+        },
+      ),
     );
+  }
+
+  private settleInFlight(lease: StagingLease | undefined, consumed: boolean): void {
+    if (lease === undefined) return;
+    this.inFlight.delete(lease);
+    if (!this.endedInFlight.delete(lease)) return;
+    if (consumed) this.releaseConsumed(lease);
+    else this.release(lease);
   }
 
   /**
