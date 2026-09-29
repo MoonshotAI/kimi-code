@@ -695,6 +695,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         trusted: true,
         gatedMcpServers: [],
         gatedAdditionalDirs: [],
+        additionalDirSources: [],
+        warnings: [],
         instructionSources: EMPTY_INSTRUCTION_SOURCES,
       };
     }
@@ -703,6 +705,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       trusted: false,
       gatedMcpServers: activation.mcpServers,
       gatedAdditionalDirs: activation.additionalDirs,
+      additionalDirSources: activation.additionalDirSources,
+      warnings: activation.warnings,
       instructionSources: activation.instructionSources,
     };
   }
@@ -2862,5 +2866,6 @@ const EMPTY_INSTRUCTION_SOURCES: WorkspaceTrustInstructionSources = {
   agentsMdPaths: [],
   skills: [],
   agentProfiles: [],
+  paths: [],
 };
 

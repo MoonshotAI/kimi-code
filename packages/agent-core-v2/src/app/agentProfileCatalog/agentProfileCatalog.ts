@@ -37,6 +37,7 @@ export interface SystemPromptRenderResult {
 
 export interface AgentProfile {
   readonly name: string;
+  readonly sourcePath?: string;
   readonly description?: string;
   readonly whenToUse?: string;
   readonly override?: boolean;

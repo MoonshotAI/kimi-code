@@ -76,6 +76,7 @@ export class WorkspaceInstructionsService
         agentsMd: result.content,
         agentsMdWarning: result.warning,
         agentsMdPaths: result.paths,
+        agentsMdUnreadablePaths: result.unreadablePaths,
       };
       const changed =
         next.agentsMd !== this.current.agentsMd ||

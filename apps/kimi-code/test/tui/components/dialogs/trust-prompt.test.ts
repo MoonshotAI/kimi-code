@@ -1,178 +1,190 @@
 import { describe, expect, it, vi } from 'vitest';
-
 import type { WorkspaceTrustInfo } from '@moonshot-ai/kimi-code-sdk';
-
 import { TrustPromptComponent } from '#/tui/components/dialogs/trust-prompt';
 
-const ANSI_SGR = /\[[0-9;]*m/g;
-
-function strip(text: string): string {
-  return text.replaceAll(ANSI_SGR, '');
-}
-
-function makeInfo(overrides: Partial<WorkspaceTrustInfo> = {}): WorkspaceTrustInfo {
+function info(overrides: Partial<WorkspaceTrustInfo> = {}): WorkspaceTrustInfo {
   return {
     trusted: false,
     gatedMcpServers: [],
     gatedAdditionalDirs: [],
-    instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
+    additionalDirSources: [],
+    instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] },
+    warnings: [],
     ...overrides,
   };
 }
-
-function renderLines(info: WorkspaceTrustInfo = makeInfo()): string[] {
-  const prompt = new TrustPromptComponent({
-    workDir: '/tmp/demo-workspace',
-    info,
-    onSelect: vi.fn(),
+function render(prompt: TrustPromptComponent, width = 80): string[] {
+  return prompt.render(width).map((line) => line.replaceAll(/\u001B\[[0-9;]*m/g, ''));
+}
+const workDir = '/tmp/example-project';
+function mixedInfo(): WorkspaceTrustInfo {
+  return info({
+    gatedMcpServers: [
+      {
+        name: 'github',
+        transport: 'stdio',
+        command: 'npx',
+        args: ['--private-argument'],
+        envKeys: ['PRIVATE_KEY'],
+        origin: `${workDir}/.mcp.json`,
+      },
+      {
+        name: 'docs',
+        transport: 'http',
+        url: 'https://example.test/private',
+        origin: `${workDir}/.kimi-code/mcp.json`,
+      },
+    ],
+    gatedAdditionalDirs: ['/tmp/shared-assets', '/Users/example/Documents'],
+    additionalDirSources: [`${workDir}/.kimi-code/local.toml`],
+    instructionSources: {
+      agentsMdPaths: [`${workDir}/AGENTS.md`],
+      skills: ['lint-fix', 'deploy'],
+      agentProfiles: ['reviewer'],
+      paths: [
+        `${workDir}/AGENTS.md`,
+        `${workDir}/.kimi-code/skills`,
+        `${workDir}/.kimi-code/agents`,
+      ],
+    },
   });
-  return prompt.render(100).map(strip);
 }
 
 describe('TrustPromptComponent', () => {
-  it('renders the header vocabulary and the workspace path', () => {
-    const lines = renderLines();
-    const titleIdx = lines.findIndex((l) => l.includes('Trust this folder?'));
-    expect(titleIdx).toBeGreaterThanOrEqual(0);
-    const hint = lines[titleIdx + 1];
-    expect(hint).toContain('↑↓ navigate');
-    expect(hint).toContain('Enter select');
-    expect(hint).toContain('Esc exit');
-    expect(lines.some((l) => l.includes('/tmp/demo-workspace'))).toBe(true);
-  });
-
-  it('explains what an unconfigured folder means when trusted', () => {
-    const text = renderLines().join('\n');
-    expect(text).toContain('No project-level config found here');
-    expect(text).toContain('subject to your approvals');
-    expect(text).toContain('applies automatically once this folder is trusted');
-  });
-
-  it('lists the gated project MCP servers with keys, origin, and caps', () => {
-    const lines = renderLines(
-      makeInfo({
-        gatedMcpServers: [
-          {
-            name: 'nested-server',
-            transport: 'stdio',
-            command: 'nested-cmd',
-            args: ['--safe'],
-            cwd: '/tmp',
-            envKeys: Array.from({ length: 25 }, (_, i) => `KEY_${i}`),
-            origin: '/tmp/demo-workspace/.mcp.json',
-          },
-          {
-            name: 'root-server',
-            transport: 'http',
-            url: 'https://example.test/mcp',
-            headerKeys: ['Authorization'],
-            bearerTokenEnvVar: 'MCP_TOKEN',
-            origin: '/tmp/demo-workspace/.kimi-code/mcp.json',
-          },
-          {
-            name: 'evil',
-            transport: 'stdio',
-            command: 'cmd\u001B[2J\u0007evil',
-            envKeys: ['SAFE', 'BAD\u0007'],
-            origin: '/tmp/demo-workspace/.mcp.json',
-          },
-        ],
-        instructionSources: {
-          agentsMdPaths: [],
-          skills: ['ski\u001B[2Jll', ...Array.from({ length: 12 }, (_, i) => `skill-${i}`)],
-          agentProfiles: [],
-        },
-      }),
-    );
+  it('fits typical consequences and actual source paths on an 80x24 terminal', () => {
+    const prompt = new TrustPromptComponent({
+      workDir,
+      info: mixedInfo(),
+      getAvailableRows: () => 23,
+      onSelect: vi.fn(),
+    });
+    const lines = render(prompt);
     const text = lines.join('\n');
-    expect(text).toContain('nested-server (stdio): command=nested-cmd');
-    expect(text).toContain('args=["--safe"] cwd=/tmp');
-    expect(text).toContain('env keys: KEY_0, KEY_1');
-    expect(text).toContain('+22 more');
-    expect(text).not.toContain('KEY_24');
-    expect(text).toContain('from .mcp.json');
-    expect(text).toContain('root-server (http): url=https://example.test/mcp');
-    expect(text).toContain('header keys: Authorization · bearer token from env MCP_TOKEN');
-    expect(text).toContain('from .kimi-code/mcp.json');
-    expect(text).toContain('+7 more');
-    // ESC and BEL are dropped, defusing the sequences into harmless literal text.
-    expect(text).toContain('evil (stdio): command=cmd[2Jevil');
-    expect(text).toContain('env keys: SAFE, BAD');
-    expect(text).toContain('skills: ski[2Jll, skill-0');
+    expect(lines.length).toBeLessThanOrEqual(23);
+    for (const label of [
+      'Start 2 MCP servers automatically',
+      'Config: .mcp.json, .kimi-code/mcp.json',
+      '/Users/example/Documents',
+      'Config: .kimi-code/local.toml',
+      'AGENTS.md',
+      '.kimi-code/skills',
+      '.kimi-code/agents',
+      'future project config changes',
+      'Trust and continue',
+    ])
+      expect(text).toContain(label);
+    for (const hidden of [
+      'page',
+      '--private-argument',
+      'PRIVATE_KEY',
+      'https://example.test/private',
+      'subagents',
+    ])
+      expect(text).not.toContain(hidden);
   });
-
-  it('sanitizes control characters in http server fields', () => {
-    const lines = renderLines(
-      makeInfo({
-        gatedMcpServers: [
-          {
-            name: 'multi\nline',
-            transport: 'http',
-            url: 'https://example.test/\u001B]8;;https://evil.test\u0007',
-            origin: '/tmp/demo-workspace/.mcp.json',
-          },
-        ],
-      }),
+  it('distinguishes empty activation from unreadable configuration', () => {
+    const empty = new TrustPromptComponent({ workDir, info: info(), onSelect: vi.fn() });
+    expect(render(empty).join('\n')).toContain(
+      'No project integrations or instructions to activate.',
     );
-    const text = lines.join('\n');
-    expect(text).toContain('multiline (http): url=https://example.test/]8;;https://evil.test');
-    expect(text).not.toContain('\u001B]8;;https://evil.test');
+    const failed = new TrustPromptComponent({
+      workDir,
+      info: info({ warnings: [{ source: 'MCP configuration', path: `${workDir}/.mcp.json` }] }),
+      onSelect: vi.fn(),
+    });
+    const text = render(failed).join('\n');
+    expect(text).toContain('.mcp.json — could not read');
+    expect(text).not.toContain('No project integrations');
+    expect(text).not.toContain('No project-level config');
+    expect(text).toContain('future project config changes');
   });
-
-  it('renders the directory and instruction sections', () => {
-    const lines = renderLines(
-      makeInfo({
-        gatedAdditionalDirs: ['/tmp/shared-assets', '/opt/toolchain', '/Users/alice/Documents'],
-        instructionSources: {
-          agentsMdPaths: ['/tmp/demo-workspace/AGENTS.md', '/Users/alice/shared/AGENTS.md'],
-          skills: ['deploy-prod', 'lint-fix'],
-          agentProfiles: ['release-manager'],
-        },
+  it('pages through all directories and sources with fixed choices and persistent trust copy', () => {
+    const paths = Array.from({ length: 8 }, (_, i) => `/outside/directory-${i}`);
+    const origins = Array.from({ length: 5 }, (_, i) => `/outside/source-${i}/mcp.json`);
+    let rows = 23;
+    const prompt = new TrustPromptComponent({
+      workDir,
+      info: info({
+        gatedMcpServers: origins.map((origin, i) => ({
+          name: `server-${i}`,
+          transport: 'stdio',
+          origin,
+        })),
+        gatedAdditionalDirs: paths,
+        additionalDirSources: [`${workDir}/.kimi-code/local.toml`],
       }),
-    );
-    const text = lines.join('\n');
-    expect(text).toContain('/tmp/shared-assets');
-    expect(text).toContain('/opt/toolchain');
-    expect(text).toContain('/Users/alice/Documents');
-    expect(text).toContain('AGENTS.md: AGENTS.md');
-    expect(text).toContain('/Users/alice/shared/AGENTS.md');
-    expect(text).toContain('skills: deploy-prod, lint-fix');
-    expect(text).toContain('agent profiles available as subagents: release-manager');
+      getAvailableRows: () => rows,
+      onSelect: vi.fn(),
+    });
+    const pages: string[] = [];
+    for (let i = 0; i < 30; i += 1) {
+      const lines = render(prompt, 60);
+      const text = lines.join('\n');
+      if (pages.includes(text)) break;
+      expect(lines.length).toBeLessThanOrEqual(rows);
+      expect(text).toContain('Trust and continue');
+      expect(text).toContain('Exit');
+      expect(text.replaceAll(/\s+/g, ' ')).toContain('future project config');
+      pages.push(text);
+      prompt.handleInput('\u001B[C');
+    }
+    expect(pages.length).toBeGreaterThan(1);
+    for (const path of [...paths, ...origins]) expect(pages.join('\n')).toContain(path);
+    expect(pages.join('\n')).not.toContain('more');
+    prompt.handleInput('\u001B[D');
+    expect(render(prompt, 60).join('\n')).toBe(pages.at(-2));
+    prompt.handleInput('\u001B[6~');
+    expect(render(prompt, 60).join('\n')).toBe(pages.at(-1));
+    rows = 60;
+    expect(render(prompt, 60).join('\n')).not.toContain('page');
   });
-
-  it('caps overlong MCP target fields from untrusted config', () => {
-    const lines = renderLines(
-      makeInfo({
-        gatedMcpServers: [
-          {
-            name: 'fat',
-            transport: 'stdio',
-            command: 'x'.repeat(200),
-            args: ['--safe'],
-            origin: '/tmp/demo-workspace/.mcp.json',
-          },
-        ],
+  it('cleans control characters and retains full long source paths across wrapping', () => {
+    const longPath = `/outside/${'x'.repeat(100)}/mcp.json`;
+    const prompt = new TrustPromptComponent({
+      workDir: '/tmp/\u001B[2Jproject',
+      info: info({
+        gatedMcpServers: [{ name: 'ignored', transport: 'http', origin: longPath }],
+        gatedAdditionalDirs: ['/outside/\u001B[2Jdirectory\u0007'],
+        additionalDirSources: ['/outside/\u001B[2Jconfig\u0007'],
       }),
-    );
-    const text = lines.join('\n');
-    expect(text).toContain('…');
-    expect(text).not.toContain('x'.repeat(200));
+      onSelect: vi.fn(),
+    });
+    const text = render(prompt).join('\n');
+    expect(text).not.toContain('\u001B');
+    expect(text).not.toContain('\u0007');
+    expect(text).toContain('/outside/[2Jconfig');
+    expect(text.replaceAll(/\s/g, '')).toContain(longPath);
   });
-
-  it('handles key input: default trust, cursor moves, and Esc', () => {
-    const cases: { keys: string[]; expected: string }[] = [
+  it('pauses confirmation in a tiny terminal and restores it after resizing', () => {
+    let rows = 4;
+    const onSelect = vi.fn();
+    const prompt = new TrustPromptComponent({
+      workDir,
+      info: mixedInfo(),
+      getAvailableRows: () => rows,
+      onSelect,
+    });
+    expect(render(prompt).join('\n')).toContain('Enlarge terminal');
+    prompt.handleInput('\r');
+    expect(onSelect).not.toHaveBeenCalled();
+    prompt.handleInput('\u001B');
+    expect(onSelect).toHaveBeenCalledWith('distrust');
+    onSelect.mockClear();
+    rows = 23;
+    render(prompt);
+    prompt.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith('trust');
+  });
+  it('preserves default trust, selection, and escape behavior', () => {
+    for (const { keys, expected } of [
       { keys: ['\r'], expected: 'trust' },
       { keys: ['\u001B[A', '\r'], expected: 'trust' },
       { keys: ['\u001B[B', '\r'], expected: 'distrust' },
       { keys: ['\u001B'], expected: 'distrust' },
-    ];
-    for (const { keys, expected } of cases) {
+    ]) {
       const onSelect = vi.fn();
-      const prompt = new TrustPromptComponent({
-        workDir: '/tmp/demo-workspace',
-        info: makeInfo(),
-        onSelect,
-      });
+      const prompt = new TrustPromptComponent({ workDir, info: info(), onSelect });
+      render(prompt);
       for (const key of keys) prompt.handleInput(key);
       expect(onSelect).toHaveBeenCalledWith(expected);
     }

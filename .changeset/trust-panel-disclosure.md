@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Show what trusting a folder activates in a paged prompt with visible trust choices.
+Replace inline MCP commands in the workspace trust prompt with activation summaries and configuration paths for manual inspection.

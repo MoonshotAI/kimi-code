@@ -17,11 +17,19 @@ export interface TrustGatedInstructionSources {
   readonly agentsMdPaths: readonly string[];
   readonly skills: readonly string[];
   readonly agentProfiles: readonly string[];
+  readonly paths: readonly string[];
+}
+
+export interface TrustDisclosureWarning {
+  readonly source: string;
+  readonly path?: string;
 }
 
 export interface TrustGatedActivation {
   readonly mcpServers: readonly TrustGatedMcpServer[];
   readonly additionalDirs: readonly string[];
+  readonly additionalDirSources: readonly string[];
+  readonly warnings: readonly TrustDisclosureWarning[];
   readonly instructionSources: TrustGatedInstructionSources;
 }
 

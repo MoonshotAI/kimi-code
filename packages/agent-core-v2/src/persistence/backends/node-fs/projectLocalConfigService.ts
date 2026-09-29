@@ -132,10 +132,11 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
       throw new Error2(
         ErrorCodes.CONFIG_INVALID,
         `Invalid project local config in ${configPath}`,
+        { details: { path: configPath } },
       );
     }
 
-    return { raw: cloneRecord(raw), parsed: parseProjectLocalToml(raw) };
+    return { raw: cloneRecord(raw), parsed: parseProjectLocalToml(raw, configPath) };
   }
 
   private async resolveAdditionalDirsInternal(
@@ -257,13 +258,14 @@ function normalizeAdditionalDirInput(additionalDir: string): string {
   return normalize(trimmed);
 }
 
-function parseProjectLocalToml(raw: Record<string, unknown>): ProjectLocalToml {
+function parseProjectLocalToml(raw: Record<string, unknown>, configPath: string): ProjectLocalToml {
   try {
     return ProjectLocalTomlSchema.parse(raw);
   } catch (error: unknown) {
     if (error instanceof z.ZodError) {
       throw new Error2(ErrorCodes.CONFIG_INVALID, describeProjectLocalValidationError(error), {
         cause: error,
+        details: { path: configPath },
       });
     }
     throw error;

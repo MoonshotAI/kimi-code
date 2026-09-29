@@ -4,6 +4,7 @@ import type { WatchChange } from '#human/utils/watch';
 import type { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 
 export interface WorkspaceInstructionsSnapshot {
+  readonly agentsMdUnreadablePaths?: readonly string[];
   readonly agentsMd: string | undefined;
   readonly agentsMdWarning: string | undefined;
   readonly agentsMdPaths: readonly string[] | undefined;

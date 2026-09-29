@@ -71,6 +71,7 @@ export async function loadAgentsMdDetailed(
 }
 
 export interface LoadedAgentsMd {
+  readonly unreadablePaths?: readonly string[];
   readonly content: string;
   readonly warning: string | undefined;
   readonly paths: readonly string[];
@@ -142,12 +143,13 @@ export async function loadAgentsMdForRoots(
   const discovered: AgentFile[] = [];
   const seen = new Set<string>();
   const loadWarnings: string[] = [];
-  const warnLoad = (message: string): void => {
-    loadWarnings.push(message);
-  };
+  const unreadablePaths: string[] = [];
 
   const collect = async (path: string): Promise<boolean> => {
-    const file = await readAgentFile(deps, path, warnLoad);
+    const file = await readAgentFile(deps, path, (message) => {
+      loadWarnings.push(message);
+      unreadablePaths.push(path);
+    });
     if (file === undefined) return false;
     const key = normalize(file.path);
     if (seen.has(key)) return false;
@@ -192,7 +194,7 @@ export async function loadAgentsMdForRoots(
   }
   const warning = loadWarnings.length > 0 ? loadWarnings.join('\n') : undefined;
   const paths = discovered.map((file) => normalize(file.path));
-  return { content, warning, paths };
+  return { content, warning, paths, unreadablePaths };
 }
 
 export interface AgentsMdWatchRoot {

@@ -1525,13 +1525,13 @@ describe('SDKRpcClientV2 workspace trust', () => {
           url: 'https://example.test/mcp',
           headerKeys: ['Authorization'],
           bearerTokenEnvVar: 'TOKEN',
-          origin: join(workDir, '.mcp.json'),
+          origin: await realpath(join(workDir, '.mcp.json')),
         },
         {
           name: 'nested-server',
           transport: 'stdio',
           command: 'nested-cmd',
-          origin: join(workDir, '.kimi-code', 'mcp.json'),
+          origin: await realpath(join(workDir, '.kimi-code', 'mcp.json')),
         },
         {
           name: 'root-server',
@@ -1540,7 +1540,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
           args: ['--safe'],
           cwd: '/tmp/root',
           envKeys: ['SECRET'],
-          origin: join(workDir, '.mcp.json'),
+          origin: await realpath(join(workDir, '.mcp.json')),
         },
       ]);
       const serialized = JSON.stringify(info);
@@ -1588,13 +1588,13 @@ describe('SDKRpcClientV2 workspace trust', () => {
           command: 'project-github',
           args: undefined,
           cwd: workDir,
-          origin: join(workDir, '.mcp.json'),
+          origin: await realpath(join(workDir, '.mcp.json')),
         },
         {
           name: 'toString',
           transport: 'http',
           url: 'https://example.test/mcp',
-          origin: join(workDir, '.mcp.json'),
+          origin: await realpath(join(workDir, '.mcp.json')),
         },
       ]);
     } finally {
@@ -1602,18 +1602,31 @@ describe('SDKRpcClientV2 workspace trust', () => {
     }
   });
 
-  it('degrades the gated-server list to empty on an invalid project mcp.json', async () => {
+  it('reports failed configuration and instruction sources while retaining readable instructions', async () => {
     const { harness } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
     await writeFile(join(workDir, '.mcp.json'), '{not json', 'utf-8');
+    await writeFile(join(workDir, 'AGENTS.md'), '# Project instructions\n', 'utf-8');
+    await mkdir(join(workDir, '.kimi-code'));
+    await symlink(join(workDir, 'missing.md'), join(workDir, '.kimi-code', 'AGENTS.md'));
+    await writeFile(join(workDir, '.kimi-code', 'local.toml'), '[workspace]\nadditional_dir = 1\n', 'utf-8');
     try {
       const info = await harness.getWorkspaceTrustInfo(workDir);
       expect(info).toEqual({
         trusted: false,
         gatedMcpServers: [],
         gatedAdditionalDirs: [],
-        instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
+        additionalDirSources: [],
+        warnings: expect.arrayContaining([
+          { source: 'MCP configuration', path: join(workDir, '.mcp.json') },
+          { source: 'Additional directory configuration', path: join(workDir, '.kimi-code', 'local.toml') },
+          { source: 'Project instructions', path: join(workDir, '.kimi-code', 'AGENTS.md') },
+        ]),
+        instructionSources: {
+          agentsMdPaths: [await realpath(join(workDir, 'AGENTS.md'))],
+          skills: [], agentProfiles: [], paths: [await realpath(join(workDir, 'AGENTS.md'))],
+        },
       });
     } finally {
       await harness.close();
@@ -1673,6 +1686,16 @@ describe('SDKRpcClientV2 workspace trust', () => {
       expect(info.instructionSources.agentsMdPaths).toEqual([
         await realpath(join(outsideDir, 'AGENTS.md')),
       ]);
+      expect(info.additionalDirSources).toEqual([
+        await realpath(join(workDir, '.kimi-code', 'local.toml')),
+        await realpath(outsideSkills),
+      ]);
+      expect(info.instructionSources.paths).toEqual([
+        await realpath(join(outsideDir, 'AGENTS.md')),
+        await realpath(outsideSkills),
+        await realpath(join(workDir, '.kimi-code', 'agents')),
+      ]);
+      expect(info.warnings).toEqual([]);
       expect(info.instructionSources.skills).toEqual(['demo-skill']);
       // The agent file clashing with the builtin default without override is
       // suppressed by the session catalog, so it is not part of the disclosure.
@@ -1685,16 +1708,19 @@ describe('SDKRpcClientV2 workspace trust', () => {
   it('discloses a workspace profile that overrides a same-name builtin', async () => {
     const { harness } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
-    tempDirs.push(workDir);
+    const outsideDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-agent-source-'));
+    tempDirs.push(workDir, outsideDir);
     await mkdir(join(workDir, '.kimi-code', 'agents'), { recursive: true });
     await writeFile(
-      join(workDir, '.kimi-code', 'agents', 'override-agent.md'),
+      join(outsideDir, 'override-agent.md'),
       '---\nname: agent\noverride: true\ndescription: Replaces the builtin default\n---\n\nYou are the override.\n',
       'utf-8',
     );
+    await symlink(join(outsideDir, 'override-agent.md'), join(workDir, '.kimi-code', 'agents', 'override-agent.md'));
     try {
       const info = await harness.getWorkspaceTrustInfo(workDir);
       expect(info.instructionSources.agentProfiles).toEqual(['agent']);
+      expect(info.instructionSources.paths).toEqual([await realpath(join(outsideDir, 'override-agent.md'))]);
     } finally {
       await harness.close();
     }
@@ -1710,7 +1736,9 @@ describe('SDKRpcClientV2 workspace trust', () => {
         trusted: true,
         gatedMcpServers: [],
         gatedAdditionalDirs: [],
-        instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [] },
+        additionalDirSources: [],
+        warnings: [],
+        instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] },
       });
       // The trust marker lives in the kimi home, never in the checkout.
       const markers = await readdir(join(homeDir, 'workspace-trust'));

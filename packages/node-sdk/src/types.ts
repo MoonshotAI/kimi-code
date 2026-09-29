@@ -153,6 +153,12 @@ export interface WorkspaceTrustInstructionSources {
   readonly skills: readonly string[];
   /** Names of project-level agent profiles that will load. */
   readonly agentProfiles: readonly string[];
+  readonly paths: readonly string[];
+}
+
+export interface WorkspaceTrustDisclosureWarning {
+  readonly source: string;
+  readonly path?: string;
 }
 
 /** Trust state of a workspace directory, plus everything trusting it would activate. */
@@ -162,6 +168,8 @@ export interface WorkspaceTrustInfo {
   readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
   /** Directories outside the project that trusting grants access to (symlink-resolved). */
   readonly gatedAdditionalDirs: readonly string[];
+  readonly additionalDirSources: readonly string[];
+  readonly warnings: readonly WorkspaceTrustDisclosureWarning[];
   readonly instructionSources: WorkspaceTrustInstructionSources;
 }
 
