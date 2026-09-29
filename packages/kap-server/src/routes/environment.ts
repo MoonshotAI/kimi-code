@@ -4,9 +4,7 @@ import {
   IAgentEnvironmentBindingService,
   IEnvironmentDeclarationService,
   ISessionContext,
-  IWorkspaceInstanceManager,
   IEnvironmentService,
-  IWorkspaceService,
   environmentEntryInfo,
   resumeSessionById,
   EnvironmentError,
@@ -16,7 +14,6 @@ import {
   type EnvironmentBinding,
   type EnvironmentGenerationSnapshot,
   type Scope,
-  type WorkspaceInstance,
 } from '@moonshot-ai/agent-core-v2';
 import { HandshakeError } from '@moonshot-ai/agent-core-v2/remote';
 
@@ -110,17 +107,6 @@ async function resolveEnvironmentAgent(core: Scope, sessionId: string): Promise<
   return ensureMainAgent(session);
 }
 
-export async function resolveWorkspaceInstance(core: Scope, workspaceId: string): Promise<WorkspaceInstance> {
-  const manager = core.accessor.get(IWorkspaceInstanceManager);
-  const existing = manager.get(workspaceId);
-  if (existing !== undefined) return existing;
-  const ws = await core.accessor.get(IWorkspaceService).get(workspaceId);
-  if (ws === undefined) {
-    throw new Error2(ErrorCodes.WORKSPACE_NOT_FOUND, `workspace ${workspaceId} does not exist`);
-  }
-  return manager.getOrCreate({ workspaceId, root: ws.root });
-}
-
 async function resolveDeclarations(
   core: Scope,
 ): Promise<ReadonlyMap<string, RemoteEnvironmentEntry>> {
@@ -183,7 +169,7 @@ export function sendEnvironmentError(
   return false;
 }
 
-export function environmentErrorCode(code: EnvironmentError['code']): ErrorCode {
+function environmentErrorCode(code: EnvironmentError['code']): ErrorCode {
   switch (code) {
     case 'environment.not_found':
       return ErrorCode.ENVIRONMENT_NOT_FOUND;

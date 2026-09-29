@@ -21,7 +21,9 @@ import {
   resolveEffectiveImageMime,
   unsupportedImageMimeFromUrl,
   type ContentPart,
+  type EnvironmentBinding,
   type GetResult,
+  type IAgentEnvironmentService,
   type IFileService,
   type ISessionMediaStore,
   type ITelemetryService,
@@ -34,7 +36,7 @@ import {
 } from '@moonshot-ai/agent-core-v2/agent/media/mediaRef';
 import { isSensitiveFile } from '@moonshot-ai/agent-core-v2/tool/path-access';
 import type { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
-import type { Environment, EnvironmentPath } from '@moonshot-ai/agent-core-v2/environment/environment';
+import type { Environment, EnvironmentLease, EnvironmentPath } from '@moonshot-ai/agent-core-v2/environment/environment';
 
 import type { PromptSubmission } from '../protocol/rest-prompt';
 
@@ -144,12 +146,27 @@ export interface PromptAttachmentsTarget {
   readonly path: EnvironmentPath;
 }
 
-export function environmentAttachmentsTarget(environment: Environment): PromptAttachmentsTarget {
-  return environmentTempDirTarget(environment, 'attachments');
+export interface EnvironmentMediaTargets {
+  readonly resolveOriginalsTarget?: () => Promise<PromptAttachmentsTarget>;
+  readonly resolveAttachmentsTarget?: () => Promise<PromptAttachmentsTarget>;
+  dispose(): void;
 }
 
-export function environmentOriginalsTarget(environment: Environment): PromptAttachmentsTarget {
-  return environmentTempDirTarget(environment, 'original-images');
+export function environmentMediaTargets(
+  binding: EnvironmentBinding,
+  environment: IAgentEnvironmentService,
+): EnvironmentMediaTargets {
+  if (binding.environmentId === 'local') return { dispose: () => {} };
+  let lease: EnvironmentLease | undefined;
+  const acquire = async (): Promise<Environment> => {
+    lease ??= await environment.acquireWhenReady(['fs']);
+    return lease.environment;
+  };
+  return {
+    resolveOriginalsTarget: async () => environmentTempDirTarget(await acquire(), 'original-images'),
+    resolveAttachmentsTarget: async () => environmentTempDirTarget(await acquire(), 'attachments'),
+    dispose: () => lease?.dispose(),
+  };
 }
 
 function environmentTempDirTarget(environment: Environment, subdir: string): PromptAttachmentsTarget {

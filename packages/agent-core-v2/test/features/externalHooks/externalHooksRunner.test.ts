@@ -251,15 +251,6 @@ describe('ExternalHooksRunnerService', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('fails open when fireAndForgetTrigger sees a synchronous trigger error', async () => {
-    const runner = makeHookRunner([]);
-    vi.spyOn(runner, 'trigger').mockImplementation(() => {
-      throw new Error('trigger failed');
-    });
-
-    await expect(runner.fireAndForgetTrigger('Notification')).resolves.toEqual([]);
-  });
-
   it('invokes onTriggered with (event,target,count) and onResolved with (event,target,action)', async () => {
     const triggered: Array<[string, string, number]> = [];
     const resolved: Array<[string, string, string]> = [];

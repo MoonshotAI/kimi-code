@@ -65,3 +65,26 @@ export interface EnvironmentLease {
   track<T extends { dispose(): void | Promise<void> }>(resource: T, sessionId?: string): T;
   dispose(): void;
 }
+
+export async function realpathExistingPrefix(
+  fs: Pick<IHostFileSystem, 'realpath'>,
+  path: EnvironmentPath,
+  abs: string,
+  isMissing: (error: unknown) => boolean,
+): Promise<string> {
+  const tail: string[] = [];
+  let current = abs;
+  for (let i = 0; i < 256; i++) {
+    try {
+      const real = await fs.realpath(current);
+      return tail.length === 0 ? real : path.join(real, ...tail.toReversed());
+    } catch (error) {
+      if (!isMissing(error)) throw error;
+      const parent = path.dirname(current);
+      if (parent === current) return abs;
+      tail.push(path.basename(current));
+      current = parent;
+    }
+  }
+  return abs;
+}

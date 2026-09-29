@@ -211,13 +211,13 @@ import {
   ISessionActivityView,
   IWorkspaceInstanceManager,
   IEnvironmentService,
+  IEnvironmentDeclarationService,
   closeSessionById,
   followSessionLifecycles,
   getLiveSessionById,
   isError2,
   programForSession,
   environmentEntryInfo,
-  resolveWorkspaceEnvironmentDeclarations,
   resumeSessionById,
   sessionDirOf,
   workspacePersistenceScope,
@@ -241,7 +241,6 @@ import {
   type IDisposable,
   type ISessionScopeHandle,
   type McpManagedServer,
-  type RemoteEnvironmentEntry,
   type Scope,
   type ServicesAccessor,
   type SessionSummary as V2SessionSummary,
@@ -1912,21 +1911,13 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async listEnvironments(input: SessionIdRpcInput): Promise<SessionEnvironmentsInfo> {
     this.requireLiveSession(input.sessionId);
-    const declarations = await this.resolveEnvironmentDeclarationEntries();
+    const declarations = await this.engineAccessor.get(IEnvironmentDeclarationService).declarations();
+    const entries = new Map((declarations?.entries ?? []).map((declaration) => [declaration.id, declaration.entry]));
     return {
       environments: this.engineAccessor.get(IEnvironmentService).snapshot().environments.map((environment) =>
-        environmentEntryInfo(environment, declarations.get(environment.environmentId)),
+        environmentEntryInfo(environment, entries.get(environment.environmentId)),
       ),
     };
-  }
-
-  private async resolveEnvironmentDeclarationEntries(): Promise<ReadonlyMap<string, RemoteEnvironmentEntry>> {
-    try {
-      const resolved = await resolveWorkspaceEnvironmentDeclarations(this.engineAccessor.get(IConfigService));
-      return new Map(resolved.entries.map((declaration) => [declaration.id, declaration.entry]));
-    } catch {
-      return new Map();
-    }
   }
 
   /**

@@ -12,6 +12,7 @@ import { createMcpTool } from '#/agent/mcp/tools/mcp';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { StdioMcpClient } from '#/mcpCore/client-stdio';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { MCPClient, MCPContentBlock, MCPToolResult } from '#/mcpCore/types';
 import type { ToolExecution } from '#/tool/toolContract';
@@ -807,7 +808,7 @@ describe('mcpResultToExecutableOutput', () => {
     const out = await mcpResultToExecutableOutput(
       result([{ type: 'image', data: bigBytes.toString('base64'), mimeType: 'image/png' }]),
       'mcp__s__shot',
-      { originalsDir: dir },
+      { originals: { fs: new HostFileSystem(), dir } },
     );
 
     const caption = modelText(out);
@@ -865,7 +866,7 @@ describe('mcpResultToExecutableOutput', () => {
         { type: 'image', data: big, mimeType: 'image/png' },
       ]),
       'mcp__s__shot',
-      { originalsDir: dir },
+      { originals: { fs: new HostFileSystem(), dir } },
     );
 
     const parts = out.output as ContentPart[];
@@ -891,7 +892,7 @@ describe('mcpResultToExecutableOutput', () => {
         { type: 'image', data: big, mimeType: 'image/png' },
       ]),
       'mcp__s__shot',
-      { originalsDir: dir },
+      { originals: { fs: new HostFileSystem(), dir } },
     );
 
     expect(out.truncated).toBeUndefined();

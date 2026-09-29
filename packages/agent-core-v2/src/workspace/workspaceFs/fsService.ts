@@ -49,7 +49,7 @@ import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem, type HostDirEntry, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
-import type { EnvironmentPath } from '#/environment/environment';
+import { realpathExistingPrefix, type EnvironmentPath } from '#/environment/environment';
 import { POSIX_ENVIRONMENT_PATH } from '#/environment/environmentDefaults';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
@@ -1121,24 +1121,6 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     return (await this.realRootPairs()).map((pair) => pair.real);
   }
 
-  private async realpathExistingPrefix(abs: string): Promise<string> {
-    const tail: string[] = [];
-    let current = abs;
-    for (let i = 0; i < 256; i++) {
-      try {
-        const real = await this.hostFs.realpath(current);
-        return tail.length === 0 ? real : this.path.join(real, ...tail.toReversed());
-      } catch (error) {
-        if (!isMissingPathError(error)) throw error;
-        const parent = this.path.dirname(current);
-        if (parent === current) return abs;
-        tail.push(this.path.basename(current));
-        current = parent;
-      }
-    }
-    return abs;
-  }
-
   private async resolveWithin(inputPath: string): Promise<string> {
     if (inputPath === '' || inputPath === '/') {
       throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" rejected (empty)`, {
@@ -1162,7 +1144,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         details: { path: inputPath, reason: 'resolved_outside' },
       });
     }
-    const resolved = await this.realpathExistingPrefix(abs);
+    const resolved = await realpathExistingPrefix(this.hostFs, this.path, abs, isMissingPathError);
     const roots = await this.realRoots();
     if (!roots.some((root) => isInsideOrEqual(this.path, resolved, root))) {
       throw new Error2(

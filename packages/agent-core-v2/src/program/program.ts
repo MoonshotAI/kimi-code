@@ -1,7 +1,7 @@
-import { AsyncEmitter, Emitter, Event, type IWaitUntil } from '#/_base/event';
+import { Emitter, Event } from '#/_base/event';
 import { GitService } from '#/app/git/gitService';
 import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
-import type { Environment, EnvironmentBinding, EnvironmentWorkspaceRoots } from '#/environment/environment';
+import type { Environment, EnvironmentBinding } from '#/environment/environment';
 import { environmentBindingId, LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { EnvironmentError, type EnvironmentGenerationSnapshot, type EnvironmentRegistryChange } from '#/environment/environmentRegistry';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
@@ -10,7 +10,7 @@ import type { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsService';
-import type { FsSuggestRequest, FsSuggestResponse, IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
+import type { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
 import { WorkspaceFsService } from '#/workspace/workspaceFs/fsService';
 import type { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
 import { WorkspaceGitService } from '#/workspace/workspaceGit/workspaceGitService';
@@ -20,7 +20,7 @@ import type { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp
 import { WorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcpService';
 import type { IWorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
 import { WorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfigService';
-import type { IWorkspaceTrust, WorkspaceTrustChange } from '#/workspace/workspaceTrust/workspaceTrust';
+import type { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 import { WorkspaceTrustService } from '#/workspace/workspaceTrust/workspaceTrustService';
 import type { IExtraAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoader';
 import { ExtraAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoaderService';
@@ -128,8 +128,6 @@ export class Program {
   private currentStatus: ProgramStatus = 'preparing';
   private readonly changeEmitter = new Emitter<ProgramSnapshot>();
   readonly onDidChange: Event<ProgramSnapshot> = this.changeEmitter.event;
-  private readonly trustChangeEmitter = new AsyncEmitter<WorkspaceTrustChange & IWaitUntil>();
-  readonly onDidChangeTrust: Event<WorkspaceTrustChange & IWaitUntil> = this.trustChangeEmitter.event;
   private readonly registrySubscription;
   private readonly resolver: EnvironmentResolver;
   private readonly generations = new Map<string, ProgramGeneration>();
@@ -171,35 +169,6 @@ export class Program {
 
   sessionControllerGenerationFor(environmentId: string, cwd?: string): string {
     return this.requireGeneration(environmentId, cwd).id;
-  }
-
-  async suggestFiles(
-    environmentId: string,
-    roots: EnvironmentWorkspaceRoots,
-    request: FsSuggestRequest,
-  ): Promise<FsSuggestResponse> {
-    const lease = this.resolver.acquire({ environmentId }, ['fs']);
-    try {
-      const workspace = lease.environment.workspace;
-      if (workspace === undefined) {
-        throw new EnvironmentError('environment.unavailable', `environment ${environmentId} is not ready`);
-      }
-      const mapped = workspace.mapRoots(roots);
-      const context: IWorkspaceContext = { ...this.context, cwd: mapped.workDir };
-      const dirs = { additionalDirs: mapped.additionalDirs ?? [] };
-      const fs = new WorkspaceFsService(
-        context,
-        dirs,
-        lease.environment.fs!,
-        this.resolver,
-        this.dependencies.telemetry,
-        new WorkspaceGitService(context, this.dependencies.git),
-        environmentId,
-      );
-      return await fs.suggest(request);
-    } finally {
-      lease.dispose();
-    }
   }
 
   createSessionController(environmentId: string = LOCAL_ENVIRONMENT_ID, cwd?: string): SessionLifecycleService {
@@ -288,7 +257,6 @@ export class Program {
     for (const generation of generations) this.retireGeneration(generation);
     if (this.shared !== undefined) this.releaseShared(this.shared);
     this.changeEmitter.dispose();
-    this.trustChangeEmitter.dispose();
   }
 
   private requireGeneration(environmentId: string, cwd?: string): ProgramGeneration {
@@ -433,9 +401,6 @@ export class Program {
       const fs = local.fs!;
       const state = own(new WorkspaceStateService(this.dependencies.appState));
       const trust = own(new WorkspaceTrustService(this.context, this.dependencies.docs, state, this.dependencies.telemetry, this.dependencies.bootstrap));
-      own(trust.onDidChange((change) => {
-        change.waitUntil(this.trustChangeEmitter.fireAsync({ trusted: change.trusted }, change.signal));
-      }));
       const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, fs, trust, this.dependencies.configStore));
       const mcp = own(new WorkspaceMcpService(this.context, this.resolver, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager));
       const userAgentProfiles = own(new UserAgentProfileLoaderService(this.dependencies.bootstrap, fs, this.dependencies.log, this.dependencies.builtinAgentProfiles, this.context, this.dependencies.agentProfiles));

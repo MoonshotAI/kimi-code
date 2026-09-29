@@ -9,7 +9,7 @@ the engine `Environment` interface (`src/environment/`).
 packages/agent-core-v2/src/remote/
 ├── protocol/   message types, error codes, NDJSON codec (self-contained)
 ├── client/     execBridge, launchers, connection, fs/process stubs, remoteEnvironment,
-│               remoteEnvironmentProvider, executorDetect, connectGuidance (executor detection + guidance)
+│               remoteEnvironmentProvider, connectGuidance (executor detection + guidance)
 └── server/     stdioHost, fsHandler, processManager, environment, entry, standalone
 ```
 

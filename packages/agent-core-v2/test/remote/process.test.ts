@@ -230,7 +230,6 @@ describe('process group over a subprocess loopback', () => {
       processId,
       argv: ['bash', '-c', 'trap "" TERM; sleep 300'],
       cwd: '/tmp',
-      pipeStdin: false,
     });
     const started = Date.now();
     const exited = new Promise<{ exitCode?: number }>((resolve) => {

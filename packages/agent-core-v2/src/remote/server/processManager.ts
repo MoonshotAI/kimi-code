@@ -26,7 +26,6 @@ interface ExitedProcessGroup {
 
 interface ManagedProcess {
   readonly processId: string;
-  readonly pipeStdin: boolean;
   state: 'starting' | 'running';
   pid: number;
   child: ChildProcess | undefined;
@@ -94,7 +93,6 @@ export class ProcessManager {
         }
       }
     }
-    const pipeStdin = optionalBoolean(params, 'pipeStdin') ?? false;
     if (this.processes.has(processId) || this.exitedGroups.has(processId)) {
       throw new RpcError(RpcErrorCode.InvalidRequest, `duplicate process id ${processId}`);
     }
@@ -108,11 +106,10 @@ export class ProcessManager {
 
     const entry: ManagedProcess = {
       processId,
-      pipeStdin,
       state: 'starting',
       pid: -1,
       child: undefined,
-      stdinOpen: pipeStdin,
+      stdinOpen: true,
       terminateAfterStart: false,
       clientPaused: false,
       exitCode: null,
@@ -128,7 +125,7 @@ export class ProcessManager {
         ? undefined
         : { ...(process.env as Record<string, string>), ...(env as Record<string, string>) };
 
-    await this.startPipe(entry, argv as string[], cwd, spawnEnv, pipeStdin);
+    await this.startPipe(entry, argv as string[], cwd, spawnEnv);
     if (this.disposed) {
 
       this.processes.delete(processId);
@@ -147,14 +144,13 @@ export class ProcessManager {
     argv: string[],
     cwd: string,
     spawnEnv: Record<string, string> | undefined,
-    pipeStdin: boolean,
   ): Promise<void> {
     const child = spawn(argv[0]!, argv.slice(1), {
       cwd,
       env: spawnEnv,
       detached: true,
       windowsHide: true,
-      stdio: [pipeStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
     entry.child = child;
     entry.pid = child.pid ?? -1;
@@ -179,7 +175,7 @@ export class ProcessManager {
     stderr.on('error', () => {
       this.onStreamEnd(entry);
     });
-    if (pipeStdin && child.stdin !== null) {
+    if (child.stdin !== null) {
       child.stdin.on('error', () => {
         this.breakStdin(entry);
       });
@@ -280,9 +276,6 @@ export class ProcessManager {
     const entry = this.processes.get(processId);
     if (entry === undefined) {
       return { status: this.exitedGroups.has(processId) ? 'stdinClosed' : 'unknownProcess' };
-    }
-    if (!entry.pipeStdin) {
-      return { status: 'stdinClosed' };
     }
     if (!entry.stdinOpen) {
       return { status: 'stdinClosed' };

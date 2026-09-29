@@ -5,7 +5,7 @@ import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 
 import { proxyEnvForChild, reconcileChildNoProxy } from '#/_base/utils/proxy';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
-import { EnvironmentError, environmentIsReady } from '#/environment/environmentRegistry';
+import { EnvironmentError } from '#/environment/environmentRegistry';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import type { EnvironmentResolver } from '#/app/environment/environment';
@@ -181,10 +181,6 @@ class EnvironmentStdioTransport implements Transport {
       environmentId: this.options.environmentId,
     };
     const required = ['process'] as const;
-    const inspected = this.options.environmentResolver.inspect(binding);
-    if (!environmentIsReady(inspected) && typeof inspected.connect === 'function') {
-      await inspected.connect();
-    }
     const lease = await this.options.environmentResolver.acquireWhenReady(binding, required);
     this.lease = lease;
     try {

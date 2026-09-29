@@ -207,7 +207,6 @@ async function scenarioTermIgnore(environment: RemoteEnvironment, cwd: string): 
       processId,
       argv: ['bash', '-c', 'trap "" TERM; sleep 300'],
       cwd,
-      pipeStdin: false,
     });
     const exited = new Promise<number>((resolve) => {
       const unsubscribe = environment.connection.onNotification('process/exited', (params) => {

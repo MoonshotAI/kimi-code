@@ -252,7 +252,7 @@ describe('RemoteEnvironmentProviderFactory', () => {
       status: 'disconnected',
       connectError: expect.stringContaining('code 255'),
     });
-    await expect(registry.acquireWhenReady({ environmentId: 'dev-box' })).rejects.toThrow('disconnected');
+    expect(() => registry.acquire({ environmentId: 'dev-box' })).toThrow('disconnected');
 
     await attachment.dispose();
     await registry.dispose();
@@ -371,7 +371,7 @@ describe('RemoteEnvironmentProviderFactory', () => {
     expect(managed.status).toBe('disconnected');
     expect(managed.whenReady).toBeUndefined();
     expect(managed.connectError).toContain('Connection refused');
-    await expect(registry.acquireWhenReady({ environmentId: 'dev-box' })).rejects.toThrow('disconnected');
+    expect(() => registry.acquire({ environmentId: 'dev-box' })).toThrow('disconnected');
 
     await attachment.dispose();
     await registry.dispose();

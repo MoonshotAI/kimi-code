@@ -1,10 +1,20 @@
 import { MIN_EXECUTOR_VERSION } from '#/remote/protocol/methods';
 
 import { HandshakeError } from './connection';
-import { launcherLabel } from './executorDetect';
 import { DEFAULT_REMOTE_BIN, type LauncherSpec } from './launchers';
 
 export type HandshakeFailureClass = 'missing' | 'timeout' | 'incompatible' | 'other';
+
+function launcherLabel(launcher: LauncherSpec): string {
+  switch (launcher.type) {
+    case 'ssh':
+      return `ssh:${launcher.host}`;
+    case 'docker':
+      return `docker:${launcher.container}`;
+    case 'command':
+      return `command:${launcher.program}`;
+  }
+}
 
 export function classifyHandshakeFailure(error: unknown): HandshakeFailureClass {
   if (!(error instanceof HandshakeError)) return 'other';

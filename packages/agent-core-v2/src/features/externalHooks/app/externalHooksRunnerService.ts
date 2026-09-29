@@ -78,15 +78,7 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
     event: string,
     args: ExternalHooksRunnerTriggerArgs = {},
   ): Promise<HookResult[]> {
-    try {
-      return this.trigger(event, args).catch((error: unknown): HookResult[] => {
-        this.reportFailure(event, undefined, error, args.sessionId);
-        return [];
-      });
-    } catch (error) {
-      this.reportFailure(event, undefined, error, args.sessionId);
-      return Promise.resolve([]);
-    }
+    return this.trigger(event, args);
   }
 
   hasHooksFor(event: string): boolean {

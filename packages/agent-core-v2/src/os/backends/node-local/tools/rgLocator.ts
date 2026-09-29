@@ -266,24 +266,27 @@ async function isExecutableFile(path: string): Promise<boolean> {
 }
 
 export function detectTarget(): string | undefined {
-  const arch = process.arch === 'x64' ? 'x86_64' : process.arch === 'arm64' ? 'aarch64' : undefined;
-  if (arch === undefined) return undefined;
-
-  if (process.platform === 'darwin') return `${arch}-apple-darwin`;
-  if (process.platform === 'linux') {
-    return arch === 'x86_64' ? 'x86_64-unknown-linux-musl' : 'aarch64-unknown-linux-gnu';
-  }
-  if (process.platform === 'win32') return `${arch}-pc-windows-msvc`;
-  return undefined;
+  const osKind =
+    process.platform === 'darwin' ? 'macOS'
+      : process.platform === 'linux' ? 'Linux'
+        : process.platform === 'win32' ? 'Windows'
+          : process.platform;
+  return rgTargetFor(osKind, process.arch);
 }
 
 export function detectRemoteTarget(osKind: string, osArch: string): string | undefined {
+  if (osKind === 'Windows') return undefined;
+  return rgTargetFor(osKind, osArch);
+}
+
+function rgTargetFor(osKind: string, osArch: string): string | undefined {
   const arch = osArch === 'x64' ? 'x86_64' : osArch === 'arm64' ? 'aarch64' : undefined;
   if (arch === undefined) return undefined;
   if (osKind === 'macOS') return `${arch}-apple-darwin`;
   if (osKind === 'Linux') {
     return arch === 'x86_64' ? 'x86_64-unknown-linux-musl' : 'aarch64-unknown-linux-gnu';
   }
+  if (osKind === 'Windows') return `${arch}-pc-windows-msvc`;
   return undefined;
 }
 

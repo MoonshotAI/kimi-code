@@ -96,13 +96,14 @@ function createEnvironmentClient(
       host: options.host ?? { homeDir: process.cwd() },
     },
   );
+  const connect = async (): Promise<void> => {
+    connectCalls += 1;
+    calls.push('connect');
+    environment.setStatus('ready');
+  };
   Object.assign(environment, {
     process: recordingProcess,
-    connect: async () => {
-      connectCalls += 1;
-      calls.push('connect');
-      environment.setStatus('ready');
-    },
+    connect,
   });
   const lease = (): EnvironmentLease => ({
     environment,
@@ -125,6 +126,7 @@ function createEnvironmentClient(
     },
     acquireWhenReady: async () => {
       calls.push('acquireWhenReady');
+      if (!environmentIsReady(environment)) await connect();
       if (!environmentIsReady(environment)) unavailable();
       return lease();
     },
@@ -159,13 +161,13 @@ describe('StdioMcpClient', () => {
     try {
       await pending.client.connect();
       expect(pending.connectCalls()).toBe(1);
-      expect(pending.calls.slice(0, 3)).toEqual(['inspect', 'connect', 'acquireWhenReady']);
+      expect(pending.calls.slice(0, 2)).toEqual(['acquireWhenReady', 'connect']);
       const result = await pending.client.callTool('echo', { text: 'remote hello' });
       expect(result.content).toEqual([{ type: 'text', text: 'remote hello' }]);
 
       await ready.client.connect();
       expect(ready.connectCalls()).toBe(0);
-      expect(ready.calls.slice(0, 2)).toEqual(['inspect', 'acquireWhenReady']);
+      expect(ready.calls.slice(0, 1)).toEqual(['acquireWhenReady']);
       const readyResult = await ready.client.callTool('echo', { text: 'hello' });
       expect(readyResult.content).toEqual([{ type: 'text', text: 'hello' }]);
     } finally {

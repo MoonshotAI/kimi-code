@@ -58,22 +58,16 @@ export interface EnvironmentEntryInfo {
   readonly connectError?: string;
 }
 
-export function environmentEntryType(
-  environmentId: string,
-  entry: RemoteEnvironmentEntry | undefined,
-): EnvironmentEntryType {
-  if (environmentId === LOCAL_ENVIRONMENT_ID) return 'local';
-  if (entry === undefined || 'command' in entry) return 'command';
-  return entry.type;
-}
-
 export function environmentEntryInfo(
   environment: EnvironmentGenerationSnapshot,
   entry: RemoteEnvironmentEntry | undefined,
 ): EnvironmentEntryInfo {
   return {
     environmentId: environment.environmentId,
-    type: environmentEntryType(environment.environmentId, entry),
+    type:
+      environment.environmentId === LOCAL_ENVIRONMENT_ID ? 'local'
+        : entry === undefined || 'command' in entry ? 'command'
+          : entry.type,
     status: environment.status,
     generation: environment.generation,
     capabilities: [...environment.capabilities],
@@ -143,10 +137,10 @@ export class EnvironmentRegistry {
 
   async acquireWhenReady(binding: EnvironmentBinding, required: readonly EnvironmentCapability[] = []): Promise<EnvironmentLease> {
     const entry = this.entries.get(binding.environmentId);
-    const pending = entry !== undefined && !entry.closed && !environmentIsReady(entry.environment)
-      ? entry.environment.whenReady
-      : undefined;
-    if (pending !== undefined) await pending;
+    if (entry !== undefined && !entry.closed && !environmentIsReady(entry.environment)) {
+      if (typeof entry.environment.connect === 'function') await entry.environment.connect();
+      if (entry.environment.whenReady !== undefined) await entry.environment.whenReady;
+    }
     return this.acquire(binding, required);
   }
 

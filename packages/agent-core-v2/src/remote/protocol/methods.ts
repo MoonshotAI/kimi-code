@@ -49,7 +49,6 @@ export interface FsReadFileParams {
   readonly path: string;
   readonly offset?: number;
   readonly maxBytes?: number;
-  readonly followSymlinks?: boolean;
 }
 
 export interface FsReadFileResult {
@@ -63,7 +62,6 @@ export interface FsWriteFileParams {
   readonly path: string;
   readonly dataBase64: string;
   readonly mode: FsWriteMode;
-  readonly followSymlinks?: boolean;
 }
 
 export interface FsCreateDirectoryParams {
@@ -82,7 +80,6 @@ export interface FsGetMetadataResult {
   readonly isFile: boolean;
   readonly isSymlink: boolean;
   readonly size: number;
-  readonly createdAtMs: number;
   readonly modifiedAtMs: number;
   readonly mode?: number;
 }
@@ -128,7 +125,6 @@ export interface ProcessStartParams {
   readonly argv: readonly string[];
   readonly cwd: string;
   readonly env?: Record<string, string>;
-  readonly pipeStdin?: boolean;
 }
 
 export interface ProcessStartResult {

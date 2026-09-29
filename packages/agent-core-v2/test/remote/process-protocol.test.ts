@@ -88,7 +88,7 @@ describe('process protocol semantics', () => {
     const raw = new RawClient(loopback);
     await raw.handshake();
     raw.sendRaw(
-      `${JSON.stringify({ id: 1, method: 'process/start', params: { processId: 'late', argv: ['sleep', '300'], cwd: '/tmp', pipeStdin: false } })}\n` +
+      `${JSON.stringify({ id: 1, method: 'process/start', params: { processId: 'late', argv: ['sleep', '300'], cwd: '/tmp' } })}\n` +
         `${JSON.stringify({ id: 2, method: 'process/signal', params: { processId: 'late', signal: 'terminate' } })}\n`,
     );
     expect((await raw.nextResponse(2))['result']).toEqual({});
@@ -154,7 +154,6 @@ describe('process protocol semantics', () => {
       processId: 'missing-cwd',
       argv: ['bash', '-c', 'true'],
       cwd: '/definitely-missing-cwd-9f3x',
-      pipeStdin: false,
     });
     const error = response['error'] as {
       code: number;
@@ -179,7 +178,6 @@ describe('process protocol semantics', () => {
       processId: 'file-cwd',
       argv: ['bash', '-c', 'true'],
       cwd: '/etc/hosts',
-      pipeStdin: false,
     });
     const error = response['error'] as { code: number; message: string };
     expect(error.code).toBe(-32602);
@@ -196,14 +194,12 @@ describe('process protocol semantics', () => {
       processId: 'dup',
       argv: ['sleep', '5'],
       cwd: '/tmp',
-      pipeStdin: false,
     });
     expect(first['result']).toMatchObject({ pid: expect.any(Number) });
     const second = await startProcess(raw, 2, {
       processId: 'dup',
       argv: ['sleep', '5'],
       cwd: '/tmp',
-      pipeStdin: false,
     });
     expect((second['error'] as { code: number }).code).toBe(-32600);
     loopback.clientInput.end();
@@ -214,7 +210,7 @@ describe('process protocol semantics', () => {
     const loopback = createInProcessLoopback();
     const raw = new RawClient(loopback);
     await raw.handshake();
-    await startProcess(raw, 1, { processId: 'cat', argv: ['cat'], cwd: '/tmp', pipeStdin: true });
+    await startProcess(raw, 1, { processId: 'cat', argv: ['cat'], cwd: '/tmp' });
     raw.send({ id: 2, method: 'process/write', params: { processId: 'cat', chunkBase64: '', eof: true } });
     expect((await raw.nextResponse(2))['result']).toEqual({ status: 'accepted' });
     raw.send({ id: 3, method: 'process/write', params: { processId: 'cat', chunkBase64: b64('x') } });
@@ -233,7 +229,6 @@ describe('process protocol semantics', () => {
       processId: 'daemon',
       argv: ['sh', '-c', 'while true; do echo tick; sleep 0.1; done & exit 0'],
       cwd: '/tmp',
-      pipeStdin: false,
     });
     await new Promise((resolve) => {
       setTimeout(resolve, 800);
@@ -259,13 +254,11 @@ describe('process protocol semantics', () => {
       processId: 'cat',
       argv: ['cat'],
       cwd: '/tmp',
-      pipeStdin: true,
     });
     await connection.call('process/start', {
       processId: 'flood',
       argv: ['yes'],
       cwd: '/tmp',
-      pipeStdin: false,
     });
     await new Promise((resolve) => {
       setTimeout(resolve, 800);
@@ -338,7 +331,6 @@ describe('process protocol semantics', () => {
       processId: 'blocker',
       argv: ['sleep', '300'],
       cwd: '/tmp',
-      pipeStdin: true,
     });
 
     const chunk = Buffer.alloc(1024 * 1024, 0x61).toString('base64');
@@ -363,7 +355,6 @@ describe('process protocol semantics', () => {
       processId: 'daemonizer',
       argv: ['sh', '-c', 'sleep 300 </dev/null >/dev/null 2>&1 & echo $!; exit 0'],
       cwd: '/tmp',
-      pipeStdin: false,
     });
     let childPid = -1;
     const started = Date.now();

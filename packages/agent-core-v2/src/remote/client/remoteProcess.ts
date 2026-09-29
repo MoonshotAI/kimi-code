@@ -10,6 +10,7 @@ import {
   type IHostProcessService,
 } from '#/os/interface/hostProcess';
 
+import { decodeBase64 } from '#/remote/protocol/codec';
 import { RpcError } from '#/remote/protocol/errors';
 import {
   PROCESS_CLOSED_METHOD,
@@ -24,7 +25,6 @@ import {
   type ProcessOutputNotification,
   type ProcessOutputStream,
   type ProcessStartResult,
-  type ProcessWriteResult,
 } from '#/remote/protocol/methods';
 import { ConnectionClosedError, RequestTimeoutError, type RemoteExecConnection } from './connection';
 import { rpcDomainError } from './rpcDomainError';
@@ -153,18 +153,11 @@ export class RemoteProcess implements IHostProcess {
   }
 
   private async sendWrite(chunk: Buffer, eof: boolean): Promise<void> {
-    const result = (await this.connection.call(PROCESS_WRITE_METHOD, {
+    await this.connection.call(PROCESS_WRITE_METHOD, {
       processId: this.processId,
       chunkBase64: chunk.toString('base64'),
       eof: eof || undefined,
-    })) as ProcessWriteResult;
-    switch (result.status) {
-      case 'accepted':
-        return;
-      case 'stdinClosed':
-      case 'unknownProcess':
-        return;
-    }
+    });
   }
 
   onOutput(stream: ProcessOutputStream, chunk: Uint8Array): void {
@@ -252,7 +245,7 @@ export class RemoteProcessService implements IHostProcessService {
       const notification = params as ProcessOutputNotification;
       this.processes
         .get(notification.processId)
-        ?.onOutput(notification.stream, decodeChunk(notification.chunkBase64));
+        ?.onOutput(notification.stream, decodeBase64(notification.chunkBase64));
     });
     connection.onNotification(PROCESS_EXITED_METHOD, (params) => {
       const notification = params as ProcessExitedNotification;
@@ -294,7 +287,6 @@ export class RemoteProcessService implements IHostProcessService {
         argv,
         cwd: options.cwd ?? this.defaultCwd,
         env: options.env,
-        pipeStdin: true,
       })) as ProcessStartResult;
       proc.attach(result.pid);
       return proc;
@@ -310,8 +302,4 @@ export class RemoteProcessService implements IHostProcessService {
       throw toRemoteProcessError(error);
     }
   }
-}
-
-function decodeChunk(chunkBase64: string): Uint8Array {
-  return new Uint8Array(Buffer.from(chunkBase64, 'base64'));
 }

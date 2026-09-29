@@ -164,12 +164,7 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
   }
 
   async acquireWhenReady(required: readonly EnvironmentCapability[] = []): Promise<EnvironmentLease> {
-    const binding = this.binding.current;
-    const environment = this.resolver.inspect(binding);
-    if (!environmentIsReady(environment) && typeof environment.connect === 'function') {
-      await environment.connect();
-    }
-    return this.resolver.acquireWhenReady(binding, required);
+    return this.resolver.acquireWhenReady(this.binding.current, required);
   }
 
   dispose(): void {

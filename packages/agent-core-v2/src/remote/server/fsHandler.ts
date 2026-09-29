@@ -60,7 +60,7 @@ export function optionalBoolean(params: Params, name: string): boolean | undefin
   return value;
 }
 
-export function optionalInteger(
+function optionalInteger(
   params: Params,
   name: string,
   min: number,
@@ -74,7 +74,7 @@ export function optionalInteger(
   return value;
 }
 
-export function fsDomainError(error: unknown, ctx: { path: string; op: string }): RpcError {
+function fsDomainError(error: unknown, ctx: { path: string; op: string }): RpcError {
   const hostError = toHostFsError(error, ctx);
   const code =
     hostError.code === OsFsErrors.codes.OS_FS_NOT_FOUND
@@ -97,10 +97,8 @@ export class FsHandler {
     const path = requireAbsolutePath(params, 'path');
     const offset = optionalInteger(params, 'offset', 0, Number.MAX_SAFE_INTEGER) ?? 0;
     const maxBytes = optionalInteger(params, 'maxBytes', 1, FS_READ_FILE_MAX_BYTES);
-    const followSymlinks = optionalBoolean(params, 'followSymlinks') ?? true;
     try {
-      const flags = followSymlinks ? constants.O_RDONLY : constants.O_RDONLY | constants.O_NOFOLLOW;
-      const handle = await open(path, flags);
+      const handle = await open(path);
       try {
         const size = (await handle.stat()).size;
         const length = maxBytes ?? size - offset;
@@ -137,25 +135,17 @@ export class FsHandler {
     if (mode !== 'truncate' && mode !== 'append' && mode !== 'exclusive') {
       throw new RpcError(RpcErrorCode.InvalidParams, 'mode must be truncate, append or exclusive');
     }
-    const followSymlinks = optionalBoolean(params, 'followSymlinks') ?? true;
     const data = Buffer.from(dataBase64, 'base64');
-    const noFollow = followSymlinks ? 0 : constants.O_NOFOLLOW;
     try {
-      if (mode === 'truncate' && followSymlinks) {
+      if (mode === 'truncate') {
         await writeFile(path, data);
-      } else if (mode === 'append' && followSymlinks) {
+      } else if (mode === 'append') {
         await appendFile(path, data);
       } else {
-        const base =
-          mode === 'truncate'
-            ? constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC
-            : mode === 'append'
-              ? constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND
-              : constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL;
-        const handle = await open(path, base | noFollow);
+        const handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL);
         try {
           await handle.writeFile(data);
-          if (mode === 'exclusive') await handle.sync();
+          await handle.sync();
         } finally {
           await handle.close();
         }
@@ -190,7 +180,6 @@ export class FsHandler {
         isFile: result.isFile(),
         isSymlink: result.isSymbolicLink(),
         size: result.size,
-        createdAtMs: result.birthtimeMs,
         modifiedAtMs: result.mtimeMs,
         mode: result.mode & 0o7777,
       };

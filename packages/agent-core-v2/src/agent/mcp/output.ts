@@ -31,7 +31,6 @@ export interface McpOriginalsTarget {
 export interface McpOutputOptions {
   readonly signal?: AbortSignal;
   readonly attachmentStore?: ISessionMediaStore;
-  readonly originalsDir?: string;
   readonly originals?: McpOriginalsTarget;
   readonly telemetry?: ITelemetryService;
   readonly providerType?: string;
@@ -218,9 +217,9 @@ export async function mcpResultToExecutableOutput(
         return persistOriginalImage(
           bytes,
           mimeType,
-          options.originals !== undefined
-            ? { fs: options.originals.fs, dir: options.originals.dir, path: options.originals.path }
-            : options.originalsDir === undefined ? {} : { dir: options.originalsDir },
+          options.originals === undefined
+            ? {}
+            : { fs: options.originals.fs, dir: options.originals.dir, path: options.originals.path },
         );
       },
     },

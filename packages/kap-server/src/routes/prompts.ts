@@ -57,11 +57,9 @@ import {
   contentToCoreParts,
   resolvePromptMediaFiles,
   resolvePromptSessionMediaRefs,
-  environmentAttachmentsTarget,
-  environmentOriginalsTarget,
+  environmentMediaTargets,
   type PromptMediaPreparation,
 } from '../lib/promptMedia';
-import type { EnvironmentLease } from '@moonshot-ai/agent-core-v2/environment/environment';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
@@ -251,8 +249,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         reservation = reservePromptId(session_id, req.body.prompt_id);
 
         const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
-        const binding = resolved.binding.current;
-        let environmentLease: EnvironmentLease | undefined;
+        const environmentMedia = environmentMediaTargets(resolved.binding.current, resolved.environment);
         try {
           preparedMedia = await resolvePromptMediaFiles(
             resolvedSessionMedia,
@@ -266,27 +263,17 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
                 if (session === undefined) return undefined;
                 return sessionMediaOriginalsDir(session.accessor.get(ISessionContext).sessionDir);
               },
-              resolveOriginalsTarget: binding.environmentId === 'local'
-                ? undefined
-                : async () => {
-                    environmentLease ??= await resolved.environment.acquireWhenReady(['fs']);
-                    return environmentOriginalsTarget(environmentLease.environment);
-                  },
+              resolveOriginalsTarget: environmentMedia.resolveOriginalsTarget,
               resolveAttachmentsDir: async () => {
                 const session = await resumeSessionById(core.accessor, session_id);
                 if (session === undefined) return undefined;
                 return join(session.accessor.get(ISessionContext).sessionDir, 'attachments');
               },
-              resolveAttachmentsTarget: binding.environmentId === 'local'
-                ? undefined
-                : async () => {
-                    environmentLease ??= await resolved.environment.acquireWhenReady(['fs']);
-                    return environmentAttachmentsTarget(environmentLease.environment);
-                  },
+              resolveAttachmentsTarget: environmentMedia.resolveAttachmentsTarget,
             },
           );
         } finally {
-          environmentLease?.dispose();
+          environmentMedia.dispose();
         }
         const resolvedContent = preparedMedia.content;
         const promptAttachments =

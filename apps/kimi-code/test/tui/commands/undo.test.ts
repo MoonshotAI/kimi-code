@@ -23,7 +23,6 @@ function hostWith(entries: TranscriptEntry[]): SlashCommandHost {
       appState: { streamingPhase: 'idle' },
     },
     showError: vi.fn(),
-    refreshEnvironmentSlot: vi.fn(async () => {}),
   } as unknown as SlashCommandHost;
 }
 

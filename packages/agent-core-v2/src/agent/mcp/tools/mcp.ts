@@ -17,7 +17,6 @@ import {
 interface McpToolOptions {
   readonly serverName?: string;
   readonly attachmentStore?: McpOutputOptions['attachmentStore'];
-  readonly originalsDir?: string;
   readonly originals?: () => McpOutputOptions['originals'];
   readonly telemetry?: ITelemetryService;
   readonly providerType?: () => string | undefined;
@@ -67,7 +66,6 @@ export function createMcpTool(
         return mcpResultToExecutableOutput(result, qualifiedName, {
           signal: context.signal,
           attachmentStore: options.attachmentStore,
-          originalsDir: options.originalsDir,
           originals: options.originals?.(),
           telemetry: options.telemetry,
           providerType: options.providerType?.(),
