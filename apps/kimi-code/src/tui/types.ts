@@ -176,6 +176,8 @@ export interface BackgroundAgentStatusData {
   readonly detail?: string;
   /** Output lines shown under the headline; set for monitor events. */
   readonly lines?: readonly string[];
+  /** Earlier lines the engine left out of this monitor event. */
+  readonly omittedLines?: number;
 }
 
 export interface CompactionTranscriptData {

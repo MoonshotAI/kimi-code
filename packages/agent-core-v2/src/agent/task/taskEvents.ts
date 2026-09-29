@@ -17,11 +17,12 @@ export interface TaskEventStreamHost {
 
 export class TaskEventStream {
   private partial = '';
+  private discarding = false;
   private pending: string[] = [];
   private omitted = 0;
   private seq = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
-  private inFlight = false;
+  private inFlight = 0;
   private windowStartedAt = 0;
   private windowLines = 0;
   private closed = false;
@@ -32,16 +33,24 @@ export class TaskEventStream {
   ) {}
 
   get hasQueuedBatch(): boolean {
-    return this.inFlight;
+    return this.inFlight > 0;
   }
 
   append(chunk: string): void {
     if (this.closed) return;
-    const lines = (this.partial + chunk).split('\n');
+    let text = chunk;
+    if (this.discarding) {
+      const newline = text.indexOf('\n');
+      if (newline === -1) return;
+      this.discarding = false;
+      text = text.slice(newline + 1);
+    }
+    const lines = (this.partial + text).split('\n');
     this.partial = lines.pop() ?? '';
     if (this.partial.length > TASK_EVENT_MAX_LINE_CHARS) {
       lines.push(this.partial);
       this.partial = '';
+      this.discarding = true;
     }
     for (const line of lines) {
       if (!this.push(line)) return;
@@ -96,7 +105,7 @@ export class TaskEventStream {
   }
 
   private schedule(): void {
-    if (this.closed || this.timer !== undefined || this.inFlight) return;
+    if (this.closed || this.timer !== undefined || this.inFlight > 0) return;
     this.timer = setTimeout(() => {
       this.timer = undefined;
       this.flush();
@@ -109,12 +118,12 @@ export class TaskEventStream {
     const batch: TaskEventBatch = { seq: ++this.seq, lines: this.pending, omitted: this.omitted };
     this.pending = [];
     this.omitted = 0;
-    this.inFlight = true;
+    this.inFlight += 1;
     let settled = false;
     this.host.deliver(batch, () => {
       if (settled) return;
       settled = true;
-      this.inFlight = false;
+      this.inFlight -= 1;
       this.schedule();
     });
   }

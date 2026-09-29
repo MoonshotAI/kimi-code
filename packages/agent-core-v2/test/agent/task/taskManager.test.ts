@@ -1467,6 +1467,21 @@ describe('TaskEventStream', () => {
     expect(batches).toHaveLength(2);
   });
 
+  it('stays queued until every undelivered batch is consumed', () => {
+    vi.useFakeTimers();
+    const { stream, settle } = eventStream();
+
+    stream.append('one\n');
+    vi.advanceTimersByTime(TASK_EVENT_BATCH_MS);
+    stream.append('two\n');
+    stream.close();
+
+    settle(0);
+    expect(stream.hasQueuedBatch).toBe(true);
+    settle(1);
+    expect(stream.hasQueuedBatch).toBe(false);
+  });
+
   it('keeps the newest lines of a large batch and cuts very long lines', () => {
     vi.useFakeTimers();
     const { stream, batches } = eventStream();
@@ -1479,6 +1494,19 @@ describe('TaskEventStream', () => {
     expect(batch!.lines).toHaveLength(TASK_EVENT_MAX_BATCH_LINES);
     expect(batch!.omitted).toBe(4);
     expect(batch!.lines.at(-1)).toBe(`${'x'.repeat(TASK_EVENT_MAX_LINE_CHARS)}…`);
+  });
+
+  it('drops the rest of an overlong line that arrives in later chunks', () => {
+    vi.useFakeTimers();
+    const { stream, batches } = eventStream();
+
+    stream.append('x'.repeat(TASK_EVENT_MAX_LINE_CHARS + 1));
+    stream.append('x'.repeat(TASK_EVENT_MAX_LINE_CHARS * 3));
+    stream.append('xxx\nnext line\n');
+    vi.advanceTimersByTime(TASK_EVENT_BATCH_MS);
+
+    expect(batches.map((batch) => batch.lines.length)).toEqual([2]);
+    expect(batches[0]!.lines[1]).toBe('next line');
   });
 
   it('delivers what it has and reports an overflow once the per-minute line limit is passed', () => {
@@ -1566,7 +1594,7 @@ describe('AgentTaskService monitor events', () => {
     const taskId = manager.registerTask(new MonitorProcessTask(proc, 'tail -F app.log', 'watch app log'));
     expect(taskId).toMatch(/^monitor-[0-9a-z]{8}$/);
 
-    stdout.write('server listening on :3000\n');
+    stdout.write('server listening on :3000 &lt;ok&gt; <b>\n');
     stderr.write('stderr noise\n');
     await vi.waitFor(() => {
       expect(notes).toHaveLength(1);
@@ -1581,7 +1609,7 @@ describe('AgentTaskService monitor events', () => {
       notificationId: `task:${taskId}:event:1`,
     });
     expect(noteText(event!)).toContain('type="task.event"');
-    expect(noteText(event!)).toContain('server listening on :3000');
+    expect(noteText(event!)).toContain('server listening on :3000 &amp;lt;ok&amp;gt; &lt;b&gt;');
     expect(noteText(event!)).not.toContain('stderr noise');
     expect(queued).toEqual([taskId]);
     expect(manager.hasQueuedEvent(taskId)).toBe(true);
@@ -1594,7 +1622,7 @@ describe('AgentTaskService monitor events', () => {
     expect(fixture.ctx.allEvents.find((e) => e.event === 'background.task.event')?.args).toMatchObject({
       taskId,
       description: 'watch app log',
-      lines: ['server listening on :3000'],
+      lines: ['server listening on :3000 &lt;ok&gt; <b>'],
       omitted: 0,
     });
 

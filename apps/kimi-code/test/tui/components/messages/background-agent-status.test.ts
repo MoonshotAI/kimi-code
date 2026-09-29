@@ -66,13 +66,14 @@ describe('BackgroundAgentStatusComponent', () => {
       headline: 'monitor event',
       detail: 'watch app log',
       lines,
+      omittedLines: 3,
     })
       .render(120)
       .map((line) => strip(line).trim());
 
     expect(rendered[1]).toBe(`${STATUS_BULLET}monitor event (watch app log)`);
     expect(rendered.slice(2)).toEqual([
-      '… 2 earlier lines',
+      '… 5 earlier lines (full log in the task output)',
       'line 3',
       'line 4',
       'line 5',

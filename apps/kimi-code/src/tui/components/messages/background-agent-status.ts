@@ -46,10 +46,11 @@ export class BackgroundAgentStatusComponent implements Component {
 
   private renderLines(): string[] {
     const lines = this.data.lines ?? [];
-    const hidden = Math.max(0, lines.length - MONITOR_EVENT_VISIBLE_LINES);
-    const rendered = lines.slice(hidden).map((line) => MESSAGE_INDENT + currentTheme.fg('textDim', line));
+    const overflow = Math.max(0, lines.length - MONITOR_EVENT_VISIBLE_LINES);
+    const rendered = lines.slice(overflow).map((line) => MESSAGE_INDENT + currentTheme.fg('textDim', line));
+    const hidden = overflow + (this.data.omittedLines ?? 0);
     if (hidden === 0) return rendered;
-    const label = `… ${String(hidden)} earlier ${hidden === 1 ? 'line' : 'lines'}`;
+    const label = `… ${String(hidden)} earlier ${hidden === 1 ? 'line' : 'lines'} (full log in the task output)`;
     return [MESSAGE_INDENT + currentTheme.fg('textDim', label), ...rendered];
   }
 }

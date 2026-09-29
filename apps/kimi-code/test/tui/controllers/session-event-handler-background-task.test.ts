@@ -317,7 +317,8 @@ describe('SessionEventHandler — background.task.event', () => {
         phase: 'event',
         headline: 'monitor event',
         detail: 'watch app log',
-        lines: ['(2 earlier lines omitted; the full log is in the task output.)', 'ERROR <db> refused'],
+        lines: ['ERROR <db> refused'],
+        omittedLines: 2,
       },
     });
   });
