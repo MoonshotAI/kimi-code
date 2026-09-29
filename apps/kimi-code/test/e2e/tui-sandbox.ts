@@ -21,7 +21,10 @@ const APP_ROOT = resolve(import.meta.dirname, '../..');
 
 type Step =
   | { readonly calls: readonly { readonly name: string; readonly args: unknown }[]; readonly delayMs?: number }
-  | { readonly text: string; readonly echo?: boolean; readonly delayMs?: number };
+  | { readonly text: string; readonly echo?: boolean; readonly delayMs?: number }
+  | { readonly resolve: (conversation: string) => Reply };
+
+type Reply = Exclude<Step, { readonly resolve: unknown }>;
 
 const call = (name: string, args: unknown): Step => ({ calls: [{ name, args }] });
 export const bash = (command: string, description = 'slow build'): Step =>
@@ -30,6 +33,11 @@ export const waitFor = (timeout: number): Step => call('WaitFor', { timeout });
 export const monitor = (command: string, description = 'ticker'): Step =>
   call('Monitor', { command, description });
 export const foreground = (command: string): Step => call('Bash', { command, timeout: 60 });
+/** TaskStop on the most recent monitor task id seen in the conversation so far. */
+export const stopMonitor = (): Step => ({
+  resolve: (conversation) =>
+    ({ calls: [{ name: 'TaskStop', args: { task_id: [...conversation.matchAll(/task_id: (monitor-[0-9a-z]+)/g)].at(-1)?.[1] ?? 'none' } }] }),
+});
 export const completeGoal = (): Step => call('UpdateGoal', { status: 'complete' });
 /** A foreground coder subagent; its own requests consume the following script steps. */
 export const agent = (prompt: string): Step =>
@@ -74,12 +82,13 @@ async function startMockModel(script: readonly Step[]) {
       const body = (raw ? JSON.parse(raw) : {}) as { messages?: Message[]; tools?: unknown[] };
       const messages = body.messages ?? [];
       const lastUser = textOf(messages.findLast((m) => m.role === 'user')?.content);
-      let step: Step = { text: 'Mock session' };
+      let step: Reply = { text: 'Mock session' };
       if ((body.tools ?? []).length > 0) {
         const sinceReply = messages.slice(messages.findLastIndex((m) => m.role === 'assistant') + 1);
         const texts = (role: string): string[] =>
           sinceReply.filter((m) => m.role === role).map((m) => textOf(m.content));
-        step = script[model.sent.length] ?? { text: 'Done.' };
+        const planned = script[model.sent.length] ?? { text: 'Done.' };
+        step = 'resolve' in planned ? planned.resolve(messages.map((m) => textOf(m.content)).join('\n')) : planned;
         model.sent.push({ userTexts: texts('user'), toolResult: texts('tool').join('\n') });
       }
       const id = model.sent.length;
@@ -272,5 +281,35 @@ export function scenario(
       await mock.close();
       rmSync(root, { recursive: true, force: true });
     }
+  };
+}
+
+/**
+ * A stand-in for a service on a remote host: `GET /status` answers with the
+ * current status as plain text, or 503 while the service is down.
+ */
+export async function startFakeService(initial: string) {
+  let status = initial;
+  let up = true;
+  const server = createServer((_req, res) => {
+    if (!up) {
+      res.writeHead(503).end();
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'text/plain' }).end(status);
+  });
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+  const address = server.address();
+  const port = typeof address === 'object' && address !== null ? address.port : 0;
+  return {
+    url: `http://127.0.0.1:${String(port)}/status`,
+    set(next: string): void {
+      status = next;
+      up = true;
+    },
+    down(): void {
+      up = false;
+    },
+    close: () => new Promise<void>((done) => server.close(() => done())),
   };
 }

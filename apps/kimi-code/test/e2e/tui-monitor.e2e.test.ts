@@ -4,13 +4,31 @@
  * with `KIMI_E2E=1` and `tmux` on PATH.
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 
-import { foreground, hasTmux, monitor, say, scenario, waitFor } from './tui-sandbox';
+import {
+  foreground,
+  hasTmux,
+  monitor,
+  say,
+  scenario,
+  startFakeService,
+  stopMonitor,
+  waitFor,
+} from './tui-sandbox';
 
 const ENABLED = process.env['KIMI_E2E'] === '1' && (await hasTmux());
 const MONITOR_ON = { env: { KIMI_CODE_EXPERIMENTAL_MONITOR: '1' } };
 vi.setConfig({ testTimeout: 120_000 });
+
+// A service on a "remote" host. A single background command cannot follow it:
+// it reports once and exits, while the monitor reports every status change.
+const service = ENABLED ? await startFakeService('deploying') : undefined;
+afterAll(() => service?.close());
+const pollStatus = (url: string): string =>
+  `sleep 3; prev=""; while true; do s=$(curl -sf --max-time 2 ${url} || echo unreachable); ` +
+  'if [ "$s" != "$prev" ]; then echo "status: $s"; prev=$s; fi; sleep 1; done';
+const watchStaging = monitor(pollStatus(service?.url ?? ''), 'staging service');
 
 describe.skipIf(!ENABLED)('TUI e2e — Monitor', () => {
   it('An event wakes an idle agent with the new line', scenario(
@@ -62,4 +80,65 @@ describe.skipIf(!ENABLED)('TUI e2e — Monitor', () => {
     },
     MONITOR_ON,
   ));
+
+  describe('remote service status', () => {
+    it('Each status change of a remote service reaches the agent', scenario(
+      [watchStaging, say('Watching staging.'), say('Still deploying.'), say('Staging is healthy.')],
+      async ({ tui, model }) => {
+        service!.set('deploying');
+        await tui.submit('Deploy staging and tell me when it is healthy');
+        await tui.see('Watching staging.');
+        await tui.see('status: deploying', 'first-status');
+        await tui.see('Still deploying.');
+        service!.set('healthy');
+        await tui.see('status: healthy', 'second-status');
+        await tui.see('Staging is healthy.');
+
+        expect(model.userText(2)).toContain('status: deploying');
+        expect(model.userText(3)).toContain('status: healthy');
+        expect(model.userText(3)).not.toContain('status: deploying');
+      },
+      MONITOR_ON,
+    ));
+
+    it('An unreachable service wakes the agent', scenario(
+      [watchStaging, say('Watching staging.'), say('Staging looks healthy.'), say('Staging is unreachable, looking into it.')],
+      async ({ tui, model }) => {
+        service!.set('healthy');
+        await tui.submit('Keep an eye on staging');
+        await tui.see('Staging looks healthy.');
+        service!.down();
+        await tui.see('status: unreachable', 'unreachable');
+        await tui.see('Staging is unreachable, looking into it.');
+
+        expect(model.userText(3)).toContain('status: unreachable');
+      },
+      MONITOR_ON,
+    ));
+
+    it('The agent stops the monitor once the service is healthy', scenario(
+      [
+        watchStaging,
+        say('Watching staging.'),
+        say('Still deploying.'),
+        stopMonitor(),
+        say('Staging is healthy; I stopped watching it.'),
+      ],
+      async ({ tui, model }) => {
+        service!.set('deploying');
+        await tui.submit('Tell me when staging is healthy, then stop watching');
+        await tui.see('Still deploying.');
+        service!.set('healthy');
+        await tui.see('Staging is healthy; I stopped watching it.', 'stopped-watching');
+        await tui.see('monitor stopped');
+
+        const requests = model.sent.length;
+        service!.set('deploying');
+        await new Promise((done) => setTimeout(done, 5_000));
+        expect(model.sent.length).toBe(requests);
+        expect(model.toolResult(4)).toMatch(/monitor-[0-9a-z]+/);
+      },
+      MONITOR_ON,
+    ));
+  });
 });
