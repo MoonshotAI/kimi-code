@@ -1,5 +1,7 @@
 import type { BackgroundAgentStatusData } from '@/tui/types';
 
+import { sanitizeShellOutput } from './shell-output';
+
 const MONITOR_TASK_ID_PREFIX = 'monitor-';
 const MONITOR_EVENT_TITLE_PREFIX = 'Monitor event: ';
 const EVENT_BLOCK = /<event(?: omitted="(\d+)")?>\n([\s\S]*?)\n?<\/event>/;
@@ -22,7 +24,13 @@ export function formatMonitorEvent(
   lines: readonly string[],
   omitted: number,
 ): BackgroundAgentStatusData {
-  return { phase: 'event', headline: 'monitor event', detail: description, lines, omittedLines: omitted };
+  return {
+    phase: 'event',
+    headline: 'monitor event',
+    detail: description,
+    lines: lines.map((line) => sanitizeShellOutput(line)),
+    omittedLines: omitted,
+  };
 }
 
 export function monitorEventFromNotification(text: string): BackgroundAgentStatusData | undefined {

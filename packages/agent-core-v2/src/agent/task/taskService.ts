@@ -1026,7 +1026,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
         onConsume: () => {
           settled();
           this.fireNotificationHook(notification);
-          this.publishTaskEvent(entry, batch);
         },
         onDrop: settled,
       });
@@ -1035,6 +1034,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       this.log.error('task event delivery failed', { taskId: entry.taskId, error });
       return;
     }
+    this.publishTaskEvent(entry, batch);
     this.eventQueuedEmitter.fire(entry.taskId);
   }
 

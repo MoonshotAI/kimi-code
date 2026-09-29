@@ -322,4 +322,26 @@ describe('SessionEventHandler — background.task.event', () => {
       },
     });
   });
+
+  it('strips terminal control sequences from monitor lines', () => {
+    const host = makeSessionEventHost() as unknown as { appendTranscriptEntry: ReturnType<typeof vi.fn> };
+    const handler = new SessionEventHandler(host as never);
+
+    handler.handleEvent(
+      {
+        sessionId: 's1',
+        agentId: 'main',
+        type: 'background.task.event',
+        taskId: 'monitor-log00000',
+        description: 'watch app log',
+        lines: ['\u001B[31mERROR\u001B[0m build \u001B]0;title\u0007failed\r'],
+        omitted: 0,
+      } as unknown as Event,
+      vi.fn(),
+    );
+
+    expect(host.appendTranscriptEntry.mock.calls[0]![0]).toMatchObject({
+      backgroundAgentStatus: { lines: ['ERROR build failed'] },
+    });
+  });
 });
