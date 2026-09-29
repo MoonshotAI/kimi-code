@@ -14,7 +14,7 @@ import {
   type CreateAgentMachineOptions,
   type PromptGate,
 } from '#/agent-machine/agent';
-import type { CreateTurnMachineOptions } from '#/agent-machine/turn';
+import type { CreateTurnMachineOptions, TurnOutcome } from '#/agent-machine/turn';
 import type { AgentLogEvent, AgentStore } from '#/stores/agent';
 import {
   createSystemEntry,
@@ -155,6 +155,32 @@ export interface AgentWaitOpts<T extends AgentEmitted['type']> {
   readonly signal?: AbortSignal;
 }
 
+export class AgentRunError extends Error {
+  readonly code: 'not_running' | 'blocked';
+
+  constructor(code: 'not_running' | 'blocked', message: string, opts?: { cause?: unknown }) {
+    super(message, opts?.cause === undefined ? undefined : { cause: opts.cause });
+    this.name = 'AgentRunError';
+    this.code = code;
+  }
+}
+
+export interface AgentRunOpts {
+  readonly meta?: UserMeta;
+  readonly timeoutMs?: number;
+  readonly signal?: AbortSignal;
+  readonly onStarted?: (turnId: number) => void;
+}
+
+export interface AgentRunResult {
+  readonly turnId: number;
+  readonly branchId: string;
+  readonly outcome: TurnOutcome;
+  readonly messages: readonly HistoryMessage[];
+}
+
+let runSeq = 0;
+
 export interface AgentCommands {
   readonly agentId: string;
   readonly snapshot: Ref<AgentSnapshot | undefined>;
@@ -179,6 +205,7 @@ export interface AgentCommands {
     type: T,
     opts?: AgentWaitOpts<T>,
   ): Promise<Extract<AgentEmitted, { type: T }>>;
+  run(message: UserMessage, opts?: AgentRunOpts): Promise<AgentRunResult>;
 }
 
 export interface AgentHandle extends UnitHandle, AgentCommands {
@@ -318,6 +345,73 @@ export const AgentUnit = createUnit<AgentUnitProps>('agent', (props) => {
         }
         opts?.signal?.addEventListener('abort', onAbort, { once: true });
       }),
+    run: async (message, opts) => {
+      const promptId = opts?.meta?.promptId ?? `run-${++runSeq}`;
+      if (opts?.signal?.aborted) throw abortReason(opts.signal);
+      const scope = new AbortController();
+      const onExternalAbort = (): void => scope.abort(opts?.signal?.reason);
+      opts?.signal?.addEventListener('abort', onExternalAbort, { once: true });
+      const timer =
+        opts?.timeoutMs === undefined
+          ? undefined
+          : setTimeout(() => {
+              scope.abort(new Error(`run timed out after ${opts.timeoutMs}ms`));
+            }, opts.timeoutMs);
+      try {
+        const started = commands.wait('turn.started', {
+          match: (event) => event.queueItemId === promptId,
+          signal: scope.signal,
+        });
+        void started.catch(() => {});
+        const blocked = commands
+          .wait('prompt.blocked', {
+            match: (event) => event.queueItemId === promptId,
+            signal: scope.signal,
+          })
+          .then((event): never => {
+            throw new AgentRunError('blocked', `prompt blocked (${event.reason})`, {
+              cause: event.error,
+            });
+          });
+        void blocked.catch(() => {});
+        const ack = commands.submit(message, { ...opts?.meta, promptId });
+        if (ack === undefined) throw new AgentRunError('not_running', 'agent is not running');
+        let turnId: number;
+        try {
+          turnId = (await Promise.race([started, blocked])).turnId;
+        } catch (error) {
+          if (scope.signal.aborted) {
+            commands.cancel(promptId);
+            throw abortReason(scope.signal);
+          }
+          throw error;
+        }
+        opts?.onStarted?.(turnId);
+        try {
+          return await commands
+            .wait('turn.done', {
+              match: (event) => event.turnId === turnId,
+              signal: scope.signal,
+            })
+            .then((event) => ({
+              turnId: event.turnId,
+              branchId: event.branchId,
+              outcome: event.outcome,
+              messages: event.messages,
+            }));
+        } catch (error) {
+          if (scope.signal.aborted) {
+            commands.abort(scope.signal.reason);
+            throw abortReason(scope.signal);
+          }
+          throw error;
+        }
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+        opts?.signal?.removeEventListener('abort', onExternalAbort);
+        scope.abort();
+      }
+    },
   };
   provide(EventContext, { sessionId: props.sessionId, agentId: props.agentId });
   provide(AgentStoreRef, props.store);
@@ -376,6 +470,7 @@ export function agentHandle(handle: UnitHandle): AgentHandle {
     continue: () => commands().continue(),
     on: (type, handler) => commands().on(type, handler),
     wait: (type, opts) => commands().wait(type, opts),
+    run: (message, opts) => commands().run(message, opts),
   };
 }
 
