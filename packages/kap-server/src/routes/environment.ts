@@ -2,15 +2,12 @@ import {
   Error2,
   ErrorCodes,
   IAgentEnvironmentBindingService,
-  IBootstrapService,
   IEnvironmentDeclarationService,
-  IHostFileSystem,
   ISessionContext,
   IWorkspaceInstanceManager,
   IEnvironmentService,
   IWorkspaceService,
   environmentEntryInfo,
-  readSshConfigHosts,
   resumeSessionById,
   EnvironmentError,
   isError2,
@@ -95,7 +92,6 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
           environments: core.accessor.get(IEnvironmentService).snapshot().environments.map((environment) =>
             toEntry(environment, declarations.get(environment.environmentId)),
           ),
-          ssh_hosts: [...await resolveSshHosts(core)],
         };
         reply.send(okEnvelope(payload, req.id));
       } catch (error) {
@@ -130,17 +126,6 @@ async function resolveDeclarations(
 ): Promise<ReadonlyMap<string, RemoteEnvironmentEntry>> {
   const declarations = await core.accessor.get(IEnvironmentDeclarationService).declarations();
   return new Map((declarations?.entries ?? []).map((declaration) => [declaration.id, declaration.entry]));
-}
-
-async function resolveSshHosts(core: Scope): Promise<readonly string[]> {
-  try {
-    return await readSshConfigHosts(
-      core.accessor.get(IHostFileSystem),
-      core.accessor.get(IBootstrapService).osHomeDir,
-    );
-  } catch {
-    return [];
-  }
 }
 
 function toEntry(environment: EnvironmentGenerationSnapshot, entry: RemoteEnvironmentEntry | undefined): SessionEnvironmentEntry {

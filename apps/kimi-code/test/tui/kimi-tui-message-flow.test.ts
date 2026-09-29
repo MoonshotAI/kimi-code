@@ -9367,7 +9367,6 @@ describe('KimiTUI environment slot', () => {
           { environmentId: 'local', type: 'local', status: 'ready', generation: 'g0', capabilities: [] },
           { environmentId: 'dev-box', type: 'ssh', status: 'ready', generation: 'g1', capabilities: ['fs'] },
         ],
-        sshHosts: [],
       })),
       ...overrides,
     });
@@ -9392,7 +9391,6 @@ describe('KimiTUI environment slot', () => {
           { environmentId: 'local', type: 'local', status: 'ready', generation: 'g0', capabilities: [] },
           { environmentId: 'dev-box', type: 'ssh', status: 'disconnected', generation: 'g1', capabilities: ['fs'] },
         ],
-        sshHosts: [],
       })),
     });
     const { driver } = await makeDriver(session);
@@ -9411,7 +9409,6 @@ describe('KimiTUI environment slot', () => {
           { environmentId: 'local', type: 'local', status: 'ready', generation: 'g0', capabilities: [] },
           { environmentId: 'dev-box', type: 'ssh', status, generation: 'g1', capabilities: ['fs'] },
         ],
-        sshHosts: [],
       })),
     });
     const { driver } = await makeDriver(session);
@@ -9439,7 +9436,6 @@ describe('KimiTUI environment slot', () => {
             connectError: 'ssh: connect failed (code 255)',
           },
         ],
-        sshHosts: [],
       })),
     });
     const { driver } = await makeDriver(session);
@@ -9468,7 +9464,6 @@ describe('KimiTUI environment slot', () => {
             connectError: 'initialize timed out after 10000ms; executor stderr: Password:\nsecond line stays out',
           },
         ],
-        sshHosts: [],
       })),
     });
     const { driver } = await makeDriver(session);
@@ -9491,7 +9486,7 @@ describe('KimiTUI environment slot', () => {
     expect(stripSgr(renderTranscript(driver))).not.toContain('Environment ssh:dev-box disconnected');
   });
 
-  it('marks the environment connecting while the first prompt awaits the startup session', async () => {
+  it('shows connection progress while the first prompt awaits the startup session', async () => {
     const lazySession = environmentSession({ id: 'ses-lazy' });
     const startupInput: KimiTUIStartupInput = {
       ...makeStartupInput(),
@@ -9508,21 +9503,14 @@ describe('KimiTUI environment slot', () => {
       lazySession,
       {
         createSession,
-        listEnvironmentDeclarations: vi.fn(async () => [
-          { id: 'dev-box', type: 'ssh', defaultCwd: '/home/me/projects' },
-        ]),
       },
       startupInput,
     );
 
     driver.handleUserInput('hello-remote-world');
-    await vi.waitFor(() => {
-      expect(driver.state.appState.environment).toEqual({
-        environmentId: 'dev-box',
-        type: 'ssh',
-        status: 'connecting',
-      });
-    });
+    await vi.waitFor(() => expect(createSession).toHaveBeenCalledOnce());
+    expect(driver.state.appState.environment).toBeUndefined();
+    expect(stripSgr(renderTranscript(driver))).toContain('Connecting to dev-box…');
 
     resolveCreate(lazySession);
     await vi.waitFor(() => {
@@ -9545,9 +9533,6 @@ describe('KimiTUI environment slot', () => {
       lazySession,
       {
         createSession,
-        listEnvironmentDeclarations: vi.fn(async () => [
-          { id: 'dev-box', type: 'ssh', defaultCwd: '/home/me/projects' },
-        ]),
       },
       startupInput,
     );

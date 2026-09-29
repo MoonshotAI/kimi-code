@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto';
 import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { IConfigService } from '#/app/config/config';
-import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
 import { ENVIRONMENTS_SECTION } from '#/environment/configSection';
 import { resolveWorkspaceEnvironmentDeclarations } from '#/environment/environmentDeclarations';
 import type {
@@ -276,7 +275,6 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
       });
       return tail;
     };
-    const reconciliation = host.get(IEnvironmentDeclarationService).registerReconciler(reconcile);
     const refresh = (): Promise<void> => reconcile().catch((error: unknown) => {
       log.warn('remote environment declarations failed to reload', { error });
     });
@@ -286,7 +284,6 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
     return {
       dispose: async () => {
         disposed = true;
-        reconciliation.dispose();
         configListener.dispose();
         for (const record of [...records.values()].toReversed()) {
           try {

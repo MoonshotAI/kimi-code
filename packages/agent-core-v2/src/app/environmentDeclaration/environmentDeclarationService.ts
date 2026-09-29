@@ -1,5 +1,4 @@
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import type { IDisposable } from '#/_base/di/lifecycle';
 import { ILogService } from '#/_base/log/log';
 import { EnvironmentSetBinding } from '#/agent/environmentBinding/environmentBindingOps';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -24,7 +23,6 @@ import { IEnvironmentDeclarationService } from './environmentDeclaration';
 
 export class EnvironmentDeclarationService implements IEnvironmentDeclarationService {
   declare readonly _serviceBrand: undefined;
-  private reconcile: (() => Promise<void>) | undefined;
 
   constructor(
     @IConfigService private readonly config: IConfigService,
@@ -33,14 +31,6 @@ export class EnvironmentDeclarationService implements IEnvironmentDeclarationSer
     @IEnvironmentService private readonly environments: IEnvironmentService,
     @ILogService private readonly log: ILogService,
   ) {}
-
-  registerReconciler(reconcile: () => Promise<void>): IDisposable {
-    if (this.reconcile !== undefined) throw new Error('remote environment provider is already registered');
-    this.reconcile = reconcile;
-    return { dispose: () => {
-      if (this.reconcile === reconcile) this.reconcile = undefined;
-    } };
-  }
 
   async declarations(): Promise<EnvironmentDeclarationSet | undefined> {
     try {

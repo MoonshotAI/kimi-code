@@ -14,6 +14,7 @@ import { IAgentPermissionRulesService } from '#/agent/permissionRules/permission
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { HostFsError } from '#/os/interface/hostFsErrors';
 import { IBlobStore } from '#/persistence/interface/blobStore';
@@ -160,7 +161,7 @@ describe('Plan service', () => {
 
   function expectedPlanPath(id: string): string {
     const agent = ctx.get(IAgentScopeContext);
-    return join(tmpdir(), 'kimi-code', 'plans', agent.agentId, `${id}.md`);
+    return join(ctx.get(ISessionContext).sessionDir, 'agents', agent.agentId, 'plans', `${id}.md`);
   }
 
   async function expectPlanActive(active: boolean): Promise<void> {
@@ -192,7 +193,19 @@ describe('Plan service', () => {
       expect(ctx.llmCalls).toHaveLength(0);
     });
 
-    it('derives the plan path from the environment tempDir on enter and restore', async () => {
+    it('restores plan content from the persistent path written by previous versions', async () => {
+      const session = ctx.get(ISessionContext);
+      const path = join(session.sessionDir, 'agents', ctx.get(IAgentScopeContext).agentId, 'plans', 'existing-plan.md');
+      const content = '# Existing plan\n\n- Keep the saved work';
+      const { fakes } = createPlanFileFakes(new Map([[path, content]]));
+      useFakes(fakes);
+
+      await ctx.dispatch({ type: 'plan_mode.enter', id: 'existing-plan' });
+
+      expect(await plan.status()).toEqual({ id: 'existing-plan', path, content });
+    });
+
+    it('keeps the local persistent plan path on enter and restore', async () => {
       useFakes(createPlanFakes({
         writeText: vi.fn(async (_path: string, _content: string): Promise<void> => {}),
       }));

@@ -397,17 +397,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     }
   });
 
-  it('lists resolved environment declarations without a session', async () => {
-    const { harness } = await makeEnvironmentHarness();
-    try {
-      await expect(harness.listEnvironmentDeclarations()).resolves.toEqual([
-        { id: 'fake-box', type: 'ssh', defaultCwd: '/remote/work' },
-      ]);
-    } finally {
-      await harness.close();
-      vi.unstubAllEnvs();
-    }
-  });
+
 
   it('reports global MCP authorization without probing when verify is false', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));

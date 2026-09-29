@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
-import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
 import { IConfigService, type ConfigSectionChangedEvent } from '#/app/config/config';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
@@ -105,7 +104,6 @@ function fakeHost(services: HostServices, registry: EnvironmentRegistry): Enviro
       if (id === IHostFileSystem) return services.fs;
       if (id === IAtomicDocumentStore) return services.docs;
       if (id === ILogService) return services.log;
-      if (id === IEnvironmentDeclarationService) return { registerReconciler: () => ({ dispose: () => {} }) };
       throw new Error('unexpected service');
     },
     provide: () => {

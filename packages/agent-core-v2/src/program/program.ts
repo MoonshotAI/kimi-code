@@ -1,7 +1,7 @@
 import { AsyncEmitter, Emitter, Event, type IWaitUntil } from '#/_base/event';
 import { GitService } from '#/app/git/gitService';
 import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
-import type { Environment, EnvironmentBinding, EnvironmentLease, EnvironmentWorkspaceRoots } from '#/environment/environment';
+import type { Environment, EnvironmentBinding, EnvironmentWorkspaceRoots } from '#/environment/environment';
 import { environmentBindingId, LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { EnvironmentError, type EnvironmentGenerationSnapshot, type EnvironmentRegistryChange } from '#/environment/environmentRegistry';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
@@ -85,7 +85,6 @@ export interface ProgramSnapshot {
 interface ProgramGeneration {
   readonly id: string;
   readonly profileContextKey: string;
-  lease?: EnvironmentLease;
   readonly state: IWorkspaceStateService;
   readonly dirs: IWorkspaceDirs;
   readonly fs: IWorkspaceFsService;
@@ -205,7 +204,7 @@ export class Program {
 
   createSessionController(environmentId: string = LOCAL_ENVIRONMENT_ID, cwd?: string): SessionLifecycleService {
     const generation = this.requireGeneration(environmentId, cwd);
-    generation.lease ??= this.resolver.acquire({ environmentId }, PROGRAM_CAPABILITIES);
+    this.resolver.acquire({ environmentId }, PROGRAM_CAPABILITIES).dispose();
     generation.references += 1;
     let released = false;
     const release = (): void => {
@@ -494,13 +493,6 @@ export class Program {
     generation.references -= 1;
     if (generation.references === 0 && generation.retired) {
       for (const disposable of [...generation.disposables].toReversed()) void disposable.dispose();
-      generation.lease?.dispose();
-      generation.lease = undefined;
-      return;
-    }
-    if (generation.references === 1 && !generation.retired) {
-      generation.lease?.dispose();
-      generation.lease = undefined;
     }
   }
 

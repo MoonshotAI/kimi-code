@@ -43,7 +43,6 @@ interface EnvironmentEntryWire {
 interface EnvironmentsWire {
   workspace_id: string;
   environments: EnvironmentEntryWire[];
-  ssh_hosts: string[];
 }
 
 interface SessionWire {
@@ -173,7 +172,6 @@ describe('server-v2 /api/v1 environment routes', () => {
       expect(byId.get('loop')).toMatchObject({ type: 'command', status: 'pending', default_cwd: '/tmp' });
       expect(byId.get('dying')).toMatchObject({ type: 'command', status: 'pending', default_cwd: '/tmp' });
       expect(byId.get('loop')?.connect_error).toBeUndefined();
-      expect(Array.isArray(environments.body.data.ssh_hosts)).toBe(true);
     });
 
     it('creates a session bound to a declared environment via POST /sessions', async () => {

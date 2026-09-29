@@ -43,6 +43,7 @@ interface StartupDriver {
   setSession(session: unknown): Promise<void>;
   syncRuntimeState(session?: unknown): Promise<void>;
   ensureSession(): Promise<unknown>;
+  waitForLazyCreation(): Promise<void>;
 }
 
 interface RuntimeStateDriver extends StartupDriver {
@@ -498,9 +499,6 @@ describe('KimiTUI startup', () => {
   });
 
   it('pre-creates the --environment session in the background at startup (v2)', async () => {
-    const listEnvironmentDeclarations = vi.fn(async () => [
-      { id: 'dev-box', type: 'ssh', defaultCwd: '/remote/work' },
-    ]);
     const harness = makeHarness(makeSession(), {
       getConfig: vi.fn(async () => ({
         models: {
@@ -508,39 +506,19 @@ describe('KimiTUI startup', () => {
         },
         defaultModel: 'k2',
       })),
-      listEnvironmentDeclarations,
     });
     const driver = makeDriver(harness, makeStartupInput({ environment: 'dev-box' }));
 
     await expect(driver.init()).resolves.toBe(false);
 
-    expect(listEnvironmentDeclarations).toHaveBeenCalledWith();
     expect(harness.createSession).toHaveBeenCalledWith(
       expect.objectContaining({ environmentId: 'dev-box' }),
     );
   });
 
-  it('pre-creates without the early check when declarations cannot be resolved (v2)', async () => {
-    const harness = makeHarness(makeSession(), {
-      getConfig: vi.fn(async () => ({
-        models: {
-          k2: { model: 'moonshot-v1', maxContextSize: 100 },
-        },
-        defaultModel: 'k2',
-      })),
-      listEnvironmentDeclarations: vi.fn(async () => {
-        throw new Error('config unreadable');
-      }),
-    });
-    const driver = makeDriver(harness, makeStartupInput({ environment: 'dev-box' }));
 
-    await expect(driver.init()).resolves.toBe(false);
-    expect(harness.createSession).toHaveBeenCalledWith(
-      expect.objectContaining({ environmentId: 'dev-box' }),
-    );
-  });
 
-  it('shows a synthetic connecting environment slot until the startup session takes over (v2)', async () => {
+  it('shows startup progress until the real environment status is available (v2)', async () => {
     const session = makeSession({
       getEnvironment: vi.fn(async () => ({
         environmentId: 'dev-box',
@@ -552,7 +530,6 @@ describe('KimiTUI startup', () => {
           { environmentId: 'local', type: 'local', status: 'ready', generation: 'g0', capabilities: [] },
           { environmentId: 'dev-box', type: 'ssh', status: 'ready', generation: 'g1', capabilities: ['fs'] },
         ],
-        sshHosts: [],
       })),
     });
     const harness = makeHarness(session, {
@@ -562,9 +539,6 @@ describe('KimiTUI startup', () => {
         },
         defaultModel: 'k2',
       })),
-      listEnvironmentDeclarations: vi.fn(async () => [
-        { id: 'dev-box', type: 'ssh', defaultCwd: '/remote/work' },
-      ]),
     });
     let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
     harness.createSession.mockImplementationOnce(
@@ -576,11 +550,8 @@ describe('KimiTUI startup', () => {
     const driver = makeDriver(harness, makeStartupInput({ environment: 'dev-box' }));
 
     await expect(driver.init()).resolves.toBe(false);
-    expect(driver.state.appState.environment).toEqual({
-      environmentId: 'dev-box',
-      type: 'ssh',
-      status: 'connecting',
-    });
+    expect(driver.state.appState.environment).toBeUndefined();
+    expect(driver.state.transcriptContainer.render(160).join('\n')).toContain('Connecting to dev-box…');
 
     resolveCreate(session);
     await driver.ensureSession();
@@ -735,7 +706,7 @@ describe('KimiTUI startup', () => {
     expect(created.agentProfile).toBeUndefined();
   });
 
-  it('marks the environment slot connecting while /new waits on a disconnected remote binding', async () => {
+  it('shows creation progress while preserving the current environment status', async () => {
     const created = makeSession({
       getEnvironment: vi.fn(async () => ({
         environmentId: 'dev-box',
@@ -747,7 +718,6 @@ describe('KimiTUI startup', () => {
           { environmentId: 'local', type: 'local', status: 'ready', generation: 'g0', capabilities: [] },
           { environmentId: 'dev-box', type: 'ssh', status: 'ready', generation: 'g1', capabilities: ['fs'] },
         ],
-        sshHosts: [],
       })),
     });
     const current = makeSession({
@@ -780,16 +750,15 @@ describe('KimiTUI startup', () => {
     };
 
     const pending = (driver as unknown as { createNewSession(): Promise<void> }).createNewSession();
-    await vi.waitFor(() => {
-      expect(driver.state.appState.environment).toEqual({
-        environmentId: 'dev-box',
-        type: 'ssh',
-        status: 'connecting',
-        cwd: '/remote/custom',
-      });
+    await vi.waitFor(() => expect(harness.createSession).toHaveBeenCalled());
+    expect(driver.state.appState.environment).toEqual({
+      environmentId: 'dev-box',
+      type: 'ssh',
+      status: 'disconnected',
+      cwd: '/remote/custom',
     });
     expect(driver.state.transcriptContainer.render(160).join('\n')).toContain(
-      'Connecting to dev-box…',
+      'Starting a new session…',
     );
 
     resolveCreate(created);
@@ -850,7 +819,7 @@ describe('KimiTUI startup', () => {
     await pending;
   });
 
-  it('restores the previous environment slot when /new creation fails', async () => {
+  it('preserves the current environment status when /new creation fails', async () => {
     const session = makeSession({
       getEnvironment: vi.fn(async () => ({
         environmentId: 'dev-box',
@@ -869,7 +838,6 @@ describe('KimiTUI startup', () => {
             connectError: 'timeout',
           },
         ],
-        sshHosts: [],
       })),
     });
     const harness = makeHarness(session, {
@@ -904,7 +872,7 @@ describe('KimiTUI startup', () => {
     );
   });
 
-  it('clears the synthetic connecting slot when a session-less /new fails', async () => {
+  it('keeps the environment unset when a session-less /new fails', async () => {
     const harness = makeHarness(makeSession(), {
       getConfig: vi.fn(async () => ({
         models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
@@ -923,7 +891,7 @@ describe('KimiTUI startup', () => {
     expect(driver.state.appState.environment).toBeUndefined();
   });
 
-  it('clears the synthetic environment slot when the background pre-create fails (v2)', async () => {
+  it('stops the progress spinner when the background pre-create fails (v2)', async () => {
     const harness = makeHarness(makeSession(), {
       getConfig: vi.fn(async () => ({
         models: {
@@ -931,17 +899,14 @@ describe('KimiTUI startup', () => {
         },
         defaultModel: 'k2',
       })),
-      listEnvironmentDeclarations: vi.fn(async () => [
-        { id: 'dev-box', type: 'ssh', defaultCwd: '/remote/work' },
-      ]),
     });
     harness.createSession.mockRejectedValueOnce(new Error('connect failed'));
     const driver = makeDriver(harness, makeStartupInput({ environment: 'dev-box' }));
 
     await expect(driver.init()).resolves.toBe(false);
-    await vi.waitFor(() => {
-      expect(driver.state.appState.environment).toBeUndefined();
-    });
+    await driver.waitForLazyCreation();
+    expect(driver.state.appState.environment).toBeUndefined();
+    expect(driver.state.transcriptContainer.render(160).join('\n')).toContain('Session setup failed.');
   });
 
   it('resumes the latest session for --continue and marks history for replay', async () => {
@@ -2929,7 +2894,6 @@ describe('KimiTUI startup', () => {
     const harness = makeHarness(makeSession(), {
       getWorkspaceTrustInfo,
       trustWorkspace,
-      listEnvironmentDeclarations: vi.fn(async () => []),
     });
     const driver = makeDriver(harness, makeStartupInput({ environment: 'ghost' })) as unknown as MigrateExitDriver & {
       mountEditorReplacement(panel: { handleInput(data: string): void }): void;

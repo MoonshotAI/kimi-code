@@ -26,7 +26,8 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import { IBlobStore } from '#/persistence/interface/blobStore';
-import type { EnvironmentPath } from '#/environment/environment';
+import { LOCAL_ENVIRONMENT_ID, type EnvironmentPath } from '#/environment/environment';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { ContextUndone } from '#/agent/undo/undoService';
@@ -63,6 +64,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     @IEventBus eventBus: IEventBus,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
+    @ISessionContext private readonly sessionCtx: ISessionContext,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
@@ -249,10 +251,13 @@ export class AgentPlanService extends Service implements IAgentPlanService {
   private planFileTarget(id: string): PlanFileTarget | undefined {
     const target = environmentTempTarget(this.environment, 'plans', tmpdir());
     if (target === undefined) return undefined;
+    const directory = this.environment.inspect().identity.environmentId === LOCAL_ENVIRONMENT_ID
+      ? target.path.join(this.sessionCtx.sessionDir, 'agents', this.agentCtx.agentId, 'plans')
+      : target.path.join(target.dir, this.agentCtx.agentId);
     return {
       fs: target.fs,
       environmentPath: target.path,
-      path: target.path.join(target.dir, this.agentCtx.agentId, `${id}.md`),
+      path: target.path.join(directory, `${id}.md`),
     };
   }
 

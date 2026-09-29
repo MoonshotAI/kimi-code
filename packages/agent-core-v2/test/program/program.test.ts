@@ -977,7 +977,7 @@ describe('Program remote generation activation', () => {
     }
   });
 
-  it('releases the remote generation lease while no session controller uses it and re-acquires on demand', async () => {
+  it('replaces a remote environment while an existing session controller is alive', async () => {
     const fixture = await localityFixture({ drainTimeoutMs: 5_000 });
     try {
       const first = fixture.program.createSessionController('remote', fixture.remoteRoot);
@@ -1002,7 +1002,7 @@ describe('Program remote generation activation', () => {
     }
   });
 
-  it('does not pin a remote environment for a generation rebuilt without controllers', async () => {
+  it('rebuilds a remote generation after the previous controller is disposed', async () => {
     const fixture = await localityFixture({ drainTimeoutMs: 5_000 });
     try {
       const controller = fixture.program.createSessionController('remote', fixture.remoteRoot);

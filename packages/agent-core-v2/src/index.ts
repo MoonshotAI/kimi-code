@@ -44,7 +44,6 @@ export * from '#/environment/localEnvironment';
 export * from '#/environment/programPath';
 export * from '#/environment/remoteEnvironmentDeclaration';
 export * from '#/environment/environmentDeclarations';
-export * from '#/environment/sshConfigDiscovery';
 export * from '#/environment/configSection';
 import '#/environment/configSection';
 export * from '#/program/program';

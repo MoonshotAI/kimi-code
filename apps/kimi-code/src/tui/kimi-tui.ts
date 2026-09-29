@@ -15,7 +15,6 @@ import type {
   PluginCommandDef,
   PromptPart,
   Session,
-  SessionEnvironmentType,
   SkillSummary,
   TokenUsage,
   TurnEndedEvent,
@@ -344,8 +343,6 @@ export class KimiTUI {
   state: TUIState;
   /** In-flight lazy session creation (v2 engine), shared by concurrent first-use triggers. */
   private ensureSessionPromise: Promise<Session | undefined> | null = null;
-  /** Type of the validated `--environment` startup declaration, used for the synthetic connecting footer slot. */
-  private startupEnvironmentType: SessionEnvironmentType | undefined;
   private readonly cacheHint = new CacheHintController(this);
   /** Staged prompt media lifecycle (daemon uploads + cache copies) — see StagingLeaseTracker. */
   private readonly staging: StagingLeaseTracker;
@@ -1018,7 +1015,7 @@ export class KimiTUI {
         await this.hydrateLazyConfigDefaults();
         this.appendStartupNotice(SESSIONLESS_STARTUP_NOTICE);
         if (startup.environment !== undefined && startup.environment !== 'local') {
-          await this.prepareStartupEnvironment(startup.environment);
+          void this.ensureSession();
         }
       }
       if (session !== undefined && shouldReplayHistory) {
@@ -2257,104 +2254,6 @@ export class KimiTUI {
   }
 
   /**
-   * `--environment <id>` startup binding: resolve the declared type for the
-   * synthetic connecting slot, then pre-create the session in the background
-   * so the remote connect overlaps startup instead of blocking the first
-   * prompt. A bad id surfaces the engine's own createSession error on first
-   * use — no early validation here.
-   */
-  private async prepareStartupEnvironment(environmentId: string): Promise<void> {
-    try {
-      const declarations = await this.harness.listEnvironmentDeclarations();
-      const declared = declarations.find((entry) => entry.id === environmentId);
-      if (declared !== undefined) this.startupEnvironmentType = declared.type;
-    } catch {
-      // Declaration resolution failed (e.g. unreadable config): the slot
-      // falls back to the generic type and the background create surfaces
-      // the engine's own error.
-    }
-    void this.ensureSession();
-  }
-
-  /**
-   * While the `--environment` startup session is being created there is no
-   * binding to sync from yet; a synthetic connecting slot drives the same
-   * footer spinner the registry-backed slot shows once refreshEnvironmentSlot
-   * takes over.
-   */
-  private markStartupEnvironmentConnecting(): void {
-    const environmentId = this.options.startup.environment;
-    if (environmentId === undefined || environmentId === 'local') return;
-    const current = this.state.appState.environment;
-    if (current?.environmentId === environmentId && current.status === 'connecting') return;
-    this.setAppState({
-      environment: {
-        environmentId,
-        type: this.startupEnvironmentType ?? 'command',
-        status: 'connecting',
-      },
-    });
-  }
-
-  private clearStartupEnvironmentConnecting(): void {
-    const environmentId = this.options.startup.environment;
-    const current = this.state.appState.environment;
-    if (environmentId === undefined || current?.environmentId !== environmentId) return;
-    if (current.status !== 'connecting') return;
-    this.setAppState({ environment: undefined });
-  }
-
-  /**
-   * `/new` on a remote binding awaits the environment connect inside
-   * createSession (the engine builds the controller on the remote root), so
-   * surface the wait the same way the startup pre-create does: a synthetic
-   * connecting slot driving the footer spinner, plus a transcript status.
-   * Skipped when the slot already shows the target as usable — a live pooled
-   * connection makes creation fast, and flipping ready → connecting → ready
-   * would be noise. The real slot returns via refreshEnvironmentSlot once the
-   * session exists.
-   */
-  private markNewSessionEnvironmentConnecting(
-    environment: { readonly environmentId: string; readonly environmentCwd?: string } | undefined,
-  ): void {
-    if (environment === undefined || environment.environmentId === 'local') return;
-    const current = this.state.appState.environment;
-    if (
-      current?.environmentId === environment.environmentId &&
-      (current.status === 'ready' || current.status === 'connecting')
-    ) {
-      return;
-    }
-    this.setAppState({
-      environment: {
-        environmentId: environment.environmentId,
-        type:
-          current?.environmentId === environment.environmentId
-            ? current.type
-            : (this.startupEnvironmentType ?? 'command'),
-        status: 'connecting',
-        cwd: environment.environmentCwd,
-      },
-    });
-    this.showStatus(`Connecting to ${environment.environmentId}…`);
-  }
-
-  /**
-   * Undo markNewSessionEnvironmentConnecting when creation fails: the old
-   * session is still live, so re-sync its real slot; session-less there is no
-   * binding to re-sync and the synthetic slot is dropped.
-   */
-  private async restoreEnvironmentSlotAfterCreateFailure(): Promise<void> {
-    if (this.session !== undefined) {
-      await this.refreshEnvironmentSlot(this.session);
-      return;
-    }
-    if (this.state.appState.environment?.status === 'connecting') {
-      this.setAppState({ environment: undefined });
-    }
-  }
-
-  /**
    * Seed appState with the config defaults the v2 engine would apply at
    * createSession time (model, permission, plan mode, thinking effort,
    * context cap), so the footer and the lazy create path reflect them while
@@ -2486,9 +2385,8 @@ export class KimiTUI {
         options.environmentId = this.options.startup.environment;
       }
     } else if (inherited !== undefined) {
-      // `/new` keeps the live binding, including an explicit switch back to
-      // local. A session-less `/new` passes the startup `--environment` here
-      // instead, so that flag is not discarded before the first session exists.
+      // `/new` keeps the live binding. Before the first session exists, it
+      // inherits the startup `--environment` flag instead.
       options.environmentId = inherited.environmentId;
       options.environmentCwd = inherited.environmentCwd;
     }
@@ -2527,43 +2425,50 @@ export class KimiTUI {
   }
 
   private async lazyCreateSession(): Promise<Session | undefined> {
-    this.markStartupEnvironmentConnecting();
-    let session: Session;
+    const environmentId = this.options.startup.environment;
+    const progress = environmentId !== undefined && environmentId !== 'local'
+      ? this.showProgressSpinner(`Connecting to ${environmentId}…`)
+      : undefined;
+    let ready = false;
     try {
-      session = await this.createSessionFromCurrentState(true);
-    } catch (error) {
-      this.clearStartupEnvironmentConnecting();
-      const msg = formatErrorMessage(error);
-      this.showError(`Failed to start a session: ${msg}`);
-      return undefined;
-    }
-    this.resetSessionRuntime(true);
-    await this.setSession(session);
-    this.setAppState({ sessionId: session.id });
-    try {
-      await this.activateRuntime();
-      await this.syncRuntimeState(session);
-    } catch (error) {
+      let session: Session;
+      try {
+        session = await this.createSessionFromCurrentState(true);
+      } catch (error) {
+        const msg = formatErrorMessage(error);
+        this.showError(`Failed to start a session: ${msg}`);
+        return undefined;
+      }
+      this.resetSessionRuntime(true);
+      await this.setSession(session);
+      this.setAppState({ sessionId: session.id });
+      try {
+        await this.activateRuntime();
+        await this.syncRuntimeState(session);
+      } catch (error) {
+        this.sessionEventHandler.startSubscription();
+        const msg = formatErrorMessage(error);
+        this.showError(`Post-create setup failed: ${msg}`);
+        return undefined;
+      }
+      try {
+        await this.refreshSkillCommands(session);
+        await this.refreshPluginCommands(session);
+      } catch {
+        /* keep the new session usable even if dynamic skills fail */
+      }
       this.sessionEventHandler.startSubscription();
-      this.clearStartupEnvironmentConnecting();
-      const msg = formatErrorMessage(error);
-      this.showError(`Post-create setup failed: ${msg}`);
-      return undefined;
+      void this.showSessionWarnings(session);
+      // The session-only thinking override was consumed by this session; the
+      // runtime status now owns the displayed effort.
+      if (this.state.appState.lazySessionThinking !== undefined) {
+        this.setAppState({ lazySessionThinking: undefined });
+      }
+      ready = true;
+      return session;
+    } finally {
+      progress?.stop({ ok: ready, label: ready ? 'Session ready.' : 'Session setup failed.' });
     }
-    try {
-      await this.refreshSkillCommands(session);
-      await this.refreshPluginCommands(session);
-    } catch {
-      /* keep the new session usable even if dynamic skills fail */
-    }
-    this.sessionEventHandler.startSubscription();
-    void this.showSessionWarnings(session);
-    // The session-only thinking override was consumed by this session; the
-    // runtime status now owns the displayed effort.
-    if (this.state.appState.lazySessionThinking !== undefined) {
-      this.setAppState({ lazySessionThinking: undefined });
-    }
-    return session;
   }
 
   async setSession(session: Session): Promise<void> {
@@ -2989,10 +2894,8 @@ export class KimiTUI {
       let session: Session;
       try {
         const environment = inherited ?? (await this.environmentForNewSession());
-        this.markNewSessionEnvironmentConnecting(environment);
         session = await this.createSessionFromCurrentState(false, environment);
       } catch (error) {
-        await this.restoreEnvironmentSlotAfterCreateFailure();
         const msg = formatErrorMessage(error);
         this.showError(`Failed to start a new session: ${msg}`);
         return;

@@ -884,13 +884,13 @@ On success, `data` is the current binding `{ workspace_id, environment_id, cwd? 
 
 #### `GET /api/v1/sessions/{session_id}/environments`
 
-Lists the environments registered for the session's workspace, plus the SSH hosts discovered in `~/.ssh/config` as candidates for new declarations.
+Lists the environments available to the session.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 
-On success, `data` is `{ workspace_id, environments, ssh_hosts }`. Each `environments` entry is `{ environment_id, type, status, generation, capabilities, default_cwd?, connect_error? }` with `type` one of `local` / `ssh` / `docker` / `command`, `status` one of `pending` / `connecting` / `ready` / `disconnected` / `disposed`, and `capabilities` drawn from `fs` / `process` / `terminal`; `pending` means no live connection and no observed failure (never connected), and `connect_error` carries the recorded failure reason for a `disconnected` entry. `ssh_hosts` is a list of host names.
+On success, `data` is `{ workspace_id, environments }`. Each `environments` entry is `{ environment_id, type, status, generation, capabilities, default_cwd?, connect_error? }` with `type` one of `local` / `ssh` / `docker` / `command`, `status` one of `pending` / `connecting` / `ready` / `disconnected` / `disposed`, and `capabilities` drawn from `fs` / `process` / `terminal`; `pending` means no live connection and no observed failure (never connected), and `connect_error` carries the recorded failure reason for a `disconnected` entry.
 
 - `40401`: session not found
 

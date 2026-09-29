@@ -23,7 +23,6 @@ export const sessionEnvironmentEntrySchema = z.object({
 export const sessionEnvironmentsResponseSchema = z.object({
   workspace_id: z.string(),
   environments: z.array(sessionEnvironmentEntrySchema),
-  ssh_hosts: z.array(z.string()),
 });
 
 export type EnvironmentBindingResponse = z.infer<typeof environmentBindingResponseSchema>;

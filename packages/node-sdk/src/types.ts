@@ -44,7 +44,6 @@ export interface SessionEnvironmentInfo {
 
 export interface SessionEnvironmentsInfo {
   readonly environments: readonly SessionEnvironmentInfo[];
-  readonly sshHosts: readonly string[];
 }
 
 export type { RemoteEnvironmentEntry };
@@ -167,18 +166,6 @@ export interface WorkspaceTrustInfo {
   readonly trusted: boolean;
   /** Safe descriptions of project-level MCP servers that trusting would enable. */
   readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
-}
-
-/**
- * One resolved `[environments]` declaration from the user-level config — an
- * entry a new session could bind. Session-less: project files are not
- * consulted and workspace trust does not gate the result. Only meaningful on
- * the agent-core-v2 engine.
- */
-export interface WorkspaceEnvironmentDeclarationInfo {
-  readonly id: string;
-  readonly type: Exclude<SessionEnvironmentType, 'local'>;
-  readonly defaultCwd?: string;
 }
 
 /**

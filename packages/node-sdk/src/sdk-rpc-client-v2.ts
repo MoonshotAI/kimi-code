@@ -216,7 +216,6 @@ import {
   getLiveSessionById,
   isError2,
   programForSession,
-  readSshConfigHosts,
   environmentEntryInfo,
   resolveWorkspaceEnvironmentDeclarations,
   resumeSessionById,
@@ -343,7 +342,6 @@ import type {
   SuggestFilesResult,
   TelemetryClient,
   UploadFileOptions,
-  WorkspaceEnvironmentDeclarationInfo,
   WorkspaceTrustInfo,
 } from '#/types';
 import {
@@ -759,21 +757,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async trustWorkspace(workDir: string): Promise<void> {
     const handler = await this.workspaceHandlerFor('trustWorkspace', workDir);
     await handler.program.trust.trust();
-  }
-
-  /**
-   * Session-less declaration lookup (e.g. validating a `--environment <id>`
-   * startup binding before any session exists), composed from the same engine
-   * services the session manager's create-time validation uses. Declarations
-   * come from the user-level `[environments]` section.
-   */
-  override async listEnvironmentDeclarations(): Promise<readonly WorkspaceEnvironmentDeclarationInfo[]> {
-    const resolved = await resolveWorkspaceEnvironmentDeclarations(this.engineAccessor.get(IConfigService));
-    return resolved.entries.map((declaration) => ({
-      id: declaration.id,
-      type: 'command' in declaration.entry ? 'command' : declaration.entry.type,
-      defaultCwd: declaration.entry.defaultCwd,
-    }));
   }
 
   /**
@@ -1925,8 +1908,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   /**
    * The app's environment registry snapshot (status / generation /
-   * capabilities) joined with the resolved declarations (type / defaultCwd),
-   * plus the ssh host candidates for the environment-add flow.
+   * capabilities) joined with the resolved declarations (type / defaultCwd).
    */
   override async listEnvironments(input: SessionIdRpcInput): Promise<SessionEnvironmentsInfo> {
     this.requireLiveSession(input.sessionId);
@@ -1935,7 +1917,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       environments: this.engineAccessor.get(IEnvironmentService).snapshot().environments.map((environment) =>
         environmentEntryInfo(environment, declarations.get(environment.environmentId)),
       ),
-      sshHosts: await this.resolveSshHostCandidates(),
     };
   }
 
@@ -1945,17 +1926,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       return new Map(resolved.entries.map((declaration) => [declaration.id, declaration.entry]));
     } catch {
       return new Map();
-    }
-  }
-
-  private async resolveSshHostCandidates(): Promise<readonly string[]> {
-    try {
-      return await readSshConfigHosts(
-        this.engineAccessor.get(IHostFileSystem),
-        this.engineAccessor.get(IBootstrapService).osHomeDir,
-      );
-    } catch {
-      return [];
     }
   }
 

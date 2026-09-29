@@ -75,7 +75,6 @@ import type {
   SuggestFilesResult,
   Unsubscribe,
   UploadFileOptions,
-  WorkspaceEnvironmentDeclarationInfo,
   WorkspaceTrustInfo,
 } from '#/types';
 
@@ -218,8 +217,6 @@ export abstract class SDKRpcClientBase {
   abstract listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]>;
 
   abstract getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo>;
-
-  abstract listEnvironmentDeclarations(): Promise<readonly WorkspaceEnvironmentDeclarationInfo[]>;
 
   abstract trustWorkspace(workDir: string): Promise<void>;
 
