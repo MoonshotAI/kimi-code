@@ -71,6 +71,7 @@ import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
+import { TOOL_SELECT_FLAG_ID } from '#/agent/toolSelect/flag';
 import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { normalizeAgentProfile, type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
@@ -718,6 +719,48 @@ describe('Agent tool description', () => {
 
     expect(ctx.get(IAgentToolRegistryService).resolve('WaitFor')).toBeUndefined();
     expect(agentDescription()).not.toMatch(/Tools:.*\bWaitFor\b/);
+  });
+
+  it.each([
+    { enabled: false, primary: true, secondary: true, force: false, expected: false },
+    { enabled: true, primary: false, secondary: false, force: false, expected: false },
+    { enabled: true, primary: true, secondary: false, force: true, expected: false },
+    { enabled: true, primary: true, secondary: false, force: false, expected: true },
+    { enabled: true, primary: false, secondary: true, force: true, expected: true },
+    { enabled: true, primary: false, secondary: true, force: false, expected: true },
+  ])('describes select_tools for eligible subagent models: $enabled/$primary/$secondary/$force', ({
+    enabled, primary, secondary, force, expected,
+  }) => {
+    ctx = createTestAgent(
+      {
+        initialConfig: {
+          secondaryModel: { defaultModel: 'provider/child', force },
+          models: {
+            'provider/child': {
+              provider: 'test-provider',
+              model: 'child-model',
+              maxContextSize: 262_144,
+              capabilities: secondary ? ['tool_use', 'dynamically_loaded_tools'] : ['tool_use'],
+            },
+          },
+        },
+      },
+      appService(IFlagService, stubFlag((id) => id !== TOOL_SELECT_FLAG_ID || enabled)),
+      sessionService(ISessionAgentProfileCatalog, discoveredCatalog()),
+    );
+    ctx.configure({
+      modelCapabilities: {
+        ...ctx.get(IAgentProfileService).getModelCapabilities(),
+        tool_use: true,
+        dynamically_loaded_tools: primary,
+      },
+    });
+    const profile = ctx.get(IAgentProfileService);
+    profile.applyBindingSnapshot({ ...profile.data(), subagents: ['reviewer'] });
+
+    const tools = agentDescription().match(/- reviewer: [^\n]*\n  Tools: ([^\n]*)/)?.[1];
+    expect(tools).toBeDefined();
+    expect(tools!.split(', ').includes('select_tools')).toBe(expected);
   });
 
   it('refreshes activation after step hooks before sending tool schemas to the model', async () => {

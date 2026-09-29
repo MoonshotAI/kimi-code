@@ -17,11 +17,14 @@ import {
 } from '#/agent/task/task';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import type { ModelCapability } from '#/llm-adapter/contract/capability';
 import {
   isToolActive as evaluateToolActive,
   resolveActiveToolNames,
 } from '#/agent/toolPolicy/evaluate';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import { TOOL_SELECT_FLAG_ID } from '#/agent/toolSelect/flag';
+import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -239,34 +242,42 @@ export class SubagentTool implements ISubagentTool {
       }
     });
     if (refs.get(READ_MEDIA_FILE_TOOL_NAME)?.source !== 'user') {
-      if (this.anyMediaCapableModel()) {
+      if (this.anySubagentModelSupports((capabilities) => capabilities.image_in || capabilities.video_in)) {
         refs.set(READ_MEDIA_FILE_TOOL_NAME, { name: READ_MEDIA_FILE_TOOL_NAME, source: 'builtin' });
       } else {
         refs.delete(READ_MEDIA_FILE_TOOL_NAME);
       }
     }
+    if (
+      !this.flags.enabled(TOOL_SELECT_FLAG_ID) ||
+      !this.anySubagentModelSupports((capabilities) =>
+        capabilities.dynamically_loaded_tools === true && capabilities.tool_use,
+      )
+    ) {
+      refs.delete(SELECT_TOOLS_TOOL_NAME);
+    }
     return [...refs.values()];
   }
 
-  private anyMediaCapableModel(): boolean {
+  private anySubagentModelSupports(supports: (capabilities: ModelCapability) => boolean): boolean {
     if (isSubagentModelForced(this.config)) {
       const forced = resolveSubagentModelPool(this.config)?.defaultModel;
       if (forced === undefined) return false;
       try {
         const capabilities = this.modelCatalog.get(forced).capabilities;
-        return capabilities.image_in || capabilities.video_in;
+        return supports(capabilities);
       } catch {
         return false;
       }
     }
     const own = this.profile.getModelCapabilities();
-    if (own.image_in || own.video_in) return true;
+    if (supports(own)) return true;
     const pool = resolveSubagentModelPool(this.config);
     if (pool === undefined) return false;
     for (const alias of Object.keys(pool.models)) {
       try {
         const capabilities = this.modelCatalog.get(alias).capabilities;
-        if (capabilities.image_in || capabilities.video_in) return true;
+        if (supports(capabilities)) return true;
       } catch {
       }
     }
