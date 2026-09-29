@@ -30,9 +30,25 @@ const call = (name: string, args: unknown): Step => ({ calls: [{ name, args }] }
 export const bash = (command: string, description = 'slow build'): Step =>
   call('Bash', { command, run_in_background: true, description });
 export const waitFor = (timeout: number): Step => call('WaitFor', { timeout });
-export const monitor = (command: string, description = 'ticker'): Step =>
-  call('Monitor', { command, description });
+export const monitor = (
+  command: string,
+  description = 'ticker',
+  options: { readonly timeout?: number; readonly persistent?: boolean } = {},
+): Step => call('Monitor', { command, description, ...options });
 export const foreground = (command: string): Step => call('Bash', { command, timeout: 60 });
+/** The task id the Monitor tool reported for the monitor with `description`. */
+function monitorId(conversation: string, description: string): string {
+  const escaped = description.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`task_id: (monitor-[0-9a-z]+)\npid: \\d+\ndescription: ${escaped}\n`).exec(conversation)?.[1] ?? 'none';
+}
+/** WaitFor on the monitor started with `description`. */
+export const waitForMonitor = (timeout: number, description: string): Step => ({
+  resolve: (conversation) => ({ calls: [{ name: 'WaitFor', args: { timeout, task_id: monitorId(conversation, description) } }] }),
+});
+/** TaskOutput of the monitor started with `description`. */
+export const monitorOutput = (description: string): Step => ({
+  resolve: (conversation) => ({ calls: [{ name: 'TaskOutput', args: { task_id: monitorId(conversation, description) } }] }),
+});
 /** TaskStop on the most recent monitor task id seen in the conversation so far. */
 export const stopMonitor = (): Step => ({
   resolve: (conversation) =>
@@ -202,11 +218,12 @@ async function launchTui(
   baseUrl: string,
   root: string,
   extraEnv: Readonly<Record<string, string>>,
+  extraArgs: readonly string[] = [],
 ): Promise<Tui> {
   const home = join(root, 'home');
   const work = join(root, 'work');
-  mkdirSync(home);
-  mkdirSync(work);
+  mkdirSync(home, { recursive: true });
+  mkdirSync(work, { recursive: true });
   const env = {
     HOME: home,
     KIMI_CODE_HOME: join(home, '.kimi-code'),
@@ -225,6 +242,7 @@ async function launchTui(
     join(APP_ROOT, '../../build/register-raw-text-loader.mjs'),
     join(APP_ROOT, 'src/main.ts'),
     '--yolo',
+    ...extraArgs,
   ];
   // Drop every inherited KIMI_* variable (e.g. KIMI_SHARE_DIR, which would point
   // legacy-migration detection back at the developer's real data) and TMUX.
@@ -243,9 +261,11 @@ async function launchTui(
   if (framesDir !== undefined) mkdirSync(framesDir, { recursive: true });
   const tui = new Tui(session, framesDir);
   try {
-    await tui.see('Trust this folder?', undefined, 60_000);
-    await tui.press('C-m');
-    await tui.see('Model:     mock');
+    const first = await tui.see(/Trust this folder\?|Model: {5}mock/, undefined, 60_000);
+    if (first.includes('Trust this folder?')) {
+      await tui.press('C-m');
+      await tui.see('Model:     mock');
+    }
   } catch (error) {
     await tui.close();
     throw error;
@@ -261,19 +281,38 @@ export async function hasTmux(): Promise<boolean> {
 }
 
 /** Body of one e2e test: mock model with `script`, TUI launched against it, torn down after `body`. */
+export interface ScenarioContext {
+  readonly tui: Tui;
+  readonly model: MockModel;
+  /** The session's working directory (also the cwd of every command it runs). */
+  readonly workDir: string;
+  /** Quits the CLI and starts it again in the same home and working directory. */
+  relaunch(args: readonly string[]): Promise<Tui>;
+}
+
 export function scenario(
   script: readonly Step[],
-  body: (ctx: { readonly tui: Tui; readonly model: MockModel }) => Promise<void>,
+  body: (ctx: ScenarioContext) => Promise<void>,
   options: { readonly env?: Readonly<Record<string, string>> } = {},
 ): (ctx: { readonly task: { readonly name: string } }) => Promise<void> {
   return async ({ task }) => {
     const name = task.name.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-').slice(0, 48);
     const mock = await startMockModel(script);
     const root = mkdtempSync(join(tmpdir(), 'kimi-tui-e2e-'));
+    const env = options.env ?? {};
     try {
-      const tui = await launchTui(name, mock.baseUrl, root, options.env ?? {});
+      let tui = await launchTui(name, mock.baseUrl, root, env);
       try {
-        await body({ tui, model: mock.model });
+        await body({
+          tui,
+          model: mock.model,
+          workDir: join(root, 'work'),
+          relaunch: async (args) => {
+            await tui.close();
+            tui = await launchTui(name, mock.baseUrl, root, env, args);
+            return tui;
+          },
+        });
       } finally {
         await tui.close();
       }
