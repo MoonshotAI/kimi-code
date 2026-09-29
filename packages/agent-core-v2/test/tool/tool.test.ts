@@ -763,33 +763,6 @@ describe('Agent tool description', () => {
     expect(tools!.split(', ').includes('select_tools')).toBe(expected);
   });
 
-  it('refreshes activation after step hooks before sending tool schemas to the model', async () => {
-    let available = true;
-    ctx = createTestAgent(appService(IWebSearchProviderService, {
-      _serviceBrand: undefined,
-      hasWebSearchProvider: () => available,
-      getWebSearchProvider: () => undefined,
-    }));
-    await ctx.get(IEventDispatcher).flush();
-    expect(ctx.get(IAgentToolRegistryService).resolve('WebSearch')).toBeDefined();
-    const hook = ctx.get(IAgentLoopService).hooks.onWillBeginStep.register('change-search-provider', async (_ctx, next) => {
-      available = false;
-      await next();
-    });
-    try {
-      ctx.mockNextResponse({ type: 'text', text: 'Ready.' });
-      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
-      await ctx.untilTurnEnd();
-      expect(ctx.llmCalls).toHaveLength(1);
-      expect(ctx.llmCalls[0]!.tools.some((tool) => tool.name === 'WebSearch')).toBe(false);
-      const agent = ctx.llmCalls[0]!.tools.find((tool) => tool.name === 'Agent');
-      expect(agent).toBeDefined();
-      expect(agent!.description).not.toContain('WebSearch');
-    } finally {
-      hook.dispose();
-    }
-  });
-
   it('preserves a user tool overriding an unavailable built-in contribution', async () => {
     ctx = createTestAgent();
     expect(ctx.get(IWebSearchProviderService).hasWebSearchProvider()).toBe(false);

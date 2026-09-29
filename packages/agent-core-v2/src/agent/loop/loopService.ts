@@ -5,7 +5,6 @@ import { createControlledPromise } from '@antfu/utils';
 
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { IInstantiationService } from '#/_base/di/instantiation';
-import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
@@ -1023,9 +1022,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         firstStepOfTurn: stepOrdinal === 1,
         signal: step.signal,
       });
-      await this.instantiation.invokeFunction((accessor) =>
-        accessor.get(IAgentToolActivationService).activate(),
-      );
 
     } catch (error) {
 
