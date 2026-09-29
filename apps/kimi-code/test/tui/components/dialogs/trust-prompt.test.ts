@@ -63,7 +63,7 @@ describe('TrustPromptComponent', () => {
     for (const label of [
       'Start 2 MCP servers automatically',
       'Config: .mcp.json, .kimi-code/mcp.json',
-      '/Users/example/Documents',
+      'Access 2 folders outside this project',
       'Config: .kimi-code/local.toml',
       'AGENTS.md',
       '.kimi-code/skills',
@@ -98,9 +98,9 @@ describe('TrustPromptComponent', () => {
     expect(text).not.toContain('No project-level config');
     expect(text).toContain('future project config changes');
   });
-  it('pages through all directories and sources with fixed choices and persistent trust copy', () => {
+  it('pages through MCP sources with fixed choices and persistent trust copy', () => {
     const paths = Array.from({ length: 8 }, (_, i) => `/outside/directory-${i}`);
-    const origins = Array.from({ length: 5 }, (_, i) => `/outside/source-${i}/mcp.json`);
+    const origins = Array.from({ length: 12 }, (_, i) => `/outside/source-${i}/mcp.json`);
     let rows = 23;
     const prompt = new TrustPromptComponent({
       workDir,
@@ -129,7 +129,8 @@ describe('TrustPromptComponent', () => {
       prompt.handleInput('\u001B[C');
     }
     expect(pages.length).toBeGreaterThan(1);
-    for (const path of [...paths, ...origins]) expect(pages.join('\n')).toContain(path);
+    for (const path of origins) expect(pages.join('\n')).toContain(path);
+    expect(pages.join('\n')).not.toContain('/outside/directory-');
     expect(pages.join('\n')).not.toContain('more');
     prompt.handleInput('\u001B[D');
     expect(render(prompt, 60).join('\n')).toBe(pages.at(-2));

@@ -159,7 +159,6 @@ export class TrustPromptComponent implements Component, Focusable {
           'warning',
         ),
       );
-      for (const path of gatedAdditionalDirs) lines.push(...wrap(path, 3, width, 'text'));
       if (additionalDirSources.length > 0) {
         lines.push(
           ...wrap(
