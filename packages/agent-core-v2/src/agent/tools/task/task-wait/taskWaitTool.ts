@@ -250,18 +250,18 @@ export class WaitForTool implements IWaitForTool {
   private withRepeatWarning(output: string, tally: TurnWaitTally): string {
     if (tally.calls < 2) return output;
     const waited = formatWaitSeconds(Math.round(tally.waitedMs / 1000));
-    const summary = `You have called WaitFor ${String(tally.calls)} times in this turn and waited ${waited} in total.`;
+    const summary = `This is WaitFor call ${String(tally.calls)} in this turn, and you have already spent ${waited} waiting.`;
     return [output, '', '[wait_warning]', `${summary} ${this.repeatWaitAdvice()}`].join('\n');
   }
 
   private repeatWaitAdvice(): string {
     if (this.isSubagent) {
-      return "Think hard about whether you can do anything useful for your task meanwhile. As a subagent, ending your turn is your final hand-off: if you still need a running background task's result, keep waiting for it rather than handing off without it.";
+      return "Stop waiting by reflex: repeated waits burn time your caller is waiting on. Before calling WaitFor again, do every part of your task that does not depend on the running background task. Wait again only for a result you truly cannot finish without — ending your turn is your final hand-off, so do not hand off without it, but never wait for tasks you do not need.";
     }
     if (this.goals.getGoal().goal?.status === 'active') {
-      return 'Think hard about whether you can do anything useful for the goal instead of waiting. If there is truly nothing else to do until a background task finishes, waiting here is fine — it is cheaper than polling with Bash sleep or ending the turn only to be continued again.';
+      return 'Stop waiting by reflex: repeated waits stall the goal. Before calling WaitFor again, do every piece of remaining goal work that does not depend on the running background task — there is almost always some. Wait again only if nothing else can proceed until it finishes; even then, WaitFor beats polling with Bash sleep or ending the turn only to be continued again.';
     }
-    return 'Do not rely on this tool. Think hard about whether you can do anything useful instead: another part of the task, verifying earlier work, or ending your turn with a progress update — finished background tasks notify you automatically. Only call WaitFor again when the user explicitly wants you to wait.';
+    return 'Stop calling WaitFor. Repeated waiting wastes the user\'s time and is almost never the right move. Do not call it again in this turn unless the user explicitly asked you to wait. Do something useful now — another part of the task, or verifying earlier work — or end your turn with a progress update. Finished background tasks notify you automatically, so you will not miss the result.';
   }
 
   private async waitAny(
