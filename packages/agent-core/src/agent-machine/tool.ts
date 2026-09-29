@@ -16,7 +16,6 @@ export type ToolOutput =
 
 export interface ToolBeforeInput {
   toolCall: ToolCall;
-  toolCalls: readonly ToolCall[];
 }
 
 export type ToolBeforeDecision =
@@ -28,8 +27,14 @@ export interface ToolAfterInput {
   result: ToolResult;
 }
 
+export interface ToolMachineInput {
+  toolCall: ToolCall;
+  signal: AbortSignal;
+  result?: ToolResult;
+}
+
 export interface ToolMachineContext {
-  input: ToolInput;
+  input: ToolMachineInput;
   toolCall: ToolCall;
   outcome?: 'succeeded' | 'failed' | 'aborted';
   result?: ToolResult;
@@ -64,29 +69,24 @@ function createExecuteActor(executor: ToolExecutor) {
   });
 }
 
-export interface CreateToolMachineOptions extends ToolExecutor {
-  readonly onBefore?: (input: ToolBeforeInput) => Promise<ToolBeforeDecision> | ToolBeforeDecision;
+export interface CreateToolMachineOptions {
   readonly onAfter?: (input: ToolAfterInput) => Promise<ToolResult> | ToolResult;
 }
 
-export function createToolMachine(executor: CreateToolMachineOptions) {
+export function createToolMachine(executor: ToolExecutor, options?: CreateToolMachineOptions) {
   const executeActor = createExecuteActor(executor);
   return setup({
     types: {
-      input: {} as ToolInput,
+      input: {} as ToolMachineInput,
       context: {} as ToolMachineContext,
       events: {} as ToolEvent,
       emitted: {} as ToolEvent,
       output: {} as ToolOutput,
     },
     actors: {
-      preparingActor: fromPromise<ToolBeforeDecision, ToolBeforeInput>(
-        async ({ input }) =>
-          executor.onBefore?.(input) ?? { type: 'proceed', toolCall: input.toolCall },
-      ),
       executeActor,
       finishingActor: fromPromise<ToolResult, ToolAfterInput>(
-        async ({ input }) => executor.onAfter?.(input) ?? input.result,
+        async ({ input }) => options?.onAfter?.(input) ?? input.result,
       ),
     },
     actions: {
@@ -96,71 +96,21 @@ export function createToolMachine(executor: CreateToolMachineOptions) {
     },
   }).createMachine({
     id: 'tool',
-    initial: 'preparing',
-    context: ({ input }) => ({ input, toolCall: input.toolCall }),
+    initial: 'starting',
+    context: ({ input }) => ({
+      input,
+      toolCall: input.toolCall,
+      result: input.result,
+    }),
     states: {
-      preparing: {
-        invoke: {
-          src: 'preparingActor',
-          input: ({ context }) => ({
-            toolCall: context.toolCall,
-            toolCalls: context.input.toolCalls ?? [context.toolCall],
-          }),
-          onDone: [
-            {
-              guard: ({ event }) => event.output.type === 'denied',
-              target: 'finishing',
-              actions: assign({
-                result: ({ event }) => (event.output as { result: ToolResult }).result,
-              }),
-            },
-            {
-              target: 'executing',
-              actions: assign({
-                toolCall: ({ context, event }) =>
-                  (event.output as { toolCall?: ToolCall }).toolCall ?? context.toolCall,
-              }),
-            },
-          ],
-          onError: {
-            target: 'failed',
-            actions: [
-              assign({ outcome: 'failed', error: ({ event }) => event.error }),
-              emit(({ context, event }) => ({
-                type: 'tool.done' as const,
-                toolCallId: context.toolCall.id,
-                outcome: { type: 'failed' as const, error: event.error },
-              })),
-              ({ self, context, event }) => {
-                self._parent?.send({
-                  type: 'tool.done',
-                  toolCallId: context.toolCall.id,
-                  outcome: { type: 'failed', error: event.error },
-                });
-              },
-            ],
+      starting: {
+        always: [
+          {
+            guard: ({ context }) => context.input.result !== undefined,
+            target: 'finishing',
           },
-        },
-        on: {
-          'tool.abort': {
-            target: 'aborted',
-            actions: [
-              assign({ outcome: 'aborted' as const }),
-              emit(({ context }) => ({
-                type: 'tool.done' as const,
-                toolCallId: context.toolCall.id,
-                outcome: { type: 'aborted' as const, reason: context.input.signal.reason },
-              })),
-              ({ self, context }) => {
-                self._parent?.send({
-                  type: 'tool.done',
-                  toolCallId: context.toolCall.id,
-                  outcome: { type: 'aborted', reason: context.input.signal.reason },
-                });
-              },
-            ],
-          },
-        },
+          { target: 'executing' },
+        ],
       },
       executing: {
         invoke: {
@@ -237,7 +187,7 @@ export function createToolMachine(executor: CreateToolMachineOptions) {
           onError: {
             target: 'failed',
             actions: [
-              assign({ outcome: 'failed', error: ({ event }) => event.error }),
+              assign({ outcome: 'failed' as const, error: ({ event }) => event.error }),
               emit(({ context, event }) => ({
                 type: 'tool.done' as const,
                 toolCallId: context.toolCall.id,

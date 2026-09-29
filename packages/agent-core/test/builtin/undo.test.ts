@@ -174,6 +174,17 @@ describe('undo anchors', () => {
     await append(compacted, { type: 'turn.ended', turnId: 1, outcome: 'done' });
     expect(planUndoCut(tree, 'compacted', 1)).toEqual({ ok: true, machineTurns: 1, fromTurnId: 1 });
     expect(planUndoCut(tree, 'compacted', 2)).toEqual({ ok: false });
+    const reset = tree.createBranch('reset');
+    await append(reset, { type: 'turn.started', turnId: 0 });
+    await append(reset, { type: 'message.appended', message: userEntry('a') });
+    await append(reset, { type: 'turn.ended', turnId: 0, outcome: 'done' });
+    await append(reset, { type: 'context.reset', messages: [summaryEntry] });
+    expect(planUndoCut(tree, 'reset', 1)).toEqual({ ok: false });
+    await append(reset, { type: 'turn.started', turnId: 1 });
+    await append(reset, { type: 'message.appended', message: userEntry('d') });
+    await append(reset, { type: 'turn.ended', turnId: 1, outcome: 'done' });
+    expect(planUndoCut(tree, 'reset', 1)).toEqual({ ok: true, machineTurns: 1, fromTurnId: 1 });
+    expect(planUndoCut(tree, 'reset', 2)).toEqual({ ok: false });
   });
 });
 

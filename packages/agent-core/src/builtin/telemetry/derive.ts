@@ -1,4 +1,7 @@
 import type { AgentCommands } from '#/app/agentUnit';
+import { extractText } from '#/llm/message';
+
+import type { ToolOutput } from '#/agent-machine/tool';
 
 import type { TelemetryFace } from './feature';
 
@@ -7,13 +10,34 @@ interface TrackedTool {
   readonly startedAt: number;
 }
 
+type ToolCallOutcome = 'success' | 'error' | 'cancelled';
+
+function toolCallOutcomeOf(output: ToolOutput): {
+  outcome: ToolCallOutcome;
+  errorType?: 'cancelled' | 'error';
+} {
+  if (output.type === 'failed') return { outcome: 'error', errorType: 'error' };
+  if (output.type === 'aborted') return { outcome: 'cancelled', errorType: 'cancelled' };
+  if (output.result.isError !== true) return { outcome: 'success' };
+  const text = extractText({ content: output.result.content }).toLowerCase();
+  const outcome =
+    text.includes('aborted') || text.includes('cancelled') || text.includes('manually interrupted')
+      ? 'cancelled'
+      : 'error';
+  return { outcome, errorType: outcome === 'cancelled' ? 'cancelled' : 'error' };
+}
+
 export function deriveAgentTelemetry(agent: AgentCommands, telemetry: TelemetryFace): void {
   let currentTurnId: number | undefined;
   let turnStartedAt: number | undefined;
   let atStep = 0;
   const tools = new Map<string, TrackedTool>();
 
-  const finishTool = (toolCallId: string, outcome: 'success' | 'error' | 'cancelled'): void => {
+  const finishTool = (
+    toolCallId: string,
+    outcome: ToolCallOutcome,
+    errorType?: 'cancelled' | 'error',
+  ): void => {
     const tool = tools.get(toolCallId);
     if (tool === undefined) {
       return;
@@ -25,6 +49,7 @@ export function deriveAgentTelemetry(agent: AgentCommands, telemetry: TelemetryF
       tool_name: tool.name,
       outcome,
       duration_ms: Date.now() - tool.startedAt,
+      error_type: errorType,
     });
   };
 
@@ -79,13 +104,8 @@ export function deriveAgentTelemetry(agent: AgentCommands, telemetry: TelemetryF
     }
   });
   agent.on('tool.done', (event) => {
-    const outcome =
-      event.outcome.type === 'succeeded'
-        ? 'success'
-        : event.outcome.type === 'failed'
-          ? 'error'
-          : 'cancelled';
-    finishTool(event.toolCallId, outcome);
+    const { outcome, errorType } = toolCallOutcomeOf(event.outcome);
+    finishTool(event.toolCallId, outcome, errorType);
   });
   agent.on('llm.failed.remote', (event) => {
     telemetry.track('api_error', { error_type: event.error.kind, model: agent.config?.model.model });

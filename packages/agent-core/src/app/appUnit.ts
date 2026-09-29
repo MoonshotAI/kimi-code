@@ -17,7 +17,7 @@ import { useFeatureSlot } from '#/feature/hooks';
 import { AppNodeRef } from '#/feature/tierNodes';
 
 import { openSession, updateSession, type OpenSessionInput } from './open-session';
-import type { SessionRecord, SessionRecordDraft, SessionSpace } from './session-space';
+import { SessionSpaceError, type SessionRecord, type SessionRecordDraft, type SessionSpace } from './session-space';
 import { SessionUnit, sessionHandle, type SessionHandle, type SessionUnitProps } from './sessionUnit';
 
 export type CreateSessionProps = SessionUnitProps;
@@ -36,6 +36,7 @@ export interface AppCommands {
   open(input?: OpenSessionInput): Promise<SessionHandle>;
   updateSession(id: string, patch: SessionRecordDraft): Promise<SessionRecord>;
   close(sessionId: string): Promise<void>;
+  delete(sessionId: string): Promise<void>;
   installFeature(spec: FeatureSpec): void;
   uninstallFeature(feature: FeatureSpec | string): boolean;
 }
@@ -104,6 +105,15 @@ export const AppUnit = createUnit<AppUnitProps>('app', (props, ctx) => {
       sessions.delete(sessionId);
       await session?.unmount();
     },
+    delete: async (sessionId) => {
+      const space = requireSpace();
+      if ((await space.get(sessionId)) === undefined) {
+        throw new SessionSpaceError('not-found', `session '${sessionId}' does not exist`);
+      }
+      await commands.close(sessionId);
+      await space.delete(sessionId);
+      ctx.node.fire({ type: 'session.deleted', sessionId });
+    },
     installFeature: (spec) => {
       if (installed.value.some((entry) => entry === spec || entry.featureName === spec.featureName)) {
         throw new Error(`feature '${spec.featureName}' is already installed`);
@@ -145,6 +155,7 @@ export function appHandle(handle: UnitHandle): AppHandle {
     open: (input) => commands().open(input),
     updateSession: (id, patch) => commands().updateSession(id, patch),
     close: (sessionId) => commands().close(sessionId),
+    delete: (sessionId) => commands().delete(sessionId),
     installFeature: (spec) => commands().installFeature(spec),
     uninstallFeature: (feature) => commands().uninstallFeature(feature),
   };

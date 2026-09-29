@@ -112,6 +112,17 @@ function bindAgentLog(actor: AgentActor, store: AgentStore): { settled(): Promis
   };
   let activeTurnId = store.getState().turnIndex.nextTurnId;
   actor.on('llm.done', (event) => persistMessages([event.entry]));
+  actor.on('turn.prompt_committed', (event) => persistMessages([event.entry]));
+  actor.on('context.reset', (event) => {
+    for (const message of event.messages) persisted.add(message);
+    write({
+      type: 'context.reset',
+      messages: event.messages,
+      reason: event.reason,
+      instruction: event.instruction,
+      stats: event.stats,
+    });
+  });
   actor.on('turn.drained', (event) => {
     persistMessages(invokedHistory(actor));
     persistMessages(event.messages);
@@ -353,11 +364,6 @@ export const AgentUnit = createUnit<AgentUnitProps>('agent', (props) => {
             scope.abort(new Error(`run timed out after ${opts.timeoutMs}ms`));
           }, opts.timeoutMs);
     try {
-      const started = commands.wait('turn.started', {
-        match: (event) => event.queueItemId === promptId,
-        signal: scope.signal,
-      });
-      void started.catch(() => {});
       const blocked = commands
         .wait('prompt.blocked', {
           match: (event) => event.queueItemId === promptId,
@@ -371,35 +377,24 @@ export const AgentUnit = createUnit<AgentUnitProps>('agent', (props) => {
       void blocked.catch(() => {});
       const ack = commands.submit(message, { ...opts?.meta, promptId });
       if (ack === undefined) throw new AgentRunError('not_running', 'agent is not running');
-      let turnId: number;
-      try {
-        turnId = (await Promise.race([started, blocked])).turnId;
-      } catch (error) {
-        if (scope.signal.aborted) {
-          commands.cancel(promptId);
-          if (actor.getSnapshot().context.activeTurnId !== undefined) {
-            commands.abort(scope.signal.reason);
-          }
-          if (opts?.abortAsOutcome === true) {
-            return { outcome: { type: 'aborted' as const, reason: scope.signal.reason } };
-          }
-          throw abortReason(scope.signal);
-        }
-        throw error;
-      }
+      const turnId = actor.getSnapshot().context.activeTurnId;
+      if (turnId === undefined) throw new AgentRunError('not_running', 'agent is not running');
       opts?.onStarted?.(turnId);
       try {
-        return await commands
-          .wait('turn.done', {
-            match: (event) => event.turnId === turnId,
-            signal: scope.signal,
-          })
-          .then((event) => ({
-            turnId: event.turnId,
-            branchId: event.branchId,
-            outcome: event.outcome,
-            messages: event.messages,
-          }));
+        return await Promise.race([
+          commands
+            .wait('turn.done', {
+              match: (event) => event.turnId === turnId,
+              signal: scope.signal,
+            })
+            .then((event) => ({
+              turnId: event.turnId,
+              branchId: event.branchId,
+              outcome: event.outcome,
+              messages: event.messages,
+            })),
+          blocked,
+        ]);
       } catch (error) {
         if (scope.signal.aborted) {
           commands.abort(scope.signal.reason);

@@ -8,11 +8,12 @@ export interface ToolUpdate {
 
 export interface ToolResult {
   content: ContentPart[];
+  isError?: true;
+  stopTurn?: boolean;
 }
 
 export interface ToolInput {
   toolCall: ToolCall;
-  toolCalls?: readonly ToolCall[];
   signal: AbortSignal;
 }
 

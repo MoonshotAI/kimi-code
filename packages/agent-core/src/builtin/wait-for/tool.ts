@@ -81,7 +81,7 @@ export function createWaitForTool(waitForTasks: WaitForTasks): ToolDefinition {
     async execute({ toolCall }): Promise<ToolResult> {
       const parsed = parseWaitForArguments(toolCall.arguments);
       if (parsed.parseError !== undefined) {
-        return { content: [{ type: 'text', text: parsed.parseError }] };
+        return { content: [{ type: 'text', text: parsed.parseError }], isError: true };
       }
       const outcome = await waitForTasks({
         taskId: parsed.args.taskId,
@@ -90,6 +90,7 @@ export function createWaitForTool(waitForTasks: WaitForTasks): ToolDefinition {
       if (outcome.unknown.length > 0) {
         return {
           content: [{ type: 'text', text: `Task not found: ${outcome.unknown.join(', ')}` }],
+          isError: true,
         };
       }
       return { content: [{ type: 'text', text: formatWaitForOutcome(outcome, parsed.args.timeoutMs) }] };

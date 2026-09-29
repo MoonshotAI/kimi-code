@@ -5,6 +5,7 @@ import {
   createToolEntry,
   createToolMessage,
   toInputMessages,
+  toRequestMessages,
   type AssistantEntry,
   type HistoryMessage,
   type ToolCall,
@@ -17,7 +18,7 @@ import { createRequestActor } from './llm-actor';
 import type { LlmCredentialProvider, LlmRequestConfig } from '#/llm/requester/requester';
 import type { LlmOutput } from '#/llm/requester/settle';
 import { ToolCallIdNormalizer } from '#/llm/requester/tool-call-id';
-import type { ToolOutput } from './tool';
+import type { ToolBeforeDecision, ToolOutput } from './tool';
 import { createAbortScope, withAbort, type AbortScope } from '#/utils/abort';
 
 import { usedContextTokens } from '#/llm/usage';
@@ -40,6 +41,7 @@ export type TurnEvent =
   | LlmEvent
   | TurnToolEvent
   | { type: 'agent.notify'; messages: HistoryMessage[] }
+  | { type: 'turn.compaction_finished'; history?: HistoryMessage[]; error?: unknown }
   | { type: 'turn.pause' }
   | { type: 'turn.continue' }
   | { type: 'turn.abort'; reason?: unknown };
@@ -48,9 +50,16 @@ export type TurnLlmEvent =
   | Exclude<LlmEvent, { type: 'llm.done' }>
   | { type: 'llm.done'; entry: AssistantEntry };
 
+export type TurnCompactionReason = 'budget' | 'overflow';
+
 export type TurnSignal =
   | { type: 'step.started'; step: number }
-  | { type: 'turn.spawn_tools'; toolCalls: ToolCall[] }
+  | {
+      type: 'turn.spawn_tools';
+      toolCalls: ToolCall[];
+      decisions?: Record<string, ToolBeforeDecision>;
+    }
+  | { type: 'turn.compaction_requested'; reason: TurnCompactionReason; history: HistoryMessage[] }
   | { type: 'turn.drain' };
 
 export const LOOP_MAX_STEPS_EXCEEDED_ERROR_CODE = 'loop.max_steps_exceeded';
@@ -89,13 +98,17 @@ export type TurnOutput = TurnOutcome & { produced: HistoryMessage[] };
 export interface TurnMachineContext {
   input: TurnInput;
   history: HistoryMessage[];
+  produced: HistoryMessage[];
   toolCallIds: ToolCallIdNormalizer;
   llmScope: AbortScope;
   pendingToolCalls: ToolCall[];
   outcomes: Record<string, ToolOutput>;
+  toolDecisions?: Record<string, ToolBeforeDecision>;
+  toolStopTurn?: boolean;
   steps: number;
   step: number;
   paused: boolean;
+  compactReason?: TurnCompactionReason;
   outcome?: 'done' | 'failed' | 'aborted';
   failure?: TurnFailure;
 }
@@ -119,13 +132,17 @@ function assistantEntry(
 function toolOutcomeEntry(toolCall: ToolCall, output: ToolOutput): ToolEntry {
   if (output.type === 'failed') {
     const text = output.error instanceof Error ? output.error.message : String(output.error);
-    return createToolEntry(createToolMessage(toolCall.id, text), { source: 'tool' });
+    return createToolEntry(createToolMessage(toolCall.id, text), { source: 'tool', isError: true });
   }
   if (output.type === 'aborted') {
-    return createToolEntry(createToolMessage(toolCall.id, 'aborted'), { source: 'tool' });
+    return createToolEntry(createToolMessage(toolCall.id, 'aborted'), {
+      source: 'tool',
+      isError: true,
+    });
   }
   return createToolEntry(createToolMessage(toolCall.id, output.result.content), {
     source: 'tool',
+    isError: output.result.isError === true ? true : undefined,
   });
 }
 
@@ -140,18 +157,29 @@ function asyncAckOutcome(toolCall: ToolCall, text: string): ToolOutput {
   };
 }
 
+function toolStopTurnRequested(context: TurnMachineContext): boolean {
+  return context.pendingToolCalls.some((toolCall) => {
+    const outcome = context.outcomes[toolCall.id];
+    return outcome?.type === 'succeeded' && outcome.result.stopTurn === true;
+  });
+}
+
 function collectToolOutcomes(
   context: TurnMachineContext,
-): Pick<TurnMachineContext, 'history' | 'pendingToolCalls' | 'outcomes'> {
+): Pick<
+  TurnMachineContext,
+  'history' | 'produced' | 'pendingToolCalls' | 'outcomes' | 'toolDecisions' | 'toolStopTurn'
+> {
+  const entries = context.pendingToolCalls.map((toolCall) =>
+    toolOutcomeEntry(toolCall, context.outcomes[toolCall.id] as ToolOutput),
+  );
   return {
-    history: [
-      ...context.history,
-      ...context.pendingToolCalls.map((toolCall) =>
-        toolOutcomeEntry(toolCall, context.outcomes[toolCall.id] as ToolOutput),
-      ),
-    ],
+    history: [...context.history, ...entries],
+    produced: [...context.produced, ...entries],
     pendingToolCalls: [],
     outcomes: {},
+    toolDecisions: undefined,
+    toolStopTurn: toolStopTurnRequested(context),
   };
 }
 
@@ -177,9 +205,43 @@ export interface TurnBeforeStepContext {
   systemPrompt?: string;
 }
 
-export type TurnBeforeStep = (context: TurnBeforeStepContext) => void | Promise<void>;
+export type TurnBeforeStepDecision = { readonly compact: true };
+
+export type TurnBeforeStep = (
+  context: TurnBeforeStepContext,
+) => void | TurnBeforeStepDecision | Promise<void | TurnBeforeStepDecision>;
+
+export interface TurnAfterStepContext {
+  step: number;
+  final: boolean;
+  messages: readonly HistoryMessage[];
+}
+
+export interface TurnAfterStepDecision {
+  readonly stopTurn?: boolean;
+}
+
+export type TurnAfterStep = (
+  context: TurnAfterStepContext,
+) => void | TurnAfterStepDecision | Promise<void | TurnAfterStepDecision>;
+
+export interface TurnBeforeToolsInput {
+  toolCalls: readonly ToolCall[];
+}
+
+export type TurnBeforeToolsDecisions = Record<string, ToolBeforeDecision>;
+
+export type TurnBeforeTools = (
+  input: TurnBeforeToolsInput,
+) => TurnBeforeToolsDecisions | Promise<TurnBeforeToolsDecisions>;
 
 export type LlmActorLogic = ReturnType<typeof createRequestActor>;
+
+function seededToolCallIds(history: readonly HistoryMessage[]): ToolCallIdNormalizer {
+  const toolCallIds = new ToolCallIdNormalizer();
+  toolCallIds.seedFrom(toInputMessages(history));
+  return toolCallIds;
+}
 
 function withCompletionBudget(
   config: LlmRequestConfig,
@@ -218,6 +280,8 @@ export interface CreateTurnMachineOptions {
   readonly getConfig?: () => LlmRequestConfig | undefined;
   readonly getCredentialProvider?: () => LlmCredentialProvider | undefined;
   readonly onBeforeStep?: TurnBeforeStep;
+  readonly onAfterStep?: TurnAfterStep;
+  readonly onBeforeTools?: TurnBeforeTools;
 }
 
 export type TurnLogic = ReturnType<typeof createTurnMachine>;
@@ -242,9 +306,15 @@ export function createTurnMachine(
     },
     actors: {
       llmActor,
-      onBeforeStepActor: fromPromise<void, TurnBeforeStepContext>(async ({ input }) => {
-        await options?.onBeforeStep?.(input);
-      }),
+      onBeforeStepActor: fromPromise<TurnBeforeStepDecision | undefined, TurnBeforeStepContext>(
+        async ({ input }) => (await options?.onBeforeStep?.(input)) ?? undefined,
+      ),
+      onAfterStepActor: fromPromise<TurnAfterStepDecision | undefined, TurnAfterStepContext>(
+        async ({ input }) => (await options?.onAfterStep?.(input)) ?? undefined,
+      ),
+      onBeforeToolsActor: fromPromise<TurnBeforeToolsDecisions, TurnBeforeToolsInput>(
+        async ({ input }) => (await options?.onBeforeTools?.(input)) ?? {},
+      ),
     },
     actions: {
       forwardToParent: ({ self, event }) => {
@@ -266,21 +336,18 @@ export function createTurnMachine(
   }).createMachine({
     id: 'turn',
     initial: 'gating',
-    context: ({ input }) => {
-      const toolCallIds = new ToolCallIdNormalizer();
-      toolCallIds.seedFrom(toInputMessages(input.history));
-      return {
-        input,
-        history: [...input.history],
-        toolCallIds,
-        llmScope: createAbortScope(),
-        pendingToolCalls: [],
-        outcomes: {},
-        steps: 1,
-        step: 0,
-        paused: false,
-      };
-    },
+    context: ({ input }) => ({
+      input,
+      history: [...input.history],
+      produced: [],
+      toolCallIds: seededToolCallIds(input.history),
+      llmScope: createAbortScope(),
+      pendingToolCalls: [],
+      outcomes: {},
+      steps: 1,
+      step: 0,
+      paused: false,
+    }),
     on: {
       'turn.pause': {
         actions: assign({ paused: true }),
@@ -303,7 +370,14 @@ export function createTurnMachine(
               systemPrompt: systemPromptFor(),
             };
           },
-          onDone: { target: 'streaming' },
+          onDone: [
+            {
+              guard: ({ event }) => event.output?.compact === true,
+              target: 'compacting',
+              actions: assign({ compactReason: 'budget' as const }),
+            },
+            { target: 'streaming' },
+          ],
           onError: {
             target: 'failed',
             actions: assign({
@@ -356,7 +430,7 @@ export function createTurnMachine(
                   config: withCompletionBudget(config, context.history, tools, systemPrompt),
                   content: {
                     systemPrompt,
-                    messages: toInputMessages(context.history),
+                    messages: toRequestMessages(context.history),
                     tools,
                   },
                   signal: context.llmScope.signal,
@@ -394,15 +468,14 @@ export function createTurnMachine(
                   'forwardToParent',
                   assign(({ context, event }) => {
                     const message = event.message;
+                    if (message === null) {
+                      return { outcome: 'aborted' as const };
+                    }
+                    const entry = assistantEntry(context, { ...event, message }, 'salvaged', configOf()?.model);
                     return {
                       outcome: 'aborted' as const,
-                      history:
-                        message === null
-                          ? context.history
-                          : [
-                              ...context.history,
-                              assistantEntry(context, { ...event, message }, 'salvaged', configOf()?.model),
-                            ],
+                      history: [...context.history, entry],
+                      produced: [...context.produced, entry],
                     };
                   }),
                 ],
@@ -410,12 +483,13 @@ export function createTurnMachine(
               'llm.done': [
                 {
                   guard: ({ event }) => event.message.toolCalls.length > 0,
-                  target: '#turn.acting',
+                  target: '#turn.preparingTools',
                   actions: [
                     assign(({ context, event }) => {
                       const entry = assistantEntry(context, event, 'llm', configOf()?.model);
                       return {
                         history: [...context.history, entry],
+                        produced: [...context.produced, entry],
                         pendingToolCalls: [...entry.message.toolCalls],
                       };
                     }),
@@ -429,13 +503,35 @@ export function createTurnMachine(
                   ],
                 },
                 {
+                  guard: () => options?.onAfterStep === undefined,
                   target: '#turn.done',
                   actions: [
-                    assign({
-                      history: ({ context, event }) => [
-                        ...context.history,
-                        assistantEntry(context, event, 'llm', configOf()?.model),
-                      ],
+                    assign(({ context, event }) => {
+                      const entry = assistantEntry(context, event, 'llm', configOf()?.model);
+                      return {
+                        history: [...context.history, entry],
+                        produced: [...context.produced, entry],
+                      };
+                    }),
+                    {
+                      type: 'sendToParent',
+                      params: ({ context }) => ({
+                        type: 'llm.done' as const,
+                        entry: context.history[context.history.length - 1] as AssistantEntry,
+                      }),
+                    },
+                  ],
+                },
+                {
+                  target: '#turn.settling',
+                  actions: [
+                    assign(({ context, event }) => {
+                      const entry = assistantEntry(context, event, 'llm', configOf()?.model);
+                      return {
+                        outcome: 'done' as const,
+                        history: [...context.history, entry],
+                        produced: [...context.produced, entry],
+                      };
                     }),
                     {
                       type: 'sendToParent',
@@ -457,20 +553,53 @@ export function createTurnMachine(
                   }),
                 ],
               },
-              'llm.failed.remote': {
-                target: '#turn.failed',
-                actions: [
-                  'forwardToParent',
-                  assign({
-                    outcome: 'failed' as const,
-                    failure: ({ event }) => ({
-                      reason: 'error' as const,
-                      error: event.rawError ?? event.error,
+              'llm.failed.remote': [
+                {
+                  guard: ({ event }) => event.error.kind === 'context_overflow',
+                  target: '#turn.compacting',
+                  actions: assign({ compactReason: 'overflow' as const }),
+                },
+                {
+                  target: '#turn.failed',
+                  actions: [
+                    'forwardToParent',
+                    assign({
+                      outcome: 'failed' as const,
+                      failure: ({ event }) => ({
+                        reason: 'error' as const,
+                        error: event.rawError ?? event.error,
+                      }),
                     }),
-                  }),
-                ],
-              },
+                  ],
+                },
+              ],
             },
+          },
+        },
+      },
+      preparingTools: {
+        always: [{ guard: () => options?.onBeforeTools === undefined, target: 'acting' }],
+        invoke: {
+          src: 'onBeforeToolsActor',
+          input: ({ context }) => ({ toolCalls: context.pendingToolCalls }),
+          onDone: {
+            target: 'acting',
+            actions: assign({
+              toolDecisions: ({ event }) => event.output,
+            }),
+          },
+          onError: {
+            target: 'failed',
+            actions: assign({
+              outcome: 'failed' as const,
+              failure: ({ event }) => ({ reason: 'error' as const, error: event.error }),
+            }),
+          },
+        },
+        on: {
+          'turn.abort': {
+            target: 'aborted',
+            actions: [assign({ outcome: 'aborted' as const }), 'collectAborted'],
           },
         },
       },
@@ -480,6 +609,7 @@ export function createTurnMachine(
           params: ({ context }) => ({
             type: 'turn.spawn_tools' as const,
             toolCalls: context.pendingToolCalls,
+            decisions: context.toolDecisions,
           }),
         },
         initial: 'running',
@@ -495,10 +625,20 @@ export function createTurnMachine(
           },
           {
             guard: ({ context }) =>
+              options?.onAfterStep === undefined &&
+              !toolStopTurnRequested(context) &&
               context.pendingToolCalls.every(
                 (toolCall) => context.outcomes[toolCall.id] !== undefined,
               ),
             target: 'draining',
+            actions: assign(({ context }) => collectToolOutcomes(context)),
+          },
+          {
+            guard: ({ context }) =>
+              context.pendingToolCalls.every(
+                (toolCall) => context.outcomes[toolCall.id] !== undefined,
+              ),
+            target: 'settling',
             actions: assign(({ context }) => collectToolOutcomes(context)),
           },
         ],
@@ -554,6 +694,41 @@ export function createTurnMachine(
           },
         },
       },
+      settling: {
+        invoke: {
+          src: 'onAfterStepActor',
+          input: ({ context }) => ({
+            step: context.step,
+            final: context.outcome === 'done',
+            messages: context.history,
+          }),
+          onDone: [
+            {
+              guard: ({ context }) => context.outcome === 'done',
+              target: 'done',
+            },
+            {
+              guard: ({ context, event }) =>
+                event.output?.stopTurn === true || context.toolStopTurn === true,
+              target: 'done',
+            },
+            { target: 'draining' },
+          ],
+          onError: {
+            target: 'failed',
+            actions: assign({
+              outcome: 'failed' as const,
+              failure: ({ event }) => ({ reason: 'error' as const, error: event.error }),
+            }),
+          },
+        },
+        on: {
+          'turn.abort': {
+            target: 'aborted',
+            actions: assign({ outcome: 'aborted' as const }),
+          },
+        },
+      },
       draining: {
         entry: {
           type: 'signalParent',
@@ -566,13 +741,15 @@ export function createTurnMachine(
               target: 'done',
               actions: assign(({ context, event }) => ({
                 history: [...context.history, ...event.messages],
+                produced: [...context.produced, ...event.messages],
               })),
             },
             {
-              guard: ({ context, event }) =>
-                event.messages.length === 0 && maxStepsExceeded(context),
+              guard: ({ context }) => maxStepsExceeded(context),
               target: 'failed',
-              actions: assign(({ context }) => ({
+              actions: assign(({ context, event }) => ({
+                history: [...context.history, ...event.messages],
+                produced: [...context.produced, ...event.messages],
                 outcome: 'failed' as const,
                 failure: createMaxStepsExceeded(context.input.maxSteps as number),
               })),
@@ -581,8 +758,49 @@ export function createTurnMachine(
               target: 'gating',
               actions: assign(({ context, event }) => ({
                 history: [...context.history, ...event.messages],
-                steps: event.messages.length > 0 ? 1 : context.steps + 1,
+                produced: [...context.produced, ...event.messages],
+                steps: context.steps + 1,
               })),
+            },
+          ],
+          'turn.abort': {
+            target: 'aborted',
+            actions: assign({ outcome: 'aborted' as const }),
+          },
+        },
+      },
+      compacting: {
+        entry: {
+          type: 'signalParent',
+          params: ({ context }) => ({
+            type: 'turn.compaction_requested' as const,
+            reason: context.compactReason ?? 'budget',
+            history: context.history,
+          }),
+        },
+        on: {
+          'turn.compaction_finished': [
+            {
+              guard: ({ event }) => event.history !== undefined,
+              target: 'gating',
+              actions: assign(({ event }) => {
+                const history = event.history as HistoryMessage[];
+                return {
+                  history: [...history],
+                  produced: [],
+                  toolCallIds: seededToolCallIds(history),
+                };
+              }),
+            },
+            {
+              target: 'failed',
+              actions: assign({
+                outcome: 'failed' as const,
+                failure: ({ event }) => ({
+                  reason: 'error' as const,
+                  error: event.type === 'turn.compaction_finished' ? event.error : undefined,
+                }),
+              }),
             },
           ],
           'turn.abort': {
@@ -596,7 +814,7 @@ export function createTurnMachine(
       aborted: { type: 'final' },
     },
     output: ({ context }): TurnOutput => {
-      const produced = context.history.slice(context.input.history.length);
+      const produced = context.produced;
       return context.outcome === 'failed'
         ? { type: 'failed', failure: context.failure ?? { reason: 'error' }, produced }
         : context.outcome === 'aborted'

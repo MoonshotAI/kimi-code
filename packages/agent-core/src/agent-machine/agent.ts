@@ -6,6 +6,8 @@ import {
   fromPromise,
   sendTo,
   setup,
+  spawnChild,
+  stopChild,
   waitFor,
   type ActorRefFrom,
 } from '#/xstate2/index';
@@ -20,10 +22,11 @@ import {
   type UserEntry,
   type UserMessage,
 } from '#/llm/message';
-import { createToolMachine, type ToolEvent, type ToolOutput } from './tool';
+import { createToolMachine, type ToolBeforeDecision, type ToolEvent, type ToolOutput } from './tool';
 import { createAbortScope, withAbort, type AbortScope } from '#/utils/abort';
 
 import {
+  type TurnCompactionReason,
   type TurnLlmEvent,
   type TurnLogic,
   type TurnOutcome,
@@ -132,19 +135,47 @@ export type AgentEvent =
   | { type: 'input.pause' }
   | { type: 'input.continue' }
   | { type: 'input.close' }
-  | { type: 'turn.spawn_tools'; toolCalls: ToolCall[] }
+  | {
+      type: 'input.context_reset';
+      messages?: HistoryMessage[];
+      reason?: string;
+      instruction?: string;
+      stats?: Record<string, number>;
+      error?: unknown;
+    }
+  | {
+      type: 'turn.spawn_tools';
+      toolCalls: ToolCall[];
+      decisions?: Record<string, ToolBeforeDecision>;
+    }
+  | { type: 'turn.compaction_requested'; reason: TurnCompactionReason; history: HistoryMessage[] }
   | { type: 'turn.drain' }
-  | { type: 'step.started'; step: number };
+  | { type: 'step.started'; step: number }
+  | { type: 'xstate.done.actor.turn'; output: TurnOutput }
+  | { type: 'xstate.error.actor.turn'; error: unknown };
 
 export type AgentEmitted =
   | TurnLlmEvent
   | ToolEvent
   | { type: 'turn.started'; turnId: number; branchId: string; queueItemId?: string; entry?: UserEntry }
+  | { type: 'turn.prompt_committed'; turnId: number; entry: UserEntry }
   | { type: 'step.started'; step: number }
   | { type: 'turn.aborting' }
-  | { type: 'turn.spawn_tools'; toolCalls: ToolCall[] }
+  | {
+      type: 'turn.spawn_tools';
+      toolCalls: ToolCall[];
+      decisions?: Record<string, ToolBeforeDecision>;
+    }
+  | { type: 'turn.compaction_requested'; turnId: number; reason: TurnCompactionReason; history: HistoryMessage[] }
   | { type: 'turn.drained'; messages: HistoryMessage[] }
   | { type: 'turn.done'; turnId: number; outcome: TurnOutcome; messages: HistoryMessage[]; branchId: string }
+  | {
+      type: 'context.reset';
+      messages: HistoryMessage[];
+      reason?: string;
+      instruction?: string;
+      stats?: Record<string, number>;
+    }
   | {
       type: 'prompt.blocked';
       queueItemId?: string;
@@ -247,7 +278,11 @@ function turnOutputPatch(
 function turnOutcomeEvent(context: AgentMachineContext, output: TurnOutput): AgentEmitted {
   const turnId = context.activeTurnId ?? context.turnId;
   const outcome: TurnOutcome =
-    output.type === 'failed' ? { type: 'failed', failure: output.failure } : { type: output.type };
+    output.type === 'failed'
+      ? { type: 'failed', failure: output.failure }
+      : output.type === 'aborted'
+        ? { type: 'aborted', reason: output.reason }
+        : { type: 'done' };
   return { type: 'turn.done', turnId, outcome, messages: context.messages, branchId: context.branchId };
 }
 
@@ -271,11 +306,7 @@ function drainPendingPatch(
 ): Pick<AgentMachineContext, 'messages' | 'notifications' | 'queue' | 'drainedId' | 'drainedEntry'> {
   const [head, ...rest] = context.queue;
   return {
-    messages: [
-      ...context.messages,
-      ...context.notifications,
-      ...(head === undefined ? [] : [head]),
-    ],
+    messages: [...context.messages, ...context.notifications],
     notifications: [],
     queue: rest,
     drainedId: head?.meta?.promptId,
@@ -330,8 +361,29 @@ export function createAgentMachine({
       forwardToParent: ({ self, event }) => {
         self._parent?.send(event);
       },
-      commitPendingToHistory: enqueueActions(({ context, enqueue }) => {
+      drainPending: enqueueActions(({ context, enqueue }) => {
         enqueue.assign(drainPendingPatch(context));
+      }),
+      commitDrainedPrompt: enqueueActions(({ context, enqueue }) => {
+        const entry = context.drainedEntry;
+        if (entry === undefined) return;
+        enqueue.assign({ messages: [...context.messages, entry] });
+        enqueue.emit({
+          type: 'turn.prompt_committed' as const,
+          turnId: context.activeTurnId ?? context.turnId,
+          entry,
+        });
+      }),
+      spawnTurn: spawnChild('turnActor', {
+        id: 'turn',
+        input: ({ context }: { context: AgentMachineContext }) => ({
+          history: context.messages,
+          maxSteps: maxStepsPerTurn,
+          parentSignal: context.scope.signal,
+        }),
+      }),
+      pauseTurnIfPaused: enqueueActions(({ context, enqueue }) => {
+        if (context.paused) enqueue.sendTo('turn', { type: 'turn.pause' as const });
       }),
       abortScope: ({ context }) => {
         context.scope.abort();
@@ -343,12 +395,23 @@ export function createAgentMachine({
         const turnTools = { ...context.turnTools };
         for (const toolCall of event.toolCalls) {
           const scope = withAbort(context.scope.signal);
+          const decision = event.decisions?.[toolCall.id];
           turnTools[toolCall.id] = {
             toolCall,
             scope,
             ref: spawn('toolActor', {
               id: toolCall.id,
-              input: { toolCall, toolCalls: event.toolCalls, signal: scope.signal },
+              input: {
+                toolCall:
+                  decision?.type === 'proceed' && decision.toolCall !== undefined
+                    ? decision.toolCall
+                    : toolCall,
+                signal: scope.signal,
+                result:
+                  decision?.type === 'denied'
+                    ? { ...decision.result, isError: true }
+                    : undefined,
+              },
             }),
           };
         }
@@ -511,13 +574,26 @@ export function createAgentMachine({
       idle: {
         initial: 'ready',
         on: {
+          'input.context_reset': {
+            guard: ({ event }) => event.messages !== undefined,
+            actions: [
+              assign({ messages: ({ event }) => event.messages as HistoryMessage[] }),
+              emit(({ event }) => ({
+                type: 'context.reset' as const,
+                messages: event.messages as HistoryMessage[],
+                reason: event.reason,
+                instruction: event.instruction,
+                stats: event.stats,
+              })),
+            ],
+          },
           'input.continue': {
             guard: ({ context }) =>
               !hasPendingWork(context) && historyEndsMidToolChain(context.messages),
             target: 'running',
             actions: [
               assign({ paused: false }),
-              'commitPendingToHistory',
+              'drainPending',
               emit({ type: 'agent.continued' as const }),
             ],
           },
@@ -532,14 +608,9 @@ export function createAgentMachine({
           ready: {
             always: [
               {
-                guard: ({ context }) =>
-                  context.promptGate !== undefined && context.queue.length > 0 && !context.paused,
-                target: 'gating',
-              },
-              {
                 guard: ({ context }) => hasPendingWork(context) && !context.paused,
                 target: '#agent.running',
-                actions: ['commitPendingToHistory'],
+                actions: ['drainPending'],
               },
               {
                 guard: ({ context }) => hasBackgroundWork(context),
@@ -550,113 +621,15 @@ export function createAgentMachine({
           waiting: {
             always: [
               {
-                guard: ({ context }) =>
-                  context.promptGate !== undefined && context.queue.length > 0 && !context.paused,
-                target: 'gating',
-              },
-              {
                 guard: ({ context }) => hasPendingWork(context) && !context.paused,
                 target: '#agent.running',
-                actions: ['commitPendingToHistory'],
+                actions: ['drainPending'],
               },
             ],
-          },
-          gating: {
-            invoke: {
-              src: 'promptGateActor',
-              input: ({ context }) => ({ gate: context.promptGate, head: context.queue[0] }),
-              onDone: [
-                {
-                  guard: ({ context, event }) =>
-                    context.paused || context.queue[0]?.meta?.promptId !== event.output.id,
-                  target: 'ready',
-                },
-                {
-                  guard: ({ event }) => event.output.error !== undefined,
-                  target: 'ready',
-                  actions: [
-                    emit(({ context, event }) => ({
-                      type: 'prompt.blocked' as const,
-                      queueItemId: context.queue[0]?.meta?.promptId,
-                      entry: context.queue[0],
-                      reason: 'error' as const,
-                      error: event.output.error,
-                    })),
-                    assign(({ context }) => ({ queue: context.queue.slice(1) })),
-                  ],
-                },
-                {
-                  guard: ({ event }) => event.output.block,
-                  target: 'ready',
-                  actions: [
-                    emit(({ context }) => ({
-                      type: 'prompt.blocked' as const,
-                      queueItemId: context.queue[0]?.meta?.promptId,
-                      entry: context.queue[0],
-                      reason: 'gate' as const,
-                    })),
-                    assign(({ context }) => ({ queue: context.queue.slice(1) })),
-                  ],
-                },
-                {
-                  target: '#agent.running',
-                  actions: [
-                    assign(({ context, event }) => {
-                      const rewritten = event.output.message;
-                      const head = context.queue[0];
-                      if (rewritten === undefined || head === undefined) return {};
-                      return { queue: [{ ...head, message: rewritten }, ...context.queue.slice(1)] };
-                    }),
-                    'commitPendingToHistory',
-                  ],
-                },
-              ],
-              onError: {
-                target: 'ready',
-                actions: [
-                  emit(({ context, event }) => ({
-                    type: 'prompt.blocked' as const,
-                    queueItemId: context.queue[0]?.meta?.promptId,
-                    entry: context.queue[0],
-                    reason: 'error' as const,
-                    error: event.error,
-                  })),
-                  assign(({ context }) => ({ queue: context.queue.slice(1) })),
-                ],
-              },
-            },
           },
         },
       },
       running: {
-        invoke: {
-          id: 'turn',
-          src: 'turnActor',
-          input: ({ context }) => ({
-            history: context.messages,
-            maxSteps: maxStepsPerTurn,
-            parentSignal: context.scope.signal,
-          }),
-          onDone: {
-            target: '#agent.idle',
-            actions: [
-              assign(({ context, event }) => turnOutputPatch(context, event.output)),
-              emit(({ context, event }) => turnOutcomeEvent(context, event.output)),
-            ],
-          },
-          onError: {
-            target: '#agent.idle',
-            actions: [
-              emit(({ context, event }) =>
-                turnOutcomeEvent(context, {
-                  type: 'failed' as const,
-                  failure: { reason: 'error', error: event.error },
-                  produced: [],
-                }),
-              ),
-            ],
-          },
-        },
         entry: [
           assign({ activeTurnId: ({ context }) => context.turnId, abortReason: undefined }),
           emit(({ context }) => ({
@@ -670,11 +643,31 @@ export function createAgentMachine({
         exit: [
           'abortTurnTools',
           'stopTurnTools',
+          stopChild('turn'),
           assign({ turnTools: {} }),
           assign({ turnId: ({ context }) => context.turnId + 1 }),
         ],
-        initial: 'active',
+        initial: 'gating',
         on: {
+          'xstate.done.actor.turn': {
+            target: '#agent.idle',
+            actions: [
+              assign(({ context, event }) => turnOutputPatch(context, event.output)),
+              emit(({ context, event }) => turnOutcomeEvent(context, event.output)),
+            ],
+          },
+          'xstate.error.actor.turn': {
+            target: '#agent.idle',
+            actions: [
+              emit(({ context, event }) =>
+                turnOutcomeEvent(context, {
+                  type: 'failed' as const,
+                  failure: { reason: 'error', error: event.error },
+                  produced: [],
+                }),
+              ),
+            ],
+          },
           'input.pause': {
             actions: [
               assign({ paused: true }),
@@ -752,8 +745,174 @@ export function createAgentMachine({
           'llm.recovering': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
+          'turn.compaction_requested': {
+            actions: [
+              emit(({ context, event }) => ({
+                type: 'turn.compaction_requested' as const,
+                turnId: context.activeTurnId ?? context.turnId,
+                reason: event.reason,
+                history: event.history,
+              })),
+              'forwardToParent',
+            ],
+          },
+          'input.context_reset': [
+            {
+              guard: ({ event }) => event.messages !== undefined,
+              actions: [
+                assign({ messages: ({ event }) => event.messages as HistoryMessage[] }),
+                sendTo('turn', ({ event }) => ({
+                  type: 'turn.compaction_finished' as const,
+                  history: event.messages,
+                })),
+                emit(({ event }) => ({
+                  type: 'context.reset' as const,
+                  messages: event.messages as HistoryMessage[],
+                  reason: event.reason,
+                  instruction: event.instruction,
+                  stats: event.stats,
+                })),
+              ],
+            },
+            {
+              actions: sendTo('turn', ({ event }) => ({
+                type: 'turn.compaction_finished' as const,
+                error: event.error,
+              })),
+            },
+          ],
         },
         states: {
+          gating: {
+            always: [
+              {
+                guard: ({ context }) =>
+                  context.drainedEntry === undefined || context.promptGate === undefined,
+                target: 'active',
+                actions: ['commitDrainedPrompt', 'spawnTurn', 'pauseTurnIfPaused'],
+              },
+            ],
+            invoke: {
+              src: 'promptGateActor',
+              input: ({ context }) => ({ gate: context.promptGate, head: context.drainedEntry }),
+              onDone: [
+                {
+                  guard: ({ event }) => event.output.error !== undefined,
+                  target: '#agent.idle',
+                  actions: [
+                    'commitDrainedPrompt',
+                    emit(({ context, event }) => ({
+                      type: 'prompt.blocked' as const,
+                      queueItemId: context.drainedId,
+                      entry: context.drainedEntry,
+                      reason: 'error' as const,
+                      error: event.output.error,
+                    })),
+                    emit(({ context, event }) =>
+                      turnOutcomeEvent(context, {
+                        type: 'failed' as const,
+                        failure: { reason: 'error', error: event.output.error },
+                        produced: [],
+                      }),
+                    ),
+                  ],
+                },
+                {
+                  guard: ({ event }) => event.output.block,
+                  target: '#agent.idle',
+                  actions: [
+                    'commitDrainedPrompt',
+                    emit(({ context }) => ({
+                      type: 'prompt.blocked' as const,
+                      queueItemId: context.drainedId,
+                      entry: context.drainedEntry,
+                      reason: 'gate' as const,
+                    })),
+                    emit(({ context }) =>
+                      turnOutcomeEvent(context, {
+                        type: 'failed' as const,
+                        failure: { reason: 'error', error: undefined },
+                        produced: [],
+                      }),
+                    ),
+                  ],
+                },
+                {
+                  target: 'active',
+                  actions: [
+                    assign(({ context, event }) => {
+                      const rewritten = event.output.message;
+                      const head = context.drainedEntry;
+                      if (rewritten === undefined || head === undefined) return {};
+                      return { drainedEntry: { ...head, message: rewritten } };
+                    }),
+                    'commitDrainedPrompt',
+                    'spawnTurn',
+                    'pauseTurnIfPaused',
+                  ],
+                },
+              ],
+              onError: {
+                target: '#agent.idle',
+                actions: [
+                  'commitDrainedPrompt',
+                  emit(({ context, event }) => ({
+                    type: 'prompt.blocked' as const,
+                    queueItemId: context.drainedId,
+                    entry: context.drainedEntry,
+                    reason: 'error' as const,
+                    error: event.error,
+                  })),
+                  emit(({ context, event }) =>
+                    turnOutcomeEvent(context, {
+                      type: 'failed' as const,
+                      failure: { reason: 'error', error: event.error },
+                      produced: [],
+                    }),
+                  ),
+                ],
+              },
+            },
+            on: {
+              'input.pause': {
+                actions: [assign({ paused: true }), emit({ type: 'agent.paused' as const })],
+              },
+              'input.continue': {
+                actions: [assign({ paused: false }), emit({ type: 'agent.continued' as const })],
+              },
+              'input.context_reset': {
+                guard: ({ event }) => event.messages !== undefined,
+                actions: [
+                  assign({ messages: ({ event }) => event.messages as HistoryMessage[] }),
+                  emit(({ event }) => ({
+                    type: 'context.reset' as const,
+                    messages: event.messages as HistoryMessage[],
+                    reason: event.reason,
+                    instruction: event.instruction,
+                    stats: event.stats,
+                  })),
+                ],
+              },
+              'input.abort': {
+                target: '#agent.idle',
+                actions: [
+                  'rememberAbortReason',
+                  emit({ type: 'turn.aborting' as const }),
+                  emit(({ event }) => ({
+                    type: 'agent.aborted' as const,
+                    reason: event.type === 'input.abort' ? event.reason : undefined,
+                  })),
+                  emit(({ context, event }) =>
+                    turnOutcomeEvent(context, {
+                      type: 'aborted' as const,
+                      reason: event.type === 'input.abort' ? event.reason : undefined,
+                      produced: [],
+                    }),
+                  ),
+                ],
+              },
+            },
+          },
           active: {
             on: {
               'turn.spawn_tools': {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { LlmErrorMessage } from '#/llm/errors';
+import { llmStatusErrorMessage, toLlmStatusErrorMessage, type LlmErrorMessage } from '#/llm/errors';
 import { UNKNOWN_CAPABILITY, type LlmModel } from '#/llm/model';
 import {
   credentialsRecovery,
@@ -143,7 +143,7 @@ const REQUEST_MODEL: LlmModel = {
 };
 
 function statusError(
-  kind: 'rate_limit' | 'status',
+  kind: 'rate_limit' | 'status' | 'auth',
   statusCode: number,
   retryAfterMs: number | null = 1,
 ): LlmErrorMessage {
@@ -178,6 +178,7 @@ describe('llm request policy', () => {
     expect(isRetryableError({ kind: 'connection', message: 'x' })).toBe(true);
     expect(isRetryableError(statusError('rate_limit', 429))).toBe(true);
     expect(isRetryableError(statusError('status', 418))).toBe(false);
+    expect(isRetryableError(statusError('auth', 401))).toBe(false);
     expect(isRetryableError({ kind: 'unknown', message: 'x' })).toBe(false);
     expect(isRetryableError({ kind: 'unknown', message: 'x' }, [() => true])).toBe(true);
     expect(isRetryableError({ kind: 'syntax', message: 'x', code: 'internal' }, [() => true])).toBe(
@@ -185,6 +186,22 @@ describe('llm request policy', () => {
     );
     expect(isRetryableError({ kind: 'abort', message: 'x' }, [() => true])).toBe(false);
     expect(isRetryableError(statusError('rate_limit', 429), [() => false])).toBe(true);
+  });
+
+  it('classifies 401/403 status errors as auth and keeps them non-retryable', () => {
+    for (const statusCode of [401, 403]) {
+      const error = toLlmStatusErrorMessage({ statusCode, message: 'unauthorized' });
+      expect(error).toMatchObject({
+        kind: 'auth',
+        statusCode,
+        requestId: null,
+        retryAfterMs: null,
+        headers: null,
+      });
+      expect(llmStatusErrorMessage(error)?.statusCode).toBe(statusCode);
+      expect(isRetryableError(error)).toBe(false);
+    }
+    expect(toLlmStatusErrorMessage({ statusCode: 418, message: 'teapot' }).kind).toBe('status');
   });
 
   it('retries a rate-limit error then succeeds', async () => {
@@ -216,7 +233,7 @@ describe('llm request policy', () => {
     };
     const events: string[] = [];
     const result = await runLlmRequest(
-      failingThenDone([statusError('status', 401, null)]),
+      failingThenDone([statusError('auth', 401, null)]),
       {
         config: { model: REQUEST_MODEL },
         content: { messages: [] },

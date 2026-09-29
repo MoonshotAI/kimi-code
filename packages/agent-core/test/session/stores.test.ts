@@ -307,3 +307,229 @@ describe('SessionStores switchBranch', () => {
     await actor2.disposeAsync();
   });
 });
+
+describe('agent store context.reset', () => {
+  it('replaces history wholesale and preserves both turnIndex cursor forms', async () => {
+    const env = await testEnv();
+    const main = await env.stores.open('main');
+    const summaryA = createUserEntry(createUserMessage('summary-a'), { source: 'compaction', key: 'summary' });
+    const summaryB = createUserEntry(createUserMessage('summary-b'), { source: 'compaction', key: 'summary' });
+
+    await main.dispatch([
+      { type: 'turn.started', turnId: 0 },
+      { type: 'message.appended', message: createUserEntry(createUserMessage('old')) },
+      { type: 'turn.ended', turnId: 0, outcome: 'done' },
+      { type: 'context.reset', messages: [summaryA], reason: 'manual' },
+    ]);
+
+    expect(historyTexts(main)).toEqual(['summary-a']);
+    expect(main.getState().turnIndex.nextTurnId).toBe(1);
+    expect(main.getState().turnIndex.turns).toHaveLength(1);
+    expect(main.getState().turnIndex.turns[0]?.end).toBeDefined();
+
+    await main.dispatch([
+      { type: 'turn.started', turnId: 1 },
+      { type: 'message.appended', message: createUserEntry(createUserMessage('in-flight')) },
+      { type: 'context.reset', messages: [summaryB], reason: 'budget' },
+    ]);
+
+    expect(historyTexts(main)).toEqual(['summary-b']);
+    expect(main.getState().turnIndex.nextTurnId).toBe(1);
+    expect(main.getState().turnIndex.turns[1]?.end).toBeUndefined();
+
+    await main.dispatch([
+      { type: 'message.appended', message: createUserEntry(createUserMessage('after')) },
+      { type: 'turn.ended', turnId: 1, outcome: 'done' },
+    ]);
+
+    expect(historyTexts(main)).toEqual(['summary-b', 'after']);
+    expect(main.getState().turnIndex.nextTurnId).toBe(2);
+    expect(main.getState().turnIndex.turns[1]?.end).toBeDefined();
+
+    await env.stores.dispose();
+  });
+});
+
+describe('turn compacting', () => {
+  const summarySeed = (): ReturnType<typeof createUserEntry>[] => [
+    createUserEntry(createUserMessage('seed-summary'), { source: 'compaction', key: 'summary' }),
+  ];
+
+  function createOverflowThenEchoRequester(calls: { messages: string[] }[]): LlmRequester {
+    let attempt = 0;
+    return {
+      generate: (_config, { messages }, { onEvent }) => {
+        attempt += 1;
+        calls.push({
+          messages: messages.map((message) => extractText(message)),
+        });
+        if (attempt === 1) {
+          onEvent?.({
+            type: 'llm.failed.remote',
+            error: {
+              kind: 'context_overflow',
+              message: 'maximum context length exceeded',
+              statusCode: 400,
+              requestId: null,
+              retryAfterMs: null,
+              headers: null,
+            },
+          });
+          return Promise.resolve();
+        }
+        const last = messages.at(-1);
+        const text = last !== undefined && last.role === 'user' ? extractText(last) : '';
+        onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: `echo:${text}` } });
+        onEvent?.({ type: 'llm.done' });
+        return Promise.resolve();
+      },
+    };
+  }
+
+  it('continues in place after a budget decision and keeps journal and memory consistent', async () => {
+    const env = await testEnv();
+    const main = await env.stores.open('main');
+    const journal: string[] = [];
+    main.onCommit((entry) => {
+      const type = entry.event.type as string;
+      if (type === 'turn.started' || type === 'message.appended' || type === 'turn.ended' || type === 'context.reset') {
+        journal.push(type);
+      }
+    });
+    let beforeStepCalls = 0;
+    const calls: { messages: string[] }[] = [];
+    const actor = mountAgent({
+      sessionId: 'sess',
+      agentId: 'main',
+      store: main,
+      branchId: env.stores.branch('main'),
+      turnOptions: {
+        onBeforeStep: () => {
+          beforeStepCalls += 1;
+          return beforeStepCalls === 1 ? { compact: true as const } : undefined;
+        },
+      },
+    });
+    actor.setConfig({ model });
+    actor.setRequester(createEchoRequester());
+    actor.on('turn.compaction_requested', (event) => {
+      expect(event.reason).toBe('budget');
+      expect(event.turnId).toBe(0);
+      actor.contextReset({ messages: summarySeed(), reason: 'budget' });
+    });
+    await actor.ready();
+    const done = new Promise<'done' | 'failed' | 'aborted'>((resolve) => {
+      actor.on('turn.done', (event) => { resolve(event.outcome.type); });
+    });
+    actor.submit(createUserMessage('hi'));
+
+    expect(await done).toBe('done');
+    expect(beforeStepCalls).toBe(2);
+    expect(historyTexts(main)).toEqual(['seed-summary', 'echo:seed-summary']);
+    expect(journal).toEqual([
+      'turn.started',
+      'message.appended',
+      'context.reset',
+      'message.appended',
+      'turn.ended',
+    ]);
+    const snapshot = actor.snapshot.value;
+    expect(snapshot?.context.messages.map((entry) => extractText(entry.message))).toEqual(
+      historyTexts(main),
+    );
+
+    await actor.disposeAsync();
+  });
+
+  it('continues in place after a context_overflow failure and resends the request on the seed', async () => {
+    const env = await testEnv();
+    const main = await env.stores.open('main');
+    const calls: { messages: string[] }[] = [];
+    const actor = mountAgent({
+      sessionId: 'sess',
+      agentId: 'main',
+      store: main,
+      branchId: env.stores.branch('main'),
+    });
+    actor.setConfig({ model });
+    actor.setRequester(createOverflowThenEchoRequester(calls));
+    actor.on('turn.compaction_requested', (event) => {
+      expect(event.reason).toBe('overflow');
+      actor.contextReset({ messages: summarySeed(), reason: 'overflow' });
+    });
+    await actor.ready();
+    const done = new Promise<'done' | 'failed' | 'aborted'>((resolve) => {
+      actor.on('turn.done', (event) => { resolve(event.outcome.type); });
+    });
+    actor.submit(createUserMessage('hi'));
+
+    expect(await done).toBe('done');
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.messages).toEqual(['hi']);
+    expect(calls[1]?.messages).toEqual(['seed-summary']);
+    expect(historyTexts(main)).toEqual(['seed-summary', 'echo:seed-summary']);
+
+    await actor.disposeAsync();
+  });
+
+  it('fails the turn when the reset response carries an error and aborts cleanly during compacting', async () => {
+    const env = await testEnv();
+    const main = await env.stores.open('main');
+    let compactionCalls = 0;
+    const actor = mountAgent({
+      sessionId: 'sess',
+      agentId: 'main',
+      store: main,
+      branchId: env.stores.branch('main'),
+      turnOptions: {
+        onBeforeStep: () => {
+          compactionCalls += 1;
+          return compactionCalls === 1 ? { compact: true as const } : undefined;
+        },
+      },
+    });
+    actor.setConfig({ model });
+    actor.setRequester(createEchoRequester());
+    actor.on('turn.compaction_requested', () => {
+      actor.contextReset({ error: new Error('summary unavailable') });
+    });
+    await actor.ready();
+    const outcomes: string[] = [];
+    actor.on('turn.done', (event) => { outcomes.push(event.outcome.type); });
+    actor.submit(createUserMessage('hi'));
+    await new Promise<void>((resolve) => {
+      actor.on('turn.done', () => { resolve(); });
+    });
+
+    expect(outcomes).toEqual(['failed']);
+    expect(historyTexts(main)).toEqual(['hi']);
+
+    await actor.disposeAsync();
+
+    let aborted = false;
+    const actor2 = mountAgent({
+      sessionId: 'sess',
+      agentId: 'main',
+      store: main,
+      branchId: env.stores.branch('main'),
+      turnOptions: {
+        onBeforeStep: () => (aborted ? undefined : { compact: true as const }),
+      },
+    });
+    actor2.setConfig({ model });
+    actor2.setRequester(createEchoRequester());
+    actor2.on('turn.compaction_requested', () => {
+      actor2.abort();
+    });
+    await actor2.ready();
+    const abortedDone = new Promise<'done' | 'failed' | 'aborted'>((resolve) => {
+      actor2.on('turn.done', (event) => { resolve(event.outcome.type); });
+    });
+    actor2.submit(createUserMessage('again'));
+
+    expect(await abortedDone).toBe('aborted');
+    aborted = true;
+
+    await actor2.disposeAsync();
+  });
+});

@@ -9,6 +9,7 @@ import {
 import {
   createTurnMachine,
   type CreateTurnMachineOptions,
+  type TurnAfterStep,
   type TurnBeforeStep,
   type TurnLogic,
 } from '#/agent-machine/turn';
@@ -23,7 +24,7 @@ import {
 } from '#/kernel/index';
 import { credentialsRecovery } from '#/llm/builtin/requester/credentials';
 import type { MediaLowerPorts } from '#/llm/media/materialize';
-import type { ToolDescription } from '#/llm/message';
+import type { ToolCall, ToolDescription } from '#/llm/message';
 import type { MessageResolver } from '#/llm/requester/input';
 import type { LlmPolicy } from '#/llm/requester/policy';
 import type { LlmRecovery } from '#/llm/requester/recovery';
@@ -47,6 +48,18 @@ export type ToolPermissionHook = (
   input: ToolBeforeInput,
 ) => void | ToolBeforeDecision | Promise<void | ToolBeforeDecision>;
 
+export interface ToolBeforeBatchInput {
+  toolCalls: readonly ToolCall[];
+}
+
+export type ToolBeforeBatchDecision =
+  | { type: 'proceed' }
+  | { type: 'denied'; result: ToolResult };
+
+export type ToolBeforeBatchHook = (
+  input: ToolBeforeBatchInput,
+) => void | ToolBeforeBatchDecision | Promise<void | ToolBeforeBatchDecision>;
+
 export type ToolAfterHook = (
   input: ToolAfterInput,
 ) => void | ToolResult | Promise<void | ToolResult>;
@@ -60,6 +73,8 @@ export interface AgentPorts {
   readonly recoveries: readonly LlmRecovery[];
   readonly retryables: readonly LlmRetryable[];
   readonly beforeSteps: readonly TurnBeforeStep[];
+  readonly afterSteps: readonly TurnAfterStep[];
+  readonly beforeToolBatches: readonly ToolBeforeBatchHook[];
   readonly beforeTools: readonly ToolBeforeHook[];
   readonly toolPermissions: readonly ToolPermissionHook[];
   readonly afterTools: readonly ToolAfterHook[];
@@ -75,6 +90,8 @@ export interface AgentPorts {
   registerRecovery(recovery: LlmRecovery): () => void;
   registerRetryable(retryable: LlmRetryable): () => void;
   registerBeforeStep(hook: TurnBeforeStep): () => void;
+  registerAfterStep(hook: TurnAfterStep): () => void;
+  registerBeforeToolBatch(hook: ToolBeforeBatchHook): () => void;
   registerBeforeTool(hook: ToolBeforeHook): () => void;
   registerToolPermission(hook: ToolPermissionHook): () => void;
   registerAfterTool(hook: ToolAfterHook): () => void;
@@ -171,6 +188,8 @@ export function createAgentPorts(): AgentPorts {
   const recoveries: LlmRecovery[] = [];
   const retryables: LlmRetryable[] = [];
   const beforeSteps: TurnBeforeStep[] = [];
+  const afterSteps: TurnAfterStep[] = [];
+  const beforeToolBatches: ToolBeforeBatchHook[] = [];
   const beforeTools: ToolBeforeHook[] = [];
   const toolPermissions: ToolPermissionHook[] = [];
   const afterTools: ToolAfterHook[] = [];
@@ -189,6 +208,8 @@ export function createAgentPorts(): AgentPorts {
     recoveries,
     retryables,
     beforeSteps,
+    afterSteps,
+    beforeToolBatches,
     beforeTools,
     toolPermissions,
     afterTools,
@@ -253,6 +274,8 @@ export function createAgentPorts(): AgentPorts {
     registerRecovery: (recovery) => register(recoveries, [recovery]),
     registerRetryable: (retryable) => register(retryables, [retryable]),
     registerBeforeStep: (hook) => register(beforeSteps, [hook]),
+    registerAfterStep: (hook) => register(afterSteps, [hook]),
+    registerBeforeToolBatch: (hook) => register(beforeToolBatches, [hook]),
     registerBeforeTool: (hook) => register(beforeTools, [hook]),
     registerToolPermission: (hook) => register(toolPermissions, [hook]),
     registerAfterTool: (hook) => register(afterTools, [hook]),
@@ -285,34 +308,29 @@ export function bindPromptGate(ports: AgentPorts, host?: PromptGate): PromptGate
 }
 
 export function bindToolLogic(ports: AgentPorts): ReturnType<typeof createToolMachine> {
-  return createToolMachine({
-    execute: async (input) => {
-      const execute = ports.resolveToolExecutor(input.toolCall.name);
-      if (execute === undefined) {
-        return { content: [{ type: 'text', text: `unknown tool: ${input.toolCall.name}` }] };
-      }
-      return execute(input);
-    },
-    onBefore: async (input) => {
-      let toolCall = input.toolCall;
-      for (const hooks of [ports.beforeTools, ports.toolPermissions]) {
-        for (const hook of hooks.slice()) {
-          const decision = await hook({ toolCall, toolCalls: input.toolCalls });
-          if (decision === undefined) continue;
-          if (decision.type === 'denied') return decision;
-          if (decision.toolCall !== undefined) toolCall = decision.toolCall;
+  return createToolMachine(
+    {
+      execute: async (input) => {
+        const execute = ports.resolveToolExecutor(input.toolCall.name);
+        if (execute === undefined) {
+          return {
+            content: [{ type: 'text', text: `unknown tool: ${input.toolCall.name}` }],
+            isError: true,
+          };
         }
-      }
-      return { type: 'proceed', toolCall };
+        return execute(input);
+      },
     },
-    onAfter: async (input) => {
-      let result = input.result;
-      for (const hook of ports.afterTools.slice()) {
-        result = (await hook({ toolCall: input.toolCall, result })) ?? result;
-      }
-      return result;
+    {
+      onAfter: async (input) => {
+        let result = input.result;
+        for (const hook of ports.afterTools.slice()) {
+          result = (await hook({ toolCall: input.toolCall, result })) ?? result;
+        }
+        return result;
+      },
     },
-  });
+  );
 }
 
 export function bindAgentLogics(
@@ -337,9 +355,47 @@ export function bindAgentLogics(
       getHostPrompt: turnOptions?.getHostPrompt,
       getConfig: turnOptions?.getConfig,
       getCredentialProvider: turnOptions?.getCredentialProvider,
+      onBeforeTools: async ({ toolCalls }) => {
+        for (const hook of ports.beforeToolBatches.slice()) {
+          const decision = await hook({ toolCalls });
+          if (decision === undefined || decision.type === 'proceed') continue;
+          const denied: ToolBeforeDecision = { type: 'denied', result: decision.result };
+          return Object.fromEntries(toolCalls.map((toolCall) => [toolCall.id, denied]));
+        }
+        const decide = async (toolCall: ToolCall): Promise<ToolBeforeDecision> => {
+          let current = toolCall;
+          for (const hooks of [ports.beforeTools, ports.toolPermissions]) {
+            for (const hook of hooks.slice()) {
+              const decision = await hook({ toolCall: current });
+              if (decision === undefined) continue;
+              if (decision.type === 'denied') return decision;
+              if (decision.toolCall !== undefined) current = decision.toolCall;
+            }
+          }
+          return { type: 'proceed', toolCall: current };
+        };
+        const entries = await Promise.all(
+          toolCalls.map(async (toolCall) => [toolCall.id, await decide(toolCall)] as const),
+        );
+        return Object.fromEntries(entries);
+      },
       onBeforeStep: async (context) => {
-        await turnOptions?.onBeforeStep?.(context);
-        for (const hook of ports.beforeSteps.slice()) await hook(context);
+        const own = await turnOptions?.onBeforeStep?.(context);
+        if (own?.compact === true) return own;
+        for (const hook of ports.beforeSteps.slice()) {
+          const decision = await hook(context);
+          if (decision?.compact === true) return decision;
+        }
+        return undefined;
+      },
+      onAfterStep: async (context) => {
+        const hostDecision = await turnOptions?.onAfterStep?.(context);
+        if (hostDecision?.stopTurn === true) return hostDecision;
+        for (const hook of ports.afterSteps.slice()) {
+          const decision = await hook(context);
+          if (decision?.stopTurn === true) return decision;
+        }
+        return undefined;
       },
     }),
     toolLogic: bindToolLogic(ports),
@@ -451,6 +507,14 @@ export function useLlmRetryable(retryable: LlmRetryable): void {
 
 export function useBeforeStep(hook: TurnBeforeStep): void {
   pushCleanup(currentUnit(), inject(AgentPort).registerBeforeStep(hook));
+}
+
+export function useAfterStep(hook: TurnAfterStep): void {
+  pushCleanup(currentUnit(), inject(AgentPort).registerAfterStep(hook));
+}
+
+export function useBeforeToolBatch(hook: ToolBeforeBatchHook): void {
+  pushCleanup(currentUnit(), inject(AgentPort).registerBeforeToolBatch(hook));
 }
 
 export function useBeforeTool(hook: ToolBeforeHook): void {

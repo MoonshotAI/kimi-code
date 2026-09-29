@@ -59,7 +59,7 @@ export const machineTelemetryEvents = [
   { name: 'turn_ended', properties: ['turn_id', 'reason', 'duration_ms'] },
   {
     name: 'tool_call',
-    properties: ['turn_id', 'tool_call_id', 'tool_name', 'outcome', 'duration_ms'],
+    properties: ['turn_id', 'tool_call_id', 'tool_name', 'outcome', 'duration_ms', 'error_type'],
   },
   { name: 'api_error', properties: ['error_type', 'model'] },
   {

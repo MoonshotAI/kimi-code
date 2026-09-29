@@ -34,6 +34,7 @@ export type LlmErrorKind =
   | 'connection'
   | 'timeout'
   | 'status'
+  | 'auth'
   | 'rate_limit'
   | 'quota_exhausted'
   | 'overloaded'
@@ -51,6 +52,7 @@ export type LlmSyntaxErrorCode = 'request_format' | 'thinking_config' | 'interna
 
 export type LlmStatusErrorKind =
   | 'status'
+  | 'auth'
   | 'rate_limit'
   | 'quota_exhausted'
   | 'overloaded'
@@ -87,6 +89,7 @@ export function llmStatusErrorMessage(
 ): LlmErrorMessage<LlmStatusErrorKind> | null {
   switch (error.kind) {
     case 'status':
+    case 'auth':
     case 'rate_limit':
     case 'quota_exhausted':
     case 'overloaded':
@@ -227,6 +230,9 @@ export function toLlmStatusErrorMessage(input: LlmStatusErrorInput): LlmRemoteEr
   const message = sanitizeStatusErrorMessage(input.message);
   if (input.statusCode === 429) {
     return { kind: 'rate_limit', message, ...info };
+  }
+  if (input.statusCode === 401 || input.statusCode === 403) {
+    return { kind: 'auth', message, ...info };
   }
   if (isContextOverflowStatusError(input.statusCode, input.message)) {
     return { kind: 'context_overflow', message, ...info };

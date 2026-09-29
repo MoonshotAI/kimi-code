@@ -45,6 +45,7 @@ function isDefaultRetryable(error: LlmErrorMessage): boolean {
   switch (error.kind) {
     case 'syntax':
     case 'abort':
+    case 'auth':
     case 'quota_exhausted':
     case 'context_overflow':
     case 'request_too_large':

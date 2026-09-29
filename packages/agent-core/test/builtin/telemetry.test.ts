@@ -252,12 +252,29 @@ describe('telemetry feature', () => {
   it('derives tool_call events with paired outcome and reports failed turns', async () => {
     const tools = createFeature('telemetry-tools', {
       agent() {
-        useAgentTools({
-          name: 'ping',
-          description: 'ping',
-          parameters: { type: 'object', properties: {} },
-          execute: async () => ({ content: [{ type: 'text', text: 'pong' }] }),
-        });
+        useAgentTools(
+          {
+            name: 'ping',
+            description: 'ping',
+            parameters: { type: 'object', properties: {} },
+            execute: async () => ({ content: [{ type: 'text', text: 'pong' }] }),
+          },
+          {
+            name: 'bad',
+            description: 'bad',
+            parameters: { type: 'object', properties: {} },
+            execute: async () => ({ content: [{ type: 'text', text: 'boom' }], isError: true }),
+          },
+          {
+            name: 'halter',
+            description: 'halter',
+            parameters: { type: 'object', properties: {} },
+            execute: async () => ({
+              content: [{ type: 'text', text: 'Tool "halter" was aborted' }],
+              isError: true,
+            }),
+          },
+        );
       },
     });
     const recorder = createRecorder();
@@ -275,6 +292,16 @@ describe('telemetry feature', () => {
             type: 'llm.streaming.part',
             part: { type: 'function', id: 'call-1', name: 'ping', arguments: '{}' },
           });
+        } else if (last !== undefined && last.role === 'user' && extractText(last) === 'bad') {
+          onEvent?.({
+            type: 'llm.streaming.part',
+            part: { type: 'function', id: 'call-2', name: 'bad', arguments: '{}' },
+          });
+        } else if (last !== undefined && last.role === 'user' && extractText(last) === 'halt') {
+          onEvent?.({
+            type: 'llm.streaming.part',
+            part: { type: 'function', id: 'call-3', name: 'halter', arguments: '{}' },
+          });
         } else {
           onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
         }
@@ -289,10 +316,27 @@ describe('telemetry feature', () => {
     expect(toolCall.properties['tool_name']).toBe('ping');
     expect(toolCall.properties['tool_call_id']).toBe('call-1');
     expect(toolCall.properties['outcome']).toBe('success');
+    expect(toolCall.properties['error_type']).toBeUndefined();
     expect(toolCall.properties['duration_ms']).toBeTypeOf('number');
     const started = findRecord(recorder.records, 'turn_started');
     expect(toolCall.properties['turn_id']).toBe(started.properties['turn_id']);
     await waitForEvent(recorder.records, 'turn_ended');
+    agent.submit(createUserMessage('bad'));
+    await vi.waitFor(() => {
+      expect(recorder.records.filter((record) => record.event === 'tool_call')).toHaveLength(2);
+    });
+    const badCall = recorder.records.filter((record) => record.event === 'tool_call')[1];
+    expect(badCall?.properties['tool_name']).toBe('bad');
+    expect(badCall?.properties['outcome']).toBe('error');
+    expect(badCall?.properties['error_type']).toBe('error');
+    agent.submit(createUserMessage('halt'));
+    await vi.waitFor(() => {
+      expect(recorder.records.filter((record) => record.event === 'tool_call')).toHaveLength(3);
+    });
+    const haltCall = recorder.records.filter((record) => record.event === 'tool_call')[2];
+    expect(haltCall?.properties['tool_name']).toBe('halter');
+    expect(haltCall?.properties['outcome']).toBe('cancelled');
+    expect(haltCall?.properties['error_type']).toBe('cancelled');
     await app.disposeAsync();
     await env.stores.dispose();
     const failed = createRecorder();

@@ -48,7 +48,16 @@ export type SpecFrozen = {
   readonly spec: AgentSpec;
 };
 
-export type AgentLogEvent = MessageAppended | TurnStarted | TurnEnded | InputSubmitted | SpecFrozen;
+export type ContextReset = {
+  readonly type: 'context.reset';
+  readonly time?: number;
+  readonly messages: HistoryMessage[];
+  readonly reason?: string;
+  readonly instruction?: string;
+  readonly stats?: Record<string, number>;
+};
+
+export type AgentLogEvent = MessageAppended | TurnStarted | TurnEnded | InputSubmitted | SpecFrozen | ContextReset;
 
 const agentLogTypes = new Set<AgentLogEvent['type']>([
   'input.submitted',
@@ -56,6 +65,7 @@ const agentLogTypes = new Set<AgentLogEvent['type']>([
   'turn.started',
   'turn.ended',
   'spec.frozen',
+  'context.reset',
 ]);
 
 export interface TurnPosition<C> {
@@ -115,6 +125,9 @@ export function agent<C>(): Projection<AgentLogState<C>, RecordEvent, C> {
       }
       if (event.type === 'message.appended') {
         return { ...state, history: [...state.history, event.message] };
+      }
+      if (event.type === 'context.reset') {
+        return { ...state, history: [...event.messages] };
       }
       if (event.type === 'input.submitted') {
         return {

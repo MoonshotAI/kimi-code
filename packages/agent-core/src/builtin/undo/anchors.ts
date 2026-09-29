@@ -115,6 +115,10 @@ export function planUndoCut(tree: Tree, branchName: string, anchorCount: number)
         if (anchored) return { ok: true, machineTurns, fromTurnId: event.turnId };
         continue;
       }
+      if (event.type === 'context.reset') {
+        if (event.messages.some(isCompactionSummary)) return { ok: false };
+        continue;
+      }
       if (event.type !== 'message.appended' || anchored) continue;
       if (isCompactionSummary(event.message)) return { ok: false };
       if (!isUndoAnchor(event.message)) continue;
