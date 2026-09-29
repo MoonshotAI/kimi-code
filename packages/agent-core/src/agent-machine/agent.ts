@@ -348,7 +348,7 @@ export function createAgentMachine({
             scope,
             ref: spawn('toolActor', {
               id: toolCall.id,
-              input: { toolCall, signal: scope.signal },
+              input: { toolCall, toolCalls: event.toolCalls, signal: scope.signal },
             }),
           };
         }

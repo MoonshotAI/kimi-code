@@ -297,7 +297,7 @@ export function bindToolLogic(ports: AgentPorts): ReturnType<typeof createToolMa
       let toolCall = input.toolCall;
       for (const hooks of [ports.beforeTools, ports.toolPermissions]) {
         for (const hook of hooks.slice()) {
-          const decision = await hook({ toolCall });
+          const decision = await hook({ toolCall, toolCalls: input.toolCalls });
           if (decision === undefined) continue;
           if (decision.type === 'denied') return decision;
           if (decision.toolCall !== undefined) toolCall = decision.toolCall;

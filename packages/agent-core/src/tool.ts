@@ -12,6 +12,7 @@ export interface ToolResult {
 
 export interface ToolInput {
   toolCall: ToolCall;
+  toolCalls?: readonly ToolCall[];
   signal: AbortSignal;
 }
 

@@ -16,6 +16,7 @@ export type ToolOutput =
 
 export interface ToolBeforeInput {
   toolCall: ToolCall;
+  toolCalls: readonly ToolCall[];
 }
 
 export type ToolBeforeDecision =
@@ -101,7 +102,10 @@ export function createToolMachine(executor: CreateToolMachineOptions) {
       preparing: {
         invoke: {
           src: 'preparingActor',
-          input: ({ context }) => ({ toolCall: context.toolCall }),
+          input: ({ context }) => ({
+            toolCall: context.toolCall,
+            toolCalls: context.input.toolCalls ?? [context.toolCall],
+          }),
           onDone: [
             {
               guard: ({ event }) => event.output.type === 'denied',
