@@ -364,19 +364,23 @@ describe.skipIf(!ENABLED)('TUI e2e — Monitor', () => {
 
     it('Quitting stops a live monitor, and resuming replays its events without a new turn', scenario(
       [
-        monitor(`echo "server ready on :3000"; printf '%s\\n' 'a & <b>'; sleep 300 # e2e-monitor-${String(process.pid)}`, 'dev server'),
+        monitor(`echo "server ready on :3000"; printf '%s\\n' 'a & <b>'; sleep 300`, 'dev server'),
         say('Watching.'),
         say('Server is up.'),
       ],
       async ({ tui, model, relaunch }) => {
         await tui.submit('Start the dev server');
         await tui.see('Server is up.');
+        // The monitor's shell leads its own process group, which also holds `sleep 300`.
+        const group = /^pid: (\d+)$/m.exec(model.toolResult(1))?.[1] ?? '';
+        const members = (): Promise<string> =>
+          run('pgrep', ['-g', group]).then(
+            (result) => result.stdout.trim(),
+            () => '',
+          );
+        expect(await members()).not.toBe('');
         const resumed = await relaunch(['--continue']);
-        const leftover = await run('pgrep', ['-f', `e2e-monitor-${String(process.pid)}`]).then(
-          (result) => result.stdout.trim(),
-          () => '',
-        );
-        expect(leftover).toBe('');
+        expect(await members()).toBe('');
 
         const requests = model.sent.length;
         await resumed.see('monitor event (dev server)', 'resumed');
