@@ -1946,13 +1946,15 @@ async function startMonitor(tool: MonitorTool, args: MonitorInput): Promise<Exec
 describe('MonitorTool', () => {
   it('starts a detached monitor task with the default timeout and returns its id', async () => {
     const { proc } = pendingProcess();
-    const { runner } = createTestRunner(proc);
+    const { runner, exec } = createTestRunner(proc);
     const { service, tasks } = createFakeTaskService();
 
     const result = await startMonitor(monitorTool(runner, service), {
       command: 'tail -F app.log | grep --line-buffered ERROR',
       description: 'app errors',
     });
+
+    expect(exec).toHaveBeenCalledWith(expect.any(String), expect.any(Array), expect.objectContaining({ mergeStderr: false }));
 
     const [entry] = [...tasks.values()];
     expect(entry!.taskId).toMatch(/^monitor-/);

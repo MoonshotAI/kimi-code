@@ -75,7 +75,6 @@ import {
   shouldEnableTelemetry,
   shutdownTelemetry,
 } from '@moonshot-ai/kimi-telemetry';
-import { isMonitorTaskId } from '@moonshot-ai/agent-core-v2/agent/tools/task/monitor/monitor';
 import type { GoalUpdated } from '@moonshot-ai/agent-core-v2/features/goal/goalOps';
 import type { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type {
@@ -97,6 +96,7 @@ import {
   CLI_USER_AGENT_PRODUCT,
   PROMPT_CLEANUP_TIMEOUT_MS,
 } from '#/constant/app';
+import { isMonitorTaskId } from '#/tui/utils/monitor-event';
 import { currentKimiProfile } from '#/utils/region';
 
 import {

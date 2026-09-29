@@ -7,6 +7,7 @@ export function spawnShellCommand(
   env: HostEnvironmentInfo,
   effectiveCwd: string,
   command: string,
+  mergeStderr?: boolean,
 ): Promise<IHostProcess> {
   const shellCwd = getShellPathBridge(env).toShellPath(effectiveCwd);
   const shellCommand = `cd ${shellQuote(shellCwd)} && ${command}`;
@@ -17,7 +18,7 @@ export function spawnShellCommand(
     SHELL: env.shellPath,
   };
 
-  return processService.spawn(env.shellPath, ['-c', shellCommand], { env: noninteractiveEnv });
+  return processService.spawn(env.shellPath, ['-c', shellCommand], { env: noninteractiveEnv, mergeStderr });
 }
 
 export function shellCommandFor(env: HostEnvironmentInfo, command: string): string {

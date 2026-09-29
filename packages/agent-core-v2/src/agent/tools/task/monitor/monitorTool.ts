@@ -105,7 +105,7 @@ export class MonitorTool implements IMonitorTool {
     const command = shellCommandFor(env, args.command);
     let proc: IHostProcess;
     try {
-      proc = lease.track(await spawnShellCommand(lease.runtime.process!, env, view.workDir, command));
+      proc = lease.track(await spawnShellCommand(lease.runtime.process!, env, view.workDir, command, false));
     } catch (error) {
       lease.dispose();
       return { isError: true, output: error instanceof Error ? error.message : String(error) };
