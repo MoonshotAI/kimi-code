@@ -17,6 +17,7 @@ export interface TaskEventStreamHost {
 
 export class TaskEventStream {
   private partial = '';
+  private discarding = false;
   private pending: string[] = [];
   private omitted = 0;
   private seq = 0;
@@ -37,11 +38,19 @@ export class TaskEventStream {
 
   append(chunk: string): void {
     if (this.closed) return;
-    const lines = (this.partial + chunk).split('\n');
+    let text = chunk;
+    if (this.discarding) {
+      const newline = text.indexOf('\n');
+      if (newline === -1) return;
+      this.discarding = false;
+      text = text.slice(newline + 1);
+    }
+    const lines = (this.partial + text).split('\n');
     this.partial = lines.pop() ?? '';
     if (this.partial.length > TASK_EVENT_MAX_LINE_CHARS) {
       lines.push(this.partial);
       this.partial = '';
+      this.discarding = true;
     }
     for (const line of lines) {
       if (!this.push(line)) return;

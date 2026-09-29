@@ -4,6 +4,8 @@ const MONITOR_TASK_ID_PREFIX = 'monitor-';
 const MONITOR_EVENT_TITLE_PREFIX = 'Monitor event: ';
 const EVENT_BLOCK = /<event>\n([\s\S]*?)\n?<\/event>/;
 const TITLE_LINE = /^Title: (.*)$/m;
+const ENTITY = /&(?:lt|gt|amp);/g;
+const ENTITIES: Readonly<Record<string, string>> = { '&lt;': '<', '&gt;': '>', '&amp;': '&' };
 
 export function isMonitorTaskId(taskId: string): boolean {
   return taskId.startsWith(MONITOR_TASK_ID_PREFIX);
@@ -15,7 +17,7 @@ function monitorEventLines(text: string): readonly string[] | undefined {
   return block
     .split('\n')
     .filter((line) => line.length > 0)
-    .map((line) => line.replaceAll('&lt;', '<').replaceAll('&gt;', '>'));
+    .map((line) => line.replaceAll(ENTITY, (entity) => ENTITIES[entity] ?? entity));
 }
 
 function monitorEventDescription(title: string): string | undefined {
