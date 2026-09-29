@@ -113,7 +113,7 @@ export function registerTerminalsRoutes(app: TerminalsRouteHost, core: Scope): v
         const { session_id } = req.params;
         const session = await resumeSessionById(core.accessor, session_id);
         if (session === undefined) throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${session_id} does not exist`);
-        const terminal = await session.accessor.get(ISessionTerminalService).create({ ...req.body, environment_id: req.body.environment_id ?? 'local' });
+        const terminal = await session.accessor.get(ISessionTerminalService).create({ ...req.body, environment_id: req.body.environment_id ?? req.body.runtime_id ?? 'local' });
         requestLog(req)?.info({ session_id, terminal_id: terminal.id }, 'terminal created');
         reply.send(okEnvelope(terminal, req.id));
       } catch (error) {

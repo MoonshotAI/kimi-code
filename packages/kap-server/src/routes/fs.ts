@@ -93,21 +93,25 @@ const sessionIdAndTailParamSchema = z.object({
 
 const fsDownloadQuerySchema = z.object({
   environment_id: z.string().min(1).optional(),
+  runtime_id: z.string().min(1).optional(),
 });
 
 const workspaceFsSearchBodySchema = fsSearchRequestSchema.extend({
   workspace: z.string().min(1),
   environment_id: z.string().min(1).optional(),
+  runtime_id: z.string().min(1).optional(),
 });
 
 const workspaceFsSuggestBodySchema = fsSuggestRequestSchema.extend({
   workspace: z.string().min(1),
   environment_id: z.string().min(1).optional(),
+  runtime_id: z.string().min(1).optional(),
 });
 
 const rootFsSuggestBodySchema = fsSuggestRequestSchema.extend({
   roots: z.array(z.string().min(1)).min(1).max(32),
   environment_id: z.string().min(1).optional(),
+  runtime_id: z.string().min(1).optional(),
 });
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
@@ -303,13 +307,13 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       const session = await resumeSessionById(core.accessor, session_id);
       let environmentFs: EnvironmentFsScope | undefined;
       try {
-        const result = z.object({ environment_id: z.string().min(1).optional() }).passthrough().safeParse(req.body ?? {});
+        const result = z.object({ environment_id: z.string().min(1).optional(), runtime_id: z.string().min(1).optional() }).passthrough().safeParse(req.body ?? {});
         if (!result.success) {
           reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, 'request body must be an object', req.id));
           return;
         }
-        const { environment_id, ...request } = result.data;
-        const environmentId = environment_id ?? 'local';
+        const { environment_id, runtime_id, ...request } = result.data;
+        const environmentId = environment_id ?? runtime_id ?? 'local';
         req.body = request;
         const required: EnvironmentCapability[] = ['fs'];
         if (fsAction === 'search' || fsAction === 'grep' || fsAction === 'git_status' || fsAction === 'diff') {
@@ -402,10 +406,10 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       operationId: 'workspaceFsSearch',
     },
     async (req, reply) => {
-      const { workspace, environment_id, ...searchRequest } = req.body;
+      const { workspace, environment_id, runtime_id, ...searchRequest } = req.body;
       let environmentFs: EnvironmentFsScope | undefined;
       try {
-        environmentFs = await resolveWorkspaceFs(core, workspace, environment_id ?? 'local', ['fs', 'process']);
+        environmentFs = await resolveWorkspaceFs(core, workspace, environment_id ?? runtime_id ?? 'local', ['fs', 'process']);
         if (environmentFs === undefined) {
           reply.send(
             errEnvelope(
@@ -449,10 +453,10 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       operationId: 'workspaceFsSuggest',
     },
     async (req, reply) => {
-      const { workspace, environment_id, ...suggestRequest } = req.body;
+      const { workspace, environment_id, runtime_id, ...suggestRequest } = req.body;
       let environmentFs: EnvironmentFsScope | undefined;
       try {
-        environmentFs = await resolveWorkspaceFs(core, workspace, environment_id ?? 'local', ['fs']);
+        environmentFs = await resolveWorkspaceFs(core, workspace, environment_id ?? runtime_id ?? 'local', ['fs']);
         if (environmentFs === undefined) {
           reply.send(
             errEnvelope(
@@ -496,7 +500,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       operationId: 'fsSuggest',
     },
     async (req, reply) => {
-      const { roots, environment_id, ...suggestRequest } = req.body;
+      const { roots, environment_id, runtime_id, ...suggestRequest } = req.body;
       for (const root of roots) {
         if (!isAbsolute(root)) {
           reply.send(
@@ -505,7 +509,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
           return;
         }
       }
-      const environmentId = environment_id ?? 'local';
+      const environmentId = environment_id ?? runtime_id ?? 'local';
       const fsRoots = { workDir: roots[0]!, additionalDirs: roots.slice(1) };
       let environmentFs: EnvironmentFsScope | undefined;
       try {
@@ -588,7 +592,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       let resolved: Awaited<ReturnType<IWorkspaceFsService['resolveDownload']>>;
       let environmentFs: EnvironmentFsScope | undefined;
       try {
-        environmentFs = acquireSessionFs(core, session_id, req.query.environment_id ?? 'local', ['fs']);
+        environmentFs = acquireSessionFs(core, session_id, req.query.environment_id ?? req.query.runtime_id ?? 'local', ['fs']);
         resolved = await environmentFs.fs.resolveDownload(relPath);
       } catch (error) {
         environmentFs?.lease.dispose();

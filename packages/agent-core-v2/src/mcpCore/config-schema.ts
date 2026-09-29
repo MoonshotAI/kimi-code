@@ -21,6 +21,7 @@ export const McpServerStdioConfigSchema = z.object({
   env: StringRecordSchema.optional(),
   cwd: z.string().optional(),
   environment_id: z.string().min(1).optional(),
+  runtime_id: z.string().min(1).optional(),
   ...McpServerCommonFields,
 });
 

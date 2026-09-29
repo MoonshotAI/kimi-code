@@ -4,12 +4,14 @@ import { join, resolve } from 'node:path';
 
 import {
   IHostTerminalService,
+  IEnvironmentService,
   ScopeActivation,
   LifecycleScope,
   overrideScopedService,
   type TerminalProcess,
   type TerminalSpawnOptions,
 } from '@moonshot-ai/agent-core-v2';
+import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
 import { ErrorCode } from '../src/protocol/error-codes';
 import type { Terminal } from '@moonshot-ai/agent-core-v2/os/interface/terminal';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -179,6 +181,71 @@ describe('server-v2 /api/v1/sessions/{sid}/terminals', () => {
     const body = (await res.json()) as Envelope<Terminal>;
     expect(body.code).toBe(0);
     expect(body.data.session_id).toBe(sid);
+  });
+
+  async function registerRemoteTerminalEnvironment(environmentId: string): Promise<{ spawns: TerminalSpawnOptions[]; dispose: () => Promise<void> }> {
+    const spawns: TerminalSpawnOptions[] = [];
+    const provider = await server!.core.accessor.get(IEnvironmentService).addProvider({
+      id: `${environmentId}-provider`,
+      attach: async (host) => {
+        const environment = Object.assign(
+          new FakeEnvironment(
+            { environmentId, generation: 'remote-generation' },
+            { capabilities: ['terminal'] },
+          ),
+          {
+            terminal: {
+              spawn: (options: TerminalSpawnOptions) => {
+                spawns.push(options);
+                const proc = new FakeTerminalProcess();
+                processes.push(proc);
+                return Promise.resolve(proc);
+              },
+            },
+          },
+        );
+        const registration = host.registerEnvironment(environment);
+        return { dispose: () => registration.remove() };
+      },
+    });
+    return { spawns, dispose: () => provider.dispose() };
+  }
+
+  it('honors the deprecated runtime_id alias when environment_id is omitted', async () => {
+    const sid = await createSession(work as string);
+    const remote = await registerRemoteTerminalEnvironment('remote-term');
+    try {
+      const res = await fetch(`${base}/api/v1/sessions/${sid}/terminals`, {
+        method: 'POST',
+        headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+        body: JSON.stringify({ runtime_id: 'remote-term' }),
+      } as never);
+      const body = (await res.json()) as Envelope<Terminal>;
+      expect(body.code).toBe(0);
+      expect(body.data.session_id).toBe(sid);
+      expect(remote.spawns).toHaveLength(1);
+      expect(spawnOptions).toHaveLength(0);
+    } finally {
+      await remote.dispose();
+    }
+  });
+
+  it('prefers environment_id over the deprecated runtime_id alias', async () => {
+    const sid = await createSession(work as string);
+    const remote = await registerRemoteTerminalEnvironment('remote-term');
+    try {
+      const res = await fetch(`${base}/api/v1/sessions/${sid}/terminals`, {
+        method: 'POST',
+        headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+        body: JSON.stringify({ environment_id: 'remote-term', runtime_id: 'local' }),
+      } as never);
+      const body = (await res.json()) as Envelope<Terminal>;
+      expect(body.code).toBe(0);
+      expect(remote.spawns).toHaveLength(1);
+      expect(spawnOptions).toHaveLength(0);
+    } finally {
+      await remote.dispose();
+    }
   });
 
   it('creates terminals for multiple sessions using each session workspace cwd', async () => {

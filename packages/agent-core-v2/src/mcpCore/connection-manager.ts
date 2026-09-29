@@ -437,8 +437,8 @@ export class McpConnectionManager implements McpConnectionView {
     const clientName = this.options.resolveClientName?.();
     if (config.transport === 'stdio') {
       const environmentResolver = this.options.environmentResolver;
-      const environmentId = config.environment_id ?? this.options.environmentId;
-      if (environmentResolver === undefined || environmentId === undefined || (this.options.requireStdioEnvironmentId === true && config.environment_id === undefined)) {
+      const environmentId = config.environment_id ?? config.runtime_id ?? this.options.environmentId;
+      if (environmentResolver === undefined || environmentId === undefined || (this.options.requireStdioEnvironmentId === true && config.environment_id === undefined && config.runtime_id === undefined)) {
         throw new Error('MCP stdio requires environment_id and environment binding');
       }
       return new StdioMcpClient(config, {

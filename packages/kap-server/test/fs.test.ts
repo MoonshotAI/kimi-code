@@ -5,7 +5,9 @@ import { join, sep } from 'node:path';
 
 import { IModelCatalog, IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
+import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
+import type { EnvironmentCapability } from '@moonshot-ai/agent-core-v2/environment/environment';
 import { ErrorCode } from '../src/protocol/error-codes';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
@@ -91,6 +93,30 @@ describe('server-v2 /api/v1 fs routes', () => {
       body: JSON.stringify({ environment_id: environmentId, ...(body as object) }),
     } as never);
     return (await res.json()) as Envelope<T>;
+  }
+
+  async function addRemoteFsEnvironment(options: {
+    environmentId: string;
+    capabilities: readonly EnvironmentCapability[];
+    workDir: string;
+  }): Promise<{ dispose: () => Promise<void> }> {
+    return server!.core.accessor.get(IEnvironmentService).addProvider({
+      id: `${options.environmentId}-provider`,
+      attach: async (host) => {
+        const environment = Object.assign(
+          new FakeEnvironment(
+            { environmentId: options.environmentId, generation: 'remote-generation' },
+            {
+              capabilities: options.capabilities,
+              mapWorkspaceRoots: () => ({ workDir: options.workDir, additionalDirs: [] }),
+            },
+          ),
+          { fs: new HostFileSystem(), process: new HostProcessService() },
+        );
+        const registration = host.registerEnvironment(environment);
+        return { dispose: () => registration.remove() };
+      },
+    });
   }
 
   it('defaults fs actions to the local environment when environment_id is omitted', async () => {
@@ -179,6 +205,77 @@ describe('server-v2 /api/v1 fs routes', () => {
     const id = await createSession();
     const body = await postFs<null>(id, 'read', { path: '.' });
     expect(body.code).toBe(ErrorCode.FS_IS_DIRECTORY);
+  });
+
+  it('fs:read honors the deprecated runtime_id alias for environment selection', async () => {
+    await writeFile(join(work!, 'selected.txt'), 'local');
+    const remote = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-remote-'));
+    await writeFile(join(remote, 'selected.txt'), 'remote');
+    const id = await createSession();
+    const provider = await addRemoteFsEnvironment({
+      environmentId: 'remote-alias',
+      capabilities: ['fs'],
+      workDir: remote,
+    });
+    try {
+      const res = await fetch(`${base}/api/v1/sessions/${id}/fs:read`, {
+        method: 'POST',
+        headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+        body: JSON.stringify({ runtime_id: 'remote-alias', path: 'selected.txt' }),
+      } as never);
+      const body = (await res.json()) as Envelope<{ content: string }>;
+      expect(body.code).toBe(0);
+      expect(body.data.content).toBe('remote');
+    } finally {
+      await provider.dispose();
+      await rm(remote, { recursive: true, force: true });
+    }
+  });
+
+  it('fs:read prefers environment_id over the deprecated runtime_id alias', async () => {
+    await writeFile(join(work!, 'selected.txt'), 'local');
+    const remote = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-remote-'));
+    await writeFile(join(remote, 'selected.txt'), 'remote');
+    const id = await createSession();
+    const provider = await addRemoteFsEnvironment({
+      environmentId: 'remote-alias',
+      capabilities: ['fs'],
+      workDir: remote,
+    });
+    try {
+      const res = await fetch(`${base}/api/v1/sessions/${id}/fs:read`, {
+        method: 'POST',
+        headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+        body: JSON.stringify({ environment_id: 'remote-alias', runtime_id: 'local', path: 'selected.txt' }),
+      } as never);
+      const body = (await res.json()) as Envelope<{ content: string }>;
+      expect(body.code).toBe(0);
+      expect(body.data.content).toBe('remote');
+    } finally {
+      await provider.dispose();
+      await rm(remote, { recursive: true, force: true });
+    }
+  });
+
+  it('fs download honors the deprecated runtime_id alias', async () => {
+    const remote = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-remote-'));
+    await writeFile(join(remote, 'dl.txt'), 'remote-download');
+    const id = await createSession();
+    const provider = await addRemoteFsEnvironment({
+      environmentId: 'remote-dl',
+      capabilities: ['fs'],
+      workDir: remote,
+    });
+    try {
+      const res = await fetch(`${base}/api/v1/sessions/${id}/fs/dl.txt:download?runtime_id=remote-dl`, {
+        headers: authHeaders(server as RunningServer),
+      } as never);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe('remote-download');
+    } finally {
+      await provider.dispose();
+      await rm(remote, { recursive: true, force: true });
+    }
   });
 
   it('fs:git_status maps an unknown environment to ENVIRONMENT_NOT_FOUND without a stack', async () => {
@@ -456,6 +553,29 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(body.code).toBe(ErrorCode.WORKSPACE_NOT_FOUND);
   });
 
+  it('workspace fs:search honors the deprecated runtime_id alias', async () => {
+    const remote = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-remote-'));
+    await writeFile(join(remote, 'remote-only-search.ts'), '');
+    const provider = await addRemoteFsEnvironment({
+      environmentId: 'remote-search',
+      capabilities: ['fs', 'process'],
+      workDir: remote,
+    });
+    try {
+      const res = await fetch(`${base}/api/v1/workspace/fs:search`, {
+        method: 'POST',
+        headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+        body: JSON.stringify({ workspace: work, query: 'remote-only-search', runtime_id: 'remote-search' }),
+      } as never);
+      const body = (await res.json()) as Envelope<{ items: { path: string }[]; truncated: boolean }>;
+      expect(body.code).toBe(0);
+      expect(body.data.items.map((i) => i.path)).toContain('remote-only-search.ts');
+    } finally {
+      await provider.dispose();
+      await rm(remote, { recursive: true, force: true });
+    }
+  });
+
   it('workspace fs:search rejects a missing workspace field with VALIDATION_FAILED', async () => {
     const body = await postWorkspaceSearch<null>({ query: 'x' });
     expect(body.code).toBe(ErrorCode.VALIDATION_FAILED);
@@ -579,6 +699,29 @@ describe('server-v2 /api/v1 fs routes', () => {
   it('workspace fs:suggest maps an unknown ref to WORKSPACE_NOT_FOUND', async () => {
     const body = await postWorkspaceSuggest<null>({ workspace: 'does-not-exist', query: 'x' });
     expect(body.code).toBe(ErrorCode.WORKSPACE_NOT_FOUND);
+  });
+
+  it('workspace fs:suggest honors the deprecated runtime_id alias', async () => {
+    const remote = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-remote-'));
+    await writeFile(join(remote, 'remote-only-suggest.ts'), '');
+    const provider = await addRemoteFsEnvironment({
+      environmentId: 'remote-suggest-ws',
+      capabilities: ['fs'],
+      workDir: remote,
+    });
+    try {
+      const res = await fetch(`${base}/api/v1/workspace/fs:suggest`, {
+        method: 'POST',
+        headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+        body: JSON.stringify({ workspace: work, query: 'remote-only-suggest', runtime_id: 'remote-suggest-ws' }),
+      } as never);
+      const body = (await res.json()) as Envelope<{ items: SuggestItemWire[]; truncated: boolean }>;
+      expect(body.code).toBe(0);
+      expect(body.data.items.map((i) => i.path)).toContain('remote-only-suggest.ts');
+    } finally {
+      await provider.dispose();
+      await rm(remote, { recursive: true, force: true });
+    }
   });
 
   it('workspace fs:suggest rejects a missing workspace field with VALIDATION_FAILED', async () => {
@@ -830,6 +973,28 @@ describe('server-v2 /api/v1 fs routes', () => {
       });
       expect(body.code).toBe(0);
       expect(body.data.items.map((i) => i.path)).toContain('remote-only.ts');
+    } finally {
+      await provider.dispose();
+      await rm(remote, { recursive: true, force: true });
+    }
+  });
+
+  it('fs:suggest honors the deprecated runtime_id alias', async () => {
+    const remote = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-remote-'));
+    await writeFile(join(remote, 'remote-only-alias.ts'), '');
+    const provider = await addRemoteFsEnvironment({
+      environmentId: 'remote-suggest-alias',
+      capabilities: ['fs'],
+      workDir: remote,
+    });
+    try {
+      const body = await postRootSuggest<{ items: SuggestItemWire[] }>({
+        roots: [remote],
+        query: 'remote-only-alias',
+        runtime_id: 'remote-suggest-alias',
+      });
+      expect(body.code).toBe(0);
+      expect(body.data.items.map((i) => i.path)).toContain('remote-only-alias.ts');
     } finally {
       await provider.dispose();
       await rm(remote, { recursive: true, force: true });

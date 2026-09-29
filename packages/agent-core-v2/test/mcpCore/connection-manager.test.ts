@@ -259,6 +259,80 @@ describe('McpConnectionManager', () => {
     }
   }, 15000);
 
+  describe('stdio environment selection', () => {
+    function recordingResolver(recorded: string[]) {
+      const lease = () => ({
+        environment: testEnvironment,
+        track: <T extends { dispose(): void | Promise<void> }>(resource: T): T => resource,
+        dispose: () => {},
+      });
+      return {
+        _serviceBrand: undefined,
+        inspect: () => testEnvironment,
+        acquire: (binding: EnvironmentBinding) => {
+          recorded.push(binding.environmentId);
+          return lease();
+        },
+        acquireWhenReady: async (binding: EnvironmentBinding) => {
+          recorded.push(binding.environmentId);
+          return lease();
+        },
+      };
+    }
+
+    it('honors the deprecated runtime_id alias when environment_id is omitted', async () => {
+      const recorded: string[] = [];
+      const cm = createManager({ environmentResolver: recordingResolver(recorded) });
+      try {
+        await cm.connectAll({ legacy: { ...stdioConfig(), cwd: process.cwd(), runtime_id: 'dev-box' } });
+        expect(cm.get('legacy')?.status).toBe('connected');
+        expect(recorded).toContain('dev-box');
+      } finally {
+        await cm.shutdown();
+      }
+    }, 20000);
+
+    it('prefers environment_id over the deprecated runtime_id alias', async () => {
+      const recorded: string[] = [];
+      const cm = createManager({ environmentResolver: recordingResolver(recorded) });
+      try {
+        await cm.connectAll({ both: { ...stdioConfig(), cwd: process.cwd(), environment_id: 'new-box', runtime_id: 'dev-box' } });
+        expect(cm.get('both')?.status).toBe('connected');
+        expect(recorded).toContain('new-box');
+        expect(recorded).not.toContain('dev-box');
+      } finally {
+        await cm.shutdown();
+      }
+    }, 20000);
+
+    it('accepts the deprecated runtime_id alias when requireStdioEnvironmentId is set', async () => {
+      const recorded: string[] = [];
+      const cm = createManager({
+        environmentResolver: recordingResolver(recorded),
+        environmentId: undefined,
+        requireStdioEnvironmentId: true,
+      });
+      try {
+        await cm.connectAll({ legacy: { ...stdioConfig(), cwd: process.cwd(), runtime_id: 'dev-box' } });
+        expect(cm.get('legacy')?.status).toBe('connected');
+        expect(recorded).toContain('dev-box');
+      } finally {
+        await cm.shutdown();
+      }
+    }, 20000);
+
+    it('fails stdio configs without any environment key when requireStdioEnvironmentId is set', async () => {
+      const cm = createManager({ environmentId: undefined, requireStdioEnvironmentId: true });
+      try {
+        await cm.connectAll({ plain: stdioConfig() });
+        expect(cm.get('plain')?.status).toBe('failed');
+        expect(cm.get('plain')?.error).toContain('environment_id');
+      } finally {
+        await cm.shutdown();
+      }
+    }, 20000);
+  });
+
   it('announces the resolved custom identity as the MCP client name', async () => {
     const cm = createManager({ resolveClientName: () => 'acme-dev' });
     try {
