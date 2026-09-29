@@ -1,12 +1,14 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { type HostUiCapability, IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
 import { FlagService } from '#/app/flag/flagService';
 import { NOTIFY_USER_FLAG_ID } from '#/features/notify/flag';
+import { NOTIFY_USER_UI_CAPABILITY } from '#/features/notify/notifyUserAvailability';
 import { NOTIFY_USER_NUDGE_VARIANT } from '#/features/notify/notifyUserNudge';
 import { NOTIFY_USER_TOOL_NAME } from '#/features/notify/tools/notify-user/notify-user';
 import type { ExecutableTool } from '#/tool/toolContract';
@@ -55,8 +57,9 @@ describe('AgentNotifyUserNudgeService', () => {
     }
   }
 
-  beforeEach(async () => {
+  async function start(uiCapabilities: readonly HostUiCapability[]): Promise<void> {
     ctx = createTestAgent({ autoConfigure: false });
+    Object.assign(ctx.get(IBootstrapService).args, { uiCapabilities });
     context = ctx.get(IAgentContextMemoryService);
     loop = ctx.get(IAgentLoopService);
     flags = ctx.get(IFlagService) as FlagService;
@@ -71,7 +74,7 @@ describe('AgentNotifyUserNudgeService', () => {
       origin: { kind: 'user' },
     });
     ctx.configure();
-  });
+  }
 
   afterEach(async () => {
     try {
@@ -82,6 +85,7 @@ describe('AgentNotifyUserNudgeService', () => {
   });
 
   it('stops injecting nudges when the flag is disabled mid-session', async () => {
+    await start([NOTIFY_USER_UI_CAPABILITY]);
     appendSilentToolCalls(8);
     await runWillBeginStepHooks(loop);
     expect(nudgeInjections()).toHaveLength(1);
@@ -96,5 +100,20 @@ describe('AgentNotifyUserNudgeService', () => {
     appendSilentToolCalls(8);
     await runWillBeginStepHooks(loop);
     expect(nudgeInjections()).toHaveLength(2);
+  });
+
+  it('does not inject nudges in a host without the update panel', async () => {
+    await start([]);
+    appendSilentToolCalls(8);
+    await runWillBeginStepHooks(loop);
+    expect(nudgeInjections()).toHaveLength(0);
+
+    context.append({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'Halfway through the checks.' }],
+      toolCalls: [{ type: 'function', id: 'call_mid', name: 'Bash', arguments: '{}' }],
+    });
+    await runWillBeginStepHooks(loop);
+    expect(nudgeInjections()).toHaveLength(0);
   });
 });

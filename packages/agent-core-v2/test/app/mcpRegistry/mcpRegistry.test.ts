@@ -24,6 +24,7 @@ import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { TRUST_WORKSPACE_ENV } from '#/workspace/workspaceTrust/workspaceTrustService';
 
 function stdioServer(name: string, command = 'npx'): GlobalMcpServerConfig {
   return { name, transport: 'stdio', command };
@@ -51,6 +52,7 @@ describe('McpRegistryService', () => {
   let pluginError: Error | undefined;
   let trusted: boolean;
   let trustedKey: string | undefined;
+  let env: NodeJS.ProcessEnv;
   let registry: IMcpRegistryService;
 
   beforeEach(() => {
@@ -62,10 +64,14 @@ describe('McpRegistryService', () => {
     pluginError = undefined;
     trusted = true;
     trustedKey = undefined;
+    env = {};
     const ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IFileSystemStorageService, new InMemoryStorageService());
-        reg.definePartialInstance(IBootstrapService, { homeDir: home });
+        reg.definePartialInstance(IBootstrapService, {
+          homeDir: home,
+          getEnv: (name: string) => env[name],
+        });
         reg.define(IMcpConfigStore, McpConfigStore);
         reg.definePartialInstance(IPluginService, {
           mcpServerEntries: async () => {
@@ -202,6 +208,29 @@ describe('McpRegistryService', () => {
 
       expect(entries.map((entry) => entry.name).toSorted()).toEqual([
         'plugin-demo:api',
+        'userOnly',
+      ]);
+    });
+
+    it('loads project layers for an untrusted workspace when KIMI_CODE_TRUST_WORKSPACE is set', async () => {
+      await writeJson(join(home, 'mcp.json'), {
+        mcpServers: { userOnly: { command: 'user-only' } },
+      });
+      const { project, sub } = await makeProject();
+      await writeJson(join(project, '.mcp.json'), {
+        mcpServers: { repoOnly: { command: 'repo-only' } },
+      });
+      await writeJson(join(sub, '.kimi-code', 'mcp.json'), {
+        mcpServers: { localOnly: { command: 'local-only' } },
+      });
+      trusted = false;
+      env = { [TRUST_WORKSPACE_ENV]: '1' };
+
+      const entries = await registry.list({ cwd: sub });
+
+      expect(entries.map((entry) => entry.name).toSorted()).toEqual([
+        'localOnly',
+        'repoOnly',
         'userOnly',
       ]);
     });

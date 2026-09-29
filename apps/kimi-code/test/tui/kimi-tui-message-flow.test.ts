@@ -1015,7 +1015,11 @@ describe('KimiTUI message flow', () => {
               message: {
                 role: 'user',
                 content: [
-                  { type: 'text', text: 'skill card C body' },
+                  {
+                    type: 'text',
+                    text: 'skill card C body',
+                    meta: { source: 'skill activation', activationId: 'act-3' },
+                  },
                   { type: 'text', text: 'please /commit' },
                 ],
                 toolCalls: [],
@@ -6172,6 +6176,35 @@ command = "vim"
     expect(countOccurrences(transcript, 'Swarm activated')).toBe(0);
     expect(countOccurrences(transcript, 'Swarm deactivated')).toBe(0);
     expect(countOccurrences(transcript, 'Swarm ended')).toBe(0);
+  });
+
+  it('syncs permission mode from agent.status.updated events', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.permissionMode = 'manual';
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        permission: 'auto',
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(driver.state.appState.permissionMode).toBe('auto');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        permission: 'yolo',
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(driver.state.appState.permissionMode).toBe('yolo');
   });
 
   it('renders an ended marker when a one-shot /swarm task exits', async () => {

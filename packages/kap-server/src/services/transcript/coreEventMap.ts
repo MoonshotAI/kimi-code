@@ -7,6 +7,8 @@ import type {
   CompactionStarted,
 } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
 import { daemonFileRefFromPart, type ContentPart, type ContextUndone, type CronFired, type GoalUpdated } from '@moonshot-ai/agent-core-v2';
+import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
+import { annotateBundledSkillParts, isSkillActivationPart } from '@moonshot-ai/agent-core-v2/human/agent/origin';
 import type {
   AssistantDelta,
   ThinkingDelta,
@@ -1521,8 +1523,10 @@ export class AgentTranscriptProjector {
     if (frameOrigin === undefined) return [];
     const turn = this.currentTurn;
     if (turn !== undefined && turn.state !== 'running') return [];
-    const skip = origin.kind === 'user' ? origin.skillActivations?.length ?? 0 : 0;
-    const input = skip > 0 ? event.input.slice(skip) : event.input;
+    const input = annotateBundledSkillParts(
+      event.input,
+      origin.kind === 'user' ? (origin.skillActivations ?? []) : [],
+    ).filter((part) => !isSkillActivationPart(part) && !isUserPromptSubmitHookPart(part));
     const files = origin.attachments ?? [];
     const promptIds = origin.kind === 'user' ? event.promptIds : undefined;
     const step = this.currentStep;

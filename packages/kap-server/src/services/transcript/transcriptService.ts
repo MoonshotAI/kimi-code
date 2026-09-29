@@ -33,6 +33,7 @@ import {
   groupMessagesIntoSnapshot,
   isPlainAgentId,
   turnId as exportTurnKey,
+  withoutUserPromptSubmitHookParts,
   type AgentDescriptor,
   type ActivityMeta,
   type AgentTranscript,
@@ -602,7 +603,7 @@ export class TranscriptService {
           anchorStack.push({ taskIdsSnapshot: new Set(taskOriginTurnTaskIds), steerCount: matchedSteers.length });
         }
         if (message?.role === 'user') {
-          const key = JSON.stringify(message.content);
+          const key = JSON.stringify(withoutUserPromptSubmitHookParts(message.content));
           const kind = message.origin?.kind ?? 'user';
           const pendingByKind = pendingSteers.get(key);
           const remaining = pendingByKind?.get(kind) ?? 0;
