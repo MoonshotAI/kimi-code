@@ -43,6 +43,8 @@ const EMPTY_ACTIVATION: TrustGatedActivation = {
   instructionSources: EMPTY_INSTRUCTION_SOURCES,
 };
 
+const SKILL_DISCLOSURE_TIMEOUT_MS = 1000;
+
 export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosure {
   declare readonly _serviceBrand: undefined;
 
@@ -150,7 +152,14 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
   private async describeInstructionSources(
     warnings: string[],
   ): Promise<TrustGatedInstructionSources> {
-    await Promise.all([this.skills.ready, this.agentProfilesLoader.ready, this.instructions.ready]);
+    const [skillsReady] = await Promise.all([
+      waitForReady(this.skills.ready, SKILL_DISCLOSURE_TIMEOUT_MS),
+      this.agentProfilesLoader.ready,
+      this.instructions.ready,
+    ]);
+    if (!skillsReady) {
+      warnings.push('Project skills are still loading; inspect the project skill directories.');
+    }
     const projectRoot =
       (await findGitWorkTree(this.fs, this.context.cwd))?.root ?? this.context.cwd;
     if (this.instructions.snapshot.agentsMdWarning !== undefined) {
@@ -171,10 +180,12 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
           entry.sourceId === 'workspace' && entry.workspaceKey === this.context.workspaceId,
       );
     const [skillPaths, profilePaths] = await Promise.all([
-      this.sourceLocations(
-        skills.map((skill) => skill.path),
-        this.skills.catalog.getSkillRoots(),
-      ),
+      skillsReady
+        ? this.sourceLocations(
+            skills.map((skill) => skill.path),
+            this.skills.catalog.getSkillRoots(),
+          )
+        : this.projectSkillRootPaths(),
       Promise.all(
         (profiles.length > 0 ? workspaceProfiles?.contribution.scannedRoots ?? [] : [])
           .map(async (root) => `${await realpathOrSelf(this.fs, root)}/`),
@@ -202,6 +213,14 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
       }),
     );
     return [...new Set(locations)].toSorted();
+  }
+
+  private async projectSkillRootPaths(): Promise<readonly string[]> {
+    const mergeAllAvailableSkills =
+      this.config.get<MergeAllAvailableSkillsConfig>(MERGE_ALL_AVAILABLE_SKILLS_SECTION) ?? true;
+    return (await projectRoots(this.context.cwd, { mergeAllAvailableSkills }))
+      .map((root) => root.path)
+      .toSorted();
   }
 
   private effectiveWorkspaceProfiles(): readonly string[] {
@@ -271,4 +290,23 @@ async function realpathOrSelf(fs: IHostFileSystem, dir: string): Promise<string>
 function isInsideOrEqualDir(child: string, parent: string): boolean {
   const rel = relative(parent, child);
   return rel === '' || (rel !== '..' && !rel.startsWith('../') && !isAbsolute(rel));
+}
+
+async function waitForReady(ready: Promise<void>, timeoutMs: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      ready.then(
+        () => true,
+        () => false,
+      ),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => {
+          resolve(false);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
