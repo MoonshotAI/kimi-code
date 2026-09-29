@@ -390,6 +390,7 @@ export interface WorkspaceStateSnapshot {
   'workspaceDirs.fileDirs': readonly string[];
   // src/workspace/workspaceInstructions/workspaceInstructionsService.ts
   'workspaceInstructions.current': /* WorkspaceInstructionsSnapshot — packages/agent-core-v2/src/workspace/workspaceInstructions/workspaceInstructions.ts */ {
+    readonly agentsMdUnreadablePaths?: readonly string[];
     readonly agentsMd: string | undefined;
     readonly agentsMdWarning: string | undefined;
     readonly agentsMdPaths: readonly string[] | undefined;
