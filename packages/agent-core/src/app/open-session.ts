@@ -31,7 +31,7 @@ export async function openSession(
   }
   const existed = input.from === undefined && input.sessionId !== undefined && (await space.get(input.sessionId)) !== undefined;
   const sessionId = input.from !== undefined || input.sessionId === undefined
-    ? input.sessionId ?? randomUUID()
+    ? input.sessionId ?? createSessionId()
     : input.sessionId;
   const container = await materializeContainer(space, sessionId, input);
   const opened = await openSessionContainer(container);
@@ -93,4 +93,8 @@ function draftOf(input: OpenSessionInput): SessionRecordDraft | undefined {
     ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
     ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
   };
+}
+
+function createSessionId(): string {
+  return `session_${randomUUID()}`;
 }
