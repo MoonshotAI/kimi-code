@@ -353,6 +353,17 @@
 - handoff：force-stop 步的 afterStep 置 pending 并 `agent.notify` 空 user 消息（v2 `loop.notify({bypassMaxSteps})` 同 turn 收尾步在新架构映射为紧随的新 turn——新架构无 bypassMaxSteps，第 75 轮已定不迁；空消息触发对齐第 72 轮 retry 先例）。下一 turn 首步 `useBeforeStep` 置 active，期间一切 tool call 被 veto 为 HANDOFF_VETO_TEXT + isError + stopTurn（文案逐字），该步 afterStep 置 done 并结算 `tool_call_repeat_handoff {outcome: vetoed|text}`；handoff 通知与真实 prompt 合并 drain 时丢弃本次 handoff（turn.started `entry` 非空判定，对齐 v2 onDrop）。新 turn 经 `turn.started` 重置 consecutive/handoff/turn 级记录（v2 turnId 变更检测对映）。
 - 遥测：`tool_call_turn_repeat` / `tool_call_dedup_detected {dup_type: same_step|cross_step}` / `tool_call_repeat {action: none|r1|r2|r3|stop}` / `tool_call_repeat_handoff` 四自定义事件经 `useTelemetryEvents` 注册 + `TelemetryRef` 可选探测上报（undo 先例，telemetry feature 缺席静默跳过——preset 未挂 telemetry）；v2 的 `toolExecutor.recordDupType` 在 `tool_call` 事件上标 dup_type 不迁（框架 tool_call 事件面无 dup_type 字段，recordDupType 通道无对应物）；trace_id 字段不迁（hook 输入无 request trace 句柄）。
 
+## fileHistory（工厂，不在默认名单）
+
+`createFileHistory({ workDir, fs })`：turn 级文件快照历史（v2 `features/fileHistory` 迁移），agent 层。`fs: OsFsPort` 为必传宿主端口（createMedia 必传端口先例；v2 `IHostFileSystem` 的 stat/readBytes 与 `OsFsPort` 同形，grown/shrunk 竞态分支逐字保留）。v2 为 registerFeature 默认启用，但 workDir/fs 是宿主概念，按 os/edit 先例由宿主挂载、不进 preset（example 已挂 `createNodeOsHost().fs`）。
+
+- 状态：`file_history.tracked` / `file_history.checkpoint` durable 事件落 agent journal + fold 投影（checkpoints `{turnId, phase start|end, entries path→{key,version,contentHash,size,oversize,mtimeMs}}` + tracked），remount 重建；turn 窗口驱逐（`FILE_HISTORY_TURN_WINDOW = 5`，`displacedCheckpoints` 逐字）在投影层。
+- 捕获：main agent 全量管线——`useBeforeTool`（= v2 onWillExecuteTool 执行前捕获，preparingTools 阶段 await 捕获完成才放行执行）按工具名 Edit/Write + 容错解析 arguments 取路径（`file_path` ?? `path`；v2 读 `execution.display` 的 file_io edit/write，新架构无 display 通道，v2 侧 file_io 生产者实证只有 Edit/Write，语义等价）+ `agent.on('turn.started'/'turn.done')` 跟踪 activeTurnId、turn.done 入队 end checkpoint；非 main agent（构造器分流逐字对齐 v2）经 `useSession().get(MAIN_AGENT_ID)?.resolve(FileHistoryRef)` 转发 `captureForActiveTurn`（resolve 失败按 v2 守卫语义跳过），自身无状态。
+- 快照字节走 `useBlobs()`（内容寻址）：`entry.key = 'file-history/<sha256内容>'`（v2 键控 `file-history/<sha(path)>@v<N>` 的前缀语义保留在 durable state；同内容跨路径天然去重）。v2 的孤儿 blob 物理清扫 / retention 物理驱逐 / 30-session LRU（`touchFileHistorySession`，依赖 IAtomicDocumentStore + 物理删目录）无端口可落（`Blobs` 无 list/delete、无 workspace doc store）——物理回收 = 内容寻址去重 + `space.delete` 整目录；`turnRecorded` 的 blob 存在性校验（has）保留。
+- 读面：facade `FileHistoryRef`（agent 层）——`history()` / `settled()`（串行 promise 链排干，read-your-writes；v2 `enqueue`/`enqueueValue` 逐字移植）/ `captureForActiveTurn(path)` / `changes(turnId)`（start/end checkpoint 比对，LCS 行 diff 双预算常量逐字）/ `turnRecorded(turnId)` / `contentAt(turnId, path, phase='start')`。turnId 与新架构数值 turn id 1:1（首个 turn 为 0，wire `turn_id: number` 零转换）。v2 卸载时 drain 写链（`fileHistory:drain` effect）无对应机制（slot cleanup 同步），agent 关闭瞬间在途捕获可能不落账，偏差在案。
+- feature-http：`GET /sessions/:session_id/file-history/changes?turn_id=` → `{changes, recorded}`、`GET /sessions/:session_id/file-history/content?turn_id&path&phase?` → `{content|null}`（wire 形状对齐 kap-server `protocol/rest-file-history.ts`）；facade 缺席 40949、session 未知 40401、参数非法 400。
+- sessionExport 的 `file-history` 路径段排除随本域落地生效（第 20 轮保留的过滤）。
+
 ## 已有 Feature 速查
 
 | Feature | 形态 | 层 | 默认名单 |
@@ -380,3 +391,4 @@
 | createWorkspaces | 工厂 | app | 否 |
 | createCapabilities | 工厂 | app | 否 |
 | createToolDedupe | 工厂 | agent | 是 |
+| createFileHistory | 工厂 | agent | 否 |

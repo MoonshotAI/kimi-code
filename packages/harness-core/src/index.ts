@@ -41,3 +41,4 @@ export * from './features/models-dev/index';
 export * from './features/workspaces/index';
 export * from './features/capabilities/index';
 export * from './features/toolDedupe/index';
+export * from './features/fileHistory/index';

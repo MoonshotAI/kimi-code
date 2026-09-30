@@ -1,0 +1,587 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  MAIN_AGENT_ID,
+  MemoryBackend,
+  Trees,
+  createFeature,
+  createHarness,
+  createUserMessage,
+  openBlobs,
+  openSessionStores,
+  UNKNOWN_CAPABILITY,
+  useAgent,
+  useAgentTools,
+  type AgentHandle,
+  type AppHandle,
+  type BlobBackend,
+  type FeatureSpec,
+  type LlmModel,
+  type LlmRequester,
+  type SessionHandle,
+  type SessionStores,
+  type ToolDefinition,
+  type ToolResult,
+} from '@moonshot-ai/agent-core';
+
+import {
+  FileHistoryRef,
+  createFileHistory,
+  type FileHistoryFace,
+  type FileHistoryState,
+} from '#/features/fileHistory/index';
+import type { OsFsPort } from '#/features/os/host/index';
+
+const WORK_DIR = '/ws';
+const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
+
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+type FakeFs = OsFsPort & {
+  readonly set: (path: string, content: string) => void;
+  readonly drop: (path: string) => void;
+};
+
+function createFakeFs(): FakeFs {
+  const files = new Map<string, { data: Uint8Array; mtimeMs: number }>();
+  let clock = 0;
+  const enoent = (): Error => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+  const read = (path: string): { data: Uint8Array; mtimeMs: number } => {
+    const file = files.get(path);
+    if (file === undefined) throw enoent();
+    return file;
+  };
+  const write = (path: string, data: Uint8Array): void => {
+    clock += 1;
+    files.set(path, { data, mtimeMs: clock });
+  };
+  const statOf = (path: string) => {
+    const file = read(path);
+    return { isFile: true, isDirectory: false, size: file.data.byteLength, mtimeMs: file.mtimeMs };
+  };
+  return {
+    set: (path, content) => {
+      write(path, encoder.encode(content));
+    },
+    drop: (path) => {
+      files.delete(path);
+    },
+    readText: async (path) => decoder.decode(read(path).data),
+    writeText: async (path, data) => {
+      write(path, encoder.encode(data));
+    },
+    appendText: async (path, data) => {
+      const file = read(path);
+      write(path, encoder.encode(`${decoder.decode(file.data)}${data}`));
+    },
+    readBytes: async (path, n) => {
+      const file = read(path);
+      return file.data.slice(0, n ?? file.data.byteLength);
+    },
+    writeBytes: async (path, data) => {
+      write(path, data);
+    },
+    readLines: async function* (path) {
+      yield* decoder.decode(read(path).data).split('\n');
+    },
+    createExclusive: async (path, data) => {
+      if (files.has(path)) return false;
+      write(path, data);
+      return true;
+    },
+    stat: async (path) => statOf(path),
+    lstat: async (path) => statOf(path),
+    readdir: async () => [],
+    mkdir: async () => {},
+    remove: async (path) => {
+      if (!files.delete(path)) throw enoent();
+    },
+    rename: async (from, to) => {
+      const file = read(from);
+      files.delete(from);
+      write(to, file.data);
+    },
+    realpath: async (path) => path,
+  };
+}
+
+type ScriptStep =
+  | { text: string; effect?: () => void | Promise<void> }
+  | { toolCall: { name: string; arguments: string } };
+
+let queue: ScriptStep[] = [];
+let callSeq = 0;
+
+function createMockRequester(): LlmRequester {
+  return {
+    generate: async (_config, _content, { onEvent }) => {
+      const out = queue.shift() ?? { text: 'done' };
+      if ('toolCall' in out) {
+        onEvent?.({
+          type: 'llm.streaming.part',
+          part: {
+            type: 'function',
+            id: `call-${(callSeq += 1)}`,
+            name: out.toolCall.name,
+            arguments: out.toolCall.arguments,
+          },
+        });
+      } else {
+        if (out.effect !== undefined) await out.effect();
+        onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: out.text } });
+      }
+      onEvent?.({
+        type: 'llm.streaming.usage',
+        usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
+      });
+      onEvent?.({ type: 'llm.done' });
+    },
+  };
+}
+
+function bindTestLlm(requester: LlmRequester): FeatureSpec {
+  return createFeature('test-llm', {
+    agent() {
+      const agent = useAgent();
+      agent.setConfig({ model });
+      agent.setRequester(requester);
+    },
+  });
+}
+
+interface BlockHandle {
+  settle(text: string): void;
+}
+
+function bindTestFsTools(fs: FakeFs, block: { current?: BlockHandle }): FeatureSpec {
+  const editTool: ToolDefinition = {
+    name: 'Edit',
+    description: 'test edit',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string' },
+        old_string: { type: 'string' },
+        new_string: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    execute: async ({ toolCall }) => {
+      const args = JSON.parse(toolCall.arguments ?? '{}') as {
+        path: string;
+        old_string: string;
+        new_string: string;
+      };
+      const text = await fs.readText(args.path);
+      if (!text.includes(args.old_string)) {
+        return { content: [{ type: 'text', text: 'old_string not found' }] };
+      }
+      await fs.writeText(args.path, text.replace(args.old_string, args.new_string));
+      return { content: [{ type: 'text', text: 'ok' }] };
+    },
+  };
+  const writeTool: ToolDefinition = {
+    name: 'Write',
+    description: 'test write',
+    parameters: {
+      type: 'object',
+      properties: { path: { type: 'string' }, content: { type: 'string' } },
+      additionalProperties: false,
+    },
+    execute: async ({ toolCall }) => {
+      const args = JSON.parse(toolCall.arguments ?? '{}') as { path: string; content: string };
+      await fs.writeText(args.path, args.content);
+      return { content: [{ type: 'text', text: 'ok' }] };
+    },
+  };
+  const blockTool: ToolDefinition = {
+    name: 'TestBlock',
+    description: 'test blocking tool',
+    parameters: { type: 'object', additionalProperties: false },
+    execute: ({ signal }) =>
+      new Promise<ToolResult>((resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          reject(new Error('test block aborted'));
+        });
+        block.current = {
+          settle: (text) => {
+            resolve({ content: [{ type: 'text', text }] });
+          },
+        };
+      }),
+  };
+  return createFeature('test-fs-tools', {
+    agent() {
+      useAgentTools(editTool, writeTool, blockTool);
+    },
+  });
+}
+
+function editStep(path: string, oldString: string, newString: string): ScriptStep {
+  return {
+    toolCall: {
+      name: 'Edit',
+      arguments: JSON.stringify({ path, old_string: oldString, new_string: newString }),
+    },
+  };
+}
+
+function writeStep(path: string, content: string): ScriptStep {
+  return {
+    toolCall: { name: 'Write', arguments: JSON.stringify({ path, content }) },
+  };
+}
+
+interface HistoryTestEnv {
+  readonly app: AppHandle;
+  readonly session: SessionHandle;
+  readonly stores: SessionStores;
+  readonly fs: FakeFs;
+  readonly blobFiles: Map<string, Uint8Array>;
+  readonly block: { current?: BlockHandle };
+  main(): AgentHandle;
+  face(): FileHistoryFace;
+  runTurn(text?: string): Promise<void>;
+  remount(): Promise<void>;
+  dispose(): Promise<void>;
+}
+
+async function startHistoryTest(): Promise<HistoryTestEnv> {
+  const backend = new MemoryBackend();
+  const trees = await Trees.open(backend.trees, {});
+  const tree = await trees.tree('sess');
+  const blobFiles = new Map<string, Uint8Array>();
+  const blobBackend: BlobBackend = {
+    has: async (ref) => blobFiles.has(ref),
+    read: async (ref) => {
+      const data = blobFiles.get(ref);
+      if (data === undefined) throw new Error(`missing blob ${ref}`);
+      return data;
+    },
+    write: async (ref, data) => {
+      blobFiles.set(ref, data);
+    },
+  };
+  const stores = await openSessionStores(tree, openBlobs(blobBackend));
+  const fs = createFakeFs();
+  const block: { current?: BlockHandle } = {};
+  const app = createHarness({
+    features: [
+      createFileHistory({ workDir: WORK_DIR, fs }),
+      bindTestLlm(createMockRequester()),
+      bindTestFsTools(fs, block),
+    ],
+  });
+  await app.ready();
+  const session = await app.create({ sessionId: 'sess', stores });
+  let main = await session.create({ agentId: MAIN_AGENT_ID });
+  await main.ready();
+  const face = (): FileHistoryFace => main.resolve(FileHistoryRef);
+  const runTurn = async (text = 'go'): Promise<void> => {
+    const done = nextTurnDone(main);
+    main.submit(createUserMessage(text));
+    await done;
+    await face().settled();
+    await stores.flush();
+  };
+  const remount = async (): Promise<void> => {
+    await session.close(MAIN_AGENT_ID);
+    main = await session.create({ agentId: MAIN_AGENT_ID });
+    await main.ready();
+  };
+  const dispose = async (): Promise<void> => {
+    await app.disposeAsync();
+    await stores.dispose();
+  };
+  return {
+    app,
+    session,
+    stores,
+    fs,
+    blobFiles,
+    block,
+    main: () => main,
+    face,
+    runTurn,
+    remount,
+    dispose,
+  };
+}
+
+function nextTurnDone(agent: AgentHandle): Promise<void> {
+  return new Promise<void>((resolve) => {
+    agent.on('turn.done', () => {
+      resolve();
+    });
+  });
+}
+
+function nextTurnStarted(agent: AgentHandle): Promise<void> {
+  return new Promise<void>((resolve) => {
+    agent.on('turn.started', () => {
+      resolve();
+    });
+  });
+}
+
+function entryAt(
+  state: FileHistoryState,
+  turnId: number,
+  phase: 'start' | 'end',
+  path: string,
+) {
+  return state.checkpoints.find((c) => c.turnId === turnId && (c.phase ?? 'start') === phase)
+    ?.entries[path];
+}
+
+describe('fileHistory feature', () => {
+  it('captures pre-edit content once per turn and versions the turn diff', async () => {
+    const env = await startHistoryTest();
+    env.fs.set('/ws/a.txt', 'one\ntwo\n');
+
+    queue = [
+      editStep('/ws/a.txt', 'two', 'TWO'),
+      editStep('/ws/a.txt', 'one', 'ONE'),
+      { text: 'done' },
+    ];
+    await env.runTurn();
+
+    const state = env.face().history();
+    expect(state.tracked).toEqual(['a.txt']);
+    expect(Object.keys(state.checkpoints.find((c) => c.turnId === 0)!.entries)).toEqual(['a.txt']);
+    expect(entryAt(state, 0, 'start', 'a.txt')?.version).toBe(1);
+    expect(entryAt(state, 0, 'end', 'a.txt')?.version).toBe(2);
+    expect((await env.face().contentAt(0, 'a.txt'))?.content).toBe('one\ntwo\n');
+    expect((await env.face().contentAt(0, '/ws/a.txt', 'end'))?.content).toBe('ONE\nTWO\n');
+    expect(await env.face().contentAt(1, 'a.txt')).toBeUndefined();
+    expect(await env.face().changes(0)).toEqual([
+      { path: 'a.txt', status: 'modified', additions: 2, deletions: 2 },
+    ]);
+    expect(await env.face().turnRecorded(0)).toBe(true);
+    expect(await env.face().turnRecorded(1)).toBe(false);
+    expect(await env.face().turnRecorded(99)).toBe(false);
+    await env.dispose();
+  });
+
+  it('records file creation and deletion across turns', async () => {
+    const env = await startHistoryTest();
+
+    queue = [writeStep('/ws/new.txt', 'created\n'), { text: 'done' }];
+    await env.runTurn();
+    expect(entryAt(env.face().history(), 0, 'start', 'new.txt')).toEqual({ key: null, version: 1 });
+    expect(await env.face().changes(0)).toEqual([
+      { path: 'new.txt', status: 'added', additions: 1, deletions: 0 },
+    ]);
+
+    queue = [
+      editStep('/ws/new.txt', 'created', 'gone'),
+      { text: 'done', effect: () => env.fs.drop('/ws/new.txt') },
+    ];
+    await env.runTurn();
+    expect(entryAt(env.face().history(), 1, 'end', 'new.txt')?.key).toBeNull();
+    expect(await env.face().changes(1)).toEqual([
+      { path: 'new.txt', status: 'deleted', additions: 0, deletions: 1 },
+    ]);
+    expect(await env.face().turnRecorded(1)).toBe(true);
+    await env.dispose();
+  });
+
+  it('excludes user edits between turns via the end-of-turn checkpoint', async () => {
+    const env = await startHistoryTest();
+    env.fs.set('/ws/a.txt', 'alpha\n');
+
+    queue = [editStep('/ws/a.txt', 'alpha', 'alpha\nagent'), { text: 'done' }];
+    await env.runTurn();
+    expect(await env.face().changes(0)).toEqual([
+      { path: 'a.txt', status: 'modified', additions: 1, deletions: 0 },
+    ]);
+
+    env.fs.set('/ws/a.txt', 'alpha\nagent\nuser\n');
+    queue = [{ text: 'done' }];
+    await env.runTurn();
+    expect(await env.face().changes(1)).toEqual([]);
+    expect(await env.face().turnRecorded(1)).toBe(false);
+    expect((await env.face().contentAt(0, 'a.txt', 'end'))?.content).toBe('alpha\nagent\n');
+    expect(await env.face().contentAt(1, 'a.txt')).toBeUndefined();
+    await env.dispose();
+  });
+
+  it('reuses the previous backup when a tracked file is unchanged at the turn boundary', async () => {
+    const env = await startHistoryTest();
+    env.fs.set('/ws/b.txt', 'stable\n');
+
+    queue = [editStep('/ws/b.txt', 'MISSING', 'x'), { text: 'done' }];
+    await env.runTurn();
+    const state = env.face().history();
+    expect(entryAt(state, 0, 'start', 'b.txt')?.version).toBe(1);
+    expect(entryAt(state, 0, 'end', 'b.txt')).toBeUndefined();
+    expect(await env.face().changes(0)).toEqual([]);
+    expect(await env.face().turnRecorded(0)).toBe(true);
+    expect((await env.face().contentAt(0, 'b.txt'))?.content).toBe('stable\n');
+
+    queue = [{ text: 'done' }];
+    await env.runTurn();
+    expect(env.face().history().checkpoints.some((c) => c.turnId === 1)).toBe(false);
+    expect(env.blobFiles.size).toBe(1);
+    await env.dispose();
+  });
+
+  it('drops turns outside the retention window and re-baselines returning files', async () => {
+    const env = await startHistoryTest();
+    env.fs.set('/ws/w.txt', 'v1\n');
+
+    queue = [editStep('/ws/w.txt', 'v1', 'v2'), { text: 'done' }];
+    await env.runTurn();
+    for (let turn = 1; turn <= 6; turn += 1) {
+      queue = [writeStep(`/ws/filler-${String(turn)}.txt`, 'f\n'), { text: 'done' }];
+      await env.runTurn();
+    }
+
+    const state = env.face().history();
+    expect(state.checkpoints.some((c) => c.turnId === 0)).toBe(false);
+    expect(state.tracked).not.toContain('w.txt');
+    expect(await env.face().changes(0)).toEqual([]);
+    expect(await env.face().turnRecorded(0)).toBe(false);
+
+    queue = [editStep('/ws/w.txt', 'v2', 'v3'), { text: 'done' }];
+    await env.runTurn();
+    const rebased = entryAt(env.face().history(), 7, 'start', 'w.txt');
+    expect(rebased?.version).toBe(1);
+    expect((await env.face().contentAt(7, 'w.txt'))?.content).toBe('v2\n');
+    await env.dispose();
+  });
+
+  it('keeps window-edge turns resolvable and detects a lost baseline blob', async () => {
+    const env = await startHistoryTest();
+    env.fs.set('/ws/e.txt', 'one\n');
+
+    queue = [editStep('/ws/e.txt', 'one', 'two'), { text: 'done' }];
+    await env.runTurn();
+    queue = [editStep('/ws/e.txt', 'two', 'three'), { text: 'done' }];
+    await env.runTurn();
+    for (let turn = 2; turn <= 5; turn += 1) {
+      queue = [writeStep(`/ws/filler-${String(turn)}.txt`, 'f\n'), { text: 'done' }];
+      await env.runTurn();
+    }
+
+    const state = env.face().history();
+    expect(state.checkpoints.some((c) => c.turnId === 0)).toBe(false);
+    expect(await env.face().changes(1)).toEqual([
+      { path: 'e.txt', status: 'modified', additions: 1, deletions: 1 },
+    ]);
+    expect((await env.face().contentAt(1, 'e.txt'))?.content).toBe('two\n');
+    expect(await env.face().turnRecorded(1)).toBe(true);
+
+    const keyed = entryAt(env.face().history(), 1, 'start', 'e.txt');
+    expect(keyed?.key).not.toBeNull();
+    const ref = (keyed?.key ?? '').slice('file-history/'.length);
+    env.blobFiles.delete(ref);
+    expect(await env.face().turnRecorded(1)).toBe(false);
+    await env.dispose();
+  });
+
+  it('restores checkpoints and tracked files from the journal after a remount', async () => {
+    const env = await startHistoryTest();
+    env.fs.set('/ws/a.txt', 'x\n');
+
+    queue = [editStep('/ws/a.txt', 'x', 'y'), { text: 'done' }];
+    await env.runTurn();
+    await env.remount();
+
+    const state = env.face().history();
+    expect(state.tracked).toEqual(['a.txt']);
+    expect(entryAt(state, 0, 'start', 'a.txt')?.version).toBe(1);
+    expect((await env.face().contentAt(0, 'a.txt'))?.content).toBe('x\n');
+    expect((await env.face().contentAt(0, 'a.txt', 'end'))?.content).toBe('y\n');
+    expect(await env.face().changes(0)).toEqual([
+      { path: 'a.txt', status: 'modified', additions: 1, deletions: 1 },
+    ]);
+    expect(await env.face().turnRecorded(0)).toBe(true);
+
+    queue = [editStep('/ws/a.txt', 'y', 'z'), { text: 'done' }];
+    await env.runTurn();
+    expect(entryAt(env.face().history(), 1, 'start', 'a.txt')?.version).toBe(2);
+    expect((await env.face().contentAt(1, 'a.txt'))?.content).toBe('y\n');
+    await env.dispose();
+  });
+
+  it('forwards subagent edits into the main agent active turn', async () => {
+    const env = await startHistoryTest();
+    env.fs.set('/ws/sub.txt', 'a\n');
+
+    queue = [
+      { toolCall: { name: 'TestBlock', arguments: '{}' } },
+      editStep('/ws/sub.txt', 'a', 'b'),
+      { text: 'sub done' },
+      { text: 'main done' },
+    ];
+    const mainStarted = nextTurnStarted(env.main());
+    const mainDone = nextTurnDone(env.main());
+    env.main().submit(createUserMessage('main go'));
+    await mainStarted;
+
+    const sub = await env.session.create({ agentId: 'sub-1' });
+    await sub.ready();
+    const subDone = nextTurnDone(sub);
+    sub.submit(createUserMessage('sub go'));
+    await subDone;
+
+    expect(sub.resolve(FileHistoryRef).history().checkpoints).toEqual([]);
+    const mainFace = env.face();
+    expect(entryAt(mainFace.history(), 0, 'start', 'sub.txt')?.version).toBe(1);
+    expect(await mainFace.changes(0)).toEqual([
+      { path: 'sub.txt', status: 'modified', additions: 1, deletions: 1 },
+    ]);
+    expect(await mainFace.turnRecorded(0)).toBe(true);
+
+    env.block.current?.settle('unblocked');
+    await mainDone;
+    await mainFace.settled();
+
+    expect((await mainFace.contentAt(0, 'sub.txt'))?.content).toBe('a\n');
+    expect((await mainFace.contentAt(0, 'sub.txt', 'end'))?.content).toBe('b\n');
+    expect(await mainFace.changes(0)).toEqual([
+      { path: 'sub.txt', status: 'modified', additions: 1, deletions: 1 },
+    ]);
+    await env.dispose();
+  });
+
+  it('reports an oversize modified file without line counts', async () => {
+    const env = await startHistoryTest();
+    const big = `h${'x'.repeat(4 * 1024 * 1024)}`;
+    env.fs.set('/ws/big.txt', big);
+
+    queue = [
+      editStep('/ws/big.txt', 'MISSING', 'y'),
+      { text: 'done', effect: () => env.fs.set('/ws/big.txt', `${big}more`) },
+    ];
+    await env.runTurn();
+
+    const start = entryAt(env.face().history(), 0, 'start', 'big.txt');
+    expect(start?.oversize).toBe(true);
+    expect(start?.key).toBeNull();
+    expect(start?.size).toBe(big.length);
+    expect(entryAt(env.face().history(), 0, 'end', 'big.txt')?.oversize).toBe(true);
+    expect(await env.face().changes(0)).toEqual([
+      { path: 'big.txt', status: 'modified', additions: 0, deletions: 0, oversize: true },
+    ]);
+    expect(await env.face().contentAt(0, 'big.txt')).toBeUndefined();
+    await env.dispose();
+  });
+
+  it('keeps files outside the workspace keyed by absolute path', async () => {
+    const env = await startHistoryTest();
+    env.fs.set('/elsewhere/notes.md', 'note\n');
+
+    queue = [editStep('/elsewhere/notes.md', 'note', 'NOTE'), { text: 'done' }];
+    await env.runTurn();
+
+    expect(env.face().history().tracked).toEqual(['/elsewhere/notes.md']);
+    expect((await env.face().contentAt(0, '/elsewhere/notes.md'))?.content).toBe('note\n');
+    expect(await env.face().changes(0)).toEqual([
+      { path: '/elsewhere/notes.md', status: 'modified', additions: 1, deletions: 1 },
+    ]);
+    await env.dispose();
+  });
+});
