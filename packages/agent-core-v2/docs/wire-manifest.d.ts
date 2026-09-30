@@ -24,7 +24,8 @@
 // cross-reducers), blobs (the folding states whose blob codec offloads inline
 // media to blob storage), owner (the source file declaring the class).
 
-// Index (64 record types)
+// Index (65 record types)
+//   changeNotifier.snapshot            changeNotifier.snapshot                               src/agent/changeNotifier/changeNotifierOps.ts
 //   config.update                      profile                                               src/agent/profile/profileOps.ts
 //   context.append_loop_event          contextMemory, turn                                   src/agent/contextMemory/contextEvents.ts
 //   context.append_message             contextMemory, plan, task.notificationDelivery        src/agent/contextMemory/contextEvents.ts
@@ -89,6 +90,19 @@
 //   turn.step.interrupted              (none)                                                src/agent/loop/turnEvents.ts
 //   turn.step.retrying                 (none)                                                src/agent/loop/turnEvents.ts
 //   usage.record                       (none)                                                src/agent/usage/usageOps.ts
+
+/**
+ * states: changeNotifier.snapshot
+ * owner: src/agent/changeNotifier/changeNotifierOps.ts
+ */
+interface ChangeNotifierSnapshotPayload {
+  _name: 'changeNotifier.snapshot';
+  agentId: string;
+  agentsMdHash: string | null;
+  skillsHash: string | null;
+  subagentNames: string[] | null;
+  modelPoolAliases: string[] | null;
+}
 
 /**
  * states: profile
@@ -960,6 +974,7 @@ interface UsageRecordPayload {
 
 /** Record type → payload sketch. */
 interface WirePayloadMap {
+  "changeNotifier.snapshot": ChangeNotifierSnapshotPayload;
   "config.update": ConfigUpdatePayload;
   "context.append_loop_event": ContextAppendLoopEventPayload;
   "context.append_message": ContextAppendMessagePayload;
