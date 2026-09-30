@@ -1522,12 +1522,14 @@ export class KimiTUI {
         return;
       }
     }
+    const hadQueuedMessages = this.state.queuedMessages.length > 0;
     if (
       this.deferUserMessages ||
       this.skillSteerBatchInFlight ||
       this.state.appState.goal?.status === 'active' ||
       this.state.appState.streamingPhase !== 'idle' ||
-      this.state.appState.isCompacting
+      this.state.appState.isCompacting ||
+      hadQueuedMessages
     ) {
       this.enqueueMessage(
         text,
@@ -1541,6 +1543,9 @@ export class KimiTUI {
             }
           : { inlineSkillActivations: activations },
       );
+      if (hadQueuedMessages && this.state.appState.goal?.status !== 'active') {
+        this.drainQueueIfIdle();
+      }
       this.updateQueueDisplay();
       this.state.ui.requestRender();
       return;
@@ -2092,16 +2097,21 @@ export class KimiTUI {
       this.steerQueuedMessagesIntoRunningTurn();
       return;
     }
+    const hadQueuedMessages = this.state.queuedMessages.length > 0;
     if (
       this.deferUserMessages ||
       this.skillSteerBatchInFlight ||
       this.state.appState.streamingPhase !== 'idle' ||
-      this.state.appState.isCompacting
+      this.state.appState.isCompacting ||
+      hadQueuedMessages
     ) {
       // A queued message re-leases its staged media at dequeue dispatch; the
       // pre-dispatch lease defers to the queue item's raw ids.
       this.staging.defer(options?.lease);
       this.enqueueMessage(input, options);
+      if (hadQueuedMessages && this.state.appState.goal?.status !== 'active') {
+        this.drainQueueIfIdle();
+      }
       return;
     }
     this.sendMessageInternal(session, input, options);

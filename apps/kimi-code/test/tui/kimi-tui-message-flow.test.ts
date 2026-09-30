@@ -1052,9 +1052,11 @@ describe('KimiTUI message flow', () => {
   it('keeps a rejected skill input when a newer draft already exists', async () => {
     let rejectSubmission!: (error: Error) => void;
     const session = makeSession({
-      promptWithSkills: vi.fn(() => new Promise<void>((_resolve, reject) => {
-        rejectSubmission = reject;
-      })),
+      promptWithSkills: vi.fn()
+        .mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+          rejectSubmission = reject;
+        }))
+        .mockResolvedValue(undefined),
     });
     const { driver } = await makeDriver(session);
     driver.state.appState.model = 'k2';
@@ -1072,6 +1074,42 @@ describe('KimiTUI message flow', () => {
       }));
     });
     expect(driver.state.editor.getText()).toBe('new draft');
+
+    driver.handleUserInput('new draft');
+
+    await vi.waitFor(() => expect(session.promptWithSkills).toHaveBeenCalledTimes(2));
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages.map((item) => item.text)).toEqual(['new draft']);
+  });
+
+  it('keeps a newer skill message behind a recovered skill request', async () => {
+    let rejectSubmission!: (error: Error) => void;
+    const session = makeSession({
+      promptWithSkills: vi.fn()
+        .mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+          rejectSubmission = reject;
+        }))
+        .mockResolvedValue(undefined),
+    });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.skillCommandMap.set('skill:review', 'review');
+
+    driver.handleUserInput('check /skill:review');
+    await vi.waitFor(() => expect(session.promptWithSkills).toHaveBeenCalledOnce());
+    driver.state.editor.setText('follow up /skill:review');
+    rejectSubmission(new Error('Skill missing'));
+    await vi.waitFor(() => expect(driver.state.queuedMessages).toHaveLength(1));
+
+    driver.handleUserInput('follow up /skill:review');
+
+    await vi.waitFor(() => expect(session.promptWithSkills).toHaveBeenCalledTimes(2));
+    expect(session.promptWithSkills).toHaveBeenNthCalledWith(2, 'check /skill:review', [
+      expect.objectContaining({ name: 'review' }),
+    ]);
+    expect(driver.state.queuedMessages.map((item) => item.text)).toEqual([
+      'follow up /skill:review',
+    ]);
   });
 
   it('renders a bundled replay submission as a single turn', async () => {
