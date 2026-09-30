@@ -232,14 +232,10 @@ export class RemoteFileSystem implements IHostFileSystem {
     }));
   }
 
-  async mkdir(
-    path: string,
-    options?: { readonly recursive?: boolean; readonly mode?: number },
-  ): Promise<void> {
+  async mkdir(path: string, options?: { readonly recursive?: boolean }): Promise<void> {
     await this.call(FS_CREATE_DIRECTORY_METHOD, {
       path,
       recursive: options?.recursive ?? false,
-      mode: options?.mode,
     });
   }
 

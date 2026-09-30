@@ -38,7 +38,6 @@ export interface SessionEnvironmentInfo {
   readonly environmentId: string;
   readonly type: SessionEnvironmentType;
   readonly status: SessionEnvironmentStatus;
-  readonly defaultCwd?: string;
   readonly connectError?: string;
 }
 

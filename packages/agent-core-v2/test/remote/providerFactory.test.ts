@@ -395,7 +395,7 @@ describe('RemoteEnvironmentProviderFactory', () => {
     const oldLease = registry.acquire({ environmentId: 'dev-box' }, ['fs']);
     expect(oldLease.environment).toBe(first);
 
-    first.disconnect?.();
+    produced[0]!.setStatus('disconnected');
     await first.connect!();
     const second = registry.current('dev-box')!;
     expect(second).toBe(first);
@@ -431,7 +431,8 @@ describe('RemoteEnvironmentProviderFactory', () => {
     const managed = registry.current('dev-box')!;
     await expect(managed.fs!.readText('/etc/motd')).resolves.toBe('connection-1');
 
-    managed.disconnect?.();
+    const firstInner = connect.mock.results[0]!.value as unknown as Promise<FakeEnvironment>;
+    (await firstInner).setStatus('disconnected');
     await managed.connect!();
     await expect(managed.fs!.readText('/etc/motd')).resolves.toBe('connection-2');
 
@@ -569,7 +570,7 @@ describe('shared connection', () => {
     expect(connect).toHaveBeenCalledTimes(2);
     expect(target.status).toBe('ready');
     expect(target.identity.generation).toBe(generation);
-    target.disconnect!();
+    produced[1]!.setStatus('disconnected');
     await target.connect!();
     expect(connect).toHaveBeenCalledTimes(3);
     expect(target.identity.generation).toBe(generation);

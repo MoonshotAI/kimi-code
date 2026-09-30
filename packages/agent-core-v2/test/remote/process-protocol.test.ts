@@ -206,17 +206,25 @@ describe('process protocol semantics', () => {
     await loopback.host.done;
   });
 
-  it('refuses writes after stdin EOF and reports unknown processes', async () => {
+  it('drops writes after stdin EOF and for unknown processes', async () => {
     const loopback = createInProcessLoopback();
     const raw = new RawClient(loopback);
     await raw.handshake();
     await startProcess(raw, 1, { processId: 'cat', argv: ['cat'], cwd: '/tmp' });
     raw.send({ id: 2, method: 'process/write', params: { processId: 'cat', chunkBase64: '', eof: true } });
-    expect((await raw.nextResponse(2))['result']).toEqual({ status: 'accepted' });
+    expect((await raw.nextResponse(2))['result']).toEqual({});
     raw.send({ id: 3, method: 'process/write', params: { processId: 'cat', chunkBase64: b64('x') } });
-    expect((await raw.nextResponse(3))['result']).toEqual({ status: 'stdinClosed' });
+    expect((await raw.nextResponse(3))['result']).toEqual({});
     raw.send({ id: 4, method: 'process/write', params: { processId: 'ghost', chunkBase64: b64('x') } });
-    expect((await raw.nextResponse(4))['result']).toEqual({ status: 'unknownProcess' });
+    expect((await raw.nextResponse(4))['result']).toEqual({});
+    await vi.waitFor(() => {
+      expect(raw.notifications('process/closed')).toHaveLength(1);
+    });
+    const echoed = raw
+      .notifications('process/output')
+      .map((event) => fromB64(event['chunkBase64'] as string))
+      .join('');
+    expect(echoed).not.toContain('x');
     loopback.clientInput.end();
     await loopback.host.done;
   });
@@ -271,7 +279,7 @@ describe('process protocol semantics', () => {
       chunkBase64: b64('ping'),
     });
     const signal = connection.call('process/signal', { processId: 'flood', signal: 'kill' });
-    await expect(write).resolves.toEqual({ status: 'accepted' });
+    await expect(write).resolves.toEqual({});
     await expect(signal).resolves.toEqual({});
 
     expect(Date.now() - started).toBeLessThan(2_000);
@@ -341,8 +349,7 @@ describe('process protocol semantics', () => {
     });
     raw.send({ id: 200, method: 'process/signal', params: { processId: 'blocker', signal: 'kill' } });
     await raw.nextResponse(200, 30_000);
-    const settled = (await raw.nextResponse(100, 30_000))['result'] as { status: string };
-    expect(settled.status).toBe('stdinClosed');
+    expect((await raw.nextResponse(100, 30_000))['result']).toEqual({});
     loopback.clientInput.end();
     await loopback.host.done;
   });

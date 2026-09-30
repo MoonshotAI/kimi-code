@@ -275,10 +275,12 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
                 providerType: mainAgent.accessor
                   .get(IAgentProfileService)
                   .getModelProviderType(),
-                resolveOriginalsDir: async () => sessionMediaOriginalsDir(sessionDir),
-                resolveOriginalsTarget: environmentMedia.resolveOriginalsTarget,
-                resolveAttachmentsDir: async () => join(sessionDir, 'attachments'),
-                resolveAttachmentsTarget: environmentMedia.resolveAttachmentsTarget,
+                resolveOriginalsTarget: environmentMedia.resolveOriginalsTarget ?? (async () => ({
+                  dir: sessionMediaOriginalsDir(sessionDir),
+                })),
+                resolveAttachmentsTarget: environmentMedia.resolveAttachmentsTarget ?? (async () => ({
+                  dir: join(sessionDir, 'attachments'),
+                })),
               },
             );
           } finally {

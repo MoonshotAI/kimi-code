@@ -16,10 +16,6 @@ export const SSH_CONFIG_OPTIONS: readonly string[] = [
   'StrictHostKeyChecking=accept-new',
 ];
 
-export function sshBaseArgs(): readonly string[] {
-  return ['-T', ...SSH_CONFIG_OPTIONS];
-}
-
 export function dockerBaseArgs(context?: string): readonly string[] {
   return context === undefined ? [] : ['--context', context];
 }
@@ -108,7 +104,7 @@ export function resolveLauncher(spec: LauncherSpec): ResolvedLauncher {
       assertLauncherOperand('ssh host', spec.host);
       return {
         program: 'ssh',
-        args: [...sshBaseArgs(), spec.host, execServerShellCommand(spec.remoteBin ?? DEFAULT_REMOTE_BIN)],
+        args: ['-T', ...SSH_CONFIG_OPTIONS, spec.host, execServerShellCommand(spec.remoteBin ?? DEFAULT_REMOTE_BIN)],
       };
     case 'docker':
       assertLauncherOperand('docker container', spec.container);

@@ -67,7 +67,6 @@ export interface FsWriteFileParams {
 export interface FsCreateDirectoryParams {
   readonly path: string;
   readonly recursive?: boolean;
-  readonly mode?: number;
 }
 
 export interface FsGetMetadataParams {
@@ -152,12 +151,6 @@ export interface ProcessWriteParams {
   readonly processId: string;
   readonly chunkBase64: string;
   readonly eof?: boolean;
-}
-
-export type ProcessWriteStatus = 'accepted' | 'unknownProcess' | 'stdinClosed';
-
-export interface ProcessWriteResult {
-  readonly status: ProcessWriteStatus;
 }
 
 export type ProcessSignalKind = 'interrupt' | 'terminate' | 'kill';

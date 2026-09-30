@@ -41,11 +41,6 @@ export function toLauncherSpec(entry: RemoteEnvironmentEntry): LauncherSpec {
 
 const EMPTY_CAPABILITIES: ReadonlySet<EnvironmentCapability> = new Set();
 
-function closeReasonOf(session: RemoteEnvironment): string | undefined {
-  const connection = (session as { connection?: { closeReason?: { reason: string } } }).connection;
-  return connection?.closeReason?.reason;
-}
-
 class DeclaredRemoteEnvironment implements Environment {
   private generation: string;
 
@@ -147,7 +142,7 @@ class DeclaredRemoteEnvironment implements Environment {
     return run;
   }
 
-  disconnect(): void {
+  private disconnect(): void {
     if (this.currentStatus === 'disposed' || this.currentStatus === 'pending') return;
     this.epoch += 1;
     this.inflight = undefined;
@@ -170,7 +165,7 @@ class DeclaredRemoteEnvironment implements Environment {
     this.sessionSubscription?.dispose();
     this.sessionSubscription = session.onDidChangeStatus((status) => {
       if (this.session !== session || status !== 'disconnected') return;
-      const reason = closeReasonOf(session);
+      const reason = session.connection?.closeReason?.reason;
       if (reason !== undefined) this.lastConnectError = reason;
       this.session = undefined;
       this.sessionSubscription?.dispose();
@@ -198,8 +193,6 @@ class DeclaredRemoteEnvironment implements Environment {
 
 export interface RemoteEnvironmentProviderFactoryOptions {
   readonly clientVersion?: string;
-  readonly minExecutorVersion?: string;
-  readonly initializeTimeoutMs?: number;
   readonly connect?: (options: RemoteEnvironmentOptions) => Promise<RemoteEnvironment>;
 }
 
@@ -318,13 +311,8 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
         environmentId,
         launcher: spec,
         clientVersion: this.options.clientVersion,
-        minExecutorVersion: this.options.minExecutorVersion,
-        initializeTimeoutMs: this.options.initializeTimeoutMs,
       }),
-      {
-        launcher,
-        minExecutorVersion: this.options.minExecutorVersion,
-      },
+      { launcher },
     );
   }
 }

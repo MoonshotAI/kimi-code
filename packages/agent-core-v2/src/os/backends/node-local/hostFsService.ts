@@ -186,12 +186,9 @@ export class HostFileSystem implements IHostFileSystem {
     }
   }
 
-  async mkdir(
-    path: string,
-    options?: { readonly recursive?: boolean; readonly mode?: number },
-  ): Promise<void> {
+  async mkdir(path: string, options?: { readonly recursive?: boolean }): Promise<void> {
     try {
-      await mkdir(path, { recursive: options?.recursive ?? false, mode: options?.mode });
+      await mkdir(path, { recursive: options?.recursive ?? false });
     } catch (error) {
       throw toHostFsError(error, { path, op: 'mkdir' });
     }

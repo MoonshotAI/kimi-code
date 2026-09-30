@@ -184,10 +184,7 @@ describe('Plan service', () => {
       const status = await expectActivePlan();
       const expectedPath = expectedPlanPath(status.id);
       expect(status.path).toBe(expectedPath);
-      expect(mkdir).toHaveBeenCalledWith(dirname(expectedPath), {
-        recursive: true,
-        mode: 0o700,
-      });
+      expect(mkdir).toHaveBeenCalledWith(dirname(expectedPath), { recursive: true });
       expect(writeText).not.toHaveBeenCalled();
       expect(ctx.allEvents.some((event) => event.event === 'turn.started')).toBe(false);
       expect(ctx.llmCalls).toHaveLength(0);
@@ -298,10 +295,7 @@ describe('Plan service', () => {
       const status = await remotePlan.status();
       const planPath = `${remoteTempDir}/kimi-code/plans/main/remote-plan.md`;
       expect(status?.path).toBe(planPath);
-      expect(remoteMkdir).toHaveBeenCalledWith(dirname(planPath), {
-        recursive: true,
-        mode: 0o700,
-      });
+      expect(remoteMkdir).toHaveBeenCalledWith(dirname(planPath), { recursive: true });
 
       const content = '# Plan\n\n- Inspect the remote tree';
       const writeCall: ToolCall = {

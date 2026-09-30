@@ -3,26 +3,22 @@ import type { ApprovalHandler, ApprovalRequest, ApprovalResponse } from '@moonsh
 import { adaptApprovalRequest } from './adapter';
 import type { ApprovalController } from './controller';
 
-/**
- * The SDK routes every session approval through the one registered handler,
- * tagging the request with the initiating agent's id at runtime — a subagent
- * may be bound to a different environment than the main agent. The public
- * `ApprovalRequest` type does not declare the tag, so it is re-declared here
- * as an optional member (any `ApprovalRequest` stays assignable).
- */
-type AgentApprovalRequest = ApprovalRequest & { readonly agentId?: string };
-
 export function createApprovalRequestHandler(
   controller: ApprovalController,
   onResponse?: (request: ApprovalRequest, response: ApprovalResponse) => void,
-  resolveEnvironment?: (agentId: string | undefined) => Promise<string | undefined>,
+  resolveEnvironment?: () => string | undefined,
 ): ApprovalHandler {
-  return async (event: AgentApprovalRequest): Promise<ApprovalResponse> => {
+  return async (event: ApprovalRequest): Promise<ApprovalResponse> => {
     try {
       const data = adaptApprovalRequest(event);
       // A badge lookup failure must never cancel the approval itself — it
       // degrades to no badge.
-      const environment = await resolveEnvironment?.(event.agentId).catch(() => undefined);
+      let environment: string | undefined;
+      try {
+        environment = resolveEnvironment?.();
+      } catch {
+        environment = undefined;
+      }
       const response = await controller.show(
         environment === undefined ? data : { ...data, environment },
       );

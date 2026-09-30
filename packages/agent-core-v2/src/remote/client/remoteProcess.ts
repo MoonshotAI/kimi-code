@@ -136,7 +136,13 @@ export class RemoteProcess implements IHostProcess {
     eof: boolean,
     callback: (error?: Error | null) => void,
   ): void {
-    const run = this.writeChain.then(() => this.sendWrite(chunk, eof));
+    const run = this.writeChain.then(() =>
+      this.connection.call(PROCESS_WRITE_METHOD, {
+        processId: this.processId,
+        chunkBase64: chunk.toString('base64'),
+        eof: eof || undefined,
+      }),
+    );
 
     this.writeChain = run.then(
       () => undefined,
@@ -150,14 +156,6 @@ export class RemoteProcess implements IHostProcess {
         callback(error);
       },
     );
-  }
-
-  private async sendWrite(chunk: Buffer, eof: boolean): Promise<void> {
-    await this.connection.call(PROCESS_WRITE_METHOD, {
-      processId: this.processId,
-      chunkBase64: chunk.toString('base64'),
-      eof: eof || undefined,
-    });
   }
 
   onOutput(stream: ProcessOutputStream, chunk: Uint8Array): void {

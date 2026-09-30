@@ -476,8 +476,6 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
   let remoteRoot: string | undefined;
   let provider: { dispose(): void | Promise<void> } | undefined;
   let base: string;
-  let sessionId: string;
-  let workspaceId: string;
   const remoteRoots = new Map<string, string>();
 
   beforeAll(async () => {
@@ -497,15 +495,6 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
     localRoot = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsrt-local-')));
     remoteRoot = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsrt-remote-')));
     remoteRoots.set(localRoot, remoteRoot);
-    const res = await fetch(`${base}/api/v1/sessions`, {
-      method: 'POST',
-      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
-      body: JSON.stringify({ metadata: { cwd: localRoot } }),
-    } as never);
-    const created = (await res.json()) as Envelope<{ id: string; workspace_id: string }>;
-    if (created.code !== 0) throw new Error(`session create failed: ${created.msg}`);
-    sessionId = created.data.id;
-    workspaceId = created.data.workspace_id;
     provider = await server!.core.accessor.get(IEnvironmentService).addProvider({
       id: 'remote-test-provider',
       attach: async (host) => {
@@ -546,15 +535,9 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
     }
   });
 
-  function contentUrl(
-    path: string,
-    environmentId?: string,
-    context?: { workspace_id?: string; session_id?: string },
-  ): string {
+  function contentUrl(path: string, environmentId?: string): string {
     const query = new URLSearchParams({ path });
     if (environmentId !== undefined) query.set('environment_id', environmentId);
-    if (context?.workspace_id !== undefined) query.set('workspace_id', context.workspace_id);
-    if (context?.session_id !== undefined) query.set('session_id', context.session_id);
     return `${base}/api/v1/fs:content?${query.toString()}`;
   }
 
@@ -570,7 +553,7 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
   it('serves file content from the selected environment fs', async () => {
     await writeFile(join(remoteRoot as string, 'remote-only.txt'), 'remote-bytes');
 
-    const res = await fetch(contentUrl('/remote-only.txt', 'remote-test', { session_id: sessionId }), {
+    const res = await fetch(contentUrl('/remote-only.txt', 'remote-test'), {
       headers: { connection: 'close', ...authHeaders(server as RunningServer) },
     } as never);
     expect(res.status).toBe(200);
@@ -585,7 +568,7 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
     await writeFile(remoteFile, 'remote-bytes');
     await writeFile(requestPath, 'local-decoy');
 
-    const res = await fetch(contentUrl(requestPath, 'remote-test', { workspace_id: workspaceId }), {
+    const res = await fetch(contentUrl(requestPath, 'remote-test'), {
       headers: { connection: 'close', ...authHeaders(server as RunningServer) },
     } as never);
     expect(res.status).toBe(200);
@@ -596,7 +579,7 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
   it('honors range requests against the environment fs', async () => {
     await writeFile(join(remoteRoot as string, 'long.txt'), '0123456789');
 
-    const res = await fetch(contentUrl('/long.txt', 'remote-test', { session_id: sessionId }), {
+    const res = await fetch(contentUrl('/long.txt', 'remote-test'), {
       headers: { connection: 'close', range: 'bytes=2-5', ...authHeaders(server as RunningServer) },
     } as never);
     expect(res.status).toBe(206);
@@ -608,13 +591,13 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
   it('answers If-None-Match with 304 against the environment fs etag', async () => {
     await writeFile(join(remoteRoot as string, 'cached.txt'), 'cache me');
 
-    const first = await fetch(contentUrl('/cached.txt', 'remote-test', { workspace_id: workspaceId }), {
+    const first = await fetch(contentUrl('/cached.txt', 'remote-test'), {
       headers: { connection: 'close', ...authHeaders(server as RunningServer) },
     } as never);
     const etag = first.headers.get('etag') as string;
     expect(typeof etag).toBe('string');
 
-    const res = await fetch(contentUrl('/cached.txt', 'remote-test', { workspace_id: workspaceId }), {
+    const res = await fetch(contentUrl('/cached.txt', 'remote-test'), {
       headers: { connection: 'close', 'if-none-match': etag, ...authHeaders(server as RunningServer) },
     } as never);
     expect(res.status).toBe(304);
@@ -633,32 +616,8 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
     expect(await res.text()).toBe('local-bytes');
   });
 
-  it('rejects a non-local content environment_id without a workspace context (40001)', async () => {
-    const res = await fetch(contentUrl('/remote-only.txt', 'remote-test'), {
-      headers: { connection: 'close', ...authHeaders(server as RunningServer) },
-    } as never);
-    const body = (await res.json()) as Envelope<null>;
-    expect(body.code).toBe(40001);
-  });
-
-  it('rejects a non-local content environment_id with an unknown session_id (40401)', async () => {
-    const res = await fetch(contentUrl('/remote-only.txt', 'remote-test', { session_id: 'no-such-session' }), {
-      headers: { connection: 'close', ...authHeaders(server as RunningServer) },
-    } as never);
-    const body = (await res.json()) as Envelope<null>;
-    expect(body.code).toBe(40401);
-  });
-
-  it('rejects a non-local content environment_id with an unknown workspace_id (40410)', async () => {
-    const res = await fetch(contentUrl('/remote-only.txt', 'remote-test', { workspace_id: 'no-such-workspace' }), {
-      headers: { connection: 'close', ...authHeaders(server as RunningServer) },
-    } as never);
-    const body = (await res.json()) as Envelope<null>;
-    expect(body.code).toBe(40410);
-  });
-
   it('maps an unknown content environment_id to ENVIRONMENT_NOT_FOUND', async () => {
-    const res = await fetch(contentUrl('/remote-only.txt', 'no-such-environment', { workspace_id: workspaceId }), {
+    const res = await fetch(contentUrl('/remote-only.txt', 'no-such-environment'), {
       headers: { connection: 'close', ...authHeaders(server as RunningServer) },
     } as never);
     const body = (await res.json()) as Envelope<null>;
@@ -669,7 +628,7 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
     const requestPath = join(localRoot as string, 'made-remote');
     await mkdir(join(remoteRoot as string, localRoot as string), { recursive: true });
 
-    const body = await postMkdir({ path: requestPath, environment_id: 'remote-test', session_id: sessionId });
+    const body = await postMkdir({ path: requestPath, environment_id: 'remote-test' });
     expect(body.code).toBe(0);
     expect(body.data?.path).toBe(requestPath);
 
@@ -682,53 +641,28 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
     const requestPath = join(localRoot as string, 'already-here');
     await mkdir(join(remoteRoot as string, requestPath), { recursive: true });
 
-    const body = await postMkdir({ path: requestPath, environment_id: 'remote-test', workspace_id: workspaceId });
+    const body = await postMkdir({ path: requestPath, environment_id: 'remote-test' });
     expect(body.code).toBe(40919);
   });
 
   it('rejects mkdir with a missing environment parent (40409)', async () => {
     const requestPath = join(localRoot as string, 'no-such-parent', 'child');
 
-    const body = await postMkdir({ path: requestPath, environment_id: 'remote-test', session_id: sessionId });
+    const body = await postMkdir({ path: requestPath, environment_id: 'remote-test' });
     expect(body.code).toBe(40409);
-  });
-
-  it('rejects a non-local mkdir environment_id without a workspace context (40001)', async () => {
-    const body = await postMkdir({ path: join(localRoot as string, 'x'), environment_id: 'remote-test' });
-    expect(body.code).toBe(40001);
-  });
-
-  it('rejects a non-local mkdir environment_id with an unknown session_id (40401)', async () => {
-    const body = await postMkdir({
-      path: join(localRoot as string, 'x'),
-      environment_id: 'remote-test',
-      session_id: 'no-such-session',
-    });
-    expect(body.code).toBe(40401);
-  });
-
-  it('rejects a non-local mkdir environment_id with an unknown workspace_id (40410)', async () => {
-    const body = await postMkdir({
-      path: join(localRoot as string, 'x'),
-      environment_id: 'remote-test',
-      workspace_id: 'no-such-workspace',
-    });
-    expect(body.code).toBe(40410);
   });
 
   it('maps an unknown mkdir environment_id to ENVIRONMENT_NOT_FOUND', async () => {
     const body = await postMkdir({
       path: join(localRoot as string, 'x'),
       environment_id: 'no-such-environment',
-      workspace_id: workspaceId,
     });
     expect(body.code).toBe(40420);
   });
 
-  it('resolves one environment independently of the requesting workspace', async () => {
+  it('shares one app-level environment across workspaces', async () => {
     const localRootB = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsrt-local-b-')));
-    const remoteRootB = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsrt-remote-b-')));
-    remoteRoots.set(localRootB, remoteRootB);
+    remoteRoots.set(localRootB, localRootB);
     const res = await fetch(`${base}/api/v1/sessions`, {
       method: 'POST',
       headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
@@ -738,37 +672,16 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
     if (createdB.code !== 0) throw new Error(`session create failed: ${createdB.msg}`);
 
     await writeFile(join(remoteRoot as string, 'shared.txt'), 'workspace-a-bytes');
-    await writeFile(join(remoteRootB, 'shared.txt'), 'workspace-b-bytes');
 
-    const fromA = await fetch(
-      contentUrl('/shared.txt', 'remote-test', { workspace_id: workspaceId }),
-      { headers: { connection: 'close', ...authHeaders(server as RunningServer) } } as never,
-    );
-    expect(fromA.status).toBe(200);
-    expect(await fromA.text()).toBe('workspace-a-bytes');
+    const listed = await fetch(contentUrl('/shared.txt', 'remote-test'), {
+      headers: { connection: 'close', ...authHeaders(server as RunningServer) },
+    } as never);
+    expect(listed.status).toBe(200);
+    expect(await listed.text()).toBe('workspace-a-bytes');
 
-    const fromB = await fetch(
-      contentUrl('/shared.txt', 'remote-test', { workspace_id: createdB.data.workspace_id }),
-      { headers: { connection: 'close', ...authHeaders(server as RunningServer) } } as never,
-    );
-    expect(fromB.status).toBe(200);
-    expect(await fromB.text()).toBe('workspace-a-bytes');
-
-    const viaSessionB = await fetch(
-      contentUrl('/shared.txt', 'remote-test', { session_id: createdB.data.id }),
-      { headers: { connection: 'close', ...authHeaders(server as RunningServer) } } as never,
-    );
-    expect(viaSessionB.status).toBe(200);
-    expect(await viaSessionB.text()).toBe('workspace-a-bytes');
-
-    const mkdirBody = await postMkdir({
-      path: '/made-on-b',
-      environment_id: 'remote-test',
-      session_id: createdB.data.id,
-    });
+    const mkdirBody = await postMkdir({ path: '/made-after-b', environment_id: 'remote-test' });
     expect(mkdirBody.code).toBe(0);
-    const statB = await stat(join(remoteRoot as string, 'made-on-b'));
+    const statB = await stat(join(remoteRoot as string, 'made-after-b'));
     expect(statB.isDirectory()).toBe(true);
-    await expect(stat(join(remoteRootB, 'made-on-b'))).rejects.toThrow();
   });
 });

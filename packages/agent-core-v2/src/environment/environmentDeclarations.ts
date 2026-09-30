@@ -7,8 +7,6 @@ import {
   type EnvironmentDeclarationSet,
 } from './remoteEnvironmentDeclaration';
 
-export type { EnvironmentDeclarationSet } from './remoteEnvironmentDeclaration';
-
 export async function resolveWorkspaceEnvironmentDeclarations(
   config: IConfigService,
 ): Promise<EnvironmentDeclarationSet> {

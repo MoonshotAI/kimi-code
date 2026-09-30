@@ -2,16 +2,13 @@ import { isAbsolute } from 'node:path';
 import type { Readable } from 'node:stream';
 
 import {
-  Error2,
   ErrorCodes,
   HostFolderNotAbsoluteError,
   HostFolderNotFoundError,
   HostFolderPermissionError,
   IHostFileSystem,
   IHostFolderBrowser,
-  ISessionIndex,
   IEnvironmentService,
-  IWorkspaceService,
   isError2,
   type HostFileStat,
   type Scope,
@@ -51,7 +48,7 @@ interface WorkspaceFsRouteHost {
     handler: (
       req: {
         id: string;
-        query: { path?: string; environment_id?: string; workspace_id?: string; session_id?: string };
+        query: { path?: string; environment_id?: string };
         headers: Record<string, unknown>;
       },
       reply: FsContentReply,
@@ -128,8 +125,6 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
       },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
-        [ErrorCode.SESSION_NOT_FOUND]: {},
-        [ErrorCode.WORKSPACE_NOT_FOUND]: {},
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
         [ErrorCode.FS_PERMISSION_DENIED]: {},
         [ErrorCode.FS_IS_DIRECTORY]: {},
@@ -137,7 +132,7 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
       description:
-        'Serve the raw content of any file on the host filesystem by absolute path. Supports ETag caching and single-range requests. `environment_id` selects the environment filesystem; defaults to local. A non-local `environment_id` is workspace-scoped and requires `workspace_id` or `session_id` to name the workspace.',
+        'Serve the raw content of any file on the host filesystem by absolute path. Supports ETag caching and single-range requests. `environment_id` selects the filesystem of a shared app-level environment; defaults to local.',
       tags: ['workspaces'],
       operationId: 'fsContent',
     },
@@ -159,8 +154,6 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
       success: { data: fsMkdirResponseSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
-        [ErrorCode.SESSION_NOT_FOUND]: {},
-        [ErrorCode.WORKSPACE_NOT_FOUND]: {},
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
         [ErrorCode.FS_PERMISSION_DENIED]: {},
         [ErrorCode.FS_ALREADY_EXISTS]: {},
@@ -168,7 +161,7 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
       description:
-        'Create a directory on the host filesystem by absolute path (folder-picker "new folder" backend). Non-recursive: the parent directory must already exist. `environment_id` selects the environment filesystem; defaults to local. A non-local `environment_id` is workspace-scoped and requires `workspace_id` or `session_id` to name the workspace.',
+        'Create a directory on the host filesystem by absolute path (folder-picker "new folder" backend). Non-recursive: the parent directory must already exist. `environment_id` selects the filesystem of a shared app-level environment; defaults to local.',
       tags: ['workspaces'],
       operationId: 'fsMkdir',
     },
@@ -186,25 +179,17 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
 const fsContentQuerySchema = z.object({
   path: z.string().min(1),
   environment_id: z.string().min(1).optional(),
-  workspace_id: z.string().min(1).optional(),
-  session_id: z.string().min(1).optional(),
 });
 
 interface FsContentRequest {
   id: string;
-  query: { path: string; environment_id?: string; workspace_id?: string; session_id?: string };
+  query: { path: string; environment_id?: string };
   headers: Record<string, unknown>;
-}
-
-interface FsEnvironmentContext {
-  readonly workspaceId?: string;
-  readonly sessionId?: string;
 }
 
 async function acquireFsSource(
   core: Scope,
   environmentId: string,
-  context: FsEnvironmentContext,
 ): Promise<EnvironmentReadStreamSource> {
   if (environmentId === 'local') {
     return {
@@ -212,35 +197,8 @@ async function acquireFsSource(
       lease: { track: (resource) => resource, dispose: () => {} },
     };
   }
-  await validateFsContext(core, environmentId, context);
   const lease = core.accessor.get(IEnvironmentService).acquire({ environmentId }, ['fs']);
   return { hostFs: lease.environment.fs!, lease };
-}
-
-async function validateFsContext(
-  core: Scope,
-  environmentId: string,
-  context: FsEnvironmentContext,
-): Promise<void> {
-  if (context.sessionId !== undefined) {
-    const summary = await core.accessor.get(ISessionIndex).get(context.sessionId);
-    if (summary === undefined) {
-      throw new Error2(
-        ErrorCodes.SESSION_NOT_FOUND,
-        `session ${context.sessionId} does not exist`,
-      );
-    }
-    return;
-  }
-  if (context.workspaceId !== undefined) {
-    const workspace = await core.accessor.get(IWorkspaceService).get(context.workspaceId);
-    if (workspace === undefined) throw new Error2(ErrorCodes.WORKSPACE_NOT_FOUND, `workspace ${context.workspaceId} does not exist`);
-    return;
-  }
-  throw new Error2(
-    ErrorCodes.VALIDATION_FAILED,
-    `pass workspace_id or session_id to identify the request context for environment_id ${environmentId}`,
-  );
 }
 
 function sendAcquireError(
@@ -249,19 +207,6 @@ function sendAcquireError(
   err: unknown,
 ): void {
   if (sendEnvironmentError(reply, requestId, err)) return;
-  if (isError2(err)) {
-    switch (err.code) {
-      case ErrorCodes.VALIDATION_FAILED:
-        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId));
-        return;
-      case ErrorCodes.SESSION_NOT_FOUND:
-        reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId));
-        return;
-      case ErrorCodes.WORKSPACE_NOT_FOUND:
-        reply.send(errEnvelope(ErrorCode.WORKSPACE_NOT_FOUND, err.message, requestId));
-        return;
-    }
-  }
   throw err;
 }
 
@@ -281,10 +226,7 @@ async function handleFsContent(
 
   let source: EnvironmentReadStreamSource;
   try {
-    source = await acquireFsSource(core, req.query.environment_id ?? 'local', {
-      workspaceId: req.query.workspace_id,
-      sessionId: req.query.session_id,
-    });
+    source = await acquireFsSource(core, req.query.environment_id ?? 'local');
   } catch (error) {
     sendAcquireError(reply, requestId, error);
     return;
@@ -378,8 +320,6 @@ async function handleFsContent(
 const fsMkdirBodySchema = z.object({
   path: z.string().min(1),
   environment_id: z.string().min(1).optional(),
-  workspace_id: z.string().min(1).optional(),
-  session_id: z.string().min(1).optional(),
 });
 
 const fsMkdirResponseSchema = z.object({
@@ -388,7 +328,7 @@ const fsMkdirResponseSchema = z.object({
 
 interface FsMkdirRequest {
   id: string;
-  body: { path: string; environment_id?: string; workspace_id?: string; session_id?: string };
+  body: { path: string; environment_id?: string };
 }
 
 async function handleFsMkdir(
@@ -407,10 +347,7 @@ async function handleFsMkdir(
 
   let source: EnvironmentReadStreamSource;
   try {
-    source = await acquireFsSource(core, req.body.environment_id ?? 'local', {
-      workspaceId: req.body.workspace_id,
-      sessionId: req.body.session_id,
-    });
+    source = await acquireFsSource(core, req.body.environment_id ?? 'local');
   } catch (error) {
     sendAcquireError(reply, requestId, error);
     return;

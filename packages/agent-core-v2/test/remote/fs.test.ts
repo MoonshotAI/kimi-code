@@ -207,15 +207,6 @@ describe('fs group over a subprocess loopback', () => {
     await expect(fs.stat(dir)).rejects.toMatchObject({ code: 'os.fs.not_found' });
   });
 
-  it('creates a directory with a unix mode and reads it back', async () => {
-    const dir = join(workDir, 'private');
-    await fs.mkdir(dir, { mode: 0o700 });
-
-    const st = await fs.stat(dir);
-    expect(st.isDirectory).toBe(true);
-    expect(st.mode).toBe(0o700);
-  });
-
   it('reads back the unix mode of an existing file', async () => {
     const file = join(workDir, 'mode.txt');
     await fs.writeText(file, 'x');

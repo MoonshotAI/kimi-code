@@ -259,10 +259,8 @@ export class Session {
   }
 
   /**
-   * List the environments registered for this session's workspace: `local`
-   * plus every declared environment with its connection status, plus the ssh
-   * host candidates discovered from `~/.ssh/config` for the environment-add
-   * flow.
+   * List the environments available to this session: `local` plus every
+   * declared environment, with its type and connection status.
    */
   async listEnvironments(): Promise<SessionEnvironmentsInfo> {
     this.ensureOpen();

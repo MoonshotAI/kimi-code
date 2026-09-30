@@ -260,18 +260,26 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             {
               telemetry,
               providerType: resolved.profile.getModelProviderType(req.body.model),
-              resolveOriginalsDir: async () => {
-                const session = await resumeSessionById(core.accessor, session_id);
-                if (session === undefined) return undefined;
-                return sessionMediaOriginalsDir(session.accessor.get(ISessionContext).sessionDir);
-              },
-              resolveOriginalsTarget: environmentMedia.resolveOriginalsTarget,
-              resolveAttachmentsDir: async () => {
-                const session = await resumeSessionById(core.accessor, session_id);
-                if (session === undefined) return undefined;
-                return join(session.accessor.get(ISessionContext).sessionDir, 'attachments');
-              },
-              resolveAttachmentsTarget: environmentMedia.resolveAttachmentsTarget,
+              resolveOriginalsTarget: environmentMedia.resolveOriginalsTarget ?? (async () => {
+                try {
+                  const session = await resumeSessionById(core.accessor, session_id);
+                  return session === undefined
+                    ? undefined
+                    : { dir: sessionMediaOriginalsDir(session.accessor.get(ISessionContext).sessionDir) };
+                } catch {
+                  return undefined;
+                }
+              }),
+              resolveAttachmentsTarget: environmentMedia.resolveAttachmentsTarget ?? (async () => {
+                try {
+                  const session = await resumeSessionById(core.accessor, session_id);
+                  return session === undefined
+                    ? undefined
+                    : { dir: join(session.accessor.get(ISessionContext).sessionDir, 'attachments') };
+                } catch {
+                  return undefined;
+                }
+              }),
             },
           );
         } finally {

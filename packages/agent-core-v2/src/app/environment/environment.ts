@@ -6,7 +6,7 @@ export interface EnvironmentResolver extends Pick<EnvironmentRegistry, 'inspect'
   readonly _serviceBrand: undefined;
 }
 
-export interface IEnvironmentService extends EnvironmentResolver, Pick<EnvironmentRegistry, 'onDidChange' | 'list' | 'snapshot' | 'current' | 'register' | 'drainSession'> {
+export interface IEnvironmentService extends EnvironmentResolver, Pick<EnvironmentRegistry, 'onDidChange' | 'snapshot' | 'current' | 'register' | 'drainSession'> {
   readonly ready: Promise<void>;
   addProvider(factory: EnvironmentProviderFactory): Promise<{ dispose(): Promise<void> }>;
 }

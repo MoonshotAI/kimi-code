@@ -1824,9 +1824,6 @@ export class KimiTUI {
   handleTurnEnded(event: TurnEndedEvent): void {
     this.staging.handleTurnEnded(event);
     this.surveyController.notifyTurnEnded(event.traceId);
-    // A disconnect mid-turn surfaces here: the footer slot flips to the error
-    // color. The next tool call reconnects.
-    void this.refreshEnvironmentSlot();
   }
 
   releaseStagingMedia(mediaAttachmentIds: readonly number[]): void {
@@ -2620,9 +2617,9 @@ export class KimiTUI {
   /**
    * Sync the footer environment slot with the session's current binding and the
    * environment registry's connection status. A disconnect is footer state only;
-   * it does not write a transcript notice. Runs at session load, turn end,
-   * explicit environment actions, and on the engine's environment.status.changed
-   * hint (mid-session drops, reconnects).
+   * it does not write a transcript notice. Runs at session load, explicit
+   * environment actions, and on the engine's environment.status.changed hint
+   * (mid-session drops, reconnects).
    */
   async refreshEnvironmentSlot(session: Session | undefined = this.session): Promise<void> {
     if (session === undefined) return;
@@ -2736,7 +2733,7 @@ export class KimiTUI {
         (request, response) => {
           this.appendApprovalTranscriptEntry(request, response);
         },
-        (agentId) => this.resolveApprovalEnvironment(session, agentId),
+        () => this.resolveApprovalEnvironment(),
       ),
     );
     session.setQuestionHandler(createQuestionAskHandler(this.questionController));
@@ -4458,35 +4455,10 @@ export class KimiTUI {
     this.mountEditorReplacement(panel);
   }
 
-  /**
-   * Approval-panel badge for the agent that initiated the request. A subagent
-   * may be bound to a different environment than the main session binding
-   * shown in the footer, so the badge resolves the initiating agent's own
-   * binding through the harness's interactive-agent scope; a local binding
-   * (or a failed lookup) renders no badge rather than a misleading host.
-   */
-  private async resolveApprovalEnvironment(
-    session: Session,
-    agentId: string | undefined,
-  ): Promise<string | undefined> {
-    if (agentId === undefined || agentId === MAIN_AGENT_ID) {
-      const environment = this.state.appState.environment;
-      if (environment === undefined || environment.environmentId === 'local') return undefined;
-      return `${environment.type}:${environment.environmentId}`;
-    }
-    try {
-      const binding = await this.harness.withInteractiveAgent(agentId, () =>
-        session.getEnvironment(),
-      );
-      if (binding.environmentId === 'local') return undefined;
-      const { environments } = await session.listEnvironments();
-      const type =
-        environments.find((entry) => entry.environmentId === binding.environmentId)?.type ??
-        'command';
-      return `${type}:${binding.environmentId}`;
-    } catch {
-      return undefined;
-    }
+  private resolveApprovalEnvironment(): string | undefined {
+    const environment = this.state.appState.environment;
+    if (environment === undefined || environment.environmentId === 'local') return undefined;
+    return `${environment.type}:${environment.environmentId}`;
   }
 
   private hideApprovalPanel(): void {

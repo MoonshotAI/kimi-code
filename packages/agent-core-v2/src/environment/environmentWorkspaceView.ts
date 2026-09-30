@@ -5,8 +5,6 @@ import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import type { Environment, EnvironmentBinding, EnvironmentPath, EnvironmentWorkspaceRoots } from './environment';
 import { DEFAULT_ENVIRONMENT_HOST, POSIX_ENVIRONMENT_PATH, POSIX_ENVIRONMENT_WORKSPACE } from './environmentDefaults';
 
-export type { EnvironmentWorkspaceRoots } from './environment';
-
 export class EnvironmentWorkspaceView {
   readonly binding: EnvironmentBinding;
   readonly host: HostEnvironmentInfo;

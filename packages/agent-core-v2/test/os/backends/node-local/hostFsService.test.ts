@@ -89,16 +89,6 @@ describe('HostFileSystem stat / lstat', () => {
 });
 
 describe('HostFileSystem unix mode', () => {
-  it('creates a directory with the given mode and reads it back via stat', async () => {
-    const target = join(dir, 'private');
-
-    await fs.mkdir(target, { mode: 0o700 });
-
-    const st = await fs.stat(target);
-    expect(st.isDirectory).toBe(true);
-    expect(st.mode).toBe(0o700);
-  });
-
   it('reports the mode of files via stat and lstat', async () => {
     const target = join(dir, 'file.txt');
     await writeFile(target, 'x', 'utf-8');

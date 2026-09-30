@@ -87,7 +87,7 @@ export class EnvironmentRegistry {
   readonly onDidChange: Event<EnvironmentRegistryChange> = this.changeEmitter.event;
   private disposing = false;
 
-  list(): readonly Environment[] {
+  private list(): readonly Environment[] {
     return [...this.entries.values()].map((entry) => entry.environment);
   }
 

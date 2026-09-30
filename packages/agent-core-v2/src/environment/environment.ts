@@ -71,7 +71,6 @@ export interface Environment {
   readonly whenReady?: Promise<void>;
   readonly connectError?: string;
   connect?(): Promise<void>;
-  disconnect?(): void;
   dispose(): void | Promise<void>;
 }
 

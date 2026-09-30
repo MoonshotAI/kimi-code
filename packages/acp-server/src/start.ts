@@ -144,7 +144,6 @@ export async function runAcpServerWithStream(
   acpConnection.bind(client);
   const acpEnvironmentProvider = new AcpEnvironmentProviderFactory(acpConnection, core.accessor.get(IHostEnvironment), core.accessor.get(IHostProcessService));
   const acpProviderRegistration = await core.accessor.get(IEnvironmentService).addProvider(acpEnvironmentProvider);
-  const sessionWorkspaces = new Map<string, string>();
   server = new AcpServer(client, klient, acpConnection, {
     agentInfo: opts.agentInfo,
     disableAuth: opts.disableAuth,
@@ -156,8 +155,7 @@ export async function runAcpServerWithStream(
       if (handle === undefined) throw new Error(`session ${sessionId} is not live`);
       const context = handle.accessor.get(ISessionContext);
       const environmentId = acpEnvironmentProvider.bindSession(sessionId, context.cwd);
-      sessionWorkspaces.set(sessionId, context.workspaceId);
-      const agentContext = await ensureMainAgent(handle, { environmentId });
+      const agentContext = await ensureMainAgent(handle, { environmentId, environmentCwd: context.cwd });
       handle.accessor
         .get(IAgentLifecycleService)
         .handleOf(agentContext.agentId)!
@@ -165,9 +163,6 @@ export async function runAcpServerWithStream(
         .bind(environmentId, context.cwd);
     },
     unbindSessionEnvironment: async (sessionId) => {
-      const workspaceId = sessionWorkspaces.get(sessionId);
-      if (workspaceId === undefined) return;
-      sessionWorkspaces.delete(sessionId);
       await acpEnvironmentProvider.unbindSession(sessionId);
     },
     // Prompt-image compression persists originals into the session's own

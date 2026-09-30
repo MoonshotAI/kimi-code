@@ -160,9 +160,8 @@ export class FsHandler {
     const params = requireParams(rawParams);
     const path = requireAbsolutePath(params, 'path');
     const recursive = optionalBoolean(params, 'recursive') ?? false;
-    const mode = optionalInteger(params, 'mode', 0, 0o7777);
     try {
-      await mkdir(path, { recursive, mode });
+      await mkdir(path, { recursive });
       return EMPTY;
     } catch (error) {
       throw fsDomainError(error, { path, op: 'mkdir' });

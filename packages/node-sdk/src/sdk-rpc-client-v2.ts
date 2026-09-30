@@ -12,10 +12,7 @@
  *   `IWorkspaceSkillCatalog`) instead.
  * - `suggestFiles` → same escape hatch (the workspace handler's
  *   `IWorkspaceFsService`); the v1 client inherits the base's `undefined`
- *   (capability absent). `suggestSessionFiles` is the session-scoped twin:
- *   roots come from the live session's workspace context and the suggest
- *   runs on the session's currently bound environment through the workspace
- *   program's per-environment accessor.
+ *   (capability absent).
  * - `getConfig` / `setConfig` / `removeProvider` / `getConfigDiagnostics` →
  *   `klient.global.config.*`, with the v1 `KimiConfig` shape restored by the
  *   pure mapping layer in `src/v2/config-mapper.ts`.
@@ -1376,7 +1373,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     if (input.environmentCwd !== undefined && input.environmentId === undefined) {
       throw new KimiError(ErrorCodes.REQUEST_INVALID, 'createSession environmentCwd requires environmentId');
     }
-    await assertUsableWorkDir(this.engineAccessor.get(IHostFileSystem), workDir);
     if (input.id !== undefined) {
       const existing =
         this.liveSession(input.id) ??
@@ -1896,17 +1892,18 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * The app's environment registry snapshot (status / generation /
-   * capabilities) joined with the resolved declarations (type / defaultCwd).
+   * The app's environment registry snapshot (status) joined with the resolved
+   * declarations (type).
    */
   override async listEnvironments(input: SessionIdRpcInput): Promise<SessionEnvironmentsInfo> {
     this.requireLiveSession(input.sessionId);
     const declarations = await this.engineAccessor.get(IEnvironmentDeclarationService).declarations();
     const entries = new Map((declarations?.entries ?? []).map((declaration) => [declaration.id, declaration.entry]));
     return {
-      environments: this.engineAccessor.get(IEnvironmentService).snapshot().environments.map((environment) =>
-        environmentEntryInfo(environment, entries.get(environment.environmentId)),
-      ),
+      environments: this.engineAccessor.get(IEnvironmentService).snapshot().environments.map((environment) => {
+        const { defaultCwd: _defaultCwd, ...info } = environmentEntryInfo(environment, entries.get(environment.environmentId));
+        return info;
+      }),
     };
   }
 

@@ -82,10 +82,8 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
         if (session === undefined) {
           throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${req.params.session_id} does not exist`);
         }
-        const workspaceId = session.accessor.get(ISessionContext).workspaceId;
         const declarations = await resolveDeclarations(core);
         const payload: SessionEnvironmentsResponse = {
-          workspace_id: workspaceId,
           environments: core.accessor.get(IEnvironmentService).snapshot().environments.map((environment) =>
             toEntry(environment, declarations.get(environment.environmentId)),
           ),
@@ -120,9 +118,6 @@ function toEntry(environment: EnvironmentGenerationSnapshot, entry: RemoteEnviro
     environment_id: info.environmentId,
     type: info.type,
     status: info.status,
-    generation: info.generation,
-    capabilities: [...info.capabilities],
-    default_cwd: info.defaultCwd,
     connect_error: info.connectError,
   };
 }

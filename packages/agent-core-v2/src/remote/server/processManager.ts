@@ -9,7 +9,6 @@ import {
   PROCESS_CLOSED_METHOD,
   type ProcessOutputStream,
   type ProcessStartResult,
-  type ProcessWriteResult,
 } from '#/remote/protocol/methods';
 import {
   optionalBoolean,
@@ -262,7 +261,7 @@ export class ProcessManager {
     }
   }
 
-  async write(rawParams: unknown): Promise<ProcessWriteResult> {
+  async write(rawParams: unknown): Promise<typeof EMPTY> {
     const params = requireParams(rawParams);
     const processId = requireString(params, 'processId');
     const chunkBase64 = params['chunkBase64'];
@@ -274,48 +273,35 @@ export class ProcessManager {
       throw new RpcError(RpcErrorCode.InvalidParams, 'eof writes must carry an empty chunk');
     }
     const entry = this.processes.get(processId);
-    if (entry === undefined) {
-      return { status: this.exitedGroups.has(processId) ? 'stdinClosed' : 'unknownProcess' };
-    }
-    if (!entry.stdinOpen) {
-      return { status: 'stdinClosed' };
+    if (entry === undefined || !entry.stdinOpen) {
+      return EMPTY;
     }
     if (eof) {
       entry.stdinOpen = false;
       entry.child?.stdin?.end();
-      return { status: 'accepted' };
+      return EMPTY;
     }
     const chunk = Buffer.from(chunkBase64, 'base64');
     if (chunk.length > 0) {
       const stdin = entry.child?.stdin;
       if (stdin === null || stdin === undefined) {
         entry.stdinOpen = false;
-        return { status: 'stdinClosed' };
+        return EMPTY;
       }
 
       if (!stdin.write(chunk)) {
-        const settled = await new Promise<'drain' | 'broken'>((resolve) => {
-          const cleanup = (): void => {
-            stdin.off('drain', onDrain);
-            entry.stdinWaiters.delete(onBroken);
+        await new Promise<void>((resolve) => {
+          const settle = (): void => {
+            stdin.off('drain', settle);
+            entry.stdinWaiters.delete(settle);
+            resolve();
           };
-          const onDrain = (): void => {
-            cleanup();
-            resolve('drain');
-          };
-          const onBroken = (): void => {
-            cleanup();
-            resolve('broken');
-          };
-          stdin.once('drain', onDrain);
-          entry.stdinWaiters.add(onBroken);
+          stdin.once('drain', settle);
+          entry.stdinWaiters.add(settle);
         });
-        if (settled === 'broken' || !entry.stdinOpen) {
-          return { status: 'stdinClosed' };
-        }
       }
     }
-    return { status: 'accepted' };
+    return EMPTY;
   }
 
   async signal(rawParams: unknown): Promise<typeof EMPTY> {

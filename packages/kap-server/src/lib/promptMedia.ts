@@ -132,9 +132,7 @@ export function contentToCoreParts(content: WireContent): ContentPart[] {
 }
 
 export interface ResolvePromptMediaOptions {
-  readonly resolveOriginalsDir?: () => Promise<string | undefined>;
   readonly resolveOriginalsTarget?: () => Promise<PromptAttachmentsTarget | undefined>;
-  readonly resolveAttachmentsDir?: () => Promise<string | undefined>;
   readonly resolveAttachmentsTarget?: () => Promise<PromptAttachmentsTarget | undefined>;
   readonly telemetry?: ITelemetryService;
   readonly providerType?: string;
@@ -142,8 +140,8 @@ export interface ResolvePromptMediaOptions {
 
 export interface PromptAttachmentsTarget {
   readonly dir: string;
-  readonly fs: IHostFileSystem;
-  readonly path: EnvironmentPath;
+  readonly fs?: IHostFileSystem;
+  readonly path?: EnvironmentPath;
 }
 
 export interface EnvironmentMediaTargets {
@@ -206,7 +204,7 @@ function localAttachmentSink(dir: string): AttachmentSink {
   };
 }
 
-function environmentAttachmentSink(target: PromptAttachmentsTarget): AttachmentSink {
+function environmentAttachmentSink(target: { readonly dir: string; readonly fs: IHostFileSystem; readonly path: EnvironmentPath }): AttachmentSink {
   return {
     dir: target.dir,
     join: (...parts) => target.path.join(...parts),
@@ -251,21 +249,12 @@ export async function resolvePromptMediaFiles(
     await Promise.all([...stagedPaths].map((path) => sink.remove(path).catch(() => undefined)));
   };
   let changed = false;
-  let originals:
-    | { readonly dir?: string; readonly fs?: IHostFileSystem; readonly path?: EnvironmentPath }
-    | undefined;
+  let originals: PromptAttachmentsTarget | undefined;
   let originalsResolved = false;
-  const resolveOriginals = async (): Promise<
-    { readonly dir?: string; readonly fs?: IHostFileSystem; readonly path?: EnvironmentPath } | undefined
-  > => {
+  const resolveOriginals = async (): Promise<PromptAttachmentsTarget | undefined> => {
     if (!originalsResolved) {
       originalsResolved = true;
-      const target = await options.resolveOriginalsTarget?.();
-      if (target !== undefined) {
-        originals = { dir: target.dir, fs: target.fs, path: target.path };
-      } else {
-        originals = { dir: await options.resolveOriginalsDir?.().catch(() => undefined) };
-      }
+      originals = await options.resolveOriginalsTarget?.();
     }
     return originals;
   };
@@ -275,9 +264,9 @@ export async function resolvePromptMediaFiles(
     if (attachmentsSink !== undefined) return attachmentsSink;
     const target = await options.resolveAttachmentsTarget?.();
     const base =
-      target !== undefined
-        ? environmentAttachmentSink(target)
-        : localAttachmentSink(await options.resolveAttachmentsDir?.().catch(() => undefined) ?? cacheDir);
+      target?.fs !== undefined && target.path !== undefined
+        ? environmentAttachmentSink({ dir: target.dir, fs: target.fs, path: target.path })
+        : localAttachmentSink(target?.dir ?? cacheDir);
     attachmentsSink = {
       ...base,
       write: async (path, data) => {

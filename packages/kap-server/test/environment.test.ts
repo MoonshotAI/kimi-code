@@ -34,14 +34,10 @@ interface EnvironmentEntryWire {
   environment_id: string;
   type: 'local' | 'ssh' | 'docker' | 'command';
   status: string;
-  generation: string;
-  capabilities: string[];
-  default_cwd?: string;
   connect_error?: string;
 }
 
 interface EnvironmentsWire {
-  workspace_id: string;
   environments: EnvironmentEntryWire[];
 }
 
@@ -169,8 +165,8 @@ describe('server-v2 /api/v1 environment routes', () => {
       expect(environments.body.code).toBe(0);
       const byId = new Map(environments.body.data.environments.map((entry) => [entry.environment_id, entry]));
       expect(byId.get('local')).toMatchObject({ type: 'local', status: 'ready' });
-      expect(byId.get('loop')).toMatchObject({ type: 'command', status: 'pending', default_cwd: '/tmp' });
-      expect(byId.get('dying')).toMatchObject({ type: 'command', status: 'pending', default_cwd: '/tmp' });
+      expect(byId.get('loop')).toMatchObject({ type: 'command', status: 'pending' });
+      expect(byId.get('dying')).toMatchObject({ type: 'command', status: 'pending' });
       expect(byId.get('loop')?.connect_error).toBeUndefined();
     });
 

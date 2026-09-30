@@ -293,10 +293,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
   }
 
   private async ensurePlanDirectory(target: PlanFileTarget): Promise<void> {
-    await target.fs.mkdir(target.environmentPath.dirname(target.path), {
-      recursive: true,
-      mode: 0o700,
-    });
+    await target.fs.mkdir(target.environmentPath.dirname(target.path), { recursive: true });
   }
 }
 

@@ -7222,19 +7222,8 @@ command = "vim"
     });
   });
 
-  it('shows the initiating subagent environment badge on the approval panel', async () => {
-    const session = makeSession({
-      getEnvironment: vi.fn(async () => ({
-        environmentId: 'sub-box',
-        cwd: '/remote/sub',
-      })),
-      listEnvironments: vi.fn(async () => ({
-        environments: [
-          { environmentId: 'main-box', type: 'ssh', status: 'ready', generation: 'g1', capabilities: [] },
-          { environmentId: 'sub-box', type: 'docker', status: 'ready', generation: 'g2', capabilities: [] },
-        ],
-      })),
-    });
+  it('shows the main session binding badge for subagent approval requests', async () => {
+    const session = makeSession();
     const { driver } = await makeDriver(session);
     driver.state.appState.environment = { environmentId: 'main-box', type: 'ssh', status: 'ready' };
 
@@ -7257,22 +7246,14 @@ command = "vim"
 
     await vi.waitFor(() => {
       const approval = stripSgr(driver.state.editorContainer.render(120).join('\n'));
-      expect(approval).toContain('docker:sub-box');
-      expect(approval).not.toContain('ssh:main-box');
+      expect(approval).toContain('ssh:main-box');
     });
   });
 
-  it('renders no badge for a locally bound subagent under a remote main binding', async () => {
-    const session = makeSession({
-      getEnvironment: vi.fn(async () => ({ environmentId: 'local' })),
-      listEnvironments: vi.fn(async () => ({
-        environments: [
-          { environmentId: 'main-box', type: 'ssh', status: 'ready', generation: 'g1', capabilities: [] },
-        ],
-      })),
-    });
+  it('renders no badge when the session binding is local', async () => {
+    const session = makeSession();
     const { driver } = await makeDriver(session);
-    driver.state.appState.environment = { environmentId: 'main-box', type: 'ssh', status: 'ready' };
+    driver.state.appState.environment = { environmentId: 'local', type: 'local', status: 'ready' };
 
     const approvalHandler = vi.mocked(session.setApprovalHandler).mock.calls[0]?.[0] as
       | ((request: ApprovalRequest & { agentId?: string }) => Promise<ApprovalResponse>)
@@ -7295,7 +7276,8 @@ command = "vim"
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(ApprovalPanelComponent);
     });
     const approval = stripSgr(driver.state.editorContainer.render(120).join('\n'));
-    expect(approval).not.toContain('ssh:main-box');
+    expect(approval).not.toContain('ssh:');
+    expect(approval).not.toContain('docker:');
   });
 
   it('keeps the main session binding as the approval badge for main-agent requests', async () => {
