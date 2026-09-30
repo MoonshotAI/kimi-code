@@ -150,7 +150,7 @@ export function resolveDefaultMaxTokens(model: string, override?: number): numbe
   const parsed = parseAnthropicModelVersion(model, true);
   const ceiling = parsed === null ? undefined : lookupClaudeCeiling(parsed);
   if (ceiling === undefined) {
-    return override ?? FALLBACK_MAX_TOKENS;
+    return Math.min(override ?? FALLBACK_MAX_TOKENS, FALLBACK_MAX_TOKENS);
   }
   return override === undefined ? ceiling : Math.min(override, ceiling);
 }
