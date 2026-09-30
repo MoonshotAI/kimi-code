@@ -10,7 +10,7 @@ import {
   type SkillActivatedEvent,
   type SkillSummary,
 } from '#/index';
-import type { SDKRpcClientBase } from '#/rpc';
+import type { SDKRpcClientBase, SessionPromptWithSkillsRpcInput } from '#/rpc';
 
 import {
   makeTempDir,
@@ -48,6 +48,32 @@ afterEach(async () => {
 });
 
 describe('Session skills', () => {
+  it('keeps the legacy RPC method compatible and uses a separate result method for steering', async () => {
+    expectTypeOf<SDKRpcClientBase['promptWithSkills']>().toEqualTypeOf<
+      (input: SessionPromptWithSkillsRpcInput) => Promise<void>
+    >();
+
+    const promptWithSkills = vi.fn(async () => {});
+    const result = { turn_id: 7, prompt_id: 'prompt-7', created_at: 'now', state: 'running' as const };
+    const promptWithSkillsResult = vi.fn(async () => result);
+    const session = new Session({
+      id: 'ses_skill_rpc_compat',
+      workDir: '/tmp/work',
+      rpc: { promptWithSkills, promptWithSkillsResult } as unknown as SDKRpcClientBase,
+    });
+
+    await expect(session.promptWithSkills('Review this.', [{ name: 'review' }])).resolves.toBeUndefined();
+    expect(promptWithSkills).toHaveBeenCalledOnce();
+    expect(promptWithSkillsResult).not.toHaveBeenCalled();
+
+    await expect(session.promptWithSkills('Review this.', [{ name: 'review' }], {
+      steerIfActive: true,
+    })).resolves.toEqual(result);
+    expect(promptWithSkillsResult).toHaveBeenCalledWith(expect.objectContaining({
+      steerIfActive: true,
+    }));
+  });
+
   it('submits multiple skills with a prompt as one grouped turn', async () => {
     const restoreEnv = scrubConfigEnv();
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-home-');

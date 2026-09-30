@@ -2051,7 +2051,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * message, so the bundle launches as one turn and undoes as a single
    * anchor. v2-only: the base class rejects this method on the v1 engine.
    */
-  override async promptWithSkills(input: SessionPromptWithSkillsRpcInput) {
+  override async promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<void> {
+    await this.promptWithSkillsResult(input);
+  }
+
+  override async promptWithSkillsResult(input: SessionPromptWithSkillsRpcInput) {
     const agent = await this.agentFacade(input.sessionId);
     return agent.promptWithSkills({
       input: input.input,

@@ -54,7 +54,11 @@ export interface EditorKeyboardHost {
   shouldDeferSteerBatch(): boolean;
   beginSteerBatch(): void;
   finishSteerBatch(drainQueued: boolean): void;
-  steerMessage(session: Session, input: readonly SteerInputItem[]): Promise<boolean> | boolean;
+  steerMessage(
+    session: Session,
+    input: readonly SteerInputItem[],
+    onSettled?: (steered: boolean) => void,
+  ): Promise<boolean> | boolean;
   steerSkillMessage(session: Session, item: QueuedMessage): Promise<boolean>;
   steerSkillActivation(session: Session, skillName: string, skillArgs: string): Promise<void> | void;
   validateMediaCapabilities(extraction: {
@@ -459,6 +463,7 @@ export class EditorKeyboardController {
           const accepted = new Set<QueuedMessage>();
           let draftAccepted = false;
           let batchFailed = false;
+          let skillBundleAccepted = false;
           try {
             for (const run of runs) {
               if (hasSkillMessage && host.shouldDeferSteerBatch()) {
@@ -471,7 +476,13 @@ export class EditorKeyboardController {
               }
               let success: boolean | void;
               try {
-                if (run.kind === 'text') success = await host.steerMessage(session, run.items);
+                if (run.kind === 'text') {
+                  success = skillBundleAccepted
+                    ? await host.steerMessage(session, run.items, () => {
+                        host.updateQueueDisplay();
+                      })
+                    : await host.steerMessage(session, run.items);
+                }
                 else if (run.kind === 'skill') {
                   success = await host.steerSkillActivation(
                     session,
@@ -483,7 +494,7 @@ export class EditorKeyboardController {
                 host.showError(`Failed to steer: ${formatErrorMessage(error)}`);
                 success = false;
               }
-              if (run.kind === 'text' && success === false) {
+              if (run.kind === 'text' && success === false && !skillBundleAccepted) {
                 for (const item of run.queued) accepted.add(item);
                 if (run.draft) draftAccepted = true;
                 if (!hasSkillMessage) success = true;
@@ -506,6 +517,7 @@ export class EditorKeyboardController {
                 if (run.draft) draftAccepted = true;
               } else if (run.kind === 'skill' || !run.draft) accepted.add(run.item);
               else draftAccepted = true;
+              if (run.kind === 'bundle') skillBundleAccepted = true;
             }
           } finally {
             if (hasSkillMessage) host.finishSteerBatch(!batchFailed);

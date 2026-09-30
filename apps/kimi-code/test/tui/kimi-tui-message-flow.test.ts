@@ -973,6 +973,42 @@ describe('KimiTUI message flow', () => {
     ]);
   });
 
+  it('waits for a pending video upload before submitting a leading skill message', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.skillCommandMap.set('skill:review', 'review');
+    const source = join(await makeTempHome(), 'clip.mp4');
+    await writeFile(source, 'video bytes');
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addVideo('video/mp4', source);
+    let finishUpload!: () => void;
+    attachment.pending = new Promise<void>((resolve) => {
+      finishUpload = () => {
+        imageStore.completeVideo(attachment, { fileId: 'file-video' });
+        resolve();
+      };
+    });
+
+    driver.handleUserInput(`/skill:review inspect ${attachment.placeholder}`);
+    expect(session.promptWithSkills).not.toHaveBeenCalled();
+    finishUpload();
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledOnce();
+    });
+    const [input, skills] = vi.mocked(session.promptWithSkills).mock.calls[0] as unknown as [
+      unknown,
+      readonly { name: string; args?: string }[],
+    ];
+    expect(input).toContainEqual({ type: 'video_url', videoUrl: { url: 'kimi-file://file-video' } });
+    expect(skills[0]).toEqual(expect.objectContaining({
+      name: 'review',
+      args: expect.stringContaining('Attached video file:'),
+    }));
+    expect(driver.state.editor.getText()).toBe('');
+  });
+
   it('does not append a user entry when the grouped submission is rejected (v2 engine)', async () => {
     const session = makeSession({
       id: 'ses-lazy',
@@ -4677,6 +4713,44 @@ command = "vim"
     ]));
     expect(session.steer).toHaveBeenCalledOnce();
     expect(session.promptWithSkills).not.toHaveBeenCalled();
+  });
+
+  it('restores plain input and media when steering fails after a skill message', async () => {
+    const session = makeSession({ steer: vi.fn(async () => { throw new Error('Turn closed'); }) });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addImage(new Uint8Array([0xaa]), 'image/png', 1, 1);
+    driver.state.queuedMessages = [
+      { text: 'check /skill:review', agentId: 'main', inlineSkillActivations: [{ skillName: 'review' }] },
+      {
+        text: `later ${attachment.placeholder}`,
+        agentId: 'main',
+        parts: [
+          { type: 'text', text: 'later ' },
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
+        ],
+        imageAttachmentIds: [attachment.id],
+      },
+    ];
+
+    driver.state.editor.onCtrlS?.();
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledOnce();
+      expect(session.steer).toHaveBeenCalledOnce();
+      expect(driver.state.queuedMessages).toEqual([
+        expect.objectContaining({ text: `later ${attachment.placeholder}`, imageAttachmentIds: [attachment.id] }),
+      ]);
+    });
+    await vi.waitFor(() => {
+      expect(driver.state.transcriptEntries.map((entry) => entry.content)).not.toContain(
+        `later ${attachment.placeholder}`,
+      );
+    });
+    expect(imageStore.get(attachment.id)).toBeDefined();
   });
 
   it('does not retry a rejected skill steer when the original turn has ended', async () => {

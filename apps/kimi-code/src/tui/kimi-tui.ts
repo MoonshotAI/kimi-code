@@ -1488,6 +1488,14 @@ export class KimiTUI {
       return;
     }
     let extraction: ReturnType<typeof extractMediaAttachments>;
+    if (preExtracted === undefined) {
+      const ingestionWait = pendingMediaIngestions(
+        text,
+        this.imageStore,
+        MEDIA_INGESTION_SUBMIT_WAIT_MS,
+      );
+      if (ingestionWait !== undefined) await ingestionWait;
+    }
     try {
       extraction = preExtracted ?? extractMediaAttachments(text, this.imageStore);
     } catch (error) {

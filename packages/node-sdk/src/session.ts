@@ -170,13 +170,14 @@ export class Session {
     options?: { steerIfActive?: boolean },
   ): Promise<void | PromptWithSkillsResult> {
     this.ensureOpen();
-    const result = await this.rpc.promptWithSkills({
+    const rpcInput = {
       sessionId: this.id,
       input: normalizePromptInput(input),
       skills,
       steerIfActive: options?.steerIfActive,
-    });
-    if (options?.steerIfActive === true) return result;
+    };
+    if (options?.steerIfActive === true) return this.rpc.promptWithSkillsResult(rpcInput);
+    await this.rpc.promptWithSkills(rpcInput);
   }
 
   /** Execute a user-initiated `!` shell command (silent — does not prompt the

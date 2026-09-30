@@ -5,7 +5,7 @@ import type { PromptWithSkillsResult } from '@moonshot-ai/agent-core-v2/features
 import type { Kaos } from '@moonshot-ai/kaos';
 
 import type { AgentContextData } from '#/context';
-import { ErrorCodes, makeErrorPayload } from '#/errors';
+import { ErrorCodes, KimiError, makeErrorPayload } from '#/errors';
 import type {
   ApprovalHandler,
   Event,
@@ -330,7 +330,13 @@ export abstract class SDKRpcClientBase {
 
   abstract prompt(input: SessionPromptRpcInput): Promise<void>;
 
-  abstract promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<PromptWithSkillsResult>;
+  abstract promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<void>;
+
+  async promptWithSkillsResult(
+    _input: SessionPromptWithSkillsRpcInput,
+  ): Promise<PromptWithSkillsResult> {
+    throw new KimiError(ErrorCodes.NOT_IMPLEMENTED, 'Skill message steering is not supported');
+  }
 
   abstract runShellCommand(input: {
     sessionId: string;
