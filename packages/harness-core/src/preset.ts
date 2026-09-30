@@ -13,6 +13,7 @@ import { createTask } from '#/features/task/feature';
 import { timing } from '#/features/timing/feature';
 import { todo } from '#/features/todo/feature';
 import { tokenCounting } from '#/features/tokenCounting/feature';
+import { createToolDedupe } from '#/features/toolDedupe/feature';
 import { usage } from '#/features/usage/feature';
 
 export const features: readonly FeatureSpec[] = [
@@ -34,4 +35,5 @@ export const features: readonly FeatureSpec[] = [
   createTask(),
   createSwarm(),
   tokenCounting,
+  createToolDedupe(),
 ];

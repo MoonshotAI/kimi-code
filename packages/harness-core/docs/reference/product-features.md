@@ -344,6 +344,15 @@
 - feature-http：`GET /capabilities` / `GET /capabilities/:capability_id` / `POST /capabilities/:tail`（`:install`）；错误映射 404/40418、409/40924/40925（kap 同值），facade 缺席 409（40947）。
 - 端口缺口：`host.fs` 无 X_OK/mode 面，可执行性检测为近似（在案）。
 
+## toolDedupe（工厂，默认名单）
+
+`createToolDedupe()`：repeat-breaker 护栏（v2 `agent/toolDedupe` 迁移），agent 层 spec 常驻（v2 为 Agent scope OnScopeCreated）。三机制：同步去重、跨步连击提醒、force-stop 后 handoff 收尾。
+
+- 同步去重（`useBeforeTool` + `useAfterTool`）：同一步内 key（`toolName + canonical(args)`，键排序稳定 stringify，feature 内自实现；raw arguments 自解析，parse 失败以原始字符串入 key——v2 registerSkipped 语义并入唯一 beforeTool 路径）相同的调用只执行一次；重复调用拿 denied 占位结果，afterTool 内 await 原始调用的 deferred，resolve 为原始调用 post-reminder 最终结果（v2 executor 双 hook 对映为贡献点双 hook）。原始调用 execute 抛异常（afterTool 不运行）经 `agent.on('tool.done')` 非成功出口兜底 resolve（v2 因 executor 全 catch 无此路径——新架构防 turn 级死锁的必要补丁）。
+- 连击（streak）：`useAfterStep` 步边界结算（本步调用序列折叠进 consecutiveKey/consecutiveCount；原始调用完成时以 stepCalls[0..index] 重算 streak）；阈值 3/5/8 追加 REMINDER_TEXT_1/makeReminderText2(streak)/REMINDER_TEXT_3（三段文案与 systemReminderText 包装逐字照抄 v2），≥12 结果置 `stopTurn: true`。reminder 追加：ContentPart[] 拼到最后一个 text part 或新增 text part（v2 的 string 输出形被新架构 ContentPart[] 统一）；v2 的 spill.suffix 同步追加不迁（新 ToolResult 无 spill 面）、stopTurnReason 不迁（ToolResult 无该字段，TurnOutcome 无 reason 面）。
+- handoff：force-stop 步的 afterStep 置 pending 并 `agent.notify` 空 user 消息（v2 `loop.notify({bypassMaxSteps})` 同 turn 收尾步在新架构映射为紧随的新 turn——新架构无 bypassMaxSteps，第 75 轮已定不迁；空消息触发对齐第 72 轮 retry 先例）。下一 turn 首步 `useBeforeStep` 置 active，期间一切 tool call 被 veto 为 HANDOFF_VETO_TEXT + isError + stopTurn（文案逐字），该步 afterStep 置 done 并结算 `tool_call_repeat_handoff {outcome: vetoed|text}`；handoff 通知与真实 prompt 合并 drain 时丢弃本次 handoff（turn.started `entry` 非空判定，对齐 v2 onDrop）。新 turn 经 `turn.started` 重置 consecutive/handoff/turn 级记录（v2 turnId 变更检测对映）。
+- 遥测：`tool_call_turn_repeat` / `tool_call_dedup_detected {dup_type: same_step|cross_step}` / `tool_call_repeat {action: none|r1|r2|r3|stop}` / `tool_call_repeat_handoff` 四自定义事件经 `useTelemetryEvents` 注册 + `TelemetryRef` 可选探测上报（undo 先例，telemetry feature 缺席静默跳过——preset 未挂 telemetry）；v2 的 `toolExecutor.recordDupType` 在 `tool_call` 事件上标 dup_type 不迁（框架 tool_call 事件面无 dup_type 字段，recordDupType 通道无对应物）；trace_id 字段不迁（hook 输入无 request trace 句柄）。
+
 ## 已有 Feature 速查
 
 | Feature | 形态 | 层 | 默认名单 |
@@ -370,3 +379,4 @@
 | createAgentsMdReminder | 工厂 | agent | 否 |
 | createWorkspaces | 工厂 | app | 否 |
 | createCapabilities | 工厂 | app | 否 |
+| createToolDedupe | 工厂 | agent | 是 |
