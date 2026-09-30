@@ -1,4 +1,5 @@
-import { promptDisplayTextFromContentParts } from '../../agent/prompt/promptMetadataText';
+import { extractImageCompressionCaptions } from '#/llm/media/imageCaption';
+import { matchSingleMediaPathTag } from '#/llm/media/pathTag';
 import type { ContentPart, TextPart } from '#/llm/message';
 
 export const SKILL_ACTIVATION_PART_SOURCE = 'skill activation';
@@ -82,6 +83,33 @@ export function stripBundledSkillBlocks(message: SteerMessage): ContentPart[] {
   return annotateBundledSkillParts(message.content, bundledSkillActivationsOf(message)).filter(
     (part) => !isSkillActivationPart(part),
   );
+}
+
+export function promptDisplayTextFromContentParts(parts: readonly ContentPart[]): string {
+  const texts: string[] = [];
+  for (const part of parts) {
+    const text = promptPartText(part);
+    if (text !== undefined) texts.push(text);
+  }
+  return texts.join('\n');
+}
+
+function promptPartText(part: ContentPart): string | undefined {
+  switch (part.type) {
+    case 'text': {
+      if (matchSingleMediaPathTag(part.text) !== undefined) return undefined;
+      const { text } = extractImageCompressionCaptions(part.text);
+      return text.trim().length === 0 ? undefined : text;
+    }
+    case 'image_url':
+      return '[image]';
+    case 'audio_url':
+      return '[audio]';
+    case 'video_url':
+      return '[video]';
+    case 'think':
+      return undefined;
+  }
 }
 
 export function mergeSteerMessages(messages: readonly SteerMessage[]): {

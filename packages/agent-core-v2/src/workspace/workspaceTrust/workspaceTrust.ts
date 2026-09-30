@@ -1,5 +1,5 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import type { Event } from '#/_base/event';
+import type { Event, IWaitUntil } from '#/_base/event';
 
 export interface WorkspaceTrustChange {
   readonly trusted: boolean;
@@ -17,7 +17,7 @@ export interface IWorkspaceTrust {
   trust(): Promise<void>;
   untrust(): Promise<void>;
 
-  readonly onDidChange: Event<WorkspaceTrustChange>;
+  readonly onDidChange: Event<WorkspaceTrustChange & IWaitUntil>;
 }
 
 export const IWorkspaceTrust: ServiceIdentifier<IWorkspaceTrust> =

@@ -1,7 +1,9 @@
-import { Emitter, type Event } from '#/_base/event';
+import { Emitter, Event } from '#/_base/event';
+import { GitService } from '#/app/git/gitService';
 import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
-import type { RuntimeBinding, RuntimeLease } from '#/runtime/runtime';
-import { RuntimeError, type RuntimeGenerationSnapshot, type RuntimeRegistry, type RuntimeRegistryChange } from '#/runtime/runtimeRegistry';
+import type { Environment, EnvironmentBinding } from '#/environment/environment';
+import { environmentBindingId, LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
+import { EnvironmentError, type EnvironmentGenerationSnapshot, type EnvironmentRegistryChange } from '#/environment/environmentRegistry';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import type { IWorkspaceStateService } from '#/workspace/state/workspaceState';
@@ -36,10 +38,10 @@ import { ExplicitFileSkillSource } from '#/features/skill/workspace/explicitFile
 import { ExtraFileSkillSource } from '#/features/skill/workspace/extraFileSkillSource';
 import { PluginSkillSource } from '#/features/skill/workspace/pluginSkillSource';
 import { WorkspaceRootSkillSource } from '#/features/skill/workspace/rootFileSkillSource';
-import { RuntimeSkillDiscovery } from '#/features/skill/workspace/runtimeSkillDiscovery';
+import { EnvironmentSkillDiscovery } from '#/features/skill/workspace/environmentSkillDiscovery';
 import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
 import { WorkspaceSkillCatalogService } from '#/features/skill/workspace/workspaceSkillCatalogService';
-import type { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { type IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
 import type { ProgramDependencies } from './programDependencies';
 
@@ -72,19 +74,19 @@ export interface ProgramSourceProvenanceSnapshot {
 
 export interface ProgramSnapshot {
   readonly workspaceId: string;
-  readonly binding: RuntimeBinding;
+  readonly binding: EnvironmentBinding;
   readonly status: ProgramStatus;
   readonly ready: boolean;
   readonly generation?: string;
   readonly trusted?: boolean;
   readonly catalog: ProgramCatalogSnapshot;
   readonly sources: ProgramSourceProvenanceSnapshot;
-  readonly runtimes: readonly RuntimeGenerationSnapshot[];
+  readonly environments: readonly EnvironmentGenerationSnapshot[];
 }
 
 interface ProgramGeneration {
   readonly id: string;
-  readonly lease: RuntimeLease;
+  readonly profileContextKey: string;
   readonly state: IWorkspaceStateService;
   readonly dirs: IWorkspaceDirs;
   readonly fs: IWorkspaceFsService;
@@ -107,53 +109,76 @@ interface ProgramGeneration {
   retired: boolean;
 }
 
+interface ProgramShared {
+  readonly mcpConfig: IWorkspaceMcpConfigService;
+  readonly mcp: IWorkspaceMcpService;
+  readonly trust: IWorkspaceTrust;
+  readonly userAgentProfiles: IUserAgentProfileLoader;
+  readonly pluginAgentProfiles: IPluginAgentProfileLoader;
+  readonly explicitAgentProfiles: IExplicitAgentProfileLoader;
+  readonly extraAgentProfiles: IExtraAgentProfileLoader;
+  readonly explicitSkills: ExplicitFileSkillSource;
+  readonly extraSkills: ExtraFileSkillSource;
+  readonly pluginSkills: PluginSkillSource;
+  readonly disposables: readonly { dispose(): void | Promise<void> }[];
+  references: number;
+}
+
 const PROGRAM_CAPABILITIES = ['fs', 'process'] as const;
 
 export class Program {
-  readonly binding: RuntimeBinding;
+  readonly binding: EnvironmentBinding;
   private currentStatus: ProgramStatus = 'preparing';
   private readonly changeEmitter = new Emitter<ProgramSnapshot>();
   readonly onDidChange: Event<ProgramSnapshot> = this.changeEmitter.event;
   private readonly registrySubscription;
-  private readonly resolver: IRuntimeResolver;
-  private generation?: ProgramGeneration;
-  private generationFailed = false;
+  private readonly resolver: EnvironmentResolver;
+  private readonly generations = new Map<string, ProgramGeneration>();
+  private readonly failedGenerations = new Set<string>();
+  private readonly reconciledGenerations = new Map<string, { readonly environmentId: string; readonly cwd?: string }>();
+  private shared: ProgramShared | undefined;
   private disposed = false;
   private resolveReady?: () => void;
   readonly ready = new Promise<void>((resolve) => { this.resolveReady = resolve; });
 
   constructor(
     readonly workspaceId: string,
-    private readonly runtimes: RuntimeRegistry,
+    private readonly environments: Pick<IEnvironmentService, 'inspect' | 'acquire' | 'acquireWhenReady' | 'onDidChange' | 'current' | 'snapshot' | 'drainSession'>,
     private readonly context: IWorkspaceContext,
     private readonly dependencies: ProgramDependencies,
   ) {
-    this.binding = Object.freeze({ workspaceId, runtimeId: 'local' });
+    this.binding = Object.freeze({ environmentId: LOCAL_ENVIRONMENT_ID });
     this.resolver = {
       _serviceBrand: undefined,
-      inspect: (binding) => this.runtimes.inspect(binding),
-      acquire: (binding, required) => this.runtimes.acquire(binding, required),
+      inspect: (binding) => this.environments.inspect(binding),
+      acquire: (binding, required) => this.environments.acquire(binding, required),
+      acquireWhenReady: (binding, required) => this.environments.acquireWhenReady(binding, required),
     };
-    this.registrySubscription = runtimes.onDidChange((change) => this.onRuntimeChange(change));
-    this.reconcileGeneration();
+    this.registrySubscription = environments.onDidChange((change) => this.onEnvironmentChange(change));
+    this.reconcileGeneration(LOCAL_ENVIRONMENT_ID);
   }
 
   get status(): ProgramStatus { return this.currentStatus; }
-  get state(): IWorkspaceStateService { return this.requireGeneration().state; }
-  get dirs(): IWorkspaceDirs { return this.requireGeneration().dirs; }
-  get fs(): IWorkspaceFsService { return this.requireGeneration().fs; }
-  get git(): IWorkspaceGitService { return this.requireGeneration().git; }
-  get instructions(): IWorkspaceInstructionsService { return this.requireGeneration().instructions; }
-  get mcpConfig(): IWorkspaceMcpConfigService { return this.requireGeneration().mcpConfig; }
-  get mcp(): IWorkspaceMcpService { return this.requireGeneration().mcp; }
-  get trust(): IWorkspaceTrust { return this.requireGeneration().trust; }
-  get trustDisclosure(): IWorkspaceTrustDisclosure { return this.requireGeneration().trustDisclosure; }
-  get skills(): IWorkspaceSkillCatalog { return this.requireGeneration().skills; }
-  get agentProfiles(): IWorkspaceAgentProfileLoader { return this.requireGeneration().agentProfiles; }
-  get sessionControllerGeneration(): string { return this.requireGeneration().id; }
+  get state(): IWorkspaceStateService { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).state; }
+  get dirs(): IWorkspaceDirs { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).dirs; }
+  get fs(): IWorkspaceFsService { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).fs; }
+  get git(): IWorkspaceGitService { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).git; }
+  get instructions(): IWorkspaceInstructionsService { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).instructions; }
+  get mcpConfig(): IWorkspaceMcpConfigService { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).mcpConfig; }
+  get mcp(): IWorkspaceMcpService { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).mcp; }
+  get trust(): IWorkspaceTrust { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).trust; }
+  get trustDisclosure(): IWorkspaceTrustDisclosure { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).trustDisclosure; }
+  get skills(): IWorkspaceSkillCatalog { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).skills; }
+  get agentProfiles(): IWorkspaceAgentProfileLoader { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).agentProfiles; }
+  get sessionControllerGeneration(): string { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).id; }
 
-  createSessionController(): SessionLifecycleService {
-    const generation = this.requireGeneration();
+  sessionControllerGenerationFor(environmentId: string, cwd?: string): string {
+    return this.requireGeneration(environmentId, cwd).id;
+  }
+
+  createSessionController(environmentId: string = LOCAL_ENVIRONMENT_ID, cwd?: string): SessionLifecycleService {
+    const generation = this.requireGeneration(environmentId, cwd);
+    this.resolver.acquire({ environmentId }, PROGRAM_CAPABILITIES).dispose();
     generation.references += 1;
     let released = false;
     const release = (): void => {
@@ -162,10 +187,10 @@ export class Program {
       this.releaseGeneration(generation);
     };
     try {
-      const runtime = generation.lease.runtime;
       return this.dependencies.createSessionController({
         context: this.context,
-        fs: runtime.fs!,
+        profileContextKey: generation.profileContextKey,
+        environments: this.environments,
         workspaceAgentProfiles: generation.agentProfiles,
         extraAgentProfiles: generation.extraAgentProfiles,
         explicitAgentProfiles: generation.explicitAgentProfiles,
@@ -184,14 +209,17 @@ export class Program {
   }
 
   snapshot(): ProgramSnapshot {
-    const generation = this.generation;
+    const generation = this.generations.get(LOCAL_ENVIRONMENT_ID);
     const skills = generation?.skills.catalog.listSkills() ?? [];
     const skillsBySource = new Map<string, number>();
     for (const skill of skills) {
       skillsBySource.set(skill.source, (skillsBySource.get(skill.source) ?? 0) + 1);
     }
     const agentProfiles = this.dependencies.agentProfiles.entries()
-      .filter((entry) => entry.workspaceKey === undefined || entry.workspaceKey === this.workspaceId)
+      .filter((entry) =>
+        (entry.workspaceKey === undefined || entry.workspaceKey === this.workspaceId) &&
+        (entry.contextKey === undefined || entry.contextKey === generation?.profileContextKey),
+      )
       .map((entry) => ({
         sourceId: entry.sourceId,
         priority: entry.priority,
@@ -221,7 +249,7 @@ export class Program {
         instructionPaths: generation?.instructions.snapshot.agentsMdPaths ?? [],
         mcpServers,
       },
-      runtimes: this.runtimes.snapshot().runtimes,
+      environments: this.environments.snapshot().environments,
     };
   }
 
@@ -229,42 +257,61 @@ export class Program {
     if (this.disposed) return;
     this.disposed = true;
     this.registrySubscription.dispose();
-    const generation = this.generation;
-    this.generation = undefined;
-    if (generation !== undefined) this.retireGeneration(generation);
+    const generations = [...this.generations.values()];
+    this.generations.clear();
+    for (const generation of generations) this.retireGeneration(generation);
+    if (this.shared !== undefined) this.releaseShared(this.shared);
     this.changeEmitter.dispose();
   }
 
-  private requireGeneration(): ProgramGeneration {
-    if (this.generation === undefined) throw new Error(`program ${this.workspaceId} has no available local runtime generation`);
-    return this.generation;
+  private requireGeneration(environmentId: string, cwd?: string): ProgramGeneration {
+    const key = environmentBindingId(environmentId, cwd);
+    let generation = this.generations.get(key);
+    if (generation === undefined && !this.reconciledGenerations.has(key)) {
+      this.reconcileGeneration(environmentId, cwd);
+      generation = this.generations.get(key);
+    }
+    if (generation === undefined) {
+      throw new Error(`program ${this.workspaceId} has no available generation for environment ${environmentId}`);
+    }
+    return generation;
   }
 
-  private onRuntimeChange(change: RuntimeRegistryChange): void {
-    if (change.runtimeId !== 'local' || this.disposed) return;
-    this.reconcileGeneration();
+  private onEnvironmentChange(change: EnvironmentRegistryChange): void {
+    if (this.disposed) return;
+    for (const request of this.reconciledGenerations.values()) {
+      if (request.environmentId === change.environmentId) {
+        this.reconcileGeneration(request.environmentId, request.cwd);
+      }
+    }
   }
 
-  private reconcileGeneration(): void {
-    const local = this.runtimes.current('local');
-    if (local === undefined) {
-      const previous = this.generation;
-      this.generation = undefined;
+  private reconcileGeneration(environmentId: string, cwd?: string): void {
+    const key = environmentBindingId(environmentId, cwd);
+    this.reconciledGenerations.set(key, { environmentId, cwd });
+    const current = this.environments.current(environmentId);
+    if (current === undefined) {
+      const previous = this.generations.get(key);
+      this.generations.delete(key);
       if (previous !== undefined) this.retireGeneration(previous);
       this.refresh();
       return;
     }
-    if (this.generation?.id !== local.identity.generation) {
-      const previous = this.generation;
-      this.generationFailed = false;
+    if (this.generations.get(key)?.id !== current.identity.generation) {
+      const previous = this.generations.get(key);
+      this.failedGenerations.delete(key);
       try {
-        const next = this.createGeneration();
-        this.generation = next;
+        const next = this.createGeneration(environmentId, cwd);
+        this.generations.set(key, next);
         if (previous !== undefined) this.retireGeneration(previous);
-        this.observeReadiness(next);
+        this.observeReadiness(key, next);
       } catch (error) {
-        if (!(error instanceof RuntimeError && error.code === 'runtime.unavailable')) {
-          this.generationFailed = true;
+        if (previous !== undefined) {
+          this.generations.delete(key);
+          this.retireGeneration(previous);
+        }
+        if (!(error instanceof EnvironmentError && error.code === 'environment.unavailable')) {
+          this.failedGenerations.add(key);
           this.resolveProgramReady();
         }
       }
@@ -272,40 +319,56 @@ export class Program {
     this.refresh();
   }
 
-  private createGeneration(): ProgramGeneration {
-    const lease = this.resolver.acquire(this.binding, PROGRAM_CAPABILITIES);
-    const runtime = lease.runtime;
+  private createGeneration(environmentId: string, cwd?: string): ProgramGeneration {
+    const lease = this.resolver.acquire({ environmentId }, PROGRAM_CAPABILITIES);
+    const environment = lease.environment;
     const disposables: { dispose(): void | Promise<void> }[] = [];
     const own = <T extends { dispose(): void | Promise<void> }>(value: T): T => {
       disposables.push(value);
       return value;
     };
     try {
+      const localEnvironment = this.environments.current(LOCAL_ENVIRONMENT_ID);
+      if (localEnvironment?.fs === undefined || localEnvironment.host === undefined) {
+        throw new Error(`program ${this.workspaceId} has no local environment fs`);
+      }
+      const localFs = localEnvironment.fs;
+      const targetFs = environment.fs!;
+      const shared = this.shared ??= this.createShared(localEnvironment);
+      shared.references += 1;
+      own({ dispose: () => { this.releaseShared(shared); } });
+      const root = cwd ?? this.context.cwd;
+      const context: IWorkspaceContext = root === this.context.cwd ? this.context : { ...this.context, cwd: root };
       const state = own(new WorkspaceStateService(this.dependencies.appState));
-      const localConfig = new FileProjectLocalConfigService(this.dependencies.bootstrap, runtime.fs!);
-      const dirs = own(new WorkspaceDirsService(this.context, localConfig, this.dependencies.log, state));
-      const git = new WorkspaceGitService(this.context, this.dependencies.git);
-      const fs = new WorkspaceFsService(this.context, dirs, runtime.fs!, this.resolver, this.dependencies.telemetry, git);
-      const instructions = own(new WorkspaceInstructionsService(this.context, runtime.fs!, runtime.environment, this.dependencies.bootstrap, this.dependencies.log, state));
-      const trust = own(new WorkspaceTrustService(this.context, this.dependencies.docs, state, this.dependencies.telemetry, this.dependencies.bootstrap));
-      const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, runtime.fs!, trust, this.dependencies.configStore));
-      const mcp = own(new WorkspaceMcpService(this.context, this.resolver, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager));
-      const userAgentProfiles = own(new UserAgentProfileLoaderService(this.dependencies.bootstrap, runtime.fs!, this.dependencies.log, this.dependencies.builtinAgentProfiles, this.context, this.dependencies.agentProfiles));
-      const pluginAgentProfiles = own(new PluginAgentProfileLoaderService(this.dependencies.plugins, runtime.fs!, this.dependencies.log, userAgentProfiles, this.context, this.dependencies.agentProfiles));
-      const explicitAgentProfiles = own(new ExplicitAgentProfileLoaderService(this.context, this.dependencies.bootstrap, runtime.fs!, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
-      const extraAgentProfiles = own(new ExtraAgentProfileLoaderService(this.dependencies.config, this.context, this.dependencies.bootstrap, runtime.fs!, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
-      const agentProfiles = own(new WorkspaceAgentProfileLoaderService(this.context, runtime.fs!, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
-      const skillDiscovery = new RuntimeSkillDiscovery(this.dependencies.log, runtime.fs!);
+      const localConfig = new FileProjectLocalConfigService(this.dependencies.bootstrap, targetFs);
+      const { trust, mcpConfig, mcp, userAgentProfiles, pluginAgentProfiles, explicitAgentProfiles, extraAgentProfiles, explicitSkills, extraSkills, pluginSkills } = shared;
+      const dirs = own(new WorkspaceDirsService(context, localConfig, this.dependencies.log, state));
+      const git = environmentId === LOCAL_ENVIRONMENT_ID
+        ? new WorkspaceGitService(this.context, this.dependencies.git)
+        : new WorkspaceGitService(context, {
+            current: new GitService(
+              {
+                _serviceBrand: undefined,
+                inspect: () => this.resolver.inspect({ environmentId }),
+                acquire: (_binding, required) => this.resolver.acquire({ environmentId }, required),
+                acquireWhenReady: (_binding, required) => this.resolver.acquireWhenReady({ environmentId }, required),
+              },
+              targetFs,
+            ),
+            onDidChange: Event.None as Event<void>,
+          });
+      const fs = new WorkspaceFsService(context, dirs, targetFs, this.resolver, this.dependencies.telemetry, git, environmentId);
+      const instructions = own(new WorkspaceInstructionsService(context, targetFs, localEnvironment.host, this.dependencies.bootstrap, this.dependencies.log, state, localFs));
+      const profileContextKey = environmentBindingId(environmentId, root);
+      const agentProfiles = own(new WorkspaceAgentProfileLoaderService(context, targetFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles, profileContextKey));
+      const targetSkillDiscovery = new EnvironmentSkillDiscovery(this.dependencies.log, targetFs);
       const userSkills = this.dependencies.userSkills;
-      const explicitSkills = new ExplicitFileSkillSource(skillDiscovery, this.context, this.dependencies.bootstrap);
-      const extraSkills = own(new ExtraFileSkillSource(skillDiscovery, this.dependencies.config, this.context, this.dependencies.bootstrap));
-      const workspaceSkills = own(new WorkspaceRootSkillSource(skillDiscovery, this.context, this.dependencies.config, this.dependencies.bootstrap));
-      const pluginSkills = new PluginSkillSource(skillDiscovery, this.dependencies.plugins);
+      const workspaceSkills = own(new WorkspaceRootSkillSource(targetSkillDiscovery, context, this.dependencies.config, this.dependencies.bootstrap, targetFs, environmentId === LOCAL_ENVIRONMENT_ID));
       const skills = own(new WorkspaceSkillCatalogService(this.dependencies.builtinSkills, userSkills, explicitSkills, extraSkills, workspaceSkills, pluginSkills, state));
-      const trustDisclosure = new WorkspaceTrustDisclosureService(this.context, runtime.fs!, this.dependencies.bootstrap, this.dependencies.config, localConfig, trust, skills, agentProfiles, this.dependencies.agentProfiles, instructions, this.dependencies.log);
+      const trustDisclosure = new WorkspaceTrustDisclosureService(context, targetFs, this.dependencies.bootstrap, this.dependencies.config, localConfig, trust, skills, agentProfiles, this.dependencies.agentProfiles, instructions, this.dependencies.log);
       return {
-        id: runtime.identity.generation,
-        lease,
+        id: environment.identity.generation,
+        profileContextKey,
         state,
         dirs,
         fs,
@@ -329,12 +392,46 @@ export class Program {
       };
     } catch (error) {
       for (const disposable of disposables.toReversed()) void disposable.dispose();
+      throw error;
+    } finally {
       lease.dispose();
+    }
+  }
+
+  private createShared(local: Environment): ProgramShared {
+    const disposables: { dispose(): void | Promise<void> }[] = [];
+    const own = <T extends { dispose(): void | Promise<void> }>(value: T): T => {
+      disposables.push(value);
+      return value;
+    };
+    try {
+      const fs = local.fs!;
+      const state = own(new WorkspaceStateService(this.dependencies.appState));
+      const trust = own(new WorkspaceTrustService(this.context, this.dependencies.docs, state, this.dependencies.telemetry, this.dependencies.bootstrap));
+      const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, fs, trust, this.dependencies.configStore));
+      const mcp = own(new WorkspaceMcpService(this.context, this.resolver, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager));
+      const userAgentProfiles = own(new UserAgentProfileLoaderService(this.dependencies.bootstrap, fs, this.dependencies.log, this.dependencies.builtinAgentProfiles, this.context, this.dependencies.agentProfiles));
+      const pluginAgentProfiles = own(new PluginAgentProfileLoaderService(this.dependencies.plugins, fs, this.dependencies.log, userAgentProfiles, this.context, this.dependencies.agentProfiles));
+      const explicitAgentProfiles = own(new ExplicitAgentProfileLoaderService(this.context, this.dependencies.bootstrap, fs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
+      const extraAgentProfiles = own(new ExtraAgentProfileLoaderService(this.dependencies.config, this.context, this.dependencies.bootstrap, fs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
+      const discovery = new EnvironmentSkillDiscovery(this.dependencies.log, fs);
+      const explicitSkills = new ExplicitFileSkillSource(discovery, this.context, this.dependencies.bootstrap, fs);
+      const extraSkills = own(new ExtraFileSkillSource(discovery, this.dependencies.config, this.context, this.dependencies.bootstrap, fs));
+      const pluginSkills = new PluginSkillSource(discovery, this.dependencies.plugins);
+      return { trust, mcpConfig, mcp, userAgentProfiles, pluginAgentProfiles, explicitAgentProfiles, extraAgentProfiles, explicitSkills, extraSkills, pluginSkills, disposables, references: 1 };
+    } catch (error) {
+      for (const disposable of disposables.toReversed()) void disposable.dispose();
       throw error;
     }
   }
 
-  private observeReadiness(generation: ProgramGeneration): void {
+  private releaseShared(shared: ProgramShared): void {
+    shared.references -= 1;
+    if (shared.references !== 0) return;
+    for (const disposable of shared.disposables.toReversed()) void disposable.dispose();
+  }
+
+  private observeReadiness(key: string, generation: ProgramGeneration): void {
     void Promise.all([
       readiness(generation.dirs),
       readiness(generation.instructions),
@@ -344,13 +441,13 @@ export class Program {
       readiness(generation.agentProfiles),
     ]).then(
       () => {
-        if (this.generation !== generation) return;
+        if (this.generations.get(key) !== generation) return;
         generation.ready = true;
         this.resolveProgramReady();
         this.refresh();
       },
       () => {
-        if (this.generation !== generation) return;
+        if (this.generations.get(key) !== generation) return;
         generation.failed = true;
         this.resolveProgramReady();
         this.refresh();
@@ -366,9 +463,9 @@ export class Program {
 
   private releaseGeneration(generation: ProgramGeneration): void {
     generation.references -= 1;
-    if (generation.references !== 0 || !generation.retired) return;
-    for (const disposable of [...generation.disposables].toReversed()) void disposable.dispose();
-    generation.lease.dispose();
+    if (generation.references === 0 && generation.retired) {
+      for (const disposable of [...generation.disposables].toReversed()) void disposable.dispose();
+    }
   }
 
   private resolveProgramReady(): void {
@@ -377,10 +474,11 @@ export class Program {
   }
 
   private refresh(): void {
-    const local = this.runtimes.current('local');
+    const local = this.environments.current(LOCAL_ENVIRONMENT_ID);
+    const generation = this.generations.get(LOCAL_ENVIRONMENT_ID);
     if (local === undefined || local.status === 'connecting') this.currentStatus = 'preparing';
-    else if (this.generationFailed || this.generation?.failed === true) this.currentStatus = 'degraded';
-    else if (this.generation?.ready !== true) this.currentStatus = this.generation === undefined && local.status !== 'ready' ? 'degraded' : 'preparing';
+    else if (this.failedGenerations.has(LOCAL_ENVIRONMENT_ID) || generation?.failed === true) this.currentStatus = 'degraded';
+    else if (generation?.ready !== true) this.currentStatus = generation === undefined && local.status !== 'ready' ? 'degraded' : 'preparing';
     else this.currentStatus = local.status === 'ready' ? 'ready' : 'degraded';
     this.changeEmitter.fire(this.snapshot());
   }

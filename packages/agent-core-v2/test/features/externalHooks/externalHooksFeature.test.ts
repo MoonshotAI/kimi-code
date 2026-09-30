@@ -7,6 +7,7 @@ import { type InstantiationService } from '#/_base/di/instantiationService';
 import { _clearScopedRegistryForTests, registerScopedService, type Scope } from '#/_base/di/scope';
 import { createScopedTestHost } from '#/_base/di/test';
 import { Event } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IFeatureManager } from '#/app/feature/featureManager';
@@ -24,6 +25,7 @@ import { ISessionExternalHooksService } from '#/features/externalHooks/session/s
 import { IHostProcessService } from '#/os/interface/hostProcess';
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
+import { stubLog } from '../../_base/log/stubs';
 
 function collectionViewOf<T>(scope: Scope, token: CollectionToken<T>): CollectionView<T> {
   return (scope.instantiation as InstantiationService).fiberHost.collectionView(token);
@@ -51,6 +53,7 @@ describe('ExternalHooksFeature — assembly (src/features/externalHooks)', () =>
   it('assembles the feature and retracts all contributions on unprovide', async () => {
     const host = createScopedTestHost([
       [IBootstrapService, stubBootstrap()],
+      [ILogService, stubLog()],
       [
         IConfigService,
         { _serviceBrand: undefined, ready: Promise.resolve(), get: () => undefined },

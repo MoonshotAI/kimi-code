@@ -261,13 +261,13 @@ function requestMatchesETag(
   headers: readonly [string, string][],
   etag: string,
 ): boolean {
-  const candidates = [etag, etag.replace(/^W\//, '')];
+  const candidates = new Set([etag, etag.replace(/^W\//, '')]);
   for (const [name, value] of headers) {
     if (name.toLowerCase() !== 'if-none-match') continue;
     for (const token of value.split(',')) {
       const candidate = token.trim();
       if (candidate === '*') return true;
-      if (candidates.includes(candidate)) return true;
+      if (candidates.has(candidate)) return true;
     }
   }
   return false;
@@ -913,11 +913,11 @@ function requestLocalHttp(
               let varyCovers = false;
               for (let index = 0; index < headers.length; index += 2) {
                 if (headers[index]!.toLowerCase() !== 'vary') continue;
-                const tokens = headers[index + 1]!
+                const tokens = new Set(headers[index + 1]!
                   .toLowerCase()
                   .split(',')
-                  .map((token) => token.trim());
-                if (tokens.includes('*') || tokens.includes('accept-encoding')) varyCovers = true;
+                  .map((token) => token.trim()));
+                if (tokens.has('*') || tokens.has('accept-encoding')) varyCovers = true;
               }
               if (!varyCovers) headers.push('Vary', 'Accept-Encoding');
             }

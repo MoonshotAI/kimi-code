@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { Service } from '@moonshot-ai/agent-core-v2/_base/di/service';
 import { CommandContribution } from '@moonshot-ai/agent-core-v2/agent/command/commandContribution';
 import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
+import { IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2/workspace/workspaceInstance/workspaceInstanceManager';
 import {
   resetModelsDevUpstreamForTest,
   setModelsDevUpstreamForTest,
@@ -536,18 +537,17 @@ export function defineKlientConformance(
       }
     });
 
-    it('agent runtime binding is available through every transport', async () => {
+    it('agent environment binding is available through every transport', async () => {
       const created = await target.klient.global.sessions.create({
         workDir: process.cwd(),
-        title: 'conformance runtime',
+        title: 'conformance environment',
       });
       try {
         const agent = target.klient.session(created.id).agent('main');
-        const binding = await agent.getRuntime();
-        expect(binding.runtimeId).toBe('local');
-        expect(binding.workspaceId.length).toBeGreaterThan(0);
-        await expect(agent.switchRuntime('missing-runtime')).rejects.toThrow(/missing-runtime/);
-        expect(await agent.getRuntime()).toEqual(binding);
+        const binding = await agent.getEnvironment();
+        expect(binding.environmentId).toBe('local');
+        expect(binding).toEqual({ environmentId: 'local' });
+        expect(await agent.getEnvironment()).toEqual(binding);
       } finally {
         await target.klient.session(created.id).close();
       }

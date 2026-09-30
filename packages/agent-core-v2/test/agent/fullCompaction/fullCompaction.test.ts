@@ -580,14 +580,14 @@ describe('FullCompaction', () => {
     expect(pre).toMatchObject({
       hook_event_name: 'PreCompact',
       session_id: 'test-session',
-      cwd: dir,
+      cwd: process.cwd(),
       trigger: 'auto',
       token_count: 6_135,
     });
     expect(post).toMatchObject({
       hook_event_name: 'PostCompact',
       session_id: 'test-session',
-      cwd: dir,
+      cwd: process.cwd(),
       trigger: 'auto',
       estimated_token_count: ctx.contextData().tokenCount,
     });

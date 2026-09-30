@@ -41,7 +41,7 @@ function camelToSnake(str: string): string {
 }
 
 const DEFAULT_CONFIG_FILE_TEXT = `# ~/.kimi-code/config.toml
-# Runtime settings for Kimi Code.
+# Environment settings for Kimi Code.
 # This file starts empty so built-in defaults can apply.
 # Login will populate managed Kimi provider and model entries.
 `;
@@ -279,6 +279,8 @@ export function transformTomlData(data: Record<string, unknown>): Record<string,
       result[targetKey] = transformPlainObject(value);
     } else if (targetKey === 'experimental' && isPlainObject(value)) {
       result[targetKey] = cloneRecord(value);
+    } else if (targetKey === 'environments' && isPlainObject(value)) {
+      result[targetKey] = transformPlainObject(value);
     } else if (targetKey === 'subagent' && isPlainObject(value)) {
       result[targetKey] = transformPlainObject(value);
     } else if (targetKey === 'secondaryModel' && isPlainObject(value)) {

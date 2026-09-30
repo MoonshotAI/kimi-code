@@ -320,6 +320,55 @@ describe('ToolCallComponent', () => {
       const expanded = strip(component.render(100).join('\n'));
       expect(expanded).toContain('echo done');
     });
+
+    it('shows the engine-stamped execution cwd when it differs from the local workDir', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_bash_remote',
+          name: 'Bash',
+          args: { command: 'ls', cwd: 'src' },
+          display: { kind: 'command', command: 'ls', cwd: '/home/deploy/app/src' },
+        },
+        { tool_call_id: 'call_bash_remote', output: 'ok', is_error: false },
+        undefined,
+        '/Users/mac/project',
+      );
+
+      const collapsed = strip(component.render(100).join('\n'));
+      expect(collapsed).toContain('cwd: /home/deploy/app/src');
+
+      component.setExpanded(true);
+      const expanded = strip(component.render(100).join('\n'));
+      expect(expanded).toContain('cwd: /home/deploy/app/src');
+      expect(expanded).toContain('$ ls');
+    });
+
+    it('omits the cwd line when the stamped cwd is the local workDir', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_bash_local',
+          name: 'Bash',
+          args: { command: 'ls' },
+          display: { kind: 'command', command: 'ls', cwd: '/Users/mac/project' },
+        },
+        { tool_call_id: 'call_bash_local', output: 'ok', is_error: false },
+        undefined,
+        '/Users/mac/project',
+      );
+
+      expect(strip(component.render(100).join('\n'))).not.toContain('cwd:');
+    });
+
+    it('omits the cwd line when the call carries no stamped display', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_bash_plain', name: 'Bash', args: { command: 'ls' } },
+        { tool_call_id: 'call_bash_plain', output: 'ok', is_error: false },
+        undefined,
+        '/Users/mac/project',
+      );
+
+      expect(strip(component.render(100).join('\n'))).not.toContain('cwd:');
+    });
   });
 
   describe('NotifyUser card', () => {

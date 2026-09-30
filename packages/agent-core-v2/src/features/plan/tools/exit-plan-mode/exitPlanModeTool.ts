@@ -57,7 +57,7 @@ export class ExitPlanModeTool implements IExitPlanModeTool {
     const display: ToolInputDisplay = {
       kind: 'plan_review',
       plan: data.content,
-      path: data.path,
+      path: data.path ?? undefined,
     };
     if (args.options !== undefined && args.options.length >= 2) {
       display.options = args.options;
@@ -120,7 +120,7 @@ export class ExitPlanModeTool implements IExitPlanModeTool {
     let source: ExitPlanModePlanSource | null;
     try {
       const data = await this.planMode.status();
-      source = data === null ? null : { plan: data.content, path: data.path };
+      source = data === null ? null : { plan: data.content, path: data.path ?? undefined };
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to read plan file.';
       return {

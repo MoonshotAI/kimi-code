@@ -63,7 +63,10 @@ import { type AgentMeta, ISessionMetadata } from '#/session/sessionMetadata/sess
 import { emitAgentRunSpawned, mirrorAgentRun, SubagentStarted } from '#/session/subagent/mirrorAgentRun';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
-import { FORK_EXPERIMENTAL_UNAVAILABLE, forkIncompatibility } from '#/session/subagent/spawn';
+import {
+  FORK_EXPERIMENTAL_UNAVAILABLE,
+  forkIncompatibility,
+} from '#/session/subagent/spawn';
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import {
   buildSubagentModelDescriptions,
@@ -682,7 +685,7 @@ function truncateReason(reason: string): string {
 registerAgentToolService(ISubagentTool, SubagentTool, {
   name: 'Agent',
   domain: 'subagent',
-  requiredRuntimeCapabilities: ['process'],
+  requiredEnvironmentCapabilities: ['process'],
 });
 
 function buildProfileDescriptions(

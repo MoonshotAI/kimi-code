@@ -37,6 +37,7 @@ export class WorkspaceAgentProfileLoaderService
     @ILogService log: ILogService,
     @IUserAgentProfileLoader private readonly user: IUserAgentProfileLoader,
     registry?: IAgentProfileRegistry,
+    protected override readonly contextKey?: string,
   ) {
     super(log, registry);
     this.watchReady = this.watchProjectAgentRoots();

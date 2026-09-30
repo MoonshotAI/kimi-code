@@ -6,6 +6,12 @@ export function toInputJsonSchema(schema: z.ZodType): Record<string, unknown> {
     io: 'input',
   });
   closeObjectNodes(jsonSchema);
+  if (
+    jsonSchema['type'] === undefined &&
+    (jsonSchema['anyOf'] !== undefined || jsonSchema['oneOf'] !== undefined)
+  ) {
+    jsonSchema['type'] = 'object';
+  }
   return jsonSchema;
 }
 

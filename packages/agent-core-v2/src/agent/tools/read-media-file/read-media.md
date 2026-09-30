@@ -1,6 +1,6 @@
 Read media content from a file.
 
-The path may be a `kimi-file://` attachment reference. Its bytes come from the current session's storage, independently of the workspace runtime, including after a fork. Any reported local attachment path belongs to the server; external converters must be able to access that filesystem.
+The path may be a `kimi-file://` attachment reference. Its bytes come from the current session's storage, independently of the workspace environment, including after a fork. Any reported local attachment path belongs to the server; external converters must be able to access that filesystem.
 
 **Tips:**
 - Make sure you follow the description of each tool parameter.

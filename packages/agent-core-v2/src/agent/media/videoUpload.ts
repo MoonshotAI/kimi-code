@@ -1,5 +1,5 @@
 import { VideoUploadUnsupportedError } from '#/llm-adapter/contract/errors';
-import { errorStatusCode } from '#human/llm/errors';
+import { errorStatusCode } from '#human/llm/errorStatus';
 import type { VideoURLPart } from '#human/llm/message';
 import type { Protocol } from '#/llm-adapter/protocol/protocol';
 import { ProtocolErrors } from '#/llm-adapter/protocol/errors';

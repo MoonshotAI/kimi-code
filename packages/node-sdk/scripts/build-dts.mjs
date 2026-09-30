@@ -106,7 +106,7 @@ async function rewriteWorkspaceSpecifiers() {
           `import { GoogleGenAI as GenAIClient } from '${providerClientSpecifier}';`,
         );
       const updated = providerClientText.replaceAll(
-        /(["'])(#\/[^"']+|@moonshot-ai\/(?:agent-core-v2|kaos|kimi-code-oauth|klient|kosong)(?:\/[^"']+)?)\1/g,
+        /(["'])(#(?:human)?\/[^"']+|@moonshot-ai\/(?:agent-core-v2|kaos|kimi-code-oauth|klient|kosong)(?:\/[^"']+)?)\1/g,
         (_match, quote, specifier) => {
           const resolved = resolveSpecifier({
             currentFile: file,
@@ -153,6 +153,15 @@ function packageDirForFile(file) {
 }
 
 function resolveSpecifier({ currentFile, emittedFiles, packageDir, specifier }) {
+  if (specifier.startsWith('#human/')) {
+    return resolvePackageSubpath({
+      emittedFiles,
+      srcRoot: path.join(dtsRoot, packageDir, 'src', 'human'),
+      subpath: specifier.slice('#human/'.length),
+      originalSpecifier: specifier,
+    });
+  }
+
   if (specifier.startsWith('#/')) {
     return resolvePackageSubpath({
       emittedFiles,

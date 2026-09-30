@@ -810,7 +810,7 @@ describe('Remote Control single-instance lock', () => {
     second = await startRemoteControl(options);
     expect(second.url).toContain('/devices/');
 
-    relay.managementSockets[relay.managementSockets.length - 1]!.send(
+    relay.managementSockets.at(-1)!.send(
       JSON.stringify({ type: 'disconnect', payload: { reason: 'user_requested' } }),
     );
     await second.closed;

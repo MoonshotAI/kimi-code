@@ -147,7 +147,7 @@ describe('plugins command capability surface', () => {
     });
   });
 
-  it('removePlugin notes that capability runtimes are left untouched', async () => {
+  it('removePlugin notes that capability environments are left untouched', async () => {
     const { host, statuses } = fakeHost({});
     await removePlugin(host, 'kimi-cu');
     expect(statuses.some((s) => s.includes('Removed kimi-cu'))).toBe(true);

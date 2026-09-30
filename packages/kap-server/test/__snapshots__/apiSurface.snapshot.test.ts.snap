@@ -86,7 +86,7 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/debug/session/{session_id}/agent/{agent_id}/runtime-binding",
+      "/api/v1/debug/session/{session_id}/agent/{agent_id}/environment-binding",
     ],
     [
       "GET",
@@ -194,6 +194,14 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/sessions/{session_id}/environment",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{session_id}/environments",
+    ],
+    [
+      "GET",
       "/api/v1/sessions/{session_id}/file-history/changes",
     ],
     [
@@ -231,10 +239,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "GET",
       "/api/v1/sessions/{session_id}/questions",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/runtime",
     ],
     [
       "GET",
@@ -463,10 +467,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/sessions/{session_id}/questions/{tail}",
-    ],
-    [
-      "POST",
-      "/api/v1/sessions/{session_id}/runtime",
     ],
     [
       "POST",

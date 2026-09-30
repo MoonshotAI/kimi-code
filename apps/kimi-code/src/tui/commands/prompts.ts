@@ -92,11 +92,15 @@ const FEEDBACK_ATTACHMENT_OPTIONS: readonly ChoiceOption[] = [
 
 export function promptFeedbackAttachment(
   host: SlashCommandHost,
+  excludeCodebase = false,
 ): Promise<FeedbackAttachmentLevel | undefined> {
+  const options = excludeCodebase
+    ? FEEDBACK_ATTACHMENT_OPTIONS.filter((option) => option.value !== 'logs+codebase')
+    : FEEDBACK_ATTACHMENT_OPTIONS;
   return new Promise((resolve) => {
     const picker = new ChoicePickerComponent({
       title: 'Share diagnostic info to help us investigate?',
-      options: FEEDBACK_ATTACHMENT_OPTIONS,
+      options,
       onSelect: (value) => {
         host.restoreEditor();
         resolve(value as FeedbackAttachmentLevel);

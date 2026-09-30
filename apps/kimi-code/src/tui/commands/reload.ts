@@ -47,7 +47,7 @@ export async function handleReloadCommand(host: SlashCommandHost): Promise<void>
     // reach the first lazy-created session instead of staying stale.
     await host.hydrateLazyConfigDefaults();
     host.showStatus(
-      'Runtime and TUI config reloaded; no active session.',
+      'Environment and TUI config reloaded; no active session.',
       'success',
     );
   }

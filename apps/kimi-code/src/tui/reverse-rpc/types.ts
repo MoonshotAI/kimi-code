@@ -118,6 +118,12 @@ export interface ApprovalPanelData {
   description: string;
   display: DisplayBlock[];
   choices: ApprovalPanelChoice[];
+  /**
+   * Environment identifier of a remote-bound session (e.g. `ssh:dev-box`),
+   * shown next to the command/path so approvals name the host they run on.
+   * Undefined for local sessions — the panel renders exactly as before.
+   */
+  environment?: string;
 }
 
 export interface QuestionPanelItem {

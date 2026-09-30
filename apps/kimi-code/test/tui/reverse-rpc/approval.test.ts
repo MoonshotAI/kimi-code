@@ -139,4 +139,39 @@ describe('approval reverse-rpc', () => {
       feedback: 'approval handler failed',
     });
   });
+
+  it('resolves the environment badge before showing the panel', async () => {
+    const controller = new ApprovalController();
+    const show = vi.spyOn(controller, 'show').mockResolvedValue({ decision: 'approved' });
+    const resolveEnvironment = vi.fn(() => 'docker:sub-box' as string | undefined);
+    const handler = createApprovalRequestHandler(
+      controller,
+      undefined,
+      resolveEnvironment,
+    );
+
+    await handler(approvalEvent());
+
+    expect(resolveEnvironment).toHaveBeenCalledOnce();
+    expect(show).toHaveBeenCalledWith(
+      expect.objectContaining({ environment: 'docker:sub-box' }),
+    );
+  });
+
+  it('shows the panel without a badge when the environment lookup fails', async () => {
+    const controller = new ApprovalController();
+    const show = vi.spyOn(controller, 'show').mockResolvedValue({ decision: 'approved' });
+    const handler = createApprovalRequestHandler(
+      controller,
+      undefined,
+      vi.fn(() => {
+        throw new Error('environment gone');
+      }),
+    );
+
+    await expect(handler(approvalEvent())).resolves.toEqual({ decision: 'approved' });
+    expect(show).toHaveBeenCalledWith(
+      expect.not.objectContaining({ environment: expect.anything() }),
+    );
+  });
 });

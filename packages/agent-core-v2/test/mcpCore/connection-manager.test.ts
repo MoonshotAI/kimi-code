@@ -24,23 +24,28 @@ import { KIMI_MCP_CLIENT_NAME } from '#/mcpCore/client-shared';
 import { McpConnectionManager, type McpConnectionManagerOptions, type McpServerEntry } from '#/mcpCore/connection-manager';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
 import type { StoredMcpOAuthTokens } from '#/mcpCore/oauth/provider';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
-import type { RuntimeBinding } from '#/runtime/runtime';
+import type { EnvironmentBinding } from '#/environment/environment';
 
-const testRuntimeBinding: RuntimeBinding = { workspaceId: 'test-workspace', runtimeId: 'local' };
+const testEnvironmentBinding: EnvironmentBinding = { environmentId: 'local' };
 const testProcess = new HostProcessService();
-const testRuntime = Object.assign(
-  new FakeRuntime({ ...testRuntimeBinding, generation: 'test-generation' }, {
+const testEnvironment = Object.assign(
+  new FakeEnvironment({ ...testEnvironmentBinding, generation: 'test-generation' }, {
     capabilities: ['process'],
   }),
   { process: testProcess },
 );
-const testRuntimeResolver = {
+const testEnvironmentResolver = {
   _serviceBrand: undefined,
-  inspect: () => testRuntime,
+  inspect: () => testEnvironment,
   acquire: () => ({
-    runtime: testRuntime,
+    environment: testEnvironment,
+    track: <T extends { dispose(): void | Promise<void> }>(resource: T): T => resource,
+    dispose: () => {},
+  }),
+  acquireWhenReady: async () => ({
+    environment: testEnvironment,
     track: <T extends { dispose(): void | Promise<void> }>(resource: T): T => resource,
     dispose: () => {},
   }),
@@ -48,9 +53,8 @@ const testRuntimeResolver = {
 
 function createManager(options: McpConnectionManagerOptions = {}): McpConnectionManager {
   return new McpConnectionManager({
-    runtimeResolver: testRuntimeResolver,
-    workspaceId: testRuntimeBinding.workspaceId,
-    runtimeId: testRuntimeBinding.runtimeId,
+    environmentResolver: testEnvironmentResolver,
+    environmentId: testEnvironmentBinding.environmentId,
     stdioCwd: process.cwd(),
     ...options,
   });
@@ -254,6 +258,80 @@ describe('McpConnectionManager', () => {
       await rm(cwd, { recursive: true, force: true });
     }
   }, 15000);
+
+  describe('stdio environment selection', () => {
+    function recordingResolver(recorded: string[]) {
+      const lease = () => ({
+        environment: testEnvironment,
+        track: <T extends { dispose(): void | Promise<void> }>(resource: T): T => resource,
+        dispose: () => {},
+      });
+      return {
+        _serviceBrand: undefined,
+        inspect: () => testEnvironment,
+        acquire: (binding: EnvironmentBinding) => {
+          recorded.push(binding.environmentId);
+          return lease();
+        },
+        acquireWhenReady: async (binding: EnvironmentBinding) => {
+          recorded.push(binding.environmentId);
+          return lease();
+        },
+      };
+    }
+
+    it('honors the deprecated runtime_id alias when environment_id is omitted', async () => {
+      const recorded: string[] = [];
+      const cm = createManager({ environmentResolver: recordingResolver(recorded) });
+      try {
+        await cm.connectAll({ legacy: { ...stdioConfig(), cwd: process.cwd(), runtime_id: 'dev-box' } });
+        expect(cm.get('legacy')?.status).toBe('connected');
+        expect(recorded).toContain('dev-box');
+      } finally {
+        await cm.shutdown();
+      }
+    }, 20000);
+
+    it('prefers environment_id over the deprecated runtime_id alias', async () => {
+      const recorded: string[] = [];
+      const cm = createManager({ environmentResolver: recordingResolver(recorded) });
+      try {
+        await cm.connectAll({ both: { ...stdioConfig(), cwd: process.cwd(), environment_id: 'new-box', runtime_id: 'dev-box' } });
+        expect(cm.get('both')?.status).toBe('connected');
+        expect(recorded).toContain('new-box');
+        expect(recorded).not.toContain('dev-box');
+      } finally {
+        await cm.shutdown();
+      }
+    }, 20000);
+
+    it('accepts the deprecated runtime_id alias when requireStdioEnvironmentId is set', async () => {
+      const recorded: string[] = [];
+      const cm = createManager({
+        environmentResolver: recordingResolver(recorded),
+        environmentId: undefined,
+        requireStdioEnvironmentId: true,
+      });
+      try {
+        await cm.connectAll({ legacy: { ...stdioConfig(), cwd: process.cwd(), runtime_id: 'dev-box' } });
+        expect(cm.get('legacy')?.status).toBe('connected');
+        expect(recorded).toContain('dev-box');
+      } finally {
+        await cm.shutdown();
+      }
+    }, 20000);
+
+    it('fails stdio configs without any environment key when requireStdioEnvironmentId is set', async () => {
+      const cm = createManager({ environmentId: undefined, requireStdioEnvironmentId: true });
+      try {
+        await cm.connectAll({ plain: stdioConfig() });
+        expect(cm.get('plain')?.status).toBe('failed');
+        expect(cm.get('plain')?.error).toContain('environment_id');
+      } finally {
+        await cm.shutdown();
+      }
+    }, 20000);
+  });
 
   it('announces the resolved custom identity as the MCP client name', async () => {
     const cm = createManager({ resolveClientName: () => 'acme-dev' });

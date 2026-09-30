@@ -52,7 +52,7 @@ import type {
   WorkspaceTrustInfo,
 } from '#/types';
 
-export interface KimiHarnessRuntimeOptions {
+export interface KimiHarnessEnvironmentOptions {
   readonly identity?: KimiHostIdentity;
   readonly uiMode?: string;
   readonly homeDir: string;
@@ -96,7 +96,7 @@ export class KimiHarness {
 
   constructor(
     private readonly rpc: SDKRpcClientBase,
-    options: KimiHarnessRuntimeOptions,
+    options: KimiHarnessEnvironmentOptions,
   ) {
     this.identity = options.identity;
     this.uiMode = options.uiMode ?? DEFAULT_SESSION_STARTED_UI_MODE;

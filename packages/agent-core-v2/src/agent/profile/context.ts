@@ -138,18 +138,21 @@ export async function loadAgentsMdForRoots(
   deps: ProfileContextDeps,
   brandHome: string | undefined,
   workDirs: readonly string[],
+  personalFs: IHostFileSystem = deps.fs,
 ): Promise<LoadedAgentsMd> {
   const discovered: AgentFile[] = [];
-  const seen = new Set<string>();
+  const seenByFs = new Map<IHostFileSystem, Set<string>>();
   const loadWarnings: string[] = [];
   const warnLoad = (message: string): void => {
     loadWarnings.push(message);
   };
 
-  const collect = async (path: string): Promise<boolean> => {
-    const file = await readAgentFile(deps, path, warnLoad);
+  const collect = async (fs: IHostFileSystem, path: string): Promise<boolean> => {
+    const file = await readAgentFile({ fs }, path, warnLoad);
     if (file === undefined) return false;
     const key = normalize(file.path);
+    const seen = seenByFs.get(fs) ?? new Set<string>();
+    seenByFs.set(fs, seen);
     if (seen.has(key)) return false;
     seen.add(key);
     discovered.push(file);
@@ -158,14 +161,14 @@ export async function loadAgentsMdForRoots(
 
   const realHome = deps.homeDir;
   const brandDir = brandHome ?? join(realHome, '.kimi-code');
-  await collect(join(brandDir, 'AGENTS.md'));
+  await collect(personalFs, join(brandDir, 'AGENTS.md'));
 
   const genericDirs = [join(realHome, '.agents')];
   const genericFiles = genericDirs.flatMap((dir) =>
     AGENTS_MD_PLAIN_NAMES.map((name) => join(dir, name)),
   );
   for (const file of genericFiles) {
-    if (await collect(file)) break;
+    if (await collect(personalFs, file)) break;
   }
 
   for (const workDir of workDirs) {
@@ -174,9 +177,9 @@ export async function loadAgentsMdForRoots(
     const dirs = dirsRootToLeaf(rootWorkDir, projectRoot);
 
     for (const dir of dirs) {
-      await collect(dotKimiAgentsMdPath(dir));
+      await collect(deps.fs, dotKimiAgentsMdPath(dir));
       for (const fileName of AGENTS_MD_PLAIN_NAMES) {
-        if (await collect(join(dir, fileName))) break;
+        if (await collect(deps.fs, join(dir, fileName))) break;
       }
     }
   }
@@ -270,7 +273,7 @@ interface AgentFile {
 }
 
 async function readAgentFile(
-  deps: ProfileContextDeps,
+  deps: { readonly fs: IHostFileSystem },
   path: string,
   warn: (message: string) => void,
 ): Promise<AgentFile | undefined> {
@@ -388,6 +391,14 @@ async function listDirectory(
   if (!readable) return '[not readable]';
   const remaining = total - entries.length;
 
+  const children = await Promise.all(
+    entries.map(async (entry) =>
+      entry.isDir && !shouldCollapseDirectory(entry, options)
+        ? collectEntries(deps, join(workDir, entry.name), LIST_DIR_CHILD_WIDTH)
+        : undefined,
+    ),
+  );
+
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
     if (entry === undefined) continue;
@@ -397,10 +408,9 @@ async function listDirectory(
 
     if (isDir) {
       lines.push(`${connector}${name}/`);
-      if (shouldCollapseDirectory(entry, options)) continue;
+      const child = children[i];
+      if (child === undefined) continue;
       const childPrefix = isLast ? '    ' : '│   ';
-      const childDir = join(workDir, name);
-      const child = await collectEntries(deps, childDir, LIST_DIR_CHILD_WIDTH);
       if (!child.readable) {
         lines.push(`${childPrefix}└── [not readable]`);
         continue;

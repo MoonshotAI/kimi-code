@@ -16,6 +16,7 @@ export interface AgentProfileContributionRecord {
   readonly sourceId: string;
   readonly priority?: number;
   readonly workspaceKey?: string;
+  readonly contextKey?: string;
   readonly contribution: AgentProfileContribution;
 }
 

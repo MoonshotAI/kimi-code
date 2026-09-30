@@ -1,4 +1,5 @@
 import { parsePattern } from '@moonshot-ai/agent-core-v2/agent/permissionRules/matchesRule';
+import { EnvironmentsSectionSchema } from '@moonshot-ai/agent-core-v2/environment/remoteEnvironmentDeclaration';
 import { z } from 'zod';
 
 import { ErrorCodes, KimiError } from '#/errors';
@@ -191,6 +192,10 @@ export const ExperimentalConfigSchema = z.record(z.string(), z.boolean());
 
 export type ExperimentalConfig = z.infer<typeof ExperimentalConfigSchema>;
 
+export const EnvironmentsConfigSchema = EnvironmentsSectionSchema;
+
+export type EnvironmentsConfig = z.infer<typeof EnvironmentsConfigSchema>;
+
 export const HookDefSchema = z
   .object({
     event: z.enum(HOOK_EVENT_TYPES),
@@ -232,7 +237,6 @@ export const McpServerStdioConfigSchema = z.object({
   args: z.array(z.string()).optional(),
   env: StringRecordSchema.optional(),
   cwd: z.string().optional(),
-  executor: z.enum(['local', 'kaos']).optional(),
   ...McpServerCommonFields,
 });
 
@@ -304,6 +308,7 @@ export const KimiConfigSchema = z.object({
   image: ImageConfigSchema.optional(),
   modelCatalog: ModelCatalogConfigSchema.optional(),
   experimental: ExperimentalConfigSchema.optional(),
+  environments: EnvironmentsConfigSchema.optional(),
   telemetry: z.boolean().optional(),
   raw: z.record(z.string(), z.unknown()).optional(),
 });
@@ -354,6 +359,7 @@ export const KimiConfigPatchSchema = z
     image: ImageConfigPatchSchema.optional(),
     modelCatalog: ModelCatalogConfigPatchSchema.optional(),
     experimental: ExperimentalConfigPatchSchema.optional(),
+    environments: EnvironmentsConfigSchema.optional(),
     telemetry: z.boolean().optional(),
   })
   .strict();

@@ -480,4 +480,25 @@ describe('ApprovalPanelComponent', () => {
       { response: 'rejected', feedback: 'no', selected_label: 'Revise' },
     ]);
   });
+
+  it('shows the environment identifier next to the title for remote-bound sessions', () => {
+    const pending = makePending();
+    const withEnv: PendingApproval = {
+      data: { ...pending.data, environment: 'ssh:dev-box' },
+    };
+    const dialog = new ApprovalPanelComponent(withEnv, () => {});
+    const out = strip(dialog.render(80).join('\n'));
+    const titleLine = out.split('\n').find((line) => line.includes('Approve WriteFile?'));
+    expect(titleLine).toBeDefined();
+    expect(titleLine).toContain('ssh:dev-box');
+  });
+
+  it('renders no environment identifier when it is not set', () => {
+    const { dialog } = makeDialog();
+    const out = strip(dialog.render(80).join('\n'));
+    const titleLine = out.split('\n').find((line) => line.includes('Approve WriteFile?'));
+    expect(titleLine).toBeDefined();
+    expect(titleLine).not.toContain('ssh:');
+    expect(titleLine).not.toContain('docker:');
+  });
 });

@@ -75,6 +75,8 @@ export const ErrorCodes = {
   REQUEST_WORK_DIR_REQUIRED: 'request.work_dir_required',
   REQUEST_PROMPT_INPUT_EMPTY: 'request.prompt_input_empty',
 
+  FS_PATH_NOT_FOUND: 'fs.path_not_found',
+
   SHELL_GIT_BASH_NOT_FOUND: 'shell.git_bash_not_found',
 
   NOT_IMPLEMENTED: 'not_implemented',
@@ -430,6 +432,12 @@ export const KIMI_ERROR_INFO = {
     retryable: false,
     public: true,
     action: 'Provide workDir in the request payload.',
+  },
+  'fs.path_not_found': {
+    title: 'Path not found',
+    retryable: false,
+    public: true,
+    action: 'Check the path exists and is a directory.',
   },
   'request.prompt_input_empty': {
     title: 'Prompt input is empty',

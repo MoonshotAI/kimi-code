@@ -1,20 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
+import { EnvironmentService } from '#/app/environment/environmentService';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Workspace, IWorkspaceService } from '#/app/workspace/workspace';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
-import type { Runtime } from '#/runtime/runtime';
-import type { RuntimeProviderFactory } from '#/runtime/runtimeProvider';
-import type { RuntimeRegistry } from '#/runtime/runtimeRegistry';
-import type {
-  RuntimeProviderHost,
-  RuntimeProviderRuntimeHandle,
-  RuntimeUnitHandle,
-  RuntimeUnitHost,
-  RuntimeUnitHostFactory,
-} from '#/runtime/runtimeUnitHost';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
+import type { Environment } from '#/environment/environment';
+import type { EnvironmentProviderFactory } from '#/environment/environmentProvider';
 import { WorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManagerService';
-
-const imports = { root: [], imports: [], local: [] } as const;
+import { sessionDirOf } from '#/workspace/sessionLifecycle/internal/addressing';
 
 function deferred(): { readonly promise: Promise<void>; resolve(): void } {
   let resolve!: () => void;
@@ -26,100 +18,28 @@ function workspace(id: string): Workspace {
   return { id, root: `/${id}`, name: id, createdAt: 0, lastOpenedAt: 0 };
 }
 
-function runtime(workspaceId: string, runtimeId: string, status: Runtime['status'] = 'connecting'): FakeRuntime {
-  return new FakeRuntime({ workspaceId, runtimeId, generation: `${runtimeId}-one` }, { status });
+function environment(workspaceId: string, environmentId: string, status: Environment['status'] = 'connecting'): FakeEnvironment {
+  return new FakeEnvironment({ environmentId, generation: `${environmentId}-one` }, { status });
 }
 
-class TestRuntimeUnitHost implements RuntimeUnitHost {
-  private readonly units: RuntimeUnitHandle[] = [];
+const environmentServices: EnvironmentService[] = [];
 
-  constructor(private readonly registry: RuntimeRegistry) {}
+afterEach(async () => {
+  for (const service of environmentServices.splice(0)) await service.dispose();
+});
 
-  async provide<T extends { dispose(): void | Promise<void> }>(
-    _imports: typeof imports,
-    prepare: (host: RuntimeProviderHost) => Promise<T>,
-  ): Promise<RuntimeUnitHandle> {
-    const registrations: RuntimeProviderRuntimeHandle[] = [];
-    const host: RuntimeProviderHost = {
-      get: () => { throw new Error('no imports'); },
-      provide: () => { throw new Error('no local services'); },
-      registerRuntime: (value) => {
-        const registration = this.registry.register(value);
-        const handle: RuntimeProviderRuntimeHandle = {
-          runtimeId: value.identity.runtimeId,
-          update: async (next) => { await registration.replace(await next()); },
-          remove: () => registration.remove(),
-        };
-        registrations.push(handle);
-        return handle;
-      },
-    };
-    let attachment: T;
-    try {
-      attachment = await prepare(host);
-    } catch (error) {
-      for (const registration of registrations.toReversed()) await registration.remove();
-      throw error;
-    }
-    let active = true;
-    const dispose = async (): Promise<void> => {
-      if (!active) return;
-      active = false;
-      await attachment.dispose();
-      for (const registration of registrations.toReversed()) await registration.remove();
-      const index = this.units.indexOf(handle);
-      if (index >= 0) this.units.splice(index, 1);
-    };
-    const handle: RuntimeUnitHandle = {
-      update: async () => { throw new Error('not supported'); },
-      remove: dispose,
-      dispose,
-    };
-    this.units.push(handle);
-    return handle;
-  }
-
-  async update(): Promise<void> {
-    throw new Error('not supported');
-  }
-
-  remove(handle: RuntimeUnitHandle): Promise<void> {
-    return handle.dispose();
-  }
-
-  async dispose(): Promise<void> {
-    for (const unit of [...this.units].toReversed()) await unit.dispose();
-  }
-}
-
-class TestRuntimeUnitHostFactory implements RuntimeUnitHostFactory {
-  create(_root: never, registry: RuntimeRegistry): RuntimeUnitHost {
-    return new TestRuntimeUnitHost(registry);
-  }
-}
-
-function provider(
-  id: string,
-  runtimeId: string,
-  events: string[],
-  options: { failWorkspace?: string; status?: Runtime['status'] } = {},
-): RuntimeProviderFactory {
-  return {
-    id,
-    imports,
-    attach: async (context, host) => {
-      events.push(`attach:${id}:${context.id}`);
-      if (options.failWorkspace === context.id) throw new Error(`attach failed ${context.id}`);
-      host.registerRuntime(runtime(context.id, runtimeId, options.status));
-      return { dispose: () => { events.push(`detach:${id}:${context.id}`); } };
-    },
-  };
+function environmentService(ready: Promise<void> = Promise.resolve()): EnvironmentService {
+  const service = new EnvironmentService({} as never, { ready, pathClass: 'posix', homeDir: '/home/test' } as never, undefined as never, undefined as never, undefined as never);
+  environmentServices.push(service);
+  return service;
 }
 
 function manager(
   values: readonly Workspace[],
   ready: Promise<void> = Promise.resolve(),
   events: string[] = [],
+  customize?: (args: unknown[]) => void,
+  environments = environmentService(ready),
 ): WorkspaceInstanceManager {
   const byId = new Map(values.map((value) => [value.id, value]));
   const workspaces: IWorkspaceService = {
@@ -139,15 +59,12 @@ function manager(
     { scope: () => 'sessions' },
     workspaces,
     { ready },
-    ...Array.from({ length: 23 }, () => undefined),
-    new TestRuntimeUnitHostFactory(),
+    ...Array.from({ length: 24 }, () => undefined),
   ];
-  args[18] = { entries: () => [] };
-  const value = Reflect.construct(WorkspaceInstanceManager, args) as WorkspaceInstanceManager;
-  const providers = (value as unknown as { providers: Map<string, RuntimeProviderFactory> }).providers;
-  providers.clear();
-  providers.set('local', provider('local', 'local', events));
-  return value;
+  args[19] = { entries: () => [] };
+  args[28] = environments;
+  customize?.(args);
+  return Reflect.construct(WorkspaceInstanceManager, args) as WorkspaceInstanceManager;
 }
 
 describe('WorkspaceInstanceManager', () => {
@@ -166,67 +83,135 @@ describe('WorkspaceInstanceManager', () => {
     expect(firstInstance).toBe(secondInstance);
     await closing;
     expect(value.get('one')).toBeUndefined();
-    expect(events).toEqual(['attach:local:one', 'detach:local:one']);
+    expect(events).toEqual([]);
   });
 
-  it('keeps runtime registries and provider attachments isolated across workspaces', async () => {
-    const events: string[] = [];
-    const value = manager([workspace('one'), workspace('two')], Promise.resolve(), events);
-    const one = await value.getOrCreate({ workspaceId: 'one' });
-    const two = await value.getOrCreate({ workspaceId: 'two' });
-
-    expect(one.runtimes.current('local')?.identity.workspaceId).toBe('one');
-    expect(two.runtimes.current('local')?.identity.workspaceId).toBe('two');
-    expect(one.runtimes.current('local')).not.toBe(two.runtimes.current('local'));
-
-    await value.close('one');
-    expect(value.get('two')).toBe(two);
-    expect(two.runtimes.current('local')).toBeDefined();
-    await value.dispose();
-  });
-
-  it('maintains both provider and workspace axes and detaches each matrix cell', async () => {
-    const events: string[] = [];
-    const value = manager([workspace('one'), workspace('two')], Promise.resolve(), events);
-    const one = await value.getOrCreate({ workspaceId: 'one' });
-    const remote = await value.addProvider(provider('remote-provider', 'remote', events, { status: 'ready' }));
-    const two = await value.getOrCreate({ workspaceId: 'two' });
-
-    expect(one.runtimes.current('remote')).toBeDefined();
-    expect(two.runtimes.current('remote')).toBeDefined();
-
-    await remote.dispose();
-    expect(one.runtimes.current('remote')).toBeUndefined();
-    expect(two.runtimes.current('remote')).toBeUndefined();
-    expect(events.filter((event) => event.startsWith('detach:remote-provider:')).toSorted()).toEqual([
-      'detach:remote-provider:one',
-      'detach:remote-provider:two',
-    ]);
-    await value.dispose();
-  });
-
-  it('rolls back earlier attachments when adding a provider fails on a later workspace', async () => {
-    const events: string[] = [];
-    const value = manager([workspace('one'), workspace('two')], Promise.resolve(), events);
-    const one = await value.getOrCreate({ workspaceId: 'one' });
+  it('attaches an environment once and keeps it alive when a workspace closes', async () => {
+    const environments = environmentService();
+    const attach = vi.fn(async (host: Parameters<EnvironmentProviderFactory['attach']>[0]) => {
+      host.registerEnvironment(environment('unused', 'remote'));
+      return { dispose: () => {} };
+    });
+    const registration = await environments.addProvider({ id: 'remote', attach });
+    const value = manager([workspace('one'), workspace('two')], Promise.resolve(), [], undefined, environments);
+    await value.getOrCreate({ workspaceId: 'one' });
     await value.getOrCreate({ workspaceId: 'two' });
-
-    await expect(value.addProvider(provider('broken', 'remote', events, { failWorkspace: 'two' })))
-      .rejects.toThrow('attach failed two');
-    expect(one.runtimes.current('remote')).toBeUndefined();
-    expect(events).toContain('detach:broken:one');
-
-    const three = workspace('three');
+    const remote = environments.current('remote');
+    await value.close('one');
+    expect(attach).toHaveBeenCalledOnce();
+    expect(environments.current('remote')).toBe(remote);
+    expect(remote?.status).toBe('connecting');
     await value.dispose();
-    expect(three.id).toBe('three');
+    expect(environments.current('remote')).toBe(remote);
+    await registration.dispose();
+    expect(environments.current('remote')).toBeUndefined();
   });
 
-  it('materializes once required local structure exists without waiting for ready status', async () => {
+  it('rolls back environments registered by a provider that fails to attach', async () => {
+    const environments = environmentService();
+    const remote = environment('unused', 'remote');
+    await expect(environments.addProvider({
+      id: 'broken',
+      attach: async (host) => {
+        host.registerEnvironment(remote);
+        throw new Error('attach failed');
+      },
+    })).rejects.toThrow('attach failed');
+    expect(environments.current('remote')).toBeUndefined();
+    expect(remote.disposed).toBe(true);
+    const registration = await environments.addProvider({ id: 'broken', attach: async () => ({ dispose: () => {} }) });
+    await registration.dispose();
+  });
+
+  it('session controllers operate on the local session dir even when bound to a remote environment', async () => {
+    const environments = environmentService();
+    const removed: string[] = [];
+    const remoteRemoved: string[] = [];
+    const value = manager([workspace('one')], Promise.resolve(), [], (args) => {
+      args[1] = { scope: () => 'sessions', homeDir: '/home/test' };
+      args[4] = { remove: async (path: string) => { removed.push(path); } };
+      args[7] = { publish: () => {} };
+      args[10] = { get: async () => undefined, remove: async () => {} };
+      args[11] = { drain: async () => {} };
+      args[23] = { withContext: () => ({ track2: () => {} }) };
+      args[25] = { append: () => {}, flush: async () => {}, drainRetirements: async () => {} };
+      args[26] = { get: async () => undefined };
+    }, environments);
+    const one = await value.getOrCreate({ workspaceId: 'one' });
+    await environments.addProvider({
+      id: 'remote-provider',
+      attach: async (host) => {
+        const remote = new FakeEnvironment(
+          { environmentId: 'remote', generation: 'remote-one' },
+          { status: 'ready', capabilities: ['fs', 'process'] },
+        );
+        Object.assign(remote, {
+          fs: { remove: async (path: string) => { remoteRemoved.push(path); } },
+          process: {},
+        });
+        host.registerEnvironment(remote);
+        return { dispose: () => {} };
+      },
+    });
+
+    const program = one.program as unknown as {
+      createGeneration: (environmentId: string, cwd?: string) => unknown;
+    };
+    program.createGeneration = (environmentId: string) => {
+      const lease = environments.acquire({ environmentId }, ['fs', 'process']);
+      const behavior = { ready: Promise.resolve(), dispose: () => {} };
+      const catalog = {
+        listSkills: () => [],
+        listInvocableSkills: () => [],
+        getSkippedByPolicy: () => [],
+        getSkillRoots: () => [],
+      };
+      return {
+        id: lease.environment.identity.generation,
+        lease,
+        state: behavior,
+        dirs: behavior,
+        fs: behavior,
+        watch: behavior,
+        git: behavior,
+        instructions: { ...behavior, snapshot: {} },
+        mcpConfig: { ...behavior, servers: () => ({}) },
+        mcp: behavior,
+        trust: { ...behavior, isTrusted: () => false },
+        skills: { ...behavior, catalog },
+        agentProfiles: behavior,
+        userAgentProfiles: behavior,
+        pluginAgentProfiles: behavior,
+        explicitAgentProfiles: behavior,
+        extraAgentProfiles: behavior,
+        disposables: [behavior],
+        ready: false,
+        failed: false,
+        references: 1,
+        retired: false,
+      };
+    };
+
+    const controller = one.program.createSessionController('remote');
+    (controller as unknown as { sessions: Map<string, unknown> }).sessions.set('session-x', {
+      id: 'session-x',
+      kind: 'session',
+      accessor: { get: () => ({ list: () => [], setArchived: async () => {} }) },
+      dispose: () => {},
+    });
+    await controller.delete('session-x');
+
+    expect(removed).toEqual([sessionDirOf('/home/test', 'sessions/one', 'session-x')]);
+    expect(remoteRemoved).toEqual([]);
+    controller.dispose();
+    await value.dispose();
+  });
+
+  it('materializes the workspace even when project services are unavailable', async () => {
     const value = manager([workspace('one')]);
     const instance = await value.getOrCreate({ workspaceId: 'one' });
 
-    expect(instance.runtimes.current('local')?.status).toBe('connecting');
-    expect(instance.program.status).toBe('preparing');
+    expect(instance.program.status).toBe('degraded');
     expect(instance.snapshot().lifecycle).toBe('active');
     await value.dispose();
   });

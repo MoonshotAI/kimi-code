@@ -14,7 +14,7 @@ import type { IBuiltinSkillSource } from '#/features/skill/catalog/builtinSkillS
 import type { IUserFileSkillSource } from '#/features/skill/catalog/userFileSkillSource';
 import type { IAppStateService } from '#/app/state/appState';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { IEnvironmentService } from '#/app/environment/environment';
 import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
@@ -30,7 +30,8 @@ import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspac
 
 export interface ProgramSessionControllerInput {
   readonly context: IWorkspaceContext;
-  readonly fs: IHostFileSystem;
+  readonly profileContextKey: string;
+  readonly environments: Pick<IEnvironmentService, 'drainSession'>;
   readonly workspaceAgentProfiles: IWorkspaceAgentProfileLoader;
   readonly extraAgentProfiles: IExtraAgentProfileLoader;
   readonly explicitAgentProfiles: IExplicitAgentProfileLoader;

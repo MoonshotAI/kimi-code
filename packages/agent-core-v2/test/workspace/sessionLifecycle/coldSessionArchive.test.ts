@@ -1,18 +1,24 @@
+import { EnvironmentRegistry } from '#/environment/environmentRegistry';
+import { IEnvironmentService } from '#/app/environment/environment';
 
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
 import { Emitter, Event } from '#/_base/event';
+import type { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import type { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
 import { ISessionManager, type UnguardedSessionLifecycle } from '#/app/sessionManager/sessionManager';
 import { SessionManager } from '#/app/sessionManager/sessionManagerService';
+import { EnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclarationService';
 import {
   ISessionIndex,
   ISessionIndexMirror,
   type SessionSummary,
 } from '#/app/sessionIndex/sessionIndex';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import {
@@ -231,11 +237,26 @@ function sessionManagerResuming(sessionId: string): SessionManager {
   } as unknown as SessionLifecycleService;
   const workspace = {
     id: summary.workspaceId,
-    program: { sessionControllerGeneration: 'generation-1', createSessionController: () => controller },
+    program: { sessionControllerGenerationFor: () => 'generation-1', createSessionController: () => controller },
   } as unknown as WorkspaceInstance;
+  const workspaces = { getOrCreate: async () => workspace, get: () => workspace } as unknown as IWorkspaceInstanceManager;
+  const environments = new EnvironmentRegistry() as unknown as IEnvironmentService;
   return new SessionManager(
-    { getOrCreate: async () => workspace, get: () => workspace } as unknown as IWorkspaceInstanceManager,
+    workspaces,
     { get: async () => summary } as unknown as ISessionIndex,
+    new EnvironmentDeclarationService(
+      { _serviceBrand: undefined, ready: Promise.resolve(), get: () => undefined } as unknown as IConfigService,
+      { _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService,
+    ),
+    { _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService,
+    environments,
+    {
+      _serviceBrand: undefined,
+      stat: async () => ({ isFile: false, isDirectory: true, size: 0 }),
+      realpath: async (path: string) => path,
+    } as unknown as IHostFileSystem,
+    { _serviceBrand: undefined, get: async () => undefined } as unknown as IAtomicDocumentStore,
+    { _serviceBrand: undefined, scope: (name: string) => name } as unknown as IBootstrapService,
   );
 }
 

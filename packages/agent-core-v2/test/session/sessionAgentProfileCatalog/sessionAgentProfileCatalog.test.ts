@@ -78,6 +78,32 @@ function makeCatalog(workspaceKey: string = WORKSPACE_KEY) {
 }
 
 describe('SessionAgentProfileCatalogService (registry projection)', () => {
+  it('keeps project profiles isolated between execution contexts in the same workspace', () => {
+    const { container, registry, catalog } = makeCatalog();
+    const localSeed = { _serviceBrand: undefined, workspaceKey: WORKSPACE_KEY, contextKey: 'local' };
+    const remoteSeed = { _serviceBrand: undefined, workspaceKey: WORKSPACE_KEY, contextKey: 'remote:/repo' };
+    const local = new SessionAgentProfileCatalogService(registry, localSeed, stubLog());
+    const remote = new SessionAgentProfileCatalogService(registry, remoteSeed, stubLog());
+    const localProfile = profile('reviewer');
+    const remoteProfile = profile('reviewer');
+    const personal = profile('personal');
+    registry.register({ sourceId: 'user', priority: 0, workspaceKey: WORKSPACE_KEY, contribution: { profiles: [personal] } });
+    registry.register({ sourceId: 'workspace', priority: 10, ...localSeed, contribution: { profiles: [localProfile] } });
+    const remoteRegistration = registry.register({ sourceId: 'workspace', priority: 10, ...remoteSeed, contribution: { profiles: [remoteProfile] } });
+
+    expect(local.get('reviewer')).toBe(localProfile);
+    expect(remote.get('reviewer')).toBe(remoteProfile);
+    expect(local.get('personal')).toBe(personal);
+    expect(remote.get('personal')).toBe(personal);
+    remoteRegistration.dispose();
+    expect(local.get('reviewer')).toBe(localProfile);
+    expect(remote.get('reviewer')).toBeUndefined();
+    local.dispose();
+    remote.dispose();
+    catalog.dispose();
+    container.dispose();
+  });
+
   it('projects global entries and own-workspace entries, filtering other workspace keys', () => {
     const { container, catalog, contribute } = makeCatalog();
     const globalProfile = profile('global-p');

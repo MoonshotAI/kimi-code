@@ -487,7 +487,7 @@ Installing a plugin never runs its hooks by itself. They only fire when their ma
 
 Plugins have a limited loading scope. The following operations do not occur during installation or session startup:
 
-- Command-type plugin tools and legacy tool runtimes are not executed
+- Command-type plugin tools and legacy tool environments are not executed
 - All paths must remain within the plugin root directory after symbolic link resolution
 - MCP servers of enabled plugins start after `/reload` or in new sessions and can be disabled at any time from `/plugins`
 - Broken manifests or unsafe paths appear in `/plugins info <id>` diagnostics and do not affect other sessions

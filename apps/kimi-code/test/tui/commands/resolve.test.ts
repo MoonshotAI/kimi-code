@@ -276,6 +276,7 @@ describe('resolveSlashCommandInput', () => {
       input: '/tower Ship feature X',
     });
   });
+
 });
 
 describe('goal command resolution', () => {

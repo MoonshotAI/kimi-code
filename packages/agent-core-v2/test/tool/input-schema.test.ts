@@ -74,4 +74,43 @@ describe('tool input JSON Schema', () => {
       }),
     ).not.toBeNull();
   });
+
+  it('adds a top-level object type to union schemas', () => {
+    const schema = toInputJsonSchema(
+      z.union([
+        z.object({ kind: z.literal('a'), value: z.string() }).strict(),
+        z.object({ kind: z.literal('b'), count: z.number() }).strict(),
+      ]),
+    );
+
+    expect(schema['type']).toBe('object');
+    expect(Array.isArray(schema['anyOf'])).toBe(true);
+  });
+
+  it('adds a top-level object type to discriminated union schemas', () => {
+    const schema = toInputJsonSchema(
+      z.discriminatedUnion('kind', [
+        z.object({ kind: z.literal('a'), value: z.string() }).strict(),
+        z.object({ kind: z.literal('b'), count: z.number() }).strict(),
+      ]),
+    );
+
+    expect(schema['type']).toBe('object');
+    expect(Array.isArray(schema['oneOf'])).toBe(true);
+  });
+
+  it('keeps union branch inputs valid through runtime validation', () => {
+    const schema = toInputJsonSchema(
+      z.union([
+        z.object({ kind: z.literal('a'), value: z.string() }).strict(),
+        z.object({ kind: z.literal('b'), count: z.number() }).strict(),
+      ]),
+    );
+    const validator = compileToolArgsValidator(schema);
+
+    expect(validateToolArgs(validator, { kind: 'a', value: 'x' })).toBeNull();
+    expect(validateToolArgs(validator, { kind: 'b', count: 1 })).toBeNull();
+    expect(validateToolArgs(validator, { kind: 'a', value: 'x', bogus: true })).not.toBeNull();
+    expect(validateToolArgs(validator, { kind: 'c' })).not.toBeNull();
+  });
 });

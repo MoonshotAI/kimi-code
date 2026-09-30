@@ -30,7 +30,7 @@ export interface SerializedAgentState {
 
 function mapToSortedObject<V>(map: ReadonlyMap<string, V>): Record<string, V> {
   const out: Record<string, V> = {};
-  for (const key of [...map.keys()].sort()) out[key] = map.get(key) as V;
+  for (const key of [...map.keys()].toSorted()) out[key] = map.get(key) as V;
   return out;
 }
 
@@ -42,7 +42,7 @@ export function serializeState(state: AgentState): SerializedAgentState {
     attachments: mapToSortedObject(state.attachments),
     todos: mapToSortedObject(state.todos),
     meta: state.meta,
-    pendingInteractions: [...state.pendingInteractions].sort(),
+    pendingInteractions: [...state.pendingInteractions].toSorted(),
     hasMoreOlder: state.hasMoreOlder,
   };
 }

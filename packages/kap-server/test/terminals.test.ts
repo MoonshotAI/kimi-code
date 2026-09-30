@@ -4,12 +4,14 @@ import { join, resolve } from 'node:path';
 
 import {
   IHostTerminalService,
+  IEnvironmentService,
   ScopeActivation,
   LifecycleScope,
   overrideScopedService,
   type TerminalProcess,
   type TerminalSpawnOptions,
 } from '@moonshot-ai/agent-core-v2';
+import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
 import { ErrorCode } from '../src/protocol/error-codes';
 import type { Terminal } from '@moonshot-ai/agent-core-v2/os/interface/terminal';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -153,7 +155,7 @@ describe('server-v2 /api/v1/sessions/{sid}/terminals', () => {
   }
 
   async function post<T>(path: string, body: unknown): Promise<Envelope<T>> {
-    const requestBody = path.endsWith('/terminals') ? { runtime_id: 'local', ...(body as object) } : body;
+    const requestBody = path.endsWith('/terminals') ? { environment_id: 'local', ...(body as object) } : body;
     const res = await fetch(`${base}${path}`, {
       method: 'POST',
       headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
@@ -169,7 +171,7 @@ describe('server-v2 /api/v1/sessions/{sid}/terminals', () => {
     return (await res.json()) as Envelope<T>;
   }
 
-  it('defaults terminal creation to the local runtime when runtime_id is omitted', async () => {
+  it('defaults terminal creation to the local environment when environment_id is omitted', async () => {
     const sid = await createSession(work as string);
     const res = await fetch(`${base}/api/v1/sessions/${sid}/terminals`, {
       method: 'POST',
@@ -179,6 +181,71 @@ describe('server-v2 /api/v1/sessions/{sid}/terminals', () => {
     const body = (await res.json()) as Envelope<Terminal>;
     expect(body.code).toBe(0);
     expect(body.data.session_id).toBe(sid);
+  });
+
+  async function registerRemoteTerminalEnvironment(environmentId: string): Promise<{ spawns: TerminalSpawnOptions[]; dispose: () => Promise<void> }> {
+    const spawns: TerminalSpawnOptions[] = [];
+    const provider = await server!.core.accessor.get(IEnvironmentService).addProvider({
+      id: `${environmentId}-provider`,
+      attach: async (host) => {
+        const environment = Object.assign(
+          new FakeEnvironment(
+            { environmentId, generation: 'remote-generation' },
+            { capabilities: ['terminal'] },
+          ),
+          {
+            terminal: {
+              spawn: (options: TerminalSpawnOptions) => {
+                spawns.push(options);
+                const proc = new FakeTerminalProcess();
+                processes.push(proc);
+                return Promise.resolve(proc);
+              },
+            },
+          },
+        );
+        const registration = host.registerEnvironment(environment);
+        return { dispose: () => registration.remove() };
+      },
+    });
+    return { spawns, dispose: () => provider.dispose() };
+  }
+
+  it('honors the deprecated runtime_id alias when environment_id is omitted', async () => {
+    const sid = await createSession(work as string);
+    const remote = await registerRemoteTerminalEnvironment('remote-term');
+    try {
+      const res = await fetch(`${base}/api/v1/sessions/${sid}/terminals`, {
+        method: 'POST',
+        headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+        body: JSON.stringify({ runtime_id: 'remote-term' }),
+      } as never);
+      const body = (await res.json()) as Envelope<Terminal>;
+      expect(body.code).toBe(0);
+      expect(body.data.session_id).toBe(sid);
+      expect(remote.spawns).toHaveLength(1);
+      expect(spawnOptions).toHaveLength(0);
+    } finally {
+      await remote.dispose();
+    }
+  });
+
+  it('prefers environment_id over the deprecated runtime_id alias', async () => {
+    const sid = await createSession(work as string);
+    const remote = await registerRemoteTerminalEnvironment('remote-term');
+    try {
+      const res = await fetch(`${base}/api/v1/sessions/${sid}/terminals`, {
+        method: 'POST',
+        headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+        body: JSON.stringify({ environment_id: 'remote-term', runtime_id: 'local' }),
+      } as never);
+      const body = (await res.json()) as Envelope<Terminal>;
+      expect(body.code).toBe(0);
+      expect(remote.spawns).toHaveLength(1);
+      expect(spawnOptions).toHaveLength(0);
+    } finally {
+      await remote.dispose();
+    }
   });
 
   it('creates terminals for multiple sessions using each session workspace cwd', async () => {
@@ -248,5 +315,25 @@ describe('server-v2 /api/v1/sessions/{sid}/terminals', () => {
 
     const noSession = await get<unknown>(`/api/v1/sessions/sess_missing/terminals`);
     expect(noSession.code).toBe(ErrorCode.SESSION_NOT_FOUND);
+  });
+
+  it('keeps other sessions terminals running when a session on the same environment is deleted', async () => {
+    const sidA = await createSession(work as string);
+    const sidB = await createSession(work as string);
+    const termA = (await post<Terminal>(`/api/v1/sessions/${sidA}/terminals`, {})).data;
+    const termB = (await post<Terminal>(`/api/v1/sessions/${sidB}/terminals`, {})).data;
+    expect(termA.session_id).toBe(sidA);
+    expect(termB.session_id).toBe(sidB);
+
+    const deleted = await post<{ deleted: boolean }>(`/api/v1/sessions/${sidA}:delete`, {});
+    expect(deleted.code).toBe(0);
+    expect(deleted.data).toEqual({ deleted: true });
+
+    expect(processes[0]?.killed).toBe(true);
+    expect(processes[1]?.killed).toBe(false);
+
+    const listB = (await get<{ items: Terminal[] }>(`/api/v1/sessions/${sidB}/terminals`)).data;
+    expect(listB.items.map((terminal) => terminal.id)).toEqual([termB.id]);
+    expect(listB.items[0]?.status).toBe('running');
   });
 });

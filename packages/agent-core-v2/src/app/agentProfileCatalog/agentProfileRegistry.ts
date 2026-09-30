@@ -7,12 +7,14 @@ export interface AgentProfileRegistration {
   readonly sourceId: string;
   readonly priority: number;
   readonly workspaceKey?: string;
+  readonly contextKey?: string;
   readonly contribution: AgentProfileContribution;
 }
 
 export interface AgentProfileRegistryChange {
   readonly sourceId: string;
   readonly workspaceKey?: string;
+  readonly contextKey?: string;
 }
 
 export interface IAgentProfileRegistry {

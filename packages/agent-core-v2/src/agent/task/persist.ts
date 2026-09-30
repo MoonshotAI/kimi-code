@@ -1,6 +1,7 @@
 import { join } from 'pathe';
 
 import { BugIndicatingError } from '#/errors';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import type { IFileSystemStorageService } from '#/persistence/interface/storage';
 
@@ -24,6 +25,11 @@ type DiskPersistedTask = PersistedTask | LegacyPersistedTask;
 export interface AgentTaskPersistenceRoot {
   readonly dir: string;
   readonly scope: string;
+}
+
+export interface AgentTaskSpillTarget {
+  readonly fs: IHostFileSystem;
+  readonly dir: string;
 }
 
 export interface AgentTaskStoredOutputSnapshot {
@@ -51,12 +57,16 @@ function validateTaskId(taskId: string): void {
 }
 
 export class AgentTaskPersistence {
+  private readonly spillDirsCreated = new Set<string>();
+  private readonly pinnedSpillTargets = new Map<string, AgentTaskSpillTarget>();
+
   constructor(
     private readonly agentDir: string,
     private readonly agentScope: string,
     private readonly docs: IAtomicDocumentStore,
     private readonly bytes: IFileSystemStorageService,
     private readonly fallbackRoot?: AgentTaskPersistenceRoot,
+    private readonly spillTarget?: () => AgentTaskSpillTarget | undefined,
   ) {}
 
   private primaryRoot(): AgentTaskPersistenceRoot {
@@ -78,6 +88,33 @@ export class AgentTaskPersistence {
   private taskOutputFileAt(taskId: string, root: AgentTaskPersistenceRoot): string {
     validateTaskId(taskId);
     return join(root.dir, TASKS_SCOPE, taskId, OUTPUT_LOG_KEY);
+  }
+
+  private async outputPathFor(taskId: string, root: AgentTaskPersistenceRoot): Promise<string> {
+    const pinnedDir = await this.pinnedSpillDir(taskId);
+    if (pinnedDir !== undefined) return join(pinnedDir, `${taskId}.log`);
+    const target = this.spillTarget?.();
+    if (target !== undefined) return join(target.dir, `${taskId}.log`);
+    return this.taskOutputFileAt(taskId, root);
+  }
+
+  private spillTargetFor(taskId: string): AgentTaskSpillTarget | undefined {
+    const pinned = this.pinnedSpillTargets.get(taskId);
+    if (pinned !== undefined) return pinned;
+    const target = this.spillTarget?.();
+    if (target !== undefined) this.pinnedSpillTargets.set(taskId, target);
+    return target;
+  }
+
+  private async pinnedSpillDir(taskId: string): Promise<string | undefined> {
+    const pinned = this.pinnedSpillTargets.get(taskId);
+    if (pinned !== undefined) return pinned.dir;
+    try {
+      const task = await this.readTask(taskId);
+      return task?.outputSpillDir;
+    } catch {
+      return undefined;
+    }
   }
 
   taskOutputFile(taskId: string): string {
@@ -103,9 +140,19 @@ export class AgentTaskPersistence {
     return normalizePersistedTask(fallback);
   }
 
-  async appendTaskOutput(taskId: string, chunk: string): Promise<void> {
-    if (chunk.length === 0) return;
+  async appendTaskOutput(taskId: string, chunk: string): Promise<string | undefined> {
+    if (chunk.length === 0) return undefined;
     await this.bytes.append(this.taskOutputScope(taskId), OUTPUT_LOG_KEY, textEncoder.encode(chunk));
+    const target = this.spillTargetFor(taskId);
+    if (target === undefined) return undefined;
+    try {
+      if (!this.spillDirsCreated.has(target.dir)) {
+        await target.fs.mkdir(target.dir, { recursive: true });
+        this.spillDirsCreated.add(target.dir);
+      }
+      await target.fs.appendText(join(target.dir, `${taskId}.log`), chunk);
+    } catch {}
+    return target.dir;
   }
 
   async taskOutputSizeBytes(taskId: string): Promise<number> {
@@ -137,7 +184,7 @@ export class AgentTaskPersistence {
     const previewBytes = Math.min(previewLimit, output.data.byteLength);
     const previewOffset = output.data.byteLength - previewBytes;
     return {
-      outputPath: this.taskOutputFileAt(taskId, output.root),
+      outputPath: await this.outputPathFor(taskId, output.root),
       outputSizeBytes: output.data.byteLength,
       previewBytes,
       truncated: previewOffset > 0,
