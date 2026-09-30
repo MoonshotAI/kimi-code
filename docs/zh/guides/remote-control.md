@@ -20,7 +20,7 @@
 - **`kimi web --remote-control`**：与 `kimi rc` 等价，在启动本地网页界面的同时把它暴露到公网
 - **`/remote-control`**（别名 `/rc`）：已在 CLI 会话中时使用，把当前会话直接交给远程界面
 
-启动成功后，终端会打印访问链接（形如 `https://code-rc.kimi.com/devices/<设备 ID>/`）、二维码和本机设备名（主机名），同时默认浏览器会自动打开该链接（加 `--no-open` 可关闭）。二维码除了显示在终端里，还会保存为 PNG 文件（路径见启动信息），终端里无法正常显示二维码时，可以直接打开该文件。
+启动成功后，终端会打印访问链接（形如 `https://code-rc.kimi.com/devices/<设备 ID>/`；`kimi login --region global` 后为 `https://code-rc.kimi.ai/devices/<设备 ID>/`）、二维码和本机设备名（主机名），同时默认浏览器会自动打开该链接（加 `--no-open` 可关闭）。二维码除了显示在终端里，还会保存为 PNG 文件（路径见启动信息），终端里无法正常显示二维码时，可以直接打开该文件。
 
 ![kimi rc 启动后的终端输出：二维码与连接状态](../../media/kimi-rc-banner.jpg)
 

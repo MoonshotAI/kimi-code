@@ -15,6 +15,7 @@ export interface AgentStatusUpdatedPayload {
   thinkingEffort?: string;
   maxContextTokens?: number;
   contextTokens?: number;
+  permission?: PermissionMode;
 }
 
 export class AgentStatusUpdated extends AgentEvent2<AgentStatusUpdatedPayload> {

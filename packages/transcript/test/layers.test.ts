@@ -498,7 +498,19 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
   it('groups flat messages into turns with folded tool results', () => {
     const snapshot = groupMessagesIntoSnapshot([
       { role: 'system', content: [{ type: 'text', text: 'sys' }] },
-      { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [], origin: { kind: 'user' } },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: '<hook_result hook_event="UserPromptSubmit">\nnoise\n</hook_result>',
+            meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+          },
+          { type: 'text', text: 'hello' },
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
       {
         role: 'assistant',
         content: [{ type: 'think', think: 'hmm' }, { type: 'text', text: 'checking' }],
@@ -521,15 +533,19 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     ]);
 
     const kinds = snapshot.items.map((i) => i.kind);
-    expect(kinds).toEqual(['turn', 'turn', 'marker', 'turn']);
-    const firstTurn = snapshot.items[0];
+    expect(kinds).toEqual(['marker', 'turn', 'turn', 'marker', 'turn']);
+    const hookMarker = snapshot.items[0];
+    if (hookMarker?.kind !== 'marker') throw new Error('expected marker');
+    expect(hookMarker.marker).toBe('hook');
+    expect(hookMarker.payload).toEqual({ hookEvent: 'UserPromptSubmit', content: 'noise' });
+    const firstTurn = snapshot.items[1];
     if (firstTurn?.kind !== 'turn') throw new Error('expected turn');
     expect(firstTurn.prompt).toBe('hello');
     expect(firstTurn.steps).toHaveLength(2);
     const tool = firstTurn.steps[0]?.frames.find((f) => f.kind === 'tool');
     expect(tool?.kind === 'tool' && tool.output).toBe('file body');
     expect(tool?.kind === 'tool' && tool.input).toEqual({ path: '/a' });
-    const marker = snapshot.items[2];
+    const marker = snapshot.items[3];
     expect(marker?.kind === 'marker' && marker.marker).toBe('compaction');
   });
 
@@ -641,12 +657,27 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
       [
         { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } },
         { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
-        { role: 'user', content: [{ type: 'text', text: 'steered in' }], toolCalls: [], origin: { kind: 'user' } },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: '<hook_result hook_event="UserPromptSubmit">\nnoise\n</hook_result>',
+              meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+            },
+            { type: 'text', text: 'steered in' },
+          ],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
       ],
       { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), new Map([['user', 1]])]]) },
     );
 
-    expect(snapshot.items.map((i) => i.kind)).toEqual(['turn']);
+    expect(snapshot.items.map((i) => i.kind)).toEqual(['turn', 'marker']);
+    const hookMarker = snapshot.items[1];
+    if (hookMarker?.kind !== 'marker') throw new Error('expected marker');
+    expect(hookMarker.marker).toBe('hook');
     const turn = snapshot.items[0];
     if (turn?.kind !== 'turn') throw new Error('expected turn');
     const lastStep = turn.steps.at(-1);
@@ -873,42 +904,56 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
   });
 
   it('expands a bundled prompt into per-skill markers and a caller-text turn', () => {
-    const snapshot = groupMessagesIntoSnapshot([
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: 'rendered review block' },
-          { type: 'text', text: 'rendered security block' },
-          { type: 'text', text: 'please /skill:review and /skill:security' },
-        ],
-        toolCalls: [],
-        origin: {
-          kind: 'user',
-          skillActivations: [
-            { activationId: 'act-1', skillName: 'review' },
-            { activationId: 'act-2', skillName: 'security', skillArgs: 'src/app.ts' },
-          ],
-        } as { kind: string },
-      },
-      { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
-    ]);
+    const origin = {
+      kind: 'user',
+      skillActivations: [
+        { activationId: 'act-1', skillName: 'review' },
+        { activationId: 'act-2', skillName: 'security', skillArgs: 'src/app.ts' },
+      ],
+    } as { kind: string };
+    const variants: readonly (readonly HistoryContentPart[])[] = [
+      [
+        { type: 'text', text: 'rendered review block' },
+        { type: 'text', text: 'rendered security block' },
+        { type: 'text', text: 'please /skill:review and /skill:security' },
+      ],
+      [
+        {
+          type: 'text',
+          text: 'rendered review block',
+          meta: { source: 'skill activation', activationId: 'act-1' },
+        },
+        {
+          type: 'text',
+          text: 'rendered security block',
+          meta: { source: 'skill activation', activationId: 'act-2' },
+        },
+        { type: 'text', text: 'please /skill:review and /skill:security' },
+      ],
+    ];
+    for (const content of variants) {
+      const snapshot = groupMessagesIntoSnapshot([
+        { role: 'user', content, toolCalls: [], origin },
+        { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
+      ]);
 
-    expect(snapshot.items.map((item) => item.kind)).toEqual(['marker', 'marker', 'turn']);
-    const first = snapshot.items[0];
-    expect(first?.kind === 'marker' && first.marker).toBe('skill');
-    expect(first?.kind === 'marker' && first.payload).toMatchObject({
-      text: 'rendered review block',
-      origin: { kind: 'skill_activation', trigger: 'user-slash', skillName: 'review' },
-    });
-    const second = snapshot.items[1];
-    expect(second?.kind === 'marker' && second.payload).toMatchObject({
-      text: 'rendered security block',
-      origin: { skillName: 'security', skillArgs: 'src/app.ts' },
-    });
-    const turn = snapshot.items[2];
-    if (turn?.kind !== 'turn') throw new Error('expected turn');
-    expect(turn.prompt).toBe('please /skill:review and /skill:security');
-    expect(turn.steps).toHaveLength(1);
+      expect(snapshot.items.map((item) => item.kind)).toEqual(['marker', 'marker', 'turn']);
+      const first = snapshot.items[0];
+      expect(first?.kind === 'marker' && first.marker).toBe('skill');
+      expect(first?.kind === 'marker' && first.payload).toMatchObject({
+        text: 'rendered review block',
+        origin: { kind: 'skill_activation', trigger: 'user-slash', skillName: 'review' },
+      });
+      const second = snapshot.items[1];
+      expect(second?.kind === 'marker' && second.payload).toMatchObject({
+        text: 'rendered security block',
+        origin: { skillName: 'security', skillArgs: 'src/app.ts' },
+      });
+      const turn = snapshot.items[2];
+      if (turn?.kind !== 'turn') throw new Error('expected turn');
+      expect(turn.prompt).toBe('please /skill:review and /skill:security');
+      expect(turn.steps).toHaveLength(1);
+    }
   });
 
   it('maps media parts on the opening user message to attachment entities, dropping base64 bytes', () => {
@@ -1488,6 +1533,75 @@ describe('foldWireRecordFacts (cold facts)', () => {
         origin: { kind: 'compaction_summary' },
       },
     ]);
+
+  it('folds terminal subagent outcomes, background promotion, and a reused member generation', () => {
+    const spawned = (subagentId: string, time: number): HistoryWireRecord => ({
+      type: 'subagent.spawned', subagentId, subagentName: 'explore', parentAgentId: 'main',
+      parentToolCallId: 'swarm', runInBackground: false, time,
+    });
+    const folded = foldWireRecordFacts([
+      spawned('failed', 1000),
+      { type: 'subagent.failed', subagentId: 'failed', error: 'offline', time: 2000 },
+      spawned('cancelled', 1000),
+      { type: 'subagent.cancelled', subagentId: 'cancelled', time: 2000 },
+      spawned('reused', 1000),
+      { type: 'subagent.completed', subagentId: 'reused', resultSummary: 'old', time: 2000 },
+      spawned('reused', 3000),
+      { ...spawned('background', 1000), taskId: 'task-1', runInBackground: true },
+      { type: 'subagent.completed', subagentId: 'background', resultSummary: 'done', usage: { inputOther: 5, output: 7, inputCacheRead: 1, inputCacheCreation: 2 }, time: 2000 },
+      { type: 'task.terminated', info: { taskId: 'task-1', kind: 'agent', status: 'completed', agentId: 'background', detached: true, startedAt: 1000, endedAt: 2000 } },
+      { ...spawned('foreign', 1000), parentAgentId: 'other' },
+    ], baseWithMarker(), { agentId: 'main' });
+    expect(folded.tasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ taskId: 'failed', state: 'failed', error: 'offline' }),
+      expect.objectContaining({ taskId: 'cancelled', state: 'killed' }),
+      expect.objectContaining({ taskId: 'reused', state: 'running', startedAt: new Date(3000).toISOString() }),
+      expect.objectContaining({ taskId: 'task-1', state: 'completed', resultSummary: 'done', detached: true, usage: { inputOther: 5, output: 7, inputCacheRead: 1, inputCacheCreation: 2 } }),
+    ]));
+    expect(folded.tasks).toHaveLength(4);
+    expect(folded.tasks.find((task) => task.taskId === 'reused')?.resultSummary).toBeUndefined();
+    expect(folded.tasks.find((task) => task.taskId === 'failed')?.usage).toBeUndefined();
+  });
+
+  it('adopts the spawn placeholder into the task registered afterwards', () => {
+    const folded = foldWireRecordFacts([
+      { type: 'subagent.spawned', subagentId: 'child', subagentName: 'explore', parentAgentId: 'main', parentToolCallId: 'tower', runInBackground: false, description: 'review the diff', model: 'k2', time: 1000 },
+      { type: 'task.started', info: { taskId: 'task-9', kind: 'agent', status: 'running', agentId: 'child', detached: false, startedAt: 1100 }, time: 1100 },
+      { type: 'subagent.completed', subagentId: 'child', resultSummary: 'done', usage: { inputOther: 3, output: 4, inputCacheRead: 0, inputCacheCreation: 0 }, time: 2000 },
+    ], baseWithMarker(), { agentId: 'main' });
+    expect(folded.tasks).toEqual([
+      expect.objectContaining({
+        taskId: 'task-9', agentId: 'child', state: 'completed', resultSummary: 'done',
+        description: 'review the diff', model: 'k2',
+        startedAt: new Date(1000).toISOString(),
+        usage: { inputOther: 3, output: 4, inputCacheRead: 0, inputCacheCreation: 0 },
+      }),
+    ]);
+  });
+
+  it('terminalises a background member spawned before its task was registered', () => {
+    const folded = foldWireRecordFacts([
+      { type: 'subagent.spawned', subagentId: 'worker', subagentName: 'tower-worker', parentAgentId: 'main', parentToolCallId: 'tower-spawn', runInBackground: true, description: 'build the feature', time: 1000 },
+      { type: 'task.started', info: { taskId: 'task-7', kind: 'agent', status: 'running', agentId: 'worker', detached: true, startedAt: 1100 }, time: 1100 },
+      { type: 'task.terminated', info: { taskId: 'task-7', kind: 'agent', status: 'lost', agentId: 'worker', detached: true, startedAt: 1100, endedAt: 3000 }, time: 3000 },
+    ], baseWithMarker(), { agentId: 'main' });
+    expect(folded.tasks).toEqual([
+      expect.objectContaining({ taskId: 'task-7', agentId: 'worker', state: 'lost', detached: true, description: 'build the feature' }),
+    ]);
+  });
+
+  it('keeps a terminal subagent record in sync with a placeholder left by an earlier generation', () => {
+    const folded = foldWireRecordFacts([
+      { type: 'subagent.spawned', subagentId: 'worker', subagentName: 'explore', parentAgentId: 'main', parentToolCallId: 'agent-a', runInBackground: false, time: 1000 },
+      { type: 'subagent.spawned', subagentId: 'worker', subagentName: 'explore', parentAgentId: 'main', parentToolCallId: 'agent-b', runInBackground: false, taskId: 'task-7', time: 2000 },
+      { type: 'subagent.failed', subagentId: 'worker', error: 'offline', time: 3000 },
+    ], baseWithMarker(), { agentId: 'main' });
+    expect(folded.tasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ taskId: 'task-7', state: 'failed', error: 'offline' }),
+      expect.objectContaining({ taskId: 'worker', state: 'failed', error: 'offline' }),
+    ]));
+    expect(folded.tasks).toHaveLength(2);
+  });
 
   it('returns the base snapshot unchanged when no fact records exist (old sessions)', () => {
     const base = baseWithMarker();

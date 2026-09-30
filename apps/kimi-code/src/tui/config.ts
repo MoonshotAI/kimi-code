@@ -18,6 +18,10 @@ import { getDataDir } from '#/utils/paths';
 export const INVALID_TUI_CONFIG_MESSAGE =
   'Invalid TUI config in ~/.kimi-code/tui.toml; using defaults.';
 
+function legacyFullscreenEnvMode(): TuiMode | undefined {
+  return process.env['KIMI_CODE_TUI_FULL_SCREEN'] === '1' ? 'fullscreen' : undefined;
+}
+
 export const TuiThemeSchema = z.string();
 
 export const NotificationConditionSchema = z.enum(['unfocused', 'always']);
@@ -61,8 +65,12 @@ export const DEFAULT_MARKDOWN_CONFIG: MarkdownConfig = {
   mermaid: 'final',
 };
 
+export const TuiModeSchema = z.enum(['regular', 'fullscreen']);
+export type TuiMode = z.infer<typeof TuiModeSchema>;
+
 export const TuiConfigFileSchema = z.object({
   theme: TuiThemeSchema.optional(),
+  tui_mode: z.string().optional(),
   render_latex: z.boolean().optional(),
   disable_paste_burst: z.boolean().optional(),
   cache_expiry_hint: z.boolean().optional(),
@@ -93,6 +101,7 @@ export const TuiConfigFileSchema = z.object({
 
 export const TuiConfigSchema = z.object({
   theme: TuiThemeSchema,
+  tuiMode: TuiModeSchema.optional(),
   /** LaTeX math rendering in Markdown; optional only so older hand-built test
    * fixtures still typecheck. */
   renderLatex: z.boolean().optional(),
@@ -128,6 +137,7 @@ export const DEFAULT_UPGRADE_PREFERENCES: UpgradePreferences = {
 
 export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   theme: 'auto',
+  tuiMode: 'regular',
   renderLatex: true,
   disablePasteBurst: false,
   cacheExpiryHint: true,
@@ -163,28 +173,50 @@ export async function loadTuiConfig(
   warn?: (message: string) => void,
 ): Promise<TuiConfig> {
   if (!existsSync(filePath)) {
-    await saveTuiConfig(DEFAULT_TUI_CONFIG, filePath);
-    return DEFAULT_TUI_CONFIG;
+    const envTuiMode = legacyFullscreenEnvMode();
+    const config: TuiConfig =
+      envTuiMode === undefined ? DEFAULT_TUI_CONFIG : { ...DEFAULT_TUI_CONFIG, tuiMode: envTuiMode };
+    try {
+      await saveTuiConfig(config, filePath);
+    } catch {
+      warn?.('[tui.toml] could not save the default config');
+    }
+    return config;
   }
 
   try {
     const text = await readFile(filePath, 'utf-8');
-    return parseTuiConfig(text, warn);
+    const shape = parseTuiConfigShape(text);
+    const config = normalizeTuiConfig(shape, warn);
+    if (shape.tui_mode !== undefined) {
+      return config;
+    }
+    const envTuiMode = legacyFullscreenEnvMode();
+    if (envTuiMode === undefined) {
+      return config;
+    }
+    const migrated: TuiConfig = { ...config, tuiMode: envTuiMode };
+    try {
+      await saveTuiConfig(migrated, filePath);
+    } catch {
+      warn?.('[tui.toml] could not save the migrated tui_mode preference');
+    }
+    return migrated;
   } catch {
     throw new TuiConfigParseError(DEFAULT_TUI_CONFIG);
   }
+}
+
+function parseTuiConfigShape(tomlText: string): TuiConfigFileShape {
+  const raw = tomlText.trim().length === 0 ? {} : (parseToml(tomlText) as Record<string, unknown>);
+  return TuiConfigFileSchema.parse(raw);
 }
 
 export function parseTuiConfig(
   tomlText: string,
   warn?: (message: string) => void,
 ): TuiConfig {
-  if (tomlText.trim().length === 0) {
-    return DEFAULT_TUI_CONFIG;
-  }
-  const raw = parseToml(tomlText) as Record<string, unknown>;
-  const parsed = TuiConfigFileSchema.parse(raw);
-  return normalizeTuiConfig(parsed, warn);
+  return normalizeTuiConfig(parseTuiConfigShape(tomlText), warn);
 }
 
 export async function saveTuiConfig(
@@ -224,8 +256,18 @@ export function normalizeTuiConfig(
       warn(`[tui.toml] ignoring unknown markdown.mermaid value: ${mermaidValue}`);
     }
   }
+  const tuiModeValue = config.tui_mode;
+  let tuiMode: TuiMode = 'regular';
+  if (tuiModeValue !== undefined) {
+    if (tuiModeValue === 'regular' || tuiModeValue === 'fullscreen') {
+      tuiMode = tuiModeValue;
+    } else {
+      warn(`[tui.toml] ignoring unknown tui_mode value: ${tuiModeValue}`);
+    }
+  }
   return TuiConfigSchema.parse({
     theme: config.theme ?? DEFAULT_TUI_CONFIG.theme,
+    tuiMode,
     renderLatex: config.render_latex ?? DEFAULT_TUI_CONFIG.renderLatex,
     disablePasteBurst: config.disable_paste_burst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     cacheExpiryHint: config.cache_expiry_hint ?? DEFAULT_TUI_CONFIG.cacheExpiryHint,
@@ -268,6 +310,7 @@ export function renderTuiConfig(config: TuiConfig): string {
   if (statusCommand) {
     statusLines.push(`command = "${escapeTomlBasicString(statusCommand)}"`);
   }
+  const tuiModeLine = `tui_mode = "${config.tuiMode ?? 'regular'}" # "regular" | "fullscreen" ("fullscreen" is experimental)`;
   const markdownSection =
     config.markdown?.mermaid === 'off'
       ? `[markdown]\nmermaid = "off" # "final" | "off"\n`
@@ -290,6 +333,7 @@ export function renderTuiConfig(config: TuiConfig): string {
 # Agent/runtime settings stay in ~/.kimi-code/config.toml.
 
 theme = "${escapeTomlBasicString(config.theme)}" # "auto" | "dark" | "light" | custom theme name
+${tuiModeLine}
 render_latex = ${String(config.renderLatex !== false)} # false keeps LaTeX math in assistant messages as raw source
 disable_paste_burst = ${String(config.disablePasteBurst)} # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = ${String(config.cacheExpiryHint !== false)} # false disables the "cache expired" dialog on resume / idle submit

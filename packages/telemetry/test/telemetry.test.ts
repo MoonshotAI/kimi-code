@@ -703,9 +703,10 @@ describe('AsyncTransport', () => {
     const fetchImpl = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
       new Response('', { status: 200 }),
     );
-    let endpoint = 'https://cn.test/events';
+    let endpoint: string | undefined = 'https://cn.test/events';
+    const homeDir = await tempHome();
     const transport = new AsyncTransport({
-      homeDir: await tempHome(),
+      homeDir,
       deviceId: 'dev',
       endpoint: () => endpoint,
       fetchImpl: fetchImpl as unknown as typeof fetch,
@@ -718,6 +719,11 @@ describe('AsyncTransport', () => {
     endpoint = 'https://global.test/events';
     await transport.send([sampleEvent()]);
     expect(fetchImpl.mock.calls[1]?.[0]).toBe('https://global.test/events');
+
+    endpoint = undefined;
+    await transport.send([sampleEvent('dropped')]);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(() => statSync(join(homeDir, 'telemetry'))).toThrow();
   });
 
   it('retries anonymously on 401 with a token', async () => {
@@ -1044,6 +1050,7 @@ describe('telemetry bootstrap', () => {
       appName: 'kimi-code-cli',
       version: '1.2.3',
       initiallyEnabled: false,
+      endpoint: 'https://mock.test/events',
     });
     track('dropped');
     setTelemetryEnabled(true);
@@ -1070,6 +1077,7 @@ describe('telemetry bootstrap', () => {
       deviceId: 'dev',
       appName: 'kimi-code-cli',
       version: '1.2.3',
+      endpoint: 'https://mock.test/events',
     });
     await vi.waitFor(() => {
       expect(fetchImpl).toHaveBeenCalledTimes(1);
@@ -1090,6 +1098,7 @@ describe('telemetry bootstrap', () => {
       sessionId: 'ses',
       appName: 'kimi-code-cli',
       version: '1.2.3',
+      endpoint: 'https://mock.test/events',
     });
 
     await shutdownTelemetry();
@@ -1152,6 +1161,7 @@ describe('telemetry bootstrap', () => {
       appName: 'kimi-code-cli',
       version: '1.2.3',
       model: 'model-a',
+      endpoint: 'https://mock.test/events',
     });
     track('first');
     setTelemetryModel('model-b');

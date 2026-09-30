@@ -10,7 +10,6 @@ import { Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { Error2, ErrorCodes } from '#/errors';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
-import { IGitService } from '#/app/git/git';
 import { stubLog } from '../../_base/log/stubs';
 import { stubFlag } from '../../app/flag/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
@@ -265,15 +264,10 @@ function realSubagents(
     },
   } as unknown as IModelCatalog;
   const sessionContext = { _serviceBrand: undefined, cwd: '/repo' } as unknown as ISessionContext;
-  const git = {
-    _serviceBrand: undefined,
-    runGit: vi.fn(async () => ({ exitCode: 1, stdout: '', stderr: '' })),
-  } as unknown as IGitService;
   return new SessionSubagentService(
     agentLifecycle,
     catalog,
     config,
-    git,
     modelCatalog,
     sessionContext,
     stubLog(),

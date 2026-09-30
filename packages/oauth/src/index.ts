@@ -51,8 +51,14 @@ export {
   kimiRegionProfile,
   kimiRegionSchema,
   resolveKimiRegion,
+  resolveKimiRemoteControlAuth,
 } from './region';
-export type { KimiRegion, KimiRegionProfile, ResolveKimiRegionOptions } from './region';
+export type {
+  KimiRegion,
+  KimiRegionProfile,
+  KimiRemoteControlAuth,
+  ResolveKimiRegionOptions,
+} from './region';
 
 export {
   applyManagedApiKeyProviderModels,

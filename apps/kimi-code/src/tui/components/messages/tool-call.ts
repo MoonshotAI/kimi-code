@@ -44,7 +44,7 @@ import { buildGoalToolHeader, parseGoalToolOutput } from './tool-renderers/goal'
 import { searchNoticeOnly } from './tool-renderers/grep-output';
 import { parseReadMediaOutput } from './tool-renderers/media';
 import { computeWriteStats } from './tool-renderers/chip';
-import { nonEmptyLines, outcomeLine } from './tool-renderers/outcome';
+import { nonEmptyLines, outcomeLine, outcomeRows } from './tool-renderers/outcome';
 import { TruncatedOutputComponent } from './tool-renderers/truncated';
 import { isSpilledToolOutput } from './tool-renderers/types';
 import { isGenericToolResult, pickResultRenderer } from './tool-renderers/registry';
@@ -761,6 +761,11 @@ export class ToolCallComponent extends Container {
           ((child instanceof TruncatedOutputComponent || child instanceof ShellExecutionComponent) &&
             child.wasTruncated()),
       );
+    } else if (
+      !this.truncatedAtLastRender &&
+      this.collapsedOutcomeClips(width)
+    ) {
+      this.truncatedAtLastRender = true;
     }
 
     if (allReused) {
@@ -804,6 +809,28 @@ export class ToolCallComponent extends Container {
   hasHiddenContent(): boolean {
     this.hiddenContent ??= this.computeHiddenContent();
     return this.hiddenContent || this.truncatedAtLastRender;
+  }
+
+  private collapsedOutcomeClips(width: number): boolean {
+    const result = this.result;
+    if (result === undefined || result.output.length === 0 || result.is_error === true) {
+      return false;
+    }
+    const name = this.toolCall.name;
+    if (name !== 'Bash' && !isGenericToolResult(name)) return false;
+    const leadsWithMetadata =
+      name === 'Bash' &&
+      (result.output.startsWith('task_id:') || isSpilledToolOutput(result.output));
+    const rows = outcomeRows(
+      result.output,
+      name === 'Bash' && !leadsWithMetadata ? 'last' : 'first',
+    );
+    for (const row of rows) {
+      if (!(row instanceof TruncatedHeaderLine)) continue;
+      row.render(width);
+      if (row.wasTruncated()) return true;
+    }
+    return false;
   }
 
   /** Whether the global ctrl+o toggle currently has this card expanded. */

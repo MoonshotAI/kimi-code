@@ -27,7 +27,7 @@ function createMockSpinner(initialText = 'working') {
 }
 
 describe('ActivityPaneComponent', () => {
-  it('renders waiting loader after a spacer', () => {
+  it('renders the waiting loader after a spacer', () => {
     const { spinner } = createMockSpinner('loading');
     const component = new ActivityPaneComponent({
       mode: 'waiting',
@@ -37,7 +37,7 @@ describe('ActivityPaneComponent', () => {
     expect(component.render(80).map((line) => line.trimEnd())).toEqual(['', 'loading']);
   });
 
-  it('renders composing spinner after a spacer', () => {
+  it('renders the composing spinner after a spacer', () => {
     const { spinner } = createMockSpinner('working');
     const component = new ActivityPaneComponent({
       mode: 'composing',
@@ -45,6 +45,16 @@ describe('ActivityPaneComponent', () => {
     });
 
     expect(component.render(80).map((line) => line.trimEnd())).toEqual(['', 'working']);
+  });
+
+  it('renders the thinking spinner after a spacer', () => {
+    const { spinner } = createMockSpinner('thinking');
+    const component = new ActivityPaneComponent({
+      mode: 'thinking',
+      spinner,
+    });
+
+    expect(component.render(80).map((line) => line.trimEnd())).toEqual(['', 'thinking']);
   });
 
   it('renders the detail line under the waiting spinner', () => {
@@ -61,8 +71,8 @@ describe('ActivityPaneComponent', () => {
     expect(lines).toEqual(['', 'working', '    429 · rate limited']);
   });
 
-  it.each(['waiting', 'tool', 'composing'] as const)(
-    'renders %s spinner with tip after a spacer',
+  it.each(['waiting', 'tool', 'composing', 'thinking'] as const)(
+    'renders the %s spinner with tip after a spacer',
     (mode) => {
       const { spinner } = createMockSpinner('working');
       const component = new ActivityPaneComponent({
@@ -91,7 +101,7 @@ describe('ActivityPaneComponent', () => {
     },
   );
 
-  it('renders nothing for hidden and thinking modes', () => {
+  it('renders nothing for hidden, or for thinking without a spinner', () => {
     expect(new ActivityPaneComponent({ mode: 'hidden' }).render(80)).toEqual([]);
     expect(new ActivityPaneComponent({ mode: 'thinking' }).render(80)).toEqual([]);
   });
