@@ -1,5 +1,11 @@
 # @moonshot-ai/agent-core-v2
 
+## 0.4.3
+
+### Patch Changes
+
+- [#3341](https://github.com/MoonshotAI/kimi-code/pull/3341) [`9fa1e77`](https://github.com/MoonshotAI/kimi-code/commit/9fa1e77df5794cebaa3eb09d01bbe174d55e5a28) Thanks [@7Sageer](https://github.com/7Sageer)! - Remove the `${now}` variable from the system prompt template variable table.
+
 ## 0.4.2
 
 ### Patch Changes

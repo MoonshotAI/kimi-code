@@ -194,10 +194,68 @@ describe('migrateSessionsStep (multi-workdir fixture)', () => {
       expect(report.sessionsFailed).toEqual([
         {
           sourcePath: sessionDir,
-          reason: expect.stringMatching(/context\.jsonl.*missing.*unreadable/i),
+          reason: expect.stringMatching(/context.*missing.*unreadable/i),
         },
       ]);
       expect(report.sessionsSkippedMalformed).toBe(0);
+    } finally {
+      await rm(src, { recursive: true, force: true });
+    }
+  });
+
+  it('migrates historical flat <uuid>.jsonl sessions end-to-end', async () => {
+    const src = await mkdtemp(join(tmpdir(), 'flat-sessions-src-'));
+    try {
+      const workdir = '/Users/me/flat-project';
+      const bucket = join(src, 'sessions', oldMd5BucketName(workdir));
+      await mkdir(bucket, { recursive: true });
+      await writeFile(
+        join(src, 'kimi.json'),
+        JSON.stringify({ work_dirs: [{ path: workdir, kaos: 'local' }] }),
+      );
+      await writeFile(
+        join(bucket, 'flat-1.jsonl'),
+        '{"role":"user","content":"session one"}\n',
+      );
+      await writeFile(
+        join(bucket, 'flat-2.jsonl'),
+        '{"role":"user","content":"session two"}\n',
+      );
+
+      const report = await migrateSessionsStep({ sourceHome: src, targetHome });
+
+      expect(report.sessionsMigrated).toBe(2);
+      expect(report.sessionsFailed).toEqual([]);
+      const index = await readFile(targetSessionIndex(targetHome), 'utf-8');
+      expect(index).toContain('ses_flat-1');
+      expect(index).toContain('ses_flat-2');
+    } finally {
+      await rm(src, { recursive: true, force: true });
+    }
+  });
+
+  it('migrates a title-only session found by the bucket scan', async () => {
+    const src = await mkdtemp(join(tmpdir(), 'title-only-src-'));
+    try {
+      const workdir = '/Users/me/title-project';
+      const sessionDir = join(src, 'sessions', oldMd5BucketName(workdir), 'titled-1');
+      await mkdir(sessionDir, { recursive: true });
+      await writeFile(
+        join(src, 'kimi.json'),
+        JSON.stringify({ work_dirs: [{ path: workdir, kaos: 'local' }] }),
+      );
+      await writeFile(join(sessionDir, 'context.jsonl'), '');
+      await writeFile(
+        join(sessionDir, 'state.json'),
+        JSON.stringify({ custom_title: 'Named but empty' }),
+      );
+
+      const report = await migrateSessionsStep({ sourceHome: src, targetHome });
+
+      expect(report.sessionsMigrated).toBe(1);
+      expect(report.sessionsSkippedEmpty).toBe(0);
+      const index = await readFile(targetSessionIndex(targetHome), 'utf-8');
+      expect(index).toContain('ses_titled-1');
     } finally {
       await rm(src, { recursive: true, force: true });
     }
@@ -219,7 +277,7 @@ describe('migrateSessionsStep (multi-workdir fixture)', () => {
       expect(report.sessionsFailed).toEqual([
         {
           sourcePath: sessionDir,
-          reason: expect.stringMatching(/context\.jsonl.*unreadable/i),
+          reason: expect.stringMatching(/context.*unreadable/i),
         },
       ]);
     } finally {

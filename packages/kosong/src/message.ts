@@ -11,11 +11,12 @@ export interface ThinkPart {
   type: 'think';
   think: string;
   encrypted?: string; // Provider-specific reasoning signature
+  hidden?: boolean;
 }
 
 export interface ImageURLPart {
   type: 'image_url';
-  imageUrl: { url: string; id?: string };
+  imageUrl: { url: string; id?: string; name?: string };
 }
 
 export interface AudioURLPart {
@@ -25,7 +26,7 @@ export interface AudioURLPart {
 
 export interface VideoURLPart {
   type: 'video_url';
-  videoUrl: { url: string; id?: string | undefined };
+  videoUrl: { url: string; id?: string | undefined; name?: string };
 }
 
 /**

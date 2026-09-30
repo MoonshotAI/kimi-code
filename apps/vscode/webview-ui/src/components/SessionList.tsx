@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useRequest } from "ahooks";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { IconSearch, IconDots, IconTrash, IconCheck } from "@tabler/icons-react";
 import { Input } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -14,6 +14,9 @@ import { toast } from "./ui/sonner";
 interface SessionListProps {
   onClose: () => void;
 }
+
+const KIMI_SESSIONS_KEY = ["kimiSessions"] as const;
+const NO_SESSIONS: SessionInfo[] = [];
 
 function formatRelativeDate(timestamp: number): string {
   const diff = Date.now() - timestamp;
@@ -86,7 +89,11 @@ export function SessionList({ onClose }: SessionListProps) {
   const [isDeleting, setIsDeleting] = useState(false);
   const [pendingSession, setPendingSession] = useState<SessionInfo | null>(null);
 
-  const { data: kimiSessions = [], loading, mutate } = useRequest(() => bridge.getAllKimiSessions());
+  const queryClient = useQueryClient();
+  const { data: kimiSessions = NO_SESSIONS, isPending: loading } = useQuery({
+    queryKey: KIMI_SESSIONS_KEY,
+    queryFn: () => bridge.getAllKimiSessions(),
+  });
 
   const getWorkDirLabel = (sessionWorkDir: string): string | null => {
     const activeWorkDir = currentWorkDir || workspaceRoot;
@@ -157,7 +164,7 @@ export function SessionList({ onClose }: SessionListProps) {
         await startNewConversation();
       }
 
-      mutate((prev) => prev?.filter((s) => s.id !== deleteTarget.id) || []);
+      queryClient.setQueryData<SessionInfo[]>(KIMI_SESSIONS_KEY, (prev) => prev?.filter((s) => s.id !== deleteTarget.id) ?? []);
     } catch (error) {
       console.error("[SessionList] Failed to delete session:", error);
       toast.error(`Unable to delete the conversation: ${error instanceof Error ? error.message : String(error)}`);

@@ -1,5 +1,4 @@
 import { Emitter, type Event } from '#/_base/event';
-import { UserFileSkillSource } from '#/features/skill/catalog/userFileSkillSource';
 import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
 import type { RuntimeBinding, RuntimeLease } from '#/runtime/runtime';
 import { RuntimeError, type RuntimeGenerationSnapshot, type RuntimeRegistry, type RuntimeRegistryChange } from '#/runtime/runtimeRegistry';
@@ -11,8 +10,6 @@ import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsService';
 import type { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
 import { WorkspaceFsService } from '#/workspace/workspaceFs/fsService';
-import type { IWorkspaceFsWatchService } from '#/workspace/workspaceFs/fsWatch';
-import { WorkspaceFsWatchService } from '#/workspace/workspaceFs/fsWatchService';
 import type { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
 import { WorkspaceGitService } from '#/workspace/workspaceGit/workspaceGitService';
 import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
@@ -23,6 +20,8 @@ import type { IWorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/
 import { WorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfigService';
 import type { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 import { WorkspaceTrustService } from '#/workspace/workspaceTrust/workspaceTrustService';
+import type { IWorkspaceTrustDisclosure } from '#/workspace/workspaceTrust/trustDisclosure';
+import { WorkspaceTrustDisclosureService } from '#/workspace/workspaceTrust/trustDisclosureService';
 import type { IExtraAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoader';
 import { ExtraAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoaderService';
 import type { IExplicitAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoader';
@@ -89,12 +88,12 @@ interface ProgramGeneration {
   readonly state: IWorkspaceStateService;
   readonly dirs: IWorkspaceDirs;
   readonly fs: IWorkspaceFsService;
-  readonly watch: IWorkspaceFsWatchService;
   readonly git: IWorkspaceGitService;
   readonly instructions: IWorkspaceInstructionsService;
   readonly mcpConfig: IWorkspaceMcpConfigService;
   readonly mcp: IWorkspaceMcpService;
   readonly trust: IWorkspaceTrust;
+  readonly trustDisclosure: IWorkspaceTrustDisclosure;
   readonly skills: IWorkspaceSkillCatalog;
   readonly agentProfiles: IWorkspaceAgentProfileLoader;
   readonly userAgentProfiles: IUserAgentProfileLoader;
@@ -108,7 +107,7 @@ interface ProgramGeneration {
   retired: boolean;
 }
 
-const PROGRAM_CAPABILITIES = ['fs', 'process', 'watch'] as const;
+const PROGRAM_CAPABILITIES = ['fs', 'process'] as const;
 
 export class Program {
   readonly binding: RuntimeBinding;
@@ -143,12 +142,12 @@ export class Program {
   get state(): IWorkspaceStateService { return this.requireGeneration().state; }
   get dirs(): IWorkspaceDirs { return this.requireGeneration().dirs; }
   get fs(): IWorkspaceFsService { return this.requireGeneration().fs; }
-  get watch(): IWorkspaceFsWatchService { return this.requireGeneration().watch; }
   get git(): IWorkspaceGitService { return this.requireGeneration().git; }
   get instructions(): IWorkspaceInstructionsService { return this.requireGeneration().instructions; }
   get mcpConfig(): IWorkspaceMcpConfigService { return this.requireGeneration().mcpConfig; }
   get mcp(): IWorkspaceMcpService { return this.requireGeneration().mcp; }
   get trust(): IWorkspaceTrust { return this.requireGeneration().trust; }
+  get trustDisclosure(): IWorkspaceTrustDisclosure { return this.requireGeneration().trustDisclosure; }
   get skills(): IWorkspaceSkillCatalog { return this.requireGeneration().skills; }
   get agentProfiles(): IWorkspaceAgentProfileLoader { return this.requireGeneration().agentProfiles; }
   get sessionControllerGeneration(): string { return this.requireGeneration().id; }
@@ -284,38 +283,38 @@ export class Program {
     try {
       const state = own(new WorkspaceStateService(this.dependencies.appState));
       const localConfig = new FileProjectLocalConfigService(this.dependencies.bootstrap, runtime.fs!);
-      const dirs = own(new WorkspaceDirsService(this.context, localConfig, runtime.watch!, this.dependencies.log, state));
+      const dirs = own(new WorkspaceDirsService(this.context, localConfig, this.dependencies.log, state));
       const git = new WorkspaceGitService(this.context, this.dependencies.git);
       const fs = new WorkspaceFsService(this.context, dirs, runtime.fs!, this.resolver, this.dependencies.telemetry, git);
-      const watch = own(new WorkspaceFsWatchService(this.context, dirs, runtime.watch!, runtime.fs!));
-      const instructions = own(new WorkspaceInstructionsService(this.context, runtime.fs!, runtime.environment, this.dependencies.bootstrap, runtime.watch!, this.dependencies.log, state));
-      const trust = own(new WorkspaceTrustService(this.context, this.dependencies.docs, state, this.dependencies.telemetry));
-      const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, runtime.watch!, runtime.fs!, trust, this.dependencies.configStore));
+      const instructions = own(new WorkspaceInstructionsService(this.context, runtime.fs!, runtime.environment, this.dependencies.bootstrap, this.dependencies.log, state));
+      const trust = own(new WorkspaceTrustService(this.context, this.dependencies.docs, state, this.dependencies.telemetry, this.dependencies.bootstrap));
+      const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, runtime.fs!, trust, this.dependencies.configStore));
       const mcp = own(new WorkspaceMcpService(this.context, this.resolver, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager));
       const userAgentProfiles = own(new UserAgentProfileLoaderService(this.dependencies.bootstrap, runtime.fs!, this.dependencies.log, this.dependencies.builtinAgentProfiles, this.context, this.dependencies.agentProfiles));
       const pluginAgentProfiles = own(new PluginAgentProfileLoaderService(this.dependencies.plugins, runtime.fs!, this.dependencies.log, userAgentProfiles, this.context, this.dependencies.agentProfiles));
       const explicitAgentProfiles = own(new ExplicitAgentProfileLoaderService(this.context, this.dependencies.bootstrap, runtime.fs!, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
       const extraAgentProfiles = own(new ExtraAgentProfileLoaderService(this.dependencies.config, this.context, this.dependencies.bootstrap, runtime.fs!, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
-      const agentProfiles = own(new WorkspaceAgentProfileLoaderService(this.context, runtime.fs!, this.dependencies.log, userAgentProfiles, runtime.watch!, this.dependencies.agentProfiles));
+      const agentProfiles = own(new WorkspaceAgentProfileLoaderService(this.context, runtime.fs!, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
       const skillDiscovery = new RuntimeSkillDiscovery(this.dependencies.log, runtime.fs!);
-      const userSkills = own(new UserFileSkillSource(skillDiscovery, this.dependencies.bootstrap, this.dependencies.config));
+      const userSkills = this.dependencies.userSkills;
       const explicitSkills = new ExplicitFileSkillSource(skillDiscovery, this.context, this.dependencies.bootstrap);
       const extraSkills = own(new ExtraFileSkillSource(skillDiscovery, this.dependencies.config, this.context, this.dependencies.bootstrap));
-      const workspaceSkills = own(new WorkspaceRootSkillSource(skillDiscovery, this.context, this.dependencies.config, this.dependencies.bootstrap, runtime.watch!));
+      const workspaceSkills = own(new WorkspaceRootSkillSource(skillDiscovery, this.context, this.dependencies.config, this.dependencies.bootstrap));
       const pluginSkills = new PluginSkillSource(skillDiscovery, this.dependencies.plugins);
       const skills = own(new WorkspaceSkillCatalogService(this.dependencies.builtinSkills, userSkills, explicitSkills, extraSkills, workspaceSkills, pluginSkills, state));
+      const trustDisclosure = new WorkspaceTrustDisclosureService(this.context, runtime.fs!, this.dependencies.bootstrap, this.dependencies.config, localConfig, trust, skills, agentProfiles, this.dependencies.agentProfiles, instructions, this.dependencies.log);
       return {
         id: runtime.identity.generation,
         lease,
         state,
         dirs,
         fs,
-        watch,
         git,
         instructions,
         mcpConfig,
         mcp,
         trust,
+        trustDisclosure,
         skills,
         agentProfiles,
         userAgentProfiles,
@@ -329,7 +328,7 @@ export class Program {
         retired: false,
       };
     } catch (error) {
-      for (const disposable of disposables.reverse()) void disposable.dispose();
+      for (const disposable of disposables.toReversed()) void disposable.dispose();
       lease.dispose();
       throw error;
     }
@@ -368,7 +367,7 @@ export class Program {
   private releaseGeneration(generation: ProgramGeneration): void {
     generation.references -= 1;
     if (generation.references !== 0 || !generation.retired) return;
-    for (const disposable of [...generation.disposables].reverse()) void disposable.dispose();
+    for (const disposable of [...generation.disposables].toReversed()) void disposable.dispose();
     generation.lease.dispose();
   }
 

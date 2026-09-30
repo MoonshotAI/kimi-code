@@ -111,17 +111,6 @@ export interface GoalClear {
   readonly agentId: string;
 }
 
-const goalForkedSchema = z.object({ agentId: z.string() });
-
-export class GoalForked extends AgentEvent2<z.infer<typeof goalForkedSchema>> {
-  static override readonly type = 'forked';
-  static override readonly durable = true;
-  static override readonly schema = goalForkedSchema;
-}
-export interface GoalForked {
-  readonly agentId: string;
-}
-
 export interface GoalUpdatedPayload {
   readonly agentId: string;
   snapshot: GoalSnapshot | null;
@@ -133,3 +122,9 @@ export class GoalUpdated extends AgentEvent2<GoalUpdatedPayload> {
   static override readonly observable = true;
 }
 export interface GoalUpdated extends GoalUpdatedPayload {}
+
+export interface GoalUpdatedEvent {
+  readonly type: 'goal.updated';
+  readonly snapshot: GoalSnapshot | null;
+  readonly change?: GoalChange;
+}

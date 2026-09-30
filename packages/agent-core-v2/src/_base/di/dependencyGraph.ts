@@ -41,6 +41,14 @@ export class PairIndex<V> {
     }
   }
 
+  deleteScope(scope: object): void {
+    this._map.delete(scope);
+  }
+
+  get size(): number {
+    return this._map.size;
+  }
+
   entries(): Array<[ScopedToken, V]> {
     const out: Array<[ScopedToken, V]> = [];
     for (const [scope, inner] of this._map) {
@@ -83,9 +91,31 @@ export class DependencyGraph {
     const out = this._out.get(instance);
     if (out !== undefined) {
       for (const [dependency] of out.entries()) {
-        this._in.get(dependency.scope, dependency.token)?.delete(instance);
+        const inbound = this._in.get(dependency.scope, dependency.token);
+        if (inbound !== undefined) {
+          inbound.delete(instance);
+          if (inbound.size === 0) {
+            this._in.delete(dependency.scope, dependency.token);
+          }
+        }
       }
       this._out.delete(instance);
+    }
+  }
+
+  removeScope(scope: object): void {
+    for (const [instance, ref] of this._refByInstance) {
+      if (ref.scope === scope) {
+        this.removeInstance(instance);
+      }
+    }
+    this._instanceByRef.deleteScope(scope);
+    this._in.deleteScope(scope);
+    for (const [instance, out] of this._out) {
+      out.deleteScope(scope);
+      if (out.size === 0) {
+        this._out.delete(instance);
+      }
     }
   }
 

@@ -41,7 +41,7 @@ const ELLIPSIS = '…';
 const WEB_BRIDGE_URL = 'https://www.kimi.com/features/webbridge#local-agent';
 const WEB_BRIDGE_ENTRY: PluginMarketplaceEntry = {
   id: 'kimi-webbridge',
-  displayName: 'Kimi WebBridge',
+  displayName: 'Kimi Browser Extension',
   source: WEB_BRIDGE_URL,
   tier: 'official',
   homepage: WEB_BRIDGE_URL,

@@ -9,7 +9,7 @@ import type { ExecutableToolResult } from '#/tool/toolContract';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -44,6 +44,20 @@ describe('ToolResultTruncationService', () => {
 
   const spillDir = () =>
     join(homeDir, 'sessions/workspace/session/agents/main/tool-results');
+
+  it('recognizes agent event logs under the sessions directory', () => {
+    expect(
+      truncation.isWireJournalPath(join(homeDir, 'sessions/workspace/session/agents/main/wire.jsonl')),
+    ).toBe(true);
+    expect(
+      truncation.isWireJournalPath(join(homeDir, 'sessions/workspace/session/agents/sub-1/wire.jsonl')),
+    ).toBe(true);
+    expect(
+      truncation.isWireJournalPath(join(homeDir, 'sessions/workspace/session/agents/main/notes.jsonl')),
+    ).toBe(false);
+    expect(truncation.isWireJournalPath(join(homeDir, 'blobs/wire.jsonl'))).toBe(false);
+    expect(truncation.isWireJournalPath('/elsewhere/sessions/x/wire.jsonl')).toBe(false);
+  });
 
   const bulk = (ch: string, n: number) => `${ch.repeat(99)}\n`.repeat(n);
 

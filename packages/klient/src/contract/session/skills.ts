@@ -18,6 +18,7 @@ export const skillSummarySchema = z.object({
   type: z.string().optional(),
   disableModelInvocation: z.boolean().optional(),
   isSubSkill: z.boolean().optional(),
+  scopes: z.array(z.enum(['tui', 'web'])).optional(),
 });
 
 export const sessionSkillCatalogContract = {

@@ -412,6 +412,227 @@ describe('InstantiationService.createChild', () => {
   });
 });
 
+describe('child scope detach on dispose', () => {
+  function collectReachable(root: unknown, cap = 200_000): Set<unknown> {
+    const seen = new Set<unknown>();
+    const queue: unknown[] = [root];
+    while (queue.length > 0 && seen.size < cap) {
+      const value = queue.shift()!;
+      if (value === null || (typeof value !== 'object' && typeof value !== 'function')) {
+        continue;
+      }
+      if (seen.has(value)) {
+        continue;
+      }
+      seen.add(value);
+      if (value instanceof Map) {
+        for (const [key, entry] of value) {
+          queue.push(key, entry);
+        }
+        continue;
+      }
+      if (value instanceof Set) {
+        for (const entry of value) {
+          queue.push(entry);
+        }
+        continue;
+      }
+      if (typeof value === 'function') {
+        continue;
+      }
+      for (const key of Object.keys(value)) {
+        queue.push((value as Record<string, unknown>)[key]);
+      }
+    }
+    return seen;
+  }
+
+  it('retiring a service-backed unit drops its edge node from the tracked set and the graph', () => {
+    interface IParentSvc {
+      tag: string;
+    }
+    interface IChildSvc {
+      tag: string;
+    }
+    const IParentSvc = createDecorator<IParentSvc>('retire-parent-svc');
+    const IChildSvc = createDecorator<IChildSvc>('retire-child-svc');
+    class ParentSvc implements IParentSvc {
+      tag = 'parent';
+    }
+    class ChildSvc implements IChildSvc {
+      tag = 'child';
+      constructor(@IParentSvc readonly parent: IParentSvc) {}
+    }
+
+    const parent = new InstantiationService(
+      new ServiceCollection([IParentSvc, new SyncDescriptor(ParentSvc)]),
+    );
+    const child = parent.createChild(
+      new ServiceCollection([IChildSvc, new SyncDescriptor(ChildSvc)]),
+    ) as InstantiationService;
+    parent.invokeFunction((a) => a.get(IParentSvc));
+    const childInstance = child.invokeFunction((a) => a.get(IChildSvc));
+    child.fiberHost.recordInstanceEdge(childInstance, IChildSvc);
+
+    const graph = parent.cascadeTree.graph;
+    expect(graph.edges().some((edge) => edge.consumer.token === IChildSvc)).toBe(true);
+
+    child.unprovide(IChildSvc);
+
+    expect(graph.edges().some((edge) => edge.consumer.token === IChildSvc)).toBe(false);
+    expect(collectReachable(parent).has(childInstance)).toBe(false);
+    parent.dispose();
+  });
+
+  it('disposing a child detaches it from the shared dependency graph and the parent', async () => {
+    interface IParentSvc {
+      tag: string;
+    }
+    interface IChildSvc {
+      tag: string;
+    }
+    interface IConsumerSvc {
+      tag: string;
+    }
+    interface IExtraSvc {
+      tag: string;
+    }
+    const IParentSvc = createDecorator<IParentSvc>('detach-parent-svc');
+    const IChildSvc = createDecorator<IChildSvc>('detach-child-svc');
+    const IConsumerSvc = createDecorator<IConsumerSvc>('detach-consumer-svc');
+    const IExtraSvc = createDecorator<IExtraSvc>('detach-extra-svc');
+    class ParentSvc implements IParentSvc {
+      tag = 'parent';
+    }
+    class ChildSvc implements IChildSvc {
+      tag = 'child';
+      constructor(@IParentSvc readonly parent: IParentSvc) {}
+    }
+    class ConsumerSvc implements IConsumerSvc {
+      tag = 'consumer';
+      constructor(@IChildSvc readonly svc: IChildSvc) {}
+    }
+    class ExtraSvc implements IExtraSvc {
+      tag = 'extra';
+    }
+
+    const parent = new InstantiationService(
+      new ServiceCollection([IParentSvc, new SyncDescriptor(ParentSvc)]),
+    );
+    const child = parent.createChild(
+      new ServiceCollection(
+        [IChildSvc, new SyncDescriptor(ChildSvc)],
+        [IConsumerSvc, new SyncDescriptor(ConsumerSvc)],
+      ),
+    ) as InstantiationService;
+    parent.invokeFunction((a) => a.get(IParentSvc));
+    child.invokeFunction((a) => {
+      a.get(IChildSvc);
+      a.get(IConsumerSvc);
+    });
+    child.provide(IExtraSvc, new SyncDescriptor(ExtraSvc));
+    const anonymousUnitNode = { marker: 'anonymous-unit' };
+    child.fiberHost.recordInstanceEdge(anonymousUnitNode, IChildSvc);
+
+    const graph = parent.cascadeTree.graph;
+    expect(graph.edges().length).toBeGreaterThan(0);
+
+    await child.disposeAsync();
+
+    for (const edge of graph.edges()) {
+      expect(edge.consumer.scope).not.toBe(child);
+      expect(edge.dependency.scope).not.toBe(child);
+    }
+    const reachable = collectReachable(parent);
+    expect(reachable.has(child)).toBe(false);
+    expect(reachable.has(anonymousUnitNode)).toBe(false);
+    parent.dispose();
+  });
+
+  it('detaches a child that is disposed while a parent cascade touching it is in flight', async () => {
+    interface IParentSvc {
+      tag: string;
+    }
+    interface IChildSvc {
+      tag: string;
+    }
+    const IParentSvc = createDecorator<IParentSvc>('inflight-detach-parent');
+    const IChildSvc = createDecorator<IChildSvc>('inflight-detach-child');
+    class ParentSvc implements IParentSvc {
+      tag = 'parent';
+    }
+    class ChildSvc implements IChildSvc {
+      tag = 'child';
+      constructor(@IParentSvc readonly parent: IParentSvc) {}
+    }
+
+    const parent = new InstantiationService(
+      new ServiceCollection([IParentSvc, new SyncDescriptor(ParentSvc)]),
+    );
+    const child = parent.createChild(
+      new ServiceCollection([IChildSvc, new SyncDescriptor(ChildSvc)]),
+    ) as InstantiationService;
+    parent.invokeFunction((a) => a.get(IParentSvc));
+    child.invokeFunction((a) => a.get(IChildSvc));
+
+    let releaseGate!: () => void;
+    parent.cascade.configure({
+      onWillCascade: () =>
+        new Promise<void>((resolve) => {
+          releaseGate = resolve;
+        }),
+    });
+    void parent.provide(IParentSvc, new SyncDescriptor(ParentSvc));
+    await child.disposeAsync();
+    releaseGate();
+    await parent.cascade.whenIdle();
+
+    expect(parent.invokeFunction((a) => a.get(IParentSvc)).tag).toBe('parent');
+    expect(collectReachable(parent).has(child)).toBe(false);
+    parent.dispose();
+  });
+
+  it('parent cascades still settle after a child scope is detached', async () => {
+    interface IParentSvc {
+      tag: string;
+    }
+    interface IChildSvc {
+      tag: string;
+    }
+    interface ILateSvc {
+      tag: string;
+    }
+    const IParentSvc = createDecorator<IParentSvc>('cascade-after-detach-parent');
+    const IChildSvc = createDecorator<IChildSvc>('cascade-after-detach-child');
+    const ILateSvc = createDecorator<ILateSvc>('cascade-after-detach-late');
+    class ParentSvc implements IParentSvc {
+      tag = 'parent';
+    }
+    class ChildSvc implements IChildSvc {
+      tag = 'child';
+      constructor(@IParentSvc readonly parent: IParentSvc) {}
+    }
+    class LateSvc implements ILateSvc {
+      tag = 'late';
+    }
+
+    const parent = new InstantiationService(
+      new ServiceCollection([IParentSvc, new SyncDescriptor(ParentSvc)]),
+    );
+    const child = parent.createChild(
+      new ServiceCollection([IChildSvc, new SyncDescriptor(ChildSvc)]),
+    ) as InstantiationService;
+    child.invokeFunction((a) => a.get(IChildSvc));
+    await child.disposeAsync();
+
+    parent.provide(ILateSvc, new SyncDescriptor(LateSvc));
+    expect(parent.invokeFunction((a) => a.get(ILateSvc)).tag).toBe('late');
+    await parent.cascade.update(IParentSvc, 'post-detach update');
+    expect(parent.invokeFunction((a) => a.get(IParentSvc)).tag).toBe('parent');
+    parent.dispose();
+  });
+});
+
 describe('Disposable base class', () => {
   it('reverse registration order on dispose (ledger teardown)', () => {
     const events: string[] = [];

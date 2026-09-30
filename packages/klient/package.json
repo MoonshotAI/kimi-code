@@ -2,7 +2,7 @@
   "name": "@moonshot-ai/klient",
   "version": "0.1.2",
   "private": true,
-  "description": "Kimi client SDK — contract-driven facade over agent-core-v2, routable over ipc or in-memory transports.",
+  "description": "Kimi client SDK \u2014 contract-driven facade over agent-core-v2, routable over ipc or in-memory transports.",
   "license": "MIT",
   "type": "module",
   "imports": {
@@ -47,7 +47,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
-    "@moonshot-ai/protocol": "workspace:^",
+    "@moonshot-ai/kap-server": "workspace:^",
     "@types/ws": "^8.18.0",
     "ulid": "^3.0.1",
     "ws": "^8.18.0"

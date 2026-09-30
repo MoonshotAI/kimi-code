@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
   IAgentLifecycleService,
@@ -27,7 +27,7 @@ describe('local/local on-disk layout (byte compatibility)', () => {
   let base: string;
   const homes: string[] = [];
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-layout-home-'));
     workDir = await mkdtemp(join(tmpdir(), 'kimi-layout-work-'));
     homes.push(home, workDir);
@@ -42,7 +42,7 @@ describe('local/local on-disk layout (byte compatibility)', () => {
     base = `http://127.0.0.1:${server.port}`;
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;

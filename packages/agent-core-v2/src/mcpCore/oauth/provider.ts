@@ -261,6 +261,12 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
     this.onCredentialsInvalidated?.(scope);
   }
 
+  async clearTokensIfCurrent(expected: OAuthTokens): Promise<boolean> {
+    const cleared = await this.tokenTransaction.clearIfCurrent(expected);
+    if (cleared) this.onCredentialsInvalidated?.('tokens');
+    return cleared;
+  }
+
   private effectiveRedirectUri(): string {
     if (this._redirectUrl !== undefined) {
       return this._redirectUrl.toString();

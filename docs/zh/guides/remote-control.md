@@ -2,8 +2,6 @@
 
 在终端里使用 `kimi rc` 命令启动 Kimi Code CLI 并开启远程控制后，会自动生成一个可以远程控制本机的链接。你可以使用手机扫描二维码打开链接，或在其他设备上直接访问该链接。打开链接后，登录和本地 Kimi Code CLI 中相同的 Kimi 账号，就能远程查看任务进度、处理权限确认、继续对话，或新建会话。任务始终在本机执行，网页只是一个远程窗口。
 
-> 远程控制（Remote Control）目前是实验性功能，需要通过环境变量开启，界面与行为以最终发布版本为准。
-
 ## 开始使用
 
 ### 使用前准备
@@ -13,19 +11,6 @@
 - **已安装 Kimi Code CLI**：安装见 [开始使用](../guides/getting-started.md)
 - **已登录 Kimi 账号且为付费会员**：远程控制需要会员权限，免费用户无法使用
 - **本机保持唤醒并联网**：远程控制依赖本机与 Kimi 服务保持连接，关机、休眠或断网后远程会话不可用
-- **已开启实验开关**：用 `export` 设置环境变量（或用 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 开启全部实验特性）：
-
-  ```sh
-  export KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL=1
-  # 或者开启全部实验特性
-  export KIMI_CODE_EXPERIMENTAL_FLAG=1
-  ```
-
-  上面的 `export` 只对当前终端会话有效。如果经常使用，建议写入 shell 配置文件（如 `~/.zshrc`）持久化：
-
-  ```sh
-  echo 'export KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL=1' >> ~/.zshrc
-  ```
 
 ### 第一步：启动远程控制
 
@@ -35,7 +20,7 @@
 - **`kimi web --remote-control`**：与 `kimi rc` 等价，在启动本地网页界面的同时把它暴露到公网
 - **`/remote-control`**（别名 `/rc`）：已在 CLI 会话中时使用，把当前会话直接交给远程界面
 
-启动成功后，终端会打印访问链接（形如 `https://code-rc.kimi.com/devices/<设备 ID>/`）、二维码和本机设备名（主机名），同时默认浏览器会自动打开该链接（加 `--no-open` 可关闭）。二维码除了显示在终端里，还会保存为 PNG 文件（路径见启动信息），终端里无法正常显示二维码时，可以直接打开该文件。
+启动成功后，终端会打印访问链接（形如 `https://code-rc.kimi.com/devices/<设备 ID>/`；`kimi login --region global` 后为 `https://code-rc.kimi.ai/devices/<设备 ID>/`）、二维码和本机设备名（主机名），同时默认浏览器会自动打开该链接（加 `--no-open` 可关闭）。二维码除了显示在终端里，还会保存为 PNG 文件（路径见启动信息），终端里无法正常显示二维码时，可以直接打开该文件。
 
 ![kimi rc 启动后的终端输出：二维码与连接状态](../../media/kimi-rc-banner.jpg)
 

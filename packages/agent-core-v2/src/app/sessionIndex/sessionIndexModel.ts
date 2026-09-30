@@ -2,6 +2,8 @@ import type { SessionSummary } from './sessionIndex';
 
 export const SESSION_INDEX_MANIFEST = 'sessionIndex';
 
+export const SESSION_INDEX_SCHEMA_VERSION = 2;
+
 export const PARENT_INDEX_NAME = 'byParent';
 
 export interface SessionWorkspaceCounts {

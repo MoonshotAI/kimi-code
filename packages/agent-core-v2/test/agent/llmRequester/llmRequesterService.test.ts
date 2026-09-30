@@ -15,7 +15,19 @@ import {
 import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
 import { AgentLLMRequesterService, KIMI_CODE_INFINITE_RETRY_ENV } from '#/agent/llmRequester/llmRequesterService';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
+import { createMachineRequester } from '#/agent/loop/machine/requester';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import {
+  createTurnMachine,
+  type AssistantEntry,
+  type TurnEvent,
+  type TurnInput,
+  type TurnLlmEvent,
+} from '#human/agent/turn';
+import { UNKNOWN_CAPABILITY } from '#human/llm/capability';
+import type { LlmModel } from '#human/llm/model';
+import type { LlmRequester } from '#human/llm/requester/requester';
+import { createActor, emit, setup } from '#human/xstate2';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -35,23 +47,19 @@ import {
   APIProviderRateLimitError,
   APIRequestTooLargeError,
   APIStatusError,
-} from '#/kosong/contract/errors';
-import { emptyUsage, type TokenUsage } from '#/kosong/contract/usage';
-import {
-  isToolCall,
-  type Message,
-  type StreamedMessagePart,
-  type ToolCall,
-} from '#/kosong/contract/message';
-import type { ThinkingEffort } from '#/kosong/contract/provider';
-import type { ModelCapability } from '#/kosong/contract/capability';
-import { IModelCatalog, type Model } from '#/kosong/model/catalog';
-import { IModelService } from '#/kosong/model/model';
+} from '#/llm-adapter/contract/errors';
+import { emptyUsage, type TokenUsage } from '#human/llm/usage';
+import { type Message } from '#/llm-adapter/contract/message';
+import { isToolCall, type StreamedMessagePart, type ToolCall } from '#human/llm/message';
+import type { ThinkingEffort } from '#human/llm/thinking';
+import type { ModelCapability } from '#/llm-adapter/contract/capability';
+import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { IModelService } from '#/llm-adapter/model/model';
 import {
   type ModelRequestEvent,
   type ModelRequestInput,
   type ModelRequester,
-} from '#/kosong/model/modelRequester';
+} from '#/llm-adapter/model/model-requester';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ILogService } from '#/_base/log/log';
 import { Error2, ErrorCodes } from '#/errors';
@@ -65,6 +73,43 @@ import {
   registerTestAgentWire,
   registerTestEventDispatcher,
 } from '../../wire/stubs';
+
+const turnHarnessModel: LlmModel = {
+  provider: 'test',
+  model: 'test-model',
+  capability: UNKNOWN_CAPABILITY,
+};
+
+function createTurnHarness(requester: LlmRequester) {
+  return setup({
+    types: {
+      input: {} as TurnInput,
+      context: {} as { turnInput: TurnInput },
+      events: {} as TurnEvent,
+      emitted: {} as TurnLlmEvent,
+    },
+    actors: { turn: createTurnMachine(requester) },
+  }).createMachine({
+    id: 'turn-harness',
+    initial: 'running',
+    context: ({ input }) => ({ turnInput: input }),
+    states: {
+      running: {
+        invoke: {
+          src: 'turn',
+          input: ({ context }) => context.turnInput,
+          onDone: { target: 'completed' },
+        },
+        on: {
+          '*': {
+            actions: emit(({ event }) => event as TurnLlmEvent),
+          },
+        },
+      },
+      completed: { type: 'final' },
+    },
+  });
+}
 
 const capabilities: ModelCapability = {
   image_in: false,
@@ -88,7 +133,12 @@ function classifyProjectionPolicy(policy: ProjectionPolicy | undefined): Project
   return 'normal';
 }
 
-function recordProjectionCalls(): {
+function recordProjectionCalls(
+  project: (
+    messages: readonly ContextMessage[],
+    policy: ProjectionPolicy | undefined,
+  ) => readonly Message[] = (messages) => messages,
+): {
   projector: Pick<IAgentContextProjectorService, 'project'>;
   calls: ProjectionKind[];
 } {
@@ -97,7 +147,7 @@ function recordProjectionCalls(): {
     projector: {
       project: (messages: readonly ContextMessage[], policy) => {
         calls.push(classifyProjectionPolicy(policy));
-        return messages;
+        return project(messages, policy);
       },
     },
     calls,
@@ -121,7 +171,6 @@ function createRequester(
     maxContextSize: 1000,
     alwaysThinking: false,
     providerName: 'p',
-    authProvider: { getAuth: async () => undefined },
   };
   return {
     model,
@@ -172,6 +221,7 @@ function createService(
   ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-code-llm-requester-test', options.env ?? {}));
   const thinkingLevel = options.thinkingLevel ?? 'off';
   const profile: Partial<IAgentProfileService> = {
+    hasProvider: () => true,
     resolveModelContext: () => ({
       modelAlias: 'm',
       modelCapabilities: capabilities,
@@ -180,6 +230,7 @@ function createService(
       thinkingLevel,
       reservedContextSize: undefined,
       compactionTriggerRatio: undefined,
+      compactionMaxAttempts: undefined,
     }),
     resolveRequestParams: () => ({}),
     getSystemPrompt: () => 'system',
@@ -229,7 +280,10 @@ function createService(
 
   ix.stub(IAgentContextMemoryService, context);
   ix.stub(IAgentToolSelectService, toolSelect);
-  ix.stub(IAgentMediaResolverService, options.mediaResolver ?? { resolve: async (messages) => messages });
+  ix.stub(IAgentMediaResolverService, options.mediaResolver ?? {
+    resolve: async (messages) => messages,
+    displayPaths: async () => new Map(),
+  });
   if (projector === undefined) {
     ix.set(
       IAgentContextProjectorService,
@@ -271,6 +325,7 @@ function createService(
     dispatcher: ix.get(IEventDispatcher),
     records,
     events,
+    telemetry,
     telemetryRecords,
     measuredCalls,
   };
@@ -519,6 +574,37 @@ describe('AgentLLMRequesterService media-stripped resend', () => {
     expect(calls.value).toBe(1);
     expect(projection.calls).toEqual(['normal']);
   });
+
+  it('warns the user when media are stripped from the retried request', async () => {
+    const calls = { value: 0 };
+    const projection = recordProjectionCalls((messages, policy) =>
+      typeof policy?.media === 'object' ? history : messages,
+    );
+    const contextMessages: Message[] = [
+      {
+        role: 'user',
+        content: [{ type: 'image_url', imageUrl: { url: 'data:image/png;base64,IMAGE' } }],
+        toolCalls: [],
+      },
+    ];
+    const { service, dispatcher, events } = createService(
+      createRequester(calls, IMAGE_FORMAT_400),
+      projection.projector,
+      { contextMessages },
+    );
+
+    await service.request();
+    await dispatcher.flush();
+
+    expect(events.filter((event) => event.type === 'warning')).toEqual([
+      expect.objectContaining({
+        type: 'warning',
+        code: 'media-stripped',
+        message:
+          'Provider rejected the media in the request; all media were omitted and the request was retried.',
+      }),
+    ]);
+  });
 });
 
 describe('AgentLLMRequesterService media-degraded resend', () => {
@@ -544,8 +630,45 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
     expect(projection.calls).toEqual(['normal', 'degraded']);
   });
 
-  it('falls back to media-stripped when the media-degraded request still receives 413', async () => {
+  it('attaches display paths to degraded older media', async () => {
     const calls = { value: 0 };
+    const capturedInputs: ModelRequestInput[] = [];
+    const imageMessage = (url: string): Message => ({
+      role: 'user',
+      content: [{ type: 'image_url', imageUrl: { url } }],
+      toolCalls: [],
+    });
+    const { service } = createService(
+      createRequester(calls, BODY_TOO_LARGE_413, [], capturedInputs),
+      undefined,
+      {
+        mediaResolver: {
+          resolve: async (messages) => messages,
+          displayPaths: async () => new Map([['kimi-file://f_old', '/session/media/f_old.png']]),
+        },
+      },
+    );
+
+    await service.request({
+      messages: [
+        imageMessage('kimi-file://f_old'),
+        imageMessage('kimi-file://f_keep1'),
+        imageMessage('kimi-file://f_keep2'),
+      ],
+      source: { type: 'turn', turnId: 1, step: 1 },
+    });
+
+    expect(calls.value).toBe(2);
+    const parts = capturedInputs[1]!.messages.flatMap((message) => message.content);
+    const urls = parts
+      .filter((part) => part.type === 'image_url')
+      .map((part) => part.imageUrl.url);
+    expect(urls).toEqual(['kimi-file://f_keep1', 'kimi-file://f_keep2']);
+    const texts = parts.filter((part) => part.type === 'text').map((part) => part.text);
+    expect(texts).toContain('<image path="/session/media/f_old.png"></image>');
+  });
+
+  it('falls back to media-stripped when the media-degraded request still receives 413', async () => {    const calls = { value: 0 };
     const projection = recordProjectionCalls();
     const { service } = createService(
       createRequester(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413]),
@@ -662,6 +785,54 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
       expect(projection.calls).toEqual(['normal']);
     }
   });
+
+  it('does not warn when the degraded projection leaves the request unchanged', async () => {
+    const calls = { value: 0 };
+    const projection = recordProjectionCalls();
+    const { service, dispatcher, events } = createService(
+      createRequester(calls, BODY_TOO_LARGE_413),
+      projection.projector,
+    );
+
+    await service.request();
+    await dispatcher.flush();
+
+    expect(events.filter((event) => event.type === 'warning')).toEqual([]);
+  });
+
+  it('warns for each escalation when the degraded resend is also rejected as too large', async () => {
+    const calls = { value: 0 };
+    const projection = recordProjectionCalls((messages, policy) => {
+      if (policy?.media === 'degraded') {
+        const message = messages[0]!;
+        return [{ ...message, content: message.content.slice(-2) }];
+      }
+      return typeof policy?.media === 'object' ? history : messages;
+    });
+    const contextMessages: Message[] = [
+      {
+        role: 'user',
+        content: ['ONE', 'TWO', 'THREE'].map((data) => ({
+          type: 'image_url',
+          imageUrl: { url: `data:image/png;base64,${data}` },
+        })),
+        toolCalls: [],
+      },
+    ];
+    const { service, dispatcher, events } = createService(
+      createRequester(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413]),
+      projection.projector,
+      { contextMessages },
+    );
+
+    await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
+    await dispatcher.flush();
+
+    expect(events.filter((event) => event.type === 'warning')).toEqual([
+      expect.objectContaining({ type: 'warning', code: 'media-degraded' }),
+      expect.objectContaining({ type: 'warning', code: 'media-stripped' }),
+    ]);
+  });
 });
 
 describe('AgentLLMRequesterService combined recovery projections', () => {
@@ -721,21 +892,44 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
     expect(typeof policies[2]?.media).toBe('object');
   });
 
-  it('applies the strict repair on top of degraded media when a structural 400 follows a 413', async () => {
+  it('applies the strict repair on top of degraded media without repeating the media warning', async () => {
     const calls = { value: 0 };
     const policies: (ProjectionPolicy | undefined)[] = [];
-    const { service } = createService(
+    const contextMessages: Message[] = [
+      {
+        role: 'user',
+        content: ['ONE', 'TWO', 'THREE'].map((data) => ({
+          type: 'image_url',
+          imageUrl: { url: `data:image/png;base64,${data}` },
+        })),
+        toolCalls: [],
+      },
+    ];
+    const projector = {
+      project: (messages: readonly ContextMessage[], policy: ProjectionPolicy | undefined) => {
+        policies.push(policy);
+        if (policy?.media !== 'degraded') return messages;
+        const message = messages[0]!;
+        return [{ ...message, content: message.content.slice(policy.structure === 'strict' ? -1 : -2) }];
+      },
+    };
+    const { service, dispatcher, events } = createService(
       createRequester(calls, BODY_TOO_LARGE_413, [STRUCTURAL_400]),
-      createPolicyRecordingProjector({ policies }),
+      projector,
+      { contextMessages },
     );
 
     await service.request();
+    await dispatcher.flush();
 
     expect(calls.value).toBe(3);
     expect(policies).toEqual([
       undefined,
       { media: 'degraded' },
       { structure: 'strict', media: 'degraded' },
+    ]);
+    expect(events.filter((event) => event.type === 'warning')).toEqual([
+      expect.objectContaining({ type: 'warning', code: 'media-degraded' }),
     ]);
   });
 });
@@ -757,7 +951,6 @@ describe('AgentLLMRequesterService trace id', () => {
       maxContextSize: 1000,
       alwaysThinking: false,
       providerName: 'p',
-      authProvider: { getAuth: async () => undefined },
     };
     return {
       model,
@@ -891,6 +1084,75 @@ describe('AgentLLMRequesterService trace id', () => {
       telemetryRecords.find((record) => record.event === 'api_error')?.properties?.['trace_id'],
     ).toBeUndefined();
   });
+
+  it('mirrors the request trace into the ambient telemetry context', async () => {
+    const { service, telemetry } = createService(
+      createTracedRequester('trace-ambient-1'),
+      passthroughProjector,
+    );
+
+    await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
+
+    expect(telemetry.getContext()['trace_id']).toBe('trace-ambient-1');
+  });
+
+  it('clears the ambient trace when the next turn request starts without one', async () => {
+    let nextTrace: string | null = 'trace-ambient-2';
+    const requester = createTracedRequester(null);
+    Object.defineProperty(requester, 'request', {
+      value: async function* (_input: unknown, _signal: unknown, requestOptions: {
+        onTraceId?: (traceId: string | null) => void;
+      }) {
+        requestOptions?.onTraceId?.(nextTrace);
+        yield {
+          type: 'finish',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }], toolCalls: [] },
+          providerFinishReason: 'completed',
+          rawFinishReason: 'stop',
+          id: 'resp-1',
+          traceId: nextTrace ?? undefined,
+        } satisfies ModelRequestEvent;
+      },
+    });
+    const { service, telemetry } = createService(requester, passthroughProjector);
+
+    await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
+    expect(telemetry.getContext()['trace_id']).toBe('trace-ambient-2');
+
+    nextTrace = null;
+    await service.request({ source: { type: 'turn', turnId: 1, step: 2 } });
+    expect(telemetry.getContext()['trace_id']).toBeUndefined();
+  });
+
+  it('mirrors the failing request trace into the ambient telemetry context', async () => {
+    const requester = createTracedRequester(null);
+    Object.defineProperty(requester, 'request', {
+      value: async function* () {
+        const events: ModelRequestEvent[] = [];
+        for (const event of events) yield event;
+        throw new APIStatusError(500, 'boom', 'req-1', null, 'trace-fail-ambient');
+      },
+    });
+    const { service, telemetry } = createService(requester, passthroughProjector);
+
+    await expect(
+      service.request({ source: { type: 'turn', turnId: 1, step: 1 } }),
+    ).rejects.toMatchObject({ statusCode: 500 });
+
+    expect(telemetry.getContext()['trace_id']).toBe('trace-fail-ambient');
+  });
+
+  it('keeps the ambient trace untouched for operation requests', async () => {
+    const { service, telemetry } = createService(
+      createTracedRequester('trace-operation-1'),
+      passthroughProjector,
+    );
+    telemetry.setContext({ trace_id: 'trace-turn-1' });
+
+    await service.request({ source: { type: 'operation', requestKind: 'full_compaction' } });
+
+    expect(telemetry.getContext()['trace_id']).toBe('trace-turn-1');
+  });
 });
 
 describe('AgentLLMRequesterService media resolver wiring', () => {
@@ -908,54 +1170,54 @@ describe('AgentLLMRequesterService media resolver wiring', () => {
   });
 });
 
-describe('AgentLLMRequesterService tool call id normalization', () => {
-  function createScriptedRequester(
-    script: { ids: string[]; error?: Error }[],
-  ): ModelRequester {
-    const base = createRequester({ value: 0 });
-    let callIndex = 0;
-    return {
-      model: base.model,
-      request: async function* () {
-        const step = script[Math.min(callIndex++, script.length - 1)]!;
-        if (step.error !== undefined) {
-          if (step.ids.length > 0) {
-            yield {
-              type: 'part',
-              part: {
-                type: 'function',
-                id: step.ids[0]!,
-                name: 'Bash',
-                arguments: null,
-                _streamIndex: 0,
-              },
-            } satisfies ModelRequestEvent;
-          }
-          throw step.error;
-        }
-        const toolCalls: ToolCall[] = [];
-        for (const [index, id] of step.ids.entries()) {
+function createScriptedRequester(
+  script: { ids: string[]; error?: Error }[],
+): ModelRequester {
+  const base = createRequester({ value: 0 });
+  let callIndex = 0;
+  return {
+    model: base.model,
+    request: async function* () {
+      const step = script[Math.min(callIndex++, script.length - 1)]!;
+      if (step.error !== undefined) {
+        if (step.ids.length > 0) {
           yield {
             type: 'part',
-            part: { type: 'function', id, name: 'Bash', arguments: null, _streamIndex: index },
+            part: {
+              type: 'function',
+              id: step.ids[0]!,
+              name: 'Bash',
+              arguments: null,
+              _streamIndex: 0,
+            },
           } satisfies ModelRequestEvent;
-          yield {
-            type: 'part',
-            part: { type: 'tool_call_part', argumentsPart: '{"command":"ls"}', index },
-          } satisfies ModelRequestEvent;
-          toolCalls.push({ type: 'function', id, name: 'Bash', arguments: '{"command":"ls"}' });
         }
+        throw step.error;
+      }
+      const toolCalls: ToolCall[] = [];
+      for (const [index, id] of step.ids.entries()) {
         yield {
-          type: 'finish',
-          message: { role: 'assistant', content: [], toolCalls },
-          providerFinishReason: 'completed',
-          rawFinishReason: 'stop',
-          id: 'resp-1',
+          type: 'part',
+          part: { type: 'function', id, name: 'Bash', arguments: null, _streamIndex: index },
         } satisfies ModelRequestEvent;
-      },
-    };
-  }
+        yield {
+          type: 'part',
+          part: { type: 'tool_call_part', argumentsPart: '{"command":"ls"}', index },
+        } satisfies ModelRequestEvent;
+        toolCalls.push({ type: 'function', id, name: 'Bash', arguments: '{"command":"ls"}' });
+      }
+      yield {
+        type: 'finish',
+        message: { role: 'assistant', content: [], toolCalls },
+        providerFinishReason: 'completed',
+        rawFinishReason: 'stop',
+        id: 'resp-1',
+      } satisfies ModelRequestEvent;
+    },
+  };
+}
 
+describe('AgentLLMRequesterService tool call id normalization', () => {
   it('passes provider-unique ids through unchanged', async () => {
     const parts: StreamedMessagePart[] = [];
     const { service } = createService(
@@ -986,8 +1248,11 @@ describe('AgentLLMRequesterService tool call id normalization', () => {
     });
 
     expect(first.message.toolCalls[0]!.id).toBe('Bash_0');
-    expect(second.message.toolCalls[0]!.id).toBe('Bash_0__2');
-    expect(parts.filter(isToolCall).map((p) => p.id)).toEqual(['Bash_0', 'Bash_0__2']);
+    expect(second.message.toolCalls[0]).toMatchObject({ id: 'Bash_0__2', rawId: 'Bash_0' });
+    expect(parts.filter(isToolCall).map((p) => [p.id, p.rawId])).toEqual([
+      ['Bash_0', undefined],
+      ['Bash_0__2', 'Bash_0'],
+    ]);
   });
 
   it('rewrites duplicates within a single response', async () => {
@@ -998,7 +1263,10 @@ describe('AgentLLMRequesterService tool call id normalization', () => {
 
     const result = await service.request();
 
-    expect(result.message.toolCalls.map((c) => c.id)).toEqual(['Bash_0', 'Bash_0__2']);
+    expect(result.message.toolCalls.map((c) => [c.id, c.rawId])).toEqual([
+      ['Bash_0', undefined],
+      ['Bash_0__2', 'Bash_0'],
+    ]);
   });
 
   it('rolls claims back when the attempt fails mid-stream', async () => {
@@ -1032,5 +1300,87 @@ describe('AgentLLMRequesterService tool call id normalization', () => {
 
     const result = await service.request();
     expect(result.message.toolCalls[0]!.id).toBe('Bash_0__2');
+  });
+});
+
+describe('AgentLLMRequesterService attempt retry notification', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('notifies before resending with a repaired projection', async () => {
+    const calls = { value: 0 };
+    const { service } = createService(createRequester(calls), undefined);
+    const onAttemptRetry = vi.fn();
+
+    const result = await service.request({ onAttemptRetry });
+
+    expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
+    expect(calls.value).toBe(2);
+    expect(onAttemptRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('notifies before each indefinite-retry backoff', async () => {
+    vi.useFakeTimers();
+    const calls = { value: 0 };
+    const requester = createRequester(calls, new APIConnectionError('socket hang up'), [
+      new APIConnectionError('socket hang up again'),
+    ]);
+    const { service } = createService(requester, undefined, {
+      env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
+    });
+    const onAttemptRetry = vi.fn();
+
+    const promise = service.request({ onAttemptRetry });
+    await vi.runAllTimersAsync();
+    await promise;
+
+    expect(calls.value).toBe(3);
+    expect(onAttemptRetry).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not notify when the error is final', async () => {
+    const calls = { value: 0 };
+    const { service } = createService(
+      createRequester(calls, new APIStatusError(400, 'max_tokens must be positive')),
+      undefined,
+    );
+    const onAttemptRetry = vi.fn();
+
+    await expect(service.request({ onAttemptRetry })).rejects.toMatchObject({ statusCode: 400 });
+    expect(onAttemptRetry).not.toHaveBeenCalled();
+  });
+});
+
+describe('turn machine stream state across service-internal retries', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('discards the interrupted attempt stream when the service retries below the turn', async () => {
+    vi.useFakeTimers();
+    const { service } = createService(
+      createScriptedRequester([
+        { ids: ['call_a'], error: new APIConnectionError('terminated') },
+        { ids: ['call_b'] },
+      ]),
+      undefined,
+      { env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' } },
+    );
+    const machineRequester = createMachineRequester(service);
+    const doneEntries: AssistantEntry[] = [];
+    const actor = createActor(createTurnHarness(machineRequester.requester), {
+      input: { request: { model: turnHarnessModel }, history: [] },
+    });
+    actor.on('llm.done', (event) => doneEntries.push(event.entry));
+    actor.start();
+
+    await vi.runAllTimersAsync();
+    for (let index = 0; index < 10; index += 1) {
+      await vi.advanceTimersByTimeAsync(0);
+    }
+
+    expect(doneEntries).toHaveLength(1);
+    expect(doneEntries[0]?.message.toolCalls.map((toolCall) => toolCall.id)).toEqual(['call_b']);
   });
 });

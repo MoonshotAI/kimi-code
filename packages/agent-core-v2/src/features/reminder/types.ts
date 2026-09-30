@@ -1,7 +1,6 @@
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import type { ContentPart } from '#/kosong/contract/message';
-import type { Tool } from '#/kosong/contract/tool';
+import type { ContentPart, ToolDescription as Tool } from '#human/llm/message';
 
 export interface ContextInjectionContext<D = unknown> {
   readonly injectedPositions: readonly number[];

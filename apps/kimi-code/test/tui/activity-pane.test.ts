@@ -141,7 +141,7 @@ describe('updateActivityPane terminal progress', () => {
     expect(setProgress).toHaveBeenLastCalledWith(false);
   });
 
-  it('keeps terminal progress active without showing a thinking spinner', () => {
+  it('keeps terminal progress active while showing the thinking spinner', () => {
     vi.useFakeTimers();
     try {
       const { driver, state, setProgress } = makeDriverWithTerminalProgress();
@@ -152,8 +152,8 @@ describe('updateActivityPane terminal progress', () => {
 
       expect(setProgress).toHaveBeenCalledTimes(1);
       expect(setProgress).toHaveBeenLastCalledWith(true);
-      expect(state.activitySpinner).toBeNull();
-      expect(state.activityContainer.children).toHaveLength(0);
+      expect(state.activitySpinner).not.toBeNull();
+      expect(state.activityContainer.children).toHaveLength(1);
 
       state.appState.streamingPhase = 'idle';
       driver.updateActivityPane();

@@ -39,6 +39,7 @@ const noopLog: IAppendLogStore = {
   read: async function* () {},
   rewrite: async () => {},
   flush: async () => {},
+  flushLog: async () => {},
   close: async () => {},
   acquire: () => toDisposable(() => {}),
   drainRetirements: () => Promise.resolve(),
@@ -157,7 +158,24 @@ export function stubAgentWire(
     seal: async () => {},
     appendRecord: () => {},
     readJournal: async function* () {},
+    readRestorable: async function* () {},
+    readRestoreChains: async () => ({ restorable: [], journal: [] }),
+    readHumanChain: () => [],
     flush,
+    drainPersisted: async () => {},
+    lineCount: () => 0,
+    lastContextClearLine: () => undefined,
+    journalPath: () => undefined,
+    journalRef: { tree: 'stub', branch: 'main' },
+    append: () => {},
+    read: async function* () {},
+    readRaw: async function* () {},
+    switchBranch: async () => {
+      throw new Error('stubAgentWire.switchBranch is not implemented');
+    },
+    branches: () => ['main'],
+    nextSeq: () => 1,
+    settled: async () => {},
   };
 }
 
@@ -167,7 +185,20 @@ export function stubWireJournal(journal: WireRecord[]): AgentWire {
     appendRecord: (record) => {
       journal.push(record);
     },
+    append: (record) => {
+      journal.push(record);
+    },
     readJournal: async function* () {
+      for (const record of journal) yield record;
+    },
+    readRestorable: async function* () {
+      for (const record of journal) yield record;
+    },
+    readRestoreChains: async () => ({ restorable: [...journal], journal: [...journal] }),
+    read: async function* () {
+      for (const record of journal) yield record;
+    },
+    readRaw: async function* () {
       for (const record of journal) yield record;
     },
   };
@@ -191,6 +222,7 @@ export function recordingWireLog(
       records.splice(0, records.length, ...(next as readonly WireRecord[]));
     },
     flush: async () => {},
+    flushLog: async () => {},
     close: async () => {},
     acquire: () => toDisposable(() => {}),
     drainRetirements: () => Promise.resolve(),

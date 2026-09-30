@@ -41,6 +41,7 @@ import {
   compactSessionResponseSchema,
   createSessionChildRequestSchema,
   createSessionRequestSchema,
+  deleteSessionResponseSchema,
   forkSessionRequestSchema,
   getSessionGoalResponseSchema,
   listSessionChildrenResponseSchema,
@@ -166,7 +167,15 @@ const sessionActionRequestSchema = z.preprocess(
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
-export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void {
+export interface SessionsRoutesDeps {
+  readonly sessionEventCursor: (sessionId: string) => Promise<{ seq: number; epoch: string }>;
+}
+
+export function registerSessionsRoutes(
+  app: SessionRouteHost,
+  core: Scope,
+  deps: SessionsRoutesDeps,
+): void {
   const createRoute = defineRoute(
     {
       method: 'POST',
@@ -403,6 +412,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
     },
     async (req, reply) => {
       const { session_id } = req.params;
+      const cursor = await deps.sessionEventCursor(session_id);
       const summary = await core.accessor.get(ISessionIndex).get(session_id);
       if (summary === undefined) {
         reply.send(
@@ -423,7 +433,10 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         return;
       }
       reply.send(
-        okEnvelope(toWireSession(summary, cwd, resolveSessionFacts(core, session_id)), req.id),
+        okEnvelope(
+          toWireSession(summary, cwd, resolveSessionFacts(core, session_id), cursor.seq),
+          req.id,
+        ),
       );
     },
   );
@@ -594,6 +607,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           sessionAbortResponseSchema,
           startBtwSessionResponseSchema,
           archiveSessionResponseSchema,
+          deleteSessionResponseSchema,
         ]),
       },
       errors: {
@@ -711,16 +725,14 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         if (childHandler === undefined) {
           throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${session_id} does not exist`);
         }
-        const handle = await core.accessor.get(ISessionManager).createChild({
+        const meta = await core.accessor.get(ISessionManager).createChild({
           sourceSessionId: session_id,
           title: req.body.title,
           metadata: req.body.metadata,
         });
-        const meta = await handle.accessor.get(ISessionMetadata).read();
-        const ctx = handle.accessor.get(ISessionContext);
         const session = toWireSession(
-          { ...meta, workspaceId: ctx.workspaceId },
-          ctx.cwd,
+          { ...meta, workspaceId: childHandler.workspaceId },
+          meta.cwd ?? '',
           resolveSessionFacts(core, meta.id),
         );
         core.accessor.get(IEventService).publish(
@@ -844,7 +856,15 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
   );
 }
 
-type SessionAction = 'fork' | 'compact' | 'undo' | 'abort' | 'btw' | 'restore' | 'archive';
+type SessionAction =
+  | 'fork'
+  | 'compact'
+  | 'undo'
+  | 'abort'
+  | 'btw'
+  | 'restore'
+  | 'archive'
+  | 'delete';
 
 interface SessionActionExtra {
   readonly core: Scope;
@@ -865,6 +885,7 @@ const sessionActions: ActionTable<SessionAction, SessionActionExtra> = {
   btw: { handle: btwSessionAction },
   restore: { handle: restoreSessionAction },
   archive: { handle: archiveSessionAction },
+  delete: { handle: deleteSessionAction },
 };
 
 async function forkSessionAction(
@@ -875,16 +896,14 @@ async function forkSessionAction(
   if (forkHandler === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
   }
-  const handle = await core.accessor.get(ISessionManager).fork({
+  const meta = await core.accessor.get(ISessionManager).fork({
     sourceSessionId: id,
     title: body.title,
     metadata: body.metadata,
   });
-  const meta = await handle.accessor.get(ISessionMetadata).read();
-  const sessionCtx = handle.accessor.get(ISessionContext);
   const session = toWireSession(
-    { ...meta, workspaceId: sessionCtx.workspaceId },
-    sessionCtx.cwd,
+    { ...meta, workspaceId: forkHandler.workspaceId },
+    meta.cwd ?? '',
     resolveSessionFacts(core, meta.id),
   );
   core.accessor
@@ -936,7 +955,7 @@ async function undoSessionAction(
 async function abortSessionAction(ctx: SessionActionCtx): Promise<void> {
   const { core, req, reply, id } = ctx;
   const agent = await resolveMainAgent(core, id);
-  agent.accessor.get(IAgentLoopService).cancelFromUser();
+  agent.accessor.get(IAgentLoopService).cancel();
   requestLog(req)?.info({ session_id: id, action: 'abort' }, 'session action completed');
   reply.send(okEnvelope({ aborted: true }, req.id));
 }
@@ -982,6 +1001,13 @@ async function archiveSessionAction(ctx: SessionActionCtx): Promise<void> {
   reply.send(okEnvelope({ archived: true }, req.id));
 }
 
+async function deleteSessionAction(ctx: SessionActionCtx): Promise<void> {
+  const { core, req, reply, id } = ctx;
+  await core.accessor.get(ISessionManager).delete(id);
+  requestLog(req)?.info({ session_id: id, action: 'delete' }, 'session action completed');
+  reply.send(okEnvelope({ deleted: true }, req.id));
+}
+
 export interface SessionWireFields {
   readonly id: string;
   readonly workspaceId: string;
@@ -999,6 +1025,7 @@ export function toWireSession(
   fields: SessionWireFields,
   cwd: string,
   facts: SessionFacts,
+  lastSeq?: number,
 ): Session {
   return {
     id: fields.id,
@@ -1020,7 +1047,7 @@ export function toWireSession(
     usage: emptySessionUsage(),
     permission_rules: [],
     message_count: 0,
-    last_seq: 0,
+    last_seq: lastSeq ?? 0,
   };
 }
 

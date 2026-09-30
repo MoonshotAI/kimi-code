@@ -8,7 +8,8 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentContextProjectorService } from '#/agent/contextProjector/contextProjector';
 import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
 import { ErrorCodes, Error2 } from '#/errors';
-import type { ContentPart, Message, TextPart, ToolCall } from '#/kosong/contract/message';
+import type { Message } from '#/llm-adapter/contract/message';
+import type { ContentPart, TextPart, ToolCall } from '#human/llm/message';
 
 const noopLogger: ILogger = {
   error: () => {},

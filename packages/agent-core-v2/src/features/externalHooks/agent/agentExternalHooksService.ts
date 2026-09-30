@@ -14,14 +14,10 @@ import {
 } from '#/agent/fullCompaction/fullCompaction';
 import type { CompactionResult } from '#/agent/fullCompaction/types';
 import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
-import { ContinuationStepRequest } from '#/agent/loop/stepRequest';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
-import {
-  IAgentPromptService,
-  type PromptSubmitContext,
-} from '#/agent/prompt/prompt';
-import { PromptQueued } from '#/agent/prompt/promptService';
+import { type PromptSubmitContext } from '#/agent/loop/loop';
+import { PromptQueued } from '#/agent/prompt/promptEvents';
 import { TaskNotified, TaskStarted } from '#/agent/task/taskOps';
 import {
   PermissionApprovalRequested,
@@ -59,6 +55,10 @@ export class HookResult extends AgentEvent2<HookResultPayload> {
   static override readonly observable = true;
 }
 export interface HookResult extends HookResultPayload {}
+
+export interface HookResultEvent extends Omit<HookResultPayload, 'agentId'> {
+  readonly type: 'hook.result';
+}
 
 export const externalHooksStopHookContinuationUsedKey = defineState<boolean>(
   'externalHooks.stopHookContinuationUsed',
@@ -139,7 +139,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     );
 
     this.registerPromptHooks(
-      this.instantiation.invokeFunction((accessor) => accessor.get(IAgentPromptService)),
+      this.instantiation.invokeFunction((accessor) => accessor.get(IAgentLoopService)),
     );
 
     this.registerTurnHooks();
@@ -189,9 +189,9 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     );
   }
 
-  private registerPromptHooks(prompt: IAgentPromptService): void {
+  private registerPromptHooks(loop: IAgentLoopService): void {
     this._register(
-      prompt.hooks.onBeforeSubmitPrompt.register('externalHooks', async (ctx, next) => {
+      loop.hooks.onBeforeSubmitPrompt.register('externalHooks', async (ctx, next) => {
         if (await this.runPromptSubmitHook(ctx)) {
           ctx.block = true;
           return;
@@ -239,7 +239,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
         if (
           ctx.finishReason === 'tool_calls' ||
           ctx.finishReason === 'filtered' ||
-          loop.hasPendingRequests()
+          loop.snapshot().hasPendingRequests
         ) {
           return;
         }
@@ -252,13 +252,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
             toolCalls: [],
             origin: { kind: 'system_trigger', name: 'stop_hook' },
           });
-          loop.enqueue(
-            new ContinuationStepRequest({
-              kind: 'stop_hook',
-              mergeable: true,
-              admission: 'activeOrNextTurn',
-            }),
-          );
+          loop.notify();
           return;
         }
       }),
@@ -375,19 +369,16 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
 
     const append = renderUserPromptHookResult(results);
     if (append !== undefined) {
-      this.context.append({
-        role: 'user',
-        content: [{ type: 'text', text: append.text }],
-        toolCalls: [],
-        origin: { kind: 'hook_result', event: append.event },
-      });
-      void this.dispatcher.dispatch(
-        new HookResult({
-          agentId: this.scopeContext.agentId,
-          hookEvent: append.event,
-          content: append.message,
-        }),
-      );
+      ctx.hookParts.push(...append.parts);
+      for (const message of append.messages) {
+        void this.dispatcher.dispatch(
+          new HookResult({
+            agentId: this.scopeContext.agentId,
+            hookEvent: append.event,
+            content: message,
+          }),
+        );
+      }
     }
     return false;
   }

@@ -36,16 +36,6 @@ export type AgentPhaseMeta =
       readonly since: number;
     }
   | {
-      readonly kind: 'streaming';
-      readonly turnId: number;
-      readonly step: number;
-      readonly stepId: string;
-      readonly stream: 'assistant' | 'thinking' | 'tool_call';
-      readonly toolCallId?: string;
-      readonly toolName?: string;
-      readonly since: number;
-    }
-  | {
       readonly kind: 'tool_call';
       readonly turnId: number;
       readonly step: number;

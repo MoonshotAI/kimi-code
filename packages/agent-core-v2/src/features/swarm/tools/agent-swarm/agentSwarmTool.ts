@@ -22,7 +22,7 @@ import {
 } from '#/session/subagent/spawn';
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import {
-  buildSubagentModelDescriptions,
+  buildSubagentModelSummary,
   exposesSubagentModelChoice,
   stripSubagentForkParameter,
   stripSubagentModelParameter,
@@ -65,6 +65,7 @@ interface SwarmRunResult {
   readonly status: 'completed' | 'failed' | 'aborted';
   readonly state?: 'started' | 'not_started';
   readonly result?: string;
+  readonly stopReason?: string;
   readonly error?: string;
 }
 
@@ -73,7 +74,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
   readonly name = 'AgentSwarm' as const;
 
   get parameters(): Record<string, unknown> {
-    const parameters = exposesSubagentModelChoice(this.config, this.flags)
+    const parameters = exposesSubagentModelChoice(this.config)
       ? AGENT_SWARM_PARAMETERS
       : AGENT_SWARM_PARAMETERS_NO_MODEL;
     return this.flags.enabled(SUBAGENT_FORK_FLAG_ID)
@@ -100,11 +101,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
     if (this.flags.enabled(SUBAGENT_FORK_FLAG_ID)) {
       description += `\n\n${AGENT_SWARM_FORK_DESCRIPTION}`;
     }
-    const modelLines = buildSubagentModelDescriptions(
-      this.config,
-      this.flags,
-      this.profile.data().modelAlias,
-    );
+    const modelLines = buildSubagentModelSummary(this.config);
     return modelLines === undefined ? description : `${description}\n\n${modelLines}`;
   }
 
@@ -301,7 +298,7 @@ function renderSwarmResults(results: readonly SwarmRunResult[]): string {
   const failed = results.filter((result) => result.status === 'failed').length;
   const aborted = results.filter((result) => result.status === 'aborted').length;
   const shouldRenderResumeHint =
-    results.some((result) => result.status !== 'completed') &&
+    results.some((result) => result.status !== 'completed' || result.stopReason !== undefined) &&
     results.some((result) => result.agentId !== undefined);
   const lines = [
     '<agent_swarm_result>',
@@ -319,9 +316,11 @@ function renderSwarmResults(results: readonly SwarmRunResult[]): string {
     const mode = result.spec.kind === 'resume' ? ' mode="resume"' : '';
     const item = result.spec.item === undefined ? '' : ` item="${escapeXmlAttribute(result.spec.item)}"`;
     const state = result.state === undefined ? '' : ` state="${result.state}"`;
+    const stopReason =
+      result.stopReason === undefined ? '' : ` stop_reason="${escapeXmlAttribute(result.stopReason)}"`;
     const body = result.status === 'completed' ? (result.result ?? '') : (result.error ?? 'unknown error');
     lines.push(
-      `<subagent${mode}${agentId}${item}${state} outcome="${result.status}">${body}</subagent>`,
+      `<subagent${mode}${agentId}${item}${state} outcome="${result.status}"${stopReason}>${body}</subagent>`,
     );
   }
 

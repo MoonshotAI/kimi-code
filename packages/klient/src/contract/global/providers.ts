@@ -1,6 +1,6 @@
 /**
  * `providerService` — provider configuration registry. Mirrors
- * `agent-core-v2/kosong/provider/provider.ts` (`ProviderConfigSchema`).
+ * `agent-core-v2/llm-adapter/provider/provider.ts` (`ProviderConfigSchema`).
  * `type` is free-form text, not an enum: vendor identity is validated at
  * resolve time against the engine's provider-definition registry, so external
  * packages can register new vendors without touching this schema.
@@ -32,6 +32,7 @@ export const providerConfigSchema = z.object({
 
   type: providerTypeSchema.optional(),
   apiKey: z.string().optional(),
+  apiKeyEnv: z.string().optional(),
   oauth: oAuthRefSchema.optional(),
   env: stringRecordSchema.optional(),
   source: z.record(z.string(), z.unknown()).optional(),

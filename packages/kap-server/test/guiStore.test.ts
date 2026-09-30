@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -59,12 +59,12 @@ describe('server-v2 gui store routes', () => {
   let home: string | undefined;
   let server: RunningServer | undefined;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-gui-store-'));
     server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -131,6 +131,7 @@ describe('server-v2 gui store routes', () => {
 
   it('length reports the count and clear empties the store', async () => {
     const api = appOf(server as RunningServer);
+    await api.inject({ method: 'POST', url: '/api/v1/gui/store/clear' });
     await setItem(api, 'a', '1');
     await setItem(api, 'b', '2');
 

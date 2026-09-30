@@ -28,9 +28,16 @@ export function ContextTab({ sessionId, initialAgentId = 'main' }: ContextTabPro
 
   const agents = detail?.agents ?? [];
   const messages = ctx?.messages ?? [];
-  const session = ctx?.usage.byScope.session ?? EMPTY_USAGE;
+  const sessionUsage = ctx?.usage.byScope.session ?? EMPTY_USAGE;
+  const turnUsage = ctx?.usage.byScope.turn ?? EMPTY_USAGE;
+  const cumulativeUsage: TokenUsage = {
+    inputOther: sessionUsage.inputOther + turnUsage.inputOther,
+    output: sessionUsage.output + turnUsage.output,
+    inputCacheRead: sessionUsage.inputCacheRead + turnUsage.inputCacheRead,
+    inputCacheCreation: sessionUsage.inputCacheCreation + turnUsage.inputCacheCreation,
+  };
   // Live context-window fill (latest step.end usage), distinct from the
-  // cumulative `session` spend the 4-segment bar breaks down.
+  // cumulative session-scoped + turn-scoped spend the bar breaks down.
   const contextTokens = ctx?.contextTokens ?? 0;
   const config = ctx?.config ?? {};
   const permissionMode = ctx?.permission.mode ?? null;
@@ -55,6 +62,7 @@ export function ContextTab({ sessionId, initialAgentId = 'main' }: ContextTabPro
             {agents.map((a) => (
               <option key={a.agentId} value={a.agentId}>
                 {a.agentId} ({a.type}
+                {a.profileName ? ` · ${a.profileName}` : ''}
                 {a.parentAgentId ? ` ← ${a.parentAgentId}` : ''})
               </option>
             ))}
@@ -130,8 +138,8 @@ export function ContextTab({ sessionId, initialAgentId = 'main' }: ContextTabPro
       ) : null}
 
       {/* Live context-window fill (contextTokens) + the 4-segment cumulative
-          session-usage breakdown. */}
-      <TokenBar usage={session} contextTokens={contextTokens} />
+          session-scoped and turn-scoped usage breakdown. */}
+      <TokenBar usage={cumulativeUsage} contextTokens={contextTokens} />
 
       {/* Message stream */}
       <div className="min-h-0 flex-1 overflow-y-auto">

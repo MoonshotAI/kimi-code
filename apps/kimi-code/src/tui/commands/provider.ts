@@ -1,13 +1,9 @@
 import {
-  applyCustomRegistryEntries,
-  fetchCustomRegistry,
-  type CustomRegistrySource,
-  type ManagedKimiConfigShape,
-} from '@moonshot-ai/kimi-code-oauth';
-import {
   applyCatalogProvider,
   catalogProviderModels,
   CatalogFetchError,
+  RegistryImportError,
+  type ImportCustomRegistryResult,
   DEFAULT_CATALOG_URL,
   resolveCatalogImport,
   SECONDARY_DERIVED_MODEL_ALIAS,
@@ -22,6 +18,7 @@ import { ChoicePickerComponent } from '../components/dialogs/choice-picker';
 import {
   CustomRegistryImportDialogComponent,
   type CustomRegistryImportResult,
+  type CustomRegistryImportValue,
 } from '../components/dialogs/custom-registry-import';
 import {
   ProviderManagerComponent,
@@ -306,18 +303,35 @@ export async function setDefaultModel(
     effort,
     model === undefined ? undefined : effectiveModelForHost(host, model),
   );
+  if (host.session === undefined) {
+    // A first prompt may still be inside lazy creation: wait it out so the
+    // pick lands on the new session instead of racing its assembly (same
+    // coordination as the /model path).
+    await host.waitForLazyCreation();
+  }
   await host.harness.setConfig({
     defaultModel: alias,
     thinking,
   });
-  await host.authFlow.refreshConfigAfterLogin();
+  // Whether activation made the engine emit model_switch (it reached a live
+  // session AND changed the bound alias — both engines track only an actual
+  // change). Recorded at activation time rather than snapshotted at entry: a
+  // lazy session can come live while the config writes above are pending; a
+  // session created BY activation (v1) or a same-alias rebind does not count
+  // — both bind the model without an engine event.
+  let engineTrackedSwitch = await host.authFlow.refreshConfigAfterLogin();
   // refreshConfigAfterLogin reactivates from the persisted config, so a pick
   // the gate keeps session-only never reaches the runtime — apply it after
   // the refresh, or the persisted value would clobber it.
   if (thinking.effort === undefined && effort !== 'off' && effort !== 'on') {
-    await host.authFlow.activateModelAfterLogin(alias, effort);
+    engineTrackedSwitch =
+      (await host.authFlow.activateModelAfterLogin(alias, effort)) || engineTrackedSwitch;
   }
-  host.track('model_switch', { model: alias });
+  // When the engine never emitted (no live session, or the alias was already
+  // bound), the TUI stays the sole producer for the pick.
+  if (!engineTrackedSwitch) {
+    host.track('model_switch', { model: alias });
+  }
   host.showStatus(`Default model set to ${alias} with thinking ${effort}.`);
 }
 
@@ -325,49 +339,49 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
   const value = await promptCustomRegistryImport(host);
   if (value === undefined) return false;
 
-  const source: CustomRegistrySource = {
-    kind: 'apiJson',
-    url: value.url,
-    apiKey: value.apiKey,
-  };
-
-  let entries: Awaited<ReturnType<typeof fetchCustomRegistry>>;
+  let result: ImportCustomRegistryResult;
   try {
-    entries = await fetchCustomRegistry(source, { userAgent: createKimiCodeUserAgent() });
+    result = await host.harness.importCustomRegistry({
+      url: value.url,
+      apiKey: value.apiKey,
+      setDefaultWhenUnset: false,
+    });
   } catch (error) {
-    host.showError(`Failed to import registry: ${formatErrorMessage(error)}`);
+    if (error instanceof RegistryImportError && error.phase === 'empty') {
+      host.showStatus('Registry contained no providers.');
+      return false;
+    }
+    const phase =
+      error instanceof RegistryImportError && error.phase === 'fetch' ? 'import' : 'apply';
+    host.showError(`Failed to ${phase} registry: ${formatErrorMessage(error)}`);
+    if (
+      value.apiKey === undefined &&
+      error instanceof RegistryImportError &&
+      (error.status === 401 || error.status === 403)
+    ) {
+      host.showStatus('This registry requires authentication — paste its Bearer token.', 'warning');
+    }
     return false;
   }
-
-  const addedProviderIds = Object.values(entries).map((entry) => entry.id);
   try {
-    const config = await host.harness.getConfig();
-    applyCustomRegistryEntries(
-      config as unknown as ManagedKimiConfigShape,
-      entries,
-      source,
-    );
-    await host.harness.setConfig({
-      providers: config.providers,
-      models: config.models,
-    });
     await host.authFlow.refreshConfigAfterLogin();
   } catch (error) {
     host.showError(`Failed to apply registry: ${formatErrorMessage(error)}`);
     return false;
   }
-
+  const addedProviderIds = result.providers.map((provider) => provider.id);
   const count = addedProviderIds.length;
-  if (count === 0) {
-    host.showStatus('Registry contained no providers.');
-    return false;
-  }
   host.showStatus(
     count === 1
       ? 'Imported 1 provider from registry.'
       : `Imported ${String(count)} providers from registry.`,
     'success',
   );
+  for (const [id, envName] of Object.entries(result.credentialEnv)) {
+    host.showStatus(
+      `provider "${id}" declares credential env var "${envName}" — set api_key_env in config.toml to use it`,
+    );
+  }
 
   // Offer the model selector so the user can pick a default, just like the
   // catalog (known-provider) flow. Copy without the v1-synthesized
@@ -402,7 +416,7 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
 
 function promptCustomRegistryImport(
   host: SlashCommandHost,
-): Promise<{ readonly url: string; readonly apiKey: string } | undefined> {
+): Promise<CustomRegistryImportValue | undefined> {
   return new Promise((resolve) => {
     const dialog = new CustomRegistryImportDialogComponent(
       (result: CustomRegistryImportResult) => {

@@ -17,7 +17,11 @@ interface UnitBookOwner {
 }
 
 interface BusCountSource {
-  listenerCounts(): { all: number; perType: Record<string, number> };
+  listenerCounts(): {
+    all: number;
+    perType: Record<string, number>;
+    perAgent: Record<string, number>;
+  };
 }
 
 interface GlobalCountSource {

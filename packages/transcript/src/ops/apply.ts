@@ -226,7 +226,7 @@ function stepEquals(step: TranscriptStep, header: StepHeader): boolean {
     step.endedAt === header.endedAt &&
     step.usage === header.usage &&
     step.finishReason === header.finishReason &&
-    step.timing === header.timing &&
+    step.llmTiming === header.llmTiming &&
     step.retry === header.retry &&
     step.endReason === header.endReason &&
     step.endMessage === header.endMessage

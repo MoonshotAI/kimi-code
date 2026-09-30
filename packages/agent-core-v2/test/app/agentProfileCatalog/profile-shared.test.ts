@@ -13,6 +13,8 @@ import {
 } from '#/app/agentProfileCatalog/contribution';
 import {
   DEFAULT_REPLY_STYLE_GUIDE,
+  NOTIFY_USER_GUIDANCE,
+  renderAgentProfilePrompt,
   profileCanDelegate,
   renderPromptTemplateResult,
   renderSystemPromptResult,
@@ -509,5 +511,34 @@ describe('withoutDelegatingTargets', () => {
       'explore',
       'missing',
     ]);
+  });
+});
+
+describe('systemPromptVars notify_user_guidance', () => {
+  it('injects the NotifyUser guidance only when the context marks the tool active', () => {
+    const active = systemPromptVars({ notifyUserActive: true }, { skillActive: false });
+    expect(active['notify_user_guidance']).toBe(` ${NOTIFY_USER_GUIDANCE}`);
+    expect(NOTIFY_USER_GUIDANCE).toContain('If you are working as a subagent');
+    expect(NOTIFY_USER_GUIDANCE).toContain('do not automatically reach your parent agent');
+
+    expect(systemPromptVars({ notifyUserActive: false }, { skillActive: false })['notify_user_guidance']).toBe('');
+    expect(systemPromptVars({}, { skillActive: false })['notify_user_guidance']).toBe('');
+  });
+});
+
+describe('renderAgentProfilePrompt', () => {
+  it('adds guidance to custom prompts only when the tool is active', () => {
+    const profile = normalizeAgentProfile({ name: 'custom', renderSystemPrompt: () => ({ text: 'Custom instructions.', environment: { cwd: '/work' } }) });
+    expect(renderAgentProfilePrompt(profile, {}).text).toBe('Custom instructions.');
+    expect(renderAgentProfilePrompt(profile, { notifyUserActive: true }).text).toBe(`Custom instructions.\n\n${NOTIFY_USER_GUIDANCE}`);
+  });
+
+  it('keeps the normal system prompt guidance once', () => {
+    const profile = normalizeAgentProfile({
+      name: 'custom',
+      renderSystemPrompt: (context) => renderSystemPromptResult('', context, { skillActive: false }),
+    });
+    const rendered = renderAgentProfilePrompt(profile, { notifyUserActive: true });
+    expect(rendered.text.split(NOTIFY_USER_GUIDANCE)).toHaveLength(2);
   });
 });

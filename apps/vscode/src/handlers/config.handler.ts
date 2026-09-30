@@ -94,7 +94,7 @@ const getSlashCommands: Handler<void, SlashCommandInfo[]> = async (_, ctx) => {
   try {
     const skills = await ctx.harness.listWorkspaceSkills(ctx.workDir);
     const skillCommands = skills
-      .filter((skill) => isUserActivatableSkill(skill.type))
+      .filter((skill) => isUserActivatableSkill(skill.type) && skill.scopes === undefined)
       .toSorted((left, right) => left.name.localeCompare(right.name))
       .map((skill) => ({
         name: `skill:${skill.name}`,

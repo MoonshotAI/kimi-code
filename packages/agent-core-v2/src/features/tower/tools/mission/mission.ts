@@ -19,6 +19,16 @@ export const TowerMissionToolInputSchema = z
       .string()
       .optional()
       .describe('Mark the first open task containing this text as done'),
+    task_drop: z
+      .string()
+      .optional()
+      .describe(
+        'Mark the first open task containing this text as dropped — the escape hatch for legitimately descoped tasks; requires task_drop_reason and is recorded in the mission notes and the activity log',
+      ),
+    task_drop_reason: z
+      .string()
+      .optional()
+      .describe('Mandatory with task_drop: why the task is legitimately descoped'),
     scope: z
       .array(z.string())
       .optional()

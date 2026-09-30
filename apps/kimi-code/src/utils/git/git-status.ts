@@ -69,11 +69,11 @@ export function createGitStatusCache(
   workDir: string,
   options: GitStatusCacheOptions = {},
 ): GitStatusCache {
-  // This cache is constructed before the workspace trust gate, so the git
-  // binary must be resolved through PATH to an absolute path — a bare name
-  // would let cmd.exe pick up a `git.exe` planted in the workspace.
+  // Resolve through PATH to an absolute path — a bare name would let cmd.exe
+  // pick up a `git.exe` planted in the workspace.
   const git = resolveCommandPath('git', workDir);
-  const isRepo = git !== undefined && detectGitRepo(git, workDir);
+  let repoDetected = false;
+  let isRepo = false;
   let branch: BranchState = { value: null, fetchedAt: 0 };
   let status: StatusState = {
     dirty: false,
@@ -93,7 +93,13 @@ export function createGitStatusCache(
 
   return {
     getStatus: () => {
-      if (!isRepo || git === undefined) return null;
+      if (git === undefined) return null;
+      if (repoDetected && !isRepo) return null;
+      if (!repoDetected) {
+        repoDetected = true;
+        isRepo = detectGitRepo(git, workDir);
+      }
+      if (!isRepo) return null;
 
       const now = Date.now();
       if (now - branch.fetchedAt >= BRANCH_TTL_MS) {

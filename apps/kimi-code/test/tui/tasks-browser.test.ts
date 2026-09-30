@@ -68,6 +68,7 @@ function makeProps(overrides: Partial<TasksBrowserProps> = {}): TasksBrowserProp
     tailOutput: undefined,
     tailLoading: false,
     flashMessage: undefined,
+    availableModels: {},
     onSelect: vi.fn(),
     onToggleFilter: vi.fn(),
     onRefresh: vi.fn(),
@@ -78,6 +79,14 @@ function makeProps(overrides: Partial<TasksBrowserProps> = {}): TasksBrowserProp
     ...overrides,
   } as TasksBrowserProps;
 }
+
+const CATALOG = {
+  'k2-cheap': {
+    provider: 'managed:kimi-code',
+    model: 'kimi-k2-cheap',
+    displayName: 'Kimi K2 Cheap',
+  },
+} as never;
 
 function makeApp(
   props: Partial<TasksBrowserProps> = {},
@@ -227,6 +236,113 @@ describe('TasksBrowserApp — full-screen rendering', () => {
     expect(out).toContain('kimi-code/k3-256k');
     expect(out).toContain('Effort:');
     expect(out).toContain('low');
+  });
+
+  it('shows the agent model on a secondary line under the task row', () => {
+    const app = makeApp({
+      tasks: [
+        task({
+          taskId: 'agent-aaaaaaaa',
+          kind: 'agent',
+          status: 'running',
+          description: 'explore project',
+          agentId: 'agent-1',
+          model: 'k2-cheap',
+        }),
+        task({ taskId: 'bash-bbbbbbbb', status: 'running' }),
+      ],
+      selectedTaskId: 'agent-aaaaaaaa',
+      availableModels: CATALOG,
+    });
+    const lines = app.render(120).map(strip);
+    const rowIndex = lines.findIndex((line) => line.includes('agent-aaaaaaaa'));
+    expect(rowIndex).toBeGreaterThanOrEqual(0);
+    expect(lines[rowIndex + 1]).toContain('Kimi K2 Cheap');
+    expect(lines[rowIndex + 2]).toContain('bash-bbbbbbbb');
+  });
+
+  it('falls back to the raw model alias when the catalog has no entry', () => {
+    const app = makeApp({
+      tasks: [
+        task({
+          taskId: 'agent-aaaaaaaa',
+          kind: 'agent',
+          status: 'running',
+          agentId: 'agent-1',
+          model: 'kimi-code/k3-256k',
+        }),
+      ],
+      selectedTaskId: 'agent-aaaaaaaa',
+    });
+    const lines = app.render(120).map(strip);
+    const rowIndex = lines.findIndex((line) => line.includes('agent-aaaaaaaa'));
+    expect(rowIndex).toBeGreaterThanOrEqual(0);
+    expect(lines[rowIndex + 1]).toContain('kimi-code/k3-256k');
+  });
+
+  it('resolves the Detail pane model through the catalog', () => {
+    const out = strip(
+      makeApp({
+        tasks: [
+          task({
+            taskId: 'agent-aaaaaaaa',
+            kind: 'agent',
+            status: 'running',
+            agentId: 'agent-1',
+            model: 'k2-cheap',
+          }),
+        ],
+        selectedTaskId: 'agent-aaaaaaaa',
+        availableModels: CATALOG,
+      })
+        .render(120)
+        .join('\n'),
+    );
+    expect(out).toContain('Model:');
+    expect(out).toContain('Kimi K2 Cheap');
+  });
+
+  it('keeps agent tasks without a model on a single line', () => {
+    const app = makeApp({
+      tasks: [
+        task({
+          taskId: 'agent-aaaaaaaa',
+          kind: 'agent',
+          status: 'running',
+          agentId: 'agent-1',
+          startedAt: 1,
+        }),
+        task({ taskId: 'bash-bbbbbbbb', status: 'running', startedAt: 2 }),
+      ],
+      selectedTaskId: 'agent-aaaaaaaa',
+    });
+    const lines = app.render(120).map(strip);
+    const rowIndex = lines.findIndex((line) => line.includes('agent-aaaaaaaa'));
+    expect(rowIndex).toBeGreaterThanOrEqual(0);
+    expect(lines[rowIndex + 1]).toContain('bash-bbbbbbbb');
+  });
+
+  it('keeps the selected agent row and its model line visible when scrolling', () => {
+    const tasks = Array.from({ length: 12 }, (_, i) =>
+      task({
+        taskId: `agent-${String(i).padStart(8, '0')}`,
+        kind: 'agent',
+        status: 'running',
+        description: `task ${String(i)}`,
+        agentId: `agent-${String(i)}`,
+        model: 'k2-cheap',
+        startedAt: i,
+      } as Partial<BackgroundTaskInfo>),
+    );
+    const app = new TasksBrowserApp(
+      makeProps({ tasks, selectedTaskId: 'agent-00000011', availableModels: CATALOG }),
+      fakeTerminal(12, 120),
+    );
+    const lines = app.render(120).map(strip);
+    expect(lines.length).toBe(12);
+    const rowIndex = lines.findIndex((line) => line.includes('agent-00000011'));
+    expect(rowIndex).toBeGreaterThanOrEqual(0);
+    expect(lines[rowIndex + 1]).toContain('Kimi K2 Cheap');
   });
 
   it('renders tail output in the Preview Output pane', () => {
@@ -575,6 +691,7 @@ describe('TasksBrowserController — opening an agent task', () => {
       terminal: fakeTerminal(30),
       ui,
       editor: {},
+      appState: { availableModels: {} },
     };
     const host = {
       state,
@@ -654,7 +771,7 @@ describe('TasksBrowserController — opening an agent task', () => {
       turnId: 1,
       toolCallId: 't1',
       name: 'Grep',
-      args: { pattern: 'foo' },
+      args: { pattern: 'foo', output_mode: 'content' },
     } as Event);
     store.applyEvent({
       sessionId: 's1',
@@ -672,7 +789,7 @@ describe('TasksBrowserController — opening an agent task', () => {
 
     const browser = state.tasksBrowser as { tailOutput?: string };
     expect(browser.tailOutput).toContain('── step 0 ──');
-    expect(browser.tailOutput).toContain('✓ Used Grep (foo) · 2 matches');
+    expect(browser.tailOutput).toContain('✓ Used Grep (foo) · 2 matches across 2 files');
     controller.close();
   });
 });

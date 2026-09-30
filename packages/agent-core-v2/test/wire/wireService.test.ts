@@ -7,7 +7,7 @@ import { resetUnexpectedErrorHandler, setUnexpectedErrorHandler } from '#/_base/
 import { ILogService } from '#/_base/log/log';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -69,7 +69,7 @@ async function collect(journal: AsyncIterable<WireRecord>): Promise<WireRecord[]
 function wireOverLog(
   stubLog: IAppendLogStore,
   key: string,
-  dependencies: { blob?: IAgentBlobService } = {},
+  dependencies: { blob?: IAgentBlobService; storage?: IFileSystemStorageService; telemetry?: ITelemetryService } = {},
 ): IWireService {
   const stubIx = disposables.add(new TestInstantiationService());
   return registerTestAgentWire(stubIx, testWireScope(SCOPE, key), { log: stubLog, ...dependencies });
@@ -230,6 +230,104 @@ describe('WireService appendRecord', () => {
 });
 
 describe('WireService readJournal', () => {
+  it('normalizes legacy plan revision paths and rewrites them as keys', async () => {
+    const telemetryRecords: { event: string; properties: unknown }[] = [];
+    const telemetry = {
+      ...noopTelemetryService,
+      track2: (event: string, properties: unknown) => telemetryRecords.push({ event, properties }),
+    } as unknown as ITelemetryService;
+    const seeded: WireRecord[] = [
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'wire.test.before', value: 1, time: 2 },
+      {
+        type: 'plan.revision',
+        id: 'plan-1',
+        version: 1,
+        path: 'sessions/source/session-1/agents/test-agent/plan/plan-1/v1.md',
+        sha256: 'sha',
+        bytes: 3,
+        time: 2,
+      },
+      { type: 'wire.test.after', value: 2, time: 3 },
+    ];
+    const stubLog = recordingWireLog(seeded);
+    const stub = wireOverLog(stubLog, 'legacy-plan', { telemetry });
+
+    expect(await collect(stub.readJournal())).toEqual([
+      seeded[0],
+      { type: 'wire.test.before', value: 1, time: 2 },
+      {
+        type: 'plan.revision',
+        id: 'plan-1',
+        version: 1,
+        key: 'plan/plan-1/v1.md',
+        sha256: 'sha',
+        bytes: 3,
+        time: 2,
+      },
+      { type: 'wire.test.after', value: 2, time: 3 },
+    ]);
+    expect(telemetryRecords).toEqual([
+      {
+        event: 'wire_plan_revision_migrated',
+        properties: {
+          record_type: 'plan.revision',
+          legacy_field: 'path',
+          migration_outcome: 'migrated',
+        },
+      },
+    ]);
+    expect(await readRecords(stubLog, SCOPE, 'legacy-plan')).toEqual([
+      seeded[0],
+      { type: 'wire.test.before', value: 1, time: 2 },
+      {
+        type: 'plan.revision',
+        id: 'plan-1',
+        version: 1,
+        key: 'plan/plan-1/v1.md',
+        sha256: 'sha',
+        bytes: 3,
+        time: 2,
+      },
+      { type: 'wire.test.after', value: 2, time: 3 },
+    ]);
+  });
+
+  it('skips unsafe legacy plan revision paths and reports the migration outcome', async () => {
+    const telemetryRecords: { event: string; properties: unknown }[] = [];
+    const telemetry = {
+      ...noopTelemetryService,
+      track2: (event: string, properties: unknown) => telemetryRecords.push({ event, properties }),
+    } as unknown as ITelemetryService;
+    const stub = wireOverLog(
+      recordingWireLog([
+        { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+        {
+          type: 'plan.revision',
+          id: 'plan-1',
+          version: 1,
+          path: 'sessions/source/session-1/agents/other-agent/plan/plan-1/v1.md',
+          sha256: 'sha',
+          bytes: 3,
+        },
+      ]),
+      'unsafe-legacy-plan',
+      { telemetry },
+    );
+
+    expect(await collect(stub.readJournal())).toEqual([
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+    ]);
+    expect(telemetryRecords).toContainEqual({
+      event: 'wire_plan_revision_migrated',
+      properties: {
+        record_type: 'plan.revision',
+        legacy_field: 'path',
+        migration_outcome: 'skipped',
+      },
+    });
+  });
+
   it('bootstraps the metadata envelope onto an empty journal', async () => {
     expect(await collect(wire.readJournal())).toEqual([]);
 
@@ -310,6 +408,14 @@ describe('WireService readJournal', () => {
 
     expect(await collect(stub.readJournal())).toEqual(seeded);
     expect(rewrites).toBe(0);
+
+    const journal = stub;
+    expect(await collect(journal.readRaw())).toEqual(seeded);
+    expect(await collect(journal.read())).toEqual(seeded);
+    expect(journal.journalRef).toEqual({ tree: testWireScope(SCOPE, 'current'), branch: 'main' });
+    expect(journal.branches()).toEqual(['main']);
+    expect(journal.nextSeq()).toBe(3);
+    expect(rewrites).toBe(0);
   });
 
   it('reads a newer-version journal without stamping or rewriting it', async () => {
@@ -328,6 +434,38 @@ describe('WireService readJournal', () => {
 
     expect(await collect(stub.readJournal())).toEqual(seeded);
     expect(rewrites).toBe(0);
+  });
+
+  it('leaves legacy plan revision paths untouched in a newer-version journal', async () => {
+    const telemetryRecords: { event: string; properties: unknown }[] = [];
+    const telemetry = {
+      ...noopTelemetryService,
+      track2: (event: string, properties: unknown) => telemetryRecords.push({ event, properties }),
+    } as unknown as ITelemetryService;
+    const seeded: WireRecord[] = [
+      { type: 'metadata', protocol_version: '9.9', created_at: 1 },
+      {
+        type: 'plan.revision',
+        id: 'plan-1',
+        version: 1,
+        path: 'sessions/source/session-1/agents/test-agent/plan/plan-1/v1.md',
+        sha256: 'sha',
+        bytes: 3,
+        time: 2,
+      },
+    ];
+    let rewrites = 0;
+    const counting = recordingWireLog(seeded);
+    const rewrite = counting.rewrite.bind(counting);
+    counting.rewrite = async (scope, key, next) => {
+      rewrites += 1;
+      return rewrite(scope, key, next);
+    };
+    const stub = wireOverLog(counting, 'newer-legacy-plan', { telemetry });
+
+    expect(await collect(stub.readJournal())).toEqual(seeded);
+    expect(rewrites).toBe(0);
+    expect(telemetryRecords).toEqual([]);
   });
 
   it('rejects a malformed metadata envelope as corrupted storage', async () => {
@@ -458,7 +596,17 @@ describe('WireService corruption repair', () => {
   });
 
   it('truncates at a corrupted middle line, dropping later valid lines', async () => {
-    const prefix = `${currentMetadata()}\n${JSON.stringify({ type: 'wire.test.a', time: 1 })}\n`;
+    const edge = {
+      type: 'agent.switched',
+      agentId: 'test-agent',
+      branch: 'b1',
+      reason: 'undo',
+      base: { branch: 'main', line: 2 },
+      turns: 1,
+      legacyUndoLine: 4,
+      time: 2,
+    };
+    const prefix = `${currentMetadata()}\n${JSON.stringify({ type: 'wire.test.a', time: 1 })}\n${JSON.stringify(edge)}\n`;
     const raw = `${prefix}GARBAGE\n${JSON.stringify({ type: 'wire.test.b', time: 2 })}\n`;
     await seedCorrupt(raw);
 
@@ -467,17 +615,17 @@ describe('WireService corruption repair', () => {
     expect(yielded).toEqual([
       { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
       { type: 'wire.test.a', time: 1 },
+      edge,
     ]);
     expect(await rawBytes()).toBe(prefix);
     expect(await rawBytes(BACKUP_KEY)).toBe(raw);
-  });
 
-  it('does not surface AppendLogCorruptedError from the restore read path', async () => {
-    await seedCorrupt(`${currentMetadata()}\nGARBAGE\n`);
-
-    await expect(collect(wire.readJournal())).resolves.toEqual([
+    const journal = wire;
+    expect(await collect(journal.read())).toEqual([
       { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'wire.test.a', time: 1 },
     ]);
+    expect(journal.journalRef.branch).toBe('b1');
   });
 
   it('keeps the first backup when the journal corrupts again after a repair', async () => {
@@ -505,6 +653,47 @@ describe('WireService corruption repair', () => {
     ]);
     expect(await rawBytes()).toBe(
       `${currentMetadata()}\n${JSON.stringify({ type: 'wire.test.legacy', time: 9 })}\n`,
+    );
+    expect(await rawBytes(BACKUP_KEY)).toBe(raw);
+  });
+
+  it('repairs a corrupted journal that also carries a migratable legacy plan revision', async () => {
+    const legacyPlan = JSON.stringify({
+      type: 'plan.revision',
+      id: 'plan-1',
+      version: 1,
+      path: 'sessions/source/session-1/agents/test-agent/plan/plan-1/v1.md',
+      sha256: 'sha',
+      bytes: 3,
+      time: 2,
+    });
+    const raw = `${currentMetadata()}\n${legacyPlan}\nGARBAGE\n${JSON.stringify({ type: 'wire.test.dropped', time: 3 })}\n`;
+    await seedCorrupt(raw);
+
+    const yielded = await collect(wire.readJournal());
+
+    expect(yielded).toEqual([
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      {
+        type: 'plan.revision',
+        id: 'plan-1',
+        version: 1,
+        sha256: 'sha',
+        bytes: 3,
+        time: 2,
+        key: 'plan/plan-1/v1.md',
+      },
+    ]);
+    expect(await rawBytes()).toBe(
+      `${currentMetadata()}\n${JSON.stringify({
+        type: 'plan.revision',
+        id: 'plan-1',
+        version: 1,
+        sha256: 'sha',
+        bytes: 3,
+        time: 2,
+        key: 'plan/plan-1/v1.md',
+      })}\n`,
     );
     expect(await rawBytes(BACKUP_KEY)).toBe(raw);
   });
@@ -762,5 +951,312 @@ describe('WireService flush', () => {
     await flushPromise;
     expect(flushed).toBe(true);
     expect(records).toEqual([{ type: 'wire.test.gated', time: 1 }]);
+  });
+});
+
+describe('WireService journal location', () => {
+  it('counts journal lines across appends and a fresh read-back', async () => {
+    await wire.seal();
+    wire.appendRecord({ type: 'wire.test.one', time: 1 });
+    wire.appendRecord({ type: 'wire.test.two', time: 2 });
+    await wire.flush();
+
+    expect(wire.lineCount()).toBe(3);
+
+    const reopened = wireOverLog(log, KEY);
+    expect(reopened.lineCount()).toBe(0);
+    await collect(reopened.readJournal());
+
+    expect(reopened.lineCount()).toBe(3);
+    reopened.appendRecord({ type: 'wire.test.three', time: 3 });
+    await reopened.flush();
+    expect(reopened.lineCount()).toBe(4);
+  });
+
+  it('reports no journal path when the storage has no on-disk location', () => {
+    expect(wire.journalPath()).toBeUndefined();
+  });
+
+  it('tracks the latest context.clear line across appends and reads', async () => {
+    await wire.seal();
+    wire.appendRecord({ type: 'wire.test.one', time: 1 });
+    expect(wire.lastContextClearLine()).toBeUndefined();
+    wire.appendRecord({ type: 'context.clear', time: 2 });
+    wire.appendRecord({ type: 'wire.test.two', time: 3 });
+    await wire.flush();
+
+    expect(wire.lastContextClearLine()).toBe(3);
+
+    const reopened = wireOverLog(log, KEY);
+    expect(reopened.lastContextClearLine()).toBeUndefined();
+    await collect(reopened.readJournal());
+    expect(reopened.lastContextClearLine()).toBe(3);
+  });
+
+  it('reports the on-disk journal path resolved by the storage layer', () => {
+    const locatedStorage: IFileSystemStorageService = Object.assign(Object.create(storage), {
+      pathFor: (scope: string, key: string) => `/home/user/.kimi-code/${scope}/${key}`,
+    }) as IFileSystemStorageService;
+    const located = wireOverLog(log, 'located', { storage: locatedStorage });
+
+    expect(located.journalPath()).toBe(
+      `/home/user/.kimi-code/${testWireScope(SCOPE, 'located')}/${AGENT_WIRE_RECORD_KEY}`,
+    );
+  });
+});
+
+describe('WireService tree projection', () => {
+  function userPrompt(text: string, id: string) {
+    return {
+      role: 'user',
+      content: [{ type: 'text', text }],
+      toolCalls: [],
+      origin: { kind: 'user' },
+      id,
+    };
+  }
+
+  it('writes the undo switch triple with paired physical line numbers after re-reading a rewritten journal', async () => {
+    const enc = new TextEncoder();
+    const seed = [
+      JSON.stringify({ type: 'context.append_message', message: userPrompt('first', 'p1'), time: 1 }),
+      JSON.stringify({
+        type: 'context.append_message',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
+        time: 2,
+      }),
+      JSON.stringify({ type: 'context.append_message', message: userPrompt('second', 'p2'), time: 3 }),
+    ];
+    await storage.write(testWireScope(SCOPE, KEY), AGENT_WIRE_RECORD_KEY, enc.encode(`${seed.join('\n')}\n`));
+
+    const switched = await wire.switchBranch({ turns: 1 });
+
+    expect(switched).toEqual({
+      branch: 'b1',
+      base: { branch: 'main', line: 3 },
+      edgeLine: 5,
+      forkLine: 3,
+    });
+    const onDisk = await readRecords();
+    expect(onDisk.slice(4)).toEqual([
+      {
+        type: 'agent.switched',
+        agentId: 'test-agent',
+        branch: 'b1',
+        reason: 'undo',
+        base: { branch: 'main', line: 3 },
+        turns: 1,
+        legacyUndoLine: 6,
+        time: expect.any(Number),
+      },
+      { type: 'context.undo', agentId: 'test-agent', count: 1, time: expect.any(Number) },
+      { type: 'context.undone', agentId: 'test-agent', turns: 1, time: expect.any(Number) },
+    ]);
+    expect(wire.lineCount()).toBe(7);
+    expect(wire.journalRef).toEqual({ tree: testWireScope(SCOPE, KEY), branch: 'b1' });
+    expect(wire.branches()).toEqual(['main', 'b1']);
+    expect(wire.nextSeq()).toBe(8);
+
+    expect(await collect(wire.read())).toEqual([
+      ...onDisk.slice(0, 3),
+      onDisk[5]!,
+      onDisk[6]!,
+    ]);
+    expect(await collect(wire.readRaw())).toEqual(onDisk);
+
+    await expect(wire.switchBranch({ turns: 2 })).rejects.toMatchObject({
+      reason: 'insufficient',
+    });
+    expect(wire.lineCount()).toBe(7);
+
+    wire.appendRecord({
+      type: 'context.apply_compaction',
+      summary: 'compacted',
+      compactedCount: 2,
+      tokensBefore: 10,
+      time: 4,
+    });
+    await wire.flush();
+    await expect(wire.switchBranch({ turns: 1 })).rejects.toMatchObject({
+      reason: 'compaction_boundary',
+    });
+    expect(wire.lineCount()).toBe(8);
+    expect(await readRecords()).toHaveLength(8);
+  });
+
+  it('walks nested switch edges to compute the active chain', async () => {
+    const seeded: WireRecord[] = [
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'wire.test.one', time: 1 },
+      { type: 'wire.test.two', time: 2 },
+      {
+        type: 'agent.switched',
+        agentId: 'test-agent',
+        branch: 'b1',
+        reason: 'undo',
+        base: { branch: 'main', line: 2 },
+        turns: 1,
+        legacyUndoLine: 5,
+        time: 3,
+      },
+      { type: 'context.undo', agentId: 'test-agent', count: 1, time: 3 },
+      { type: 'context.undone', agentId: 'test-agent', turns: 1, time: 3 },
+      { type: 'wire.test.three', time: 4 },
+      {
+        type: 'agent.switched',
+        agentId: 'test-agent',
+        branch: 'b2',
+        reason: 'undo',
+        base: { branch: 'b1', line: 7 },
+        turns: 1,
+        legacyUndoLine: 9,
+        time: 5,
+      },
+      { type: 'context.undo', agentId: 'test-agent', count: 1, time: 5 },
+      { type: 'context.undone', agentId: 'test-agent', turns: 1, time: 5 },
+      { type: 'wire.test.four', time: 6 },
+    ];
+    const stub = wireOverLog(recordingWireLog(seeded), 'tree');
+    const journal = stub;
+
+    expect(await collect(journal.readRaw())).toEqual(seeded);
+    expect(await collect(journal.read())).toEqual([
+      seeded[0]!,
+      seeded[1]!,
+      seeded[4]!,
+      seeded[5]!,
+      seeded[6]!,
+      seeded[8]!,
+      seeded[9]!,
+      seeded[10]!,
+    ]);
+    expect(journal.journalRef.branch).toBe('b2');
+    expect(journal.branches()).toEqual(['main', 'b1', 'b2']);
+    expect(journal.nextSeq()).toBe(12);
+  });
+
+  it('retries the branch switch on read interference, then rejects when the switch triple is interleaved', async () => {
+    const records: WireRecord[] = [
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'context.append_message', message: userPrompt('first', 'p1'), time: 1 },
+      {
+        type: 'context.append_message',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
+        time: 2,
+      },
+    ];
+    let concurrent: IWireService | undefined;
+    let interferences = 0;
+    let maxInterferences = 1;
+    const log = recordingWireLog(records);
+    log.read = function <R>(): AsyncIterable<R> {
+      const snapshot = [...records];
+      const interfere = interferences < maxInterferences;
+      if (interfere) interferences += 1;
+      return (async function* () {
+        try {
+          for (const record of snapshot) {
+            yield record as R;
+          }
+        } finally {
+          if (interfere) {
+            concurrent!.appendRecord({ type: 'wire.test.concurrent', time: 9 });
+          }
+        }
+      })();
+    };
+    concurrent = wireOverLog(log, 'concurrent');
+
+    const switched = await concurrent.switchBranch({ turns: 1 });
+
+    expect(switched).toMatchObject({ branch: 'b1', base: { branch: 'main', line: 1 }, forkLine: 1 });
+    expect(records[3]).toEqual({ type: 'wire.test.concurrent', time: 9 });
+    expect(records[4]?.type).toBe('agent.switched');
+
+    interferences = 0;
+    maxInterferences = Number.MAX_SAFE_INTEGER;
+    await expect(concurrent.switchBranch({ turns: 1 })).rejects.toMatchObject({
+      code: WireErrors.codes.RECORDS_WRITE_FAILED,
+    });
+
+    const tailRecords: WireRecord[] = [
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'context.append_message', message: userPrompt('first', 'p1'), time: 1 },
+      {
+        type: 'context.append_message',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
+        time: 2,
+      },
+    ];
+    const tailLog = recordingWireLog(tailRecords);
+    const baseAppend = tailLog.append.bind(tailLog);
+    tailLog.append = (scope, key, record, options) => {
+      if ((record as WireRecord).type === 'context.undo') {
+        baseAppend(scope, key, { type: 'wire.test.interleaved', time: 9 }, options);
+      }
+      baseAppend(scope, key, record, options);
+    };
+    const tail = wireOverLog(tailLog, 'tail');
+
+    await expect(tail.switchBranch({ turns: 1 })).rejects.toMatchObject({
+      code: WireErrors.codes.RECORDS_WRITE_FAILED,
+    });
+    expect(tailRecords.map((record) => record.type)).toEqual([
+      'metadata',
+      'context.append_message',
+      'context.append_message',
+      'agent.switched',
+      'wire.test.interleaved',
+      'context.undo',
+      'context.undone',
+    ]);
+  });
+});
+
+describe('WireService readRestoreChains', () => {
+  it('returns restorable and journal chains from a single read with shared record identity', async () => {
+    const seeded: WireRecord[] = [
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'wire.test.one', time: 1 },
+      { type: 'wire.test.two', time: 2 },
+      {
+        type: 'agent.switched',
+        agentId: 'test-agent',
+        branch: 'b1',
+        reason: 'undo',
+        base: { branch: 'main', line: 2 },
+        turns: 1,
+        legacyUndoLine: 5,
+        time: 3,
+      },
+      { type: 'context.undo', agentId: 'test-agent', count: 1, time: 3 },
+      { type: 'context.undone', agentId: 'test-agent', turns: 1, time: 3 },
+      { type: 'wire.test.three', time: 4 },
+    ];
+    const stub = wireOverLog(recordingWireLog(seeded), 'restore-chains');
+
+    const chains = await stub.readRestoreChains();
+
+    expect(chains.journal).toEqual(seeded);
+    expect(chains.restorable).toEqual([seeded[0]!, seeded[1]!, seeded[6]!]);
+    for (const record of chains.restorable) {
+      expect(chains.journal).toContain(record);
+    }
+    expect(await collect(stub.readJournal())).toEqual(chains.journal);
+    expect(await collect(stub.readRestorable())).toEqual(chains.restorable);
+    expect(stub.journalRef.branch).toBe('b1');
+  });
+
+  it('bootstraps the metadata envelope onto an empty journal', async () => {
+    const chains = await wire.readRestoreChains();
+
+    const envelope = {
+      type: 'metadata',
+      protocol_version: WIRE_PROTOCOL_VERSION,
+      created_at: expect.any(Number),
+    };
+    expect(chains).toEqual({ restorable: [envelope], journal: [envelope] });
+    expect(await collect(wire.readRestorable())).toEqual([envelope]);
+    expect(await readRecords()).toEqual([envelope]);
   });
 });

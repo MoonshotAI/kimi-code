@@ -704,7 +704,7 @@ function sweepCacheSync(dir: string, maxTotalBytes: number): void {
   }
 }
 
-/** Mirrors agent-core's `originalImageCacheDir` (not re-exported through the SDK). */
+/** Mirrors agent-core-v2's `originalImageCacheDir` (not re-exported through the SDK). */
 function originalImageTempDir(): string {
   return join(tmpdir(), 'kimi-code-original-images');
 }

@@ -21,6 +21,7 @@ import { getNativeWebAssetsDir } from '#/native/web-assets';
 import { darkColors } from '#/tui/theme/colors';
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
 import { getDataDir } from '#/utils/paths';
+import { persistedKimiOAuthRef } from '#/utils/region';
 import { generateRemoteControlQr } from '#/utils/remote-control-qr';
 
 import { initializeServerTelemetry } from '../../telemetry';
@@ -31,6 +32,7 @@ import {
 } from '../../version';
 import {
   accessUrlLines,
+  browserOpenOrigin,
   buildOpenableUrl,
   isLoopbackHost,
   splitTokenFragment,
@@ -39,8 +41,6 @@ import { type NetworkAddress } from './networks';
 import {
   formatRemoteControlOutput,
   formatRemoteControlStatus,
-  isRemoteControlEnabled,
-  REMOTE_CONTROL_FLAG_ENV,
   startRemoteControl,
   type RemoteControlHandle,
   type RemoteControlOptions,
@@ -170,10 +170,8 @@ export function buildWebCommand(
     withServerOptions.addOption(
       new Option(
         '--rc, --remote-control',
-        'Expose the web UI through Kimi Remote Control (experimental).',
-      )
-        .default(false)
-        .hideHelp(!isRemoteControlEnabled()),
+        'Expose the web UI through Kimi Remote Control.',
+      ).default(false),
     );
   }
   return withServerOptions
@@ -195,11 +193,6 @@ export async function handleWebCommand(
   deps: WebCommandDeps = DEFAULT_WEB_COMMAND_DEPS,
 ): Promise<void> {
   const parsed = parseServerOptions(opts);
-  if (opts.remoteControl === true && !isRemoteControlEnabled()) {
-    throw new Error(
-      `--remote-control is experimental: set ${REMOTE_CONTROL_FLAG_ENV}=1 (or KIMI_CODE_EXPERIMENTAL_FLAG=1) to enable it.`,
-    );
-  }
   if (opts.remoteControl === true && parsed.dangerousBypassAuth) {
     throw new Error('--remote-control cannot be combined with --dangerous-bypass-auth.');
   }
@@ -221,6 +214,7 @@ export async function handleWebCommand(
       if (opts.remoteControl === true) {
         if (token === undefined) throw new Error('Unable to read the local server token.');
         const dataDir = getDataDir();
+        const persisted = persistedKimiOAuthRef();
         let outputReady = false;
         const pendingStatuses: string[] = [];
         const onStatus = (status: RemoteControlStatus): void => {
@@ -232,6 +226,9 @@ export async function handleWebCommand(
           homeDir: dataDir,
           localOrigin: origin,
           localServerToken: token,
+          clientVersion: `kimi-code/${getVersion()}`,
+          configuredOAuthKey: persisted?.key,
+          configuredOAuthHost: persisted?.oauthHost,
           stderr: deps.stderr,
           onStatus,
         });
@@ -240,6 +237,7 @@ export async function handleWebCommand(
           formatRemoteControlOutput({
             url: remoteControl.url,
             localOrigin: origin,
+            localServerToken: token,
             deviceName: remoteControl.deviceName,
             qrCode: qrCode.terminal,
             pngPath: qrCode.pngPath,
@@ -260,7 +258,8 @@ export async function handleWebCommand(
           : formatReadyLine(origin, token, parsed.dangerousBypassAuth),
       );
       if (opts.open === true) {
-        deps.openUrl(token !== undefined ? buildWebUrl(origin, token) : origin);
+        const openOrigin = browserOpenOrigin(origin);
+        deps.openUrl(token !== undefined ? buildWebUrl(openOrigin, token) : openOrigin);
       }
     },
     onShutdown: async () => {
@@ -411,7 +410,7 @@ async function runServerInProcess(
       await hooks.onShutdown?.('startup_failed');
     } finally {
       await running.close();
-      await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
+      await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS }).catch(() => {});
     }
     throw error;
   }
@@ -473,7 +472,7 @@ export function formatReadyBanner(
     return frag === '' ? url(base) : url(base) + dim(frag);
   };
 
-  const port = Number(new URL(origin).port);
+  const port = Number(origin.slice(origin.lastIndexOf(':') + 1));
   // Borderless header: the Kimi sprite (the little mascot with eyes) sits next
   // to the title, keeping the brand without the enclosing box.
   const logo = ['▐█▛█▛█▌', '▐█████▌'] as const;

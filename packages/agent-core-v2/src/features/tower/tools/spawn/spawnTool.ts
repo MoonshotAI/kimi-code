@@ -6,6 +6,7 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentTaskService } from '#/agent/task/task';
+import { isAgentTaskTerminal } from '#/agent/task/taskService';
 import {
   GitError,
   MISSIONS_DIR,
@@ -13,16 +14,19 @@ import {
   TowerProtocolError,
   TowerStore,
   WORKTREES_DIR,
+  isReservedTowerAgentName,
   missionFileName,
+  parseFrontmatter,
+  resolveMissionByBranch,
   resolveTowerRepoRoot,
+  type TowerInboxItem,
   type TowerMission,
   type TowerState,
 } from '#/features/tower/protocol/index';
 import { IAgentTowerService, TOWER_WORKER_PROFILE } from '#/features/tower/tower';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
 import { IConfigService } from '#/app/config/config';
-import { IFlagService } from '#/app/flag/flag';
-import { IModelCatalog } from '#/kosong/model/catalog';
+import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import {
   type ExecutableToolContext,
@@ -33,10 +37,10 @@ import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/
 import { subagentLabels } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
-  DEFAULT_SUBAGENT_TIMEOUT_MS,
   isSubagentModelForced,
   resolveSubagentBinding,
   resolveSubagentThinking,
+  resolveSubagentTimeoutMs,
   wrapSubagentModelError,
 } from '#/session/subagent/configSection';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
@@ -44,11 +48,34 @@ import { ISessionSubagentService } from '#/session/subagent/subagent';
 
 import { SubagentTask, type SubagentHandle } from '#/agent/tools/agent/subagent-task';
 
-import { TOWER_MAIN_AGENT_ONLY } from '../support';
+import { TOWER_MAIN_AGENT_ONLY, TOWER_MODE_USER_ENABLED_ONLY } from '../support';
 import { ITowerSpawnTool, TowerSpawnToolInputSchema, type TowerSpawnToolInput } from './spawn';
 import DESCRIPTION from './spawn.md?raw';
 
 type SubagentBinding = ReturnType<typeof resolveSubagentBinding>;
+
+const REVIEW_REQUEST_SCAN_LIMIT = 50;
+const REVIEW_HISTORY_ROUNDS = 5;
+const REVIEW_EXCERPT_MAX_CHARS = 8000;
+
+function truncateSection(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars)}\n…(truncated)`;
+}
+
+async function reviewExcerpt(store: TowerStore, file: string): Promise<string> {
+  const { body } = parseFrontmatter(await readFile(store.abs(file), 'utf8'));
+  return truncateSection(body.trim(), REVIEW_EXCERPT_MAX_CHARS);
+}
+
+async function findReviewRequest(
+  store: TowerStore,
+  author: string,
+): Promise<TowerInboxItem | undefined> {
+  return (await store.readInbox(TOWER_NAME, REVIEW_REQUEST_SCAN_LIMIT)).find(
+    (item) => item.from === author && item.subject.startsWith('review-request'),
+  );
+}
 
 export class TowerSpawnTool implements ITowerSpawnTool {
   declare readonly _serviceBrand: undefined;
@@ -68,7 +95,6 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IConfigService private readonly config: IConfigService,
-    @IFlagService private readonly flags: IFlagService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
   ) {
     this.callerAgentId = scopeContext.agentId;
@@ -99,19 +125,33 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     try {
       if (!this.tower.isActive) {
         return {
-          output: 'tower mode is not active — run TowerInit first',
+          output: TOWER_MODE_USER_ENABLED_ONLY,
           isError: true,
         };
       }
       const store = this.newStore();
       const state = await store.load();
 
+      if (args.name.trim().length === 0 || args.name.trim() !== args.name) {
+        return {
+          output: `tower agent name "${args.name}" must not be blank or carry surrounding whitespace`,
+          isError: true,
+        };
+      }
+
+      if (isReservedTowerAgentName(args.name)) {
+        return {
+          output: `tower agent name "${args.name}" is reserved by the tower protocol — pick a different name`,
+          isError: true,
+        };
+      }
+
       const existing = store.findByName(state, args.name);
       if (existing !== undefined) {
         return {
           output:
             `tower agent "${args.name}" is already registered (agent_id: ${existing.agentId}, kind: ${existing.kind}) — ` +
-            `resume it instead of spawning a duplicate: Agent(resume="${existing.agentId}", prompt="...")`,
+            `resume it instead of spawning a duplicate: Agent(resume="${existing.agentId}", run_in_background=true, prompt="...") — never foreground: its output flows back through the tower protocol files`,
           isError: true,
         };
       }
@@ -142,6 +182,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
             );
           }
         } catch (error) {
+          if (error instanceof TowerProtocolError) throw error;
           notes.push(
             `worktree setup warning (continuing): ${error instanceof Error ? error.message : String(error)}`,
           );
@@ -153,11 +194,22 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         }
       }
 
-      const prompt = await this.buildPrompt(args, store, state, mission, reviewTarget);
+      const reviewMission =
+        reviewTarget !== undefined ? resolveMissionByBranch(state, reviewTarget) : undefined;
+      const prompt = await this.buildPrompt(
+        args,
+        store,
+        state,
+        mission,
+        reviewTarget,
+        reviewMission,
+      );
       const description =
         mission !== undefined
-          ? `tower worker ${args.name}: ${mission.title}`
-          : `tower reviewer ${args.name}: ${reviewTarget ?? ''}`;
+          ? `${mission.id} ${args.name}: ${mission.title}`
+          : reviewMission !== undefined
+            ? `${reviewMission.id} review: ${reviewTarget ?? ''}`
+            : `review ${args.name}: ${reviewTarget ?? ''}`;
 
       const gate = this.rateLimit.acquire();
       if (!gate.ok) {
@@ -172,7 +224,6 @@ export class TowerSpawnTool implements ITowerSpawnTool {
             ? undefined
             : resolveSubagentBinding(
                 this.config,
-                this.flags,
                 { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
                 args.kind === 'reviewer' && !isSubagentModelForced(this.config)
                   ? 'primary'
@@ -192,7 +243,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         try {
           taskId = this.tasks.registerTask(new SubagentTask(handle, description, controller), {
             detached: true,
-            timeoutMs: DEFAULT_SUBAGENT_TIMEOUT_MS,
+            timeoutMs: resolveSubagentTimeoutMs(this.config),
             signal: undefined,
           });
         } catch (error) {
@@ -217,10 +268,24 @@ export class TowerSpawnTool implements ITowerSpawnTool {
           kind: args.kind,
           missionId: mission?.id,
           reviewTarget,
+          reviewMissionId: reviewMission?.id,
           worktree: mission?.worktree,
           branch: mission?.branch,
           spawnedAt: new Date().toISOString(),
         });
+        const settled = this.tasks.getTask(taskId);
+        if (
+          settled !== undefined &&
+          isAgentTaskTerminal(settled.status) &&
+          settled.status !== 'completed'
+        ) {
+          await store.markAgentDied(
+            handle.agentId,
+            settled.status,
+            settled.stopReason,
+            this.sessionContext.sessionId,
+          );
+        }
         if (mission !== undefined) {
           await store.updateMission(
             TOWER_NAME,
@@ -262,7 +327,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
               : [`review_target: ${reviewTarget ?? ''}`]),
             ...notes,
             '',
-            `The ${args.kind} runs detached in the background; its completion arrives as a notification. Track progress with TowerStatus / TowerInbox; recover a dead agent with Agent(resume="${handle.agentId}", prompt="...").`,
+            `The ${args.kind} runs detached in the background; its completion arrives as a notification. Track progress with TowerStatus / TowerInbox. If it dies, diagnose first: check why it died (the died entry's status/reason, its task state) before reviving. Resume with Agent(resume="${handle.agentId}", run_in_background=true, prompt="...") — never foreground: its output flows back through the tower protocol files — or reassign its work, but only when the cause is transient (lost contact, timeout, OOM); a systematic cause (code or environment defect) is fixed or escalated to the human before any revive.`,
           ].join('\n'),
         };
       } finally {
@@ -333,6 +398,8 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     return {
       agentId,
       profileName: TOWER_WORKER_PROFILE,
+      model: binding?.model,
+      thinkingEffort: created.accessor.get(IAgentProfileService).getEffectiveThinkingLevel(),
       completion: mirrored.then((r) => ({ result: r.summary, usage: r.usage })),
     };
   }
@@ -343,6 +410,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     state: TowerState,
     mission: TowerMission | undefined,
     reviewTarget: string | undefined,
+    targetMission: TowerMission | undefined,
   ): Promise<string> {
     const extra =
       args.instructions !== undefined && args.instructions.trim().length > 0
@@ -361,7 +429,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         (mission.spawnBase !== undefined
           ? `- Your branch starts from snapshot commit ${mission.spawnBase.slice(0, 7)}: the base checkout's uncommitted changes (WIP), captured at spawn so you can build on them. That commit is your foundation — never revert, amend, or claim it as your own work; your own commits go on top of it.\n`
           : '') +
-        `- Your working directory is the main checkout, NOT your worktree — address the worktree explicitly: every Read/Write/Edit/Grep/Glob path must be absolute and under ${worktreeAbs}, and every Bash command must \`cd ${worktreeAbs}\` first. A permission guard hard-denies any Write/Edit outside it. Never touch the main checkout (${store.repoRoot}) or another agent's worktree slot.\n` +
+        `- Your working directory is the main checkout, NOT your worktree — address the worktree explicitly: every Read/Write/Edit/Grep/Glob path must be absolute and under ${worktreeAbs}, and every Bash command must \`cd ${worktreeAbs}\` first. A permission guard hard-denies any Write/Edit outside it; reads are unrestricted — you may read the main checkout (${store.repoRoot}) or another agent's worktree when coordination calls for it, but write only inside your own.\n` +
         (mission.kind === 'survey'
           ? `- Scope — what you investigate (read-only; reserves nothing): ${mission.scope.join(', ')}\n\n`
           : `- Scope — the only files you may change: ${mission.scope.join(', ')}\n\n`);
@@ -375,44 +443,72 @@ export class TowerSpawnTool implements ITowerSpawnTool {
           '- Your deliverables are knowledge: record findings as TowerMission notes, send summaries to the tower and to dependent agents with TowerSend, and file TowerFinding for out-of-scope discoveries.\n\n' +
           `# Communication protocol\n` +
           '- Coordinate through tower tools ONLY: TowerSend / TowerInbox / TowerFinding / TowerMission / TowerStatus. Reach the tower and sibling agents with TowerSend; check TowerInbox regularly.\n' +
-          '- NEVER create or edit files under `.tower/` by hand — the tools are the only writers.\n\n' +
+          '- NEVER create or edit files under `.tower/` by hand — the tools are the only writers.\n' +
+          '- Ambiguity is escalated, not guessed: if the mission leaves substantive doubt about what to investigate, TowerSend(to="tower", subject="clarify-request", body=what needs pinning down) BEFORE acting — the tower relays to the human; you never ask the user directly.\n\n' +
           `# When the survey is done\n` +
-          `1. Mark the mission completed: TowerMission(id="${mission.id}", status="completed").\n` +
-          '2. Send the tower your summary: TowerSend(to="tower", subject="survey-summary", body=the full survey result).\n' +
-          '3. Finish with a structured final summary: what you covered, key facts with file:line references, open questions.' +
+          '1. Call TowerInbox once and fold anything new into your summary — the store refuses status="completed" while unread messages wait in your inbox.\n' +
+          `2. Mark the mission completed: TowerMission(id="${mission.id}", status="completed").\n` +
+          '3. Send the tower your summary: TowerSend(to="tower", subject="survey-summary", body=the full survey result).\n' +
+          '4. Finish with a structured final summary: what you covered, key facts with file:line references, open questions.' +
           extra
         );
       }
+      const historySection = await this.workerHistorySection(store, mission, args.name);
       return (
         `You are "${args.name}", a tower worker agent in a multi-agent workspace.\n\n` +
         workplace +
         `# Your mission\n\n${missionText.trim()}\n\n` +
+        historySection +
         `# Communication protocol\n` +
         '- Coordinate through tower tools ONLY: TowerSend / TowerInbox / TowerFinding / TowerMission / TowerStatus. Reach the tower and sibling agents with TowerSend; check TowerInbox regularly.\n' +
         '- NEVER create or edit files under `.tower/` by hand — the tools are the only writers; hand-written protocol files break the merge gate.\n' +
         '- Found something notable outside your scope? File it with TowerFinding instead of fixing it.\n' +
-        '- Keep your mission current with TowerMission: task_done as you finish tasks, note for decisions, blocker when stuck.\n\n' +
+        '- Keep your mission current with TowerMission: task_done as you finish tasks, note for decisions, blocker when stuck.\n' +
+        '- Ambiguity is escalated, not guessed: if the mission and its Context leave substantive doubt about what to build, TowerSend(to="tower", subject="clarify-request", body=what needs pinning down) BEFORE acting — the tower relays to the human; you never ask the user directly.\n\n' +
         `# When the mission is done\n` +
-        '1. `git add` + `git commit` everything in your worktree (and `git push` only if a remote is configured).\n' +
-        `2. Mark the mission completed: TowerMission(id="${mission.id}", status="completed").\n` +
-        '3. Request review: TowerSend(to="tower", subject="review-request", body=what you changed and why).\n' +
-        '4. Finish with a structured final summary: files changed, key decisions, open follow-ups.' +
+        "1. `git add` + `git commit` your mission's changes in the worktree (source files only — no build outputs).\n" +
+        `2. Before marking completed or sending the review-request, call TowerInbox once and incorporate anything new into the delivery — the store refuses status="completed" while unread messages wait in your inbox. Re-read your mission too (TowerMission(id="${mission.id}") with no patch fields): the tower may have changed its tasks mid-flight.\n` +
+        `3. Mark the mission completed: TowerMission(id="${mission.id}", status="completed").\n` +
+        '4. Request review: TowerSend(to="tower", subject="review-request", body=what you changed and why, reconciled against the mission tasks item by item — the reviewer maps each task to your diff).\n' +
+        '5. Finish with a structured final summary: files changed, key decisions, open follow-ups.\n' +
+        'Long blocking operations (sleep, builds, test runs) hide inbox messages for their whole duration — split them into chunks and check TowerInbox between chunks.' +
         extra
       );
     }
     const target = reviewTarget ?? '';
-    const targetMission = state.missions.find((m) => m.branch === target);
     const author = targetMission?.owner;
     const reviewBase =
       targetMission !== undefined ? await store.diffBase(state, targetMission) : state.base;
+    const missionSection =
+      targetMission !== undefined
+        ? `# Mission under review — verify the diff against this intent, not only against code health\n\n${(
+            await readFile(
+              store.abs(join(MISSIONS_DIR, missionFileName(targetMission.id, targetMission.slug))),
+              'utf8',
+            )
+          ).trim()}\n\n`
+        : '';
+    const reviewRequest = author !== undefined ? await findReviewRequest(store, author) : undefined;
+    const selfReportSection =
+      reviewRequest !== undefined
+        ? `# The author's own account (their review-request to the tower)\n${reviewRequest.body.trim()}\n\n`
+        : '';
+    const historySection = await this.reviewHistorySection(store, target);
+    const checklist =
+      targetMission !== undefined
+        ? '1. Intent — does the diff deliver the mission above? Map every task to the changes; healthy code that answers the wrong requirement or silently drops a task is a finding, not a pass.\n2. Security\n3. Data integrity\n4. Performance\n5. Error handling\n6. Code quality\n\n'
+        : '1. Security\n2. Data integrity\n3. Performance\n4. Error handling\n5. Code quality\n\n';
     return (
       `You are "${args.name}", a tower reviewer agent in a multi-agent workspace.\n\n` +
       `# Your assignment\n` +
       `Review branch "${target}" against base "${reviewBase}".\n` +
       `- Work read-only in the main checkout (${store.repoRoot}): \`git diff ${reviewBase}...${target}\`, \`git log ${reviewBase}..${target}\`, and read files as needed.\n` +
       '- Do NOT modify any code, and never create or edit files under `.tower/` by hand — protocol artifacts go through the tower tools.\n\n' +
+      missionSection +
+      selfReportSection +
+      historySection +
       `# Review checklist (in priority order)\n` +
-      '1. Security\n2. Data integrity\n3. Performance\n4. Error handling\n5. Code quality\n\n' +
+      checklist +
       `# When done — both steps are mandatory\n` +
       `1. Submit your verdict with TowerReview: { target: "${target}", status: "clean" | "p1-Nitems" | "p2-Nitems", merge: "merge" | "fix-then-merge" | "hold", findings, checks, decision }. Only a "clean" review of the exact branch tip lets the tower merge.\n` +
       (author !== undefined
@@ -421,5 +517,58 @@ export class TowerSpawnTool implements ITowerSpawnTool {
       'Then finish with a structured summary of the review.' +
       extra
     );
+  }
+
+  private async workerHistorySection(
+    store: TowerStore,
+    mission: TowerMission,
+    agentName: string,
+  ): Promise<string> {
+    const latest = await store.latestReview(mission.branch);
+    const predecessor =
+      mission.owner !== undefined && mission.owner !== agentName ? mission.owner : undefined;
+    const reviewRequest =
+      predecessor !== undefined ? await findReviewRequest(store, predecessor) : undefined;
+    if (latest === undefined && reviewRequest === undefined) return '';
+    const parts = [
+      '# Previous work on this branch',
+      'An earlier worker already ran on this branch — continue from its work instead of starting over, and address the review verdict below rather than re-opening what it already settled.',
+    ];
+    if (latest !== undefined) {
+      parts.push(
+        `## Latest review — round ${String(latest.round)} by ${latest.reviewer}: ${latest.status}, merge verdict "${latest.merge}"`,
+        await reviewExcerpt(store, latest.file),
+      );
+    }
+    if (reviewRequest !== undefined) {
+      parts.push(
+        "## The previous worker's review-request to the tower",
+        truncateSection(reviewRequest.body.trim(), REVIEW_EXCERPT_MAX_CHARS),
+      );
+    }
+    return `${parts.join('\n\n')}\n\n`;
+  }
+
+  private async reviewHistorySection(store: TowerStore, target: string): Promise<string> {
+    const reviews = await store.reviewsFor(target);
+    if (reviews.length === 0) return '';
+    const recent = reviews.slice(-REVIEW_HISTORY_ROUNDS);
+    const omitted = reviews.length - recent.length;
+    const parts = [
+      '# Review history on this branch',
+      'Earlier review rounds already ran on this branch — verify their findings against the current tip instead of reporting them again; re-report only what still reproduces.',
+    ];
+    if (omitted > 0) {
+      parts.push(
+        `(${String(omitted)} earlier round(s) omitted — the full record lives in .tower/comms/reviews/.)`,
+      );
+    }
+    for (const review of recent) {
+      parts.push(
+        `## Round ${String(review.round)} by ${review.reviewer}: ${review.status}, merge verdict "${review.merge}"`,
+        await reviewExcerpt(store, review.file),
+      );
+    }
+    return `${parts.join('\n\n')}\n\n`;
   }
 }

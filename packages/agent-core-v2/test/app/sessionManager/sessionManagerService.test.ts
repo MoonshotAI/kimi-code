@@ -505,9 +505,9 @@ describe('SessionManager controller retirement', () => {
     return Object.assign(
       new FakeRuntime(
         { workspaceId: 'workspace', runtimeId: 'local', generation },
-        { capabilities: ['fs', 'process', 'watch'] },
+        { capabilities: ['fs', 'process'] },
       ),
-      { fs: {}, process: {}, watch: {} },
+      { fs: {}, process: {} },
     ) as FakeRuntime;
   }
 
@@ -589,7 +589,7 @@ describe('SessionManager controller retirement', () => {
       } as never,
     );
     const createGeneration = vi.fn(() => {
-      const lease = registry.acquire(program.binding, ['fs', 'process', 'watch']);
+      const lease = registry.acquire(program.binding, ['fs', 'process']);
       const id = lease.runtime.identity.generation;
       const behavior = {
         ready: Promise.resolve(),

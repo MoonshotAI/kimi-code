@@ -8,12 +8,12 @@ Custom themes can override the tokens below. The `dark` and `light` columns show
 
 | Token | `dark` | `light` | What it controls |
 | --- | --- | --- | --- |
-| `primary` | `#4FA8FF` | `#1565C0` | The most-used color. Links, inline code, the selected item in nearly every dialog, the focused editor border, Plan/"running" badges, spinners |
-| `accent` | `#5BC0BE` | `#00838F` | Secondary highlight. Approval `▶` prefix, device-code box, image placeholder, BTW / queue panes, registry import |
-| `text` | `#E0E0E0` | `#1A1A1A` | Body text. Dialog bodies, todo titles, footer model label, Markdown headings, assistant/tool message bullets, list bullets |
+| `primary` | `#4FA8FF` | `#1565C0` | The most-used color. Links, inline code, selected items in dialogs, focus borders, badges, spinners |
+| `accent` | `#5BC0BE` | `#00838F` | Secondary highlight. Approval `▶` prefix, device-code box, image placeholder, panes, registry import |
+| `text` | `#E0E0E0` | `#1A1A1A` | Body text. Dialog bodies, todo titles, footer model label, Markdown headings, list bullets |
 | `textStrong` | `#F5F5F5` | `#1A1A1A` | Emphasized / bold text. Input dialogs, status messages |
-| `textDim` | `#888888` | `#454545` | Secondary, dimmed text. Thinking, hints, descriptions, completed todos, Markdown quotes, footer status bar |
-| `textMuted` | `#6B6B6B` | `#5F5F5F` | Faintest text. Counters, scroll info, descriptions, Markdown link URLs, code-block borders |
+| `textDim` | `#888888` | `#454545` | Secondary, dimmed text. Thinking, hints, completed todos, Markdown quotes, footer status bar |
+| `textMuted` | `#6B6B6B` | `#5F5F5F` | Faintest text. Counters, scroll info, Markdown link URLs, code-block borders |
 | `border` | `#5A5A5A` | `#737373` | Pane and editor borders, Markdown horizontal rule |
 | `borderFocus` | `#E8A838` | `#92660A` | Focus / attention border, currently only the approval panel |
 | `success` | `#4EC87E` | `#0E7A38` | Success state. `✓`, "enabled", completed |
@@ -65,7 +65,7 @@ Fields:
 
 - `name` (required): the theme identifier.
 - `displayName` (optional): a human-readable name.
-- `base` (optional): the built-in palette that unspecified tokens inherit — `"dark"` (default) or `"light"`. Set `"base": "light"` when you are building a **light** theme so the tokens you leave out stay readable on a light background (otherwise they fall back to the dark palette).
+- `base` (optional): the built-in palette that unspecified tokens inherit, `"dark"` (default) or `"light"`. Set `"base": "light"` when you are building a **light** theme so the tokens you leave out stay readable on a light background (otherwise they fall back to the dark palette).
 - `colors` (optional): the color tokens to override, each a 6-digit hex value (e.g. `#FE8019`).
 
 Use the token names from [Built-in color tokens](#built-in-color-tokens). Any token you omit falls back to the selected base palette, so partial themes are fine:
@@ -85,7 +85,7 @@ Use the token names from [Built-in color tokens](#built-in-color-tokens). Any to
 Two ways:
 
 1. **The `/theme` command** (recommended): opens the theme picker, where custom themes appear as `Custom: <filename>`. The picker **re-scans the themes directory every time it opens**, so a theme file you just added shows up **without a restart**.
-2. **`tui.toml`**: set `theme` to your theme name:
+2. **[`tui.toml`](../configuration/config-files.md#tuitoml)**: set `theme` to your theme name:
 
    ```toml
    # ~/.kimi-code/tui.toml
@@ -104,9 +104,13 @@ Custom themes are designed to never get in your way:
 
 If you edit the theme file that is **currently active**, the change is not reloaded automatically. To apply the new colors:
 
-- run `/reload-tui` — it reloads `tui.toml` and re-applies the current theme (including re-reading the theme file); or
+- run `/reload-tui`, which reloads `tui.toml` and re-applies the current theme (including re-reading the theme file); or
 - switch to another theme in `/theme` and back.
 
 ::: warning Note
 Re-selecting the **same** theme in `/theme` does not reload it (you get a "Theme unchanged" message). To reload changes to the active theme, use one of the two methods above.
 :::
+
+## Next steps
+
+- [Configuration files](../configuration/config-files.md#tuitoml) — Full field reference for `tui.toml`, including the `theme` option

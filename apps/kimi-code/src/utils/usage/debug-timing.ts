@@ -24,6 +24,7 @@ export interface StepTimingInput {
    */
   readonly llmServerDecodeMs?: number;
   readonly llmClientConsumeMs?: number;
+  readonly llmClientBlockedMs?: number;
   readonly usage?: DebugTokenUsage;
 }
 
@@ -99,7 +100,9 @@ function formatDecodeSplit(input: StepTimingInput): string {
   const server = input.llmServerDecodeMs;
   const client = input.llmClientConsumeMs;
   if (server === undefined || client === undefined) return '';
-  return `; server ${formatDuration(server)} + client ${formatDuration(client)}`;
+  const blocked = input.llmClientBlockedMs;
+  const blockedPart = blocked === undefined ? '' : ` (busy ${formatDuration(blocked)})`;
+  return `; server ${formatDuration(server)}${blockedPart} + client ${formatDuration(client)}`;
 }
 
 function formatDuration(ms: number): string {

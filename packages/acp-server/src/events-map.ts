@@ -10,16 +10,18 @@ import type {
   ToolCallLocation,
   ToolKind,
 } from '@agentclientprotocol/sdk';
+import type { ToolResultEvent } from '@moonshot-ai/agent-core-v2/events';
 import type {
   AssistantDeltaEvent,
   ThinkingDeltaEvent,
+  TurnEndReason,
+} from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+import type {
   ToolCallDeltaEvent,
   ToolCallStartedEvent,
-  ToolInputDisplay,
   ToolProgressEvent,
-  ToolResultEvent,
-  TurnEndReason,
-} from '@moonshot-ai/protocol';
+} from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
+import type { ToolInputDisplay } from '@moonshot-ai/agent-core-v2/tool/toolInputDisplay';
 
 import { displayBlockToAcpContent, toolResultToAcpContent } from './convert';
 import type { AcpStopReason } from './types';

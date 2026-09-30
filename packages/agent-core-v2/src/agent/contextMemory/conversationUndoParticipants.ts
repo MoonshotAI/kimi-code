@@ -7,6 +7,7 @@ import { BugIndicatingError } from '#/errors';
 
 export interface AgentConversationUndoParticipant {
   readonly id: string;
+  readonly phase?: 'after-flush';
   reconcileAfterUndo(): Promise<void>;
 }
 

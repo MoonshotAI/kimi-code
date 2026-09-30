@@ -17,6 +17,7 @@ import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
+  DEFAULT_TOOL_RESULT_MAX_RETAINED_CHARS,
   ToolAccesses,
   type ExecutableToolResult,
   type ToolExecution,
@@ -37,7 +38,7 @@ import {
   type GlobInput,
   GlobInputSchema,
   IGlobTool,
-  MAX_MATCHES,
+  DEFAULT_HEAD_LIMIT,
   WINDOWS_PATH_HINT,
 } from './glob';
 
@@ -238,50 +239,90 @@ export class GlobTool implements IGlobTool {
       }
     }
 
-    const truncated = kept.length > MAX_MATCHES;
-    const limited = truncated ? kept.slice(0, MAX_MATCHES) : kept;
-
-    if (limited.length === 0 && !timedOut) {
-      if (filteredSensitive > 0) {
-        return {
-          output: `No non-sensitive matches found (${String(filteredSensitive)} sensitive file(s) filtered).`,
-        };
-      }
-      return { output: 'No matches found' };
-    }
+    const offset = args.offset ?? 0;
+    const headLimit = args.head_limit ?? DEFAULT_HEAD_LIMIT;
+    const limited = headLimit === 0 ? kept.slice(offset) : kept.slice(offset, offset + headLimit);
+    const partial = bufferTruncated || timedOut || traversalWarning !== undefined;
 
     const pathClass = env.pathClass;
     const shouldRelativize = isWithinDirectory(searchRoot, workspace.workspaceDir, pathClass);
-    const displayLines = limited.map((p) =>
+    const candidates = limited.map((p) =>
       shouldRelativize ? relativizeIfUnder(p, searchRoot, pathClass) : p,
     );
 
-    const lines: string[] = [];
+    const warnings: string[] = [];
     if (timedOut) {
-      lines.push(
+      warnings.push(
         `Glob timed out after ${String(DEFAULT_TIMEOUT_MS / 1000)}s; partial results returned.`,
       );
     }
     if (bufferTruncated) {
-      lines.push(
+      warnings.push(
         `[stdout truncated at ${String(MAX_OUTPUT_BYTES)} bytes; results may be incomplete — use a more specific pattern]`,
       );
     }
     if (traversalWarning !== undefined) {
-      lines.push(traversalWarning);
+      warnings.push(traversalWarning);
     }
-    if (truncated) {
-      lines.push(`[Truncated at ${String(MAX_MATCHES)} matches — use a more specific pattern]`);
-      lines.push(`Only the first ${String(MAX_MATCHES)} matches are returned.`);
+    const pageNotices = (count: number, characterLimited: boolean) => {
+      const lines = [...warnings];
+      const footer: string[] = [];
+      const truncated = characterLimited || offset + count < kept.length;
+      if (count === 0) {
+        if (kept.length > 0) {
+          const resultSet = partial ? 'collected partial result set' : 'current result set';
+          lines.push(
+            `No more matches at offset=${String(offset)} in the ${resultSet} (${String(kept.length)} matches).`,
+          );
+        } else if (partial) {
+          lines.push('No matches collected; search incomplete.');
+        } else if (filteredSensitive > 0) {
+          lines.push(
+            `No non-sensitive matches found (${String(filteredSensitive)} sensitive file(s) filtered).`,
+          );
+        } else {
+          lines.push('No matches found');
+        }
+      } else if (truncated || offset > 0 || partial) {
+        const total = partial
+          ? `${String(kept.length)} collected matches (partial result set)`
+          : String(kept.length);
+        lines.push(`Showing matches ${String(offset + 1)}–${String(offset + count)} of ${total}.`);
+      }
+      if (characterLimited) lines.push('Character limit reached; only complete paths are returned.');
+      if (truncated) {
+        lines.push(
+          `Continue with the same search arguments and offset=${String(offset + count)}.`,
+        );
+        if (!characterLimited) lines.push('To remove the match-count limit, omit offset and use head_limit=0.');
+      }
+      if (filteredSensitive > 0 && (kept.length > 0 || partial)) {
+        footer.push(`Filtered ${String(filteredSensitive)} sensitive file(s).`);
+      }
+      if (!truncated && !partial && offset === 0 && headLimit > 0 && count === headLimit) {
+        footer.push(`Found ${String(count)} matches`);
+      }
+      return { lines, footer };
+    };
+    const noticeChars = Math.max(...[false, true].map((characterLimited) => {
+      const { lines, footer } = pageNotices(candidates.length, characterLimited);
+      return [...lines, ...footer].join('\n').length + 2;
+    }));
+    let remaining = DEFAULT_TOOL_RESULT_MAX_RETAINED_CHARS - noticeChars;
+    const displayLines: string[] = [];
+    for (const path of candidates) {
+      if (path.length + 1 > remaining) break;
+      displayLines.push(path);
+      remaining -= path.length + 1;
     }
-    lines.push(...displayLines);
-    if (filteredSensitive > 0) {
-      lines.push(`Filtered ${String(filteredSensitive)} sensitive file(s).`);
+    if (candidates.length > 0 && displayLines.length === 0) {
+      return {
+        isError: true,
+        output: 'Glob cannot fit a complete path and its diagnostics within the output limit. Narrow the search path or pattern.',
+      };
     }
-    if (!truncated && limited.length === MAX_MATCHES) {
-      lines.push(`Found ${String(limited.length)} matches`);
-    }
-    return { output: lines.join('\n') };
+    const notices = pageNotices(displayLines.length, displayLines.length < candidates.length);
+    return { output: [...notices.lines, ...displayLines, ...notices.footer].join('\n') };
   }
 }
 

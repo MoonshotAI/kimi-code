@@ -1,10 +1,12 @@
 import { createRequire } from 'node:module';
 import { dirname } from 'node:path';
 
+import chalk from 'chalk';
 import { describe, expect, it } from 'vitest';
 
 import { highlightLines, langFromPath } from '#/tui/components/media/code-highlight';
 import { codeHighlightTheme } from '#/tui/theme/highlight-theme';
+import { currentTheme } from '#/tui/theme/theme';
 
 import { captureProcessWrite } from '../../../helpers/process';
 
@@ -30,13 +32,13 @@ describe('code-highlight', () => {
     }
   });
 
-  it('resets red tokens to plain styling', () => {
-    for (const token of ['string', 'regexp', 'deletion'] as const) {
+  it('resets string and regexp tokens to plain styling', () => {
+    for (const token of ['string', 'regexp'] as const) {
       expect(codeHighlightTheme[token]?.('code')).toBe('code');
     }
   });
 
-  it('emits no red SGR for strings, regexps and diff deletions', () => {
+  it('emits no red SGR for strings and regexps', () => {
     // cli-highlight styles through its own chalk v4 instance; force colors on
     // so the assertions below observe real SGR sequences.
     const req = createRequire(import.meta.url);
@@ -49,12 +51,21 @@ describe('code-highlight', () => {
       const js = highlightLines("const s = 'str';\nconst r = /re+/g;", 'javascript').join('\n');
       expect(js).not.toContain(`${ESC}[31m`);
       expect(js).toContain(`${ESC}[34m`); // keywords stay highlighted
-
-      const diff = highlightLines('+ added\n- removed', 'diff').join('\n');
-      expect(diff).not.toContain(`${ESC}[31m`);
-      expect(diff).toContain(`${ESC}[32m`); // additions stay green
     } finally {
       chalkV4.level = prevLevel;
+    }
+  });
+
+  it('colors diff deletions and additions with the palette diff colors', () => {
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    try {
+      expect(highlightLines('- removed\n+ added', 'diff')).toEqual([
+        chalk.hex(currentTheme.color('diffRemoved'))('- removed'),
+        chalk.hex(currentTheme.color('diffAdded'))('+ added'),
+      ]);
+    } finally {
+      chalk.level = previousLevel;
     }
   });
 });

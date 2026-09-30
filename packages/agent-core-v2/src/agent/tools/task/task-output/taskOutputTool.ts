@@ -9,7 +9,7 @@ import type {
   AgentTaskOutputSnapshot,
 } from '#/agent/task/task';
 import { type AgentTaskStatus, TERMINAL_STATUSES } from '#/agent/task/types';
-import { formatPlainObject } from '#/agent/task/tools/format';
+import { formatTaskRecord } from '#/agent/task/tools/format';
 import { ITaskOutputTool, TaskOutputInputSchema, type TaskOutputInput } from './task-output';
 import TASK_OUTPUT_DESCRIPTION from './task-output.md?raw';
 
@@ -72,7 +72,7 @@ export class TaskOutputTool implements ITaskOutputTool {
     const output = await this.tasks.getOutputSnapshot(args.task_id, OUTPUT_PREVIEW_BYTES);
 
     const lines = [
-      formatPlainObject({
+      formatTaskRecord({
         retrievalStatus: retrievalStatus(current.status),
         ...current,
         outputPath: output.outputPath,

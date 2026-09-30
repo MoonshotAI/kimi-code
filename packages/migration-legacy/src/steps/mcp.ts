@@ -1,6 +1,6 @@
 import { readFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { McpServerConfigSchema } from '@moonshot-ai/agent-core';
+import { McpServerConfigSchema } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
 import { atomicWrite } from '../atomic-write.js';
 import { siblingMcpJson, sourceMcpJson, targetMcpFile } from '../paths.js';
 
@@ -16,6 +16,25 @@ export interface McpStepResult {
   readonly droppedServers: readonly string[];
   /** Target `mcp.json` existed but was unparseable; output went to a sibling. */
   readonly wroteSiblingDueToConflict: boolean;
+  readonly sourceUnreadable: boolean;
+}
+
+function emptyResult(sourceUnreadable: boolean): McpStepResult {
+  return {
+    mergedServers: [],
+    keptNewForConflicts: [],
+    droppedServers: [],
+    wroteSiblingDueToConflict: false,
+    sourceUnreadable,
+  };
+}
+
+function isEnoent(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: unknown }).code === 'ENOENT'
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -26,15 +45,18 @@ export async function migrateMcpStep(input: McpStepInput): Promise<McpStepResult
   let sourceText: string;
   try {
     sourceText = await readFile(sourceMcpJson(input.sourceHome), 'utf-8');
-  } catch {
-    return { mergedServers: [], keptNewForConflicts: [], droppedServers: [], wroteSiblingDueToConflict: false };
+  } catch (error) {
+    // Only a missing mcp.json means "nothing to migrate"; any other read
+    // failure (permissions, I/O) must mark the step incomplete so the
+    // completion marker does not permanently suppress a retry.
+    return emptyResult(!isEnoent(error));
   }
 
   let sourceJson: unknown;
   try {
     sourceJson = JSON.parse(sourceText);
   } catch {
-    return { mergedServers: [], keptNewForConflicts: [], droppedServers: [], wroteSiblingDueToConflict: false };
+    return emptyResult(true);
   }
   const srcServers: Record<string, unknown> = {};
   if (isRecord(sourceJson)) {
@@ -98,5 +120,5 @@ export async function migrateMcpStep(input: McpStepInput): Promise<McpStepResult
   await mkdir(dirname(outPath), { recursive: true, mode: 0o700 });
   await atomicWrite(outPath, JSON.stringify({ mcpServers: mergedTargetServers }, null, 2));
 
-  return { mergedServers, keptNewForConflicts, droppedServers, wroteSiblingDueToConflict: targetUnparseable };
+  return { mergedServers, keptNewForConflicts, droppedServers, wroteSiblingDueToConflict: targetUnparseable, sourceUnreadable: false };
 }

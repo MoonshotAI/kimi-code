@@ -13,7 +13,6 @@
 import type { Command } from 'commander';
 
 import { registerDeprecatedServerCommand } from './deprecated-server';
-import { isRemoteControlEnabled } from './remote-control';
 import { registerRotateTokenCommand } from './rotate-token';
 import { buildWebCommand } from './run';
 
@@ -27,9 +26,9 @@ export function registerWebCommand(program: Command): void {
   registerDeprecatedServerCommand(program);
   buildWebCommand(
     program
-      .command('rc', { hidden: !isRemoteControlEnabled() })
+      .command('rc')
       .alias('remote')
-      .description('Run the local Kimi server and open the web UI through Remote Control (experimental).'),
+      .description('Run the local Kimi server and open the web UI through Remote Control.'),
     { forceRemoteControl: true },
   );
 }

@@ -47,6 +47,7 @@ export const stepTimingSchema = z.object({
   llmServerFirstTokenMs: z.number().optional(),
   llmServerDecodeMs: z.number().optional(),
   llmClientConsumeMs: z.number().optional(),
+  llmClientBlockedMs: z.number().optional(),
 });
 
 export const stepRetrySchema = z.object({
@@ -67,10 +68,20 @@ export const transcriptSkillActivationSchema = z.object({
   skillArgs: z.string().optional(),
 });
 
-export const transcriptUserOriginSchema = z.object({
-  kind: z.literal('user'),
-  skillActivations: z.array(transcriptSkillActivationSchema).optional(),
-});
+export const transcriptUserOriginSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('user'),
+    clientMetadata: z.array(z.record(z.string(), z.unknown())).optional(),
+    skillActivations: z.array(transcriptSkillActivationSchema).optional(),
+  }),
+  z.object({
+    kind: z.literal('skill_activation'),
+    trigger: z.literal('user-slash'),
+    skillName: z.string().min(1),
+    skillArgs: z.string().optional(),
+    clientMetadata: z.array(z.record(z.string(), z.unknown())).optional(),
+  }),
+]);
 
 const textFrameShape = {
   kind: z.literal('text'),
@@ -160,7 +171,7 @@ export const transcriptStepSchema = z.object({
   endedAt: z.string().optional(),
   usage: stepUsageSchema.optional(),
   finishReason: z.string().optional(),
-  timing: stepTimingSchema.optional(),
+  llmTiming: stepTimingSchema.optional(),
   retry: stepRetrySchema.optional(),
   endReason: z.string().optional(),
   endMessage: z.string().optional(),
@@ -252,16 +263,6 @@ export const agentPhaseMetaSchema = z.discriminatedUnion('kind', [
     turnId: z.number(),
     step: z.number(),
     stepId: z.string(),
-    since: z.number(),
-  }),
-  z.object({
-    kind: z.literal('streaming'),
-    turnId: z.number(),
-    step: z.number(),
-    stepId: z.string(),
-    stream: z.enum(['assistant', 'thinking', 'tool_call']),
-    toolCallId: z.string().optional(),
-    toolName: z.string().optional(),
     since: z.number(),
   }),
   z.object({
@@ -369,6 +370,7 @@ export const transcriptPromptSchema = z.object({
   status: z.enum(['running', 'queued', 'blocked', 'completed', 'failed', 'aborted']),
   userMessageId: z.string().optional(),
   content: z.unknown().optional(),
+  clientMetadata: z.array(z.record(z.string(), z.unknown())).optional(),
   createdAt: z.string(),
   finishedAt: z.string().optional(),
   steeredAt: z.string().optional(),

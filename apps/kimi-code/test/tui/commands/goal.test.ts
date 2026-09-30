@@ -18,6 +18,7 @@ import {
 } from '#/tui/goal-queue-store';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import { getBuiltInPalette } from '#/tui/theme';
+import { PERMISSION_MODE_DESCRIPTIONS } from '#/tui/utils/permission-mode';
 
 vi.mock('#/tui/goal-queue-store', () => ({
   appendGoalQueueItem: vi.fn(async () => ({
@@ -375,6 +376,8 @@ describe('handleGoalCommand', () => {
     });
     expect(s.setPermission).toHaveBeenCalledWith('auto');
     expect(manualHost.setAppState).toHaveBeenCalledWith({ permissionMode: 'auto' });
+    expect(manualHost.showNotice).toHaveBeenCalledWith('Permission mode: Never Ask');
+    expect(manualHost.showStatus).toHaveBeenCalledWith(PERMISSION_MODE_DESCRIPTIONS.auto, 'warning');
     expect(manualHost.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
   });
 
@@ -393,6 +396,8 @@ describe('handleGoalCommand', () => {
       );
     });
     expect(s.setPermission).not.toHaveBeenCalled();
+    expect(manualHost.showNotice).not.toHaveBeenCalled();
+    expect(manualHost.showStatus).not.toHaveBeenCalledWith(PERMISSION_MODE_DESCRIPTIONS.auto, 'warning');
     expect(manualHost.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
   });
 
@@ -411,6 +416,8 @@ describe('handleGoalCommand', () => {
     });
     expect(s.setPermission).toHaveBeenCalledWith('yolo');
     expect(manualHost.setAppState).toHaveBeenCalledWith({ permissionMode: 'yolo' });
+    expect(manualHost.showNotice).toHaveBeenCalledWith('Permission mode: Ask When Needed');
+    expect(manualHost.showStatus).toHaveBeenCalledWith(PERMISSION_MODE_DESCRIPTIONS.yolo, 'warning');
   });
 
   it('restores the previous permission mode when the goal fails to start', async () => {
@@ -430,6 +437,10 @@ describe('handleGoalCommand', () => {
     });
     expect(s.setPermission).toHaveBeenCalledWith('yolo');
     expect(manualHost.setAppState).toHaveBeenLastCalledWith({ permissionMode: 'manual' });
+    // The permissive-mode notice is deferred until the goal starts, so a failed
+    // start leaves no stale notice behind.
+    expect(manualHost.showNotice).not.toHaveBeenCalled();
+    expect(manualHost.showStatus).not.toHaveBeenCalledWith(PERMISSION_MODE_DESCRIPTIONS.yolo, 'warning');
   });
 
   it('returns the command to the input box when a Manual-mode goal start is cancelled', async () => {
@@ -824,7 +835,6 @@ describe('dispatchInput /goal integration', () => {
   it('restores the input when the post-creation busy re-check rejects /goal', async () => {
     const { host, session } = makeHost({ hasSession: false });
     Object.assign(host, {
-      engineV2: true,
       // A first prompt starts a turn while the lazy session creation awaits.
       ensureSession: vi.fn(async () => {
         host.state.appState.streamingPhase = 'thinking';
@@ -846,7 +856,6 @@ describe('dispatchInput /goal integration', () => {
   it('does not restore over a draft typed while lazy session creation was pending', async () => {
     const { host, session } = makeHost({ hasSession: false });
     Object.assign(host, {
-      engineV2: true,
       ensureSession: vi.fn(async () => {
         host.state.appState.streamingPhase = 'thinking';
         // The user kept typing after submitting /goal.
@@ -869,7 +878,6 @@ describe('dispatchInput /goal integration', () => {
   it('restores the input when lazy session creation fails before /goal runs', async () => {
     const { host, session } = makeHost({ hasSession: false });
     Object.assign(host, {
-      engineV2: true,
       ensureSession: vi.fn(async () => undefined),
     });
 
@@ -884,7 +892,6 @@ describe('dispatchInput /goal integration', () => {
   it('does not restore when an editor-replacement panel opened during creation', async () => {
     const { host, session } = makeHost({ hasSession: false });
     Object.assign(host, {
-      engineV2: true,
       ensureSession: vi.fn(async () => {
         // The user opened a panel (e.g. /help) while creation was pending.
         Object.assign(host.state, { editorReplacementMounted: true });

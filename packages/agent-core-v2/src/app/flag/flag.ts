@@ -54,6 +54,7 @@ export interface IFlagService {
   enabled(id: FlagId): boolean;
   snapshot(): ExperimentalFlagMap;
   enabledIds(): readonly FlagId[];
+  exposedIds(): readonly FlagId[];
   explain(id: FlagId): ExperimentalFeatureState | undefined;
   explainAll(): readonly ExperimentalFeatureState[];
   setConfigOverrides(overrides: ExperimentalFlagConfig | undefined): void;

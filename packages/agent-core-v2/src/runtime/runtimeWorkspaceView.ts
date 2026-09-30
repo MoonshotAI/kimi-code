@@ -30,16 +30,14 @@ export class RuntimeWorkspaceView {
   resolve(path: string, cwd = this.workDir): string {
     const env = this.runtime.environment;
     const bridged = env.pathClass === 'win32' ? getShellPathBridge(env).fromShellPath(path) : path;
-    const resolved = this.runtime.path.isAbsolute(bridged)
+    return this.runtime.path.isAbsolute(bridged)
       ? this.runtime.path.resolve(bridged)
       : this.runtime.path.resolve(cwd, bridged);
-    this.assertAllowed(resolved);
-    return resolved;
   }
 
-  assertAllowed(path: string): void {
+  assertAllowed(path: string): string {
     const resolved = this.runtime.path.resolve(path);
-    if (this.roots.some((root) => contains(this.runtime, root, resolved))) return;
+    if (this.roots.some((root) => contains(this.runtime, root, resolved))) return resolved;
     throw new Error2(
       ErrorCodes.FS_PATH_ESCAPES,
       `path ${path} is outside runtime workspace ${this.binding.runtimeId}`,

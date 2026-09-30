@@ -7,3 +7,7 @@ export class PluginChanged extends Event2<{ readonly payload: Record<string, nev
 export interface PluginChanged {
   readonly payload: Record<string, never>;
 }
+
+export interface PluginChangedEvent {
+  readonly type: 'event.plugin.changed';
+}

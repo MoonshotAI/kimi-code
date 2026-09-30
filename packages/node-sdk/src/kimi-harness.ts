@@ -1,11 +1,9 @@
 import type { Kaos } from '@moonshot-ai/kaos';
-import {
-  ErrorCodes,
-  KimiError,
-  ImageLimits,
-  withTelemetryContext,
-  type ExperimentalFeatureState,
-} from '@moonshot-ai/agent-core';
+
+import { ErrorCodes, KimiError } from '#/errors';
+import type { ExperimentalFeatureState } from '#/flag';
+import type { ImageLimits } from '#/image';
+import { withTelemetryContext } from '#/telemetry';
 
 import { capabilityRpc, Session } from '#/session';
 import type { KimiAuthFacade } from '#/auth';
@@ -22,6 +20,8 @@ import type {
   ForkSessionInput,
   GenerateSessionTitleInput,
   GetConfigOptions,
+  ImportCustomRegistryOptions,
+  ImportCustomRegistryResult,
   GlobalMcpServerAuthStatus,
   KimiConfig,
   KimiConfigPatch,
@@ -42,6 +42,8 @@ import type {
   SessionSummary,
   SessionSummaryPage,
   SkillSummary,
+  SuggestFilesInput,
+  SuggestFilesResult,
   TelemetryClient,
   TelemetryContextPatch,
   TelemetryProperties,
@@ -61,11 +63,13 @@ export interface KimiHarnessRuntimeOptions {
   readonly onClose: () => void | Promise<void>;
   readonly sessionStartedProperties?: TelemetryProperties;
   /**
-   * Owner-scoped [image] limits for prompt-ingestion compression in the
-   * client process (paste-time, ACP prompt conversion). In-process cores
-   * (SDKRpcClient) hand over their core's instance; daemon-client hosts
-   * leave it undefined and ingestion falls back to env/built-in defaults.
+   * Per-emission companion to `sessionStartedProperties`: evaluated at every
+   * `session_started` call, so values that can change over the process
+   * lifetime (e.g. experimental flag state) stay current. Its keys are
+   * engine-owned: they win over both the static and the per-call
+   * session-scoped properties, and lose only to the canonical harness fields.
    */
+  readonly sessionStartedDynamicProperties?: () => TelemetryProperties;
   readonly imageLimits?: ImageLimits | undefined;
 }
 
@@ -82,6 +86,7 @@ export class KimiHarness {
   private readonly ensureConfigFileImpl: () => Promise<void>;
   private readonly closeImpl: () => void | Promise<void>;
   private readonly sessionStartedProperties: TelemetryProperties;
+  private readonly sessionStartedDynamicProperties: (() => TelemetryProperties) | undefined;
 
   /**
    * Ingestion-side [image] limits owned by this harness's core; undefined for
@@ -102,6 +107,7 @@ export class KimiHarness {
     this.ensureConfigFileImpl = options.ensureConfigFile;
     this.closeImpl = options.onClose;
     this.sessionStartedProperties = options.sessionStartedProperties ?? {};
+    this.sessionStartedDynamicProperties = options.sessionStartedDynamicProperties;
     this.imageLimits = options.imageLimits;
   }
 
@@ -119,6 +125,14 @@ export class KimiHarness {
 
   track(event: string, properties?: TelemetryProperties): void {
     this.telemetry.track(event, properties);
+  }
+
+  trackWithContext(
+    event: string,
+    properties: TelemetryProperties | undefined,
+    context: TelemetryContextPatch,
+  ): void {
+    withTelemetryContext(this.telemetry, context).track(event, properties);
   }
 
   setTelemetryContext(patch: TelemetryContextPatch): void {
@@ -328,6 +342,15 @@ export class KimiHarness {
   }
 
   /**
+   * File suggestions for @ mention-style completion under `workDir`, no
+   * session required. `undefined` on the v1 engine, which has no equivalent
+   * capability; callers fall back to their own file search there.
+   */
+  async suggestFiles(workDir: string, input: SuggestFilesInput): Promise<SuggestFilesResult | undefined> {
+    return this.rpc.suggestFiles(workDir, input);
+  }
+
+  /**
    * App-global plugin command list, no session required. Empty on the v1
    * engine, which only exposes plugin commands through a live session.
    */
@@ -455,6 +478,12 @@ export class KimiHarness {
    */
   supportsAtomicSectionReplace(): boolean {
     return this.rpc.supportsAtomicSectionReplace();
+  }
+
+  async importCustomRegistry(
+    options: ImportCustomRegistryOptions,
+  ): Promise<ImportCustomRegistryResult> {
+    return this.rpc.importCustomRegistry(options);
   }
 
   /**
@@ -624,15 +653,15 @@ export class KimiHarness {
     withTelemetryContext(this.telemetry, { sessionId: eventSessionId }).track('session_started', {
       ...this.sessionStartedProperties,
       ...sessionScoped,
+      ...this.sessionStartedDynamicProperties?.(),
       // Canonical fields are owned by the harness and must win over any
       // caller-supplied sessionStartedProperties that happen to share a key.
-      // `client_id` is always null here: a single-process host has no
-      // per-connection client id (that concept only exists for daemon clients,
-      // see core-impl.ts). Kept as an explicit key so both producers share the
-      // same session_started schema.
-      client_id: null,
-      client_name: this.identity?.productName ?? null,
-      client_version: this.identity?.version ?? null,
+      // A single-process host has no per-connection client id, so `client_id`
+      // stays empty; empty strings (unlike null) survive payload flattening,
+      // keeping the client-attribution keys present on every row.
+      client_id: '',
+      client_name: this.identity?.productName ?? '',
+      client_version: this.identity?.version ?? '',
       ui_mode: this.uiMode,
       resumed,
     });

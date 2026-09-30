@@ -12,7 +12,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import { configResponseSchema, type ConfigResponse } from '../src/protocol/rest-config';
 import { ErrorCode } from '../src/protocol/error-codes';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -32,11 +32,19 @@ describe('server-v2 /api/v1/config', () => {
   let home: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-config-'));
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+    base = `http://127.0.0.1:${server.port}`;
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -48,17 +56,8 @@ describe('server-v2 /api/v1/config', () => {
   });
 
   async function boot(toml?: string): Promise<void> {
-    if (toml !== undefined) {
-      await writeFile(join(home as string, 'config.toml'), toml, 'utf-8');
-    }
-    server = await startServer({
-      hostIdentity: TEST_HOST_IDENTITY,
-      host: '127.0.0.1',
-      port: 0,
-      homeDir: home,
-      logLevel: 'silent',
-    });
-    base = `http://127.0.0.1:${server.port}`;
+    await writeFile(join(home as string, 'config.toml'), toml ?? '', 'utf-8');
+    await (server as RunningServer).core.accessor.get(IConfigService).reload();
   }
 
   async function getConfig(): Promise<ConfigResponse> {
@@ -110,6 +109,21 @@ describe('server-v2 /api/v1/config', () => {
     expect(after.yolo).toBe(false);
   });
 
+  it('POST { auto_session_title: false } persists and GET echoes it', async () => {
+    await boot();
+    const cfg = await patchConfig({ auto_session_title: false });
+    expect(cfg.auto_session_title).toBe(false);
+
+    const after = await getConfig();
+    expect(after.auto_session_title).toBe(false);
+  });
+
+  it('GET omits auto_session_title when the field is absent from config.toml', async () => {
+    await boot();
+    const cfg = await getConfig();
+    expect(cfg.auto_session_title).toBeUndefined();
+  });
+
   it('POST { secondary_model } persists the subagent model pool and GET echoes it', async () => {
     await boot();
     const cfg = await patchConfig({
@@ -159,16 +173,31 @@ describe('server-v2 /api/v1/config', () => {
     });
   });
 
-  it('session create with a broken subagent model pool fails with VALIDATION_FAILED', async () => {
+  it('GET reports has_api_key for an api_key_env provider only while the variable is set', async () => {
+    await boot('[providers.acme]\ntype = "openai"\napi_key_env = "KIMI_TEST_CONFIG_ROUTE_KEY"\n');
+    try {
+      vi.stubEnv('KIMI_TEST_CONFIG_ROUTE_KEY', 'sk-live');
+      const live = await getConfig();
+      expect(live.providers['acme']).toMatchObject({ has_api_key: true });
+
+      vi.stubEnv('KIMI_TEST_CONFIG_ROUTE_KEY', '');
+      const empty = await getConfig();
+      expect(empty.providers['acme']).toMatchObject({ has_api_key: false });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('session create with a broken subagent model pool still succeeds', async () => {
     await boot('[secondary_model.models]\n"provider/fast" = "fast and cheap"\n');
     const res = await authedFetch(server as RunningServer, base, '/api/v1/sessions', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ metadata: { cwd: home as string } }),
     });
-    const body = (await res.json()) as Envelope<null>;
-    expect(body.code).toBe(ErrorCode.VALIDATION_FAILED);
-    expect(body.msg).toContain('[secondary_model].default_model is required');
+    const body = (await res.json()) as Envelope<{ id?: string }>;
+    expect(body.code).toBe(0);
+    expect(body.data?.id).toBeTruthy();
   });
 });
 
@@ -178,12 +207,23 @@ describe('server-v2 config changed WS notifications', () => {
   let base: string;
   const sockets: WebSocket[] = [];
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-config-ws-'));
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+    base = `http://127.0.0.1:${server.port}`;
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     for (const ws of sockets.splice(0)) ws.close();
+  });
+
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -195,17 +235,19 @@ describe('server-v2 config changed WS notifications', () => {
   });
 
   async function boot(toml?: string): Promise<void> {
-    if (toml !== undefined) {
-      await writeFile(join(home as string, 'config.toml'), toml, 'utf-8');
+    if (server === undefined) {
+      server = await startServer({
+        hostIdentity: TEST_HOST_IDENTITY,
+        host: '127.0.0.1',
+        port: 0,
+        homeDir: home,
+        logLevel: 'silent',
+      });
+      base = `http://127.0.0.1:${server.port}`;
     }
-    server = await startServer({
-      hostIdentity: TEST_HOST_IDENTITY,
-      host: '127.0.0.1',
-      port: 0,
-      homeDir: home,
-      logLevel: 'silent',
-    });
-    base = `http://127.0.0.1:${server.port}`;
+    await writeFile(join(home as string, 'config.toml'), toml ?? '', 'utf-8');
+    await (server as RunningServer).core.accessor.get(IConfigService).reload();
+    await new Promise((resolve) => setTimeout(resolve, 25));
   }
 
   interface ConfigChangedFrame {

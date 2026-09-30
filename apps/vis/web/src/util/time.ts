@@ -1,3 +1,10 @@
+export function parseTimestamp(value: string | number | undefined): number | null {
+  if (value === undefined || value === '') return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 /** Format an epoch-ms timestamp as a short relative string ("2m ago", "3h ago"). */
 export function formatRelativeTime(epochMs: number): string {
   if (!epochMs || !Number.isFinite(epochMs)) return '—';

@@ -210,7 +210,9 @@ describe('ascii header value sanitization', () => {
     }
   });
 
-  it('falls back to Darwin kernel version when sw_vers is unavailable', async () => {
+  const MACOS_SYSTEM_VERSION_PLIST = '/System/Library/CoreServices/SystemVersion.plist';
+
+  function mockDarwinHost(systemVersionPlist: string | Error): void {
     vi.resetModules();
     vi.doMock('node:os', async () => ({
       ...(await vi.importActual<typeof import('node:os')>('node:os')),
@@ -219,23 +221,60 @@ describe('ascii header value sanitization', () => {
       type: () => 'Darwin',
       arch: () => 'arm64',
     }));
-    // Force the sw_vers lookup to fail so the test is deterministic on macOS too,
-    // where the real binary would otherwise return the host's product version.
-    vi.doMock('node:child_process', async () => ({
-      ...(await vi.importActual<typeof import('node:child_process')>('node:child_process')),
-      execFileSync: () => {
-        throw new Error('ENOENT');
-      },
-    }));
+    // Pin the SystemVersion.plist read so the test is deterministic on every
+    // host; other reads (the device id file) still hit the real filesystem.
+    vi.doMock('node:fs', async () => {
+      const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+      const readFileSync = ((path: unknown, ...rest: unknown[]) => {
+        if (String(path) !== MACOS_SYSTEM_VERSION_PLIST) {
+          return (actual.readFileSync as (...args: unknown[]) => unknown)(path, ...rest);
+        }
+        if (systemVersionPlist instanceof Error) throw systemVersionPlist;
+        return systemVersionPlist;
+      }) as typeof actual.readFileSync;
+      return { ...actual, readFileSync };
+    });
+  }
+
+  function unmockDarwinHost(): void {
+    vi.doUnmock('node:os');
+    vi.doUnmock('node:fs');
+    vi.resetModules();
+  }
+
+  it('reads the macOS product version from SystemVersion.plist without spawning sw_vers', async () => {
+    mockDarwinHost(
+      [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<plist version="1.0">',
+        '<dict>',
+        '\t<key>ProductName</key>',
+        '\t<string>macOS</string>',
+        '\t<key>ProductVersion</key>',
+        '\t<string>26.1</string>',
+        '</dict>',
+        '</plist>',
+      ].join('\n'),
+    );
+
+    try {
+      const { createKimiDeviceHeaders } = await import('../src/identity');
+      const headers = createKimiDeviceHeaders({ homeDir: tempHome(), version: '1.0.0', platform: 'test' });
+      expect(headers['X-Msh-Device-Model']).toBe('macOS 26.1 arm64');
+    } finally {
+      unmockDarwinHost();
+    }
+  });
+
+  it('falls back to Darwin kernel version when SystemVersion.plist is unavailable', async () => {
+    mockDarwinHost(new Error('ENOENT'));
 
     try {
       const { createKimiDeviceHeaders } = await import('../src/identity');
       const headers = createKimiDeviceHeaders({ homeDir: tempHome(), version: '1.0.0', platform: 'test' });
       expect(headers['X-Msh-Device-Model']).toBe('macOS 25.5.0 arm64');
     } finally {
-      vi.doUnmock('node:os');
-      vi.doUnmock('node:child_process');
-      vi.resetModules();
+      unmockDarwinHost();
     }
   });
 });

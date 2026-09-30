@@ -19,7 +19,7 @@ import {
   transformPlainObject,
 } from '#/app/config/toml';
 import { type AssertExact, type Equal } from '#/_base/utils/typeEquality';
-import type { OAuthRef } from '#/kosong/provider/provider';
+import type { OAuthRef } from '#/llm-adapter/provider/provider';
 
 export const SERVICES_SECTION = 'services';
 

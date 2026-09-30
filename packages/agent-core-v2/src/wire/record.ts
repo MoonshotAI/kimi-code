@@ -9,6 +9,11 @@ export type RecordDehydrator = (
   transform: PartsTransformer,
 ) => WireRecord | Promise<WireRecord>;
 
+export interface WireLineRange {
+  readonly start: number;
+  readonly end: number;
+}
+
 export interface WireRecord {
   readonly type: string;
   readonly time?: number;

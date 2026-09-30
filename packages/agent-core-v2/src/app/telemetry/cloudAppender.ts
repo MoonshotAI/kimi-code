@@ -6,7 +6,8 @@ import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
-import type { ITelemetryAppender, TelemetryContextPatch, TelemetryProperties } from './telemetry';
+import type { ITelemetryAppender, TelemetryAppenderRecord } from './telemetry';
+import type { TelemetryProperties } from './context';
 import {
   type CloudContext,
   type CloudPrimitive,
@@ -97,16 +98,17 @@ export class CloudAppender implements ITelemetryAppender {
     });
   }
 
-  track(event: string, properties?: TelemetryProperties): void {
-    const eventSessionId = properties?.['sessionId'];
+  track(record: TelemetryAppenderRecord): void {
+    const ambientSessionId = record.context['session_id'];
     const enriched: EnrichedCloudEvent = {
       event_id: randomUUID().replaceAll('-', ''),
       device_id: this.deviceId,
-      session_id: typeof eventSessionId === 'string' ? eventSessionId : this.sessionId,
-      event,
+      session_id:
+        typeof ambientSessionId === 'string' ? ambientSessionId : this.sessionId,
+      event: record.event,
       timestamp: Date.now() / 1000,
-      properties: cleanTelemetryProperties(sanitizeProperties(properties)),
-      context: { ...this.context },
+      properties: cleanTelemetryProperties(sanitizeProperties(record.properties)),
+      context: this.envelopeContext(record.context),
     };
     this.buffer.push(enriched);
     if (this.buffer.length >= this.flushThreshold) {
@@ -114,19 +116,13 @@ export class CloudAppender implements ITelemetryAppender {
     }
   }
 
-  setContext(patch: TelemetryContextPatch): void {
-    const deviceId = patch['deviceId'];
-    if (typeof deviceId === 'string') {
-      this.deviceId = deviceId;
+  private envelopeContext(ambient: TelemetryProperties): CloudContext {
+    const context: CloudContext = { ...this.context };
+    const ambientModel = ambient['model'];
+    if (typeof ambientModel === 'string' && ambientModel.length > 0) {
+      context['model'] = ambientModel;
     }
-    const sessionId = patch['sessionId'];
-    if (typeof sessionId === 'string') {
-      this.sessionId = sessionId;
-    }
-    const model = patch['model'];
-    if (typeof model === 'string') {
-      setPrimitive(this.context, 'model', model);
-    }
+    return context;
   }
 
   async flush(): Promise<void> {

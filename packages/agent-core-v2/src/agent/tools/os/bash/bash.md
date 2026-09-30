@@ -21,6 +21,7 @@ If `run_in_background=true`, the command will be started as a background task an
 - Avoid using `..` to access files or directories outside of the working directory.
 - Avoid modifying files outside of the working directory unless explicitly instructed to do so.
 - Never run commands that require superuser privileges unless explicitly instructed to do so.
+- Run git-mutating commands such as `git commit`, `git push`, `git reset`, and `git rebase` only when the user asks for them.
 
 **Guidelines for efficiency:**
 - Use `&&` to chain commands that genuinely depend on each other, e.g. `npm install && npm test`. Independent read-only commands (separate `git show`, `ls`, or status checks) should be issued as separate parallel Bash calls in one response, not chained into a single call — chaining serializes their execution and mixes their output. Do not stitch outputs together with `echo` separators.

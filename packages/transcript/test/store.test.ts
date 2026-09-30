@@ -251,14 +251,14 @@ describe('AgentTranscript', () => {
           kind: 'step', stepId: 't1.1', turnId: 't1', ordinal: 1, state: 'completed',
           usage: { inputOther: 10, output: 5, inputCacheRead: 3, inputCacheCreation: 2 },
           finishReason: 'stop',
-          timing: { llmFirstTokenLatencyMs: 120 },
+          llmTiming: { llmFirstTokenLatencyMs: 120 },
         },
       },
     ]);
     expect(completed.accepted).toHaveLength(1);
     const step = tx.getTurn('t1')?.steps[0];
     expect(step?.usage?.output).toBe(5);
-    expect(step?.timing?.llmFirstTokenLatencyMs).toBe(120);
+    expect(step?.llmTiming?.llmFirstTokenLatencyMs).toBe(120);
     expect(step?.retry).toBeUndefined();
   });
 

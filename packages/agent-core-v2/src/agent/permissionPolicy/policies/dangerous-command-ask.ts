@@ -12,7 +12,7 @@ import type {
   PermissionPolicyResult,
 } from '#/agent/permissionPolicy/types';
 
-const PARSE_OPTIONS = { timeoutMs: 20, maxNodes: 10_000 } as const;
+const PARSE_OPTIONS = { timeoutMs: 500, maxNodes: 10_000 } as const;
 
 const MAX_NESTED_SHELL_DEPTH = 4;
 
@@ -104,6 +104,15 @@ const DD_SAFE_DEVICE_TARGETS: ReadonlySet<string> = new Set([
   '/dev/stderr',
 ]);
 
+const RM_SAFE_TEMP_ROOTS: readonly string[] = ['/tmp', '/temp'];
+
+function isSafeTempRmOperand(operand: string): boolean {
+  for (const segment of operand.split('/')) {
+    if (segment === '..') return false;
+  }
+  return RM_SAFE_TEMP_ROOTS.some((root) => operand === root || operand.startsWith(`${root}/`));
+}
+
 type DangerousVerdict =
   | { readonly kind: 'dangerous'; readonly command: string }
   | { readonly kind: 'unanalyzable' };
@@ -119,6 +128,7 @@ export class DangerousCommandAskPermissionPolicyService implements PermissionPol
 
   evaluate(context: ResolvedToolExecutionHookContext): PermissionPolicyResult | undefined {
     if (!isDangerousCommandGuardEnabled(this.config)) return undefined;
+    if (this.modeService.mode === 'auto') return undefined;
     if (context.toolCall.name !== 'Bash') return undefined;
     const command = bashCommandText(context.args);
     const verdict =
@@ -128,25 +138,10 @@ export class DangerousCommandAskPermissionPolicyService implements PermissionPol
             this.bashParser.parse(source, PARSE_OPTIONS),
           );
     if (verdict === undefined) return undefined;
-    const auto = this.modeService.mode === 'auto';
     if (verdict.kind === 'dangerous') {
-      if (auto) {
-        return {
-          kind: 'deny',
-          reason: { dangerous_command: verdict.command },
-          message: `Bash command '${verdict.command}' is blocked in auto permission mode because it is considered dangerous. Ask the user to switch permission mode or run it themselves.`,
-        };
-      }
       return { kind: 'ask', reason: { dangerous_command: verdict.command } };
     }
-    if (auto) {
-      return {
-        kind: 'deny',
-        reason: { unanalyzable_command: true },
-        message:
-          'This Bash command could not be analyzed and is blocked in auto permission mode. Rewrite it with a literal command name and arguments, or ask the user to run it themselves.',
-      };
-    }
+    if (this.modeService.mode === 'yolo') return undefined;
     return { kind: 'ask', reason: { unanalyzable_command: true } };
   }
 }
@@ -288,8 +283,17 @@ function analyzeInvocation(
   if (name === 'rm') {
     let recursive = false;
     let force = false;
+    const operands: string[] = [];
+    let optionsEnded = false;
     for (const arg of args) {
-      if (arg === '--') break;
+      if (!optionsEnded && arg === '--') {
+        optionsEnded = true;
+        continue;
+      }
+      if (optionsEnded) {
+        operands.push(arg);
+        continue;
+      }
       if (arg === '--recursive') {
         recursive = true;
       } else if (arg === '--force') {
@@ -297,9 +301,16 @@ function analyzeInvocation(
       } else if (/^-[a-zA-Z]+$/.test(arg)) {
         if (/[rR]/.test(arg)) recursive = true;
         if (arg.includes('f')) force = true;
+      } else {
+        operands.push(arg);
       }
     }
-    if (recursive && force) return { kind: 'dangerous', command: 'rm -rf' };
+    if (recursive && force) {
+      if (!dropped && operands.length > 0 && operands.every(isSafeTempRmOperand)) {
+        return undefined;
+      }
+      return { kind: 'dangerous', command: 'rm -rf' };
+    }
     return dropped ? { kind: 'unanalyzable' } : undefined;
   }
   return undefined;

@@ -1,5 +1,4 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import type { Event } from '#/_base/event';
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 import { Error2, type Error2Options } from '#/_base/errors/errors';
 
@@ -146,8 +145,8 @@ export interface IFileSystemStorageService {
   list(scope: string, prefix?: string): Promise<readonly string[]>;
   delete(scope: string, key: string): Promise<void>;
   size(scope: string, key: string): Promise<number | undefined>;
+  mtime(scope: string, key: string): Promise<number | undefined>;
   pathFor(scope: string, key: string): string | undefined;
-  watch?(scope: string, key: string): Event<void>;
   flush(): Promise<void>;
   close(): Promise<void>;
 }

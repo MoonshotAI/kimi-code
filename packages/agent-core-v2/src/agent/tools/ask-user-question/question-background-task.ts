@@ -42,6 +42,10 @@ export class QuestionBackgroundTask implements AgentTask {
       const result = await this.run(sink.signal);
       const output =
         typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
+      if (result.isError === true) {
+        await sink.settle({ status: 'failed', stopReason: output });
+        return;
+      }
       sink.appendOutput(output);
       await sink.settle({ status: 'completed' });
     } catch (error: unknown) {

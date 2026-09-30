@@ -30,6 +30,7 @@ export class TowerInboxTool implements ITowerInboxTool {
           const state = await store.load();
           const caller = callerName(this.scopeContext.agentId, store, state);
           const items = await store.readInbox(caller, args.limit ?? DEFAULT_LIMIT);
+          await store.markInboxRead(caller, items[0]?.sentAt);
           if (items.length === 0) {
             return { output: `inbox empty for ${caller}` };
           }

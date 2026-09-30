@@ -1,6 +1,6 @@
 # Agent 与 subagent
 
-Kimi Code CLI 中的每次会话都由一个**main agent** 驱动。main agent 理解用户意图、规划步骤、调用工具，并在需要时向外派发**subagent** 处理更聚焦的子任务——例如探索一个陌生代码库、并行审阅多处实现、或在不触碰主上下文的情况下规划一次大型重构。
+Kimi Code CLI 中的每次会话都由一个 **main agent** 驱动。main agent 理解用户意图、规划步骤、调用工具，并在需要时向外派发 **subagent** 处理更聚焦的子任务：探索一个陌生代码库、并行审阅多处实现、或在不触碰主上下文的情况下规划一次大型重构。
 
 subagent 接受 main agent 给出的任务描述，在自己的独立上下文里工作，最后把结论返回。它不会与用户直接对话，中间的思考和工具调用记录也不会混入 main agent 的历史。
 
@@ -12,13 +12,21 @@ Kimi Code CLI 内置三种 subagent，开箱即用，分别面向不同任务形
 - **`explore`**：代码库探索专用，只做只读操作，不修改任何文件。适合在不改动文件的前提下快速搜索、阅读和总结仓库。
 - **`plan`**：实现规划与架构设计专用，连 Shell 命令都不提供，专注于"想清楚怎么做"而不是"动手做"。
 
-`coder` subagent 与 main agent 共享大部分工具集：可以在后台执行 Shell 命令、维护待办列表、进入 Plan 模式、调用 Agent Skills。内置 subagent 都不能继续派发新的 subagent。自定义 Agent 缺省时继承内置委派列表（`coder`、`explore`、`plan`），而这些内置类型自身同样不能再派发，因此委派链默认必然终止——不存在不受限的递归派发。自定义 Agent 可以通过显式声明 [`subagents`](#agent-文件格式) 列表来获得更深的委派链。如果 subagent 结束自己的轮次时仍有后台任务在运行，那么只有在这些后台任务全部落定后，这次运行才会回报完成——main agent 拿到结果时，背后的工作也已经真正完成。
+三种类型之外，使用 subagent 还有三条约定，分别关于工具边界、委派深度和完成时机：
+
+`coder` subagent 与 main agent 共享大部分工具集：可以在后台执行 Shell 命令、维护待办列表、进入 Plan 模式、调用 Agent Skills。三种内置 subagent 都不能继续派发新的 subagent。
+
+自定义 Agent 缺省时继承内置委派列表（`coder`、`explore`、`plan`），这些内置类型自身不能再派发，因此委派链默认必然终止，不存在不受限的递归派发。如需更深的委派链，可以在 Agent 文件中显式声明 [`subagents`](#agent-文件格式) 列表。
+
+如果 subagent 结束自己的轮次时仍有后台任务在运行，这次运行会等这些后台任务全部落定后才回报完成。main agent 拿到结果时，背后的工作也已经真正完成。
 
 ## 调用方式
 
-subagent 由 main agent 自动调度——根据任务复杂度、上下文消耗和子任务的独立性，在适当时机派发，无需用户手动指定。
+调度的完整链路只有三个环节：派发、审批、回收，都不需要手动管理。
 
-每次派发都会在终端以审批请求的形式呈现（除非命中 allow 规则或处于「必要时询问」模式），方便你审视任务描述。你也可以在对话中直接指示 main agent 使用特定 subagent，例如"先用 explore 把相关文件梳理一遍再动手"。
+subagent 由 main agent 自动调度：根据任务复杂度、上下文消耗和子任务的独立性，在适当时机派发，无需用户手动指定。
+
+每次派发都会在终端以审批请求的形式呈现，方便你审视任务描述，除非你已用 allow 规则放行或处于 YOLO 模式。你也可以在对话中直接指示 main agent 使用特定 subagent，例如"先用 explore 把相关文件梳理一遍再动手"。
 
 subagent 支持在后台运行：完成后结果自动回到 main agent，无需手动轮询。也可以唤回已有的 subagent 实例继续推进同一任务。
 
@@ -31,7 +39,7 @@ subagent 支持在后台运行：完成后结果自动回到 main agent，无需
 - **main agent 上下文保持精炼**，长会话中不会被大量探索性日志撑满。
 - **多个 subagent 可以并行运行**，互不干扰。
 
-需要注意的是，每个 subagent 都会独立消耗模型 token。简单任务没有必要派发 subagent，main agent 直接处理更经济。
+每个 subagent 都会独立消耗模型 token。简单任务没有必要派发 subagent，由 main agent 直接处理更经济。
 
 ## 权限继承
 
@@ -41,19 +49,23 @@ subagent 的权限规则继承自 main agent：main agent 通过 `/permission` �
 
 ## 自定义 Agent
 
-除了三个内置 subagent，你还可以用 Markdown 文件定义自己的 Agent。每个文件描述一个 Agent：文件顶部的 Frontmatter（YAML 元数据）声明名称、描述和工具权限，文件正文是它的系统提示词。自定义 Agent 可以作为 subagent 被委派 —— main agent 会自动发现它们，与内置 subagent 并列 —— 也可以在启动时选为 main agent。
+除了三个内置 subagent，你还可以用 Markdown 文件定义自己的 Agent。每个文件描述一个 Agent：文件顶部的 Frontmatter 声明名称、描述和工具权限，文件正文是它的系统提示词。
+
+自定义 Agent 可以作为 subagent 被委派：main agent 会自动发现它们，与内置 subagent 并列。自定义 Agent 也可以在启动时选为 main agent。
 
 ### Agent 目录
 
 Kimi Code CLI 按作用域发现 Agent 文件，作用域越具体，优先级越高：**显式（`--agent-file`）> 项目 > 额外 > 用户 > Plugin > 内置**。两个文件定义了相同的 `name` 时，高优先级作用域胜出。每个目录都会递归扫描 `.md` 文件。
 
 **用户级**（对所有项目生效）：
+
 - `$KIMI_CODE_HOME/agents/`（默认：`~/.kimi-code/agents/`）
 - `~/.agents/agents/`
 
 Kimi 专属的用户 Agent 目录随 `KIMI_CODE_HOME` 移动，通用的 `~/.agents/agents/` 目录留在真实用户目录下，便于跨工具共享。
 
-**项目级**（项目根目录 = 从工作目录向上查找、最近的包含 `.git` 的目录）：
+**项目级**：项目根目录指从工作目录向上查找、最近的包含 `.git` 的目录。可用位置：
+
 - `.kimi-code/agents/`
 - `.agents/agents/`
 
@@ -63,12 +75,14 @@ Kimi 专属的用户 Agent 目录随 `KIMI_CODE_HOME` 移动，通用的 `~/.age
 extra_agent_dirs = ["~/team-agents", ".agents/team-agents"]
 ```
 
-**Plugin 级**：已启用 plugin 在其 manifest 的 `agents` 字段中声明的目录（省略时自动采用 plugin 根下的 `agents/` 目录），见[插件 Agent](./plugins.md#插件-agent)。Plugin Agent 优先级仅高于内置 Agent。
+**Plugin 级**：已启用 plugin 在其 manifest 的 `agents` 字段中声明的目录，省略时自动采用 plugin 根下的 `agents/` 目录，见 [插件 Agent](./plugins.md#插件-agent)。Plugin Agent 优先级仅高于内置 Agent。
 
-**内置 Agent** 随 CLI 分发，优先级最低。目录中发现的文件不会仅凭同名覆盖内置 Agent；如确需替换，必须在 Frontmatter 中声明 `override: true`。通过 `--agent-file` 加载的文件视为显式启动意图，可以覆盖同名内置 Agent，优先级高于所有目录作用域，且仅对本次启动生效。另外，`$KIMI_CODE_HOME/SYSTEM.md` 可永久覆盖默认 main agent 的系统提示词（它不参与 Agent 文件发现），其优先级交互见下文 SYSTEM.md 小节。
+**内置 Agent** 随 CLI 分发，优先级最低。目录中发现的文件不会仅凭同名覆盖内置 Agent；如确需替换，必须在 Frontmatter 中声明 `override: true`。通过 `--agent-file` 加载的文件视为显式启动意图，可以覆盖同名内置 Agent，优先级高于所有目录作用域，且仅对本次启动生效。
+
+另外，`$KIMI_CODE_HOME/SYSTEM.md` 可永久覆盖默认 main agent 的系统提示词，它不参与 Agent 文件发现，优先级交互见 [SYSTEM.md 小节](#用-systemmd-覆盖-main-agent-的系统提示词)。
 
 ::: warning 信任模型
-Agent 文件属于提示词配置，而项目级文件来自仓库本身 —— 包括你刚刚 clone、尚不可信的仓库。项目作用域的文件可以完全接管内置 Agent：命名为 `agent.md` 并声明 `override: true` 会替换**默认 main agent 的整个系统提示词**，`coder.md` 加 `override: true` 则会替换默认 subagent 类型。与 `AGENTS.md` 内容（作为参考资料注入提示词）不同，override 文件**就是**系统提示词本身，且不写 `tools` 的文件保留全部工具。在不熟悉的仓库中运行 Kimi Code 之前，请以对待脚本同样的谨慎检查其中的 `.kimi-code/agents/` 与 `.agents/agents/` 目录。
+Agent 文件属于提示词配置，而项目级文件来自仓库本身，包括你刚刚 clone、尚不可信的仓库。项目作用域的文件可以完全接管内置 Agent：命名为 `agent.md` 并声明 `override: true` 会替换**默认 main agent 的整个系统提示词**，`coder.md` 加 `override: true` 则会替换默认 subagent 类型。不同于把 `AGENTS.md` 内容作为参考资料注入提示词，override 文件本身就是系统提示词，且不写 `tools` 的文件保留全部工具。在不熟悉的仓库中运行 Kimi Code 之前，请以对待脚本同样的谨慎检查其中的 `.kimi-code/agents/` 与 `.agents/agents/` 目录。
 :::
 
 ### Agent 文件格式
@@ -93,23 +107,29 @@ disallowedTools:
 你是严格的代码审查者。阅读 diff 后，按严重度分级报告问题……
 ```
 
+各字段的含义如下：
+
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
-| `name` | 否 | kebab-case 唯一标识。缺省时取文件名（去掉扩展名，如 `review.md` → `review`）；解析后名字缺失或不是 kebab-case 的文件会被跳过并告警 |
+| `name` | 否 | kebab-case 唯一标识。缺省时取文件名去掉扩展名后的部分；名字缺失或不是 kebab-case 的文件会被跳过并告警 |
 | `description` | 是 | Agent 的用途。main agent 挑选 subagent 时会看到，请围绕委派决策来写 |
 | `whenToUse` | 否 | 补充说明何时应使用该 Agent |
 | `override` | 否 | 是否允许覆盖同名内置 Agent，默认 `false`。`--agent-file` 属于显式启动意图，无需设置此字段 |
-| `tools` | 否 | 工具名允许列表，如 `Read`、`Bash`；MCP 工具用 glob 匹配，如 `mcp__github__*`。支持 YAML 列表或逗号分隔字符串（`tools: Read, Grep`）两种写法。缺省表示允许全部工具；单独的 `*` 同样表示允许全部工具；空列表（`tools: []`）表示禁用全部工具 |
-| `disallowedTools` | 否 | 禁止列表，写法与匹配规则相同，在 `tools` 之后应用 |
-| `subagents` | 否 | 允许委派的 subagent 名称列表，写法与 `tools` 相同（YAML 列表或逗号分隔字符串）。缺省表示继承默认 Agent 的委派列表（内置默认为 `coder`、`explore`、`plan`，它们自身都不能再派发，因此继承得到的链路必然终止）；单独的 `*` 表示可委派所有类型。main agent 的有效委派列表还会自动并入所有发现的自定义 Agent，因此自定义 Agent 默认即可被委派 |
+| `tools` | 否 | 工具允许列表。MCP 工具用 glob 匹配（如 `mcp__github__*`）；支持 YAML 列表或逗号分隔字符串。缺省或单独的 `*` 表示允许全部工具，空列表表示禁用全部工具 |
+| `disallowedTools` | 否 | 工具禁止列表，写法与匹配规则和 `tools` 相同，在 `tools` 之后应用 |
+| `subagents` | 否 | 允许委派的 subagent 名称列表，写法与 `tools` 相同。缺省继承内置默认委派列表，单独的 `*` 表示可委派所有类型。main agent 的有效委派列表会自动并入所有发现的自定义 Agent |
 
-内置工具与用户工具按名称精确匹配（区分大小写）；以 `mcp__` 开头的条目按 glob 匹配 MCP 工具。有三种写法永远匹配不到任何工具，在 profile 生效时会给出警告：`mcp__` 模式之外使用通配符（`disallowedTools` 里单独的 `*` 什么也禁不掉）；不是完整 `mcp__<服务器>__<工具>` 形式的 `mcp__` 字面量（`mcp__github` 匹配不到任何工具 —— 匹配整个服务器要用 `mcp__github__*`）；以及任何已注册或内置工具都没有的名字（通常是笔误，如把 `Read` 写成 `read`）。
+内置工具与用户工具按名称精确匹配（区分大小写）；以 `mcp__` 开头的条目按 glob 匹配 MCP 工具。以下三种写法永远匹配不到任何工具，在 profile 生效时会给出警告：
 
-正文即 Agent 的系统提示词，每次构建提示词时都会作为模板渲染：`${var}` 占位符替换为实时上下文值——未知变量保持原样，单独的 `$` 没有特殊含义，上下文中缺失的变量渲染为空字符串。`${base_prompt}` 会在你放置它的位置嵌入有效默认系统提示词（内置默认，或存在时为你的 `SYSTEM.md` 覆盖），因此文件可以"包裹"默认行为而不是替换它。如果文件会替换默认提示词、但仍要保留已启用 plugin 提供的指令，请把 `${plugin_sections}` 放在希望出现这些指令的位置。可用变量见下文 SYSTEM.md 变量表。
+- 在 `mcp__` 模式之外使用通配符：`disallowedTools` 里单独的 `*` 什么也禁不掉。
+- 写不全的 `mcp__` 字面量：`mcp__github` 匹配不到任何工具；匹配整个服务器要用 `mcp__github__*`。
+- 任何已注册或内置工具都没有的名字：通常是笔误，如把 `Read` 写成 `read`。
 
-未知字段会被忽略，新版本写的文件在旧版本上仍可读取。其他 Agent 工具的字段（如 Claude Code 的 `model`、OpenCode 的 `mode`）同样会被忽略；加上 `tools` 的逗号分隔写法和 `name` 缺省回退到文件名，Claude Code 与 OpenCode 风格的 Agent 文件一般可直接加载 —— 只含 `description` 和正文的最小文件可跨工具通用。
+正文即 Agent 的系统提示词，每次构建提示词时都会作为模板渲染。`${var}` 占位符替换为实时上下文值：未知变量保持原样，单独的 `$` 没有特殊含义，上下文中缺失的变量渲染为空字符串。`${base_prompt}` 会在放置它的位置嵌入有效默认系统提示词（内置默认，或存在时为你的 `SYSTEM.md` 覆盖），因此文件可以包裹默认行为而不是替换它。如果文件替换默认提示词后仍要保留已启用 plugin 提供的指令，把 `${plugin_sections}` 放在希望出现这些指令的位置即可。可用变量见 [SYSTEM.md 变量表](#用-systemmd-覆盖-main-agent-的系统提示词)。
 
-目录中发现的非法文件会被跳过并告警，不影响其他文件。通过 `--agent-file` 显式传入的文件必须合法 —— 否则 CLI 会报错并退出。
+未知字段会被忽略，新版本写的文件在旧版本上仍可读取。其他 Agent 工具的字段（如 Claude Code 的 `model`、OpenCode 的 `mode`）同样会被忽略。加上 `tools` 的逗号分隔写法和 `name` 缺省回退到文件名，Claude Code 与 OpenCode 风格的 Agent 文件一般可直接加载，只含 `description` 和正文的最小文件可跨工具通用。
+
+目录中发现的非法文件会被跳过并告警，不影响其他文件。通过 `--agent-file` 显式传入的文件必须合法，否则 CLI 会报错并退出。
 
 ::: warning 注意
 `tools` 与 `disallowedTools` 不仅决定模型能"看到"哪些工具，还会在执行前再次强制检查。`subagents` 同样双重生效：`Agent` 工具的类型列表只包含允许委派的 subagent，`Agent` 与 `AgentSwarm` 在实际派发前都会强制校验；唤回已有 subagent 不受此限制。权限规则仍是独立的控制层，用于决定哪些操作需要审批。
@@ -124,7 +144,7 @@ disallowedTools:
 - **`--agent <name>`**：以指定 Agent 作为 main agent 启动会话。名称可以指向内置 Agent 或任何已发现的文件；名称不存在时会报错，并列出可用的 Agent。
 - **`--agent-file <path>`**：以最高优先级加载一个 Agent 文件（仅本次启动）并以其启动。该 flag 只接受一个文件：不可重复传入，也不能与 `--agent` 同时使用。
 
-两个 flag 都仅在新建会话时有效——都不能与 `--session`/`--continue` 组合。Agent 在会话创建时绑定，恢复会话时会自动还原已绑定的 Agent，因此恢复时不需要（也不允许）携带这些 flag。
+两个 flag 都仅在新建会话时有效，不能与 `--session`/`--continue` 组合。Agent 在会话创建时绑定，恢复会话时会自动还原已绑定的 Agent，因此恢复时不需要（也不允许）携带这些 flag。
 
 例如：
 
@@ -133,17 +153,23 @@ kimi --agent reviewer
 kimi -p --agent reviewer "审查这个分支上的改动"
 ```
 
-绑定的 Agent 即会话的身份：在会话首次绑定后即固定，之后不可切换。在 TUI 中，这些 flag 只绑定启动时的会话；之后在同一进程内新建的会话（例如通过 `/new`）使用默认 Agent。
+绑定的 Agent 即会话的身份，在会话首次绑定后即固定，之后不可切换。在 TUI 中，这些 flag 只绑定启动时的会话；之后在同一进程内新建的会话（例如通过 `/new`）使用默认 Agent。
 
-定制 main agent 时，在正文中引用 `${base_prompt}` 可保持有效默认提示词中已有的环境、工作区指令、Skill 和 plugin 注入生效。如果要替换默认提示词、但只保留 plugin 提供的指令，请改用 `${plugin_sections}`。正文同时不引用 `${base_prompt}` 和 `${plugin_sections}` 时，会完全拥有自己的提示词并排除 plugin 指令，适合自包含的 subagent。
+定制 main agent 时，在正文中引用 `${base_prompt}` 可保留有效默认提示词中已有的环境、工作区指令、Skill 和 plugin 注入。要替换默认提示词、但只保留 plugin 提供的指令，改用 `${plugin_sections}`。正文同时不引用这两个变量时，Agent 拥有完全独立的提示词，plugin 指令不会注入，适合自包含的场景。
 
 ### 用 SYSTEM.md 覆盖 main agent 的系统提示词
 
-希望永久覆盖 main agent 的系统提示词、而不必每次启动都传入 `--agent` 或 `--agent-file` 时，可以写一份 `$KIMI_CODE_HOME/SYSTEM.md`（默认：`~/.kimi-code/SYSTEM.md`，随 `KIMI_CODE_HOME` 移动）。文件存在且非空期间，它整体替换内置默认 main agent 的系统提示词——但只替换提示词，描述、工具集与允许委派的 subagent 列表仍沿用内置默认值。SYSTEM.md 在包括交互式 TUI 会话在内的所有启动方式下生效。
+希望永久覆盖 main agent 的系统提示词、而不必每次启动都传入 `--agent` 或 `--agent-file` 时，可以写一份 `$KIMI_CODE_HOME/SYSTEM.md`，默认位置为 `~/.kimi-code/SYSTEM.md`，随 `KIMI_CODE_HOME` 移动。文件存在且非空期间，它整体替换内置默认 main agent 的系统提示词；但只替换提示词，描述、工具集与允许委派的 subagent 列表仍沿用内置默认值。SYSTEM.md 在包括交互式 TUI 会话在内的所有启动方式下生效。
 
-SYSTEM.md 是纯 Markdown 正文，不需要也不读取 Frontmatter。文件缺失或为空时不生效；读取失败时会告警并回退到内置提示词。优先级上，显式意图仍然胜出：项目作用域中声明了 `override: true` 的同名 Agent 文件、通过 `--agent-file` 传入的文件都排在 SYSTEM.md 之前，用 `--agent` 选择其他 Agent 时 SYSTEM.md 也不会生效；而在用户作用域内部，SYSTEM.md 优先于 `agents/` 目录中扫描到的同名文件。
+SYSTEM.md 是纯 Markdown 正文，不需要也不读取 Frontmatter。文件缺失或为空时不生效；读取失败时会告警并回退到内置提示词。
 
-与普通 Agent 文件的正文一样，SYSTEM.md 在每次构建提示词时作为模板渲染——正文中的 `${var}` 占位符会被替换为实时上下文：
+优先级上，显式意图仍然胜出：
+
+- 项目作用域中声明了 `override: true` 的同名 Agent 文件、通过 `--agent-file` 传入的文件都排在 SYSTEM.md 之前。
+- 用 `--agent` 选择其他 Agent 时，SYSTEM.md 不生效。
+- 在用户作用域内部，SYSTEM.md 优先于 `agents/` 目录中扫描到的同名文件。
+
+与普通 Agent 文件的正文一样，SYSTEM.md 在每次构建提示词时作为模板渲染，正文中的 `${var}` 占位符会被替换为实时上下文：
 
 | 变量 | 内容 |
 | --- | --- |
@@ -153,11 +179,14 @@ SYSTEM.md 是纯 Markdown 正文，不需要也不读取 Frontmatter。文件缺
 | `${cwd_listing}` | 工作目录的文件列表 |
 | `${os}` | 操作系统类型 |
 | `${shell}` | Shell 名称与路径，例如 `bash (\`/bin/bash\`)` |
+| `${now}` | 当前时间（ISO 格式） |
 | `${additional_dirs_info}` | 加入工作区的额外目录信息；没有时为空 |
-| `${base_prompt}` | 默认系统提示词。在 `SYSTEM.md` 中指内置默认提示词；在 Agent 文件中指有效默认提示词（内置默认，或存在时为你的 `SYSTEM.md` 覆盖） |
+| `${base_prompt}` | 默认系统提示词。在 `SYSTEM.md` 中指内置默认提示词；在 Agent 文件中指有效默认提示词（内置默认，或存在时的 `SYSTEM.md` 覆盖） |
 | `${plugin_sections}` | 已启用 plugin 提供的完整 Plugin Instructions 块；没有已启用 plugin 提供指令时为空 |
 
-未知变量原样保留，单独的 `$` 没有特殊含义；上下文中缺失的变量渲染为空字符串。另有四个预组合块——`${windows_notes}`、`${additional_dirs_section}`、`${skills_section}`、`${plugin_sections}`——渲染对应的内置提示词段落，不适用时为空字符串。内置默认提示词已经包含 `${plugin_sections}`；当 `${base_prompt}` 已展开为该提示词时，不要再重复加入此变量。利用这些变量可以重建内置提示词的骨架，例如：
+未知变量原样保留，单独的 `$` 没有特殊含义；上下文中缺失的变量渲染为空字符串。另有四个预组合块 `${windows_notes}`、`${additional_dirs_section}`、`${skills_section}`、`${plugin_sections}`，渲染对应的内置提示词段落，不适用时为空字符串。
+
+内置默认提示词已经包含 `${plugin_sections}`；当 `${base_prompt}` 已展开为该提示词时，不要再重复加入此变量。利用这些变量可以重建内置提示词的骨架，例如：
 
 ```markdown
 You are Kimi, running at ${cwd} on ${os}.

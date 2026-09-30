@@ -61,7 +61,7 @@ import type {
   ShellStartedPayload,
 } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommandService';
 
-import type { TurnStepRetryingPayload } from '@moonshot-ai/agent-core-v2/agent/stepRetry/stepRetryService';
+import type { TurnStepRetryingPayload } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { AgentTaskStatus } from '@moonshot-ai/agent-core-v2/agent/task/types';
 import type {
   ToolCallStartedPayload,
@@ -69,9 +69,10 @@ import type {
   ToolResultEventPayload,
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
-import type { FinishReason } from '@moonshot-ai/agent-core-v2/kosong/contract/provider';
-import type { TokenUsage } from '@moonshot-ai/agent-core-v2/kosong/contract/usage';
+import type { FinishReason } from '@moonshot-ai/agent-core-v2/human/llm/finish-reason';
+import type { TokenUsage } from '@moonshot-ai/agent-core-v2/human/llm/usage';
 import type {
+  SubagentCancelledPayload,
   SubagentCompletedPayload,
   SubagentFailedPayload,
   SubagentSpawnedPayload,
@@ -372,7 +373,6 @@ export const kimiErrorCodeSchema = z.enum([
   'request.prompt_input_empty',
   'prompt.id_conflict',
   'prompt.not_found',
-  'prompt.already_completed',
   'session.busy',
   'shell.git_bash_not_found',
   'workspace.not_found',
@@ -490,16 +490,6 @@ export const agentPhaseSchema = z.discriminatedUnion('kind', [
     since: z.number(),
   }),
   z.object({
-    kind: z.literal('streaming'),
-    turnId: z.number(),
-    step: z.number(),
-    stepId: z.string(),
-    stream: z.enum(['assistant', 'thinking', 'tool_call']),
-    toolCallId: z.string().optional(),
-    toolName: z.string().optional(),
-    since: z.number(),
-  }),
-  z.object({
     kind: z.literal('tool_call'),
     turnId: z.number(),
     step: z.number(),
@@ -581,6 +571,11 @@ export const sessionCreatedEventSchema = z.object({
 
 export const sessionArchivedEventSchema = z.object({
   type: z.literal('event.session.archived'),
+  workspace_id: z.string().min(1),
+});
+
+export const sessionDeletedEventSchema = z.object({
+  type: z.literal('event.session.deleted'),
   workspace_id: z.string().min(1),
 });
 
@@ -756,6 +751,7 @@ export const turnEndedEventSchema = z.object({
   interruptReason: z
     .enum(['user_cancelled', 'aborted', 'max_steps', 'error', 'filtered', 'blocked'])
     .optional(),
+  traceId: z.string().optional(),
 });
 
 export const turnStepStartedEventSchema = z.object({
@@ -780,6 +776,7 @@ export const turnStepCompletedEventSchema = z.object({
   llmServerFirstTokenMs: z.number().optional(),
   llmServerDecodeMs: z.number().optional(),
   llmClientConsumeMs: z.number().optional(),
+  llmClientBlockedMs: z.number().optional(),
   providerFinishReason: finishReasonSchema.optional(),
   rawFinishReason: z.string().optional(),
 }) satisfies z.ZodType<TurnStepCompletedPayload>;
@@ -934,6 +931,11 @@ export const subagentFailedEventSchema = z.object({
   error: z.string(),
 }) satisfies z.ZodType<SubagentFailedPayload>;
 
+export const subagentCancelledEventSchema = z.object({
+  type: z.literal('subagent.cancelled'),
+  subagentId: z.string(),
+}) satisfies z.ZodType<SubagentCancelledPayload>;
+
 export const compactionStartedEventSchema = z.object({
   type: z.literal('compaction.started'),
   agentId: z.string(),
@@ -1055,6 +1057,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   sessionMetaUpdatedEventSchema,
   sessionCreatedEventSchema,
   sessionArchivedEventSchema,
+  sessionDeletedEventSchema,
   workspaceCreatedEventSchema,
   workspaceUpdatedEventSchema,
   workspaceDeletedEventSchema,
@@ -1092,6 +1095,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   subagentSuspendedEventSchema,
   subagentCompletedEventSchema,
   subagentFailedEventSchema,
+  subagentCancelledEventSchema,
   compactionStartedEventSchema,
   compactionBlockedEventSchema,
   compactionCancelledEventSchema,

@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -11,11 +11,12 @@ describe('server-v2 /api/v1 bearer auth', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-auth-middleware-'));
+    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -27,22 +28,19 @@ describe('server-v2 /api/v1 bearer auth', () => {
   });
 
   it('allows healthz without a token', async () => {
-    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
-    const res = await server.app.inject({ method: 'GET', url: '/api/v1/healthz' });
+    const res = await server!.app.inject({ method: 'GET', url: '/api/v1/healthz' });
     expect(res.statusCode).toBe(200);
   });
 
   it('rejects /api/v1/auth without a token with 40101', async () => {
-    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
-    const res = await server.app.inject({ method: 'GET', url: '/api/v1/auth' });
+    const res = await server!.app.inject({ method: 'GET', url: '/api/v1/auth' });
     expect(res.statusCode).toBe(401);
     const body = res.json() as Record<string, unknown>;
     expect(body['code']).toBe(40101);
   });
 
   it('rejects /api/v1/auth with a wrong token', async () => {
-    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
-    const res = await server.app.inject({
+    const res = await server!.app.inject({
       method: 'GET',
       url: '/api/v1/auth',
       headers: { authorization: 'Bearer wrong-token' },
@@ -53,9 +51,8 @@ describe('server-v2 /api/v1 bearer auth', () => {
   });
 
   it('accepts /api/v1/auth with the persistent token', async () => {
-    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
-    const token = server.authTokenService.getToken();
-    const res = await server.app.inject({
+    const token = server!.authTokenService.getToken();
+    const res = await server!.app.inject({
       method: 'GET',
       url: '/api/v1/auth',
       headers: { authorization: `Bearer ${token}` },
@@ -66,8 +63,7 @@ describe('server-v2 /api/v1 bearer auth', () => {
   });
 
   it('requires auth for /openapi.json', async () => {
-    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
-    const res = await server.app.inject({ method: 'GET', url: '/openapi.json' });
+    const res = await server!.app.inject({ method: 'GET', url: '/openapi.json' });
     expect(res.statusCode).toBe(401);
   });
 });

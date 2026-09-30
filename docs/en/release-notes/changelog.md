@@ -6,6 +6,196 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.1.1 (2026-09-24)
+
+### Polish
+
+- Revert filesystem watchers for config and workspace files to on by default. Set `[watch] enabled` to `false` or `KIMI_CODE_WATCH=0` to keep them off. See [`watch`](../configuration/config-files.md#watch) for details.
+
+### Bug Fixes
+
+- Roll back some of the overly defensive changes in 2.1.0.
+
+## 2.1.0 (2026-09-23)
+
+### Features
+
+- Add an experimental fullscreen mode toggle for the TUI. Enable it via the TUI mode setting in `/settings`, or set `tui_mode = "fullscreen"` in `~/.kimi-code/tui.toml`; it takes effect after restarting Kimi Code.
+- In fullscreen, click a folded block to open or close it.
+- Add a clickable "Jump to bottom" indicator to the fullscreen TUI.
+
+### Polish
+
+- Reduce the CLI's startup time and memory usage.
+- Turn off filesystem watchers for config and workspace files by default. Set `[watch] enabled` to `true` or `KIMI_CODE_WATCH=1` to turn them back on. See [`watch`](../configuration/config-files.md#watch) for details.
+
+### Bug Fixes
+
+- Harden workspace security: block file tools from accessing files outside the working directory through symlinks, apply project-local configuration only after the workspace is trusted, block repository git configuration from executing commands during background git operations, and reject additional directories that resolve to the home directory or filesystem root.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
+## 2.0.2 (2026-09-19)
+
+### Polish
+
+- The agent no longer assumes the current working directory is the project root.
+
+### Bug Fixes
+
+- Fix compaction failing after switching to a model with a smaller context window.
+- Fix new messages occasionally landing at an old position in the conversation after resuming a session.
+- Fix a message sent while the agent was running sometimes appearing twice in the chat.
+- web: Improved interactions and fixed known bugs.
+
+## 2.0.1 (2026-09-18)
+
+### Polish
+
+- Remove the system-prompt rule that forbade all file access outside the working directory.
+- Providers can read their API key from a named environment variable via [`api_key_env`](../configuration/providers.md) in `config.toml`.
+- Stop workspace file watchers from scanning an unbounded project root, and add `[watch] enabled` / `KIMI_CODE_WATCH` to disable watching entirely. See [`watch`](../configuration/config-files.md#watch) for details.
+- Stop asking for approval of bash commands that cannot be statically analyzed in Ask When Needed permission mode.
+- Rename the `kimi install-app` subcommand to `kimi install-desktop`; the old name keeps working as a hidden alias.
+
+### Bug Fixes
+
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
+## 2.0.0 (2026-09-17)
+
+### Features
+
+- Add the `/desktop` slash command (alias `/install-desktop`) and the `kimi install-app` subcommand.
+- Render mermaid code blocks as diagrams in the terminal; turn it off under `/settings` → Mermaid diagrams, or set `mermaid = "off"` in the `[markdown]` section of tui.toml.
+
+### Polish
+
+- The built-in browser plugin now appears as "Kimi Browser Extension" in the plugins panel, marketplace catalog, and docs, matching the product rename.
+
+### Bug Fixes
+
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
+## 0.43.1 (2026-09-15)
+
+### Features
+
+- Add native clipboard support on Linux X11, so copying from the TUI no longer depends on the terminal's OSC 52 support.
+
+### Polish
+
+- Reduce event-loop stalls and GC churn in sessions with many concurrent subagents.
+
+### Bug Fixes
+
+- Fix pressing Ctrl+C while subagents are running exiting the whole CLI instead of just interrupting the subagents.
+- Fix progressively slower rendering on each round of large agent swarm runs.
+- Fix memory not being released when subagent scopes are disposed.
+- Fix tower mode mistaking newly spawned agents for previous sessions' roster entries.
+- Stop returning deleted sessions from global search before the search index catches up.
+- Fix link colors in wrapped markdown tables and `@` file-completion ordering.
+
+## 0.43.0 (2026-09-14)
+
+### Features
+
+- web: AI session titles are now always on — a title is generated after the first turn and can be regenerated from the rename field, with no experimental flag required.
+- Delete sessions from the session picker: press Ctrl+X on a session, then y to confirm.
+- Add `-y, --yes` to `kimi upgrade` (alias `kimi update`) to skip the confirmation prompt and install the update directly.
+- Add the `loop_control.compaction_max_attempts` config option to set the maximum total attempts for a failing compaction request (default 5). See [`loop_control`](../configuration/config-files.md#loop_control) for details.
+
+### Polish
+
+- Skip the confirmation prompt for rm -rf commands that target only /tmp or /temp paths.
+- Allow steering messages to interrupt waits for background tasks.
+- Goal time budgets no longer count time spent with the session closed, and the 24-hour limit is removed.
+- Add the `KIMI_CODE_PERMISSION_MODE_REMINDER` environment variable: set it to `0` to stop injecting the auto permission-mode reminders into the model context.
+
+### Bug Fixes
+
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
+## 0.42.0 (2026-09-09)
+
+### Features
+
+- Remote Control is now always on; the experimental `KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL` flag has been removed. See [Remote Control](https://moonshotai.github.io/kimi-code/guides/remote-control.html) for details.
+- web: Support permanently deleting sessions from the session row context menu, with a confirmation prompt.
+- Add read-only tools to the `/btw` side agent.
+- web: Preview images and videos in a reorderable media rail in the composer, mention them in the text on demand, and keep the previews after queueing and sending.
+- Accept HEIC, HEIF, and BMP images in prompt attachments and `ReadMediaFile` when the model is served by Kimi.
+
+### Polish
+
+- Collapse finished tool calls in the transcript to a header plus one marked outcome row: short output is shown whole, hidden output is counted (`N more lines`, `+N more`) and revealed by `Ctrl-O`, which the footer advertises while it is available.
+- Upgrade the default thinking effort to the recommended level for eligible users.
+- The subagent model pool (`[secondary_model]`) is now always on; the experimental secondary-model flag and the `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL` opt-out have been removed.
+- Add configurable character limits and resumable long-line file reads without repeated output truncation; see [`read`](https://moonshotai.github.io/kimi-code/configuration/config-files.html#read) for details.
+- The minidb session-index read model and global search worker are now always on; the experimental flags have been replaced by the `[database]` config section and the `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` / `KIMI_CODE_SEARCH_WORKER` env vars; see [`database`](https://moonshotai.github.io/kimi-code/configuration/config-files.html#database) for details.
+
+### Bug Fixes
+
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
+## 0.41.0 (2026-09-04)
+
+### Features
+
+- web: Add tower multi-agent collaboration mode (experimental), enabled via the `/tower` command or the composer plus menu; `/tower` supports specifying a base branch (e.g. `/tower add-new-feature`).
+- web: Add selection annotation — select text in messages, file previews, the diff and per-turn changes panels, or the terminal to add a comment or quote it into the chat.
+- CLI: Add a session rating prompt that invites you to rate the session at appropriate times above the input box.
+
+### Polish
+
+- Auto permission mode no longer blocks dangerous commands and commands that cannot be statically analyzed.
+- Remind the model of its context budget before automatic compaction, and after compaction point it at the session's event log for exact details.
+- web: Rename the three permission modes to Always Ask / Ask When Needed / Never Ask and update their descriptions; switching to Ask When Needed or Never Ask permission mode now warns that files may be modified or deleted directly in that mode.
+- web: Esc no longer closes the right detail panel.
+- web: Restyle Bash commands in the right-side panel in terminal style.
+- Deliver background question answers to the agent directly instead of via a saved output file.
+- Subagent final messages under 200 characters are no longer bounced back for expansion.
+
+### Bug Fixes
+
+- Fix print mode (`kimi -p`) losing session records when the run exits on an error or a termination signal.
+- Fix print mode (`kimi -p`) ignoring the `KIMI_DISABLE_TELEMETRY` environment variable.
+- Tower mode (experimental): fix tower mode never starting when enabled through `[experimental] tower = true` in config.toml instead of the environment variable, and make `/tower` work in directories that are not git repositories; enablement errors now name the actual blocker.
+- Fix background questions being cancelled as soon as the agent finishes its turn.
+- Fix resuming a subagent by its agent id after the session is reopened in a new process; the resumed subagent follows the current permission mode and is matched by its own profile in permission rules.
+- web: Fix per-turn file change previews showing added/removed lines that never existed and inaccurate line counts when the same file is edited multiple times in one turn; change cards now show only exact line statistics.
+- web: Fix the default thinking effort in settings not being settable to the highest level (Max).
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
+## 0.40.1 (2026-09-02)
+
+### Bug Fixes
+
+- Fix the condition for showing the kimi-cli migration prompt.
+
+## 0.40.0 (2026-09-02)
+
+### Features
+
+- web: Add a Plugins panel to Settings for browsing the plugin marketplace and installing, enabling, disabling, and removing plugins.
+- web: Support activating multiple skills from a single message.
+- Add the `kimi session list` command to list sessions from the command line.
+- Tower mode (experimental, `KIMI_CODE_EXPERIMENTAL_TOWER=1`): the agent no longer enters tower mode on its own — turn it on with `/tower on` or `/tower <base-branch>`.
+- The subagent model setting (`[secondary_model]`) graduates from experimental to stable.
+- Block dangerous shell commands such as shutdown, reboot, or rm -rf in Auto mode, and always ask before running them in Manual and YOLO modes; disable the guard with `[permission] dangerous_command_guard = false` or `KIMI_CODE_DANGEROUS_COMMAND_GUARD=false`.
+
+### Polish
+
+- Preserve comments, key order, and formatting in config.toml when configuration values are updated.
+- Remove the workspace restriction on the Bash tool's cwd parameter.
+- Default the workspace trust prompt selection to "Trust this folder" instead of "Don't trust".
+- The `kimi acp` subcommand no longer honors `KIMI_CODE_LEGACY_FLAG`; it always runs on the default agent engine.
+- web: Add a code wrap toggle to the diff panel and streamline its header.
+
+### Bug Fixes
+
+- Honor explicit `[experimental]` config entries over the `KIMI_CODE_EXPERIMENTAL_FLAG` master switch, so a flag set to `false` in config.toml stays off; per-feature `KIMI_CODE_EXPERIMENTAL_<NAME>` variables still override both.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
 ## 0.39.1 (2026-08-28)
 
 ### Bug Fixes

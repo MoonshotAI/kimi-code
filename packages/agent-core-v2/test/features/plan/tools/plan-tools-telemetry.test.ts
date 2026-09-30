@@ -1,4 +1,4 @@
-import type { ToolCall } from '#/kosong/contract/message';
+import type { ToolCall } from '#human/llm/message';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IAgentPlanService, PlanData } from '#/features/plan/plan';
@@ -44,13 +44,12 @@ function recordingTelemetry(): {
   return {
     telemetry: {
       _serviceBrand: undefined,
-      track: vi.fn(),
       track2,
       withContext: () => recordingTelemetry().telemetry,
       setContext: () => {},
+      getContext: () => ({}),
       addAppender: () => ({ dispose: () => {} }),
       removeAppender: () => {},
-      setAppender: () => {},
       setEnabled: () => {},
       flush: () => Promise.resolve(),
       shutdown: () => Promise.resolve(),
@@ -254,7 +253,14 @@ describe('AgentPlanService EnterPlanMode telemetry', () => {
         ).toBe(false);
         expect(records).toContainEqual({
           event: 'plan_enter_resolved',
-          properties: { agent_id: 'main', outcome: 'auto_approved' },
+          properties: {
+            agent_id: 'main',
+            mode: 'plan',
+            model: 'mock-model',
+            outcome: 'auto_approved',
+            protocol: 'openai',
+            provider_type: 'kimi',
+          },
         });
       });
     });

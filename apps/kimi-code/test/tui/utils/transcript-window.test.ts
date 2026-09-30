@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { TranscriptEntry } from '#/tui/types';
-import { groupTurns, readEnvInt, turnsToTrim } from '#/tui/utils/transcript-window';
+import { expandCutoffIndex, groupTurns, readEnvInt, turnsToTrim } from '#/tui/utils/transcript-window';
 
 let seq = 0;
 function makeEntry(
@@ -112,5 +112,20 @@ describe('readEnvInt', () => {
   it('falls back on empty/whitespace', () => {
     process.env[KEY] = '  ';
     expect(readEnvInt(KEY, 7)).toBe(7);
+  });
+});
+
+describe('expandCutoffIndex', () => {
+  it('starts the window at the (turns - expandTurns)-th boundary', () => {
+    expect(expandCutoffIndex(20, [0, 5, 10, 15], 3)).toBe(5);
+  });
+
+  it('expands everything while there are no more turns than the window', () => {
+    expect(expandCutoffIndex(20, [0, 5, 10], 3)).toBe(0);
+    expect(expandCutoffIndex(20, [], 3)).toBe(0);
+  });
+
+  it('disables expanding when the window is zero', () => {
+    expect(expandCutoffIndex(20, [0, 5, 10, 15], 0)).toBe(20);
   });
 });

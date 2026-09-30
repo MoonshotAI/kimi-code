@@ -163,8 +163,8 @@ export function limitReplayRecordsByTurn(
   maxTurns: number,
 ): readonly AgentReplayRecord[] {
   // Defensive slice — the core already trims the replay when the caller passes
-  // `replayTurnLimit` on resume; the boundary predicate lives in agent-core
-  // (`limitAgentReplayByTurns`) and is re-exported through the SDK.
+  // `replayTurnLimit` on resume; the boundary predicate lives in the SDK
+  // (`limitAgentReplayByTurns`).
   return limitAgentReplayByTurns(records, maxTurns);
 }
 
@@ -193,7 +193,9 @@ export function collectReplayMessageContent(
   for (const part of content) {
     switch (part.type) {
       case 'think':
-        target.thinking.push(part.think);
+        if (part.hidden !== true) {
+          target.thinking.push(part.think);
+        }
         break;
       case 'text':
         target.text.push(part.text);
@@ -235,6 +237,59 @@ export function contentPartsToText(content: readonly ContentPart[]): string {
   // path nor the internal `kimi-file://` url may surface as user text. A
   // standalone `<media path>` tag is user text and stays verbatim.
   return content.map(contentPartToText).join('');
+}
+
+export function isUserPromptSubmitHookPart(
+  part: ContentPart,
+): part is Extract<ContentPart, { type: 'text' }> {
+  return (
+    part.type === 'text' &&
+    (part as { meta?: { source?: unknown } }).meta?.source === 'user prompt submit hook'
+  );
+}
+
+const SKILL_ACTIVATION_PART_SOURCE = 'skill activation';
+
+export function isSkillActivationPart(part: ContentPart): boolean {
+  return (
+    part.type === 'text' &&
+    (part as { meta?: { source?: unknown } }).meta?.source === SKILL_ACTIVATION_PART_SOURCE
+  );
+}
+
+function annotateBundledSkillParts(
+  content: readonly ContentPart[],
+  bundledActivations: readonly BundledSkillActivationRef[],
+): ContentPart[] {
+  if (bundledActivations.length === 0 || content.some(isSkillActivationPart)) {
+    return [...content];
+  }
+  let index = 0;
+  return content.map((part) => {
+    const activation = bundledActivations[index];
+    if (
+      activation !== undefined &&
+      part.type === 'text' &&
+      (part as { meta?: { source?: unknown } }).meta?.source === undefined
+    ) {
+      index += 1;
+      return {
+        ...part,
+        meta: { source: SKILL_ACTIVATION_PART_SOURCE, activationId: activation.activationId },
+      };
+    }
+    return part;
+  });
+}
+
+interface BundledSkillActivationRef {
+  readonly activationId: string;
+}
+
+export function withoutUserPromptSubmitHookParts(
+  content: readonly ContentPart[],
+): ContentPart[] {
+  return content.filter((part) => !isUserPromptSubmitHookPart(part));
 }
 
 /**
@@ -304,13 +359,15 @@ export function bundledSkillsFromOrigin(
 }
 
 /**
- * Content parts the caller actually typed: the engine prepends one rendered
- * text part per bundled skill, so the caller's own parts start right after
- * them.
+ * Content parts the caller actually typed: skill blocks are meta-marked at
+ * construction; legacy wires carry no marks, so the leading unmarked parts
+ * (one per bundled activation) are annotated first, then filtered out.
  */
 export function stripBundledSkillParts(message: ContextMessage): readonly ContentPart[] {
-  const bundledCount = bundledSkillsFromOrigin(message.origin).length;
-  return bundledCount === 0 ? message.content : message.content.slice(bundledCount);
+  return annotateBundledSkillParts(
+    message.content,
+    bundledSkillsFromOrigin(message.origin),
+  ).filter((part) => !isSkillActivationPart(part));
 }
 
 export function pluginCommandFromOrigin(

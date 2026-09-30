@@ -23,7 +23,7 @@ For any list dialog, selector, input box, or status/toggle list, the interaction
   - `editor-keyboard.ts` — editor keyboard handling, exit shortcuts, external editor, clipboard image.
   - `auth-flow.ts` — login/auth orchestration (`refreshConfigAfterLogin`, etc.).
 - `src/tui/commands/` — slash-command declaration, parsing, ordering, and dynamic skill-command generation. Parsing and types only; execution is dispatched from `KimiTUI`'s slash-command handler section, and complex execution sinks into `utils` or focused components.
-- `src/tui/components/` — pi-tui components by UI type: `chrome/` (footer, todo, welcome, loader, device code), `dialogs/` (selectors, approval/question panels, settings popups that replace the editor), `editor/` (input box + mention provider), `media/` (image, diff, code highlight), `messages/` (transcript blocks + tool-renderers), `panes/` (activity, queue).
+- `src/tui/components/` — pi-tui components by UI type: `chrome/` (footer, todo, welcome, loader, device code), `dialogs/` (selectors, approval/question panels, settings popups that replace the editor), `editor/` (input box + mention provider), `media/` (image, diff, code highlight), `markdown/` (the app's Markdown wrapper and mermaid art), `messages/` (transcript blocks + tool-renderers), `panes/` (activity, queue).
 - `src/tui/reverse-rpc/` — adapts SDK approval/question callbacks into UI panel data and the user's choice back into an SDK response.
 - `src/tui/theme/` — themes, color tokens, style helpers, pi-tui markdown theme, terminal-background detection. The single source of truth for color.
 - `src/tui/utils/` — TUI-only utilities (need `TUIState` or a component). App-wide, UI-independent helpers go in `src/utils/`.
@@ -68,7 +68,7 @@ Themes are managed centrally under `src/tui/theme/`:
 - `bundle.ts` — packs `colors`, `styles`, `markdownTheme` into a `KimiTUIThemeBundle`.
 - `index.ts` / `detect.ts` — theme type and auto/dark/light resolution.
 
-> **Keep the color-token set in sync.** `ColorPalette` in `colors.ts` is the source of truth for color tokens. When you add, rename, or remove one, update its mirrors in the same change: the custom-theme JSON schema (`apps/kimi-code/src/tui/theme/theme-schema.json`), the token tables in the custom-theme docs (`docs/en/customization/themes.md` and `docs/zh/customization/themes.md`), and the token table in the `custom-theme` built-in skill (`packages/agent-core/src/skill/builtin/custom-theme.md`).
+> **Keep the color-token set in sync.** `ColorPalette` in `colors.ts` is the source of truth for color tokens. When you add, rename, or remove one, update its mirrors in the same change: the custom-theme JSON schema (`apps/kimi-code/src/tui/theme/theme-schema.json`), the token tables in the custom-theme docs (`docs/en/customization/themes.md` and `docs/zh/customization/themes.md`), and the token table in the `custom-theme` built-in skill (`packages/agent-core-v2/src/features/skill/catalog/builtin/custom-theme.md`).
 
 Apply / switch flow:
 

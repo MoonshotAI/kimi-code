@@ -776,6 +776,81 @@ describe('combinations', () => {
   });
 });
 
+describe('heredocs in substitutions', () => {
+  it('parses a quoted heredoc with a single quote in its body inside "$( )"', () => {
+    expectTree(
+      'echo "$(cat <<\'EOF\'\nit\'s\nEOF\n)"',
+      `(program (command (command_name (word "echo")) (string "\\"" (command_substitution "$(" (redirected_statement (command (command_name (word "cat"))) (heredoc_redirect "<<" (heredoc_start "'EOF'") (heredoc_body "it's\\n") (heredoc_end "EOF"))) ")") "\\"")))`,
+    );
+  });
+
+  it('parses the gh pr create shape that triggered the unanalyzable verdict', () => {
+    expectTree(
+      'gh --body "$(cat <<\'EOF\'\nit\'s\nEOF\n)"',
+      `(program (command (command_name (word "gh")) (word "--body") (string "\\"" (command_substitution "$(" (redirected_statement (command (command_name (word "cat"))) (heredoc_redirect "<<" (heredoc_start "'EOF'") (heredoc_body "it's\\n") (heredoc_end "EOF"))) ")") "\\"")))`,
+    );
+  });
+
+  it('parses a quoted heredoc with a single quote in its body inside bare $( )', () => {
+    expectTree(
+      'echo $(cat <<\'EOF\'\nit\'s\nEOF\n)',
+      `(program (command (command_name (word "echo")) (command_substitution "$(" (redirected_statement (command (command_name (word "cat"))) (heredoc_redirect "<<" (heredoc_start "'EOF'") (heredoc_body "it's\\n") (heredoc_end "EOF"))) ")")))`,
+    );
+  });
+
+  it('parses a heredoc body containing a paren inside $( )', () => {
+    expectTree(
+      'echo $(cat <<EOF\n)a\nEOF\n)',
+      `(program (command (command_name (word "echo")) (command_substitution "$(" (redirected_statement (command (command_name (word "cat"))) (heredoc_redirect "<<" (heredoc_start "EOF") (heredoc_body (heredoc_content ")a\\n")) (heredoc_end "EOF"))) ")")))`,
+    );
+  });
+
+  it('parses a heredoc with a double-quoted body line inside "$( )"', () => {
+    expectTree(
+      'echo "$(cat <<\'EOF\'\nsay "hi"\nEOF\n)"',
+      `(program (command (command_name (word "echo")) (string "\\"" (command_substitution "$(" (redirected_statement (command (command_name (word "cat"))) (heredoc_redirect "<<" (heredoc_start "'EOF'") (heredoc_body "say \\"hi\\"\\n") (heredoc_end "EOF"))) ")") "\\"")))`,
+    );
+  });
+
+  it('parses a heredoc inside a process substitution', () => {
+    expectTree(
+      'cat <(cat <<\'EOF\'\nit\'s\nEOF\n)',
+      `(program (command (command_name (word "cat")) (process_substitution "<(" (redirected_statement (command (command_name (word "cat"))) (heredoc_redirect "<<" (heredoc_start "'EOF'") (heredoc_body "it's\\n") (heredoc_end "EOF"))) ")")))`,
+    );
+  });
+
+  it('handles tricky << contexts inside substitutions (non-redirection contexts and substitution delimiters)', () => {
+    expectTree(
+      'echo $(echo $((x << 2)))',
+      `(program (command (command_name (word "echo")) (command_substitution "$(" (command (command_name (word "echo")) (arithmetic_expansion "$((" (binary_expression (variable_name "x") "<<" (number "2")) "))")) ")")))`,
+    );
+    expectTree(
+      'echo $(echo $[x << 2]\n)',
+      `(program (command (command_name (word "echo")) (command_substitution "$(" (command (command_name (word "echo")) (arithmetic_expansion "$[" (binary_expression (variable_name "x") "<<" (number "2")) "]")) ")")))`,
+    );
+    expectTree(
+      'echo $(printf x # <<EOF\n)',
+      `(program (command (command_name (word "echo")) (command_substitution "$(" (command (command_name (word "printf")) (word "x")) (comment "# <<EOF") ")")))`,
+    );
+    expectTree(
+      'echo $(a[x<<2]=3\n)',
+      `(program (command (command_name (word "echo")) (command_substitution "$(" (variable_assignment (subscript (variable_name "a") "[" (word "x<<2") "]") "=" (number "3")) ")")))`,
+    );
+    expectTree(
+      'echo $( [[ x == @(<<EOF) ]]\n)',
+      `(program (command (command_name (word "echo")) (command_substitution "$(" (test_command "[[" (binary_expression (word "x") "==" (extglob_pattern "@(<<EOF)")) "]]") ")")))`,
+    );
+    expectTree(
+      'echo $(cat <<$(foo)\nbody\n$(foo)\n)',
+      `(program (command (command_name (word "echo")) (command_substitution "$(" (redirected_statement (command (command_name (word "cat"))) (heredoc_redirect "<<" (heredoc_start "$(foo)") (heredoc_body (heredoc_content "body\\n")) (heredoc_end "$(foo)"))) ")")))`,
+    );
+    expectTree(
+      'echo $(printf foo\\\n#bar)',
+      `(program (command (command_name (word "echo")) (command_substitution "$(" (command (command_name (word "printf")) (word "foo")) (comment "#bar") ")")))`,
+    );
+  });
+});
+
 describe('recovery and adversarial input', () => {
   it('recovers unterminated compound commands without throwing', () => {
     for (const source of [

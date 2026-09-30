@@ -1,4 +1,3 @@
-import type { AgentActivityUpdated } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import type { ContextSpliced } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
 import type { HookResult } from '@moonshot-ai/agent-core-v2/features/externalHooks/agent/agentExternalHooksService';
 import type {
@@ -8,6 +7,8 @@ import type {
   CompactionStarted,
 } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
 import { daemonFileRefFromPart, type ContentPart, type ContextUndone, type CronFired, type GoalUpdated } from '@moonshot-ai/agent-core-v2';
+import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
+import { annotateBundledSkillParts, isSkillActivationPart } from '@moonshot-ai/agent-core-v2/human/agent/origin';
 import type {
   AssistantDelta,
   ThinkingDelta,
@@ -15,33 +16,37 @@ import type {
   TurnStarted,
   TurnStepCompleted,
   TurnStepInterrupted,
+  TurnStepRetrying,
   TurnStepStarted,
 } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { TurnEnded, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import type { AgentActivitySnapshot } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import type { AgentErrorEvent } from '@moonshot-ai/agent-core-v2/agent/mcp/mcpEvents';
 import type { PluginCommandActivated } from '@moonshot-ai/agent-core-v2/agent/pluginCommand/pluginCommand';
 import type { WarningIssued } from '@moonshot-ai/agent-core-v2/agent/profile/profileOps';
 import type {
   PromptAborted,
   PromptCompleted,
+  PromptQueued,
   PromptStarted,
   PromptSteered,
   PromptSubmitted,
-} from '@moonshot-ai/agent-core-v2/agent/prompt/promptService';
-import type { PromptAccepted } from '@moonshot-ai/agent-core-v2/agent/prompt/promptOps';
-import type { PromptQueued } from '@moonshot-ai/agent-core-v2/agent/prompt/promptService';
+} from '@moonshot-ai/agent-core-v2/agent/prompt/promptEvents';
 import type {
   ShellCompleted,
   ShellOutput,
   ShellStarted,
 } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommandService';
 import type { SkillActivated } from '@moonshot-ai/agent-core-v2/features/skill/skillOps';
-import type { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/stepRetry/stepRetryService';
 import type {
   TaskNotified,
   TaskStarted,
   TaskTerminatedNotice,
 } from '@moonshot-ai/agent-core-v2/agent/task/taskOps';
+import type {
+  PermissionApprovalRequested,
+  PermissionApprovalResolved,
+} from '@moonshot-ai/agent-core-v2/agent/toolApproval/toolApprovalService';
 import type {
   ToolCallStarted,
   ToolProgress,
@@ -51,6 +56,7 @@ import type { AgentStatusUpdated } from '@moonshot-ai/agent-core-v2/agent/usage/
 import type { PlanRevision } from '@moonshot-ai/agent-core-v2/features/plan/planOps';
 import type { SubagentSuspended } from '@moonshot-ai/agent-core-v2/features/swarm/session/sessionSwarmService';
 import type {
+  SubagentCancelled,
   SubagentCompleted,
   SubagentFailed,
   SubagentSpawned,
@@ -58,6 +64,7 @@ import type {
 } from '@moonshot-ai/agent-core-v2/session/subagent/mirrorAgentRun';
 import {
   projectTranscriptUserOrigin,
+  projectTranscriptUserTurnOrigin,
   type AgentRef,
   type AgentUsageMeta,
   type StepHeader,
@@ -68,12 +75,13 @@ import {
   type TranscriptAttachment,
   type TranscriptFrame,
   type TranscriptInteraction,
-  type TranscriptItem,
   type TranscriptMarker,
   type TranscriptOperation,
   type TranscriptPrompt,
   type TranscriptTask,
   type TranscriptTodo,
+  turnId as exportTurnKey,
+  turnOrdinal,
   type TranscriptUsage,
   type TranscriptUserOrigin,
   type TurnHeader,
@@ -81,7 +89,8 @@ import {
   type TurnState,
 } from '@moonshot-ai/transcript';
 
-import { toLegacyPhase } from '../legacyStatus/legacyStatus';
+import { toLegacyPhase, type LegacyActivityApproval } from '../legacyStatus/legacyStatus';
+import { LegacyActivityTracker, phaseFromDomainEvent } from '../legacyStatus/legacyActivity';
 import { toWireQuestion } from '../../protocol/question-wire';
 import { projectPromptContentParts } from '../messages/messageProjection';
 
@@ -89,14 +98,11 @@ export interface ProjectorInteraction {
   readonly id: string;
   readonly kind: 'approval' | 'question';
   readonly payload: unknown;
-  readonly origin: { readonly agentId?: string; readonly turnId?: number };
   readonly createdAt: number;
 }
 
 type PlanRevisionEvent = { readonly type: 'plan.revision' } & PlanRevision;
 
-type AgentActivityUpdatedEvent = { readonly type: 'agent.activity.updated' } & AgentActivityUpdated;
-type PromptAcceptedEvent = { readonly type: 'prompt.accepted' } & PromptAccepted;
 type PromptQueuedEvent = { readonly type: 'prompt.queued' } & PromptQueued;
 type PromptSubmittedEvent = { readonly type: 'prompt.submitted' } & PromptSubmitted;
 type PromptStartedEvent = { readonly type: 'prompt.started' } & PromptStarted;
@@ -104,6 +110,7 @@ type PromptCompletedEvent = { readonly type: 'prompt.completed' } & PromptComple
 type PromptAbortedEvent = { readonly type: 'prompt.aborted' } & PromptAborted;
 type PromptSteeredEvent = { readonly type: 'prompt.steered' } & PromptSteered;
 type TurnSteerEvent = { readonly type: 'turn.steer' } & TurnSteer;
+type SteerFileAttachment = { readonly name: string; readonly mediaType: string; readonly size: number };
 
 export type ProjectorBusEvent =
   | PlanRevisionEvent
@@ -119,6 +126,8 @@ export type ProjectorBusEvent =
   | ({ readonly type: 'tool.progress' } & ToolProgress)
   | ({ readonly type: 'tool.call.started' } & ToolCallStarted)
   | ({ readonly type: 'tool.result' } & ToolResultEvent)
+  | ({ readonly type: 'permission.approval.requested' } & PermissionApprovalRequested)
+  | ({ readonly type: 'permission.approval.resolved' } & PermissionApprovalResolved)
   | ({ readonly type: 'task.started' } & TaskStarted)
   | ({ readonly type: 'task.terminated' } & TaskTerminatedNotice)
   | ({ readonly type: 'task.notified' } & TaskNotified)
@@ -129,11 +138,10 @@ export type ProjectorBusEvent =
   | ({ readonly type: 'subagent.started' } & SubagentStarted)
   | ({ readonly type: 'subagent.completed' } & SubagentCompleted)
   | ({ readonly type: 'subagent.failed' } & SubagentFailed)
+  | ({ readonly type: 'subagent.cancelled' } & SubagentCancelled)
   | ({ readonly type: 'subagent.suspended' } & SubagentSuspended)
   | ({ readonly type: 'goal.updated' } & GoalUpdated)
   | ({ readonly type: 'agent.status.updated' } & AgentStatusUpdated)
-  | AgentActivityUpdatedEvent
-  | PromptAcceptedEvent
   | PromptQueuedEvent
   | PromptSubmittedEvent
   | PromptStartedEvent
@@ -165,14 +173,42 @@ export type ProjectorStepOrdinalLookup = (turnId: string) => number | undefined;
 
 export type ProjectorTurnLookup = (turnId: string) => TurnHeader | undefined;
 
-export type ProjectorItemsLookup = () => readonly TranscriptItem[] | undefined;
+export type ProjectorMaxOrdinalLookup = () => number;
+
+export function allocateExportTurn(
+  wireId: number,
+  highWater: number,
+  existing: { readonly state: string; readonly ordinal?: number } | undefined,
+  adoptRunning: boolean,
+): { readonly turnId: string; readonly ordinal: number; readonly highWater: number } {
+  const candidate = exportTurnKey(wireId);
+  if (adoptRunning && existing !== undefined) {
+    const ordinal = existing.ordinal ?? wireId;
+    if (existing.state === 'running' || ordinal === highWater) {
+      return { turnId: candidate, ordinal, highWater: Math.max(highWater, ordinal) };
+    }
+  }
+  if (existing === undefined && wireId > highWater) {
+    return { turnId: candidate, ordinal: wireId, highWater: wireId };
+  }
+  const ordinal = Math.max(highWater, wireId) + 1;
+  return { turnId: exportTurnKey(ordinal), ordinal, highWater: ordinal };
+}
+
+export type ProjectorPromptLookup = (promptId: string) => TranscriptPrompt | undefined;
+
+export type ProjectorPlanRevisionKey = (key: string) => string;
 
 export interface ProjectorLookups {
   readonly stepFrames?: ProjectorFrameLookup;
   readonly toolFrame?: ProjectorToolFrameLookup;
   readonly stepOrdinal?: ProjectorStepOrdinalLookup;
   readonly turn?: ProjectorTurnLookup;
-  readonly items?: ProjectorItemsLookup;
+  readonly maxOrdinal?: ProjectorMaxOrdinalLookup;
+  readonly prompt?: ProjectorPromptLookup;
+  readonly resolvePlanRevisionKey?: ProjectorPlanRevisionKey;
+  readonly activitySnapshot?: () => AgentActivitySnapshot;
+  readonly pendingApprovals?: () => readonly LegacyActivityApproval[];
 }
 
 interface OpenTextFrame {
@@ -190,13 +226,16 @@ export interface ToolFrameRecord {
 export class AgentTranscriptProjector {
   private currentTurn: TurnHeader | undefined;
   private currentStep: StepHeader | undefined;
+  private highWater = -1;
+  private highWaterSeeded = false;
+  private readonly wireToExport = new Map<number, string>();
   private pendingTaskNotifications: { text: string; taskId: string | undefined }[] = [];
   private pendingSteers: {
     input: readonly ContentPart[];
+    files: readonly SteerFileAttachment[];
     promptIds: readonly string[] | undefined;
     origin: TranscriptUserOrigin;
   }[] = [];
-  private unpairedSteerPromptIds: string[][] = [];
   private readonly stepOrdinals = new Map<string, number>();
   private frameOrdinal = 0;
   private attachmentOrdinal = 0;
@@ -206,6 +245,7 @@ export class AgentTranscriptProjector {
   private readonly tasks = new Map<string, TranscriptTask>();
   private readonly shellTasks = new Map<string, string>();
   private readonly subagentTaskIds = new Map<string, string>();
+  private activityTracker: LegacyActivityTracker | undefined;
 
   seedSubagentTask(info: {
     readonly taskId: string;
@@ -232,12 +272,20 @@ export class AgentTranscriptProjector {
   }
 
   seedActiveTurn(info: { turnId: number; promptId?: string }): void {
-    const turnId = `t${info.turnId}`;
-    const prev = this.lookups?.turn?.(turnId);
+    this.ensureHighWater();
+    const alloc = allocateExportTurn(
+      info.turnId,
+      this.highWater,
+      this.occupiedExport(exportTurnKey(info.turnId)),
+      true,
+    );
+    this.highWater = alloc.highWater;
+    this.wireToExport.set(info.turnId, alloc.turnId);
+    const prev = this.lookups?.turn?.(alloc.turnId);
     this.currentTurn = {
       kind: 'turn',
-      turnId,
-      ordinal: info.turnId,
+      turnId: alloc.turnId,
+      ordinal: alloc.ordinal,
       state: 'running',
       triggerPromptId: info.promptId ?? prev?.triggerPromptId,
       origin: prev?.origin ?? { kind: 'other' },
@@ -245,6 +293,50 @@ export class AgentTranscriptProjector {
       attachmentIds: prev?.attachmentIds,
       startedAt: prev?.startedAt,
     };
+  }
+
+  syncFromStore(): void {
+    this.highWaterSeeded = false;
+    this.ensureHighWater();
+    for (const [wireId, exportId] of this.wireToExport) {
+      const storeTurn = this.lookups?.turn?.(exportId);
+      if (storeTurn !== undefined && storeTurn.state === 'running') continue;
+      const wireTurn = this.lookups?.turn?.(exportTurnKey(wireId));
+      if (exportId !== exportTurnKey(wireId) || wireTurn === undefined || wireTurn.state === 'running') {
+        continue;
+      }
+      const alloc = allocateExportTurn(wireId, this.highWater, wireTurn, true);
+      this.wireToExport.set(wireId, alloc.turnId);
+      this.highWater = alloc.highWater;
+      if (this.currentTurn?.turnId === exportId) {
+        this.currentTurn = {
+          ...this.currentTurn,
+          turnId: alloc.turnId,
+          ordinal: alloc.ordinal,
+        };
+      }
+    }
+  }
+
+  private ensureHighWater(): void {
+    if (this.highWaterSeeded) return;
+    this.highWaterSeeded = true;
+    const fromStore = this.lookups?.maxOrdinal?.();
+    if (fromStore !== undefined && fromStore > this.highWater) this.highWater = fromStore;
+  }
+
+  private occupiedExport(turnId: string): TurnHeader | undefined {
+    return this.lookups?.turn?.(turnId) ?? (this.currentTurn?.turnId === turnId ? this.currentTurn : undefined);
+  }
+
+  private exportTurnId(wireId: number): string {
+    const mapped = this.wireToExport.get(wireId);
+    if (mapped !== undefined) return mapped;
+    this.ensureHighWater();
+    const alloc = allocateExportTurn(wireId, this.highWater, this.occupiedExport(exportTurnKey(wireId)), true);
+    this.highWater = alloc.highWater;
+    this.wireToExport.set(wireId, alloc.turnId);
+    return alloc.turnId;
   }
   private readonly interactions = new Map<string, TranscriptInteraction>();
   private readonly prompts = new Map<string, TranscriptPrompt>();
@@ -259,6 +351,24 @@ export class AgentTranscriptProjector {
   ) {}
 
   map(event: ProjectorBusEvent): TranscriptOperation[] {
+    const ops = this.mapEvent(event);
+    const phase = this.phaseFor(event);
+    if (phase === undefined) return ops;
+    return [...ops, { op: 'meta.merge', meta: { agent: { phase } } }];
+  }
+
+  private phaseFor(event: ProjectorBusEvent): ReturnType<typeof toLegacyPhase> {
+    if (this.lookups?.activitySnapshot === undefined || this.lookups.pendingApprovals === undefined) {
+      return undefined;
+    }
+    this.activityTracker ??= new LegacyActivityTracker(
+      this.lookups.activitySnapshot,
+      this.lookups.pendingApprovals,
+    );
+    return phaseFromDomainEvent(this.activityTracker, event);
+  }
+
+  private mapEvent(event: ProjectorBusEvent): TranscriptOperation[] {
     switch (event.type) {
       case 'plan.revision':
         return this.onPlanRevision(event);
@@ -286,6 +396,9 @@ export class AgentTranscriptProjector {
         return this.onToolCallStarted(event);
       case 'tool.result':
         return this.onToolResult(event);
+      case 'permission.approval.requested':
+      case 'permission.approval.resolved':
+        return [];
       case 'task.started':
       case 'task.terminated':
         return this.onTaskLifecycle(event);
@@ -302,16 +415,13 @@ export class AgentTranscriptProjector {
       case 'subagent.started':
       case 'subagent.completed':
       case 'subagent.failed':
+      case 'subagent.cancelled':
       case 'subagent.suspended':
         return this.onSubagentRun(event);
       case 'goal.updated':
         return this.onGoalUpdated(event);
       case 'agent.status.updated':
         return this.onAgentStatusUpdated(event);
-      case 'agent.activity.updated':
-        return this.onAgentActivityUpdated(event);
-      case 'prompt.accepted':
-        return this.onPromptAccepted(event);
       case 'prompt.queued':
         return this.onPromptQueued(event);
       case 'prompt.submitted':
@@ -347,7 +457,7 @@ export class AgentTranscriptProjector {
       case 'context.spliced':
         return [this.markerOp('undo', restOf(event))];
       case 'context.undone':
-        return this.onContextUndone(event);
+        return [];
       case 'error':
         return [this.noticeOp('error', event.message, restOf(event))];
       case 'warning':
@@ -363,12 +473,33 @@ export class AgentTranscriptProjector {
     origin: unknown;
     prompt?: string;
     promptAttachments?: readonly (
-      | { kind: 'image' | 'video' | 'audio'; fileId: string }
+      | { kind: 'image' | 'video' | 'audio'; fileId: string; name?: string }
       | { kind: 'file'; name: string; mediaType: string; size: number; path: string }
     )[];
   }): TranscriptOperation[] {
-    const n = event.turnId;
-    const turnId = `t${n}`;
+    this.ensureHighWater();
+    const mapped = this.wireToExport.get(event.turnId);
+    let turnId: string;
+    let ordinal: number;
+    if (
+      mapped !== undefined &&
+      this.currentTurn?.turnId === mapped &&
+      this.currentTurn.state === 'running'
+    ) {
+      turnId = mapped;
+      ordinal = this.currentTurn.ordinal;
+    } else {
+      const alloc = allocateExportTurn(
+        event.turnId,
+        this.highWater,
+        this.occupiedExport(exportTurnKey(event.turnId)),
+        false,
+      );
+      this.highWater = alloc.highWater;
+      this.wireToExport.set(event.turnId, alloc.turnId);
+      turnId = alloc.turnId;
+      ordinal = alloc.ordinal;
+    }
     const ops: TranscriptOperation[] = [];
     const attachmentIds: string[] = [];
     for (const input of event.promptAttachments ?? []) {
@@ -383,6 +514,7 @@ export class AgentTranscriptProjector {
           : {
               attachmentId: `${turnId}.att${attachmentIds.length + 1}`,
               mediaType: `${input.kind}/*`,
+              name: input.name,
               source: { kind: 'session_media', fileId: input.fileId },
             };
       ops.push({ op: 'attachment.upsert', attachment });
@@ -392,7 +524,7 @@ export class AgentTranscriptProjector {
       kind: 'turn',
       turnId,
       triggerPromptId: event.promptId,
-      ordinal: n,
+      ordinal,
       state: 'running',
       origin: mapTurnOrigin(event.origin),
       prompt: event.prompt,
@@ -419,7 +551,7 @@ export class AgentTranscriptProjector {
   }): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
     this.flushOpenFrames(ops);
-    const turnId = `t${event.turnId}`;
+    const turnId = this.exportTurnId(event.turnId);
     if (this.currentStep !== undefined && this.currentStep.state === 'running') {
       const step: StepHeader = { ...this.currentStep, state: 'interrupted', endedAt: nowIso() };
       this.currentStep = step;
@@ -446,6 +578,7 @@ export class AgentTranscriptProjector {
           turnId,
           this.currentStep.stepId,
           pending.input,
+          pending.files,
           pending.promptIds,
           pending.origin,
         );
@@ -458,7 +591,10 @@ export class AgentTranscriptProjector {
     this.currentTurn = {
       kind: 'turn',
       turnId,
-      ordinal: event.turnId,
+      ordinal:
+        this.currentTurn?.turnId === turnId
+          ? this.currentTurn.ordinal
+          : (this.occupiedExport(turnId)?.ordinal ?? turnOrdinal(turnId)),
       state,
       triggerPromptId: prev?.triggerPromptId,
       origin: prev?.origin ?? { kind: 'other' },
@@ -504,7 +640,7 @@ export class AgentTranscriptProjector {
   }
 
   private onStepStarted(event: { turnId: number; step: number }): TranscriptOperation[] {
-    const turnId = `t${event.turnId}`;
+    const turnId = this.exportTurnId(event.turnId);
     const stepId = `${turnId}.${event.step}`;
     this.stepOrdinals.set(turnId, event.step);
     this.currentStep = {
@@ -536,7 +672,7 @@ export class AgentTranscriptProjector {
     }
     this.pendingTaskNotifications = [];
     for (const pending of this.pendingSteers) {
-      this.steerUserFrame(ops, turnId, stepId, pending.input, pending.promptIds, pending.origin);
+      this.steerUserFrame(ops, turnId, stepId, pending.input, pending.files, pending.promptIds, pending.origin);
     }
     this.pendingSteers = [];
     return ops;
@@ -555,10 +691,11 @@ export class AgentTranscriptProjector {
     llmServerFirstTokenMs?: number;
     llmServerDecodeMs?: number;
     llmClientConsumeMs?: number;
+    llmClientBlockedMs?: number;
   }): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
     this.flushOpenFrames(ops);
-    const turnId = `t${event.turnId}`;
+    const turnId = this.exportTurnId(event.turnId);
     const stepId = `${turnId}.${event.step}`;
     const prev = this.currentStep?.stepId === stepId ? this.currentStep : undefined;
     if (event.usage !== undefined) {
@@ -576,13 +713,14 @@ export class AgentTranscriptProjector {
       endedAt: nowIso(),
       usage: event.usage,
       finishReason: event.finishReason ?? event.rawFinishReason ?? event.providerFinishReason,
-      timing: {
+      llmTiming: {
         llmFirstTokenLatencyMs: event.llmFirstTokenLatencyMs,
         llmStreamDurationMs: event.llmStreamDurationMs,
         llmRequestBuildMs: event.llmRequestBuildMs,
         llmServerFirstTokenMs: event.llmServerFirstTokenMs,
         llmServerDecodeMs: event.llmServerDecodeMs,
         llmClientConsumeMs: event.llmClientConsumeMs,
+        llmClientBlockedMs: event.llmClientBlockedMs,
       },
     };
     ops.push({ op: 'step.upsert', turnId, step: this.currentStep });
@@ -598,7 +736,7 @@ export class AgentTranscriptProjector {
   }): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
     this.flushOpenFrames(ops);
-    const turnId = `t${event.turnId}`;
+    const turnId = this.exportTurnId(event.turnId);
     const stepId = `${turnId}.${event.step}`;
     const prev = this.currentStep?.stepId === stepId ? this.currentStep : undefined;
     this.currentStep = {
@@ -628,7 +766,7 @@ export class AgentTranscriptProjector {
     statusCode?: number;
   }): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
-    const turnId = `t${event.turnId}`;
+    const turnId = this.exportTurnId(event.turnId);
     const stepId = `${turnId}.${event.step}`;
     const prev = this.currentStep?.stepId === stepId ? this.currentStep : undefined;
     this.currentStep = {
@@ -658,7 +796,7 @@ export class AgentTranscriptProjector {
     delta: string,
   ): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
-    const turnId = `t${turnNumber}`;
+    const turnId = this.exportTurnId(turnNumber);
     const step = this.ensureStep(turnId, ops);
     let open = kind === 'assistant' ? this.openText : this.openThinking;
     open ??= this.adoptStreamFrame(turnId, step.stepId, kind);
@@ -767,7 +905,7 @@ export class AgentTranscriptProjector {
       ops.push({ op: 'frame.upsert', turnId: prev.turnId, stepId: prev.stepId, frame });
       return ops;
     }
-    const turnId = `t${event.turnId}`;
+    const turnId = this.exportTurnId(event.turnId);
     const step = this.ensureStep(turnId, ops);
     const frameId = `${step.stepId}.${event.toolCallId}`;
     const frame: ToolCallFrame = {
@@ -811,7 +949,7 @@ export class AgentTranscriptProjector {
     display?: unknown;
   }): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
-    const turnId = `t${event.turnId}`;
+    const turnId = this.exportTurnId(event.turnId);
     const step = this.ensureStep(turnId, ops);
     const frameId = `${step.stepId}.${event.toolCallId}`;
     const input = parseToolArgs(event.args);
@@ -1055,19 +1193,22 @@ export class AgentTranscriptProjector {
     } else {
       this.subagentTaskIds.delete(event.subagentId);
     }
-    const task = this.upsertTask(taskKey, (prev) => ({
-      taskId: taskKey,
-      kind: 'subagent',
-      state: 'running',
-      detached: event.runInBackground,
-      description: event.description ?? prev?.description,
-      agentId: event.subagentId,
-      outputTail: prev?.outputTail ?? '',
-      startedAt: prev?.startedAt ?? nowIso(),
-      endedAt: prev?.endedAt,
-      model: event.model ?? prev?.model,
-      thinkingEffort: event.thinkingEffort ?? prev?.thinkingEffort,
-    }));
+    const task = this.upsertTask(taskKey, (prev) => {
+      const newGeneration = prev !== undefined && prev.state !== 'running';
+      return {
+        taskId: taskKey,
+        kind: 'subagent',
+        state: 'running',
+        detached: event.runInBackground,
+        description: event.description ?? prev?.description,
+        agentId: event.subagentId,
+        outputTail: prev?.outputTail ?? '',
+        startedAt: newGeneration ? nowIso() : (prev?.startedAt ?? nowIso()),
+        endedAt: newGeneration ? undefined : prev?.endedAt,
+        model: event.model ?? prev?.model,
+        thinkingEffort: event.thinkingEffort ?? prev?.thinkingEffort,
+      };
+    });
     const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
     const hit =
       this.toolFrames.get(event.parentToolCallId) ?? this.adoptToolFrame(event.parentToolCallId);
@@ -1087,62 +1228,50 @@ export class AgentTranscriptProjector {
   }
 
   private onSubagentRun(event: {
-    type: 'subagent.started' | 'subagent.completed' | 'subagent.failed' | 'subagent.suspended';
+    type: 'subagent.started' | 'subagent.completed' | 'subagent.failed' | 'subagent.cancelled' | 'subagent.suspended';
     subagentId: string;
     resultSummary?: string;
     usage?: StepUsage;
     error?: string;
     reason?: string;
   }): TranscriptOperation[] {
+    const terminal =
+      event.type === 'subagent.completed' ||
+      event.type === 'subagent.failed' ||
+      event.type === 'subagent.cancelled';
     const state: TranscriptTask['state'] =
       event.type === 'subagent.completed'
         ? 'completed'
         : event.type === 'subagent.failed'
           ? 'failed'
-          : 'running';
-    const taskKey = this.subagentTaskIds.get(event.subagentId) ?? event.subagentId;
-    const task = this.upsertTask(taskKey, (prev) => ({
-      taskId: taskKey,
-      kind: 'subagent',
-      state,
-      detached: prev?.detached ?? true,
-      description: prev?.description,
-      agentId: event.subagentId,
-      outputTail: prev?.outputTail ?? '',
-      startedAt: prev?.startedAt ?? nowIso(),
-      endedAt:
-        event.type === 'subagent.completed' || event.type === 'subagent.failed'
-          ? nowIso()
-          : prev?.endedAt,
-      resultSummary: event.resultSummary ?? prev?.resultSummary,
-      usage: event.usage ?? prev?.usage,
-      error: event.error ?? prev?.error,
-      stateReason: event.reason ?? prev?.stateReason,
-      model: prev?.model,
-      thinkingEffort: prev?.thinkingEffort,
-    }));
-    const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
-    if (taskKey !== event.subagentId && this.tasks.has(event.subagentId)) {
-      const agentTask = this.upsertTask(event.subagentId, (prev) => ({
-        taskId: event.subagentId,
+          : event.type === 'subagent.cancelled'
+            ? 'killed'
+            : 'running';
+    const build = (taskId: string) => (prev: TranscriptTask | undefined): TranscriptTask => {
+      const newGeneration = !terminal && prev !== undefined && prev.state !== 'running';
+      return {
+        taskId,
         kind: 'subagent',
         state,
         detached: prev?.detached ?? true,
         description: prev?.description,
         agentId: event.subagentId,
         outputTail: prev?.outputTail ?? '',
-        startedAt: prev?.startedAt ?? nowIso(),
-        endedAt:
-          event.type === 'subagent.completed' || event.type === 'subagent.failed'
-            ? nowIso()
-            : prev?.endedAt,
-        resultSummary: event.resultSummary ?? prev?.resultSummary,
-        usage: event.usage ?? prev?.usage,
-        error: event.error ?? prev?.error,
-        stateReason: event.reason ?? prev?.stateReason,
+        startedAt: newGeneration ? nowIso() : (prev?.startedAt ?? nowIso()),
+        endedAt: terminal ? nowIso() : newGeneration ? undefined : prev?.endedAt,
+        resultSummary: newGeneration ? undefined : (event.resultSummary ?? prev?.resultSummary),
+        usage: newGeneration ? undefined : (event.usage ?? prev?.usage),
+        error: newGeneration ? undefined : (event.error ?? prev?.error),
+        stateReason: event.reason ?? (newGeneration ? undefined : prev?.stateReason),
         model: prev?.model,
         thinkingEffort: prev?.thinkingEffort,
-      }));
+      };
+    };
+    const taskKey = this.subagentTaskIds.get(event.subagentId) ?? event.subagentId;
+    const task = this.upsertTask(taskKey, build(taskKey));
+    const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
+    if (taskKey !== event.subagentId && this.tasks.has(event.subagentId)) {
+      const agentTask = this.upsertTask(event.subagentId, build(event.subagentId));
       ops.push({ op: 'task.upsert', task: agentTask });
     }
     return ops;
@@ -1256,53 +1385,18 @@ export class AgentTranscriptProjector {
     return ops;
   }
 
-  private onAgentActivityUpdated(event: AgentActivityUpdatedEvent): TranscriptOperation[] {
-    const phase = toLegacyPhase(event);
-    if (phase === undefined) return [];
-    return [{ op: 'meta.merge', meta: { agent: { phase } } }];
-  }
-
   private onPlanRevision(event: PlanRevisionEvent): TranscriptOperation[] {
-    const ops: TranscriptOperation[] = [this.markerOp('plan.revision', restOf(event))];
+    const path = this.lookups?.resolvePlanRevisionKey?.(event.key) ?? event.key;
+    const { key: _key, ...rest } = restOf(event);
+    const payload = { ...rest, path };
+    const ops: TranscriptOperation[] = [this.markerOp('plan.revision', payload)];
     if (this.planModeActive) {
       ops.push({
         op: 'meta.merge',
-        meta: { modes: { plan: { reviewPath: event.path, version: event.version } } },
+        meta: { modes: { plan: { reviewPath: path, version: event.version } } },
       });
     }
     return ops;
-  }
-
-  private onContextUndone(event: { turns: number; fromTurnId?: number }): TranscriptOperation[] {
-    const items = this.lookups?.items?.();
-    if (items === undefined) return [];
-    const ids: string[] = [];
-    let cutIndex = items.length;
-    if (event.fromTurnId !== undefined) {
-      const fromTurnId = event.fromTurnId;
-      for (let i = items.length - 1; i >= 0; i--) {
-        const item = items[i];
-        if (item === undefined || item.kind !== 'turn') continue;
-        if (item.ordinal < fromTurnId) break;
-        ids.push(item.turnId);
-        cutIndex = i;
-      }
-    } else {
-      let remaining = event.turns;
-      for (let i = items.length - 1; i >= 0 && remaining > 0; i--) {
-        const item = items[i];
-        if (item === undefined || item.kind !== 'turn') continue;
-        ids.push(item.turnId);
-        cutIndex = i;
-        remaining -= 1;
-      }
-    }
-    if (ids.length === 0) return [];
-    for (let i = cutIndex + 1; i < items.length; i++) {
-      const item = items[i];
-      if (item?.kind === 'marker' && item.marker === 'undo') ids.push(item.markerId);
-    }
-    return [{ op: 'items.remove', ids }];
   }
 
   private markerOp(marker: string, payload: unknown): TranscriptOperation {
@@ -1325,26 +1419,13 @@ export class AgentTranscriptProjector {
     return this.markerOp('notice', { level, message, event: eventPayload });
   }
 
-  private onPromptAccepted(event: PromptAcceptedEvent): TranscriptOperation[] {
-    const prompt = this.upsertPrompt(event.promptId, () => ({
-      promptId: event.promptId,
-      status: 'running',
-      userMessageId: event.promptId,
-      content:
-        event.content === undefined
-          ? undefined
-          : projectPromptContentParts(event.content as readonly ContentPart[]),
-      createdAt: nowIso(),
-    }));
-    return [{ op: 'prompt.upsert', prompt }];
-  }
-
   private onPromptQueued(event: PromptQueuedEvent): TranscriptOperation[] {
     const prompt = this.upsertPrompt(event.promptId, (prev) => ({
       promptId: event.promptId,
       status: 'queued',
       userMessageId: prev?.userMessageId,
-      content: projectPromptContentParts(event.content),
+      content: prev?.content ?? projectPromptContentParts(event.content),
+      clientMetadata: event.clientMetadata ?? prev?.clientMetadata,
       createdAt: prev?.createdAt ?? nowIso(),
     }));
     return [{ op: 'prompt.upsert', prompt }];
@@ -1356,6 +1437,7 @@ export class AgentTranscriptProjector {
       status: prev !== undefined && isTerminalPromptStatus(prev.status) ? prev.status : event.status,
       userMessageId: event.userMessageId,
       content: projectPromptContentParts(event.content),
+      clientMetadata: event.clientMetadata ?? prev?.clientMetadata,
       createdAt: prev?.createdAt ?? event.createdAt,
       finishedAt: prev?.finishedAt,
       steeredAt: prev?.steeredAt,
@@ -1369,6 +1451,7 @@ export class AgentTranscriptProjector {
       status: 'running',
       userMessageId: prev?.userMessageId,
       content: prev?.content,
+      clientMetadata: prev?.clientMetadata,
       createdAt: prev?.createdAt ?? new Date().toISOString(),
       finishedAt: prev?.finishedAt,
       steeredAt: prev?.steeredAt,
@@ -1382,6 +1465,7 @@ export class AgentTranscriptProjector {
       status: event.reason ?? 'completed',
       userMessageId: prev?.userMessageId,
       content: prev?.content,
+      clientMetadata: prev?.clientMetadata,
       createdAt: prev?.createdAt ?? event.finishedAt,
       finishedAt: event.finishedAt,
       steeredAt: prev?.steeredAt,
@@ -1395,6 +1479,7 @@ export class AgentTranscriptProjector {
       status: 'aborted',
       userMessageId: prev?.userMessageId,
       content: prev?.content,
+      clientMetadata: prev?.clientMetadata,
       createdAt: prev?.createdAt ?? event.abortedAt,
       finishedAt: event.abortedAt,
       steeredAt: prev?.steeredAt,
@@ -1408,19 +1493,20 @@ export class AgentTranscriptProjector {
       promptId: event.activePromptId,
       status: prev?.status ?? 'running',
       userMessageId: prev?.userMessageId,
-      content: projectPromptContentParts(event.content),
+      content: prev?.content ?? projectPromptContentParts(event.content),
+      clientMetadata: prev?.clientMetadata,
       createdAt: prev?.createdAt ?? event.steeredAt,
       finishedAt: prev?.finishedAt,
       steeredAt: event.steeredAt,
     }));
     ops.push({ op: 'prompt.upsert', prompt: active });
-    this.unpairedSteerPromptIds.push([...event.promptIds]);
     for (const promptId of event.promptIds) {
       const steered = this.upsertPrompt(promptId, (prev) => ({
         promptId,
         status: 'completed',
         userMessageId: prev?.userMessageId,
         content: prev?.content,
+        clientMetadata: prev?.clientMetadata,
         createdAt: prev?.createdAt ?? event.steeredAt,
         finishedAt: event.steeredAt,
         steeredAt: event.steeredAt,
@@ -1432,13 +1518,17 @@ export class AgentTranscriptProjector {
 
   private onTurnSteered(event: TurnSteerEvent): TranscriptOperation[] {
     const origin = event.origin;
-    if (origin.kind !== 'user') return [];
+    if (origin.kind !== 'user' && origin.kind !== 'skill_activation') return [];
     const frameOrigin = projectTranscriptUserOrigin(origin);
     if (frameOrigin === undefined) return [];
     const turn = this.currentTurn;
     if (turn !== undefined && turn.state !== 'running') return [];
-    const skip = origin.skillActivations?.length ?? 0;
-    const input = skip > 0 ? event.input.slice(skip) : event.input;
+    const input = annotateBundledSkillParts(
+      event.input,
+      origin.kind === 'user' ? (origin.skillActivations ?? []) : [],
+    ).filter((part) => !isSkillActivationPart(part) && !isUserPromptSubmitHookPart(part));
+    const files = origin.attachments ?? [];
+    const promptIds = origin.kind === 'user' ? event.promptIds : undefined;
     const step = this.currentStep;
     if (step !== undefined && step.state === 'running') {
       const ops: TranscriptOperation[] = [];
@@ -1447,14 +1537,16 @@ export class AgentTranscriptProjector {
         step.turnId,
         step.stepId,
         input,
-        this.unpairedSteerPromptIds.shift(),
+        files,
+        promptIds,
         frameOrigin,
       );
       return ops;
     }
     this.pendingSteers.push({
       input,
-      promptIds: this.unpairedSteerPromptIds.shift(),
+      files,
+      promptIds,
       origin: frameOrigin,
     });
     return [];
@@ -1465,6 +1557,7 @@ export class AgentTranscriptProjector {
     turnId: string,
     stepId: string,
     input: readonly ContentPart[],
+    files: readonly SteerFileAttachment[],
     promptIds: readonly string[] | undefined,
     origin: TranscriptUserOrigin,
   ): void {
@@ -1480,7 +1573,23 @@ export class AgentTranscriptProjector {
       const attachment: TranscriptAttachment = {
         attachmentId: `${stepId}.att${++this.attachmentOrdinal}`,
         mediaType: `${ref.kind}/*`,
+        name:
+          part.type === 'image_url'
+            ? part.imageUrl.name
+            : part.type === 'video_url'
+              ? part.videoUrl.name
+              : undefined,
         source: { kind: 'session_media', fileId: ref.ref.fileId },
+      };
+      ops.push({ op: 'attachment.upsert', attachment });
+      attachmentIds.push(attachment.attachmentId);
+    }
+    for (const file of files) {
+      const attachment: TranscriptAttachment = {
+        attachmentId: `${stepId}.att${++this.attachmentOrdinal}`,
+        mediaType: file.mediaType,
+        name: file.name,
+        size: file.size,
       };
       ops.push({ op: 'attachment.upsert', attachment });
       attachmentIds.push(attachment.attachmentId);
@@ -1505,7 +1614,7 @@ export class AgentTranscriptProjector {
     promptId: string,
     build: (prev: TranscriptPrompt | undefined) => TranscriptPrompt,
   ): TranscriptPrompt {
-    const prompt = build(this.prompts.get(promptId));
+    const prompt = build(this.lookups?.prompt?.(promptId) ?? this.prompts.get(promptId));
     this.prompts.set(promptId, prompt);
     return prompt;
   }
@@ -1576,7 +1685,7 @@ function mapTurnOrigin(origin: unknown): TurnOrigin {
   const kind = typeof candidate?.kind === 'string' ? candidate.kind : undefined;
   switch (kind) {
     case 'user':
-      return { kind: 'user', payload: origin };
+      return projectTranscriptUserTurnOrigin(origin);
     case 'cron_job':
     case 'cron_missed': {
       const jobId = (candidate as { jobId?: unknown }).jobId;

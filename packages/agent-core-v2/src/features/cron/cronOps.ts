@@ -5,7 +5,10 @@ import type { CronJobOrigin } from '#/agent/contextMemory/types';
 import type { CronTask } from '#/features/cron/cronTask';
 import { Event2 } from '#/app/event/event2';
 
-export type CronModelState = Map<string, CronTask>;
+export interface CronModelState {
+  readonly tasks: Map<string, CronTask>;
+  readonly forkNotice: { reminderPending: boolean };
+}
 
 const cronTaskSchema = z.object({
   id: z.string(),
@@ -65,3 +68,7 @@ export class CronFired extends Event2<CronFiredPayload> {
   static override readonly observable = true;
 }
 export interface CronFired extends CronFiredPayload {}
+
+export interface CronFiredEvent extends CronFiredPayload {
+  readonly type: 'cron.fired';
+}

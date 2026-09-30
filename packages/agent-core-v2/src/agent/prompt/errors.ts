@@ -7,7 +7,6 @@ export const PromptErrors = {
     REQUEST_PROMPT_INPUT_EMPTY: 'request.prompt_input_empty',
     PROMPT_ID_CONFLICT: 'prompt.id_conflict',
     PROMPT_NOT_FOUND: 'prompt.not_found',
-    PROMPT_ALREADY_COMPLETED: 'prompt.already_completed',
     SESSION_BUSY: 'session.busy',
   },
 } as const satisfies ErrorDomain;

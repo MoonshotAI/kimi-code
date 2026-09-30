@@ -1,4 +1,5 @@
 {
   "extends": "../../tsconfig.json",
-  "include": ["examples/**/*.ts", "../agent-core-v2/src"]
+  "include": ["examples/**/*.ts", "../agent-core-v2/src"],
+  "exclude": ["../agent-core-v2/src/human/test"]
 }

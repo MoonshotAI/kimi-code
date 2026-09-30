@@ -41,7 +41,10 @@ import {
   questionResolveRequestSchema,
   questionResolveResultSchema,
 } from '../protocol/rest-question';
-import { archiveSessionResponseSchema } from '../protocol/rest-session';
+import {
+  archiveSessionResponseSchema,
+  deleteSessionResponseSchema,
+} from '../protocol/rest-session';
 
 const binarySchema = {
   type: 'string',
@@ -183,18 +186,32 @@ function patchSessionAction(paths: Record<string, unknown>): void {
   const operation = asRecord(pathItem?.['post']);
   if (pathItem === undefined || operation === undefined) return;
 
+  projectSessionAction(paths, pathItem, 'archive', 'runSessionArchiveAction', {
+    description: 'Session archive response',
+    content: jsonContent(openApiDocumentEnvelopeJsonSchema(archiveSessionResponseSchema)),
+  });
+  projectSessionAction(paths, pathItem, 'delete', 'runSessionDeleteAction', {
+    description: 'Session delete response',
+    content: jsonContent(openApiDocumentEnvelopeJsonSchema(deleteSessionResponseSchema)),
+  });
+  delete paths[internalPath];
+}
+
+function projectSessionAction(
+  paths: Record<string, unknown>,
+  pathItem: Record<string, unknown>,
+  action: string,
+  operationId: string,
+  okResponse: Record<string, unknown>,
+): void {
   const cloned = cloneRecord(pathItem);
   replacePathParamName(cloned, 'tail', 'session_id');
   const clonedOperation = asRecord(cloned['post']);
   if (clonedOperation !== undefined) {
-    clonedOperation['operationId'] = 'runSessionArchiveAction';
-    setResponse(clonedOperation, '200', {
-      description: 'Session archive response',
-      content: jsonContent(openApiDocumentEnvelopeJsonSchema(archiveSessionResponseSchema)),
-    });
+    clonedOperation['operationId'] = operationId;
+    setResponse(clonedOperation, '200', okResponse);
   }
-  paths['/api/v1/sessions/{session_id}:archive'] = cloned;
-  delete paths[internalPath];
+  paths[`/api/v1/sessions/{session_id}:${action}`] = cloned;
 }
 
 function patchFsAction(paths: Record<string, unknown>): void {

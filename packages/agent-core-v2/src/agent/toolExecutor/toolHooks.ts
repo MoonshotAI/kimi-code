@@ -1,6 +1,6 @@
 import type { IWaitUntil } from '#/_base/event';
-import type { ToolCall } from '#/kosong/contract/message';
-import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
+import type { ToolCall } from '#human/llm/message';
+import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 
 import type {
   ExecutableTool,

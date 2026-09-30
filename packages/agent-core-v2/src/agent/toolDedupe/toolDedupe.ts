@@ -1,4 +1,4 @@
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { ExecutableToolErrorResult, ExecutableToolSuccessResult } from '#/tool/toolContract';
@@ -14,6 +14,8 @@ export interface ToolDedupeErrorResult extends ExecutableToolErrorResult {
 }
 
 export type ToolDedupeResult = ToolDedupeSuccessResult | ToolDedupeErrorResult;
+
+export const REPEAT_BREAKER_STOP_REASON = 'repeat_breaker';
 
 export interface IAgentToolDedupeService {
   readonly _serviceBrand: undefined;

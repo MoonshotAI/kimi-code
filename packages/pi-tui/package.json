@@ -1,6 +1,6 @@
 {
 	"name": "@moonshot-ai/pi-tui",
-	"version": "0.84.4",
+	"version": "0.84.5",
 	"private": true,
 	"description": "Terminal User Interface library with differential rendering for efficient text-based applications",
 	"license": "MIT",
@@ -58,7 +58,7 @@
 	},
 	"dependencies": {
 		"get-east-asian-width": "1.6.0",
-		"marked": "18.0.5"
+		"marked": "18.0.11"
 	},
 	"devDependencies": {
 		"@xterm/headless": "5.5.0",

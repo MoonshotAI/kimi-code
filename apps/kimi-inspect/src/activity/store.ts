@@ -106,6 +106,10 @@ export class SessionActivityHub {
           this.store.remove(sessionId);
           opts.onListChanged();
         },
+        onSessionDeleted: (sessionId) => {
+          this.store.remove(sessionId);
+          opts.onListChanged();
+        },
         onWorkspaceChanged: () => opts.onListChanged(),
         onReconnected: () => void this.seed(),
       },

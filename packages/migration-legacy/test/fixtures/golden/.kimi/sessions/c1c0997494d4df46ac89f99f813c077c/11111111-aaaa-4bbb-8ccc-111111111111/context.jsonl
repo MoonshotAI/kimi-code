@@ -1,0 +1,7 @@
+{"role": "_system_prompt", "content": "You are an AI agent."}
+{"role":"user","content":[{"type":"text","text":"Look at these attachments."},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo=","id":"img-1"}},{"type":"audio_url","audio_url":{"url":"data:audio/wav;base64,UklGRg==","id":null}},{"type":"video_url","video_url":{"url":"https://media.example.test/v.mp4","id":"vid-1"}}]}
+{"role": "_checkpoint", "id": 1}
+{"role":"assistant","content":[{"type":"think","think":"thinking about the attachments","encrypted":null},{"type":"text","text":"The diagram shows a pipeline."}],"tool_calls":[{"type":"function","id":"call-1","function":{"name":"Shell","arguments":"{\"command\": \"ls -la\"}"}}]}
+{"role":"tool","content":"total 0","tool_call_id":"call-1"}
+{"role":"assistant","content":"Done reviewing."}
+{"role": "_usage", "token_count": 42}

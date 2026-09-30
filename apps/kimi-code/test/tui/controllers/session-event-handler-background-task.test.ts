@@ -21,12 +21,15 @@ function makeStreamingUIStub() {
     flushNow: vi.fn(),
     setTodoList: vi.fn(),
     resetToolUi: vi.fn(),
+    clearNotifyPanel: vi.fn(),
+    markNotifyPanelEnded: vi.fn(),
     finalizeTurn: vi.fn(),
   };
 }
 
 function makeSubagentHandler() {
   const backgroundTasks = new Map<string, never>();
+  const transcriptedTerminal = new Set<string>();
   const host = {
     state: {
       appState: { availableModels: {} },
@@ -40,10 +43,10 @@ function makeSubagentHandler() {
   };
   const handler = new SubAgentEventHandler(host as never, {
     backgroundTasks,
-    backgroundTaskTranscriptedTerminal: new Set(),
+    backgroundTaskTranscriptedTerminal: transcriptedTerminal,
     syncBackgroundAgentBadge: vi.fn(),
   });
-  return { handler, backgroundTasks };
+  return { handler, backgroundTasks, host, transcriptedTerminal };
 }
 
 function spawnEvent(subagentId: string, runInBackground: boolean): SubagentLifecycleEvent {
@@ -69,6 +72,76 @@ function completedEvent(subagentId: string): SubagentLifecycleEvent {
     resultSummary: 'done',
   } as unknown as SubagentLifecycleEvent;
 }
+
+function cancelledEvent(subagentId: string): SubagentLifecycleEvent {
+  return {
+    sessionId: 's1',
+    agentId: 'main',
+    type: 'subagent.cancelled',
+    subagentId,
+    parentToolCallId: `tc-${subagentId}`,
+  } as unknown as SubagentLifecycleEvent;
+}
+
+describe('SubAgentEventHandler — background agent cancelled transcript', () => {
+  function agentTask(subagentId: string) {
+    return {
+      taskId: `task-${subagentId}`,
+      kind: 'agent',
+      agentId: subagentId,
+      description: `task ${subagentId}`,
+      status: 'running',
+      startedAt: 0,
+    } as never;
+  }
+
+  it('appends a stopped transcript entry when a background agent is cancelled', () => {
+    const { handler, backgroundTasks, host, transcriptedTerminal } = makeSubagentHandler();
+    backgroundTasks.set('task-a1', agentTask('a1'));
+    handler.handleLifecycleEvent(spawnEvent('a1', true));
+    (host.appendTranscriptEntry as ReturnType<typeof vi.fn>).mockClear();
+
+    handler.handleLifecycleEvent(cancelledEvent('a1'));
+
+    const appended = (host.appendTranscriptEntry as ReturnType<typeof vi.fn>).mock.calls.map(
+      ([entry]) => entry as { content: string },
+    );
+    expect(appended).toHaveLength(1);
+    expect(appended[0]!.content).toContain('stopped');
+    expect(transcriptedTerminal.has('task-a1')).toBe(true);
+    expect(handler.backgroundAgentMetadata.has('a1')).toBe(false);
+    expect(host.streamingUI.applyBackgroundTaskTerminalStatus).toHaveBeenCalledWith({
+      agentId: 'a1',
+      description: 'task a1',
+      status: 'killed',
+    });
+  });
+
+  it('does not append a second entry when the task was already transcripted', () => {
+    const { handler, backgroundTasks, host, transcriptedTerminal } = makeSubagentHandler();
+    backgroundTasks.set('task-a1', agentTask('a1'));
+    transcriptedTerminal.add('task-a1');
+    handler.handleLifecycleEvent(spawnEvent('a1', true));
+    (host.appendTranscriptEntry as ReturnType<typeof vi.fn>).mockClear();
+
+    handler.handleLifecycleEvent(cancelledEvent('a1'));
+
+    expect(host.appendTranscriptEntry).not.toHaveBeenCalled();
+    expect(handler.backgroundAgentMetadata.has('a1')).toBe(false);
+  });
+
+  it('delivers a terminal status to a non-swarm foreground tool card when a subagent is cancelled', () => {
+    const { handler, host } = makeSubagentHandler();
+    const tc = { onSubagentSpawned: vi.fn(), onSubagentFailed: vi.fn() };
+    (host.streamingUI.getToolComponent as ReturnType<typeof vi.fn>).mockReturnValue(tc);
+    handler.handleLifecycleEvent(spawnEvent('a1', false));
+
+    handler.handleLifecycleEvent(cancelledEvent('a1'));
+
+    expect(tc.onSubagentFailed).toHaveBeenCalledWith({ error: 'Aborted by the user' });
+    expect(host.streamingUI.removeToolComponentIfInactive).toHaveBeenCalledWith('tc-a1');
+  });
+});
 
 describe('SubAgentEventHandler — activity record pruning', () => {
   it('drops the record of a foreground-only subagent at terminal state', () => {

@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.8.1
+
+### Patch Changes
+
+- [#3915](https://github.com/MoonshotAI/kimi-code/pull/3915) [`02d829e`](https://github.com/MoonshotAI/kimi-code/commit/02d829e13120781dfd2f7aa5e78b9ce56cfc013a) Thanks [@Grapedge](https://github.com/Grapedge)! - Fix the VS Code question dialog submitting unfinished custom answers when pressing Enter to confirm IME input.
+
+## 0.8.0
+
+### Minor Changes
+
+- [#3852](https://github.com/MoonshotAI/kimi-code/pull/3852) [`bbcdde0`](https://github.com/MoonshotAI/kimi-code/commit/bbcdde0b13a06fbadedca680ef565a5b01cb6c61) Thanks [@Grapedge](https://github.com/Grapedge)! - Add anonymous usage telemetry to the VS Code extension, following the VS Code telemetry setting.
+
+### Patch Changes
+
+- Updated dependencies [[`bbcdde0`](https://github.com/MoonshotAI/kimi-code/commit/bbcdde0b13a06fbadedca680ef565a5b01cb6c61)]:
+  - @moonshot-ai/kimi-telemetry@0.2.0
+
+## 0.7.5
+
+### Patch Changes
+
+- [#3453](https://github.com/MoonshotAI/kimi-code/pull/3453) [`411572e`](https://github.com/MoonshotAI/kimi-code/commit/411572e166edee8581ba9c5a7f1bbf6c8b405606) Thanks [@Grapedge](https://github.com/Grapedge)! - Highlight matched characters in @ file suggestions and allow folders to be inserted as mentions.
+
+- [#3453](https://github.com/MoonshotAI/kimi-code/pull/3453) [`411572e`](https://github.com/MoonshotAI/kimi-code/commit/411572e166edee8581ba9c5a7f1bbf6c8b405606) Thanks [@Grapedge](https://github.com/Grapedge)! - Show the image/video picker entry in the @ menu only before a search query is typed, and remove the Browse folders mode.
+
+- [#3453](https://github.com/MoonshotAI/kimi-code/pull/3453) [`411572e`](https://github.com/MoonshotAI/kimi-code/commit/411572e166edee8581ba9c5a7f1bbf6c8b405606) Thanks [@Grapedge](https://github.com/Grapedge)! - Fix the @ and / suggestion lists jittering when the mouse rests at the scroll edge.
+
+- Updated dependencies [[`411572e`](https://github.com/MoonshotAI/kimi-code/commit/411572e166edee8581ba9c5a7f1bbf6c8b405606)]:
+  - @moonshot-ai/kimi-code-sdk@0.20.0
+
+## 0.7.4
+
+### Patch Changes
+
+- [#3371](https://github.com/MoonshotAI/kimi-code/pull/3371) [`9e88152`](https://github.com/MoonshotAI/kimi-code/commit/9e881528a89945a373002b0b229f91735e8f2c4f) Thanks [@tpoisonooo](https://github.com/tpoisonooo)! - Fix prompts remaining queued forever after reopening a session.
+
+- [#3366](https://github.com/MoonshotAI/kimi-code/pull/3366) [`9619277`](https://github.com/MoonshotAI/kimi-code/commit/961927739ef34819d67d76fa5870cbe4ba7a01ff) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - Use the Unicode ellipsis "…" in user-facing TUI and VS Code webview text.
+
 ## 0.7.3
 
 ### Patch Changes

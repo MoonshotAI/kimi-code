@@ -4,33 +4,30 @@ export function parsePorcelain(
   stdout: string,
   filter: ReadonlySet<string> | undefined,
 ): FsGitStatusResponse {
-  const lines = stdout.split('\n');
+  const records = stdout.split('\0');
   let branch = '';
   let ahead = 0;
   let behind = 0;
   const entries: Record<string, FsGitStatus> = {};
 
-  for (const line of lines) {
-    if (line.length === 0) continue;
-    if (line.startsWith('## ')) {
-      const parsed = parseBranchHeader(line.slice(3));
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i]!;
+    if (record.length === 0) continue;
+    if (record.startsWith('## ')) {
+      const parsed = parseBranchHeader(record.slice(3));
       branch = parsed.branch;
       ahead = parsed.ahead;
       behind = parsed.behind;
       continue;
     }
 
-    if (line.length < 4) continue;
-    const xy = line.slice(0, 2);
-    let rest = line.slice(3);
+    if (record.length < 4) continue;
+    const xy = record.slice(0, 2);
+    const wirePath = record.slice(3);
 
     if (xy.startsWith('R') || xy.startsWith('C')) {
-      const arrow = rest.indexOf(' -> ');
-      if (arrow >= 0) {
-        rest = rest.slice(arrow + 4);
-      }
+      i++;
     }
-    const wirePath = posix(rest.trim());
     if (filter !== undefined && !filter.has(wirePath)) continue;
     const status = collapseXY(xy);
     entries[wirePath] = status;
@@ -114,10 +111,6 @@ function collapseXY(xy: string): FsGitStatus {
   if (set.has('C')) return 'renamed';
   if (set.has('A')) return 'added';
   return 'clean';
-}
-
-function posix(p: string): string {
-  return p.replaceAll('\\', '/');
 }
 
 export function parsePullRequest(stdout: string): FsPullRequest | null {

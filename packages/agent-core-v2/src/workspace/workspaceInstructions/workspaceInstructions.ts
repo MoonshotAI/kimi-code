@@ -1,6 +1,6 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
-import type { HostFsChange } from '#/os/interface/hostFsWatch';
+import type { WatchChange } from '#human/utils/watch';
 import type { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 
 export interface WorkspaceInstructionsSnapshot {
@@ -14,7 +14,7 @@ export interface IWorkspaceInstructionsService {
 
   readonly ready: Promise<void>;
   readonly snapshot: WorkspaceInstructionsSnapshot;
-  readonly onDidChange: Event<readonly HostFsChange[]>;
+  readonly onDidChange: Event<readonly WatchChange[]>;
   reload(): Promise<void>;
   sessionProvider(): ISessionInstructionsProvider;
 }

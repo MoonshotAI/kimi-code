@@ -20,7 +20,6 @@ export {
   modelProviderServices,
   permissionModeServices,
   permissionRulesServices,
-  questionServices,
   sessionService,
   sessionServices,
   skillServices,
@@ -35,7 +34,7 @@ export {
   type TestAgentServiceRegistration,
   type WireRecordPersistence,
 } from './agent';
-export { createScriptedGenerate } from './scripted-generate';
+export { createScriptedGenerate, requesterFromGenerateFn, type LegacyGenerateFn, type LegacyGenerateResult } from './scripted-generate';
 export {
   DEFAULT_TEST_SYSTEM_PROMPT,
   eventSnapshot,

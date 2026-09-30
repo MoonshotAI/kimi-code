@@ -54,13 +54,16 @@ export function installCrashHandlersForClient(client: TelemetryClient): () => vo
   // listener suppresses Node's default crash-on-rejection, so when we are
   // the only listener (print / server modes) rethrow to preserve it; the
   // dedupe set above keeps the monitor from double-reporting that path.
+  // AbortError rejections are expected cancellations: never reported, and
+  // never rethrown either — rethrowing them would turn a normal cancel into
+  // a crash (#2801).
   installedRejectionHandler = (reason: unknown) => {
     const soleListener = process.listenerCount('unhandledRejection') === 1;
     if (!isAbortError(reason)) {
       trackCrash(crashErrorType(reason), 'unhandledRejection');
       recordedRejections.add(reason);
     }
-    if (soleListener) {
+    if (soleListener && !isAbortError(reason)) {
       throw reason;
     }
   };

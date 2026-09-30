@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -52,7 +52,7 @@ describe('WS upgrade Host/Origin checks', () => {
   let v1Url: string;
   const sockets: WebSocket[] = [];
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-ws-host-origin-'));
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -65,13 +65,16 @@ describe('WS upgrade Host/Origin checks', () => {
     v1Url = `ws://127.0.0.1:${server.port}/api/v1/ws`;
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     for (const ws of sockets.splice(0)) {
       try {
         ws.close();
       } catch {
       }
     }
+  });
+
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;

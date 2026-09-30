@@ -57,7 +57,7 @@ export class NoticeMessageComponent extends Container {
     this.titleText = new Text(`  ${currentTheme.fg('textStrong', title)}`, 0, 0);
     this.addChild(this.titleText);
     if (detail !== undefined && detail.length > 0) {
-      this.detailText = new Text(`  ${currentTheme.fg('textDim', detail)}`, 0, 0);
+      this.detailText = new Text(this.renderDetail(detail), 0, 0);
       this.addChild(this.detailText);
     }
   }
@@ -65,8 +65,15 @@ export class NoticeMessageComponent extends Container {
   override invalidate(): void {
     this.titleText.setText(`  ${currentTheme.fg('textStrong', this.title)}`);
     if (this.detailText !== undefined && this.detail !== undefined) {
-      this.detailText.setText(`  ${currentTheme.fg('textDim', this.detail)}`);
+      this.detailText.setText(this.renderDetail(this.detail));
     }
     super.invalidate();
+  }
+
+  // Indent every line, not just the first. The `detail` may be multi-line;
+  // prefixing the whole string once would only indent the first line and leave
+  // the rest at column 0 (same handling as StatusMessageComponent).
+  private renderDetail(detail: string): string {
+    return currentTheme.fg('textDim', detail).split('\n').map((line) => `  ${line}`).join('\n');
   }
 }

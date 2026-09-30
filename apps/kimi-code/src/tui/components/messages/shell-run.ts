@@ -45,6 +45,8 @@ export class ShellRunComponent extends Container {
   private backgrounded = false;
   private disposed = false;
   private expanded = false;
+  // Whether the collapsed running tail leaves rows (or a capped buffer) behind; refreshed by renderText().
+  private runningHidesRows = false;
   private readonly startedAt = Date.now();
   private timer: ReturnType<typeof setInterval> | undefined;
 
@@ -72,6 +74,29 @@ export class ShellRunComponent extends Container {
     this.finalOutput = formatBashOutputForDisplay(stdout, stderr, isError);
     this.rebuildResult();
     this.flush();
+  }
+
+  /**
+   * Whether ctrl+o would change the card: a running tail with earlier rows
+   * (or a capped buffer) behind it, or a finished preview cut to its row cap.
+   * Drives the footer's ctrl+o hint.
+   */
+  isExpanded(): boolean {
+    return this.expanded;
+  }
+
+  hasHiddenContent(): boolean {
+    if (this.disposed || this.backgrounded) return false;
+    if (this.running) return this.runningHidesRows;
+    // More physical lines than the collapsed cap is hidden for certain, even
+    // for a card that finished while already expanded; a wrapped overflow
+    // shows up once a collapsed render has recorded it.
+    return (
+      this.finalOutput.split('\n').length > SHELL_OUTPUT_PREVIEW_LINES ||
+      this.children.some(
+        (child) => child instanceof TruncatedOutputComponent && child.wasTruncated(),
+      )
+    );
   }
 
   finishBackgrounded(): void {
@@ -155,6 +180,8 @@ export class ShellRunComponent extends Container {
       const elapsed = Math.floor((Date.now() - this.startedAt) / 1000);
       const dim = (s: string): string => currentTheme.fg('textDim', s);
       const trimmed = sanitizeShellOutput(this.combined).trimEnd();
+      const lineCount = trimmed.length === 0 ? 0 : trimmed.split('\n').length;
+      this.runningHidesRows = this.combinedTruncated || lineCount > RUNNING_TAIL_LINES;
       let body: string;
       let extra = 0;
       if (trimmed.length === 0) {

@@ -14,6 +14,7 @@ import {
 } from '#/tui/components/messages/agent-swarm-progress';
 import { AgentSwarmProgressEstimator } from '#/tui/components/messages/agent-swarm-progress-estimator';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
+import { setRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 const DEFAULT_DESCRIPTION = 'Review changed files';
 
@@ -873,6 +874,401 @@ describe('AgentSwarmProgressComponent', () => {
   });
 });
 
+describe('AgentSwarmProgressComponent render caching', () => {
+  function createTerminalComponent(): AgentSwarmProgressComponent {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = createComponent();
+    registerSubagents(component, 2);
+    startSubagents(component, 2);
+    vi.setSystemTime(1_000);
+    component.markCompleted('agent-1', 'done one');
+    component.markCompleted('agent-2', 'done two');
+    component.markToolCallEnded();
+    // Past the 360ms completion fill window, so the panel is fully static.
+    vi.setSystemTime(2_000);
+    return component;
+  }
+
+  it('returns the identical line array while a terminal swarm is unchanged', () => {
+    const component = createTerminalComponent();
+
+    const first = component.render(100);
+
+    expect(component.render(100)).toBe(first);
+  });
+
+  it('re-renders when a member changes', () => {
+    const component = createTerminalComponent();
+    const before = component.render(100);
+
+    component.applyResult('<subagent index="1" outcome="completed">updated output</subagent>');
+    const after = component.render(100);
+
+    expect(after).not.toBe(before);
+    expect(renderText(component)).toContain('updated output');
+  });
+
+  it('re-renders when the width changes', () => {
+    const component = createTerminalComponent();
+    const wide = component.render(100);
+
+    expect(component.render(80)).not.toBe(wide);
+  });
+
+  it('re-renders when the available grid height changes', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    let gridHeight: number | undefined = 10;
+    const component = createComponent({ availableGridHeight: () => gridHeight });
+    registerSubagents(component, 1);
+    startSubagents(component, 1);
+    vi.setSystemTime(1_000);
+    component.markCompleted('agent-1', 'done');
+    component.markToolCallEnded();
+    vi.setSystemTime(2_000);
+    const before = component.render(100);
+
+    gridHeight = 1;
+
+    expect(component.render(100)).not.toBe(before);
+  });
+
+  it('re-renders after invalidate() even when nothing else changed', () => {
+    const component = createTerminalComponent();
+    const before = component.render(100);
+
+    component.invalidate();
+    const after = component.render(100);
+
+    expect(after).not.toBe(before);
+    expect(after.map(strip)).toEqual(before.map(strip));
+  });
+
+  it('bypasses both component and cell caches when the render cache is disabled', () => {
+    const component = createTerminalComponent();
+    const before = component.render(100);
+
+    setRenderCacheEnabled(false);
+    try {
+      const after = component.render(100);
+      expect(after).not.toBe(before);
+      expect(after.map(strip)).toEqual(before.map(strip));
+      const third = component.render(100);
+      expect(third).not.toBe(after);
+      expect(third.map(strip)).toEqual(after.map(strip));
+    } finally {
+      setRenderCacheEnabled(true);
+    }
+  });
+
+  it('repaints member cells from the active palette when the theme changes', () => {
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    try {
+      const component = createTerminalComponent();
+      const cellLineOf = (): string => {
+        const line = component.render(100).find((l) => strip(l).includes('001 ['));
+        if (line === undefined) throw new Error('cell line not found');
+        return line;
+      };
+      const before = cellLineOf();
+
+      currentTheme.setPalette(lightColors);
+      const after = cellLineOf();
+
+      expect(strip(after)).toBe(strip(before));
+      expect(after).not.toBe(before);
+    } finally {
+      chalk.level = previousLevel;
+    }
+  });
+
+  it('does not cache while a member is still running', () => {
+    vi.useFakeTimers();
+    const component = createComponent();
+    registerSubagents(component, 1);
+    startSubagents(component, 1);
+
+    expect(component.render(100)).not.toBe(component.render(100));
+  });
+
+  it('does not cache during the completion fill window', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = createComponent();
+    registerSubagents(component, 1);
+    startSubagents(component, 1);
+    vi.setSystemTime(1_000);
+    component.markCompleted('agent-1', 'done');
+    component.markToolCallEnded();
+
+    expect(component.render(100)).not.toBe(component.render(100));
+
+    vi.setSystemTime(2_000);
+    const settled = component.render(100);
+    expect(component.render(100)).toBe(settled);
+  });
+});
+
+describe('AgentSwarmProgressComponent terminal state memory', () => {
+  const WIDE_RENDER_WIDTH = 500;
+
+  function rawCellLine(component: AgentSwarmProgressComponent): string {
+    const line = component
+      .render(WIDE_RENDER_WIDTH)
+      .find((candidate) => strip(candidate).includes('001 ['));
+    if (line === undefined) throw new Error('cell line not found');
+    return line;
+  }
+
+  function visibleCellText(component: AgentSwarmProgressComponent): string {
+    return strip(rawCellLine(component)).trimEnd();
+  }
+
+  it('bounds completed output text to a few hundred characters', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+
+    component.markCompleted('agent-1', `Reviewed imports. ${'x'.repeat(100_000)}`);
+
+    const cellText = visibleCellText(component);
+    expect(cellText.length).toBeLessThanOrEqual(500);
+    expect(cellText).not.toContain('…');
+    expect(cellText).toContain('✓ Reviewed imports.');
+  });
+
+  it('bounds failure text to a few hundred characters', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+
+    component.markFailed('agent-1', `Provider request failed ${'y'.repeat(100_000)}`);
+
+    const cellText = visibleCellText(component);
+    expect(cellText.length).toBeLessThanOrEqual(500);
+    expect(cellText).not.toContain('…');
+    expect(cellText).toContain('✗ Provider request failed');
+  });
+
+  it('uses the latest assistant line as the completed label when no output is given', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+    component.appendModelDelta({
+      agentId: 'agent-1',
+      delta: 'Reviewing src/a.ts\nImports look stable',
+    });
+
+    component.markCompleted('agent-1');
+
+    expect(renderText(component)).toContain('✓ Imports look stable');
+  });
+
+  it('bounds the cancelled label of a running member to a few hundred characters', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+    startSubagents(component, 1);
+    component.appendModelDelta({ agentId: 'agent-1', delta: 'x'.repeat(5_000) });
+
+    component.markCancelled('agent-1');
+
+    const cellText = visibleCellText(component);
+    expect(cellText.length).toBeLessThanOrEqual(500);
+    expect(cellText).not.toContain('…');
+    expect(cellText).toContain(`⊘ ${'x'.repeat(20)}`);
+  });
+
+  it('re-renders a member cell with its terminal label after completing', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = createComponent();
+    registerSubagents(component, 1);
+    startSubagents(component, 1);
+    component.appendModelDelta({ agentId: 'agent-1', delta: 'working on it' });
+    expect(renderText(component)).toContain('working on it');
+
+    vi.setSystemTime(1_000);
+    component.markCompleted('agent-1', 'done');
+
+    const output = renderText(component);
+    expect(output).toContain('✓ done');
+    expect(output).not.toContain('working on it');
+  });
+
+  it('bounds the retained label code units when the output carries ANSI sequences', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+
+    component.markCompleted('agent-1', `ok${'\u001B[31m'.repeat(10_000)}`);
+
+    const line = rawCellLine(component);
+    expect(line.length).toBeLessThan(3_000);
+    expect(strip(line)).toContain('ok');
+    expect(line).toContain('\u001B[0m');
+    const escapeCount = line.match(/\u001B/g)?.length ?? 0;
+    const completeSequenceCount = line.match(/\u001B\[[0-9;]*m/g)?.length ?? 0;
+    expect(escapeCount).toBe(completeSequenceCount);
+  });
+
+  it('bounds the retained label code units for a long zero-width grapheme', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+
+    component.markCompleted('agent-1', `x${'\u0301'.repeat(50_000)}`);
+
+    const line = rawCellLine(component);
+    expect(line.length).toBeLessThan(3_000);
+    expect(strip(line)).toContain('✓ x');
+  });
+
+  it('does not split a surrogate pair at the retained label storage limit', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+
+    component.markCompleted(
+      'agent-1',
+      `x${'\u0301'.repeat(1_998)}\u{1F600}${'\u0301'.repeat(5_000)}`,
+    );
+
+    const line = rawCellLine(component);
+    expect(line.length).toBeLessThan(3_000);
+    expect(line).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  });
+
+  it('closes an OSC 8 hyperlink that the storage cap slices through', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+
+    component.markCompleted(
+      'agent-1',
+      `\u001B]8;;https://example.com\u0007x${'\u0301'.repeat(5_000)}\u001B]8;;\u0007`,
+    );
+
+    const line = rawCellLine(component);
+    expect(line).toContain('\u001B]8;;https://example.com\u0007');
+    expect(line).toContain('\u001B]8;;\u0007');
+  });
+
+  it('resets SGR styling that the storage cap slices through', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+
+    component.markCompleted(
+      'agent-1',
+      `\u001B[1m\u001B[31mx${'\u0301'.repeat(5_000)}\u001B[0m`,
+    );
+
+    expect(rawCellLine(component)).toContain('\u001B[0m');
+  });
+
+  it('appends the SGR reset after the OSC 8 close when both are sliced', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+
+    component.markCompleted(
+      'agent-1',
+      `\u001B]8;;https://example.com\u0007\u001B[1mx${'\u0301'.repeat(5_000)}\u001B]8;;\u0007\u001B[0m`,
+    );
+
+    expect(rawCellLine(component)).toContain('\u001B]8;;\u0007\u001B[0m');
+  });
+
+  it('does not split a ZWJ grapheme cluster at the retained label storage limit', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+
+    const family = '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}';
+    component.markCompleted(
+      'agent-1',
+      `x${'\u0301'.repeat(1_996)}${family}${'\u0301'.repeat(5_000)}`,
+    );
+
+    const line = rawCellLine(component);
+    expect(line.length).toBeLessThan(3_000);
+    expect(line).not.toContain('\u200D');
+  });
+});
+
+describe('AgentSwarmProgressComponent frame timer', () => {
+  it('batches model deltas onto the frame timer instead of rendering per delta', () => {
+    vi.useFakeTimers();
+    const requestRender = vi.fn();
+    const component = createComponent({ requestRender });
+    registerSubagents(component, 1);
+    startSubagents(component, 1);
+    requestRender.mockClear();
+
+    component.appendModelDelta({ agentId: 'agent-1', delta: 'line one' });
+    component.appendModelDelta({ agentId: 'agent-1', delta: 'line two' });
+    component.recordToolCall({ agentId: 'agent-1', toolCallId: 'call-1' });
+
+    expect(requestRender).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(80);
+    expect(requestRender).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts the frame timer when a delta arrives for a queued member', () => {
+    vi.useFakeTimers();
+    const requestRender = vi.fn();
+    const component = createComponent({ requestRender });
+    registerSubagents(component, 1);
+    requestRender.mockClear();
+
+    component.appendModelDelta({ agentId: 'agent-1', delta: 'hello' });
+
+    expect(requestRender).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(80);
+    expect(requestRender).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the frame timer alive while members are running', () => {
+    vi.useFakeTimers();
+    const requestRender = vi.fn();
+    const component = createComponent({ requestRender });
+    registerSubagents(component, 1);
+    startSubagents(component, 1);
+    requestRender.mockClear();
+
+    vi.advanceTimersByTime(80 * 3);
+
+    expect(requestRender.mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('stops the frame timer after the completion fill animation ends', () => {
+    vi.useFakeTimers();
+    const requestRender = vi.fn();
+    const component = createComponent({ requestRender });
+    registerSubagents(component, 1);
+    startSubagents(component, 1);
+    requestRender.mockClear();
+
+    component.markCompleted('agent-1', 'done');
+    vi.advanceTimersByTime(80 * 10);
+    const callsAfterSettled = requestRender.mock.calls.length;
+    expect(callsAfterSettled).toBeGreaterThan(0);
+
+    vi.advanceTimersByTime(80 * 5);
+    expect(requestRender.mock.calls.length).toBe(callsAfterSettled);
+  });
+
+  it('stops the frame timer when the tool call ends with an unparsable result', () => {
+    vi.useFakeTimers();
+    const requestRender = vi.fn();
+    const component = createComponent({ requestRender });
+    registerSubagents(component, 1);
+    startSubagents(component, 1);
+    requestRender.mockClear();
+
+    component.markToolCallEnded();
+    expect(component.applyResult('Done')).toBe(false);
+    vi.advanceTimersByTime(80 * 10);
+    const callsAfterSettled = requestRender.mock.calls.length;
+
+    vi.advanceTimersByTime(80 * 5);
+    expect(requestRender.mock.calls.length).toBe(callsAfterSettled);
+  });
+});
+
 describe('AgentSwarmProgressEstimator', () => {
   it('counts a started subagent as one progress tick before tool calls arrive', () => {
     const estimator = new AgentSwarmProgressEstimator();
@@ -999,5 +1395,62 @@ describe('AgentSwarmProgressEstimator', () => {
     expect(second.displayTicks).toBeGreaterThan(4);
     expect(second.displayTicks).toBeLessThan(second.targetTicks ?? 0);
     expect(second.boosted).toBe(true);
+  });
+
+  it('rebuilds the completed-sample prior as new members complete', () => {
+    const estimator = new AgentSwarmProgressEstimator();
+
+    estimator.markStarted('001', 0);
+    for (let index = 0; index < 10; index += 1) {
+      estimator.recordToolCall({
+        memberKey: '001',
+        toolCallId: `done-${index}`,
+        nowMs: 1_000 + index * 1_000,
+      });
+    }
+    estimator.markCompleted('001', 40_000);
+
+    estimator.markStarted('002', 0);
+    for (let index = 0; index < 3; index += 1) {
+      estimator.recordToolCall({
+        memberKey: '002',
+        toolCallId: `running-${index}`,
+        nowMs: 5_000 + index * 5_000,
+      });
+    }
+    const before = estimator.estimate({
+      memberKey: '002',
+      phase: 'running',
+      capacityTicks: 56,
+      nowMs: 20_000,
+    });
+
+    estimator.markCompleted('002', 25_000);
+    estimator.markStarted('003', 0);
+    for (let index = 0; index < 3; index += 1) {
+      estimator.recordToolCall({
+        memberKey: '003',
+        toolCallId: `running-${index}`,
+        nowMs: 5_000 + index * 5_000,
+      });
+    }
+    const after = estimator.estimate({
+      memberKey: '003',
+      phase: 'running',
+      capacityTicks: 56,
+      nowMs: 20_000,
+    });
+
+    expect(before.estimatedTotalToolCalls).toBeDefined();
+    expect(after.estimatedTotalToolCalls).toBeDefined();
+    expect(after.estimatedTotalToolCalls).not.toBe(before.estimatedTotalToolCalls);
+
+    const repeat = estimator.estimate({
+      memberKey: '003',
+      phase: 'running',
+      capacityTicks: 56,
+      nowMs: 20_000,
+    });
+    expect(repeat.estimatedTotalToolCalls).toBe(after.estimatedTotalToolCalls);
   });
 });

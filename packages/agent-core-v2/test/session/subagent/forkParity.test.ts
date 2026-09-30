@@ -4,12 +4,11 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Event } from '#/_base/event';
 import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/agent/contextMemory/openToolExchange';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 import { IHostTerminalService } from '#/os/interface/terminal';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -24,6 +23,7 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import { IFlagService } from '#/app/flag/flag';
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import { FORK_CONTEXT_NOTICE } from '#/session/subagent/spawn';
+import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import {
   IRuntimeResolver,
@@ -73,6 +73,10 @@ class ScopedAppendLogStore implements IAppendLogStore {
     return Promise.resolve();
   }
 
+  flushLog(): Promise<void> {
+    return Promise.resolve();
+  }
+
   close(): Promise<void> {
     return Promise.resolve();
   }
@@ -94,10 +98,9 @@ class TestRuntimeResolver implements IRuntimeResolver {
     @IHostEnvironment environment: IHostEnvironment,
     @IHostFileSystem fs: IHostFileSystem,
     @IHostProcessService processes: IHostProcessService,
-    @IHostFsWatchService watch: IHostFsWatchService,
     @IHostTerminalService terminal: IHostTerminalService,
   ) {
-    this.runtime = new LocalRuntime('test-workspace', environment, fs, processes, watch, terminal);
+    this.runtime = new LocalRuntime('test-workspace', environment, fs, processes, terminal);
   }
 
   inspect(_binding: RuntimeBinding): Runtime {
@@ -111,10 +114,7 @@ class TestRuntimeResolver implements IRuntimeResolver {
 
 const PARENT_SYSTEM_PROMPT = 'You are the parity probe parent.';
 const ACTIVE_TOOL_NAMES = ['Agent', 'Bash', 'Read'];
-const CHILD_FINAL_TEXT =
-  'The inherited task is done. This closing summary is intentionally long so that any ' +
-  'profile summary policy with a minimum character threshold considers it adequate and no ' +
-  'extra continuation request is scripted for the child agent turn.';
+const CHILD_FINAL_TEXT = 'The inherited task is done.';
 
 describe('fork subagent first-request parity', () => {
   let ctx: TestAgentContext;
@@ -163,15 +163,12 @@ describe('fork subagent first-request parity', () => {
     ctx.mockNextResponse({ type: 'text', text: CHILD_FINAL_TEXT });
     ctx.mockNextResponse({ type: 'text', text: 'parent final answer' });
 
-    const handle = await parent.accessor.get(IAgentPromptService).enqueue({
-      message: {
-        role: 'user',
-        content: [{ type: 'text', text: 'start the parity probe' }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
+    const loop = parent.accessor.get(IAgentLoopService);
+    const { id } = loop.submit({
+      message: { role: 'user', content: [{ type: 'text', text: 'start the parity probe' }] },
+      meta: { origin: { kind: 'user' }, tracked: true },
     });
-    const completion = await handle.completion;
+    const completion = await loop.promptHandle(id)!.completion;
     expect(completion.state).toBe('completed');
 
     expect(ctx.llmCalls).toHaveLength(3);
@@ -189,14 +186,17 @@ describe('fork subagent first-request parity', () => {
     expect(prefix).toEqual(parentReq.history);
 
     const tail = childReq.history.slice(parentReq.history.length);
-    expect(tail.map((message) => message.role)).toEqual(['assistant', 'tool', 'user']);
+    expect(tail.map((message) => message.role)).toEqual(['assistant', 'tool', 'user', 'user']);
     expect(tail[0]?.toolCalls.map((call) => call.name)).toEqual(['Agent']);
     expect(tail[0]?.partial).toBeUndefined();
     expect(tail[1]?.toolCallId).toBe('call_fork');
     expect(tail[1]?.content).toEqual([{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }]);
     const notice = tail[2]?.content[0];
     expect(notice?.type).toBe('text');
-    expect(notice?.type === 'text' && notice.text.startsWith(FORK_CONTEXT_NOTICE)).toBe(true);
+    expect(notice?.type === 'text' && notice.text).toBe(wrapSystemReminder(FORK_CONTEXT_NOTICE));
+    const prompt = tail[3]?.content[0];
+    expect(prompt?.type).toBe('text');
+    expect(prompt?.type === 'text' && prompt.text).toBe('finish the inherited task');
 
     expect(parentFollowup.history.slice(0, parentReq.history.length)).toEqual(parentReq.history);
     expect(parentFollowup.history[parentReq.history.length]).toEqual(tail[0]);
