@@ -383,8 +383,8 @@ describe('migrateV2Session', () => {
     });
     const loaded = await loadMigrated(dir);
     const agent = loaded.agents[0]!;
-    expect(agent.messages.map((entry) => extractText(entry.message))).toEqual(['u1', 'u3', 'CTX']);
-    expect(agent.messages.map((entry) => entry.meta?.source)).toEqual(['input', 'input', 'compaction_summary']);
+    expect(agent.messages.map((entry) => extractText(entry.message))).toEqual(['u1', 'CTX', 'u3']);
+    expect(agent.messages.map((entry) => entry.meta?.source)).toEqual(['input', 'compaction_summary', 'input']);
 
     const big = 'x'.repeat(90_000);
     const elided = await makeV2SessionDir({

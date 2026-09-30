@@ -188,9 +188,9 @@ function truncateTextToTokensFromEnd(text: string, maxTokens: number): string {
   let start = text.length;
   for (let i = text.length - 1; i >= 0; i--) {
     let isAscii = false;
-    const code = text.charCodeAt(i);
+    const code = text.codePointAt(i)!;
     if (code >= 0xdc00 && code <= 0xdfff && i > 0) {
-      const high = text.charCodeAt(i - 1);
+      const high = text.codePointAt(i - 1)!;
       if (high >= 0xd800 && high <= 0xdbff) {
         i--;
       }
@@ -373,7 +373,7 @@ function buildCompactionMessages(
       ...history.slice(input.compactedCount),
     ];
   }
-  const compactable = history.filter(isCompactableUserMessage);
+  const compactable = history.slice(0, input.compactedCount).filter(isCompactableUserMessage);
   const selection = selectCompactionUserMessages(
     compactable,
     COMPACT_USER_MESSAGE_MAX_TOKENS,
@@ -382,7 +382,11 @@ function buildCompactionMessages(
   const kept = selection.elided
     ? [...selection.head, createCompactionElisionMessage(selection.omittedTokens), ...selection.tail]
     : [...selection.head, ...selection.tail];
-  return [...kept, createCompactionSummaryMessage(contextSummary)];
+  return [
+    ...kept,
+    createCompactionSummaryMessage(contextSummary),
+    ...history.slice(input.compactedCount).filter(isCompactableUserMessage),
+  ];
 }
 
 interface UndoCut {

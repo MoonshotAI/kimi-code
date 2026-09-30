@@ -141,6 +141,7 @@ export function readContextCompactionShapeInput(
     summaryOutputTokens: readOptionalNumber(fields, 'summaryOutputTokens'),
     keptUserMessageCount,
     keptHeadUserMessageCount: readOptionalNumber(fields, 'keptHeadUserMessageCount'),
+    appendedUserMessageCount: readOptionalNumber(fields, 'appendedUserMessageCount'),
     droppedCount: readOptionalNumber(fields, 'droppedCount'),
     legacyTail: readOptionalBoolean(fields, 'legacyTail') ?? keptUserMessageCount === undefined,
   };
