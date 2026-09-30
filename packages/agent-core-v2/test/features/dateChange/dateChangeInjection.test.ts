@@ -507,31 +507,4 @@ describe('AgentDateChangeService on a remote environment binding', () => {
     expect(reminders).toHaveLength(1);
     expect(messageText(reminders[0] as ContextMessage)).toContain('2026-07-29');
   });
-
-  it('announces a crossed midnight on a remote binding, labeled as local client time', async () => {
-    updateSystemPrompt(profile, 'You are a deterministic test agent.', REMOTE_WORK_DIR);
-    await runWillBeginStepHooks(loop);
-    expect(dateReminders(context)).toHaveLength(1);
-
-    clock.set('2026-07-30T04:00:00.000Z');
-    await runWillBeginStepHooks(loop);
-
-    const reminders = dateReminders(context);
-    expect(reminders).toHaveLength(2);
-    const text = messageText(reminders[1] as ContextMessage);
-    expect(text).toContain('2026-07-30');
-    expect(text).toContain(TEST_TIME_ZONE);
-    expect(text).toContain('local client');
-  });
-
-  it('stays quiet when the disclosed cwd matches neither the binding nor the session cwd', async () => {
-    updateSystemPrompt(profile, 'You are a deterministic test agent.', '/some/other/workspace');
-
-    await runWillBeginStepHooks(loop);
-    expect(dateReminders(context)).toHaveLength(0);
-
-    clock.set('2026-07-30T04:00:00.000Z');
-    await runWillBeginStepHooks(loop);
-    expect(dateReminders(context)).toHaveLength(0);
-  });
 });

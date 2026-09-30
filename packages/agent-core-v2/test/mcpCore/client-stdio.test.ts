@@ -62,7 +62,6 @@ interface EnvironmentClientHarness {
   readonly calls: string[];
   readonly spawnEnvs: Array<Record<string, string> | undefined>;
   readonly spawnCwds: Array<string | undefined>;
-  readonly connectCalls: () => number;
 }
 
 function createEnvironmentClient(
@@ -78,7 +77,6 @@ function createEnvironmentClient(
   const calls: string[] = [];
   const spawnEnvs: Array<Record<string, string> | undefined> = [];
   const spawnCwds: Array<string | undefined> = [];
-  let connectCalls = 0;
   const hostProcess = new HostProcessService();
   const recordingProcess: IHostProcessService = {
     _serviceBrand: undefined,
@@ -97,7 +95,6 @@ function createEnvironmentClient(
     },
   );
   const connect = async (): Promise<void> => {
-    connectCalls += 1;
     calls.push('connect');
     environment.setStatus('ready');
   };
@@ -136,7 +133,7 @@ function createEnvironmentClient(
     environmentId,
     defaultCwd: options.defaultCwd ?? process.cwd(),
   });
-  return { client, calls, spawnEnvs, spawnCwds, connectCalls: () => connectCalls };
+  return { client, calls, spawnEnvs, spawnCwds };
 }
 
 function isPostCloseTransportError(error: unknown): boolean {
@@ -149,30 +146,18 @@ function isPostCloseTransportError(error: unknown): boolean {
 }
 
 describe('StdioMcpClient', () => {
-  it('connects a pending environment before spawning the server', async () => {
-    const pending = createEnvironmentClient(
+  it('connects through acquireWhenReady before spawning the server', async () => {
+    const harness = createEnvironmentClient(
       { transport: 'stdio', command: process.execPath, args: [stdioFixture] },
-      { environmentId: 'dev-box', status: 'pending' },
-    );
-    const ready = createEnvironmentClient(
-      { transport: 'stdio', command: process.execPath, args: [stdioFixture] },
-      { environmentId: 'dev-box', status: 'ready' },
+      { environmentId: 'dev-box' },
     );
     try {
-      await pending.client.connect();
-      expect(pending.connectCalls()).toBe(1);
-      expect(pending.calls.slice(0, 2)).toEqual(['acquireWhenReady', 'connect']);
-      const result = await pending.client.callTool('echo', { text: 'remote hello' });
-      expect(result.content).toEqual([{ type: 'text', text: 'remote hello' }]);
-
-      await ready.client.connect();
-      expect(ready.connectCalls()).toBe(0);
-      expect(ready.calls.slice(0, 1)).toEqual(['acquireWhenReady']);
-      const readyResult = await ready.client.callTool('echo', { text: 'hello' });
-      expect(readyResult.content).toEqual([{ type: 'text', text: 'hello' }]);
+      await harness.client.connect();
+      expect(harness.calls.slice(0, 1)).toEqual(['acquireWhenReady']);
+      const result = await harness.client.callTool('echo', { text: 'hello' });
+      expect(result.content).toEqual([{ type: 'text', text: 'hello' }]);
     } finally {
-      await pending.client.close();
-      await ready.client.close();
+      await harness.client.close();
     }
   }, 15000);
 

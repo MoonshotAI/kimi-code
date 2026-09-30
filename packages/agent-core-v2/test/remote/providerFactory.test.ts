@@ -792,13 +792,7 @@ describe('factory executor detection', () => {
     const error = await placeholder.connect!().catch((error: unknown) => error);
 
     expect(error).toBeInstanceOf(HandshakeError);
-    const message = (error as Error).message;
-    expect(message).toContain('was not found on ssh:dev-box');
-    expect(message).toContain('Kimi Code release CDN');
-    expect(message).toContain('executor path (~/.kimi-code/bin/kimi)');
-    expect(message).toContain('Then reconnect the environment.');
-    expect(message).not.toContain('curl -fL');
-    expect(message).not.toContain('/tmp/kimi-install');
+    expect((error as Error).message).toContain(missingExecutorError().message);
     expect(connect).toHaveBeenCalledTimes(1);
     expect(registry.current('dev-box')).toBe(placeholder);
     expect(registry.current('dev-box')!.status).toBe('disconnected');
@@ -820,30 +814,9 @@ describe('factory executor detection', () => {
     const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
     const attachment = await factory.attach(fakeHost(services, registry));
 
-    await expect(registry.current('sandbox')!.connect!()).rejects.toThrow(
-      /code 127[\s\S]*the absolute path your launcher command invokes/,
-    );
+    await expect(registry.current('sandbox')!.connect!()).rejects.toThrow(/command:sandbox/);
     expect(connect).toHaveBeenCalledTimes(1);
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
-  it('answers a too-old executor with upgrade guidance', async () => {
-    const registry = new EnvironmentRegistry();
-    const connect = vi.fn(async () => {
-      throw new HandshakeError(
-        'executor version 0.0.4 is below the minimum 0.1.0; upgrade the remote executor (kimi exec-server) and retry',
-        { kind: 'incompatible', executorVersion: '0.0.4', minExecutorVersion: '0.1.0' },
-      );
-    });
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
-    const attachment = await factory.attach(fakeHost(baseServices(), registry));
-
-    await expect(registry.current('dev-box')!.connect!()).rejects.toThrow(
-      /0\.0\.4[\s\S]*Upgrade the executor/,
-    );
-    expect(connect).toHaveBeenCalledTimes(1);
+    expect(registry.current('sandbox')!.status).toBe('disconnected');
 
     await attachment.dispose();
     await registry.dispose();

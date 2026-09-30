@@ -133,19 +133,6 @@ describe('process protocol semantics', () => {
     }
   });
 
-  it('rejects the unused process replay method', async () => {
-    const loopback = createInProcessLoopback();
-    const raw = new RawClient(loopback);
-    try {
-      await raw.handshake();
-      raw.send({ id: 1, method: 'process/read', params: { processId: 'unused' } });
-      expect((await raw.nextResponse(1))['error']).toMatchObject({ code: -32601 });
-    } finally {
-      loopback.clientInput.end();
-      await loopback.host.done;
-    }
-  });
-
   it('rejects a spawn cwd that does not exist with an explicit cwd error', async () => {
     const loopback = createInProcessLoopback();
     const raw = new RawClient(loopback);

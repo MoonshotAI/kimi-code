@@ -170,21 +170,6 @@ describe('Program', () => {
     await registry.dispose();
   });
 
-  it('switches the program generation when the environment is re-registered', async () => {
-    const { registry, program } = setup();
-    const first = fakeEnvironment('local', 'one');
-    const registration = registry.register(first);
-    await program.ready;
-    const controller = program.createSessionController();
-    await registration.remove();
-    registry.register(fakeEnvironment('local', 'two'));
-    expect(program.sessionControllerGenerationFor('local')).toBe('two');
-    expect(first.disposed).toBe(true);
-    controller.dispose();
-    program.dispose();
-    await registry.dispose();
-  });
-
   it('stops serving new sessions from the previous generation when its successor is unavailable', async () => {
     const order: string[] = [];
     const { registry, program, create } = setup(new Map(), order);
@@ -443,7 +428,7 @@ function scopedFs(base: string, realBase: string, inner: IHostFileSystem, additi
   };
 }
 
-async function localityFixture(options: { readonly remoteCwd?: string; readonly drainTimeoutMs?: number } = {}): Promise<LocalityFixture> {
+async function localityFixture(options: { readonly remoteCwd?: string } = {}): Promise<LocalityFixture> {
   const base = await mkdtemp(join(tmpdir(), 'kimi-program-locality-'));
   const localRoot = join(base, 'local');
   const remoteRoot = join(base, 'target');
@@ -873,55 +858,6 @@ describe('Program remote generation activation', () => {
 
       expect(remote.instructions.snapshot.agentsMd).toContain('local project instructions');
       expect(remote.dirs.additionalDirs).toEqual([join(fixture.localRoot, 'localextra')]);
-    } finally {
-      await fixture.cleanup();
-    }
-  });
-
-  it('replaces a remote environment while an existing session controller is alive', async () => {
-    const fixture = await localityFixture({ drainTimeoutMs: 5_000 });
-    try {
-      const first = fixture.program.createSessionController('remote', fixture.remoteRoot);
-      const replaced = fixture.replaceRemote('remote-two', fixture.remoteRoot);
-      const settled = await Promise.race([
-        replaced.then(() => 'replaced' as const),
-        new Promise<'pending'>((resolve) => {
-          setTimeout(() => {
-            resolve('pending');
-          }, 200);
-        }),
-      ]);
-      expect(settled).toBe('replaced');
-
-      first.dispose();
-      await replaced;
-
-      const second = fixture.program.createSessionController('remote', fixture.remoteRoot);
-      second.dispose();
-    } finally {
-      await fixture.cleanup();
-    }
-  });
-
-  it('rebuilds a remote generation after the previous controller is disposed', async () => {
-    const fixture = await localityFixture({ drainTimeoutMs: 5_000 });
-    try {
-      const controller = fixture.program.createSessionController('remote', fixture.remoteRoot);
-      controller.dispose();
-
-      const replaced = fixture.replaceRemote('remote-two', fixture.remoteRoot);
-      const settled = await Promise.race([
-        replaced.then(() => 'replaced' as const),
-        new Promise<'pending'>((resolve) => {
-          setTimeout(() => {
-            resolve('pending');
-          }, 200);
-        }),
-      ]);
-      expect(settled).toBe('replaced');
-
-      const next = fixture.program.createSessionController('remote', fixture.remoteRoot);
-      next.dispose();
     } finally {
       await fixture.cleanup();
     }

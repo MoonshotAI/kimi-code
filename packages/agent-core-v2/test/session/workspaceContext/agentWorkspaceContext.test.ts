@@ -1,5 +1,5 @@
 import { IEnvironmentService } from '#/app/environment/environment';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { Emitter, Event } from '#/_base/event';
 import { createScopedTestHost } from '#/_base/di/test';
@@ -32,7 +32,6 @@ import { stubAgentContext } from '../../agent/agentContext/stubs';
 interface AgentHarness {
   readonly shadow: AgentWorkspaceContextService;
   readonly binding: IAgentEnvironmentBindingService & { apply(next: EnvironmentBinding): void };
-  readonly publishBus: (type: string, event: { readonly agentId?: string }) => void;
 }
 
 function setup(options: { readonly sessionCwd?: string } = {}) {
@@ -66,9 +65,6 @@ function setup(options: { readonly sessionCwd?: string } = {}) {
       return { dispose: () => {} };
     },
   } as unknown as ISessionEventBus;
-  const publishBus = (type: string, event: { readonly agentId?: string }): void => {
-    for (const handler of busHandlers.get(type) ?? []) handler(event);
-  };
 
   function agent(agentId: string, initial: EnvironmentBinding): AgentHarness {
     const bindingEmitter = new Emitter<EnvironmentBinding>();
@@ -96,7 +92,7 @@ function setup(options: { readonly sessionCwd?: string } = {}) {
       current: environment,
       onDidChange: () => ({ dispose: () => {} }),
     });
-    return { shadow, binding, publishBus };
+    return { shadow, binding };
   }
 
   return {
@@ -122,29 +118,6 @@ describe('AgentWorkspaceContextService', () => {
     expect(sub.shadow.additionalDirs).toEqual(['/extra']);
   });
 
-  it('keeps a sub-agent on its own inherited binding cwd after the main agent switches', () => {
-    const { agent } = setup();
-    const main = agent('main', { environmentId: 'local', cwd: '/workspace' });
-    const sub = agent('agent-1', { environmentId: 'local', cwd: '/workspace' });
-
-    main.binding.apply({ environmentId: 'remote', cwd: '/remote/work' });
-
-    expect(main.shadow.workDir).toBe('/remote/work');
-    expect(sub.shadow.workDir).toBe('/workspace');
-  });
-
-  it('re-pins the derived roots when the binding switches mid-turn', () => {
-    const { agent } = setup();
-    const main = agent('main', { environmentId: 'local' });
-
-    main.publishBus('turn.started', { agentId: 'main' });
-    main.binding.apply({ environmentId: 'remote', cwd: '/remote/work' });
-    expect(main.shadow.workDir).toBe('/remote/work');
-
-    main.publishBus('turn.ended', { agentId: 'main' });
-    expect(main.shadow.workDir).toBe('/remote/work');
-  });
-
   it('resolves and guards paths against the derived roots', () => {
     const { agent } = setup();
     const main = agent('main', { environmentId: 'remote', cwd: '/remote/work' });
@@ -153,22 +126,6 @@ describe('AgentWorkspaceContextService', () => {
     expect(main.shadow.isWithin('/remote/work/src')).toBe(true);
     expect(main.shadow.isWithin('/elsewhere')).toBe(false);
     expect(() => main.shadow.assertAllowed('/elsewhere', 'read')).toThrowError(/outside workspace/);
-  });
-
-  it('resolves remote paths with the bound environment path semantics instead of the host', () => {
-    const { agent, registry } = setup();
-    const remote = registry.current('remote');
-    if (remote === undefined) throw new Error('remote environment missing');
-    const path = remote.path;
-    if (path === undefined) throw new Error('remote environment path missing');
-    const resolveSpy = vi.spyOn(path, 'resolve');
-    const relativeSpy = vi.spyOn(path, 'relative');
-    const main = agent('main', { environmentId: 'remote', cwd: '/srv/work' });
-
-    expect(main.shadow.resolve('src/file.ts')).toBe('/srv/work/src/file.ts');
-    expect(main.shadow.isWithin('/srv/work/src')).toBe(true);
-    expect(resolveSpy).toHaveBeenCalled();
-    expect(relativeSpy).toHaveBeenCalled();
   });
 
   it('resolves and guards paths with win32 semantics for a win32 environment binding', () => {

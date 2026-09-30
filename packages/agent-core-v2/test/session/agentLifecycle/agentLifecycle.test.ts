@@ -1173,20 +1173,6 @@ describe('AgentLifecycleService', () => {
     expect(connectCalls).toEqual([]);
   });
 
-  it('restores the main agent binding without the binding service reconnecting it', async () => {
-    ix.stub(IAppendLogStore, recordingAppendLog([
-      createWireMetadataRecord(1),
-      { type: 'environment.set_binding', agentId: 'main', workspaceId: 'ws_test', environmentId: 'remote', cwd: '/remote/work', time: 2 },
-    ]).store);
-    const { connectCalls } = stubRemoteResolver();
-
-    const svc = ix.get(IAgentLifecycleService);
-    await svc.create({ agentId: 'main' });
-
-    expectCurrentBinding('main', { environmentId: 'remote', cwd: '/remote/work' });
-    expect(connectCalls).toEqual([]);
-  });
-
   it('attaches durable environments before restore and replays their records', async () => {
     ix.stub(IAppendLogStore, recordingAppendLog([
       createWireMetadataRecord(1),

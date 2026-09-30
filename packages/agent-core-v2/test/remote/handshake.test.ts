@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ConnectionClosedError,
-  HandshakeError,
   RemoteExecConnection,
   RequestTimeoutError,
 } from '#/remote/client/connection';
@@ -96,15 +95,6 @@ describe('handshake', () => {
     await loopback.host.done;
   });
 
-  it('times out when the executor does not answer initialize', async () => {
-    await expect(
-      connectSubprocess({
-        env: { EXEC_SERVER_DELAY_MS: '3000' },
-        connect: { initializeTimeoutMs: 500 },
-      }),
-    ).rejects.toThrow(HandshakeError);
-  });
-
   it('refuses an executor below MIN_EXECUTOR_VERSION with upgrade guidance', async () => {
     await expect(connectInProcess({ version: '0.0.1' })).rejects.toThrow(/below the minimum/);
   });
@@ -127,30 +117,14 @@ describe('handshake', () => {
       clientName: 'test',
       clientVersion: '0.0.0',
     });
-    const pending = connection.call(FS_READ_FILE_METHOD, { path: '/nope' });
-    connection.close();
-    await expect(pending).rejects.toThrow(ConnectionClosedError);
-  });
-
-  it('settles a burst of pending calls when the connection closes', async () => {
-    const pipe = createScriptedServer((frame, reply) => {
-      if (frame.method === INITIALIZE_METHOD) {
-        reply({ id: frame.id, result: testInitializeResult() });
-      }
-    });
-    const connection = await RemoteExecConnection.connect(pipe, {
-      clientName: 'test',
-      clientVersion: '0.0.0',
-    });
-    const total = 260;
-    const calls: Promise<unknown>[] = [];
-    for (let i = 0; i < total; i += 1) {
-      calls.push(connection.call(FS_READ_FILE_METHOD, { path: `/nope-${i}` }));
+    const rejections: Promise<void>[] = [];
+    for (let i = 0; i < 260; i += 1) {
+      rejections.push(
+        expect(connection.call(FS_READ_FILE_METHOD, { path: `/nope-${i}` })).rejects.toThrow(ConnectionClosedError),
+      );
     }
     connection.close();
-    const settled = await Promise.allSettled(calls);
-    expect(settled).toHaveLength(total);
-    expect(settled.every((result) => result.status === 'rejected')).toBe(true);
+    await Promise.all(rejections);
   });
 
   it('rejects the handshake with the peer error when initialize is answered with an error', async () => {

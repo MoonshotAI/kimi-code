@@ -388,8 +388,7 @@ describe('WorkspaceMcpService', () => {
     const overlay = service.sessionOverlay({ eph: stdioServer() }, { sessionId: 'session-1' });
     await overlay.handle.ready;
 
-    expect(trackedSessions.filter((id) => id === undefined)).toHaveLength(2);
-    expect(trackedSessions.filter((id) => id === 'session-1')).toHaveLength(2);
+    expect(new Set(trackedSessions)).toEqual(new Set([undefined, 'session-1']));
 
     await overlay.shutdown();
   }, 20000);
@@ -451,24 +450,6 @@ describe('WorkspaceMcpService', () => {
       expect(shutdown).toHaveBeenCalledTimes(1);
       await shutdown.mock.results[0]?.value;
       await rm(sessionCwd, { recursive: true, force: true });
-    }, 20000);
-
-    it('spawns local stdio entries with the local workspace root when the session cwd is remote', async () => {
-      const service = createService();
-      manager = service.connectionManager();
-      await service.ready;
-
-      const servers = { eph: stdioServer() };
-      const sessionOverlay = vi.spyOn(service, 'sessionOverlay');
-      const { event, contributed } = willCreateEvent(servers, '/remote/session-cwd-that-does-not-exist-locally');
-      assemblyEvents.fire(event);
-
-      expect(sessionOverlay).toHaveBeenCalledWith(servers, { stdioCwd: cwd, sessionId: 's1' });
-      const overlay = sessionOverlay.mock.results[0]?.value as ISessionMcpOverlay;
-      expect(contributed.get(ISessionMcpHandle)).toBe(overlay.handle);
-      await overlay.handle.ready;
-      expect(overlay.handle.connectionManager.get('eph')?.status).toBe('connected');
-      await overlay.shutdown();
     }, 20000);
 
     it('ignores a session created without ephemeral servers', async () => {

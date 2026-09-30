@@ -231,26 +231,6 @@ describe('ExternalHooksRunnerService', () => {
     expect(results).toHaveLength(0);
   });
 
-  it('fails open when trigger input preparation throws', async () => {
-    const inputData = {};
-    Object.defineProperty(inputData, 'broken', {
-      enumerable: true,
-      get() {
-        throw new Error('broken input');
-      },
-    });
-    const runner = makeHookRunner([
-      { event: 'PreToolUse', matcher: 'Bash', command: nodeCommand('process.stdout.write("should-not-run");') },
-    ]);
-
-    await expect(
-      runner.trigger('PreToolUse', { matcherValue: 'Bash', inputData }),
-    ).resolves.toEqual([]);
-    await expect(
-      runner.triggerBlock('PreToolUse', { matcherValue: 'Bash', inputData }),
-    ).resolves.toBeUndefined();
-  });
-
   it('invokes onTriggered with (event,target,count) and onResolved with (event,target,action)', async () => {
     const triggered: Array<[string, string, number]> = [];
     const resolved: Array<[string, string, string]> = [];

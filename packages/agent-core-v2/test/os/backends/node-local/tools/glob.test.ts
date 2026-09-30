@@ -591,6 +591,37 @@ describe('GlobTool', () => {
     });
   });
 
+  it('spawns the rg probe and the rg run in the session workspace cwd', async () => {
+    const actual = await vi.importActual<typeof import('#/os/backends/node-local/tools/rgLocator')>(
+      '#/os/backends/node-local/tools/rgLocator',
+    );
+    vi.mocked(ensureRgPath).mockImplementationOnce(actual.ensureRgPath);
+    const exec = vi.fn(async (_command: string, args: readonly string[] = [], _options?: { cwd?: string }) =>
+      args[0] === '--version' ? fakeProcess('ripgrep 15.0.0\n') : fakeProcess('/workspace/src/a.ts\n'),
+    );
+    const { fs } = createTestFs();
+    const processService = createTestProcessService(exec);
+    const backend = Object.assign(
+      new FakeEnvironment(
+        { environmentId: 'ssh-dev', generation: 'rg-probe-cwd' },
+        { capabilities: ['fs', 'process'], pathClass: 'posix' },
+      ),
+      { fs, host: createTestEnv({ home: '/home/remote' }), process: processService },
+    );
+    const tool = new GlobTool(stubAgentEnvironment(backend), workspace, noopTelemetryService);
+
+    const result = await execute(tool, { pattern: '**/*.ts' });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toContain('src/a.ts');
+    expect(exec.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(exec.mock.calls[0]?.[0]).toBe('rg');
+    expect(exec.mock.calls[0]?.[1]).toEqual(['--version']);
+    for (const call of exec.mock.calls) {
+      expect(call[2]?.cwd).toBe('/workspace');
+    }
+  });
+
   describe('skills / additional dirs', () => {
     const skillsWorkspace = stubWorkspaceContext('/workspace', ['/skills']);
 

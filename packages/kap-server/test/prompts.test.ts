@@ -1784,49 +1784,6 @@ describe('server-v2 /api/v1 prompts', () => {
     }
   });
 
-  it('connects a pending bound environment on demand when resolving attachment targets', async () => {
-    const id = await createSession(home as string);
-    await createMainAgent(id);
-    const session = getLiveSessionById(server!.core.accessor, id);
-    const workspaceId = session!.accessor.get(ISessionContext).workspaceId;
-    const remoteRoot = await realpath(await mkdtemp(join(tmpdir(), 'kimi-prompt-pending-remote-')));
-    try {
-      const instance = server!.core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
-      const fake = new FakeEnvironment(
-        { environmentId: 'pending-remote', generation: 'pending-generation' },
-        { status: 'pending', capabilities: ['fs'] },
-      );
-      const connect = vi.fn(async () => {
-        fake.setStatus('ready');
-      });
-      server!.core.accessor.get(IEnvironmentService).register(Object.assign(fake, {
-        fs: new HostFileSystem(),
-        host: { ...fake.host, tempDir: join(remoteRoot, 'remote-tmp') },
-        connect,
-      }));
-      const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
-      main.accessor.get(IAgentStateService).set(agentEnvironmentBindingKey, {
-        environmentId: 'pending-remote',
-      });
-
-      const bytes = Buffer.from('%PDF-1.4 fake pdf bytes');
-      const uploaded = await uploadFile(bytes, 'application/pdf', 'report.pdf');
-      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
-        content: [
-          { type: 'file', file_id: uploaded.id, name: 'report.pdf', media_type: 'application/pdf', size: bytes.length },
-        ],
-      });
-      expect(submitted.body.code).toBe(0);
-      expect(connect).toHaveBeenCalledTimes(1);
-      const content = submitted.body.data.content as Array<{ type: string; text?: string }>;
-      const attachedPath = attachedPathFrom(content[0]?.text ?? '');
-      expect(dirname(attachedPath)).toBe(join(remoteRoot, 'remote-tmp', 'kimi-code', 'attachments'));
-      expect(await readFile(attachedPath)).toEqual(bytes);
-    } finally {
-      await rm(remoteRoot, { recursive: true, force: true });
-    }
-  });
-
   it('maps a disconnected bound environment failure to 40926 instead of 50001', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);

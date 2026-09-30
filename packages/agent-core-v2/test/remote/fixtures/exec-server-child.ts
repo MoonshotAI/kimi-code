@@ -5,13 +5,6 @@ if (banner !== undefined && banner.length > 0) {
   process.stdout.write(banner);
 }
 
-const delayMs = Number(process.env['EXEC_SERVER_DELAY_MS'] ?? '0');
-if (delayMs > 0) {
-  await new Promise((resolve) => {
-    setTimeout(resolve, delayMs);
-  });
-}
-
 const exitAfterMs = Number(process.env['EXEC_SERVER_EXIT_AFTER_MS'] ?? '0');
 if (exitAfterMs > 0) {
   setTimeout(() => {

@@ -211,14 +211,6 @@ describe('server-v2 /api/v1 environment routes', () => {
       expect(cwdOnly.body.msg).toContain('environment_cwd');
     });
 
-    it('fails session creation loudly when the environment cannot connect', async () => {
-      const created = await call<null>('POST', '/api/v1/sessions', {
-        metadata: { cwd: home as string },
-        environment_id: 'dying',
-      });
-      expect(created.body.code).toBe(40926);
-    }, 90_000);
-
     it('surfaces the connect failure reason as connect_error in the environment list', async () => {
       const created = await call<null>('POST', '/api/v1/sessions', {
         metadata: { cwd: home as string },

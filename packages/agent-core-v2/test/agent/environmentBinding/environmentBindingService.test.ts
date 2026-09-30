@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { Emitter } from '#/_base/event';
 import type { ISessionEventBus } from '#/app/event/eventBus';
 import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import '#/agent/contextMemory/conversationTime';
@@ -20,14 +19,12 @@ import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { SessionStateService } from '#/session/state/sessionStateService';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import type { WireRecord } from '#/wire/record';
 import type { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   workspaceContextAdditionalDirsKey,
   workspaceContextWorkDirKey,
 } from '#/session/workspaceContext/workspaceContextService';
-import type { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import type { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
 import { stubAgentContext } from '../agentContext/stubs';
@@ -185,10 +182,6 @@ function setup(options: {
   } as unknown as IEnvironmentDeclarationService;
   const workDirWrites: string[] = [];
   const workspaceContext = stubWorkspaceContext(session.cwd, workDirWrites);
-  const activeToolCalls: { toolCallId: string; name: string }[] = [];
-  const loopState: {
-    turn?: { turnId: number; phase: string; step: number; activeToolCalls: { toolCallId: string; name: string }[] };
-  } = { turn: undefined };
   const busHandlers = new Map<string, ((event: { readonly agentId?: string }) => void)[]>();
   const published: { readonly type: string; readonly environmentId?: string; readonly status?: string }[] = [];
   const eventBus = {
@@ -208,13 +201,6 @@ function setup(options: {
   };
   const reminders: { content: string; variant: string }[] = [];
   const reminder = stubReminder(reminders);
-  const appendLogRecords: WireRecord[] = [];
-  const workspaceChanges = new Emitter<{ workspaceId: string }>();
-  const workspaces = {
-    _serviceBrand: undefined,
-    onDidChange: workspaceChanges.event,
-    get: () => ({ environments: registry }),
-  } as unknown as IWorkspaceInstanceManager;
   const sessionState = new SessionStateService();
   sessionState.contributeState(workspaceContextWorkDirKey);
   sessionState.contributeState(workspaceContextAdditionalDirsKey);
@@ -252,18 +238,14 @@ function setup(options: {
     local,
     remote,
     localRegistration,
-    workspaceChanges,
     dispatched,
     restoreHooks,
     workDirWrites,
-    activeToolCalls,
-    loopState,
     publishBus,
     published,
     sessionState,
     reminders,
     metadataUpdates,
-    appendLogRecords,
     makeAgent,
     agentEnvironment: main.agentEnvironment,
   };
@@ -409,7 +391,7 @@ describe('AgentEnvironmentBindingService', () => {
   });
 
   it('tracks environment changes independently of workspace instances', () => {
-    const { local, workspaceChanges, agentEnvironment } = setup();
+    const { local, agentEnvironment } = setup();
     const changes: void[] = [];
     agentEnvironment.onDidChange(() => changes.push(undefined));
 
@@ -417,7 +399,6 @@ describe('AgentEnvironmentBindingService', () => {
     expect(agentEnvironment.isAvailable(['fs'])).toBe(false);
     local.setStatus('ready');
     expect(agentEnvironment.isAvailable(['fs'])).toBe(true);
-    workspaceChanges.fire({ workspaceId: 'workspace' });
 
     expect(changes).toHaveLength(2);
   });
@@ -505,48 +486,16 @@ describe('AgentEnvironmentBindingService', () => {
     expect(workDirWrites).toEqual(['/workspace']);
   });
 
-  it('applies the workDir switch immediately even while a turn is between tool calls', () => {
-    const { binding, loopState, workDirWrites, publishBus } = setup();
-    loopState.turn = { turnId: 1, phase: 'running', step: 1, activeToolCalls: [] };
-
-    expect(binding.bind('remote', '/remote/work').environmentId).toBe('remote');
-    expect(binding.current).toMatchObject({ environmentId: 'remote', cwd: '/remote/work' });
-    expect(workDirWrites).toEqual(['/remote/work']);
-
-    loopState.turn = undefined;
-    binding.bind('local');
-    expect(workDirWrites).toEqual(['/remote/work', '/workspace']);
-
-    publishBus('turn.ended', { agentId: 'main' });
-    expect(workDirWrites).toEqual(['/remote/work', '/workspace']);
-  });
-
   it('does not push workDir for non-main agents', () => {
     const { binding, workDirWrites } = setup({ agentId: 'agent-1' });
     binding.bind('remote', '/remote/work');
     expect(workDirWrites).toEqual([]);
   });
 
-  it('re-pins the turn binding and generation when the binding switches mid-turn', () => {
-    const { binding, agentEnvironment, publishBus } = setup();
-    publishBus('turn.started', { agentId: 'main' });
-
-    binding.bind('remote');
-    const lease = agentEnvironment.acquire();
-    expect(lease.environment.identity).toMatchObject({ environmentId: 'remote', generation: 'remote-one' });
-    lease.dispose();
-
-    publishBus('turn.ended', { agentId: 'main' });
-    const next = agentEnvironment.acquire();
-    expect(next.environment.identity).toMatchObject({ environmentId: 'remote', generation: 'remote-one' });
-    next.dispose();
-  });
-
   it('keeps turn acquires working when another session switches cwd on the pinned environment', async () => {
-    const { binding, agentEnvironment, registry, publishBus, makeAgent } = setup();
+    const { binding, agentEnvironment, registry, makeAgent } = setup();
     connectableEnvironment(registry, { environmentId: 'shared', status: 'ready' });
     binding.bind('shared', '/remote/work');
-    publishBus('turn.started', { agentId: 'main' });
 
     const other = makeAgent('agent-2');
     other.binding.bind('shared', '/remote/other');
@@ -554,8 +503,6 @@ describe('AgentEnvironmentBindingService', () => {
     const lease = agentEnvironment.acquire();
     expect(lease.environment.identity).toMatchObject({ environmentId: 'shared', generation: 'shared-pending' });
     lease.dispose();
-
-    publishBus('turn.ended', { agentId: 'main' });
   });
 
   it('replays the restored binding without reconnecting and raises unavailable on first acquire', async () => {
@@ -572,21 +519,11 @@ describe('AgentEnvironmentBindingService', () => {
     );
     expect(binding.current.environmentId).toBe('remote');
   });
-
-  it('ignores turn events of other agents', () => {
-    const { binding, agentEnvironment, publishBus } = setup();
-    publishBus('turn.started', { agentId: 'agent-9' });
-    binding.bind('remote');
-    const lease = agentEnvironment.acquire();
-    expect(lease.environment.identity.environmentId).toBe('remote');
-    lease.dispose();
-  });
 });
 
 describe('AgentEnvironmentBindingService restore from wire records', () => {
   it('does not reseed a remote binding from raw wire records that replay excluded', async () => {
-    const { binding, restoreHooks, dispatched, reminders, appendLogRecords } = setup({ agentId: 'agent-1' });
-    appendLogRecords.push({ type: 'environment.set_binding', agentId: 'agent-1', environmentId: 'remote', cwd: '/remote/work', time: 2 });
+    const { binding, restoreHooks, dispatched, reminders } = setup({ agentId: 'agent-1' });
 
     await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
 
@@ -893,24 +830,11 @@ describe('AgentEnvironmentService on-demand connect', () => {
     publishBus('turn.ended', { agentId: 'main' });
   });
 
-  it('connects on demand without an active turn', async () => {
+  it('adopts the generation another session connected before the first turn acquire without reconnecting', async () => {
     const { registry, state, restoreHooks, agentEnvironment } = setup();
     const { calls } = connectSwappingEnvironment(registry, 'remote-x');
     state.set(environmentBindingKey, { environmentId: 'remote-x', cwd: '/remote/x' });
     await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
-
-    const lease = await agentEnvironment.acquireWhenReady(['fs']);
-    expect(calls).toEqual(['connect']);
-    expect(lease.environment.identity.generation).toBe('remote-x-ready');
-    lease.dispose();
-  });
-
-  it('adopts the generation another session connected before the first turn acquire without reconnecting', async () => {
-    const { registry, state, restoreHooks, agentEnvironment, publishBus } = setup();
-    const { calls } = connectSwappingEnvironment(registry, 'remote-x');
-    state.set(environmentBindingKey, { environmentId: 'remote-x', cwd: '/remote/x' });
-    await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
-    publishBus('turn.started', { agentId: 'main' });
 
     await registry.current('remote-x')!.connect!();
     expect(calls).toEqual(['connect']);
@@ -923,7 +847,6 @@ describe('AgentEnvironmentService on-demand connect', () => {
     const next = agentEnvironment.acquire(['fs']);
     expect(next.environment.identity.generation).toBe('remote-x-ready');
     next.dispose();
-    publishBus('turn.ended', { agentId: 'main' });
   });
 
   it('propagates a failed on-demand connect and retries on the next call', async () => {

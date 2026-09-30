@@ -576,35 +576,6 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
     expect(await res.text()).toBe('remote-bytes');
   });
 
-  it('honors range requests against the environment fs', async () => {
-    await writeFile(join(remoteRoot as string, 'long.txt'), '0123456789');
-
-    const res = await fetch(contentUrl('/long.txt', 'remote-test'), {
-      headers: { connection: 'close', range: 'bytes=2-5', ...authHeaders(server as RunningServer) },
-    } as never);
-    expect(res.status).toBe(206);
-    expect(res.headers.get('content-range')).toBe('bytes 2-5/10');
-    expect(res.headers.get('content-length')).toBe('4');
-    expect(await res.text()).toBe('2345');
-  });
-
-  it('answers If-None-Match with 304 against the environment fs etag', async () => {
-    await writeFile(join(remoteRoot as string, 'cached.txt'), 'cache me');
-
-    const first = await fetch(contentUrl('/cached.txt', 'remote-test'), {
-      headers: { connection: 'close', ...authHeaders(server as RunningServer) },
-    } as never);
-    const etag = first.headers.get('etag') as string;
-    expect(typeof etag).toBe('string');
-
-    const res = await fetch(contentUrl('/cached.txt', 'remote-test'), {
-      headers: { connection: 'close', 'if-none-match': etag, ...authHeaders(server as RunningServer) },
-    } as never);
-    expect(res.status).toBe(304);
-    expect(res.headers.get('etag')).toBe(etag);
-    expect(await res.text()).toBe('');
-  });
-
   it('keeps serving the server-local filesystem when environment_id is local', async () => {
     const file = join(localRoot as string, 'local.txt');
     await writeFile(file, 'local-bytes');

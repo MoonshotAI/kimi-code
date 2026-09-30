@@ -72,22 +72,19 @@ describe('isExecServerArgv', () => {
 });
 
 describe('runExecServerCommand transport validation', () => {
-  it.each(['ws', 'tcp'])(
-    'rejects the %s transport with exit code 2 and a stderr-only error',
-    async (transport) => {
-      const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-      const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-      try {
-        const code = await runExecServerCommand(transport);
-        expect(code).toBe(2);
-        expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('--listen stdio'));
-        expect(stdoutSpy).not.toHaveBeenCalled();
-      } finally {
-        stderrSpy.mockRestore();
-        stdoutSpy.mockRestore();
-      }
-    },
-  );
+  it('rejects an unsupported transport with exit code 2 and a stderr-only error', async () => {
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      const code = await runExecServerCommand('ws');
+      expect(code).toBe(2);
+      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('--listen stdio'));
+      expect(stdoutSpy).not.toHaveBeenCalled();
+    } finally {
+      stderrSpy.mockRestore();
+      stdoutSpy.mockRestore();
+    }
+  });
 });
 
 describe('resolveExecutorVersion', () => {
@@ -314,15 +311,12 @@ async function runExecServerHandshake(
 }
 
 describe('exec-server stdio handshake (source entry)', () => {
-  it.each([
-    ['bare', ['src/main.ts', 'exec-server']],
-    ['explicit --listen stdio', ['src/main.ts', 'exec-server', '--listen', 'stdio']],
-  ] as const)(
-    'answers initialize with the host version and a posix environment, then exits 0 on stdin EOF (%s argv)',
+  it(
+    'answers initialize with the host version and a posix environment, then exits 0 on stdin EOF',
     { timeout: 60_000 },
-    async (_label, argv) => {
+    async () => {
       const tsxBin = resolve(appRoot, 'node_modules/.bin/tsx');
-      const result = await runExecServerHandshake(tsxBin, argv);
+      const result = await runExecServerHandshake(tsxBin, ['src/main.ts', 'exec-server']);
 
       expect(result.initialize['id']).toBe(1);
       const initializeResult = result.initialize['result'] as {

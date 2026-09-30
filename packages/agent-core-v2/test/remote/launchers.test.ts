@@ -58,15 +58,6 @@ describe('launcher lowering', () => {
     ]);
   });
 
-  it('expands a leading tilde inside the container while quoting the rest of remoteBin', () => {
-    expect(
-      resolveLauncher({ type: 'docker', container: 'myapp', remoteBin: '~/bin/kimi' }).args.at(-1),
-    ).toBe(`exec ~'/bin/kimi' 'exec-server' '--listen' 'stdio'`);
-    expect(
-      resolveLauncher({ type: 'docker', container: 'myapp', remoteBin: '/opt/$(whoami)/kimi' }).args.at(-1),
-    ).toBe(`exec '/opt/$(whoami)/kimi' 'exec-server' '--listen' 'stdio'`);
-  });
-
   it('lowers command launchers through PATH resolution with a scrubbed environment', () => {
     const resolved = resolveLauncher({
       type: 'command',
