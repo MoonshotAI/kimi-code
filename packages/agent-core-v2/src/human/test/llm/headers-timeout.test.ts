@@ -130,11 +130,27 @@ describe('default client headers timeout', () => {
       delete process.env['ALL_PROXY'];
 
       process.env[LLM_HEADERS_TIMEOUT_ENV] = 'abc';
-      const events = await generate(createOpenAIRequester());
+      let events = await generate(createOpenAIRequester());
       expect(events.at(-1)).toMatchObject({
         type: 'llm.failed.remote',
         error: { message: expect.stringContaining(LLM_HEADERS_TIMEOUT_ENV) },
       });
+
+      process.env[LLM_HEADERS_TIMEOUT_ENV] = '3000000000';
+      events = await generate(createOpenAIRequester());
+      expect(events.at(-1)).toMatchObject({
+        type: 'llm.failed.remote',
+        error: { message: expect.stringContaining(LLM_HEADERS_TIMEOUT_ENV) },
+      });
+
+      process.env[LLM_HEADERS_TIMEOUT_ENV] = '45000';
+      process.env['HTTP_PROXY'] = 'not-a-url';
+      events = await generate(createOpenAIRequester());
+      calls += 1;
+      expect(events.at(-1)).toMatchObject({ type: 'llm.done' });
+      expect(fetchStub).toHaveBeenCalledTimes(calls);
+      expect(fetchStub.mock.calls[calls - 1]?.[1]).not.toHaveProperty('dispatcher');
+      delete process.env['HTTP_PROXY'];
     } finally {
       vi.unstubAllGlobals();
       for (const [key, value] of Object.entries(savedEnv)) {

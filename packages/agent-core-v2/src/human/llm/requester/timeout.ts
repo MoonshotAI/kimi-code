@@ -2,15 +2,17 @@ import { Agent, EnvHttpProxyAgent, type Dispatcher } from 'undici';
 
 export const LLM_HEADERS_TIMEOUT_ENV = 'KIMI_CODE_LLM_HEADERS_TIMEOUT_MS';
 
+const MAX_HEADERS_TIMEOUT_MS = 2 ** 31 - 1;
+
 type Env = Readonly<Record<string, string | undefined>>;
 
 export function resolveLlmHeadersTimeoutMs(env: Env = process.env): number | undefined {
   const raw = env[LLM_HEADERS_TIMEOUT_ENV];
   if (raw === undefined || raw.trim() === '') return undefined;
   const value = Number(raw);
-  if (!Number.isInteger(value) || value <= 0) {
+  if (!Number.isInteger(value) || value <= 0 || value > MAX_HEADERS_TIMEOUT_MS) {
     throw new Error(
-      `${LLM_HEADERS_TIMEOUT_ENV} must be a positive integer, got ${JSON.stringify(raw)}.`,
+      `${LLM_HEADERS_TIMEOUT_ENV} must be a positive integer no greater than ${MAX_HEADERS_TIMEOUT_MS}, got ${JSON.stringify(raw)}.`,
     );
   }
   return value;
@@ -66,6 +68,7 @@ function resolveNoProxy(env: Env): string {
 }
 
 let warnedSocksProxy = false;
+let warnedInvalidProxy = false;
 let cached: { readonly key: string; readonly dispatcher: Dispatcher | undefined } | undefined;
 
 export function getLlmHeadersTimeoutDispatcher(
@@ -87,12 +90,23 @@ export function getLlmHeadersTimeoutDispatcher(
   let dispatcher: Dispatcher | undefined;
   const httpProxyUrls = resolveHttpProxyUrls(env);
   if (httpProxyUrls !== undefined) {
-    dispatcher = new EnvHttpProxyAgent({
-      httpProxy: httpProxyUrls.httpProxy ?? '',
-      httpsProxy: httpProxyUrls.httpsProxy ?? '',
-      noProxy: resolveNoProxy(env),
-      headersTimeout: timeoutMs,
-    });
+    try {
+      dispatcher = new EnvHttpProxyAgent({
+        httpProxy: httpProxyUrls.httpProxy ?? '',
+        httpsProxy: httpProxyUrls.httpsProxy ?? '',
+        noProxy: resolveNoProxy(env),
+        headersTimeout: timeoutMs,
+      });
+    } catch (error) {
+      if (!warnedInvalidProxy) {
+        warnedInvalidProxy = true;
+        const reason = error instanceof Error ? error.message : String(error);
+        process.stderr.write(
+          `kimi: ${LLM_HEADERS_TIMEOUT_ENV}: ignoring invalid proxy configuration (${reason}); requests keep the default headers timeout\n`,
+        );
+      }
+      dispatcher = undefined;
+    }
   } else if (hasSocksProxy(env)) {
     if (!warnedSocksProxy) {
       warnedSocksProxy = true;
