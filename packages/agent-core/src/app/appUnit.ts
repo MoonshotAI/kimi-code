@@ -119,6 +119,6 @@ export function appHandle(handle: UnitHandle): AppHandle {
   };
 }
 
-export function mountApp(props: AppUnitProps, opts?: MountRootOptions): AppHandle {
+export function createHarness(props: AppUnitProps, opts?: MountRootOptions): AppHandle {
   return appHandle(mountRoot(AppUnit, props, opts).handle);
 }
