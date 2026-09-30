@@ -288,6 +288,29 @@ describe('CloudAppender', () => {
     expect(requests[0]?.body.events[0]?.['context_model']).toBe('ambient-model');
   });
 
+  it('clears a constructor model only for the event with an explicitly unknown model', async () => {
+    const requests: CapturedRequest[] = [];
+    const appender = new CloudAppender(
+      baseOptions({
+        homeDir,
+        model: 'constructor-model',
+        fetchImpl: makeFetch((req) => {
+          requests.push(req);
+          return okResponse();
+        }),
+      }),
+    );
+
+    appender.track({ event: 'session_started', context: { model: null }, properties: {} });
+    appender.track({ event: 'turn_started', context: { model: 'selected-model' }, properties: {} });
+    appender.track({ event: 'started', context: {}, properties: {} });
+    await appender.flush();
+
+    expect(requests[0]?.body.events[0]).not.toHaveProperty('context_model');
+    expect(requests[0]?.body.events[1]?.['context_model']).toBe('selected-model');
+    expect(requests[0]?.body.events[2]?.['context_model']).toBe('constructor-model');
+  });
+
   it('sends Authorization header when a token is provided', async () => {
     const requests: CapturedRequest[] = [];
     const appender = new CloudAppender(

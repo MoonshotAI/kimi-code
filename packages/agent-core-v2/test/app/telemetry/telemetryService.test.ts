@@ -468,16 +468,17 @@ describe('TelemetryService (layered ambient)', () => {
       model: 'resumed-model',
     });
     first.dispose();
-    second.telemetry.track2('session_started', { resumed: true, experimental_flags: '' });
+    second.telemetry.track2('session_started', { resumed: true, experimental_flags: '', model_source: 'agent' });
     expect(appender.records[0]?.properties).toEqual({
       sessionId: 's1',
       model: 'resumed-model',
       resumed: true,
       experimental_flags: '',
+      model_source: 'agent',
     });
     second.dispose();
-    second.telemetry.track2('session_started', { resumed: true, experimental_flags: '' });
-    expect(appender.records[1]?.properties).toEqual({ resumed: true, experimental_flags: '' });
+    second.telemetry.track2('session_started', { resumed: true, experimental_flags: '', model_source: 'agent' });
+    expect(appender.records[1]?.properties).toEqual({ resumed: true, experimental_flags: '', model_source: 'agent' });
   });
 
   it('context writes on one binding do not leak into a sibling binding', () => {

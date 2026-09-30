@@ -119,7 +119,9 @@ export class CloudAppender implements ITelemetryAppender {
   private envelopeContext(ambient: TelemetryProperties): CloudContext {
     const context: CloudContext = { ...this.context };
     const ambientModel = ambient['model'];
-    if (typeof ambientModel === 'string' && ambientModel.length > 0) {
+    if (ambientModel === null) {
+      delete context['model'];
+    } else if (typeof ambientModel === 'string' && ambientModel.length > 0) {
       context['model'] = ambientModel;
     }
     return context;

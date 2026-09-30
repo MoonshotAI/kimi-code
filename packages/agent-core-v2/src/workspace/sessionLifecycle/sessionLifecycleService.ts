@@ -20,6 +20,7 @@ import {
   touchForkedFileHistory,
 } from '#/features/fileHistory/fileHistoryRetention';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { LifecycleScope } from '#/app/scopes';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -334,9 +335,14 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
   private async announceCreated(event: SessionCreatedEvent): Promise<void> {
     await this._onDidCreateSession.fireAsync(event, NO_ABORT);
-    event.handle.accessor.get(ITelemetryService).track2('session_started', {
+    const main = event.handle.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
+    const boundModel = main?.accessor.get(IAgentProfileService).data().modelAlias || undefined;
+    const model = boundModel ?? (this.config.get<string>('defaultModel') || null);
+    const modelSource = boundModel !== undefined ? 'agent' : model !== null ? 'default' : 'unknown';
+    event.handle.accessor.get(ITelemetryService).withContext({ model }).track2('session_started', {
       resumed: event.source === 'resume',
       experimental_flags: this.flags.exposedIds().toSorted().join(','),
+      model_source: modelSource,
     });
   }
 

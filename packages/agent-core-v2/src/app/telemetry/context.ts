@@ -23,5 +23,5 @@ export interface TelemetryContextPatch
   extends Partial<SessionTelemetryContext>,
     Partial<AgentTelemetryContext>,
     Partial<TurnTelemetryContext> {
-  readonly model?: string;
+  readonly model?: string | null;
 }

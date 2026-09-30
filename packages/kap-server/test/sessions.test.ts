@@ -14,6 +14,10 @@ import {
   Error2,
   ErrorCodes,
   IBootstrapService,
+  IConfigService,
+  IAgentProfileService,
+  ITelemetryService,
+  type TelemetryAppenderRecord,
   IOAuthService,
   type Event2,
   type IOAuthService as IOAuthServiceType,
@@ -130,7 +134,7 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
-  async function restartWithFreshHome(): Promise<void> {
+  async function restartWithFreshHome(config?: string): Promise<void> {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -140,6 +144,7 @@ describe('server-v2 /api/v1/sessions', () => {
       await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as never);
     }
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-'));
+    if (config !== undefined) await writeFile(join(home, 'config.toml'), config, 'utf-8');
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
@@ -444,6 +449,162 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(body.code).toBe(0);
     expect(body.data.items.some((s) => s.id === created.body.data.id)).toBe(true);
     expect(typeof body.data.has_more).toBe('boolean');
+  });
+
+  const sessionModelConfig = [
+    'default_model = "example-model"',
+    '[providers.example]',
+    'type = "openai"',
+    'base_url = "https://example.test/v1"',
+    'api_key = "YOUR_API_KEY"',
+    '[models.example-model]',
+    'provider = "example"',
+    'model = "example-model"',
+    'max_context_size = 4096',
+    '[models.mock-model]',
+    'provider = "example"',
+    'model = "mock-model"',
+    'max_context_size = 4096',
+  ].join('\n');
+
+  it('attributes concurrent session starts to each requested model before returning', async () => {
+    await restartWithFreshHome(sessionModelConfig);
+    const core = (server as RunningServer).core;
+    const records: TelemetryAppenderRecord[] = [];
+    const registration = core.accessor.get(ITelemetryService).addAppender({
+      track: (record) => { records.push(record); },
+    });
+    try {
+      const models = ['mock-model', 'example-model'];
+      const created = await Promise.all(models.map((model) => postJson<SessionWire>('/api/v1/sessions', {
+        metadata: { cwd: home as string },
+        agent_config: { model },
+      })));
+      const started = records.filter((record) => record.event === 'session_started');
+      expect(started).toHaveLength(2);
+      for (const [index, result] of created.entries()) {
+        expect(result.body.code).toBe(0);
+        expect(result.body.data.agent_config.model).toBe(models[index]);
+        expect(started.find((record) => record.context['session_id'] === result.body.data.id)).toMatchObject({
+          context: { model: models[index] },
+          properties: { resumed: false, model_source: 'agent' },
+        });
+      }
+      expect(core.accessor.get(ITelemetryService).getContext()).not.toHaveProperty('model');
+    } finally {
+      registration.dispose();
+    }
+  });
+
+  it('snapshots the current default without binding an empty session', async () => {
+    await restartWithFreshHome(sessionModelConfig);
+    const core = (server as RunningServer).core;
+    const records: TelemetryAppenderRecord[] = [];
+    const registration = core.accessor.get(ITelemetryService).addAppender({
+      track: (record) => { records.push(record); },
+    });
+    try {
+      for (const model of ['example-model', 'mock-model']) {
+        await core.accessor.get(IConfigService).set('defaultModel', model);
+        const created = await postJson<SessionWire>('/api/v1/sessions', {
+          metadata: { cwd: home as string },
+          agent_config: { model: '' },
+        });
+        expect(created.body.code).toBe(0);
+        expect(created.body.data.agent_config.model).toBe('');
+        const session = getLiveSessionById(core.accessor, created.body.data.id);
+        expect(session?.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)).toBeUndefined();
+        expect(records.find((record) => record.event === 'session_started' && record.context['session_id'] === created.body.data.id)).toMatchObject({
+          context: { model },
+          properties: { model_source: 'default' },
+        });
+      }
+      expect(records.filter((record) => record.event === 'session_started')).toHaveLength(2);
+    } finally {
+      registration.dispose();
+    }
+  });
+
+  it('uses the restored model and keeps later model changes out of the startup snapshot', async () => {
+    await restartWithFreshHome(sessionModelConfig);
+    const core = (server as RunningServer).core;
+    const records: TelemetryAppenderRecord[] = [];
+    const registration = core.accessor.get(ITelemetryService).addAppender({
+      track: (record) => { records.push(record); },
+    });
+    try {
+      const created = await postJson<SessionWire>('/api/v1/sessions', {
+        metadata: { cwd: home as string },
+        agent_config: { model: 'mock-model' },
+      });
+      expect(created.body.code).toBe(0);
+      const id = created.body.data.id;
+      await closeSessionById(core.accessor, id);
+      const resumed = await resumeSessionById(core.accessor, id);
+      expect(resumed).toBeDefined();
+      const started = records.filter((record) => record.event === 'session_started');
+      expect(started).toHaveLength(2);
+      expect(started[1]).toMatchObject({
+        context: { session_id: id, model: 'mock-model' },
+        properties: { resumed: true, model_source: 'agent' },
+      });
+      await resumeSessionById(core.accessor, id);
+      const updated = await postJson<SessionWire>(`/api/v1/sessions/${id}/profile`, {
+        agent_config: { model: 'example-model' },
+      });
+      expect(updated.body.code).toBe(0);
+      const main = resumed?.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
+      expect(main?.accessor.get(IAgentProfileService).getModel()).toBe('example-model');
+      expect(main?.accessor.get(ITelemetryService).getContext().model).toBe('example-model');
+      expect(started[1]?.context['model']).toBe('mock-model');
+      expect(records.filter((record) => record.event === 'session_started')).toHaveLength(2);
+    } finally {
+      registration.dispose();
+    }
+  });
+
+  it('keeps model-less session creation available and explicitly marks its unknown model', async () => {
+    await restartWithFreshHome();
+    const core = (server as RunningServer).core;
+    const telemetry = core.accessor.get(ITelemetryService);
+    telemetry.setContext({ model: 'stale-model' });
+    const records: TelemetryAppenderRecord[] = [];
+    const registration = telemetry.addAppender({ track: (record) => { records.push(record); } });
+    try {
+      const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home as string } });
+      expect(created.body.code).toBe(0);
+      expect(created.body.data.agent_config.model).toBe('');
+      expect(records.filter((record) => record.event === 'session_started')).toEqual([
+        expect.objectContaining({
+          context: { session_id: created.body.data.id, model: null },
+          properties: expect.objectContaining({ model_source: 'unknown' }),
+        }),
+      ]);
+      expect(telemetry.getContext().model).toBe('stale-model');
+    } finally {
+      registration.dispose();
+    }
+  });
+
+  it('rejects an unknown requested model without announcing a started session', async () => {
+    await restartWithFreshHome(sessionModelConfig);
+    const core = (server as RunningServer).core;
+    const records: TelemetryAppenderRecord[] = [];
+    const registration = core.accessor.get(ITelemetryService).addAppender({
+      track: (record) => { records.push(record); },
+    });
+    try {
+      const created = await postJson<SessionWire>('/api/v1/sessions', {
+        metadata: { cwd: home as string },
+        agent_config: { model: 'missing-model' },
+      });
+      expect(created.body.code).not.toBe(0);
+      expect(records.filter((record) => record.event === 'session_started')).toEqual([]);
+      expect((await getJson<PageWire>('/api/v1/sessions')).body.data.items).toEqual([]);
+      expect((await getJson<{ items: unknown[] }>('/api/v1/workspaces')).body.data.items).toEqual([]);
+    } finally {
+      registration.dispose();
+    }
   });
 
   it('fills agent_config.model from the live session profile', async () => {

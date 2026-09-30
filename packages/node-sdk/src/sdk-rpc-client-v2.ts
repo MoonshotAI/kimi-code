@@ -127,6 +127,7 @@
  *   `toolCall` keeps the base class's "not supported" answer, which the
  *   interaction bridge already relies on.
  */
+import { randomUUID } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -1360,33 +1361,50 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         );
       }
     }
-    const handle = await this.engineAccessor.get(ISessionManager).create({
-      sessionId: input.id,
-      workDir,
-      additionalDirs: input.additionalDirs,
+    const manager = this.engineAccessor.get(ISessionManager);
+    if (manager.onDidCreateSession === undefined) {
+      throw new Error('Session creation events are unavailable');
+    }
+    const sessionId = input.id ?? `session_${randomUUID()}`;
+    let initialization: Promise<void> | undefined;
+    const registration = manager.onDidCreateSession((event) => {
+      if (event.sessionId !== sessionId) return;
+      initialization = (async () => {
+        // Wired before the optional main-agent materialization so a profile-bind
+        // warning (oversized AGENTS.md) reaches the listeners like v1's create.
+        this.wireSession(event.handle);
+        if (
+          input.model !== undefined ||
+          input.thinking !== undefined ||
+          input.permission !== undefined
+        ) {
+          const agent = await this.materializeMainAgent(event.handle, {
+            model: input.model,
+            thinking: input.thinking,
+          });
+          if (input.permission !== undefined) {
+            agent.accessor.get(IAgentPermissionModeService).setMode(input.permission);
+          }
+        }
+      })();
+      event.waitUntil(initialization.catch(() => {}));
     });
-    // Wired before the optional main-agent materialization so a profile-bind
-    // warning (oversized AGENTS.md) reaches the listeners like v1's create.
-    this.wireSession(handle);
-    if (
-      input.model !== undefined ||
-      input.thinking !== undefined ||
-      input.permission !== undefined
-    ) {
-      const agent = await this.materializeMainAgent(handle, {
-        model: input.model,
-        thinking: input.thinking,
+    try {
+      const handle = await manager.create({
+        sessionId,
+        workDir,
+        additionalDirs: input.additionalDirs,
       });
-      if (input.permission !== undefined) {
-        agent.accessor.get(IAgentPermissionModeService).setMode(input.permission);
+      await initialization;
+      if (input.metadata !== undefined) {
+        await this.klient.session(handle.id).update({ custom: { ...input.metadata } });
       }
+      // v1 returns the caller's metadata verbatim on create (not the merged
+      // custom map a later listing would report), so override it here too.
+      return { ...(await this.liveSessionSummary(handle)), metadata: input.metadata };
+    } finally {
+      registration.dispose();
     }
-    if (input.metadata !== undefined) {
-      await this.klient.session(handle.id).update({ custom: { ...input.metadata } });
-    }
-    // v1 returns the caller's metadata verbatim on create (not the merged
-    // custom map a later listing would report), so override it here too.
-    return { ...(await this.liveSessionSummary(handle)), metadata: input.metadata };
   }
 
   /**
