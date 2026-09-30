@@ -593,19 +593,6 @@ describe('AgentEnvironmentBindingService restore from wire records', () => {
 });
 
 describe('AgentEnvironmentBindingService environment reminder', () => {
-  it('emits exactly one reminder with the environment id and environment on switch', () => {
-    const { binding, reminders } = setup();
-
-    binding.bind('remote', '/remote/work');
-    binding.bind('remote', '/remote/work');
-
-    expect(reminders).toHaveLength(1);
-    expect(reminders[0]!).toEqual({
-      variant: ENVIRONMENT_BINDING_REMINDER_VARIANT,
-      content: reminderText('remote', REMOTE_HOST, '/remote/work'),
-    });
-  });
-
   it('emits no reminder for a local create-seed on a fresh session restore', async () => {
     const { restoreHooks, reminders } = setup();
 
@@ -631,55 +618,6 @@ describe('AgentEnvironmentBindingService environment reminder', () => {
 
     await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
 
-    expect(reminders).toHaveLength(0);
-  });
-
-  it('emits the local environment when switching back to local', () => {
-    const { binding, reminders } = setup();
-
-    binding.bind('remote', '/remote/work');
-    binding.bind('local');
-
-    expect(reminders).toHaveLength(2);
-    expect(reminders[1]!.content).toBe(reminderText('local', LOCAL_HOST, '/workspace'));
-  });
-
-  it('emits the reminder on a remote to remote switch, even when the environments match', () => {
-    const { binding, registry, reminders } = setup();
-    const host = {
-      osKind: 'Linux',
-      osArch: 'x86_64',
-      osVersion: '5.15-remote-two',
-      shellName: 'bash',
-      shellPath: '/usr/bin/bash',
-    } as const;
-    registry.register(environment('remote-two', 'remote-two-one', 'ready', ['process'], host));
-    registry.register(environment('remote-three', 'remote-three-one', 'ready', ['process'], REMOTE_HOST));
-
-    binding.bind('remote', '/remote/work');
-    binding.bind('remote-two', '/remote/two');
-    binding.bind('remote-three', '/remote/three');
-
-    expect(reminders).toHaveLength(3);
-    expect(reminders[1]!.content).toBe(reminderText('remote-two', host, '/remote/two'));
-    expect(reminders[2]!.content).toBe(reminderText('remote-three', REMOTE_HOST, '/remote/three'));
-  });
-
-  it('emits no reminder when the non-local target reports the same environment as local', () => {
-    const { binding, registry, reminders } = setup();
-    registry.register(
-      environment('acp:session-1', 'acp-one', 'ready', ['fs', 'process'], {
-        osKind: 'Linux',
-        osArch: 'x86_64',
-        osVersion: '6.1.0-local',
-        shellName: 'bash',
-        shellPath: '/bin/bash',
-      }),
-    );
-
-    binding.bind('acp:session-1');
-
-    expect(binding.current).toEqual({ environmentId: 'acp:session-1' });
     expect(reminders).toHaveLength(0);
   });
 
@@ -745,7 +683,6 @@ describe('AgentEnvironmentBindingService project context reminder', () => {
     await flushProbe();
 
     expect(reminders.map((reminder) => reminder.variant)).toEqual([
-      ENVIRONMENT_BINDING_REMINDER_VARIANT,
       PROJECT_CONTEXT_REMINDER_VARIANT,
     ]);
     expect(projectContextReminders(reminders)[0]!.content).toBe(
@@ -756,21 +693,6 @@ describe('AgentEnvironmentBindingService project context reminder', () => {
         '- /remote/work/sub/AGENTS.md\n' +
         'Read them before making changes in this working directory.',
     );
-  });
-
-  it('injects nothing when the same view is revisited within the session', async () => {
-    const { registry, binding, reminders } = setup();
-    const fs = probeFs({ '/remote/work/AGENTS.md': 'remote instructions' }, ['/remote/work/.git']);
-    registry.register(probingEnvironment('remote-view', REMOTE_HOST, fs));
-
-    binding.bind('remote-view', '/remote/work');
-    await flushProbe();
-    binding.bind('local');
-    await flushProbe();
-    binding.bind('remote-view', '/remote/work');
-    await flushProbe();
-
-    expect(projectContextReminders(reminders)).toHaveLength(1);
   });
 
   it('injects on a remote to same-host remote switch because the view is new', async () => {

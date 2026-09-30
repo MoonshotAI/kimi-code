@@ -10,8 +10,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
-import { DEFAULT_ENVIRONMENT_HOST } from '#/environment/environmentDefaults';
-import { environmentBindingId, LOCAL_ENVIRONMENT_ID, type EnvironmentBinding, type EnvironmentLease } from '#/environment/environment';
+import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding, type EnvironmentLease } from '#/environment/environment';
 import { EnvironmentError } from '#/environment/environmentRegistry';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -28,10 +27,6 @@ export const agentEnvironmentBindingKey = defineState<EnvironmentBinding>('envir
 export const ENVIRONMENT_BINDING_REMINDER_VARIANT = 'environment_binding';
 
 export const PROJECT_CONTEXT_REMINDER_VARIANT = 'project_context';
-
-function projectContextViewKey(binding: EnvironmentBinding, fallbackCwd: string): string {
-  return environmentBindingId(binding.environmentId, binding.cwd ?? fallbackCwd);
-}
 
 function projectContextReminderText(binding: EnvironmentBinding, cwd: string, paths: readonly string[]): string {
   return (
@@ -53,24 +48,11 @@ function environmentReminderText(binding: EnvironmentBinding, environment: HostE
   ].join(' ');
 }
 
-function hostEnvironmentEquals(left: HostEnvironmentInfo, right: HostEnvironmentInfo): boolean {
-  return (
-    left.osKind === right.osKind &&
-    left.osArch === right.osArch &&
-    left.osVersion === right.osVersion &&
-    left.shellName === right.shellName &&
-    left.shellPath === right.shellPath &&
-    left.pathClass === right.pathClass &&
-    left.homeDir === right.homeDir
-  );
-}
-
 export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingService {
   declare readonly _serviceBrand: undefined;
   private readonly changeEmitter = new Emitter<EnvironmentBinding>();
   readonly onDidChange = this.changeEmitter.event;
   private readonly restoreHook: IDisposable;
-  private readonly visitedViews = new Set<string>();
 
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
@@ -89,7 +71,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     this.state.contributeState(environmentBindingKey);
     const initial = this.state.get(environmentBindingKey) ?? seed.binding;
     this.state.set(agentEnvironmentBindingKey, initial);
-    this.markProjectContextVisited(initial);
     this.restoreHook = dispatcher.hooks.onDidRestore.register('agent-environment-binding', async (_ctx, next) => {
       const replayed = this.state.get(environmentBindingKey);
       if (replayed !== undefined) {
@@ -107,7 +88,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
           this.emitEnvironmentReminder(this.current);
         }
       }
-      this.markProjectContextVisited(this.current);
       await this.persistIfChanged(this.current);
       await next();
     });
@@ -163,31 +143,10 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     );
     this.state.set(agentEnvironmentBindingKey, next);
     this.applySessionWorkDir(next);
-    if (this.machineIdentityChanged(previous, next)) {
-      this.emitEnvironmentReminder(next);
-    }
     this.emitProjectContextReminder(next);
     this.changeEmitter.fire(next);
     void this.persistIfChanged(next);
     return next;
-  }
-
-  private machineIdentityChanged(previous: EnvironmentBinding, next: EnvironmentBinding): boolean {
-    if (
-      previous.environmentId !== LOCAL_ENVIRONMENT_ID &&
-      next.environmentId !== LOCAL_ENVIRONMENT_ID &&
-      previous.environmentId !== next.environmentId
-    ) {
-      return true;
-    }
-    try {
-      return !hostEnvironmentEquals(
-        this.resolver.inspect(previous).host ?? DEFAULT_ENVIRONMENT_HOST,
-        this.resolver.inspect(next).host ?? DEFAULT_ENVIRONMENT_HOST,
-      );
-    } catch {
-      return true;
-    }
   }
 
   private emitEnvironmentReminder(binding: EnvironmentBinding): void {
@@ -205,14 +164,8 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     });
   }
 
-  private markProjectContextVisited(binding: EnvironmentBinding): void {
-    this.visitedViews.add(projectContextViewKey(binding, this.session.cwd));
-  }
-
   private emitProjectContextReminder(binding: EnvironmentBinding): void {
     if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
-    if (this.visitedViews.has(projectContextViewKey(binding, this.session.cwd))) return;
-    this.markProjectContextVisited(binding);
     void this.probeProjectContext(binding).catch((error: unknown) => {
       this.log.warn(`project context probe for environment ${binding.environmentId} failed`, { error });
     });
@@ -238,9 +191,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
         this.bootstrap.homeDir,
       );
       if (paths.length === 0) return;
-      if (projectContextViewKey(this.current, this.session.cwd) !== projectContextViewKey(binding, this.session.cwd)) {
-        return;
-      }
       this.reminder.notify(projectContextReminderText(binding, cwd, paths), {
         variant: PROJECT_CONTEXT_REMINDER_VARIANT,
       });
