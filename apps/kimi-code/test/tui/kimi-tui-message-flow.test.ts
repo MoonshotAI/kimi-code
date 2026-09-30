@@ -1146,19 +1146,14 @@ describe('KimiTUI message flow', () => {
     const turns = groupTurns(driver.state.transcriptEntries);
     expect(turns).toHaveLength(3);
     expect(turns[1]!.entries.map((entry) => entry.kind)).toEqual([
-      'skill_activation',
-      'skill_activation',
       'assistant',
       'user',
       'assistant',
     ]);
-    expect(turns[1]!.entries[2]!.hookResult).toBe(true);
-    expect(turns[1]!.entries[3]!.content).toBe('please /skill:review and /skill:security');
-    expect(
-      turns[1]!.entries.slice(0, 2).map((entry) => entry.bundledWithPrompt),
-    ).toEqual([true, true]);
-    expect(turns[2]!.entries.map((entry) => entry.kind)).toEqual(['skill_activation', 'user']);
-    expect(turns[2]!.entries[1]!.content).toBe('please /commit');
+    expect(turns[1]!.entries[0]!.hookResult).toBe(true);
+    expect(turns[1]!.entries[1]!.content).toBe('please /skill:review and /skill:security');
+    expect(turns[2]!.entries.map((entry) => entry.kind)).toEqual(['user']);
+    expect(turns[2]!.entries[0]!.content).toBe('please /commit');
   });
 
   it('pages Updates with Ctrl+N and arrow keys while keeping the editor focused', async () => {
@@ -1466,12 +1461,12 @@ describe('KimiTUI message flow', () => {
     expect(hookIndex).toBeGreaterThan(-1);
     expect(entries[hookIndex]!.content).toContain('hook note');
     const contents = entries.map((entry) => entry.content);
-    expect(contents.indexOf('Activated skill: review')).toBeLessThan(hookIndex);
     expect(contents.indexOf('bundled question')).toBeGreaterThan(hookIndex);
+    expect(contents).not.toContain('Activated skill: review');
     expect(contents).not.toContain('question 0');
   });
 
-  it('appends the user entry after the skill cards for a bundled submission (v2 engine)', async () => {
+  it('shows only the user entry for a bundled submission (v2 engine)', async () => {
     const session = makeSession({
       id: 'ses-lazy',
       listSkills: vi.fn(async () => [
@@ -1521,12 +1516,9 @@ describe('KimiTUI message flow', () => {
     release();
 
     await vi.waitFor(() => {
-      expect(driver.state.transcriptEntries.map((entry) => entry.kind)).toEqual([
-        'skill_activation',
-        'user',
-      ]);
+      expect(driver.state.transcriptEntries.map((entry) => entry.kind)).toEqual(['user']);
     });
-    expect(driver.state.transcriptEntries[0]!.bundledWithPrompt).toBe(true);
+    expect(driver.state.transcriptEntries[0]!.content).toBe('please /skill:review');
   });
 
   it('serializes concurrent lazy session creation (v2 engine)', async () => {
@@ -3347,7 +3339,7 @@ command = "vim"
     expect(transcript).not.toContain('review');
   });
 
-  it('keeps user-slash skill activations as undo anchors', async () => {
+  it('does not count hidden skill activation events as undo anchors', async () => {
     const { driver } = await makeDriver();
 
     driver.handleUserInput('hello');
@@ -3361,29 +3353,70 @@ command = "vim"
       } as Event,
       () => {},
     );
+    expect(driver.state.transcriptEntries.map((entry) => entry.content)).toEqual(['hello']);
     driver.state.appState.streamingPhase = 'idle';
 
     driver.handleUserInput('/undo');
     await confirmUndoSelection(driver);
 
     await vi.waitFor(() => {
-      expect(driver.state.transcriptEntries).toEqual([
-        expect.objectContaining({
-          kind: 'user',
-          content: 'hello',
-        }),
-      ]);
+      expect(driver.state.transcriptEntries).toEqual([]);
     });
 
-    expect(driver.state.transcriptEntries).toEqual([
-      expect.objectContaining({
-        kind: 'user',
-        content: 'hello',
-      }),
-    ]);
     const transcript = stripSgr(renderTranscript(driver));
-    expect(transcript).toContain('hello');
+    expect(transcript).not.toContain('hello');
     expect(transcript).not.toContain('review');
+  });
+
+  it('undoes a reconstructed user message from an older skill session', async () => {
+    const session = makeSession();
+    (session.getResumeState as ReturnType<typeof vi.fn>).mockReturnValue({
+      sessionMetadata: {},
+      agents: {
+        main: {
+          config: { modelCapabilities: { max_context_tokens: 100 }, modelAlias: 'k2' },
+          plan: null,
+          permission: { mode: 'manual' },
+          swarmMode: false,
+          context: { history: [], tokenCount: 0 },
+          background: [],
+          toolStore: {},
+          replay: [
+            {
+              type: 'message',
+              time: 1,
+              message: {
+                role: 'user',
+                content: [{ type: 'text', text: 'expanded skill instructions' }],
+                toolCalls: [],
+                origin: {
+                  kind: 'skill_activation',
+                  activationId: 'old-skill',
+                  skillName: 'review',
+                  skillArgs: 'src/app.ts',
+                  skillSource: 'user',
+                  trigger: 'user-slash',
+                },
+              },
+            },
+          ],
+        },
+      },
+    });
+    const { driver } = await makeDriver(session);
+    await driver.sessionReplay.hydrateFromReplay(session as unknown as Session);
+
+    expect(driver.state.transcriptEntries.map((entry) => entry.content)).toEqual([
+      '/skill:review src/app.ts',
+    ]);
+    driver.handleUserInput('/undo');
+    await confirmUndoSelection(driver);
+
+    await vi.waitFor(() => {
+      expect(driver.state.transcriptEntries).toEqual([]);
+    });
+    expect(session.undoHistory).toHaveBeenCalledWith(1);
+    expect(stripSgr(renderTranscript(driver))).not.toContain('/skill:review src/app.ts');
   });
 
   it('deletes a pasted video’s daemon upload when the consuming turn ends', async () => {

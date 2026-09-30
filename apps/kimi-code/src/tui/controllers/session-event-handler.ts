@@ -16,7 +16,6 @@ import type {
   HookResultEvent,
   Session,
   SessionMetaUpdatedEvent,
-  SkillActivatedEvent,
   PluginCommandActivatedEvent,
   ThinkingDeltaEvent,
   ToolCallDeltaEvent,
@@ -162,7 +161,6 @@ export class SessionEventHandler {
   backgroundTasks: Map<string, BackgroundTaskInfo> = new Map();
   backgroundTaskTranscriptedTerminal: Set<string> = new Set();
 
-  renderedSkillActivationIds: Set<string> = new Set();
   renderedPluginCommandActivationIds: Set<string> = new Set();
   renderedMcpServerStatusKeys: Map<string, string> = new Map();
   mcpServerStatusSpinners: Map<string, MoonLoader> = new Map();
@@ -183,7 +181,6 @@ export class SessionEventHandler {
     this.backgroundTaskTranscriptedTerminal.clear();
     this.subAgentEventHandler.resetRuntimeState();
     this.notifications.reset();
-    this.renderedSkillActivationIds.clear();
     this.renderedPluginCommandActivationIds.clear();
     this.renderedMcpServerStatusKeys.clear();
     this.mcpServers.clear();
@@ -294,7 +291,7 @@ export class SessionEventHandler {
       case 'agent.status.updated': this.handleStatusUpdate(event); break;
       case 'session.meta.updated': this.handleSessionMetaChanged(event); break;
       case 'goal.updated': this.handleGoalUpdated(event); break;
-      case 'skill.activated': this.handleSkillActivated(event); break;
+      case 'skill.activated': break;
       case 'plugin_command.activated': this.handlePluginCommandActivated(event); break;
       case 'error': this.handleSessionError(event); break;
       case 'warning': this.handleSessionWarning(event); break;
@@ -1090,22 +1087,6 @@ export class SessionEventHandler {
     }
     this.mcpServerStatusSpinners.delete(name);
     state.ui.requestRender();
-  }
-
-  private handleSkillActivated(event: SkillActivatedEvent): void {
-    if (this.renderedSkillActivationIds.has(event.activationId)) return;
-    this.renderedSkillActivationIds.add(event.activationId);
-    this.host.appendTranscriptEntry({
-      id: nextTranscriptId(),
-      kind: 'skill_activation',
-      turnId: undefined,
-      renderMode: 'plain',
-      content: `Activated skill: ${event.skillName}`,
-      skillActivationId: event.activationId,
-      skillName: event.skillName,
-      skillArgs: event.skillArgs,
-      skillTrigger: event.trigger,
-    });
   }
 
   private handlePluginCommandActivated(event: PluginCommandActivatedEvent): void {
