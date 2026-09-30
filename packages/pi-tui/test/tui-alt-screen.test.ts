@@ -62,6 +62,172 @@ class RecordingTerminal extends VirtualTerminal {
 }
 
 describe("TuiAltScreen", () => {
+	it("preserves word selections when an effect adds or removes leading content padding", async () => {
+		const terminal = new VirtualTerminal(30, 6);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		let pinned = false;
+		let requested = false;
+		const body = {
+			render: () => (pinned ? ["alpha", "beta"] : ["", "alpha", "beta"]),
+			invalidate() {},
+		};
+		const header = { render: () => (pinned ? ["heading"] : []), invalidate() {} };
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: header, shrink: 0 },
+				{ component: new ScrollView(body), basis: 0, grow: 1 },
+			]),
+		);
+		tui.addLayoutEffect(() => {
+			if (pinned === requested) return;
+			pinned = requested;
+			tui.requestRender();
+		});
+		tui.start();
+		await terminal.waitForRender();
+		for (let click = 0; click < 2; click++) {
+			terminal.sendInput("\x1b[<0;2;2M");
+			terminal.sendInput("\x1b[<0;2;2m");
+		}
+		requested = true;
+		tui.renderNow();
+		await tui.copyActiveSelectionToClipboard();
+		requested = false;
+		tui.renderNow();
+		await tui.copyActiveSelectionToClipboard();
+		assert.deepStrictEqual(copied, ["alpha", "alpha"]);
+		tui.stop();
+	});
+
+	it("settles layout effects before the first write and coalesces their render requests", async () => {
+		const terminal = new RecordingTerminal(20, 3);
+		const tui = new TuiAltScreen(terminal);
+		let heading = "";
+		let invalidations = 0;
+		const header = { render: () => (heading ? [heading] : []), invalidate: () => invalidations++ };
+		const scroll = new ScrollView(new Text("one\ntwo\nthree\nfour\nfive\nsix", 0, 0), { follow: "end" });
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: header, shrink: 0 },
+				{ component: scroll, basis: 0, grow: 1 },
+			]),
+		);
+		const observed: number[] = [];
+		const dispose = tui.addLayoutEffect(() => {
+			observed.push(scroll.scrollTop);
+			assert.strictEqual(tui.viewportTop, scroll.scrollTop);
+			const next = `top ${scroll.scrollTop}`;
+			if (next === heading) return;
+			heading = next;
+			tui.requestRender();
+			tui.requestRender();
+		});
+		tui.start();
+		await terminal.waitForRender();
+		assert.deepStrictEqual(observed, [3, 4, 4]);
+		assert.deepStrictEqual(
+			terminal.getViewport().map((line) => line.trimEnd()),
+			["top 4", "five", "six"],
+		);
+		assert.strictEqual(invalidations, 0);
+		const frames = terminal.events.filter((event) => event.type === "write" && event.data.includes("\x1b[?2026h"));
+		assert.strictEqual(frames.length, 1);
+		dispose();
+		scroll.scrollBy(-1);
+		await terminal.waitForRender();
+		assert.deepStrictEqual(observed, [3, 4, 4]);
+		assert.strictEqual(terminal.getViewport()[1]?.trimEnd(), "four");
+		tui.stop();
+	});
+
+	it("honors a forced render requested from a layout effect without scheduling another frame", async () => {
+		const terminal = new RecordingTerminal(20, 3);
+		const tui = new TuiAltScreen(terminal);
+		const scroll = new ScrollView(new Text("one\ntwo\nthree\nfour\nfive", 0, 0), { follow: "end" });
+		tui.setLayoutRoot(scroll);
+		tui.start();
+		await terminal.waitForRender();
+		const redraws = tui.fullRedraws;
+		terminal.events.length = 0;
+		let force = true;
+		tui.addLayoutEffect(() => {
+			if (!force) return;
+			force = false;
+			tui.requestRender(true);
+		});
+		tui.addLayoutEffect(() => assert.strictEqual(tui.viewportTop, scroll.scrollTop));
+		tui.requestRender();
+		await terminal.waitForRender();
+		assert.strictEqual(tui.fullRedraws, redraws + 1);
+		assert.strictEqual(terminal.events.filter((event) => event.type === "write").length, 1);
+		tui.stop();
+	});
+
+	it("bounds layout effects that keep requesting another pass", async () => {
+		const terminal = new VirtualTerminal(20, 3);
+		const tui = new TuiAltScreen(terminal);
+		tui.start();
+		await terminal.waitForRender();
+		const dispose = tui.addLayoutEffect(() => tui.requestRender());
+		assert.throws(() => tui.renderNow(), /Layout effects did not stabilize/);
+		dispose();
+		tui.renderNow();
+		tui.stop();
+	});
+
+	it("retains the selected search occurrence when a layout effect shifts content rows", async () => {
+		const terminal = new RecordingTerminal(60, 6);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			searchCurrentMatchStyle: (text) => `\x1b[42m${text}\x1b[49m`,
+		});
+		let searching = false;
+		let pinned = false;
+		const body = {
+			render: () =>
+				pinned ? ["needle first", "needle second", "end"] : ["", "needle first", "needle second", "end"],
+			invalidate() {},
+		};
+		const header = { render: () => (pinned ? ["needle pill"] : []), invalidate() {} };
+		const scroll = new ScrollView(body, { primary: true });
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: header, shrink: 0 },
+				{ component: scroll, basis: 0, grow: 1 },
+			]),
+		);
+		tui.addLayoutEffect(() => {
+			if (!searching || pinned) return;
+			pinned = true;
+			tui.requestRender();
+		});
+		tui.start();
+		await terminal.waitForRender();
+		terminal.events.length = 0;
+		searching = true;
+		terminal.sendInput("\x1b[102;6u");
+		terminal.sendInput("needle");
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport().some((line) => line.includes("1/2")));
+		assert.ok(
+			terminal.events.some(
+				(event) => event.type === "write" && event.data.includes("\x1b[42mneedle\x1b[49m first"),
+			),
+		);
+		assert.ok(
+			terminal.events.every(
+				(event) => event.type !== "write" || !event.data.includes("\x1b[42mneedle\x1b[49m pill"),
+			),
+		);
+		tui.stop();
+	});
+
 	it("renders a terminal-height viewport and preserves manual scroll position", async () => {
 		const terminal = new VirtualTerminal(20, 4);
 		const tui = new TuiAltScreen(terminal);

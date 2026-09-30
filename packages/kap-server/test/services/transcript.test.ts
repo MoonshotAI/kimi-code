@@ -312,14 +312,16 @@ describe('AgentTranscriptProjector', () => {
       turnId: 0,
       promptId: 'prompt-1',
       origin: { kind: 'user' },
-      prompt: 'fix the bug',
+      prompt: '<hook_result hook_event="UserPromptSubmit">\nliteral user text\n</hook_result>fix the bug',
     }));
     feed(ev({ type: 'assistant.delta', turnId: 0, delta: 'on it' }));
     feed(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
 
     const turn = turnOps('t0', tx.getItems());
     expect(turn.triggerPromptId).toBe('prompt-1');
-    expect(turn.prompt).toBe('fix the bug');
+    expect(turn.prompt).toBe(
+      '<hook_result hook_event="UserPromptSubmit">\nliteral user text\n</hook_result>fix the bug',
+    );
     expect(turn.state).toBe('completed');
   });
 

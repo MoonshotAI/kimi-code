@@ -9,6 +9,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import { ContextApplyCompaction } from '#/agent/contextMemory/contextEvents';
 import { isPromptOwnedInjection, isUndoAnchor } from '#/agent/contextMemory/conversationTime';
+import { userPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 import type { ContextMessage, PromptOrigin, TaskOrigin } from '#/agent/contextMemory/types';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -623,6 +624,19 @@ describe('AgentConversationUndoService', () => {
     await ctx.get(IAgentConversationUndoService).undo(1);
     await expect(metadata.read()).resolves.toMatchObject({ lastPrompt: undefined });
 
+    ctx.context.append({
+      role: 'user',
+      content: [
+        userPromptSubmitHookPart('<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>'),
+        { type: 'text', text: 'u2' },
+      ],
+      toolCalls: [],
+      origin: { kind: 'user' },
+    });
+    ctx.appendTurnExchange('u3', 'a3');
+
+    await ctx.get(IAgentConversationUndoService).undo(1);
+    await expect(metadata.read()).resolves.toMatchObject({ lastPrompt: 'u2' });
   });
 
   it.each([undefined, 'Save button · Rename it'])('uses the newest pending prompt as lastPrompt after undo (display=%s)', async (displayText) => {
@@ -640,7 +654,10 @@ describe('AgentConversationUndoService', () => {
         {
           message: {
             role: 'user',
-            content: [{ type: 'text', text: 'queued prompt' }],
+            content: [
+              userPromptSubmitHookPart('<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>'),
+              { type: 'text', text: 'queued prompt' },
+            ],
           },
           meta: {
             promptId: 'queued',

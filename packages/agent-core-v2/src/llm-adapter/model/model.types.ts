@@ -8,11 +8,6 @@ export interface ModelOverrides {
   readonly maxCompletionTokens?: number;
 }
 
-export interface CompletionBudgetConfig {
-  readonly hardCap?: number;
-  readonly fallback?: number;
-}
-
 export interface CompletionBudgetParams {
   readonly maxCompletionTokens: number;
   readonly usedContextTokens?: number;
