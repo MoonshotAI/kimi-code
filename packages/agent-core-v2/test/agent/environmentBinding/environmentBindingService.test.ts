@@ -29,6 +29,7 @@ import {
 } from '#/session/workspaceContext/workspaceContextService';
 import type { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
+import type { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
 import { stubAgentContext } from '../agentContext/stubs';
 import { noopLogger } from '../../wire/stubs';
 import { fakeEnvironment, connectableEnvironment } from '../../environment/stubs';
@@ -178,6 +179,10 @@ function setup(options: {
       metadataUpdates.push(patch);
     },
   } as unknown as ISessionMetadata;
+  const environmentDeclarations = {
+    _serviceBrand: undefined,
+    declarations: async () => ({ entries: [{ id: 'remote' }] }),
+  } as unknown as IEnvironmentDeclarationService;
   const workDirWrites: string[] = [];
   const workspaceContext = stubWorkspaceContext(session.cwd, workDirWrites);
   const activeToolCalls: { toolCallId: string; name: string }[] = [];
@@ -229,6 +234,7 @@ function setup(options: {
       noopLogger,
       stubBootstrap(),
       metadata,
+      environmentDeclarations,
     );
     return {
       binding: agentBinding,
@@ -284,6 +290,16 @@ describe('AgentEnvironmentBindingService', () => {
     unchanged.state.set(environmentBindingKey, { environmentId: 'remote', cwd: '/remote/work' });
     await unchanged.restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
     expect(unchanged.metadataUpdates).toEqual([]);
+  });
+
+  it('does not persist a binding to an environment that is not declared', async () => {
+    const { registry, binding, metadataUpdates } = setup();
+    registry.register(environment('acp:s1', 'acp-one', 'ready', ['process'], REMOTE_HOST));
+
+    binding.bind('acp:s1', '/remote/work');
+    await flushProbe();
+
+    expect(metadataUpdates).toEqual([]);
   });
 
   it('switches only after the target can be acquired and emits the committed binding', () => {

@@ -18,6 +18,7 @@ import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
+import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
 
 import { IAgentEnvironmentBindingSeed, IAgentEnvironmentBindingService } from './environmentBinding';
 import { EnvironmentSetBinding, environmentBindingKey } from './environmentBindingOps';
@@ -66,6 +67,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     @ILogService private readonly log: ILogService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
+    @IEnvironmentDeclarationService private readonly environmentDeclarations: IEnvironmentDeclarationService,
   ) {
     this.state.contributeState(agentEnvironmentBindingKey);
     this.state.contributeState(environmentBindingKey);
@@ -95,6 +97,10 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
 
   private async persistIfChanged(binding: EnvironmentBinding): Promise<void> {
     if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
+    if (binding.environmentId !== LOCAL_ENVIRONMENT_ID) {
+      const declarations = await this.environmentDeclarations.declarations();
+      if (!declarations?.entries.some((entry) => entry.id === binding.environmentId)) return;
+    }
     const persisted = await this.metadata.read();
     const persistedId = persisted.environmentId ?? LOCAL_ENVIRONMENT_ID;
     if (persistedId === binding.environmentId && persisted.environmentCwd === binding.cwd) return;
