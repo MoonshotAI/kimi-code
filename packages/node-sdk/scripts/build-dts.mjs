@@ -40,6 +40,7 @@ function run(command, binPath, args) {
     const child = spawn(process.execPath, [binPath, ...args], {
       cwd: packageRoot,
       stdio: 'inherit',
+      shell: true,
     });
 
     child.once('error', reject);
