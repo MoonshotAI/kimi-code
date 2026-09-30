@@ -12,7 +12,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { chmod, mkdir, open, readFile, readdir, rename, rm, rmdir, stat, unlink } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { createZstdDecompress } from 'node:zlib';
+import zlib from 'node:zlib';
 
 import { valid } from 'semver';
 import { z } from 'zod';
@@ -382,7 +382,7 @@ async function decompressAndHash(
   let size = 0;
   const file = await open(destPath, 'w');
   try {
-    for await (const chunk of createReadStream(zstPath).pipe(createZstdDecompress())) {
+    for await (const chunk of createReadStream(zstPath).pipe(zlib.createZstdDecompress())) {
       hash.update(chunk as Buffer);
       size += (chunk as Buffer).length;
       // Same short-write loop as downloadAndHash: FileHandle.write may
@@ -495,7 +495,7 @@ export async function stageNativeUpdate(
     // the runtime can inflate it (~4x smaller than the bare binary). Any
     // failure in the compressed path falls back to the bare download below.
     let size: number | undefined;
-    if (compressed !== undefined && typeof createZstdDecompress === 'function') {
+    if (compressed !== undefined && typeof zlib.createZstdDecompress === 'function') {
       const zstPartPath = join(stagingDir, `${exeFileName}.zst.part`);
       try {
         await downloadAndHash(
