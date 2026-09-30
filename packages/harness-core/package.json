@@ -38,7 +38,9 @@
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
     "@moonshot-ai/tree-sitter-bash": "workspace:^",
     "@mozilla/readability": "^0.6.0",
+    "@noble/hashes": "^2.0.0",
     "@types/express": "^5.0.6",
+    "better-sqlite3": "^13.0.3",
     "express": "^5.2.1",
     "jimp": "^1.6.1",
     "js-yaml": "^4.1.1",
@@ -56,6 +58,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
     "@types/js-yaml": "^4.0.9",
     "@types/picomatch": "^4.0.3",
     "@types/semver": "^7.7.0",

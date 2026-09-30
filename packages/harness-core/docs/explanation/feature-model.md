@@ -30,7 +30,7 @@ export function createCompaction(deps: CreateCompactionDeps): FeatureSpec {
 | `session()` | 会话共享：Interaction 登记表、session journal 投影 | `interaction` |
 | `agent()` | 跟 journal / 工具 / turn hook / 机器事件绑定 | `todo`、`usage`、`timing`、`waitFor` |
 
-一个 Feature 可以同时占多层。上层 `useExpose`，下层 `inject`。`interaction`：session 持表并 `useFire`，agent 取同一份表、挂 `AskUserQuestion`、卸载时 `cancelAgent`。
+一个 Feature 可以同时占多层。上层 `useExpose`，下层 `useInject` 读 `.value`。`interaction`：session 持表并 `useFire`，agent 取同一份表、挂 `AskUserQuestion`、卸载时 `cancelAgent`。
 
 ## 贡献面
 
@@ -49,16 +49,16 @@ system prompt 的 `host` 段留给创建 agent 时的 `systemPrompt`。第一次
 
 宿主和兄弟只依赖包入口导出的符号，契约因此收窄到一个 token：
 
-1. `createToken` 一个 facade。
+1. `createFacadeToken` 一个 facade。
 2. slot 里 `useExpose(Token, face)`，挂到父节点，随本节点撤销。
 3. 包入口导出 Token 与类型。
-4. 外部 `session.resolve(Token)` 或 `app.resolve(Token)`。
+4. 外部 `session.resolve(Token)` 或 `app.resolve(Token)`，facade 缺席返回 `undefined` 不抛错。
 
 有自己的节点事件时，把联合类型挂在配方上：`createFeature<InteractionEvent>('interaction', …)`。订阅写成 `session.on(interaction, 'interaction.requested', handler)`；`on(feature, '*')` 按 `featureName.` 前缀过滤。
 
 ## 跨 Feature
 
-协作只走 token / collection：拥有方导出 collection，贡献方 `useContribute`，依赖方向只剩包入口的导出符号，每个 Feature 才能独立装卸。宿主端口同样：`host/` 定义 token，Feature `inject`，CLI 在 `createHarness({ provide })` 注入。
+协作只走 token / collection：拥有方导出 collection，贡献方 `useContribute`，依赖方向只剩包入口的导出符号，每个 Feature 才能独立装卸。宿主端口同样：`host/` 定义 token，Feature `useInject`，CLI 在 `createHarness({ provide })` 注入。
 
 ## 相关文档
 

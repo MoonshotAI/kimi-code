@@ -31,6 +31,7 @@ import {
   ShellCommandRef,
   type ShellCommandEvent,
 } from '#/features/shellCommand/index';
+import { createNodeOsHost } from '#/features/os/host/index';
 
 const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
 
@@ -113,7 +114,7 @@ async function startApp(opts?: { timeoutMs?: number }) {
   const workDir = await mkdtemp(join(tmpdir(), 'shell-command-'));
   const env = await testStores();
   const { requester } = createMockRequester(script);
-  const shell = createShellCommand({ workDir, timeoutMs: opts?.timeoutMs });
+  const shell = createShellCommand({ workDir, timeoutMs: opts?.timeoutMs, host: createNodeOsHost() });
   const app = createHarness({ features: [shell, bindTestTools(), bindTestLlm(requester)] });
   const session = await app.create({ sessionId: 'sess', stores: env.stores });
   const main = await session.create({ agentId: MAIN_AGENT_ID, systemPrompt: 'main-host' });

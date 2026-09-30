@@ -6,6 +6,7 @@ import {
   useAgent,
   useAgentTools,
   useConfigSection,
+  useInject,
   useLlmRecovery,
   useMediaLower,
   useMessageResolver,
@@ -14,7 +15,7 @@ import {
   type MediaStore,
   type MediaUploadCache,
 } from '@moonshot-ai/agent-core';
-import { useCollection, useNode } from '@moonshot-ai/agent-core/kernel/index';
+import { useCollection } from '@moonshot-ai/agent-core/kernel/index';
 
 import type { OsHost } from '#/features/os/host/types';
 
@@ -42,12 +43,11 @@ export function createMedia(props: CreateMediaProps): FeatureSpec {
       useConfigSection(imageConfigSection);
     },
     agent() {
-      const node = useNode();
       const agent = useAgent();
-      const configEntries = node.providerRef(ConfigRef);
+      const config = useInject(ConfigRef);
       const limits = () =>
         resolveImageLimits(
-          configEntries.value.at(-1)?.value.get<ImageConfig>(IMAGE_CONFIG_SECTION) ?? {},
+          config.value?.get<ImageConfig>(IMAGE_CONFIG_SECTION) ?? {},
         );
       const contributed = useCollection(Providers);
       useMediaLower({
@@ -70,6 +70,7 @@ export function createMedia(props: CreateMediaProps): FeatureSpec {
           store: props.store,
           limits,
           originalsDir: props.originalsDir,
+          fs: props.host?.fs,
         }),
       );
       useMessageResolver(createMediaBudgetResolver());

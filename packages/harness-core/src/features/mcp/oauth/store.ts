@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto';
-import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
-
 import { basename, join } from 'pathe';
+
+import { sha256Hex } from '#/sha256';
+import type { OsFsPort } from '#/features/os/host/index';
 
 export function sanitizeStoreKey(name: string): string {
   const safe = basename(name)
@@ -22,12 +22,7 @@ export function canonicalMcpOAuthResource(serverUrl: string | URL): string {
 export function mcpOAuthStoreKey(serverName: string, serverUrl: string | URL): string {
   const safeName = sanitizeStoreKey(serverName);
   const resource = canonicalMcpOAuthResource(serverUrl);
-  const digest = createHash('sha256')
-    .update(serverName)
-    .update('\0')
-    .update(resource)
-    .digest('hex')
-    .slice(0, 24);
+  const digest = sha256Hex(`${serverName}\0${resource}`).slice(0, 24);
   return `${safeName}-${digest}`;
 }
 
@@ -38,29 +33,44 @@ export interface McpOAuthStore {
   list(prefix?: string): Promise<readonly string[]>;
 }
 
-export function createFileMcpOAuthStore(dir: string): McpOAuthStore {
+export function createFileMcpOAuthStore(dir: string, fs: OsFsPort): McpOAuthStore {
   return {
     async read<T>(key: string): Promise<T | undefined> {
       try {
-        return JSON.parse(await readFile(join(dir, key), 'utf8')) as T;
+        return JSON.parse(await fs.readText(join(dir, key))) as T;
       } catch {
         return undefined;
       }
     },
     async write(key: string, data: unknown): Promise<void> {
-      await mkdir(dir, { recursive: true });
-      await writeFile(join(dir, key), JSON.stringify(data, null, 2), 'utf8');
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeText(join(dir, key), JSON.stringify(data, null, 2));
     },
     async remove(key: string): Promise<void> {
-      await rm(join(dir, key), { force: true });
+      await fs.remove(join(dir, key)).catch(() => {});
     },
     async list(prefix?: string): Promise<readonly string[]> {
       try {
-        const names = await readdir(dir);
+        const names = (await fs.readdir(dir)).map((entry) => entry.name);
         return prefix === undefined ? names : names.filter((name) => name.startsWith(prefix));
       } catch {
         return [];
       }
     },
+  };
+}
+
+export function createMemoryMcpOAuthStore(): McpOAuthStore {
+  const map = new Map<string, unknown>();
+  return {
+    read: async <T>(key: string) => map.get(key) as T | undefined,
+    write: async (key: string, data: unknown) => {
+      map.set(key, data);
+    },
+    remove: async (key: string) => {
+      map.delete(key);
+    },
+    list: async (prefix?: string) =>
+      [...map.keys()].filter((name) => prefix === undefined || name.startsWith(prefix)),
   };
 }

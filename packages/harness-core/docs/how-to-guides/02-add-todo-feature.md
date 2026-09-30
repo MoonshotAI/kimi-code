@@ -70,7 +70,7 @@ agent.on('turn.started', () => {
 
 ## 3. Tool：给模型读写口
 
-`useAgentTools` 登记。`execute` 不在 setup 里跑，不能在 execute 里 `inject`；需要的 `store` / `state` 在 setup 闭包捕获。
+`useAgentTools` 登记。`execute` 不在 setup 里跑，不能在 execute 里 `useInject`；需要的 `store` / `state` 在 setup 闭包捕获。
 
 ```ts
 useAgentTools(createTodoListTool(store, state));

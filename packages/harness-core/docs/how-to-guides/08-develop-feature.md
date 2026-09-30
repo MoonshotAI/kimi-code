@@ -26,14 +26,14 @@ src/features/<name>/
 setup 必须同步。`await` 之后不能再调 hook。异步就绪用 `useReady`。
 
 ```ts
-import { createFeature, useAgent, useAgentStore, useAgentTools } from '@moonshot-ai/agent-core';
-import { computed, createToken, useExpose, type Ref } from '@moonshot-ai/agent-core/kernel/index';
+import { createFacadeToken, createFeature, useAgent, useAgentStore, useAgentTools } from '@moonshot-ai/agent-core';
+import { computed, useExpose, type Ref } from '@moonshot-ai/agent-core/kernel/index';
 
 export interface DemoFace {
   readonly items: Ref<readonly string[]>;
 }
 
-export const DemoRef = createToken<DemoFace>('demo');
+export const DemoRef = createFacadeToken<DemoFace>('demo');
 
 export const demo = createFeature('demo', {
   agent() {
@@ -61,7 +61,9 @@ export const demo = createFeature('demo', {
 | 给宿主 facade | `useExpose` |
 | 发节点事件 | `useFire()`，type 建议 `featureName.*` |
 
-工具 `execute` 不在 setup 里跑，不能在 execute 里 `inject`。需要 `WaitForTasks` 时在 setup 闭包捕获 `useWaitForTasks()`。
+工具 `execute` 不在 setup 里跑，不能在 execute 里 `useInject`。需要 `WaitForTasks` 时在 setup 闭包捕获 `useWaitForTasks()`。
+
+跨 Feature 依赖用 `useInject(XxxRef)`：facade token 返回响应式可空 ref，读 `.value` 并处理 `undefined`——三种合法形态：① 领域降级（没有它就缩水）；② 自身停用（不注册贡献，或门面方法抛带领域语境的错误）；③ 显式上报（诊断 / 事件）。禁止无声 `?.` 全吞。语义细节见 [useInject](../reference/inject.md)。
 
 ## 4. 自有事件与投影
 
@@ -95,19 +97,22 @@ export const interaction = createFeature<InteractionEvent>('interaction', {
     const fire = useFire();
     const interactions = openInteractions({ fire });
     useExpose(InteractionRef, interactions);
-    pushCleanup(useNode(), () => interactions.stop());
+    useCleanup(() => interactions.stop());
   },
   agent() {
-    const interactions = useInteractions();
+    const interactions = useInteractions().value;
+    if (interactions === undefined) {
+      throw new Error('interaction feature session slot is not installed');
+    }
     useAgentTools(createAskUserQuestionTool(interactions, { /* ids */ }));
-    pushCleanup(useNode(), () => {
+    useCleanup(() => {
       interactions.cancelAgent(useAgent().agentId, 'agent_closed');
     });
   },
 });
 ```
 
-`use*` 贡献点已经 `pushCleanup`。自己开的表、actor、timer 显式 `pushCleanup` 到自己的节点：卸载只执行各节点登记的 cleanup 栈，资源因此随所属节点一起撤。
+`use*` 贡献点已经登记清理。自己开的表、actor、timer 显式 `useCleanup`：卸载只执行各节点登记的 cleanup 栈，资源因此随所属节点一起撤。
 
 ## 6. 推进名单
 
@@ -126,6 +131,7 @@ createHarness({
 ```ts
 const session = await app.open({ sessionId: 's' });
 const face = session.resolve(DemoRef);
+if (face === undefined) throw new Error('demo feature is not installed');
 session.on(demo, 'demo.updated', (event) => { /* … */ });
 ```
 

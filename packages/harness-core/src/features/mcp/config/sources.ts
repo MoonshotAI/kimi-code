@@ -1,8 +1,8 @@
+import { useCleanup } from '@moonshot-ai/agent-core';
 import {
   createCollection,
+  currentUnit,
   lineage,
-  pushCleanup,
-  useNode,
   type UnitNode,
   type Unsubscribe,
 } from '@moonshot-ai/agent-core/kernel/index';
@@ -18,9 +18,7 @@ export interface McpServerSource {
 export const McpServerSources = createCollection<McpServerSource>('mcp.server-sources');
 
 export function useMcpServerSource(source: McpServerSource): void {
-  const node = useNode();
-  pushCleanup(
-    node,
-    ([...lineage(node)].at(-1) as UnitNode).contribute(McpServerSources, source, 0),
+  useCleanup(
+    ([...lineage(currentUnit())].at(-1) as UnitNode).contribute(McpServerSources, source, 0),
   );
 }

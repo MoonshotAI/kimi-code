@@ -1,4 +1,5 @@
 import {
+  createFacadeToken,
   createFeature,
   createHistoryMessageBuilder,
   MAIN_AGENT_ID,
@@ -9,7 +10,6 @@ import {
   type FeatureSpec,
 } from '@moonshot-ai/agent-core';
 import {
-  createToken,
   useExpose,
   useFire,
   type RuntimeEvent,
@@ -37,7 +37,7 @@ export interface BtwFace {
   isBtw(agentId: string): boolean;
 }
 
-export const BtwRef = createToken<BtwFace>('btw');
+export const BtwRef = createFacadeToken<BtwFace>('btw');
 
 const BTW_SOURCE = 'btw';
 

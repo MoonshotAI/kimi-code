@@ -1,10 +1,7 @@
-import { createFeature, useAgent, type FeatureSpec } from '@moonshot-ai/agent-core';
+import { createFacadeToken, createFeature, useAgent, useCleanup, type FeatureSpec } from '@moonshot-ai/agent-core';
 import {
-  createToken,
-  pushCleanup,
   useExpose,
   useFire,
-  useNode,
   type RuntimeEvent,
 } from '@moonshot-ai/agent-core/kernel/index';
 
@@ -28,7 +25,7 @@ export interface ShellCommandFace {
   cancel(commandId: string): void;
 }
 
-export const ShellCommandRef = createToken<ShellCommandFace>('shellCommand');
+export const ShellCommandRef = createFacadeToken<ShellCommandFace>('shellCommand');
 
 export interface ShellStartedEvent extends RuntimeEvent {
   readonly type: 'shell.started';
@@ -67,16 +64,18 @@ export function createShellCommand(
 ): FeatureSpec<ShellCommandEvent> {
   return createFeature<ShellCommandEvent>('shellCommand', {
     agent() {
+      const host = props.host;
+      if (host === undefined) return;
       const commands = openShellCommands({
         workDir: props.workDir,
         shell: props.shell ?? '/bin/bash',
         timeoutMs: props.timeoutMs ?? SHELL_COMMAND_DEFAULT_TIMEOUT_MS,
         agent: useAgent(),
         fire: useFire(),
-        host: props.host,
+        host,
       });
       useExpose(ShellCommandRef, commands.face);
-      pushCleanup(useNode(), () => commands.stop());
+      useCleanup(() => commands.stop());
     },
   });
 }

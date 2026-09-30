@@ -27,6 +27,7 @@ import {
 } from '@moonshot-ai/agent-core';
 
 import { createEdit, createEditTool } from '#/features/edit/index';
+import { createNodeOsHost } from '#/features/os/host/index';
 
 let workDir: string;
 
@@ -39,7 +40,7 @@ afterEach(async () => {
 });
 
 async function runEditResult(args: Record<string, unknown>): Promise<ToolResult> {
-  const tool = createEditTool({ workDir });
+  const tool = createEditTool({ workDir, host: createNodeOsHost() });
   return tool.execute({
     toolCall: {
       type: 'function',
@@ -247,7 +248,7 @@ describe('edit feature', () => {
     };
     const env = await testStores();
     const { requester, calls } = createMockRequester(script);
-    const app = createHarness({ features: [createEdit({ workDir }), bindTestLlm(requester)] });
+    const app = createHarness({ features: [createEdit({ workDir, host: createNodeOsHost() }), bindTestLlm(requester)] });
     const session = await app.create({ sessionId: 'sess', stores: env.stores });
     const main = await session.create({ agentId: MAIN_AGENT_ID, systemPrompt: 'main-host' });
     try {

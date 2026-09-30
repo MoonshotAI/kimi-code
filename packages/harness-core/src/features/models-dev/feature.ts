@@ -7,20 +7,16 @@ import {
   MODEL_CATALOG_CONFIG_SECTION,
   openAIBase,
   openAIResponsesBase,
+  useApp,
+  useCleanup,
+  useInject,
   useProviderProtocol,
   type CatalogProviderInfo,
   type FeatureSpec,
   type ModelCatalogConfig,
   type ProviderConnection,
 } from '@moonshot-ai/agent-core';
-import {
-  lineage,
-  pushCleanup,
-  useExpose,
-  useNode,
-  watch,
-  type UnitNode,
-} from '@moonshot-ai/agent-core/kernel/index';
+import { useExpose, watch } from '@moonshot-ai/agent-core/kernel/index';
 
 import { createModelsDevService, ModelsDevRef } from './service';
 
@@ -44,10 +40,9 @@ function genericConnection(info: CatalogProviderInfo): ProviderConnection {
 export function createModelsDev(props: CreateModelsDevProps = {}): FeatureSpec {
   return createFeature('models-dev', {
     app() {
-      const node = useNode();
-      const configEntries = node.providerRef(ConfigRef);
+      const config = useInject(ConfigRef);
       const service = createModelsDevService({
-        config: () => configEntries.value.at(-1)?.value,
+        config: () => config.value,
         userAgent: props.userAgent,
         builtinCatalog: props.builtinCatalog,
       });
@@ -85,20 +80,18 @@ export function createModelsDev(props: CreateModelsDevProps = {}): FeatureSpec {
           timer = undefined;
         }
       };
-      const root = [...lineage(node)].at(-1) as UnitNode;
+      const app = useApp();
       watch(
         () =>
-          configEntries.value.at(-1)?.value.section<ModelCatalogConfig>(MODEL_CATALOG_CONFIG_SECTION)
+          config.value?.section<ModelCatalogConfig>(MODEL_CATALOG_CONFIG_SECTION)
             .value,
         (section) => {
           clearTimer();
           if (!started) {
             started = true;
-            void root.ready().then(
+            void app.ready().then(
               () => {
-                const loaded = configEntries.value
-                  .at(-1)
-                  ?.value.get<ModelCatalogConfig>(MODEL_CATALOG_CONFIG_SECTION);
+                const loaded = config.value?.get<ModelCatalogConfig>(MODEL_CATALOG_CONFIG_SECTION);
                 if (loaded?.refreshOnStart ?? true) {
                   void service.refreshRegistries().catch(() => {});
                 }
@@ -119,7 +112,7 @@ export function createModelsDev(props: CreateModelsDevProps = {}): FeatureSpec {
         },
         { immediate: true },
       );
-      pushCleanup(node, clearTimer);
+      useCleanup(clearTimer);
     },
   });
 }

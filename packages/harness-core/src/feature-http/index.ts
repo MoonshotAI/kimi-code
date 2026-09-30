@@ -8,7 +8,10 @@ export {
 } from './feature';
 export type { CreateHttpOptions, HttpRoute } from './feature';
 export { createHttpServer } from './server';
-export type { Http, HttpHandler, HttpListen } from './server';
+export type { Http, HttpHandler, HttpListen, HttpUpgradeHandler } from './server';
 export type { Request as HttpRequest, Response as HttpResponse } from 'express';
+export { useWsEndpoint, WsRegistryRef } from './ws';
+export type { WsRegistry, WsRegistryEntry } from './ws';
 export { ErrorCode } from './route/index';
 export * from './route-builtin/index';
+export * from './route-features/index';

@@ -1,28 +1,33 @@
-import { readFile, stat } from 'node:fs/promises';
-
 import { dirname, isAbsolute, join, normalize, resolve } from 'pathe';
+
+import { HostFsError, type OsFsPort } from '#/features/os/host/index';
 
 import { McpServerConfigSchema, type McpServerConfig } from '#/features/mcp/core/config-schema';
 
 export interface McpJsonPaths {
-  readonly user: string;
+  readonly user?: string;
   readonly projectRoot: string;
   readonly project: string;
 }
 
-export async function resolveMcpJsonPaths(cwd: string, home: string): Promise<McpJsonPaths> {
+export async function resolveMcpJsonPaths(
+  fs: OsFsPort | undefined,
+  cwd: string,
+  home?: string,
+): Promise<McpJsonPaths> {
   const start = normalize(cwd);
-  const gitRoot = await findGitRoot(start);
+  const gitRoot = fs === undefined ? undefined : await findGitRoot(fs, start);
   return {
-    user: join(home, 'mcp.json'),
+    user: home === undefined ? undefined : join(home, 'mcp.json'),
     projectRoot: join(gitRoot ?? start, '.mcp.json'),
     project: join(start, '.kimi-code', 'mcp.json'),
   };
 }
 
 export interface LoadMcpServersInput {
+  readonly fs?: OsFsPort;
   readonly cwd: string;
-  readonly home: string;
+  readonly home?: string;
   readonly trusted: boolean;
   readonly servers?: Record<string, McpServerConfig>;
 }
@@ -39,25 +44,29 @@ export async function loadMcpServers(input: LoadMcpServersInput): Promise<Record
 }
 
 export async function loadMcpServersDetailed(input: LoadMcpServersInput): Promise<LoadMcpServersDetailedResult> {
-  const paths = await resolveMcpJsonPaths(input.cwd, input.home);
+  const paths = await resolveMcpJsonPaths(input.fs, input.cwd, input.home);
   const servers: Record<string, McpServerConfig> = Object.create(null);
   const origins: Record<string, string> = Object.create(null);
   for (const [name, config] of Object.entries(input.servers ?? {})) {
     servers[name] = config;
     origins[name] = MCP_PROPS_SERVERS_ORIGIN;
   }
-  const user = await readMcpJson(paths.user);
-  for (const [name, config] of Object.entries(user)) {
-    servers[name] = config;
-    origins[name] = paths.user;
+  if (input.fs !== undefined && paths.user !== undefined) {
+    const user = await readMcpJson(input.fs, paths.user);
+    for (const [name, config] of Object.entries(user)) {
+      servers[name] = config;
+      origins[name] = paths.user;
+    }
   }
-  if (input.trusted) {
-    const projectRoot = await readMcpJson(paths.projectRoot, { stdioCwdBase: dirname(paths.projectRoot) });
+  if (input.trusted && input.fs !== undefined) {
+    const projectRoot = await readMcpJson(input.fs, paths.projectRoot, {
+      stdioCwdBase: dirname(paths.projectRoot),
+    });
     for (const [name, config] of Object.entries(projectRoot)) {
       servers[name] = config;
       origins[name] = paths.projectRoot;
     }
-    const project = await readMcpJson(paths.project);
+    const project = await readMcpJson(input.fs, paths.project);
     for (const [name, config] of Object.entries(project)) {
       servers[name] = config;
       origins[name] = paths.project;
@@ -71,14 +80,15 @@ interface ReadMcpJsonOptions {
 }
 
 async function readMcpJson(
+  fs: OsFsPort,
   filePath: string,
   options: ReadMcpJsonOptions = {},
 ): Promise<Record<string, McpServerConfig>> {
   let text: string;
   try {
-    text = await readFile(filePath, 'utf8');
+    text = await fs.readText(filePath);
   } catch (error: unknown) {
-    if (isFileNotFound(error)) return {};
+    if (error instanceof HostFsError && error.code === 'os.fs.not_found') return {};
     throw new Error(`Failed to read ${filePath}: ${describeError(error)}`, { cause: error });
   }
 
@@ -133,21 +143,21 @@ function normalizeStdioCwd(config: McpServerConfig, cwdBase: string): McpServerC
   return { ...config, cwd };
 }
 
-async function findGitRoot(cwd: string): Promise<string | undefined> {
+async function findGitRoot(fs: OsFsPort, cwd: string): Promise<string | undefined> {
   if (cwd.length === 0 || !isAbsolute(cwd)) return undefined;
   let current = normalize(cwd);
   for (;;) {
-    if (await probeGitMarker(join(current, '.git'))) return current;
+    if (await probeGitMarker(fs, join(current, '.git'))) return current;
     const parent = dirname(current);
     if (parent === current) return undefined;
     current = parent;
   }
 }
 
-async function probeGitMarker(dotGitPath: string): Promise<boolean> {
+async function probeGitMarker(fs: OsFsPort, dotGitPath: string): Promise<boolean> {
   try {
-    const stats = await stat(dotGitPath);
-    return stats.isDirectory() || stats.isFile();
+    const stats = await fs.stat(dotGitPath);
+    return stats.isDirectory || stats.isFile;
   } catch {
     return false;
   }
@@ -155,15 +165,6 @@ async function probeGitMarker(dotGitPath: string): Promise<boolean> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isFileNotFound(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    (error as { code: unknown }).code === 'ENOENT'
-  );
 }
 
 function describeError(error: unknown): string {

@@ -1,11 +1,12 @@
 import {
+  createFacadeToken,
   createFeature,
   createHistoryMessageBuilder,
   useAgent,
   useAgentStore,
   useAgentTools,
 } from '@moonshot-ai/agent-core';
-import { computed, createToken, useExpose, type Ref } from '@moonshot-ai/agent-core/kernel/index';
+import { computed, useExpose, type Ref } from '@moonshot-ai/agent-core/kernel/index';
 
 import { todos, type TodoState } from './projection';
 import { createTodoListTool } from './tool';
@@ -18,7 +19,7 @@ export interface TodoFace {
   readonly state: Ref<TodoState>;
 }
 
-export const TodoRef = createToken<TodoFace>('todo');
+export const TodoRef = createFacadeToken<TodoFace>('todo');
 
 export const todo = createFeature('todo', {
   agent() {

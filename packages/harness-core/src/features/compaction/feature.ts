@@ -1,16 +1,13 @@
 import {
+  createFacadeToken,
   createFeature,
   useAgent,
   useBeforeStep,
+  useCleanup,
   useSession,
   type FeatureSpec,
 } from '@moonshot-ai/agent-core';
-import {
-  createToken,
-  pushCleanup,
-  useExpose,
-  useNode,
-} from '@moonshot-ai/agent-core/kernel/index';
+import { useExpose } from '@moonshot-ai/agent-core/kernel/index';
 
 import {
   createCompactionController,
@@ -20,7 +17,7 @@ import {
 
 export type CompactionFace = Pick<CompactionController, 'compact' | 'cancel' | 'status'>;
 
-export const CompactionRef = createToken<CompactionFace>('compaction');
+export const CompactionRef = createFacadeToken<CompactionFace>('compaction');
 
 export type CreateCompactionDeps = Omit<CompactionControllerDeps, 'agentId' | 'agent' | 'stores'>;
 
@@ -41,7 +38,7 @@ export function createCompaction(deps: CreateCompactionDeps): FeatureSpec {
         cancel: () => controller.cancel(),
         status: () => controller.status(),
       });
-      pushCleanup(useNode(), () => controller.dispose());
+      useCleanup(() => controller.dispose());
     },
   });
 }

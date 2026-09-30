@@ -1,4 +1,4 @@
-import { createToken } from '@moonshot-ai/agent-core/kernel/index';
+import { createFacadeToken } from '@moonshot-ai/agent-core';
 
 export interface FileBackupEntry {
   readonly key: string | null;
@@ -52,6 +52,6 @@ export interface FileHistoryFace {
   ): Promise<FileHistoryContent | undefined>;
 }
 
-export const FileHistoryRef = createToken<FileHistoryFace>('fileHistory');
+export const FileHistoryRef = createFacadeToken<FileHistoryFace>('fileHistory');
 
 export const FILE_HISTORY_BLOB_PREFIX = 'file-history';

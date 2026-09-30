@@ -1,17 +1,18 @@
 import {
+  createFacadeToken,
   createFeature,
   llmStatusErrorMessage,
   useAgent,
   type FeatureSlots,
   type FeatureSpec,
 } from '@moonshot-ai/agent-core';
-import { createToken, shallowRef, useExpose, type Ref } from '@moonshot-ai/agent-core/kernel/index';
+import { shallowRef, useExpose, type Ref } from '@moonshot-ai/agent-core/kernel/index';
 
 export interface TraceFace {
   readonly traceId: Ref<string | undefined>;
 }
 
-export const TraceRef = createToken<TraceFace>('trace');
+export const TraceRef = createFacadeToken<TraceFace>('trace');
 
 export const traceSlots: FeatureSlots = {
   agent() {

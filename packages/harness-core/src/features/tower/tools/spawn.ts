@@ -336,9 +336,9 @@ export function createTowerSpawnTool(deps: TowerSpawnToolDeps): ToolDefinition {
               `tower spawn failed: ${error instanceof Error ? error.message : String(error)}`,
             );
           }
-          try {
-            await launched.target.resolve(PermissionRef).setMode('auto');
-          } catch {
+          const permission = launched.target.resolve(PermissionRef);
+          if (permission !== undefined) {
+            await permission.setMode('auto').catch(() => {});
           }
           const agentId = launched.agentId;
           deps.running.add(agentId);

@@ -1,5 +1,6 @@
 import {
   AgentPort,
+  createFacadeToken,
   createFeature,
   createHistoryMessageBuilder,
   MAIN_AGENT_ID,
@@ -9,18 +10,16 @@ import {
   useAfterStep,
   useBeforeStep,
   useBeforeTool,
+  useCleanup,
+  useInject,
   useSession,
   type FeatureSpec,
   type TurnOutcome,
   type UserEntry,
 } from '@moonshot-ai/agent-core';
 import {
-  createToken,
-  inject,
-  pushCleanup,
   useExpose,
   useFire,
-  useNode,
   useReady,
   watch,
   type RuntimeEvent,
@@ -109,7 +108,7 @@ export interface GoalFace {
   pauseOnInterrupt(input?: GoalReasonInput): Promise<GoalSnapshot | null>;
 }
 
-export const GoalRef = createToken<GoalFace>('goal');
+export const GoalRef = createFacadeToken<GoalFace>('goal');
 
 export interface CreateGoalProps {
   readonly now?: () => number;
@@ -159,11 +158,10 @@ export function createGoal(props: CreateGoalProps = {}): FeatureSpec<GoalUpdated
   const wallNow = props.wallNow ?? Date.now;
   return createFeature<GoalUpdatedEvent>('goal', {
     agent() {
-      const node = useNode();
       const agent = useAgent();
       const store = useAgentStore();
       const state = store.fold(goalProjection);
-      const ports = inject(AgentPort);
+      const ports = useInject(AgentPort);
       const fire = useFire();
       const waitForAvailable = (): boolean =>
         ports.toolDescriptions.some((tool) => tool.name === 'WaitFor' && tool.deferred !== true);
@@ -944,12 +942,16 @@ export function createGoal(props: CreateGoalProps = {}): FeatureSpec<GoalUpdated
         useExpose(GoalRef, face);
         return;
       }
+      const interactions = useInteractions().value;
+      if (interactions === undefined) {
+        throw new Error('goal feature requires the interaction feature');
+      }
       useBeforeTool(
         createGoalGuard({
           turnTarget,
           getGoal,
           inBudgetGraceTurn,
-          interactions: useInteractions(),
+          interactions,
           sessionId: useSession().sessionId,
           agentId: agent.agentId,
         }),
@@ -965,10 +967,10 @@ export function createGoal(props: CreateGoalProps = {}): FeatureSpec<GoalUpdated
       agent.on('prompt.blocked', (event) => {
         promptBlocked(event.entry);
       });
-      const usageEntries = node.providerRef(UsageRef);
+      const usage = useInject(UsageRef);
       let usageProcessed = 0;
       watch(
-        () => usageEntries.value.at(-1)?.value.records.value,
+        () => usage.value?.records.value,
         (records) => {
           if (records === undefined || records.length < usageProcessed) {
             usageProcessed = records?.length ?? 0;
@@ -980,8 +982,8 @@ export function createGoal(props: CreateGoalProps = {}): FeatureSpec<GoalUpdated
         },
         { scheduler: (job) => job() },
       );
-      pushCleanup(node, clearDeadlineTimer);
-      pushCleanup(node, () => close());
+      useCleanup(clearDeadlineTimer);
+      useCleanup(() => close());
       useReady(normalize());
       useExpose(GoalRef, face);
     },

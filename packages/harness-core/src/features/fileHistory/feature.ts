@@ -5,15 +5,16 @@ import {
   useAgentStore,
   useBeforeTool,
   useBlobs,
+  useCleanup,
   useSession,
   type FeatureSpec,
   type ToolCall,
 } from '@moonshot-ai/agent-core';
-import { pushCleanup, useExpose, useNode } from '@moonshot-ai/agent-core/kernel/index';
+import { useExpose } from '@moonshot-ai/agent-core/kernel/index';
 
 import type { OsFsPort } from '#/features/os/host/index';
 
-import { FileHistoryRef, type FileHistoryFace } from './fileHistory';
+import { FileHistoryRef } from './fileHistory';
 import { fileHistoryProjection } from './projection';
 import { createFileHistoryService } from './service';
 
@@ -25,7 +26,6 @@ export interface CreateFileHistoryProps {
 export function createFileHistory(props: CreateFileHistoryProps): FeatureSpec {
   return createFeature('fileHistory', {
     agent() {
-      const node = useNode();
       const agent = useAgent();
       const session = useSession();
       const store = useAgentStore();
@@ -47,12 +47,8 @@ export function createFileHistory(props: CreateFileHistoryProps): FeatureSpec {
           if (path === undefined) return undefined;
           const main = session.get(MAIN_AGENT_ID);
           if (main === undefined) return undefined;
-          let face: FileHistoryFace;
-          try {
-            face = main.resolve(FileHistoryRef);
-          } catch {
-            return undefined;
-          }
+          const face = main.resolve(FileHistoryRef);
+          if (face === undefined) return undefined;
           await face.captureForActiveTurn(path);
           return undefined;
         });
@@ -67,14 +63,14 @@ export function createFileHistory(props: CreateFileHistoryProps): FeatureSpec {
       const turnStarted = agent.on('turn.started', (event) => {
         activeTurnId = event.turnId;
       });
-      pushCleanup(node, () => {
+      useCleanup(() => {
         turnStarted.unsubscribe();
       });
       const turnDone = agent.on('turn.done', (event) => {
         if (activeTurnId === event.turnId) activeTurnId = undefined;
         void service.endCheckpoint(event.turnId);
       });
-      pushCleanup(node, () => {
+      useCleanup(() => {
         turnDone.unsubscribe();
       });
     },

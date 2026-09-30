@@ -1,4 +1,5 @@
 import {
+  createFacadeToken,
   createFeature,
   useAgent,
   useAgentStore,
@@ -7,10 +8,11 @@ import {
   useBeforeTool,
   useBlobs,
   useConfigSection,
+  useInject,
   useSession,
   type FeatureSpec,
 } from '@moonshot-ai/agent-core';
-import { createToken, useExpose, useNode, type Ref } from '@moonshot-ai/agent-core/kernel/index';
+import { useExpose, type Ref } from '@moonshot-ai/agent-core/kernel/index';
 
 import { useInteractions } from '#/features/interaction/index';
 import { PermissionRef, type PermissionFace } from '#/features/permission/index';
@@ -40,7 +42,7 @@ export interface PlanFace {
   status(): Promise<PlanData | null>;
 }
 
-export const PlanRef = createToken<PlanFace>('plan');
+export const PlanRef = createFacadeToken<PlanFace>('plan');
 
 export interface CreatePlanProps {
   readonly storage?: PlanStorage;
@@ -56,9 +58,12 @@ export function createPlan(props: CreatePlanProps = {}): FeatureSpec {
       const agent = useAgent();
       const session = useSession();
       const store = useAgentStore();
-      const node = useNode();
       const state = store.fold(planProjection);
       const blobs = useBlobs();
+      const interactions = useInteractions().value;
+      if (interactions === undefined) {
+        throw new Error('plan feature requires the interaction feature');
+      }
       const pathFor = (id: string): string => storage.pathFor(agent.agentId, id);
       const planPath = (): string | null => {
         const current = state.value;
@@ -117,9 +122,8 @@ export function createPlan(props: CreatePlanProps = {}): FeatureSpec {
         const path = pathFor(current.id);
         return { id: current.id, content: await readPlanText(path), path };
       };
-      const permissionEntries = node.providerRef(PermissionRef);
-      const permission = (): PermissionFace | undefined =>
-        permissionEntries.value.find((entry) => entry.node === node.parent)?.value;
+      const permissionRef = useInject(PermissionRef);
+      const permission = (): PermissionFace | undefined => permissionRef.value;
       useAgentTools(
         createEnterPlanModeTool({ status, enter }),
         createExitPlanModeTool({ status, exit }),
@@ -130,7 +134,7 @@ export function createPlan(props: CreatePlanProps = {}): FeatureSpec {
           status,
           recordRevision,
           exit,
-          interactions: useInteractions(),
+          interactions,
           sessionId: session.sessionId,
           agentId: agent.agentId,
           permission,

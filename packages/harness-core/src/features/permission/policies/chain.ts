@@ -1,5 +1,6 @@
 import type { ToolCall } from '@moonshot-ai/agent-core';
 
+import type { OsFsPort } from '#/features/os/host/index';
 import type { PathClass } from '#/features/os/path-access';
 
 import type { PermissionConfig } from '../state/configSection';
@@ -28,6 +29,7 @@ export interface PermissionPolicyContext {
   readonly additionalDirs: readonly string[];
   readonly pathClass: PathClass;
   readonly homeDir: string | undefined;
+  readonly fs?: OsFsPort;
 }
 
 export type PermissionPolicyResult =

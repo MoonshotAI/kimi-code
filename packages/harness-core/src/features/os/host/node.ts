@@ -251,7 +251,7 @@ function toHostFileStat(s: {
   };
 }
 
-function createNodeFsPort(): OsFsPort {
+export function createNodeFsPort(): OsFsPort {
   return {
     async readText(path, options) {
       try {

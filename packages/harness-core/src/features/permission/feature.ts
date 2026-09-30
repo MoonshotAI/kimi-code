@@ -1,22 +1,24 @@
-import { homedir } from 'node:os';
 
 import {
   ConfigRef,
+  createFacadeToken,
   createFeature,
   MAIN_AGENT_ID,
   useAgent,
   useAgentStore,
   useBeforeStep,
   useConfigSection,
+  useInject,
   useSession,
   useSessionStore,
   useToolPermission,
   type FeatureSpec,
   type ToolCall,
 } from '@moonshot-ai/agent-core';
-import { createToken, useExpose, useFire, useNode, type Ref } from '@moonshot-ai/agent-core/kernel/index';
+import { useExpose, useFire, type Ref } from '@moonshot-ai/agent-core/kernel/index';
 
 import { useInteractions } from '#/features/interaction/index';
+import type { OsFsPort } from '#/features/os/host/index';
 import type { PathClass } from '#/features/os/path-access';
 
 import { formatDenyMessage, requestToolApproval } from './ask';
@@ -46,13 +48,14 @@ export interface PermissionFace {
   addRules(rules: readonly PermissionRule[]): Promise<void>;
 }
 
-export const PermissionRef = createToken<PermissionFace>('permission');
+export const PermissionRef = createFacadeToken<PermissionFace>('permission');
 
 export interface CreatePermissionProps {
   readonly interactive?: boolean;
   readonly workDir?: string;
   readonly additionalDirs?: readonly string[];
   readonly homeDir?: string;
+  readonly fs?: OsFsPort;
 }
 
 export function createPermission(props: CreatePermissionProps = {}): FeatureSpec<PermissionEvent> {
@@ -66,15 +69,18 @@ export function createPermission(props: CreatePermissionProps = {}): FeatureSpec
       const session = useSession();
       const store = useAgentStore();
       const sessionStore = useSessionStore();
-      const configEntries = useNode().providerRef(ConfigRef);
+      const config = useInject(ConfigRef);
       const state = store.fold(permissionProjection);
       const fire = useFire();
-      const interactions = useInteractions();
+      const interactions = useInteractions().value;
+      if (interactions === undefined) {
+        throw new Error('permission feature requires the interaction feature');
+      }
       const isMain = agent.agentId === MAIN_AGENT_ID;
       const pathClass: PathClass = process.platform === 'win32' ? 'win32' : 'posix';
 
       const permissionConfig = (): PermissionConfig | undefined =>
-        configEntries.value.at(-1)?.value.get<PermissionConfig>(PERMISSION_CONFIG_SECTION);
+        config.value?.get<PermissionConfig>(PERMISSION_CONFIG_SECTION);
 
       const setMode = async (mode: PermissionMode): Promise<void> => {
         const current = state.value;
@@ -93,11 +99,8 @@ export function createPermission(props: CreatePermissionProps = {}): FeatureSpec
           const pending: Promise<void>[] = [];
           for (const id of Object.keys(agents)) {
             if (id === agent.agentId) continue;
-            try {
-              const target = session.get(id)?.resolve(PermissionRef);
-              if (target !== undefined) pending.push(target.setMode(mode));
-            } catch {
-            }
+            const target = session.get(id)?.resolve(PermissionRef);
+            if (target !== undefined) pending.push(target.setMode(mode));
           }
           await Promise.all(pending);
         },
@@ -120,7 +123,8 @@ export function createPermission(props: CreatePermissionProps = {}): FeatureSpec
           workDir: props.workDir,
           additionalDirs: props.additionalDirs ?? [],
           pathClass,
-          homeDir: props.homeDir ?? homedir(),
+          homeDir: props.homeDir,
+          fs: props.fs,
         });
         if (evaluation === undefined) return undefined;
         const { result } = evaluation;

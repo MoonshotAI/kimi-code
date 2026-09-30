@@ -1,13 +1,15 @@
 import {
   ConfigRef,
+  createFacadeToken,
   createFeature,
   useAgentTools,
+  useInject,
   useProviderCatalog,
   type CatalogOAuthRef,
   type FeatureSlots,
   type FeatureSpec,
 } from '@moonshot-ai/agent-core';
-import { createToken, inject, useExpose, useNode } from '@moonshot-ai/agent-core/kernel/index';
+import { useExpose } from '@moonshot-ai/agent-core/kernel/index';
 import {
   createKimiDefaultHeaders,
   KIMI_CODE_PROVIDER_NAME,
@@ -25,7 +27,7 @@ import { createLocalFetchURLProvider } from './local';
 import { createMoonshotFetchURLProvider } from './moonshot';
 import { createFetchURLTool } from './tool';
 
-export const WebFetchRef = createToken<WebFetchFace>('web.fetch');
+export const WebFetchRef = createFacadeToken<WebFetchFace>('web.fetch');
 
 export interface WebFetchFace {
   getUrlFetcher(): UrlFetcher;
@@ -37,7 +39,11 @@ export interface CreateFetchProps {
 }
 
 export function useWebFetch(): WebFetchFace {
-  return inject(WebFetchRef);
+  const face = useInject(WebFetchRef).value;
+  if (face === undefined) {
+    throw new Error('fetch feature is not installed');
+  }
+  return face;
 }
 
 export function createFetchSlots(props: CreateFetchProps = {}): FeatureSlots {
@@ -49,19 +55,18 @@ export function createFetchSlots(props: CreateFetchProps = {}): FeatureSlots {
   };
   return {
     app() {
-      const node = useNode();
       const catalog = useProviderCatalog();
-      const configEntries = node.providerRef(ConfigRef);
-      const oauthEntries = node.providerRef(OAuthTokensRef);
+      const config = useInject(ConfigRef);
+      const oauth = useInject(OAuthTokensRef);
       const local = createLocalFetchURLProvider({ fetchImpl: props.fetchImpl });
       const resolveToken = (ref: CatalogOAuthRef | undefined): BearerTokenProvider | undefined => {
         if (ref === undefined) return undefined;
-        return oauthEntries.value.at(-1)?.value.resolve(ref);
+        return oauth.value?.resolve(ref);
       };
       const fromServicesConfig = (): UrlFetcher | undefined => {
-        const config = configEntries.value.at(-1)?.value;
-        if (config === undefined) return undefined;
-        const fetchEntry = config.get<ServicesSection>(SERVICES_CONFIG_SECTION)?.moonshot_fetch;
+        const store = config.value;
+        if (store === undefined) return undefined;
+        const fetchEntry = store.get<ServicesSection>(SERVICES_CONFIG_SECTION)?.moonshot_fetch;
         if (fetchEntry?.baseUrl === undefined) return undefined;
         return createMoonshotFetchURLProvider({
           baseUrl: fetchEntry.baseUrl,
@@ -74,7 +79,7 @@ export function createFetchSlots(props: CreateFetchProps = {}): FeatureSlots {
         });
       };
       const fromManagedOAuth = (): UrlFetcher | undefined => {
-        const info = catalog.providerInfo(KIMI_CODE_PROVIDER_NAME);
+        const info = catalog.value?.providerInfo(KIMI_CODE_PROVIDER_NAME);
         if (info?.modelSource !== 'oauth-catalog') return undefined;
         const tokenProvider = resolveToken(info.oauth);
         if (tokenProvider === undefined) return undefined;
@@ -93,7 +98,7 @@ export function createFetchSlots(props: CreateFetchProps = {}): FeatureSlots {
       });
     },
     agent() {
-      const webFetch = inject(WebFetchRef);
+      const webFetch = useWebFetch();
       useAgentTools(createFetchURLTool(webFetch));
     },
   };

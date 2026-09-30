@@ -187,10 +187,6 @@ afterEach(async () => {
   for (const dir of tempDirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });
 
-function testHost(): OsHost {
-  return { ...host, environment: { ...host.environment, homeDir: osHome } };
-}
-
 async function writeFileUnder(base: string, rel: string, text: string): Promise<string> {
   const p = join(base, rel);
   await mkdir(dirname(p), { recursive: true });
@@ -217,7 +213,7 @@ async function startSkillApp(options?: {
   readonly toml?: string;
   readonly env?: Record<string, string | undefined>;
   readonly withConfig?: boolean;
-  readonly noHost?: boolean;
+  readonly noFs?: boolean;
   readonly skillProps?: Partial<CreateSkillProps>;
   readonly script?: LlmScript;
   readonly extraFeatures?: readonly FeatureSpec[];
@@ -226,7 +222,7 @@ async function startSkillApp(options?: {
   const { requester, calls } = createMockRequester(options?.script ?? singleCallScript);
   const skillFeature = createSkill({
     workDir,
-    ...(options?.noHost === true ? {} : { host: testHost(), brandHome }),
+    ...(options?.noFs === true ? {} : { fs: host.fs, home: brandHome }),
     ...options?.skillProps,
   });
   const features: FeatureSpec[] = [
@@ -665,8 +661,8 @@ async function makeProjectSkill(): Promise<void> {
 }
 
 describe('createSkill app slot', () => {
-  it('loads only builtin skills when no host is provided', async () => {
-    const env = await startSkillApp({ noHost: true });
+  it('loads only builtin skills when no fs is provided', async () => {
+    const env = await startSkillApp({ noFs: true });
     expect(env.catalog().list().map((skill) => skill.name).toSorted()).toEqual(BUILTIN_SKILL_NAMES);
     expect(env.catalog().roots()).toEqual([]);
     await env.dispose();
@@ -725,7 +721,7 @@ describe('createSkill app slot', () => {
 
   it('reloads user and workspace sources when mergeAllAvailableSkills changes', async () => {
     await writeFileUnder(brandHome, 'skills/brand-one/SKILL.md', fm('name: brand-one\ndescription: B'));
-    await writeFileUnder(osHome, '.agents/skills/generic-one/SKILL.md', fm('name: generic-one\ndescription: G'));
+    await writeFileUnder(brandHome, '.agents/skills/generic-one/SKILL.md', fm('name: generic-one\ndescription: G'));
     const env = await startSkillApp();
     expect(env.catalog().list().map((skill) => skill.name)).toEqual(
       expect.arrayContaining(['brand-one', 'generic-one']),

@@ -1,11 +1,10 @@
-import { randomBytes } from 'node:crypto';
-
 import { createHistoryMessageBuilder, type AgentCommands } from '@moonshot-ai/agent-core';
 import type { RuntimeEvent } from '@moonshot-ai/agent-core/kernel/index';
 
-import { createNodeOsHost, type OsHost, type OsProcess } from '#/features/os/host/index';
+import type { OsHost, OsProcess } from '#/features/os/host/index';
 import { startProcessExecution } from '#/features/os/process-exec';
 import { renderBashBackgroundAck } from '#/features/os/tools/bash';
+import { randomHex } from '#/random';
 import type { RunShellCommandInput, RunShellCommandResult, ShellCommandFace } from './feature';
 import { escapeXml } from './xml-escape';
 
@@ -15,7 +14,7 @@ export interface ShellCommandRunnerDeps {
   readonly timeoutMs: number;
   readonly agent: AgentCommands;
   readonly fire: (event: RuntimeEvent) => void;
-  readonly host?: OsHost;
+  readonly host: OsHost;
 }
 
 export interface ShellCommandRunner {
@@ -30,13 +29,13 @@ interface RunningCommand {
 
 export function openShellCommands(deps: ShellCommandRunnerDeps): ShellCommandRunner {
   const { workDir, shell, timeoutMs, agent, fire } = deps;
-  const host = deps.host ?? createNodeOsHost();
+  const host = deps.host;
   const agentId = agent.agentId;
   const running = new Map<string, RunningCommand>();
   const cancelledBeforeStart = new Set<string>();
 
   const run = async (input: RunShellCommandInput): Promise<RunShellCommandResult> => {
-    const commandId = input.commandId ?? `shell-command-${randomBytes(6).toString('hex')}`;
+    const commandId = input.commandId ?? `shell-command-${randomHex(6)}`;
     agent.remind(
       createHistoryMessageBuilder()
         .xml(`<bash-input>\n${escapeXml(input.command)}\n</bash-input>`, 'text/xml', {

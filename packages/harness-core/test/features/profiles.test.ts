@@ -154,7 +154,7 @@ describe('buildCatalogView', () => {
 
 describe('profiles feature', () => {
   it('exposes the builtin catalog through the facade', async () => {
-    const app = createHarness({ features: [createProfiles({ workDir, home: homeDir })] });
+    const app = createHarness({ features: [createProfiles({ workDir, host, home: homeDir })] });
     try {
       await app.ready();
       const face = app.resolve(ProfileCatalogRef);
@@ -215,6 +215,7 @@ describe('profiles feature', () => {
       features: [
         createProfiles({
           workDir,
+          host,
           home: homeDir,
           finders: [customFinder, failingFinder],
           onWarn: (message) => warnings.push(message),
@@ -233,7 +234,7 @@ describe('profiles feature', () => {
   });
 
   it('renders the coder system prompt with the shared skeleton and role text', async () => {
-    const app = createHarness({ features: [createProfiles({ workDir, home: homeDir })] });
+    const app = createHarness({ features: [createProfiles({ workDir, host, home: homeDir })] });
     try {
       await app.ready();
       const face = app.resolve(ProfileCatalogRef);
@@ -540,7 +541,7 @@ describe('finders end-to-end', () => {
 
   it('lists workspace agent files and renders their prompt with context vars', async () => {
     await writeAgent('.kimi-code/agents/foo.md', 'name: foo\ndescription: Foo agent', 'You are foo running in ${cwd}.');
-    const app = createHarness({ features: [createProfiles({ workDir, home: homeDir })] });
+    const app = createHarness({ features: [createProfiles({ workDir, host, home: homeDir })] });
     try {
       await app.ready();
       const face = app.resolve(ProfileCatalogRef);
@@ -558,7 +559,7 @@ describe('finders end-to-end', () => {
 
   it('rejects a same-name builtin without override and honors override: true', async () => {
     await writeAgent('.kimi-code/agents/coder.md', 'name: coder\ndescription: Custom coder', 'Custom body.');
-    const app = createHarness({ features: [createProfiles({ workDir, home: homeDir })] });
+    const app = createHarness({ features: [createProfiles({ workDir, host, home: homeDir })] });
     try {
       await app.ready();
       const face = app.resolve(ProfileCatalogRef);
@@ -578,7 +579,7 @@ describe('finders end-to-end', () => {
       join(workDir, '.kimi-code', 'agents', 'coder.md'),
       '---\nname: coder\ndescription: Custom coder\noverride: true\n---\nCustom body.\n',
     );
-    const app2 = createHarness({ features: [createProfiles({ workDir, home: homeDir })] });
+    const app2 = createHarness({ features: [createProfiles({ workDir, host, home: homeDir })] });
     try {
       await app2.ready();
       const face2 = app2.resolve(ProfileCatalogRef);
@@ -596,7 +597,7 @@ describe('finders end-to-end', () => {
       'name: foo\ndescription: Foo agent',
       'prefix ${base_prompt} suffix',
     );
-    const app = createHarness({ features: [createProfiles({ workDir, home: homeDir })] });
+    const app = createHarness({ features: [createProfiles({ workDir, host, home: homeDir })] });
     try {
       await app.ready();
       const face = app.resolve(ProfileCatalogRef);
@@ -614,7 +615,7 @@ describe('finders end-to-end', () => {
       join(homeDir, 'agents', 'helper.md'),
       '---\nname: helper\ndescription: Helper agent\n---\nprefix ${base_prompt} suffix\n',
     );
-    const app = createHarness({ features: [createProfiles({ workDir, home: homeDir })] });
+    const app = createHarness({ features: [createProfiles({ workDir, host, home: homeDir })] });
     try {
       await app.ready();
       const face = app.resolve(ProfileCatalogRef);

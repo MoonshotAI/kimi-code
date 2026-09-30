@@ -15,16 +15,15 @@ Tutorial：通过一个完整程序体验宿主启动、异步门控、依赖注
 ```ts
 import assert from 'node:assert/strict';
 import {
-  createToken,
+  createFacadeToken,
   createUnit,
-  inject,
   mountRoot,
   provide,
   ref,
   shallowRef,
   useChildren,
   useFire,
-  useNode,
+  useInject,
   useOn,
   useReady,
   watchEffect,
@@ -42,24 +41,25 @@ type RootProps = {
   loadSeed(signal: AbortSignal): Promise<number>;
 };
 
-const Counter = createToken<CounterService>('counter');
+const Counter = createFacadeToken<CounterService>('counter');
 const observations: number[] = [];
 const events: number[] = [];
 const closed: string[] = [];
 
 const Observer = createUnit('observer', () => {
-  const counter = inject(Counter);
+  const counter = useInject(Counter);
   const fire = useFire();
   watchEffect(() => {
-    const value = counter.count.value;
+    const service = counter.value;
+    if (service === undefined) return;
+    const value = service.count.value;
     observations.push(value);
     fire({ type: 'counter.observed', value });
   });
   return () => { closed.push('observer'); };
 });
 
-const Root = createUnit<RootProps>('root', (props) => {
-  const node = useNode();
+const Root = createUnit<RootProps>('root', (props, ctx) => {
   const count = ref(0);
   const initialized = ref(false);
   provide(Counter, {
@@ -70,8 +70,8 @@ const Root = createUnit<RootProps>('root', (props) => {
     'counter.observed',
     (event) => { events.push(event.value); },
   );
-  useReady(props.loadSeed(node.signal).then((seed) => {
-    if (node.signal.aborted) return;
+  useReady(props.loadSeed(ctx.node.signal).then((seed) => {
+    if (ctx.node.signal.aborted) return;
     count.value = seed;
     initialized.value = true;
   }));
@@ -91,11 +91,11 @@ async function main() {
   try {
     await handle.ready();
     assert.deepEqual(observations, [3]);
-    handle.resolve(Counter).increment();
+    handle.resolve(Counter)?.increment();
     assert.deepEqual(events, [3, 4]);
     children.value = [];
     await handle.ready();
-    handle.resolve(Counter).increment();
+    handle.resolve(Counter)?.increment();
     assert.deepEqual(observations, [3, 4]);
   } finally {
     await handle.unmount();

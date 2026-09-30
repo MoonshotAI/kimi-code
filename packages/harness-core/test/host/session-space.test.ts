@@ -21,9 +21,9 @@ async function readMarker(space: SessionSpace, id: string): Promise<string> {
 }
 
 async function exerciseSpace(space: SessionSpace): Promise<void> {
-  await space.create('alpha', { title: 'one', workspaceId: 'ws' });
+  await space.create('alpha', { title: 'one', metadata: { workspaceId: 'ws' } });
   await writeMarker(space, 'alpha', 'hello');
-  expect(await space.list()).toEqual([{ id: 'alpha', title: 'one', workspaceId: 'ws' }]);
+  expect(await space.list()).toEqual([{ id: 'alpha', title: 'one', metadata: { workspaceId: 'ws' } }]);
   await expect(space.create('alpha')).rejects.toMatchObject({ reason: 'already-exists' });
   await expect(space.open('missing')).rejects.toBeInstanceOf(SessionSpaceError);
   const copied = await space.copy('alpha', 'beta');
@@ -34,7 +34,12 @@ async function exerciseSpace(space: SessionSpace): Promise<void> {
   expect(await space.update('beta', { title: 'two' })).toEqual({
     id: 'beta',
     title: 'two',
-    workspaceId: 'ws',
+    metadata: { workspaceId: 'ws' },
+  });
+  expect(await space.update('beta', { metadata: { extra: 1 } })).toEqual({
+    id: 'beta',
+    title: 'two',
+    metadata: { workspaceId: 'ws', extra: 1 },
   });
   await space.delete('alpha');
   expect(await space.get('alpha')).toBeUndefined();
@@ -51,7 +56,11 @@ describe('session space', () => {
     try {
       await exerciseSpace(fsSessionSpace(root));
       const reopened = fsSessionSpace(root);
-      expect(await reopened.get('beta')).toEqual({ id: 'beta', title: 'two', workspaceId: 'ws' });
+      expect(await reopened.get('beta')).toEqual({
+        id: 'beta',
+        title: 'two',
+        metadata: { workspaceId: 'ws', extra: 1 },
+      });
       expect(await readMarker(reopened, 'beta')).toBe('hello');
     } finally {
       await rm(root, { recursive: true, force: true });

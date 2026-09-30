@@ -100,7 +100,11 @@ function bindTestTools(): FeatureSpec {
   });
 }
 
-async function startPlanTest(options?: { withConfig?: boolean; withPermission?: boolean }) {
+async function startPlanTest(options?: {
+  withConfig?: boolean;
+  withPermission?: boolean;
+  withInteraction?: boolean;
+}) {
   const backend = new MemoryBackend();
   const trees = await Trees.open(backend.trees, {});
   const tree = await trees.tree('sess');
@@ -109,7 +113,7 @@ async function startPlanTest(options?: { withConfig?: boolean; withPermission?: 
   const storage = createMemoryPlanStorage();
   const features: FeatureSpec[] = [
     ...(options?.withConfig === true ? [createConfig({})] : []),
-    interaction,
+    ...(options?.withInteraction === false ? [] : [interaction]),
     ...(options?.withPermission === true ? [createPermission()] : []),
     createPlan({ storage }),
     bindTestTools(),
@@ -219,10 +223,13 @@ describe('plan feature', () => {
     await env.dispose();
   });
 
-  it('registers the defaultPlanMode config section with default false', async () => {
+  it('registers the defaultPlanMode config section and fails agent setup without the interaction feature', async () => {
     const env = await startPlanTest({ withConfig: true });
-    expect(env.app.resolve(ConfigRef).get('defaultPlanMode')).toBe(false);
+    expect(env.app.resolve(ConfigRef)?.get('defaultPlanMode')).toBe(false);
     await env.dispose();
+    await expect(startPlanTest({ withInteraction: false })).rejects.toThrow(
+      'plan feature requires the interaction feature',
+    );
   });
 
   it('enters plan mode through the EnterPlanMode tool and rejects re-entry', async () => {

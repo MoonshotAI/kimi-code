@@ -1,8 +1,8 @@
+import { useCleanup } from '@moonshot-ai/agent-core';
 import {
   createCollection,
+  currentUnit,
   lineage,
-  pushCleanup,
-  useNode,
   type UnitNode,
   type Unsubscribe,
 } from '@moonshot-ai/agent-core/kernel/index';
@@ -36,9 +36,7 @@ export interface SkillCatalogSource {
 export const SkillSources = createCollection<SkillCatalogSource>('skill.sources');
 
 export function useSkillSource(source: SkillCatalogSource): void {
-  const node = useNode();
-  pushCleanup(
-    node,
-    ([...lineage(node)].at(-1) as UnitNode).contribute(SkillSources, source, 0),
+  useCleanup(
+    ([...lineage(currentUnit())].at(-1) as UnitNode).contribute(SkillSources, source, 0),
   );
 }

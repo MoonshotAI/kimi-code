@@ -1,17 +1,14 @@
 import {
-  AgentStoreRef,
   ConfigRef,
+  createFacadeToken,
   createFeature,
   useAgentStore,
   useConfigSection,
+  useInject,
 } from '@moonshot-ai/agent-core';
 import {
-  createToken,
-  inject,
-  pushCleanup,
   shallowRef,
   useExpose,
-  useNode,
   type ShallowRef,
 } from '@moonshot-ai/agent-core/kernel/index';
 
@@ -39,27 +36,23 @@ export interface TokenCountingFace {
   requestSize(request: TokenCountingRequest): number;
 }
 
-export const TokenCountingRef = createToken<TokenCountingFace>('tokenCounting');
+export const TokenCountingRef = createFacadeToken<TokenCountingFace>('tokenCounting');
 
 export const tokenCounting = createFeature('tokenCounting', {
   agent() {
-    const node = useNode();
     const store = useAgentStore();
     useConfigSection(tokenCountingConfigSection);
-    const configEntries = node.providerRef(ConfigRef);
+    const config = useInject(ConfigRef);
     const strategy = (): TokenCountingStrategy =>
-      configEntries.value.at(-1)?.value.get<TokenCountingConfig | undefined>(TOKEN_COUNTING_SECTION)
+      config.value?.get<TokenCountingConfig | undefined>(TOKEN_COUNTING_SECTION)
         ?.strategy ?? DEFAULT_TOKEN_COUNTING_CONFIG.strategy;
     const currentStatus = (): number => statusSize(store.getState().history, strategy());
     const status = shallowRef(currentStatus());
-    pushCleanup(
-      node,
-      inject(AgentStoreRef).onCommit((entry) => {
-        if (entry.event.type === 'turn.ended') {
-          status.value = currentStatus();
-        }
-      }),
-    );
+    store.onCommit((entry) => {
+      if (entry.event.type === 'turn.ended') {
+        status.value = currentStatus();
+      }
+    });
     useExpose(TokenCountingRef, {
       status,
       get: (start?: number, end?: number): ContextSize =>

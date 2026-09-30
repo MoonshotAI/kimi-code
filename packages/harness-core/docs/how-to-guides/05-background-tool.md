@@ -12,15 +12,18 @@ export const interaction = createFeature<InteractionEvent>('interaction', {
     const fire = useFire();
     const interactions = openInteractions({ fire });
     useExpose(InteractionRef, interactions);
-    pushCleanup(useNode(), () => interactions.stop());
+    useCleanup(() => interactions.stop());
   },
   agent() {
-    const interactions = useInteractions();
+    const interactions = useInteractions().value;
+    if (interactions === undefined) {
+      throw new Error('interaction feature session slot is not installed');
+    }
     useAgentTools(createAskUserQuestionTool(interactions, {
       sessionId: useSession().sessionId,
       agentId: useAgent().agentId,
     }));
-    pushCleanup(useNode(), () => {
+    useCleanup(() => {
       interactions.cancelAgent(useAgent().agentId, 'agent_closed');
     });
   },
@@ -31,6 +34,7 @@ export const interaction = createFeature<InteractionEvent>('interaction', {
 
 ```ts
 const interactions = session.resolve(InteractionRef);
+if (interactions === undefined) throw new Error('interaction feature is not installed');
 session.on(interaction, 'interaction.requested', (event) => {
   interactions.respond(event.interaction.id, { answers: { /* … */ } });
 });
@@ -62,7 +66,7 @@ async execute({ toolCall, detach }) {
 - ack 文案就是模型本步看到的 tool result
 - `task_id` 用 `toolCall.id`，和 WaitFor 的 `task_id` 对齐
 - `detach` 之后继续等 `request()`：答案必须等 `respond` 之后作为 async completion 回来，提前 `return` 就把这条 completion 丢了
-- `execute` 里不能 `inject`；`interactions` 在 setup 闭包捕获
+- `execute` 里不能 `useInject`；`interactions` 在 setup 闭包捕获
 
 前台提问（`background` 省略 / false）不 detach，turn 停在 `acting`，等人答完。
 

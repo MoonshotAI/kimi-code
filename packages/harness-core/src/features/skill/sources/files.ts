@@ -33,16 +33,19 @@ export const WORKSPACE_SKILL_SOURCE_ID = 'workspace';
 export const EXTRA_SKILL_SOURCE_ID = 'extra';
 export const EXPLICIT_SKILL_SOURCE_ID = 'explicit';
 
-export interface FileSkillSourceDeps {
+export interface SharedSkillSourceDeps {
   readonly fs: OsFsPort;
   readonly workDir: string;
-  readonly homeDir: string;
-  readonly osHomeDir: string;
+  readonly osHomeDir?: string;
   readonly mergeAllAvailableSkills: () => boolean;
   readonly hasExplicitDirs: () => boolean;
   readonly extraSkillDirs: () => readonly string[];
   readonly explicitDirs: () => readonly string[];
   readonly warn?: (message: string) => void;
+}
+
+export interface FileSkillSourceDeps extends SharedSkillSourceDeps {
+  readonly homeDir: string;
 }
 
 export function createUserSkillSource(deps: FileSkillSourceDeps): SkillCatalogSource {
@@ -62,7 +65,7 @@ export function createUserSkillSource(deps: FileSkillSourceDeps): SkillCatalogSo
   };
 }
 
-export function createWorkspaceSkillSource(deps: FileSkillSourceDeps): SkillCatalogSource {
+export function createWorkspaceSkillSource(deps: SharedSkillSourceDeps): SkillCatalogSource {
   return {
     id: WORKSPACE_SKILL_SOURCE_ID,
     priority: SKILL_SOURCE_PRIORITY.workspace,
@@ -79,7 +82,7 @@ export function createWorkspaceSkillSource(deps: FileSkillSourceDeps): SkillCata
   };
 }
 
-export function createExtraSkillSource(deps: FileSkillSourceDeps): SkillCatalogSource {
+export function createExtraSkillSource(deps: SharedSkillSourceDeps): SkillCatalogSource {
   return {
     id: EXTRA_SKILL_SOURCE_ID,
     priority: SKILL_SOURCE_PRIORITY.extra,
@@ -92,7 +95,7 @@ export function createExtraSkillSource(deps: FileSkillSourceDeps): SkillCatalogS
   };
 }
 
-export function createExplicitSkillSource(deps: FileSkillSourceDeps): SkillCatalogSource {
+export function createExplicitSkillSource(deps: SharedSkillSourceDeps): SkillCatalogSource {
   return {
     id: EXPLICIT_SKILL_SOURCE_ID,
     priority: SKILL_SOURCE_PRIORITY.user,

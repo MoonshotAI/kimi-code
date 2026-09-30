@@ -43,11 +43,11 @@ Feature 不是第四棵树。`createFeature('name', { app?, session?, agent? })`
 - 绑 generate：`agent.setConfig` / `setCredentialProvider` / `setRequester`（不进机器、不落盘；Feature 用 `useAgent()` 上的同名方法）
 - 写回合：`agent.submit` / `notify` / `remind` / `steer` / `cancel` / `abort` / `pause` / `continue`（步骤见 [01](../how-to-guides/01-run-a-turn.md)）
 - 写 Feature 状态：Feature 自己 `useAgentStore().dispatch` 或 `useSessionStore().dispatch`，事件进同一份 journal，`decodeAgent` 不认识的 type 原样留下
-- 读 facade：`handle.resolve(TodoRef)`——Handle 是面向宿主的解析面，与 `inject` 同语义（缺失抛错）
+- 读 facade：`handle.resolve(TodoRef)`——Handle 是面向宿主的解析面，与 `useInject` 同套分级语义（facade 缺失返回 `undefined`，certain 缺失抛错）
 - 读活表：`app.get(sessionId)` / `session.get(agentId)` 是同步活表查找；从 catalog 打开走 `app.open`
 
 ## 相关文档
 
 - 外部操作 → [01](../how-to-guides/01-run-a-turn.md)
 - 写 Feature → [feature-model](feature-model.md) · [02](../how-to-guides/02-add-todo-feature.md) · [08](../how-to-guides/08-develop-feature.md)
-- 状态机与事件 → [agent-machine](agent-machine.md) · [events](../reference/events.md)
+- 状态机与事件 → [agent-machine](agent-machine.md) · [events](../reference/events.md) · [event-consumption](event-consumption.md)

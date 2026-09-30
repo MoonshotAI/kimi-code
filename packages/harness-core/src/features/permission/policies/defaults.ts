@@ -63,7 +63,8 @@ export const gitCwdWriteApprove: PermissionPolicy = {
       return undefined;
     }
 
-    return (await findGitWorkTree(cwd)) === null ? undefined : { kind: 'approve' };
+    if (context.fs === undefined) return undefined;
+    return (await findGitWorkTree(context.fs, cwd)) === null ? undefined : { kind: 'approve' };
   },
 };
 

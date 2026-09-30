@@ -1,5 +1,5 @@
-import { createFeature, useAgent } from '@moonshot-ai/agent-core';
-import { createToken, shallowRef, useExpose, type Ref } from '@moonshot-ai/agent-core/kernel/index';
+import { createFacadeToken, createFeature, useAgent } from '@moonshot-ai/agent-core';
+import { shallowRef, useExpose, type Ref } from '@moonshot-ai/agent-core/kernel/index';
 
 export interface LlmRequestTiming {
   readonly requestBuildMs?: number;
@@ -14,7 +14,7 @@ export interface TimingFace {
   readonly timing: Ref<LlmRequestTiming | undefined>;
 }
 
-export const TimingRef = createToken<TimingFace>('timing');
+export const TimingRef = createFacadeToken<TimingFace>('timing');
 
 export const timing = createFeature('timing', {
   agent() {

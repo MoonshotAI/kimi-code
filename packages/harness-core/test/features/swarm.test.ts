@@ -31,6 +31,7 @@ import {
   type ToolMeta,
 } from '@moonshot-ai/agent-core';
 
+import { createNodeOsHost } from '#/features/os/host/index';
 import { createProfiles } from '#/features/profiles/index';
 import {
   createSpawn,
@@ -49,7 +50,6 @@ import {
   multipleAgentSwarmDeniedMessage,
   renderSwarmResults,
   resolveSwarmMaxConcurrency,
-  SwarmRef,
   type AgentRunAbandonedEvent,
   type AgentRunAttemptHandle,
   type AgentRunAttemptOptions,
@@ -201,10 +201,11 @@ async function startApp(opts?: {
   const homeDir = await mkdtemp(join(tmpdir(), 'swarm-home-'));
   tmpDirs.push(workDir, homeDir);
   const { requester, calls } = createMockRequester(opts?.script ?? script);
-  const swarm = createSwarm({ models: opts?.models, workDir });
+  const host = createNodeOsHost();
+  const swarm = createSwarm({ models: opts?.models, workDir, host });
   const features: FeatureSpec[] = [swarm, bindTestTools(), bindTestLlm(requester)];
-  if (opts?.withSpawn !== false) features.unshift(createSpawn({ workDir }));
-  if (opts?.withProfiles !== false) features.unshift(createProfiles({ workDir, home: homeDir }));
+  if (opts?.withSpawn !== false) features.unshift(createSpawn({ workDir, host }));
+  if (opts?.withProfiles !== false) features.unshift(createProfiles({ workDir, host, home: homeDir }));
   if (opts?.withConfig === true) {
     features.unshift(createConfig({ persist: fakePersist(opts?.toml).persist, env: opts?.env ?? {} }));
   }
@@ -257,12 +258,6 @@ function toolResultIsErrors(stores: SessionStores, agentId = MAIN_AGENT_ID): boo
   return (stores.get(agentId)?.getState().history ?? [])
     .filter((entry) => entry.message.role === 'tool')
     .map((entry) => (entry.meta as ToolMeta | undefined)?.isError === true);
-}
-
-function swarmReminders(stores: SessionStores, agentId = MAIN_AGENT_ID) {
-  return (stores.get(agentId)?.getState().history ?? []).filter(
-    (entry) => entry.meta?.source === 'reminder' && entry.meta?.key === 'swarm-mode',
-  );
 }
 
 afterEach(async () => {
@@ -813,97 +808,6 @@ describe('swarm guard', () => {
   });
 });
 
-describe('swarm mode', () => {
-  it('enters and exits idempotently and auto-exits a tool-triggered mode at turn end', async () => {
-    const env = await startApp();
-    const face = env.main.resolve(SwarmRef);
-    expect(face.isActive()).toBe(false);
-
-    await face.enter('manual');
-    expect(face.isActive()).toBe(true);
-    expect(face.state.value.trigger).toBe('manual');
-    await face.enter('tool');
-    expect(face.state.value.trigger).toBe('manual');
-    await face.exit();
-    expect(face.isActive()).toBe(false);
-    await face.exit();
-    expect(face.isActive()).toBe(false);
-
-    await face.enter('tool');
-    expect(face.state.value.trigger).toBe('tool');
-    await env.runTurn('go');
-    await vi.waitFor(() => {
-      expect(face.isActive()).toBe(false);
-    });
-    await env.dispose();
-  });
-
-  it('restores the swarm mode from the journal on remount', async () => {
-    const env = await startApp();
-    await env.main.resolve(SwarmRef).enter('manual');
-    await env.session.close(MAIN_AGENT_ID);
-    const main = await env.session.create({ agentId: MAIN_AGENT_ID, systemPrompt: 'main-host' });
-    const face = main.resolve(SwarmRef);
-    expect(face.isActive()).toBe(true);
-    expect(face.state.value.trigger).toBe('manual');
-    await env.dispose();
-  });
-});
-
-describe('swarm injection', () => {
-  it('injects the enter reminder once while manual mode is active and the exit reminder once after exit', async () => {
-    const env = await startApp();
-    const face = env.main.resolve(SwarmRef);
-    await face.enter('manual');
-    await env.runTurn('run');
-    await env.runTurn('run');
-
-    let reminders = swarmReminders(env.stores);
-    expect(reminders).toHaveLength(1);
-    expect(extractText(reminders[0]!.message)).toContain('You are now in "agent swarm" mode.');
-    const secondCall = env.calls[1]!;
-    expect(
-      secondCall.messages.some(
-        (message) => message.role === 'user' && extractText(message).includes('agent swarm'),
-      ),
-    ).toBe(true);
-
-    await face.exit();
-    await env.runTurn('run');
-    await env.runTurn('run');
-    reminders = swarmReminders(env.stores);
-    expect(reminders).toHaveLength(2);
-    expect(extractText(reminders[1]!.message)).toContain('Swarm Mode has ended.');
-    await env.dispose();
-  });
-
-  it('renders no reminder for tool-triggered swarms', async () => {
-    const env = await startApp();
-    await env.main.resolve(SwarmRef).enter('tool');
-    await env.runTurn('run');
-    await env.runTurn('run');
-    expect(swarmReminders(env.stores)).toHaveLength(0);
-    await env.dispose();
-  });
-
-  it('does not re-inject the enter reminder on remount while it is still live in history', async () => {
-    const env = await startApp();
-    await env.main.resolve(SwarmRef).enter('manual');
-    await env.runTurn('run');
-    await env.runTurn('run');
-    expect(swarmReminders(env.stores)).toHaveLength(1);
-
-    await env.session.close(MAIN_AGENT_ID);
-    const main = await env.session.create({ agentId: MAIN_AGENT_ID, systemPrompt: 'main-host' });
-    const done = waitTurnDone(main);
-    main.submit(createUserMessage('run'));
-    await done;
-    await env.stores.flush();
-    expect(swarmReminders(env.stores)).toHaveLength(1);
-    await env.dispose();
-  });
-});
-
 describe('AgentSwarm tool', () => {
   it('gates schema parameters and renders the description with the models section', async () => {
     const env = await startApp({ models: [fastModel] });
@@ -953,7 +857,6 @@ describe('AgentSwarm tool', () => {
   it('runs a three-item swarm to completion and resumes one subagent with its item backfilled', async () => {
     const env = await startApp();
     const updates = trackSubagentUpdates(env.main);
-    const face = env.main.resolve(SwarmRef);
 
     await env.runTurn(
       swarmCall({
@@ -979,10 +882,6 @@ describe('AgentSwarm tool', () => {
         `<subagent agent_id="${agentIds[index]}" item="${item}" outcome="completed">echo:review ${item}</subagent>`,
       );
     }
-    await vi.waitFor(() => {
-      expect(face.isActive()).toBe(false);
-    });
-    expect(swarmReminders(env.stores)).toHaveLength(0);
 
     await env.runTurn(
       swarmCall({
@@ -1049,13 +948,10 @@ describe('AgentSwarm tool', () => {
     await invalid.dispose();
   });
 
-  it('does not register the AgentSwarm tool when no catalog is available but keeps the facade', async () => {
+  it('does not register the AgentSwarm tool when no catalog is available', async () => {
     const env = await startApp({ withProfiles: false, withSpawn: false });
     await env.runTurn('hello');
     expect(env.calls[0]!.tools.find((candidate) => candidate.name === 'AgentSwarm')).toBeUndefined();
-    const face = env.main.resolve(SwarmRef);
-    await face.enter('manual');
-    expect(face.isActive()).toBe(true);
     await env.dispose();
   });
 

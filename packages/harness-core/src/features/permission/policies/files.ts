@@ -26,7 +26,8 @@ export const gitControlPathAccessAsk: PermissionPolicy = {
     );
     if (directGitAccess !== undefined) return { kind: 'ask' };
 
-    const marker = await findGitWorkTree(cwd);
+    if (context.fs === undefined) return undefined;
+    const marker = await findGitWorkTree(context.fs, cwd);
     if (marker === null) return undefined;
     const access = accesses.find((fileAccess) =>
       isGitControlPath(fileAccess.path, marker, context.pathClass),

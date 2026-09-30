@@ -2,6 +2,7 @@ export type McpManagementErrorCode =
   | 'mcp.server_not_found'
   | 'mcp.request_invalid'
   | 'mcp.config_invalid'
+  | 'mcp.user_store_unavailable'
   | 'mcp.oauth_failed';
 
 export class McpManagementError extends Error {

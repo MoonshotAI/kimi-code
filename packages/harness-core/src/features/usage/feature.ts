@@ -1,5 +1,5 @@
-import { createFeature, useAgent } from '@moonshot-ai/agent-core';
-import { createToken, shallowRef, useExpose, type Ref } from '@moonshot-ai/agent-core/kernel/index';
+import { createFacadeToken, createFeature, useAgent } from '@moonshot-ai/agent-core';
+import { shallowRef, useExpose, type Ref } from '@moonshot-ai/agent-core/kernel/index';
 
 import { accumulateUsage, emptyUsageSummary, type UsageRecord, type UsageSummary } from './usage';
 
@@ -8,7 +8,7 @@ export interface UsageFace {
   readonly records: Ref<readonly UsageRecord[]>;
 }
 
-export const UsageRef = createToken<UsageFace>('usage');
+export const UsageRef = createFacadeToken<UsageFace>('usage');
 
 export const usage = createFeature('usage', {
   agent() {

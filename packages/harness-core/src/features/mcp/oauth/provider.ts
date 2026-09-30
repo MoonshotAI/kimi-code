@@ -1,5 +1,3 @@
-import { randomBytes } from 'node:crypto';
-
 import type {
   OAuthClientProvider,
   OAuthDiscoveryState,
@@ -14,6 +12,7 @@ import {
 import { OAuthTokenTransaction } from '@moonshot-ai/kimi-code-oauth';
 
 import { MCP_CLIENT_NAME } from '#/features/mcp/core/client-shared';
+import { randomHex } from '#/random';
 
 import { canonicalMcpOAuthResource, mcpOAuthStoreKey, type McpOAuthStore } from './store';
 
@@ -156,7 +155,7 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
   }
 
   state(): string {
-    this._state ??= randomBytes(16).toString('hex');
+    this._state ??= randomHex(16);
     return this._state;
   }
 

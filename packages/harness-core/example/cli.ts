@@ -79,6 +79,9 @@ export async function runCli(args: CliArgs): Promise<void> {
     const store = join(dataRoot, session.sessionId);
     writeSession({ sessionId: session.sessionId, model: key, store }, args.json);
     const interactions = session.resolve(InteractionRef);
+    if (interactions === undefined) {
+      throw new Error('interaction feature is not installed');
+    }
     const promptOut = args.json ? process.stderr : process.stdout;
     const offQuestion = session.on(interaction, 'interaction.requested', (event) => {
       const rl = createInterface({ input: process.stdin, output: promptOut });

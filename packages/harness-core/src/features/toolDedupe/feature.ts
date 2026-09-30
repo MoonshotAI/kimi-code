@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto';
-
 import {
   createFeature,
   systemReminderText,
@@ -9,13 +7,15 @@ import {
   useAfterTool,
   useBeforeStep,
   useBeforeTool,
+  useInject,
   useTelemetryEvents,
   type FeatureSpec,
   type TelemetryEventDefinition,
   type TelemetryProperties,
   type ToolResult,
 } from '@moonshot-ai/agent-core';
-import { lineage, useNode } from '@moonshot-ai/agent-core/kernel/index';
+
+import { sha256Hex } from '#/sha256';
 
 export const REMINDER_TEXT_1 =
   '\n\n' +
@@ -124,11 +124,11 @@ function makeKey(toolName: string, args: unknown): string {
 }
 
 function argsHash(args: unknown): string {
-  return createHash('sha256').update(canonicalArgs(args)).digest('hex').slice(0, 8);
+  return sha256Hex(canonicalArgs(args)).slice(0, 8);
 }
 
 function callSignature(key: string): string {
-  return createHash('sha256').update(key).digest('hex');
+  return sha256Hex(key);
 }
 
 interface TurnCallRecord {
@@ -163,18 +163,11 @@ const toolDedupeTelemetryEvents = [
 export function createToolDedupe(): FeatureSpec {
   return createFeature('toolDedupe', {
     agent() {
-      const node = useNode();
       const agent = useAgent();
       useTelemetryEvents(toolDedupeTelemetryEvents);
+      const telemetry = useInject(TelemetryRef);
       const track = (event: string, properties: TelemetryProperties): void => {
-        const providers = node.providerRef(TelemetryRef).value;
-        for (const unit of lineage(node)) {
-          const entry = providers.findLast((candidate) => candidate.node === unit);
-          if (entry !== undefined) {
-            entry.value.track(event, properties);
-            return;
-          }
-        }
+        telemetry.value?.track(event, properties);
       };
 
       let stepCalls: string[] = [];

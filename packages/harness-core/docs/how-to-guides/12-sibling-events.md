@@ -31,7 +31,7 @@ const receiver = createFeature('receiver', {
 
 ## 通用 Unit：在父节点登记
 
-非 feature 的普通 Unit 没有 tier 保证，仍在共同父节点手动登记，并把取消订阅归接收者所有：
+非 feature 的普通 Unit 没有 tier 保证，仍在共同父节点手动登记（`currentUnit` 取当前节点），并把取消订阅归接收者所有。Feature slot 不要手写这层，用上面的 tier hook：
 
 ```ts
 interface ReceiverProps {
@@ -39,7 +39,7 @@ interface ReceiverProps {
 }
 
 const Receiver = createUnit<ReceiverProps>('receiver', (props) => {
-  const node = useNode();
+  const node = currentUnit();
   const parent = node.parent;
   if (parent === null) throw new Error('receiver requires a parent');
 

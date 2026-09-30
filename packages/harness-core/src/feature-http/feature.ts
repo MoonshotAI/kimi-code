@@ -1,22 +1,25 @@
-import { createFeature, type FeatureSpec } from '@moonshot-ai/agent-core';
+import { createFacadeToken, createFeature, useCleanup, useInject, type FeatureSpec } from '@moonshot-ai/agent-core';
 import {
   asUnit,
   createCollection,
-  createToken,
   createUnit,
-  inject,
-  pushCleanup,
+  currentUnit,
   useChildren,
   useCollection,
   useExpose,
-  useNode,
   useReady,
   watch,
   type UnitNode,
 } from '@moonshot-ai/agent-core/kernel/index';
+import { randomUUID } from 'node:crypto';
 
 import { DEFAULT_HTTP_PREFIX, useFacadeRoutes } from './route-builtin/index';
+import { useGuiStoreRoutes } from './route-builtin/gui-store';
+import { useMetaRoutes } from './route-builtin/meta';
+import { useWebAssetRoutes } from './route-builtin/web-assets';
+import { useFeatureFacadeRoutes } from './route-features/index';
 import { createHttpServer, type Http, type HttpHandler, type HttpListen } from './server';
+import { useWsEndpoint } from './ws';
 
 export interface HttpRoute {
   readonly id: string;
@@ -29,28 +32,34 @@ export interface CreateHttpOptions {
   readonly server?: Http;
   readonly listen?: HttpListen;
   readonly prefix?: string;
+  readonly version?: string;
+  readonly guiStorePath?: string;
+  readonly webAssetsDir?: string;
 }
 
 export const HttpRoutes = createCollection<HttpRoute>('http.routes');
 
-export const HttpRef = createToken<Http>('http');
+export const HttpRef = createFacadeToken<Http>('http');
 
 export function useHttp(): Http {
-  return inject(HttpRef);
+  const http = useInject(HttpRef).value;
+  if (http === undefined) {
+    throw new Error('http feature is not installed');
+  }
+  return http;
 }
 
 export function useHttpRoute(route: HttpRoute, priority = 0): void {
-  const node = useNode();
+  const node = currentUnit();
   const wrapped: HttpRoute = {
     ...route,
     handler: (request, response) => asUnit(node, () => route.handler(request, response)),
   };
-  pushCleanup(node, rootOf(node).contribute(HttpRoutes, wrapped, priority));
+  useCleanup(rootOf(node).contribute(HttpRoutes, wrapped, priority));
 }
 
 const HttpRouteUnit = createUnit<HttpRoute>('http.route', (props) => {
-  const http = inject(HttpRef);
-  const node = useNode();
+  const http = useHttp();
   let withdraw: (() => void) | undefined;
   watch(
     () => [props.method, props.path, props.handler] as const,
@@ -60,7 +69,7 @@ const HttpRouteUnit = createUnit<HttpRoute>('http.route', (props) => {
     },
     { immediate: true },
   );
-  pushCleanup(node, () => {
+  useCleanup(() => {
     withdraw?.();
   });
 });
@@ -68,15 +77,26 @@ const HttpRouteUnit = createUnit<HttpRoute>('http.route', (props) => {
 export function createHttp(options: CreateHttpOptions = {}): FeatureSpec {
   return createFeature('http', {
     app() {
-      const node = useNode();
       const owned = options.server === undefined;
       const server = options.server ?? createHttpServer();
       if (owned) {
-        pushCleanup(node, () => server.close());
+        useCleanup(() => server.close());
         useReady(server.listen(options.listen));
       }
       useExpose(HttpRef, server);
-      useFacadeRoutes(options.prefix ?? DEFAULT_HTTP_PREFIX);
+      const prefix = options.prefix ?? DEFAULT_HTTP_PREFIX;
+      useFacadeRoutes(prefix);
+      useFeatureFacadeRoutes(prefix);
+      useMetaRoutes(prefix, {
+        version: options.version,
+        serverId: randomUUID(),
+        startedAt: new Date().toISOString(),
+      });
+      useGuiStoreRoutes(prefix, { persistPath: options.guiStorePath });
+      useWsEndpoint({ prefix });
+      if (options.webAssetsDir !== undefined) {
+        useWebAssetRoutes({ assetsDir: options.webAssetsDir, prefix });
+      }
       const routes = useCollection(HttpRoutes);
       useChildren(() =>
         routes.value.map((route) => ({

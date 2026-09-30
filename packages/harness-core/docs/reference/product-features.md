@@ -4,12 +4,12 @@
 
 ## profiles（工厂，不在默认名单）
 
-`createProfiles({ workDir, host?, home?, finders?, extraAgentDirs?, explicitAgentFiles?, onWarn? })`：profile 目录聚合与渲染（v2 `agent/profile` + 各级 catalog 迁移）。app 层。
+`createProfiles({ workDir, host?, home?, finders?, extraAgentDirs?, explicitAgentFiles?, onWarn? })`：profile 目录聚合与渲染（v2 `agent/profile` + 各级 catalog 迁移）。app 层。`host` 未传入时 user/workspace/extra/explicit finder 不注册（builtin 仍可用）；`home` 缺省读 `KIMI_CODE_HOME` env，解析不出则不注册 user finder（workspace basePrompt 回落 builtin 默认）。
 
 - finder 管线：`ProfileFinder`（`load()` + 可选 `watch`）+ `ProfileFinders` collection + `useProfileFinder` 贡献钩子（晚注册响应式并入）。默认 finder 初始化注入：builtin（agent/coder/explore/plan 四静态 profile，priority 0）、user（`~/.kimi-code/agents` + `~/.agents/agents`，10）、workspace（`<workDir>/.kimi-code/agents` + `<workDir>/.agents/agents`，30）；extra（20）/ explicit（40）走 props；plugin（5）由 plugin Feature 经贡献钩子接入。catalog 聚合：同名高优先级覆盖；覆盖 builtin 需 profile 声明 `override: true`，否则 suppressed 并记诊断。
 - profile 文件为 v2 markdown + frontmatter 格式逐字（`name`/`description` 必填、`model`/`tools`/`disallowedTools`/`whenToUse`/`override` 等键；扫描深度 8、跳过隐藏目录与 node_modules、同名先见者赢、skip 诊断汇总）。
 - facade：`ProfileCatalogRef`（app 层）：`ready` / `list` / `get` / `getDefault` / `inspect`（含 skipped/scannedRoots 诊断）/ `reload` / `renderSystemPrompt` / `promptPrefix`。fs 目录监视不迁（v2 为 fswatch），`reload()` 代替。
-- 消费方：spawn 的 `Agent` 工具 catalog（props override 缺省经 `providerRef(ProfileCatalogRef)` 解析）、sessionInit 子代理 systemPrompt、swarm。
+- 消费方：spawn 的 `Agent` 工具 catalog（props override 缺省经 `useInject(ProfileCatalogRef)` 解析）、sessionInit 子代理 systemPrompt、swarm。
 - `host` 缺省 `createNodeOsHost()`（profile 文件扫描与 explore 的 `<git-context>` 收集走 OsHost 端口）。
 
 ## spawn（工厂，不在默认名单）
@@ -45,7 +45,7 @@
 `createKimi(props?)`：kimi 平台全家桶——核心 provider 注册（`useProvider(kimiProvider)` + `useProviderProtocol({ type: 'kimi' })`）与五个子 Feature（oauth / web / fetch / sessionTitle / trace）的 spec 级组合。
 
 - props：`oauth?`（`CreateOauthProps`）、`web?`（`CreateWebProps`）、`fetch?`（`CreateFetchProps`），透传给子 Feature 的 slots 工厂。
-- 组合方式：子 Feature 的 slot setup 在 `kimi:<tier>` 同一节点上顺序执行（app：核心注册 → oauth → web → fetch；session：sessionTitle；agent：web → fetch → sessionTitle → trace）。不是节点嵌套——`useExpose` / `inject` 的落点与三者扁平挂载时逐点等价，facade 解析（`app.resolve(OAuthTokensRef)` / `session.resolve(SessionTitleRef)` 等）不受影响。子 setup 返回的 cleanup 由组合器收集、逆序执行。
+- 组合方式：子 Feature 的 slot setup 在 `kimi:<tier>` 同一节点上顺序执行（app：核心注册 → oauth → web → fetch；session：sessionTitle；agent：web → fetch → sessionTitle → trace）。不是节点嵌套——`useExpose` / `useInject` 的落点与三者扁平挂载时逐点等价，facade 解析（`app.resolve(OAuthTokensRef)` / `session.resolve(SessionTitleRef)` 等）不受影响。子 setup 返回的 cleanup 由组合器收集、逆序执行。
 - 名单语义：preset 里只占一个 `kimi` 名（roster 记录的 agent features  likewise），`uninstallFeature('kimi')` 级联卸载全部。不要再把 `createKimi()` 与 `createOauth()` / `createWeb()` / `createFetch()` / `sessionTitle` / `trace` 并列进同一名单——dedup 按 featureName，名字不同不会拦截，子 Feature 会跑两份。
 - 子 Feature 保持独立目录与导出（`src/features/kimi/{oauth,web,fetch,sessionTitle,trace}/`，各自含 `index.ts` 与 slots 工厂），测试与定制宿主可单独挂载。
 
@@ -214,6 +214,14 @@
 - 善后：`stores.flush()` → `stores.undo` → 发 Feature 事件 `context.undone`（`{agentId, turns, fromTurnId?}`）→ telemetry `conversation_undo {count}`（可选探测 TelemetryRef，缺席静默跳过）→ `session.close` + `session.create({agentId})` 重挂（对齐 compaction「换分支后宿主重挂」范式；roster 保留，冻结 spec 与 host prompt 随分支继承不丢，durable feature 状态随投影重建，task running 记录 remount reconciliation 为 lost）。v2 的 undo participants 注册表（唯一消费方是未迁的 v2 任务服务）与 `lastPrompt` 元数据 reconcile（新架构无此字段）不迁；v2 的 tokenCounting.recordTruncation 不需要——tokenCounting 锚点随 message meta，切割后自维护（见 tokenCounting 节）。
 - 无 feature-http 路由（facade only；v2 的 `POST {id}:undo` 响应形是 kap-server 投影，宿主需要时再加）。
 
+## session.status()（agent-core 命令面，非 Feature）
+
+`SessionCommands.status()`：会话状态面（v2 `session/sessionActivity` 的引擎原生部分），**同步读**——返回 `{ busy, mainTurnActive, source, lastTurnReason? }`。运行时切片（`busy` / `mainTurnActive`）从活机器 snapshot 现读（`running` 状态 + `context.background`；非 live 的 agent 恒报 clean——liveness 的所有者是 Unit 树，不是 journal）；`lastTurnReason` 取 session journal 折叠的 `sessionMeta.lastTurn`（main agent `turn.ended` 时 SessionUnit 经 `session.meta_updated` patch 落账，重开 main 时与分支末条 `turn.ended` 比对校正）——打开即可用，含 main 未挂载时；`source` 是静态打开来源（`SessionUnitProps.source` 输入：startup/resume/fork，feature 经 `session.status().source` 读取，externalHooks 的 SessionOpened 即此消费方）。原则：引擎可派生的状态由 session 命令面原生提供；依赖其他 Feature 领域状态的部分（pendingInteraction 的 approval/question、compaction 相位）不做中间聚合，消费方各自经对应 Feature 的 facade 获取（feature-http status 路由即此模式：`busy` 取 `session.status().busy` 引擎态，TaskRef/CompactionRef 补 feature 态）。
+
+- `busy`：任一 agent `turnActive` 或 `background` 非空（折叠自 session journal，刚打开 session 即可用，不需要 live agent）；`mainTurnActive`：main 的 `turnActive`。
+- `lastTurnReason`：main 折叠态 `lastTurn` 的 outcome（done/aborted/failed → completed/cancelled/failed）；turn 进行中保持上一结局（v2 是清除，此为有意的语义差：折叠恒反映「最后一个已结束 turn」）。aborted → cancelled 的映射比 v2 宽（v2 仅 user_cancelled）。
+- wire：`last_turn_reason` 经 feature-http `sessionView` 透出——live 会话读 `session.status()`，冷会话（未 open）暂不可得（如需恢复，正解是开容器只读 replay session journal，不是写镜像）。
+
 ## agentsMdReminder（工厂，不在默认名单）
 
 `createAgentsMdReminder({ workDir, host?, brandHome? })`：AGENTS.md 发现/注入/变更提醒（v2 `agent/agentsMdReminder` 迁移）。agent 层；`host` 未传入时不挂载（能力归宿主注入端口，不自建 node host）。
@@ -231,18 +239,17 @@
 - facade：`SessionInitRef`（session 层）：`generateAgentsMd()` / `cancelInit(reason?)`。错误域 `SessionInitError`（`agent.not_found` / `session.init_failed`，码值与 v2 逐字）；`cancelInit` 中止的拒绝原样透出（`AbortError` 形态，不包装）。
 - 流程（对齐 v2 sessionInitService）：校验 main 在且已绑模型（`'Main agent was not found'` / `'Main agent has no model bound'` 逐字）→ `session.create` 子代理（`subagent-<id>`，roster source `session-init`——不可经 Agent 工具 resume）→ 复制 permission mode（可选探测 `PermissionRef`，缺席跳过）→ `setConfig(main.config)` 模型继承 → 跑 `init.md` 提示词（与 v2 逐字节一致）；完成/失败/取消即 facade 的 resolve/reject（v2 的 `subagent.*` 镜像事件不迁——子代理由 roster source 与自身 turn 事件描述）。
 - 完成后：`loadAgentsMdDetailed` 重载（brand home → `~/.agents` → git 根→叶链，`<!-- From: -->` 注解渲染逐字对齐 v2）→ 可选探测 `AgentsMdReminderRef.seed(paths)` 标记已注入 → `main.remind`（key `session-init`）携带 `initCompletionReminder(content)`（空内容回落文案逐字；reminder 随下一轮 drain 落账）。
-- profile 经 `providerRef(ProfileCatalogRef)` 可选探测：有则子代理 systemPrompt 取 coder 的 `renderSystemPrompt`，无则裸提示词运行（v2 必有 profiles 绑定）。
+- profile 经 `useInject(ProfileCatalogRef)` 可选探测：有则子代理 systemPrompt 取 coder 的 `renderSystemPrompt`，无则裸提示词运行（v2 必有 profiles 绑定）。
 - 子代理跑完保留在 roster（v2 同）；无 feature-http 路由（v2 的消费方是 node-sdk 进程内 RPC，kap-server 无 REST 路由）。
 
 ## swarm（工厂，默认名单）
 
-`createSwarm({ catalog?, models?, forkEnabled?, workDir?, host? })`：批量子代理编排（v2 `features/swarm` 迁移）——AgentSwarm 工具 + AgentRunBatch 调度 + swarm mode 状态。catalog 缺席（props 与 profiles Feature 皆无）时 AgentSwarm 工具不注册（spawn 响应式门控先例），mode 状态/守卫/注入照常。
+`createSwarm({ catalog?, models?, forkEnabled?, workDir?, host? })`：批量子代理编排（v2 `features/swarm` 迁移）——AgentSwarm 工具 + AgentRunBatch 调度 + 批级独占守卫。catalog 缺席（props 与 profiles Feature 皆无）时 AgentSwarm 工具不注册（spawn 响应式门控先例），守卫照常。
 
-- 工具：prompt_template（`{{item}}` 占位）+ items + resume_agent_ids + fork + subagent_type + model（strict、128 上限，schema/校验文案逐字）。spec freeze：models 非空才带 model 参、flag 开才带 fork 参；description = `agent-swarm.md`（逐字节）+ models 段。execute：`enter('tool')` → 校验（全文案逐字）→ planSpawn 一次共享 → batch → `renderSwarmResults`（`<agent_swarm_result>` XML 逐字）。子代启动复用 spawn 提取管线（`spawn/run.ts` 的 createSubagentLauncher），执行走 agent-core 复合命令——`target.run(..., { meta:{origin:{kind:'subagent'}}, abortAsOutcome:true })`，resume 重跑走 `target.retry`（空 content user 消息、框架写 `origin:{kind:'retry'}`，重驱同一 agent，已实证）。
+- 工具：prompt_template（`{{item}}` 占位）+ items + resume_agent_ids + fork + subagent_type + model（strict、128 上限，schema/校验文案逐字）。spec freeze：models 非空才带 model 参、flag 开才带 fork 参；description = `agent-swarm.md`（逐字节）+ models 段。execute：校验（全文案逐字）→ planSpawn 一次共享 → batch → `renderSwarmResults`（`<agent_swarm_result>` XML 逐字）。子代启动复用 spawn 提取管线（`spawn/run.ts` 的 createSubagentLauncher），执行走 agent-core 复合命令——`target.run(..., { meta:{origin:{kind:'subagent'}}, abortAsOutcome:true })`，resume 重跑走 `target.retry`（空 content user 消息、框架写 `origin:{kind:'retry'}`，重驱同一 agent，已实证）。
 - batch（`batch.ts`，v2 agentRunBatch 全语义）：首发 5 个、700ms 间隔；限流模式（`failure.error.kind==='rate_limit'` 判定）requeue + 退避（内联 `3000*2^n`，不引 `retry` 包）+ 容量收缩/恢复；per-attempt timeout（`swarm` 节 `timeout_ms` 默认 2h，env `KIMI_CODE_SWARM_TIMEOUT_MS`）；`KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY` 并发上限；工具 signal 中止逐任务 aborted（v2 用户取消两态文案逐字）。
-- mode：`swarm_mode.enter/exit` durable 事件 + fold 投影（trigger `'manual'|'task'|'tool'`）；`SwarmRef` facade（state/isActive/enter/exit）；trigger ∈ {task, tool} 时 `turn.done` 自动 exit（'task' 与 v2 同无生产方）；进/出 reminder 两 md 逐字节（`useBeforeStep` + 同 key remind + 历史扫描去重；trigger='tool' 不注入 enter）。
 - 守卫（`useBeforeToolBatch` 批级贡献点）：批内 AgentSwarm >1 deny、混批 deny（文案逐字，整批逐 call 否决）；非 main 追加 worker guidance。批裁决先于一切 per-call 钩子；per-call 钩子只见本 call。
-- 事件：无镜像事件通道（v2 复用 subagent.* 名的 `swarm.*` 不迁）——子代理由 roster source + `agent.opened` + AgentSwarm 工具调用事件（每个子代理启动经 `onUpdate` 发 `tool.update {key:'subagent', text: agentId}`）+ 子代理自身 turn 事件统一描述；suspended 语义即「子 turn failed(rate_limit) + AgentSwarm 调用仍在途」。swarmItem 为 session 内存 Map（v2 持久化于 session metadata labels；重启丢失仅影响 resume 的 `item=` 渲染）。modeMutex 已随 tower 域落地（tower Feature 内双向实现，本域零改动）。不迁：SessionSwarmService.cancel、stopReason（TurnOutcome 无 max_tokens 面，渲染保留支持）、feature-http 路由。
+- 事件：无镜像事件通道（v2 复用 subagent.* 名的 `swarm.*` 不迁）——子代理由 roster source + `agent.opened` + AgentSwarm 工具调用事件（每个子代理启动经 `onUpdate` 发 `tool.update {key:'subagent', text: agentId}`）+ 子代理自身 turn 事件统一描述；suspended 语义即「子 turn failed(rate_limit) + AgentSwarm 调用仍在途」。swarmItem 为 session 内存 Map（v2 持久化于 session metadata labels；重启丢失仅影响 resume 的 `item=` 渲染）。不迁：SessionSwarmService.cancel、stopReason（TurnOutcome 无 max_tokens 面，渲染保留支持）、feature-http 路由。v2 的 swarm mode（`swarm_mode.enter/exit` + 进出 reminder + 状态面）已于 2026-09-30 评审后整体删除——它不符合 mode 定义（无模型面/工具面效果，唯一 trigger 为 'tool' 时 reminder 永不注入），残余语义仅为运行状态标记。
 
 ## media（工厂，不在默认名单）
 
@@ -263,7 +270,7 @@
 - facade：`TokenCountingRef`（agent 层）：`status: ShallowRef<number>`（挂载初始化 + `turn.ended` journal commit 后重算）/ `get(start?, end?)` → `{size, measured, estimated}`（含负下标切片，measured/estimated 切分对齐 v2 `getFrom`）/ `statusSize()` / `latestMeasured()` / `requestSize({systemPrompt, tools, messages})`（纯估算，对齐 agent-core `usedContextTokens` 的 prefix 口径）。
 - strategy 三态（config `token_counting` 节 `strategy` + env `KIMI_TOKEN_COUNTING_STRATEGY`，非法值回落默认；config 缺席走 `measured+estimated`）：`measured` 取末锚原值、`estimated` 纯估算全量、`measured+estimated` = max(get.size, 末锚)（与 agent-core `usedContextTokens` 同语义）。
 - 消费方：子代理卡片头部 chip 的 contextTokens 由消费方自子代理全量 history 读 `usedContextTokens`（v2 `mirrorAgentRun` 的 statusSize 同位；spawn/swarm 已无镜像事件通道，策略感知读取走子代理的 `TokenCountingRef`）。
-- 状态出口：`status` ref（v2 `AgentStatusUpdated{contextTokens}` 同位；事件式消费方 sessionActivity / ACP usage_update 落地时读 ref 或 facade）。
+- 状态出口：`status` ref（v2 `AgentStatusUpdated{contextTokens}` 同位；事件式消费方 ACP usage_update 落地时读 ref 或 facade）。
 
 ## tower（工厂，flag 门控，不在默认名单）
 
@@ -275,7 +282,7 @@
 - 守卫（`useBeforeTool`）：tower 激活时 TodoList 拒绝、前台 resume tower agent 拒绝（后台可用性经 TaskRef 探测）、tower-worker 仅可写自己 worktree（参数 `file_path`/`path` 双键 + `isWithinDirectory`，v2 走 execution.accesses）。
 - TowerSpawn：复用 spawn 提取管线（`createSubagentLauncher`）派生 worker/reviewer 进各自 worktree，roster source 沿用 `spawn:<parent>:tower-worker`（保持 `Agent(resume=...)` 协议不断）；限流 governor 在 app 层（pause 60s / 容量收缩 2s / 恢复 180s / 预算 16）；permission mode 固定 auto（worker overlay 声明 pin）；模型池非空时 worker 绑 `models[0]`、reviewer 继承调用方。
 - 注入：mode full/sparse/exit 三变体 md 逐字节（`useBeforeStep` + 同 key remind + 历史扫描去重，窗口 2/5）。
-- modeMutex：tower enter 退出 plan/swarm（facade 可选探测），`plan_mode.enter`/`swarm_mode.enter` journal commit（经 `AgentStoreRef.onCommit` 订阅）触发 tower exit。
+- modeMutex：tower enter 退出 plan mode（facade 可选探测），`plan_mode.enter` journal commit（经 `AgentStoreRef.onCommit` 订阅）触发 tower exit。swarm 侧互斥已随 swarm mode 删除（2026-09-30）一并移除。
 - inbox wake：session 层 hub 承载 worker→tower 信号，main 空闲时 `agent.submit` 唤醒（origin `{kind:'injection', variant:'tower_inbox'}`，microtask 合并计数 + 120 字符截断文案逐字）。
 - 事件：`tower.spawned/completed/failed/cancelled`（v2 复用 subagent.* 名，本架构按命名空间）；死亡追踪在 spawn 管线内（非 done → `markAgentDied`）；复活追踪在 session 层订阅 `turn.started`（journal commit 在 agent 节点 fire 后沿祖先链传播，worker resume 开跑即清 died 标记，`clearAgentDied` 幂等；被动 remount 不开 turn 故不误清）。
 - 不迁：`[experimental]` config 面、AgentStatusUpdated 镜像（kap-server 状态面）、v2 动态 active tools、restoreTowerTools/reconcileTowerProjection 投影面。
@@ -285,13 +292,13 @@
 `createExternalHooks({ host?, workDir?, clientType?, shell? })`：外部钩子子进程（v2 `features/externalHooks` 迁移，第一批），app + session + agent 三层。`host` 未传入时三个 slot 全部不挂载（能力归宿主注入端口，不自建 node host；config 节仍注册）。
 
 - runner（app 层，`ExternalHooksRunnerRef` facade）：`hooks` config 节（zod strict——event 接受 v2 全部 20 个事件名 / matcher 正则 / command / timeout 1..600s，`[[hooks]]` array-of-tables）响应式索引（config 缺席恒空）；`trigger / triggerBlock / fireAndForgetTrigger / hasHooksFor / summary` 签名逐字对齐 v2 `IExternalHooksRunnerService`。正则 matcher、cwd+command 去重、默认 30s 超时（SIGTERM→100ms→SIGKILL）、exit 2 或 stdout JSON `hookSpecificOutput.permissionDecision:'deny'` 判 block、stdin snake_case JSON（`hook_event_name`/`session_id`/`cwd`/`client_type`）全部逐字对齐 v2 `internal/{runHook,matchHooks}.ts`。进程执行走 `OsHost.process` 端口；v2 `shell:true` 语义用显式 shell 承载（POSIX `/bin/sh -c`，win32 `cmd.exe /s /c`，`shell` prop 覆盖）。
-- 已接线 8 事件：**PreToolUse**（`useBeforeTool`，block → denied 文案）；**TurnStarted**（`turn.started`，origin 取自 `entry.meta.origin`，可展示 origin 判定等价 v2 `isDisplayablePromptOrigin`）；**StopFailure**（`turn.done` failed，LLM 载荷 `kind` 作 error_type，Error 实例取 `name` 逐字）；**Interrupt**（`turn.done` aborted，`reason:'cancelled'`）；**UserPromptQueued**（`prompt.submitted`，保留 v2 的 origin `'user'` 门控）；**SessionHeartbeat**（session 层 60s interval + `hasHooksFor` 门控，`session_title`/`uptime_ms`）；**TaskStarted**（task Feature 事件，kind=toolName，detached 恒 true）；**SubagentStop**（session 层派生——订阅 `agent.opened` 按 roster source 判定子代理身份（`spawn:` 前缀取 profile、`session-init` 恒 coder）并挂 `turn.started`/`turn.done` 监听，origin ∈ {subagent, retry} 且 outcome done 时触发，response 取 `turn.done.messages` 末条 assistant 文本——v2 仅成功路径触发的语义对齐，agentName 随 roster durable 不再依赖内存 Map）。跨 Feature 事件经 `node.parent.on` 订阅（task 未挂载时自然静默）。
+- 已接线 10 事件：**PreToolUse**（`useBeforeTool`，block → denied 文案）；**TurnStarted**（`turn.started`，origin 取自 `entry.meta.origin`，可展示 origin 判定等价 v2 `isDisplayablePromptOrigin`）；**StopFailure**（`turn.done` failed，LLM 载荷 `kind` 作 error_type，Error 实例取 `name` 逐字）；**Interrupt**（`turn.done` aborted，`reason:'cancelled'`）；**UserPromptQueued**（`prompt.submitted`，保留 v2 的 origin `'user'` 门控）；**SessionHeartbeat**（session 层 60s interval + `hasHooksFor` 门控，`session_title`/`uptime_ms`）；**TaskStarted**（task Feature 事件，kind=toolName，detached 恒 true）；**SubagentStop**（session 层派生——订阅 `agent.opened` 按 roster source 判定子代理身份（`spawn:` 前缀取 profile、`session-init` 恒 coder）并挂 `turn.started`/`turn.done` 监听，origin ∈ {subagent, retry} 且 outcome done 时触发，response 取 `turn.done.messages` 末条 assistant 文本——v2 仅成功路径触发的语义对齐，agentName 随 roster durable 不再依赖内存 Map）；**SessionOpened**（session 层 setup 经 `useReady` 触发，`app.open`/`app.create` 等待钩子完成——等价 v2 `waitUntil`；matcher=source，fork 不触发；载荷 `source`/`session_title`/`model`/`profile`，model 读 config `defaultModel` 节、profile 读 `ProfileCatalogRef.getDefault()`，均可选探测；事件名自 v2 `SessionStart` 改名，对齐 `agent.opened`/`agent.closed` 族）；**SessionClosed**（session 层 `pushCleanup` 异步清理触发，kernel unmount 等待钩子完成，close/delete/app unmount 三路径全覆盖；reason 恒 `'exit'`——v2 的 `'archive'` 因新架构 archive 不关闭 session 而不产生；v2 名 `SessionEnd`）。跨 Feature 事件经 `node.parent.on` 订阅（task 未挂载时自然静默）。
 - 已知保真度损失：UserPromptQueued 无 queued-only 门控与 `queueLength` 字段（`prompt.submitted` 每次 submit 都触发）；PreToolUse 无 abort 杀钩子进程能力（`ToolBeforeInput` 无 signal）。
-- 未接线（后续批次）：PostToolUse / PostToolUseFailure（isError 通道已就绪，随第二批逐项对齐）、PermissionRequest / PermissionResult、UserPromptSubmit、Stop、SessionStart / SessionEnd、SubagentStart、PreCompact / PostCompact、Notification、插件来源 hooks（待 plugin 域）。
+- 未接线（后续批次）：PostToolUse / PostToolUseFailure（isError 通道已就绪，随第二批逐项对齐）、PermissionRequest / PermissionResult、UserPromptSubmit、Stop、SubagentStart、PreCompact / PostCompact、Notification、插件来源 hooks（待 plugin 域）。
 
 ## skill（工厂，不在默认名单）
 
-`createSkill({ workDir, host?, brandHome?, explicitDirs? })`：技能目录与激活（v2 `features/skill` 迁移），app + agent 双层。`host` 未传入时文件类 source（user/project/extra/explicit）不激活，builtin source 仍可用（能力归宿主注入端口）。
+`createSkill({ workDir, fs?, home?, explicitDirs?, sources? })`：技能目录与激活（v2 `features/skill` 迁移），app + agent 双层。`fs` 未传入时文件类 source（user/project/extra/explicit）不激活，builtin source 仍可用（能力归宿主注入端口）。`home` 缺省读 `KIMI_CODE_HOME` env，解析不出则不注册 user source；`~/.agents` 等通用根解析到 `home ?? homeDir` 下；外部目录来源经 `sources` props 或 `useSkillSource` 贡献。
 
 - 目录：app 层按优先级合并全部 `SkillCatalogSource`（`SkillSources` collection + `useSkillSource` 贡献钩子，晚注册响应式并入——plugin 来源 #24 经此接入）——builtin 0 / plugin 5 / extra 10 / user 20 / workspace 30（逐字），高优先级覆盖同名；初始加载经 `useReady` 门控 app ready（「会话打开前技能就绪」）。`SkillCatalogRef` facade（app 层）：ready / list / get / renderSkillPrompt / getModelSkillListing / getKimiSkillsDescription / listInvocableSkills / roots / skipped / reload。事件 `skill.changed`（`{sourceId}`）。
 - 发现与解析逐字移植：frontmatter（键别名/必填校验/错误文案）、目录遍历（深度 8、排除 node_modules 与点开头、目录 skill 优先、顶层 md 文件、sub-skill `parent.child` 命名与 isSubSkill 标记、root-skill-only scanMode、skipped 收集）、roots（brand/generic 目录表、`.git` 向上找项目根、realpath 去重、`~` 展开）、参数展开（`$ARGUMENTS[N]` / `$N` / 命名参数 / tokenize 引号 / `${KIMI_SKILL_DIR}` / `${KIMI_SESSION_ID}` / plugin-instructions 包裹）、分组 listing（DISREGARD 头 + 250 grapheme 截断）。fs 全走 `host.fs` 端口（v2 的 node:fs 与 IHostFileSystem 双份收敛为端口版一份）；fs 目录监视不迁（v2 为 200ms 防抖 watcher），`reload()` facade 代替（profiles 先例）。
@@ -328,10 +335,11 @@
 
 ## workspaces（工厂，不在默认名单）
 
-`createWorkspaces({ homeDir, host?, now? })`：workspace 注册表 + trust + aliases + fs 浏览（v2 `app/workspace` + `workspace/workspaceTrust` + workspaceFs 迁移），app tier。workspace 是管理面注册数据（哪个目录、受不受信任），与 os-host（执行能力端口）正交。
+`createWorkspaces({ homeDir, host?, now?, defaultRoot? })`：workspace 注册表 + trust + aliases + fs 浏览（v2 `app/workspace` + `workspace/workspaceTrust` + workspaceFs 迁移），app tier。workspace 是管理面注册数据（哪个目录、受不受信任），与 os-host（执行能力端口）正交。
 
 - 注册表：durable 事件（`workspace.created/updated/deleted/alias/trust.set`）+ fold 投影；`createOrTouch(root, name?)` 按 root 去重、touch 更新 lastOpenedAt；delete 保留 trust 记录；持久化走 `host.fs` 的 JSONL journal（`<homeDir>/workspaces/journal.jsonl`），host 缺席纯内存。
-- facade `WorkspaceRef`（app 层）：list/get/findByRoot/createOrTouch/update/delete/getTrust/trust/untrust/isTrusted/sessionCount/addDir/additionalDirs；`face.fs`（host 在场才有）：browse/home/probe/read/stat/mkdir/view(roots)——list/read/search/suggest/grep 全走 `OsFsPort`（resolveWithin 逃逸防护、gitignore、10MB 上限、ETag/mime）。
+- session 绑定：`workspaceId` 不是 session catalog 的内置字段，而是本 Feature 拥有的 metadata key（`features/workspaces/session.ts` 的 `SESSION_WORKSPACE_ID` / `sessionWorkspaceId` / `withSessionWorkspace`；HTTP 线 `workspace_id`  ⇄ 该 key）。`face.openSession(root, input?)` = `createOrTouch(root)` + `app.open` 搭配 metadata 写入——按 workspace 目录创建 session 的入口（ACP `session/new` 经此绑定各自 cwd）；session builtin 裸 `app.open` 不带绑定。配了 `defaultRoot` 时，feature 在 app 节点监听 `session.created`（仅 startup/fork 落账），发现记录未绑定则 `createOrTouch(defaultRoot)` 并 `app.updateSession` 赋默认 workspace（异步落账，绑定经随后的 `session.meta_updated` 冒泡可见）；未配 `defaultRoot` 不自动赋。
+- facade `WorkspaceRef`（app 层）：list/get/findByRoot/createOrTouch/openSession/update/delete/getTrust/trust/untrust/isTrusted/sessionCount/addDir/additionalDirs；`face.fs`（host 在场才有）：browse/home/probe/read/stat/mkdir/view(roots)——list/read/search/suggest/grep 全走 `OsFsPort`（resolveWithin 逃逸防护、gitignore、10MB 上限、ETag/mime）。
 - feature-http：`/workspaces` 八端点（GET/POST、trust GET/POST、untrust、PATCH、DELETE、add-dir）+ `/fs:browse|home|content|mkdir` 四端点 + session 维度 fs 五端点（`POST /sessions/:id/fs:<action>`、`/workspace/fs:search|suggest`、`/fs:suggest`、`GET /sessions/:id/fs/*:download`）；git_status/diff/open/reveal 回不支持（能力缺口在案），facade 缺席 409（40945/40946）。
 - 不迁：v2 session-index 合并/rebuild、suggest/grep 的 rg 路径（恒 node 回落）、local.toml watch、fs 遥测。
 

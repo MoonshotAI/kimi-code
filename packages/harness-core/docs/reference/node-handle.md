@@ -7,7 +7,7 @@ Reference：在 setup 外通过显式实例管理运行中的 Unit，不重建�
 | 对象 | 能力与取得方式 |
 |---|---|
 | `NodeRef` | 节点能力接口；`ctx.node`、`handle.node` 使用该类型 |
-| `UnitNode` | NodeRef 的实现，另有 scope、children、状态等内部数据；由 `useNode()`、`mountRoot().node` 取得 |
+| `UnitNode` | NodeRef 的实现，另有 scope、children、状态等内部数据；由 `mountRoot().node` 取得（`useNode()` 是 kernel 内部能力，见 [use-node](use-node.md)） |
 | `UnitHandle` | `name`、`state`、`node`、`resolve`、`update`、`ready`、`unmount`；由根挂载或 `node.mount()` 取得 |
 
 NodeRef 不是 Vue Ref，也不会复制或隔离底层 UnitNode。避免仅为访问底层数据把每个业务接口扩大为 UnitNode。
@@ -18,8 +18,8 @@ NodeRef 不是 Vue Ref，也不会复制或隔离底层 UnitNode。避免仅为�
 |---|---|
 | `node.mount(recipe, props?)` | 子节点的 UnitHandle；父节点负责递归卸载 |
 | `node.provide(token, value)` | 返回撤销函数，也自动加入提供节点的 cleanup |
-| `handle.resolve(token)` / `node.resolve(token)` | 立即解析自己和祖先，缺失时抛错。宿主用 Handle 这一层；`node` 是节点内部面 |
-| `node.providerRef(token)` | 整棵根树的响应式 provider 目录；不同于 resolve |
+| `handle.resolve(token)` / `node.resolve(token)` | 立即解析自己和祖先；按 token 分级——certain 缺失抛错，facade 返回 `T | undefined`。宿主用 Handle 这一层；`node` 是节点内部面 |
+| `node.providerRef(token)` | 整棵根树的响应式 provider 目录（kernel 内部能力，facade ref 的驱动源）；不同于 resolve |
 | `app.on` / `session.on` / `node.on(type, handler, opts?)` | 返回取消订阅。`on(feature, type, handler)` 按 Feature 事件联合收窄；`on(feature, '*')` 只收 `featureName.` 前缀。开放字符串 overload 仍是 `RuntimeEvent`。`AgentHandle.on` 仍是机器事件 |
 | `app.wait` / `session.wait` / `node.wait(type, opts?)` | `on` 的 Promise 对偶，只等之后发生的事件。`opts.match` 不满足则继续等；`opts.signal` 取消；节点卸载按 `ready()` 同一句拒绝。不解释 `outcome`。`UnitHandle` 没有 `on` / `wait` |
 | `node.fire(event)` | 同步发送到自己和祖先路径 |

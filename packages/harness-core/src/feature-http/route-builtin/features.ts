@@ -1,5 +1,5 @@
-import { Features, useApp, type FeatureSpec, type FeatureTier } from '@moonshot-ai/agent-core';
-import { inject, toValue } from '@moonshot-ai/agent-core/kernel/index';
+import { Features, useApp, useInject, type FeatureSpec, type FeatureTier } from '@moonshot-ai/agent-core';
+import { toValue } from '@moonshot-ai/agent-core/kernel/index';
 
 import { useHttpRoute } from '../feature';
 import { sendOk } from '../route/http';
@@ -28,7 +28,7 @@ export function useFeatureRoutes(prefix: string): void {
     handler: (request, response) => {
       const app = useApp();
       sendOk(request, response, {
-        features: featureNames(toValue(inject(Features)), 'app'),
+        features: featureNames(toValue(useInject(Features)), 'app'),
         sessions: app.list().flatMap((sessionId) => {
           const session = app.get(sessionId);
           if (session === undefined) {

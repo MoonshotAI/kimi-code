@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto';
-
 import type { Message, MessageResolver } from '@moonshot-ai/agent-core';
+
+import { sha256Hex } from '#/sha256';
 
 import { isDataUrl } from '../inspect/format-policy';
 
@@ -26,7 +26,7 @@ export function createMediaBudgetResolver(): MessageResolver {
           const url = part.type === 'image_url' ? part.imageUrl.url : part.videoUrl.url;
           if (!isDataUrl(url)) return;
           const kind = part.type === 'image_url' ? 'image' : 'video';
-          const key = createHash('sha256').update(kind).update('\0').update(url).digest('hex');
+          const key = sha256Hex(`${kind}\0${url}`);
           entries.push({ messageIndex, partIndex, key, kind, bytes: url.length });
         });
       });

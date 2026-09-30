@@ -42,7 +42,7 @@ export interface SpawnToolDeps {
   readonly session: SessionCommands;
   readonly agent: AgentCommands;
   readonly forkEnabled: () => boolean;
-  readonly process: OsProcessPort;
+  readonly process?: OsProcessPort;
   readonly workDir: string;
 }
 

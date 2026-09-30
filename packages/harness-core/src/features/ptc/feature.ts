@@ -5,10 +5,10 @@ import {
   useAgentStore,
   useAgentTools,
   useBlobs,
+  useInject,
   useSession,
   type FeatureSpec,
 } from '@moonshot-ai/agent-core';
-import { inject } from '@moonshot-ai/agent-core/kernel/index';
 
 import type { PtcContextLevel } from './context';
 import { createCodeTool, DEFAULT_PTC_LIMITS, type PtcLimits } from './tool';
@@ -35,7 +35,7 @@ export function createPtc(props: CreatePtcProps): FeatureSpec {
       const agent = useAgent();
       useAgentTools(
         createCodeTool({
-          ports: inject(AgentPort),
+          ports: useInject(AgentPort),
           dir: props.dir,
           agentId: agent.agentId,
           exclude,

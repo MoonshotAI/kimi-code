@@ -6,8 +6,8 @@ Reference：写 Feature 或改文档前，先对上当前 checkout 的路径。�
 
 | 从哪取 | 入口 |
 |---|---|
-| 产品符号（Feature、机器、Store、LLM） | `@moonshot-ai/agent-core` |
-| Unit 原语 | `@moonshot-ai/agent-core/kernel/index` |
+| 产品符号（Feature、机器、Store、LLM）、`createFacadeToken` / `useInject` / `useCleanup` | `@moonshot-ai/agent-core` |
+| Unit 原语（`useExpose`、响应式、`asUnit`、`currentUnit`） | `@moonshot-ai/agent-core/kernel/index` |
 | XState 包装 | `@moonshot-ai/agent-core/xstate2/index` |
 | harness 产品 | `@moonshot-ai/harness-core` |
 | 包内互引 | `#/` → 各包 `src/*.ts` |
@@ -21,8 +21,8 @@ Reference：写 Feature 或改文档前，先对上当前 checkout 的路径。�
 | 路径 | 核对什么 |
 |---|---|
 | `kernel/runtime.ts` | `UnitNode`、mount / ready / cleanup、`asUnit` |
-| `kernel/hooks.ts` | `provide` / `inject` / `useExpose` / `useChildren` / `useFire` / `useOn` |
-| `kernel/primitives.ts` | 响应式、`createToken`、`createCollection` |
+| `kernel/hooks.ts` | `provide` / `useInject` / `useCleanup` / `useExpose` / `useChildren` / `useFire` / `useOn`（`inject` / `useNode` 留在框架内部，不经 `kernel/index` 导出） |
+| `kernel/primitives.ts` | 响应式、`createToken`（框架 certain）/ `createFacadeToken`（facade）、`createCollection` |
 | `feature/feature.ts` | `createFeature`、`Features`、`bindHandleOn`、`useOnApp` / `useOnSession` / `useOnAgent` |
 | `feature/tierNodes.ts` | `AppNodeRef` / `SessionNodeRef` / `AgentNodeRef`：tier 节点 token，各 Unit setup 提供 |
 | `feature/hooks.ts` | `useFeatureSlot` |

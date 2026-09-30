@@ -1,18 +1,20 @@
 import {
   AgentRunError,
+  createFacadeToken,
   createFeature,
   createHistoryMessageBuilder,
   createUserMessage,
   MAIN_AGENT_ID,
+  useInject,
   useSession,
   type FeatureSpec,
   type TurnFailure,
 } from '@moonshot-ai/agent-core';
-import { createToken, useExpose, useNode } from '@moonshot-ai/agent-core/kernel/index';
+import { useExpose } from '@moonshot-ai/agent-core/kernel/index';
 
 import { AgentsMdReminderRef } from '#/features/agentsMdReminder/index';
 import type { OsHost } from '#/features/os/host/index';
-import { PermissionRef, type PermissionMode } from '#/features/permission/index';
+import { PermissionRef } from '#/features/permission/index';
 import { ProfileCatalogRef } from '#/features/profiles/index';
 
 import { loadAgentsMdDetailed } from './agents-md';
@@ -38,7 +40,7 @@ export interface SessionInitFace {
   cancelInit(reason?: unknown): void;
 }
 
-export const SessionInitRef = createToken<SessionInitFace>('sessionInit');
+export const SessionInitRef = createFacadeToken<SessionInitFace>('sessionInit');
 
 export interface CreateSessionInitProps {
   readonly workDir: string;
@@ -59,9 +61,8 @@ export function createSessionInit(props: CreateSessionInitProps): FeatureSpec {
     session() {
       if (props.host === undefined) return;
       const host = props.host;
-      const node = useNode();
       const session = useSession();
-      const catalogEntries = node.providerRef(ProfileCatalogRef);
+      const catalog = useInject(ProfileCatalogRef);
       let initRun: AbortController | undefined;
 
       const generateAgentsMd = async (): Promise<void> => {
@@ -76,9 +77,8 @@ export function createSessionInit(props: CreateSessionInitProps): FeatureSpec {
         const controller = new AbortController();
         initRun = controller;
         try {
-          const systemPrompt = catalogEntries.value
-            .at(-1)
-            ?.value.get(INIT_PROFILE_NAME)
+          const systemPrompt = catalog.value
+            ?.get(INIT_PROFILE_NAME)
             ?.renderSystemPrompt({ cwd: props.workDir }).text;
           const agentId = `subagent-${crypto.randomUUID().slice(0, 8)}`;
           const child = await session.create({
@@ -86,16 +86,12 @@ export function createSessionInit(props: CreateSessionInitProps): FeatureSpec {
             systemPrompt,
             source: SESSION_INIT_SOURCE,
           });
-          let mode: PermissionMode | undefined;
-          try {
-            mode = main.resolve(PermissionRef).mode();
-          } catch {
-            mode = undefined;
-          }
+          const mode = main.resolve(PermissionRef)?.mode();
           if (mode !== undefined) {
-            try {
-              await child.resolve(PermissionRef).setMode(mode);
-            } catch {}
+            await child
+              .resolve(PermissionRef)
+              ?.setMode(mode)
+              .catch(() => {});
           }
           child.setConfig(config);
           let outcome: RunOutcome;
@@ -131,7 +127,7 @@ export function createSessionInit(props: CreateSessionInitProps): FeatureSpec {
             props.brandHome,
           );
           try {
-            main.resolve(AgentsMdReminderRef).seed(paths);
+            main.resolve(AgentsMdReminderRef)?.seed(paths);
           } catch {}
           main.remind(
             createHistoryMessageBuilder()

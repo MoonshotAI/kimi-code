@@ -1,19 +1,21 @@
 import {
+  createFacadeToken,
   createFeature,
   useAgent,
   useAgentTools,
+  useInject,
   useSession,
   type FeatureSpec,
 } from '@moonshot-ai/agent-core';
-import { createToken, inject, useExpose, useNode } from '@moonshot-ai/agent-core/kernel/index';
+import { useExpose } from '@moonshot-ai/agent-core/kernel/index';
 
-import { createNodeOsHost, type OsHost } from '#/features/os/host/index';
+import type { OsHost } from '#/features/os/host/index';
 import { ProfileCatalogRef, type ProfileCatalog } from '#/features/profiles/index';
 import { type SpawnModelEntry } from './plan';
 import { type SpawnRegistry } from './run';
 import { createSpawnTool } from './tool';
 
-export const SpawnRegistryRef = createToken<SpawnRegistry>('spawn.registry');
+export const SpawnRegistryRef = createFacadeToken<SpawnRegistry>('spawn.registry');
 
 export interface CreateSpawnProps {
   readonly catalog?: ProfileCatalog;
@@ -24,7 +26,7 @@ export interface CreateSpawnProps {
 }
 
 export function createSpawn(props: CreateSpawnProps = {}): FeatureSpec {
-  const host = props.host ?? createNodeOsHost();
+  const host = props.host;
   const models = props.models ?? [];
   const forkEnabled = props.forkEnabled ?? defaultForkEnabled;
   const workDir = props.workDir ?? process.cwd();
@@ -33,18 +35,21 @@ export function createSpawn(props: CreateSpawnProps = {}): FeatureSpec {
       useExpose(SpawnRegistryRef, new Map());
     },
     agent() {
-      const catalog =
-        props.catalog ?? useNode().providerRef(ProfileCatalogRef).value.at(-1)?.value;
+      const catalog = props.catalog ?? useInject(ProfileCatalogRef).value;
       if (catalog === undefined) return;
+      const registry = useInject(SpawnRegistryRef).value;
+      if (registry === undefined) {
+        throw new Error('spawn feature session slot is not installed');
+      }
       useAgentTools(
         createSpawnTool({
           catalog,
           models,
-          registry: inject(SpawnRegistryRef),
+          registry,
           session: useSession(),
           agent: useAgent(),
           forkEnabled,
-          process: host.process,
+          process: host?.process,
           workDir,
         }),
       );

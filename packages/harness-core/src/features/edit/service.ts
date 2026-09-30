@@ -1,4 +1,7 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import {
+  HostFsError,
+  type OsFsPort,
+} from '#/features/os/host/index';
 
 import {
   type LineEndingStyle,
@@ -93,9 +96,9 @@ export type EditFileResult =
   | { readonly ok: true; readonly count: number }
   | { readonly ok: false; readonly error: string };
 
-export async function editFile(input: EditFileInput): Promise<EditFileResult> {
+export async function editFile(input: EditFileInput, fs: OsFsPort): Promise<EditFileResult> {
   try {
-    const raw = new TextDecoder('utf-8', { fatal: true }).decode(await readFile(input.path));
+    const raw = new TextDecoder('utf-8', { fatal: true }).decode(await fs.readBytes(input.path));
     const model = new TextModel(raw);
     const result = applyEdit(model, {
       path: input.displayPath,
@@ -106,11 +109,10 @@ export async function editFile(input: EditFileInput): Promise<EditFileResult> {
     if (!result.ok) {
       return { ok: false, error: result.error };
     }
-    await writeFile(input.path, result.rawContent);
+    await fs.writeText(input.path, result.rawContent);
     return { ok: true, count: result.count };
   } catch (error) {
-    const code = (error as { code?: unknown } | null)?.code;
-    if (code === 'EISDIR') {
+    if (error instanceof HostFsError && error.code === 'os.fs.is_directory') {
       return { ok: false, error: `${input.displayPath} is not a file.` };
     }
     return {

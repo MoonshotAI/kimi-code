@@ -8,13 +8,13 @@ How-to：把共享业务契约提供到共同父级，让兄弟节点注入同�
 
 ```text
 Parent：provide(Counter, shared)
-├── Writer：inject(Counter)，调用 increment
-└── Reader：inject(Counter)，观察 count
+├── Writer：useInject(Counter)，调用 increment
+└── Reader：useInject(Counter)，观察 count
 ```
 
 ## 实现
 
-片段中的 `Writer`、`Reader` 是已定义的子配方，均在同步 setup 中 `inject(Counter)`。Reader 使用 `watchEffect` 或 `watch` 观察 count；Writer 在需要时调用 increment。
+片段中的 `Writer`、`Reader` 是已定义的子配方，均在同步 setup 中 `useInject(Counter)`。facade token 返回响应式可空 ref，读 `.value` 并按缺席处理三形态（见 [useInject](../reference/inject.md)）。Reader 使用 `watchEffect` 或 `watch` 观察 count；Writer 在需要时调用 increment。
 
 ```ts
 interface CounterService {
@@ -22,7 +22,7 @@ interface CounterService {
   increment(): void;
 }
 
-const Counter = createToken<CounterService>('counter');
+const Counter = createFacadeToken<CounterService>('counter');
 
 const Parent = createUnit('parent', () => {
   const count = ref(0);
@@ -44,10 +44,10 @@ const Parent = createUnit('parent', () => {
 
 ## 孩子把契约挂到共同父级
 
-DI 只沿祖先链解析。孩子若要把 face 提供给宿主 `resolve` 和兄弟 `inject`，用 [useExpose](../reference/use-expose.md)：它登记在父节点，并把撤销自动绑到当前节点的清理栈。
+DI 只沿祖先链解析。孩子若要把 face 提供给宿主 `resolve` 和兄弟 `useInject`，用 [useExpose](../reference/use-expose.md)：它登记在父节点，并把撤销自动绑到当前节点的清理栈。
 
 ```ts
-const Counter = createToken<CounterService>('counter');
+const Counter = createFacadeToken<CounterService>('counter');
 
 const Writer = createUnit('writer', () => {
   const count = ref(0);
@@ -58,8 +58,8 @@ const Writer = createUnit('writer', () => {
 });
 
 const Reader = createUnit('reader', () => {
-  const counter = inject(Counter);
-  watchEffect(() => { void counter.count.value; });
+  const counter = useInject(Counter);
+  watchEffect(() => { void counter.value?.count.value; });
 });
 
 const Parent = createUnit('parent', () => {
@@ -70,7 +70,7 @@ const Parent = createUnit('parent', () => {
 });
 ```
 
-Writer 必须先于 Reader 挂载：`inject` 不等稍后出现的 provider。Feature slot 由产品节点 `provide` 之后再 `useChildren`，同一轮里列表顺序仍要满足「先发布、后消费」。
+certain token 的 `useInject` 不等稍后出现的 provider（缺席即抛错）；facade token 的可空 ref 允许任意顺序——provider 到场 / 卸载都会驱动 ref 更新，消费方读 `.value` 并处理 `undefined`。同一轮 `useChildren` 里仍建议「先发布、后消费」，让消费者在 setup 快照里就能拿到值。
 
 挂到父级的条目必须随子提供者卸载而撤销，否则子节点消失后父级仍保留条目——`useExpose` 把这条规则做成了原语。
 

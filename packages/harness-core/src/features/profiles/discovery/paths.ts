@@ -2,9 +2,15 @@ import { isAbsolute, join, resolve } from 'pathe';
 
 import { HostFsError, type OsFsPort } from '#/features/os/host/index';
 
-export function resolveAgentPath(path: string, baseDir: string, osHomeDir: string): string {
+export function resolveAgentPath(
+  path: string,
+  baseDir: string,
+  osHomeDir: string | undefined,
+): string | undefined {
   if (path === '~') return osHomeDir;
-  if (path.startsWith('~/')) return join(osHomeDir, path.slice(2));
+  if (path.startsWith('~/')) {
+    return osHomeDir === undefined ? undefined : join(osHomeDir, path.slice(2));
+  }
   if (isAbsolute(path)) return path;
   return resolve(baseDir, path);
 }

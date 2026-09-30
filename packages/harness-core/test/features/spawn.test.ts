@@ -34,6 +34,7 @@ import {
   normalizeAgentProfile,
   ProfileCatalogRef,
 } from '#/features/profiles/index';
+import { createNodeOsHost } from '#/features/os/host/index';
 import {
   createSpawn,
   FORK_CONTEXT_NOTICE,
@@ -136,10 +137,11 @@ async function startApp(opts?: {
   const homeDir = await mkdtemp(join(tmpdir(), 'spawn-home-'));
   tmpDirs.push(workDir, homeDir);
   const { requester, calls } = createMockRequester(script);
-  const spawn = createSpawn({ models: opts?.models, workDir });
+  const host = createNodeOsHost();
+  const spawn = createSpawn({ models: opts?.models, workDir, host });
   const features: FeatureSpec[] = [spawn, bindTestLlm(requester)];
   if (opts?.withProfiles !== false) {
-    features.unshift(createProfiles({ workDir, home: homeDir }));
+    features.unshift(createProfiles({ workDir, host, home: homeDir }));
   }
   const app = createHarness({ features });
   await app.ready();
@@ -494,9 +496,10 @@ describe('spawn tool', () => {
     const workDir = await mkdtemp(join(tmpdir(), 'spawn-work-'));
     const homeDir = await mkdtemp(join(tmpdir(), 'spawn-home-'));
     tmpDirs.push(workDir, homeDir);
-    const spawn = createSpawn({ workDir });
+    const host = createNodeOsHost();
+    const spawn = createSpawn({ workDir, host });
     const features: FeatureSpec[] = [
-      createProfiles({ workDir, home: homeDir }),
+      createProfiles({ workDir, host, home: homeDir }),
       spawn,
       bindTestLlm(requester),
     ];

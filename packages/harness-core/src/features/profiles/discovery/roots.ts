@@ -13,12 +13,14 @@ const PROJECT_GENERIC_DIRS = ['.agents/agents'] as const;
 export async function userAgentRoots(
   fs: OsFsPort,
   homeDir: string,
-  osHomeDir: string,
+  osHomeDir?: string,
   warn?: (message: string) => void,
 ): Promise<readonly AgentFileRoot[]> {
   const roots: AgentFileRoot[] = [];
   await pushFirstExisting(fs, roots, USER_BRAND_DIRS, homeDir, 'user', warn);
-  await pushFirstExisting(fs, roots, USER_GENERIC_DIRS, osHomeDir, 'user', warn);
+  if (osHomeDir !== undefined) {
+    await pushFirstExisting(fs, roots, USER_GENERIC_DIRS, osHomeDir, 'user', warn);
+  }
   return roots;
 }
 
@@ -38,14 +40,17 @@ export async function configuredAgentRoots(
   fs: OsFsPort,
   dirs: readonly string[],
   workDir: string,
-  osHomeDir: string,
+  osHomeDir: string | undefined,
   source: AgentFileSource,
   warn?: (message: string) => void,
 ): Promise<readonly AgentFileRoot[]> {
   const projectRoot = await findProjectRoot(fs, workDir, warn);
   const roots: AgentFileRoot[] = [];
   for (const dir of dirs) {
-    await pushExistingRoot(fs, roots, resolveAgentPath(dir, projectRoot, osHomeDir), source, warn);
+    const resolved = resolveAgentPath(dir, projectRoot, osHomeDir);
+    if (resolved !== undefined) {
+      await pushExistingRoot(fs, roots, resolved, source, warn);
+    }
   }
   return roots;
 }

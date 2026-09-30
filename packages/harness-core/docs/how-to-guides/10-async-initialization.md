@@ -14,12 +14,11 @@ interface ParentProps {
   child: KernelRecipe;
 }
 
-const Parent = createUnit<ParentProps>('parent', (props) => {
-  const node = useNode();
+const Parent = createUnit<ParentProps>('parent', (props, ctx) => {
   const initialized = ref(false);
 
-  useReady(props.initialize(node.signal).then(() => {
-    if (!node.signal.aborted) initialized.value = true;
+  useReady(props.initialize(ctx.node.signal).then(() => {
+    if (!ctx.node.signal.aborted) initialized.value = true;
   }));
 
   useChildren(() => initialized.value

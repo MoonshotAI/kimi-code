@@ -1,8 +1,8 @@
+import { useCleanup } from '@moonshot-ai/agent-core';
 import {
   createCollection,
+  currentUnit,
   lineage,
-  pushCleanup,
-  useNode,
   type UnitNode,
 } from '@moonshot-ai/agent-core/kernel/index';
 
@@ -29,9 +29,7 @@ export interface ProfileFinder {
 export const ProfileFinders = createCollection<ProfileFinder>('profiles.finders');
 
 export function useProfileFinder(finder: ProfileFinder): void {
-  const node = useNode();
-  pushCleanup(
-    node,
-    ([...lineage(node)].at(-1) as UnitNode).contribute(ProfileFinders, finder, 0),
+  useCleanup(
+    ([...lineage(currentUnit())].at(-1) as UnitNode).contribute(ProfileFinders, finder, 0),
   );
 }

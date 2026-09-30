@@ -8,7 +8,7 @@ Explanation：runtime 是一棵以 Node 为生命周期和资源归属单位的�
 - `UnitNode`：配方挂载后的运行实例，实现 `NodeRef`，每次挂载都会创建新实例。
 - `UnitHandle`：宿主控制实例的句柄，负责更新 props、等待就绪和卸载。
 
-`NodeRef` 只是收窄的 TypeScript 接口，不是另一个包装对象，也不是 Vue Ref。`ctx.node`、`handle.node` 的静态类型是 `NodeRef`；`useNode()`、`mountRoot().node` 返回完整的 `UnitNode`。
+`NodeRef` 只是收窄的 TypeScript 接口，不是另一个包装对象，也不是 Vue Ref。`ctx.node`、`handle.node` 的静态类型是 `NodeRef`；`mountRoot().node` 返回完整的 `UnitNode`（`useNode()` 已退出公开面，见 [use-node](../reference/use-node.md)）。
 
 ## 两棵关联的树
 
@@ -33,7 +33,7 @@ Explanation：runtime 是一棵以 Node 为生命周期和资源归属单位的�
 | 协作 | 本地 providers、事件监听器、集合贡献 |
 | 扩展实现 | `postSetup` 队列和 `internals` Map |
 
-provider `directory` 仅在根节点按需创建，用来观察整棵树的 provider；它不改变 `inject` 的祖先查找规则。树本身不是全量响应式对象，`state`、`children` 等是普通字段。
+provider `directory` 仅在根节点按需创建，用来观察整棵树的 provider；它不改变 `useInject` 的祖先查找规则——facade token 的响应式 ref 正是由它驱动。树本身不是全量响应式对象，`state`、`children` 等是普通字段。
 
 ## 职责边界
 

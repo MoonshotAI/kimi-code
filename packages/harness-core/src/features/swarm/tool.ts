@@ -89,11 +89,10 @@ export interface AgentSwarmToolDeps {
   readonly session: SessionCommands;
   readonly agent: AgentCommands;
   readonly forkEnabled: () => boolean;
-  readonly process: OsProcessPort;
+  readonly process?: OsProcessPort;
   readonly workDir: string;
   readonly swarmItems: SwarmItemRegistry;
   readonly timeoutMs: () => number;
-  readonly enterSwarmMode: () => Promise<void>;
 }
 
 export function createAgentSwarmTool(deps: AgentSwarmToolDeps): ToolDefinition {
@@ -323,7 +322,6 @@ export function createAgentSwarmTool(deps: AgentSwarmToolDeps): ToolDefinition {
         if (args.description === undefined || args.description.trim().length === 0) {
           throw new Error('Provide a non-empty description for the swarm.');
         }
-        await deps.enterSwarmMode();
         return text(await runSwarm(args, signal, toolCall.id, onUpdate));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

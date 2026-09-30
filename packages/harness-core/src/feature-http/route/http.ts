@@ -2,12 +2,9 @@ import type { Request, Response } from 'express';
 
 import {
   SessionSpaceError,
-  type AgentHandle,
   type ContentPart,
-  type SessionHandle,
   type UserMessage,
 } from '@moonshot-ai/agent-core';
-import type { Token } from '@moonshot-ai/agent-core/kernel/index';
 
 export const ErrorCode = {
   SUCCESS: 0,
@@ -123,14 +120,6 @@ export function readAgentId(request: Request): string | undefined {
     }
   }
   return undefined;
-}
-
-export function tryResolve<T>(handle: AgentHandle | SessionHandle, token: Token<T>): T | undefined {
-  try {
-    return handle.resolve(token);
-  } catch {
-    return undefined;
-  }
 }
 
 export function readUserMessage(body: unknown): UserMessage | undefined {

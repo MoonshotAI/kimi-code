@@ -38,7 +38,6 @@ import { interaction } from '#/features/interaction/index';
 import { createPlan, PlanRef } from '#/features/plan/index';
 import { createProfiles, ProfileCatalogRef } from '#/features/profiles/index';
 import { createSpawn, type SpawnModelEntry } from '#/features/spawn/index';
-import { createSwarm, SwarmRef } from '#/features/swarm/index';
 import { createTask } from '#/features/task/index';
 import {
   createTower,
@@ -887,7 +886,6 @@ async function startApp(opts?: {
   models?: readonly SpawnModelEntry[];
   withProfiles?: boolean;
   withPlan?: boolean;
-  withSwarm?: boolean;
   withSpawn?: boolean;
   withTask?: boolean;
   withHost?: boolean;
@@ -909,7 +907,6 @@ async function startApp(opts?: {
   if (opts?.withTask !== false) features.unshift(createTask());
   if (opts?.withProfiles === true) features.unshift(createProfiles({ workDir, host, home: homeDir }));
   if (opts?.withPlan === true) features.unshift(createPlan(), interaction);
-  if (opts?.withSwarm === true) features.unshift(createSwarm({ workDir, host }));
   const app = createHarness({ features });
   await app.ready();
   const session = await app.create({ sessionId: 'sess', stores });
@@ -1424,14 +1421,13 @@ describe('inbox wake', () => {
 });
 
 describe('mode mutex', () => {
-  it('tower enter exits plan and swarm modes; their enters exit tower mode', async () => {
+  it('tower enter exits plan mode and plan enter exits tower mode', async () => {
     const repo = await tmpRepo('tower-mutex-');
     await commitFile(repo, 'a.txt', 'a', 'initial');
-    const env = await startApp({ workDir: repo, withPlan: true, withSwarm: true });
+    const env = await startApp({ workDir: repo, withPlan: true });
     try {
       const tower = env.main.resolve(TowerRef);
       const plan = env.main.resolve(PlanRef);
-      const swarm = env.main.resolve(SwarmRef);
       await plan.enter();
       expect(plan.state.value.active).toBe(true);
       expect(await tower.enter()).toEqual({ entered: true });
@@ -1440,14 +1436,6 @@ describe('mode mutex', () => {
       await plan.enter();
       await waitUntil(() => !tower.isActive());
       expect(plan.state.value.active).toBe(true);
-      expect(await tower.enter()).toEqual({ entered: true });
-      await waitUntil(() => !plan.state.value.active);
-      await swarm.enter('manual');
-      expect(swarm.state.value.trigger).toBe('manual');
-      await waitUntil(() => !tower.isActive());
-      expect(await tower.enter()).toEqual({ entered: true });
-      await waitUntil(() => swarm.state.value.trigger === null);
-      expect(tower.isActive()).toBe(true);
     } finally {
       await env.dispose();
     }

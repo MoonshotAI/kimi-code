@@ -1,4 +1,5 @@
 import {
+  createFacadeToken,
   createFeature,
   extractText,
   useAgent,
@@ -8,7 +9,6 @@ import {
   type RecordEvent,
 } from '@moonshot-ai/agent-core';
 import {
-  createToken,
   useExpose,
   useFire,
   type RuntimeEvent,
@@ -45,7 +45,7 @@ export interface TaskFace {
   readonly stop: (taskId: string, reason: string) => Promise<TaskRecord | undefined>;
 }
 
-export const TaskRef = createToken<TaskFace>('task');
+export const TaskRef = createFacadeToken<TaskFace>('task');
 
 export function createTask(): FeatureSpec<TaskEvent> {
   return createFeature<TaskEvent>('task', {

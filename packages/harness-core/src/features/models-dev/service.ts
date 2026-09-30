@@ -11,7 +11,7 @@ import {
   type ModelsSection,
   type ProvidersSection,
 } from '@moonshot-ai/agent-core';
-import { createToken } from '@moonshot-ai/agent-core/kernel/index';
+import { createFacadeToken } from '@moonshot-ai/agent-core';
 import {
   CUSTOM_REGISTRY_DEFAULT_CAPABILITIES,
   CUSTOM_REGISTRY_DEFAULT_MAX_CONTEXT,
@@ -75,7 +75,7 @@ export interface ModelsDevFace {
   refreshRegistries(): Promise<void>;
 }
 
-export const ModelsDevRef = createToken<ModelsDevFace>('models-dev');
+export const ModelsDevRef = createFacadeToken<ModelsDevFace>('models-dev');
 
 export interface ModelsDevServiceDeps {
   readonly config: () => ConfigStore | undefined;

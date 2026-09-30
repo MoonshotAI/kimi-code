@@ -6,7 +6,7 @@ export const DEFAULT_PRODUCT_NAME = 'Kimi Code CLI';
 
 export interface AgentProfilePromptPrefixContext {
   readonly cwd: string;
-  readonly process: OsProcessPort;
+  readonly process?: OsProcessPort;
   readonly log?: (message: string) => void;
 }
 

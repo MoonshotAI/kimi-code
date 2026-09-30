@@ -4,7 +4,7 @@ How-to：接着上一篇写好的 compact，用 token + `useExpose` 给出宿主
 
 ## 约定
 
-1. `createToken` 一个 facade 类型。
+1. `createFacadeToken` 一个 facade 类型。
 2. 在拥有该能力的 slot 里 `useExpose(Token, face)`——挂到**父节点**，随本节点撤销。
 3. 包入口导出 Token 与类型。
 4. 宿主 `handle.resolve(Token)`。`resolve` 从该节点自身再祖先找，不看兄弟和后代。
@@ -15,7 +15,7 @@ How-to：接着上一篇写好的 compact，用 token + `useExpose` 给出宿主
 | session slot（`InteractionRef`） | `session.resolve(InteractionRef)` |
 | app slot（`ProviderCatalogRef`） | `app.resolve(ProviderCatalogRef)` |
 
-缺失 token 抛错。
+facade token 缺失时 `resolve` 返回 `undefined`（certain token 才抛错），调用方判空后使用。
 
 ## compaction 的 facade
 
@@ -24,7 +24,7 @@ controller 可以自动跑（[3](03-listen-and-trigger.md)）。宿主还要能�
 ```ts
 export type CompactionFace = Pick<CompactionController, 'compact' | 'cancel' | 'status'>;
 
-export const CompactionRef = createToken<CompactionFace>('compaction');
+export const CompactionRef = createFacadeToken<CompactionFace>('compaction');
 
 export function createCompaction(deps: CreateCompactionDeps): FeatureSpec {
   return createFeature('compaction', {
@@ -43,7 +43,7 @@ export function createCompaction(deps: CreateCompactionDeps): FeatureSpec {
         cancel: () => controller.cancel(),
         status: () => controller.status(),
       });
-      pushCleanup(useNode(), () => controller.dispose());
+      useCleanup(() => controller.dispose());
     },
   });
 }
@@ -55,6 +55,7 @@ export function createCompaction(deps: CreateCompactionDeps): FeatureSpec {
 
 ```ts
 const compaction = agent.resolve(CompactionRef);
+if (compaction === undefined) throw new Error('compaction feature is not installed');
 compaction.status();
 await compaction.compact('保留最近的决策，丢掉重复的工具输出');
 compaction.cancel();
@@ -62,7 +63,7 @@ compaction.cancel();
 
 有自己的节点事件时，把联合类型挂在配方上：`createFeature<E>('name', …)`，订阅写成 `session.on(feature, type)`。compaction 落盘的是 session journal 上的 `compaction.*` 字符串事件，不是 `createFeature<CompactionEvent>`（那是机器载荷，形状不同）。
 
-Todo 同一套：`agent.resolve(TodoRef).items.value`。
+Todo 同一套：`agent.resolve(TodoRef)?.items.value`。
 
 ## 相关文档
 

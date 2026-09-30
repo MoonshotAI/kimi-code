@@ -1,36 +1,25 @@
-# useNode
+# useNode（kernel 内部能力）
 
-Reference：需要在 setup 中取得当前具体节点，并保存显式操作入口供后续回调使用时使用 `useNode`。
+Reference：`useNode` 已退出公开面。它与 `inject` 留在 `packages/agent-core/src/kernel/hooks.ts` 供 agent-core 框架自身使用——不经 `kernel/index` 导出，也不从 `@moonshot-ai/agent-core` 包根导出；harness-core 侧由 lint 禁止导入（见根 `.oxlintrc.json` 的 token 分级守护）。本页说明原 `useNode()` 场景的现行去处。
 
-## 使用场景
+## 原场景的现行 API
 
-- 在同步 setup 中取得节点的 `signal`，或挂载子节点、注册清理、访问显式节点方法。
-- 只需服务、集合或事件时，优先使用相应 hook：`useNode()` 暴露的是节点的完整内部面，为一个值引入整个面会放大依赖。
-- 它不是在任意异步回调里查找“所属 Unit”的全局定位器。
+| 原 `useNode()` 场景 | 现行 API |
+|---|---|
+| 按 token 取依赖 | [useInject](inject.md)：certain 缺席抛错，facade 返回响应式可空 ref |
+| 登记清理 | `useCleanup(fn)`（包根导出），或从 setup 直接返回清理函数 |
+| 节点 `signal`、父引用 | setup 第二参 `ctx.node`（`NodeRef`），见 [节点与句柄](node-handle.md) |
+| 监听 / 发送节点事件 | [useOn](use-on.md) / [useFire](use-fire.md)；产品层用 `useOnApp` / `useOnSession` / `useOnAgent` 家族，见 [兄弟事件](../how-to-guides/12-sibling-events.md) |
+| 挂载子节点 | [useChildren](use-children.md)；句柄场景用 `handle.update` 驱动 |
+| 读集合 | [useCollection](use-collection.md)，贡献用 [useContribute](use-contribute.md) |
+| 宿主侧解析 | `handle.resolve(token)`，同样按 token 分级 |
 
-## 调用契约
+## 为什么收窄
 
-```ts
-useNode(): UnitNode
-```
+`useNode()` 返回具体 `UnitNode`，暴露整棵树的内部面（`providerRef`、`resolveEntry`、清理栈、scope 等）。token 分级改造后，依赖解析按 `CertainToken` / `FacadeToken` 分级，原始目录操作不再对产品代码开放；为一个值引入整个节点面只会放大依赖。
 
-- 必须在当前 Unit 的同步 setup 调用链内执行；没有当前 Unit 时抛出 `hook called outside of a unit setup`。
-- 返回当前栈顶的具体 `UnitNode`，没有创建新节点，也没有创建句柄。
-- `ctx.node` 与 `handle.node` 的声明类型是 `NodeRef`：包含 `signal`、父引用和节点操作，不暴露完整实现字段。
-- `UnitNode` 实现 `NodeRef`，另有 `children`、`state`、`scope`、清理栈等具体实现成员。
-- `UnitHandle` 是另一种控制接口，包含 `update()`、`ready()`、`unmount()`；`useNode()` 返回值没有 `update()`，详见 [节点与句柄](node-handle.md)。
-- 在 setup 中保存的节点可以在后续回调中调用显式方法；这不会恢复当前 Unit 栈，也不会自动把回调中的新 watcher 纳入该节点 scope。
+## 包内例外
 
-## 边界
+kernel 内部能力在 agent-core 包内仍然合法：`useInject` 自身的实现、根级 contribute（`lineage(useNode())` 取根再 `contribute`）等没有公开 hook 等价物的操作就走它。harness-core 的两个包装层（`feature-http/feature.ts`、`feature-acp/feature.ts`）经 lint 豁免使用 `asUnit`，配合 `currentUnit` 恢复 setup 上下文——这不是产品代码该跟随的模式，产品 Feature 用上行表格里的 hook。
 
-- 当前 Unit 不跨 `await`、计时器或事件回调传播；异步代码先同步取得节点，再使用其方法，见 [setup 上下文](setup-context.md)。
-- `node.provide()` 返回撤销函数，并自动将撤销登记到目标节点；直接调用也会在目标节点卸载时撤销。
-- `node.on()` 返回取消订阅函数，但不登记清理栈；目标节点完整卸载时会清空处理器。需要更早或随其他所有者释放时，显式登记取消函数。
-- `node.contribute()` 返回撤销函数，但不自动登记清理，也不在卸载时清空贡献表；[useContribute](use-contribute.md) 才有「随当前节点撤销」的所有权保证。
-- `node.resolve()` 是调用时解析，`node.fold()` 是调用时集合快照；它们分别不是动态注入绑定和 computed 包装。
-- `node.mount()` 会建立子节点 scope 和 setup 上下文；父节点已卸载或 scope 已停止时不能挂载。
-- `scope.stop()` 只停响应式 effects；节点卸载走 `unmount()`（会执行 cleanup 栈）。也并非所有节点方法都检查生命周期状态，调用都安排在节点存活期内。
-- 取得节点本身无需清理；资源仍须由其所属 API 或清理栈管理，见 [资源清理](../how-to-guides/16-cleanup-resources.md)。
-- 源码 `kernel/index.ts` 重导出 `UnitNode`、`useNode`、`pushCleanup`、`removeCleanup`；`removeCleanup` 只移除登记，不执行 cleanup。`StackEntry` 类型仅由底层 `runtime.ts` 导出。
-
-源码：见 [代码定位](source-map.md)，`packages/agent-core/src/kernel/hooks.ts` 的 `useNode`。
+源码：`packages/agent-core/src/kernel/hooks.ts`（不导出）；公开面见 [代码定位](source-map.md)。

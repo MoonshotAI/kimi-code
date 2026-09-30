@@ -138,7 +138,7 @@ export const BUILTIN_PROFILES: readonly AgentProfile[] = [
       renderSystemPromptResult(EXPLORE_ROLE, context, { skillActive: skillActiveFor(EXPLORE_TOOLS) }),
     promptPrefix: async ({ cwd, process, log }) => {
       try {
-        return await collectGitContext(process, cwd, log);
+        return process === undefined ? '' : await collectGitContext(process, cwd, log);
       } catch {
         return '';
       }

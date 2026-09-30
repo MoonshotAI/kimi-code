@@ -1,5 +1,5 @@
 import {
-  AgentStoreRef,
+  createFacadeToken,
   createFeature,
   createHistoryMessageBuilder,
   MAIN_AGENT_ID,
@@ -9,6 +9,8 @@ import {
   useApp,
   useBeforeStep,
   useBeforeTool,
+  useCleanup,
+  useInject,
   useOnSession,
   useSession,
   type FeatureSpec,
@@ -16,12 +18,8 @@ import {
   type TokenUsage,
 } from '@moonshot-ai/agent-core';
 import {
-  createToken,
-  inject,
-  pushCleanup,
   useExpose,
   useFire,
-  useNode,
   type RuntimeEvent,
   type ShallowRef,
 } from '@moonshot-ai/agent-core/kernel/index';
@@ -40,7 +38,6 @@ import {
   type SpawnModelEntry,
   type SpawnRegistry,
 } from '#/features/spawn/index';
-import { SwarmRef } from '#/features/swarm/index';
 import { TaskRef } from '#/features/task/index';
 
 import { createTowerGuard } from './guard';
@@ -137,16 +134,16 @@ export interface TowerFace {
   exit(): Promise<void>;
 }
 
-export const TowerRef = createToken<TowerFace>('tower');
+export const TowerRef = createFacadeToken<TowerFace>('tower');
 
-export const TowerRateLimitRef = createToken<TowerRateLimiter>('tower.rateLimit');
+export const TowerRateLimitRef = createFacadeToken<TowerRateLimiter>('tower.rateLimit');
 
 interface TowerSessionState {
   readonly hub: TowerHub;
   readonly registry: SpawnRegistry;
 }
 
-const TowerSessionRef = createToken<TowerSessionState>('tower.session');
+const TowerSessionRef = createFacadeToken<TowerSessionState>('tower.session');
 
 export interface CreateTowerProps {
   readonly workDir: string;
@@ -190,7 +187,6 @@ export function createTower(props: CreateTowerProps): FeatureSpec<TowerEvent> {
       });
     },
     agent() {
-      const node = useNode();
       const agent = useAgent();
       const session = useSession();
       const app = useApp();
@@ -302,13 +298,10 @@ export function createTower(props: CreateTowerProps): FeatureSpec<TowerEvent> {
         await store0.init(session.sessionId, base);
       };
 
-      const planEntries = node.providerRef(PlanRef);
-      const swarmEntries = node.providerRef(SwarmRef);
+      const planRef = useInject(PlanRef);
       const exitPeerModes = (): void => {
-        const plan = planEntries.value.find((entry) => entry.node === node.parent)?.value;
+        const plan = planRef.value;
         if (plan !== undefined && plan.state.value.active) void plan.exit().catch(() => {});
-        const swarm = swarmEntries.value.find((entry) => entry.node === node.parent)?.value;
-        if (swarm !== undefined && swarm.isActive()) void swarm.exit().catch(() => {});
       };
 
       const dispatchEnter = async (base: string | undefined): Promise<void> => {
@@ -400,15 +393,11 @@ export function createTower(props: CreateTowerProps): FeatureSpec<TowerEvent> {
         );
       };
 
-      pushCleanup(
-        node,
-        inject(AgentStoreRef).onCommit((entry) => {
-          const type = entry.event.type;
-          if ((type === 'plan_mode.enter' || type === 'swarm_mode.enter') && isActive()) {
-            void exit().catch(() => {});
-          }
-        }),
-      );
+      store.onCommit((entry) => {
+        if (entry.event.type === 'plan_mode.enter' && isActive()) {
+          void exit().catch(() => {});
+        }
+      });
 
       if (agent.agentId === MAIN_AGENT_ID && state.value.active && host !== undefined) {
         void (async () => {
@@ -430,15 +419,20 @@ export function createTower(props: CreateTowerProps): FeatureSpec<TowerEvent> {
       }
 
       if (enabled()) {
-        const shared = inject(TowerSessionRef);
-        const rateLimit = inject(TowerRateLimitRef);
+        const shared = useInject(TowerSessionRef).value;
+        if (shared === undefined) {
+          throw new Error('tower feature session slot is not installed');
+        }
+        const rateLimit = useInject(TowerRateLimitRef).value;
+        if (rateLimit === undefined) {
+          throw new Error('tower feature app slot is not installed');
+        }
         const io = ioFor();
         const running = new Set<string>();
-        const registry =
-          node.providerRef(SpawnRegistryRef).value.at(-1)?.value ?? shared.registry;
+        const registry = useInject(SpawnRegistryRef).value ?? shared.registry;
         const catalog: ProfileCatalog =
           props.catalog ??
-          node.providerRef(ProfileCatalogRef).value.at(-1)?.value ??
+          useInject(ProfileCatalogRef).value ??
           createStaticProfileCatalog([TOWER_WORKER_PROFILE_DEF]);
         const models = props.models ?? [];
         const deps: TowerToolDeps = {
@@ -485,6 +479,7 @@ export function createTower(props: CreateTowerProps): FeatureSpec<TowerEvent> {
           createTowerMissionTool(deps),
           createTowerStatusTool(deps),
         );
+        const task = useInject(TaskRef);
         useBeforeTool(
           createTowerGuard({
             agentId: agent.agentId,
@@ -492,8 +487,7 @@ export function createTower(props: CreateTowerProps): FeatureSpec<TowerEvent> {
             isActive,
             isTowerWorker: () =>
               registry.get(agent.agentId)?.profileName === TOWER_WORKER_PROFILE,
-            backgroundAvailable: () =>
-              node.providerRef(TaskRef).value.some((entry) => entry.node === node.parent),
+            backgroundAvailable: () => task.value !== undefined,
             newStore: () => newTowerStore(deps),
           }),
         );
@@ -511,7 +505,7 @@ export function createTower(props: CreateTowerProps): FeatureSpec<TowerEvent> {
             wakeScheduled = true;
             queueMicrotask(flushInboxWake);
           });
-          pushCleanup(node, () => {
+          useCleanup(() => {
             unsubscribe();
             wakeTurnSubscription?.unsubscribe();
             wakeTurnSubscription = undefined;

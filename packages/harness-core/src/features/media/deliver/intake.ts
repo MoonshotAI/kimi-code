@@ -5,6 +5,8 @@ import {
   type PromptGate,
 } from '@moonshot-ai/agent-core';
 
+import type { OsFsPort } from '#/features/os/host/index';
+
 import type { ImageLimits } from '../state/configSection';
 import { buildImageCompressionCaption, compressBase64ForModel } from '../transform/compress';
 import { parseImageDataUrl } from '../inspect/format-policy';
@@ -14,6 +16,7 @@ export interface CreateMediaPromptGateProps {
   readonly store: MediaStore;
   readonly limits: () => ImageLimits;
   readonly originalsDir?: string;
+  readonly fs?: OsFsPort;
 }
 
 export function createMediaPromptGate(props: CreateMediaPromptGateProps): PromptGate {
@@ -45,12 +48,12 @@ export function createMediaPromptGate(props: CreateMediaPromptGateProps): Prompt
         continue;
       }
       const originalPath =
-        props.originalsDir === undefined
+        props.originalsDir === undefined || props.fs === undefined
           ? null
           : await persistOriginalImage(
               Buffer.from(parsed.base64, 'base64'),
               parsed.mimeType,
-              { dir: props.originalsDir },
+              { dir: props.originalsDir, fs: props.fs },
             );
       const ref = await props.store.put({
         bytes: Buffer.from(compressed.base64, 'base64'),

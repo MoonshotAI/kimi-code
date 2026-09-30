@@ -16,13 +16,15 @@ export interface SkillRootsOptions {
 export async function userRoots(
   fs: OsFsPort,
   homeDir: string,
-  osHomeDir: string,
+  osHomeDir?: string,
   options: SkillRootsOptions = {},
 ): Promise<readonly SkillRoot[]> {
   const roots: SkillRoot[] = [];
   const mergeAllAvailableSkills = options.mergeAllAvailableSkills ?? true;
   await pushBrandGroup(fs, roots, USER_BRAND_DIRS, homeDir, 'user', mergeAllAvailableSkills);
-  await pushFirstExisting(fs, roots, USER_GENERIC_DIRS, osHomeDir, 'user');
+  if (osHomeDir !== undefined) {
+    await pushFirstExisting(fs, roots, USER_GENERIC_DIRS, osHomeDir, 'user');
+  }
   return roots;
 }
 
@@ -43,13 +45,14 @@ export async function configuredRoots(
   fs: OsFsPort,
   dirs: readonly string[],
   workDir: string,
-  osHomeDir: string,
+  osHomeDir: string | undefined,
   source: SkillSource,
 ): Promise<readonly SkillRoot[]> {
   const projectRoot = await findProjectRoot(fs, workDir);
   const roots: SkillRoot[] = [];
   for (const dir of dirs) {
-    await pushExistingRoot(fs, roots, resolveConfiguredDir(dir, projectRoot, osHomeDir), source);
+    const resolved = resolveConfiguredDir(dir, projectRoot, osHomeDir);
+    if (resolved !== undefined) await pushExistingRoot(fs, roots, resolved, source);
   }
   return roots;
 }
@@ -118,9 +121,15 @@ async function pushExistingRoot(
   return true;
 }
 
-function resolveConfiguredDir(dir: string, projectRoot: string, osHomeDir: string): string {
+function resolveConfiguredDir(
+  dir: string,
+  projectRoot: string,
+  osHomeDir: string | undefined,
+): string | undefined {
   if (dir === '~') return osHomeDir;
-  if (dir.startsWith('~/')) return join(osHomeDir, dir.slice(2));
+  if (dir.startsWith('~/')) {
+    return osHomeDir === undefined ? undefined : join(osHomeDir, dir.slice(2));
+  }
   if (isAbsolute(dir)) return dir;
   return resolve(projectRoot, dir);
 }

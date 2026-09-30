@@ -1,3 +1,4 @@
+import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import {
@@ -26,6 +27,7 @@ import {
   createModelsDev,
   createNodeOsHost,
   createOs,
+  createPermission,
   createProfiles,
   createShellCommand,
   createSessionExport,
@@ -55,22 +57,25 @@ export function mountExample(options?: { http?: boolean; acp?: boolean }): Examp
   const dataRoot = resolve(
     process.env['HARNESS_EXAMPLE_DIR'] ?? join(process.cwd(), '.local/harness-example'),
   );
+  const home = process.env['KIMI_CODE_HOME'] ?? join(homedir(), '.kimi-code');
   const port = Number(process.env['PORT'] ?? 8787);
   const mediaStore = createMemoryMediaStore();
   const osHost = createNodeOsHost();
   const app = createHarness({
     space: fsSessionSpace(dataRoot),
     features: [
-      ...features,
+      ...features.map((spec) =>
+        spec.featureName === 'permission' ? createPermission({ fs: osHost.fs }) : spec,
+      ),
       bindExampleLlm(config, credentialProvider, requester),
-      createProfiles({ workDir: process.cwd() }),
-      createSpawn(),
-      createEdit({ workDir: process.cwd() }),
-      createShellCommand({ workDir: process.cwd() }),
+      createProfiles({ workDir: process.cwd(), host: osHost, home }),
+      createSpawn({ host: osHost }),
+      createEdit({ workDir: process.cwd(), host: osHost }),
+      createShellCommand({ workDir: process.cwd(), host: osHost }),
       createOs({ workDir: process.cwd(), host: osHost }),
       createFileHistory({ workDir: process.cwd(), fs: osHost.fs }),
       createAgentsMdReminder({ workDir: process.cwd(), host: osHost }),
-      createSkill({ workDir: process.cwd(), host: createNodeOsHost() }),
+      createSkill({ workDir: process.cwd(), fs: osHost.fs, home }),
       createSessionInit({ workDir: process.cwd(), host: createNodeOsHost() }),
       createExternalHooks({ workDir: process.cwd(), host: createNodeOsHost() }),
       createSessionExport({
@@ -86,6 +91,7 @@ export function mountExample(options?: { http?: boolean; acp?: boolean }): Examp
       }),
       createMcp({
         workDir: process.cwd(),
+        home,
         host: createNodeOsHost(),
         mediaStore,
         trusted: true,

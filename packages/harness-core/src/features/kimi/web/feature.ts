@@ -1,15 +1,17 @@
 import {
   ConfigRef,
+  createFacadeToken,
   createFeature,
   useAgentTools,
   useConfigOverlay,
   useConfigSection,
+  useInject,
   useProviderCatalog,
   type CatalogOAuthRef,
   type FeatureSlots,
   type FeatureSpec,
 } from '@moonshot-ai/agent-core';
-import { createToken, inject, useExpose, useNode } from '@moonshot-ai/agent-core/kernel/index';
+import { useExpose } from '@moonshot-ai/agent-core/kernel/index';
 import {
   createKimiDefaultHeaders,
   KIMI_CODE_PROVIDER_NAME,
@@ -29,7 +31,7 @@ import {
 } from './provider';
 import { createWebSearchTool } from './tool';
 
-export const WebSearchRef = createToken<WebSearchFace>('web.search');
+export const WebSearchRef = createFacadeToken<WebSearchFace>('web.search');
 
 export interface CreateWebProps {
   readonly fetchImpl?: typeof fetch;
@@ -37,7 +39,11 @@ export interface CreateWebProps {
 }
 
 export function useWebSearch(): WebSearchFace {
-  return inject(WebSearchRef);
+  const face = useInject(WebSearchRef).value;
+  if (face === undefined) {
+    throw new Error('web feature is not installed');
+  }
+  return face;
 }
 
 export function createWebSlots(props: CreateWebProps = {}): FeatureSlots {
@@ -49,20 +55,19 @@ export function createWebSlots(props: CreateWebProps = {}): FeatureSlots {
   };
   return {
     app() {
-      const node = useNode();
       const catalog = useProviderCatalog();
-      const configEntries = node.providerRef(ConfigRef);
-      const oauthEntries = node.providerRef(OAuthTokensRef);
+      const config = useInject(ConfigRef);
+      const oauth = useInject(OAuthTokensRef);
       useConfigSection(servicesConfigSection);
       useConfigOverlay(servicesCredentialEnvOverlay);
       const resolveToken = (ref: CatalogOAuthRef | undefined): BearerTokenProvider | undefined => {
         if (ref === undefined) return undefined;
-        return oauthEntries.value.at(-1)?.value.resolve(ref);
+        return oauth.value?.resolve(ref);
       };
       const fromServicesConfig = (): WebSearchProvider | undefined => {
-        const config = configEntries.value.at(-1)?.value;
-        if (config === undefined) return undefined;
-        const search = config.get<ServicesSection>(SERVICES_CONFIG_SECTION)?.moonshot_search;
+        const store = config.value;
+        if (store === undefined) return undefined;
+        const search = store.get<ServicesSection>(SERVICES_CONFIG_SECTION)?.moonshot_search;
         if (search?.baseUrl === undefined) return undefined;
         return createMoonshotWebSearchProvider({
           baseUrl: search.baseUrl,
@@ -74,7 +79,7 @@ export function createWebSlots(props: CreateWebProps = {}): FeatureSlots {
         });
       };
       const fromManagedOAuth = (): WebSearchProvider | undefined => {
-        const info = catalog.providerInfo(KIMI_CODE_PROVIDER_NAME);
+        const info = catalog.value?.providerInfo(KIMI_CODE_PROVIDER_NAME);
         if (info?.modelSource !== 'oauth-catalog') return undefined;
         const tokenProvider = resolveToken(info.oauth);
         if (tokenProvider === undefined) return undefined;
@@ -92,7 +97,7 @@ export function createWebSlots(props: CreateWebProps = {}): FeatureSlots {
       });
     },
     agent() {
-      const web = inject(WebSearchRef);
+      const web = useWebSearch();
       if (web.getProvider() === undefined) return;
       useAgentTools(createWebSearchTool(web));
     },

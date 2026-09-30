@@ -1,5 +1,6 @@
-import type { Server } from 'node:http';
+import type { IncomingMessage, Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import type { Duplex } from 'node:stream';
 
 import express, {
   type Express,
@@ -10,6 +11,8 @@ import express, {
 
 export type HttpHandler = (request: Request, response: Response) => void | Promise<void>;
 
+export type HttpUpgradeHandler = (request: IncomingMessage, socket: Duplex, head: Buffer) => boolean;
+
 export interface HttpListen {
   readonly port?: number;
   readonly host?: string;
@@ -19,6 +22,7 @@ export interface Http {
   readonly app: Express;
   readonly origin: string | undefined;
   route(method: string | readonly string[], path: string, handler: HttpHandler): () => void;
+  upgrade(handler: HttpUpgradeHandler): () => void;
   listen(options?: HttpListen): Promise<string>;
   close(): Promise<void>;
 }
@@ -31,6 +35,7 @@ export function createHttpServer(): Http {
   const app = express();
   app.use(express.json());
   const slots = new Map<string, Slot>();
+  const upgrades: HttpUpgradeHandler[] = [];
   let server: Server | undefined;
   let origin: string | undefined;
 
@@ -71,6 +76,15 @@ export function createHttpServer(): Http {
         }
       };
     },
+    upgrade(handler) {
+      upgrades.push(handler);
+      return () => {
+        const index = upgrades.lastIndexOf(handler);
+        if (index >= 0) {
+          upgrades.splice(index, 1);
+        }
+      };
+    },
     listen(options = {}) {
       const port = options.port ?? 0;
       const host = options.host ?? '127.0.0.1';
@@ -92,6 +106,14 @@ export function createHttpServer(): Http {
         };
         const listening = app.listen(port, host);
         server = listening;
+        listening.on('upgrade', (request, socket, head) => {
+          for (const handler of [...upgrades]) {
+            if (handler(request, socket, head)) {
+              return;
+            }
+          }
+          socket.destroy();
+        });
         listening.once('error', onError);
         listening.once('listening', onListening);
       });

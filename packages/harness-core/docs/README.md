@@ -40,6 +40,7 @@ HTTP 装配见 [getting-started](getting-started.md)。
 ## Explanation
 
 - [总览](explanation/overview.md)：包边界、产品树、两套事件面。
+- [事件消费模型](explanation/event-consumption.md)：事件直接消费还是以状态提供——三种消费模型与四个判别维度。
 - [Feature 模型](explanation/feature-model.md)：三层 slot、贡献面、token、跨 Feature 协作。
 - [Agent 状态机](explanation/agent-machine.md)：队列的目的；idle / running / turn / tool。
 - [provider-catalog](explanation/provider-catalog.md)：目录为什么是 app Feature。
@@ -59,8 +60,8 @@ HTTP 装配见 [getting-started](getting-started.md)。
 | setup 调用边界 | [setup-context](reference/setup-context.md) |
 | 命名：`use*` 与实例 `get` | [naming](reference/naming.md) |
 | `createUnit` / `mountRoot` | [create-unit](reference/create-unit.md) · [mount-root](reference/mount-root.md) |
-| `useNode` / `useReady` / Handle | [use-node](reference/use-node.md) · [use-ready](reference/use-ready.md) · [node-handle](reference/node-handle.md) |
-| `provide` / `inject` / `useExpose` | [provide](reference/provide.md) · [inject](reference/inject.md) · [use-expose](reference/use-expose.md) |
+| `useNode`（内部）/ `useReady` / Handle | [use-node](reference/use-node.md) · [use-ready](reference/use-ready.md) · [node-handle](reference/node-handle.md) |
+| `provide` / `useInject` / `useExpose` | [provide](reference/provide.md) · [useInject](reference/inject.md) · [use-expose](reference/use-expose.md) |
 | `useFire` / `useOn` | [use-fire](reference/use-fire.md) · [use-on](reference/use-on.md) |
 | `useContribute` / `useCollection` / `useChildren` | [use-contribute](reference/use-contribute.md) · [use-collection](reference/use-collection.md) · [use-children](reference/use-children.md) |
 | Store 协议 / `openStore` / 组合 | [protocol](reference/protocol.md) · [open-store](reference/open-store.md) · [composition](reference/composition.md) |

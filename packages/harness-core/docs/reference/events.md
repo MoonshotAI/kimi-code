@@ -36,16 +36,16 @@ if (event['outcome'] !== 'done') {
 
 ## 节点：session journal（`SessionEvent`）
 
-`packages/agent-core/src/stores/session.ts`。
+`packages/agent-core/src/stores/session.ts`。session journal 只记 durable 事实，每条 commit 经 SessionUnit 的 `onCommit → node.fire` 桥上节点面（与 agent journal 同一机制），下列事件在 `session.on` / `app.on` 都能收到。
 
 | type | 字段 | 谁写 |
 |---|---|---|
-| `agent.opened` | `agentId`，`branch`，`features?`，`source?` | `SessionStores.open` 首次登记 |
-| `agent.closed` | `agentId` | `SessionStores.close` |
+| `session.created` | `from?`（fork 来源 sessionId）；经 `EventContext` 带 `sessionId` | `app.open` 在 catalog 记录新建时（startup 与 fork；resume / live 复用不发；`app.create({ stores })` 低层路径不经此） |
+| `agent.created` | `agentId`，`branch`，`features?`，`source?` | `SessionStores.open` 首次登记（一次性；旧 journal 的 `agent.opened` 记录按此折叠） |
 | `agent.switched` | `agentId`，`branch`，`reason?`，`stats?` | `undo` / `switchBranch` |
-| `session.meta_updated` | `meta` | `app.open` 写 catalog 记录；`app.updateSession` |
+| `session.meta_updated` | `meta`（patch，折叠浅合并） | `app.open` 写 catalog 记录；`app.updateSession`；main agent `turn.ended` 时 SessionUnit 落 `{ lastTurn }`（重开 / 换分支后随 `session.create` 校正） |
 
-`session.create` / `session.fork` / `session.close` 同时在 session 节点 fire 同名节点事件（不落盘，live 通道）：`agent.opened { agentId, source?, reopened? }`——首次创建与 journal 写入同点（`reopened` 缺省），roster 已有登记的重开带 `reopened: true`（resume / 重挂，source 从 roster 取）；`agent.closed { agentId }` 在实际 live 关闭时发。子代理身份的生命周期以这组事件为准（配 roster source 判定创建者与 profile）。
+live 生命周期是单独的现场事件（不落盘）：`session.create` / `session.fork` 在 agent 挂好 ready 后 fire `agent.opened { agentId, source?, reopened? }`——首次创建 `reopened` 缺省，roster 已有登记的重开带 `reopened: true`（resume / 重挂，source 从 roster 取）；`session.close` 在实际 live 关闭后 fire `agent.closed { agentId }`。子代理身份的生命周期以这组事件为准（配 roster source 判定创建者与 profile）。`agent.created` 是登记事实（commit 时点，早于 ready）；要「agent 可用了」订 `agent.opened`。
 
 `app.delete(sessionId)` 删除会话（live 先 close、再 `space.delete` 清持久数据，未知 id 抛 `SessionSpaceError('not-found')`），完成后在 app 节点 fire `session.deleted { sessionId }`（不落盘，live 与 cold 删除都发）——会话级删除的唯一通知通道，feature-http WS 端点经 `useOnApp` 订阅并广播给全部连接。
 
@@ -130,6 +130,7 @@ session.on(interaction, 'interaction.requested', (event) => {
 ## 相关文档
 
 - 状态机走位 → [agent-machine](../explanation/agent-machine.md)
+- 事件直接消费还是以状态提供 → [event-consumption](../explanation/event-consumption.md)
 - 报文 → [HistoryMessage 与 Delta](history-message.md)
 - 命令与两个 `on` → [01](../how-to-guides/01-run-a-turn.md)
 - 写一个会自动压上下文的 Feature → [03](../how-to-guides/03-listen-and-trigger.md)

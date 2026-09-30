@@ -8,9 +8,9 @@ Reference：先区分依赖当前 Unit 的 hooks 与不依赖上下文的定义�
 |---|---|
 | `createUnit` | 任意普通代码；通常在模块顶层定义配方 |
 | `mountRoot` | 宿主启动层；不需要当前 Unit |
-| `useNode`、`useReady`、`useExpose` | 当前 Unit 的同步 setup 调用链 |
-| `provide`、`inject` | 当前 Unit 的同步 setup 调用链；或 `asUnit(node, fn)` 里的同步回调 |
-| `asUnit` | 任意持有 Node 的代码；只压栈，不重跑 setup。给 HTTP handler 这类稍后回调恢复 `inject` |
+| `useInject`、`useCleanup`、`useReady`、`useExpose` | 当前 Unit 的同步 setup 调用链；或 `asUnit(node, fn)` 里的同步回调 |
+| `provide` | 当前 Unit 的同步 setup 调用链 |
+| `asUnit` | 任意持有 Node 的代码；只压栈，不重跑 setup。给 HTTP handler 这类稍后回调恢复 hook 上下文（`useInject` / `useApp` 等）；kernel 内部能力，产品侧只见于 feature-http / feature-acp 包装层 |
 | `useFire`、`useOn` | 当前 Unit 的同步 setup 调用链 |
 | `useContribute`、`useCollection` | 当前 Unit 的同步 setup 调用链 |
 | `useChildren` | 当前 Unit 的同步 setup 调用链 |
@@ -20,14 +20,13 @@ Reference：先区分依赖当前 Unit 的 hooks 与不依赖上下文的定义�
 
 `runUnit` 在调用 setup 前压入当前 Node，返回时弹出。setup 同步调用的 helper 可以使用 hooks；不要求代码字面上嵌套在 setup 中。
 
-hooks 只在同步 setup 段有效：`await` 之后、定时器、事件处理器或后续 watch 回调里，原 Node 的上下文已弹出（即使碰巧存在当前 Unit，也可能是别的节点），这些回调里使用 setup 阶段捕获的句柄与服务。HTTP handler 由 `useHttpRoute` 包在 `asUnit` 里，因此可以同步 `inject` / `useApp` / `useSession` / `useAgent`；按 id 用 `useApp().get(id)`。`asUnit` 只恢复查找；`useReady` / `useOn` / `useHttpRoute` 这类登记仍回 setup 段调用。
+hooks 只在同步 setup 段有效：`await` 之后、定时器、事件处理器或后续 watch 回调里，原 Node 的上下文已弹出（即使碰巧存在当前 Unit，也可能是别的节点），这些回调里使用 setup 阶段捕获的句柄与服务。HTTP handler 由 `useHttpRoute` 包在 `asUnit` 里，因此可以同步 `useInject` / `useApp` / `useSession` / `useAgent`；按 id 用 `useApp().get(id)`。`asUnit` 只恢复查找；`useReady` / `useOn` / `useHttpRoute` 这类登记仍回 setup 段调用。
 
 ```ts
-const Worker = createUnit('worker', () => {
-  const node = useNode();
+const Worker = createUnit('worker', (props, ctx) => {
   const fire = useFire();
-  useReady(initialize(node.signal).then(() => {
-    if (!node.signal.aborted) fire({ type: 'worker.ready' });
+  useReady(initialize(ctx.node.signal).then(() => {
+    if (!ctx.node.signal.aborted) fire({ type: 'worker.ready' });
   }));
 });
 ```
@@ -44,7 +43,7 @@ const Worker = createUnit('worker', () => {
 
 ## EffectScope 上下文不等于 Unit 上下文
 
-`node.scope.run(...)` 能建立 Vue effect 归属，但不会压入 `unitStack`。它不能让 setup 外的 `inject()` 或 `useOn()` 合法；宿主用 `handle.resolve()`、`app.on` / `session.on`。
+`node.scope.run(...)` 能建立 Vue effect 归属，但不会压入 `unitStack`。它不能让 setup 外的 `useInject()` 或 `useOn()` 合法；宿主用 `handle.resolve()`、`app.on` / `session.on`。
 
 继续阅读：[命名](naming.md)、[异步初始化](../how-to-guides/10-async-initialization.md)、[启动层](../how-to-guides/09-bootstrap.md)。
 

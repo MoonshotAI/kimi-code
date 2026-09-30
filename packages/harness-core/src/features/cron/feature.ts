@@ -1,21 +1,21 @@
 import {
   ConfigRef,
+  createFacadeToken,
   createFeature,
   createHistoryMessageBuilder,
   MAIN_AGENT_ID,
   useAgent,
   useAgentStore,
   useAgentTools,
+  useCleanup,
   useConfigSection,
+  useInject,
   type FeatureSpec,
 } from '@moonshot-ai/agent-core';
 import {
   computed,
-  createToken,
-  pushCleanup,
   useExpose,
   useFire,
-  useNode,
   watch,
   type RuntimeEvent,
   type ShallowRef,
@@ -70,7 +70,7 @@ export interface CronFace {
   tick(): Promise<void>;
 }
 
-export const CronRef = createToken<CronFace>('cron');
+export const CronRef = createFacadeToken<CronFace>('cron');
 
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
 
@@ -80,15 +80,14 @@ export function createCron(): FeatureSpec<CronFiredEvent> {
       useConfigSection(cronConfigSection);
     },
     agent() {
-      const node = useNode();
       const agent = useAgent();
       const store = useAgentStore();
       const state = store.fold(cronProjection);
       const fire = useFire();
-      const configEntries = node.providerRef(ConfigRef);
+      const configRef = useInject(ConfigRef);
       const section = computed(
         () =>
-          configEntries.value.at(-1)?.value.section<CronConfig>(CRON_CONFIG_SECTION).value ??
+          configRef.value?.section<CronConfig>(CRON_CONFIG_SECTION).value ??
           DEFAULT_CRON_CONFIG,
       );
       const config = (): CronConfig => section.value;
@@ -351,7 +350,7 @@ export function createCron(): FeatureSpec<CronFiredEvent> {
           },
           { immediate: true },
         );
-        pushCleanup(node, disarm);
+        useCleanup(disarm);
       }
       useExpose(CronRef, {
         tasks: state,

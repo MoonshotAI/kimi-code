@@ -27,6 +27,7 @@ export * from './features/notify/index';
 export * from './features/cron/index';
 export * from './features/os/index';
 export * from './features/sessionExport/index';
+export * from './features/sessionIndex/index';
 export * from './features/agentsMdReminder/index';
 export * from './features/sessionInit/index';
 export * from './features/task/index';

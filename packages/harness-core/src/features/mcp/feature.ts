@@ -1,24 +1,21 @@
-import { homedir } from 'node:os';
-
 import {
   AgentPort,
   ConfigRef,
+  createFacadeToken,
   createFeature,
   useAgent,
+  useCleanup,
   useConfigSection,
+  useInject,
   useSession,
   type FeatureSpec,
   type SessionRecord,
   type ToolDefinition,
 } from '@moonshot-ai/agent-core';
 import {
-  createToken,
-  inject,
-  pushCleanup,
   useCollection,
   useExpose,
   useFire,
-  useNode,
   useReady,
   watch,
   type Unsubscribe,
@@ -38,12 +35,16 @@ import type { McpServerConfig } from './core/config-schema';
 import { createMcpDeferredChannel, type McpDynamicToolEntry } from './deferred';
 import { createMcpManagement } from './management';
 import { McpOAuthService, type McpOAuthEvent } from './oauth/service';
-import { canonicalMcpOAuthResource, createFileMcpOAuthStore } from './oauth/store';
+import {
+  canonicalMcpOAuthResource,
+  createFileMcpOAuthStore,
+  createMemoryMcpOAuthStore,
+} from './oauth/store';
 import { createMcpAuthTool } from './tools/authenticate';
 import { createMcpTool, planMcpToolRegistrations, reconnectForServer } from './tools/mcp-tool';
 import type { CreateMcpProps, McpEvent, McpFacade } from './types';
 
-export const McpRef = createToken<McpFacade>('mcp');
+export const McpRef = createFacadeToken<McpFacade>('mcp');
 
 export function createMcp(props: CreateMcpProps = {}): FeatureSpec<McpEvent> {
   const shared: {
@@ -53,16 +54,18 @@ export function createMcp(props: CreateMcpProps = {}): FeatureSpec<McpEvent> {
   } = { ephemeral: new Map() };
   return createFeature<McpEvent>('mcp', {
     app() {
-      const node = useNode();
       const fire = useFire();
       useConfigSection(mcpConfigSection);
-      const configEntries = node.providerRef(ConfigRef);
+      const config = useInject(ConfigRef);
       const section = (): McpSection =>
-        configEntries.value.at(-1)?.value.get<McpSection>(MCP_CONFIG_SECTION) ?? {};
+        config.value?.get<McpSection>(MCP_CONFIG_SECTION) ?? {};
       const workDir = props.workDir ?? process.cwd();
-      const home = props.home ?? process.env['KIMI_CODE_HOME'] ?? join(homedir(), '.kimi-code');
+      const home = props.home ?? process.env['KIMI_CODE_HOME'];
       const oauthService = new McpOAuthService({
-        store: createFileMcpOAuthStore(join(home, 'credentials', 'mcp')),
+        store:
+          home === undefined || props.host === undefined
+            ? createMemoryMcpOAuthStore()
+            : createFileMcpOAuthStore(join(home, 'credentials', 'mcp'), props.host.fs),
       });
       const manager = new McpConnectionManager({
         host: props.host,
@@ -88,6 +91,7 @@ export function createMcp(props: CreateMcpProps = {}): FeatureSpec<McpEvent> {
           ),
           ...Object.assign({}, ...contributed),
           ...(await loadMcpServers({
+            fs: props.host?.fs,
             cwd: workDir,
             home,
             trusted: props.trusted ?? false,
@@ -150,6 +154,7 @@ export function createMcp(props: CreateMcpProps = {}): FeatureSpec<McpEvent> {
         void reloadServers();
       });
       const management = createMcpManagement({
+        fs: props.host?.fs,
         home,
         workDir,
         trusted: props.trusted ?? false,
@@ -157,7 +162,10 @@ export function createMcp(props: CreateMcpProps = {}): FeatureSpec<McpEvent> {
         ephemeral: shared.ephemeral,
         sources: () => sources.value,
         oauth: oauthService,
-        store: new McpUserConfigStore(join(home, 'mcp.json')),
+        store:
+          home === undefined || props.host === undefined
+            ? undefined
+            : new McpUserConfigStore(join(home, 'mcp.json'), props.host.fs),
         createProbe: (stdioCwd) =>
           new McpConnectionManager({
             host: props.host,
@@ -187,14 +195,14 @@ export function createMcp(props: CreateMcpProps = {}): FeatureSpec<McpEvent> {
         },
         ...managementFace,
       });
-      pushCleanup(node, () => {
+      useCleanup(() => {
         disposeManagement();
         unsubscribeOAuth();
         unsubscribeStatus();
         for (const unsubscribe of sourceUnsubscribes) unsubscribe();
         sourceUnsubscribes = [];
       });
-      pushCleanup(node, async () => {
+      useCleanup(async () => {
         await manager.shutdown();
         await oauthService.shutdown();
       });
@@ -203,10 +211,9 @@ export function createMcp(props: CreateMcpProps = {}): FeatureSpec<McpEvent> {
       const manager = shared.manager;
       const initialLoad = shared.initialLoad;
       if (manager === undefined || initialLoad === undefined) return;
-      const node = useNode();
       const agent = useAgent();
       const session = useSession();
-      const ports = inject(AgentPort);
+      const ports = useInject(AgentPort);
       const fire = useFire();
       useReady(initialLoad);
 
@@ -355,7 +362,7 @@ export function createMcp(props: CreateMcpProps = {}): FeatureSpec<McpEvent> {
         }
       };
 
-      pushCleanup(node, manager.onStatusChange(mirror));
+      useCleanup(manager.onStatusChange(mirror));
       for (const entry of manager.list()) mirror(entry);
       void initialLoad.then(() => {
         initialPhase = false;
@@ -364,7 +371,7 @@ export function createMcp(props: CreateMcpProps = {}): FeatureSpec<McpEvent> {
       agent.on('turn.started', () => {
         syncDeferred();
       });
-      pushCleanup(node, () => {
+      useCleanup(() => {
         for (const server of [...registrations.keys()]) unregisterServer(server);
       });
     },

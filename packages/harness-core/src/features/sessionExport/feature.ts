@@ -1,10 +1,11 @@
 import {
+  createFacadeToken,
   createFeature,
   SessionSpaceError,
   useApp,
   type FeatureSpec,
 } from '@moonshot-ai/agent-core';
-import { createToken, useExpose } from '@moonshot-ai/agent-core/kernel/index';
+import { useExpose } from '@moonshot-ai/agent-core/kernel/index';
 
 import { SessionExportError } from './errors';
 import { exportSessionDirectory } from './service';
@@ -14,7 +15,7 @@ export interface SessionExportFace {
   export(input: ExportSessionInput): Promise<ExportSessionResult>;
 }
 
-export const SessionExportRef = createToken<SessionExportFace>('sessionExport');
+export const SessionExportRef = createFacadeToken<SessionExportFace>('sessionExport');
 
 export interface CreateSessionExportProps {
   readonly version: string;

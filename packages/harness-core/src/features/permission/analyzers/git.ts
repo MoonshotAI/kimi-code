@@ -1,6 +1,6 @@
-import { stat, readFile } from 'node:fs/promises';
-import * as posixPath from 'node:path/posix';
-import * as win32Path from 'node:path/win32';
+import { posix as posixPath, win32 as win32Path } from 'pathe';
+
+import type { OsFsPort } from '#/features/os/host/index';
 
 import { dirname, isAbsolute, join, normalize } from 'pathe';
 
@@ -12,13 +12,13 @@ export interface GitWorkTree {
   readonly controlDirPath: string;
 }
 
-export async function findGitWorkTree(cwd: string): Promise<GitWorkTree | null> {
+export async function findGitWorkTree(fs: OsFsPort, cwd: string): Promise<GitWorkTree | null> {
   if (cwd.length === 0 || !isAbsolute(cwd)) return null;
 
   let current = normalize(cwd);
   while (true) {
     const dotGitPath = join(current, '.git');
-    const controlDirPath = await probeGitControlDir(dotGitPath, current);
+    const controlDirPath = await probeGitControlDir(fs, dotGitPath, current);
     if (controlDirPath !== null) return { root: current, dotGitPath, controlDirPath };
 
     const parent = dirname(current);
@@ -28,15 +28,16 @@ export async function findGitWorkTree(cwd: string): Promise<GitWorkTree | null> 
 }
 
 async function probeGitControlDir(
+  fs: OsFsPort,
   dotGitPath: string,
   markerParent: string,
 ): Promise<string | null> {
   try {
-    const stats = await stat(dotGitPath);
-    if (stats.isDirectory()) return dotGitPath;
-    if (!stats.isFile()) return null;
+    const stats = await fs.stat(dotGitPath);
+    if (stats.isDirectory) return dotGitPath;
+    if (!stats.isFile) return null;
 
-    const content = await readFile(dotGitPath, 'utf8');
+    const content = await fs.readText(dotGitPath);
     return parseGitDirPointer(content, markerParent) ?? null;
   } catch {
     return null;

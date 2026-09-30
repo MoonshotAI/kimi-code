@@ -1,5 +1,4 @@
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join } from 'pathe';
 
 import type { CatalogOAuthRef } from '@moonshot-ai/agent-core';
 import {
@@ -40,8 +39,8 @@ export interface OAuthTokenResolver {
   manager(ref: CatalogOAuthRef): OAuthManager | undefined;
 }
 
-export function resolveOauthHome(home?: string): string {
-  return home ?? process.env['KIMI_CODE_HOME'] ?? join(homedir(), '.kimi-code');
+export function resolveOauthHome(home?: string): string | undefined {
+  return home ?? process.env['KIMI_CODE_HOME'];
 }
 
 export function createOAuthTokenResolver(home: string): OAuthTokenResolver {

@@ -1,6 +1,6 @@
 import type { ToolDefinition, ToolResult } from '@moonshot-ai/agent-core';
 
-import { createNodeOsHost, type OsHost } from '#/features/os/host/index';
+import type { OsHost } from '#/features/os/host/index';
 import { PathSecurityError, resolvePathAccessPath } from '#/features/os/path-access';
 
 import DESCRIPTION from './edit.md?raw';
@@ -10,7 +10,7 @@ export const EDIT_TOOL_NAME = 'Edit';
 
 export interface CreateEditToolProps {
   readonly workDir: string;
-  readonly host?: OsHost;
+  readonly host: OsHost;
 }
 
 interface EditArguments {
@@ -58,7 +58,7 @@ function parseEditArguments(
 }
 
 export function createEditTool(props: CreateEditToolProps): ToolDefinition {
-  const host = props.host ?? createNodeOsHost();
+  const host = props.host;
   return {
     name: EDIT_TOOL_NAME,
     description: DESCRIPTION,
@@ -118,13 +118,16 @@ export function createEditTool(props: CreateEditToolProps): ToolDefinition {
         }
         throw error;
       }
-      const result = await editFile({
-        path,
-        displayPath: args.path,
-        old_string: args.old_string,
-        new_string: args.new_string,
-        replace_all: args.replace_all,
-      });
+      const result = await editFile(
+        {
+          path,
+          displayPath: args.path,
+          old_string: args.old_string,
+          new_string: args.new_string,
+          replace_all: args.replace_all,
+        },
+        host.fs,
+      );
       if (!result.ok) {
         return errorText(result.error);
       }

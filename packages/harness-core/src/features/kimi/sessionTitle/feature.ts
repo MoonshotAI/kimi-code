@@ -1,15 +1,17 @@
 import {
+  createFacadeToken,
   createFeature,
   MAIN_AGENT_ID,
   useAgentStore,
   useApp,
+  useInject,
   useProviderCatalog,
   useSession,
   type FeatureSlots,
   type FeatureSpec,
   type SessionRecord,
 } from '@moonshot-ai/agent-core';
-import { createToken, inject, useExpose, useNode } from '@moonshot-ai/agent-core/kernel/index';
+import { useExpose } from '@moonshot-ai/agent-core/kernel/index';
 import {
   fetchChatTitle,
   KIMI_CODE_PROVIDER_NAME,
@@ -30,17 +32,21 @@ export interface SessionTitleFace {
   generateTitle(opts?: { force?: boolean; source?: SessionTitleSource }): Promise<string | undefined>;
 }
 
-export const SessionTitleRef = createToken<SessionTitleFace>('sessionTitle');
+export const SessionTitleRef = createFacadeToken<SessionTitleFace>('sessionTitle');
 
 export function useSessionTitle(): SessionTitleFace {
-  return inject(SessionTitleRef);
+  const face = useInject(SessionTitleRef).value;
+  if (face === undefined) {
+    throw new Error('sessionTitle feature is not installed');
+  }
+  return face;
 }
 
 export interface SessionTitlePromptSource {
   compose(source: SessionTitleSource): string | undefined;
 }
 
-export const SessionTitlePromptSourceRef = createToken<SessionTitlePromptSource>(
+export const SessionTitlePromptSourceRef = createFacadeToken<SessionTitlePromptSource>(
   'sessionTitle.promptSource',
 );
 
@@ -54,31 +60,26 @@ interface TitleChannel {
 
 export const sessionTitleSlots: FeatureSlots = {
   session() {
-    const node = useNode();
     const app = useApp();
     const session = useSession();
     const catalog = useProviderCatalog();
-    const oauthEntries = node.providerRef(OAuthTokensRef);
+    const oauth = useInject(OAuthTokensRef);
     let shared: Promise<string | undefined> | undefined;
     const channel = (): TitleChannel | undefined => {
-      const info = catalog.providerInfo(KIMI_CODE_PROVIDER_NAME);
+      const info = catalog.value?.providerInfo(KIMI_CODE_PROVIDER_NAME);
       if (info?.modelSource !== 'oauth-catalog' || info.oauth === undefined) return undefined;
       const runtimeAuth = resolveKimiCodeRuntimeAuth({
         configuredBaseUrl: info.baseUrl,
         configuredOAuthRef: info.oauth,
       });
-      const tokens = oauthEntries.value.at(-1)?.value.resolve(runtimeAuth.oauthRef);
+      const tokens = oauth.value?.resolve(runtimeAuth.oauthRef);
       if (tokens === undefined) return undefined;
       return { baseUrl: runtimeAuth.baseUrl, customHeaders: info.customHeaders, tokens };
     };
     const promptSourceOfMain = (): SessionTitlePromptSource | undefined => {
       const main = session.get(MAIN_AGENT_ID);
       if (main === undefined) return undefined;
-      try {
-        return main.resolve(SessionTitlePromptSourceRef);
-      } catch {
-        return undefined;
-      }
+      return main.resolve(SessionTitlePromptSourceRef);
     };
     const generateAndApply = async (
       chatContent: string,

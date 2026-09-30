@@ -2,29 +2,23 @@ import { z } from 'zod';
 
 import {
   ConfigRef,
+  createFacadeToken,
   createFeature,
   MAIN_AGENT_ID,
   useAgent,
-  useAgentStore,
   useAgentTools,
-  useBeforeStep,
   useBeforeToolBatch,
   useConfigSection,
+  useInject,
   useSession,
   type ConfigSectionContribution,
   type EnvBindings,
   type FeatureSpec,
 } from '@moonshot-ai/agent-core';
-import {
-  createToken,
-  inject,
-  useExpose,
-  useNode,
-  type ShallowRef,
-} from '@moonshot-ai/agent-core/kernel/index';
+import { useExpose } from '@moonshot-ai/agent-core/kernel/index';
 
 import { stripEnvBoundFields } from '#/config-env';
-import { createNodeOsHost, type OsHost } from '#/features/os/host/index';
+import type { OsHost } from '#/features/os/host/index';
 import { ProfileCatalogRef, type ProfileCatalog } from '#/features/profiles/index';
 import {
   SpawnRegistryRef,
@@ -33,14 +27,6 @@ import {
 } from '#/features/spawn/index';
 
 import { createSwarmGuard } from './guard';
-import { createSwarmInjection } from './injection';
-import {
-  SWARM_MODE_ENTER,
-  SWARM_MODE_EXIT,
-  swarmModeProjection,
-  type SwarmModeState,
-  type SwarmModeTrigger,
-} from './ops';
 import { createAgentSwarmTool, type SwarmItemRegistry } from './tool';
 
 export const SWARM_CONFIG_SECTION = 'swarm';
@@ -72,15 +58,6 @@ export const swarmConfigSection: ConfigSectionContribution<SwarmConfig> = {
   stripEnv: stripEnvBoundFields<SwarmConfig>(swarmEnvBindings),
 };
 
-export interface SwarmFace {
-  readonly state: ShallowRef<SwarmModeState>;
-  isActive(): boolean;
-  enter(trigger: SwarmModeTrigger): Promise<void>;
-  exit(): Promise<void>;
-}
-
-export const SwarmRef = createToken<SwarmFace>('swarm');
-
 export interface CreateSwarmProps {
   readonly catalog?: ProfileCatalog;
   readonly models?: readonly SpawnModelEntry[];
@@ -94,10 +71,10 @@ interface SwarmSessionState {
   readonly registry: SpawnRegistry;
 }
 
-const SwarmSessionRef = createToken<SwarmSessionState>('swarm.session');
+const SwarmSessionRef = createFacadeToken<SwarmSessionState>('swarm.session');
 
 export function createSwarm(props: CreateSwarmProps = {}): FeatureSpec {
-  const host = props.host ?? createNodeOsHost();
+  const host = props.host;
   const models = props.models ?? [];
   const forkEnabled = props.forkEnabled ?? defaultForkEnabled;
   const workDir = props.workDir ?? process.cwd();
@@ -109,44 +86,22 @@ export function createSwarm(props: CreateSwarmProps = {}): FeatureSpec {
       useExpose(SwarmSessionRef, { items: new Map(), registry: new Map() });
     },
     agent() {
-      const node = useNode();
       const agent = useAgent();
       const session = useSession();
-      const store = useAgentStore();
-      const state = store.fold(swarmModeProjection);
-      const shared = inject(SwarmSessionRef);
+      const shared = useInject(SwarmSessionRef).value;
+      if (shared === undefined) {
+        throw new Error('swarm feature session slot is not installed');
+      }
 
-      const isActive = (): boolean => state.value.trigger !== null;
-      const enter = async (trigger: SwarmModeTrigger): Promise<void> => {
-        if (state.value.trigger !== null) return;
-        await store.dispatch({ type: SWARM_MODE_ENTER, trigger });
-      };
-      const exit = async (): Promise<void> => {
-        if (state.value.trigger === null) return;
-        await store.dispatch({ type: SWARM_MODE_EXIT });
-      };
-
-      agent.on('turn.done', () => {
-        const trigger = state.value.trigger;
-        if (trigger === 'task' || trigger === 'tool') {
-          void exit().catch(() => {});
-        }
-      });
-
-      useBeforeStep(
-        createSwarmInjection({ agent, state, history: store.getState().history }),
-      );
       useBeforeToolBatch(createSwarmGuard({ isMain: agent.agentId === MAIN_AGENT_ID }));
 
-      const catalog =
-        props.catalog ?? node.providerRef(ProfileCatalogRef).value.at(-1)?.value;
+      const catalog = props.catalog ?? useInject(ProfileCatalogRef).value;
       if (catalog !== undefined) {
-        const configEntries = node.providerRef(ConfigRef);
+        const config = useInject(ConfigRef);
         const timeoutMs = (): number =>
-          configEntries.value.at(-1)?.value.get<SwarmConfig | undefined>(SWARM_CONFIG_SECTION)
+          config.value?.get<SwarmConfig | undefined>(SWARM_CONFIG_SECTION)
             ?.timeoutMs ?? DEFAULT_SWARM_TIMEOUT_MS;
-        const registry =
-          node.providerRef(SpawnRegistryRef).value.at(-1)?.value ?? shared.registry;
+        const registry = useInject(SpawnRegistryRef).value ?? shared.registry;
         useAgentTools(
           createAgentSwarmTool({
             catalog,
@@ -155,16 +110,13 @@ export function createSwarm(props: CreateSwarmProps = {}): FeatureSpec {
             session,
             agent,
             forkEnabled,
-            process: host.process,
+            process: host?.process,
             workDir,
             swarmItems: shared.items,
             timeoutMs,
-            enterSwarmMode: () => enter('tool'),
           }),
         );
       }
-
-      useExpose(SwarmRef, { state, isActive, enter, exit });
     },
   });
 }

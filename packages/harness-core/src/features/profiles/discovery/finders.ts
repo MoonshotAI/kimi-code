@@ -13,7 +13,7 @@ import type { AgentProfile } from '../definition/types';
 export interface UserFinderDeps {
   readonly fs: OsFsPort;
   readonly homeDir: string;
-  readonly osHomeDir: string;
+  readonly osHomeDir?: string;
   readonly builtinDefault: AgentProfile;
   readonly onWarn?: (message: string) => void;
 }
@@ -72,7 +72,7 @@ export interface ExtraFinderDeps {
   readonly fs: OsFsPort;
   readonly dirs: readonly string[];
   readonly workDir: string;
-  readonly osHomeDir: string;
+  readonly osHomeDir?: string;
   readonly basePrompt: AgentProfileBasePrompt;
   readonly onWarn?: (message: string) => void;
 }
@@ -104,7 +104,7 @@ export interface ExplicitFinderDeps {
   readonly fs: OsFsPort;
   readonly files: readonly string[];
   readonly workDir: string;
-  readonly osHomeDir: string;
+  readonly osHomeDir?: string;
   readonly basePrompt: AgentProfileBasePrompt;
 }
 
@@ -117,6 +117,9 @@ export function createExplicitFinder(deps: ExplicitFinderDeps): ProfileFinder {
       const profiles: AgentProfile[] = [];
       for (const file of deps.files) {
         const filePath = resolveAgentPath(file, deps.workDir, deps.osHomeDir);
+        if (filePath === undefined) {
+          throw new Error(`Cannot resolve "${file}" without a home directory.`);
+        }
         const text = await deps.fs.readText(filePath);
         profiles.push(
           agentProfileFromFile(

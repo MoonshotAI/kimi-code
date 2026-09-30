@@ -8,7 +8,7 @@ How-to：为每项订阅、计时器和外部句柄指定所有者，把释放�
 |---|---|
 | setup 中创建的 Vue watcher | 由节点 scope 停止 |
 | 单个 setup 资源 | 从 setup 返回清理函数 |
-| 多个资源或可异步关闭的资源 | `pushCleanup(node, cleanup)` |
+| 多个资源或可异步关闭的资源 | `useCleanup(fn)`；跨节点场景用 kernel 的 `pushCleanup(node, fn)` |
 | 外部节点上的监听 | 将 `node.on()` 返回的 unsubscribe 登记到真正的订阅者 |
 | 支持取消的异步 I/O | 传入 `node.signal`，必要时再登记关闭动作 |
 
@@ -18,10 +18,9 @@ How-to：为每项订阅、计时器和外部句柄指定所有者，把释放�
 
 ```ts
 const Consumer = createUnit('consumer', () => {
-  const node = useNode();
   const resource = openResource();
-  pushCleanup(node, () => resource.close());
-  pushCleanup(node, resource.subscribe(onChange));
+  useCleanup(() => resource.close());
+  useCleanup(resource.subscribe(onChange));
 });
 ```
 

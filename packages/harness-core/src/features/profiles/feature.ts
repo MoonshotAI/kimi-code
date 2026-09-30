@@ -1,16 +1,12 @@
-import { homedir } from 'node:os';
-import { join } from 'pathe';
-
-import { createFeature, type FeatureSpec } from '@moonshot-ai/agent-core';
+import { createFacadeToken, createFeature, type FeatureSpec } from '@moonshot-ai/agent-core';
 import {
-  createToken,
   useCollection,
   useExpose,
   useReady,
   watch,
 } from '@moonshot-ai/agent-core/kernel/index';
 
-import { createNodeOsHost, type OsHost } from '#/features/os/host/index';
+import type { OsHost } from '#/features/os/host/index';
 import { createBuiltinFinder, getBuiltinDefaultProfile } from './builtin';
 import {
   BUILTIN_PROFILE_SOURCE_ID,
@@ -35,7 +31,7 @@ export interface ProfileCatalogFace extends ProfileCatalog {
   reload(): Promise<void>;
 }
 
-export const ProfileCatalogRef = createToken<ProfileCatalogFace>('profiles');
+export const ProfileCatalogRef = createFacadeToken<ProfileCatalogFace>('profiles');
 
 export interface CreateProfilesProps {
   readonly workDir: string;
@@ -48,57 +44,64 @@ export interface CreateProfilesProps {
 }
 
 export function createProfiles(props: CreateProfilesProps): FeatureSpec {
-  const host = props.host ?? createNodeOsHost();
   return createFeature('profiles', {
     app() {
       const warn = (message: string): void => {
         props.onWarn?.(message);
       };
-      const homeDir = props.home ?? process.env['KIMI_CODE_HOME'] ?? join(homedir(), '.kimi-code');
-      const osHomeDir = props.home ?? homedir();
+      const host = props.host;
+      const homeDir = props.home ?? process.env['KIMI_CODE_HOME'];
+      const osHomeDir = props.home ?? homeDir;
       const builtinDefault = getBuiltinDefaultProfile();
-      const userFinder = createUserFinder({
-        fs: host.fs,
-        homeDir,
-        osHomeDir,
-        builtinDefault,
-        onWarn: props.onWarn,
-      });
+      const userFinder =
+        host === undefined || homeDir === undefined
+          ? undefined
+          : createUserFinder({
+              fs: host.fs,
+              homeDir,
+              osHomeDir,
+              builtinDefault,
+              onWarn: props.onWarn,
+            });
       const userBasePrompt: AgentProfileBasePrompt = (context) =>
-        userFinder.defaultProfile().renderSystemPrompt(context);
+        (userFinder?.defaultProfile() ?? builtinDefault).renderSystemPrompt(context);
 
       useProfileFinder(createBuiltinFinder());
-      useProfileFinder(userFinder);
-      useProfileFinder(
-        createWorkspaceFinder({
-          fs: host.fs,
-          workDir: props.workDir,
-          basePrompt: userBasePrompt,
-          onWarn: props.onWarn,
-        }),
-      );
-      if (props.extraAgentDirs !== undefined && props.extraAgentDirs.length > 0) {
+      if (userFinder !== undefined) {
+        useProfileFinder(userFinder);
+      }
+      if (host !== undefined) {
         useProfileFinder(
-          createExtraFinder({
+          createWorkspaceFinder({
             fs: host.fs,
-            dirs: props.extraAgentDirs,
             workDir: props.workDir,
-            osHomeDir,
             basePrompt: userBasePrompt,
             onWarn: props.onWarn,
           }),
         );
-      }
-      if (props.explicitAgentFiles !== undefined && props.explicitAgentFiles.length > 0) {
-        useProfileFinder(
-          createExplicitFinder({
-            fs: host.fs,
-            files: props.explicitAgentFiles,
-            workDir: props.workDir,
-            osHomeDir,
-            basePrompt: userBasePrompt,
-          }),
-        );
+        if (props.extraAgentDirs !== undefined && props.extraAgentDirs.length > 0) {
+          useProfileFinder(
+            createExtraFinder({
+              fs: host.fs,
+              dirs: props.extraAgentDirs,
+              workDir: props.workDir,
+              osHomeDir,
+              basePrompt: userBasePrompt,
+              onWarn: props.onWarn,
+            }),
+          );
+        }
+        if (props.explicitAgentFiles !== undefined && props.explicitAgentFiles.length > 0) {
+          useProfileFinder(
+            createExplicitFinder({
+              fs: host.fs,
+              files: props.explicitAgentFiles,
+              workDir: props.workDir,
+              osHomeDir,
+              basePrompt: userBasePrompt,
+            }),
+          );
+        }
       }
       for (const finder of props.finders ?? []) {
         useProfileFinder(finder);

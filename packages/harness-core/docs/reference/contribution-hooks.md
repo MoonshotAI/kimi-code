@@ -14,15 +14,24 @@ Reference：builtin 扩展点。源码 `packages/agent-core/src/feature/contribu
 
 catalog 在 `useApp()` 上：`app.space` / `app.open` / `app.updateSession` / `app.delete`（删除会话：live 先 close、再 `space.delete`、完成后 app 节点 fire `session.deleted`）。未配 `space` 时访问会抛错。
 
+## 依赖注入与清理
+
+| hook | 返回 | 说明 |
+|---|---|---|
+| `useInject(token)` | certain：`T`；facade：`Readonly<ShallowRef<T \| undefined>>` | 分级语义见 [useInject](inject.md)：框架 token 缺席抛错，facade token 返回响应式可空 ref（lineage 最近、随挂载 / 卸载驱动） |
+| `useCleanup(fn)` | — | 往当前 Unit 登记清理，卸载随 Unit 撤回 |
+
+facade token 一律 `createFacadeToken`（包根导入），`useExpose` 只接受 facade token。树外取 facade 用 `handle.resolve(token)`：`resolve(CertainToken): T` 缺席抛错，`resolve(FacadeToken): T | undefined` 不抛错。
+
 ## Store
 
 | hook | 说明 |
 |---|---|
-| `useAgentStore()` | `getState` / `dispatch` / `fold(projection)` → `ShallowRef` |
+| `useAgentStore()` | `getState` / `dispatch` / `fold(projection)` → `ShallowRef` / `onCommit`（登记随当前 Unit 撤回） |
 | `useSessionStore()` | 同上，session journal |
 | `useBlobs()` | 内容寻址仓，与 journal 平级 |
 
-`fold` 从日志起点重放，中途安装的 Feature 也能看到历史。`dispatch` 是唯一写入口。
+`fold` 从日志起点重放，中途安装的 Feature 也能看到历史。`dispatch` 是唯一写入口。`onCommit` 用于派生副作用，返回 off 且已登记清理，不要直接 `useInject(AgentStoreRef)` 拿裸 store。
 
 ## Agent ports
 
@@ -47,7 +56,7 @@ catalog 在 `useApp()` 上：`app.space` / `app.open` / `app.updateSession` / `a
 
 ## HTTP
 
-`useHttpRoute` 用 `asUnit` 恢复 HTTP Feature 节点。handler 里同步 `inject` / `useApp`，第一次 `await` 后出栈。路由全部写在 handler 内。
+`useHttpRoute` 用 `asUnit` 恢复 HTTP Feature 节点。handler 里同步 `useInject` / `useApp`，第一次 `await` 后出栈。路由全部写在 handler 内。
 
 ## 相关文档
 

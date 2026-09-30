@@ -247,12 +247,12 @@ describe('mcp feature', () => {
       shared: { transport: 'stdio', command: 'props-cmd' } as McpServerConfig,
     };
 
-    const untrusted = await loadMcpServers({ cwd: work, home, trusted: false, servers: programmatic });
+    const untrusted = await loadMcpServers({ fs: createNodeOsHost().fs, cwd: work, home, trusted: false, servers: programmatic });
     expect(Object.keys(untrusted).toSorted()).toEqual(['base', 'shared', 'useronly']);
     expect(untrusted['shared']).toMatchObject({ transport: 'http', url: 'http://example.com/user' });
     expect(untrusted['base']).toMatchObject({ transport: 'stdio', command: 'base-cmd' });
 
-    const trusted = await loadMcpServers({ cwd: work, home, trusted: true, servers: programmatic });
+    const trusted = await loadMcpServers({ fs: createNodeOsHost().fs, cwd: work, home, trusted: true, servers: programmatic });
     expect(Object.keys(trusted).toSorted()).toEqual(['base', 'projectonly', 'shared', 'useronly']);
     expect(trusted['shared']).toMatchObject({ transport: 'stdio', command: 'root-cmd', cwd: join(work, 'sub') });
     expect(trusted['projectonly']).toMatchObject({ transport: 'stdio', command: 'project-cmd' });

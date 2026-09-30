@@ -23,9 +23,8 @@ useReady(operation: Promise<unknown>): void
 输入：`initialize` 是接收 `AbortSignal`、返回 `Promise<void>` 的初始化函数。
 
 ```ts
-const Feature = createUnit('feature', () => {
-  const node = useNode();
-  useReady(initialize(node.signal));
+const Feature = createUnit('feature', (props, ctx) => {
+  useReady(initialize(ctx.node.signal));
 });
 ```
 

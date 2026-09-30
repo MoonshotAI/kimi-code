@@ -1,6 +1,7 @@
 import {
   CatalogModels,
   ConfigRef,
+  createFacadeToken,
   createFeature,
   createOAuthCredentialProvider,
   createProvider,
@@ -11,7 +12,10 @@ import {
   PROVIDERS_CONFIG_SECTION,
   ProviderProtocols,
   THINKING_CONFIG_SECTION,
+  useApp,
+  useCleanup,
   useCredentialResolver,
+  useInject,
   useProviderCatalog,
   type CatalogOAuthRef,
   type CatalogProviderInfo,
@@ -24,15 +28,9 @@ import {
   type ProvidersSection,
 } from '@moonshot-ai/agent-core';
 import {
-  createToken,
-  inject,
-  lineage,
-  pushCleanup,
   useCollection,
   useExpose,
-  useNode,
   watch,
-  type UnitNode,
 } from '@moonshot-ai/agent-core/kernel/index';
 import {
   fetchManagedKimiCodeModels,
@@ -76,7 +74,7 @@ import {
 import { managedKimiCodeModelSeed } from './models';
 import { createOAuthTokenResolver, resolveOauthHome, type OAuthTokens } from './tokens';
 
-export const OAuthTokensRef = createToken<OAuthTokens>('oauth.tokens');
+export const OAuthTokensRef = createFacadeToken<OAuthTokens>('oauth.tokens');
 
 export const DEFAULT_OAUTH_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
@@ -86,17 +84,23 @@ export interface CreateOauthProps {
 }
 
 export function useOauth(): OAuthTokens {
-  return inject(OAuthTokensRef);
+  const face = useInject(OAuthTokensRef).value;
+  if (face === undefined) {
+    throw new Error('oauth feature is not installed');
+  }
+  return face;
 }
 
 export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
   const home = resolveOauthHome(props.home);
   return {
     app() {
-      const node = useNode();
       const catalog = useProviderCatalog();
-      const configEntries = node.providerRef(ConfigRef);
-      const tokens = createOAuthTokenResolver(home);
+      const configRef = useInject(ConfigRef);
+      const tokens =
+        home === undefined
+          ? { resolve: () => undefined, manager: () => undefined }
+          : createOAuthTokenResolver(home);
       const protocolFactories = useCollection(ProviderProtocols);
       const bindings = useCollection(CatalogModels);
       const aliasScopeWrites = new Map<string, Promise<void>>();
@@ -142,7 +146,7 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
         readonly baseUrl: string | undefined;
         readonly oauthHost: string | undefined;
       } => {
-        const info = catalog.providerInfo(provider);
+        const info = catalog.value?.providerInfo(provider);
         if (provider !== KIMI_CODE_PROVIDER_NAME) {
           return { oauthRef: info?.oauth, baseUrl: undefined, oauthHost: undefined };
         }
@@ -180,9 +184,9 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
         loginBaseUrl: string | undefined,
       ): Promise<void> => {
         if (oauthRef === undefined && provider !== KIMI_CODE_PROVIDER_NAME) return;
-        const config = configEntries.value.at(-1)?.value;
+        const config = configRef.value;
         if (config === undefined) return;
-        const baseUrl = loginBaseUrl ?? catalog.providerInfo(provider)?.baseUrl ?? kimiCodeBaseUrl();
+        const baseUrl = loginBaseUrl ?? catalog.value?.providerInfo(provider)?.baseUrl ?? kimiCodeBaseUrl();
         await config.set(
           PROVIDERS_CONFIG_SECTION,
           {
@@ -198,12 +202,12 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
         );
       };
       const healDefaultModelAfterManagedLogin = (): void => {
-        const config = configEntries.value.at(-1)?.value;
+        const config = configRef.value;
         if (config === undefined) return;
         const stop = watch(
-          () => catalog.models(KIMI_CODE_PROVIDER_NAME),
+          () => catalog.value?.models(KIMI_CODE_PROVIDER_NAME),
           (models) => {
-            const first = models[0];
+            const first = models?.[0];
             if (first === undefined) return;
             stop();
             const current = config.get<string>(DEFAULT_MODEL_CONFIG_SECTION);
@@ -212,26 +216,26 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
               if (entry !== undefined && entry.provider !== KIMI_CODE_PROVIDER_NAME) return;
               if (
                 matchCatalogBinding(current, bindings.value, (providerId) =>
-                  catalog.providerInfo(providerId),
+                  catalog.value?.providerInfo(providerId),
                 ) !== undefined
               ) {
                 return;
               }
             }
             const scope =
-              catalog.providerInfo(KIMI_CODE_PROVIDER_NAME)?.aliasScope ?? KIMI_CODE_PROVIDER_NAME;
+              catalog.value?.providerInfo(KIMI_CODE_PROVIDER_NAME)?.aliasScope ?? KIMI_CODE_PROVIDER_NAME;
             void config.set(DEFAULT_MODEL_CONFIG_SECTION, `${scope}/${first.model}`, 'user').catch(() => {});
           },
           { immediate: true },
         );
-        pushCleanup(node, stop);
+        useCleanup(stop);
       };
       const provisionAfterSuccess = async (state: LoginFlowState): Promise<void> => {
         try {
           await provisionAfterLogin(state.provider, state.oauthRef, state.loginBaseUrl);
           if (flows.get(state.provider) !== state) return;
           if (state.provider === KIMI_CODE_PROVIDER_NAME) {
-            if (catalog.isLive(KIMI_CODE_PROVIDER_NAME)) facade.refresh();
+            if (catalog.value?.isLive(KIMI_CODE_PROVIDER_NAME) === true) facade.refresh();
             healDefaultModelAfterManagedLogin();
           }
         } catch {
@@ -258,7 +262,7 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
       };
       const deprovisionAfterLogout = async (provider: string): Promise<void> => {
         if (provider !== KIMI_CODE_PROVIDER_NAME) return;
-        const config = configEntries.value.at(-1)?.value;
+        const config = configRef.value;
         if (config === undefined) return;
         await aliasScopeWrites.get(provider);
         const providers = { ...(config.get<ProvidersSection>(PROVIDERS_CONFIG_SECTION) ?? {}) };
@@ -303,7 +307,7 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
         }
       };
       const runtimeAuthFor = (provider: string): ManagedKimiRuntimeAuth => {
-        const info = catalog.providerInfo(provider);
+        const info = catalog.value?.providerInfo(provider);
         return resolveKimiCodeRuntimeAuth({
           configuredBaseUrl: info?.baseUrl,
           configuredOAuthRef: info?.oauth,
@@ -326,9 +330,11 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
       const facade: OAuthTokens = {
         resolve: (ref) => tokens.resolve(ref),
         refresh: () => {
-          for (const providerId of catalog.providers()) {
-            if (catalog.providerInfo(providerId)?.modelSource !== 'oauth-catalog') continue;
-            if (catalog.isLive(providerId)) catalog.refresh(providerId);
+          const store = catalog.value;
+          if (store === undefined) return;
+          for (const providerId of store.providers()) {
+            if (store.providerInfo(providerId)?.modelSource !== 'oauth-catalog') continue;
+            if (store.isLive(providerId)) store.refresh(providerId);
           }
         },
         loginStart: async (input) => {
@@ -430,7 +436,7 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
           const ref =
             provider === KIMI_CODE_PROVIDER_NAME
               ? runtimeAuthFor(provider).oauthRef
-              : catalog.providerInfo(provider)?.oauth;
+              : catalog.value?.providerInfo(provider)?.oauth;
           const oauthHost = ref?.oauthHost ?? KIMI_CODE_FLOW_CONFIG.oauthHost;
           const key = ref?.key ?? resolveKimiCodeOAuthKey({ oauthHost, baseUrl: undefined });
           const manager = tokens.manager({ storage: 'file', key, oauthHost });
@@ -488,7 +494,7 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
           }
         },
         region: (): KimiRegion => {
-          const oauth = catalog.providerInfo(KIMI_CODE_PROVIDER_NAME)?.oauth;
+          const oauth = catalog.value?.providerInfo(KIMI_CODE_PROVIDER_NAME)?.oauth;
           return resolveKimiRegion({
             configuredOAuthHost: oauth?.oauthHost,
             configuredOAuthKey: oauth?.key,
@@ -497,21 +503,22 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
           });
         },
         summary: async (): Promise<AuthSummary> => {
-          const config = configEntries.value.at(-1)?.value;
+          const config = configRef.value;
+          const store = catalog.value;
           const providers: ProvidersSection =
             config !== undefined
               ? (config.get<ProvidersSection>(PROVIDERS_CONFIG_SECTION) ?? {})
               : Object.fromEntries(
-                  catalog.providers().map((providerId) => [
+                  (store?.providers() ?? []).map((providerId) => [
                     providerId,
-                    catalog.providerInfo(providerId) ?? {},
+                    store?.providerInfo(providerId) ?? {},
                   ]),
                 );
           const defaultModel = config?.get<string>(DEFAULT_MODEL_CONFIG_SECTION);
           const modelsReady =
             defaultModel !== undefined && defaultModel.length > 0
               ? matchCatalogBinding(defaultModel, bindings.value, (providerId) =>
-                  catalog.providerInfo(providerId),
+                  catalog.value?.providerInfo(providerId),
                 ) !== undefined
               : false;
           let managedProvider: ManagedProviderSummary | null = null;
@@ -551,10 +558,10 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
       });
       watch(
         () =>
-          configEntries.value.at(-1)?.value.section<ProvidersSection>(PROVIDERS_CONFIG_SECTION)
+          configRef.value?.section<ProvidersSection>(PROVIDERS_CONFIG_SECTION)
             .value,
         (providers) => {
-          const config = configEntries.value.at(-1)?.value;
+          const config = configRef.value;
           const entry = providers?.[KIMI_CODE_PROVIDER_NAME];
           if (config === undefined || entry === undefined || entry.aliasScope !== undefined) return;
           const write = config
@@ -572,12 +579,14 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
         { immediate: true },
       );
       watch(
-        () => [catalog.snapshot.value, protocolFactories.value],
+        () => [catalog.value?.snapshot.value, protocolFactories.value],
         () => {
-          for (const [providerId, entry] of Object.entries(catalog.snapshot.value.providers)) {
+          const store = catalog.value;
+          if (store === undefined) return;
+          for (const [providerId, entry] of Object.entries(store.snapshot.value.providers)) {
             const info = entry.info;
             if (info?.modelSource !== 'oauth-catalog' || info.type === undefined) continue;
-            if (catalog.isLive(providerId) || materializing.has(providerId)) continue;
+            if (store.isLive(providerId) || materializing.has(providerId)) continue;
             const factory = protocolFactories.value.findLast(
               (contribution) => contribution.type === info.type,
             );
@@ -588,8 +597,8 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
             void (async () => {
               try {
                 await aliasScopeWrites.get(providerId);
-                if (catalog.isLive(providerId)) return;
-                catalog.refresh(
+                if (store.isLive(providerId)) return;
+                store.refresh(
                   createProvider({
                     id: providerId,
                     protocols,
@@ -613,18 +622,18 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
           timer = undefined;
         }
       };
-      const root = [...lineage(node)].at(-1) as UnitNode;
+      const app = useApp();
       watch(
         () =>
-          configEntries.value.at(-1)?.value.section<ModelCatalogConfig>(MODEL_CATALOG_CONFIG_SECTION)
+          configRef.value?.section<ModelCatalogConfig>(MODEL_CATALOG_CONFIG_SECTION)
             .value,
         (section) => {
           clearTimer();
-          const config = configEntries.value.at(-1)?.value;
+          const config = configRef.value;
           if (config === undefined) return;
           if (!started) {
             started = true;
-            void root.ready().then(
+            void app.ready().then(
               () => {
                 const loaded = config.get<ModelCatalogConfig>(MODEL_CATALOG_CONFIG_SECTION);
                 if (loaded?.refreshOnStart ?? true) {
@@ -648,8 +657,8 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
         },
         { immediate: true },
       );
-      pushCleanup(node, clearTimer);
-      pushCleanup(node, () => {
+      useCleanup(clearTimer);
+      useCleanup(() => {
         for (const state of flows.values()) {
           if (state.gcTimer !== undefined) clearTimeout(state.gcTimer);
           if (state.status === 'pending') state.controller.abort();

@@ -1,5 +1,5 @@
-import { createFeature, type FeatureSpec } from '@moonshot-ai/agent-core';
-import { createToken, pushCleanup, useExpose, useNode } from '@moonshot-ai/agent-core/kernel/index';
+import { createFacadeToken, createFeature, useCleanup, type FeatureSpec } from '@moonshot-ai/agent-core';
+import { useExpose } from '@moonshot-ai/agent-core/kernel/index';
 
 import { startRemoteControl, type RemoteControlHandle, type RemoteControlOptions } from './client';
 import { createRemoteControlManager, type RemoteControlStatusInfo } from './manager';
@@ -10,7 +10,7 @@ export interface RemoteControlFace {
   disable(): Promise<RemoteControlStatusInfo>;
 }
 
-export const RemoteControlRef = createToken<RemoteControlFace>('remote-control');
+export const RemoteControlRef = createFacadeToken<RemoteControlFace>('remote-control');
 
 export interface CreateRemoteControlProps {
   readonly homeDir: string;
@@ -25,7 +25,6 @@ export interface CreateRemoteControlProps {
 export function createRemoteControl(props: CreateRemoteControlProps): FeatureSpec {
   return createFeature('remote-control', {
     app() {
-      const node = useNode();
       const manager = createRemoteControlManager({
         homeDir: props.homeDir,
         localOrigin: props.localOrigin,
@@ -40,7 +39,7 @@ export function createRemoteControl(props: CreateRemoteControlProps): FeatureSpe
         enable: () => manager.enable(),
         disable: () => manager.disable(),
       });
-      pushCleanup(node, () => manager.close());
+      useCleanup(() => manager.close());
     },
   });
 }

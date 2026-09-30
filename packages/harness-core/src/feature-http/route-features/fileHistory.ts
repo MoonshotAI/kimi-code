@@ -9,7 +9,7 @@ import {
 } from '#/features/fileHistory/index';
 
 import { useHttpRoute } from '../feature';
-import { ErrorCode, param, sendErr, sendOk, tryResolve } from '../route/http';
+import { ErrorCode, param, sendErr, sendOk } from '../route/http';
 
 export function useFileHistoryRoutes(prefix: string): void {
   useHttpRoute({
@@ -71,7 +71,7 @@ function resolveFileHistory(request: Request, response: Response): FileHistoryFa
     return undefined;
   }
   const main = session.get(MAIN_AGENT_ID);
-  const face = main === undefined ? undefined : tryResolve(main, FileHistoryRef);
+  const face = main === undefined ? undefined : main.resolve(FileHistoryRef);
   if (face === undefined) {
     sendErr(
       request,

@@ -323,7 +323,7 @@ describe('sessionInit feature', () => {
   it('exposes no facade when the host injects no os-host', async () => {
     const { session, dispose } = await startApp({ withHost: false });
 
-    expect(() => session.resolve(SessionInitRef)).toThrow();
+    expect(session.resolve(SessionInitRef)).toBeUndefined();
     await dispose();
   });
 

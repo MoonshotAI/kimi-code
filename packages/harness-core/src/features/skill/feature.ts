@@ -1,10 +1,13 @@
 import {
   ConfigRef,
+  createFacadeToken,
   createFeature,
   createHistoryMessageBuilder,
   useAgent,
   useAgentTools,
+  useCleanup,
   useConfigSection,
+  useInject,
   useSession,
   useSystemPrompt,
   type BundledSkillActivation,
@@ -18,13 +21,10 @@ import {
 } from '@moonshot-ai/agent-core';
 import {
   computed,
-  createToken,
-  inject,
-  pushCleanup,
+  currentUnit,
   useCollection,
   useExpose,
   useFire,
-  useNode,
   useReady,
   watch,
   type RuntimeEvent,
@@ -105,7 +105,7 @@ export interface SkillCatalogFace {
   reload(): Promise<void>;
 }
 
-export const SkillCatalogRef = createToken<SkillCatalogFace>('skill');
+export const SkillCatalogRef = createFacadeToken<SkillCatalogFace>('skill');
 
 export interface SkillActivationInput {
   readonly name: string;
@@ -129,7 +129,7 @@ export interface SkillFace {
   promptWithSkills(input: PromptWithSkillsInput): Promise<{ turnId?: number }>;
 }
 
-export const SkillRef = createToken<SkillFace>('skill.agent');
+export const SkillRef = createFacadeToken<SkillFace>('skill.agent');
 
 export interface CreateSkillProps {
   readonly workDir: string;
@@ -156,26 +156,26 @@ type SkillPromptOrigin = SkillActivationOrigin | BundledSkillPromptOrigin;
 export function createSkill(props: CreateSkillProps): FeatureSpec<SkillEvent> {
   return createFeature<SkillEvent>('skill', {
     app() {
-      const node = useNode();
+      const node = currentUnit();
       const fire = useFire();
       useConfigSection(extraSkillDirsSection);
       useConfigSection(mergeAllAvailableSkillsSection);
       useConfigSection(builtinProductSkillsSection);
 
-      const configEntries = node.providerRef(ConfigRef);
+      const config = useInject(ConfigRef);
       const extraDirs = computed(
         () =>
-          configEntries.value.at(-1)?.value.section<string[]>(EXTRA_SKILL_DIRS_SECTION).value ??
+          config.value?.section<string[]>(EXTRA_SKILL_DIRS_SECTION).value ??
           [],
       );
       const mergeAll = computed(
         () =>
-          configEntries.value.at(-1)?.value.section<boolean>(MERGE_ALL_AVAILABLE_SKILLS_SECTION)
+          config.value?.section<boolean>(MERGE_ALL_AVAILABLE_SKILLS_SECTION)
             .value ?? true,
       );
       const builtinProduct = computed(
         () =>
-          configEntries.value.at(-1)?.value.section<boolean>(BUILTIN_PRODUCT_SKILLS_SECTION)
+          config.value?.section<boolean>(BUILTIN_PRODUCT_SKILLS_SECTION)
             .value ?? true,
       );
 
@@ -238,7 +238,7 @@ export function createSkill(props: CreateSkillProps): FeatureSpec<SkillEvent> {
       };
 
       const loadAll = async (): Promise<void> => {
-        await configEntries.value.at(-1)?.value.reload();
+        await config.value?.reload();
         const ordered = [...sources.value].toSorted((a, b) => a.priority - b.priority);
         for (const source of ordered) await loadSource(source);
         remerge();
@@ -262,8 +262,7 @@ export function createSkill(props: CreateSkillProps): FeatureSpec<SkillEvent> {
         for (const source of sources.value) {
           if (subscribed.has(source.id) || source.onDidChange === undefined) continue;
           subscribed.add(source.id);
-          pushCleanup(
-            node,
+          useCleanup(
             source.onDidChange(() => {
               void loadSource(source, true).catch(() => {});
             }),
@@ -321,7 +320,10 @@ export function createSkill(props: CreateSkillProps): FeatureSpec<SkillEvent> {
       });
     },
     agent() {
-      const catalog = inject(SkillCatalogRef);
+      const catalog = useInject(SkillCatalogRef).value;
+      if (catalog === undefined) {
+        throw new Error('skill feature app slot is not installed');
+      }
       const agent = useAgent();
       const session = useSession();
       const fire = useFire();

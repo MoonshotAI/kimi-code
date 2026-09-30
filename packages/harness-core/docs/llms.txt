@@ -22,6 +22,7 @@
 - [Store 模型](explanation/store-model.md)
 - [provider-catalog](explanation/provider-catalog.md)
 - [总览](explanation/overview.md)
+- [事件消费模型](explanation/event-consumption.md)
 - [Feature 模型](explanation/feature-model.md)
 - [源码地图](reference/source-map.md)
 - [HTTP](getting-started.md)
@@ -40,7 +41,7 @@
 
 - [Unit 树](explanation/unit-tree.md) · [setup 边界](reference/setup-context.md) · [命名](reference/naming.md)
 - [createUnit](reference/create-unit.md) · [mountRoot](reference/mount-root.md) · [Handle](reference/node-handle.md)
-- [provide](reference/provide.md) · [inject](reference/inject.md) · [useExpose](reference/use-expose.md)
+- [provide](reference/provide.md) · [useInject](reference/inject.md) · [useExpose](reference/use-expose.md)
 - [useFire](reference/use-fire.md) · [useOn](reference/use-on.md) · [useChildren](reference/use-children.md)
 - [protocol](reference/protocol.md) · [openStore](reference/open-store.md)
 - [drivers](reference/drivers.md) · [blobs](reference/blobs.md) · [domain](reference/domain.md)

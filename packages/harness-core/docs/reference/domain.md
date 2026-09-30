@@ -25,11 +25,11 @@
 
 | 事件 | reduce |
 |---|---|
-| `agent.opened` / `agent.switched` | 登记 branch（switched 保留 features/source） |
-| `agent.closed` | 保留 roster 条目 |
-| `session.meta_updated` | 覆盖 `sessionMeta` |
+| `agent.created` / `agent.switched` | 登记 branch（switched 保留 features/source；旧 journal 的 `agent.opened` 记录按 `agent.created` 折叠） |
+| `session.created` | 创建登记（`from?` 标记 fork 来源），不折叠进状态 |
+| `session.meta_updated` | 浅合并进 `sessionMeta` |
 
-catalog（title / workspaceId）在 `SessionSpace`，旁路 `meta.json`。活 session 的同一份记录也会 `dispatch` 进 session journal。
+catalog（title / metadata）在 `SessionSpace`，旁路 `meta.json`，patch 逐字段浅合并（metadata 本身也浅合并）。活 session 的同一份记录也会 `dispatch` 进 session journal；main agent `turn.ended` 时 SessionUnit 再往同一事件通道落 `{ lastTurn }`（patch 语义，与 catalog 字段浅合并）。session 与 workspace 的绑定不是内置字段：`workspaceId` 是 catalog metadata 里的一个 key，归 workspaces Feature 所有（见 `features/workspaces/session.ts`）。
 
 ## Feature 投影
 

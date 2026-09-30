@@ -7,19 +7,16 @@ import {
   type ContentPart,
   type HistoryMessage,
   type OpenSessionInput,
+  type SessionHandle,
   type SessionRecord,
   type ToolMeta,
 } from '@moonshot-ai/agent-core';
 
-import {
-  SessionTitleRef,
-  type SessionTitleFace,
-  type SessionTitleSource,
-} from '#/features/kimi/sessionTitle/index';
+import { sessionWorkspaceId, withSessionWorkspace } from '#/features/workspaces/index';
 
 import { useHttpRoute } from '../feature';
 import { useSessionAction, useSessionActionRoutes } from '../route/session-action';
-import { ErrorCode, param, readAgentId, requestId, sendErr, sendFacadeErr, sendOk, tryResolve } from '../route/http';
+import { ErrorCode, param, readAgentId, requestId, sendErr, sendFacadeErr, sendOk } from '../route/http';
 import { sessionStatusView } from '../route-features/status';
 
 export interface SessionView {
@@ -29,6 +26,7 @@ export interface SessionView {
   readonly metadata?: Record<string, unknown>;
   readonly archived?: boolean;
   readonly archived_at?: string;
+  readonly last_turn_reason?: 'completed' | 'cancelled' | 'failed';
   readonly agent_ids: string[];
 }
 
@@ -41,7 +39,7 @@ export function useSessionRoutes(prefix: string): void {
       const app = useApp();
       const space = app.space;
       sendOk(request, response, {
-        items: (await space.list()).map((record) => sessionView(record, app.get(record.id)?.list() ?? [])),
+        items: (await space.list()).map((record) => sessionView(record, app.get(record.id))),
         has_more: false,
       });
     },
@@ -80,54 +78,7 @@ export function useSessionRoutes(prefix: string): void {
         sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`, 404);
         return;
       }
-      sendOk(request, response, sessionView(record, app.get(record.id)?.list() ?? []));
-    },
-  });
-
-  useHttpRoute({
-    id: 'sessions.titleGenerate',
-    method: 'POST',
-    path: `${prefix}/sessions/:session_id/title/generate`,
-    handler: async (request, response) => {
-      const sessionId = param(request, 'session_id');
-      if (sessionId === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required', 400);
-        return;
-      }
-      const input = readTitleGenerateInput(request.body);
-      if (input === undefined) {
-        sendErr(
-          request,
-          response,
-          ErrorCode.VALIDATION_FAILED,
-          'source must be one of user_prompts, first_turn, digest',
-          400,
-        );
-        return;
-      }
-      const session = useApp().get(sessionId);
-      if (session === undefined) {
-        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`, 404);
-        return;
-      }
-      let facade: SessionTitleFace | undefined;
-      try {
-        facade = session.resolve(SessionTitleRef);
-      } catch {
-        facade = undefined;
-      }
-      const title = facade === undefined ? undefined : await facade.generateTitle(input);
-      if (title === undefined) {
-        sendErr(
-          request,
-          response,
-          ErrorCode.SESSION_TITLE_UNAVAILABLE,
-          'session title generation is unavailable (no managed OAuth login, no prompt yet, or the backend request failed)',
-          409,
-        );
-        return;
-      }
-      sendOk(request, response, { title });
+      sendOk(request, response, sessionView(record, app.get(record.id)));
     },
   });
 
@@ -149,7 +100,7 @@ export function useSessionRoutes(prefix: string): void {
         sendOk(
           request,
           response,
-          sessionView(await app.updateSession(sessionId, readSessionInput(request.body)), app.get(sessionId)?.list() ?? []),
+          sessionView(await app.updateSession(sessionId, readSessionInput(request.body)), app.get(sessionId)),
         );
       } catch (error) {
         if (sendFacadeErr(request, response, error)) return;
@@ -281,7 +232,7 @@ export function useSessionRoutes(prefix: string): void {
       sendOk(
         request,
         response,
-        sessionView(await app.updateSession(sessionId, readSessionInput(request.body)), app.get(sessionId)?.list() ?? []),
+        sessionView(await app.updateSession(sessionId, readSessionInput(request.body)), app.get(sessionId)),
       );
     } catch (error) {
       if (sendFacadeErr(request, response, error)) return;
@@ -303,7 +254,7 @@ export function useSessionRoutes(prefix: string): void {
         sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`, 404);
         return;
       }
-      const undo = tryResolve(agent, UndoRef);
+      const undo = agent.resolve(UndoRef);
       if (undo === undefined) {
         sendErr(
           request,
@@ -370,7 +321,6 @@ function readSessionInput(body: unknown): OpenSessionInput {
   const input: {
     sessionId?: string;
     title?: string;
-    workspaceId?: string;
     metadata?: Record<string, unknown>;
   } = {};
   if (body === null || typeof body !== 'object' || Array.isArray(body)) {
@@ -383,46 +333,27 @@ function readSessionInput(body: unknown): OpenSessionInput {
   if (typeof record['title'] === 'string') {
     input.title = record['title'];
   }
-  if (typeof record['workspace_id'] === 'string' && record['workspace_id'].length > 0) {
-    input.workspaceId = record['workspace_id'];
-  }
   if (record['metadata'] !== null && typeof record['metadata'] === 'object' && !Array.isArray(record['metadata'])) {
     input.metadata = record['metadata'] as Record<string, unknown>;
   }
-  return input;
-}
-
-function readTitleGenerateInput(
-  body: unknown,
-): { force?: boolean; source?: SessionTitleSource } | undefined {
-  if (body === undefined || body === null) return {};
-  if (typeof body !== 'object' || Array.isArray(body)) return undefined;
-  const record = body as { [key: string]: unknown };
-  const input: { force?: boolean; source?: SessionTitleSource } = {};
-  if (record['force'] !== undefined) {
-    if (typeof record['force'] !== 'boolean') return undefined;
-    input.force = record['force'];
-  }
-  if (record['source'] !== undefined) {
-    const source = record['source'];
-    if (source !== 'user_prompts' && source !== 'first_turn' && source !== 'digest') {
-      return undefined;
-    }
-    input.source = source;
+  if (typeof record['workspace_id'] === 'string' && record['workspace_id'].length > 0) {
+    input.metadata = withSessionWorkspace(input.metadata, record['workspace_id']);
   }
   return input;
 }
 
-function sessionView(record: SessionRecord, agentIds: readonly string[]): SessionView {
+function sessionView(record: SessionRecord, live: SessionHandle | undefined): SessionView {
   const archivedAt = record.metadata?.['archived_at'];
+  const workspaceId = sessionWorkspaceId(record);
   return {
     id: record.id,
     ...(record.title !== undefined ? { title: record.title } : {}),
-    ...(record.workspaceId !== undefined ? { workspace_id: record.workspaceId } : {}),
+    ...(workspaceId !== undefined ? { workspace_id: workspaceId } : {}),
     ...(record.metadata !== undefined ? { metadata: record.metadata } : {}),
     archived: record.metadata?.['archived'] === true ? true : undefined,
     archived_at: typeof archivedAt === 'string' ? archivedAt : undefined,
-    agent_ids: [...agentIds],
+    last_turn_reason: live?.status().lastTurnReason,
+    agent_ids: [...(live?.list() ?? [])],
   };
 }
 
