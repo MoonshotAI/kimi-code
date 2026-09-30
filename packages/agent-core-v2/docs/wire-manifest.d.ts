@@ -37,7 +37,7 @@
 //   environment.set_binding            environmentBinding                                    src/agent/environmentBinding/environmentBindingOps.ts
 //   file_history.checkpoint            fileHistory                                           src/features/fileHistory/fileHistoryOps.ts
 //   file_history.tracked               fileHistory                                           src/features/fileHistory/fileHistoryOps.ts
-//   forked                             (none)                                                src/features/goal/goalOps.ts
+//   forked                             (none)                                                src/session/agentLifecycle/forked.ts
 //   full_compaction.begin              fullCompaction                                        src/agent/fullCompaction/compactionOps.ts
 //   full_compaction.cancel             fullCompaction                                        src/agent/fullCompaction/compactionOps.ts
 //   full_compaction.complete           fullCompaction                                        src/agent/fullCompaction/compactionOps.ts
@@ -260,7 +260,7 @@ interface FileHistoryTrackedPayload {
 
 /**
  * states: (none)
- * owner: src/features/goal/goalOps.ts
+ * owner: src/session/agentLifecycle/forked.ts
  */
 interface ForkedPayload {
   _name: 'forked';

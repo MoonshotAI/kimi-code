@@ -11,8 +11,15 @@ export type HistoryMediaSource =
   | { readonly kind: 'base64'; readonly media_type: string; readonly data: string }
   | { readonly kind: 'file' | 'session_media'; readonly file_id: string };
 
+export interface HistoryTextPartMeta {
+  readonly source?: string;
+  readonly contentType?: string;
+  readonly activationId?: string;
+  readonly [key: string]: unknown;
+}
+
 export type HistoryContentPart =
-  | { readonly type: 'text'; readonly text: string }
+  | { readonly type: 'text'; readonly text: string; readonly meta?: HistoryTextPartMeta }
   | { readonly type: 'think'; readonly think: string; readonly hidden?: boolean }
   | { readonly type: 'image' | 'video' | 'audio'; readonly source: HistoryMediaSource; readonly name?: string }
   | {
@@ -23,6 +30,71 @@ export type HistoryContentPart =
       readonly size: number;
     }
   | { readonly type: string };
+
+const USER_PROMPT_SUBMIT_HOOK_SOURCE = 'user prompt submit hook';
+
+export function isUserPromptSubmitHookPart(part: { readonly type: string }): boolean {
+  return (
+    part.type === 'text' &&
+    (part as { readonly meta?: HistoryTextPartMeta }).meta?.source ===
+      USER_PROMPT_SUBMIT_HOOK_SOURCE
+  );
+}
+
+const SKILL_ACTIVATION_PART_SOURCE = 'skill activation';
+
+export function isSkillActivationPart(part: { readonly type: string }): boolean {
+  return (
+    part.type === 'text' &&
+    (part as { readonly meta?: HistoryTextPartMeta }).meta?.source ===
+      SKILL_ACTIVATION_PART_SOURCE
+  );
+}
+
+function annotateBundledSkillParts<T extends { readonly type: string }>(
+  content: readonly T[],
+  bundledActivations: readonly BundledSkillActivation[],
+): T[] {
+  if (bundledActivations.length === 0 || content.some(isSkillActivationPart)) {
+    return [...content];
+  }
+  let index = 0;
+  return content.map((part) => {
+    const activation = bundledActivations[index];
+    if (
+      activation !== undefined &&
+      part.type === 'text' &&
+      (part as { readonly meta?: HistoryTextPartMeta }).meta?.source === undefined
+    ) {
+      index += 1;
+      return {
+        ...part,
+        meta: { source: SKILL_ACTIVATION_PART_SOURCE, activationId: activation.activationId },
+      } as T;
+    }
+    return part;
+  });
+}
+
+export function withoutUserPromptSubmitHookParts<T extends { readonly type: string }>(
+  content: readonly T[],
+): readonly T[] {
+  if (!content.some(isUserPromptSubmitHookPart)) return content;
+  return content.filter((part) => !isUserPromptSubmitHookPart(part));
+}
+
+const USER_PROMPT_HOOK_RESULT_WRAPPER_RE =
+  /^<hook_result hook_event="UserPromptSubmit">\n([\s\S]*)\n<\/hook_result>$/;
+
+function userPromptSubmitHookMarkerPayload(part: { readonly type: string }): {
+  readonly hookEvent: string;
+  readonly content: string;
+} {
+  const text = (part as { readonly text?: unknown }).text;
+  const raw = typeof text === 'string' ? text : '';
+  const match = USER_PROMPT_HOOK_RESULT_WRAPPER_RE.exec(raw);
+  return { hookEvent: 'UserPromptSubmit', content: match?.[1] ?? raw };
+}
 
 export interface HistoryToolCall {
   readonly id: string;
@@ -224,8 +296,29 @@ export function groupMessagesIntoSnapshot(
     items.push(item);
   };
 
+  const extractBundledSkillMarkers = (message: HistoryMessage): HistoryMessage => {
+    const bundled = bundledSkillActivations(message);
+    const annotated = annotateBundledSkillParts(message.content ?? [], bundled);
+    const skillParts = annotated.filter(isSkillActivationPart);
+    bundled.forEach((activation, index) => {
+      const block = skillParts[index];
+      pushMarker('skill', {
+        text: block !== undefined && block.type === 'text' && 'text' in block ? block.text : '',
+        origin: { kind: 'skill_activation', trigger: 'user-slash', ...activation },
+      });
+    });
+    return { ...message, content: annotated.filter((part) => !isSkillActivationPart(part)) };
+  };
+
   let prevNonTaskRole: string | undefined;
-  for (const message of messages) {
+  for (const entry of messages) {
+    const content =
+      entry.content === undefined ? undefined : withoutUserPromptSubmitHookParts(entry.content);
+    const hookParts =
+      entry.content === undefined || content === entry.content
+        ? []
+        : entry.content.filter(isUserPromptSubmitHookPart);
+    const message = content === entry.content ? entry : { ...entry, content };
     if (message.role === 'system') continue;
     const originKind = message.origin?.kind;
     const isTaskOrigin =
@@ -234,6 +327,9 @@ export function groupMessagesIntoSnapshot(
     if (!isTaskOrigin) prevNonTaskRole = message.role;
 
     if (message.role === 'user') {
+      for (const part of hookParts) {
+        pushMarker('hook', userPromptSubmitHookMarkerPayload(part));
+      }
       if (originKind !== undefined && HIDDEN_USER_ORIGINS.has(originKind)) {
         if (opensOwnTurn(message)) {
           const opening =
@@ -263,16 +359,7 @@ export function groupMessagesIntoSnapshot(
       const steeredRemaining = steeredByKind?.get(steerKind) ?? 0;
       if (steeredById || (steeredByKind !== undefined && steeredRemaining > 0)) {
         if (!steeredById) steeredByKind!.set(steerKind, steeredRemaining - 1);
-        const bundled = bundledSkillActivations(message);
-        const parts = message.content ?? [];
-        bundled.forEach((activation, index) => {
-          const block = parts[index];
-          pushMarker('skill', {
-            text: block !== undefined && block.type === 'text' && 'text' in block ? block.text : '',
-            origin: { kind: 'skill_activation', trigger: 'user-slash', ...activation },
-          });
-        });
-        const opening = foldTurnOpeningInput({ ...message, content: parts.slice(bundled.length) });
+        const opening = foldTurnOpeningInput(extractBundledSkillMarkers(message));
         pendingNotificationFrames.push({
           text: opening.text,
           taskId: undefined,
@@ -312,15 +399,7 @@ export function groupMessagesIntoSnapshot(
       }
       const bundled = bundledSkillActivations(message);
       if (bundled.length > 0) {
-        const parts = message.content ?? [];
-        bundled.forEach((activation, index) => {
-          const block = parts[index];
-          pushMarker('skill', {
-            text: block !== undefined && block.type === 'text' && 'text' in block ? block.text : '',
-            origin: { kind: 'skill_activation', trigger: 'user-slash', ...activation },
-          });
-        });
-        const callerMessage = { ...message, content: parts.slice(bundled.length) };
+        const callerMessage = extractBundledSkillMarkers(message);
         const opening = foldTurnOpeningInput(callerMessage);
         startTurn(mapOrigin(message), opening.text, opening.attachmentIds, triggerPromptIdOf(message));
         continue;

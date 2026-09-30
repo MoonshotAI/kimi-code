@@ -855,6 +855,7 @@ describe('Plan service', () => {
 
       expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
         [wire] permission.set_mode         { "agentId": "main", "mode": "yolo", "time": "<time>" }
+        [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "permission": "yolo" }
         [wire] plan_mode.enter             { "agentId": "main", "id": "test-plan", "time": "<time>" }
         [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "planMode": true }
         [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Inspect without mutating files" } ], "createdAt": "<time>" }
@@ -933,6 +934,7 @@ describe('Plan service', () => {
 
       expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
         [wire] permission.set_mode         { "agentId": "main", "mode": "yolo", "time": "<time>" }
+        [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "permission": "yolo" }
         [wire] plan_mode.enter             { "agentId": "main", "id": "test-plan", "time": "<time>" }
         [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "planMode": true }
         [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Remove forbidden.txt" } ], "createdAt": "<time>" }

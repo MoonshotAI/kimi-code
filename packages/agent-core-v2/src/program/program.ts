@@ -22,6 +22,8 @@ import type { IWorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/
 import { WorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfigService';
 import type { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 import { WorkspaceTrustService } from '#/workspace/workspaceTrust/workspaceTrustService';
+import type { IWorkspaceTrustDisclosure } from '#/workspace/workspaceTrust/trustDisclosure';
+import { WorkspaceTrustDisclosureService } from '#/workspace/workspaceTrust/trustDisclosureService';
 import type { IExtraAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoader';
 import { ExtraAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoaderService';
 import type { IExplicitAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoader';
@@ -93,6 +95,7 @@ interface ProgramGeneration {
   readonly mcpConfig: IWorkspaceMcpConfigService;
   readonly mcp: IWorkspaceMcpService;
   readonly trust: IWorkspaceTrust;
+  readonly trustDisclosure: IWorkspaceTrustDisclosure;
   readonly skills: IWorkspaceSkillCatalog;
   readonly agentProfiles: IWorkspaceAgentProfileLoader;
   readonly userAgentProfiles: IUserAgentProfileLoader;
@@ -164,8 +167,10 @@ export class Program {
   get mcpConfig(): IWorkspaceMcpConfigService { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).mcpConfig; }
   get mcp(): IWorkspaceMcpService { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).mcp; }
   get trust(): IWorkspaceTrust { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).trust; }
+  get trustDisclosure(): IWorkspaceTrustDisclosure { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).trustDisclosure; }
   get skills(): IWorkspaceSkillCatalog { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).skills; }
   get agentProfiles(): IWorkspaceAgentProfileLoader { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).agentProfiles; }
+  get sessionControllerGeneration(): string { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).id; }
 
   sessionControllerGenerationFor(environmentId: string, cwd?: string): string {
     return this.requireGeneration(environmentId, cwd).id;
@@ -360,6 +365,7 @@ export class Program {
       const userSkills = this.dependencies.userSkills;
       const workspaceSkills = own(new WorkspaceRootSkillSource(targetSkillDiscovery, context, this.dependencies.config, this.dependencies.bootstrap, targetFs, environmentId === LOCAL_ENVIRONMENT_ID));
       const skills = own(new WorkspaceSkillCatalogService(this.dependencies.builtinSkills, userSkills, explicitSkills, extraSkills, workspaceSkills, pluginSkills, state));
+      const trustDisclosure = new WorkspaceTrustDisclosureService(context, targetFs, this.dependencies.bootstrap, this.dependencies.config, localConfig, trust, skills, agentProfiles, this.dependencies.agentProfiles, instructions, this.dependencies.log);
       return {
         id: environment.identity.generation,
         profileContextKey,
@@ -371,6 +377,7 @@ export class Program {
         mcpConfig,
         mcp,
         trust,
+        trustDisclosure,
         skills,
         agentProfiles,
         userAgentProfiles,

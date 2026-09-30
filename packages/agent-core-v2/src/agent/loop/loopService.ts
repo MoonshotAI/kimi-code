@@ -84,6 +84,7 @@ import {
   type TurnResult,
 } from './loop';
 import { mergeSteerMessages, stripBundledSkillBlocks } from '#human/agent/origin';
+import { isUserPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 import { createUserEntry, type UserEntry } from '#human/agent/historyEntry';
 import {
   AssistantDelta,
@@ -590,6 +591,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const ctx: PromptSubmitContext = {
       promptMessage,
       isSteer: false,
+      hookParts: [],
       block: false,
     };
     await this.hooks.onBeforeSubmitPrompt.run(ctx);
@@ -599,7 +601,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       block: false,
       message: {
         role: 'user',
-        content: gateImageFormatParts(promptMessage.content, this.profile.getModelProviderType()),
+        content: [
+          ...ctx.hookParts,
+          ...gateImageFormatParts(promptMessage.content, this.profile.getModelProviderType()),
+        ],
       },
     };
   }
@@ -1207,7 +1212,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         promptId: prompt.promptId,
         origin: prompt.origin,
         prompt: isDisplayablePromptOrigin(prompt.origin)
-          ? turnPromptText(prompt.message.content, prompt.origin)
+          ? turnPromptText(
+              prompt.message.content.filter((part) => !isUserPromptSubmitHookPart(part)),
+              prompt.origin,
+            )
           : undefined,
         promptAttachments: turnPromptAttachments(prompt.message.content, prompt.origin),
       }),

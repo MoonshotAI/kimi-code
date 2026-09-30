@@ -397,6 +397,21 @@ describe("replay adapter (renders the public SDK resume state for the Webview)",
         }),
       ),
       record(message("user", [{ type: "text", text: "Visible prompt" }], { origin: { kind: "user" } }), 2),
+      record(
+        message(
+          "user",
+          [
+            {
+              type: "text",
+              text: '<hook_result hook_event="UserPromptSubmit">\nmerged hook note\n</hook_result>',
+              meta: { contentType: "text/xml", source: "user prompt submit hook" },
+            } as ContentPart,
+            { type: "text", text: "Merged prompt" },
+          ],
+          { origin: { kind: "user" } },
+        ),
+        3,
+      ),
     ]);
 
     expect(events.filter((event) => event.type === "TurnBegin")).toEqual([
@@ -405,7 +420,25 @@ describe("replay adapter (renders the public SDK resume state for the Webview)",
         payload: { user_input: [{ type: "text", text: "Visible prompt" }] },
         _sessionId: "session-1",
       },
+      {
+        type: "TurnBegin",
+        payload: { user_input: [{ type: "text", text: "Merged prompt" }] },
+        _sessionId: "session-1",
+      },
     ]);
+    const hookIndex = events.findIndex(
+      (event) => event.type === "ContentPart" && JSON.stringify(event).includes("merged hook note"),
+    );
+    expect(events[hookIndex - 1]).toEqual({
+      type: "StepBegin",
+      payload: { n: 1 },
+      _sessionId: "session-1",
+    });
+    expect(events[hookIndex]).toEqual({
+      type: "ContentPart",
+      payload: { type: "text", text: "merged hook note" },
+      _sessionId: "session-1",
+    });
   });
 
   it("restores a user-invoked skill as its original slash command", () => {
