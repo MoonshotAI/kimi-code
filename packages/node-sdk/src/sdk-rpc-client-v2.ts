@@ -1366,9 +1366,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       throw new Error('Session creation events are unavailable');
     }
     const sessionId = input.id ?? `session_${randomUUID()}`;
+    let initialization: Promise<void> | undefined;
     const registration = manager.onDidCreateSession((event) => {
       if (event.sessionId !== sessionId) return;
-      event.waitUntil((async () => {
+      initialization = (async () => {
         // Wired before the optional main-agent materialization so a profile-bind
         // warning (oversized AGENTS.md) reaches the listeners like v1's create.
         this.wireSession(event.handle);
@@ -1385,7 +1386,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
             agent.accessor.get(IAgentPermissionModeService).setMode(input.permission);
           }
         }
-      })());
+      })();
+      event.waitUntil(initialization.catch(() => {}));
     });
     try {
       const handle = await manager.create({
@@ -1393,6 +1395,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         workDir,
         additionalDirs: input.additionalDirs,
       });
+      await initialization;
       if (input.metadata !== undefined) {
         await this.klient.session(handle.id).update({ custom: { ...input.metadata } });
       }

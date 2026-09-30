@@ -2281,6 +2281,24 @@ describe('SDKRpcClientV2 engine telemetry', () => {
     },
   );
 
+  it.each([
+    { model: 'missing-model' },
+    { thinking: 'on' },
+    { permission: 'yolo' },
+  ] as const)('rejects failed initial SDK configuration %j', async (options) => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-tel-invalid-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-tel-invalid-work-'));
+    tempDirs.push(homeDir, workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await expect(client.createSession({ workDir, ...options })).rejects.toThrow();
+      const session = await client.createSession({ workDir });
+      expect(session.id).toBeTruthy();
+    } finally {
+      await client.close();
+    }
+  });
+
   it('keeps forwarding the engine session_started to a direct SDKRpcClientV2 consumer', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-tel-direct-'));
     tempDirs.push(homeDir);
