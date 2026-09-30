@@ -591,7 +591,7 @@ Every endpoint that returns a session uses this wire shape. The live facts (`bus
 | `last_turn_reason` | string | Main agent's latest turn outcome: `completed` / `cancelled` / `failed` |
 | `last_prompt` | string | Most recent user prompt text, when present |
 | `metadata` | object | Custom metadata; always carries `cwd` (the session's working directory) |
-| `agent_config` | object | Projected as `{ model }`; `model` is `""` in most responses and only filled with the live model by `GET /api/v1/sessions/{session_id}/snapshot` |
+| `agent_config` | object | Projected as `{ model }`; creation with an explicit model returns that model, and live sessions expose the main agent's current model; an empty or unloaded session can return `""` |
 | `usage` | object | Token rollup `{ input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, context_tokens, context_limit?, total_cost_usd?, turn_count? }`; all zeros outside the snapshot endpoint |
 | `permission_rules` | array | Session permission rules; currently always `[]` |
 | `message_count` | integer | Message count; currently always `0` |
@@ -606,9 +606,9 @@ Creates a session and returns it. The target directory comes from `workspace_id`
 | `workspace_id` | body | string | **Required** when `metadata.cwd` is absent. Registered workspace id; the session is created at that workspace's root |
 | `metadata` | body | object | Custom metadata. `metadata.cwd` is the working directory and is **required** when `workspace_id` is absent; with both given, it must equal the workspace root |
 | `title` | body | string | Initial title (at least 1 character); the session is untitled otherwise |
-| `agent_config` | body | object | Accepted by the schema but currently not applied — set the model and modes through `POST /api/v1/sessions/{session_id}/profile` |
+| `agent_config` | body | object | A non-empty `model` binds the main agent before creation completes; other fields are not applied here — set modes through `POST /api/v1/sessions/{session_id}/profile` |
 
-On success, `data` is [the session object](#the-session-object) of the new session.
+On success, `data` is [the session object](#the-session-object) of the new session. Omitting `model` or passing `""` keeps empty-session creation available without a configured model. A non-empty model is validated during creation; an unknown model fails the request.
 
 - `40001`: neither `workspace_id` nor `metadata.cwd` given, or `metadata.cwd` does not match the workspace root (`details` lists the field)
 - `40409`: the working directory does not exist or is not a directory
@@ -873,7 +873,7 @@ Exports the session together with diagnostic logs as a zip attachment (`kimi-ses
 
 #### `GET /api/v1/sessions/{session_id}/snapshot`
 
-Assembles an atomic snapshot for rebuilding a client after a resync: the session, recent messages, the in-flight turn, live subagents, and pending interactions, all stamped with the `as_of_seq` watermark and `epoch` used to resubscribe — see [Reconnect and recovery](#reconnect-and-recovery). Unlike the plain session endpoints, the embedded session carries the live `agent_config.model` and real `usage` totals.
+Assembles an atomic snapshot for rebuilding a client after a resync: the session, recent messages, the in-flight turn, live subagents, and pending interactions, all stamped with the `as_of_seq` watermark and `epoch` used to resubscribe — see [Reconnect and recovery](#reconnect-and-recovery). The embedded session carries the live `agent_config.model` and real `usage` totals.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |

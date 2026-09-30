@@ -31,6 +31,7 @@ import {
   type Scope,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
+import { DEFAULT_AGENT_PROFILE_NAME } from '@moonshot-ai/agent-core-v2/app/agentProfileCatalog/agentProfileCatalog';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
 import { ErrorCode } from '../protocol/error-codes';
 import { pageResponseSchema } from '../protocol/pagination';
@@ -239,9 +240,11 @@ export function registerSessionsRoutes(
 
       try {
         const touched = await registry.createOrTouch(workDir);
+        const model = body.agent_config?.model || undefined;
         const handle = await core.accessor.get(ISessionManager).create({
           workspaceId: touched.id,
           workDir,
+          mainAgentBinding: model === undefined ? undefined : { profile: DEFAULT_AGENT_PROFILE_NAME, model },
         });
         if (typeof body.title === 'string') {
           await handle.accessor.get(ISessionMetadata).setTitle(body.title);
@@ -250,7 +253,7 @@ export function registerSessionsRoutes(
         const session = toWireSession(
           { ...meta, workspaceId: touched.id },
           touched.root,
-          { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
+          { busy: false, mainTurnActive: false, pendingInteraction: 'none', model: readLiveSessionModel(handle) },
         );
         core.accessor.get(IEventService).publish(
           new SessionCreated({ payload: { agentId: 'main', sessionId: session.id, session } }),

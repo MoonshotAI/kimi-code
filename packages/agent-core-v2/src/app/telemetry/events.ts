@@ -501,6 +501,7 @@ export interface VideoUploadEvent {
 export interface SessionStartedEvent {
   resumed: boolean;
   experimental_flags: string;
+  model_source: 'agent' | 'default' | 'unknown';
 }
 
 export interface SessionLoadFailedEvent {
@@ -1215,6 +1216,7 @@ export const telemetryEventDefinitions = {
     comment: 'A session becomes active (created, forked, or resumed).',
     properties: {
       resumed: 'Whether the session was resumed from disk',
+      model_source: 'Origin of the startup model snapshot: bound main agent, current default, or unknown',
       experimental_flags:
         'Sorted comma-separated ids of enabled experimental flags, empty when none are enabled',
     },

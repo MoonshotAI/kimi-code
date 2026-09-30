@@ -591,7 +591,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `last_turn_reason` | string | main agent 最近一次轮次的结果：`completed` / `cancelled` / `failed` |
 | `last_prompt` | string | 最近一条用户提示词文本（如有） |
 | `metadata` | object | 自定义元数据；始终携带 `cwd`（会话的工作目录） |
-| `agent_config` | object | 投影为 `{ model }`；`model` 在大多数响应中为 `""`，仅由 `GET /api/v1/sessions/{session_id}/snapshot` 填入实时模型 |
+| `agent_config` | object | 投影为 `{ model }`；创建时显式指定模型会返回该模型，活跃会话返回 main agent 的当前模型；空会话或未加载的会话可能返回 `""` |
 | `usage` | object | token 汇总 `{ input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, context_tokens, context_limit?, total_cost_usd?, turn_count? }`；在 snapshot 端点之外全为零 |
 | `permission_rules` | array | 会话权限规则；当前始终为 `[]` |
 | `message_count` | integer | 消息数；当前始终为 `0` |
@@ -606,9 +606,9 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `workspace_id` | body | string | 未提供 `metadata.cwd` 时**必填**。已注册的工作区 id；会话创建于该工作区的根目录 |
 | `metadata` | body | object | 自定义元数据。`metadata.cwd` 为工作目录，未提供 `workspace_id` 时**必填**；两者同时提供时必须等于工作区根目录 |
 | `title` | body | string | 初始标题（至少 1 个字符）；否则会话无标题 |
-| `agent_config` | body | object | schema 接受该字段但当前不会应用——模型与各模式请通过 `POST /api/v1/sessions/{session_id}/profile` 设置 |
+| `agent_config` | body | object | 非空的 `model` 会在创建完成前绑定到 main agent；此处不应用其他字段，各模式请通过 `POST /api/v1/sessions/{session_id}/profile` 设置 |
 
-成功时，`data` 为新会话的 [session 对象](#session-对象)。
+成功时，`data` 为新会话的 [session 对象](#session-对象)。省略 `model` 或传入 `""` 时，仍可在未配置模型的情况下创建空会话。非空模型会在创建时校验；指定不存在的模型会导致请求失败。
 
 - `40001`：`workspace_id` 与 `metadata.cwd` 都未提供，或 `metadata.cwd` 与工作区根目录不一致（`details` 会列出该字段）
 - `40409`：工作目录不存在或不是目录
@@ -873,7 +873,7 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 
 #### `GET /api/v1/sessions/{session_id}/snapshot`
 
-为重新同步后重建客户端组装一份原子快照：会话、最近的消息、进行中的轮次、存活的 subagent 以及待处理交互，全部盖上 `as_of_seq` 水位与用于重新订阅的 `epoch`——见 [断线恢复](#断线恢复)。与普通的会话端点不同，内嵌的会话携带实时的 `agent_config.model` 与真实的 `usage` 总计。
+为重新同步后重建客户端组装一份原子快照：会话、最近的消息、进行中的轮次、存活的 subagent 以及待处理交互，全部盖上 `as_of_seq` 水位与用于重新订阅的 `epoch`——见 [断线恢复](#断线恢复)。内嵌的会话携带实时的 `agent_config.model` 与真实的 `usage` 总计。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
