@@ -5,7 +5,7 @@
  * shrink distribution with no minSize, so a tall transcript crushed it and
  * the editor's bottom border row was clipped off screen.
  */
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { Spacer, type Terminal, TuiAltScreen } from '@moonshot-ai/pi-tui';
 import { VirtualTerminal } from '../../../../packages/pi-tui/test/virtual-terminal';
@@ -57,7 +57,7 @@ function fakeInitialAppState(): AppState {
 
 function stripAnsi(s: string): string {
   // eslint-disable-next-line no-control-regex
-  return s.replace(/\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07/g, '');
+  return s.replaceAll(/\x1B\[[0-9;?]*[a-zA-Z]|\x1B\][^\x07]*\x07/g, '');
 }
 
 const LONG_MARKDOWN = Array.from(
@@ -70,12 +70,10 @@ async function mountFullscreen(): Promise<{
   vt: VirtualTerminal;
 }> {
   const opts: KimiTUIOptions = {
-    initialAppState: fakeInitialAppState(),
+    initialAppState: { ...fakeInitialAppState(), tuiMode: 'fullscreen' },
     startup: { continueLast: false, yolo: false, auto: false, plan: false },
   };
-  vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '1');
   const state = createTUIState(opts);
-  vi.unstubAllEnvs();
   const vt = new VirtualTerminal(WIDTH, HEIGHT);
   (state.ui as { terminal: Terminal }).terminal = vt;
 
@@ -154,15 +152,15 @@ describe('fullscreen layout', () => {
     // Zones anchor every user/assistant message, so the nearest previous zone
     // below the fold is the current turn's assistant message, then the user
     // message that started the turn.
-    vt.sendInput('\x1b[1;6A'); // ctrl+shift+up = previous prompt
+    vt.sendInput('\x1B[1;6A'); // ctrl+shift+up = previous prompt
     await vt.waitForRender();
     expect(topRows()[1]).toContain('回答二');
 
-    vt.sendInput('\x1b[1;6A');
+    vt.sendInput('\x1B[1;6A');
     await vt.waitForRender();
     expect(topRows()[1]).toContain('第二轮提问');
 
-    vt.sendInput('\x1b[1;6B'); // ctrl+shift+down = next prompt
+    vt.sendInput('\x1B[1;6B'); // ctrl+shift+down = next prompt
     await vt.waitForRender();
     expect(topRows()[1]).toContain('回答二');
 

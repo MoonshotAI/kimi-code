@@ -7,9 +7,17 @@ export interface ToolDescription {
 
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
 
+export type TextPartMeta = {
+  source?: string;
+  contentType?: string;
+  activationId?: string;
+  [key: string]: unknown;
+};
+
 export interface TextPart {
   type: 'text';
   text: string;
+  meta?: TextPartMeta;
 }
 
 export interface ThinkPart {

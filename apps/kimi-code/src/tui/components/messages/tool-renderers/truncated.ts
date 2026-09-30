@@ -86,7 +86,7 @@ export class TruncatedOutputComponent implements Component {
 
   render(width: number): string[] {
     const contentLines = this.textComponent.render(width);
-    if (!this.expanded) this.truncatedAtLastRender = contentLines.length > this.maxLines;
+    this.truncatedAtLastRender = contentLines.length > this.maxLines;
 
     if (this.expanded || contentLines.length <= this.maxLines) {
       return contentLines;

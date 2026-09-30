@@ -1,9 +1,10 @@
+import type { AgentRef } from '../model/frame';
 import type { TranscriptInteraction } from '../model/interaction';
 import type { TranscriptItem, TranscriptMarker, TranscriptTaskRef } from '../model/item';
 import type { GoalMeta, GoalStatus, TranscriptMeta } from '../model/meta';
 import type { TranscriptTask } from '../model/task';
 import type { TodoItem, TranscriptTodo } from '../model/todo';
-import type { TranscriptTurn } from '../model/turn';
+import type { StepUsage, TranscriptTurn } from '../model/turn';
 import type { AgentTranscriptSnapshot } from '../ops/operation';
 
 export interface HistoryWireRecord {
@@ -196,6 +197,28 @@ function recordTimeIso(record: HistoryWireRecord): string | undefined {
   return undefined;
 }
 
+function readFiniteNumber(raw: unknown): number | undefined {
+  return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
+}
+
+function readStepUsage(raw: unknown): StepUsage | undefined {
+  if (raw === null || typeof raw !== 'object') return undefined;
+  const usage = raw as Record<string, unknown>;
+  const inputOther = readFiniteNumber(usage['inputOther']);
+  const output = readFiniteNumber(usage['output']);
+  const inputCacheRead = readFiniteNumber(usage['inputCacheRead']);
+  const inputCacheCreation = readFiniteNumber(usage['inputCacheCreation']);
+  if (
+    inputOther === undefined ||
+    output === undefined ||
+    inputCacheRead === undefined ||
+    inputCacheCreation === undefined
+  ) {
+    return undefined;
+  }
+  return { inputOther, output, inputCacheRead, inputCacheCreation };
+}
+
 function epochMsToIso(value: unknown): string | undefined {
   return typeof value === 'number' && Number.isFinite(value)
     ? new Date(value).toISOString()
@@ -223,7 +246,7 @@ function readTodoItems(raw: unknown): TodoItem[] {
 export function foldWireRecordFacts(
   records: Iterable<HistoryWireRecord>,
   base: AgentTranscriptSnapshot,
-  options?: { readonly resolvePlanRevisionKey?: (key: string) => string },
+  options?: { readonly agentId?: string; readonly resolvePlanRevisionKey?: (key: string) => string },
 ): AgentTranscriptSnapshot {
   const tasks = new Map<string, TranscriptTask>();
   const interactions = new Map<string, TranscriptInteraction>();
@@ -276,13 +299,33 @@ export function foldWireRecordFacts(
     appended.push(item);
   };
 
+  const subagentTasks = new Map<string, string>();
+  const subagentRefs = new Map<string, Map<string, { ref: AgentRef; index?: number }>>();
+
+  const adoptSpawnPlaceholder = (agentId: string, taskId: string): TranscriptTask | undefined => {
+    subagentTasks.set(agentId, taskId);
+    if (agentId === taskId) return undefined;
+    const placeholder = tasks.get(agentId);
+    if (placeholder === undefined || placeholder.kind !== 'subagent') return undefined;
+    tasks.delete(agentId);
+    return placeholder;
+  };
+
   const upsertTask = (record: HistoryWireRecord): void => {
     const info = record['info'] as TaskInfoPayload | undefined;
     if (info === undefined || typeof info.taskId !== 'string') return;
     const taskId = info.taskId;
-    const prev = tasks.get(taskId);
+    const adopted =
+      record.type === 'task.started' &&
+      info.kind === 'agent' &&
+      typeof info.agentId === 'string' &&
+      info.agentId.length > 0
+        ? adoptSpawnPlaceholder(info.agentId, taskId)
+        : undefined;
+    const prev = tasks.get(taskId) ?? adopted;
     const status = info.status;
     const task: TranscriptTask = {
+      ...prev,
       taskId,
       kind: mapTaskKind(info.kind),
       state:
@@ -317,6 +360,57 @@ export function foldWireRecordFacts(
 
   for (const record of records) {
     switch (record.type) {
+      case 'subagent.spawned': {
+        if (options?.agentId !== undefined && record['parentAgentId'] !== options.agentId) break;
+        const agentId = record['subagentId'];
+        const toolCallId = record['parentToolCallId'];
+        if (typeof agentId !== 'string' || typeof toolCallId !== 'string') break;
+        const taskId = typeof record['taskId'] === 'string' ? record['taskId'] : agentId;
+        subagentTasks.set(agentId, taskId);
+        const index = typeof record['swarmIndex'] === 'number' ? record['swarmIndex'] : undefined;
+        const refs = subagentRefs.get(toolCallId) ?? new Map();
+        refs.set(agentId, { ref: { agentId, role: index === undefined ? 'child' : 'member' }, index });
+        subagentRefs.set(toolCallId, refs);
+        tasks.set(taskId, {
+          taskId,
+          kind: 'subagent',
+          state: 'running',
+          detached: record['runInBackground'] === true,
+          agentId,
+          description: typeof record['description'] === 'string' ? record['description'] : undefined,
+          model: typeof record['model'] === 'string' ? record['model'] : undefined,
+          thinkingEffort: typeof record['thinkingEffort'] === 'string' ? record['thinkingEffort'] : undefined,
+          startedAt: recordTimeIso(record),
+          outputTail: '',
+        });
+        break;
+      }
+      case 'subagent.started':
+      case 'subagent.completed':
+      case 'subagent.failed':
+      case 'subagent.cancelled': {
+        const agentId = record['subagentId'];
+        if (typeof agentId !== 'string') break;
+        const taskId = subagentTasks.get(agentId) ?? agentId;
+        const state = record.type === 'subagent.completed' ? 'completed'
+          : record.type === 'subagent.failed' ? 'failed'
+            : record.type === 'subagent.cancelled' ? 'killed' : 'running';
+        const terminalise = (key: string): void => {
+          const task = tasks.get(key);
+          if (task === undefined) return;
+          tasks.set(key, {
+            ...task,
+            state,
+            endedAt: state === 'running' ? undefined : recordTimeIso(record),
+            resultSummary: typeof record['resultSummary'] === 'string' ? record['resultSummary'] : task.resultSummary,
+            usage: readStepUsage(record['usage']) ?? task.usage,
+            error: typeof record['error'] === 'string' ? record['error'] : task.error,
+          });
+        };
+        terminalise(taskId);
+        if (taskId !== agentId) terminalise(agentId);
+        break;
+      }
       case 'tools.update_store': {
         const payload = record as UpdateStorePayload;
         if (payload.key !== 'todo') break;
@@ -747,9 +841,33 @@ export function foldWireRecordFacts(
       : base.meta.modes,
   };
 
+  let restoredItems = appended.length > 0 ? [...items, ...appended] : items;
+  if (subagentRefs.size > 0) {
+    restoredItems = restoredItems.map((item) => {
+      if (item.kind !== 'turn') return item;
+      return {
+        ...item,
+        steps: item.steps.map((step) => ({
+          ...step,
+          frames: step.frames.map((frame) => {
+            if (frame.kind !== 'tool') return frame;
+            const refs = subagentRefs.get(frame.toolCallId);
+            if (refs === undefined) return frame;
+            return {
+              ...frame,
+              agentRefs: [...refs.values()]
+                .toSorted((a, b) => (a.index ?? 0) - (b.index ?? 0))
+                .map(({ ref }) => ref),
+            };
+          }),
+        })),
+      };
+    });
+  }
+
   return {
     ...base,
-    items: appended.length > 0 ? [...items, ...appended] : items,
+    items: restoredItems,
     tasks: [...tasks.values()],
     interactions: [...interactions.values()],
     todos: todo !== undefined ? [todo] : base.todos,

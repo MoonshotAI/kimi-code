@@ -157,7 +157,6 @@ export class TelemetryClient {
     const timer = setTimeout(() => {
       controller.abort();
     }, options.timeoutMs);
-    timer.unref?.();
     try {
       await sink.flush(controller.signal);
     } catch {

@@ -35,6 +35,8 @@ import {
   type ISessionScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { annotateBundledSkillParts, isSkillActivationPart } from '@moonshot-ai/agent-core-v2/human/agent/origin';
+import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
 import { ErrorCode } from '../protocol/error-codes';
 import { projectPromptContentParts } from '../services/messages/messageProjection';
 import {
@@ -500,8 +502,10 @@ export function projectPromptSnapshot(prompt: {
     ? 'running'
     : prompt.state === 'blocked' ? 'blocked' : 'queued';
   const origin = prompt.message.origin;
-  const bundled = origin?.kind === 'user' ? (origin.skillActivations?.length ?? 0) : 0;
-  const content = bundled === 0 ? prompt.message.content : prompt.message.content.slice(bundled);
+  const bundled = origin?.kind === 'user' ? (origin.skillActivations ?? []) : [];
+  const content = annotateBundledSkillParts(prompt.message.content, bundled).filter(
+    (part) => !isSkillActivationPart(part) && !isUserPromptSubmitHookPart(part),
+  );
   return {
     prompt_id: prompt.id,
     user_message_id: prompt.userMessageId,

@@ -120,6 +120,18 @@ export class CompactionComponent extends Container {
     this.ui?.requestRender();
   }
 
+  hasHiddenContent(): boolean {
+    return this.summary !== undefined && this.summary.length > 0;
+  }
+
+  isExpanded(): boolean {
+    return this.expanded;
+  }
+
+  omitsExpandHint(): boolean {
+    return true;
+  }
+
   private addSummaryChild(): void {
     if (this.summaryText !== undefined || this.summary === undefined || this.summary.length === 0) {
       return;

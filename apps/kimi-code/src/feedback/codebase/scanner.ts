@@ -4,8 +4,6 @@ import { lstat, readdir } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
-import { GIT_CONFIG_ARGS } from '#/utils/git/git-args';
-
 import {
   DEFAULT_MAX_ARCHIVE_SIZE,
   DEFAULT_MAX_FILES,
@@ -48,9 +46,9 @@ export async function scanCodebase(
   const root = resolve(rootInput);
   const limits = resolveLimits(options.limits);
   throwIfAborted(options.signal);
-  const usedGitIgnore = await isInsideGitWorkTree(root, GIT_CONFIG_ARGS);
+  const usedGitIgnore = await isInsideGitWorkTree(root);
   const collected = usedGitIgnore
-    ? await scanWithGit(root, GIT_CONFIG_ARGS, limits, options.signal)
+    ? await scanWithGit(root, limits, options.signal)
     : await scanWithoutFilter(root, limits, options.signal);
   const sortedFiles = collected.files.toSorted((a, b) => a.path.localeCompare(b.path));
 
@@ -71,18 +69,9 @@ function resolveLimits(limits: ScanCodebaseOptions['limits']): ScanCodebaseLimit
   };
 }
 
-async function isInsideGitWorkTree(
-  root: string,
-  configArgs: readonly string[],
-): Promise<boolean> {
+async function isInsideGitWorkTree(root: string): Promise<boolean> {
   try {
-    const { stdout } = await execFileAsync('git', [
-      ...configArgs,
-      '-C',
-      root,
-      'rev-parse',
-      '--is-inside-work-tree',
-    ]);
+    const { stdout } = await execFileAsync('git', ['-C', root, 'rev-parse', '--is-inside-work-tree']);
     return stdout.trim() === 'true';
   } catch {
     return false;
@@ -91,21 +80,12 @@ async function isInsideGitWorkTree(
 
 async function scanWithGit(
   root: string,
-  configArgs: readonly string[],
   limits: ScanCodebaseLimits,
   signal?: AbortSignal,
 ): Promise<CollectedFiles> {
   const { stdout } = await execFileAsync(
     'git',
-    [
-      ...configArgs,
-      '-C',
-      root,
-      'ls-files',
-      '-co',
-      '--exclude-standard',
-      '-z',
-    ],
+    ['-C', root, 'ls-files', '-co', '--exclude-standard', '-z'],
     { encoding: 'buffer', maxBuffer: 1024 * 1024 * 64, signal },
   );
 

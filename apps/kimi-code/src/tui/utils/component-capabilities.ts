@@ -4,12 +4,15 @@ export interface Expandable {
 
 /**
  * An expandable component that can say whether ctrl+o would change what it
- * shows — content it keeps out of its collapsed form. Drives the footer's
- * `ctrl+o expand` / `ctrl+o collapse` hint.
+ * shows — content it keeps out of its collapsed form.
  */
 export interface HidesContent extends Expandable {
   hasHiddenContent(): boolean;
   isExpanded(): boolean;
+}
+
+export interface OmitsExpandHint {
+  omitsExpandHint(): boolean;
 }
 
 export interface Disposable {
@@ -31,6 +34,21 @@ export function hasHiddenContent(obj: unknown): boolean {
     'hasHiddenContent' in obj &&
     typeof (obj as HidesContent).hasHiddenContent === 'function' &&
     (obj as HidesContent).hasHiddenContent()
+  );
+}
+
+export function countedByExpandHint(obj: unknown): boolean {
+  if (omitsExpandHint(obj)) return false;
+  return hasHiddenContent(obj);
+}
+
+function omitsExpandHint(obj: unknown): boolean {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    'omitsExpandHint' in obj &&
+    typeof (obj as OmitsExpandHint).omitsExpandHint === 'function' &&
+    (obj as OmitsExpandHint).omitsExpandHint()
   );
 }
 

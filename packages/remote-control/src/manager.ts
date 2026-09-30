@@ -26,6 +26,8 @@ export interface RemoteControlManagerOptions {
   readonly localServerToken: () => string;
   readonly clientVersion: string;
   readonly relayOrigin?: string;
+  readonly configuredOAuthKey?: () => string | undefined;
+  readonly configuredOAuthHost?: () => string | undefined;
   readonly stderr?: Pick<NodeJS.WriteStream, 'write'>;
 }
 
@@ -53,6 +55,8 @@ function createRemoteControlMachine(
           localServerToken: options.localServerToken,
           clientVersion: options.clientVersion,
           relayOrigin: options.relayOrigin,
+          configuredOAuthKey: options.configuredOAuthKey?.(),
+          configuredOAuthHost: options.configuredOAuthHost?.(),
           stderr: options.stderr,
         });
         onTunnelStarted(handle);
