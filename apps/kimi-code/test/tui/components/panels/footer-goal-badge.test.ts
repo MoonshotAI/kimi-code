@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { FooterComponent } from '#/tui/components/chrome/footer';
-import type { GoalSnapshot } from '@moonshot-ai/kimi-code-sdk';
+import type { GoalSnapshot } from '@moonshot-ai/harness-core';
 import type { AppState } from '#/tui/types';
 
 const ANSI_SGR = /\[[0-9;]*m/g;

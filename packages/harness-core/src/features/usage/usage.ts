@@ -1,8 +1,8 @@
-import { emptyUsage, modelKey, type LlmModel, type TokenUsage } from '@moonshot-ai/agent-core';
+import { emptyUsage, type LlmModelSpec, type TokenUsage } from '@moonshot-ai/agent-core';
 
 export interface UsageRecord {
   usage: Partial<TokenUsage>;
-  model?: LlmModel;
+  model?: LlmModelSpec;
   turnId?: number;
   at: number;
 }
@@ -28,14 +28,15 @@ function addUsage(base: TokenUsage | undefined, usage: Partial<TokenUsage>): Tok
 }
 
 export function accumulateUsage(summary: UsageSummary, record: UsageRecord): UsageSummary {
+  const key = record.model === undefined ? undefined : `${record.model.provider}/${record.model.name}`;
   return {
     total: addUsage(summary.total, record.usage),
     byModel:
-      record.model === undefined
+      key === undefined
         ? summary.byModel
         : {
             ...summary.byModel,
-            [modelKey(record.model)]: addUsage(summary.byModel[modelKey(record.model)], record.usage),
+            [key]: addUsage(summary.byModel[key], record.usage),
           },
     byTurn:
       record.turnId === undefined

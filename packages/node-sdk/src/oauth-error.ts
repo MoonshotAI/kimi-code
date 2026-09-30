@@ -5,23 +5,6 @@ import {
   RetryableRefreshError,
 } from '@moonshot-ai/kimi-code-oauth';
 
-/**
- * Classify an OAuth token-fetch failure into the public {@link KimiError}
- * protocol so callers (turn serialization, SDK clients, ACP) can react on
- * `code` rather than on class identity.
- *
- * Only errors we can positively identify are mapped:
- *  - `OAuthUnauthorizedError` → `auth.login_required` (drive the user through
- *    `/login`).
- *  - `OAuthConnectionError` / `RetryableRefreshError` →
- *    `provider.connection_error` (transient; the user can retry).
- *
- * Anything else returns `undefined` so the caller rethrows it raw and lets it
- * surface as `internal` with the original message preserved. We deliberately do
- * **not** guess a category for unrecognized errors — masking e.g. a storage or
- * lock failure as `auth.login_required` would send the user down the wrong
- * remediation path.
- */
 export function mapOAuthTokenError(error: unknown, providerName: string): KimiError | undefined {
   if (error instanceof OAuthUnauthorizedError) {
     return new KimiError(

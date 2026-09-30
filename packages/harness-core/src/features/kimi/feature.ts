@@ -31,7 +31,7 @@ export function createKimi(props: CreateKimiProps = {}): FeatureSpec {
 }
 
 function kimiAppSlot(): void {
-  useProvider({ provider: kimiProvider });
+  useProvider({ handle: kimiProvider });
   useProviderProtocol({ type: 'kimi', protocols: () => kimiProtocolBindings() });
 }
 

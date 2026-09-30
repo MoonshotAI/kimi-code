@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { UndoRef } from '@moonshot-ai/agent-core';
+
 import { handleUndoCommand } from '#/tui/commands/undo';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import type { TranscriptEntry } from '#/tui/types';
@@ -13,9 +15,22 @@ function entry(partial: Partial<TranscriptEntry> & Pick<TranscriptEntry, 'kind' 
   };
 }
 
-function hostWith(entries: TranscriptEntry[]): SlashCommandHost {
-  return {
-    session: { undoHistory: vi.fn(async () => {}) },
+function hostWith(entries: TranscriptEntry[]): {
+  host: SlashCommandHost;
+  undo: ReturnType<typeof vi.fn>;
+} {
+  const undo = vi.fn(async (_turns: number) => 1);
+  const host = {
+    session: {},
+    mainAgent: () => ({
+      resolve: (token: unknown) => {
+        if (token !== UndoRef) throw new Error('unknown token');
+        return {
+          undo,
+          availability: () => ({ maxTurns: 10, stoppedAtCompaction: false }),
+        };
+      },
+    }),
     state: {
       transcriptEntries: entries,
       transcriptContainer: { children: [], addChild: vi.fn() },
@@ -23,140 +38,79 @@ function hostWith(entries: TranscriptEntry[]): SlashCommandHost {
       appState: { streamingPhase: 'idle' },
     },
     showError: vi.fn(),
+    appendTranscriptEntry: vi.fn(),
   } as unknown as SlashCommandHost;
+  return { host, undo };
 }
 
-describe('/undo with bundled prompts', () => {
-  it('removes the bundle cards with their prompt, keeping a standalone skill card before them', async () => {
+describe('/undo', () => {
+  it('undoes the last prompt through the undo facade and trims the transcript', async () => {
     const entries: TranscriptEntry[] = [
       entry({ kind: 'user', content: 'earlier question' }),
-      entry({
-        kind: 'skill_activation',
-        content: 'Activated skill: review',
-        skillTrigger: 'user-slash',
-      }),
-      entry({ kind: 'user', content: 'prompt one' }),
-      entry({ kind: 'assistant', content: 'answer one' }),
-      entry({
-        kind: 'skill_activation',
-        content: 'Activated skill: security',
-        skillTrigger: 'user-slash',
-        bundledWithPrompt: true,
-      }),
-      entry({ kind: 'user', content: 'prompt two' }),
-      entry({ kind: 'assistant', content: 'answer two' }),
+      entry({ kind: 'assistant', content: 'earlier answer' }),
+      entry({ kind: 'user', content: 'latest question' }),
+      entry({ kind: 'assistant', content: 'latest answer' }),
     ];
-    const host = hostWith(entries);
+    const { host, undo } = hostWith(entries);
 
     await handleUndoCommand(host, '1');
 
-    expect(host.session?.undoHistory).toHaveBeenCalledWith(1);
-    expect(entries.map((item) => item.content)).toEqual([
-      'earlier question',
-      'Activated skill: review',
-      'prompt one',
-      'answer one',
-    ]);
+    expect(undo).toHaveBeenCalledWith(1);
+    expect(entries.map((item) => item.content)).toEqual(['earlier question', 'earlier answer']);
   });
 
-  it('removes bundle cards around an interleaved hook result and keeps the hook result', async () => {
+  it('treats a standalone skill activation as its own undo anchor', async () => {
     const entries: TranscriptEntry[] = [
+      entry({ kind: 'user', content: 'question' }),
+      entry({ kind: 'assistant', content: 'answer' }),
       entry({
         kind: 'skill_activation',
         content: 'Activated skill: review',
         skillTrigger: 'user-slash',
-        bundledWithPrompt: true,
       }),
-      entry({ kind: 'assistant', content: 'hook note', hookResult: true }),
-      entry({ kind: 'user', content: 'bundled prompt' }),
-      entry({ kind: 'assistant', content: 'bundled answer' }),
+      entry({ kind: 'assistant', content: 'skill answer' }),
     ];
-    const host = hostWith(entries);
+    const { host, undo } = hostWith(entries);
 
     await handleUndoCommand(host, '1');
 
-    expect(host.session?.undoHistory).toHaveBeenCalledWith(1);
-    expect(entries.map((item) => item.content)).toEqual(['hook note']);
+    expect(undo).toHaveBeenCalledWith(1);
+    expect(entries.map((item) => item.content)).toEqual(['question', 'answer']);
   });
 
-  it('does not count bundle cards as undo anchors of their own', async () => {
+  it('undoes multiple prompts with /undo N', async () => {
     const entries: TranscriptEntry[] = [
-      entry({ kind: 'user', content: 'prompt one' }),
+      entry({ kind: 'user', content: 'one' }),
       entry({ kind: 'assistant', content: 'answer one' }),
-      entry({
-        kind: 'skill_activation',
-        content: 'Activated skill: review',
-        skillTrigger: 'user-slash',
-        bundledWithPrompt: true,
-      }),
-      entry({ kind: 'user', content: 'prompt two' }),
+      entry({ kind: 'user', content: 'two' }),
       entry({ kind: 'assistant', content: 'answer two' }),
     ];
-    const host = hostWith(entries);
+    const { host, undo } = hostWith(entries);
 
     await handleUndoCommand(host, '2');
 
-    expect(host.session?.undoHistory).toHaveBeenCalledWith(2);
+    expect(undo).toHaveBeenCalledWith(2);
     expect(entries).toHaveLength(0);
   });
-});
 
-describe('/undo todo panel refresh', () => {
-  function hostWithTodos(
-    entries: TranscriptEntry[],
-    session: Record<string, unknown>,
-  ): { host: SlashCommandHost; setTodoList: ReturnType<typeof vi.fn> } {
-    const host = hostWith(entries);
-    const setTodoList = vi.fn();
-    (host as { streamingUI?: unknown }).streamingUI = { setTodoList };
-    (host as { session?: unknown }).session = session;
-    return { host, setTodoList };
-  }
-
-  it('re-pulls the engine todo state after a successful undo', async () => {
-    const entries: TranscriptEntry[] = [
-      entry({ kind: 'user', content: 'question' }),
-      entry({ kind: 'assistant', content: 'answer' }),
-    ];
-    const { host, setTodoList } = hostWithTodos(entries, {
-      undoHistory: vi.fn(async () => {}),
-      getTodos: vi.fn(async () => [{ title: 'kept', status: 'pending' }]),
-    });
+  it('reports a limit instead of calling the facade when there is nothing to undo', async () => {
+    const entries: TranscriptEntry[] = [entry({ kind: 'assistant', content: 'answer only' })];
+    const { host, undo } = hostWith(entries);
 
     await handleUndoCommand(host, '1');
 
-    expect(setTodoList).toHaveBeenCalledWith([{ title: 'kept', status: 'pending' }]);
+    expect(undo).not.toHaveBeenCalled();
+    expect(host.appendTranscriptEntry).toHaveBeenCalled();
   });
 
-  it('keeps the panel as-is when the engine has no todo read surface', async () => {
-    const entries: TranscriptEntry[] = [
-      entry({ kind: 'user', content: 'question' }),
-      entry({ kind: 'assistant', content: 'answer' }),
-    ];
-    const { host, setTodoList } = hostWithTodos(entries, {
-      undoHistory: vi.fn(async () => {}),
-      getTodos: vi.fn(async () => {
-        throw new Error('getTodos is only available on the agent-core-v2 engine.');
-      }),
-    });
+  it('refuses to undo while streaming', async () => {
+    const entries: TranscriptEntry[] = [entry({ kind: 'user', content: 'question' })];
+    const { host, undo } = hostWith(entries);
+    (host.state.appState as { streamingPhase: string }).streamingPhase = 'waiting';
 
     await handleUndoCommand(host, '1');
 
-    expect(setTodoList).not.toHaveBeenCalled();
-  });
-
-  it('hides the panel when the restored todos are all done', async () => {
-    const entries: TranscriptEntry[] = [
-      entry({ kind: 'user', content: 'question' }),
-      entry({ kind: 'assistant', content: 'answer' }),
-    ];
-    const { host, setTodoList } = hostWithTodos(entries, {
-      undoHistory: vi.fn(async () => {}),
-      getTodos: vi.fn(async () => [{ title: 'finished', status: 'done' }]),
-    });
-
-    await handleUndoCommand(host, '1');
-
-    expect(setTodoList).toHaveBeenCalledWith([]);
+    expect(undo).not.toHaveBeenCalled();
+    expect(host.showError).toHaveBeenCalled();
   });
 });

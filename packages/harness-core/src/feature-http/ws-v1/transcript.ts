@@ -1,12 +1,14 @@
-import { parseMediaRefUrl } from '@moonshot-ai/agent-core';
 import type {
   AssistantEntry,
   ContentPart,
   HistoryMessage,
+  MediaSource,
   PromptOrigin,
   ToolCall,
   UserEntry,
 } from '@moonshot-ai/agent-core';
+
+import { parseMediaRefUrl } from '#/features/media/ref';
 
 import type {
   AgentTranscriptSnapshot,
@@ -189,18 +191,35 @@ function attachmentFromPart(
   index: number,
 ): TranscriptAttachment | undefined {
   if (part.type === 'image_url' || part.type === 'video_url' || part.type === 'audio_url') {
-    const target =
-      part.type === 'image_url' ? part.imageUrl : part.type === 'video_url' ? part.videoUrl : part.audioUrl;
-    const name = 'name' in target && typeof target.name === 'string' ? target.name : undefined;
-    const ref = parseMediaRefUrl(target.url);
     return {
       attachmentId: `att_${index + 1}`,
       mediaType: `${part.type.slice(0, part.type.indexOf('_'))}/*`,
-      name,
-      source: ref === undefined ? { kind: 'url', url: target.url } : { kind: 'session_media', fileId: ref },
+      name: part.type === 'audio_url' ? undefined : part.name,
+      source: attachmentSourceOf(part.source),
     };
   }
   return undefined;
+}
+
+function attachmentSourceOf(source: MediaSource): TranscriptAttachment['source'] {
+  switch (source.kind) {
+    case 'store': {
+      const ref = parseMediaRefUrl(source.ref);
+      return ref === undefined
+        ? { kind: 'url', url: source.ref }
+        : { kind: 'session_media', fileId: ref };
+    }
+    case 'url': {
+      const ref = parseMediaRefUrl(source.url);
+      return ref === undefined
+        ? { kind: 'url', url: source.url }
+        : { kind: 'session_media', fileId: ref };
+    }
+    case 'inline':
+      return { kind: 'url', url: `data:${source.mimeType};base64,${source.data}` };
+    case 'file':
+      return { kind: 'file', fileId: source.id };
+  }
 }
 
 function textOfParts(parts: readonly ContentPart[]): string {
@@ -254,28 +273,41 @@ export function projectPromptContent(parts: readonly ContentPart[]): unknown[] {
     if (part.type === 'text') {
       out.push({ type: 'text', text: part.text });
     } else if (part.type === 'image_url') {
-      const ref = parseMediaRefUrl(part.imageUrl.url);
       out.push({
         type: 'image',
-        source:
-          ref === undefined
-            ? { kind: 'url', url: part.imageUrl.url }
-            : { kind: 'session_media', file_id: ref },
-        name: part.imageUrl.name,
+        source: promptMediaSourceOf(part.source),
+        name: part.name,
       });
     } else if (part.type === 'video_url') {
-      const ref = parseMediaRefUrl(part.videoUrl.url);
       out.push({
         type: 'video',
-        source:
-          ref === undefined
-            ? { kind: 'url', url: part.videoUrl.url }
-            : { kind: 'session_media', file_id: ref },
-        name: part.videoUrl.name,
+        source: promptMediaSourceOf(part.source),
+        name: part.name,
       });
     }
   }
   return out;
+}
+
+function promptMediaSourceOf(source: MediaSource): unknown {
+  switch (source.kind) {
+    case 'store': {
+      const ref = parseMediaRefUrl(source.ref);
+      return ref === undefined
+        ? { kind: 'url', url: source.ref }
+        : { kind: 'session_media', file_id: ref };
+    }
+    case 'url': {
+      const ref = parseMediaRefUrl(source.url);
+      return ref === undefined
+        ? { kind: 'url', url: source.url }
+        : { kind: 'session_media', file_id: ref };
+    }
+    case 'inline':
+      return { kind: 'url', url: `data:${source.mimeType};base64,${source.data}` };
+    case 'file':
+      return { kind: 'file', file_id: source.id };
+  }
 }
 
 export interface TurnPageQuery {

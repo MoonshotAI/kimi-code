@@ -6,15 +6,15 @@ import { basename, dirname, join, resolve } from 'node:path';
 import {
   createConfig,
   createFeature,
-  createMemoryMediaStore,
-  createMemoryMediaUploadCache,
+  createMemoryRefStore,
+  createMemoryUploadCache,
   createHarness,
   useAgent,
+  type AgentLlmRequester,
   type AppHandle,
-  type LlmCredentialProvider,
-  type LlmModel,
-  type LlmRequestConfig,
-  type LlmRequester,
+  type LlmEndpoint,
+  type LlmModelSpec,
+  type LlmRequestModel,
 } from '@moonshot-ai/agent-core';
 import {
   acpStdioStreams,
@@ -55,20 +55,20 @@ import { loadKimiCodeDefault } from './kimi-code-config';
 export interface ExampleApp {
   readonly app: AppHandle;
   readonly key: string;
-  readonly model: LlmModel;
+  readonly model: LlmModelSpec;
   readonly dataRoot: string;
-  readonly requester: LlmRequester;
+  readonly requester: AgentLlmRequester;
 }
 
 export function mountExample(options?: { http?: boolean; acp?: boolean }): ExampleApp {
-  const { model, requester, credentialProvider, thinking, key } = loadKimiCodeDefault();
-  const config: LlmRequestConfig = thinking === undefined ? { model } : { model, thinking };
+  const { model, requester, endpoint, thinking, key } = loadKimiCodeDefault();
+  const config: LlmRequestModel = thinking === undefined ? { spec: model } : { spec: model, thinking };
   const dataRoot = resolve(
     process.env['HARNESS_EXAMPLE_DIR'] ?? join(process.cwd(), '.local/harness-example'),
   );
   const home = process.env['KIMI_CODE_HOME'] ?? join(homedir(), '.kimi-code');
   const port = Number(process.env['PORT'] ?? 8787);
-  const mediaStore = createMemoryMediaStore();
+  const mediaStore = createMemoryRefStore();
   const osHost = createNodeOsHost();
   const app = createHarness({
     space: fsSessionSpace(dataRoot),
@@ -80,7 +80,7 @@ export function mountExample(options?: { http?: boolean; acp?: boolean }): Examp
       ...features.map((spec) =>
         spec.featureName === 'permission' ? createPermission({ fs: osHost.fs }) : spec,
       ),
-      bindExampleLlm(config, credentialProvider, requester),
+      bindExampleLlm(config, endpoint, requester),
       createProfiles({ workDir: process.cwd(), host: osHost, home }),
       createSpawn({ host: osHost }),
       createEdit({ workDir: process.cwd(), host: osHost }),
@@ -105,7 +105,7 @@ export function mountExample(options?: { http?: boolean; acp?: boolean }): Examp
       createMedia({
         workDir: process.cwd(),
         store: mediaStore,
-        cache: createMemoryMediaUploadCache(),
+        cache: createMemoryUploadCache(),
         host: createNodeOsHost(),
       }),
       createMcp({
@@ -120,7 +120,7 @@ export function mountExample(options?: { http?: boolean; acp?: boolean }): Examp
         enabled: () => isToolSelectEnabled(model.capability),
       }),
       createCompaction({
-        summarize: createSummarize({ config, requester, credentialProvider }),
+        summarize: createSummarize({ model: config, requester, endpoint }),
         budget: {
           maxContextTokens: () => model.maxContextSize ?? 262_144,
           triggerRatio: 0.85,
@@ -183,15 +183,15 @@ function fsConfigPersist(path: string) {
 }
 
 function bindExampleLlm(
-  config: LlmRequestConfig,
-  credentialProvider: LlmCredentialProvider,
-  requester: LlmRequester,
+  config: LlmRequestModel,
+  endpoint: LlmEndpoint,
+  requester: AgentLlmRequester,
 ) {
   return createFeature('example-llm', {
     agent() {
       const agent = useAgent();
-      agent.setConfig(config);
-      agent.setCredentialProvider(credentialProvider);
+      agent.setModel(config);
+      agent.setEndpoint(endpoint);
       agent.setRequester(requester);
     },
   });

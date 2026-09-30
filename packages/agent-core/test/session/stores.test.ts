@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { createUserEntry, createUserMessage, extractText } from '#/llm/message';
-import { UNKNOWN_CAPABILITY, type LlmModel } from '#/llm/model';
-import type { LlmRequester } from '#/llm/requester/requester';
+import { createUserMessage, extractText } from '#/llm/message';
+import { createUserEntry } from '#/history/message';
+import type { AgentLlmRequester } from '#/agent-machine/llm-actor';
 import { openBlobs } from '#/store/blob';
 import { treeJournal } from '#/store/journal';
 import { MemoryBackend, Trees, type Tree } from '#/store/tree';
@@ -9,18 +9,15 @@ import type { AgentStore } from '#/stores/agent';
 import { openSessionStores, SESSION_LOG_BRANCH, type AgentSwitched, type SessionStores } from '#/stores/session';
 import { mountAgent, type AgentHandle } from '#/app/index';
 
-const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
+import { failureOutcome, fakeRequester, testModel, textOutcome } from '../fake-llm';
 
-function createEchoRequester(): LlmRequester {
-  return {
-    generate: (_config, { messages }, { onEvent }) => {
-      const last = messages.at(-1);
-      const text = last !== undefined && last.role === 'user' ? extractText(last) : '';
-      onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: `echo:${text}` } });
-      onEvent?.({ type: 'llm.done' });
-      return Promise.resolve();
-    },
-  };
+function createEchoRequester(): AgentLlmRequester {
+  return fakeRequester((rest) => {
+    const messages = rest.content?.messages ?? [];
+    const last = messages.at(-1);
+    const text = last !== undefined && last.role === 'user' ? extractText(last) : '';
+    return textOutcome(`echo:${text}`);
+  });
 }
 
 interface TestEnv {
@@ -47,7 +44,7 @@ async function reopen(env: TestEnv, beforeReopen?: () => Promise<void>): Promise
 
 function mountTestAgent(
   store: AgentStore,
-  opts: { agentId: string; branchId?: string; requester?: LlmRequester },
+  opts: { agentId: string; branchId?: string; requester?: AgentLlmRequester },
 ): AgentHandle {
   const handle = mountAgent({
     sessionId: 'sess',
@@ -55,14 +52,14 @@ function mountTestAgent(
     store,
     branchId: opts.branchId,
   });
-  handle.setConfig({ model });
+  handle.setModel(testModel);
   handle.setRequester(opts.requester ?? createEchoRequester());
   return handle;
 }
 
 async function startAgent(
   store: AgentStore,
-  opts: { agentId: string; branchId?: string; requester?: LlmRequester },
+  opts: { agentId: string; branchId?: string; requester?: AgentLlmRequester },
 ): Promise<AgentHandle> {
   const host = mountTestAgent(store, opts);
   await host.ready();
@@ -372,35 +369,28 @@ describe('turn compacting', () => {
     createUserEntry(createUserMessage('seed-summary'), { source: 'compaction', key: 'summary' }),
   ];
 
-  function createOverflowThenEchoRequester(calls: { messages: string[] }[]): LlmRequester {
+  function createOverflowThenEchoRequester(calls: { messages: string[] }[]): AgentLlmRequester {
     let attempt = 0;
-    return {
-      generate: (_config, { messages }, { onEvent }) => {
-        attempt += 1;
-        calls.push({
-          messages: messages.map((message) => extractText(message)),
+    return fakeRequester((rest) => {
+      const messages = rest.content?.messages ?? [];
+      attempt += 1;
+      calls.push({
+        messages: messages.map((message) => extractText(message)),
+      });
+      if (attempt === 1) {
+        return failureOutcome({
+          kind: 'context_overflow',
+          message: 'maximum context length exceeded',
+          statusCode: 400,
+          requestId: null,
+          retryAfterMs: null,
+          headers: null,
         });
-        if (attempt === 1) {
-          onEvent?.({
-            type: 'llm.failed.remote',
-            error: {
-              kind: 'context_overflow',
-              message: 'maximum context length exceeded',
-              statusCode: 400,
-              requestId: null,
-              retryAfterMs: null,
-              headers: null,
-            },
-          });
-          return Promise.resolve();
-        }
-        const last = messages.at(-1);
-        const text = last !== undefined && last.role === 'user' ? extractText(last) : '';
-        onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: `echo:${text}` } });
-        onEvent?.({ type: 'llm.done' });
-        return Promise.resolve();
-      },
-    };
+      }
+      const last = messages.at(-1);
+      const text = last !== undefined && last.role === 'user' ? extractText(last) : '';
+      return textOutcome(`echo:${text}`);
+    });
   }
 
   it('continues in place after a budget decision and keeps journal and memory consistent', async () => {
@@ -427,7 +417,7 @@ describe('turn compacting', () => {
         },
       },
     });
-    actor.setConfig({ model });
+    actor.setModel(testModel);
     actor.setRequester(createEchoRequester());
     actor.on('turn.compaction_requested', (event) => {
       expect(event.reason).toBe('budget');
@@ -468,7 +458,7 @@ describe('turn compacting', () => {
       store: main,
       branchId: env.stores.branch('main'),
     });
-    actor.setConfig({ model });
+    actor.setModel(testModel);
     actor.setRequester(createOverflowThenEchoRequester(calls));
     actor.on('turn.compaction_requested', (event) => {
       expect(event.reason).toBe('overflow');
@@ -505,7 +495,7 @@ describe('turn compacting', () => {
         },
       },
     });
-    actor.setConfig({ model });
+    actor.setModel(testModel);
     actor.setRequester(createEchoRequester());
     actor.on('turn.compaction_requested', () => {
       actor.contextReset({ error: new Error('summary unavailable') });
@@ -533,7 +523,7 @@ describe('turn compacting', () => {
         onBeforeStep: () => (aborted ? undefined : { compact: true as const }),
       },
     });
-    actor2.setConfig({ model });
+    actor2.setModel(testModel);
     actor2.setRequester(createEchoRequester());
     actor2.on('turn.compaction_requested', () => {
       actor2.abort();

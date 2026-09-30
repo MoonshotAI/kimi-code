@@ -10,7 +10,6 @@ import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Event, Session } from "@moonshot-ai/kimi-code-sdk";
 import type * as vscode from "vscode";
 import { Methods } from "../shared/bridge";
 import { BridgeHandler } from "../src/bridge-handler";
@@ -20,6 +19,7 @@ import { FileManager } from "../src/managers/file.manager";
 import { SessionRuntime } from "../src/runtime/session-runtime";
 import { areSameFsPath, isFsPathInsideOrEqual } from "../src/utils/fs-path";
 import { relativeWorkspacePath } from "../src/utils/workspace-path";
+import { createFakeEngineSession } from "./fake-engine-session";
 
 const vscodeHost = vi.hoisted(() => {
   function normalizeUriPath(value: string): string {
@@ -186,42 +186,6 @@ describe("Webview workspace paths (selected-directory containment)", () => {
     expect(files).toEqual([{ path: "src/inside.ts", name: "inside.ts", isDirectory: false }]);
   });
 
-  it("maps engine suggestions without touching the local file search", async () => {
-    const workDir = join(root, "project");
-    await mkdir(workDir);
-    const ctx = createContext(vscodeHost.Uri.file(workDir));
-    const suggestFiles = vi.mocked(ctx.harness.suggestFiles);
-    suggestFiles.mockResolvedValue({
-      items: [
-        { path: "src/app.ts", name: "app.ts", kind: "file", matchPositions: [4, 5, 6] },
-        { path: "src", name: "src", kind: "directory", matchPositions: [] },
-      ],
-      truncated: false,
-    });
-
-    const files = await fileHandlers[Methods.GetProjectFiles]!({ query: "app" }, ctx);
-
-    expect(suggestFiles).toHaveBeenCalledWith(workDir, { query: "app", limit: 20 });
-    expect(vscodeHost.findFiles).not.toHaveBeenCalled();
-    expect(files).toEqual([
-      { path: "src/app.ts", name: "app.ts", isDirectory: false, matchPositions: [4, 5, 6] },
-      { path: "src", name: "src", isDirectory: true, matchPositions: [] },
-    ]);
-  });
-
-  it("degrades to an empty list when engine suggestions fail", async () => {
-    const workDir = join(root, "project");
-    await mkdir(workDir);
-    const ctx = createContext(vscodeHost.Uri.file(workDir));
-    vi.mocked(ctx.harness.suggestFiles).mockRejectedValue(new Error("engine down"));
-
-    const files = await fileHandlers[Methods.GetProjectFiles]!({ query: "app" }, ctx);
-
-    expect(files).toEqual([]);
-    expect(ctx.logError).toHaveBeenCalled();
-    expect(vscodeHost.findFiles).not.toHaveBeenCalled();
-  });
-
   it("refuses to open a symlink whose target lies outside the selected working directory", async () => {
     const workDir = join(root, "project");
     const outside = join(root, "outside.txt");
@@ -236,7 +200,7 @@ describe("Webview workspace paths (selected-directory containment)", () => {
     expect(vscodeHost.executeCommand).not.toHaveBeenCalled();
   });
 
-  it("omits an outside symlink when an SDK Write event requests baseline capture", async () => {
+  it("omits an outside symlink when an engine Write event requests baseline capture", async () => {
     const workDir = join(root, "project");
     const outsideRoot = await mkdtemp(join(tmpdir(), "kimi-vscode-baseline-outside-"));
     extraRoots.push(outsideRoot);
@@ -246,41 +210,39 @@ describe("Webview workspace paths (selected-directory containment)", () => {
     await writeFile(outside, "secret");
     await symlink(outside, linkedFile);
     const bridge = createBridge();
-    let emit!: (event: Event) => void;
-    const session = {
-      id: "session-1",
-      workDir,
-      summary: { id: "session-1", workDir },
-      setApprovalHandler: vi.fn(),
-      setQuestionHandler: vi.fn(),
-      onEvent(listener: (event: Event) => void) {
-        emit = listener;
-        return vi.fn();
-      },
-      close: vi.fn(),
-    } as unknown as Session;
+    const engine = createFakeEngineSession("session-1");
     const runtime = new SessionRuntime({
-      session,
+      session: engine.session,
+      workDir,
       legacyApproval: { yolo: false, afk: false },
       broadcast: vi.fn(),
       captureBaseline: (summary, filePath, webviewIds) => {
         bridge.captureFileBaseline(summary, filePath, webviewIds);
       },
+      updateMetadata: async () => undefined,
+      recreateSession: async () => engine.session,
       log: vi.fn(),
     });
+    runtime.subscribe("view-1");
     sessionRuntimes.push(runtime);
 
-    emit({
-      type: "tool.call.started",
-      sessionId: "session-1",
-      agentId: "main",
-      turnId: 1,
-      toolCallId: "tool-1",
-      name: "Write",
-      args: { path: linkedFile },
+    engine.emitAgent({
+      type: "turn.spawn_tools",
+      toolCalls: [
+        {
+          type: "function",
+          id: "tool-1",
+          name: "Write",
+          arguments: JSON.stringify({ path: linkedFile }),
+        },
+      ],
     });
 
-    await expect(bridge.baselineManager.getChanges({ id: "session-1", workDir })).resolves.toEqual([]);
+    await vi.waitFor(async () => {
+      await expect(
+        bridge.baselineManager.getChanges({ id: "session-1", workDir }),
+      ).resolves.toEqual([]);
+    });
   });
 
   it("builds an editor mention relative to the selected working directory", async () => {
@@ -432,7 +394,6 @@ function createContext(workDirUri: InstanceType<typeof vscodeHost.Uri>): Handler
     requireWorkDir: () => workDirUri.fsPath,
     requireWorkDirUri: () => workDirUri as vscode.Uri,
     fileManager,
-    harness: { suggestFiles: vi.fn(async () => undefined) },
     logError: vi.fn(),
   } as unknown as HandlerContext;
 }

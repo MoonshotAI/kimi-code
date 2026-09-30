@@ -1,4 +1,4 @@
-import type { HistoryMessage, UserMeta } from '#/llm/message';
+import type { HistoryMessage, UserMeta } from '#/history/message';
 import type { RecordEvent } from '#/store/journal';
 import type { Tree } from '#/store/tree';
 import { decodeAgent } from '#/stores/agent';

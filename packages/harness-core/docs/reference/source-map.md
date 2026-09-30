@@ -28,7 +28,7 @@ Reference：写 Feature 或改文档前，先对上当前 checkout 的路径。�
 | `feature/hooks.ts` | `useFeatureSlot` |
 | `feature/contribution-hooks.ts` | `useAgent` / ports / `useAgentStore` |
 | `feature/run-turn.ts` | `useTurn` / `runTurn`：另开 turn，不进用户 queue |
-| `app/{app,session,agent}Unit.ts` | 产品树与 Handle；`setConfig` / `setCredentialProvider` / `setRequester`；`createHarness({ space })` / `app.open` / `session.create` |
+| `app/{app,session,agent}Unit.ts` | 产品树与 Handle；`setModel` / `setEndpoint` / `setRequester`；`createHarness({ space })` / `app.open` / `session.create` |
 | `app/session-space.ts` | `SessionSpace`、`memorySessionSpace` |
 | `agent-machine/agent.ts` | agent 机器 |
 | `agent-machine/turn.ts` | turn 机器 |
@@ -38,8 +38,12 @@ Reference：写 Feature 或改文档前，先对上当前 checkout 的路径。�
 | `store/store.ts` | `openStore` / `attach` / `dispatch` |
 | `store/journal.ts` | `treeJournal`、`RecordEvent` |
 | `store/blob.ts` | `Blobs` |
-| `llm/message.ts` | `HistoryMessage` / `StreamedMessagePart` |
-| `llm/requester/input.ts` | `LlmEvent` |
+| `llm/message.ts` | `Message` / `StreamedMessagePart` / 媒体 part（`MediaSource` / `omitted`） |
+| `llm/request.ts` | `LlmModelSpec` / `LlmRequestModel` / `LlmEndpoint` |
+| `llm/requester.ts` | `LlmRequester`（`with` / `request` / `generate`）；`AgentLlmRequester` 在 `agent-machine/llm-actor.ts` |
+| `llm/response.ts` | `LlmRunEvent` / `LlmOutcome` |
+| `history/message.ts` | `HistoryMessage` / `createUserEntry` / `createHistoryMessageBuilder` |
+| `history/usage.ts` | `usedContextTokens` |
 | `builtin/wait-for/`、`builtin/media/`、`builtin/provider-catalog/` | 内置 Feature |
 
 ## harness-core

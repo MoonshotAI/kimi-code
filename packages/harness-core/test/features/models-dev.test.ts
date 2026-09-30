@@ -723,7 +723,7 @@ describe('models-dev custom registry', () => {
 
     const catalog = app.resolve(ProviderCatalogRef);
     await until(() => catalog.isLive('regone') && catalog.isLive('regtwo'));
-    expect(catalog.resolve('regone', 'reg-a')?.requester).toBeDefined();
+    expect(catalog.requester('regone', 'reg-a')).toBeDefined();
 
     registryPayload = {
       regone: registryEntry('regone', 'openai', {
@@ -827,10 +827,11 @@ describe('models-dev generic protocol factories', () => {
         catalog.isLive('genp') &&
         catalog.isLive('vtxp'),
     );
-    const binding = catalog.resolve('openp', 'm1');
-    expect(binding?.requester).toBeDefined();
-    expect(binding?.model.baseUrl).toBe('https://openp.example.com/v1');
-    expect(binding?.model.apiKey).toBe('sk-open');
+    const requester = catalog.requester('openp', 'm1');
+    expect(requester).toBeDefined();
+    const request = requester!.request({ content: { messages: [] } });
+    expect(request.endpoint?.baseUrl).toBe('https://openp.example.com/v1');
+    expect(await request.endpoint?.credentials?.resolve?.()).toMatchObject({ apiKey: 'sk-open' });
   });
 });
 

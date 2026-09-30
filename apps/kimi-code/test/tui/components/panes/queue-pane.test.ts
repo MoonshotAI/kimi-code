@@ -13,8 +13,8 @@ describe('QueuePaneComponent', () => {
       isStreaming: true,
       canSteerImmediately: true,
       messages: [
-        { text: 'first message' },
-        { text: '/skill:review src/app.ts' },
+        { id: 'q1', text: 'first message', kind: 'prompt' },
+        { id: 'q1', text: '/skill:review src/app.ts', kind: 'prompt' },
       ],
     });
 
@@ -30,7 +30,7 @@ describe('QueuePaneComponent', () => {
       isCompacting: true,
       isStreaming: false,
       canSteerImmediately: true,
-      messages: [{ text: 'after compact' }],
+      messages: [{ id: 'q1', text: 'after compact', kind: 'prompt' }],
     });
 
     const output = stripAnsi(component.render(120).join('\n'));
@@ -43,7 +43,7 @@ describe('QueuePaneComponent', () => {
       isCompacting: false,
       isStreaming: true,
       canSteerImmediately: false,
-      messages: [{ text: 'after init' }],
+      messages: [{ id: 'q1', text: 'after init', kind: 'prompt' }],
     });
 
     const output = stripAnsi(component.render(120).join('\n'));
@@ -58,7 +58,7 @@ describe('QueuePaneComponent', () => {
       isCompacting: false,
       isStreaming: true,
       canSteerImmediately: true,
-      messages: [{ text: longText }],
+      messages: [{ id: 'q1', text: longText, kind: 'prompt' }],
     });
 
     const lines = component.render(30);
@@ -73,7 +73,7 @@ describe('QueuePaneComponent', () => {
       isCompacting: false,
       isStreaming: true,
       canSteerImmediately: true,
-      messages: [{ text: 'line one\nline two\nline three' }],
+      messages: [{ id: 'q1', text: 'line one\nline two\nline three', kind: 'prompt' }],
     });
 
     const lines = component.render(120);
@@ -88,7 +88,7 @@ describe('QueuePaneComponent', () => {
       isCompacting: false,
       isStreaming: true,
       canSteerImmediately: false,
-      messages: [{ text: 'ls -la', mode: 'bash' }],
+      messages: [{ id: 'b1', text: 'ls -la', kind: 'bash' }],
     });
 
     const output = stripAnsi(component.render(120).join('\n'));
@@ -100,7 +100,7 @@ describe('QueuePaneComponent', () => {
       isCompacting: false,
       isStreaming: true,
       canSteerImmediately: true,
-      messages: [{ text: 'ls', mode: 'bash' }],
+      messages: [{ id: 'b1', text: 'ls', kind: 'bash' }],
     });
 
     const output = stripAnsi(component.render(120).join('\n'));
@@ -113,7 +113,7 @@ describe('QueuePaneComponent', () => {
       isCompacting: false,
       isStreaming: true,
       canSteerImmediately: true,
-      messages: [{ text: 'ls', mode: 'bash' }, { text: 'focus on tests' }],
+      messages: [{ id: 'b1', text: 'ls', kind: 'bash' }, { id: 'q1', text: 'focus on tests', kind: 'prompt' }],
     });
 
     const output = stripAnsi(component.render(120).join('\n'));

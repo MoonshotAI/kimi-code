@@ -12,16 +12,14 @@ import {
   type ActorRefFrom,
 } from '#/xstate2/index';
 
+import { createUserMessage, type ToolCall, type UserMessage } from '#/llm/message';
 import {
   createUserEntry,
-  createUserMessage,
   mergeSteerMessages,
   type HistoryMessage,
   type SystemEntry,
-  type ToolCall,
   type UserEntry,
-  type UserMessage,
-} from '#/llm/message';
+} from '#/history/message';
 import { createToolMachine, type ToolBeforeDecision, type ToolEvent, type ToolOutput } from './tool';
 import { createAbortScope, withAbort, type AbortScope } from '#/utils/abort';
 
@@ -753,10 +751,13 @@ export function createAgentMachine({
               'forwardToParent',
             ],
           },
-          'llm.sent': {
+          'llm.started': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
           'step.started': {
+            actions: [emit(({ event }) => event), 'forwardToParent'],
+          },
+          'llm.notice': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
           'llm.streaming.*': {
@@ -765,19 +766,10 @@ export function createAgentMachine({
           'llm.done': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
-          'llm.aborted': {
-            actions: [emit(({ event }) => event), 'forwardToParent'],
-          },
-          'llm.failed.syntax': {
-            actions: [emit(({ event }) => event), 'forwardToParent'],
-          },
-          'llm.failed.remote': {
+          'llm.ended': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
           'llm.retrying': {
-            actions: [emit(({ event }) => event), 'forwardToParent'],
-          },
-          'llm.recovering': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
           'turn.compaction_requested': {

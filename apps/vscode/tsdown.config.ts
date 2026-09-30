@@ -19,6 +19,8 @@ export default defineConfig({
   sourcemap: false,
   plugins: [rawTextPlugin()],
   alias: {
+    '@moonshot-ai/agent-core': resolve(root, '../../packages/agent-core/src/index.ts'),
+    '@moonshot-ai/harness-core': resolve(root, '../../packages/harness-core/src/index.ts'),
     '@moonshot-ai/kimi-code-sdk': resolve(root, '../../packages/node-sdk/src/index.ts'),
     '@moonshot-ai/kimi-telemetry': resolve(root, '../../packages/telemetry/src/index.ts'),
     '@moonshot-ai/migration-legacy': resolve(root, '../../packages/migration-legacy/src/index.ts'),

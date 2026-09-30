@@ -5,13 +5,7 @@
  * separate from the TUI orchestration layer.
  */
 
-import {
-  effectiveModelAlias,
-  type ModelAlias,
-  type PermissionMode,
-  type SessionStatus,
-  type ThinkingEffort,
-} from '@moonshot-ai/kimi-code-sdk';
+import type { ModelAlias, PermissionMode, ThinkingEffort } from '#/tui/types';
 
 import { PRODUCT_NAME } from '#/constant/app';
 import { currentTheme } from '#/tui/theme';
@@ -52,8 +46,6 @@ export interface StatusReportOptions {
   readonly contextTokens: number;
   readonly maxContextTokens: number;
   readonly availableModels: Record<string, ModelAlias>;
-  readonly status?: SessionStatus;
-  readonly statusError?: string;
   readonly managedUsage?: ManagedUsageReport;
   readonly managedUsageError?: string;
 }
@@ -62,15 +54,14 @@ type Colorize = (text: string) => string;
 
 function displayModelName(alias: string, models: Record<string, ModelAlias>): string {
   const model = models[alias];
-  const effective = model === undefined ? undefined : effectiveModelAlias(model);
-  return effective?.displayName ?? effective?.model ?? alias;
+  return model?.displayName ?? model?.model ?? alias;
 }
 
 function formatModelStatus(options: StatusReportOptions): string {
-  const model = options.status?.model ?? options.model;
+  const model = options.model;
   if (model.trim().length === 0) return 'not set';
 
-  const effort = options.status?.thinkingEffort ?? options.thinkingEffort;
+  const effort = options.thinkingEffort;
   return `${displayModelName(model, options.availableModels)} (thinking ${effort})`;
 }
 
@@ -94,9 +85,9 @@ function contextValues(options: StatusReportOptions): {
   maxTokens: number;
 } {
   return {
-    ratio: options.status?.contextUsage ?? options.contextUsage,
-    tokens: options.status?.contextTokens ?? options.contextTokens,
-    maxTokens: options.status?.maxContextTokens ?? options.maxContextTokens,
+    ratio: options.contextUsage,
+    tokens: options.contextTokens,
+    maxTokens: options.maxContextTokens,
   };
 }
 
@@ -108,9 +99,9 @@ export function buildStatusReportLines(options: StatusReportOptions): string[] {
   const severityToken = (sev: 'ok' | 'warn' | 'danger'): 'error' | 'warning' | 'success' =>
     sev === 'danger' ? 'error' : sev === 'warn' ? 'warning' : 'success';
 
-  const permission = options.status?.permission ?? options.permissionMode;
-  const planMode = options.status?.planMode ?? options.planMode;
-  const towerMode = options.status?.towerMode ?? options.towerMode;
+  const permission = options.permissionMode;
+  const planMode = options.planMode;
+  const towerMode = options.towerMode;
   const sessionId = options.sessionId.trim().length > 0 ? options.sessionId : 'none';
   const rows: FieldRow[] = [
     { label: 'Model', value: formatModelStatus(options) },
@@ -124,10 +115,6 @@ export function buildStatusReportLines(options: StatusReportOptions): string[] {
   rows.push({ label: 'Session', value: sessionId });
   const title = options.sessionTitle?.trim();
   if (title !== undefined && title.length > 0) rows.push({ label: 'Title', value: title });
-  if (options.statusError !== undefined) {
-    rows.push({ label: 'Warning', value: options.statusError, severity: 'error' });
-  }
-
   const lines: string[] = [
     `${accent(`>_ ${PRODUCT_NAME}`)} ${muted(`(v${options.version})`)}`,
     '',

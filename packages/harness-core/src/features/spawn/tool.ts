@@ -78,7 +78,7 @@ export function createSpawnTool(deps: SpawnToolDeps): ToolDefinition {
           args,
           {
             profileName: registry.get(callerAgentId)?.profileName,
-            modelAlias: agent.config?.model.model,
+            modelAlias: agent.model?.spec.name,
           },
           forkEnabled(),
         );

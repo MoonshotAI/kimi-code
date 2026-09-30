@@ -176,7 +176,7 @@ describe('oauth feature', () => {
     await until(() => catalog.models('managed:kimi-code').length === 2);
     expect(catalog.isLive('managed:kimi-code')).toBe(true);
     const models = catalog.models('managed:kimi-code');
-    expect(models.map((model) => model.model)).toEqual(['kimi-for-coding', 'kimi-latest']);
+    expect(models.map((model) => model.id)).toEqual(['kimi-for-coding', 'kimi-latest']);
     expect(models[0]?.maxContextSize).toBe(262144);
     expect(models[0]?.capability.thinking).toBe(true);
     expect(models[0]?.capability.image_in).toBe(true);
@@ -279,7 +279,7 @@ describe('oauth feature', () => {
     });
     await until(
       () =>
-        catalog.models('managed:kimi-code').some((model) => model.model === 'kimi-coding-plus') &&
+        catalog.models('managed:kimi-code').some((model) => model.id === 'kimi-coding-plus') &&
         file.saved.at(-1)?.includes('kimi-code/kimi-coding-plus') === true &&
         file.saved.at(-1)?.includes('kimi-latest') === false,
     );
@@ -299,7 +299,7 @@ describe('oauth feature', () => {
     });
     await until(
       () =>
-        catalog.models('managed:kimi-code').find((model) => model.model === 'kimi-for-coding')
+        catalog.models('managed:kimi-code').find((model) => model.id === 'kimi-for-coding')
           ?.maxContextSize === 65536,
     );
     await app.disposeAsync();

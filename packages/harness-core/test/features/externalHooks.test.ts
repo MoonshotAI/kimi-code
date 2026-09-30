@@ -17,14 +17,12 @@ import {
   openBlobs,
   openSessionStores,
   Trees,
-  UNKNOWN_CAPABILITY,
   useAgent,
   useAgentTools,
   type AgentHandle,
   type AppHandle,
   type FeatureSpec,
-  type LlmModel,
-  type LlmRequester,
+  type AgentLlmRequester,
   type PromptOrigin,
   type SessionHandle,
   type SessionStores,
@@ -43,7 +41,7 @@ import { runHook } from '#/features/externalHooks/internal/run';
 import type { OsHost, OsProcess, OsSpawnOptions } from '#/features/os/index';
 import { ProfileCatalogRef, type AgentProfile } from '#/features/profiles/index';
 
-const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
+import { fakeRequester, testModel, textOutcome } from '../fake-llm';
 
 interface FakeProcSpec {
   readonly stdout?: string;
@@ -130,39 +128,34 @@ function spawnPayload(record: SpawnRecord): Record<string, unknown> {
 
 type ScriptStep = { text: string } | { toolCall: { name: string; arguments: string } };
 
-function createMockRequester(steps: readonly ScriptStep[] = []): LlmRequester {
+function createMockRequester(steps: readonly ScriptStep[] = []): AgentLlmRequester {
   const pending = [...steps];
   let seq = 0;
-  return {
-    generate: async (_config, _content, { onEvent }) => {
-      const out = pending.shift() ?? { text: 'done' };
-      if ('toolCall' in out) {
-        onEvent?.({
-          type: 'llm.streaming.part',
-          part: {
-            type: 'function',
-            id: `call-${(seq += 1)}`,
-            name: out.toolCall.name,
-            arguments: out.toolCall.arguments,
-          },
-        });
-      } else {
-        onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: out.text } });
-      }
-      onEvent?.({
-        type: 'llm.streaming.usage',
-        usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
-      });
-      onEvent?.({ type: 'llm.done' });
-    },
-  };
+  return fakeRequester((_rest, onEvent) => {
+    const out = pending.shift() ?? { text: 'done' };
+    onEvent?.({
+      type: 'llm.streaming.usage',
+      usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
+    });
+    if ('toolCall' in out) {
+      return textOutcome('', [
+        {
+          type: 'function',
+          id: `call-${(seq += 1)}`,
+          name: out.toolCall.name,
+          arguments: out.toolCall.arguments,
+        },
+      ]);
+    }
+    return textOutcome(out.text);
+  });
 }
 
-function bindTestLlm(requester: LlmRequester): FeatureSpec {
+function bindTestLlm(requester: AgentLlmRequester): FeatureSpec {
   return createFeature('test-llm', {
     agent() {
       const agent = useAgent();
-      agent.setConfig({ model });
+      agent.setModel(testModel);
       agent.setRequester(requester);
     },
   });
@@ -211,7 +204,7 @@ interface TestApp {
 
 async function startApp(options?: {
   host?: OsHost;
-  requester?: LlmRequester;
+  requester?: AgentLlmRequester;
   executed?: ExecutedTool[];
   withConfig?: boolean;
   clientType?: string;
@@ -472,7 +465,7 @@ describe('runMatchedHooks', () => {
     const results = await runMatchedHooks(host.process, indexHooks(hooks), 'UserPromptQueued', {
       matcherValue: [
         { type: 'text', text: 'hello' },
-        { type: 'image_url', imageUrl: { url: 'file:///tmp/a.png' } },
+        { type: 'image_url', source: { kind: 'url', url: 'file:///tmp/a.png' } },
         { type: 'text', text: 'world' },
       ],
     });
@@ -702,7 +695,11 @@ describe('externalHooks feature', () => {
 
   it('fires StopFailure with the llm error payload on turn failure', async () => {
     const fake = createFakeHost(() => ({ exitCode: 0 }));
-    const failing: LlmRequester = {
+    const failing: AgentLlmRequester = {
+      with: () => failing,
+      request: () => {
+        throw new Error('fake requester cannot build wire requests');
+      },
       generate: async () => {
         throw { kind: 'rate_limit', message: 'slow down' };
       },
@@ -722,7 +719,11 @@ describe('externalHooks feature', () => {
 
   it('fires Interrupt with reason cancelled when the turn is aborted', async () => {
     const fake = createFakeHost(() => ({ exitCode: 0 }));
-    const hanging: LlmRequester = {
+    const hanging: AgentLlmRequester = {
+      with: () => hanging,
+      request: () => {
+        throw new Error('fake requester cannot build wire requests');
+      },
       generate: async () => {
         await new Promise<void>(() => {});
       },
@@ -831,20 +832,18 @@ describe('externalHooks feature', () => {
   it('derives SubagentStop from roster identity and subagent-origin turn completion', async () => {
     const fake = createFakeHost(() => ({ exitCode: 0 }));
     let failNext = false;
-    const requester: LlmRequester = {
-      generate: async (_config, _content, { onEvent }) => {
-        if (failNext) {
-          failNext = false;
-          throw new Error('boom');
-        }
-        onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
-        onEvent?.({
-          type: 'llm.streaming.usage',
-          usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
-        });
-        onEvent?.({ type: 'llm.done' });
-      },
-    };
+    const requester = fakeRequester((_rest, onEvent) => {
+      if (failNext) {
+        failNext = false;
+        throw new Error('boom');
+      }
+      onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
+      onEvent?.({
+        type: 'llm.streaming.usage',
+        usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
+      });
+      return textOutcome('done');
+    });
     const t = await startApp({ host: fake.host, requester });
     const config = t.app.resolve(ConfigRef);
     await config.set('hooks', [{ event: 'SubagentStop', command: 'rec sub' }], 'memory');

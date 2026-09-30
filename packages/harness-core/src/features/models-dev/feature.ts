@@ -1,20 +1,18 @@
 import {
-  anthropicBase,
+  anthropicRequester,
   ConfigRef,
   createFeature,
-  createGoogleGenAIBase,
-  googleGenAIBase,
+  googleGenAIRequester,
+  googleVertexRequester,
   MODEL_CATALOG_CONFIG_SECTION,
-  openAIBase,
-  openAIResponsesBase,
+  openAIRequester,
+  openAIResponsesRequester,
   useApp,
   useCleanup,
   useInject,
   useProviderProtocol,
-  type CatalogProviderInfo,
   type FeatureSpec,
   type ModelCatalogConfig,
-  type ProviderConnection,
 } from '@moonshot-ai/agent-core';
 import { useExpose, watch } from '@moonshot-ai/agent-core/kernel/index';
 
@@ -25,16 +23,6 @@ export const DEFAULT_MODELS_DEV_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
 export interface CreateModelsDevProps {
   readonly builtinCatalog?: () => unknown;
   readonly userAgent?: string;
-}
-
-const vertexGenAIBase = createGoogleGenAIBase({ vertexai: true });
-
-function genericConnection(info: CatalogProviderInfo): ProviderConnection {
-  return {
-    endpoint: () => ({ defaultBaseUrl: info.baseUrl }),
-    defaultHeaders: () =>
-      info.customHeaders === undefined ? undefined : { ...info.customHeaders },
-  };
 }
 
 export function createModelsDev(props: CreateModelsDevProps = {}): FeatureSpec {
@@ -49,27 +37,27 @@ export function createModelsDev(props: CreateModelsDevProps = {}): FeatureSpec {
       useExpose(ModelsDevRef, service);
       useProviderProtocol({
         type: 'openai',
-        protocols: (info) => ({
-          openai: { base: openAIBase, connection: genericConnection(info) },
-          openai_responses: { base: openAIResponsesBase, connection: genericConnection(info) },
+        protocols: () => ({
+          openai: openAIRequester,
+          openai_responses: openAIResponsesRequester,
         }),
       });
       useProviderProtocol({
         type: 'anthropic',
-        protocols: (info) => ({
-          anthropic: { base: anthropicBase, connection: genericConnection(info) },
+        protocols: () => ({
+          anthropic: anthropicRequester,
         }),
       });
       useProviderProtocol({
         type: 'google-genai',
-        protocols: (info) => ({
-          'google-genai': { base: googleGenAIBase, connection: genericConnection(info) },
+        protocols: () => ({
+          'google-genai': googleGenAIRequester,
         }),
       });
       useProviderProtocol({
         type: 'vertexai',
-        protocols: (info) => ({
-          'google-genai': { base: vertexGenAIBase, connection: genericConnection(info) },
+        protocols: () => ({
+          'google-genai': googleVertexRequester,
         }),
       });
       let timer: ReturnType<typeof setTimeout> | undefined;

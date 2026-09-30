@@ -100,18 +100,16 @@ session.on(interaction, 'interaction.requested', (event) => {
 
 | type | 要点 |
 |---|---|
-| `llm.sent` | 请求已发出 |
+| `llm.started` | 一次 `runLlmRequest` 开始（policy 循环入口） |
 | `llm.streaming.headers` | `headers` |
 | `llm.streaming.part` | `part`，增量，**不**进节点事件 |
 | `llm.streaming.usage` | `usage` |
 | `llm.streaming.finish` | `finish` |
 | `llm.streaming.message_id` | `messageId` |
-| `llm.done` | 机器侧带完整 `entry: AssistantEntry`（已进 turn history） |
-| `llm.aborted` | 流被 abort，可能带 salvage message |
-| `llm.failed.syntax` | 本地编解码 / 空响应 |
-| `llm.failed.remote` | 远端错误，`rawError?` |
-| `llm.retrying` | `failedAttempt` / `nextAttempt` / `delayMs` / `error` |
-| `llm.recovering` | `strategy` / `action` / `error` |
+| `llm.notice` | `notice { source, code, message, data? }`：resolver / encode 的旁路提示（如 store-ref resolver 的 `media-budget-exceeded`） |
+| `llm.retrying` | `reason: 'backoff'`（`failedAttempt` / `nextAttempt` / `maxAttempts` / `delayMs` / `error`）或 `reason: 'recovery'`（`strategy` / `action` / `error`） |
+| `llm.done` | turn 级：带完整 `entry: AssistantEntry`（已进 turn history） |
+| `llm.ended` | `outcome`：只在 failed / aborted 时外发（done 被 turn 译成 `llm.done`；`context_overflow` 失败被吸收进 `compacting` 不外发）。failed 带 `error` / `rawError?`；aborted 可能带 salvage `message` |
 
 ### Tool
 
@@ -125,7 +123,7 @@ session.on(interaction, 'interaction.requested', (event) => {
 
 ## 机器输入（只给 `send`，不是订阅面）
 
-`input.submit` / `notify` / `remind` / `steer` / `cancel` / `abort` / `abort_tool` / `pause` / `continue` / `context_reset` / `close`。宿主用 `AgentCommands` 的同名方法：方法内部先订回执再 `send`（同步派发），同步把上表对应回执 `return` 出来，type 由命令面封装；actor 未运行（done / stopped / unmounted）时返回 `undefined`。例外是 `abortTool`——无回执（fire-and-forget），结果经 `tool.done` 的 `aborted` outcome（带 `reason`）体现。`contextReset({ messages, … })` 以 `context.reset` emit 为回执（idle 时只替换机器 `messages`；running 时同时转发 `turn.compaction_finished` 给悬停在 `compacting` 的 turn），携 `error` 回应失败时无回执、直接送 turn 失败收场。`setConfig` / `setCredentialProvider` / `setRequester` 也在命令面上，但不进机器，仍是同步。
+`input.submit` / `notify` / `remind` / `steer` / `cancel` / `abort` / `abort_tool` / `pause` / `continue` / `context_reset` / `close`。宿主用 `AgentCommands` 的同名方法：方法内部先订回执再 `send`（同步派发），同步把上表对应回执 `return` 出来，type 由命令面封装；actor 未运行（done / stopped / unmounted）时返回 `undefined`。例外是 `abortTool`——无回执（fire-and-forget），结果经 `tool.done` 的 `aborted` outcome（带 `reason`）体现。`contextReset({ messages, … })` 以 `context.reset` emit 为回执（idle 时只替换机器 `messages`；running 时同时转发 `turn.compaction_finished` 给悬停在 `compacting` 的 turn），携 `error` 回应失败时无回执、直接送 turn 失败收场。`setModel` / `setEndpoint` / `setRequester` 也在命令面上，但不进机器，仍是同步。
 
 ## 相关文档
 

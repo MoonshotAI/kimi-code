@@ -10,13 +10,11 @@ import {
   openBlobs,
   openSessionStores,
   Trees,
-  UNKNOWN_CAPABILITY,
   useAgent,
   type AgentHandle,
   type FeatureSpec,
   type HistoryMessage,
-  type LlmModel,
-  type LlmRequester,
+  type AgentLlmRequester,
   type RecordEvent,
   type SessionStores,
   type TurnOutcome,
@@ -30,13 +28,13 @@ import {
   type Summarize,
 } from '#/features/compaction/index';
 
-const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
+import { failureOutcome, fakeRequester, testModel, textOutcome } from '../fake-llm';
 
-function bindTestLlm(requester: LlmRequester): FeatureSpec {
+function bindTestLlm(requester: AgentLlmRequester): FeatureSpec {
   return createFeature('test-llm', {
     agent() {
       const agent = useAgent();
-      agent.setConfig({ model });
+      agent.setModel(testModel);
       agent.setRequester(requester);
     },
   });
@@ -46,46 +44,38 @@ function textOfCalls(calls: string[][]): string[][] {
   return calls;
 }
 
-function createEchoRequester(calls?: string[][]): LlmRequester {
-  return {
-    generate: (_config, { messages }, { onEvent }) => {
-      calls?.push(messages.map((message) => extractText(message)));
-      const last = messages.at(-1);
-      const text = last !== undefined && last.role === 'user' ? extractText(last) : '';
-      onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: `echo:${text}` } });
-      onEvent?.({ type: 'llm.done' });
-      return Promise.resolve();
-    },
-  };
+function createEchoRequester(calls?: string[][]): AgentLlmRequester {
+  return fakeRequester((rest, onEvent) => {
+    const messages = rest.content?.messages ?? [];
+    calls?.push(messages.map((message) => extractText(message)));
+    const last = messages.at(-1);
+    const text = last !== undefined && last.role === 'user' ? extractText(last) : '';
+    onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: `echo:${text}` } });
+    return textOutcome(`echo:${text}`);
+  });
 }
 
-function createOverflowRequester(calls: string[][], failTimes: number): LlmRequester {
+function createOverflowRequester(calls: string[][], failTimes: number): AgentLlmRequester {
   let attempt = 0;
-  return {
-    generate: (_config, { messages }, { onEvent }) => {
-      attempt += 1;
-      calls.push(messages.map((message) => extractText(message)));
-      if (attempt <= failTimes) {
-        onEvent?.({
-          type: 'llm.failed.remote',
-          error: {
-            kind: 'context_overflow',
-            message: 'maximum context length exceeded',
-            statusCode: 400,
-            requestId: null,
-            retryAfterMs: null,
-            headers: null,
-          },
-        });
-        return Promise.resolve();
-      }
-      const last = messages.at(-1);
-      const text = last !== undefined && last.role === 'user' ? extractText(last) : '';
-      onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: `echo:${text}` } });
-      onEvent?.({ type: 'llm.done' });
-      return Promise.resolve();
-    },
-  };
+  return fakeRequester((rest, onEvent) => {
+    const messages = rest.content?.messages ?? [];
+    attempt += 1;
+    calls.push(messages.map((message) => extractText(message)));
+    if (attempt <= failTimes) {
+      return failureOutcome({
+        kind: 'context_overflow',
+        message: 'maximum context length exceeded',
+        statusCode: 400,
+        requestId: null,
+        retryAfterMs: null,
+        headers: null,
+      });
+    }
+    const last = messages.at(-1);
+    const text = last !== undefined && last.role === 'user' ? extractText(last) : '';
+    onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: `echo:${text}` } });
+    return textOutcome(`echo:${text}`);
+  });
 }
 
 function stubSummarize(text: string, onCall?: (history: readonly HistoryMessage[]) => void): Summarize {
@@ -107,7 +97,7 @@ async function startCompactionTest(options: {
   summarize: Summarize;
   budgetMax: () => number;
   maxAutoAttempts?: number;
-  requester: LlmRequester;
+  requester: AgentLlmRequester;
 }): Promise<TestEnv> {
   const backend = new MemoryBackend();
   const trees = await Trees.open(backend.trees, {});

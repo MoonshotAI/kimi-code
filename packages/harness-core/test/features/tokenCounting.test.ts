@@ -16,15 +16,13 @@ import {
   openBlobs,
   openSessionStores,
   Trees,
-  UNKNOWN_CAPABILITY,
   useAgent,
   type AgentHandle,
   type AssistantMeta,
   type ConfigPersist,
   type FeatureSpec,
   type HistoryMessage,
-  type LlmModel,
-  type LlmRequester,
+  type AgentLlmRequester,
   type SessionStores,
   type TokenUsage,
   type ToolDescription,
@@ -42,6 +40,8 @@ import {
   tokenCountingConfigSection,
   TokenCountingRef,
 } from '#/features/tokenCounting/index';
+
+import { fakeRequester, testModel, textOutcome } from '../fake-llm';
 
 function usage(inputOther: number, output: number): TokenUsage {
   return { inputOther, output, inputCacheRead: 0, inputCacheCreation: 0 };
@@ -69,8 +69,6 @@ const anchored: HistoryMessage[] = [
   assistantEntry('later'),
 ];
 
-const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
-
 interface ScriptStep {
   readonly text: string;
   readonly usage?: TokenUsage;
@@ -78,24 +76,18 @@ interface ScriptStep {
 
 let queue: ScriptStep[] = [];
 
-function createMockRequester(): LlmRequester {
-  return {
-    generate: async (_config, _content, { onEvent }) => {
-      const step: ScriptStep = queue.shift() ?? { text: 'done' };
-      onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: step.text } });
-      if (step.usage !== undefined) {
-        onEvent?.({ type: 'llm.streaming.usage', usage: step.usage });
-      }
-      onEvent?.({ type: 'llm.done' });
-    },
-  };
+function createMockRequester(): AgentLlmRequester {
+  return fakeRequester((_rest, onEvent) => {
+    const step: ScriptStep = queue.shift() ?? { text: 'done' };
+    return { ...textOutcome(step.text), usage: step.usage };
+  });
 }
 
-function bindTestLlm(requester: LlmRequester): FeatureSpec {
+function bindTestLlm(requester: AgentLlmRequester): FeatureSpec {
   return createFeature('test-llm', {
     agent() {
       const agent = useAgent();
-      agent.setConfig({ model });
+      agent.setModel(testModel);
       agent.setRequester(requester);
     },
   });

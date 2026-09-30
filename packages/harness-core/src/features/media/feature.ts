@@ -3,23 +3,22 @@ import {
   createFacadeToken,
   createFeature,
   createMediaDegradeRecovery,
+  createStoreRefResolver,
   useAgent,
   useAgentTools,
   useConfigSection,
   useInject,
   useLlmRecovery,
-  useMediaLower,
   useMessageResolver,
   usePromptGate,
   type FeatureSpec,
-  type MediaStore,
-  type MediaUploadCache,
+  type StoreRefPorts,
 } from '@moonshot-ai/agent-core';
 import { useExpose } from '@moonshot-ai/agent-core/kernel/index';
 
 import type { OsHost } from '#/features/os/host/types';
 
-import { createMediaBudgetResolver } from './deliver/budget';
+import type { MediaStore } from './store';
 import {
   IMAGE_CONFIG_SECTION,
   imageConfigSection,
@@ -29,10 +28,9 @@ import {
 import { createMediaPromptGate } from './deliver/intake';
 import { createReadMediaFileTool } from './deliver/tool';
 
-export interface CreateMediaProps {
+export interface CreateMediaProps extends StoreRefPorts {
   readonly workDir: string;
   readonly store: MediaStore;
-  readonly cache: MediaUploadCache;
   readonly host?: OsHost;
   readonly originalsDir?: string;
 }
@@ -83,10 +81,7 @@ export function createMedia(props: CreateMediaProps): FeatureSpec {
         resolveImageLimits(
           config.value?.get<ImageConfig>(IMAGE_CONFIG_SECTION) ?? {},
         );
-      useMediaLower({
-        source: props.store,
-        cache: props.cache,
-      });
+      useMessageResolver(createStoreRefResolver(props));
       useLlmRecovery(createMediaDegradeRecovery());
       useAgentTools(
         createReadMediaFileTool({
@@ -105,7 +100,6 @@ export function createMedia(props: CreateMediaProps): FeatureSpec {
           fs: props.host?.fs,
         }),
       );
-      useMessageResolver(createMediaBudgetResolver());
     },
   });
 }

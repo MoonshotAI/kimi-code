@@ -1,4 +1,5 @@
-import { type HistoryMessage, type ToolDescription } from '#/llm/message';
+import { type HistoryMessage } from '#/history/message';
+import { type ToolDescription } from '#/llm/message';
 import { decodeRecord, type RecordEvent } from '#/store/journal';
 import { openStore, type Journal, type Projection, type Store } from '#/store/store';
 import type { BranchRef } from '#/store/tree';

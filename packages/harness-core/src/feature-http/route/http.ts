@@ -3,8 +3,11 @@ import type { Request, Response } from 'express';
 import {
   SessionSpaceError,
   type ContentPart,
+  type MediaSource,
   type UserMessage,
 } from '@moonshot-ai/agent-core';
+
+import { parseMediaRefUrl } from '#/features/media/ref';
 
 export const ErrorCode = {
   SUCCESS: 0,
@@ -177,18 +180,27 @@ function toContentPart(value: unknown): ContentPart | undefined {
     if (typeof imageUrl['url'] === 'string') {
       return {
         type: 'image_url',
-        imageUrl: {
-          url: imageUrl['url'],
-          name: typeof imageUrl['name'] === 'string' ? imageUrl['name'] : undefined,
-        },
+        source: mediaSourceFromUrl(imageUrl['url']),
+        name: typeof imageUrl['name'] === 'string' ? imageUrl['name'] : undefined,
       };
     }
   }
   if (part['type'] === 'image' && part['source'] !== null && typeof part['source'] === 'object') {
     const source = part['source'] as { [key: string]: unknown };
     if (source['kind'] === 'url' && typeof source['url'] === 'string') {
-      return { type: 'image_url', imageUrl: { url: source['url'] } };
+      return {
+        type: 'image_url',
+        source: mediaSourceFromUrl(source['url']),
+        name: typeof part['name'] === 'string' ? part['name'] : undefined,
+      };
     }
   }
   return undefined;
+}
+
+function mediaSourceFromUrl(url: string): MediaSource {
+  if (parseMediaRefUrl(url) !== undefined) return { kind: 'store', ref: url };
+  const match = /^data:([^;]+);base64,(.*)$/.exec(url);
+  if (match !== null) return { kind: 'inline', mimeType: match[1] as string, data: match[2] as string };
+  return { kind: 'url', url };
 }

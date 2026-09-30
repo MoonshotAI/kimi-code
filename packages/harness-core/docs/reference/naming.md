@@ -33,7 +33,7 @@ const agent = session.get(agentId);
 - 依赖当前实例的顶层函数一律叫 `use*`；更薄的情况直接 `useX()` 再调方法，不再包一层 `find*` / `ensure*` / `open*`——名字一多，调用方就要猜每一层的语义。
 - 「当前」归 `use*` hook，「按 id」归实例方法 `get`：两个维度各有一个名字，不需要 `use*Host` / `useLive*` 这类第三种。
 - 已挂载 Unit 的外部句柄叫 `*Handle`，对齐 [UnitHandle](node-handle.md)；包装函数是 `appHandle` / `sessionHandle` / `agentHandle`。
-- `use*` 返回命令面（`*Commands`）。`mount*` / `get` 返回 `*Handle`（`UnitHandle` + 命令面）。Feature 用命令面；卸载、`ready`、`state`、`resolve` 走 Handle。绑 generate 用命令面上的 `setConfig` / `setCredentialProvider` / `setRequester`。
+- `use*` 返回命令面（`*Commands`）。`mount*` / `get` 返回 `*Handle`（`UnitHandle` + 命令面）。Feature 用命令面；卸载、`ready`、`state`、`resolve` 走 Handle。绑 generate 用命令面上的 `setModel` / `setEndpoint` / `setRequester`。
 - 宿主取 Feature facade 用 `handle.resolve(token)`，按 token 分级：certain 缺失抛错，facade 返回 `T | undefined`。`get(id)` 只表示孩子，可以 miss。
 - 宿主订 Feature 事件用 `handle.on(feature, type, handler)`，事件联合是 `createFeature<E>` 的幽灵泛型：订阅点挂在句柄上，配方保持纯数据。agent handle 的 `on`/`wait` 首参分流：字符串是 actor 事件，FeatureSpec 是 feature 事件（feature 事件的裸字符串形式因此不可用）。
 - ensure-open、打开持久化容器挂在已有端口方法上（`SessionSpace`、`app.open`、`openStore`）。

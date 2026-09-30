@@ -184,18 +184,6 @@ describe('chip registry', () => {
     expect(pickChip('Think')).toBeUndefined();
   });
 
-  it('GetGoal chip shows the current status', () => {
-    expect(chipFor('GetGoal', {}, result('{"goal":{"status":"active"}}'))).toBe('active');
-  });
-
-  it('GetGoal chip shows when there is no current goal', () => {
-    expect(chipFor('GetGoal', {}, result('{"goal":null}'))).toBe('no goal');
-  });
-
-  it('CreateGoal chip shows the created status', () => {
-    expect(chipFor('CreateGoal', { objective: 'Ship feature X' }, result('{"goal":{"status":"active"}}'))).toBe('active');
-  });
-
   it('SetGoalBudget has no chip because the budget is in the header argument', () => {
     expect(pickChip('SetGoalBudget')).toBeUndefined();
   });

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runPrompt } from '#/cli/run-prompt';
 
 const mocks = vi.hoisted(() => ({
-  runV2Print: vi.fn(
+  runPrint: vi.fn(
     async (
       opts: { readonly outputFormat?: string },
       version: string,
@@ -38,8 +38,8 @@ const mocks = vi.hoisted(() => ({
   ),
 }));
 
-vi.mock('../../src/cli/v2/run-v2-print', () => ({
-  runV2Print: mocks.runV2Print,
+vi.mock('../../src/cli/run-print', () => ({
+  runPrint: mocks.runPrint,
 }));
 
 function opts(overrides: Partial<Parameters<typeof runPrompt>[0]> = {}) {
@@ -83,7 +83,7 @@ describe('runPrompt', () => {
 
     await runPrompt(opts(), '1.2.3-test', { stdout, stderr });
 
-    expect(mocks.runV2Print).toHaveBeenCalled();
+    expect(mocks.runPrint).toHaveBeenCalled();
     expect(stderr.write).toHaveBeenNthCalledWith(1, 'kimi version 1.2.3-test\n');
     expect(stderr.text().startsWith('kimi version 1.2.3-test\n')).toBe(true);
     expect(stdout.text()).toBe('• hello world\n\n');
@@ -98,7 +98,7 @@ describe('runPrompt', () => {
       stderr,
     });
 
-    expect(mocks.runV2Print).toHaveBeenCalled();
+    expect(mocks.runPrint).toHaveBeenCalled();
     const lines = stdout.text().split('\n');
     expect(lines[0]).toBe(
       '{"role":"meta","type":"system.version","version":"1.2.3-test"}',

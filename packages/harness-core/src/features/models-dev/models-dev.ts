@@ -376,7 +376,7 @@ function toModelItem(model: ModelsDevImportedModel): ModelsDevModelItem {
     name: model.name,
     max_context_size: model.maxContextSize,
     capabilities: capabilityToStrings(model.capability),
-    reasoning: model.capability.thinking,
+    reasoning: model.capability.thinking === true,
   };
 }
 

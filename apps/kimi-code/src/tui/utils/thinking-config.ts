@@ -1,4 +1,4 @@
-import type { ModelAlias, ThinkingEffort } from '@moonshot-ai/kimi-code-sdk';
+import type { ModelAlias, ThinkingEffort } from '../types';
 
 /** Whether a thinking effort represents "thinking enabled" (anything but 'off'). */
 export function isThinkingOn(effort: ThinkingEffort): boolean {

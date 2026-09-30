@@ -16,9 +16,9 @@ import {
   shallowRef,
   type Ref,
 } from '#/kernel/index';
-import { createUserEntry, createUserMessage, extractText, type HistoryMessage, type Message } from '#/llm/message';
-import { UNKNOWN_CAPABILITY, type LlmModel } from '#/llm/model';
-import type { LlmRequester } from '#/llm/requester/requester';
+import { createUserMessage, extractText, type Message } from '#/llm/message';
+import { createUserEntry, type HistoryMessage } from '#/history/message';
+import type { AgentLlmRequester } from '#/agent-machine/llm-actor';
 import { openSessionStores, type SessionStores } from '#/stores/session';
 import { mountAgent, createHarness, type AgentHandle } from '#/app/index';
 import {
@@ -41,9 +41,9 @@ import {
   useTurn,
 } from '#/feature/index';
 
-const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+import { fakeRequester, testModel, testModelSpec, textOutcome } from '../fake-llm';
 
-const model: LlmModel = { provider: 'test', model: 'test', capability: UNKNOWN_CAPABILITY };
+const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 function turnDone(agent: AgentHandle): Promise<void> {
   return new Promise((resolve) => {
@@ -141,18 +141,15 @@ describe('feature DSL', () => {
         let sideMax = 0;
         const sideCalls = ref(0);
         const enqueue = useTurn({
-          requester: {
-            generate: async (_config, _content, { onEvent }) => {
-              sideActive += 1;
-              sideMax = Math.max(sideMax, sideActive);
-              sideCalls.value += 1;
-              await new Promise<void>((resolve) => setTimeout(resolve, 15));
-              sideActive -= 1;
-              onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'side' } });
-              onEvent?.({ type: 'llm.done' });
-            },
-          },
-          getConfig: () => ({ model }),
+          requester: fakeRequester(async () => {
+            sideActive += 1;
+            sideMax = Math.max(sideMax, sideActive);
+            sideCalls.value += 1;
+            await new Promise<void>((resolve) => setTimeout(resolve, 15));
+            sideActive -= 1;
+            return textOutcome('side');
+          }),
+          getModel: () => testModel,
           getTools: () => [],
         });
         useExpose(Side, {
@@ -165,21 +162,39 @@ describe('feature DSL', () => {
     const installed = shallowRef([probeSpec]);
     const env = await testStores();
     const requests: Array<{ tools: string[]; text: string[]; systemPrompt?: string }> = [];
-    const requester: LlmRequester = {
-      generate: async (_config, content, { onEvent }) => {
+    const requester: AgentLlmRequester = {
+      with: () => requester,
+      request: () => {
+        throw new Error('fake requester cannot build wire requests');
+      },
+      generate: async (rest, control) => {
+        let messages: readonly Message[] = rest.content?.messages ?? [];
+        const resolvers = rest.policy?.resolvers;
+        for (const resolver of typeof resolvers === 'function' ? resolvers() : (resolvers ?? [])) {
+          messages = await resolver.resolve(messages, {
+            model: rest.model?.spec ?? testModelSpec,
+            endpoint: rest.endpoint,
+            media: { kinds: {} },
+            signal: control.signal,
+            report: () => {},
+          });
+        }
         requests.push({
-          tools: content.tools?.map((tool) => tool.name) ?? [],
-          text: content.messages.map((message) => extractText(message)),
-          systemPrompt: content.systemPrompt,
+          tools: rest.profile?.tools?.map((tool) => tool.name) ?? [],
+          text: messages.map((message) => extractText(message)),
+          systemPrompt: rest.profile?.systemPrompt,
         });
-        const last = content.messages.at(-1);
+        const last = messages.at(-1);
         const callsIncrement =
           requests.length === 1 ||
           (last !== undefined && last.role === 'user' && ['degraded', 'revive'].includes(extractText(last)));
-        onEvent?.({ type: 'llm.streaming.part', part: callsIncrement
-          ? { type: 'function', id: `call-${requests.length}`, name: 'increment', arguments: '{}' }
-          : { type: 'text', text: 'done' } });
-        onEvent?.({ type: 'llm.done' });
+        const outcome = callsIncrement
+          ? textOutcome('', [
+              { type: 'function', id: `call-${requests.length}`, name: 'increment', arguments: '{}' },
+            ])
+          : textOutcome('done');
+        control.onEvent?.({ type: 'llm.ended', outcome });
+        return outcome;
       },
     };
     const app = createHarness({ features: [shared] });
@@ -194,7 +209,7 @@ describe('feature DSL', () => {
         node.provide(Extra, 'extra-value');
       },
     });
-    agent.setConfig({ model });
+    agent.setModel(testModel);
     agent.setRequester(requester);
     const first = turnDone(agent);
     agent.submit(createUserMessage('run'));
@@ -251,7 +266,7 @@ describe('feature DSL', () => {
         node.provide(Extra, 'extra-value');
       },
     });
-    resumed.setConfig({ model });
+    resumed.setModel(testModel);
     resumed.setRequester(requester);
     const third = turnDone(resumed);
     resumed.submit(createUserMessage('resume'));
@@ -268,7 +283,7 @@ describe('feature DSL', () => {
         agent() { useBeforeStep(() => { throw stepError; }); },
       })],
     });
-    failing.setConfig({ model });
+    failing.setModel(testModel);
     failing.setRequester(requester);
     const failed = new Promise<unknown>((resolve) => {
       failing.on('turn.done', (event) => {
@@ -286,7 +301,7 @@ describe('feature DSL', () => {
     await session.close('agent-0');
     const degraded = await session.create({ agentId: 'agent-0', systemPrompt: 'host-text' });
     expect(missing).toEqual(['probe']);
-    degraded.setConfig({ model });
+    degraded.setModel(testModel);
     degraded.setRequester(requester);
     const fourth = turnDone(degraded);
     degraded.submit(createUserMessage('degraded'));
@@ -352,21 +367,21 @@ describe('feature DSL', () => {
     });
     const env = await testStores();
     const requests: string[][] = [];
-    const requester: LlmRequester = {
-      generate: async (_config, content, { onEvent }) => {
-        requests.push(content.messages.map((message) => extractText(message)));
-        const last = content.messages.at(-1);
-        const name = last !== undefined && last.role === 'user' ? extractText(last) : undefined;
-        onEvent?.({ type: 'llm.streaming.part', part: name === 'rewrite' || name === 'blocked'
-          ? { type: 'function', id: `call-${requests.length}`, name, arguments: '{}' }
-          : { type: 'text', text: 'done' } });
-        onEvent?.({ type: 'llm.done' });
-      },
-    };
+    const requester = fakeRequester((rest) => {
+      const messages = rest.content?.messages ?? [];
+      requests.push(messages.map((message) => extractText(message)));
+      const last = messages.at(-1);
+      const name = last !== undefined && last.role === 'user' ? extractText(last) : undefined;
+      return name === 'rewrite' || name === 'blocked'
+        ? textOutcome('', [
+            { type: 'function', id: `call-${requests.length}`, name, arguments: '{}' },
+          ])
+        : textOutcome('done');
+    });
     const app = createHarness({});
     const session = await app.create({ sessionId: 'sess', stores: env.stores });
     const agent = await session.create({ agentId: 'agent-0', features: shallowRef([spec]) });
-    agent.setConfig({ model });
+    agent.setModel(testModel);
     agent.setRequester(requester);
     const first = turnDone(agent);
     agent.submit(createUserMessage('rewrite'));
@@ -419,22 +434,20 @@ describe('feature DSL', () => {
     });
     const env = await testStores();
     let call = 0;
-    const requester: LlmRequester = {
-      generate: async (_config, _content, { onEvent }) => {
-        call += 1;
-        if (call === 1) {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'function', id: 'call-1', name: 'alpha', arguments: '{}' } });
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'function', id: 'call-2', name: 'beta', arguments: '{}' } });
-        } else {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
-        }
-        onEvent?.({ type: 'llm.done' });
-      },
-    };
+    const requester = fakeRequester(() => {
+      call += 1;
+      if (call === 1) {
+        return textOutcome('', [
+          { type: 'function', id: 'call-1', name: 'alpha', arguments: '{}' },
+          { type: 'function', id: 'call-2', name: 'beta', arguments: '{}' },
+        ]);
+      }
+      return textOutcome('done');
+    });
     const app = createHarness({});
     const session = await app.create({ sessionId: 'sess', stores: env.stores });
     const agent = await session.create({ agentId: 'agent-0', features: shallowRef([spec]) });
-    agent.setConfig({ model });
+    agent.setModel(testModel);
     agent.setRequester(requester);
     const done = turnDone(agent);
     agent.submit(createUserMessage('pair'));
@@ -492,22 +505,21 @@ describe('feature DSL', () => {
     });
     const env = await testStores();
     const requests: string[][] = [];
-    const requester: LlmRequester = {
-      generate: async (_config, content, { onEvent }) => {
-        requests.push(content.messages.map((message) => extractText(message)));
-        if (requests.length === 1) {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'function', id: 'call-1', name: 'alpha', arguments: '{}' } });
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'function', id: 'call-2', name: 'beta', arguments: '{}' } });
-        } else {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
-        }
-        onEvent?.({ type: 'llm.done' });
-      },
-    };
+    const requester = fakeRequester((rest) => {
+      const messages = rest.content?.messages ?? [];
+      requests.push(messages.map((message) => extractText(message)));
+      if (requests.length === 1) {
+        return textOutcome('', [
+          { type: 'function', id: 'call-1', name: 'alpha', arguments: '{}' },
+          { type: 'function', id: 'call-2', name: 'beta', arguments: '{}' },
+        ]);
+      }
+      return textOutcome('done');
+    });
     const app = createHarness({});
     const session = await app.create({ sessionId: 'sess', stores: env.stores });
     const agent = await session.create({ agentId: 'agent-0', features: shallowRef([spec]) });
-    agent.setConfig({ model });
+    agent.setModel(testModel);
     agent.setRequester(requester);
     const done = turnDone(agent);
     agent.submit(createUserMessage('pair'));
@@ -553,22 +565,20 @@ describe('feature DSL', () => {
     });
     const env = await testStores();
     let call = 0;
-    const requester: LlmRequester = {
-      generate: async (_config, _content, { onEvent }) => {
-        call += 1;
-        if (call === 1) {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'function', id: 'call-1', name: 'alpha', arguments: '{}' } });
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'function', id: 'call-2', name: 'beta', arguments: '{}' } });
-        } else {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
-        }
-        onEvent?.({ type: 'llm.done' });
-      },
-    };
+    const requester = fakeRequester(() => {
+      call += 1;
+      if (call === 1) {
+        return textOutcome('', [
+          { type: 'function', id: 'call-1', name: 'alpha', arguments: '{}' },
+          { type: 'function', id: 'call-2', name: 'beta', arguments: '{}' },
+        ]);
+      }
+      return textOutcome('done');
+    });
     const app = createHarness({});
     const session = await app.create({ sessionId: 'sess', stores: env.stores });
     const agent = await session.create({ agentId: 'agent-0', features: shallowRef([spec]) });
-    agent.setConfig({ model });
+    agent.setModel(testModel);
     agent.setRequester(requester);
     agent.on('turn.done', (event) => {
       outcome = event.outcome.type;
@@ -638,7 +648,7 @@ describe('feature DSL', () => {
         });
       },
     });
-    const requester: LlmRequester = { generate: async () => {} };
+    const requester = fakeRequester(() => textOutcome(''));
     const installed = shallowRef([spec]);
     let store = await openGatedStore();
     const mount = () => {
@@ -649,7 +659,7 @@ describe('feature DSL', () => {
         branchId: 'main',
         features: installed,
       });
-      handle.setConfig({ model });
+      handle.setModel(testModel);
       handle.setRequester(requester);
       return handle;
     };
@@ -712,19 +722,16 @@ describe('feature DSL', () => {
   it('runs afterStep hooks at the loop boundary and stops the turn normally on stopTurn', async () => {
     const env = await testStores();
     const requests: string[][] = [];
-    const requester: LlmRequester = {
-      generate: async (_config, content, { onEvent }) => {
-        requests.push(content.messages.map((message) => extractText(message)));
-        const last = content.messages.at(-1);
-        onEvent?.({
-          type: 'llm.streaming.part',
-          part: last?.role === 'user'
-            ? { type: 'function', id: `call-${requests.length}`, name: 'increment', arguments: '{}' }
-            : { type: 'text', text: 'done' },
-        });
-        onEvent?.({ type: 'llm.done' });
-      },
-    };
+    const requester = fakeRequester((rest) => {
+      const messages = rest.content?.messages ?? [];
+      requests.push(messages.map((message) => extractText(message)));
+      const last = messages.at(-1);
+      return last?.role === 'user'
+        ? textOutcome('', [
+            { type: 'function', id: `call-${requests.length}`, name: 'increment', arguments: '{}' },
+          ])
+        : textOutcome('done');
+    });
     const seen: Array<{ step: number; final: boolean; texts: string[] }> = [];
     let stop = true;
     const spec = createFeature('after-step-probe', {
@@ -744,7 +751,7 @@ describe('feature DSL', () => {
     const app = createHarness({ features: [] });
     const session = await app.create({ sessionId: 'sess', stores: env.stores });
     const agent = await session.create({ agentId: 'agent-0', features: [spec] });
-    agent.setConfig({ model });
+    agent.setModel(testModel);
     agent.setRequester(requester);
     const outcomes: string[] = [];
     agent.on('turn.done', (event) => { outcomes.push(event.outcome.type); });
@@ -767,31 +774,25 @@ describe('feature DSL', () => {
   it('channels tool result isError into history meta and renders status blocks at request assembly', async () => {
     const env = await testStores();
     const requests: Message[][] = [];
-    const requester: LlmRequester = {
-      generate: async (_config, content, { onEvent }) => {
-        requests.push([...content.messages]);
-        const last = content.messages.at(-1);
-        if (last?.role === 'user') {
-          const calls: Array<[string, string]> = [
-            ['call-fail', 'failer'],
-            ['call-empty', 'emptier'],
-            ['call-emptyfail', 'emptyFailer'],
-            ['call-multi', 'multipart'],
-            ['call-veto', 'vetoed'],
-            ['call-ghost', 'ghost'],
-          ];
-          for (const [id, name] of calls) {
-            onEvent?.({
-              type: 'llm.streaming.part',
-              part: { type: 'function', id, name, arguments: '{}' },
-            });
-          }
-        } else {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
-        }
-        onEvent?.({ type: 'llm.done' });
-      },
-    };
+    const requester = fakeRequester((rest) => {
+      const messages = rest.content?.messages ?? [];
+      requests.push([...messages]);
+      const last = messages.at(-1);
+      if (last?.role === 'user') {
+        const calls: Array<[string, string]> = [
+          ['call-fail', 'failer'],
+          ['call-empty', 'emptier'],
+          ['call-emptyfail', 'emptyFailer'],
+          ['call-multi', 'multipart'],
+          ['call-veto', 'vetoed'],
+          ['call-ghost', 'ghost'],
+        ];
+        return textOutcome('', [
+          ...calls.map(([id, name]) => ({ type: 'function' as const, id, name, arguments: '{}' })),
+        ]);
+      }
+      return textOutcome('done');
+    });
     let historyOf: () => readonly HistoryMessage[] = () => [];
     const spec = createFeature('iserror-probe', {
       agent() {
@@ -848,7 +849,7 @@ describe('feature DSL', () => {
     const app = createHarness({ features: [] });
     const session = await app.create({ sessionId: 'sess', stores: env.stores });
     const agent = await session.create({ agentId: 'agent-0', features: [spec] });
-    agent.setConfig({ model });
+    agent.setModel(testModel);
     agent.setRequester(requester);
     const done = turnDone(agent);
     agent.submit(createUserMessage('go'));
@@ -902,25 +903,18 @@ describe('feature DSL', () => {
   it('ends the turn normally when a tool result carries stopTurn, without short-circuiting the batch', async () => {
     const env = await testStores();
     const requests: string[][] = [];
-    const requester: LlmRequester = {
-      generate: async (_config, content, { onEvent }) => {
-        requests.push(content.messages.map((message) => extractText(message)));
-        const last = content.messages.at(-1);
-        if (last?.role === 'user') {
-          onEvent?.({
-            type: 'llm.streaming.part',
-            part: { type: 'function', id: 'call-stop', name: 'finisher', arguments: '{}' },
-          });
-          onEvent?.({
-            type: 'llm.streaming.part',
-            part: { type: 'function', id: 'call-plain', name: 'plain', arguments: '{}' },
-          });
-        } else {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
-        }
-        onEvent?.({ type: 'llm.done' });
-      },
-    };
+    const requester = fakeRequester((rest) => {
+      const messages = rest.content?.messages ?? [];
+      requests.push(messages.map((message) => extractText(message)));
+      const last = messages.at(-1);
+      if (last?.role === 'user') {
+        return textOutcome('', [
+          { type: 'function', id: 'call-stop', name: 'finisher', arguments: '{}' },
+          { type: 'function', id: 'call-plain', name: 'plain', arguments: '{}' },
+        ]);
+      }
+      return textOutcome('done');
+    });
     const executed: string[] = [];
     const spec = createFeature('stop-turn-probe', {
       agent() {
@@ -949,7 +943,7 @@ describe('feature DSL', () => {
     const app = createHarness({ features: [] });
     const session = await app.create({ sessionId: 'sess', stores: env.stores });
     const agent = await session.create({ agentId: 'agent-0', features: [spec] });
-    agent.setConfig({ model });
+    agent.setModel(testModel);
     agent.setRequester(requester);
     const outcomes: string[] = [];
     agent.on('turn.done', (event) => { outcomes.push(event.outcome.type); });

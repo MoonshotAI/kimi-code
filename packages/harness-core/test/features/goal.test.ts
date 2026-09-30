@@ -10,13 +10,11 @@ import {
   openBlobs,
   openSessionStores,
   Trees,
-  UNKNOWN_CAPABILITY,
   useAgent,
   useAgentTools,
   type AgentHandle,
   type FeatureSpec,
-  type LlmModel,
-  type LlmRequester,
+  type AgentLlmRequester,
   type SessionHandle,
   type SessionStores,
   type ToolMeta,
@@ -51,45 +49,40 @@ import {
   type GoalUpdatedEvent,
 } from '#/features/goal/index';
 
-const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
+import { fakeRequester, testModel, textOutcome } from '../fake-llm';
 
 type ScriptStep = { text: string } | { toolCall: { name: string; arguments: string } };
 
 let queue: ScriptStep[] = [];
 let callSeq = 0;
 
-function createMockRequester(): LlmRequester {
-  return {
-    generate: async (_config, _content, { onEvent }) => {
-      await tick();
-      const out = queue.shift() ?? { text: 'done' };
-      if ('toolCall' in out) {
-        onEvent?.({
-          type: 'llm.streaming.part',
-          part: {
-            type: 'function',
-            id: `call-${(callSeq += 1)}`,
-            name: out.toolCall.name,
-            arguments: out.toolCall.arguments,
-          },
-        });
-      } else {
-        onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: out.text } });
-      }
-      onEvent?.({
-        type: 'llm.streaming.usage',
-        usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
-      });
-      onEvent?.({ type: 'llm.done' });
-    },
-  };
+function createMockRequester(): AgentLlmRequester {
+  return fakeRequester(async (_rest, onEvent) => {
+    await tick();
+    const out = queue.shift() ?? { text: 'done' };
+    onEvent?.({
+      type: 'llm.streaming.usage',
+      usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
+    });
+    if ('toolCall' in out) {
+      return textOutcome('', [
+        {
+          type: 'function',
+          id: `call-${(callSeq += 1)}`,
+          name: out.toolCall.name,
+          arguments: out.toolCall.arguments,
+        },
+      ]);
+    }
+    return textOutcome(out.text);
+  });
 }
 
-function bindTestLlm(requester: LlmRequester): FeatureSpec {
+function bindTestLlm(requester: AgentLlmRequester): FeatureSpec {
   return createFeature('test-llm', {
     agent() {
       const agent = useAgent();
-      agent.setConfig({ model });
+      agent.setModel(testModel);
       agent.setRequester(requester);
     },
   });
@@ -130,7 +123,7 @@ interface GoalTestEnv {
 
 async function startGoalTest(options?: {
   readonly now?: () => number;
-  readonly requester?: LlmRequester;
+  readonly requester?: AgentLlmRequester;
   readonly maxStepsPerTurn?: number;
   readonly seed?: (stores: SessionStores) => Promise<void>;
 }): Promise<GoalTestEnv> {
@@ -485,8 +478,12 @@ describe('goal feature', () => {
     try {
       let now = 0;
       let llmSignal: AbortSignal | undefined;
-      const blockingRequester: LlmRequester = {
-        generate: (_config, _content, { signal }) =>
+      const blockingRequester: AgentLlmRequester = {
+        with: () => blockingRequester,
+        request: () => {
+          throw new Error('fake requester cannot build wire requests');
+        },
+        generate: (_rest, { signal }) =>
           new Promise((_resolve, reject) => {
             llmSignal = signal;
             signal.addEventListener(
@@ -729,7 +726,11 @@ describe('goal feature', () => {
   });
 
   it('pauses the goal after a failed turn', async () => {
-    const failingRequester: LlmRequester = {
+    const failingRequester: AgentLlmRequester = {
+      with: () => failingRequester,
+      request: () => {
+        throw new Error('fake requester cannot build wire requests');
+      },
       generate: async () => {
         throw new Error('boom');
       },

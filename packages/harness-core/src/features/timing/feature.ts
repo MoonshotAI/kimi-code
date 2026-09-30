@@ -48,7 +48,7 @@ export const timing = createFeature('timing', {
     });
     agent.on('tool.detached', mark);
     agent.on('tool.done', mark);
-    agent.on('llm.sent', () => {
+    agent.on('llm.started', () => {
       const t = now();
       attemptStartedAt =
         retryAnchor === undefined ? lastEventAt : retryAnchor.at + retryAnchor.delayMs;
@@ -91,23 +91,12 @@ export const timing = createFeature('timing', {
     });
     agent.on('llm.retrying', (event) => {
       const t = now();
-      retryAnchor = { at: t, delayMs: event.delayMs };
+      retryAnchor = event.reason === 'backoff' ? { at: t, delayMs: event.delayMs } : undefined;
       resetWindow();
       lastEventAt = t;
     });
-    agent.on('llm.recovering', () => {
-      const t = now();
-      retryAnchor = undefined;
-      resetWindow();
-      lastEventAt = t;
-    });
-    agent.on('llm.failed.syntax', () => {
-      const t = now();
-      retryAnchor = undefined;
-      resetWindow();
-      lastEventAt = t;
-    });
-    agent.on('llm.failed.remote', () => {
+    agent.on('llm.ended', (event) => {
+      if (event.outcome.type !== 'failed') return;
       const t = now();
       retryAnchor = undefined;
       resetWindow();

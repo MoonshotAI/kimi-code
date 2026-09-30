@@ -76,7 +76,7 @@ HTTP 装配见 [getting-started](getting-started.md)。
 ## 交付检查
 
 - Feature 之间只经 token / collection 协作：协作面收窄到包入口导出的符号，Feature 才能独立装卸。
-- 绑 generate 用 `agent.setConfig` / `setCredentialProvider` / `setRequester`（Feature 用 `useAgent()` 上的同名方法）：它们是命令面上的同步设置，直接决定下一次 `generate`。
+- 绑 generate 用 `agent.setModel` / `setEndpoint` / `setRequester`（Feature 用 `useAgent()` 上的同名方法）：它们是命令面上的同步设置，直接决定下一次 `generate`。
 - 宿主取 facade 用 `handle.resolve(token)`，订 Feature 事件用 `session.on(feature, type)`。
 - `app.on` / `session.on` 是已持久化（或 Feature `fire`）的节点事件；`agent.on` 是机器事件。
 - 事实流用 `onCommit` 或节点 `on`：`subscribe` 只在状态变化时通知，状态没变 ≠ 事件没提交。

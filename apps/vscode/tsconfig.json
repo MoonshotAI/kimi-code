@@ -8,12 +8,17 @@
     "noEmit": true,
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
+    "experimentalDecorators": true,
     "paths": {
       "@/*": ["./src/*"],
       "shared/*": ["./shared/*"],
+      "@moonshot-ai/agent-core": ["../../packages/agent-core/src/index.ts"],
+      "@moonshot-ai/agent-core/*": ["../../packages/agent-core/src/*.ts"],
+      "@moonshot-ai/harness-core": ["../../packages/harness-core/src/index.ts"],
+      "@moonshot-ai/harness-core/*": ["../../packages/harness-core/src/*.ts"],
       "@moonshot-ai/kimi-code-sdk": ["../../packages/node-sdk/src/index.ts"]
     }
   },
-  "include": ["src/**/*", "shared/**/*", "test/**/*"],
-  "exclude": ["dist", "node_modules", "webview-ui", "test/settings-store.test.ts", "test/app-init.test.ts", "test/webview"]
+  "include": ["src/**/*", "shared/**/*", "test/**/*", "../../packages/agent-core-v2/src/**/*.ts"],
+  "exclude": ["dist", "node_modules", "webview-ui", "test/settings-store.test.ts", "test/app-init.test.ts", "test/webview", "../../packages/agent-core-v2/src/human/test"]
 }

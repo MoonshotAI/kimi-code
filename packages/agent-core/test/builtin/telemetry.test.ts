@@ -14,15 +14,14 @@ import {
   type TelemetryFace,
 } from '#/builtin/telemetry/index';
 import { createFeature, useAgentTools } from '#/feature/index';
-import type { LlmErrorMessage, LlmRemoteErrorMessage } from '#/llm/errors';
+import type { LlmErrorMessage } from '#/llm/response';
 import { createUserMessage, extractText } from '#/llm/message';
-import { UNKNOWN_CAPABILITY, type LlmModel } from '#/llm/model';
-import type { LlmRequester } from '#/llm/requester/requester';
+import type { AgentLlmRequester } from '#/agent-machine/llm-actor';
 import { openBlobs } from '#/store/blob';
 import { MemoryBackend, Trees } from '#/store/tree';
 import { openSessionStores, type SessionStores } from '#/stores/session';
 
-const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
+import { failureOutcome, fakeRequester, testModel, textOutcome } from '../fake-llm';
 
 function createRecorder(): { records: TelemetryAppenderRecord[]; appender: TelemetryAppender } {
   const records: TelemetryAppenderRecord[] = [];
@@ -61,17 +60,8 @@ function mountTelemetryApp(props?: { enabled?: boolean; context?: TelemetryConte
   return { app, recorder, ready: app.ready() };
 }
 
-function failingRequester(
-  failure:
-    | { type: 'llm.failed.syntax'; error: LlmErrorMessage<'syntax'> }
-    | { type: 'llm.failed.remote'; error: LlmRemoteErrorMessage },
-): LlmRequester {
-  return {
-    generate: (_config, _input, { onEvent }) => {
-      onEvent?.(failure);
-      return Promise.resolve();
-    },
-  };
+function failingRequester(error: LlmErrorMessage): AgentLlmRequester {
+  return fakeRequester(() => failureOutcome(error));
 }
 
 async function settleMicrotasks(): Promise<void> {
@@ -213,18 +203,12 @@ describe('telemetry feature', () => {
     const env = await testStores();
     const session = await app.create({ sessionId: 'sess', stores: env.stores });
     const agent = await session.create({ agentId: 'main' });
-    agent.setConfig({ model });
+    agent.setModel(testModel);
     let release: () => void = () => {};
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    agent.setRequester({
-      generate: (_config, _input, { onEvent }) =>
-        gate.then(() => {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'hi' } });
-          onEvent?.({ type: 'llm.done' });
-        }),
-    });
+    agent.setRequester(fakeRequester(() => gate.then(() => textOutcome('hi'))));
     const agentTelemetry = agent.resolve(TelemetryRef)!;
     agent.submit(createUserMessage('hello'));
     await waitForEvent(recorder.records, 'turn_started');
@@ -283,32 +267,21 @@ describe('telemetry feature', () => {
     const env = await testStores();
     const session = await app.create({ sessionId: 'sess', stores: env.stores });
     const agent = await session.create({ agentId: 'main' });
-    agent.setConfig({ model });
-    const requester: LlmRequester = {
-      generate: (_config, { messages }, { onEvent }) => {
-        const last = messages.at(-1);
-        if (last !== undefined && last.role === 'user' && extractText(last) === 'go') {
-          onEvent?.({
-            type: 'llm.streaming.part',
-            part: { type: 'function', id: 'call-1', name: 'ping', arguments: '{}' },
-          });
-        } else if (last !== undefined && last.role === 'user' && extractText(last) === 'bad') {
-          onEvent?.({
-            type: 'llm.streaming.part',
-            part: { type: 'function', id: 'call-2', name: 'bad', arguments: '{}' },
-          });
-        } else if (last !== undefined && last.role === 'user' && extractText(last) === 'halt') {
-          onEvent?.({
-            type: 'llm.streaming.part',
-            part: { type: 'function', id: 'call-3', name: 'halter', arguments: '{}' },
-          });
-        } else {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
-        }
-        onEvent?.({ type: 'llm.done' });
-        return Promise.resolve();
-      },
-    };
+    agent.setModel(testModel);
+    const requester = fakeRequester((rest) => {
+      const messages = rest.content?.messages ?? [];
+      const last = messages.at(-1);
+      if (last !== undefined && last.role === 'user' && extractText(last) === 'go') {
+        return textOutcome('', [{ type: 'function', id: 'call-1', name: 'ping', arguments: '{}' }]);
+      }
+      if (last !== undefined && last.role === 'user' && extractText(last) === 'bad') {
+        return textOutcome('', [{ type: 'function', id: 'call-2', name: 'bad', arguments: '{}' }]);
+      }
+      if (last !== undefined && last.role === 'user' && extractText(last) === 'halt') {
+        return textOutcome('', [{ type: 'function', id: 'call-3', name: 'halter', arguments: '{}' }]);
+      }
+      return textOutcome('done');
+    });
     agent.setRequester(requester);
     agent.submit(createUserMessage('go'));
     await waitForEvent(recorder.records, 'tool_call');
@@ -345,9 +318,9 @@ describe('telemetry feature', () => {
     const failEnv = await testStores();
     const failSession = await failApp.create({ sessionId: 'sess', stores: failEnv.stores });
     const failAgent = await failSession.create({ agentId: 'main' });
-    failAgent.setConfig({ model });
+    failAgent.setModel(testModel);
     failAgent.setRequester(
-      failingRequester({ type: 'llm.failed.remote', error: { kind: 'unknown', message: 'boom' } }),
+      failingRequester({ kind: 'unknown', message: 'boom' }),
     );
     failAgent.submit(createUserMessage('go'));
     await waitForEvent(failed.records, 'turn_ended');
@@ -362,12 +335,9 @@ describe('telemetry feature', () => {
     const env = await testStores();
     const session = await app.create({ sessionId: 'sess', stores: env.stores });
     const agent = await session.create({ agentId: 'main' });
-    agent.setConfig({ model });
+    agent.setModel(testModel);
     agent.setRequester(
-      failingRequester({
-        type: 'llm.failed.syntax',
-        error: { kind: 'syntax', message: 'bad request', code: 'request_format' },
-      }),
+      failingRequester({ kind: 'syntax', message: 'bad request', code: 'request_format' }),
     );
     agent.submit(createUserMessage('go'));
     await waitForEvent(recorder.records, 'api_error');
@@ -444,18 +414,16 @@ describe('telemetry feature', () => {
     const env = await testStores();
     const session = await app.create({ sessionId: 'sess', stores: env.stores });
     const agent = await session.create({ agentId: 'main' });
-    agent.setConfig({ model });
-    agent.setRequester({
-      generate: (_config, _input, { onEvent }) => {
+    agent.setModel(testModel);
+    agent.setRequester(
+      fakeRequester((_rest, onEvent) => {
         onEvent?.({
           type: 'llm.streaming.usage',
           usage: { inputOther: 10, inputCacheRead: 5, inputCacheCreation: 2, output: 3 },
         });
-        onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'hi' } });
-        onEvent?.({ type: 'llm.done' });
-        return Promise.resolve();
-      },
-    });
+        return textOutcome('hi');
+      }),
+    );
     agent.submit(createUserMessage('hello'));
     await waitForEvent(recorder.records, 'prompt_cache_probe');
     const probe = findRecord(recorder.records, 'prompt_cache_probe');

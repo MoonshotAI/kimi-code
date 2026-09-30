@@ -1,21 +1,17 @@
 /**
- * Output rendering for `kimi -p` (print mode) — shared by the v1 driver
- * (`run-prompt.ts`) and the native v2 runner (`v2/run-v2-print.ts`).
- *
- * Both engines feed the same writer classes: v1 via the SDK `Event` stream, v2
- * via the main agent's native `IEventBus` (whose `DomainEvent` payloads are
- * already v1-protocol-shaped). Keeping the writers here lets v2 reuse them
- * without re-implementing rendering, while v1's `runPromptTurn` keeps its own
- * event-filtering / completion flow intact.
+ * Output rendering for `kimi -p` (print mode), fed by the v3 runner
+ * (`run-print.ts`) from the main agent's native event stream
+ * (`llm.streaming.part`, `turn.spawn_tools`, `tool.done`, `llm.retrying`,
+ * `turn.done`). Keeping the writers here lets the runner stay a thin
+ * event-to-writer mapping without re-implementing rendering.
  */
 
 import type { PromptOutputFormat } from './options';
 
 /**
- * Structural hook-result shape the renderer reads. Both the v1 SDK
- * `HookResultEvent` and the v2 native `hook.result` `DomainEvent` satisfy it,
- * so the renderer stays engine-agnostic without depending on either event
- * definition.
+ * Structural hook-result shape the renderer reads. No v3 runtime event feeds
+ * this today (external hooks no longer emit a UI-level result event); the
+ * writer support stays so a future hook-result surface can re-use it.
  */
 interface HookResultEventLike {
   readonly hookEvent: string;
@@ -24,11 +20,10 @@ interface HookResultEventLike {
 }
 
 /**
- * Structural retry shape the renderer reads. Mirrors the v1 SDK
- * `turn.step.retrying` event fields the stream-json meta line surfaces. Both
- * drivers forward retries to `writeRetrying`: v1 from its SDK event stream,
- * v2 from the native `turn.step.retrying` `DomainEvent` (same field names),
- * after discarding the failed attempt's partial output.
+ * Structural retry shape the renderer reads. The v3 `llm.retrying` machine
+ * event carries `failedAttempt` / `nextAttempt` / `maxAttempts` / `delayMs`
+ * plus an `LlmErrorMessage`; the runner maps that error onto `errorName` /
+ * `errorMessage` / `statusCode` for the stream-json meta line.
  */
 interface RetryingEventLike {
   readonly failedAttempt: number;

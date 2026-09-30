@@ -73,18 +73,28 @@ export function parseReadMediaOutput(output: string): ReadMediaSummary | null {
     if (type === 'image_url' || type === 'video_url') {
       foundMedia = true;
       kind = type === 'image_url' ? 'image' : 'video';
-      const holder = part[type === 'image_url' ? 'imageUrl' : 'videoUrl'];
-      if (typeof holder === 'object' && holder !== null) {
-        const h = holder as Record<string, unknown>;
-        const u = h['url'];
-        if (typeof u === 'string') {
-          const data = DATA_URL_RE.exec(u);
-          if (data && data[1] !== undefined && data[2] !== undefined) {
-            mimeType = data[1];
-            bytes = bytesFromBase64(data[2]);
-          } else {
-            url = u;
+      const source = part['source'];
+      if (typeof source === 'object' && source !== null) {
+        const s = source as Record<string, unknown>;
+        if (s['kind'] === 'inline') {
+          const m = s['mimeType'];
+          const d = s['data'];
+          if (typeof m === 'string') mimeType = m;
+          if (typeof d === 'string') bytes = bytesFromBase64(d);
+        } else if (s['kind'] === 'url') {
+          const u = s['url'];
+          if (typeof u === 'string') {
+            const data = DATA_URL_RE.exec(u);
+            if (data && data[1] !== undefined && data[2] !== undefined) {
+              mimeType = data[1];
+              bytes = bytesFromBase64(data[2]);
+            } else {
+              url = u;
+            }
           }
+        } else if (s['kind'] === 'file') {
+          const m = s['mimeType'];
+          if (typeof m === 'string') mimeType = m;
         }
       }
     }

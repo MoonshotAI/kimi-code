@@ -4,39 +4,43 @@ import { createHarness, memorySessionSpace, type AgentHandle, type AppHandle, ty
 import { undo, UndoRef } from '#/builtin/undo/index';
 import { createFeature, MAIN_AGENT_ID, useAgent } from '#/feature/index';
 import { createUserMessage } from '#/llm/message';
-import { UNKNOWN_CAPABILITY, type LlmModel } from '#/llm/model';
-import type { LlmRequester } from '#/llm/requester/requester';
+import type { AgentLlmRequester } from '#/agent-machine/llm-actor';
 
-const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
+import { testModel, textOutcome } from '../fake-llm';
 
 type Step = { readonly kind: 'text'; readonly text: string } | { readonly kind: 'fail' } | { readonly kind: 'hang' };
 
 let queue: Step[] = [];
 
-function createMockRequester(): LlmRequester {
-  return {
-    generate: async (_config, _content, { onEvent, signal }) => {
+function createMockRequester(): AgentLlmRequester {
+  const requester: AgentLlmRequester = {
+    with: () => requester,
+    request: () => {
+      throw new Error('fake requester cannot build wire requests');
+    },
+    generate: async (_rest, control) => {
       const step: Step = queue.shift() ?? { kind: 'text', text: 'done' };
       if (step.kind === 'hang') {
-        await new Promise((_, reject) => {
-          signal.addEventListener('abort', () => {
-            reject(signal.reason);
+        return new Promise<never>((_, reject) => {
+          control.signal.addEventListener('abort', () => {
+            reject(control.signal.reason);
           });
         });
-        return;
       }
       if (step.kind === 'fail') throw new Error('boom');
-      onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: step.text } });
-      onEvent?.({ type: 'llm.done' });
+      const outcome = textOutcome(step.text);
+      control.onEvent?.({ type: 'llm.ended', outcome });
+      return outcome;
     },
   };
+  return requester;
 }
 
-function bindTestLlm(requester: LlmRequester) {
+function bindTestLlm(requester: AgentLlmRequester) {
   return createFeature('test-llm', {
     agent() {
       const agent = useAgent();
-      agent.setConfig({ model });
+      agent.setModel(testModel);
       agent.setRequester(requester);
     },
   });

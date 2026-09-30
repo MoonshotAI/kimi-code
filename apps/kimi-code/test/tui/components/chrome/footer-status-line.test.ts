@@ -16,7 +16,6 @@ import type { AppState } from '#/tui/types';
 const baseState: AppState = {
   version: '1.2.3',
   workDir: '/tmp/project',
-  additionalDirs: [],
   sessionId: 'ses-1',
   sessionTitle: null,
   model: 'kimi-k2',

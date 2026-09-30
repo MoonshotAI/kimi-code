@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createUserMessage, extractText, type SystemMessage } from '#/llm/message';
-import { UNKNOWN_CAPABILITY, type LlmModel } from '#/llm/model';
-import type { LlmRequester } from '#/llm/requester/requester';
+import type { LlmOutcome } from '#/llm/response';
+import type { AgentLlmRequester } from '#/agent-machine/llm-actor';
 import { openBlobs, type Blobs } from '#/store/blob';
 import { MemoryBackend, Trees } from '#/store/tree';
 import { openSessionStores, type RosterEntry, type SessionStores } from '#/stores/session';
@@ -11,18 +11,15 @@ import { createFacadeToken, useExpose, useFire, useInject, ref, type Ref, type R
 import { createFeature, useAgentTools, useBlobs, useOnAgent, useOnApp, useOnSession, useSession, useSessionStore } from '#/feature/index';
 import { createHarness, memorySessionSpace, type AgentHandle } from '#/app/index';
 
-const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
+import { fakeRequester, testModel, textOutcome } from '../fake-llm';
 
-function createEchoRequester(): LlmRequester {
-  return {
-    generate: (_config, { messages }, { onEvent }) => {
-      const last = messages.at(-1);
-      const text = last !== undefined && last.role === 'user' ? extractText(last) : '';
-      onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: `echo:${text}` } });
-      onEvent?.({ type: 'llm.done' });
-      return Promise.resolve();
-    },
-  };
+function createEchoRequester(): AgentLlmRequester {
+  return fakeRequester((rest) => {
+    const messages = rest.content?.messages ?? [];
+    const last = messages.at(-1);
+    const text = last !== undefined && last.role === 'user' ? extractText(last) : '';
+    return textOutcome(`echo:${text}`);
+  });
 }
 
 async function testStores(): Promise<{ stores: SessionStores }> {
@@ -99,7 +96,7 @@ describe('app-session-agent units', () => {
     expect(left.resolve(SessionCounter)!.appCount.value).toBe(1);
     expect(right.resolve(SessionCounter)!.appCount.value).toBe(1);
     const agent = await left.create({ agentId: 'agent-0' });
-    agent.setConfig({ model });
+    agent.setModel(testModel);
     agent.setRequester(createEchoRequester());
     expect(left.resolve(SessionCounter)!.roster()).toEqual({
       'agent-0': { branch: 'agent-0', features: ['app-probe', 'session-probe'] },
@@ -143,29 +140,28 @@ describe('app-session-agent units', () => {
   it('exposes session agent management and agent input interfaces', async () => {
     const requests: string[][] = [];
     let gate: PromiseWithResolvers<void> | undefined;
-    const requester: LlmRequester = {
-      generate: (_config, { messages }, { onEvent }) => {
-        requests.push(messages.map((message) => extractText(message)));
-        const respond = (): void => {
-          const last = messages.at(-1);
-          const lastUser = messages.toReversed().find((message) => message.role === 'user');
-          if (last !== undefined && last.role === 'tool') {
-            onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
-          } else if (lastUser !== undefined && extractText(lastUser) === 'go') {
-            onEvent?.({ type: 'llm.streaming.part', part: { type: 'function', id: `call-${requests.length}`, name: 'ping', arguments: '{}' } });
-          } else {
-            onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
-          }
-          onEvent?.({ type: 'llm.done' });
-        };
-        const pending = gate;
-        if (pending === undefined) {
-          respond();
-          return Promise.resolve();
+    const requester = fakeRequester((rest) => {
+      const messages = rest.content?.messages ?? [];
+      requests.push(messages.map((message) => extractText(message)));
+      const respond = (): LlmOutcome => {
+        const last = messages.at(-1);
+        const lastUser = messages.toReversed().find((message) => message.role === 'user');
+        if (last !== undefined && last.role === 'tool') {
+          return textOutcome('done');
         }
-        return pending.promise.then(respond);
-      },
-    };
+        if (lastUser !== undefined && extractText(lastUser) === 'go') {
+          return textOutcome('', [
+            { type: 'function', id: `call-${requests.length}`, name: 'ping', arguments: '{}' },
+          ]);
+        }
+        return textOutcome('done');
+      };
+      const pending = gate;
+      if (pending === undefined) {
+        return respond();
+      }
+      return pending.promise.then(respond);
+    });
     const spec = createFeature('probe', {
       agent() {
         useAgentTools({
@@ -180,7 +176,7 @@ describe('app-session-agent units', () => {
     const app = createHarness({ features: [spec] });
     const session = await app.create({ sessionId: 'sess', stores: env.stores });
     const agent = await session.create({ agentId: 'main' });
-    agent.setConfig({ model });
+    agent.setModel(testModel);
     agent.setRequester(requester);
     expect(session.list()).toEqual(['main']);
     expect(session.get('main')).toBe(agent);
@@ -215,7 +211,7 @@ describe('app-session-agent units', () => {
     await env.stores.flush();
     expect(store?.getState().history.some((entry) => extractText(entry.message) === 'note')).toBe(true);
     const copy = await session.fork('main', { agentId: 'copy' });
-    copy.setConfig({ model });
+    copy.setModel(testModel);
     copy.setRequester(requester);
     expect(session.list()).toEqual(['main', 'copy']);
     const copyStore = env.stores.get('copy');
@@ -236,7 +232,7 @@ describe('app-session-agent units', () => {
     const app = createHarness({});
     const session = await app.create({ sessionId: 'sess', stores: env.stores });
     const agent = await session.create({ agentId: 'main' });
-    agent.setConfig({ model });
+    agent.setModel(testModel);
     agent.setRequester(createEchoRequester());
     const done = agent.wait('turn.done', { match: (event) => event.outcome.type === 'done' });
     agent.submit(createUserMessage('hello'));
@@ -255,7 +251,7 @@ describe('app-session-agent units', () => {
     const app = createHarness({});
     const session = await app.create({ sessionId: 'sess', stores: env.stores });
     const agent = await session.create({ agentId: 'main' });
-    agent.setConfig({ model });
+    agent.setModel(testModel);
     agent.setRequester(createEchoRequester());
     const first = await agent.run(createUserMessage('hello'));
     expect(first.outcome.type).toBe('done');
@@ -266,10 +262,18 @@ describe('app-session-agent units', () => {
     await expect(agent.run(createUserMessage('two'))).rejects.toThrow('agent is busy');
     await expect(agent.retry()).rejects.toThrow('agent is busy');
     expect((await inFlight).outcome.type).toBe('done');
-    const hanging: LlmRequester = {
-      generate: (_config, _content, { signal }) =>
-        new Promise((resolve) => {
-          signal.addEventListener('abort', () => resolve());
+    const hanging: AgentLlmRequester = {
+      with: () => hanging,
+      request: () => {
+        throw new Error('fake requester cannot build wire requests');
+      },
+      generate: (_rest, { signal }) =>
+        new Promise((_, reject) => {
+          if (signal.aborted) {
+            reject(signal.reason);
+            return;
+          }
+          signal.addEventListener('abort', () => reject(signal.reason));
         }),
     };
     agent.setRequester(hanging);
@@ -294,7 +298,7 @@ describe('app-session-agent units', () => {
     const app = createHarness({});
     const session = await app.create({ sessionId: 'sess', stores: env.stores });
     const agent = await session.create({ agentId: 'main' });
-    agent.setConfig({ model });
+    agent.setModel(testModel);
     agent.setRequester(createEchoRequester());
     const retried = await agent.retry();
     expect(retried.outcome.type).toBe('done');
@@ -303,10 +307,18 @@ describe('app-session-agent units', () => {
       (entry) => entry.message.role === 'user' && entry.meta?.origin?.kind === 'retry',
     );
     expect(retryEntry?.message).toMatchObject({ role: 'user', content: [] });
-    const hanging: LlmRequester = {
-      generate: (_config, _content, { signal }) =>
-        new Promise((resolve) => {
-          signal.addEventListener('abort', () => resolve());
+    const hanging: AgentLlmRequester = {
+      with: () => hanging,
+      request: () => {
+        throw new Error('fake requester cannot build wire requests');
+      },
+      generate: (_rest, { signal }) =>
+        new Promise((_, reject) => {
+          if (signal.aborted) {
+            reject(signal.reason);
+            return;
+          }
+          signal.addEventListener('abort', () => reject(signal.reason));
         }),
     };
     agent.setRequester(hanging);
@@ -329,18 +341,14 @@ describe('app-session-agent units', () => {
   });
 
   it('aborts a detached background tool with abortTool', async () => {
-    const requester: LlmRequester = {
-      generate: (_config, { messages }, { onEvent }) => {
-        const last = messages.at(-1);
-        if (last !== undefined && last.role === 'user' && extractText(last) === 'bg') {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'function', id: 'call-bg', name: 'bg', arguments: '{}' } });
-        } else {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
-        }
-        onEvent?.({ type: 'llm.done' });
-        return Promise.resolve();
-      },
-    };
+    const requester = fakeRequester((rest) => {
+      const messages = rest.content?.messages ?? [];
+      const last = messages.at(-1);
+      if (last !== undefined && last.role === 'user' && extractText(last) === 'bg') {
+        return textOutcome('', [{ type: 'function', id: 'call-bg', name: 'bg', arguments: '{}' }]);
+      }
+      return textOutcome('done');
+    });
     const spec = createFeature('probe', {
       agent() {
         useAgentTools({
@@ -360,7 +368,7 @@ describe('app-session-agent units', () => {
     const app = createHarness({ features: [spec] });
     const session = await app.create({ sessionId: 'sess', stores: env.stores });
     const agent = await session.create({ agentId: 'main' });
-    agent.setConfig({ model });
+    agent.setModel(testModel);
     agent.setRequester(requester);
     const detached = agent.wait('tool.detached', { match: (event) => event.toolCallId === 'call-bg' });
     expect(agent.submit(createUserMessage('bg'))?.type).toBe('prompt.submitted');
@@ -374,18 +382,14 @@ describe('app-session-agent units', () => {
   });
 
   it('moves a foreground tool to the background with detachTool and still reports its completion', async () => {
-    const requester: LlmRequester = {
-      generate: (_config, { messages }, { onEvent }) => {
-        const last = messages.at(-1);
-        if (last !== undefined && last.role === 'user' && extractText(last) === 'fg') {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'function', id: 'call-fg', name: 'fg', arguments: '{}' } });
-        } else {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
-        }
-        onEvent?.({ type: 'llm.done' });
-        return Promise.resolve();
-      },
-    };
+    const requester = fakeRequester((rest) => {
+      const messages = rest.content?.messages ?? [];
+      const last = messages.at(-1);
+      if (last !== undefined && last.role === 'user' && extractText(last) === 'fg') {
+        return textOutcome('', [{ type: 'function', id: 'call-fg', name: 'fg', arguments: '{}' }]);
+      }
+      return textOutcome('done');
+    });
     let settle: ((result: ToolResult) => void) | undefined;
     const spec = createFeature('probe', {
       agent() {
@@ -404,7 +408,7 @@ describe('app-session-agent units', () => {
     const app = createHarness({ features: [spec] });
     const session = await app.create({ sessionId: 'sess', stores: env.stores });
     const agent = await session.create({ agentId: 'main' });
-    agent.setConfig({ model });
+    agent.setModel(testModel);
     agent.setRequester(requester);
     expect(agent.detachTool('missing')).toBeUndefined();
     const spawned = agent.wait('turn.spawn_tools', {
@@ -446,14 +450,12 @@ describe('app-session-agent units', () => {
 
   it('counts steps monotonically across drains and fails with max_steps even when a drain carries messages', async () => {
     let requests = 0;
-    const requester: LlmRequester = {
-      generate: (_config, _input, { onEvent }) => {
-        requests += 1;
-        onEvent?.({ type: 'llm.streaming.part', part: { type: 'function', id: `call-${requests}`, name: 'spin', arguments: '{}' } });
-        onEvent?.({ type: 'llm.done' });
-        return Promise.resolve();
-      },
-    };
+    const requester = fakeRequester(() => {
+      requests += 1;
+      return textOutcome('', [
+        { type: 'function', id: `call-${requests}`, name: 'spin', arguments: '{}' },
+      ]);
+    });
     const spec = createFeature('probe', {
       agent() {
         useAgentTools({
@@ -468,7 +470,7 @@ describe('app-session-agent units', () => {
     const app = createHarness({ features: [spec] });
     const session = await app.create({ sessionId: 'sess', stores: env.stores });
     const agent = await session.create({ agentId: 'main', machineOptions: { maxStepsPerTurn: 2 } });
-    agent.setConfig({ model });
+    agent.setModel(testModel);
     agent.setRequester(requester);
     const done = new Promise<{ outcome: unknown; texts: string[] }>((resolve) => {
       agent.on('turn.done', (event) => {

@@ -1,39 +1,20 @@
 import {
-  anthropicBetaBase,
-  createProvider,
-  openAIBase,
-  openAIResponsesBase,
-  type ProtocolBinding,
+  kimiAnthropicRequester,
+  kimiRequester,
+  kimiResponsesRequester,
+  type CatalogProviderHandle,
+  type LlmRequester,
 } from '@moonshot-ai/agent-core';
 
-import { classifyKimiQuotaError } from './errors';
-import { kimiMediaContribution } from './media';
-import { kimiAnthropicTrait, kimiConnection, kimiOpenAITrait } from './trait';
-
-export function kimiProtocolBindings(): Record<string, ProtocolBinding | undefined> {
+export function kimiProtocolBindings(): Record<string, LlmRequester<'protocol'>> {
   return {
-    openai: {
-      base: openAIBase,
-      trait: kimiOpenAITrait,
-      connection: kimiConnection,
-      classifyError: classifyKimiQuotaError,
-    },
-    anthropic: {
-      base: anthropicBetaBase,
-      trait: kimiAnthropicTrait,
-      connection: kimiConnection,
-      classifyError: classifyKimiQuotaError,
-    },
-    openai_responses: {
-      base: openAIResponsesBase,
-      connection: kimiConnection,
-      classifyError: classifyKimiQuotaError,
-    },
+    openai: kimiRequester,
+    anthropic: kimiAnthropicRequester,
+    openai_responses: kimiResponsesRequester,
   };
 }
 
-export const kimiProvider = createProvider({
+export const kimiProvider: CatalogProviderHandle = {
   id: 'kimi',
-  protocols: kimiProtocolBindings(),
-  media: kimiMediaContribution,
-});
+  requester: kimiProtocolBindings(),
+};

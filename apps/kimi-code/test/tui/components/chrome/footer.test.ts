@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FooterComponent } from '#/tui/components/chrome/footer';
 import { setRainbowDance, type RainbowDanceController } from '#/tui/easter-eggs/dance';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
-import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
+import type { ModelAlias } from '#/tui/types';
 import type { AppState } from '#/tui/types';
 
 const gitStatusMocks = vi.hoisted(() => ({
@@ -53,7 +53,6 @@ function setDanceView(colored: boolean, phase: number): void {
 const appState: AppState = {
   version: '1.2.3',
   workDir: '/tmp/project',
-  additionalDirs: [],
   sessionId: 'ses-1',
   sessionTitle: null,
   model: 'kimi-k2',
@@ -194,9 +193,8 @@ describe('FooterComponent overrides', () => {
       provider: 'managed:kimi-code',
       model: 'kimi-k2',
       maxContextSize: 262144,
-      supportEfforts: ['low', 'high', 'max'],
-      defaultEffort: 'max',
-      overrides: { supportEfforts: ['low', 'high'], defaultEffort: 'high' },
+      supportEfforts: ['low', 'high'],
+      defaultEffort: 'high',
     };
     const state: AppState = {
       ...appState,
@@ -219,15 +217,13 @@ describe('FooterComponent displayName override', () => {
           provider: 'managed:kimi-code',
           model: 'kimi-k2',
           maxContextSize: 262144,
-          displayName: 'Remote Name',
-          overrides: { displayName: 'Custom Name' },
+          displayName: 'Custom Name',
         },
       },
     };
     const footer = new FooterComponent(state);
 
     expect(footer.render(120).join('\n')).toContain('Custom Name');
-    expect(footer.render(120).join('\n')).not.toContain('Remote Name');
   });
 });
 

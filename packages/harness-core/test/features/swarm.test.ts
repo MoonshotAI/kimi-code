@@ -16,14 +16,12 @@ import {
   openBlobs,
   openSessionStores,
   Trees,
-  UNKNOWN_CAPABILITY,
   useAgent,
   useAgentTools,
   type AgentHandle,
   type ConfigPersist,
   type FeatureSpec,
-  type LlmModel,
-  type LlmRequester,
+  type AgentLlmRequester,
   type Message,
   type SessionStores,
   type ToolCall,
@@ -60,12 +58,12 @@ import {
   type SwarmTask,
 } from '#/features/swarm/index';
 
-const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
+import { textOutcome, testModel } from '../fake-llm';
 
 const fastModel: SpawnModelEntry = {
   name: 'fast',
   description: 'Fast test model',
-  model: { provider: 'test', model: 'fast-model', capability: UNKNOWN_CAPABILITY },
+  model: { provider: 'test', name: 'fast-model' },
 };
 
 interface LlmCall {
@@ -82,45 +80,51 @@ type ScriptStep =
 
 type LlmScript = (call: LlmCall) => ScriptStep;
 
-function createMockRequester(script: LlmScript): { requester: LlmRequester; calls: LlmCall[] } {
+function createMockRequester(script: LlmScript): { requester: AgentLlmRequester; calls: LlmCall[] } {
   const calls: LlmCall[] = [];
   return {
     calls,
-    requester: {
-      generate: async (_config, content, { onEvent, signal }) => {
-        const call: LlmCall = {
-          systemPrompt: content.systemPrompt,
-          messages: content.messages,
-          tools: content.tools ?? [],
-        };
-        calls.push(call);
-        const out = script(call);
-        if ('throw' in out) throw out.throw;
-        if ('hang' in out) {
-          await new Promise<never>((_resolve, reject) => {
-            signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
-          });
-        }
-        if ('toolCall' in out) {
+    requester: (() => {
+      const requester: AgentLlmRequester = {
+        with: () => requester,
+        request: () => {
+          throw new Error('fake requester cannot build wire requests');
+        },
+        generate: async (rest, { signal, onEvent }) => {
+          const call: LlmCall = {
+            systemPrompt: rest.profile?.systemPrompt,
+            messages: rest.content?.messages ?? [],
+            tools: rest.profile?.tools ?? [],
+          };
+          calls.push(call);
+          const out = script(call);
+          if ('throw' in out) throw out.throw;
+          if ('hang' in out) {
+            await new Promise<never>((_resolve, reject) => {
+              signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+            });
+          }
           onEvent?.({
-            type: 'llm.streaming.part',
-            part: {
-              type: 'function',
-              id: `call-${calls.length}`,
-              name: out.toolCall.name,
-              arguments: out.toolCall.arguments,
-            },
+            type: 'llm.streaming.usage',
+            usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
           });
-        } else {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: out.text } });
-        }
-        onEvent?.({
-          type: 'llm.streaming.usage',
-          usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
-        });
-        onEvent?.({ type: 'llm.done' });
-      },
-    },
+          const outcome =
+            'toolCall' in out
+              ? textOutcome('', [
+                  {
+                    type: 'function',
+                    id: `call-${calls.length}`,
+                    name: out.toolCall.name,
+                    arguments: out.toolCall.arguments,
+                  },
+                ])
+              : textOutcome(out.text);
+          onEvent?.({ type: 'llm.ended', outcome });
+          return outcome;
+        },
+      };
+      return requester;
+    })(),
   };
 }
 
@@ -138,11 +142,11 @@ const script: LlmScript = (call) => {
   return { text: 'parent done' };
 };
 
-function bindTestLlm(requester: LlmRequester): FeatureSpec {
+function bindTestLlm(requester: AgentLlmRequester): FeatureSpec {
   return createFeature('test-llm', {
     agent() {
       const agent = useAgent();
-      agent.setConfig({ model });
+      agent.setModel(testModel);
       agent.setRequester(requester);
     },
   });

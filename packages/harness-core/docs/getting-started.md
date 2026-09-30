@@ -26,7 +26,7 @@ pnpm --filter @moonshot-ai/harness-core example -- -p '你好' -c <session-id> -
 | 进程内 | HTTP |
 |---|---|
 | 三层已挂 Feature | `GET /api/v1/features` |
-| `agent.setConfig` / `setCredentialProvider` / `setRequester` | 无；只在进程内 |
+| `agent.setModel` / `setEndpoint` / `setRequester` | 无；只在进程内 |
 | `agent.submit` | `POST /api/v1/sessions/:session_id/prompts` |
 | `agent.notify` | `POST /api/v1/sessions/:session_id/notify` |
 | `agent.remind` | `POST /api/v1/sessions/:session_id/remind`（必填 `key`） |

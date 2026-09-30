@@ -6,22 +6,22 @@ import {
   createUserMessage,
   type Message,
 } from '#/llm/message';
-import { UNKNOWN_CAPABILITY, type LlmModel, type ResponseFormat } from '#/llm/model';
-import type { LlmClientContext, LlmRequestEvent } from '#/llm/requester/requester';
-import { bindAnthropic } from '#/llm/builtin/protocol/anthropic/index';
-import { bindGoogleGenAI } from '#/llm/builtin/protocol/google-genai/index';
-import { bindOpenAI } from '#/llm/builtin/protocol/openai/index';
-import { bindOpenAIResponses } from '#/llm/builtin/protocol/openai-responses/index';
-import { createRequesterFromHandle } from '#/llm/protocol/runner';
+import type { LlmModelSpec, ResponseFormat } from '#/llm/request';
+import { createRequester } from '#/llm/requester';
+import { anthropicProtocol } from '#/llm/builtin/protocol/anthropic/index';
+import { googleGenAIProtocol } from '#/llm/builtin/protocol/google-genai/index';
+import { extractToolText, openAIProtocol } from '#/llm/builtin/protocol/openai/index';
+import {
+  extractToolText as extractResponsesToolText,
+  openAIResponsesProtocol,
+} from '#/llm/builtin/protocol/openai-responses/index';
 
-const model: LlmModel = {
+const spec: LlmModelSpec = {
   provider: 'test',
-  model: 'test-model',
-  capability: UNKNOWN_CAPABILITY,
-  baseUrl: 'https://example.test/v1',
+  name: 'test-model',
 };
-const genaiModel: LlmModel = { ...model, apiKey: 'test-key' };
 const messages: readonly Message[] = [createUserMessage('hi')];
+const control = () => ({ signal: new AbortController().signal });
 
 const jsonObjectFormat: ResponseFormat = { type: 'json_object' };
 const jsonSchemaFormat: ResponseFormat = {
@@ -54,6 +54,7 @@ const anthropicStreamEvents: readonly Record<string, unknown>[] = [
 ];
 
 const responsesStreamEvents: readonly Record<string, unknown>[] = [
+  { type: 'response.output_text.delta', delta: 'ok' },
   {
     type: 'response.completed',
     response: {
@@ -84,7 +85,7 @@ function createAsyncStream<T>(chunks: readonly T[]): AsyncIterable<T> {
 }
 
 interface ClientStub {
-  clientFactory: (request: LlmClientContext) => never;
+  clientFactory: () => unknown;
   body: () => Record<string, unknown>;
   called: () => boolean;
 }
@@ -94,7 +95,7 @@ function createClientStub(
 ): ClientStub {
   const captured: Record<string, unknown>[] = [];
   return {
-    clientFactory: () => client(captured) as never,
+    clientFactory: () => client(captured),
     body: () => {
       const last = captured.at(-1);
       if (last === undefined) throw new Error('expected client to be called');
@@ -164,22 +165,26 @@ function stubGoogleClient(chunks: readonly Record<string, unknown>[]): ClientStu
 describe('openai requester responseFormat', () => {
   it('maps json_object to response_format', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createRequesterFromHandle(bindOpenAI({ clientFactory: client.clientFactory }));
+    const requester = createRequester().with({
+      protocol: { base: openAIProtocol },
+      endpoint: { clientFactory: client.clientFactory },
+    });
     await requester.generate(
-      { model, responseFormat: jsonObjectFormat },
-      { messages },
-      { signal: new AbortController().signal },
+      { model: { spec, responseFormat: jsonObjectFormat }, content: { messages } },
+      control(),
     );
     expect(client.body()['response_format']).toEqual({ type: 'json_object' });
   });
 
   it('maps json_schema to response_format.json_schema', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createRequesterFromHandle(bindOpenAI({ clientFactory: client.clientFactory }));
+    const requester = createRequester().with({
+      protocol: { base: openAIProtocol },
+      endpoint: { clientFactory: client.clientFactory },
+    });
     await requester.generate(
-      { model, responseFormat: jsonSchemaFormat },
-      { messages },
-      { signal: new AbortController().signal },
+      { model: { spec, responseFormat: jsonSchemaFormat }, content: { messages } },
+      control(),
     );
     expect(client.body()['response_format']).toEqual({
       type: 'json_schema',
@@ -196,18 +201,19 @@ describe('openai requester responseFormat', () => {
 describe('openai-responses requester responseFormat', () => {
   it('maps json_schema to text.format', async () => {
     const client = stubResponsesClient(responsesStreamEvents);
-    const requester = createRequesterFromHandle(bindOpenAIResponses({
-      clientFactory: client.clientFactory,
-      extras: { text: { verbosity: 'high' }, reasoning: { summary: 'detailed' } },
-    }));
+    const requester = createRequester().with({
+      protocol: {
+        base: openAIResponsesProtocol,
+        options: { extras: { text: { verbosity: 'high' }, reasoning: { summary: 'detailed' } } },
+      },
+      endpoint: { clientFactory: client.clientFactory },
+    });
     await requester.generate(
       {
-        model,
-        responseFormat: jsonSchemaFormat,
-        thinking: { effort: 'high' },
+        model: { spec, responseFormat: jsonSchemaFormat, thinking: { effort: 'high' } },
+        content: { messages },
       },
-      { messages },
-      { signal: new AbortController().signal },
+      control(),
     );
     expect(client.body()['text']).toEqual({
       format: {
@@ -226,11 +232,16 @@ describe('openai-responses requester responseFormat', () => {
 describe('anthropic requester responseFormat', () => {
   it('maps json_schema to output_config.format and keeps the thinking effort', async () => {
     const client = stubAnthropicClient(anthropicStreamEvents);
-    const requester = createRequesterFromHandle(bindAnthropic({ clientFactory: client.clientFactory }));
+    const requester = createRequester().with({
+      protocol: { base: anthropicProtocol },
+      endpoint: { clientFactory: client.clientFactory },
+    });
     await requester.generate(
-      { model, thinking: { effort: 'high' }, responseFormat: jsonSchemaFormat },
-      { messages },
-      { signal: new AbortController().signal },
+      {
+        model: { spec, thinking: { effort: 'high' }, responseFormat: jsonSchemaFormat },
+        content: { messages },
+      },
+      control(),
     );
     expect(client.body()['output_config']).toEqual({
       effort: 'high',
@@ -240,41 +251,37 @@ describe('anthropic requester responseFormat', () => {
 
   it('fails with a syntax error for json_object', async () => {
     const client = stubAnthropicClient(anthropicStreamEvents);
-    const requester = createRequesterFromHandle(bindAnthropic({ clientFactory: client.clientFactory }));
-    const events: LlmRequestEvent[] = [];
-    await requester.generate(
-      { model, responseFormat: jsonObjectFormat },
-      { messages },
-      { signal: new AbortController().signal, onEvent: (event) => events.push(event) },
+    const requester = createRequester().with({
+      protocol: { base: anthropicProtocol },
+      endpoint: { clientFactory: client.clientFactory },
+    });
+    const result = await requester.generate(
+      { model: { spec, responseFormat: jsonObjectFormat }, content: { messages } },
+      control(),
     );
     expect(client.called()).toBe(false);
-    const failed = events.find((event) => event.type === 'llm.failed.syntax');
-    expect(failed).toBeDefined();
-    if (failed?.type !== 'llm.failed.syntax') throw new Error('expected llm.failed.syntax');
-    expect(failed.error.code).toBe('request_format');
+    if (result.type !== 'failed' || result.error.kind !== 'syntax') {
+      throw new Error('expected a syntax failure');
+    }
+    expect(result.error.code).toBe('request_format');
   });
 });
 
 describe('google-genai requester responseFormat', () => {
   it('maps response formats to config', async () => {
     const client = stubGoogleClient(googleGenAIStreamChunks);
-    const requester = createRequesterFromHandle(bindGoogleGenAI({
-      clientFactory: client.clientFactory,
-    }));
-    await requester.generate(
-      { model: genaiModel, responseFormat: jsonSchemaFormat },
-      { messages },
-      { signal: new AbortController().signal },
-    );
+    const requester = createRequester().with({
+      protocol: { base: googleGenAIProtocol },
+      endpoint: { clientFactory: client.clientFactory },
+      model: { spec },
+      content: { messages },
+    });
+    await requester.generate({ model: { responseFormat: jsonSchemaFormat } }, control());
     let config = client.body()['config'] as Record<string, unknown> | undefined;
     expect(config?.['responseMimeType']).toBe('application/json');
     expect(config?.['responseJsonSchema']).toEqual(jsonSchemaFormat.jsonSchema.schema);
 
-    await requester.generate(
-      { model: genaiModel, responseFormat: jsonObjectFormat },
-      { messages },
-      { signal: new AbortController().signal },
-    );
+    await requester.generate({ model: { responseFormat: jsonObjectFormat } }, control());
     config = client.body()['config'] as Record<string, unknown> | undefined;
     expect(config?.['responseMimeType']).toBe('application/json');
     expect(config?.['responseJsonSchema']).toBeUndefined();
@@ -290,19 +297,22 @@ describe('requester toolMessageConversion', () => {
       ]),
       createToolMessage('call_1', [
         { type: 'text', text: 'shot taken' },
-        { type: 'image_url', imageUrl: { url: 'https://example.test/shot.png' } },
+        { type: 'image_url', source: { kind: 'url', url: 'https://example.test/shot.png' } },
       ]),
     ];
-    const expectedText = 'shot taken\n(image omitted: tool result converted to plain text)';
+    const expectedText = 'shot taken\n[image omitted: not supported by this provider]';
+    const conversation = createRequester().with({
+      model: { spec: { provider: 'test', name: 'gpt-4o-mini' } },
+      content: { messages: toolMessages },
+    });
 
     const openAIClient = stubOpenAIClient(chatCompletionChunks);
-    await createRequesterFromHandle(bindOpenAI({
-      trait: { toolMessageConversion: 'extract_text' },
-      clientFactory: openAIClient.clientFactory,
-    })).generate(
-      { model },
-      { messages: toolMessages },
-      { signal: new AbortController().signal },
+    await conversation.generate(
+      {
+        protocol: { base: openAIProtocol.with(extractToolText) },
+        endpoint: { clientFactory: openAIClient.clientFactory },
+      },
+      control(),
     );
     const chatMessages = openAIClient.body()['messages'] as Record<string, unknown>[];
     expect(chatMessages.find((message) => message['role'] === 'tool')?.['content']).toBe(
@@ -312,13 +322,12 @@ describe('requester toolMessageConversion', () => {
     expect(JSON.stringify(chatMessages)).not.toContain('image_url');
 
     const responsesClient = stubResponsesClient(responsesStreamEvents);
-    await createRequesterFromHandle(bindOpenAIResponses({
-      trait: { toolMessageConversion: 'extract_text' },
-      clientFactory: responsesClient.clientFactory,
-    })).generate(
-      { model },
-      { messages: toolMessages },
-      { signal: new AbortController().signal },
+    await conversation.generate(
+      {
+        protocol: { base: openAIResponsesProtocol.with(extractResponsesToolText) },
+        endpoint: { clientFactory: responsesClient.clientFactory },
+      },
+      control(),
     );
     const inputItems = responsesClient.body()['input'] as Record<string, unknown>[];
     expect(

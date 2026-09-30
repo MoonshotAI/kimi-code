@@ -17,7 +17,6 @@ import {
   openSessionStores,
   systemReminderText,
   Trees,
-  UNKNOWN_CAPABILITY,
   useAgent,
   useAgentTools,
   createFeature,
@@ -25,8 +24,7 @@ import {
   type AgentHandle,
   type FeatureSpec,
   type HistoryMessage,
-  type LlmModel,
-  type LlmRequester,
+  type AgentLlmRequester,
   type Message,
   type SessionStores,
   type ToolDescription,
@@ -59,6 +57,8 @@ import {
 import TOWER_MODE_EXIT_REMINDER from '../../src/features/tower/injection/tower-mode-exit-reminder.md?raw';
 import TOWER_MODE_FULL_REMINDER from '../../src/features/tower/injection/tower-mode-full-reminder.md?raw';
 import TOWER_MODE_SPARSE_REMINDER from '../../src/features/tower/injection/tower-mode-sparse-reminder.md?raw';
+
+import { fakeRequester, textOutcome, testModel } from '../fake-llm';
 
 const execFileAsync = promisify(execFile);
 
@@ -756,12 +756,10 @@ type ScriptStep =
 
 type LlmScript = (call: LlmCall) => ScriptStep;
 
-const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
-
 const fastModel: SpawnModelEntry = {
   name: 'fast',
   description: 'Fast test model',
-  model: { provider: 'test', model: 'fast-model', capability: UNKNOWN_CAPABILITY },
+  model: { provider: 'test', name: 'fast-model' },
 };
 
 let queue: ScriptStep[] = [];
@@ -786,48 +784,43 @@ function routingScript(call: LlmCall): ScriptStep {
   return { text: 'main done' };
 }
 
-function createMockRequester(script: LlmScript): { requester: LlmRequester; calls: LlmCall[] } {
+function createMockRequester(script: LlmScript): { requester: AgentLlmRequester; calls: LlmCall[] } {
   const calls: LlmCall[] = [];
   return {
     calls,
-    requester: {
-      generate: async (_config, content, { onEvent }) => {
+    requester: fakeRequester((rest, onEvent) => {
         const call: LlmCall = {
-          systemPrompt: content.systemPrompt,
-          messages: content.messages,
-          tools: content.tools ?? [],
+          systemPrompt: rest.profile?.systemPrompt,
+          messages: rest.content?.messages ?? [],
+          tools: rest.profile?.tools ?? [],
         };
         calls.push(call);
         const out = script(call);
         if ('throw' in out) throw out.throw;
+        onEvent?.({
+          type: 'llm.streaming.usage',
+          usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
+        });
         if ('toolCall' in out) {
-          onEvent?.({
-            type: 'llm.streaming.part',
-            part: {
+          return textOutcome('', [
+            {
               type: 'function',
               id: `call-${calls.length}`,
               name: out.toolCall.name,
               arguments: out.toolCall.arguments,
             },
-          });
-        } else {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: out.text } });
+          ]);
         }
-        onEvent?.({
-          type: 'llm.streaming.usage',
-          usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
-        });
-        onEvent?.({ type: 'llm.done' });
-      },
-    },
+        return textOutcome(out.text);
+      }),
   };
 }
 
-function bindTestLlm(requester: LlmRequester): FeatureSpec {
+function bindTestLlm(requester: AgentLlmRequester): FeatureSpec {
   return createFeature('test-llm', {
     agent() {
       const agent = useAgent();
-      agent.setConfig({ model });
+      agent.setModel(testModel);
       agent.setRequester(requester);
     },
   });

@@ -8,9 +8,9 @@ Reference：builtin 扩展点。源码 `packages/agent-core/src/feature/contribu
 |---|---|---|
 | `useApp()` | `AppCommands` | 活 session 表、`installFeature` |
 | `useSession()` | `SessionCommands` | 活 agent 表、`stores` |
-| `useAgent()` | `AgentCommands` | `config` / `setConfig` / `setCredentialProvider` / `setRequester` / `submit` / `notify` / `on`（机器事件） |
+| `useAgent()` | `AgentCommands` | `model` / `setModel` / `setEndpoint` / `setRequester` / `submit` / `notify` / `on`（机器事件） |
 
-命令面是收窄后的 Commands——Feature 经这三个 hook 拿到提交、配置、订阅的完整能力，节点内部结构留在产品节点背后。按 id 查找走实例方法：`useApp().get(id)` / `session.get(agentId)`，失败是 `undefined`。绑 generate 用 `setConfig` / `setCredentialProvider` / `setRequester`。缺 `config` 或 requester 的下一次 `generate` 失败。
+命令面是收窄后的 Commands——Feature 经这三个 hook 拿到提交、配置、订阅的完整能力，节点内部结构留在产品节点背后。按 id 查找走实例方法：`useApp().get(id)` / `session.get(agentId)`，失败是 `undefined`。绑 generate 用 `setModel` / `setEndpoint` / `setRequester`。缺 model 或 requester 的下一次 `generate` 失败。
 
 catalog 在 `useApp()` 上：`app.space` / `app.open` / `app.updateSession` / `app.delete`（删除会话：live 先 close、再 `space.delete`、完成后 app 节点 fire `session.deleted`）。未配 `space` 时访问会抛错。
 
@@ -49,7 +49,6 @@ facade token 一律 `createFacadeToken`（包根导入），`useExpose` 只接�
 | `useToolPermission(hook)` | 风险裁决阶段，恒在全部 `useBeforeTool` 之后、执行之前，看到守卫改写后的最终 call。协议同 `useBeforeTool` |
 | `useAfterTool(hook)` | 可改 `ToolResult`；deny 路径也跑 |
 | `usePromptGate(gate)` | host gate 先于 Feature。在 turn 内执行（`turn.started` 之后）：`true` / `{ block: true }` 拦下——原始 prompt 落 history、发 `prompt.blocked`、turn 以 `failed` 收尾；可改 `message`（改写后落盘并消费） |
-| `useMediaLower(ports)` | 单槽。重复登记抛错 |
 | `useWaitForTasks()` | 等后台 tool actor |
 
 `bindPromptGate` 链式：先 block 胜出，rewrite 依次。`AgentUnit` 始终挂这条链（含空列表），以便动态安装。

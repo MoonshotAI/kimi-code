@@ -16,29 +16,31 @@ import {
 import { Jimp } from 'jimp';
 import {
   createFeature,
-  createMemoryMediaStore,
-  createMemoryMediaUploadCache,
+  createMemoryUploadCache,
   createUserMessage,
   MAIN_AGENT_ID,
   memorySessionSpace,
   createHarness,
   providerCatalog,
-  UNKNOWN_CAPABILITY,
   useAgent,
   useAgentTools,
   useProvider,
   type AppHandle,
+  type CatalogModelConfig,
   type CatalogModelDefinition,
   type FeatureSpec,
-  type LlmModel,
   type LlmRemoteErrorMessage,
-  type LlmRequester,
-  type MediaContent,
-  type MediaStore,
+  type AgentLlmRequester,
+  type CatalogProviderHandle,
   type Message,
   type ModelCapability,
-  type Provider,
+  type StoredContent,
   type StreamedMessagePart,
+  type AssistantMessage,
+  type ContentPart,
+  type ToolCall,
+  type LlmOutcome,
+  createAssistantMessage,
 } from '@moonshot-ai/agent-core';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -46,7 +48,7 @@ import { createAcp } from '#/feature-acp/index';
 import { createAcpOsHost, createAcpOsHostRouter, type AcpOsConnection } from '#/feature-acp/os-host';
 import { buildAcpSkillSlashCommands, resolveSkillCommand } from '#/feature-acp/slash';
 import { interaction } from '#/features/interaction/index';
-import { createMedia } from '#/features/media/index';
+import { createMedia, type MediaStore } from '#/features/media/index';
 import { createMcp, McpRef, type McpServerConfig } from '#/features/mcp/index';
 import { createNodeOsHost } from '#/features/os/host/index';
 import { createPermission, PermissionRef } from '#/features/permission/index';
@@ -61,7 +63,8 @@ import {
 import { todo as todoFeature } from '#/features/todo/index';
 import { usage } from '#/features/usage/index';
 
-const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
+import { failureOutcome, testModel } from './fake-llm';
+import { createMemoryMediaStore } from './fake-media';
 
 const fixturePath = fileURLToPath(new URL('./features/fixtures/fake-mcp-server.mjs', import.meta.url));
 
@@ -72,11 +75,41 @@ let callSeq = 0;
 let callCount = 0;
 let llmCalls: Array<{ messages: Message[]; thinking?: string | undefined }> = [];
 
-function createMockRequester(): LlmRequester {
-  return {
-    generate: async (config, content, { onEvent, signal }) => {
+function messageFromParts(parts: StreamedMessagePart[]): AssistantMessage {
+  const content: ContentPart[] = [];
+  const toolCalls: ToolCall[] = [];
+  for (const part of parts) {
+    if (part.type === 'function') {
+      toolCalls.push(part);
+      continue;
+    }
+    if (part.type === 'tool_call_part') {
+      const target = toolCalls.at(-1);
+      if (target !== undefined && part.argumentsPart !== null) {
+        toolCalls[toolCalls.length - 1] = {
+          ...target,
+          arguments: (target.arguments ?? '') + part.argumentsPart,
+        };
+      }
+      continue;
+    }
+    content.push(part);
+  }
+  return createAssistantMessage(content, toolCalls);
+}
+
+function createMockRequester(): AgentLlmRequester {
+  const requester: AgentLlmRequester = {
+    with: () => requester,
+    request: () => {
+      throw new Error('fake requester cannot build wire requests');
+    },
+    generate: async (rest, { onEvent, signal }) => {
       callCount += 1;
-      llmCalls.push({ messages: [...content.messages], thinking: config.thinking?.effort });
+      llmCalls.push({
+        messages: [...(rest.content?.messages ?? [])],
+        thinking: rest.model?.thinking?.effort,
+      });
       const step = queue.shift() ?? { parts: [{ type: 'text', text: 'done' }] };
       if ('hang' in step) {
         await new Promise<never>((_resolve, reject) => {
@@ -86,11 +119,12 @@ function createMockRequester(): LlmRequester {
           }
           signal.addEventListener('abort', () => reject(new Error('aborted')));
         });
-        return;
+        throw new Error('unreachable');
       }
       if ('fail' in step) {
-        onEvent?.({ type: 'llm.failed.remote', error: step.fail });
-        return;
+        const failed = failureOutcome(step.fail);
+        onEvent?.({ type: 'llm.ended', outcome: failed });
+        return failed;
       }
       for (const part of step.parts) {
         onEvent?.({ type: 'llm.streaming.part', part });
@@ -99,42 +133,41 @@ function createMockRequester(): LlmRequester {
         type: 'llm.streaming.usage',
         usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
       });
-      onEvent?.({ type: 'llm.done' });
+      const outcome: LlmOutcome = { type: 'done', message: messageFromParts(step.parts) };
+      onEvent?.({ type: 'llm.ended', outcome });
+      return outcome;
     },
   };
+  return requester;
 }
 
-function bindTestLlm(requester: LlmRequester): FeatureSpec {
+function bindTestLlm(requester: AgentLlmRequester): FeatureSpec {
   return createFeature('test-llm', {
     agent() {
       const agent = useAgent();
-      agent.setConfig({ model });
+      agent.setModel(testModel);
       agent.setRequester(requester);
     },
   });
 }
 
 function contributeTestProvider(
-  requester: LlmRequester,
-  extraModels: CatalogModelDefinition[] = [],
+  requester: AgentLlmRequester,
+  extraModels: CatalogModelConfig[] = [],
 ): FeatureSpec {
-  const provider: Provider = {
+  const provider: CatalogProviderHandle = {
     id: 'test',
-    requesters: { openai: requester },
-    listModels: async () => [{ ...model, maxContextSize: 8192 }],
-    resolveModel: () => {
-      throw new Error('unused');
-    },
+    requester,
+    listModels: async () => [{ id: 'test-model', provider: 'test', maxContextSize: 8192 }],
   };
   return createFeature('test-provider', {
     app() {
       useProvider({
-        provider,
+        handle: provider,
         models: [
           {
             provider: 'test',
             model: 'test-model',
-            capability: UNKNOWN_CAPABILITY,
             maxContextSize: 8192,
           },
           ...extraModels,
@@ -152,7 +185,7 @@ const THINKING_CAPABILITY: ModelCapability = {
   tool_use: true,
 };
 
-function reasonerModel(): CatalogModelDefinition {
+function reasonerModel(): CatalogModelConfig {
   return {
     provider: 'test',
     model: 'test-reasoner',
@@ -162,7 +195,7 @@ function reasonerModel(): CatalogModelDefinition {
   };
 }
 
-function booleanThinkerModel(): CatalogModelDefinition {
+function booleanThinkerModel(): CatalogModelConfig {
   return {
     provider: 'test',
     model: 'test-boolean-thinker',
@@ -170,7 +203,7 @@ function booleanThinkerModel(): CatalogModelDefinition {
   };
 }
 
-function alwaysThinkingModel(): CatalogModelDefinition {
+function alwaysThinkingModel(): CatalogModelConfig {
   return {
     provider: 'test',
     model: 'test-always-thinker',
@@ -242,7 +275,7 @@ interface AcpTestEnv {
   readonly updates: SessionNotification[];
   readonly permissionRequests: RequestPermissionRequest[];
   readonly elicitationRequests: unknown[];
-  readonly mediaPuts: MediaContent[];
+  readonly mediaPuts: StoredContent[];
   readonly readPaths: string[];
   readonly triggerSkillChange: () => void;
   respondPermission(response: RequestPermissionResponse): void;
@@ -250,9 +283,9 @@ interface AcpTestEnv {
   dispose(): Promise<void>;
 }
 
-function recordingStore(): { store: MediaStore; puts: MediaContent[] } {
+function recordingStore(): { store: MediaStore; puts: StoredContent[] } {
   const inner = createMemoryMediaStore();
-  const puts: MediaContent[] = [];
+  const puts: StoredContent[] = [];
   return {
     puts,
     store: {
@@ -291,7 +324,7 @@ async function startAcpTest(options?: {
   withMcp?: boolean | Record<string, McpServerConfig>;
   mcpHost?: boolean;
   withTerminalBash?: boolean;
-  extraModels?: CatalogModelDefinition[];
+  extraModels?: CatalogModelConfig[];
   fileContent?: string;
   onSessionActive?: (connection: AcpOsConnection) => void;
   onSessionClose?: (sessionId: string) => void;
@@ -315,7 +348,7 @@ async function startAcpTest(options?: {
     ...(options?.withPermission === true ? [createPermission()] : []),
     ...(options?.withPlan === true ? [createPlan({ storage: createMemoryPlanStorage() })] : []),
     ...(options?.withMedia === true
-      ? [createMedia({ workDir: '/tmp/acp-test', store, cache: createMemoryMediaUploadCache() })]
+      ? [createMedia({ workDir: '/tmp/acp-test', store, cache: createMemoryUploadCache() })]
       : []),
     ...(options?.withTodo === true ? [todoFeature] : []),
     ...(options?.withSkill === true ? [createSkill({ workDir: '/tmp/acp-test' })] : []),
@@ -848,7 +881,7 @@ describe('feature-acp', () => {
     const userMessage = llmCalls.at(-1)?.messages.findLast((message) => message.role === 'user');
     expect(userMessage?.content).toEqual([
       { type: 'text', text: 'look' },
-      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,aGk=' } },
+      { type: 'image_url', source: { kind: 'inline', mimeType: 'image/png', data: 'aGk=' } },
       { type: 'text', text: '/tmp/notes/a.ts:3-9' },
       { type: 'text', text: '<resource_link uri="https://example.com/x" name="x" />' },
       { type: 'text', text: '<resource uri="file:///tmp/notes/b.ts">const b = 1;</resource>' },
@@ -873,9 +906,10 @@ describe('feature-acp', () => {
     expect(texts.some((text) => text.includes('Image compressed to fit model limits:'))).toBe(true);
     const images = userMessage.content.filter((part) => part.type === 'image_url');
     expect(images).toHaveLength(1);
-    const lowered = images[0] as { imageUrl: { url: string } };
-    expect(lowered.imageUrl.url.startsWith('media://')).toBe(true);
-    expect(lowered.imageUrl.url.includes('image/png')).toBe(false);
+    const lowered = images[0] as { source: { kind: string; ref?: string } };
+    expect(lowered.source.kind).toBe('store');
+    expect(lowered.source.ref?.startsWith('media://')).toBe(true);
+    expect(lowered.source.ref?.includes('image/png')).toBe(false);
     expect(env.mediaPuts.some((put) => put.mimeType === 'image/jpeg')).toBe(true);
   }, 60_000);
 

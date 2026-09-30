@@ -10,23 +10,23 @@ import type { Handler } from "./types";
 
 export const authHandlers: Record<string, Handler<any, any>> = {
   [Methods.CheckLoginStatus]: async (_, ctx): Promise<LoginStatus> => {
-    return { loggedIn: await updateLoginContext(ctx.harness) };
+    return { loggedIn: await updateLoginContext(ctx.runtime.auth) };
   },
 
   [Methods.Login]: async (_, ctx): Promise<LoginResult> => {
     try {
-      await ctx.harness.auth.login(undefined, {
+      await ctx.runtime.auth.login(undefined, {
         onDeviceCode: async (authorization) => {
           const url = authorization.verificationUriComplete || authorization.verificationUri;
           ctx.broadcast(Events.LoginUrl, { url }, ctx.webviewId);
           await vscode.env.openExternal(vscode.Uri.parse(url));
         },
       });
-      await updateLoginContext(ctx.harness);
+      await updateLoginContext(ctx.runtime.auth);
       return { success: true };
     } catch (error) {
       ctx.logError("Kimi login failed", error);
-      await updateLoginContext(ctx.harness).catch((statusError: unknown) => {
+      await updateLoginContext(ctx.runtime.auth).catch((statusError: unknown) => {
         ctx.logError("Unable to refresh login status after a failed login", statusError);
       });
       const message = error instanceof Error ? error.message : String(error);
@@ -39,12 +39,12 @@ export const authHandlers: Record<string, Handler<any, any>> = {
 
   [Methods.Logout]: async (_, ctx): Promise<LoginResult> => {
     try {
-      await ctx.harness.auth.logout();
-      await updateLoginContext(ctx.harness);
+      await ctx.runtime.auth.logout();
+      await updateLoginContext(ctx.runtime.auth);
       return { success: true };
     } catch (error) {
       ctx.logError("Kimi logout failed", error);
-      await updateLoginContext(ctx.harness).catch((statusError: unknown) => {
+      await updateLoginContext(ctx.runtime.auth).catch((statusError: unknown) => {
         ctx.logError("Unable to refresh login status after a failed logout", statusError);
       });
       return {

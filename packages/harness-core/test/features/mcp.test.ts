@@ -8,10 +8,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   ConfigRef,
-  UNKNOWN_CAPABILITY,
   createConfig,
   createFeature,
-  createMemoryMediaStore,
   createUserMessage,
   MAIN_AGENT_ID,
   MemoryBackend,
@@ -23,9 +21,8 @@ import {
   type AgentHandle,
   type AppHandle,
   type ConfigPersist,
-  type LlmModel,
-  type LlmRequester,
-  type MediaStore,
+  type AgentLlmRequester,
+  type LlmModelSpec,
   type Message,
   type SessionStores,
   type ToolDescription,
@@ -47,16 +44,17 @@ import {
 } from '#/features/mcp/index';
 import { createNodeOsHost, type OsHost } from '#/features/os/host/index';
 
+import type { MediaStore } from '#/features/media/index';
+
+import { fakeRequester, textOutcome } from '../fake-llm';
+import { createMemoryMediaStore } from '../fake-media';
+
 const fixturePath = fileURLToPath(new URL('./fixtures/fake-mcp-server.mjs', import.meta.url));
 
 const TINY_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
-const model: LlmModel = {
-  provider: 'test',
-  model: 'test-model',
-  capability: { ...UNKNOWN_CAPABILITY, image_in: true },
-};
+const model: LlmModelSpec = { provider: 'test', name: 'test-model', capability: { image_in: true } };
 
 interface LlmCall {
   readonly messages: readonly Message[];
@@ -65,30 +63,25 @@ interface LlmCall {
 
 type LlmScript = (call: LlmCall, index: number) => { text: string } | { toolCall: { name: string; arguments: string } };
 
-function createMockRequester(script: LlmScript): { requester: LlmRequester; calls: LlmCall[] } {
+function createMockRequester(script: LlmScript): { requester: AgentLlmRequester; calls: LlmCall[] } {
   const calls: LlmCall[] = [];
   return {
     calls,
-    requester: {
-      generate: async (_config, content, { onEvent }) => {
-        const call: LlmCall = { messages: content.messages, tools: content.tools ?? [] };
+    requester: fakeRequester((rest, onEvent) => {
+        const call: LlmCall = { messages: rest.content?.messages ?? [], tools: rest.profile?.tools ?? [] };
         calls.push(call);
         const out = script(call, calls.length - 1);
-        if ('toolCall' in out) {
-          onEvent?.({
-            type: 'llm.streaming.part',
-            part: { type: 'function', id: `call-${calls.length}`, name: out.toolCall.name, arguments: out.toolCall.arguments },
-          });
-        } else {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: out.text } });
-        }
         onEvent?.({
           type: 'llm.streaming.usage',
           usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
         });
-        onEvent?.({ type: 'llm.done' });
-      },
-    },
+        if ('toolCall' in out) {
+          return textOutcome('', [
+            { type: 'function', id: `call-${calls.length}`, name: out.toolCall.name, arguments: out.toolCall.arguments },
+          ]);
+        }
+        return textOutcome(out.text);
+      }),
   };
 }
 
@@ -153,7 +146,7 @@ async function startApp(opts: {
   const bindLlm = createFeature('test-llm', {
     agent() {
       const agent = useAgent();
-      agent.setConfig({ model });
+      agent.setModel({ spec: model });
       agent.setRequester(requester);
     },
   });
@@ -434,8 +427,10 @@ describe('mcp feature', () => {
     expect(offloaded.content[0]).toEqual({ type: 'text', text: '<mcp_tool_result name="mcp__fake__image">' });
     const mediaPart = offloaded.content[1];
     if (mediaPart?.type !== 'image_url') throw new Error('expected an image_url part');
-    expect(mediaPart.imageUrl.url.startsWith('media://')).toBe(true);
-    const stored = await store.get(mediaPart.imageUrl.url.slice('media://'.length));
+    expect(mediaPart.source.kind).toBe('store');
+    if (mediaPart.source.kind !== 'store') throw new Error('expected a store source');
+    expect(mediaPart.source.ref.startsWith('media://')).toBe(true);
+    const stored = await store.get(mediaPart.source.ref);
     expect(stored?.mimeType).toBe('image/png');
     expect(offloaded.content[2]).toEqual({ type: 'text', text: '</mcp_tool_result>' });
 
@@ -445,7 +440,7 @@ describe('mcp feature', () => {
     );
     expect(inline.content[1]).toEqual({
       type: 'image_url',
-      imageUrl: { url: `data:image/png;base64,${TINY_PNG_BASE64}` },
+      source: { kind: 'inline', mimeType: 'image/png', data: TINY_PNG_BASE64 },
     });
 
     const oversized = await mcpResultToToolResult(
@@ -469,7 +464,7 @@ describe('mcp feature', () => {
     });
     expect(convertMCPContentBlock({ type: 'resource_link', uri: 'https://example.com/p.png', mimeType: 'image/png' })).toEqual({
       type: 'image_url',
-      imageUrl: { url: 'https://example.com/p.png' },
+      source: { kind: 'url', url: 'https://example.com/p.png' },
     });
   }, 60_000);
 

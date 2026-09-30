@@ -20,7 +20,7 @@ export const usage = createFeature('usage', {
       currentTurnId = event.turnId;
     });
     agent.on('llm.streaming.usage', (event) => {
-      const model = agent.config?.model;
+      const model = agent.model?.spec;
       const record: UsageRecord = {
         usage: event.usage,
         model,

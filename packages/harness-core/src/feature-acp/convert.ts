@@ -18,7 +18,7 @@ export function acpBlocksToContentParts(blocks: readonly ContentBlock[]): Conten
     if (block.type === 'image') {
       out.push({
         type: 'image_url',
-        imageUrl: { url: `data:${block.mimeType};base64,${block.data}` },
+        source: { kind: 'inline', mimeType: block.mimeType, data: block.data },
       });
       continue;
     }

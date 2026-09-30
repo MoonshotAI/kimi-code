@@ -1,4 +1,4 @@
-import { effectiveModelAlias, type ModelAlias, type ThinkingEffort } from '@moonshot-ai/kimi-code-sdk';
+import type { ModelAlias, ThinkingEffort } from '../../types';
 import {
   Container,
   Key,
@@ -38,7 +38,7 @@ export interface ModelSelection {
 }
 
 export function modelDisplayName(alias: string, model: ModelAlias | undefined): string {
-  const effective = model === undefined ? undefined : effectiveModelAlias(model);
+  const effective = model;
   return effective?.displayName ?? effective?.model ?? alias;
 }
 
@@ -52,7 +52,7 @@ export function createModelChoiceOptions(
   models: Record<string, ModelAlias>,
 ): readonly ChoiceOption[] {
   return Object.entries(models).map(([alias, cfg]) => {
-    const effective = effectiveModelAlias(cfg);
+    const effective = cfg;
     return {
       value: alias,
       label: `${modelDisplayName(alias, effective)} (${providerDisplayName(effective.provider)})`,
@@ -92,7 +92,7 @@ export interface ModelSelectorOptions {
 
 function createModelChoices(models: Record<string, ModelAlias>): readonly ModelChoice[] {
   return Object.entries(models).map(([alias, cfg]) => {
-    const effective = effectiveModelAlias(cfg);
+    const effective = cfg;
     const name = modelDisplayName(alias, effective);
     const provider = providerDisplayName(effective.provider);
     return { alias, model: effective, name, provider, label: `${name} (${provider})` };
@@ -101,7 +101,7 @@ function createModelChoices(models: Record<string, ModelAlias>): readonly ModelC
 
 export function thinkingAvailability(model: ModelAlias): ThinkingAvailability {
   const caps = model.capabilities ?? [];
-  if (caps.includes('always_thinking')) return 'always-on';
+  if (caps.includes('always_thinking') || model.alwaysThinking === true) return 'always-on';
   if (caps.includes('thinking') || model.adaptiveThinking === true) return 'toggle';
   return 'unsupported';
 }

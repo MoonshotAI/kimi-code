@@ -120,7 +120,7 @@ export const interaction = createFeature<InteractionEvent>('interaction', {
 
 ```ts
 createHarness({
-  features: [...features, createMedia({ source, cache }), createCompaction(deps)],
+  features: [...features, createMedia({ workDir, store, cache }), createCompaction(deps)],
 });
 ```
 

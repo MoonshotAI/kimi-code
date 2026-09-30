@@ -1,4 +1,4 @@
-import { MAIN_AGENT_ID, type LlmModel } from '@moonshot-ai/agent-core';
+import { MAIN_AGENT_ID, type LlmModelSpec } from '@moonshot-ai/agent-core';
 
 import {
   DEFAULT_AGENT_PROFILE_NAME,
@@ -14,7 +14,7 @@ import {
 export interface SpawnModelEntry {
   readonly name: string;
   readonly description?: string;
-  readonly model: LlmModel;
+  readonly model: LlmModelSpec;
 }
 
 export const FORK_PROFILE_LABEL = 'fork';
@@ -98,7 +98,7 @@ export function validateSpawnArgs(
 
 export type SpawnModelResolution =
   | { readonly kind: 'inherit' }
-  | { readonly kind: 'explicit'; readonly name: string; readonly model: LlmModel };
+  | { readonly kind: 'explicit'; readonly name: string; readonly model: LlmModelSpec };
 
 export interface SpawnPlanInput {
   readonly callerAgentId: string;

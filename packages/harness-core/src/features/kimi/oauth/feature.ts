@@ -4,7 +4,6 @@ import {
   createFacadeToken,
   createFeature,
   createOAuthCredentialProvider,
-  createProvider,
   deepEqual,
   DEFAULT_MODEL_CONFIG_SECTION,
   isOAuthBackedProvider,
@@ -19,15 +18,15 @@ import {
   useCredentialResolver,
   useInject,
   useProviderCatalog,
+  type LlmRequester,
   type CatalogModelConfig,
+  type CatalogModelDefinition,
   type CatalogOAuthRef,
   type CatalogProviderInfo,
   type FeatureSlots,
   type FeatureSpec,
-  type LlmModelSeed,
   type ModelCatalogConfig,
   type ModelsSection,
-  type ProtocolBinding,
   type ProvidersSection,
 } from '@moonshot-ai/agent-core';
 import {
@@ -116,10 +115,13 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
       const aliasScopeWrites = new Map<string, Promise<void>>();
       const materializing = new Set<string>();
       const flows = new Map<string, LoginFlowState>();
-      const pendingSeeds = new Map<string, readonly LlmModelSeed[]>();
+      const pendingSeeds = new Map<string, readonly CatalogModelDefinition[]>();
       let refreshOnStartPending = false;
       let refreshChain: Promise<void> = Promise.resolve();
-      const fetchCatalog = async (info: CatalogProviderInfo): Promise<readonly LlmModelSeed[]> => {
+      const fetchCatalog = async (
+        providerId: string,
+        info: CatalogProviderInfo,
+      ): Promise<readonly CatalogModelDefinition[]> => {
         const ref = info.oauth;
         if (ref === undefined) return [];
         const token = tokens.resolve(ref);
@@ -130,7 +132,7 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
           baseUrl: info.baseUrl,
           fetchImpl: props.fetchImpl,
         });
-        return models.map(managedKimiCodeModelSeed);
+        return models.map((model) => managedKimiCodeModelSeed(providerId, model));
       };
       const setTerminal = (state: LoginFlowState, status: Exclude<OAuthFlowStatus, 'pending'>): void => {
         state.status = status;
@@ -230,7 +232,12 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
                 return;
               }
             }
-            void config.set(DEFAULT_MODEL_CONFIG_SECTION, first.alias, 'user').catch(() => {});
+            const info = catalog.value?.providerInfo(KIMI_CODE_PROVIDER_NAME);
+            void config.set(
+              DEFAULT_MODEL_CONFIG_SECTION,
+              `${info?.aliasScope ?? KIMI_CODE_PROVIDER_NAME}/${first.id}`,
+              'user',
+            ).catch(() => {});
           },
           { immediate: true },
         );
@@ -349,7 +356,7 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
             failed.push({ provider: providerId, reason: 'OAuth token provider is not configured.' });
             continue;
           }
-          let seeds: readonly LlmModelSeed[];
+          let seeds: readonly CatalogModelDefinition[];
           try {
             const accessToken = await token.getAccessToken();
             const models = await fetchManagedKimiCodeModels({
@@ -358,7 +365,7 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
               fetchImpl: props.fetchImpl,
             });
             if (models.length === 0) continue;
-            seeds = models.map(managedKimiCodeModelSeed);
+            seeds = models.map((model) => managedKimiCodeModelSeed(providerId, model));
           } catch (error) {
             failed.push({
               provider: providerId,
@@ -374,11 +381,11 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
             if (record.provider !== providerId || !key.startsWith(prefix)) continue;
             before.set(record.model, record);
           }
-          const afterIds = new Set(seeds.map((seed) => seed.model));
+          const afterIds = new Set(seeds.map((seed) => seed.id));
           const added = [...afterIds].filter((id) => !before.has(id)).length;
           const removed = [...before.keys()].filter((id) => !afterIds.has(id)).length;
           const drifted = seeds.some((seed) => {
-            const record = before.get(seed.model);
+            const record = before.get(seed.id);
             return record !== undefined && !managedRecordEqual(record, seed);
           });
           if (added === 0 && removed === 0 && !drifted) {
@@ -649,11 +656,11 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
         { immediate: true },
       );
       watch(
-        () => [catalog.value?.snapshot.value, protocolFactories.value],
+        () => [catalog.value?.snapshot(), protocolFactories.value],
         () => {
           const store = catalog.value;
           if (store === undefined) return;
-          for (const [providerId, entry] of Object.entries(store.snapshot.value.providers)) {
+          for (const [providerId, entry] of Object.entries(store.snapshot().providers)) {
             const info = entry.info;
             if (info === undefined || !isOAuthBackedProvider(info) || info.type === undefined) {
               continue;
@@ -663,28 +670,31 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
               (contribution) => contribution.type === info.type,
             );
             if (factory === undefined) continue;
-            const protocols: Record<string, ProtocolBinding | undefined> = factory.protocols(info);
-            if (Object.values(protocols).every((binding) => binding === undefined)) continue;
+            const protocols: Record<string, LlmRequester<'protocol'> | undefined> = factory.protocols(info);
+            const entries = Object.fromEntries(
+              Object.entries(protocols).filter(
+                (entry): entry is [string, LlmRequester<'protocol'>] => entry[1] !== undefined,
+              ),
+            );
+            if (Object.keys(entries).length === 0) continue;
             materializing.add(providerId);
             void (async () => {
               try {
                 await aliasScopeWrites.get(providerId);
                 if (store.isLive(providerId)) return;
                 pendingSeeds.delete(providerId);
-                store.refresh(
-                  createProvider({
-                    id: providerId,
-                    protocols,
-                    models: () => {
-                      const injected = pendingSeeds.get(providerId);
-                      if (injected !== undefined) {
-                        pendingSeeds.delete(providerId);
-                        return Promise.resolve(injected);
-                      }
-                      return fetchCatalog(info);
-                    },
-                  }),
-                );
+                store.refresh({
+                  id: providerId,
+                  requester: entries,
+                  listModels: () => {
+                    const injected = pendingSeeds.get(providerId);
+                    if (injected !== undefined) {
+                      pendingSeeds.delete(providerId);
+                      return Promise.resolve(injected);
+                    }
+                    return fetchCatalog(providerId, info);
+                  },
+                });
               } finally {
                 materializing.delete(providerId);
                 runStartRefresh();
@@ -753,11 +763,10 @@ export function createOauth(props: CreateOauthProps = {}): FeatureSpec {
   return createFeature('oauth', createOauthSlots(props));
 }
 
-function managedRecordEqual(record: CatalogModelConfig, seed: LlmModelSeed): boolean {
+function managedRecordEqual(record: CatalogModelConfig, seed: CatalogModelDefinition): boolean {
   return (
     record.maxContextSize === seed.maxContextSize &&
     record.maxInputSize === seed.maxInputSize &&
-    record.baseUrl === seed.baseUrl &&
     deepEqual(record.capability, seed.capability)
   );
 }

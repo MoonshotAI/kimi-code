@@ -1,11 +1,17 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
-import type { SessionSummary } from "@moonshot-ai/kimi-code-sdk";
 
 import { Events, Methods } from "../../shared/bridge";
 import type { SessionInfo } from "../../shared/legacy-sdk";
 import type { BaselineSession } from "../managers/baseline.manager";
-import { replaySessionToWebviewEvents } from "../runtime/replay-adapter";
+import {
+  replaySessionToWebviewEvents,
+  type ReplayAgentSource,
+  type ReplaySessionSource,
+  type ReplayStatus,
+} from "../runtime/replay-adapter";
+import type { EngineSessionSummary } from "../runtime/kimi-runtime";
+import type { SessionRuntime } from "../runtime/session-runtime";
 import { areSameFsPath, isFsPathInsideOrEqual } from "../utils/fs-path";
 import {
   isWorkspacePathContained,
@@ -31,19 +37,19 @@ interface ForkSessionParams {
 export const sessionHandlers: Record<string, Handler<any, any>> = {
   [Methods.GetKimiSessions]: async (_, ctx): Promise<SessionInfo[]> => {
     if (!ctx.workDir) return [];
-    return (await ctx.harness.listSessions({ workDir: ctx.workDir })).map(toSessionInfo);
+    return (await ctx.runtime.listSessions(ctx.workDir)).map(toSessionInfo);
   },
 
   [Methods.GetAllKimiSessions]: async (_, ctx): Promise<SessionInfo[]> => {
     if (!ctx.workspaceRoot) return [];
-    return (await ctx.harness.listSessions())
+    return (await ctx.runtime.listSessions())
       .filter((session) => isInsideOrEqual(ctx.workspaceRoot!, session.workDir))
       .map(toSessionInfo);
   },
 
   [Methods.GetRegisteredWorkDirs]: async (_, ctx): Promise<string[]> => {
     if (!ctx.workspaceRoot) return [];
-    const sessions = await ctx.harness.listSessions();
+    const sessions = await ctx.runtime.listSessions();
     const candidates = [ctx.workspaceRoot, ctx.workDir, ...sessions.map((session) => session.workDir)];
     return [
       ...new Set(
@@ -127,28 +133,21 @@ export const sessionHandlers: Record<string, Handler<any, any>> = {
   [Methods.LoadKimiSessionHistory]: async (params: LoadHistoryParams, ctx) => {
     if (!ctx.workDir || !isSessionId(params.kimiSessionId)) return [];
     const runtime = await ctx.resumeSession(params.kimiSessionId);
-    if (!areSameFsPath(runtime.session.workDir, ctx.workDir)) {
+    if (!areSameFsPath(runtime.workDir, ctx.workDir)) {
       await ctx.closeSession();
       throw new Error("The selected session belongs to a different working directory.");
     }
 
     let history: ReturnType<typeof replaySessionToWebviewEvents>;
     try {
-      const resumeState = runtime.session.getResumeState();
-      if (resumeState?.agents["main"] === undefined) {
-        throw new Error("Session history is unavailable.");
-      }
-      history = replaySessionToWebviewEvents(resumeState, runtime.id);
+      history = replaySessionToWebviewEvents(await buildReplaySource(runtime), runtime.id);
     } catch (error) {
       await ctx.closeSession();
       throw error;
     }
 
     ctx.fileManager.clearTracked(ctx.webviewId);
-    const baseline = baselineSession(runtime.summary ?? {
-      id: runtime.id,
-      workDir: runtime.session.workDir,
-    });
+    const baseline = baselineSession(runtime);
     try {
       const changes = await ctx.baselineManager.getChanges(baseline);
       for (const change of changes) {
@@ -176,12 +175,14 @@ export const sessionHandlers: Record<string, Handler<any, any>> = {
 
   [Methods.DeleteKimiSession]: async (params: DeleteSessionParams, ctx): Promise<{ ok: boolean }> => {
     if (!isSessionId(params.sessionId) || !ctx.workspaceRoot) return { ok: false };
-    const summary = (await ctx.harness.listSessions({ sessionId: params.sessionId }))[0];
+    const summary = (await ctx.runtime.listSessions()).find(
+      (candidate) => candidate.id === params.sessionId,
+    );
     if (summary === undefined || !isInsideOrEqual(ctx.workspaceRoot, summary.workDir)) {
       return { ok: false };
     }
     const affectedViews = ctx.runtime.getSession(params.sessionId)?.subscribers ?? [];
-    await ctx.runtime.deleteSession(params.sessionId);
+    await ctx.runtime.deleteEngineSession(summary.workDir, params.sessionId);
     await ctx.baselineManager.deleteSession(params.sessionId);
     for (const webviewId of affectedViews) {
       ctx.fileManager.clearSession(webviewId);
@@ -197,8 +198,9 @@ export const sessionHandlers: Record<string, Handler<any, any>> = {
     if (!ctx.workDir || !isSessionId(params.sessionId) || !Number.isInteger(params.turnIndex) || params.turnIndex < 0) {
       return null;
     }
-    const summaries = await ctx.harness.listSessions({ sessionId: params.sessionId });
-    const sourceSummary = summaries[0];
+    const sourceSummary = (await ctx.runtime.listSessions()).find(
+      (candidate) => candidate.id === params.sessionId,
+    );
     if (
       sourceSummary === undefined ||
       !ctx.workspaceRoot ||
@@ -206,30 +208,24 @@ export const sessionHandlers: Record<string, Handler<any, any>> = {
     ) return null;
 
     const forkSettledSession = async () => {
-      const fork = await ctx.harness.forkSession({ id: params.sessionId, turnIndex: params.turnIndex });
-      const targetSummary = fork.summary;
-      if (targetSummary === undefined) {
-        await fork.close();
-        throw new Error("Forked session metadata is unavailable.");
-      }
+      const targetSummary = await ctx.runtime.forkEngineSession(
+        sourceSummary.workDir,
+        params.sessionId,
+        params.turnIndex,
+      );
 
       let materializeError: unknown;
       try {
         await ctx.baselineManager.materializeToFork(
-          baselineSession(sourceSummary),
-          baselineSession(targetSummary),
+          baselineSummary(sourceSummary),
+          baselineSummary(targetSummary),
         );
       } catch (error) {
         materializeError = error;
       }
 
-      try {
-        await fork.close();
-      } catch (error) {
-        ctx.logError("Unable to close a forked session", error);
-      }
       if (materializeError !== undefined) {
-        await ctx.harness.deleteSession(targetSummary.id).catch((error: unknown) => {
+        await ctx.runtime.deleteEngineSession(sourceSummary.workDir, targetSummary.id).catch((error: unknown) => {
           ctx.logError(`Unable to remove failed fork "${targetSummary.id}"`, error);
         });
         await ctx.baselineManager.deleteSession(targetSummary.id).catch((error: unknown) => {
@@ -251,17 +247,47 @@ export const sessionHandlers: Record<string, Handler<any, any>> = {
   },
 };
 
-function toSessionInfo(summary: SessionSummary): SessionInfo {
+async function buildReplaySource(runtime: SessionRuntime): Promise<ReplaySessionSource> {
+  const session = runtime.engineSession;
+  const stores = session.handle.stores;
+  const rosterState = stores.session.getState().roster;
+  const agents: Record<string, ReplayAgentSource> = {};
+  const roster: Record<string, { source?: string }> = {};
+  for (const [agentId, entry] of Object.entries(rosterState.agents)) {
+    const store = stores.get(agentId) ?? (await stores.open(agentId));
+    agents[agentId] = { history: store.getState().history };
+    roster[agentId] = { source: entry.source };
+  }
+  const status = runtime.getStatus();
+  const replayStatus: ReplayStatus = {
+    modelAlias: status.model,
+    thinkingEffort: status.thinkingEffort,
+    planMode: status.planMode,
+    contextTokens: status.contextTokens,
+    maxContextTokens: status.maxContextTokens,
+  };
+  return { agents, roster, status: replayStatus };
+}
+
+function toSessionInfo(summary: EngineSessionSummary): SessionInfo {
   return {
     id: summary.id,
     workDir: summary.workDir,
     updatedAt: summary.updatedAt,
-    brief: summary.title ?? summary.lastPrompt ?? "",
+    brief: summary.title ?? "",
   };
 }
 
-function baselineSession(summary: Pick<SessionSummary, "id" | "workDir" | "metadata">): BaselineSession {
-  return { id: summary.id, workDir: summary.workDir, metadata: summary.metadata };
+function baselineSession(runtime: SessionRuntime): BaselineSession {
+  return baselineSummary(runtime.summary);
+}
+
+function baselineSummary(summary: Pick<EngineSessionSummary, "id" | "workDir" | "metadata">): BaselineSession {
+  return {
+    id: summary.id,
+    workDir: summary.workDir,
+    ...(summary.metadata === undefined ? {} : { metadata: summary.metadata }),
+  };
 }
 
 function isInsideOrEqual(root: string, candidate: string): boolean {

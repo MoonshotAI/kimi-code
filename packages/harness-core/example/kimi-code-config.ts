@@ -3,25 +3,26 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  anthropicProvider,
+  anthropicRequester,
   createStaticCredentialProvider,
-  googleProvider,
-  openaiProvider,
-  requesterOf,
-  type LlmCredentialProvider,
-  type LlmModel,
-  type LlmRequester,
+  googleGenAIRequester,
+  kimiAnthropicRequester,
+  kimiRequester,
+  kimiResponsesRequester,
+  openAIRequester,
+  openAIResponsesRequester,
+  type AgentLlmRequester,
+  type LlmEndpoint,
+  type LlmModelSpec,
   type ModelCapability,
   type ThinkingRequestOptions,
 } from '@moonshot-ai/agent-core';
 import { parse } from 'smol-toml';
 
-import { kimiProvider } from '@moonshot-ai/harness-core';
-
 export interface KimiCodeDefault {
-  readonly model: LlmModel;
-  readonly requester: LlmRequester;
-  readonly credentialProvider: LlmCredentialProvider;
+  readonly model: LlmModelSpec;
+  readonly requester: AgentLlmRequester;
+  readonly endpoint: LlmEndpoint;
   readonly thinking?: ThinkingRequestOptions;
   readonly key: string;
 }
@@ -56,38 +57,42 @@ export function loadKimiCodeDefault(): KimiCodeDefault {
     throw new Error(`provider '${providerId}' has no api_key`);
   }
   const capabilities = asStringList(entry['capabilities']);
-  const model: LlmModel = {
+  const model: LlmModelSpec = {
     provider: providerId,
-    model: modelName,
+    name: modelName,
     capability: capabilityOf(capabilities),
     maxContextSize: asNumber(entry['max_context_size']),
-    baseUrl: asString(provider['base_url']),
-    apiKey,
   };
   const thinking = thinkingOf(asRecord(root['thinking']), asString(entry['default_effort']));
   return {
     model,
     requester: requesterFor(type, protocol),
-    credentialProvider: createStaticCredentialProvider(apiKey),
+    endpoint: {
+      baseUrl: asString(provider['base_url']),
+      credentials: createStaticCredentialProvider(apiKey),
+    },
     thinking,
     key,
   };
 }
 
-function requesterFor(type: string, protocol: string | undefined): LlmRequester {
+function requesterFor(type: string, protocol: string | undefined): AgentLlmRequester {
   if (type === 'kimi') {
-    return requesterOf(kimiProvider, protocol);
+    if (protocol === 'anthropic') return kimiAnthropicRequester;
+    if (protocol === 'openai_responses') return kimiResponsesRequester;
+    if (protocol === undefined || protocol === 'openai') return kimiRequester;
+    throw new Error(`provider 'kimi' has no protocol '${protocol}'`);
   }
   if (type === 'anthropic') {
-    return anthropicProvider.requesters.anthropic;
+    return anthropicRequester;
   }
   if (type === 'google-genai' || type === 'google') {
-    return googleProvider.requesters['google-genai'];
+    return googleGenAIRequester;
   }
   if ((protocol ?? type) === 'openai_responses') {
-    return openaiProvider.requesters.openai_responses;
+    return openAIResponsesRequester;
   }
-  return openaiProvider.requesters.openai;
+  return openAIRequester;
 }
 
 function capabilityOf(names: readonly string[]): ModelCapability {

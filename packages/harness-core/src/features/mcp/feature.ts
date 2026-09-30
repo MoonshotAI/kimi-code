@@ -283,7 +283,7 @@ export function createMcp(props: CreateMcpProps = {}): FeatureSpec<McpEvent> {
           definitions.push(
             createMcpTool(qualified, tool, resolved.client, {
               mediaStore: props.mediaStore,
-              providerType: () => agent.config?.model.provider,
+              providerType: () => agent.model?.spec.provider,
               reconnect: (signal) => reconnectForServer(manager, entry.name, resolved.client, signal),
               isRemoved: () => manager.get(entry.name)?.status === 'removed',
               deferred: markDeferred,

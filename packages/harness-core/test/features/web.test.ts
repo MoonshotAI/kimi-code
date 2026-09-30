@@ -15,13 +15,11 @@ import {
   openSessionStores,
   providerCatalog,
   Trees,
-  UNKNOWN_CAPABILITY,
   useAgent,
   ConfigRef,
   type AgentHandle,
   type ConfigPersist,
-  type LlmModel,
-  type LlmRequester,
+  type AgentLlmRequester,
   type ToolCall,
   type ToolDescription,
 } from '@moonshot-ai/agent-core';
@@ -41,6 +39,8 @@ import {
   type ServicesSection,
   type WebSearchProvider,
 } from '#/features/kimi/web/index';
+
+import { fakeRequester, testModel, textOutcome } from '../fake-llm';
 
 const homes: string[] = [];
 
@@ -120,23 +120,19 @@ const SERVICES_TOML =
   'base_url = "https://search.example.com/search"\n' +
   'api_key = "sk-search"\n';
 
-const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
-
-function captureTools(): { requester: LlmRequester; seen: ToolDescription[][] } {
+function captureTools(): { requester: AgentLlmRequester; seen: ToolDescription[][] } {
   const seen: ToolDescription[][] = [];
   return {
     seen,
-    requester: {
-      generate: async (_config, content, { onEvent }) => {
-        seen.push([...(content.tools ?? [])]);
-        onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'ok' } });
-        onEvent?.({
-          type: 'llm.streaming.usage',
-          usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
-        });
-        onEvent?.({ type: 'llm.done' });
-      },
-    },
+    requester: fakeRequester((rest, onEvent) => {
+      seen.push([...(rest.profile?.tools ?? [])]);
+      onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'ok' } });
+      onEvent?.({
+        type: 'llm.streaming.usage',
+        usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
+      });
+      return textOutcome('ok');
+    }),
   };
 }
 
@@ -152,7 +148,7 @@ async function openSession(
   const bindLlm = createFeature('test-llm', {
     agent() {
       const agent = useAgent();
-      agent.setConfig({ model });
+      agent.setModel(testModel);
       agent.setRequester(requester);
     },
   });

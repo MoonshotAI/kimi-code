@@ -1,12 +1,12 @@
 import {
   createFacadeToken,
   MAIN_AGENT_ID,
-  parseMediaRefUrl,
   type AppCommands,
   type SessionHandle,
 } from '@moonshot-ai/agent-core';
 import type { Unsubscribe } from '@moonshot-ai/agent-core/kernel/index';
 
+import { parseMediaRefUrl } from '#/features/media/ref';
 import { PlanRef } from '#/features/plan/index';
 import { TokenCountingRef } from '#/features/tokenCounting/index';
 import { PermissionRef } from '#/features/permission/index';
@@ -655,19 +655,14 @@ export class SessionBroadcaster {
       content.map(async (part) => {
         if (part === null || typeof part !== 'object') return part;
         const record = part as { [key: string]: unknown; type?: unknown };
-        const key =
-          record.type === 'image_url'
-            ? 'imageUrl'
-            : record.type === 'video_url'
-              ? 'videoUrl'
-              : record.type === 'audio_url'
-                ? 'audioUrl'
-                : undefined;
-        if (key === undefined) return part;
-        const holder = record[key] as { url?: unknown } | undefined;
-        if (typeof holder?.url !== 'string' || parseMediaRefUrl(holder.url) === undefined) return part;
-        const inlined = await inline(holder.url).catch(() => undefined);
-        return inlined === undefined ? part : { ...record, [key]: { ...holder, url: inlined } };
+        if (record.type !== 'image_url' && record.type !== 'video_url' && record.type !== 'audio_url') {
+          return part;
+        }
+        const source = record['source'] as { kind?: unknown; ref?: unknown } | undefined;
+        if (source?.kind !== 'store' || typeof source.ref !== 'string') return part;
+        if (parseMediaRefUrl(source.ref) === undefined) return part;
+        const inlined = await inline(source.ref).catch(() => undefined);
+        return inlined === undefined ? part : { ...record, source: { kind: 'url', url: inlined } };
       }),
     );
     return { ...event, outcome: { ...outcome, result: { ...outcome.result, content: parts } } };
@@ -1212,11 +1207,11 @@ export class SessionBroadcaster {
       planMode = await plan.status().then((status) => status !== null, () => undefined);
     }
     return {
-      model: agent?.config?.model.model,
-      thinkingEffort: agent?.config?.thinking?.effort,
+      model: agent?.model?.spec.name,
+      thinkingEffort: agent?.model?.thinking?.effort,
       contextTokens: agent?.resolve(TokenCountingRef)?.statusSize(),
       maxContextTokens:
-        agent?.config?.model.maxInputSize ?? agent?.config?.model.maxContextSize,
+        agent?.model?.spec.maxInputSize ?? agent?.model?.spec.maxContextSize,
       planMode,
       permission: agent?.resolve(PermissionRef)?.mode(),
       ...base,

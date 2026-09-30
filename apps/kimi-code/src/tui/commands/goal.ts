@@ -1,134 +1,15 @@
-import { ErrorCodes, isKimiError, type PermissionMode } from '@moonshot-ai/kimi-code-sdk';
+import { GOAL_NOT_FOUND, GoalRef, isGoalError } from '@moonshot-ai/harness-core';
 
-import {
-  GoalStartPermissionPromptComponent,
-  type GoalStartPermissionChoice,
-} from '../components/dialogs/goal-start-permission-prompt';
-import {
-  GoalQueueEditDialogComponent,
-  GoalQueueManagerComponent,
-  type GoalQueueEditResult,
-  type GoalQueueManagerAction,
-} from '../components/dialogs/goal-queue-manager';
-import {
-  GoalSetMessageComponent,
-  GoalStatusMessageComponent,
-  UpcomingGoalAddedMessageComponent,
-} from '../components/messages/goal-panel';
+import { parseGoalCommand, type ParsedGoalCommand } from '#/cli/goal-command-parse';
+
+import { GoalStatusMessageComponent } from '../components/messages/goal-panel';
 import { LLM_NOT_SET_MESSAGE } from '../constant/kimi-tui';
-import {
-  appendGoalQueueItem,
-  moveGoalQueueItem,
-  readGoalQueue,
-  removeGoalQueueItem,
-  updateGoalQueueItem,
-  type GoalQueueSnapshot,
-} from '../goal-queue-store';
-import { formatErrorMessage } from '../utils/event-payload';
-import { PERMISSION_MODE_DESCRIPTIONS, PERMISSION_MODE_DISPLAY_NAMES } from '../utils/permission-mode';
+import { formatErrorMessage } from '../utils/errors';
 import { canRestoreSubmittedInput } from './resolve';
 import type { SlashCommandHost } from './dispatch';
 
-const MAX_GOAL_OBJECTIVE_LENGTH = 4000;
-const RESUME_GOAL_INPUT = 'Resume the active goal.';
-const START_NEXT_GOAL_NOW_MESSAGE = 'No active goal. Starting this goal now.';
-
-type GoalCommandHost = Pick<
-  SlashCommandHost,
-  | 'state'
-  | 'session'
-  | 'requireSession'
-  | 'setAppState'
-  | 'showError'
-  | 'showNotice'
-  | 'showStatus'
-  | 'track'
-  | 'mountEditorReplacement'
-  | 'restoreEditor'
-  | 'restoreInputText'
-  | 'sendNormalUserInput'
->;
-
-export interface GoalStartOptions {
-  readonly beforeSend?: () => boolean | Promise<boolean>;
-  readonly sendInput?: (objective: string) => void;
-}
-
-export type ParsedGoalCommand =
-  | { readonly kind: 'status' }
-  | { readonly kind: 'pause' }
-  | { readonly kind: 'resume' }
-  | { readonly kind: 'cancel' }
-  | {
-      readonly kind: 'create';
-      readonly objective: string;
-      readonly replace: boolean;
-    }
-  | { readonly kind: 'next-add'; readonly objective: string }
-  | { readonly kind: 'next-manage' }
-  | {
-      readonly kind: 'error';
-      readonly message: string;
-      readonly severity?: 'error' | 'hint';
-      /** Restore the typed `/goal ...` line into the editor so the input is not lost. */
-      readonly restoreInput?: boolean;
-    };
-
-const CONTROL_SUBCOMMANDS = new Set(['pause', 'resume', 'cancel']);
-
-/**
- * Parses the deterministic `/goal` command grammar. Reserved subcommands
- * (`pause`/`resume`/`cancel`/`status`/`replace`) are only honored as the first
- * token; use `/goal -- <objective>` to start a goal whose text begins with one
- * of those words. (`cancel` is the single discard action — it removes the
- * current goal.) Stop conditions are expressed in the objective in natural
- * language (e.g. "…or stop after 20 turns"); the model honors them when it
- * self-audits each turn and reports `complete`/`blocked` via UpdateGoal.
- */
-export function parseGoalCommand(rawArgs: string): ParsedGoalCommand {
-  const args = rawArgs.trim();
-  if (args.length === 0 || args === 'status') return { kind: 'status' };
-
-  const tokens = args.split(/\s+/);
-  const first = tokens[0];
-  if (first === 'next') {
-    return parseNextGoalCommand(tokens);
-  }
-  if (first !== undefined && CONTROL_SUBCOMMANDS.has(first) && tokens.length === 1) {
-    return { kind: first as 'pause' | 'resume' | 'cancel' };
-  }
-
-  let index = 0;
-  let replace = false;
-  if (tokens[index] === 'replace') {
-    replace = true;
-    index += 1;
-  }
-  // `--` ends subcommand parsing so an objective can begin with a reserved word
-  // (e.g. `/goal -- pause the rollout`).
-  if (tokens[index] === '--') {
-    index += 1;
-  }
-
-  const objective = tokens.slice(index).join(' ').trim();
-  if (objective.length === 0) {
-    // A usage hint, not a failure — shown in the same calm style as the other
-    // "nothing to act on" messages (no goal to pause/resume/cancel).
-    return {
-      kind: 'error',
-      severity: 'hint',
-      message: 'Provide a goal objective, e.g. `/goal Ship feature X`.',
-    };
-  }
-  if (objective.length > MAX_GOAL_OBJECTIVE_LENGTH) {
-    return {
-      kind: 'error',
-      restoreInput: true,
-      message: `Goal objective is too long (max ${MAX_GOAL_OBJECTIVE_LENGTH} characters). Put long content in a file and reference the file path.`,
-    };
-  }
-  return { kind: 'create', objective, replace };
-}
+const GOAL_QUEUE_DROPPED_MESSAGE =
+  'Upcoming goal queues are not available in this version. Start the next goal with `/goal replace <objective>` once the current one finishes.';
 
 export async function handleGoalCommand(host: SlashCommandHost, args: string): Promise<void> {
   const parsed = parseGoalCommand(args);
@@ -136,12 +17,9 @@ export async function handleGoalCommand(host: SlashCommandHost, args: string): P
     case 'error':
       if (parsed.severity === 'hint') host.showStatus(parsed.message);
       else host.showError(parsed.message);
-      // Give rejected input back so a long hand-typed objective is not
-      // lost — unless the user already moved on (a newer draft or an
-      // opened panel), which is possible after the async lazy-session
-      // creation on the v2 engine.
-      if (parsed.restoreInput === true && canRestoreSubmittedInput(host))
+      if (parsed.restoreInput === true && canRestoreSubmittedInput(host)) {
         host.restoreInputText(`/goal ${args}`);
+      }
       return;
     case 'status':
       await showGoalStatus(host);
@@ -156,357 +34,72 @@ export async function handleGoalCommand(host: SlashCommandHost, args: string): P
       await cancelGoal(host);
       return;
     case 'next-add':
-      await queueNextGoal(host, parsed);
-      return;
     case 'next-manage':
-      await showGoalQueueManager(host);
+      host.showStatus(GOAL_QUEUE_DROPPED_MESSAGE);
       return;
     case 'create':
-      await createGoal(host, parsed, args);
+      await createGoal(host, parsed);
       return;
   }
 }
 
-function parseNextGoalCommand(tokens: readonly string[]): ParsedGoalCommand {
-  if (tokens.length === 2 && tokens[1] === 'manage') return { kind: 'next-manage' };
-  let index = 1;
-  if (tokens[index] === '--') index += 1;
-  const objective = tokens.slice(index).join(' ').trim();
-  if (objective.length === 0) {
-    return {
-      kind: 'error',
-      severity: 'hint',
-      message:
-        'Provide an upcoming goal objective, e.g. `/goal next Ship feature X`, or use `/goal next manage`.',
-    };
-  }
-  if (objective.length > MAX_GOAL_OBJECTIVE_LENGTH) {
-    return {
-      kind: 'error',
-      restoreInput: true,
-      message: `Goal objective is too long (max ${MAX_GOAL_OBJECTIVE_LENGTH} characters). Put long content in a file and reference the file path.`,
-    };
-  }
-  return { kind: 'next-add', objective };
-}
-
-/**
- * Live pre-send check for the main editor: when the typed text is a `/goal`
- * create/next command whose objective already exceeds the length limit,
- * returns a warning to show while typing — before anything is submitted or
- * sent to the server. Returns undefined for non-goal input and for control
- * forms (`status`/`pause`/`resume`/`cancel`/`next manage`).
- */
-export function goalObjectiveLengthWarning(text: string): string | undefined {
-  // Submitted text is trimmed before dispatch, so match leading whitespace.
-  const trimmed = text.trimStart();
-  if (!trimmed.startsWith('/goal')) return undefined;
-  const args = trimmed.slice('/goal'.length);
-  // parseSlashInput splits the command name at a literal space only, so a
-  // newline/tab boundary (`/goal⏎…`, `/goalfoo`) is not the goal command.
-  if (args.length > 0 && args.charAt(0) !== ' ') return undefined;
-  const objective = extractGoalObjective(args);
-  if (objective === undefined || objective.length <= MAX_GOAL_OBJECTIVE_LENGTH) return undefined;
-  return `Goal objective is too long (${objective.length}/${MAX_GOAL_OBJECTIVE_LENGTH} characters); put long content in a file and reference the file path.`;
-}
-
-/**
- * Mirrors the parse grammar above: strips `next` / `replace` / `--` and
- * returns the objective text, or undefined when the args form a control
- * command that carries no objective.
- */
-function extractGoalObjective(rawArgs: string): string | undefined {
-  const args = rawArgs.trim();
-  if (args.length === 0 || args === 'status') return undefined;
-  const tokens = args.split(/\s+/);
-  const first = tokens[0];
-  let index = 0;
-  if (first === 'next') {
-    if (tokens.length === 2 && tokens[1] === 'manage') return undefined;
-    index = 1;
-  } else {
-    if (first !== undefined && CONTROL_SUBCOMMANDS.has(first) && tokens.length === 1) {
-      return undefined;
-    }
-    if (tokens[index] === 'replace') index += 1;
-  }
-  if (tokens[index] === '--') index += 1;
-  return tokens.slice(index).join(' ').trim();
-}
-
-async function queueNextGoal(
+async function createGoal(
   host: SlashCommandHost,
-  parsed: Extract<ParsedGoalCommand, { kind: 'next-add' }>,
+  parsed: Extract<ParsedGoalCommand, { kind: 'create' }>,
 ): Promise<void> {
-  const session = host.requireSession();
-  let hasCurrentGoal: boolean;
-  try {
-    const { goal } = await session.getGoal();
-    hasCurrentGoal = goal !== null;
-  } catch (error) {
-    host.showError(`Failed to inspect current goal: ${formatErrorMessage(error)}`);
+  if (host.state.appState.model.trim().length === 0) {
+    host.showError(LLM_NOT_SET_MESSAGE);
     return;
   }
-
-  if (!hasCurrentGoal && !isBusy(host)) {
-    host.showStatus(START_NEXT_GOAL_NOW_MESSAGE);
-    await createGoal(
-      host,
-      { kind: 'create', objective: parsed.objective, replace: false },
-      `next ${parsed.objective}`,
+  const session = await host.ensureSession();
+  if (session === undefined) return;
+  const main = host.mainAgent();
+  if (main === undefined) return;
+  const goalFace = main.resolve(GoalRef);
+  if (goalFace === undefined) {
+    // Goal feature not mounted — the intake prompt would have nothing to call.
+    host.showError('Goal mode is not available in this session.');
+    return;
+  }
+  const current = goalFace.getGoal().goal;
+  if (current !== null && !parsed.replace) {
+    host.showError(
+      'A goal is already active. Use `/goal replace <objective>` to replace it, or `/goal status` to inspect it.',
     );
     return;
   }
-
-  try {
-    await appendGoalQueueItem(session, { objective: parsed.objective });
-  } catch (error) {
-    host.showError(formatErrorMessage(error));
-    return;
-  }
-  host.track('goal_queue_append');
-  if (!hasCurrentGoal) host.requestQueuedGoalPromotion?.();
-  host.state.transcriptContainer.addChild(
-    new UpcomingGoalAddedMessageComponent(),
-  );
-  host.state.ui.requestRender();
+  host.track('goal_create', { replace: parsed.replace });
+  host.sendNormalUserInput(goalIntakePrompt(parsed));
 }
 
-async function showGoalQueueManager(
-  host: SlashCommandHost,
-  selectedGoalId?: string,
-): Promise<void> {
-  let snapshot: GoalQueueSnapshot;
-  try {
-    snapshot = await readGoalQueue(host.requireSession());
-  } catch (error) {
-    host.showError(`Failed to load upcoming goals: ${formatErrorMessage(error)}`);
-    return;
-  }
-
-  host.track('goal_queue_manage');
-  host.mountEditorReplacement(
-    new GoalQueueManagerComponent({
-      goals: snapshot.goals,
-      selectedGoalId,
-      onAction: async (action) => {
-        try {
-          return await handleGoalQueueManagerAction(host, action);
-        } catch (error) {
-          host.showError(`Failed to update upcoming goals: ${formatErrorMessage(error)}`);
-          return undefined;
-        }
-      },
-      onCancel: () => {
-        host.restoreEditor();
-      },
-    }),
-  );
-}
-
-async function handleGoalQueueManagerAction(
-  host: SlashCommandHost,
-  action: GoalQueueManagerAction,
-): Promise<GoalQueueSnapshot | void> {
-  const session = host.requireSession();
-  switch (action.kind) {
-    case 'move': {
-      const snapshot = await moveGoalQueueItem(session, {
-        goalId: action.goalId,
-        direction: action.direction,
-      });
-      host.track('goal_queue_move', { direction: action.direction });
-      return snapshot;
-    }
-    case 'delete': {
-      const snapshot = await removeGoalQueueItem(session, { goalId: action.goalId });
-      host.track('goal_queue_remove');
-      return snapshot;
-    }
-    case 'edit':
-      await showGoalQueueEditDialog(host, action.goalId);
-      return;
-  }
-}
-
-async function showGoalQueueEditDialog(
-  host: SlashCommandHost,
-  goalId: string,
-): Promise<void> {
-  let snapshot: GoalQueueSnapshot;
-  try {
-    snapshot = await readGoalQueue(host.requireSession());
-  } catch (error) {
-    host.showError(`Failed to load upcoming goals: ${formatErrorMessage(error)}`);
-    return;
-  }
-
-  const goal = snapshot.goals.find((item) => item.id === goalId);
-  if (goal === undefined) {
-    host.showStatus('Queued goal no longer exists.');
-    await showGoalQueueManager(host);
-    return;
-  }
-
-  host.mountEditorReplacement(
-    new GoalQueueEditDialogComponent({
-      goal,
-      onDone: (result) => {
-        void handleGoalQueueEditResult(host, result).catch((error: unknown) => {
-          host.showError(`Failed to update upcoming goal: ${formatErrorMessage(error)}`);
-        });
-      },
-    }),
-  );
-}
-
-async function handleGoalQueueEditResult(
-  host: SlashCommandHost,
-  result: GoalQueueEditResult,
-): Promise<void> {
-  if (result.kind === 'cancel') {
-    await showGoalQueueManager(host, result.goalId);
-    return;
-  }
-
-  await updateGoalQueueItem(host.requireSession(), {
-    goalId: result.goalId,
-    objective: result.objective,
-  });
-  host.track('goal_queue_update');
-  await showGoalQueueManager(host, result.goalId);
-}
-
-export async function createGoal(
-  host: GoalCommandHost,
-  parsed: Extract<ParsedGoalCommand, { kind: 'create' }>,
-  rawArgs?: string,
-  options: GoalStartOptions = {},
-): Promise<boolean> {
-  // A goal must be able to start a model turn; refuse to create one otherwise.
-  if (host.state.appState.model.trim().length === 0 || host.session === undefined) {
-    host.showError(LLM_NOT_SET_MESSAGE);
-    return false;
-  }
-
-  if (
-    host.state.appState.permissionMode === 'manual' ||
-    host.state.appState.permissionMode === 'yolo'
-  ) {
-    showGoalStartPermissionPrompt(host, parsed, rawArgs ?? parsed.objective, options);
-    return false;
-  }
-
-  return startGoal(host, parsed, options);
-}
-
-function showGoalStartPermissionPrompt(
-  host: GoalCommandHost,
-  parsed: Extract<ParsedGoalCommand, { kind: 'create' }>,
-  rawArgs: string,
-  options: GoalStartOptions,
-): void {
-  const commandText = `/goal ${rawArgs.trim()}`;
-  const cancelStart = (): void => {
-    host.restoreInputText(commandText);
-    host.showStatus('Goal not started.');
-  };
-  host.mountEditorReplacement(
-    new GoalStartPermissionPromptComponent({
-      mode: host.state.appState.permissionMode === 'yolo' ? 'yolo' : 'manual',
-      onSelect: (choice) => {
-        if (choice === 'cancel') {
-          cancelStart();
-          return;
-        }
-        host.restoreEditor();
-        void startGoalWithPermission(host, parsed, choice, options);
-      },
-      onCancel: cancelStart,
-    }),
-  );
-}
-
-async function startGoalWithPermission(
-  host: GoalCommandHost,
-  parsed: Extract<ParsedGoalCommand, { kind: 'create' }>,
-  choice: GoalStartPermissionChoice,
-  options: GoalStartOptions,
-): Promise<void> {
-  const previousMode = host.state.appState.permissionMode;
-  const switched =
-    choice !== previousMode && (choice === 'auto' || choice === 'yolo');
-  if (switched) {
-    if (!(await setPermissionForGoal(host, choice))) return;
-  }
-  const started = await startGoal(host, parsed, options);
-  // The permission switch only exists to run this goal. If creation fails
-  // (e.g. a goal already exists and `replace` was not given), restore the
-  // previous mode so the session is not left more permissive than before.
-  if (!started && switched) {
-    await setPermissionForGoal(host, previousMode);
-    return;
-  }
-  // Announce the switch only once the goal actually starts: shown earlier, a
-  // failed creation would leave a stale permissive-mode notice in the
-  // transcript even though the rollback above restored the previous mode.
-  if (switched) {
-    host.showNotice(`Permission mode: ${PERMISSION_MODE_DISPLAY_NAMES[choice]}`);
-    host.showStatus(PERMISSION_MODE_DESCRIPTIONS[choice], 'warning');
-  }
-}
-
-async function setPermissionForGoal(host: GoalCommandHost, mode: PermissionMode): Promise<boolean> {
-  try {
-    await host.requireSession().setPermission(mode);
-  } catch (error) {
-    host.showError(`Failed to set permission mode: ${formatErrorMessage(error)}`);
-    return false;
-  }
-  host.setAppState({ permissionMode: mode });
-  return true;
-}
-
-async function startGoal(
-  host: GoalCommandHost,
-  parsed: Extract<ParsedGoalCommand, { kind: 'create' }>,
-  options: GoalStartOptions,
-): Promise<boolean> {
-  try {
-    await host.requireSession().createGoal({
-      objective: parsed.objective,
-      replace: parsed.replace,
-    });
-  } catch (error) {
-    if (isKimiError(error) && error.code === ErrorCodes.GOAL_ALREADY_EXISTS) {
-      host.showError(
-        'A goal is already active. Use `/goal replace <objective>` to replace it, or `/goal status` to inspect it.',
-      );
-      return false;
-    }
-    host.showError(formatErrorMessage(error));
-    return false;
-  }
-  if (options.beforeSend !== undefined && !(await options.beforeSend())) {
-    return false;
-  }
-  host.state.transcriptContainer.addChild(new GoalSetMessageComponent());
-  host.state.ui.requestRender();
-  if (options.sendInput !== undefined) {
-    options.sendInput(parsed.objective);
-  } else {
-    host.sendNormalUserInput(parsed.objective);
-  }
-  return true;
+function goalIntakePrompt(parsed: Extract<ParsedGoalCommand, { kind: 'create' }>): string {
+  const replace = parsed.replace
+    ? ' Replace the existing goal (`replace: true`).'
+    : '';
+  return [
+    'The user asked to start goal mode with the following objective:',
+    '',
+    parsed.objective,
+    '',
+    `Create the goal now by calling CreateGoal with exactly this objective.${replace} Derive a completionCriterion only when one is stated or directly implied by the objective; otherwise omit it. Once the goal exists, start working toward it immediately in this turn.`,
+  ].join('\n');
 }
 
 async function pauseGoal(host: SlashCommandHost): Promise<void> {
-  const session = host.requireSession();
+  const main = host.mainAgent();
+  if (main === undefined) {
+    host.showStatus('No goal to pause.');
+    return;
+  }
+  const goalFace = main.resolve(GoalRef);
+  if (goalFace === undefined) {
+    host.showError('Goal mode is not available in this session.');
+    return;
+  }
   try {
-    await session.pauseGoal();
-    if (isStreaming(host)) await session.cancel();
+    await goalFace.pauseGoal({}, 'user');
   } catch (error) {
-    if (isKimiError(error) && error.code === ErrorCodes.GOAL_NOT_FOUND) {
+    if (isGoalError(error) && error.code === GOAL_NOT_FOUND) {
       host.showStatus('No goal to pause.');
       return;
     }
@@ -518,15 +111,23 @@ async function pauseGoal(host: SlashCommandHost): Promise<void> {
 }
 
 async function resumeGoal(host: SlashCommandHost): Promise<void> {
-  if (host.state.appState.model.trim().length === 0 || host.session === undefined) {
+  if (host.state.appState.model.trim().length === 0) {
     host.showError(LLM_NOT_SET_MESSAGE);
     return;
   }
-
+  const session = await host.ensureSession();
+  if (session === undefined) return;
+  const main = host.mainAgent();
+  if (main === undefined) return;
+  const goalFace = main.resolve(GoalRef);
+  if (goalFace === undefined) {
+    host.showError('Goal mode is not available in this session.');
+    return;
+  }
   try {
-    await host.requireSession().resumeGoal();
+    await goalFace.resumeGoal({ continueIfPaused: true, continueIfBlocked: true }, 'user');
   } catch (error) {
-    if (isKimiError(error) && error.code === ErrorCodes.GOAL_NOT_FOUND) {
+    if (isGoalError(error) && error.code === GOAL_NOT_FOUND) {
       host.showStatus('No goal to resume.');
       return;
     }
@@ -534,16 +135,23 @@ async function resumeGoal(host: SlashCommandHost): Promise<void> {
     return;
   }
   host.track('goal_resume');
-  host.sendNormalUserInput(RESUME_GOAL_INPUT);
 }
 
 async function cancelGoal(host: SlashCommandHost): Promise<void> {
-  const session = host.requireSession();
+  const main = host.mainAgent();
+  if (main === undefined) {
+    host.showStatus('No goal to cancel.');
+    return;
+  }
+  const goalFace = main.resolve(GoalRef);
+  if (goalFace === undefined) {
+    host.showError('Goal mode is not available in this session.');
+    return;
+  }
   try {
-    await session.cancelGoal();
-    if (isStreaming(host)) await session.cancel();
+    await goalFace.cancelGoal({}, 'user');
   } catch (error) {
-    if (isKimiError(error) && error.code === ErrorCodes.GOAL_NOT_FOUND) {
+    if (isGoalError(error) && error.code === GOAL_NOT_FOUND) {
       host.showStatus('No goal to cancel.');
       return;
     }
@@ -555,22 +163,17 @@ async function cancelGoal(host: SlashCommandHost): Promise<void> {
 }
 
 async function showGoalStatus(host: SlashCommandHost): Promise<void> {
-  const { goal } = await host.requireSession().getGoal();
+  const main = host.mainAgent();
+  if (main === undefined) {
+    host.showStatus('No goal set. Start one with `/goal <objective>`.');
+    return;
+  }
+  const goal = main.resolve(GoalRef)?.getGoal().goal ?? null;
   host.track('goal_status', { status: goal?.status ?? 'none' });
   if (goal === null) {
     host.showStatus('No goal set. Start one with `/goal <objective>`.');
     return;
   }
-  host.state.transcriptContainer.addChild(
-    new GoalStatusMessageComponent(goal),
-  );
+  host.state.transcriptContainer.addChild(new GoalStatusMessageComponent(goal));
   host.state.ui.requestRender();
-}
-
-function isStreaming(host: SlashCommandHost): boolean {
-  return host.state.appState.streamingPhase !== 'idle';
-}
-
-function isBusy(host: SlashCommandHost): boolean {
-  return isStreaming(host) || host.state.appState.isCompacting;
 }

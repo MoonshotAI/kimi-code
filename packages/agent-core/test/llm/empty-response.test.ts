@@ -1,15 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { emptyResponseError } from '#/llm/errors';
-import {
-  createMessageAccumulator,
-  type AssistantMessage,
-  type StreamedMessagePart,
-} from '#/llm/message';
-import { UNKNOWN_CAPABILITY, type LlmModel } from '#/llm/model';
-import { NO_FINISH } from '#/llm/usage';
+import type { AssistantMessage, StreamedMessagePart } from '#/llm/message';
+import { createMessageAccumulator, emptyResponseError } from '#/llm/policy/settle';
+import type { LlmModelSpec } from '#/llm/request';
+import { NO_FINISH } from '#/llm/response';
 
-const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
+const model: LlmModelSpec = { provider: 'test', name: 'test-model' };
 
 function accumulatedMessage(parts: readonly StreamedMessagePart[]): AssistantMessage {
   const accumulator = createMessageAccumulator();

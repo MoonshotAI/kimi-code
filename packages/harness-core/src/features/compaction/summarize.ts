@@ -5,11 +5,11 @@ import {
   createUserMessage,
   extractText,
   runTurn,
+  type AgentLlmRequester,
   type AssistantEntry,
   type HistoryMessage,
-  type LlmCredentialProvider,
-  type LlmRequestConfig,
-  type LlmRequester,
+  type LlmEndpoint,
+  type LlmRequestModel,
   type TokenUsage,
   type TurnOutput,
 } from '@moonshot-ai/agent-core';
@@ -32,9 +32,9 @@ export type Summarize = (input: {
 }) => Promise<SummaryOutcome>;
 
 export interface CreateSummarizeOptions {
-  config: LlmRequestConfig;
-  requester: LlmRequester;
-  credentialProvider?: LlmCredentialProvider;
+  model: LlmRequestModel;
+  requester: AgentLlmRequester;
+  endpoint?: LlmEndpoint;
   systemPrompt?: string;
   maxShrinkAttempts?: number;
   timeoutMs?: number;
@@ -44,8 +44,8 @@ export function createSummarize(options: CreateSummarizeOptions): Summarize {
   const maxShrinkAttempts = options.maxShrinkAttempts ?? 3;
   const turnLogic = createTurnMachine(createRequestActor(() => options.requester), {
     getTools: () => [],
-    getConfig: () => options.config,
-    getCredentialProvider: () => options.credentialProvider,
+    getModel: () => options.model,
+    getEndpoint: () => options.endpoint,
     getHostPrompt: () => options.systemPrompt,
   });
   return async ({ history, instruction, signal }) => {

@@ -9,18 +9,20 @@ import {
   SessionSpaceError,
   UndoFeatureError,
   UndoRef,
-  parseMediaRefUrl,
   useApp,
   useInject,
   type AgentHandle,
   type AppCommands,
   type ContentPart,
   type HistoryMessage,
+  type MediaSource,
   type OpenSessionInput,
   type SessionHandle,
   type SessionRecord,
   type ToolMeta,
 } from '@moonshot-ai/agent-core';
+
+import { parseMediaRefUrl } from '#/features/media/ref';
 
 import {
   GOAL_ALREADY_EXISTS,
@@ -639,7 +641,7 @@ function sessionModelOf(record: SessionRecord, main: AgentHandle | undefined): s
   if (bound !== undefined && bound !== null) return bound;
   const configured = record.metadata?.['defaultModel'];
   if (typeof configured === 'string' && configured.length > 0) return configured;
-  return main?.config?.model.model ?? '';
+  return main?.model?.spec.name ?? '';
 }
 
 function sessionUsageOf(main: AgentHandle | undefined): SessionUsageView {
@@ -651,7 +653,7 @@ function sessionUsageOf(main: AgentHandle | undefined): SessionUsageView {
     cache_creation_tokens: usage?.total.inputCacheCreation ?? 0,
     total_cost_usd: 0,
     context_tokens: main?.resolve(TokenCountingRef)?.statusSize() ?? 0,
-    context_limit: main?.config?.model.maxInputSize ?? main?.config?.model.maxContextSize ?? 0,
+    context_limit: main?.model?.spec.maxInputSize ?? main?.model?.spec.maxContextSize ?? 0,
     turn_count: usage === undefined ? 0 : Object.keys(usage.byTurn).length,
   };
 }
@@ -1037,36 +1039,51 @@ function mapContentPart(part: ContentPart): unknown {
       return part.encrypted === undefined
         ? { type: 'thinking', thinking: part.think }
         : { type: 'thinking', thinking: part.think, signature: part.encrypted };
-    case 'image_url': {
-      const ref = parseMediaRefUrl(part.imageUrl.url);
-      if (ref !== undefined) {
-        return { type: 'image', source: { kind: 'session_media', file_id: ref }, name: part.imageUrl.name };
-      }
-      const match = /^data:([^;]+);base64,(.*)$/.exec(part.imageUrl.url);
-      return match === null
-        ? { type: 'image', source: { kind: 'url', url: part.imageUrl.url }, name: part.imageUrl.name }
-        : {
-            type: 'image',
-            source: { kind: 'base64', media_type: match[1], data: match[2] },
-            name: part.imageUrl.name,
-          };
-    }
+    case 'image_url':
+      return { type: 'image', source: wireMediaSourceOf(part.source), name: part.name };
     case 'audio_url':
-      return { type: 'text', text: `[audio:${part.audioUrl.url}]` };
-    case 'video_url': {
-      const ref = parseMediaRefUrl(part.videoUrl.url);
-      if (ref !== undefined) {
-        return { type: 'video', source: { kind: 'session_media', file_id: ref }, name: part.videoUrl.name };
-      }
-      const match = /^data:([^;]+);base64,(.*)$/.exec(part.videoUrl.url);
-      return match === null
-        ? { type: 'video', source: { kind: 'url', url: part.videoUrl.url }, name: part.videoUrl.name }
-        : {
-            type: 'video',
-            source: { kind: 'base64', media_type: match[1], data: match[2] },
-            name: part.videoUrl.name,
-          };
+      return { type: 'text', text: `[audio:${mediaUrlTextOf(part.source)}]` };
+    case 'video_url':
+      return { type: 'video', source: wireMediaSourceOf(part.source), name: part.name };
+  }
+}
+
+function wireMediaSourceOf(source: MediaSource): unknown {
+  switch (source.kind) {
+    case 'store': {
+      const ref = parseMediaRefUrl(source.ref);
+      return ref === undefined
+        ? { kind: 'url', url: source.ref }
+        : { kind: 'session_media', file_id: ref };
     }
+    case 'inline':
+      return { kind: 'base64', media_type: source.mimeType, data: source.data };
+    case 'url':
+      return wireMediaSourceFromUrl(source.url);
+    case 'file':
+      return { kind: 'file', file_id: source.id };
+  }
+}
+
+function wireMediaSourceFromUrl(url: string): unknown {
+  const ref = parseMediaRefUrl(url);
+  if (ref !== undefined) return { kind: 'session_media', file_id: ref };
+  const match = /^data:([^;]+);base64,(.*)$/.exec(url);
+  return match === null
+    ? { kind: 'url', url }
+    : { kind: 'base64', media_type: match[1], data: match[2] };
+}
+
+function mediaUrlTextOf(source: MediaSource): string {
+  switch (source.kind) {
+    case 'store':
+      return source.ref;
+    case 'url':
+      return source.url;
+    case 'inline':
+      return `data:${source.mimeType};base64,${source.data}`;
+    case 'file':
+      return source.id;
   }
 }
 

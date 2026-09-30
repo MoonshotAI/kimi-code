@@ -1,6 +1,6 @@
 import { createCollection, lineage, useCleanup, type UnitNode } from '#/kernel/index';
 import { useNode } from '#/kernel/hooks';
-import type { LlmCredentialProvider } from '#/llm/requester/requester';
+import type { LlmCredentialProvider } from '#/llm/request';
 
 import type { CatalogProviderInfo } from './types';
 

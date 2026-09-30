@@ -42,11 +42,11 @@ const text = new TextDecoder().decode(await stores.blobs.get(ref));
 
 ```ts
 const { ref } = await stores.blobs.put(bytes);
-const part = { type: 'image_url', imageUrl: { url: `media://${ref}` } };
+const part = { type: 'image_url', source: { kind: 'store', ref: `media://${ref}` } };
 await store.dispatch({ type: 'message.appended', message: { role: 'user', content: [part] } });
 ```
 
-mime / filename 由 `MediaSource` 解释；`createMediaRefResolver` 在组 provider 请求时 `get` 再变成 data URL。事件里始终只有 `media://` ref，展开只发生在组请求这一步。
+mime / filename 由 store 里的 `StoredContent` 解释；store-ref resolver（`createMedia` 装的 `useMessageResolver`）在组请求前 `get` 再变成 inline base64 或上传后的 url / file-id。事件里始终只有 `media://` ref，展开只发生在组请求这一步。
 
 **工具大输出**同理：事件带截断文本 + `outputRef`，需要全文的调用方再 `get`。
 

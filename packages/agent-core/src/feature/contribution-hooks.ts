@@ -1,4 +1,4 @@
-import { createRequestActor } from '#/agent-machine/llm-actor';
+import { createRequestActor, type AgentLlmRequester } from '#/agent-machine/llm-actor';
 import type { PromptGate, WaitForTasks } from '#/agent-machine/agent';
 import {
   createToolMachine,
@@ -22,14 +22,12 @@ import {
   type ShallowRef,
 } from '#/kernel/index';
 import { inject } from '#/kernel/hooks';
-import { credentialsRecovery } from '#/llm/builtin/requester/credentials';
-import type { MediaLowerPorts } from '#/llm/media/materialize';
+import { credentialsRecovery } from '#/llm/builtin/policy/credentials';
 import type { ToolCall, ToolDescription } from '#/llm/message';
-import type { MessageResolver } from '#/llm/requester/input';
-import type { LlmPolicy } from '#/llm/requester/policy';
-import type { LlmRecovery } from '#/llm/requester/recovery';
-import type { LlmRequester } from '#/llm/requester/requester';
-import type { LlmRetryable, LlmRetryOptions } from '#/llm/requester/retry';
+import type { MessageResolver } from '#/llm/policy/resolver';
+import type { LlmPolicy } from '#/llm/policy/policy';
+import type { LlmRecovery } from '#/llm/policy/recovery';
+import type { LlmRetryable, LlmRetryOptions } from '#/llm/policy/retry';
 import type { SessionLogState, SessionStore } from '#/stores/session';
 import type { Blobs } from '#/store/blob';
 import type { Entry, Projection, View } from '#/store/store';
@@ -79,7 +77,6 @@ export interface AgentPorts {
   readonly toolPermissions: readonly ToolPermissionHook[];
   readonly afterTools: readonly ToolAfterHook[];
   readonly promptGates: readonly PromptGate[];
-  readonly media: MediaLowerPorts | undefined;
   registerTools(tools: readonly ToolDefinition[]): () => void;
   registerToolExecutor(name: string, executor: ToolExecutor): () => void;
   resolveToolExecutor(name: string): ToolDefinition['execute'] | undefined;
@@ -96,7 +93,6 @@ export interface AgentPorts {
   registerToolPermission(hook: ToolPermissionHook): () => void;
   registerAfterTool(hook: ToolAfterHook): () => void;
   registerPromptGate(gate: PromptGate): () => void;
-  registerMedia(ports: MediaLowerPorts): () => void;
 }
 
 export interface AgentLogics {
@@ -194,7 +190,6 @@ export function createAgentPorts(): AgentPorts {
   const toolPermissions: ToolPermissionHook[] = [];
   const afterTools: ToolAfterHook[] = [];
   const promptGates: PromptGate[] = [];
-  let media: MediaLowerPorts | undefined;
   const tombstone = (name: string): ToolDefinition['execute'] =>
     async () => ({
       content: [{ type: 'text', text: `tool '${name}' is unavailable: contributing feature is not mounted` }],
@@ -214,9 +209,6 @@ export function createAgentPorts(): AgentPorts {
     toolPermissions,
     afterTools,
     promptGates,
-    get media() {
-      return media;
-    },
     registerTools: (values) => {
       const names = new Set(descriptions.live.map((tool) => tool.name));
       for (const tool of values) {
@@ -280,13 +272,6 @@ export function createAgentPorts(): AgentPorts {
     registerToolPermission: (hook) => register(toolPermissions, [hook]),
     registerAfterTool: (hook) => register(afterTools, [hook]),
     registerPromptGate: (gate) => register(promptGates, [gate]),
-    registerMedia: (value) => {
-      if (media !== undefined) throw new Error('duplicate media lower');
-      media = value;
-      return () => {
-        if (media === value) media = undefined;
-      };
-    },
   };
 }
 
@@ -335,7 +320,7 @@ export function bindToolLogic(ports: AgentPorts): ReturnType<typeof createToolMa
 
 export function bindAgentLogics(
   ports: AgentPorts,
-  getRequester: () => LlmRequester | undefined,
+  getRequester: () => AgentLlmRequester | undefined,
   turnOptions?: CreateTurnMachineOptions,
   retry?: LlmRetryOptions,
 ): AgentLogics {
@@ -343,7 +328,6 @@ export function bindAgentLogics(
     resolvers: () => ports.messageResolvers,
     recoveries: () => [credentialsRecovery, ...ports.recoveries],
     retryables: () => ports.retryables,
-    media: () => ports.media,
     retry,
   };
   const llmActor = createRequestActor(getRequester, policy);
@@ -353,8 +337,8 @@ export function bindAgentLogics(
       getTools: () => ports.toolDescriptions.filter((tool) => tool.deferred !== true),
       getSystemPrompt: (host) => ports.getSystemPrompt(host),
       getHostPrompt: turnOptions?.getHostPrompt,
-      getConfig: turnOptions?.getConfig,
-      getCredentialProvider: turnOptions?.getCredentialProvider,
+      getModel: turnOptions?.getModel,
+      getEndpoint: turnOptions?.getEndpoint,
       onBeforeTools: async ({ toolCalls }) => {
         for (const hook of ports.beforeToolBatches.slice()) {
           const decision = await hook({ toolCalls });
@@ -538,8 +522,4 @@ export function useAfterTool(hook: ToolAfterHook): void {
 
 export function usePromptGate(gate: PromptGate): void {
   pushCleanup(currentUnit(), inject(AgentPort).registerPromptGate(gate));
-}
-
-export function useMediaLower(ports: MediaLowerPorts): void {
-  pushCleanup(currentUnit(), inject(AgentPort).registerMedia(ports));
 }

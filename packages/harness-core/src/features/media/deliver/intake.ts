@@ -1,15 +1,10 @@
-import {
-  buildMediaRefUrl,
-  type ContentPart,
-  type MediaStore,
-  type PromptGate,
-} from '@moonshot-ai/agent-core';
+import type { ContentPart, PromptGate } from '@moonshot-ai/agent-core';
 
 import type { OsFsPort } from '#/features/os/host/index';
 
+import type { MediaStore } from '../store';
 import type { ImageLimits } from '../state/configSection';
 import { buildImageCompressionCaption, compressBase64ForModel } from '../transform/compress';
-import { parseImageDataUrl } from '../inspect/format-policy';
 import { persistOriginalImage } from '../transform/originals';
 
 export interface CreateMediaPromptGateProps {
@@ -25,21 +20,17 @@ export function createMediaPromptGate(props: CreateMediaPromptGateProps): Prompt
     const content: ContentPart[] = [];
     let changed = false;
     for (const part of message.content) {
-      if (part.type !== 'image_url') {
+      if (part.type !== 'image_url' || part.source.kind !== 'inline') {
         content.push(part);
         continue;
       }
-      const parsed = parseImageDataUrl(part.imageUrl.url);
-      if (parsed === null) {
-        content.push(part);
-        continue;
-      }
-      const approxBytes = Math.floor((parsed.base64.length * 3) / 4);
+      const source = part.source;
+      const approxBytes = Math.floor((source.data.length * 3) / 4);
       if (approxBytes <= readByteBudget) {
         content.push(part);
         continue;
       }
-      const compressed = await compressBase64ForModel(parsed.base64, parsed.mimeType, {
+      const compressed = await compressBase64ForModel(source.data, source.mimeType, {
         byteBudget: readByteBudget,
         maxEdge: maxEdgePx,
       });
@@ -51,14 +42,14 @@ export function createMediaPromptGate(props: CreateMediaPromptGateProps): Prompt
         props.originalsDir === undefined || props.fs === undefined
           ? null
           : await persistOriginalImage(
-              Buffer.from(parsed.base64, 'base64'),
-              parsed.mimeType,
+              Buffer.from(source.data, 'base64'),
+              source.mimeType,
               { dir: props.originalsDir, fs: props.fs },
             );
       const ref = await props.store.put({
         bytes: Buffer.from(compressed.base64, 'base64'),
         mimeType: compressed.mimeType,
-        filename: part.imageUrl.name,
+        filename: part.name,
       });
       content.push({
         type: 'text',
@@ -67,7 +58,7 @@ export function createMediaPromptGate(props: CreateMediaPromptGateProps): Prompt
             width: compressed.originalWidth,
             height: compressed.originalHeight,
             byteLength: compressed.originalByteLength,
-            mimeType: parsed.mimeType,
+            mimeType: source.mimeType,
           },
           final: {
             width: compressed.width,
@@ -80,7 +71,8 @@ export function createMediaPromptGate(props: CreateMediaPromptGateProps): Prompt
       });
       content.push({
         type: 'image_url',
-        imageUrl: { ...part.imageUrl, url: buildMediaRefUrl(ref) },
+        source: { kind: 'store', ref },
+        name: part.name,
       });
       changed = true;
     }

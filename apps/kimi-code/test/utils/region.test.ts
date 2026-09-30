@@ -49,7 +49,7 @@ describe('currentKimiRegion', () => {
         '[providers."managed:kimi-code".oauth]',
         'storage = "file"',
         'key = "oauth/kimi-code-env-0123456789abcdef"',
-        'oauthHost = "https://auth.kimi.ai"',
+        'oauth_host = "https://auth.kimi.ai"',
         '',
       ].join('\n'),
     );

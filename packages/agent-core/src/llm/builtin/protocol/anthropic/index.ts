@@ -1,45 +1,33 @@
 import Anthropic from '@anthropic-ai/sdk';
 
-import { headersToRecord } from '#/llm/errors';
-import { providerImagePolicy } from '#/llm/media/image-formats';
-import type { Message, ToolDescription } from '#/llm/message';
-import type { LlmModel } from '#/llm/model';
-import type { ProtocolBase, ProtocolRequesterOptions, TraitContext } from '#/llm/protocol/base';
-import { resolveMaxCompletionCap, type FormatRequestInput } from '#/llm/protocol/format';
-import { composeProtocolRequest } from '#/llm/protocol/runner';
-import { applyThinking, type ThinkingStrategy } from '#/llm/protocol/thinking';
-import { encodeAnthropicSampling } from './sampling';
-import type { LlmClientContext, LlmRequesterOptions, ToolCallIdPolicy } from '#/llm/requester/requester';
+import type { ResolvedEndpoint } from '#/llm/endpoint';
+import { headersToRecord, requestIdFromHeader } from '#/llm/protocol/kit/http';
+import { defineProtocol } from '#/llm/protocol/protocol';
 
-import { sanitizeToolCallId } from '#/llm/protocol/tool-call-id';
 import {
-  applyResponseFormat,
-  applyThinkingKeep,
-  assemble,
-  convertError,
-  createFormat,
-  defaultMergeHistory,
-  defaultTool,
-  encodeMaxTokens,
-  encode,
-  lower,
-  type FormatOptions,
-  type Assembled,
-  type Request,
-  type NativeMessage,
-} from './codec';
-import { encodeThinking, INTERLEAVED_THINKING_BETA, resolveDefaultMaxTokens } from './profile';
+  createStreamDecoder,
+  decodeError,
+  decodeResponse,
+  type RawChunk,
+  type RawResponse,
+} from './decode';
+import { inferAnthropicCapability } from './capability';
+import { anthropicPipeline, type Request } from './lower';
+
 
 export type {
-  FormatOptions as AnthropicFormatOptions,
   RawBlock as AnthropicRawBlock,
   RawChunk as AnthropicRawChunk,
+  RawResponse as AnthropicRawResponse,
   RawUsage as AnthropicRawUsage,
+} from './decode';
+export type {
+  AnthropicParams,
   Request as AnthropicRequest,
   NativePart as AnthropicNativePart,
   NativeMessage as AnthropicNativeMessage,
-} from './codec';
-export { CONTEXT_MANAGEMENT_BETA } from './codec';
+} from './lower';
+export { CONTEXT_MANAGEMENT_BETA } from './lower';
 
 export interface AnthropicExtraParams {
   readonly temperature?: number;
@@ -48,87 +36,17 @@ export interface AnthropicExtraParams {
   readonly stop_sequences?: readonly string[];
 }
 
-const CLAUDE_VISION_TOOL_PREFIXES = ['claude-3-', 'claude-3.5-', 'claude-3.7-'] as const;
-
-const CLAUDE_THINKING_VISION_TOOL_PREFIXES = [
-  'claude-opus-4',
-  'claude-sonnet-4',
-  'claude-haiku-4',
-  'claude-fable',
-] as const;
-
-const ANTHROPIC_VISION_TOOL_CAPABILITY = Object.freeze({
-  image_in: true,
-  video_in: false,
-  audio_in: false,
-  thinking: false,
-  tool_use: true,
-});
-
-const ANTHROPIC_THINKING_VISION_TOOL_CAPABILITY = Object.freeze({
-  image_in: true,
-  video_in: false,
-  audio_in: false,
-  thinking: true,
-  tool_use: true,
-});
-
-export function getAnthropicModelCapability(modelName: string) {
-  const normalized = modelName.toLowerCase();
-  if (CLAUDE_VISION_TOOL_PREFIXES.some((prefix) => normalized.startsWith(prefix))) {
-    return ANTHROPIC_VISION_TOOL_CAPABILITY;
-  }
-  if (CLAUDE_THINKING_VISION_TOOL_PREFIXES.some((prefix) => normalized.startsWith(prefix))) {
-    return ANTHROPIC_THINKING_VISION_TOOL_CAPABILITY;
-  }
-  return undefined;
-}
-
-export interface AnthropicTrait {
-  readonly toolCallIdPolicy?: ToolCallIdPolicy;
-
-  readonly thinking?: ThinkingStrategy;
-
-  encodeMaxCompletionTokens?(
-    maxCompletionTokens: number,
-    ctx: TraitContext,
-  ): Record<string, unknown> | undefined;
-
-  convertTool?(tool: ToolDescription, ctx: TraitContext): Record<string, unknown> | undefined;
-
-  acceptedImageMimes?(ctx: TraitContext): ReadonlySet<string> | undefined;
-
-  convertMessage?(
-    message: Message,
-    converted: NativeMessage,
-    ctx: TraitContext,
-  ): NativeMessage | null;
-
-  mergeHistory?(
-    messages: readonly NativeMessage[],
-    ctx: TraitContext,
-  ): NativeMessage[] | undefined;
-
-  buildParams?(
-    params: Record<string, unknown>,
-    ctx: TraitContext,
-  ): Record<string, unknown> | undefined;
-}
-
-const ANTHROPIC_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
-  normalize: (id) => sanitizeToolCallId(id, 64),
-  maxLength: 64,
-};
-
-export interface AnthropicRequesterOptions
-  extends ProtocolRequesterOptions<AnthropicTrait>,
-    FormatOptions,
-    LlmRequesterOptions<Anthropic> {
+export interface AnthropicOptions {
+  readonly betaApi?: boolean;
   readonly extras?: AnthropicExtraParams;
 }
 
+interface ProcessGlobal {
+  readonly process?: { readonly env?: Readonly<Record<string, string | undefined>> };
+}
+
 function anthropicCustomHeaderEnvNames(): string[] {
-  const customHeaders = process.env['ANTHROPIC_CUSTOM_HEADERS'];
+  const customHeaders = (globalThis as ProcessGlobal).process?.env?.['ANTHROPIC_CUSTOM_HEADERS'];
   if (customHeaders === undefined || customHeaders.length === 0) return [];
 
   const names: string[] = [];
@@ -155,131 +73,53 @@ function buildDefaultHeaders(
   return defaultHeaders;
 }
 
-function createClient(model: LlmModel, headers: Record<string, string> | undefined): Anthropic {
+function createClient(endpoint: ResolvedEndpoint): Anthropic {
   return new Anthropic({
-    apiKey: model.apiKey ?? 'unused',
+    apiKey: endpoint.apiKey ?? 'unused',
     authToken: null,
-    baseURL: model.baseUrl ?? null,
-    defaultHeaders: buildDefaultHeaders(headers),
+    baseURL: endpoint.baseUrl ?? null,
+    defaultHeaders: buildDefaultHeaders(endpoint.headers),
     maxRetries: 0,
+    fetch: endpoint.fetch,
   });
 }
 
-export interface AnthropicRequestPreparationOptions {
-  readonly trait?: AnthropicTrait;
-  readonly betaApi?: boolean;
-  readonly extras?: AnthropicExtraParams;
+function requestOptionsOf(request: Request, signal: AbortSignal) {
+  const headers =
+    !request.useBetaApi && request.betas.length > 0
+      ? { 'anthropic-beta': request.betas.join(',') }
+      : undefined;
+  return { signal, headers };
 }
 
-export async function prepareAnthropicRequest(
-  input: FormatRequestInput,
-  options?: AnthropicRequestPreparationOptions,
-): Promise<Request> {
-  const trait = options?.trait;
-  return composeProtocolRequest<
-    NativeMessage,
-    Assembled,
-    Request,
-    AnthropicTrait
-  >(input, trait, {
-    encodeSampling: encodeAnthropicSampling,
-    extras: options?.extras,
-    encodeKwargs: (current, currentTrait, ctx) => {
-      let kwargs: Record<string, unknown> = { betaFeatures: [INTERLEAVED_THINKING_BETA] };
-      let preserveThinking = false;
-      if (current.thinking !== undefined) {
-        const applied = applyThinking(
-          kwargs,
-          current.thinking,
-          currentTrait?.thinking,
-          ctx,
-          (thinking, thinkingCtx) => encodeThinking(thinking, thinkingCtx.model),
-        );
-        kwargs = applied.kwargs;
-        preserveThinking = applied.preserveThinking;
-      }
-      if (current.responseFormat !== undefined) {
-        kwargs = applyResponseFormat(kwargs, current.responseFormat);
-      }
-      const cap = resolveMaxCompletionCap(current);
-      if (cap !== undefined) {
-        const capped = resolveDefaultMaxTokens(ctx.model.model, cap);
-        kwargs = {
-          ...kwargs,
-          ...(currentTrait?.encodeMaxCompletionTokens?.(capped, ctx) ?? encodeMaxTokens(capped)),
-        };
-      }
-      return { kwargs, preserveThinking };
-    },
-    sealKwargs: (kwargs, current) =>
-      current.thinking?.keep === undefined
-        ? kwargs
-        : applyThinkingKeep(kwargs, current.thinking.keep),
-    lower: (current, currentTrait) =>
-      lower(
-        current,
-        currentTrait?.acceptedImageMimes?.({ model: current.model }) ??
-          providerImagePolicy().acceptedMimes,
-      ),
-    defaultMergeHistory,
-    defaultTool,
-    assemble: (current, parts) =>
-      assemble(current, {
-        messages: parts.messages,
-        tools: parts.tools as Record<string, unknown>[],
-        kwargs: parts.kwargs,
-        betaApi: options?.betaApi === true,
-      }),
-    encode: (assembled, applyParams) =>
-      encode({ ...assembled, params: applyParams(assembled.params) }),
-  });
-}
-
-export function bindAnthropic(options?: AnthropicRequesterOptions) {
-  const connection = options?.connection;
-  const trait = options?.trait;
-  const classifyError = options?.classifyError;
-  const format = createFormat();
-  const resolveClient =
-    options?.clientFactory ??
-    ((request: LlmClientContext) => createClient(request.model, request.headers));
-  return {
-    connection,
-    toolCallIdPolicy: trait?.toolCallIdPolicy ?? ANTHROPIC_TOOL_CALL_ID_POLICY,
-    prepare: (input: FormatRequestInput) =>
-      prepareAnthropicRequest(input, {
-        trait,
-        betaApi: options?.betaApi,
-        extras: options?.extras,
-      }),
-    createClient: resolveClient,
-    send: async (client: Anthropic, request: Request, signal: AbortSignal) => {
-      const betaHeaders =
-        !request.useBetaApi && request.betas.length > 0
-          ? { 'anthropic-beta': request.betas.join(',') }
-          : undefined;
-      const requestOptions = { signal, headers: betaHeaders };
-      const { data: stream, response } = request.useBetaApi
-        ? await client.beta.messages.create(request.params, requestOptions).withResponse()
-        : await client.messages.create(request.params, requestOptions).withResponse();
-      return { stream, headers: headersToRecord(response.headers) ?? {} };
-    },
-    createStreamParser: () => format.createStreamParser(),
-    classifyError: (error: unknown) => convertError(error, (e) => classifyError?.(e)),
-  };
-}
-
-export function createAnthropicBase(
-  options?: AnthropicRequesterOptions,
-): ProtocolBase<AnthropicTrait> {
-  return {
-    capability: getAnthropicModelCapability,
-    bind: (bindOptions) => bindAnthropic({ ...options, ...bindOptions }),
-  };
-}
-
-export const anthropicBase: ProtocolBase<AnthropicTrait> = createAnthropicBase();
-
-export const anthropicBetaBase: ProtocolBase<AnthropicTrait> = createAnthropicBase({
-  betaApi: true,
+export const anthropicProtocol = defineProtocol({
+  ...anthropicPipeline,
+  capability: inferAnthropicCapability,
+  requestId: requestIdFromHeader('request-id'),
+  decode: (_module, response: RawResponse, sink) => decodeResponse(response, sink),
+  decodeStream: () => createStreamDecoder(),
+  decodeError,
+  client: createClient,
+  send: async (client: Anthropic, request: Request, signal) => {
+    const params = { ...request.params, stream: false as const };
+    const options = requestOptionsOf(request, signal);
+    const { data, response } = request.useBetaApi
+      ? await client.beta.messages.create(params, options).withResponse()
+      : await client.messages.create(params, options).withResponse();
+    return {
+      body: data as unknown as RawResponse,
+      headers: headersToRecord(response.headers) ?? {},
+    };
+  },
+  sendStream: async (client: Anthropic, request: Request, signal) => {
+    const params = { ...request.params, stream: true as const };
+    const options = requestOptionsOf(request, signal);
+    const { data, response } = request.useBetaApi
+      ? await client.beta.messages.create(params, options).withResponse()
+      : await client.messages.create(params, options).withResponse();
+    return {
+      body: data as AsyncIterable<RawChunk>,
+      headers: headersToRecord(response.headers) ?? {},
+    };
+  },
 });

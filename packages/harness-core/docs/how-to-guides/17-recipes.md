@@ -58,7 +58,7 @@ await store.dispatch({ type: 'plan.revision', planId: 'p1', content: ref });
 const text = new TextDecoder().decode(await stores.blobs.get(ref));
 ```
 
-Feature 里 `const blobs = useBlobs()`。`reduce` 保持纯函数（不 `get`）；图写 `media://${ref}`，物化在 protocol `lower`。
+Feature 里 `const blobs = useBlobs()`。`reduce` 保持纯函数（不 `get`）；图写 `{ kind: 'store', ref: 'media://<sha256>' }` part，物化在 store-ref resolver（`createMedia` 装的 `useMessageResolver`）。
 
 ## 写自定义 Projection / Journal
 

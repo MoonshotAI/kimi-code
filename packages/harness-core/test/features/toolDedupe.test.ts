@@ -11,14 +11,12 @@ import {
   openBlobs,
   openSessionStores,
   Trees,
-  UNKNOWN_CAPABILITY,
   useAgent,
   useAgentTools,
   useTelemetryAppender,
   type AgentHandle,
   type FeatureSpec,
-  type LlmModel,
-  type LlmRequester,
+  type AgentLlmRequester,
   type Message,
   type SessionStores,
   type TelemetryAppenderRecord,
@@ -33,7 +31,7 @@ import {
   createToolDedupe,
 } from '#/features/toolDedupe/index';
 
-const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
+import { fakeRequester, testModel, textOutcome } from '../fake-llm';
 
 interface LlmCall {
   readonly systemPrompt?: string;
@@ -46,53 +44,44 @@ type ScriptResponse =
   | { readonly toolCalls: readonly { readonly name: string; readonly arguments: string }[] };
 
 function createMockRequester(responses: readonly ScriptResponse[]): {
-  requester: LlmRequester;
+  requester: AgentLlmRequester;
   calls: LlmCall[];
 } {
   const calls: LlmCall[] = [];
   let index = 0;
   return {
     calls,
-    requester: {
-      generate: async (_config, content, { onEvent }) => {
-        calls.push({
-          systemPrompt: content.systemPrompt,
-          messages: content.messages,
-          tools: content.tools ?? [],
-        });
-        const response: ScriptResponse =
-          index < responses.length ? (responses[index] as ScriptResponse) : { text: 'end' };
-        index += 1;
-        if ('toolCalls' in response) {
-          for (const [i, toolCall] of response.toolCalls.entries()) {
-            onEvent?.({
-              type: 'llm.streaming.part',
-              part: {
-                type: 'function',
-                id: `call-${calls.length}-${i}`,
-                name: toolCall.name,
-                arguments: toolCall.arguments,
-              },
-            });
-          }
-        } else {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: response.text } });
-        }
-        onEvent?.({
-          type: 'llm.streaming.usage',
-          usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
-        });
-        onEvent?.({ type: 'llm.done' });
-      },
-    },
+    requester: fakeRequester((rest, onEvent) => {
+      calls.push({
+        systemPrompt: rest.profile?.systemPrompt,
+        messages: rest.content?.messages ?? [],
+        tools: rest.profile?.tools ?? [],
+      });
+      const response: ScriptResponse =
+        index < responses.length ? (responses[index] as ScriptResponse) : { text: 'end' };
+      index += 1;
+      onEvent?.({
+        type: 'llm.streaming.usage',
+        usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
+      });
+      if ('toolCalls' in response) {
+        return textOutcome('', response.toolCalls.map((toolCall, i) => ({
+          type: 'function',
+          id: `call-${calls.length}-${i}`,
+          name: toolCall.name,
+          arguments: toolCall.arguments,
+        })));
+      }
+      return textOutcome(response.text);
+    }),
   };
 }
 
-function bindTestLlm(requester: LlmRequester): FeatureSpec {
+function bindTestLlm(requester: AgentLlmRequester): FeatureSpec {
   return createFeature('test-llm', {
     agent() {
       const agent = useAgent();
-      agent.setConfig({ model });
+      agent.setModel(testModel);
       agent.setRequester(requester);
     },
   });
@@ -463,7 +452,7 @@ describe('toolDedupe feature', () => {
       responses: [tc('X', '{}'), tc('X', '{}'), tc('X', '{}'), { text: 'done' }],
       tools: [
         countingTool('X', [], () => ({
-          content: [{ type: 'image_url', imageUrl: { url: 'data:foo' } }],
+          content: [{ type: 'image_url', source: { kind: 'inline', mimeType: 'image/png', data: 'Zm9v' } }],
         })),
       ],
       telemetry: [],

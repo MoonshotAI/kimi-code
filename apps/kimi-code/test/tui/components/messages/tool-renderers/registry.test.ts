@@ -27,36 +27,6 @@ function result(output: string, isError = false): ToolResultBlockData {
 const ctx = { expanded: false, colors: darkColors };
 const expandedCtx = { expanded: true, colors: darkColors };
 
-function goalOutput(overrides: Record<string, unknown> = {}): string {
-  return JSON.stringify({
-    goal: {
-      goalId: 'g1',
-      objective: 'Ship feature X',
-      status: 'active',
-      createdAt: '2026-01-01T00:00:00.000Z',
-      updatedAt: '2026-01-01T00:00:00.000Z',
-      startedBy: 'model',
-      updatedBy: 'model',
-      turnsUsed: 2,
-      tokensUsed: 1234,
-      wallClockMs: 61000,
-      budget: {
-        tokenBudget: null,
-        turnBudget: null,
-        wallClockBudgetMs: null,
-        remainingTokens: null,
-        remainingTurns: null,
-        remainingWallClockMs: null,
-        tokenBudgetReached: false,
-        turnBudgetReached: false,
-        wallClockBudgetReached: false,
-        overBudget: false,
-      },
-      ...overrides,
-    },
-  });
-}
-
 describe('tool-result registry', () => {
   it('falls back to truncated renderer for unknown tools: first line marked, full when expanded', () => {
     const renderer = pickResultRenderer('SomethingUnknown');
@@ -280,43 +250,6 @@ describe('tool-result registry', () => {
   it('Think renders no body even with a thought arg', () => {
     const renderer = pickResultRenderer('Think');
     const out = joinRender(renderer(call('Think', { thought: 'hello' }), result('Recorded.'), ctx));
-    expect(out.trim()).toBe('');
-  });
-
-  it('GetGoal renders a compact goal summary instead of raw JSON', () => {
-    const renderer = pickResultRenderer('GetGoal');
-    const out = strip(joinRender(renderer(call('GetGoal'), result(goalOutput()), ctx)));
-    expect(out).toContain('Goal active: Ship feature X');
-    expect(out).toContain('2 turns');
-    expect(out).toContain('1.2k tokens');
-    expect(out).toContain('1m 01s');
-    expect(out).not.toContain('"objective"');
-    expect(out).not.toContain('"budget"');
-  });
-
-  it('GetGoal renders an empty goal without dumping JSON', () => {
-    const renderer = pickResultRenderer('GetGoal');
-    const out = strip(joinRender(renderer(call('GetGoal'), result('{"goal":null}'), ctx)));
-    expect(out).toContain('No current goal.');
-    expect(out).not.toContain('"goal"');
-  });
-
-  it('CreateGoal renders the created goal summary without raw JSON', () => {
-    const renderer = pickResultRenderer('CreateGoal');
-    const out = strip(joinRender(renderer(
-      call('CreateGoal', { objective: 'Ship feature X' }),
-      result(goalOutput()),
-      ctx,
-    )));
-    expect(out).toContain('Goal active: Ship feature X');
-    expect(out).not.toContain('"goalId"');
-  });
-
-  it('UpdateGoal success renders no redundant body', () => {
-    const renderer = pickResultRenderer('UpdateGoal');
-    const out = joinRender(
-      renderer(call('UpdateGoal', { status: 'complete' }), result('Goal marked complete.'), ctx),
-    );
     expect(out.trim()).toBe('');
   });
 

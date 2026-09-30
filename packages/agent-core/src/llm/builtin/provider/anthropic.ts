@@ -1,14 +1,6 @@
-import { anthropicBase } from '#/llm/builtin/protocol/anthropic/index';
-import type { ProviderConnection } from '#/llm/protocol/connection';
-import { createProvider } from '#/llm/provider';
+import { anthropicProtocol } from '#/llm/builtin/protocol/anthropic/index';
+import { createRequester } from '#/llm/requester';
 
-const anthropicConnection: ProviderConnection = {
-  endpoint: () => ({ apiKeyEnv: 'ANTHROPIC_API_KEY', baseUrlEnv: 'ANTHROPIC_BASE_URL' }),
-};
-
-export const anthropicProvider = createProvider({
-  id: 'anthropic',
-  protocols: {
-    anthropic: { base: anthropicBase, connection: anthropicConnection },
-  },
+export const anthropicRequester = createRequester().with({
+  protocol: { base: anthropicProtocol },
 });

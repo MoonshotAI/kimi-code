@@ -57,7 +57,7 @@ export function deriveAgentTelemetry(agent: AgentCommands, telemetry: TelemetryF
     currentTurnId = event.turnId;
     turnStartedAt = Date.now();
     atStep = 0;
-    telemetry.setContext({ turn_id: event.turnId, model: agent.config?.model.model });
+    telemetry.setContext({ turn_id: event.turnId, model: agent.model?.spec.name });
     telemetry.track('turn_started', { turn_id: event.turnId });
   });
   agent.on('step.started', (event) => {
@@ -107,11 +107,12 @@ export function deriveAgentTelemetry(agent: AgentCommands, telemetry: TelemetryF
     const { outcome, errorType } = toolCallOutcomeOf(event.outcome);
     finishTool(event.toolCallId, outcome, errorType);
   });
-  agent.on('llm.failed.remote', (event) => {
-    telemetry.track('api_error', { error_type: event.error.kind, model: agent.config?.model.model });
-  });
-  agent.on('llm.failed.syntax', (event) => {
-    telemetry.track('api_error', { error_type: event.error.kind, model: agent.config?.model.model });
+  agent.on('llm.ended', (event) => {
+    if (event.outcome.type !== 'failed') return;
+    telemetry.track('api_error', {
+      error_type: event.outcome.error.kind,
+      model: agent.model?.spec.name,
+    });
   });
   agent.on('llm.streaming.usage', (event) => {
     const usage = event.usage;

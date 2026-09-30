@@ -14,13 +14,12 @@ import {
   openBlobs,
   openSessionStores,
   Trees,
-  UNKNOWN_CAPABILITY,
   useAgent,
   useAgentTools,
   type AgentHandle,
   type FeatureSpec,
-  type LlmModel,
-  type LlmRequester,
+  type AgentLlmRequester,
+  type LlmOutcome,
   type Message,
   type SessionStores,
   type ToolDescription,
@@ -41,7 +40,7 @@ import {
   SessionInitRef,
 } from '#/features/sessionInit/index';
 
-const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
+import { testModel, textOutcome } from '../fake-llm';
 
 const AGENTS_MD = 'latest project instructions';
 const INIT_SUMMARY = 'Explored and wrote AGENTS.md';
@@ -61,42 +60,42 @@ function isInitCall(call: LlmCall): boolean {
   );
 }
 
-function createMockRequester(script: LlmScript): { requester: LlmRequester; calls: LlmCall[] } {
+function createMockRequester(script: LlmScript): { requester: AgentLlmRequester; calls: LlmCall[] } {
   const calls: LlmCall[] = [];
-  return {
-    calls,
-    requester: {
-      generate: (_config, content, { signal, onEvent }) => {
-        const call: LlmCall = {
-          systemPrompt: content.systemPrompt,
-          messages: content.messages,
-          tools: content.tools ?? [],
-        };
-        calls.push(call);
-        const out = script(call);
-        if (out === 'hang') {
-          return new Promise<void>((_resolve, reject) => {
-            signal.addEventListener('abort', () => reject(signal.reason), { once: true });
-          });
-        }
-        if (out === 'throw') return Promise.reject(new Error('coder exploded'));
-        if ('toolCall' in out) {
-          onEvent?.({
-            type: 'llm.streaming.part',
-            part: { type: 'function', id: `call-${calls.length}`, name: out.toolCall.name, arguments: out.toolCall.arguments },
-          });
-        } else {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: out.text } });
-        }
-        onEvent?.({
-          type: 'llm.streaming.usage',
-          usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
+  const requester: AgentLlmRequester = {
+    with: () => requester,
+    request: () => {
+      throw new Error('fake requester cannot build wire requests');
+    },
+    generate: (rest, { signal, onEvent }) => {
+      const call: LlmCall = {
+        systemPrompt: rest.profile?.systemPrompt,
+        messages: rest.content?.messages ?? [],
+        tools: rest.profile?.tools ?? [],
+      };
+      calls.push(call);
+      const out = script(call);
+      if (out === 'hang') {
+        return new Promise<LlmOutcome>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
         });
-        onEvent?.({ type: 'llm.done' });
-        return Promise.resolve();
-      },
+      }
+      if (out === 'throw') return Promise.reject(new Error('coder exploded'));
+      onEvent?.({
+        type: 'llm.streaming.usage',
+        usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
+      });
+      const outcome =
+        'toolCall' in out
+          ? textOutcome('', [
+              { type: 'function', id: `call-${calls.length}`, name: out.toolCall.name, arguments: out.toolCall.arguments },
+            ])
+          : textOutcome(out.text);
+      onEvent?.({ type: 'llm.ended', outcome });
+      return Promise.resolve(outcome);
     },
   };
+  return { calls, requester };
 }
 
 function defaultScript(workDir: string): LlmScript {
@@ -114,11 +113,11 @@ function defaultScript(workDir: string): LlmScript {
   };
 }
 
-function bindTestLlm(requester: LlmRequester): FeatureSpec {
+function bindTestLlm(requester: AgentLlmRequester): FeatureSpec {
   return createFeature('test-llm', {
     agent() {
       const agent = useAgent();
-      agent.setConfig({ model });
+      agent.setModel(testModel);
       agent.setRequester(requester);
     },
   });
@@ -239,7 +238,7 @@ describe('sessionInit feature', () => {
     expect(agentId).toMatch(/^subagent-/);
 
     expect(calls[0]!.systemPrompt).toContain('You are now running as a subagent.');
-    expect(session.get(agentId!)?.config?.model.model).toBe('test-model');
+    expect(session.get(agentId!)?.model?.spec.name).toBe('test-model');
     const childHistory = env.stores.get(agentId!)?.getState().history ?? [];
     expect(childHistory.some((entry) => extractText(entry.message) === INIT_SUMMARY)).toBe(true);
 

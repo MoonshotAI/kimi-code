@@ -1,4 +1,5 @@
-import type { FinishInfo, TokenUsage } from '#/llm/usage';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 
 export interface ToolDescription {
   name: string;
@@ -6,8 +7,6 @@ export interface ToolDescription {
   parameters: Record<string, unknown>;
   deferred?: true;
 }
-
-export type Role = 'system' | 'user' | 'assistant' | 'tool';
 
 export interface ContentPartMeta {
   readonly kind?: string;
@@ -33,19 +32,103 @@ export interface ThinkPart extends ContentPartBase {
   reasoningKey?: string;
 }
 
-export interface ImageURLPart extends ContentPartBase {
+export type MediaSource =
+  | { readonly kind: 'store'; readonly ref: string }
+  | { readonly kind: 'url'; readonly url: string }
+  | { readonly kind: 'inline'; readonly mimeType: string; readonly data: string }
+  | { readonly kind: 'file'; readonly id: string; readonly mimeType: string };
+
+export type MediaOmission = 'degraded' | 'stripped' | 'budget';
+
+export interface MediaPartBase extends ContentPartBase {
+  source: MediaSource;
+  omitted?: MediaOmission;
+}
+
+export interface ImageURLPart extends MediaPartBase {
   type: 'image_url';
-  imageUrl: { url: string; name?: string };
+  name?: string;
 }
 
-export interface AudioURLPart extends ContentPartBase {
+export interface AudioURLPart extends MediaPartBase {
   type: 'audio_url';
-  audioUrl: { url: string };
 }
 
-export interface VideoURLPart extends ContentPartBase {
+export interface VideoURLPart extends MediaPartBase {
   type: 'video_url';
-  videoUrl: { url: string; name?: string };
+  name?: string;
+}
+
+export type MediaPart = ImageURLPart | AudioURLPart | VideoURLPart;
+
+export function isMediaPart(part: ContentPart): part is MediaPart {
+  return part.type === 'image_url' || part.type === 'audio_url' || part.type === 'video_url';
+}
+
+export type MediaKind = 'image' | 'video' | 'audio';
+
+export function mediaKindOfPart(part: MediaPart): MediaKind {
+  if (part.type === 'image_url') return 'image';
+  if (part.type === 'video_url') return 'video';
+  return 'audio';
+}
+
+function mediaIdentityOf(source: MediaSource): string {
+  switch (source.kind) {
+    case 'store':
+      return source.ref;
+    case 'url':
+      return source.url;
+    case 'file':
+      return source.id;
+    case 'inline':
+      return bytesToHex(sha256(utf8ToBytes(`${source.mimeType}\0${source.data}`)));
+  }
+}
+
+export function mediaKeyOf(part: MediaPart): string {
+  return `${part.type}\0${part.source.kind}\0${mediaIdentityOf(part.source)}`;
+}
+
+export type MediaPlaceholderReason = MediaOmission | 'unsupported' | 'protocol_unsupported' | 'unavailable';
+
+const MEDIA_PLACEHOLDER_TEXT: Readonly<
+  Record<MediaPlaceholderReason, Readonly<Record<MediaKind, string>>>
+> = {
+  degraded: {
+    image: '[image omitted: dropped to fit the provider request size limit; re-read the file to view it]',
+    audio: '[audio omitted: dropped to fit the provider request size limit; re-read the file to hear it]',
+    video: '[video omitted: dropped to fit the provider request size limit; re-read the file to view it]',
+  },
+  stripped: {
+    image: '[image omitted for provider compatibility; re-read the file to view it or get conversion guidance]',
+    audio: '[audio omitted for provider compatibility; re-read the file to hear it]',
+    video: '[video omitted for provider compatibility; re-read the file to view it]',
+  },
+  budget: {
+    image: '[image omitted: dropped to fit the request media budget]',
+    audio: '[audio omitted: dropped to fit the request media budget]',
+    video: '[video omitted: dropped to fit the request media budget]',
+  },
+  unsupported: {
+    image: '[image omitted: not supported by this model]',
+    audio: '[audio omitted: not supported by this model]',
+    video: '[video omitted: not supported by this model]',
+  },
+  protocol_unsupported: {
+    image: '[image omitted: not supported by this provider]',
+    audio: '[audio omitted: not supported by this provider]',
+    video: '[video omitted: not supported by this provider]',
+  },
+  unavailable: {
+    image: '[image omitted: media unavailable]',
+    audio: '[audio omitted: media unavailable]',
+    video: '[video omitted: media unavailable]',
+  },
+};
+
+export function mediaPlaceholderText(kind: MediaKind, reason: MediaPlaceholderReason): string {
+  return MEDIA_PLACEHOLDER_TEXT[reason][kind];
 }
 
 export type ContentPart = TextPart | ThinkPart | ImageURLPart | AudioURLPart | VideoURLPart;
@@ -93,84 +176,17 @@ export interface ToolMessage {
 
 export type Message = SystemMessage | UserMessage | AssistantMessage | ToolMessage;
 
-export function isContentPart(part: StreamedMessagePart): part is ContentPart {
-  const t = part.type;
-  return (
-    t === 'text' || t === 'think' || t === 'image_url' || t === 'audio_url' || t === 'video_url'
-  );
-}
-
-export function isToolCall(part: StreamedMessagePart): part is ToolCall {
-  return part.type === 'function';
-}
-
-export function isToolCallPart(part: StreamedMessagePart): part is ToolCallPart {
-  return part.type === 'tool_call_part';
-}
-
-function samePartIdentity(target: ContentPartBase, source: ContentPartBase): boolean {
-  if (
-    source.contentType !== undefined &&
-    target.contentType !== undefined &&
-    source.contentType !== target.contentType
-  ) {
-    return false;
-  }
-  if (source.meta !== undefined && target.meta !== undefined && source.meta !== target.meta) {
-    if (source.meta.kind !== target.meta.kind) return false;
-    const sourceKeys = Object.keys(source.meta);
-    const targetKeys = Object.keys(target.meta);
-    if (sourceKeys.length !== targetKeys.length) return false;
-    for (const key of sourceKeys) {
-      if (source.meta[key] !== target.meta[key]) return false;
-    }
-  }
-  return true;
-}
-
-export function mergeInPlace(target: StreamedMessagePart, source: StreamedMessagePart): boolean {
-  if (target.type === 'text' && source.type === 'text') {
-    if (!samePartIdentity(target, source)) return false;
-    target.text += source.text;
-    target.contentType ??= source.contentType;
-    target.meta ??= source.meta;
-    return true;
-  }
-
-  if (target.type === 'think' && source.type === 'think') {
-    if (target.encrypted !== undefined) {
+export function isVacuousContentPart(part: ContentPart): boolean {
+  switch (part.type) {
+    case 'text':
+      return part.text.trim().length === 0;
+    case 'think':
+      return part.encrypted === undefined && part.hidden !== true && part.think.trim().length === 0;
+    case 'image_url':
+    case 'audio_url':
+    case 'video_url':
       return false;
-    }
-    if (target.detailsIndex !== source.detailsIndex) {
-      return false;
-    }
-    if (target.hidden !== source.hidden) {
-      return false;
-    }
-    if (target.reasoningKey !== source.reasoningKey) {
-      return false;
-    }
-    if (!samePartIdentity(target, source)) return false;
-    target.think += source.think;
-    if (source.encrypted !== undefined) {
-      target.encrypted = source.encrypted;
-    }
-    target.contentType ??= source.contentType;
-    target.meta ??= source.meta;
-    return true;
   }
-
-  if (target.type === 'function' && source.type === 'tool_call_part') {
-    if (source.argumentsPart !== null) {
-      target.arguments =
-        target.arguments === null
-          ? source.argumentsPart
-          : target.arguments + source.argumentsPart;
-    }
-    return true;
-  }
-
-  return false;
 }
 
 export function extractText(message: { readonly content: readonly ContentPart[] }, sep: string = ''): string {
@@ -178,10 +194,6 @@ export function extractText(message: { readonly content: readonly ContentPart[] 
     .filter((part): part is TextPart => part.type === 'text')
     .map((part) => part.text)
     .join(sep);
-}
-
-export function getTextContent(message: { readonly content: readonly ContentPart[] }): string {
-  return extractText(message);
 }
 
 export function createUserMessage(content: string): UserMessage {
@@ -210,339 +222,4 @@ export function createToolMessage(toolCallId: string, output: string | ContentPa
     content,
     toolCallId,
   };
-}
-
-export type TextContentType = 'text/xml' | 'text/markdown' | 'text/plain';
-
-export function systemReminderText(content: string): string {
-  return `<system-reminder>\n${content.trim()}\n</system-reminder>`;
-}
-
-export class HistoryMessageBuilder {
-  private readonly content: ContentPart[] = [];
-
-  plain(text: string, meta?: ContentPartMeta): this {
-    return this.appendText(text, 'text/plain', meta);
-  }
-
-  markdown(text: string, meta?: ContentPartMeta): this {
-    return this.appendText(text, 'text/markdown', meta);
-  }
-
-  xml(text: string, contentType: TextContentType = 'text/xml', meta?: ContentPartMeta): this {
-    return this.appendText(text, contentType, meta);
-  }
-
-  systemReminder(content: string): this {
-    return this.xml(systemReminderText(content), 'text/xml', { kind: 'reminder' });
-  }
-
-  parts(): readonly ContentPart[] {
-    return [...this.content];
-  }
-
-  userMessage(): UserMessage {
-    return { role: 'user', content: [...this.content] };
-  }
-
-  private appendText(text: string, contentType: TextContentType, meta?: ContentPartMeta): this {
-    this.content.push({ type: 'text', text, contentType, meta });
-    return this;
-  }
-}
-
-export function createHistoryMessageBuilder(): HistoryMessageBuilder {
-  return new HistoryMessageBuilder();
-}
-
-export function isVacuousContentPart(part: ContentPart): boolean {
-  switch (part.type) {
-    case 'text':
-      return part.text.trim().length === 0;
-    case 'think':
-      return part.encrypted === undefined && part.hidden !== true && part.think.trim().length === 0;
-    case 'image_url':
-    case 'audio_url':
-    case 'video_url':
-      return false;
-    default: {
-      const exhaustive: never = part;
-      void exhaustive;
-      return false;
-    }
-  }
-}
-
-export function salvageInterruptedMessage(message: AssistantMessage): AssistantMessage | null {
-  const content = message.content.filter((part) => !isVacuousContentPart(part));
-  if (content.length === 0) {
-    return null;
-  }
-  return { role: 'assistant', content, toolCalls: [] };
-}
-
-export interface MessageAccumulator {
-  push(part: StreamedMessagePart): void;
-  finish(): AssistantMessage;
-}
-
-export function createMessageAccumulator(): MessageAccumulator {
-  const message: AssistantMessage = { role: 'assistant', content: [], toolCalls: [] };
-  const toolCallIndexMap = new Map<number | string, number>();
-  let pending: StreamedMessagePart | null = null;
-  let deferredThink: ThinkPart | null = null;
-  const flush = () => {
-    if (pending !== null) {
-      if (isContentPart(pending)) {
-        message.content.push(pending);
-      } else if (isToolCall(pending)) {
-        const ordinal = message.toolCalls.length;
-        message.toolCalls.push({
-          type: 'function',
-          id: pending.id,
-          name: pending.name,
-          arguments: pending.arguments,
-          extras: pending.extras,
-          rawId: pending.rawId,
-        });
-        if (pending._streamIndex !== undefined) {
-          toolCallIndexMap.set(pending._streamIndex, ordinal);
-        }
-      }
-      pending = null;
-    }
-    if (deferredThink !== null) {
-      message.content.push(deferredThink);
-      deferredThink = null;
-    }
-  };
-  return {
-    push(part: StreamedMessagePart) {
-      if (
-        isToolCallPart(part) &&
-        part.index !== undefined &&
-        !(pending !== null && isToolCall(pending) && pending._streamIndex === part.index)
-      ) {
-        const arrayIndex = toolCallIndexMap.get(part.index);
-        if (arrayIndex !== undefined) {
-          const target = message.toolCalls[arrayIndex];
-          if (target !== undefined && part.argumentsPart !== null) {
-            target.arguments =
-              target.arguments === null
-                ? part.argumentsPart
-                : target.arguments + part.argumentsPart;
-          }
-          return;
-        }
-      }
-      if (part.type === 'text') {
-        deferredThink = null;
-      }
-      if (pending === null) {
-        pending = structuredClone(part);
-        return;
-      }
-      if (pending.type === 'text' && part.type === 'think' && isVacuousContentPart(part)) {
-        deferredThink = structuredClone(part);
-        return;
-      }
-      if (!mergeInPlace(pending, part)) {
-        flush();
-        pending = structuredClone(part);
-      }
-    },
-    finish(): AssistantMessage {
-      flush();
-      return message;
-    },
-  };
-}
-
-export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
-
-export interface PromptFileAttachment {
-  readonly name: string;
-  readonly mediaType: string;
-  readonly size: number;
-  readonly path: string;
-}
-
-export interface BundledSkillActivation {
-  readonly activationId: string;
-  readonly skillName: string;
-  readonly skillArgs?: string;
-  readonly skillType?: string;
-  readonly skillPath?: string;
-  readonly skillSource?: SkillSource;
-}
-
-export type SkillPartMeta = BundledSkillActivation & {
-  readonly kind: 'skill';
-};
-
-export interface UserPromptOrigin {
-  readonly kind: 'user';
-  readonly attachments?: readonly PromptFileAttachment[];
-}
-
-export const USER_PROMPT_ORIGIN: UserPromptOrigin = { kind: 'user' };
-
-export interface PromptOrigin {
-  readonly kind: string;
-}
-
-export interface SteerMessage {
-  readonly content: readonly ContentPart[];
-  readonly origin?: PromptOrigin;
-}
-
-function userOriginOf(origin: PromptOrigin | undefined): UserPromptOrigin | undefined {
-  return origin !== undefined && origin.kind === 'user' ? (origin as UserPromptOrigin) : undefined;
-}
-
-export function isSkillPart(part: ContentPart): part is ContentPart & { meta: SkillPartMeta } {
-  return part.meta?.kind === 'skill';
-}
-
-export function stripBundledSkillBlocks(message: {
-  readonly content: readonly ContentPart[];
-}): ContentPart[] {
-  return message.content.filter((part) => !isSkillPart(part));
-}
-
-export function mergeSteerMessages(messages: readonly SteerMessage[]): {
-  role: 'user';
-  content: ContentPart[];
-  toolCalls: [];
-  origin: UserPromptOrigin;
-} {
-  const attachments = messages.flatMap((message) => userOriginOf(message.origin)?.attachments ?? []);
-  return {
-    role: 'user',
-    content: [
-      ...messages.flatMap((message) => message.content.filter(isSkillPart)),
-      ...messages.flatMap((message) => stripBundledSkillBlocks(message)),
-    ],
-    toolCalls: [],
-    origin:
-      attachments.length === 0 ? USER_PROMPT_ORIGIN : { kind: 'user', attachments },
-  };
-}
-
-export interface EntryMeta {
-  source?: string;
-  key?: string;
-}
-
-export type SystemMeta = EntryMeta;
-
-export interface UserMeta extends EntryMeta {
-  promptId?: string;
-  origin?: PromptOrigin;
-  tracked?: boolean;
-  createdAt?: string;
-  userMessageId?: string;
-}
-
-export interface ToolMeta extends EntryMeta {
-  isError?: true;
-}
-
-export interface AssistantMeta extends EntryMeta {
-  model?: { provider: string; model: string };
-  usage?: TokenUsage;
-  headers?: Record<string, string>;
-  finish?: FinishInfo;
-  messageId?: string;
-}
-
-export interface HistoryEntry<T extends Message, F extends EntryMeta> {
-  message: T;
-  meta?: F;
-}
-
-export type SystemEntry = HistoryEntry<SystemMessage, SystemMeta>;
-
-export type UserEntry = HistoryEntry<UserMessage, UserMeta>;
-
-export type ToolEntry = HistoryEntry<ToolMessage, ToolMeta>;
-
-export type AssistantEntry = HistoryEntry<AssistantMessage, AssistantMeta>;
-
-export type HistoryMessage = SystemEntry | UserEntry | AssistantEntry | ToolEntry;
-
-export function createUserEntry(message: UserMessage, meta: UserMeta = {}): UserEntry {
-  return { message, meta };
-}
-
-export function createSystemEntry(message: SystemMessage, meta: SystemMeta = {}): SystemEntry {
-  return { message, meta };
-}
-
-export function createToolEntry(message: ToolMessage, meta: ToolMeta = {}): ToolEntry {
-  return { message, meta };
-}
-
-export function createAssistantEntry(
-  message: AssistantMessage,
-  meta: AssistantMeta,
-): AssistantEntry {
-  return { message, meta };
-}
-
-export function toInputMessages(history: readonly HistoryMessage[]): Message[] {
-  return history.map((entry) => entry.message);
-}
-
-const TOOL_ERROR_STATUS = '<system>ERROR: Tool execution failed.</system>';
-const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';
-const TOOL_EMPTY_ERROR_STATUS =
-  '<system>ERROR: Tool execution failed. Tool output is empty.</system>';
-const TOOL_OUTPUT_EMPTY_TEXT = 'Tool output is empty.';
-
-export interface RenderableToolResult {
-  readonly output: string | readonly ContentPart[];
-  readonly isError?: boolean;
-}
-
-export function renderToolResultForModel(result: RenderableToolResult): ContentPart[] {
-  const output = result.output;
-  const sourcePart = typeof output === 'string' ? undefined : output[0];
-  const single =
-    typeof output === 'string'
-      ? output
-      : output.length === 1 && sourcePart?.type === 'text'
-        ? sourcePart.text
-        : undefined;
-  if (single !== undefined) {
-    if (result.isError === true) {
-      if (single.length === 0) return [{ type: 'text', text: TOOL_EMPTY_ERROR_STATUS }];
-      return [{ type: 'text', text: TOOL_ERROR_STATUS + '\n' + single }];
-    }
-    const trimmed = single.trim();
-    if (trimmed.length === 0 || trimmed === TOOL_OUTPUT_EMPTY_TEXT) {
-      return [{ type: 'text', text: TOOL_EMPTY_STATUS }];
-    }
-    return [sourcePart ?? { type: 'text', text: single }];
-  }
-  const parts = output as readonly ContentPart[];
-  if (parts.every((part) => part.type === 'text' && part.text.trim().length === 0)) {
-    return [{ type: 'text', text: result.isError === true ? TOOL_EMPTY_ERROR_STATUS : TOOL_EMPTY_STATUS }];
-  }
-  if (result.isError === true) return [{ type: 'text', text: TOOL_ERROR_STATUS }, ...parts];
-  return [...parts];
-}
-
-export function toRequestMessages(history: readonly HistoryMessage[]): Message[] {
-  return history.map((entry) =>
-    entry.message.role === 'tool'
-      ? {
-          ...entry.message,
-          content: renderToolResultForModel({
-            output: entry.message.content,
-            isError: (entry.meta as ToolMeta | undefined)?.isError === true,
-          }),
-        }
-      : entry.message,
-  );
 }

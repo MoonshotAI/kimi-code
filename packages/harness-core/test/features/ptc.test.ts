@@ -14,15 +14,13 @@ import {
   openBlobs,
   openSessionStores,
   Trees,
-  UNKNOWN_CAPABILITY,
   useAgent,
   useAgentTools,
   useBeforeTool,
   useToolExecutor,
   type AgentHandle,
   type FeatureSpec,
-  type LlmModel,
-  type LlmRequester,
+  type AgentLlmRequester,
   type Message,
   type SessionStores,
   type ToolDescription,
@@ -31,7 +29,7 @@ import {
 
 import { CODE_TOOL_NAME, createPtc } from '#/features/ptc/index';
 
-const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
+import { fakeRequester, textOutcome, testModel } from '../fake-llm';
 
 interface LlmCall {
   readonly systemPrompt?: string;
@@ -41,42 +39,37 @@ interface LlmCall {
 
 type LlmScript = (call: LlmCall) => { text: string } | { toolCall: { name: string; arguments: string } };
 
-function createMockRequester(script: LlmScript): { requester: LlmRequester; calls: LlmCall[] } {
+function createMockRequester(script: LlmScript): { requester: AgentLlmRequester; calls: LlmCall[] } {
   const calls: LlmCall[] = [];
   return {
     calls,
-    requester: {
-      generate: async (_config, content, { onEvent }) => {
+    requester: fakeRequester((rest, onEvent) => {
         const call: LlmCall = {
-          systemPrompt: content.systemPrompt,
-          messages: content.messages,
-          tools: content.tools ?? [],
+          systemPrompt: rest.profile?.systemPrompt,
+          messages: rest.content?.messages ?? [],
+          tools: rest.profile?.tools ?? [],
         };
         calls.push(call);
         const out = script(call);
-        if ('toolCall' in out) {
-          onEvent?.({
-            type: 'llm.streaming.part',
-            part: { type: 'function', id: `call-${calls.length}`, name: out.toolCall.name, arguments: out.toolCall.arguments },
-          });
-        } else {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: out.text } });
-        }
         onEvent?.({
           type: 'llm.streaming.usage',
           usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
         });
-        onEvent?.({ type: 'llm.done' });
-      },
-    },
+        if ('toolCall' in out) {
+          return textOutcome('', [
+            { type: 'function', id: `call-${calls.length}`, name: out.toolCall.name, arguments: out.toolCall.arguments },
+          ]);
+        }
+        return textOutcome(out.text);
+      }),
   };
 }
 
-function bindTestLlm(requester: LlmRequester): FeatureSpec {
+function bindTestLlm(requester: AgentLlmRequester): FeatureSpec {
   return createFeature('test-llm', {
     agent() {
       const agent = useAgent();
-      agent.setConfig({ model });
+      agent.setModel(testModel);
       agent.setRequester(requester);
     },
   });

@@ -14,14 +14,14 @@ describe('status panel report lines', () => {
       workDir: '/tmp/project',
       sessionId: 'ses-1',
       sessionTitle: 'Implement status',
-      thinkingEffort: 'on',
-      permissionMode: 'manual',
-      planMode: false,
+      thinkingEffort: 'high',
+      permissionMode: 'auto',
+      planMode: true,
       towerMode: false,
       towerAvailable: true,
       contextUsage: 0.25,
-      contextTokens: 2500,
-      maxContextTokens: 10000,
+      contextTokens: 3000,
+      maxContextTokens: 12000,
       availableModels: {
         k2: {
           provider: 'managed:kimi-code',
@@ -30,15 +30,7 @@ describe('status panel report lines', () => {
           displayName: 'Kimi K2',
         },
       },
-      status: {
-        model: 'k2',
-        thinkingEffort: 'high',
-        permission: 'auto',
-        planMode: true,
-        contextTokens: 3000,
-        maxContextTokens: 12000,
-        contextUsage: 0.25,
-      },
+
       managedUsage: {
         rows: [
           {
@@ -69,7 +61,7 @@ describe('status panel report lines', () => {
     expect(output).not.toContain('Runtime');
   });
 
-  it('prefers the fetched status tower mode over the cached value', () => {
+  it('renders the tower mode row from the current state', () => {
     const lines = buildStatusReportLines({
       version: '1.2.3',
       model: 'k2',
@@ -79,22 +71,13 @@ describe('status panel report lines', () => {
       thinkingEffort: 'off',
       permissionMode: 'manual',
       planMode: false,
-      towerMode: false,
+      towerMode: true,
       towerAvailable: true,
       contextUsage: 0,
       contextTokens: 0,
       maxContextTokens: 0,
       availableModels: {},
-      status: {
-        model: 'k2',
-        thinkingEffort: 'off',
-        permission: 'manual',
-        planMode: false,
-        towerMode: true,
-        contextTokens: 0,
-        maxContextTokens: 0,
-        contextUsage: 0,
-      },
+
     }).map(strip);
 
     expect(lines.join('\n')).toContain('Tower mode   on');
@@ -176,13 +159,11 @@ describe('status panel report lines', () => {
       contextTokens: 0,
       maxContextTokens: 0,
       availableModels: {},
-      statusError: 'No active session',
     }).map(strip);
 
     const output = lines.join('\n');
     expect(output).toContain('Model        not set');
     expect(output).toContain('Session      none');
-    expect(output).toContain('Warning      No active session');
     expect(output).toContain('No context window data available.');
   });
 });

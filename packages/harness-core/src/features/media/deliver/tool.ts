@@ -1,11 +1,8 @@
 import * as path from 'node:path';
 
 import {
-  buildMediaRefUrl,
-  providerImagePolicy,
   type AgentCommands,
   type ContentPart,
-  type MediaStore,
   type ToolDefinition,
   type ToolResult,
 } from '@moonshot-ai/agent-core';
@@ -13,6 +10,7 @@ import {
 import type { OsHost } from '#/features/os/host/types';
 import { renderPrompt } from '#/features/os/text/render-prompt';
 
+import type { MediaStore } from '../store';
 import type { ImageLimits } from '../state/configSection';
 import { MEDIA_SNIFF_BYTES, detectFileType, sniffImageDimensions } from '../inspect/file-type';
 import {
@@ -27,6 +25,7 @@ import {
   buildImageConversionGuidance,
   buildOversizedImageConversionGuidance,
   isModelAcceptedImageMime,
+  providerImagePolicy,
 } from '../inspect/format-policy';
 import DESCRIPTION from '../read-media.md?raw';
 
@@ -270,7 +269,7 @@ export function createReadMediaFileTool(
       }
       await host.environment.ready;
       const filePath = path.resolve(props.workDir, args.path);
-      const model = props.agent.config?.model;
+      const model = props.agent.model?.spec;
       const providerType = model?.provider;
       try {
         const header = await host.fs.readBytes(filePath, MEDIA_SNIFF_BYTES);
@@ -299,7 +298,7 @@ export function createReadMediaFileTool(
             isError: true,
           };
         }
-        if (fileType.kind === 'image' && model?.capability.image_in !== true) {
+        if (fileType.kind === 'image' && model?.capability?.image_in !== true) {
           return {
             content: [
               {
@@ -330,7 +329,7 @@ export function createReadMediaFileTool(
             isError: true,
           };
         }
-        if (fileType.kind === 'video' && model?.capability.video_in !== true) {
+        if (fileType.kind === 'video' && model?.capability?.video_in !== true) {
           return {
             content: [
               {
@@ -536,12 +535,11 @@ export function createReadMediaFileTool(
           mimeType: outMime,
           filename: path.basename(filePath),
         });
-        const url = buildMediaRefUrl(ref);
         const tag = fileType.kind === 'image' ? 'image' : 'video';
         const mediaPart: ContentPart =
           tag === 'image'
-            ? { type: 'image_url', imageUrl: { url } }
-            : { type: 'video_url', videoUrl: { url } };
+            ? { type: 'image_url', source: { kind: 'store', ref } }
+            : { type: 'video_url', source: { kind: 'store', ref } };
         const note = buildMediaNote({
           kind: fileType.kind,
           mimeType: fileType.mimeType,

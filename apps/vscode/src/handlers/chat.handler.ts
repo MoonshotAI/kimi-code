@@ -102,21 +102,18 @@ const streamChat: Handler<StreamChatParams, { done: boolean }> = async (params, 
   }
 
   try {
-    // Attach no longer overwrites session modes with the configured defaults
-    // (resumed sessions keep their own), so apply the model/effort that the
-    // composer submitted with this prompt before the turn starts.
-    const status = await runtime.session.getStatus();
+    const status = runtime.getStatus();
     let model = status.model;
     if (params.model && model !== params.model) {
-      await runtime.session.setModel(params.model);
+      await runtime.setModel(params.model);
       model = params.model;
     }
     const effort = normalizeEffort(params.effort ?? (params.thinking === true ? "on" : "off"));
     if (status.thinkingEffort !== effort) {
-      await runtime.session.setThinking(effort);
+      await runtime.setThinking(effort);
     }
     if (params.planMode !== undefined && status.planMode !== params.planMode) {
-      await runtime.session.setPlanMode(params.planMode);
+      await runtime.setPlanMode(params.planMode);
     }
     runtime.announceSessionStart(model);
   } catch (error) {
@@ -165,7 +162,7 @@ const respondQuestion: Handler<RespondQuestionParams, { ok: boolean }> = async (
 const setPlanMode: Handler<{ enabled: boolean }, { ok: boolean; planMode: boolean }> = async (params, ctx) => {
   const runtime = ctx.getSession();
   if (runtime === undefined) return { ok: false, planMode: false };
-  await runtime.session.setPlanMode(params.enabled);
+  await runtime.setPlanMode(params.enabled);
   return { ok: true, planMode: params.enabled };
 };
 

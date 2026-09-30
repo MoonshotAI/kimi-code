@@ -1,8 +1,8 @@
 import type { ContentPart } from '@moonshot-ai/agent-core';
-import { DEFAULT_INLINE_IMAGE_BYTE_BUDGET } from '@moonshot-ai/agent-core';
 
 import { sniffImageDimensions } from '../inspect/file-type';
 import {
+  DEFAULT_INLINE_IMAGE_BYTE_BUDGET,
   buildMalformedImageNotice,
   buildUnsupportedImageNotice,
   decodeBase64Prefix,
@@ -214,38 +214,49 @@ export function gateImageFormatParts(
   const out: ContentPart[] = [];
   for (const part of parts) {
     if (part.type === 'image_url') {
-      const parsed = parseImageDataUrl(part.imageUrl.url);
-      if (parsed === null) {
-        if (isDataUrl(part.imageUrl.url)) {
-          out.push({ type: 'text', text: buildMalformedImageNotice(part.imageUrl.url) });
-          continue;
-        }
-        const extMime = unsupportedImageMimeFromUrl(part.imageUrl.url, providerType);
+      const source = part.source;
+      if (source.kind === 'url' && !isDataUrl(source.url)) {
+        const extMime = unsupportedImageMimeFromUrl(source.url, providerType);
         if (extMime !== null) {
           out.push({
             type: 'text',
-            text: buildUnsupportedImageNotice(extMime, part.imageUrl.url, providerType),
+            text: buildUnsupportedImageNotice(extMime, source.url, providerType),
           });
           continue;
         }
         out.push(part);
         continue;
       }
-      const effectiveMime = resolveEffectiveImageMime(
-        parsed.mimeType,
-        decodeBase64Prefix(parsed.base64),
-      );
-      if (!isModelAcceptedImageMime(effectiveMime, providerType)) {
-        out.push({
-          type: 'text',
-          text: buildUnsupportedImageNotice(effectiveMime, undefined, providerType),
-        });
-        continue;
-      }
-      const canonicalUrl = `data:${normalizeImageMime(effectiveMime)};base64,${parsed.base64}`;
-      if (part.imageUrl.url !== canonicalUrl) {
-        out.push({ type: 'image_url', imageUrl: { ...part.imageUrl, url: canonicalUrl } });
-        continue;
+      if (source.kind === 'inline' || source.kind === 'url') {
+        let parsed: { mimeType: string; base64: string } | null;
+        if (source.kind === 'inline') {
+          parsed = { mimeType: source.mimeType, base64: source.data };
+        } else {
+          parsed = parseImageDataUrl(source.url);
+          if (parsed === null) {
+            out.push({ type: 'text', text: buildMalformedImageNotice(source.url) });
+            continue;
+          }
+        }
+        const effectiveMime = resolveEffectiveImageMime(
+          parsed.mimeType,
+          decodeBase64Prefix(parsed.base64),
+        );
+        if (!isModelAcceptedImageMime(effectiveMime, providerType)) {
+          out.push({
+            type: 'text',
+            text: buildUnsupportedImageNotice(effectiveMime, undefined, providerType),
+          });
+          continue;
+        }
+        const canonicalMime = normalizeImageMime(effectiveMime);
+        if (source.kind === 'url' || source.mimeType !== canonicalMime) {
+          out.push({
+            ...part,
+            source: { kind: 'inline', mimeType: canonicalMime, data: parsed.base64 },
+          });
+          continue;
+        }
       }
     }
     out.push(part);

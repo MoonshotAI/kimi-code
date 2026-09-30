@@ -1,6 +1,6 @@
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import type { TranscriptEntry } from '../types';
-import { formatErrorMessage } from '../utils/event-payload';
+import { formatErrorMessage } from '../utils/errors';
 import type { SlashCommandHost } from './dispatch';
 
 /**

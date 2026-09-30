@@ -20,12 +20,12 @@ import {
   createSystemEntry,
   createUserEntry,
   type HistoryMessage,
-  type SystemMessage,
-  type UserMessage,
   type UserMeta,
-} from '#/llm/message';
-import type { LlmCredentialProvider, LlmRequestConfig, LlmRequester } from '#/llm/requester/requester';
-import type { LlmRetryOptions } from '#/llm/requester/retry';
+} from '#/history/message';
+import type { SystemMessage, UserMessage } from '#/llm/message';
+import type { AgentLlmRequester } from '#/agent-machine/llm-actor';
+import type { LlmEndpoint, LlmRequestModel } from '#/llm/request';
+import type { LlmRetryOptions } from '#/llm/policy/retry';
 import {
   createUnit,
   currentUnit,
@@ -218,10 +218,11 @@ let runSeq = 0;
 export interface AgentCommands {
   readonly agentId: string;
   readonly snapshot: Ref<AgentSnapshot | undefined>;
-  readonly config: LlmRequestConfig | undefined;
-  setRequester(requester: LlmRequester): void;
-  setConfig(config: LlmRequestConfig): void;
-  setCredentialProvider(provider?: LlmCredentialProvider): void;
+  readonly model: LlmRequestModel | undefined;
+  readonly endpoint: LlmEndpoint | undefined;
+  setRequester(requester: AgentLlmRequester): void;
+  setModel(model: LlmRequestModel): void;
+  setEndpoint(endpoint: LlmEndpoint): void;
   submit(message: UserMessage, meta?: UserMeta): AgentAck<'prompt.submitted'> | undefined;
   notify(message: UserMessage): AgentAck<'prompt.notified'> | undefined;
   remind(message: UserMessage | SystemMessage, meta?: UserMeta): AgentAck<'prompt.reminded'> | undefined;
@@ -287,16 +288,16 @@ export interface AgentHandle extends UnitHandle, Omit<AgentCommands, 'on' | 'wai
 export const AgentUnit = createUnit<AgentUnitProps>('agent', (props) => {
   const node = useNode();
   const ports = createAgentPorts();
-  let requester: LlmRequester | undefined;
-  let config: LlmRequestConfig | undefined;
-  let credentialProvider: LlmCredentialProvider | undefined;
+  let requester: AgentLlmRequester | undefined;
+  let model: LlmRequestModel | undefined;
+  let endpoint: LlmEndpoint | undefined;
   const { turnLogic, toolLogic } = bindAgentLogics(
     ports,
     () => requester,
     {
       ...props.turnOptions,
-      getConfig: () => config,
-      getCredentialProvider: () => credentialProvider,
+      getModel: () => model,
+      getEndpoint: () => endpoint,
       getHostPrompt: () => props.systemPrompt,
     },
     props.retry,
@@ -421,17 +422,20 @@ export const AgentUnit = createUnit<AgentUnitProps>('agent', (props) => {
   const commands: AgentCommands = {
     agentId: props.agentId,
     snapshot,
-    get config() {
-      return config;
+    get model() {
+      return model;
+    },
+    get endpoint() {
+      return endpoint;
     },
     setRequester: (next) => {
       requester = next;
     },
-    setConfig: (next) => {
-      config = next;
+    setModel: (next) => {
+      model = next;
     },
-    setCredentialProvider: (next) => {
-      credentialProvider = next;
+    setEndpoint: (next) => {
+      endpoint = next;
     },
     submit: (message, meta) => {
       const entry = createUserEntry(message, { source: 'input', ...meta });
@@ -588,10 +592,11 @@ export function agentHandle(handle: UnitHandle): AgentHandle {
     disposeAsync: () => handle.unmount(),
     get agentId() { return commands().agentId; },
     get snapshot() { return commands().snapshot; },
-    get config() { return commands().config; },
+    get model() { return commands().model; },
+    get endpoint() { return commands().endpoint; },
     setRequester: (requester) => commands().setRequester(requester),
-    setConfig: (config) => commands().setConfig(config),
-    setCredentialProvider: (provider) => commands().setCredentialProvider(provider),
+    setModel: (model) => commands().setModel(model),
+    setEndpoint: (endpoint) => commands().setEndpoint(endpoint),
     submit: (message, meta) => commands().submit(message, meta),
     notify: (message) => commands().notify(message),
     remind: (message, meta) => commands().remind(message, meta),

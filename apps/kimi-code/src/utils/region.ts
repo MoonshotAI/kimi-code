@@ -9,12 +9,12 @@
  * Resolution lives in `@moonshot-ai/kimi-code-oauth` (see `resolveKimiRegion`);
  * this module only adds the one thing that package deliberately does not own:
  * reading the persisted login's oauth ref (credential key + `oauthHost`) out
- * of config.toml, synchronously, via the SDK's safe config reader. First call
+ * of config.toml, synchronously, via the SDK's config snapshot. First call
  * wins; `refreshKimiRegion` re-resolves after login/logout rewrote the oauth
  * ref.
  */
 
-import { loadRuntimeConfigSafe, resolveConfigPath } from '@moonshot-ai/kimi-code-sdk';
+import { readKimiConfigSnapshot, resolveConfigPath } from '@moonshot-ai/kimi-code-sdk';
 import {
   KIMI_CODE_OAUTH_KEY,
   KIMI_REGION_PROFILES,
@@ -40,11 +40,12 @@ export interface PersistedKimiOAuthRef {
 
 /** The oauth ref persisted by a previous login, if any. */
 export function persistedKimiOAuthRef(): PersistedKimiOAuthRef | undefined {
-  const result = loadRuntimeConfigSafe(resolveConfigPath({}));
-  // `providers` is always present on a real config load; the `?.` guards
-  // hosts/tests that hand us a partial config shape.
-  const oauth = result.config.providers?.[MANAGED_KIMI_CODE_PROVIDER_KEY]?.oauth;
-  if (oauth === undefined) return undefined;
+  const { sections } = readKimiConfigSnapshot(resolveConfigPath({}));
+  const providers = sections['providers'] as
+    | Record<string, { readonly oauth?: PersistedKimiOAuthRef | undefined } | undefined>
+    | undefined;
+  const oauth = providers?.[MANAGED_KIMI_CODE_PROVIDER_KEY]?.oauth;
+  if (oauth?.key === undefined) return undefined;
   return { key: oauth.key, oauthHost: oauth.oauthHost };
 }
 

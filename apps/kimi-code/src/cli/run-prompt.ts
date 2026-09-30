@@ -42,8 +42,8 @@ export async function runPrompt(
   version: string,
   io: PromptRunIO = {},
 ): Promise<void> {
-  const { runV2Print } = await import('./v2/run-v2-print');
-  await runV2Print(opts, version, io);
+  const { runPrint } = await import('./run-print');
+  await runPrint(opts, version, io);
 }
 
 export function requireConfiguredModel(...models: readonly (string | undefined)[]): string {

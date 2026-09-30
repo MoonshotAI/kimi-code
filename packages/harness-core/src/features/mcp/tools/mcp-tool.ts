@@ -1,5 +1,6 @@
-import { isAbortError, type MediaStore, type ToolDefinition } from '@moonshot-ai/agent-core';
+import { isAbortError, type ToolDefinition } from '@moonshot-ai/agent-core';
 
+import type { MediaStore } from '#/features/media/store';
 import {
   abortable,
   isMcpConnectionClosedError,

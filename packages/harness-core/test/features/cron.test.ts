@@ -16,13 +16,11 @@ import {
   openBlobs,
   openSessionStores,
   Trees,
-  UNKNOWN_CAPABILITY,
   useAgent,
   type AgentHandle,
   type ConfigPersist,
   type FeatureSpec,
-  type LlmModel,
-  type LlmRequester,
+  type AgentLlmRequester,
   type SessionHandle,
   type SessionStores,
   type ToolMeta,
@@ -39,44 +37,39 @@ import {
   type CronTask,
 } from '#/features/cron/index';
 
-const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
+import { fakeRequester, textOutcome, testModel } from '../fake-llm';
 
 type ScriptStep = { text: string } | { toolCall: { name: string; arguments: string } };
 
 let queue: ScriptStep[] = [];
 let callSeq = 0;
 
-function createMockRequester(): LlmRequester {
-  return {
-    generate: async (_config, _content, { onEvent }) => {
-      const out = queue.shift() ?? { text: 'done' };
-      if ('toolCall' in out) {
-        onEvent?.({
-          type: 'llm.streaming.part',
-          part: {
-            type: 'function',
-            id: `call-${(callSeq += 1)}`,
-            name: out.toolCall.name,
-            arguments: out.toolCall.arguments,
-          },
-        });
-      } else {
-        onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: out.text } });
-      }
-      onEvent?.({
-        type: 'llm.streaming.usage',
-        usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
-      });
-      onEvent?.({ type: 'llm.done' });
-    },
-  };
+function createMockRequester(): AgentLlmRequester {
+  return fakeRequester((_rest, onEvent) => {
+    const out = queue.shift() ?? { text: 'done' };
+    onEvent?.({
+      type: 'llm.streaming.usage',
+      usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
+    });
+    if ('toolCall' in out) {
+      return textOutcome('', [
+        {
+          type: 'function',
+          id: `call-${(callSeq += 1)}`,
+          name: out.toolCall.name,
+          arguments: out.toolCall.arguments,
+        },
+      ]);
+    }
+    return textOutcome(out.text);
+  });
 }
 
-function bindTestLlm(requester: LlmRequester): FeatureSpec {
+function bindTestLlm(requester: AgentLlmRequester): FeatureSpec {
   return createFeature('test-llm', {
     agent() {
       const agent = useAgent();
-      agent.setConfig({ model });
+      agent.setModel(testModel);
       agent.setRequester(requester);
     },
   });

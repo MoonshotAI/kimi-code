@@ -1,12 +1,12 @@
-import type { McpServerInfo } from '@moonshot-ai/kimi-code-sdk';
+import type { McpServerEntry, McpServerStatus } from '@moonshot-ai/harness-core';
 
 import { currentTheme } from '#/tui/theme';
 
 export interface McpStatusReportOptions {
-  readonly servers: readonly McpServerInfo[];
+  readonly servers: readonly McpServerEntry[];
 }
 
-const STATUS_PRIORITY: Record<McpServerInfo['status'], number> = {
+const STATUS_PRIORITY: Record<McpServerStatus, number> = {
   failed: 0,
   'needs-auth': 1,
   pending: 2,
@@ -15,7 +15,7 @@ const STATUS_PRIORITY: Record<McpServerInfo['status'], number> = {
   removed: 5,
 };
 
-const STATUS_LABEL: Record<McpServerInfo['status'], string> = {
+const STATUS_LABEL: Record<McpServerStatus, string> = {
   connected: 'connected',
   pending: 'pending',
   'needs-auth': 'needs auth',
@@ -24,7 +24,7 @@ const STATUS_LABEL: Record<McpServerInfo['status'], string> = {
   removed: 'removed',
 };
 
-const SUMMARY_ORDER: readonly McpServerInfo['status'][] = [
+const SUMMARY_ORDER: readonly McpServerStatus[] = [
   'connected',
   'pending',
   'needs-auth',
@@ -33,9 +33,7 @@ const SUMMARY_ORDER: readonly McpServerInfo['status'][] = [
   'removed',
 ];
 
-function statusPainter(
-  status: McpServerInfo['status'],
-): (text: string) => string {
+function statusPainter(status: McpServerStatus): (text: string) => string {
   switch (status) {
     case 'connected':
       return (text) => currentTheme.fg('success', text);
@@ -50,7 +48,7 @@ function statusPainter(
   }
 }
 
-function formatToolCount(server: McpServerInfo): string {
+function formatToolCount(server: McpServerEntry): string {
   if (server.status === 'disabled' || server.status === 'removed') return '—';
   return `${server.toolCount} tool${server.toolCount === 1 ? '' : 's'}`;
 }
@@ -59,28 +57,19 @@ function formatToolsAvailable(count: number): string {
   return `${count} tool${count === 1 ? '' : 's'} available`;
 }
 
-/**
- * Collapse a (possibly multi-line) MCP error into a single line. The status
- * panel renders each returned string as exactly one boxed row (see
- * `UsagePanelComponent.render`), so an embedded newline — e.g. the
- * `\nstderr: ...` a failed stdio server appends — would drop the trailing
- * text to column 0 and punch through the rounded border. Folding every run
- * of whitespace to a single space keeps the error on one row, which the
- * panel then truncates to the available width.
- */
 function formatErrorLine(error: string): string {
   return error.trim().replaceAll(/\s+/g, ' ');
 }
 
-function sortedServers(servers: readonly McpServerInfo[]): McpServerInfo[] {
+function sortedServers(servers: readonly McpServerEntry[]): McpServerEntry[] {
   return servers.toSorted(
     (a, b) =>
       STATUS_PRIORITY[a.status] - STATUS_PRIORITY[b.status] || a.name.localeCompare(b.name),
   );
 }
 
-function buildSummary(servers: readonly McpServerInfo[]): string {
-  const counts: Partial<Record<McpServerInfo['status'], number>> = {};
+export function buildMcpServersSummary(servers: readonly McpServerEntry[]): string {
+  const counts: Partial<Record<McpServerStatus, number>> = {};
   let toolsAvailable = 0;
   for (const server of servers) {
     counts[server.status] = (counts[server.status] ?? 0) + 1;
@@ -106,7 +95,7 @@ export function buildMcpStatusReportLines(options: McpStatusReportOptions): stri
   const lines: string[] = [accent('Servers')];
 
   if (servers.length === 0) {
-    lines.push(muted('  No MCP servers configured. Run /mcp-config to add one.'));
+    lines.push(muted('  No MCP servers configured.'));
     return lines;
   }
 
@@ -127,9 +116,7 @@ export function buildMcpStatusReportLines(options: McpStatusReportOptions): stri
   );
 
   for (const server of servers) {
-    const status = statusPainter(
-      server.status,
-    )(STATUS_LABEL[server.status].padEnd(statusWidth));
+    const status = statusPainter(server.status)(STATUS_LABEL[server.status].padEnd(statusWidth));
     lines.push(
       `  ${value(server.name.padEnd(nameWidth))}  ${status}  ${muted(
         server.transport.padEnd(transportWidth),
@@ -144,13 +131,12 @@ export function buildMcpStatusReportLines(options: McpStatusReportOptions): stri
       lines.push(`    ${muted('error:')} ${error(formatErrorLine(server.error))}`);
     }
     if (server.status === 'needs-auth') {
-      lines.push(`    ${muted('action:')} ${value(`run /mcp-config login ${server.name}`)}`);
+      lines.push(`    ${muted('action:')} ${value('authorize in the browser when the agent runs the server\'s authenticate flow')}`);
     }
   }
 
   lines.push('');
-  lines.push(`  ${value(buildSummary(servers))}`);
-  lines.push(`  ${muted('Configure with')} ${value('/mcp-config')}`);
+  lines.push(`  ${value(buildMcpServersSummary(servers))}`);
 
   return lines;
 }

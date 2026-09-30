@@ -1,12 +1,12 @@
 # 1. 启动最小 App 并跑完一个 turn
 
-How-to：用 builtin SDK 绑一个已知模型的 API，`createHarness` 开出实例，创建 agent 后 `setConfig` / `setCredentialProvider` / `setRequester`，提交一条用户 prompt，等到这个 turn 落盘结束。报文形状见 [HistoryMessage 与 Delta](../reference/history-message.md)。队列为什么存在、状态机怎么走见 [Agent 状态机](../explanation/agent-machine.md)。
+How-to：用 builtin SDK 绑一个已知模型的 API，`createHarness` 开出实例，创建 agent 后 `setModel` / `setEndpoint` / `setRequester`，提交一条用户 prompt，等到这个 turn 落盘结束。报文形状见 [HistoryMessage 与 Delta](../reference/history-message.md)。队列为什么存在、状态机怎么走见 [Agent 状态机](../explanation/agent-machine.md)。
 
 这一步不装 `provider-catalog`（那是 [7](07-use-provider-catalog.md)），也不写 Feature。
 
 ## 装配
 
-`openaiProvider` / `createStaticCredentialProvider` / `createUserMessage` / `createHarness` / `memorySessionSpace` 来自 `@moonshot-ai/agent-core`。落盘 `fsSessionSpace` 来自 `@moonshot-ai/harness-core`。
+`openAIRequester` / `createStaticCredentialProvider` / `createUserMessage` / `createHarness` / `memorySessionSpace` 来自 `@moonshot-ai/agent-core`。落盘 `fsSessionSpace` 来自 `@moonshot-ai/harness-core`。
 
 ```ts
 import {
@@ -15,13 +15,13 @@ import {
   MAIN_AGENT_ID,
   memorySessionSpace,
   createHarness,
-  openaiProvider,
-  type LlmModel,
+  openAIRequester,
+  type LlmModelSpec,
 } from '@moonshot-ai/agent-core';
 
-const model: LlmModel = {
+const spec: LlmModelSpec = {
   provider: 'openai',
-  model: 'gpt-4o',
+  name: 'gpt-4o',
   capability: {
     image_in: false,
     video_in: false,
@@ -30,8 +30,6 @@ const model: LlmModel = {
     tool_use: true,
   },
   maxContextSize: 128_000,
-  baseUrl: process.env['OPENAI_BASE_URL'],
-  apiKey: process.env['OPENAI_API_KEY'],
 };
 
 const app = createHarness({
@@ -40,9 +38,9 @@ const app = createHarness({
 await app.ready();
 ```
 
-`space` 是 App 的 catalog。最小路径省略 `features`；要默认产品名单再写 `features: [...features]`。`config` / 凭证 / 传输按 agent 绑定：开完 agent 再 `setConfig` / `setCredentialProvider` / `setRequester`。
+`space` 是 App 的 catalog。最小路径省略 `features`；要默认产品名单再写 `features: [...features]`。`model` / `endpoint` / 传输按 agent 绑定：开完 agent 再 `setModel` / `setEndpoint` / `setRequester`。
 
-Anthropic / Google 把 requester 换成 `anthropicProvider.requesters.anthropic` / `googleProvider.requesters['google-genai']`。Kimi 用 `@moonshot-ai/harness-core` 的 `kimiProvider.requesters.openai`（或 `.anthropic` / `.openai_responses`）。协议绑定细节见 [15. 绑定 Provider](15-run-llm-request.md)。按模型再绑一条见 [7. provider-catalog](07-use-provider-catalog.md)。
+Anthropic / Google 把 requester 换成 `anthropicRequester` / `googleGenAIRequester`（同样从 `@moonshot-ai/agent-core` 根导出，另有 `openAIResponsesRequester` / `googleVertexRequester` / `deepseekRequester` / `glmRequester` 等）。Kimi 用 `kimiRequester`（或 `kimiAnthropicRequester` / `kimiResponsesRequester`）。协议绑定细节见 [15. 绑定 Provider](15-run-llm-request.md)。按模型再绑一条见 [7. provider-catalog](07-use-provider-catalog.md)。
 
 落盘用 `fsSessionSpace('/path/to/data-root')`。可运行闭环见 `example/app.ts` 与 `example/cli.ts`。
 
@@ -51,9 +49,12 @@ Anthropic / Google 把 requester 换成 `anthropicProvider.requesters.anthropic`
 ```ts
 const session = await app.open({ sessionId: 'demo' });
 const agent = session.get(MAIN_AGENT_ID) ?? await session.create({ agentId: MAIN_AGENT_ID });
-agent.setConfig({ model });
-agent.setCredentialProvider(createStaticCredentialProvider(model.apiKey));
-agent.setRequester(openaiProvider.requesters.openai);
+agent.setModel({ spec });
+agent.setEndpoint({
+  baseUrl: process.env['OPENAI_BASE_URL'],
+  credentials: createStaticCredentialProvider(process.env['OPENAI_API_KEY']),
+});
+agent.setRequester(openAIRequester);
 
 const ended = session.wait('turn.ended');
 const submitted = agent.submit(createUserMessage('你好'), {
@@ -101,12 +102,12 @@ const off = agent.on('llm.streaming.part', (event) => {
 
 ## 其余命令
 
-`setConfig` / `setCredentialProvider` / `setRequester` 不进机器，仍是同步。其余命令都是「先订再 `send`，同步返回对应机器回执」的同步封装；actor 未运行时返回 `undefined`。
+`setModel` / `setEndpoint` / `setRequester` 不进机器，仍是同步。其余命令都是「先订再 `send`，同步返回对应机器回执」的同步封装；actor 未运行时返回 `undefined`。
 
 | 要做什么 | 调用 | 进哪 |
 |---|---|---|
-| 模型 / thinking / 采样 | `setConfig(config)` | 下次 `generate` |
-| 凭证 | `setCredentialProvider(provider)` | 下次 `generate` |
+| 模型 / thinking / 采样 | `setModel(model)` | 下次 `generate` |
+| 凭证 / baseUrl / 上传通道 | `setEndpoint(endpoint)` | 下次 `generate` |
 | 协议传输 | `setRequester(requester)` | 下次 `generate` |
 | 用户 prompt（占队列、可撤/可并） | `submit(message, meta?)` → `prompt.submitted` | `queue` |
 | 不占队列的旁路说明 | `notify(message)` → `prompt.notified` | `notifications` |

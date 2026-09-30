@@ -1,11 +1,10 @@
 import { release as osRelease, type as osType } from 'node:os';
 
-import type { McpServerInfo, SessionStatus, SessionUsage } from '@moonshot-ai/kimi-code-sdk';
+import { McpRef, UsageRef, type McpServerEntry, type UsageSummary } from '@moonshot-ai/harness-core';
 
 import { buildMcpStatusReportLines } from '../components/messages/mcp-status-panel';
 import { buildStatusReportLines } from '../components/messages/status-panel';
 import { buildUsageReportLines, UsagePanelComponent, type ManagedUsageReport } from '../components/messages/usage-panel';
-import { isExperimentalFlagEnabled } from './experimental-flags';
 import { quotaUsageRows } from '#/utils/usage/usage-format';
 import {
   FEEDBACK_ISSUE_URL,
@@ -24,7 +23,7 @@ import {
 } from '../constant/feedback';
 import { DEFAULT_OAUTH_PROVIDER_NAME, isManagedUsageProvider } from '../constant/kimi-tui';
 import { submitFeedbackWithAttachments } from '../../feedback/feedback-attachments';
-import { formatErrorMessage } from '../utils/event-payload';
+import { formatErrorMessage } from '../utils/errors';
 import { openUrl } from '#/utils/open-url';
 import { promptFeedbackAttachment, promptFeedbackInput } from './prompts';
 import type { SlashCommandHost } from './dispatch';
@@ -131,26 +130,16 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
 // Info commands
 // ---------------------------------------------------------------------------
 
-interface SessionUsageResult {
-  readonly usage?: SessionUsage;
-  readonly error?: string;
-}
-
-interface RuntimeStatusResult {
-  readonly status?: SessionStatus;
-  readonly error?: string;
-}
-
 interface ManagedUsageResult {
   readonly usage?: ManagedUsageReport;
   readonly error?: string;
 }
 
 export async function showUsage(host: SlashCommandHost): Promise<void> {
-  const sessionUsage = await loadSessionUsageReport(host);
+  const sessionUsage = loadSessionUsageSummary(host);
   const managedUsage = await loadManagedUsageReport(host);
   const reportArgs = {
-    sessionUsage: sessionUsage.usage,
+    sessionUsage: sessionUsage.summary,
     sessionUsageError: sessionUsage.error,
     contextUsage: host.state.appState.contextUsage,
     contextTokens: host.state.appState.contextTokens,
@@ -163,11 +152,27 @@ export async function showUsage(host: SlashCommandHost): Promise<void> {
   host.state.ui.requestRender();
 }
 
-export async function showStatusReport(host: SlashCommandHost): Promise<void> {
-  const [runtimeStatus, managedUsage] = await Promise.all([
-    loadRuntimeStatusReport(host),
-    loadManagedUsageReport(host),
-  ]);
+export function showMcpServers(host: SlashCommandHost): void {
+  let servers: readonly McpServerEntry[];
+  try {
+    const mcp = host.harness.app.resolve(McpRef);
+    if (mcp === undefined) throw new Error('mcp feature is not installed');
+    servers = mcp.list();
+  } catch (error) {
+    host.showError(`Failed to load MCP servers: ${formatErrorMessage(error)}`);
+    return;
+  }
+  const title = servers.length > 0 ? ` MCP (${servers.length}) ` : ' MCP ';
+  const panel = new UsagePanelComponent(
+    () => buildMcpStatusReportLines({ servers }),
+    'primary',
+    title,
+  );
+  host.state.transcriptContainer.addChild(panel);
+  host.state.ui.requestRender();
+}
+
+export async function showStatusReport(host: SlashCommandHost): Promise<void> {  const managedUsage = await loadManagedUsageReport(host);
   const appState = host.state.appState;
   const reportArgs = {
     version: appState.version,
@@ -179,13 +184,11 @@ export async function showStatusReport(host: SlashCommandHost): Promise<void> {
     permissionMode: appState.permissionMode,
     planMode: appState.planMode,
     towerMode: appState.towerMode,
-    towerAvailable: isExperimentalFlagEnabled('tower'),
+    towerAvailable: false,
     contextUsage: appState.contextUsage,
     contextTokens: appState.contextTokens,
     maxContextTokens: appState.maxContextTokens,
     availableModels: appState.availableModels,
-    status: runtimeStatus.status,
-    statusError: runtimeStatus.error,
     managedUsage: managedUsage?.usage,
     managedUsageError: managedUsage?.error,
   };
@@ -194,47 +197,16 @@ export async function showStatusReport(host: SlashCommandHost): Promise<void> {
   host.state.ui.requestRender();
 }
 
-export async function showMcpServers(host: SlashCommandHost): Promise<void> {
-  let servers: readonly McpServerInfo[];
-  try {
-    if (host.session !== undefined) {
-      servers = await host.session.listMcpServers();
-    } else {
-      // v2 session-less: the MCP connection set is workspace-scoped, so it is
-      // inspectable before the first session exists.
-      servers = await host.harness.listWorkspaceMcpServers(host.state.appState.workDir);
-    }
-  } catch (error) {
-    host.showError(`Failed to load MCP servers: ${formatErrorMessage(error)}`);
-    return;
-  }
-
-  const title = servers.length > 0 ? ` MCP (${servers.length}) ` : ' MCP ';
-  const panel = new UsagePanelComponent(
-    () => buildMcpStatusReportLines({ servers }),
-    'primary',
-    title,
-  );
-  host.state.transcriptContainer.addChild(panel);
-  host.state.ui.requestRender();
-}
-
-async function loadSessionUsageReport(host: SlashCommandHost): Promise<SessionUsageResult> {
-  if (host.session === undefined) return {};
-  try {
-    return { usage: await host.session.getUsage() };
-  } catch (error) {
-    return { error: formatErrorMessage(error) };
-  }
-}
-
-async function loadRuntimeStatusReport(host: SlashCommandHost): Promise<RuntimeStatusResult> {
-  if (host.session === undefined) return {};
-  try {
-    return { status: await host.session.getStatus() };
-  } catch (error) {
-    return { error: error instanceof Error ? error.message : String(error) };
-  }
+function loadSessionUsageSummary(host: SlashCommandHost): {
+  readonly summary?: { readonly byModel?: UsageSummary['byModel'] };
+  readonly error?: string;
+} {
+  const main = host.mainAgent();
+  if (main === undefined) return {};
+  const usage = main.resolve(UsageRef);
+  if (usage === undefined) return { error: 'usage feature is not installed' };
+  const summary = usage.summary.value;
+  return { summary: { byModel: summary.byModel } };
 }
 
 async function loadManagedUsageReport(host: SlashCommandHost): Promise<ManagedUsageResult | undefined> {

@@ -25,8 +25,8 @@ export interface CreateToolSelectStateOptions {
   enabled: () => boolean;
 }
 
-export function isToolSelectEnabled(capability: ModelCapability): boolean {
-  return capability.dynamically_loaded_tools === true && capability.tool_use;
+export function isToolSelectEnabled(capability: ModelCapability | undefined): boolean {
+  return capability?.dynamically_loaded_tools === true && capability.tool_use === true;
 }
 
 export function renderLoadableToolsAnnouncement(

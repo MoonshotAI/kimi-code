@@ -1,5 +1,3 @@
-import type { Event } from '@moonshot-ai/kimi-code-sdk';
-
 import type {
   DisplayBlock,
   LegacyWireEvent,
@@ -8,9 +6,94 @@ import type {
   TurnBegin,
 } from '../../shared/legacy-sdk';
 import type { ErrorPhase, UIStreamEvent } from '../../shared/types';
-import { toLegacyDisplay } from './tool-display';
 
 const DEFAULT_MAIN_AGENT_ID = 'main';
+
+export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked';
+
+interface SdkEventBase {
+  readonly sessionId: string;
+  readonly agentId: string;
+  readonly turnId?: number;
+  readonly stepId?: string;
+}
+
+export type Event = SdkEventBase &
+  (
+    | {
+        readonly type: 'subagent.spawned';
+        readonly subagentId: string;
+        readonly subagentName: string;
+        readonly parentToolCallId: string;
+        readonly parentAgentId?: string;
+        readonly callerAgentId?: string;
+        readonly runInBackground: boolean;
+      }
+    | { readonly type: 'turn.started'; readonly origin?: unknown; readonly input?: unknown }
+    | {
+        readonly type: 'turn.ended';
+        readonly turnId: number;
+        readonly reason: TurnEndReason;
+        readonly error?: {
+          readonly code: string;
+          readonly message: string;
+          readonly retryable: boolean;
+        };
+        readonly durationMs?: number;
+      }
+    | {
+        readonly type: 'error';
+        readonly code: string;
+        readonly message: string;
+        readonly details?: Record<string, unknown>;
+        readonly retryable: boolean;
+      }
+    | { readonly type: 'turn.step.started'; readonly step: number }
+    | {
+        readonly type: 'turn.step.retrying';
+        readonly nextAttempt: number;
+        readonly maxAttempts: number;
+        readonly delayMs: number;
+        readonly errorMessage: string;
+      }
+    | { readonly type: 'turn.step.interrupted' }
+    | { readonly type: 'assistant.delta'; readonly delta: string }
+    | { readonly type: 'hook.result'; readonly content: string }
+    | { readonly type: 'thinking.delta'; readonly delta: string }
+    | {
+        readonly type: 'tool.call.started';
+        readonly toolCallId: string;
+        readonly name: string;
+        readonly args: unknown;
+        readonly display?: readonly DisplayBlock[];
+      }
+    | {
+        readonly type: 'tool.call.delta';
+        readonly toolCallId: string;
+        readonly name?: string;
+        readonly argumentsPart?: string | null;
+      }
+    | {
+        readonly type: 'tool.result';
+        readonly toolCallId: string;
+        readonly output: unknown;
+        readonly isError?: boolean;
+      }
+    | {
+        readonly type: 'agent.status.updated';
+        readonly contextUsage?: number;
+        readonly contextTokens?: number;
+        readonly maxContextTokens?: number;
+        readonly planMode?: boolean;
+        readonly model?: string;
+        readonly thinkingEffort?: string;
+        readonly usage?: { readonly currentTurn: AdapterTokenUsage };
+      }
+    | { readonly type: 'compaction.started'; readonly trigger?: string }
+    | { readonly type: 'compaction.blocked' }
+    | { readonly type: 'compaction.cancelled' }
+    | { readonly type: 'compaction.completed' }
+  );
 
 export interface AdapterTokenUsage {
   readonly inputOther: number;
@@ -193,9 +276,14 @@ interface MappedLegacyWireEvent {
   readonly event?: LegacyWireEvent;
 }
 
+type LegacyMappedEvent = Exclude<
+  Event,
+  { readonly type: 'subagent.spawned' | 'turn.started' | 'turn.ended' | 'error' }
+>;
+
 function mapLegacyWireEvent(
   state: EventAdapterState,
-  sdkEvent: Event,
+  sdkEvent: LegacyMappedEvent,
   mainAgentId: string,
 ): MappedLegacyWireEvent {
   switch (sdkEvent.type) {
@@ -245,7 +333,7 @@ function mapLegacyWireEvent(
         sdkEvent.toolCallId,
         mainAgentId,
       );
-      const display = sdkEvent.display === undefined ? undefined : toLegacyDisplay(sdkEvent.display);
+      const display = sdkEvent.display === undefined ? undefined : [...sdkEvent.display];
       return {
         state: display === undefined
           ? state

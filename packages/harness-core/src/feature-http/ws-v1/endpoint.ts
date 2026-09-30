@@ -1,9 +1,10 @@
-import { parseMediaRefUrl, useApp, useCleanup, useInject, useOnApp } from '@moonshot-ai/agent-core';
+import { useApp, useCleanup, useInject, useOnApp } from '@moonshot-ai/agent-core';
 import { useExpose } from '@moonshot-ai/agent-core/kernel/index';
 
 import { WebSocketServer } from 'ws';
 
 import { MediaLibraryRef } from '#/features/media/index';
+import { parseMediaRefUrl } from '#/features/media/ref';
 
 import { useHttp } from '../feature';
 import type { WsRegistryStore } from '../ws-registry';

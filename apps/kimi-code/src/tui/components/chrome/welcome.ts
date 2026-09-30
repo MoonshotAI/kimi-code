@@ -7,7 +7,6 @@ import type { Component } from '@moonshot-ai/pi-tui';
 import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
-import { effectiveModelAlias } from '@moonshot-ai/kimi-code-sdk';
 
 import { isRainbowDancing, renderDanceWelcomeHeader } from '#/tui/easter-eggs/dance';
 import type { AppState } from '#/tui/types';
@@ -27,7 +26,7 @@ export class WelcomeComponent implements Component {
     const primary = (s: string): string => chalk.hex(currentTheme.palette.primary)(s);
     const isLoggedOut = !this.state.model;
     const activeModel = this.state.availableModels[this.state.model];
-    const effectiveActiveModel = activeModel === undefined ? undefined : effectiveModelAlias(activeModel);
+    const effectiveActiveModel = activeModel;
 
     if (safeWidth < 24) {
       const title = chalk.bold.hex(currentTheme.palette.primary)('Welcome to Kimi Code!');

@@ -15,7 +15,8 @@ export type PtcContextLevel = 'none' | 'readonly' | 'full';
 export interface PtcAgentReadonly {
   readonly agentId: string;
   readonly snapshot: AgentCommands['snapshot'];
-  readonly config: AgentCommands['config'];
+  readonly model: AgentCommands['model'];
+  readonly endpoint: AgentCommands['endpoint'];
   on: AgentCommands['on'];
   wait: AgentCommands['wait'];
 }
@@ -96,8 +97,11 @@ function createReadonlyAgent(agent: AgentCommands, on: AgentCommands['on']): Ptc
     get snapshot() {
       return agent.snapshot;
     },
-    get config() {
-      return agent.config;
+    get model() {
+      return agent.model;
+    },
+    get endpoint() {
+      return agent.endpoint;
     },
     on,
     wait: (type, opts) => agent.wait(type, opts),
@@ -111,8 +115,8 @@ function createFullAgent(agent: AgentCommands, on: AgentCommands['on']): AgentCo
       agent.run(message, opts)) as AgentCommands['run'],
     retry: ((opts?: AgentRunOpts) => agent.retry(opts)) as AgentCommands['retry'],
     setRequester: (requester) => agent.setRequester(requester),
-    setConfig: (config) => agent.setConfig(config),
-    setCredentialProvider: (provider) => agent.setCredentialProvider(provider),
+    setModel: (model) => agent.setModel(model),
+    setEndpoint: (endpoint) => agent.setEndpoint(endpoint),
     submit: (message, meta) => agent.submit(message, meta),
     notify: (message) => agent.notify(message),
     remind: (message, meta) => agent.remind(message, meta),

@@ -1,4 +1,10 @@
-import type { ShellEnvironment } from '@moonshot-ai/kimi-code-sdk';
+export interface ShellEnvironment {
+  readonly term?: string;
+  readonly termProgram?: string;
+  readonly termProgramVersion?: string;
+  readonly multiplexer?: string;
+  readonly shell?: string;
+}
 
 function detectMultiplexer(): string | undefined {
   if (process.env['TMUX']) return 'tmux';

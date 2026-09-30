@@ -1,6 +1,6 @@
 # 7. 使用 builtin provider-catalog
 
-How-to：装上 `providerCatalog`，用 `useProvider` 贡献 Provider，用 `ProviderCatalogRef` 解析出 `requester`，再 `agent.setRequester`。它为什么是 app 级 Feature 见 [provider-catalog](../explanation/provider-catalog.md)。第 1 步是手绑 requester；这一步改成目录。
+How-to：装上 `providerCatalog`，用 `useProvider` 贡献 Provider，用 `ProviderCatalogRef` 解析出 `{ requester, endpoint }`，再 `agent.setModel` / `setEndpoint` / `setRequester`。它为什么是 app 级 Feature 见 [provider-catalog](../explanation/provider-catalog.md)。第 1 步是手绑 requester；这一步改成目录。
 
 ## 装上
 
@@ -14,19 +14,29 @@ await app.ready();
 const catalog = app.resolve(ProviderCatalogRef);
 ```
 
-底层仍是 `setConfig` + `setRequester`。catalog 解决的是「按 providerId + model 再绑一条传输」。
+底层仍是 `setModel` + `setEndpoint` + `setRequester`。catalog 解决的是「按 providerId + model 再绑一条传输」。
 
 ## 贡献 Provider
 
-标准 `openaiProvider` / `anthropicProvider` / `googleProvider` **不会**自动进目录。写一个 app slot Feature：
+预制 requester（`openAIRequester` 等）**不会**自动进目录。把预制 requester 摆进 `CatalogProviderHandle.requester`（单个 requester、按协议名的 record、或 `(protocol?, model?) => requester` 工厂），写一个 app slot Feature：
 
 ```ts
-import { createFeature, openaiProvider, useProvider } from '@moonshot-ai/agent-core';
+import {
+  createFeature,
+  openAIRequester,
+  useProvider,
+  type CatalogProviderHandle,
+} from '@moonshot-ai/agent-core';
+
+const openai: CatalogProviderHandle = {
+  id: 'openai',
+  requester: { openai: openAIRequester },
+};
 
 export const officialOpenAI = createFeature('official-openai', {
   app() {
     useProvider({
-      provider: openaiProvider,
+      handle: openai,
       info: { type: 'openai', defaultModel: 'gpt-4o' },
       models: [
         {
@@ -48,7 +58,7 @@ export const officialOpenAI = createFeature('official-openai', {
 });
 ```
 
-harness 的 `kimi` Feature 就是 `useProvider({ provider: kimiProvider })`，不写死 models，让 `listModels()` 填 `discovered`。
+harness 的 `kimi` Feature 就是 `useProvider({ handle: kimiProvider })` + `useProviderProtocol({ type: 'kimi', protocols: () => kimiProtocolBindings() })`——`kimiProvider` 是把 `kimiRequester` / `kimiAnthropicRequester` / `kimiResponsesRequester` 摆进 `requester` 的 `CatalogProviderHandle`，不写死 models，让 `listModels()` / config 物化填 `discovered`。
 
 `useProvider` 必须在同步 setup 调用；卸载从目录 `remove`。
 
@@ -59,27 +69,34 @@ harness 的 `kimi` Feature 就是 `useProvider({ provider: kimiProvider })`，�
 ```ts
 catalog.providers();
 catalog.models('openai');
-const binding = catalog.resolve('openai', 'gpt-4o');
-if (binding === undefined) throw new Error('model not in catalog');
+const model = catalog.model('openai', 'gpt-4o');
+const requester = catalog.requester('openai', 'gpt-4o');
+if (model === undefined || requester === undefined) throw new Error('model not in catalog');
 const agent = session.get(MAIN_AGENT_ID) ?? await session.create({ agentId: MAIN_AGENT_ID });
-agent.setRequester(binding.requester);
+agent.setModel({ spec: model });
+agent.setRequester(requester);
 ```
 
-`resolve` 要两样都在：live `Provider` 实例（`upsert` / `useProvider` 绑过）+ 条目里能合并出的 model。缺一即 `undefined`。
+`model(providerId, modelId)` 返回合并后的 `CatalogModel`（它本身就是 `LlmModelSpec` 的超集，直接喂 `spec`）；`requester(providerId, modelId)` 按 handle.endpoint → info(baseUrl/customHeaders) → model(endpoint/protocolOptions/model 维度) 叠出**已烘焙模型与凭证**的 requester，缺一即 `undefined`。静态 key / OAuth 凭证由 catalog 的 resolver 链在 upsert 时烘进 handle 的 endpoint。
+
+config Feature 在场时不必手绑：catalog 的 agent slot 会读 `default_model` 节的别名，从 `CatalogModels` 解析 binding 后自己调 `setModel` / `setRequester`（含凭证解析）；显式 `setModel` 先到则不再覆盖。
 
 其它命令：
 
 | 方法 | 作用 |
 |---|---|
-| `upsert({ provider, info?, models? })` | 登记 live Provider，写 override，并 `listModels()` 填 discovered |
-| `upsertEntry({ providerId, info?, models? })` | 只改快照，不绑 live |
-| `refresh(provider)` | 再拉一次 `listModels` |
-| `ping(providerId, model)` | `settleLlmRequest` 探活；失败写入 `pingError` |
-| `hydrate(snapshot)` / `remove(id)` | 整表替换 / 删除 |
+| `upsert({ providerId?, handle?, info?, models?, refresh? })` | 登记/替换条目（可顺带 handle）；`refresh !== false` 时随后 `listModels()` 填 discovered |
+| `bind(handle)` | 只绑 handle，不动快照 |
+| `refresh(target)` | 再拉一次 `listModels`（id / handle / 数组） |
+| `ping(providerId, modelId)` | 单次探活；失败写入 `pingError` |
+| `remove(id)` | 删除 |
+| `onChanged(listener)` | 快照变更（providers 名单） |
+| `onRefreshFailed(listener)` | 刷新失败 |
+| `isLive(providerId)` | handle 是否已绑 |
 
-`ping` 不走 `runLlmRequest`，不带 retry / recovery。
+`ping` 走 requester 的 `generate`，但 policy 只有 `retry.maxAttemptsPerStep: 1`（单次、不挂 recovery），默认 30s 超时。
 
-模型列表也可以当 collection 读：`app.node.fold(CatalogModels)`，每条是 `{ providerId, model, requester }`。media 按 `ctx.model.provider` 找上传通道时要同时装 catalog，见 [14. 安装 createMedia](14-install-media.md)。
+模型列表也可以当 collection 读：`app.node.fold(CatalogModels)`，每条是 `{ providerId, model, alias, configKey?, requester }`。媒体上传通道在 requester 的 endpoint `files` 上（kimi requester 已携带），见 [14. 安装 createMedia](14-install-media.md)。
 
 ## 相关文档
 

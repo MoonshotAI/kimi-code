@@ -56,14 +56,14 @@ export function useStatusRoutes(prefix: string): void {
 export async function sessionStatusView(session: SessionHandle): Promise<SessionStatusView | undefined> {
   const main = session.get(MAIN_AGENT_ID);
   if (main === undefined) return undefined;
-  const model = main.config?.model.model ?? '';
-  const maxTokens = main.config?.model.maxInputSize ?? main.config?.model.maxContextSize ?? 0;
+  const model = main.model?.spec.name ?? '';
+  const maxTokens = main.model?.spec.maxInputSize ?? main.model?.spec.maxContextSize ?? 0;
   const tokens = main.resolve(TokenCountingRef)?.statusSize() ?? 0;
   const plan = main.resolve(PlanRef);
   return {
     busy: sessionBusy(session),
     model: model === '' ? undefined : model,
-    thinking_level: model === '' ? '' : (main.config?.thinking?.effort ?? 'off'),
+    thinking_level: model === '' ? '' : (main.model?.thinking?.effort ?? 'off'),
     permission: main.resolve(PermissionRef)?.mode() ?? 'manual',
     plan_mode: plan !== undefined ? (await plan.status()) !== null : false,
     tower_mode: main.resolve(TowerRef)?.isActive() ?? false,

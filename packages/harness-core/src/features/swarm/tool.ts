@@ -258,7 +258,7 @@ export function createAgentSwarmTool(deps: AgentSwarmToolDeps): ToolDefinition {
           { subagent_type: args.subagent_type, model: args.model },
           {
             profileName: registry.get(callerAgentId)?.profileName,
-            modelAlias: agent.config?.model.model,
+            modelAlias: agent.model?.spec.name,
           },
         );
         if (incompatible !== undefined) {

@@ -1,103 +1,136 @@
-import type { LlmRemoteErrorMessage } from '#/llm/errors';
-import type { Message, ToolDescription } from '#/llm/message';
+import type { ResolvedEndpoint } from '#/llm/endpoint';
+import type { StreamedMessagePart } from '#/llm/message';
 import type {
-  LlmClientContext,
-  LlmSampling,
-  ToolCallIdPolicy,
-} from '#/llm/requester/requester';
+  LlmRequestContent,
+  LlmRequestModel,
+  LlmRequestProfile,
+  ModelCapability,
+} from '#/llm/request';
+import type { FinishInfo, LlmRemoteErrorMessage, TokenUsage } from '#/llm/response';
 
-import type { TraitContext } from './base';
-import type { ProviderConnection } from './connection';
-import type { FormatRequestInput, StreamParser } from './format';
+import { runPipeline, type EncodeHooks, type PipelineSpec } from './pipeline';
+import type { MediaSupport } from './rules/media';
 
-export interface ProtocolLowered<TNative> {
-  readonly source?: Message;
-  readonly message: TNative;
+export interface LlmModule<TOptions = unknown> {
+  readonly model: LlmRequestModel;
+  readonly profile: LlmRequestProfile;
+  readonly content: LlmRequestContent;
+  readonly options: TOptions | undefined;
 }
 
-export interface ProtocolAssembleParts<TNative> {
-  readonly messages: readonly TNative[];
-  readonly tools: readonly unknown[];
-  readonly kwargs: Readonly<Record<string, unknown>>;
+export interface DecodeSink {
+  onDelta(part: StreamedMessagePart): void;
+  onFinish(finish: FinishInfo): void;
+  onMessageId?(messageId: string): void;
+  onUsage?(usage: Partial<TokenUsage>): void;
+  onError?(message: LlmRemoteErrorMessage): void;
 }
 
-export interface EncodedKwargs {
-  readonly kwargs: Record<string, unknown>;
-  readonly preserveThinking: boolean;
-}
+export type StreamDecoder<TChunk = unknown> = (chunk: TChunk, sink: DecodeSink) => void;
 
-export interface RequestTrait<TNative = unknown> {
-  readonly toolCallIdPolicy?: ToolCallIdPolicy;
-  convertMessage?(
-    message: Message,
-    converted: TNative,
-    ctx: TraitContext,
-  ): TNative | null;
-  mergeHistory?(
-    messages: readonly TNative[],
-    ctx: TraitContext,
-  ): TNative[] | undefined;
-  convertTool?(tool: ToolDescription, ctx: TraitContext): unknown;
-  buildParams?(
-    params: Record<string, unknown>,
-    ctx: TraitContext,
-  ): Record<string, unknown> | undefined;
-}
-
-export interface ComposeProtocolPorts<TNative, TAssembled, TRequest, TTrait> {
-  extras?: object;
-  encodeSampling(sampling: LlmSampling | undefined): Record<string, unknown>;
-  encodeKwargs(
-    input: FormatRequestInput,
-    trait: TTrait | undefined,
-    ctx: TraitContext,
-  ): EncodedKwargs;
-  sealKwargs?(
-    kwargs: Record<string, unknown>,
-    input: FormatRequestInput,
-    trait: TTrait | undefined,
-    ctx: TraitContext,
-  ): Record<string, unknown>;
-  lower(
-    input: FormatRequestInput,
-    trait: TTrait | undefined,
-    ctx: TraitContext,
-    extras: { readonly preserveThinking: boolean },
-  ): Promise<readonly ProtocolLowered<TNative>[]>;
-  defaultMergeHistory?(messages: readonly TNative[]): readonly TNative[];
-  defaultTool(tool: ToolDescription): unknown;
-  assemble(
-    input: FormatRequestInput,
-    parts: ProtocolAssembleParts<TNative>,
-  ): TAssembled;
-  encode(
-    assembled: TAssembled,
-    applyParams: (params: Record<string, unknown>) => Record<string, unknown>,
-  ): TRequest;
-}
-
-export interface ProtocolStream<TChunk> {
-  readonly stream: AsyncIterable<TChunk>;
+export interface ProtocolReply<TBody> {
+  readonly body: TBody;
   readonly headers?: Record<string, string>;
 }
 
-export interface ProtocolHandle<TRequest, TChunk, TClient> {
-  readonly connection?: ProviderConnection;
-  readonly toolCallIdPolicy?: ToolCallIdPolicy;
-  prepare(input: FormatRequestInput, ctx: TraitContext): Promise<TRequest>;
-  createClient(ctx: LlmClientContext): TClient;
-  requestHeaders?(request: TRequest): Record<string, string> | undefined;
-  send(
+export interface Protocol<
+  TOptions = unknown,
+  TRequest = any,
+  TResponse = any,
+  TChunk = any,
+  TClient = any,
+> {
+  readonly media: MediaSupport;
+  readonly capability?: (modelName: string) => ModelCapability | undefined;
+  readonly requestId?: (headers: Readonly<Record<string, string>>) => string | undefined;
+  readonly encode: (module: LlmModule<TOptions>, hooks?: EncodeHooks) => TRequest;
+  readonly decode: (module: LlmModule<TOptions>, response: TResponse, sink: DecodeSink) => void;
+  readonly decodeStream: (module: LlmModule<TOptions>) => StreamDecoder<TChunk>;
+  readonly decodeError: (error: unknown) => LlmRemoteErrorMessage;
+  readonly client: (endpoint: ResolvedEndpoint, options: TOptions | undefined) => TClient;
+  readonly send: (
     client: TClient,
     request: TRequest,
     signal: AbortSignal,
-  ): Promise<ProtocolStream<TChunk>>;
-  createStreamParser(ctx: TraitContext): StreamParser<TChunk>;
-  classifyError(error: unknown): LlmRemoteErrorMessage;
+  ) => Promise<ProtocolReply<TResponse>>;
+  readonly sendStream: (
+    client: TClient,
+    request: TRequest,
+    signal: AbortSignal,
+  ) => Promise<ProtocolReply<AsyncIterable<TChunk>>>;
 }
 
-export function asLowered<TNative>(
-  messages: readonly TNative[],
-): ProtocolLowered<TNative>[] {
-  return messages.map((message) => ({ message }));
+export interface ProtocolDefinition<
+  TOptions,
+  TMessage,
+  TTool,
+  TParams,
+  TRequest,
+  TResponse,
+  TChunk,
+  TClient,
+> extends Omit<Protocol<TOptions, TRequest, TResponse, TChunk, TClient>, 'encode'>,
+    PipelineSpec<TOptions, TMessage, TTool, TParams, TRequest> {}
+
+export type ProtocolPatch<TDefinition> =
+  | Partial<TDefinition>
+  | ((base: TDefinition) => Partial<TDefinition>);
+
+export interface DefinedProtocol<
+  TOptions,
+  TMessage,
+  TTool,
+  TParams,
+  TRequest,
+  TResponse,
+  TChunk,
+  TClient,
+> extends ProtocolDefinition<
+      TOptions,
+      TMessage,
+      TTool,
+      TParams,
+      TRequest,
+      TResponse,
+      TChunk,
+      TClient
+    >,
+    Protocol<TOptions, TRequest, TResponse, TChunk, TClient> {
+  with(
+    patch: ProtocolPatch<
+      ProtocolDefinition<TOptions, TMessage, TTool, TParams, TRequest, TResponse, TChunk, TClient>
+    >,
+  ): DefinedProtocol<TOptions, TMessage, TTool, TParams, TRequest, TResponse, TChunk, TClient>;
+}
+
+export function defineProtocol<
+  TOptions,
+  TMessage,
+  TTool,
+  TParams extends object,
+  TRequest,
+  TResponse,
+  TChunk,
+  TClient,
+>(
+  definition: ProtocolDefinition<
+    TOptions,
+    TMessage,
+    TTool,
+    TParams,
+    TRequest,
+    TResponse,
+    TChunk,
+    TClient
+  >,
+): DefinedProtocol<TOptions, TMessage, TTool, TParams, TRequest, TResponse, TChunk, TClient> {
+  return {
+    ...definition,
+    encode: (module, hooks) => runPipeline(definition, module, hooks),
+    with: (patch) =>
+      defineProtocol({
+        ...definition,
+        ...(typeof patch === 'function' ? patch(definition) : patch),
+      }),
+  };
 }

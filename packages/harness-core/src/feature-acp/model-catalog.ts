@@ -1,7 +1,6 @@
 import {
   defaultThinkingEffortForModel,
   modelSupportsThinking,
-  thinkingMetadataOf,
   type CatalogModelBinding,
 } from '@moonshot-ai/agent-core';
 
@@ -19,16 +18,16 @@ export function projectModelCatalog(
   bindings: readonly CatalogModelBinding[],
 ): readonly AcpModelEntry[] {
   return bindings.map((binding) => {
-    const supported = modelSupportsThinking(binding.model);
-    const meta = thinkingMetadataOf(binding.model);
+    const spec = binding.model;
+    const supported = modelSupportsThinking(spec);
     return {
-      id: binding.model.model,
-      name: binding.model.displayName ?? binding.model.model,
+      id: binding.model.name,
+      name: binding.model.displayName ?? binding.model.name,
       description: undefined,
       thinkingSupported: supported,
-      alwaysThinking: meta?.alwaysThinking === true ? true : undefined,
-      defaultThinkingEffort: supported ? defaultThinkingEffortForModel(binding.model) : 'on',
-      supportEfforts: meta?.supportEfforts,
+      alwaysThinking: spec.thinking?.alwaysThinking === true ? true : undefined,
+      defaultThinkingEffort: supported ? defaultThinkingEffortForModel(spec) : 'on',
+      supportEfforts: spec.thinking?.supportEfforts,
     };
   });
 }
@@ -37,5 +36,7 @@ export function findModelBinding(
   bindings: readonly CatalogModelBinding[],
   modelId: string,
 ): CatalogModelBinding | undefined {
-  return bindings.find((binding) => binding.model.model === modelId);
+  return bindings.find(
+    (binding) => binding.model.name === modelId || binding.model.id === modelId,
+  );
 }

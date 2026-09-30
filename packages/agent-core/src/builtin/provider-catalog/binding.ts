@@ -53,9 +53,8 @@ export function matchCatalogBinding(
   bindings: readonly CatalogModelBinding[],
 ): CatalogModelBinding | undefined {
   return bindings.find((candidate) => {
-    if (candidate.model.alias === alias) return true;
-    if (candidate.model.configKey === alias) return true;
-    if (candidate.model.name === alias) return true;
+    if (candidate.alias === alias) return true;
+    if (candidate.configKey === alias) return true;
     return candidate.model.aliases?.includes(alias) ?? false;
   });
 }

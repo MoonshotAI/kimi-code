@@ -2,11 +2,16 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 
-import { resolveConfigPath, type KimiConfigValidationIssue } from '@moonshot-ai/kimi-code-sdk';
+import { resolveConfigPath } from '@moonshot-ai/kimi-code-sdk';
 import type { Command } from 'commander';
 import { z } from 'zod';
 
 import { getTuiConfigPath, parseTuiConfig } from '#/tui/config';
+
+interface KimiConfigValidationIssue {
+  readonly path: readonly (string | number)[];
+  readonly message: string;
+}
 
 interface WritableLike {
   write(chunk: string): boolean;
@@ -121,8 +126,8 @@ function resolveDeps(deps: Partial<DoctorDeps> | DoctorDeps | undefined): Resolv
     validateConfigToml:
       deps?.validateConfigToml ??
       (async (text, filePath) => {
-        const { validateConfigTomlV2 } = await import('../v2/validate-config');
-        return validateConfigTomlV2(text, filePath);
+        const { validateConfigToml } = await import('./validate-config');
+        return validateConfigToml(text, filePath);
       }),
   };
 }

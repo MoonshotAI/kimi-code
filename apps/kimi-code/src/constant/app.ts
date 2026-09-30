@@ -1,4 +1,4 @@
-import { ErrorCodes, type HostUiCapability } from '@moonshot-ai/kimi-code-sdk';
+import { ErrorCodes } from '@moonshot-ai/kimi-code-sdk';
 
 import { currentKimiProfile } from '#/utils/region';
 
@@ -12,7 +12,6 @@ export const CLI_MSH_PLATFORM = 'kimi_code_cli';
 export const CLI_UI_MODE = 'shell';
 // UI surfaces the TUI renders; declared to the engine at bootstrap so features that need a
 // host-side surface (the NotifyUser update panel) are offered to this process only.
-export const TUI_HOST_UI_CAPABILITIES: readonly HostUiCapability[] = ['update_panel'];
 // Telemetry ui_mode for the `kimi web` host. Same product
 // as the CLI (CLI_USER_AGENT_PRODUCT); the surface is distinguished by ui_mode.
 export const WEB_UI_MODE = 'web';
@@ -115,10 +114,10 @@ export function kimiCodeCdnLatestJsonUrl(): string {
 export function kimiCodeCdnBinariesBase(): string {
   return `${kimiCodeCdnBase()}/binaries`;
 }
-// The marketplace env override name lives in the shared agent-core-v2 plugin
-// domain (kap-server consumes it from there). Deep-path import: this module is
-// evaluated on every CLI invocation, so it must not pull in the engine root.
-export { KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV } from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
+// The marketplace env override name lives in the shared harness-core plugin
+// domain. Deep-path import: this module is evaluated on every CLI invocation,
+// so it must not pull in the engine root.
+export { KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV } from '@moonshot-ai/harness-core/features/plugin/acquire/marketplace';
 // The CLI-side default catalog derives from the current region profile; the
 // env override above takes priority at the call site.
 export function kimiCodePluginMarketplaceUrl(): string {

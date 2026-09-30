@@ -15,8 +15,7 @@ import {
   ConfigRef,
   createConfig,
   createFeature,
-  createMemoryMediaStore,
-  createMemoryMediaUploadCache,
+  createMemoryUploadCache,
   createUserEntry,
   createUserMessage,
   MAIN_AGENT_ID,
@@ -24,18 +23,16 @@ import {
   createHarness,
   providerCatalog,
   undo as builtinUndo,
-  UNKNOWN_CAPABILITY,
   useAgent,
   useAgentTools,
   useProvider,
   type AgentHandle,
   type AppHandle,
-  type CatalogModelDefinition,
+  type CatalogModelConfig,
   type ConfigPersist,
   type FeatureSpec,
-  type LlmModel,
-  type LlmRequester,
-  type Provider,
+  type AgentLlmRequester,
+  type CatalogProviderHandle,
   type SessionHandle,
   type SessionSpace,
   type ToolDefinition,
@@ -50,7 +47,7 @@ import { createFileHistory } from '#/features/fileHistory/index';
 import { createFiles } from '#/features/files/index';
 import { createGoal, GoalRef } from '#/features/goal/index';
 import { createKimi } from '#/features/kimi/index';
-import { createMedia } from '#/features/media/index';
+import { createMedia, parseMediaRefUrl } from '#/features/media/index';
 import { createSessionIndex } from '#/features/sessionIndex/index';
 import {
   interaction,
@@ -71,7 +68,8 @@ import { tokenCounting } from '#/features/tokenCounting/index';
 import { usage } from '#/features/usage/index';
 import { createWorkspaces, WorkspaceRef } from '#/features/workspaces/index';
 
-const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
+import { fakeRequester, textOutcome, testModel } from './fake-llm';
+import { createMemoryMediaStore } from './fake-media';
 
 const mcpFixturePath = fileURLToPath(new URL('./features/fixtures/fake-mcp-server.mjs', import.meta.url));
 
@@ -87,37 +85,35 @@ type ScriptStep = { text: string } | { toolCall: { name: string; arguments: stri
 let queue: ScriptStep[] = [];
 let callSeq = 0;
 
-function createMockRequester(): LlmRequester {
-  return {
-    generate: async (_config, _content, { onEvent }) => {
-      const out = queue.shift() ?? { text: 'done' };
-      if ('toolCall' in out) {
-        onEvent?.({
-          type: 'llm.streaming.part',
-          part: {
+function createMockRequester(): AgentLlmRequester {
+  return fakeRequester((_rest, onEvent) => {
+    const out = queue.shift() ?? { text: 'done' };
+    const usage = { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 };
+    if ('toolCall' in out) {
+      onEvent?.({ type: 'llm.streaming.usage', usage });
+      return {
+        ...textOutcome('', [
+          {
             type: 'function',
             id: `call-${(callSeq += 1)}`,
             name: out.toolCall.name,
             arguments: out.toolCall.arguments,
           },
-        });
-      } else {
-        onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: out.text } });
-      }
-      onEvent?.({
-        type: 'llm.streaming.usage',
-        usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
-      });
-      onEvent?.({ type: 'llm.done' });
-    },
-  };
+        ]),
+        usage,
+      };
+    }
+    onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: out.text } });
+    onEvent?.({ type: 'llm.streaming.usage', usage });
+    return { ...textOutcome(out.text), usage };
+  });
 }
 
-function bindTestLlm(requester: LlmRequester): FeatureSpec {
+function bindTestLlm(requester: AgentLlmRequester): FeatureSpec {
   return createFeature('test-llm', {
     agent() {
       const agent = useAgent();
-      agent.setConfig({ model });
+      agent.setModel(testModel);
       agent.setRequester(requester);
     },
   });
@@ -262,28 +258,14 @@ model = "m1"
 max_context_size = 4096
 `;
 
-function stubProvider(id: string): Provider {
-  return {
-    id,
-    requesters: {
-      openai: {
-        generate: async (_config, _content, { onEvent }) => {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'ok' } });
-          onEvent?.({ type: 'llm.done' });
-        },
-      },
-    },
-    listModels: () => Promise.resolve([]),
-    resolveModel: () => {
-      throw new Error('unused');
-    },
-  };
+function stubProvider(id: string): CatalogProviderHandle {
+  return { id, requester: fakeRequester(() => textOutcome('ok')) };
 }
 
-const m1Def: CatalogModelDefinition = {
+const m1Def: CatalogModelConfig = {
   provider: 'test',
   model: 'm1',
-  capability: { ...UNKNOWN_CAPABILITY, thinking: true, tool_use: true },
+  capability: { thinking: true, tool_use: true },
   maxContextSize: 4096,
   supportEfforts: ['low', 'high'],
   defaultEffort: 'low',
@@ -293,7 +275,7 @@ function bindTestProvider(): FeatureSpec {
   return createFeature('test-provider', {
     app() {
       useProvider({
-        provider: stubProvider('test'),
+        handle: stubProvider('test'),
         info: { type: 'openai', apiKey: 'sk-test', baseUrl: 'https://test.example.com' },
         models: [m1Def],
       });
@@ -4132,6 +4114,7 @@ describe('feature-http ws v1 (kap-aligned) endpoint', () => {
     const store = createMemoryMediaStore();
     const pngBytes = Buffer.from('fake-png-bytes');
     const ref = await store.put({ bytes: pngBytes, mimeType: 'image/png', filename: 'shot.png' });
+    const fileId = parseMediaRefUrl(ref) ?? ref;
 
     const mediaTool: ToolDefinition = {
       name: 'MediaProbe',
@@ -4141,7 +4124,7 @@ describe('feature-http ws v1 (kap-aligned) endpoint', () => {
         Promise.resolve({
           content: [
             { type: 'text' as const, text: '<image path="/tmp/shot.png">' },
-            { type: 'image_url' as const, imageUrl: { url: `media://${ref}` } },
+            { type: 'image_url' as const, source: { kind: 'store' as const, ref } },
             { type: 'text' as const, text: '</image>' },
           ],
         }),
@@ -4154,7 +4137,7 @@ describe('feature-http ws v1 (kap-aligned) endpoint', () => {
       });
 
     const env = await mountHttp([
-      createMedia({ workDir: dir, store, cache: createMemoryMediaUploadCache() }),
+      createMedia({ workDir: dir, store, cache: createMemoryUploadCache() }),
       bindMediaTool(),
       bindTestLlm(createMockRequester()),
     ]);
@@ -4179,7 +4162,7 @@ describe('feature-http ws v1 (kap-aligned) endpoint', () => {
       {
         role: 'user',
         content: [
-          { type: 'image_url', imageUrl: { url: `media://${ref}`, name: 'shot.png' } },
+          { type: 'image_url', source: { kind: 'store', ref }, name: 'shot.png' },
           { type: 'text', text: 'look' },
         ],
       },
@@ -4201,13 +4184,13 @@ describe('feature-http ws v1 (kap-aligned) endpoint', () => {
     ] as Record<string, unknown>;
     expect(attachment).toMatchObject({
       mediaType: 'image/*',
-      source: { kind: 'session_media', fileId: ref },
+      source: { kind: 'session_media', fileId },
     });
 
     const prompted = collectOps(client).find((op) => op['op'] === 'prompt.upsert');
     expect(prompted?.['prompt']).toMatchObject({
       content: [
-        { type: 'image', source: { kind: 'session_media', file_id: ref }, name: 'shot.png' },
+        { type: 'image', source: { kind: 'session_media', file_id: fileId }, name: 'shot.png' },
         { type: 'text', text: 'look' },
       ],
     });
@@ -4238,10 +4221,11 @@ describe('feature-http ws v1 (kap-aligned) endpoint', () => {
       unknown
     >[];
     const mediaPart = output.find((part) => part['type'] === 'image_url') as {
-      imageUrl: { url: string };
+      source: { kind: string; url: string };
     };
-    expect(mediaPart.imageUrl.url.startsWith('data:image/png;base64,')).toBe(true);
-    const base64 = mediaPart.imageUrl.url.slice('data:image/png;base64,'.length);
+    expect(mediaPart.source.kind).toBe('url');
+    expect(mediaPart.source.url.startsWith('data:image/png;base64,')).toBe(true);
+    const base64 = mediaPart.source.url.slice('data:image/png;base64,'.length);
     expect(Buffer.from(base64, 'base64')).toEqual(pngBytes);
 
     await client.close();
@@ -5066,22 +5050,23 @@ describe('feature-http files and session media routes', () => {
     const store = createMemoryMediaStore();
     const env = await mountHttp([
       createFiles({ dir }),
-      createMedia({ workDir: dir, store, cache: createMemoryMediaUploadCache() }),
+      createMedia({ workDir: dir, store, cache: createMemoryUploadCache() }),
     ]);
     await env.app.open({ sessionId: 'ses_media' });
 
     const bytes = Buffer.from('media-bytes-abcdef');
     const ref = await store.put({ bytes, mimeType: 'image/png', filename: 'shot.png' });
+    const fileId = parseMediaRefUrl(ref) ?? ref;
 
-    const got = await get(env, `/sessions/ses_media/media/${ref}`);
+    const got = await get(env, `/sessions/ses_media/media/${fileId}`);
     expect(got.status).toBe(200);
     expect(got.headers.get('content-type')).toBe('image/png');
     expect(got.headers.get('content-disposition')).toBe('inline; filename="shot.png"');
     expect(got.headers.get('accept-ranges')).toBe('bytes');
-    expect(got.headers.get('etag')).toBe(`"ses_media-${ref}-${bytes.length}"`);
+    expect(got.headers.get('etag')).toBe(`"ses_media-${fileId}-${bytes.length}"`);
     expect(Buffer.from(await got.arrayBuffer())).toEqual(bytes);
 
-    const ranged = await fetch(`${env.origin}/api/v1/sessions/ses_media/media/${ref}`, {
+    const ranged = await fetch(`${env.origin}/api/v1/sessions/ses_media/media/${fileId}`, {
       headers: { range: 'bytes=1-3' },
     });
     expect(ranged.status).toBe(206);
@@ -5098,7 +5083,7 @@ describe('feature-http files and session media routes', () => {
     const missingFile = await get(env, '/sessions/ses_media/media/f_00000000-0000-0000-0000-000000000000');
     expect(await missingFile.json()).toMatchObject({ code: 40407, msg: 'file not found' });
 
-    const missingSession = await get(env, `/sessions/ses_ghost/media/${ref}`);
+    const missingSession = await get(env, `/sessions/ses_ghost/media/${fileId}`);
     expect(await missingSession.json()).toMatchObject({ code: 40401, msg: 'session not found' });
   });
 

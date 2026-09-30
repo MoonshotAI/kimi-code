@@ -7,17 +7,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   ConfigRef,
-  UNKNOWN_CAPABILITY,
   createConfig,
   createFeature,
-  createMediaLowerer,
-  createMemoryMediaStore,
-  createMemoryMediaUploadCache,
+  createMemoryUploadCache,
   createUserMessage,
-  dataUrlOf,
-  isMediaPart,
   MAIN_AGENT_ID,
-  mediaContextOf,
   MemoryBackend,
   createHarness,
   openBlobs,
@@ -29,29 +23,37 @@ import {
   type ContentPart,
   type FeatureSpec,
   type HistoryMessage,
-  type LlmModel,
-  type LlmRequestContent,
-  type LlmRequester,
-  type MediaContent,
-  type MediaPart,
-  type MediaStore,
+  type AgentLlmRequester,
+  type LlmModelSpec,
+  type LlmOutcome,
+  type MediaSupport,
   type Message,
   type SessionStores,
+  type StoredContent,
   type ToolDescription,
   type ToolMessage,
   type ToolMeta,
 } from '@moonshot-ai/agent-core';
 
-import { createMedia, IMAGE_CONFIG_SECTION, MediaLibraryRef, type ImageConfig } from '#/features/media/index';
+import {
+  createMedia,
+  IMAGE_CONFIG_SECTION,
+  MediaLibraryRef,
+  type ImageConfig,
+  type MediaStore,
+} from '#/features/media/index';
 import { createNodeOsHost } from '#/features/os/host/index';
 
-const visionModel: LlmModel = {
+import { testModelSpec, textOutcome } from '../fake-llm';
+import { createMemoryMediaStore } from '../fake-media';
+
+const visionModel: LlmModelSpec = {
   provider: 'test',
-  model: 'vision-model',
-  capability: { ...UNKNOWN_CAPABILITY, image_in: true, video_in: true },
+  name: 'vision-model',
+  capability: { image_in: true, video_in: true },
 };
 
-const plainModel: LlmModel = { provider: 'test', model: 'plain-model', capability: UNKNOWN_CAPABILITY };
+const plainModel: LlmModelSpec = { provider: 'test', name: 'plain-model' };
 
 interface LlmCall {
   readonly messages: readonly Message[];
@@ -61,72 +63,52 @@ interface LlmCall {
 
 type LlmScript = (call: LlmCall) => { text: string } | { toolCall: { name: string; arguments: string } };
 
-function withMediaUrl(part: MediaPart, url: string): ContentPart {
-  if (part.type === 'image_url') return { ...part, imageUrl: { ...part.imageUrl, url } };
-  if (part.type === 'video_url') return { ...part, videoUrl: { ...part.videoUrl, url } };
-  return { ...part, audioUrl: { ...part.audioUrl, url } };
-}
+const wireMedia: MediaSupport = {
+  kinds: {
+    image: { mimes: 'any', sources: ['inline', 'url'], inToolResult: 'native' },
+    video: { mimes: 'any', sources: ['inline', 'url'], inToolResult: 'native' },
+    audio: { mimes: 'any', sources: ['inline', 'url'], inToolResult: 'native' },
+  },
+};
 
-async function lowerForWire(
-  messages: readonly Message[],
-  content: LlmRequestContent,
-  model: LlmModel,
-): Promise<readonly Message[]> {
-  if (content.media === undefined) return messages;
-  const materialize = createMediaLowerer(mediaContextOf({ model, media: content.media }));
-  const out: Message[] = [];
-  for (const message of messages) {
-    let changed = false;
-    const parts: ContentPart[] = [];
-    for (const part of message.content) {
-      if (!isMediaPart(part)) {
-        parts.push(part);
-        continue;
-      }
-      const media = await materialize(part);
-      changed = true;
-      if (media.form === 'inline') {
-        parts.push(withMediaUrl(part, dataUrlOf(media.mimeType, media.data)));
-      } else if (media.form === 'file') {
-        parts.push(withMediaUrl(part, media.url));
-      } else {
-        parts.push({ type: 'text', text: media.text });
-      }
-    }
-    out.push(changed ? { ...message, content: parts } : message);
-  }
-  return out;
-}
-
-function createMockRequester(script: LlmScript): { requester: LlmRequester; calls: LlmCall[] } {
+function createMockRequester(script: LlmScript): { requester: AgentLlmRequester; calls: LlmCall[] } {
   const calls: LlmCall[] = [];
-  return {
-    calls,
-    requester: {
-      generate: async (config, content, { onEvent }) => {
-        const call: LlmCall = {
-          messages: content.messages,
-          wire: await lowerForWire(content.messages, content, config.model),
-          tools: content.tools ?? [],
-        };
-        calls.push(call);
-        const out = script(call);
-        if ('toolCall' in out) {
-          onEvent?.({
-            type: 'llm.streaming.part',
-            part: { type: 'function', id: `call-${calls.length}`, name: out.toolCall.name, arguments: out.toolCall.arguments },
-          });
-        } else {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: out.text } });
-        }
-        onEvent?.({
-          type: 'llm.streaming.usage',
-          usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
+  const requester: AgentLlmRequester = {
+    with: () => requester,
+    request: () => {
+      throw new Error('fake requester cannot build wire requests');
+    },
+    generate: async (rest, { signal, onEvent }) => {
+      const messages = rest.content?.messages ?? [];
+      let wire: readonly Message[] = messages;
+      const resolvers = rest.policy?.resolvers;
+      for (const resolver of typeof resolvers === 'function' ? resolvers() : (resolvers ?? [])) {
+        wire = await resolver.resolve(wire, {
+          model: rest.model?.spec ?? testModelSpec,
+          endpoint: rest.endpoint,
+          media: wireMedia,
+          signal,
+          report: () => {},
         });
-        onEvent?.({ type: 'llm.done' });
-      },
+      }
+      const call: LlmCall = { messages, wire, tools: rest.profile?.tools ?? [] };
+      calls.push(call);
+      const out = script(call);
+      onEvent?.({
+        type: 'llm.streaming.usage',
+        usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
+      });
+      const outcome =
+        'toolCall' in out
+          ? textOutcome('', [
+              { type: 'function', id: `call-${calls.length}`, name: out.toolCall.name, arguments: out.toolCall.arguments },
+            ])
+          : textOutcome(out.text);
+      onEvent?.({ type: 'llm.ended', outcome });
+      return outcome;
     },
   };
+  return { calls, requester };
 }
 
 function readMediaScript(...argsList: Record<string, unknown>[]): LlmScript {
@@ -150,9 +132,9 @@ function fakePersist(initial?: string): ConfigPersist {
   };
 }
 
-function recordingStore(): { store: MediaStore; puts: MediaContent[] } {
+function recordingStore(): { store: MediaStore; puts: StoredContent[] } {
   const inner = createMemoryMediaStore();
-  const puts: MediaContent[] = [];
+  const puts: StoredContent[] = [];
   return {
     puts,
     store: {
@@ -176,7 +158,7 @@ interface StartedApp {
   readonly main: AgentHandle;
   readonly calls: LlmCall[];
   readonly store: MediaStore;
-  readonly puts: MediaContent[];
+  readonly puts: StoredContent[];
   readonly workDir: string;
   readonly stores: SessionStores;
   readonly dispose: () => Promise<void>;
@@ -184,7 +166,7 @@ interface StartedApp {
 
 async function startApp(opts: {
   readonly script: LlmScript;
-  readonly model?: LlmModel;
+  readonly model?: LlmModelSpec;
   readonly toml?: string;
   readonly withConfig?: boolean;
   readonly originalsDir?: string;
@@ -200,7 +182,7 @@ async function startApp(opts: {
   const bindLlm = createFeature('test-llm', {
     agent() {
       const agent = useAgent();
-      agent.setConfig({ model: opts.model ?? visionModel });
+      agent.setModel({ spec: opts.model ?? visionModel });
       agent.setRequester(requester);
     },
   });
@@ -210,7 +192,7 @@ async function startApp(opts: {
     createMedia({
       workDir,
       store,
-      cache: createMemoryMediaUploadCache(),
+      cache: createMemoryUploadCache(),
       host: createNodeOsHost(),
       originalsDir: opts.originalsDir,
     }),
@@ -338,9 +320,10 @@ describe('media feature', () => {
     expect(open).toEqual({ type: 'text', text: `<image path="${join(started.workDir, 'noise.png')}">` });
     expect(close).toEqual({ type: 'text', text: '</image>' });
     if (mediaPart?.type !== 'image_url') throw new Error('expected an image_url part');
-    expect(mediaPart.imageUrl.url.startsWith('media://')).toBe(true);
-    const ref = mediaPart.imageUrl.url.slice('media://'.length);
-    const stored = await started.store.get(ref);
+    expect(mediaPart.source.kind).toBe('store');
+    if (mediaPart.source.kind !== 'store') throw new Error('expected a store source');
+    expect(mediaPart.source.ref.startsWith('media://')).toBe(true);
+    const stored = await started.store.get(mediaPart.source.ref);
     expect(stored?.mimeType).toBe('image/jpeg');
     expect(stored?.bytes.length ?? 0).toBeGreaterThan(0);
     expect(stored?.bytes.length ?? Number.MAX_SAFE_INTEGER).toBeLessThanOrEqual(256 * 1024);
@@ -363,7 +346,8 @@ describe('media feature', () => {
     const toolMessage = await runToolTurn(started.main, started.calls);
     const mediaPart = toolMessage.content.find((part) => part.type === 'image_url');
     if (mediaPart?.type !== 'image_url') throw new Error('expected an image_url part');
-    const stored = await started.store.get(mediaPart.imageUrl.url.slice('media://'.length));
+    if (mediaPart.source.kind !== 'store') throw new Error('expected a store source');
+    const stored = await started.store.get(mediaPart.source.ref);
     expect(stored?.mimeType).toBe('image/png');
     expect(stored?.bytes.slice(0, 8)).toEqual(
       new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
@@ -389,7 +373,8 @@ describe('media feature', () => {
     const toolMessage = await runToolTurn(started.main, started.calls);
     const mediaPart = toolMessage.content.find((part) => part.type === 'image_url');
     if (mediaPart?.type !== 'image_url') throw new Error('expected an image_url part');
-    const stored = await started.store.get(mediaPart.imageUrl.url.slice('media://'.length));
+    if (mediaPart.source.kind !== 'store') throw new Error('expected a store source');
+    const stored = await started.store.get(mediaPart.source.ref);
     expect(stored?.mimeType).toBe('image/png');
     expect(Buffer.from(stored?.bytes ?? []).equals(png)).toBe(true);
     expect(
@@ -455,15 +440,15 @@ describe('media feature', () => {
     const started = await startApp({ script: () => ({ text: 'ok' }) });
     const noise = await noisePngBytes(1200, 900);
     const small = await solidPngBytes(64, 48);
-    const bigDataUrl = `data:image/png;base64,${noise.toString('base64')}`;
-    const smallDataUrl = `data:image/png;base64,${small.toString('base64')}`;
+    const bigData = noise.toString('base64');
+    const smallData = small.toString('base64');
     const done = nextTurnDone(started.main);
     started.main.submit({
       role: 'user',
       content: [
         { type: 'text', text: 'look at these' },
-        { type: 'image_url', imageUrl: { url: bigDataUrl } },
-        { type: 'image_url', imageUrl: { url: smallDataUrl } },
+        { type: 'image_url', source: { kind: 'inline', mimeType: 'image/png', data: bigData } },
+        { type: 'image_url', source: { kind: 'inline', mimeType: 'image/png', data: smallData } },
       ],
     });
     await done;
@@ -477,28 +462,40 @@ describe('media feature', () => {
     const images = parts.filter((part) => part.type === 'image_url');
     expect(images).toHaveLength(2);
     const lowered = images.find(
-      (part) => part.type === 'image_url' && part.imageUrl.url.startsWith('data:image/jpeg;base64,'),
+      (part) =>
+        part.type === 'image_url' && part.source.kind === 'inline' && part.source.mimeType === 'image/jpeg',
     );
     expect(lowered).toBeDefined();
     expect(
       images.some(
-        (part) => part.type === 'image_url' && part.imageUrl.url === smallDataUrl,
+        (part) =>
+          part.type === 'image_url' &&
+          part.source.kind === 'inline' &&
+          part.source.mimeType === 'image/png' &&
+          part.source.data === smallData,
       ),
     ).toBe(true);
-    expect(images.every((part) => part.type === 'image_url' && part.imageUrl.url !== bigDataUrl)).toBe(true);
+    expect(
+      images.every(
+        (part) =>
+          part.type === 'image_url' && (part.source.kind !== 'inline' || part.source.data !== bigData),
+      ),
+    ).toBe(true);
     expect(started.puts.some((put) => put.mimeType === 'image/jpeg')).toBe(true);
     await started.dispose();
   }, 60_000);
 
   it('drops the oldest inline images when a request exceeds the media budget', async () => {
     const started = await startApp({ script: () => ({ text: 'ok' }) });
-    const filler = (marker: string) =>
-      `data:image/png;base64,${marker}${'A'.repeat(8 * 1024 * 1024)}`;
-    const urls = [filler('a'), filler('b'), filler('c')];
+    const filler = (marker: string) => `${marker}${'A'.repeat(8 * 1024 * 1024)}`;
+    const datas = [filler('a'), filler('b'), filler('c')];
     const done = nextTurnDone(started.main);
     started.main.submit({
       role: 'user',
-      content: urls.map((url) => ({ type: 'image_url' as const, imageUrl: { url } })),
+      content: datas.map((data) => ({
+        type: 'image_url' as const,
+        source: { kind: 'inline' as const, mimeType: 'image/png', data },
+      })),
     });
     await done;
     const userMessage = started.calls.at(-1)?.wire.findLast((message) => message.role === 'user');
@@ -506,7 +503,10 @@ describe('media feature', () => {
     const placeholder = '[image omitted: dropped to fit the request media budget]';
     expect(userMessage.content[0]).toEqual({ type: 'text', text: placeholder });
     expect(userMessage.content[1]).toEqual({ type: 'text', text: placeholder });
-    expect(userMessage.content[2]).toEqual({ type: 'image_url', imageUrl: { url: urls[2] } });
+    expect(userMessage.content[2]).toEqual({
+      type: 'image_url',
+      source: { kind: 'inline', mimeType: 'image/png', data: datas[2] },
+    });
     await started.dispose();
   }, 60_000);
 
@@ -517,7 +517,7 @@ describe('media feature', () => {
     const done = nextTurnDone(started.main);
     started.main.submit({
       role: 'user',
-      content: [{ type: 'image_url', imageUrl: { url: `media://${ref}` } }],
+      content: [{ type: 'image_url', source: { kind: 'store', ref } }],
     });
     await done;
     const userMessage = started.calls.at(-1)?.wire.findLast((message) => message.role === 'user');
@@ -525,7 +525,7 @@ describe('media feature', () => {
     expect(userMessage.content).toEqual([
       {
         type: 'image_url',
-        imageUrl: { url: `data:image/png;base64,${png.toString('base64')}` },
+        source: { kind: 'inline', mimeType: 'image/png', data: png.toString('base64') },
       },
     ]);
     await started.dispose();

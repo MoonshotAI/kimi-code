@@ -9,6 +9,7 @@ import {
   ModelDefaultsRef,
   PROVIDERS_CONFIG_SECTION,
   ProviderCatalogRef,
+  catalogModelAlias,
   matchCatalogBinding,
   omitUndefined,
   useInject,
@@ -18,7 +19,7 @@ import {
   type ConfigStore,
   type ModelCapability,
   type ModelsSection,
-  type ProviderStore,
+  type ProviderCatalogFace as ProviderStore,
   type ProvidersSection,
 } from '@moonshot-ai/agent-core';
 import { useCollection } from '@moonshot-ai/agent-core/kernel/index';
@@ -373,7 +374,7 @@ export function useModelCatalogRoutes(prefix: string): void {
       const items = resolved.store
         .providers()
         .flatMap((providerId) =>
-          resolved.store.models(providerId).map((model) => modelCatalogItemView(providerId, model)),
+          resolved.store.models(providerId).map((model) => modelCatalogItemView(providerId, model, resolved.store.providerInfo(providerId))),
         );
       sendOk(request, response, { items });
     },
@@ -436,7 +437,7 @@ export function useModelCatalogRoutes(prefix: string): void {
                 model: slash > 0 ? parsed.id.slice(slash + 1) : parsed.id,
                 max_context_size: 0,
               }
-            : modelCatalogItemView(binding.providerId, binding.model),
+            : { ...modelCatalogItemView(binding.providerId, binding.model), model: binding.alias },
       });
     },
   });
@@ -673,7 +674,7 @@ function buildProviderView(
 
 function providerView(providerId: string, config: ConfigStore, store: ProviderStore): ProviderView {
   const info = store.providerInfo(providerId);
-  const aliasIds = store.models(providerId).map((model) => model.alias);
+  const aliasIds = store.models(providerId).map((model) => `${info?.aliasScope ?? providerId}/${model.id}`);
   const modelsSection = config.get<ModelsSection>(MODELS_CONFIG_SECTION) ?? {};
   return buildProviderView(providerId, info, aliasIds, config, modelsSection);
 }
@@ -681,24 +682,28 @@ function providerView(providerId: string, config: ConfigStore, store: ProviderSt
 function capabilityStrings(model: CatalogModel): readonly string[] | undefined {
   const capability = model.capability;
   const out: string[] = [];
-  if (capability.image_in) out.push('image_in');
-  if (capability.video_in) out.push('video_in');
-  if (capability.audio_in) out.push('audio_in');
-  if (capability.thinking) out.push('thinking');
-  if (capability.tool_use) out.push('tool_use');
-  if (capability.dynamically_loaded_tools === true) out.push('dynamically_loaded_tools');
-  if (model.alwaysThinking === true) out.push('always_thinking');
+  if (capability?.image_in === true) out.push('image_in');
+  if (capability?.video_in === true) out.push('video_in');
+  if (capability?.audio_in === true) out.push('audio_in');
+  if (capability?.thinking === true) out.push('thinking');
+  if (capability?.tool_use === true) out.push('tool_use');
+  if (capability?.dynamically_loaded_tools === true) out.push('dynamically_loaded_tools');
+  if (model.thinking?.alwaysThinking === true) out.push('always_thinking');
   return out.length === 0 ? undefined : out;
 }
 
-function modelCatalogItemView(providerId: string, model: CatalogModel): ModelCatalogItemView {
+function modelCatalogItemView(
+  providerId: string,
+  model: CatalogModel,
+  info?: CatalogProviderInfo,
+): ModelCatalogItemView {
   return {
     provider: providerId,
-    model: model.alias,
-    display_name: model.displayName ?? model.name ?? model.model,
+    model: catalogModelAlias(info, providerId, model.id),
+    display_name: model.displayName ?? model.name,
     max_context_size: model.maxContextSize ?? 0,
     capabilities: capabilityStrings(model),
-    support_efforts: model.supportEfforts === undefined ? undefined : [...model.supportEfforts],
-    default_effort: model.defaultEffort,
+    support_efforts: model.thinking?.supportEfforts === undefined ? undefined : [...model.thinking.supportEfforts],
+    default_effort: model.thinking?.defaultEffort,
   };
 }

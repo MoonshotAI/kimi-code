@@ -27,6 +27,8 @@ import {
   createWriteTool,
 } from '#/features/os/tools/index';
 
+import { testModel } from '../fake-llm';
+
 let workDir: string;
 let host: OsHost;
 
@@ -927,27 +929,37 @@ describe('os feature', () => {
       createHarness,
       openBlobs,
       openSessionStores,
-      UNKNOWN_CAPABILITY,
-      useAgent,
+          useAgent,
     } = await import('@moonshot-ai/agent-core');
     const { createOs, BashRef, resolveAgentTaskConfig, resolvePrintBackgroundMode } = await import(
       '#/features/os/index'
     );
-    const model = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
     const seen: { tools: string[] } = { tools: [] };
     const requester = {
-      generate: async (_config: unknown, content: { tools?: readonly { name: string }[] }, hooks: { onEvent?: (event: unknown) => void }) => {
-        seen.tools = (content.tools ?? []).map((tool) => tool.name);
+      with: () => requester,
+      request: () => {
+        throw new Error('fake requester cannot build wire requests');
+      },
+      generate: async (
+        rest: { profile?: { tools?: readonly { name: string }[] } },
+        hooks: { onEvent?: (event: unknown) => void },
+      ) => {
+        seen.tools = (rest.profile?.tools ?? []).map((tool) => tool.name);
         const emit = hooks.onEvent ?? (() => undefined);
         emit({ type: 'llm.streaming.part', part: { type: 'text', text: 'ok' } });
         emit({ type: 'llm.streaming.usage', usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 } });
-        emit({ type: 'llm.done' });
+        const outcome = {
+          type: 'done',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }], toolCalls: [] },
+        };
+        emit({ type: 'llm.ended', outcome });
+        return outcome;
       },
     };
     const bindLlm = createFeature('test-llm', {
       agent() {
         const agent = useAgent();
-        agent.setConfig({ model });
+        agent.setModel(testModel);
         agent.setRequester(requester as never);
       },
     });

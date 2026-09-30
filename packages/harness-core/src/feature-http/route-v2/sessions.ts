@@ -460,7 +460,7 @@ function activityModelOf(session: SessionHandle): string | undefined {
   const main = session.get(MAIN_AGENT_ID);
   const bound = main?.resolve(AgentModelRef)?.current.value.alias;
   if (typeof bound === 'string' && bound.length > 0) return bound;
-  const configured = main?.config?.model.model;
+  const configured = main?.model?.spec.name;
   return typeof configured === 'string' && configured.length > 0 ? configured : undefined;
 }
 

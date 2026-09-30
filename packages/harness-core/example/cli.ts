@@ -5,6 +5,7 @@ import {
   createUserMessage,
   MAIN_AGENT_ID,
   type AssistantMessage,
+  type MediaSource,
 } from '@moonshot-ai/agent-core';
 import type { RuntimeEvent } from '@moonshot-ai/agent-core/kernel/index';
 
@@ -218,19 +219,32 @@ function writeAssistant(message: AssistantMessage): void {
       continue;
     }
     if (part.type === 'image_url') {
-      process.stdout.write(`${part.imageUrl.url}\n`);
+      process.stdout.write(`${mediaSourceText(part.source)}\n`);
       continue;
     }
     if (part.type === 'audio_url') {
-      process.stdout.write(`${part.audioUrl.url}\n`);
+      process.stdout.write(`${mediaSourceText(part.source)}\n`);
       continue;
     }
-    process.stdout.write(`${part.videoUrl.url}\n`);
+    process.stdout.write(`${mediaSourceText(part.source)}\n`);
   }
   for (const call of message.toolCalls) {
     process.stdout.write(`${call.name} ${call.arguments ?? ''}\n`);
   }
   process.stdout.write('\n');
+}
+
+function mediaSourceText(source: MediaSource): string {
+  switch (source.kind) {
+    case 'url':
+      return source.url;
+    case 'store':
+      return `store:${source.ref}`;
+    case 'inline':
+      return `data:${source.mimeType};base64,${source.data}`;
+    case 'file':
+      return `file:${source.id}`;
+  }
 }
 
 function writeJson(value: unknown): void {

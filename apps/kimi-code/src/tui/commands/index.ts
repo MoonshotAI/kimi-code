@@ -1,9 +1,9 @@
 export * from './experimental-flags';
 export * from './parse';
+export * from './plugin-commands';
 export * from './registry';
 export * from './resolve';
 export * from './skills';
-export * from './plugin-commands';
 export * from './types';
 
 export { dispatchInput, type SlashCommandHost } from './dispatch';
@@ -16,27 +16,28 @@ export {
   handleModelCommand,
   handlePlanCommand,
   handleThemeCommand,
-  showExperimentsPanel,
   showModelPicker,
   showPermissionPicker,
   showSettingsSelector,
 } from './config';
-export { handleSwarmCommand } from './swarm';
-export { handleTowerCommand } from './tower';
-export { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
+export { handleGoalCommand } from './goal';
+export { handleFeedbackCommand, showStatusReport, showUsage } from './info';
 export { handlePluginsCommand } from './plugins';
+export { handleProviderCommand } from './provider';
 export { handleReloadCommand, handleReloadTuiCommand } from './reload';
-export { handleGoalCommand, parseGoalCommand, goalObjectiveLengthWarning } from './goal';
-export { goalArgumentCompletions } from './registry';
-export { handleForkCommand, handleInitCommand, handleTitleCommand } from './session';
+export {
+  handleExportDebugZipCommand,
+  handleExportMdCommand,
+  handleForkCommand,
+  handleInitCommand,
+  handleTitleCommand,
+} from './session';
+export { handleSwarmCommand } from './swarm';
 export { handleUndoCommand } from './undo';
-export { handleRemoteControlCommand, handleWebCommand } from './web';
 export {
   promptApiKey,
-  promptCatalogProviderSelection,
   promptFeedbackInput,
   promptLogoutProviderSelection,
-  promptModelSelectionForCatalog,
   promptModelSelectionForOpenPlatform,
   promptPlatformSelection,
   runModelSelector,

@@ -1,6 +1,6 @@
-import type { MediaStore } from '@moonshot-ai/agent-core';
 import type { RuntimeEvent } from '@moonshot-ai/agent-core/kernel/index';
 
+import type { MediaStore } from '#/features/media/store';
 import type { OsHost } from '#/features/os/host/types';
 
 import type { McpServerConfig } from './core/config-schema';

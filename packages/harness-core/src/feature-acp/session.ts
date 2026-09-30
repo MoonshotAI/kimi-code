@@ -10,11 +10,11 @@ import {
   type ToolCallContent,
   type ToolCallLocation,
 } from '@agentclientprotocol/sdk';
-import type {
-  AgentHandle,
-  CatalogModelBinding,
-  SessionHandle,
-  SessionRecord,
+import {
+  type AgentHandle,
+  type CatalogModelBinding,
+  type SessionHandle,
+  type SessionRecord,
 } from '@moonshot-ai/agent-core';
 import { watch } from '@moonshot-ai/agent-core/kernel/index';
 
@@ -112,8 +112,8 @@ export function wireAcpSession(deps: AcpSessionDeps): AcpSession {
   const sessionId = deps.session.sessionId;
   const agent = deps.agent;
   const client = deps.client;
-  let currentModelId = agent.config?.model.model ?? '';
-  let currentThinkingLevel: string = agent.config?.thinking?.effort ?? 'off';
+  let currentModelId = agent.model?.spec.name ?? '';
+  let currentThinkingLevel: string = agent.model?.thinking?.effort ?? 'off';
   let currentModeId: AcpModeId = DEFAULT_MODE_ID;
   let driver: TurnDriver | undefined;
   let currentTurnId: number | undefined;
@@ -529,14 +529,14 @@ export function wireAcpSession(deps: AcpSessionDeps): AcpSession {
       if (binding === undefined) {
         throw RequestError.invalidParams({ modelId: baseId }, `Unknown model: ${baseId}`);
       }
-      agent.setConfig({ ...agent.config, model: binding.model });
+      agent.setModel({ ...agent.model, spec: binding.model });
       agent.setRequester(binding.requester);
       currentModelId = baseId;
       if (hasSuffix) {
         const level =
           projectModelCatalog(deps.models()).find((model) => model.id === baseId)
             ?.defaultThinkingEffort ?? 'on';
-        agent.setConfig({ model: binding.model, thinking: { effort: level } });
+        agent.setModel({ spec: binding.model, thinking: { effort: level } });
         currentThinkingLevel = level;
       }
       await client
@@ -566,9 +566,9 @@ export function wireAcpSession(deps: AcpSessionDeps): AcpSession {
       } else {
         return false;
       }
-      const config = agent.config;
-      if (config !== undefined) {
-        agent.setConfig({ ...config, thinking: { effort: level } });
+      const model = agent.model;
+      if (model !== undefined) {
+        agent.setModel({ ...model, thinking: { effort: level } });
       }
       currentThinkingLevel = level;
       await client

@@ -148,17 +148,17 @@ export function createSubagentLauncher(deps: SubagentLauncherDeps): SubagentLaun
     if (plan.fork) {
       target.remind(createUserMessage(FORK_CONTEXT_NOTICE), { key: FORK_REMIND_KEY });
     }
-    const callerConfig = agent.config;
-    if (callerConfig === undefined) {
+    const callerModel = agent.model;
+    if (callerModel === undefined) {
       if (plan.model.kind === 'explicit') {
         await session.close(agentId).catch(() => {});
         return MODEL_NOT_CONFIGURED_MESSAGE;
       }
     } else {
-      target.setConfig(
+      target.setModel(
         plan.model.kind === 'explicit'
-          ? { ...callerConfig, model: plan.model.model }
-          : callerConfig,
+          ? { ...callerModel, spec: plan.model.model }
+          : callerModel,
       );
     }
     registry.set(agentId, {

@@ -16,14 +16,12 @@ import {
   openBlobs,
   openSessionStores,
   Trees,
-  UNKNOWN_CAPABILITY,
   useAgent,
   type AgentHandle,
   type AppHandle,
   type ConfigPersist,
   type FeatureSpec,
-  type LlmModel,
-  type LlmRequester,
+  type AgentLlmRequester,
   type Message,
   type SessionHandle,
   type SessionStores,
@@ -57,7 +55,7 @@ import {
   type SkillFace,
 } from '#/features/skill/index';
 
-const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
+import { fakeRequester, testModel, textOutcome } from '../fake-llm';
 
 interface LlmCall {
   readonly systemPrompt?: string;
@@ -73,36 +71,30 @@ interface ScriptOut {
 
 type LlmScript = (call: LlmCall) => ScriptOut;
 
-function createMockRequester(script: LlmScript): { requester: LlmRequester; calls: LlmCall[] } {
+function createMockRequester(script: LlmScript): { requester: AgentLlmRequester; calls: LlmCall[] } {
   const calls: LlmCall[] = [];
   return {
     calls,
-    requester: {
-      generate: async (_config, content, { onEvent }) => {
-        const call: LlmCall = {
-          systemPrompt: content.systemPrompt,
-          messages: content.messages,
-          tools: content.tools ?? [],
-        };
-        calls.push(call);
-        const out = script(call);
-        if (out.gate !== undefined) await out.gate;
-        if (out.text !== undefined) {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: out.text } });
-        }
-        if (out.toolCall !== undefined) {
-          onEvent?.({
-            type: 'llm.streaming.part',
-            part: { type: 'function', id: `call-${calls.length}`, name: out.toolCall.name, arguments: out.toolCall.arguments },
-          });
-        }
-        onEvent?.({
-          type: 'llm.streaming.usage',
-          usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
-        });
-        onEvent?.({ type: 'llm.done' });
-      },
-    },
+    requester: fakeRequester(async (rest, onEvent) => {
+      const call: LlmCall = {
+        systemPrompt: rest.profile?.systemPrompt,
+        messages: rest.content?.messages ?? [],
+        tools: rest.profile?.tools ?? [],
+      };
+      calls.push(call);
+      const out = script(call);
+      if (out.gate !== undefined) await out.gate;
+      onEvent?.({
+        type: 'llm.streaming.usage',
+        usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
+      });
+      return textOutcome(
+        out.text ?? '',
+        out.toolCall === undefined
+          ? []
+          : [{ type: 'function', id: `call-${calls.length}`, name: out.toolCall.name, arguments: out.toolCall.arguments }],
+      );
+    }),
   };
 }
 
@@ -116,11 +108,11 @@ const singleCallScript: LlmScript = (call) => {
   return { text: `echo:${text}` };
 };
 
-function bindTestLlm(requester: LlmRequester): FeatureSpec {
+function bindTestLlm(requester: AgentLlmRequester): FeatureSpec {
   return createFeature('test-llm', {
     agent() {
       const agent = useAgent();
-      agent.setConfig({ model });
+      agent.setModel(testModel);
       agent.setRequester(requester);
     },
   });

@@ -15,12 +15,10 @@ import {
   openBlobs,
   openSessionStores,
   Trees,
-  UNKNOWN_CAPABILITY,
   useAgent,
   type AgentHandle,
   type FeatureSpec,
-  type LlmModel,
-  type LlmRequester,
+  type AgentLlmRequester,
   type Message,
   type SessionStores,
   type ToolDescription,
@@ -49,12 +47,12 @@ import {
   type SpawnModelEntry,
 } from '#/features/spawn/index';
 
-const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
+import { fakeRequester, textOutcome, testModel } from '../fake-llm';
 
 const fastModel: SpawnModelEntry = {
   name: 'fast',
   description: 'Fast test model',
-  model: { provider: 'test', model: 'fast-model', capability: UNKNOWN_CAPABILITY },
+  model: { provider: 'test', name: 'fast-model' },
 };
 
 interface LlmCall {
@@ -65,34 +63,29 @@ interface LlmCall {
 
 type LlmScript = (call: LlmCall) => { text: string } | { toolCall: { name: string; arguments: string } };
 
-function createMockRequester(script: LlmScript): { requester: LlmRequester; calls: LlmCall[] } {
+function createMockRequester(script: LlmScript): { requester: AgentLlmRequester; calls: LlmCall[] } {
   const calls: LlmCall[] = [];
   return {
     calls,
-    requester: {
-      generate: async (_config, content, { onEvent }) => {
+    requester: fakeRequester((rest, onEvent) => {
         const call: LlmCall = {
-          systemPrompt: content.systemPrompt,
-          messages: content.messages,
-          tools: content.tools ?? [],
+          systemPrompt: rest.profile?.systemPrompt,
+          messages: rest.content?.messages ?? [],
+          tools: rest.profile?.tools ?? [],
         };
         calls.push(call);
         const out = script(call);
-        if ('toolCall' in out) {
-          onEvent?.({
-            type: 'llm.streaming.part',
-            part: { type: 'function', id: `call-${calls.length}`, name: out.toolCall.name, arguments: out.toolCall.arguments },
-          });
-        } else {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: out.text } });
-        }
         onEvent?.({
           type: 'llm.streaming.usage',
           usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
         });
-        onEvent?.({ type: 'llm.done' });
-      },
-    },
+        if ('toolCall' in out) {
+          return textOutcome('', [
+            { type: 'function', id: `call-${calls.length}`, name: out.toolCall.name, arguments: out.toolCall.arguments },
+          ]);
+        }
+        return textOutcome(out.text);
+      }),
   };
 }
 
@@ -108,11 +101,11 @@ const script: LlmScript = (call) => {
   return { text: 'parent done' };
 };
 
-function bindTestLlm(requester: LlmRequester): FeatureSpec {
+function bindTestLlm(requester: AgentLlmRequester): FeatureSpec {
   return createFeature('test-llm', {
     agent() {
       const agent = useAgent();
-      agent.setConfig({ model });
+      agent.setModel(testModel);
       agent.setRequester(requester);
     },
   });
@@ -473,13 +466,13 @@ describe('spawn tool', () => {
 
   it('inherits the caller model when the tool call omits model', async () => {
     const { app, env, main, session } = await startApp({ models: [fastModel] });
-    main.setConfig({ model: fastModel.model });
+    main.setModel({ spec: fastModel.model });
     const subagentIds = trackSubagentIds(main);
     const done = nextTurnDone(main);
     main.submit(createUserMessage(agentCall({ prompt: 'SUB:inherit', description: 'inherit model' })));
     await done;
     const agentId = subagentIds[0]!;
-    expect(session.get(agentId)?.config?.model.model).toBe('fast-model');
+    expect(session.get(agentId)?.model?.spec.name).toBe('fast-model');
 
     await app.disposeAsync();
     await env.stores.dispose();

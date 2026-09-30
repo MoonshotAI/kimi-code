@@ -34,7 +34,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   let isLoggedIn = false;
   try {
-    isLoggedIn = await updateLoginContext(provider.harness);
+    isLoggedIn = await updateLoginContext(provider.runtime.auth);
   } catch (error) {
     logError("Unable to determine login status", error);
   }
@@ -73,7 +73,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   const migrationManager = new LegacyMigrationManager({
-    targetHome: provider.harness.homeDir,
+    targetHome: provider.runtime.homeDir,
     workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
     legacyEnvironmentVariables: vscode.workspace
       .getConfiguration("kimi")
@@ -231,7 +231,7 @@ async function performMigration(
 
   if (result.status === "completed" || result.status === "partial") {
     try {
-      await provider?.harness.getConfig({ reload: true });
+      await provider?.runtime.reloadConfig();
       await provider?.resetAllWebviews();
     } catch (error) {
       logError("Migration finished, but the runtime config could not be reloaded", error);

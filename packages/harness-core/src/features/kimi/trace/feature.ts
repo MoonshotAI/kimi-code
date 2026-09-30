@@ -27,8 +27,9 @@ export const traceSlots: FeatureSlots = {
     agent.on('llm.streaming.headers', (event) => {
       capture(event.headers);
     });
-    agent.on('llm.failed.remote', (event) => {
-      capture(llmStatusErrorMessage(event.error)?.headers);
+    agent.on('llm.ended', (event) => {
+      if (event.outcome.type !== 'failed') return;
+      capture(llmStatusErrorMessage(event.outcome.error)?.headers);
     });
     useExpose(TraceRef, { traceId: current });
   },

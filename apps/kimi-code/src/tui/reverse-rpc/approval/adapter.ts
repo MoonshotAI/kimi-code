@@ -1,8 +1,60 @@
-import type { ApprovalRequest, ApprovalResponse, ToolInputDisplay } from '@moonshot-ai/kimi-code-sdk';
+import type { ApprovalResponse } from '@moonshot-ai/harness-core';
 
 import type { ApprovalPanelResponse } from '#/tui/components/dialogs/approval-panel';
-import { goalStartOptions } from '#/tui/components/dialogs/goal-start-permission-prompt';
 import type { ApprovalPanelChoice, ApprovalPanelData, DisplayBlock } from '#/tui/reverse-rpc/types';
+
+export interface PermissionApprovalPayload {
+  readonly id: string;
+  readonly sessionId: string;
+  readonly agentId: string;
+  readonly toolCallId: string;
+  readonly toolName: string;
+  readonly action: string;
+  readonly display: {
+    readonly kind: 'generic';
+    readonly summary: string;
+    readonly detail: unknown;
+  };
+  readonly toolInput?: unknown;
+}
+
+export interface PlanReviewPayload {
+  readonly plan: string;
+  readonly path: string;
+  readonly options?: readonly { readonly label: string; readonly description?: string }[];
+}
+
+export interface GoalStartPayload {
+  readonly kind: 'goal_start';
+  readonly objective?: string;
+  readonly completionCriterion?: string;
+}
+
+export function isPermissionApprovalPayload(payload: unknown): payload is PermissionApprovalPayload {
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    typeof (payload as { toolName?: unknown }).toolName === 'string' &&
+    typeof (payload as { toolCallId?: unknown }).toolCallId === 'string'
+  );
+}
+
+export function isPlanReviewPayload(payload: unknown): payload is PlanReviewPayload {
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    typeof (payload as { plan?: unknown }).plan === 'string' &&
+    typeof (payload as { path?: unknown }).path === 'string'
+  );
+}
+
+export function isGoalStartPayload(payload: unknown): payload is GoalStartPayload {
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    (payload as { kind?: unknown }).kind === 'goal_start'
+  );
+}
 
 const DEFAULT_APPROVAL_CHOICES: ApprovalPanelChoice[] = [
   { label: 'Approve once', response: 'approved' },
@@ -11,21 +63,59 @@ const DEFAULT_APPROVAL_CHOICES: ApprovalPanelChoice[] = [
   { label: 'Reject with feedback', response: 'rejected', requires_feedback: true },
 ];
 
+const GOAL_START_CHOICES: ApprovalPanelChoice[] = [
+  { label: 'Start goal', response: 'approved' },
+  { label: 'Do not start', response: 'rejected' },
+  { label: 'Reject with feedback', response: 'rejected', requires_feedback: true },
+];
+
 const PLAN_REJECT_CHOICES: ApprovalPanelChoice[] = [
-  { label: 'Reject', response: 'rejected', selected_label: 'Reject' },
+  { label: 'Reject and Exit', response: 'rejected', selected_label: 'Reject and Exit' },
   { label: 'Revise', response: 'rejected', selected_label: 'Revise', requires_feedback: true },
 ];
 
-export function adaptApprovalRequest(event: ApprovalRequest): ApprovalPanelData {
-  const resolved = resolveDisplay(event.toolName, event.display, event.action);
+export function adaptApprovalPayload(
+  interactionId: string,
+  payload: PermissionApprovalPayload | PlanReviewPayload | GoalStartPayload,
+): ApprovalPanelData {
+  if (isGoalStartPayload(payload)) {
+    const lines = [`Start goal: ${payload.objective ?? ''}`];
+    if (payload.completionCriterion !== undefined && payload.completionCriterion.length > 0) {
+      lines.push(`Done when: ${payload.completionCriterion}`);
+    }
+    return {
+      id: interactionId,
+      tool_call_id: interactionId,
+      tool_name: 'CreateGoal',
+      action: 'Start a goal?',
+      description: '',
+      display: [{ type: 'brief', text: lines.join('\n') }],
+      choices: GOAL_START_CHOICES.map((choice) => ({ ...choice })),
+    };
+  }
+  if (isPlanReviewPayload(payload)) {
+    return {
+      id: interactionId,
+      tool_call_id: interactionId,
+      tool_name: 'ExitPlanMode',
+      action: 'Approve plan',
+      description: '',
+      display:
+        payload.plan.trim().length > 0
+          ? [{ type: 'file_content', path: payload.path, content: payload.plan }]
+          : [],
+      choices: adaptPlanReviewChoices(payload),
+    };
+  }
+  const resolved = resolveDisplay(payload.toolName, payload.display.detail);
   return {
-    id: event.toolCallId,
-    tool_call_id: event.toolCallId,
-    tool_name: event.toolName,
-    action: event.action,
+    id: interactionId,
+    tool_call_id: payload.toolCallId,
+    tool_name: payload.toolName,
+    action: payload.action,
     description: resolved.description,
     display: resolved.blocks,
-    choices: adaptChoices(event.toolName, event.display),
+    choices: DEFAULT_APPROVAL_CHOICES.map((choice) => ({ ...choice })),
   };
 }
 
@@ -34,19 +124,12 @@ interface ResolvedDisplay {
   description: string;
 }
 
-function resolveDisplay(
-  toolName: string,
-  display: ToolInputDisplay,
-  action: string,
-): ResolvedDisplay {
-  if (display.kind === 'generic' && isRecord(display.detail)) {
-    const extracted = extractFromArgs(toolName, display.detail);
+function resolveDisplay(toolName: string, detail: unknown): ResolvedDisplay {
+  if (isRecord(detail)) {
+    const extracted = extractFromArgs(toolName, detail);
     if (extracted !== null) return extracted;
   }
-  return {
-    blocks: adaptDisplay(display),
-    description: describeApproval(display, action),
-  };
+  return { blocks: [], description: '' };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -173,44 +256,6 @@ export function adaptPanelResponse(response: ApprovalPanelResponse): ApprovalRes
   };
 }
 
-function describeApproval(display: ToolInputDisplay, action: string): string {
-  switch (display.kind) {
-    case 'plan_review':
-      return '';
-    case 'goal_start':
-      return 'Start a goal?';
-    case 'generic':
-      if (typeof display.detail === 'string' && display.detail.length > 0) {
-        return display.detail;
-      }
-      return display.summary ?? action;
-    case 'command':
-      return display.description ?? display.command ?? action;
-    case 'diff':
-      return `edit ${display.path ?? ''}`.trim();
-    case 'file_io':
-      return `${display.operation ?? 'file'} ${display.path ?? ''}`.trim();
-    case 'task_stop':
-      return `stop task: ${display.task_description ?? display.task_id ?? ''}`.trim();
-    case 'agent_call':
-      return `spawn ${display.agent_name ?? 'agent'}`;
-    case 'skill_call':
-      return `invoke skill ${display.skill_name ?? ''}`.trim();
-    case 'url_fetch':
-      return `fetch ${display.url ?? ''}`.trim();
-    case 'search':
-      return `search: ${display.query ?? ''}`.trim();
-    case 'todo_list':
-      return `update todo list (${String(display.items?.length ?? 0)} items)`;
-    case 'task':
-      return `${display.status ?? 'background'} task ${display.task_id ?? ''}: ${
-        display.description ?? ''
-      }`.trim();
-    default:
-      return action;
-  }
-}
-
 const DANGER_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /\brm\s+(-[a-zA-Z]*[rRfF][a-zA-Z]*|--recursive|--force)/i, label: 'recursive delete' },
   { pattern: /\bsudo\b/i, label: 'sudo' },
@@ -229,164 +274,14 @@ function detectDanger(command: string): string | undefined {
   return undefined;
 }
 
-function adaptDisplay(display: ToolInputDisplay): DisplayBlock[] {
-  switch (display.kind) {
-    case 'command': {
-      const command = display.command ?? '';
-      const danger = detectDanger(command);
-      return [
-        {
-          type: 'shell',
-          language: display.language ?? 'bash',
-          command,
-          cwd: display.cwd,
-          description: display.description,
-          danger,
-        },
-      ];
-    }
-    case 'diff':
-      return [
-        {
-          type: 'diff',
-          path: display.path ?? '',
-          old_text: display.before ?? '',
-          new_text: display.after ?? '',
-        },
-      ];
-    case 'file_io': {
-      const path = display.path ?? '';
-      // Write attaches the full file content — render it as a syntax-
-      // highlighted code block so the approval panel can preview (and
-      // ctrl+e expand) what is about to land on disk.
-      if (display.operation === 'write' && typeof display.content === 'string') {
-        return [{ type: 'file_content', path, content: display.content }];
-      }
-      // Edit attaches the old_string/new_string hunk as before/after — render
-      // it as a diff block so ctrl+e expansion works on the change.
-      if (
-        display.operation === 'edit' &&
-        typeof display.before === 'string' &&
-        typeof display.after === 'string'
-      ) {
-        return [{ type: 'diff', path, old_text: display.before, new_text: display.after }];
-      }
-      return [
-        {
-          type: 'file_op',
-          operation: display.operation,
-          path,
-          detail: display.detail,
-        },
-      ];
-    }
-    case 'url_fetch':
-      return [
-        {
-          type: 'url_fetch',
-          url: display.url ?? '',
-          method: display.method,
-        },
-      ];
-    case 'search':
-      return [
-        {
-          type: 'search',
-          query: display.query ?? '',
-          scope: display.scope,
-        },
-      ];
-    case 'agent_call':
-      return [
-        {
-          type: 'invocation',
-          kind: 'agent',
-          name: display.agent_name ?? '',
-          description: display.prompt,
-        },
-      ];
-    case 'skill_call':
-      return [
-        {
-          type: 'invocation',
-          kind: 'skill',
-          name: display.skill_name ?? '',
-          description: display.args,
-        },
-      ];
-    case 'task_stop':
-      return [
-        {
-          type: 'brief',
-          text: `Stop task ${display.task_id ?? ''}: ${display.task_description ?? ''}`,
-        },
-      ];
-    case 'plan_review':
-      return [];
-    case 'goal_start': {
-      const lines = [`Start goal: ${display.objective}`];
-      if (typeof display.completionCriterion === 'string' && display.completionCriterion.length > 0) {
-        lines.push(`Done when: ${display.completionCriterion}`);
-      }
-      return [{ type: 'brief', text: lines.join('\n') }];
-    }
-    case 'generic':
-      return [];
-    case 'todo_list':
-      return [];
-    case 'task':
-      return [];
-    default:
-      return [];
-  }
-}
-
-function adaptChoices(toolName: string, display: ToolInputDisplay): ApprovalPanelChoice[] {
-  if (toolName === 'ExitPlanMode' || display.kind === 'plan_review') {
-    return adaptPlanReviewChoices(display);
-  }
-  if (display.kind === 'goal_start') {
-    return adaptGoalStartChoices(display);
-  }
-
-  return DEFAULT_APPROVAL_CHOICES.map((choice) => cloneChoice(choice));
-}
-
-function adaptGoalStartChoices(
-  display: Extract<ToolInputDisplay, { kind: 'goal_start' }>,
-): ApprovalPanelChoice[] {
-  // Reuse the exact options the /goal start menu shows. Each mode option starts
-  // the goal under that permission mode (the policy reads selected_label); "Do
-  // not start" declines so no goal is created.
-  return goalStartOptions(display.mode).map((option) =>
-    option.value === 'cancel'
-      ? {
-          label: option.label,
-          response: 'cancelled',
-          selected_label: 'cancel',
-          description: option.description,
-        }
-      : {
-          label: option.label,
-          response: 'approved',
-          selected_label: option.value,
-          description: option.description,
-        },
-  );
-}
-
-function adaptPlanReviewChoices(display: ToolInputDisplay): ApprovalPanelChoice[] {
+function adaptPlanReviewChoices(payload: PlanReviewPayload): ApprovalPanelChoice[] {
   const optionChoices =
-    display.kind === 'plan_review' && display.options !== undefined && display.options.length >= 2
-      ? display.options.map((option) => ({
+    payload.options !== undefined && payload.options.length >= 2
+      ? payload.options.map((option) => ({
           label: option.label,
           response: 'approved' as const,
           selected_label: option.label,
         }))
       : [{ label: 'Approve', response: 'approved' as const, selected_label: 'Approve' }];
-  return [...optionChoices, ...PLAN_REJECT_CHOICES].map((choice) => cloneChoice(choice));
-}
-
-function cloneChoice(choice: ApprovalPanelChoice): ApprovalPanelChoice {
-  return { ...choice };
+  return [...optionChoices, ...PLAN_REJECT_CHOICES].map((choice) => ({ ...choice }));
 }

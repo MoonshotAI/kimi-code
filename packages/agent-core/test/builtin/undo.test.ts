@@ -17,32 +17,23 @@ import {
   type ContextUndoneEvent,
 } from '#/builtin/undo/index';
 import { createFeature } from '#/feature/index';
-import {
-  createUserEntry,
-  createUserMessage,
-  extractText,
-  type HistoryMessage,
-  type UserMeta,
-} from '#/llm/message';
-import { UNKNOWN_CAPABILITY, type LlmModel } from '#/llm/model';
-import type { LlmRequester } from '#/llm/requester/requester';
+import { createUserMessage, extractText } from '#/llm/message';
+import { createUserEntry, type HistoryMessage, type UserMeta } from '#/history/message';
+import type { AgentLlmRequester } from '#/agent-machine/llm-actor';
 import { openBlobs } from '#/store/blob';
 import type { RecordEvent } from '#/store/journal';
 import { MemoryBackend, Trees, type Branch } from '#/store/tree';
 import { openSessionStores, type SessionStores } from '#/stores/session';
 
-const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
+import { fakeRequester, testModel, textOutcome } from '../fake-llm';
 
-function createEchoRequester(): LlmRequester {
-  return {
-    generate: (_config, { messages }, { onEvent }) => {
-      const last = messages.at(-1);
-      const text = last !== undefined && last.role === 'user' ? extractText(last) : '';
-      onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: `echo:${text}` } });
-      onEvent?.({ type: 'llm.done' });
-      return Promise.resolve();
-    },
-  };
+function createEchoRequester(): AgentLlmRequester {
+  return fakeRequester((rest) => {
+    const messages = rest.content?.messages ?? [];
+    const last = messages.at(-1);
+    const text = last !== undefined && last.role === 'user' ? extractText(last) : '';
+    return textOutcome(`echo:${text}`);
+  });
 }
 
 function userEntry(text: string, meta?: UserMeta): HistoryMessage {
@@ -81,9 +72,9 @@ async function testEnv(): Promise<TestEnv> {
   return { backend, stores, app, session, records };
 }
 
-async function startMain(env: TestEnv, requester?: LlmRequester): Promise<AgentHandle> {
+async function startMain(env: TestEnv, requester?: AgentLlmRequester): Promise<AgentHandle> {
   const agent = await env.session.create({ agentId: 'main' });
-  agent.setConfig({ model });
+  agent.setModel(testModel);
   agent.setRequester(requester ?? createEchoRequester());
   return agent;
 }
@@ -236,7 +227,7 @@ describe('undo feature', () => {
     const fresh = env.session.get('main');
     expect(fresh).toBeDefined();
     expect(fresh).not.toBe(agent);
-    (fresh as AgentHandle).setConfig({ model });
+    (fresh as AgentHandle).setModel(testModel);
     (fresh as AgentHandle).setRequester(createEchoRequester());
     await runTurn(fresh as AgentHandle, 'third');
     expect(historyTexts(env.stores, 'main')).toEqual([
@@ -313,13 +304,10 @@ describe('undo feature', () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const agent = await startMain(env, {
-      generate: (_config, _input, { onEvent }) =>
-        gate.then(() => {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'slow' } });
-          onEvent?.({ type: 'llm.done' });
-        }),
-    });
+    const agent = await startMain(
+      env,
+      fakeRequester(() => gate.then(() => textOutcome('slow'))),
+    );
     const face = agent.resolve(UndoRef)!;
     const started = new Promise<void>((resolve) => {
       agent.on('turn.started', () => {
@@ -375,7 +363,7 @@ describe('undo feature', () => {
     await app.ready();
     const session = await app.create({ sessionId: 'sess', stores });
     const reopened = await session.create({ agentId: 'main' });
-    reopened.setConfig({ model });
+    reopened.setModel(testModel);
     reopened.setRequester(createEchoRequester());
 
     expect(historyTexts(stores, 'main')).toEqual(['first', 'echo:first']);

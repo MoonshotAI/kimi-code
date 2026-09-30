@@ -1,14 +1,19 @@
 import { isDeepStrictEqual } from 'node:util';
 
-import { buildMediaRefUrl, type ContentPart, type MediaStore, type ToolResult } from '@moonshot-ai/agent-core';
+import {
+  isMediaPart,
+  mediaKindOfPart,
+  type ContentPart,
+  type ToolResult,
+} from '@moonshot-ai/agent-core';
 
 import {
   buildUnsupportedImageNotice,
   decodeBase64Prefix,
   isModelAcceptedImageMime,
-  parseImageDataUrl,
   resolveEffectiveImageMime,
 } from '#/features/media/inspect/format-policy';
+import type { MediaStore } from '#/features/media/store';
 import { compressImageForModel } from '#/features/media/transform/compress';
 
 import type { MCPContentBlock, MCPToolResult } from './client-shared';
@@ -41,7 +46,7 @@ export function convertMCPContentBlock(block: MCPContentBlock, providerType?: st
     const mimeType = block.mimeType ?? 'image/png';
     return {
       type: 'image_url',
-      imageUrl: { url: `data:${mimeType};base64,${block.data}` },
+      source: { kind: 'inline', mimeType, data: block.data },
     };
   }
 
@@ -49,7 +54,7 @@ export function convertMCPContentBlock(block: MCPContentBlock, providerType?: st
     const mimeType = block.mimeType ?? 'audio/mpeg';
     return {
       type: 'audio_url',
-      audioUrl: { url: `data:${mimeType};base64,${block.data}` },
+      source: { kind: 'inline', mimeType, data: block.data },
     };
   }
 
@@ -63,19 +68,19 @@ export function convertMCPContentBlock(block: MCPContentBlock, providerType?: st
       if (mimeType.startsWith('image/')) {
         return {
           type: 'image_url',
-          imageUrl: { url: `data:${mimeType};base64,${res.blob}` },
+          source: { kind: 'inline', mimeType, data: res.blob },
         };
       }
       if (mimeType.startsWith('audio/')) {
         return {
           type: 'audio_url',
-          audioUrl: { url: `data:${mimeType};base64,${res.blob}` },
+          source: { kind: 'inline', mimeType, data: res.blob },
         };
       }
       if (mimeType.startsWith('video/')) {
         return {
           type: 'video_url',
-          videoUrl: { url: `data:${mimeType};base64,${res.blob}` },
+          source: { kind: 'inline', mimeType, data: res.blob },
         };
       }
       const approxMb = ((res.blob.length * 3) / 4 / (1024 * 1024)).toFixed(1);
@@ -95,13 +100,13 @@ export function convertMCPContentBlock(block: MCPContentBlock, providerType?: st
           text: buildUnsupportedImageNotice(mimeType, block.uri, providerType),
         };
       }
-      return { type: 'image_url', imageUrl: { url: block.uri } };
+      return { type: 'image_url', source: { kind: 'url', url: block.uri } };
     }
     if (mimeType.startsWith('audio/')) {
-      return { type: 'audio_url', audioUrl: { url: block.uri } };
+      return { type: 'audio_url', source: { kind: 'url', url: block.uri } };
     }
     if (mimeType.startsWith('video/')) {
-      return { type: 'video_url', videoUrl: { url: block.uri } };
+      return { type: 'video_url', source: { kind: 'url', url: block.uri } };
     }
     return droppedBlockNotice(
       `resource_link with unsupported mimeType "${mimeType}" was not delivered. Fetch it directly if needed: ${block.uri}`,
@@ -159,14 +164,13 @@ export async function mcpResultToToolResult(
 
 async function offloadInlineImage(part: ContentPart, options: McpOutputOptions): Promise<ContentPart> {
   const store = options.mediaStore;
-  if (part.type !== 'image_url' || store === undefined) return part;
-  const parsed = parseImageDataUrl(part.imageUrl.url);
-  if (parsed === null) return part;
+  if (part.type !== 'image_url' || part.source.kind !== 'inline' || store === undefined) return part;
+  const source = part.source;
   try {
-    const mime = parsed.mimeType.startsWith('image/')
-      ? resolveEffectiveImageMime(parsed.mimeType, decodeBase64Prefix(parsed.base64))
-      : parsed.mimeType;
-    const bytes = Buffer.from(parsed.base64.replaceAll(/\s/g, ''), 'base64');
+    const mime = source.mimeType.startsWith('image/')
+      ? resolveEffectiveImageMime(source.mimeType, decodeBase64Prefix(source.data))
+      : source.mimeType;
+    const bytes = Buffer.from(source.data.replaceAll(/\s/g, ''), 'base64');
     const compressed = await compressImageForModel(new Uint8Array(bytes), mime);
     const ref = await store.put({
       bytes: compressed.data,
@@ -174,7 +178,7 @@ async function offloadInlineImage(part: ContentPart, options: McpOutputOptions):
       filename: `mcp-image.${compressed.mimeType.split('/')[1] ?? 'bin'}`,
     });
     options.signal?.throwIfAborted();
-    return { ...part, imageUrl: { ...part.imageUrl, url: buildMediaRefUrl(ref) } };
+    return { ...part, source: { kind: 'store', ref } };
   } catch (error) {
     options.signal?.throwIfAborted();
     return part;
@@ -236,20 +240,24 @@ function wrapMediaOnly(parts: readonly ContentPart[], qualifiedToolName: string)
 function applyBinaryPartCap(parts: readonly ContentPart[]): ContentPart[] {
   const out: ContentPart[] = [];
   for (const part of parts) {
-    if (part.type === 'text' || part.type === 'think') {
+    if (!isMediaPart(part)) {
       out.push(part);
       continue;
     }
-    const url =
-      part.type === 'image_url'
-        ? part.imageUrl.url
-        : part.type === 'audio_url'
-          ? part.audioUrl.url
-          : part.videoUrl.url;
-    if (url.length > MCP_MAX_BINARY_PART_CHARS) {
-      const kind =
-        part.type === 'image_url' ? 'image' : part.type === 'audio_url' ? 'audio' : 'video';
-      out.push({ type: 'text', text: binaryPartTooLargeNotice(kind, url.length) });
+    const source = part.source;
+    const payloadLength =
+      source.kind === 'inline'
+        ? source.data.length
+        : source.kind === 'url'
+          ? source.url.length
+          : source.kind === 'store'
+            ? source.ref.length
+            : source.id.length;
+    if (payloadLength > MCP_MAX_BINARY_PART_CHARS) {
+      out.push({
+        type: 'text',
+        text: binaryPartTooLargeNotice(mediaKindOfPart(part), payloadLength),
+      });
       continue;
     }
     out.push(part);

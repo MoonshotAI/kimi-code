@@ -1,6 +1,27 @@
-import { providerImagePolicy } from '@moonshot-ai/agent-core';
+import { BASELINE_IMAGE_MIMES } from '@moonshot-ai/agent-core';
 
 import { IMAGE_MIME_BY_SUFFIX, sniffMediaFromMagic } from './file-type';
+
+export interface ProviderImagePolicy {
+  readonly acceptedMimes: ReadonlySet<string>;
+  readonly inlineByteBudget: number;
+}
+
+export const DEFAULT_INLINE_IMAGE_BYTE_BUDGET = 3.75 * 1024 * 1024;
+
+const BASELINE_IMAGE_POLICY: ProviderImagePolicy = {
+  acceptedMimes: BASELINE_IMAGE_MIMES,
+  inlineByteBudget: DEFAULT_INLINE_IMAGE_BYTE_BUDGET,
+};
+
+const KIMI_IMAGE_POLICY: ProviderImagePolicy = {
+  acceptedMimes: new Set([...BASELINE_IMAGE_MIMES, 'image/bmp', 'image/heic', 'image/heif']),
+  inlineByteBudget: 5 * 1024 * 1024,
+};
+
+export function providerImagePolicy(provider?: string): ProviderImagePolicy {
+  return provider === 'kimi' ? KIMI_IMAGE_POLICY : BASELINE_IMAGE_POLICY;
+}
 
 const IMAGE_FORMAT_LABELS: Readonly<Record<string, string>> = Object.freeze({
   'image/png': 'PNG',

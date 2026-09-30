@@ -34,11 +34,11 @@ export function createCompaction(deps: CreateCompactionDeps): FeatureSpec {
 
 ## 贡献面
 
-agent slot 里读命令面用 `useAgent` / `useSession` / `useApp`：它们给出收窄后的 Commands 面（提交、配置、订阅），Feature 摸不到节点内部结构。绑 generate 用 `useAgent().setConfig` / `setCredentialProvider` / `setRequester`。往回合里加东西用贡献 hook，卸载自动撤回：
+agent slot 里读命令面用 `useAgent` / `useSession` / `useApp`：它们给出收窄后的 Commands 面（提交、配置、订阅），Feature 摸不到节点内部结构。绑 generate 用 `useAgent().setModel` / `setEndpoint` / `setRequester`。往回合里加东西用贡献 hook，卸载自动撤回：
 
 - 工具 / 系统提示：`useAgentTools`、`useSystemPrompt`
 - 拦截缝：`useBeforeStep`、`useBeforeToolBatch`、`useBeforeTool`、`useToolPermission`、`useAfterTool`、`usePromptGate`
-- LLM：`useMessageResolver`、`useLlmRecovery`、`useLlmRetryable`、`useMediaLower`
+- LLM：`useMessageResolver`、`useLlmRecovery`、`useLlmRetryable`（媒体物化是 `useMessageResolver` 装的 store-ref resolver，见 [14](../how-to-guides/14-install-media.md)）
 - 状态：`useAgentStore` / `useSessionStore` 的 `fold` / `dispatch`，大字段 `useBlobs`
 
 system prompt 的 `host` 段留给创建 agent 时的 `systemPrompt`。第一次组包冻住拼装，之后改 text、卸载、晚到的 section 都不改已出示的字节。

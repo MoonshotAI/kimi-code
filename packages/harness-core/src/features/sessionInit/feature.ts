@@ -70,8 +70,8 @@ export function createSessionInit(props: CreateSessionInitProps): FeatureSpec {
         if (main === undefined) {
           throw new SessionInitError(AGENT_NOT_FOUND, 'Main agent was not found');
         }
-        const config = main.config;
-        if (config === undefined) {
+        const model = main.model;
+        if (model === undefined) {
           throw new SessionInitError(SESSION_INIT_FAILED, 'Main agent has no model bound');
         }
         const controller = new AbortController();
@@ -93,7 +93,7 @@ export function createSessionInit(props: CreateSessionInitProps): FeatureSpec {
               ?.setMode(mode)
               .catch(() => {});
           }
-          child.setConfig(config);
+          child.setModel(model);
           let outcome: RunOutcome;
           try {
             outcome = (

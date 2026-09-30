@@ -9,7 +9,7 @@ How-to：自己写 compact。拦 `useBeforeStep` 下决策、订 turn 的压缩�
 | 触发 | 订什么 | 然后做什么 |
 |---|---|---|
 | 本步超预算 | `useBeforeStep`：算 `usedContextTokens`，超 `max * triggerRatio` | 返回 `{ compact: true }` 决策，turn 进 `compacting` |
-| 远端 context overflow | 不用订：`llm.failed.remote` 且 `error.kind === 'context_overflow'` 时 turn 自己进 `compacting`（失败被吸收，不再外发） | 同上 |
+| 远端 context overflow | 不用订：`llm.ended` 的 failed outcome 且 `error.kind === 'context_overflow'` 时 turn 自己进 `compacting`（失败被吸收，不再外发） | 同上 |
 | turn 请求压缩 | `agent.on('turn.compaction_requested')` | 按 `turnId` 计次，≤3 次跑 compact 并 `contextReset({ messages })` 回应；超限 `contextReset({ error })` 让 turn `failed` |
 | 用户 abort | `agent.on('turn.aborting')` | abort 正在跑的摘要 turn |
 
@@ -17,7 +17,7 @@ How-to：自己写 compact。拦 `useBeforeStep` 下决策、订 turn 的压缩�
 
 ## 1. 配方
 
-需要构造期的 `config` / `requester`，用工厂返回 `FeatureSpec`：
+需要构造期的 `model` / `requester`，用工厂返回 `FeatureSpec`：
 
 ```ts
 import {
@@ -30,15 +30,17 @@ import {
   useSession,
   useTurn,
   usedContextTokens,
+  type AgentLlmRequester,
   type FeatureSpec,
   type HistoryMessage,
-  type LlmRequestConfig,
-  type LlmRequester,
+  type LlmEndpoint,
+  type LlmRequestModel,
 } from '@moonshot-ai/agent-core';
 
 export function createCompact(deps: {
-  config: LlmRequestConfig;
-  requester: LlmRequester;
+  model: LlmRequestModel;
+  requester: AgentLlmRequester;
+  endpoint?: LlmEndpoint;
   maxContextTokens: () => number;
   triggerRatio?: number;
 }): FeatureSpec {
@@ -49,7 +51,8 @@ export function createCompact(deps: {
       const triggerRatio = deps.triggerRatio ?? 0.85;
       const enqueue = useTurn({
         requester: deps.requester,
-        getConfig: () => deps.config,
+        getModel: () => deps.model,
+        getEndpoint: () => deps.endpoint,
         getTools: () => [],
       });
       let running = false;
@@ -64,7 +67,7 @@ export function createCompact(deps: {
 
 ## 2. 另开一次 turn（不是 submit）
 
-摘要请求不进用户 queue，也不读 agent 上的 `setConfig` / `setRequester`。`useTurn` 在 setup 里绑一台自己的 turn（空工具、自己的 requester），返回的 `enqueue` 同实例串行，卸载随节点 `signal` abort。默认等 120s。
+摘要请求不进用户 queue，也不读 agent 上的 `setModel` / `setEndpoint` / `setRequester`。`useTurn` 在 setup 里绑一台自己的 turn（空工具、自己的 model / endpoint / requester），返回的 `enqueue` 同实例串行，卸载随节点 `signal` abort。默认等 120s。
 
 ```ts
 const summarize = async (history: readonly HistoryMessage[], signal: AbortSignal) => {
@@ -160,7 +163,7 @@ const run = async (reason: 'budget' | 'overflow', history: readonly HistoryMessa
 };
 ```
 
-`contextReset({ messages })` 以 `context.reset` emit 为回执：running 时 agent 替换自己的 `messages`、把 `turn.compaction_finished` 转给悬停的 turn，turn 换掉 history、`toolCallIds` 重播种、回 `gating` 原地续跑（budget 复检自然通过、overflow 重发失败请求）；journal 写一条 `context.reset`（fold 语义「整段替换 history」，reset 前记录保留）。整个流程在当前分支内完成——live actor 就地应用新 history，没有分支切换，也没有宿主重挂。压缩记录写 **session** journal（`compaction.started|completed|cancelled`），与 agent journal 的 `context.reset` 分工审计。`meta: { source: 'compaction', key: 'summary' }` 是 undo 的边界锚（`isCompactionSummary`），不能省。
+`contextReset({ messages })` 以 `context.reset` emit 为回执：running 时 agent 替换自己的 `messages`、把 `turn.compaction_finished` 转给悬停的 turn，turn 换掉 history、回 `gating` 原地续跑（budget 复检自然通过、overflow 重发失败请求）；journal 写一条 `context.reset`（fold 语义「整段替换 history」，reset 前记录保留）。整个流程在当前分支内完成——live actor 就地应用新 history，没有分支切换，也没有宿主重挂。压缩记录写 **session** journal（`compaction.started|completed|cancelled`），与 agent journal 的 `context.reset` 分工审计。`meta: { source: 'compaction', key: 'summary' }` 是 undo 的边界锚（`isCompactionSummary`），不能省。
 
 产品实现还会：manual 路径先 `pause` + 等 idle 再摘要（turn 悬停即天然 quiesce 的 in-turn 路径不用）、检查 compact 期间 history 有没有漂、seed 里保留开头/最近的 user 并接 continuation 消息。那些是 `src/features/compaction/shape.ts` 与 `machine.ts` 的事，本篇不抄。
 
@@ -172,9 +175,9 @@ const run = async (reason: 'budget' | 'overflow', history: readonly HistoryMessa
 features: [
   ...features,
   createCompact({
-    config: { model },
-    requester: openaiProvider.requesters.openai,
-    maxContextTokens: () => model.maxContextSize ?? 262_144,
+    model: { spec },
+    requester: openAIRequester,
+    maxContextTokens: () => spec.maxContextSize ?? 262_144,
   }),
 ]
 ```

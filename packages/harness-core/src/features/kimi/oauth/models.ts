@@ -1,9 +1,13 @@
-import type { LlmModelSeed } from '@moonshot-ai/agent-core';
+import type { CatalogModelDefinition } from '@moonshot-ai/agent-core';
 import type { ManagedKimiCodeModelInfo } from '@moonshot-ai/kimi-code-oauth';
 
-export function managedKimiCodeModelSeed(info: ManagedKimiCodeModelInfo): LlmModelSeed {
+export function managedKimiCodeModelSeed(
+  providerId: string,
+  info: ManagedKimiCodeModelInfo,
+): CatalogModelDefinition {
   return {
-    model: info.id,
+    id: info.id,
+    provider: providerId,
     capability: {
       image_in: info.supportsImageIn,
       video_in: info.supportsVideoIn,

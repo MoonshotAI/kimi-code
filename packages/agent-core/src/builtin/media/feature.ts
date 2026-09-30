@@ -1,19 +1,13 @@
 import { createFeature, type FeatureSpec } from '#/feature/feature';
-import { useLlmRecovery, useMediaLower } from '#/feature/contribution-hooks';
-import { createMediaDegradeRecovery } from '#/llm/builtin/media/degrade';
-import type { MediaUploadCache } from '#/llm/media/cache';
-import type { MediaSource } from '#/llm/media/source';
+import { useLlmRecovery, useMessageResolver } from '#/feature/contribution-hooks';
+import { createMediaDegradeRecovery } from '#/llm/builtin/policy/media-degrade';
+import { createStoreRefResolver } from '#/llm/builtin/policy/store-ref/index';
+import type { StoreRefPorts } from '#/llm/builtin/policy/store-ref/index';
 
-export function createMedia(deps: {
-  readonly source: MediaSource;
-  readonly cache: MediaUploadCache;
-}): FeatureSpec {
+export function createMedia(deps: StoreRefPorts): FeatureSpec {
   return createFeature('media', {
     agent() {
-      useMediaLower({
-        source: deps.source,
-        cache: deps.cache,
-      });
+      useMessageResolver(createStoreRefResolver(deps));
       useLlmRecovery(createMediaDegradeRecovery());
     },
   });

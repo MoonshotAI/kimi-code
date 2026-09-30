@@ -43,6 +43,6 @@ props 更新的可观察面就是这个浅响应式视图：非对象 props 的 
 - 资源注册与事件发送安排在节点存活期内完成；并非所有低层方法都主动拒绝卸载后的调用。
 - `pushCleanup(node, fn)` 返回清理项；`removeCleanup(node, entry)` 只移除登记，不执行 fn。
 
-产品树上的 `AppHandle` / `SessionHandle` / `AgentHandle` 是 `UnitHandle` 加命令面。按 id 取这些句柄用 `useApp().get`，见 [命名](naming.md)。`setConfig` / `setCredentialProvider` / `setRequester` 是命令面上的方法，直接调用即生效。
+产品树上的 `AppHandle` / `SessionHandle` / `AgentHandle` 是 `UnitHandle` 加命令面。按 id 取这些句柄用 `useApp().get`，见 [命名](naming.md)。`setModel` / `setEndpoint` / `setRequester` 是命令面上的方法，直接调用即生效。
 
 源码：见 [代码定位](source-map.md)，`kernel/runtime.ts` 的 `NodeRef`、`UnitNode`、`handleFor`、`pushCleanup`、`removeCleanup`。

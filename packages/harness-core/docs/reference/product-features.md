@@ -18,7 +18,7 @@
 
 - props：`catalog?`（profile 目录 override；缺省经 `ProfileCatalogRef` 解析 profiles Feature 的目录，两者皆无则 `Agent` 工具不注册）、`models?`（工具描述里列出的可选模型）、`forkEnabled?`（默认读 `KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK`）。
 - 工具参数：`prompt` / `description` / `subagent_type`（默认 `coder`）/ `resume` / `run_in_background` / `fork`（flag 门控）/ `model`（`'primary'` 继承调用方）。
-- 行为：校验（静态互斥 + planSpawn 白名单/profile/模型）→ `session.create` / `session.fork` 建子代理（roster 写 `source: 'spawn:<parent>:<profile>'`，模型总是 `setConfig(调用方 config)`、显式 `model` 再覆盖）→ `submit` 等终态（按 `turnId` 关联）→ 取子代理最后一条 assistant 文本作交接摘要。后台走 `detach`，完成经 async-tool 通知回父代理。fork 复制调用方完整历史并注入 `FORK_CONTEXT_NOTICE`。resume 从 roster 的 source 派生成员身份；子代理非 live 时 `session.create({ agentId })` 按已注册分支/features/spec 重开，跨进程重启同样可 resume（重开后 config 由 agent 层 Feature 实时绑定，不保留显式模型覆盖）。
+- 行为：校验（静态互斥 + planSpawn 白名单/profile/模型）→ `session.create` / `session.fork` 建子代理（roster 写 `source: 'spawn:<parent>:<profile>'`，模型总是 `setModel(调用方 model)`、显式 `model` 再覆盖 spec）→ `submit` 等终态（按 `turnId` 关联）→ 取子代理最后一条 assistant 文本作交接摘要。后台走 `detach`，完成经 async-tool 通知回父代理。fork 复制调用方完整历史并注入 `FORK_CONTEXT_NOTICE`。resume 从 roster 的 source 派生成员身份；子代理非 live 时 `session.create({ agentId })` 按已注册分支/features/spec 重开，跨进程重启同样可 resume（重开后 model 由 agent 层 Feature 实时绑定，不保留显式模型覆盖）。
 - 事件：无镜像事件通道——子代理的一切由统一事件面描述：身份与创建者（roster source + `agent.opened`/`agent.closed` 节点事件）、调用关联（Agent 工具调用的 `turn.spawn_tools`/`tool.done`，启动后经 `onUpdate` 发 `tool.update {key:'subagent', text: agentId}` 关联 toolCall↔子代理）、过程与产出（子代理自身 `turn.started`/`turn.done` 及 llm/tool 事件，冒泡携带 sessionId/agentId）。
 - facade：`SpawnRegistryRef`（session 层 registry，`handle.resolve(SpawnRegistryRef)`）。
 - 注意：工具描述是静态的（agent spec 首包冻结，见 [store-model](../explanation/store-model.md)），可选模型列表只来自 props `models`，不读调用方 config。
@@ -53,7 +53,7 @@
 
 `trace`（原 kimi-trace，改名收编）：agent 层捕获最近一次 LLM 请求的 trace id。
 
-- facade：`TraceRef`（agent 层）：`traceId: Ref<string | undefined>`——从 `llm.streaming.headers` 与 `llm.failed.remote` 的 `x-trace-id` 响应头捕获。
+- facade：`TraceRef`（agent 层）：`traceId: Ref<string | undefined>`——从 `llm.streaming.headers` 与 `llm.ended`（failed outcome 的 status 错误头）的 `x-trace-id` 响应头捕获。
 
 ## oauth（kimi 子 Feature，工厂）
 
@@ -64,7 +64,7 @@
 - facade：`OAuthTokensRef`（`useOauth()`）：`resolve(ref): BearerTokenProvider | undefined` / `refresh(): Promise<{ changed, unchanged, failed }>`——kap `refreshOAuthProviderModels` 同语义编排：遍历 oauth-backed provider 逐个拉 managed 目录（单链串行），按 `${aliasScope ?? providerId}/` 前缀在 config models 节取旧集合与拉取结果 diff 出 added/removed（记录内容漂移记 changed 0/0），失败聚合进 `failed` 不抛出；成功结果经一次性注入走 store.pull → writeback 落盘（单次拉取）。config 未加载时整体惰性不报错（空 report）。
 - 无事件。login/logout 设备流不在本域（宿主层职责，`@moonshot-ai/kimi-code-oauth` 的 OAuthManager 已具备能力）。
 
-配套机制（agent-core provider-catalog）：`default_model` config 节持久化模型选择（别名 `${aliasScope ?? providerId}/${modelId}`）；`CredentialResolvers` collection + `useCredentialResolver`（注册序取第一个非 undefined，静态 apiKey/env 兜底排最后）；provider-catalog 的 agent slot 在挂载时读 defaultModel → `CatalogModels` 解析 binding → `setConfig` + `setRequester` + `setCredentialProvider`，显式 `setConfig` 先到则不再覆盖（resume 自动恢复绑定，凭证永不落盘）。
+配套机制（agent-core provider-catalog）：`default_model` config 节持久化模型选择（别名 `${aliasScope ?? providerId}/${modelId}`）；`CredentialResolvers` collection + `useCredentialResolver`（注册序取第一个非 undefined，静态 apiKey/env 兜底排最后）；provider-catalog 的 agent slot 在挂载时读 defaultModel → `CatalogModels` 解析 binding → `setModel` + `setRequester` + `setEndpoint`，显式 `setModel` 先到则不再覆盖（resume 自动恢复绑定，凭证永不落盘）。
 
 ## web（kimi 子 Feature，工厂）
 
@@ -237,7 +237,7 @@
 `createSessionInit({ workDir, host?, brandHome? })`：`/init` 的 core 侧（v2 `features/sessionInit` 迁移）——派生 coder 子代理探索项目并写 AGENTS.md，完成后把最新内容注入 main agent。session 层；`host` 未传入时不挂载（能力归宿主注入端口，不自建 node host）。
 
 - facade：`SessionInitRef`（session 层）：`generateAgentsMd()` / `cancelInit(reason?)`。错误域 `SessionInitError`（`agent.not_found` / `session.init_failed`，码值与 v2 逐字）；`cancelInit` 中止的拒绝原样透出（`AbortError` 形态，不包装）。
-- 流程（对齐 v2 sessionInitService）：校验 main 在且已绑模型（`'Main agent was not found'` / `'Main agent has no model bound'` 逐字）→ `session.create` 子代理（`subagent-<id>`，roster source `session-init`——不可经 Agent 工具 resume）→ 复制 permission mode（可选探测 `PermissionRef`，缺席跳过）→ `setConfig(main.config)` 模型继承 → 跑 `init.md` 提示词（与 v2 逐字节一致）；完成/失败/取消即 facade 的 resolve/reject（v2 的 `subagent.*` 镜像事件不迁——子代理由 roster source 与自身 turn 事件描述）。
+- 流程（对齐 v2 sessionInitService）：校验 main 在且已绑模型（`'Main agent was not found'` / `'Main agent has no model bound'` 逐字）→ `session.create` 子代理（`subagent-<id>`，roster source `session-init`——不可经 Agent 工具 resume）→ 复制 permission mode（可选探测 `PermissionRef`，缺席跳过）→ `setModel(main.model)` 模型继承 → 跑 `init.md` 提示词（与 v2 逐字节一致）；完成/失败/取消即 facade 的 resolve/reject（v2 的 `subagent.*` 镜像事件不迁——子代理由 roster source 与自身 turn 事件描述）。
 - 完成后：`loadAgentsMdDetailed` 重载（brand home → `~/.agents` → git 根→叶链，`<!-- From: -->` 注解渲染逐字对齐 v2）→ 可选探测 `AgentsMdReminderRef.seed(paths)` 标记已注入 → `main.remind`（key `session-init`）携带 `initCompletionReminder(content)`（空内容回落文案逐字；reminder 随下一轮 drain 落账）。
 - profile 经 `useInject(ProfileCatalogRef)` 可选探测：有则子代理 systemPrompt 取 coder 的 `renderSystemPrompt`，无则裸提示词运行（v2 必有 profiles 绑定）。
 - 子代理跑完保留在 roster（v2 同）；无 feature-http 路由（v2 的消费方是 node-sdk 进程内 RPC，kap-server 无 REST 路由）。
@@ -253,13 +253,13 @@
 
 ## media（工厂，不在默认名单）
 
-`createMedia({ workDir, store, cache, host?, originalsDir? })`：媒体域（v2 `agent/media` + `tools/read-media-file` 迁移，media:// 形态），app + agent 双层。**接管 media lowering**：挂载本 Feature 后不得再挂 agent-core builtin `createMedia`（`registerMedia` 单槽，同挂在挂载期 throw `duplicate media lower`）；kimi-file:// 体系不在本 Feature（kap-server 侧另案）。
+`createMedia({ workDir, store, cache, host?, originalsDir? })`：媒体域（v2 `agent/media` + `tools/read-media-file` 迁移，media:// 形态），app + agent 双层。**接管 store-ref 物化**：挂载本 Feature 后不得再挂 agent-core builtin `createMedia`（同 id `store-ref` 的 MessageResolver 重复登记，挂载期 throw `duplicate message resolver: 'store-ref'`）；kimi-file:// 体系不在本 Feature（kap-server 侧另案）。
 
-- lowering：agent slot `useMediaLower({ source: store, cache, providers })`（providers 经 `Providers` collection 折叠）+ `useLlmRecovery(createMediaDegradeRecovery())`，与 builtin 同形端口的纯超集；图/音频 inline，视频在协议 lower 时经 `provider.media.uploadVideo` 上传（kimi provider 已携带，零新增）。
-- ReadMediaFile 工具：`path`（相对 workDir 解析）/ `region{x,y,width,height}`（仅图片，原图像素坐标）/ `full_resolution`（仅图片）；100MB 上限、512B 魔数嗅探（text 推给 Read）、`image_in`/`video_in` 能力门控（execute 内读 `agent.config?.model.capability`）、provider 不接受的 mime 给按 OS 转换命令文案；交付 `store.put` 后 `<image path="…">` 包裹 media:// ref + `<system>` note（mime/字节/原始尺寸/交付方式 untouched/downsampled/crop/full、相对坐标指引），note 文案逐字对齐 v2；`host` 未传入时本地路径读取返回不可用文案（不自建 node host）；`read-media.md` 与 v2 逐字节（kimi-file:// 段删除）。
+- 物化：agent slot `useMessageResolver(createStoreRefResolver(props))` + `useLlmRecovery(createMediaDegradeRecovery())`，与 builtin 同形端口的纯超集；store ref 经 `RefStore.get` 读出后，端点声明了对应 kind 的 `endpoint.files` 上传通道则上传（kimi requester 已携带，零新增），否则 inline base64。
+- ReadMediaFile 工具：`path`（相对 workDir 解析）/ `region{x,y,width,height}`（仅图片，原图像素坐标）/ `full_resolution`（仅图片）；100MB 上限、512B 魔数嗅探（text 推给 Read）、`image_in`/`video_in` 能力门控（execute 内读 `agent.model?.spec.capability`）、provider 不接受的 mime 给按 OS 转换命令文案；交付 `store.put` 后 `<image path="…">` 包裹 media:// ref + `<system>` note（mime/字节/原始尺寸/交付方式 untouched/downsampled/crop/full、相对坐标指引），note 文案逐字对齐 v2；`host` 未传入时本地路径读取返回不可用文案（不自建 node host）；`read-media.md` 与 v2 逐字节（kimi-file:// 段删除）。
 - 压缩/裁剪：jimp 动态 import、quality ladder、2000px 边长 / 256KB 读取预算 / 64MB 解码上限；原图持久化经 `originalsDir`（sha256 命名 + 1GB LRU sweep，缺省跳过）；webp 经内嵌 wasm 解码（`@jsquash/webp`）。
 - prompt 摄入（`usePromptGate`）：user message 中超过 readByteBudget 的 `data:` 内联图片压缩后 `store.put`、part 改写为 media:// ref 并附压缩 caption（形态幂等）。
-- 每请求预算（`useMessageResolver`）：inline 媒体去重总量 >20MB 时从最旧起替换为占位文本直至 ≤10MB（v2 `media-budget-exceeded` 同款语义，warning 即占位文本）。
+- 每请求预算（store-ref resolver 内建）：inline 媒体去重总量超 `DEFAULT_MEDIA_BUDGET`（20MB）时从最旧起替换为占位文本直至 ≤10MB，并经 `llm.notice` 报 `media-budget-exceeded`（v2 同款语义，warning 即占位文本）。
 - config：`image` 节（`max_edge_px` 默认 2000 / `read_byte_budget` 默认 256KB + `KIMI_IMAGE_MAX_EDGE_PX` / `KIMI_IMAGE_READ_BYTE_BUDGET` env 绑定 + stripEnv），config 缺席走默认值。
 - 不迁：kimi-file:// 全家、sessionMediaStore DI 同形物、动态重注册（spec freeze，execute 内门控替代）、telemetry（image_compress/image_crop/video_upload）、MCP 媒体输出（#29 下游）、kap-server 下载路由与 prompt 上传入口（宿主层）、displayPaths 降级路径回写。
 
@@ -315,7 +315,7 @@
 - 配置：三层文件合并——user `{home}/mcp.json`、projectRoot `{git根}/.mcp.json`、project `{workDir}/.kimi-code/mcp.json`，同名整体覆盖、后层赢；`trusted` 缺省 false 只读 user 层；`servers` props 垫底（projectRoot 层 stdio 相对 cwd 归一到文件所在目录）。`mcp` config 节（`startup_timeout_ms`/`tool_timeout_ms` 皆 optional 无默认值 + env `KIMI_MCP_STARTUP_TIMEOUT_MS`/`KIMI_MCP_TOOL_TIMEOUT_MS` + stripEnv）。文件 hot-watch 不迁，`McpRef.reload()` facade 取代（新增 connect / 消失 markRemoved / 指纹变更 reconnect，mutation 串行化）。
 - 连接管理（app 层）：状态机 pending|connected|failed|disabled|needs-auth|removed、attemptId 防串代、connectAll allSettled（无总超时，单 server startup 超时默认 30s）、无自动重试、liveness 探测；stdio 自实现 NDJSON transport（SDK ReadBuffer/serializeMessage + OsHost spawn，4KB stderr 尾缓冲、mergeStdioEnv）；http/sse 走 SDK transport + OAuth fetch。
 - spec freeze 语义（定稿：中途连接不影响 tool[]）：agent slot `useReady(initialLoad)` 门控，首批连接的工具 inline 进冻结 spec（per-agent initialPhase，第二个 agent 的首批仍是它的 inline 首批）；中途连接/重连/OAuth 完成的工具不进 spec，executor 照注册 + deferred 通道递送。
-- deferred（server 配置 `deferred: true`）：工具带 `deferred` 标记（请求级过滤不进 wire tools，executor 按名可解析）+ `mcp-dynamic-tools` system 消息（同 key 覆盖，content 名单 + tools schema 经 kimi trait 序列化上线；其它协议忽略该字段，模型不可见但 executor 仍可解析）。
+- deferred（server 配置 `deferred: true`）：工具带 `deferred` 标记（请求级过滤不进 wire tools，executor 按名可解析）+ `mcp-dynamic-tools` system 消息（同 key 覆盖，content 名单 + tools schema 经 kimi 协议序列化上线；其它协议忽略该字段，模型不可见但 executor 仍可解析）。
 - 工具镜像：限定名 `mcp__server__tool`（sanitize + 超 64 字符 FNV hash 截断，逐字）、same_server/other_server 冲突丢弃、enabledTools/disabledTools 注册前过滤；调用失败 liveness 探测 + 原地重连重试一次（v2 逐字）；server 变 failed/removed 不注销 executor（冻结 spec 无法移除），调用时重连或返回明确文案。
 - OAuth：401 → needs-auth + 合成 `mcp__{server}__authenticate` 工具；授权 URL 经 `mcp.oauth.authorization_url` Feature 事件（v2 的 onUpdate custom 通道无对应物）+ 工具阻塞至 flow.complete（signal，15min）；callback server 127.0.0.1 随机端口固定 `/callback`；token 存 `{home}/credentials/mcp/`（key 规则逐字）；主动刷新提前 2 分钟；tokens-saved/invalidated/refresh-failed → 自动重连（v2 workspaceMcpService 规则逐字）。
 - 输出治理：text/resource/structuredContent/_meta `<mcp-result-extras>` 规则逐字；图片在 `mediaStore` 在场时 compressImageForModel → store.put → media:// ref（失败回退 data-URL），缺席 data-URL 直出；10MB/part 上限 drop notice。v2 的 originals 落盘 + daemon-file-url 通知不迁（media 无该 facade）；错误结果经 `result.isError` 透传标记（第 76 轮框架通道）。

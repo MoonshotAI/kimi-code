@@ -1,6 +1,6 @@
 # HistoryMessage 与 Delta
 
-Reference：落盘历史是 `HistoryMessage`；流式增量是 `StreamedMessagePart`（机器事件 `llm.streaming.part` 的 `part`）。源码 `packages/agent-core/src/llm/message.ts`。怎么订这两面见 [1. 跑完一个 turn](../how-to-guides/01-run-a-turn.md)。
+Reference：落盘历史是 `HistoryMessage`；流式增量是 `StreamedMessagePart`（机器事件 `llm.streaming.part` 的 `part`）。源码：`HistoryMessage` 在 `packages/agent-core/src/history/message.ts`，`StreamedMessagePart` 在 `src/llm/message.ts`。怎么订这两面见 [1. 跑完一个 turn](../how-to-guides/01-run-a-turn.md)。
 
 文档里说的 Delta 就是 `StreamedMessagePart`，包内没有名为 `Delta` 的类型。
 
@@ -25,7 +25,7 @@ HistoryEntry<T, F> = { message: T; meta?: F }
 |---|---|
 | `text` | `text`，可选 `contentType`（`text/plain` \| `text/markdown` \| `text/xml`）/ `meta` |
 | `think` | `think`，可选 `encrypted` / `hidden` / `reasoningKey` / `detailsIndex` |
-| `image_url` / `audio_url` / `video_url` | 对应 `*Url.url`，可选 `name` |
+| `image_url` / `audio_url` / `video_url` | `source: MediaSource`（`store` ref / `url` / `inline` base64 / `file` id），可选 `name`（图 / 视频）与 `omitted`（`degraded` / `stripped` / `budget` 降级标记） |
 
 `meta.kind === 'skill'` 表示 skill 段；`meta.kind === 'reminder'` 是 system reminder。身份在 part 上，不在 `origin.skillActivations`。
 
@@ -66,4 +66,4 @@ Delta 只出现在机器事件面（`agent.on`）；节点事件只有完整 `Hi
 
 - 跑一个 turn → [01](../how-to-guides/01-run-a-turn.md)
 - 事件面 → [events](events.md)
-- 占用 → `usedContextTokens(history)`（`llm/usage.ts`）
+- 占用 → `usedContextTokens(history)`（`history/usage.ts`）

@@ -1,30 +1,23 @@
 import { assign, fromPromise, setup } from '#/xstate2/index';
 
+import { createToolMessage, type ToolCall, type ToolDescription } from '#/llm/message';
 import {
   createAssistantEntry,
   createToolEntry,
-  createToolMessage,
-  toInputMessages,
   toRequestMessages,
   type AssistantEntry,
   type HistoryMessage,
-  type ToolCall,
-  type ToolDescription,
   type ToolEntry,
-} from '#/llm/message';
-import type { LlmModel } from '#/llm/model';
-import type { LlmEvent } from '#/llm/requester/input';
+} from '#/history/message';
+import { usedContextTokens } from '#/history/usage';
+import type { LlmEndpoint, LlmModelSpec, LlmRequestModel } from '#/llm/request';
+import type { LlmOutcome, LlmOutput, LlmRunEvent } from '#/llm/response';
 import { createRequestActor } from './llm-actor';
-import type { LlmCredentialProvider, LlmRequestConfig } from '#/llm/requester/requester';
-import type { LlmOutput } from '#/llm/requester/settle';
-import { ToolCallIdNormalizer } from '#/llm/requester/tool-call-id';
 import type { ToolBeforeDecision, ToolOutput } from './tool';
 import { createAbortScope, withAbort, type AbortScope } from '#/utils/abort';
 
-import { usedContextTokens } from '#/llm/usage';
-
-function modelMeta(model: LlmModel): { model: { provider: string; model: string } } {
-  return { model: { provider: model.provider, model: model.model } };
+function modelMeta(model: LlmModelSpec): { model: { provider: string; model: string } } {
+  return { model: { provider: model.provider, model: model.name } };
 }
 
 export interface TurnInput {
@@ -38,7 +31,7 @@ export type TurnToolEvent =
   | { type: 'tool.done'; toolCallId: string; outcome: ToolOutput };
 
 export type TurnEvent =
-  | LlmEvent
+  | LlmRunEvent
   | TurnToolEvent
   | { type: 'agent.notify'; messages: HistoryMessage[] }
   | { type: 'turn.compaction_finished'; history?: HistoryMessage[]; error?: unknown }
@@ -47,8 +40,9 @@ export type TurnEvent =
   | { type: 'turn.abort'; reason?: unknown };
 
 export type TurnLlmEvent =
-  | Exclude<LlmEvent, { type: 'llm.done' }>
-  | { type: 'llm.done'; entry: AssistantEntry };
+  | Exclude<LlmRunEvent, { type: 'llm.ended' }>
+  | { type: 'llm.done'; entry: AssistantEntry }
+  | { type: 'llm.ended'; outcome: Extract<LlmOutcome, { type: 'aborted' | 'failed' }> };
 
 export type TurnCompactionReason = 'budget' | 'overflow';
 
@@ -99,7 +93,6 @@ export interface TurnMachineContext {
   input: TurnInput;
   history: HistoryMessage[];
   produced: HistoryMessage[];
-  toolCallIds: ToolCallIdNormalizer;
   llmScope: AbortScope;
   pendingToolCalls: ToolCall[];
   outcomes: Record<string, ToolOutput>;
@@ -117,7 +110,7 @@ function assistantEntry(
   context: TurnMachineContext,
   output: LlmOutput,
   source: string,
-  model?: LlmModel,
+  model?: LlmModelSpec,
 ): AssistantEntry {
   return createAssistantEntry(output.message, {
     source,
@@ -200,7 +193,7 @@ function maxStepsExceeded(context: TurnMachineContext): boolean {
 
 export interface TurnBeforeStepContext {
   messages: readonly HistoryMessage[];
-  config?: LlmRequestConfig;
+  model?: LlmRequestModel;
   tools: readonly ToolDescription[];
   systemPrompt?: string;
 }
@@ -237,48 +230,13 @@ export type TurnBeforeTools = (
 
 export type LlmActorLogic = ReturnType<typeof createRequestActor>;
 
-function seededToolCallIds(history: readonly HistoryMessage[]): ToolCallIdNormalizer {
-  const toolCallIds = new ToolCallIdNormalizer();
-  toolCallIds.seedFrom(toInputMessages(history));
-  return toolCallIds;
-}
-
-function withCompletionBudget(
-  config: LlmRequestConfig,
-  history: readonly HistoryMessage[],
-  tools: readonly ToolDescription[] | undefined,
-  systemPrompt: string | undefined,
-): LlmRequestConfig {
-  const maxCompletionTokens = config.maxCompletionTokens;
-  const maxContextTokens = config.model.maxContextSize;
-  if (maxCompletionTokens === undefined) {
-    return config;
-  }
-  let cap = maxCompletionTokens;
-  if (maxContextTokens !== undefined && maxContextTokens > 0) {
-    cap = Math.min(
-      cap,
-      maxContextTokens -
-        usedContextTokens(history, {
-          systemPrompt,
-          tools,
-        }),
-    );
-  }
-  cap = Math.max(1, cap);
-  if (cap === maxCompletionTokens) {
-    return config;
-  }
-  return { ...config, maxCompletionTokens: cap };
-}
-
 export interface CreateTurnMachineOptions {
   readonly abortGraceMs?: number;
   readonly getTools?: () => readonly ToolDescription[] | undefined;
   readonly getSystemPrompt?: (host?: string) => string | undefined;
   readonly getHostPrompt?: () => string | undefined;
-  readonly getConfig?: () => LlmRequestConfig | undefined;
-  readonly getCredentialProvider?: () => LlmCredentialProvider | undefined;
+  readonly getModel?: () => LlmRequestModel | undefined;
+  readonly getEndpoint?: () => LlmEndpoint | undefined;
   readonly onBeforeStep?: TurnBeforeStep;
   readonly onAfterStep?: TurnAfterStep;
   readonly onBeforeTools?: TurnBeforeTools;
@@ -292,7 +250,7 @@ export function createTurnMachine(
 ) {
   const abortGraceMs = options?.abortGraceMs ?? 2_500;
   const toolsFor = (): readonly ToolDescription[] | undefined => options?.getTools?.();
-  const configOf = (): LlmRequestConfig | undefined => options?.getConfig?.();
+  const modelOf = (): LlmRequestModel | undefined => options?.getModel?.();
   const systemPromptFor = (): string | undefined => {
     const host = options?.getHostPrompt?.();
     return options?.getSystemPrompt === undefined ? host : options.getSystemPrompt(host);
@@ -340,7 +298,6 @@ export function createTurnMachine(
       input,
       history: [...input.history],
       produced: [],
-      toolCallIds: seededToolCallIds(input.history),
       llmScope: createAbortScope(),
       pendingToolCalls: [],
       outcomes: {},
@@ -362,10 +319,10 @@ export function createTurnMachine(
         invoke: {
           src: 'onBeforeStepActor',
           input: ({ context }) => {
-            const config = configOf();
+            const model = modelOf();
             return {
               messages: context.history,
-              config,
+              model,
               tools: toolsFor() ?? [],
               systemPrompt: systemPromptFor(),
             };
@@ -420,22 +377,26 @@ export function createTurnMachine(
             invoke: {
               src: 'llmActor',
               input: ({ context }) => {
-                const config = configOf();
-                if (config === undefined) {
-                  throw new Error('config is not set');
+                const model = modelOf();
+                if (model === undefined) {
+                  throw new Error('model is not set');
                 }
                 const tools = toolsFor();
                 const systemPrompt = systemPromptFor();
                 return {
-                  config: withCompletionBudget(config, context.history, tools, systemPrompt),
-                  content: {
-                    systemPrompt,
-                    messages: toRequestMessages(context.history),
-                    tools,
+                  rest: {
+                    model,
+                    endpoint: options?.getEndpoint?.(),
+                    profile: {
+                      systemPrompt,
+                      tools,
+                    },
+                    content: {
+                      messages: toRequestMessages(context.history),
+                      usedTokens: usedContextTokens(context.history, { systemPrompt, tools }),
+                    },
                   },
                   signal: context.llmScope.signal,
-                  toolCallIds: context.toolCallIds,
-                  credentialProvider: options?.getCredentialProvider?.(),
                 };
               },
               onError: {
@@ -447,46 +408,30 @@ export function createTurnMachine(
               },
             },
             on: {
-              'llm.sent': {
+              'llm.started': {
                 actions: [
                   {
                     type: 'sendToParent',
-                    params: { type: 'llm.sent' as const },
+                    params: { type: 'llm.started' as const },
                   },
                 ],
               },
+              'llm.notice': { actions: 'forwardToParent' },
               'llm.streaming.headers': { actions: 'forwardToParent' },
               'llm.streaming.part': { actions: 'forwardToParent' },
               'llm.streaming.usage': { actions: 'forwardToParent' },
               'llm.streaming.finish': { actions: 'forwardToParent' },
               'llm.streaming.message_id': { actions: 'forwardToParent' },
               'llm.retrying': { actions: 'forwardToParent' },
-              'llm.recovering': { actions: 'forwardToParent' },
-              'llm.aborted': {
-                target: '#turn.aborted',
-                actions: [
-                  'forwardToParent',
-                  assign(({ context, event }) => {
-                    const message = event.message;
-                    if (message === null) {
-                      return { outcome: 'aborted' as const };
-                    }
-                    const entry = assistantEntry(context, { ...event, message }, 'salvaged', configOf()?.model);
-                    return {
-                      outcome: 'aborted' as const,
-                      history: [...context.history, entry],
-                      produced: [...context.produced, entry],
-                    };
-                  }),
-                ],
-              },
-              'llm.done': [
+              'llm.ended': [
                 {
-                  guard: ({ event }) => event.message.toolCalls.length > 0,
+                  guard: ({ event }) =>
+                    event.outcome.type === 'done' && event.outcome.message.toolCalls.length > 0,
                   target: '#turn.preparingTools',
                   actions: [
                     assign(({ context, event }) => {
-                      const entry = assistantEntry(context, event, 'llm', configOf()?.model);
+                      const outcome = event.outcome as Extract<typeof event.outcome, { type: 'done' }>;
+                      const entry = assistantEntry(context, outcome, 'llm', modelOf()?.spec);
                       return {
                         history: [...context.history, entry],
                         produced: [...context.produced, entry],
@@ -503,11 +448,13 @@ export function createTurnMachine(
                   ],
                 },
                 {
-                  guard: () => options?.onAfterStep === undefined,
+                  guard: ({ event }) =>
+                    event.outcome.type === 'done' && options?.onAfterStep === undefined,
                   target: '#turn.done',
                   actions: [
                     assign(({ context, event }) => {
-                      const entry = assistantEntry(context, event, 'llm', configOf()?.model);
+                      const outcome = event.outcome as Extract<typeof event.outcome, { type: 'done' }>;
+                      const entry = assistantEntry(context, outcome, 'llm', modelOf()?.spec);
                       return {
                         history: [...context.history, entry],
                         produced: [...context.produced, entry],
@@ -523,10 +470,12 @@ export function createTurnMachine(
                   ],
                 },
                 {
+                  guard: ({ event }) => event.outcome.type === 'done',
                   target: '#turn.settling',
                   actions: [
                     assign(({ context, event }) => {
-                      const entry = assistantEntry(context, event, 'llm', configOf()?.model);
+                      const outcome = event.outcome as Extract<typeof event.outcome, { type: 'done' }>;
+                      const entry = assistantEntry(context, outcome, 'llm', modelOf()?.spec);
                       return {
                         outcome: 'done' as const,
                         history: [...context.history, entry],
@@ -542,20 +491,51 @@ export function createTurnMachine(
                     },
                   ],
                 },
-              ],
-              'llm.failed.syntax': {
-                target: '#turn.failed',
-                actions: [
-                  'forwardToParent',
-                  assign({
-                    outcome: 'failed' as const,
-                    failure: ({ event }) => ({ reason: 'error' as const, error: event.error }),
-                  }),
-                ],
-              },
-              'llm.failed.remote': [
                 {
-                  guard: ({ event }) => event.error.kind === 'context_overflow',
+                  guard: ({ event }) => event.outcome.type === 'aborted',
+                  target: '#turn.aborted',
+                  actions: [
+                    'forwardToParent',
+                    assign(({ context, event }) => {
+                      const outcome = event.outcome as Extract<typeof event.outcome, { type: 'aborted' }>;
+                      const message = outcome.message;
+                      if (message === null) {
+                        return { outcome: 'aborted' as const };
+                      }
+                      const entry = assistantEntry(
+                        context,
+                        { ...outcome, message },
+                        'salvaged',
+                        modelOf()?.spec,
+                      );
+                      return {
+                        outcome: 'aborted' as const,
+                        history: [...context.history, entry],
+                        produced: [...context.produced, entry],
+                      };
+                    }),
+                  ],
+                },
+                {
+                  guard: ({ event }) =>
+                    event.outcome.type === 'failed' && event.outcome.error.kind === 'syntax',
+                  target: '#turn.failed',
+                  actions: [
+                    'forwardToParent',
+                    assign({
+                      outcome: 'failed' as const,
+                      failure: ({ event }) => ({
+                        reason: 'error' as const,
+                        error:
+                          event.outcome.type === 'failed' ? event.outcome.error : event.outcome,
+                      }),
+                    }),
+                  ],
+                },
+                {
+                  guard: ({ event }) =>
+                    event.outcome.type === 'failed' &&
+                    event.outcome.error.kind === 'context_overflow',
                   target: '#turn.compacting',
                   actions: assign({ compactReason: 'overflow' as const }),
                 },
@@ -567,7 +547,10 @@ export function createTurnMachine(
                       outcome: 'failed' as const,
                       failure: ({ event }) => ({
                         reason: 'error' as const,
-                        error: event.rawError ?? event.error,
+                        error:
+                          event.outcome.type === 'failed'
+                            ? (event.outcome.rawError ?? event.outcome.error)
+                            : event.outcome,
                       }),
                     }),
                   ],
@@ -788,7 +771,6 @@ export function createTurnMachine(
                 return {
                   history: [...history],
                   produced: [],
-                  toolCallIds: seededToolCallIds(history),
                 };
               }),
             },

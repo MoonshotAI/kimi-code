@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { applyPatterns, type Pattern, type Rewrite } from '#/llm/protocol/rewrite';
+import { applyPatterns, type Pattern, type Rewrite } from '#/llm/protocol/pattern';
 
 function pairToSum(name: string): Pattern<number> {
   return {
@@ -44,14 +44,9 @@ describe('applyPatterns', () => {
     expect(out).not.toBe(input);
   });
 
-  it('applies patterns in order, one pass each', () => {
-    const out = applyPatterns([2, 4, 1, 1], [pairToSum('sum'), splitEven()]);
-    expect(out).toEqual([3, 3, 1, 1]);
-  });
-
-  it('later patterns see the output of earlier patterns', () => {
-    const out = applyPatterns([2, 2], [pairToSum('sum'), splitEven()]);
-    expect(out).toEqual([2, 2]);
+  it('applies patterns in order, one pass each, on the output of earlier patterns', () => {
+    expect(applyPatterns([2, 4, 1, 1], [pairToSum('sum'), splitEven()])).toEqual([3, 3, 1, 1]);
+    expect(applyPatterns([2, 2], [pairToSum('sum'), splitEven()])).toEqual([2, 2]);
   });
 
   it('supports run matching with multi-item consumption', () => {

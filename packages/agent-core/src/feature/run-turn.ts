@@ -1,4 +1,4 @@
-import { createRequestActor } from '#/agent-machine/llm-actor';
+import { createRequestActor, type AgentLlmRequester } from '#/agent-machine/llm-actor';
 import {
   createTurnMachine,
   type CreateTurnMachineOptions,
@@ -7,7 +7,6 @@ import {
   type TurnOutput,
 } from '#/agent-machine/turn';
 import { currentUnit } from '#/kernel/index';
-import type { LlmRequester } from '#/llm/requester/requester';
 import { createActor, waitFor } from '#/xstate2/index';
 
 export interface RunTurnOptions {
@@ -42,7 +41,7 @@ export async function runTurn(
 }
 
 export interface UseTurnOptions extends CreateTurnMachineOptions {
-  readonly requester: LlmRequester;
+  readonly requester: AgentLlmRequester;
 }
 
 export function useTurn(options: UseTurnOptions): (input: TurnInput) => Promise<TurnOutput> {

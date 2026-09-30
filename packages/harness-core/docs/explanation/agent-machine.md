@@ -1,6 +1,6 @@
 # Agent 状态机
 
-机器在 `packages/agent-core/src/agent-machine/`，store-free。`AgentUnit` 创建机器、翻译写回、对外暴露命令。机器不认识 ports、不认识 journal。`setConfig` / `setCredentialProvider` / `setRequester` 只改下次 `generate`，不进这台机器。
+机器在 `packages/agent-core/src/agent-machine/`，store-free。`AgentUnit` 创建机器、翻译写回、对外暴露命令。机器不认识 ports、不认识 journal。`setModel` / `setEndpoint` / `setRequester` 只改下次 `generate`，不进这台机器。
 
 三台嵌套机器：
 
@@ -64,14 +64,14 @@ queue 存在是因为用户输入必须能排队、能撤、能并，而且不�
 进入 `running` **立即发 `turn.started`**（`activeTurnId = turnId`，`entry` 为 drain 出的原始 prompt），随后按顺序：
 
 - `gating`：`drainedEntry` 存在且装了 `promptGate` 才 invoke gate（否则直通）。gate 通过 → 把（可能被 gate 改写的）prompt 并入 `messages`、发 `turn.prompt_committed`、spawn turn actor 进 `active`；gate 拦截或抛错 → **原始 prompt 同样并入 `messages` 落盘**（对齐 v2 UserPromptSubmit 语义：被拦截的 prompt 进 context，后续 turn 可见），发 `prompt.blocked`（payload 不变），并合成 `turn.done`（`failed` 结局）回 `idle`。gating 期间 `input.abort` → 发 `turn.aborting`/`agent.aborted` 并合成 `turn.done`（`aborted` 结局）回 `idle`；`input.pause` 只立标志，gate 通过 spawn 后补 `turn.pause`。
-- `active`：turn actor 实际跑（输入是 commit 后的 `messages`；`config` / 凭证 / 传输活读命令面上的值）。turn 完成（`xstate.done.actor.turn`）→ 回 `idle` 并发 `turn.done`。
+- `active`：turn actor 实际跑（输入是 commit 后的 `messages`；`model` / `endpoint` / 传输活读命令面上的值）。turn 完成（`xstate.done.actor.turn`）→ 回 `idle` 并发 `turn.done`。
 - 离开 `running` 时 abort/stop 本 turn 的 tool actor 与 turn actor，`turnId += 1`
 
 turn 内部一步是「LLM →（可选）工具 → drain」。
 
 **gating**：有 `onBeforeStep`（含 Feature 的 `useBeforeStep`）就先跑。hook 返回 `{ compact: true }` 决策（compaction 超预算）则进 `compacting`，不杀 turn。
 
-**streaming.requesting**：调 `runLlmRequest`。policy（resolver / recovery / retry / media）在 actor 里，turn 没有 retrying 状态。流式事件原样转给 agent。`llm.done` 时：
+**streaming.requesting**：经 actor 调 `runLlmRequest`。policy（resolver / recovery / retry）在 actor 里，turn 没有 retrying 状态。流式事件原样转给 agent。`llm.done` 时：
 
 - 已把这一条 assistant **写入 turn history**，再发给父机（同一对象）
 - 有 toolCalls → `acting`，否则 → `done`
@@ -84,7 +84,7 @@ turn 内部一步是「LLM →（可选）工具 → drain」。
 - 超过 `maxSteps` → `failed`（`TurnFailure.reason = 'max_steps'`；notify 带入的消息先入 history 再失败）
 - 否则回到 `gating` 开下一步（steps 恒递增，notify 带入消息不重置）
 
-**compacting**：两个入口——gating 决策 `{ compact: true }`（budget）与 `llm.failed.remote` 且 `error.kind === 'context_overflow'`（overflow，该失败被吸收不再外发）。入口向 agent 发 `turn.compaction_requested { reason, history }`（agent 补 `turnId` 后 emit），然后悬停等 `turn.compaction_finished`：携 `history` 则整体替换现有 history、`toolCallIds` 重播种、清空本轮 produced 累积器，回 `gating` 原地续跑（budget 复检自然通过、overflow 重发失败请求）；携 `error` 则 turn `failed`。`turn.abort` → `aborted`。压缩只发生在 step 边界，`acting`（工具在飞）不进。
+**compacting**：两个入口——gating 决策 `{ compact: true }`（budget）与 `llm.ended` 的 failed outcome 且 `error.kind === 'context_overflow'`（overflow，该失败被吸收不再外发）。入口向 agent 发 `turn.compaction_requested { reason, history }`（agent 补 `turnId` 后 emit），然后悬停等 `turn.compaction_finished`：携 `history` 则整体替换现有 history、清空本轮 produced 累积器，回 `gating` 原地续跑（budget 复检自然通过、overflow 重发失败请求）；携 `error` 则 turn `failed`。`turn.abort` → `aborted`。压缩只发生在 step 边界，`acting`（工具在飞）不进。
 
 turn 的 `produced`（终局交给 agent 追加进 `messages` 的部分）是累积器：llm / salvaged assistant、tool 结果、drain 进 history 的 notify 逐条记，reset 时清零——reset 前产生的条目随旧 history 一起丢弃。
 

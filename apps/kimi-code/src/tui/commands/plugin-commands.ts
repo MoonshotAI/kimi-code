@@ -1,10 +1,9 @@
-import type { PluginCommandDef } from '@moonshot-ai/kimi-code-sdk';
+import type { PluginCommandDef } from '@moonshot-ai/harness-core/features/plugin/index';
 
 import type { KimiSlashCommand } from './types';
 
 export interface PluginSlashCommands {
   readonly commands: readonly KimiSlashCommand[];
-  /** Maps a namespaced command name (`plugin:command`) to its markdown body. */
   readonly commandMap: ReadonlyMap<string, string>;
 }
 

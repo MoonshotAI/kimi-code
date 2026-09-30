@@ -1,4 +1,4 @@
-import type { PermissionMode } from '@moonshot-ai/kimi-code-sdk';
+import type { PermissionMode } from '@moonshot-ai/harness-core';
 
 export const PERMISSION_MODE_DISPLAY_NAMES: Readonly<Record<PermissionMode, string>> = {
   manual: 'Always Ask',

@@ -1,11 +1,34 @@
+import { randomUUID } from "node:crypto";
+
 import {
-  isKimiError,
-  type ContentPart as SdkContentPart,
-  type Event,
-  type PromptInput,
-  type Session,
-  type SessionSummary,
-} from "@moonshot-ai/kimi-code-sdk";
+  AgentModelRef,
+  MAIN_AGENT_ID,
+  type AgentHandle,
+  type AgentModelFace,
+  type ContentPart as EngineContentPart,
+  type MediaSource,
+  type SessionRecord,
+  type UserMessage,
+} from "@moonshot-ai/agent-core";
+import type { CertainToken, FacadeToken, Token } from "@moonshot-ai/agent-core/kernel/index";
+import {
+  CompactionRef,
+  PermissionRef,
+  PlanRef,
+  SessionInitRef,
+  SessionTitleRef,
+  SkillRef,
+  TokenCountingRef,
+  type CompactionFace,
+  type PermissionFace,
+  type PermissionMode,
+  type PlanFace,
+  type SessionInitFace,
+  type SessionTitleFace,
+  type SkillFace,
+  type TokenCountingFace,
+} from "@moonshot-ai/harness-core";
+import { isKimiError, type KimiSession } from "@moonshot-ai/kimi-code-sdk";
 
 import type { ContentPart as LegacyContentPart, ApprovalResponse } from "../../shared/legacy-sdk";
 import { Events } from "../../shared/bridge";
@@ -14,6 +37,7 @@ import type { ErrorPhase, UIStreamEvent } from "../../shared/types";
 import {
   adaptSdkEvent,
   createEventAdapterState,
+  type Event,
   type EventAdapterState,
   type TurnTerminalMetadata,
 } from "./event-adapter";
@@ -23,19 +47,42 @@ import {
   type LegacyApprovalFlags,
 } from "./legacy-approval";
 import { ReverseRpcController } from "./reverse-rpc";
+import { SessionEventSource } from "./session-event-source";
+import type { ContextMessage } from "../utils/session-context";
+import { contextMessageFromHistory } from "../utils/session-context";
 
 export type RuntimeBroadcast = (event: string, data: unknown, webviewId?: string) => void;
 
 export interface SessionRuntimeOptions {
-  readonly session: Session;
+  readonly session: KimiSession;
+  readonly workDir: string;
   readonly legacyApproval: LegacyApprovalFlags;
   readonly broadcast: RuntimeBroadcast;
   readonly captureBaseline: (
-    session: Pick<SessionSummary, "id" | "workDir" | "metadata">,
+    session: { readonly id: string; readonly workDir: string; readonly metadata?: Readonly<Record<string, unknown>> },
     filePath: string,
     webviewIds: readonly string[],
   ) => void;
+  readonly updateMetadata: (
+    id: string,
+    patch: Record<string, unknown>,
+  ) => Promise<Readonly<Record<string, unknown>> | undefined>;
+  readonly recreateSession: (
+    id: string,
+    metadata: Readonly<Record<string, unknown>> | undefined,
+  ) => Promise<KimiSession>;
+  readonly configDefaults?: () => { readonly model?: string; readonly thinking?: string };
   readonly log: (message: string, error?: unknown) => void;
+}
+
+export interface SessionStatusSnapshot {
+  readonly model: string | undefined;
+  readonly thinkingEffort: string;
+  readonly permission: PermissionMode;
+  readonly planMode: boolean;
+  readonly contextTokens: number;
+  readonly maxContextTokens: number;
+  readonly contextUsage: number;
 }
 
 interface ActivePrompt {
@@ -62,20 +109,21 @@ interface PendingHostCompaction {
   readonly reject: (error: unknown) => void;
 }
 
-/**
- * Owns the one SDK event subscription and reverse-RPC handlers for a session.
- * Any number of Webviews may subscribe without replacing each other's approval
- * handler or duplicating streamed events.
- */
 export class SessionRuntime {
-  readonly session: Session;
+  private session: KimiSession;
+  private main: AgentHandle;
+  private eventSource: SessionEventSource;
+
+  readonly workDir: string;
 
   private readonly broadcast: RuntimeBroadcast;
   private readonly captureBaseline: SessionRuntimeOptions["captureBaseline"];
+  private readonly updateMetadataDelegate: SessionRuntimeOptions["updateMetadata"];
+  private readonly recreateSessionDelegate: SessionRuntimeOptions["recreateSession"];
+  private readonly configDefaults: () => { readonly model?: string; readonly thinking?: string };
   private readonly log: SessionRuntimeOptions["log"];
   private readonly webviewIds = new Set<string>();
   private readonly reverseRpc: ReverseRpcController;
-  private readonly unsubscribe: () => void;
   private adapterState: EventAdapterState = createEventAdapterState();
   private activePrompt: ActivePrompt | undefined;
   private hostActionActive = false;
@@ -88,31 +136,41 @@ export class SessionRuntime {
   private readonly terminalKeys = new Set<string>();
   private suppressedError: SuppressedError | undefined;
   private legacyApproval: LegacyApprovalFlags;
+  private record: SessionRecord | undefined;
+  private titleRequested = false;
   private closed = false;
 
   constructor(options: SessionRuntimeOptions) {
     this.session = options.session;
+    this.main = options.session.main;
+    this.workDir = options.workDir;
     this.broadcast = options.broadcast;
     this.captureBaseline = options.captureBaseline;
+    this.updateMetadataDelegate = options.updateMetadata;
+    this.recreateSessionDelegate = options.recreateSession;
+    this.configDefaults = options.configDefaults ?? (() => ({}));
     this.log = options.log;
     this.legacyApproval = options.legacyApproval;
     this.reverseRpc = new ReverseRpcController((event) => this.emitStreamEvent(event));
-
-    // Forward every approval request to the user. The engine permission mode
-    // (mapped from the legacy flags) already auto-approves what yolo/auto
-    // allow internally; anything that reaches this handler is an exception
-    // (sensitive file, plan review, ask rule) the user must decide on.
-    this.session.setApprovalHandler((request) => this.reverseRpc.requestApproval(request));
-    this.session.setQuestionHandler((request) => this.reverseRpc.requestQuestion(request));
-    this.unsubscribe = this.session.onEvent((event) => this.onSdkEvent(event));
+    this.reverseRpc.mountSession(this.session);
+    this.eventSource = this.createEventSource();
+    this.eventSource.start();
   }
 
   get id(): string {
     return this.session.id;
   }
 
-  get summary(): SessionSummary | undefined {
-    return this.session.summary;
+  get engineSession(): KimiSession {
+    return this.session;
+  }
+
+  get summary(): { readonly id: string; readonly workDir: string; readonly metadata?: Readonly<Record<string, unknown>> } {
+    return {
+      id: this.id,
+      workDir: this.workDir,
+      metadata: this.record?.metadata,
+    };
   }
 
   get subscribers(): readonly string[] {
@@ -125,6 +183,10 @@ export class SessionRuntime {
 
   get legacyApprovalFlags(): LegacyApprovalFlags {
     return this.legacyApproval;
+  }
+
+  setSessionRecord(record: SessionRecord | undefined): void {
+    this.record = record;
   }
 
   async toggleLegacyApproval(kind: keyof LegacyApprovalFlags): Promise<LegacyApprovalFlags> {
@@ -143,14 +205,9 @@ export class SessionRuntime {
     this.webviewIds.add(webviewId);
   }
 
-  /**
-   * Push the session's current status to a view. Called whenever a view
-   * opens or re-enters a session so the display (model, thinking effort,
-   * plan mode) matches engine truth instead of the global defaults.
-   */
   async announceStatus(webviewId: string): Promise<void> {
     this.ensureOpen();
-    const status = await this.session.getStatus();
+    const status = this.getStatus();
     if (this.closed || !this.webviewIds.has(webviewId)) return;
     this.broadcast(
       Events.StreamEvent,
@@ -172,8 +229,114 @@ export class SessionRuntime {
     this.webviewIds.delete(webviewId);
   }
 
+  getStatus(): SessionStatusSnapshot {
+    const model = this.resolveOptional<AgentModelFace>(AgentModelRef, "agent");
+    const permission = this.resolveOptional<PermissionFace>(PermissionRef, "agent");
+    const plan = this.resolveOptional<PlanFace>(PlanRef, "agent");
+    const tokenCounting = this.resolveOptional<TokenCountingFace>(TokenCountingRef, "agent");
+    const binding = model?.current.value;
+    const defaults = this.configDefaults();
+    const contextTokens = tokenCounting?.status.value ?? 0;
+    const maxContextTokens = this.main.model?.spec.maxContextSize ?? 0;
+    return {
+      model: binding?.alias ?? defaults.model,
+      thinkingEffort: binding?.thinking ?? defaults.thinking ?? "off",
+      permission: permission?.state.value.mode ?? corePermissionForLegacyApproval(this.legacyApproval),
+      planMode: plan?.state.value.active ?? false,
+      contextTokens,
+      maxContextTokens,
+      contextUsage: maxContextTokens > 0 ? contextTokens / maxContextTokens : 0,
+    };
+  }
+
+  async setModel(model: string): Promise<void> {
+    await this.resolveRequired<AgentModelFace>(AgentModelRef, "agent").setModel(model);
+  }
+
+  async setThinking(effort: string): Promise<void> {
+    await this.resolveRequired<AgentModelFace>(AgentModelRef, "agent").setThinking(effort);
+  }
+
+  async setPlanMode(enabled: boolean): Promise<void> {
+    const plan = this.resolveRequired<PlanFace>(PlanRef, "agent");
+    if (plan.state.value.active === enabled) return;
+    if (enabled) {
+      await plan.enter(undefined, true);
+      return;
+    }
+    await plan.cancel();
+  }
+
+  async getPlan(): Promise<{ readonly content: string; readonly path: string } | null> {
+    const plan = this.resolveOptional<PlanFace>(PlanRef, "agent");
+    const status = await plan?.status();
+    if (status === null || status === undefined) return null;
+    return { content: status.content, path: status.path };
+  }
+
+  async clearPlan(): Promise<void> {
+    await this.resolveRequired<PlanFace>(PlanRef, "agent").clear();
+  }
+
+  async init(): Promise<void> {
+    await this.resolveRequired<SessionInitFace>(SessionInitRef, "session").generateAgentsMd();
+  }
+
+  async activateSkill(name: string, args?: string): Promise<void> {
+    await this.resolveRequired<SkillFace>(SkillRef, "agent").activate({ name, args });
+  }
+
+  getContext(): { readonly history: ContextMessage[]; readonly tokenCount: number } {
+    const store = this.session.handle.stores.get(MAIN_AGENT_ID);
+    const history = store?.getState().history ?? [];
+    const tokenCounting = this.resolveOptional<TokenCountingFace>(TokenCountingRef, "agent");
+    return {
+      history: history.map(contextMessageFromHistory),
+      tokenCount: tokenCounting?.status.value ?? 0,
+    };
+  }
+
+  async importContext(content: string, source: string): Promise<void> {
+    this.ensureOpen();
+    const store = this.session.handle.stores.get(MAIN_AGENT_ID);
+    if (store === undefined) throw new Error("Session history is unavailable.");
+    const text = `<imported_context source="${escapeXml(source)}">\n${content}\n</imported_context>`;
+    await store.dispatch({
+      type: "message.appended",
+      message: {
+        message: { role: "user", content: [{ type: "text", text }] },
+        meta: { origin: { kind: "user" } },
+      },
+    });
+  }
+
+  async clearContext(): Promise<void> {
+    this.ensureOpen();
+    const metadata = this.record?.metadata;
+    this.eventSource.close();
+    this.reverseRpc.unmountSession();
+    await this.session.close().catch((error: unknown) => {
+      this.log("Failed to close the session before clearing its context", error);
+    });
+    const fresh = await this.recreateSessionDelegate(this.id, metadata);
+    this.session = fresh;
+    this.main = fresh.main;
+    this.adapterState = createEventAdapterState();
+    this.terminalKeys.clear();
+    this.reverseRpc.mountSession(fresh);
+    this.eventSource = this.createEventSource();
+    this.eventSource.start();
+    await this.applyPermissionMode(corePermissionForLegacyApproval(this.legacyApproval));
+  }
+
   async prompt(input: string | LegacyContentPart[]): Promise<PromptResult> {
-    return this.runTurnAction(input, () => this.session.prompt(toSdkPromptInput(input)));
+    return this.runTurnAction(input, async () => {
+      const ack = this.main.submit(
+        toEngineUserMessage(input),
+        { origin: { kind: "user" }, tracked: true, promptId: randomUUID() },
+      );
+      if (ack === undefined) throw new Error("Failed to send: the agent is not running.");
+    });
   }
 
   async runTurnAction(
@@ -182,12 +345,6 @@ export class SessionRuntime {
   ): Promise<PromptResult> {
     this.ensureOpen();
     if (this.isBusy) {
-      // A re-entrant turn request must never disturb the active turn — it fails
-      // only itself. When a turn or host action is running, its later terminal
-      // stream event unlocks every subscribed view, so a non-terminal warning
-      // is enough. An exclusive operation (e.g. fork materialization) emits no
-      // such terminal event, so reject terminally: the caller's composer must
-      // unlock rather than hang until the handshake timeout.
       this.emitError(
         new Error(ALREADY_GENERATING_MESSAGE),
         "runtime",
@@ -211,9 +368,6 @@ export class SessionRuntime {
     try {
       await action();
     } catch (error) {
-      // Only settle the prompt this call created. Once the event pipeline or a
-      // cancel has settled it, the failure was already reported — settling it
-      // again would misreport the active turn and could emit a duplicate error.
       if (!active.settled) {
         this.emitError(error, active.started ? "runtime" : "preflight");
         this.settlePrompt({ status: "failed" });
@@ -299,6 +453,10 @@ export class SessionRuntime {
     if (this.pendingHostCompaction !== undefined) {
       throw new Error("A context compaction is already running.");
     }
+    const compaction = this.resolveOptional<CompactionFace>(CompactionRef, "agent");
+    if (compaction === undefined) {
+      throw new Error("Context compaction is not available in this session.");
+    }
 
     let resolveCompletion!: (result: "completed" | "cancelled") => void;
     let rejectCompletion!: (error: unknown) => void;
@@ -313,7 +471,7 @@ export class SessionRuntime {
     };
 
     try {
-      await this.session.compact(instruction === undefined ? {} : { instruction });
+      await compaction.compact(instruction);
     } catch (error) {
       if (this.pendingHostCompaction?.actionId === actionId) {
         this.pendingHostCompaction = undefined;
@@ -328,10 +486,6 @@ export class SessionRuntime {
   }
 
   async cancel(): Promise<void> {
-    // Always reach the engine, even when the host believes nothing is active.
-    // The host-side bookkeeping can drift from engine truth after an abnormal
-    // error path; session.cancel() is a harmless no-op when the engine is
-    // idle, but it is the only way to recover a turn the host lost track of.
     if (this.closed) return;
     this.reverseRpc.cancelAll("Turn cancelled");
     const cancellingHostAction = this.hostActionActive;
@@ -340,23 +494,13 @@ export class SessionRuntime {
       this.cancelledHostActions.add(hostActionId);
       this.completeHostAction("cancelled", hostActionId);
     }
-    // A manual compaction is not a model turn, so Session.cancel() alone does
-    // not stop it. Calling both public cancellation surfaces is harmless when
-    // the other operation is idle and keeps the Stop button correct for both
-    // normal turns and host-side slash commands such as /compact and /init.
-    const results = await Promise.allSettled([
-      this.session.cancel(),
-      ...(cancellingHostAction ? [this.session.cancelCompaction()] : []),
-    ]);
-    const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
-    if (failure !== undefined) throw failure.reason;
+    const sessionInit = this.resolveOptional<SessionInitFace>(SessionInitRef, "session");
+    sessionInit?.cancelInit("Turn cancelled");
+    const compaction = this.resolveOptional<CompactionFace>(CompactionRef, "agent");
+    if (cancellingHostAction) compaction?.cancel();
+    this.main.abort("Turn cancelled");
   }
 
-  /**
-   * Stop any in-flight work, wait for its terminal event, and keep new turns
-   * out until the supplied operation finishes. Forking uses this so it reads a
-   * fully settled session instead of racing the asynchronous cancel event.
-   */
   async runExclusiveAfterCancelling<T>(action: () => Promise<T>): Promise<T> {
     this.ensureOpen();
     if (this.exclusiveActionActive) {
@@ -377,7 +521,13 @@ export class SessionRuntime {
 
   async steer(input: string | LegacyContentPart[]): Promise<void> {
     this.ensureOpen();
-    await this.session.steer(toSdkPromptInput(input));
+    const promptId = randomUUID();
+    const ack = this.main.submit(
+      toEngineUserMessage(input),
+      { origin: { kind: "user" }, tracked: true, promptId },
+    );
+    if (ack === undefined) throw new Error("Failed to steer: the agent is not running.");
+    this.main.steer([promptId]);
     this.emitStreamEvent({
       type: "SteerInput",
       payload: { user_input: input },
@@ -399,12 +549,11 @@ export class SessionRuntime {
     this.pendingHostCompaction?.reject(new Error("Session closed during context compaction."));
     this.pendingHostCompaction = undefined;
     this.reverseRpc.cancelAll("Session closed");
-    this.unsubscribe();
-    this.session.setApprovalHandler(undefined);
-    this.session.setQuestionHandler(undefined);
+    this.reverseRpc.unmountSession();
+    this.eventSource.close();
     if (this.activePrompt !== undefined || this.hostActionActive) {
       try {
-        await this.session.cancel();
+        this.main.abort("Session closed");
       } catch (error) {
         this.log("Failed to cancel the active turn while closing a session", error);
       }
@@ -418,23 +567,83 @@ export class SessionRuntime {
     this.webviewIds.clear();
   }
 
+  private createEventSource(): SessionEventSource {
+    return new SessionEventSource({
+      session: this.session,
+      workDir: this.workDir,
+      maxContextTokens: () => this.main.model?.spec.maxContextSize,
+      emit: (event) => this.onSdkEvent(event),
+      onSessionMeta: (meta) => {
+        this.record = meta;
+      },
+      onMainRebound: (main) => {
+        this.main = main;
+      },
+      log: this.log,
+    });
+  }
+
+  private resolveOptional<T>(token: Token<T>, tier: "agent" | "session"): T | undefined {
+    const handle = tier === "agent" ? this.main : this.session.handle;
+    if (token.kind === "facade") return handle.resolve(token as FacadeToken<T>);
+    try {
+      return handle.resolve(token as CertainToken<T>);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private resolveRequired<T>(token: Token<T>, tier: "agent" | "session"): T {
+    const resolved = this.resolveOptional<T>(token, tier);
+    if (resolved === undefined) {
+      throw new Error("This capability is not available in the session.");
+    }
+    return resolved;
+  }
+
   private async applyLegacyApproval(flags: LegacyApprovalFlags): Promise<void> {
     this.ensureOpen();
     const permission = corePermissionForLegacyApproval(flags);
-    const status = await this.session.getStatus();
-    const permissionChanged = status.permission !== permission;
-    if (permissionChanged) await this.session.setPermission(permission);
+    const face = this.resolveOptional<PermissionFace>(PermissionRef, "agent");
+    const previous = face?.state.value.mode;
+    const permissionChanged = previous !== undefined && previous !== permission;
+    if (face !== undefined && previous !== permission) {
+      await face.setModeAndBroadcast(permission);
+    }
     try {
-      await this.session.updateMetadata(legacyApprovalMetadata(flags));
+      await this.updateMetadata(legacyApprovalMetadata(flags));
     } catch (error) {
-      if (permissionChanged) {
-        await this.session.setPermission(status.permission).catch((rollbackError: unknown) => {
+      if (permissionChanged && face !== undefined && previous !== undefined) {
+        await face.setModeAndBroadcast(previous).catch((rollbackError: unknown) => {
           this.log("Failed to restore session permission after a metadata error", rollbackError);
         });
       }
       throw error;
     }
     this.legacyApproval = flags;
+  }
+
+  async updateMetadataFlags(patch: Record<string, unknown>): Promise<void> {
+    await this.updateMetadata(patch);
+  }
+
+  async applyPermissionMode(mode: PermissionMode): Promise<void> {
+    this.ensureOpen();
+    const face = this.resolveOptional<PermissionFace>(PermissionRef, "agent");
+    if (face !== undefined && face.state.value.mode !== mode) {
+      await face.setModeAndBroadcast(mode);
+    }
+  }
+
+  private async updateMetadata(patch: Record<string, unknown>): Promise<void> {
+    const metadata = await this.updateMetadataDelegate(this.id, patch);
+    if (metadata !== undefined) {
+      this.record = {
+        id: this.id,
+        title: this.record?.title,
+        metadata: metadata as Record<string, unknown>,
+      };
+    }
   }
 
   private onSdkEvent(event: Event): void {
@@ -448,7 +657,7 @@ export class SessionRuntime {
       }
     }
 
-    if (event.type === "turn.started" && event.agentId === "main" && this.activePrompt !== undefined) {
+    if (event.type === "turn.started" && event.agentId === MAIN_AGENT_ID && this.activePrompt !== undefined) {
       this.activePrompt.started = true;
     }
 
@@ -480,10 +689,6 @@ export class SessionRuntime {
     }
 
     if (adapted.event !== undefined) {
-      // Errors the core reports while the active turn keeps running (they are
-      // not followed by a terminal turn.ended) must not look turn-ending to the
-      // Webview — otherwise the UI unlocks mid-turn and the next send collides
-      // with the still-active prompt.
       const wireEvent =
         adapted.event.type === "error" && this.activePrompt?.started === true
           ? { ...adapted.event, terminal: false as const }
@@ -496,21 +701,13 @@ export class SessionRuntime {
   }
 
   private captureFileBaseline(event: Extract<Event, { type: "tool.call.started" }>): void {
+    if (event.agentId !== MAIN_AGENT_ID) return;
     if (event.name !== "Write" && event.name !== "Edit") return;
     if (!isRecord(event.args)) return;
-    const filePath = event.args["path"];
+    const filePath = event.args["path"] ?? event.args["file_path"];
     if (typeof filePath !== "string" || filePath.length === 0) return;
 
-    const summary = this.session.summary;
-    this.captureBaseline(
-      {
-        id: this.session.id,
-        workDir: this.session.workDir,
-        metadata: summary?.metadata,
-      },
-      filePath,
-      this.subscribers,
-    );
+    this.captureBaseline(this.summary, filePath, this.subscribers);
   }
 
   private emitTerminal(terminal: TurnTerminalMetadata): void {
@@ -524,6 +721,7 @@ export class SessionRuntime {
         _sessionId: terminal.sessionId,
       });
       this.settlePrompt({ status: "finished" });
+      this.requestSessionTitle();
       return;
     }
 
@@ -557,6 +755,13 @@ export class SessionRuntime {
     this.settlePrompt({ status: "failed" });
   }
 
+  private requestSessionTitle(): void {
+    if (this.titleRequested) return;
+    this.titleRequested = true;
+    const title = this.resolveOptional<SessionTitleFace>(SessionTitleRef, "session");
+    void title?.generateTitle({ source: "first_turn" }).catch(() => undefined);
+  }
+
   private consumeSuppressedError(code: string, message: string): boolean {
     const suppressed = this.suppressedError;
     if (suppressed === undefined) return false;
@@ -574,7 +779,7 @@ export class SessionRuntime {
       message: getUserMessage(code, detail),
       detail,
       phase,
-      _sessionId: this.session.id,
+      _sessionId: this.id,
       terminal: options?.terminal,
     });
   }
@@ -616,39 +821,51 @@ export class SessionRuntime {
   }
 }
 
-export function toSdkPromptInput(input: string | LegacyContentPart[]): string | PromptInput {
-  if (typeof input === "string") return input;
-  const parts: SdkContentPart[] = [];
-  for (const part of input) {
+export function toEngineUserMessage(input: string | LegacyContentPart[]): UserMessage {
+  const parts: EngineContentPart[] = [];
+  const legacyParts: readonly LegacyContentPart[] =
+    typeof input === "string" ? [{ type: "text", text: input }] : input;
+  for (const part of legacyParts) {
     switch (part.type) {
       case "text":
         parts.push({ type: "text", text: part.text });
         break;
       case "image_url":
-        parts.push({
-          type: "image_url",
-          imageUrl: {
-            url: part.image_url.url,
-            ...(part.image_url.id === null || part.image_url.id === undefined ? {} : { id: part.image_url.id }),
-          },
-        });
+        parts.push({ type: "image_url", source: mediaSourceFromUrl(part.image_url.url) });
         break;
       case "video_url":
-        parts.push({
-          type: "video_url",
-          videoUrl: {
-            url: part.video_url.url,
-            ...(part.video_url.id === null || part.video_url.id === undefined ? {} : { id: part.video_url.id }),
-          },
-        });
+        parts.push({ type: "video_url", source: mediaSourceFromUrl(part.video_url.url) });
         break;
       case "audio_url":
+        parts.push({ type: "audio_url", source: mediaSourceFromUrl(part.audio_url.url) });
+        break;
       case "think":
-        // PromptInput intentionally accepts user text/images/videos only.
         break;
     }
   }
-  return parts as PromptInput;
+  return { role: "user", content: parts };
+}
+
+function mediaSourceFromUrl(url: string): MediaSource {
+  if (url.startsWith("media://")) return { kind: "store", ref: url };
+  const data = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(url);
+  if (data !== null) {
+    return {
+      kind: "inline",
+      mimeType: data[1] ?? "application/octet-stream",
+      data: data[3] ?? "",
+    };
+  }
+  return { kind: "url", url };
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

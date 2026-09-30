@@ -13,7 +13,15 @@ import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 
-import { formatGoalElapsed } from '../goal-format';
+function formatGoalElapsed(ms: number): string {
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) return `${String(totalSeconds)}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return `${String(minutes)}m ${seconds.toString().padStart(2, '0')}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${String(hours)}h ${(minutes % 60).toString().padStart(2, '0')}m`;
+}
 import { renderTruncated } from './truncated';
 import type { ResultRenderer } from './types';
 

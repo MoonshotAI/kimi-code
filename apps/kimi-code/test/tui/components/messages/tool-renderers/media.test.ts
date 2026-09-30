@@ -36,7 +36,7 @@ const PNG_DATA_URL = `data:image/png;base64,${PNG_B64}`;
 function imageOutput(path: string, b64 = PNG_B64, mime = 'image/png'): string {
   return JSON.stringify([
     { type: 'text', text: `<image path="${path}">` },
-    { type: 'image_url', imageUrl: { url: `data:${mime};base64,${b64}` } },
+    { type: 'image_url', source: { kind: 'inline', mimeType: mime, data: b64 } },
     { type: 'text', text: '</image>' },
   ]);
 }
@@ -44,7 +44,7 @@ function imageOutput(path: string, b64 = PNG_B64, mime = 'image/png'): string {
 function videoOutput(path: string, mime = 'video/mp4'): string {
   return JSON.stringify([
     { type: 'text', text: `<video path="${path}">` },
-    { type: 'video_url', videoUrl: { url: `data:${mime};base64,YWJj` } },
+    { type: 'video_url', source: { kind: 'inline', mimeType: mime, data: 'YWJj' } },
     { type: 'text', text: '</video>' },
   ]);
 }
@@ -68,7 +68,7 @@ describe('parseReadMediaOutput', () => {
   it('captures non-data video URL when uploader was used', () => {
     const out = JSON.stringify([
       { type: 'text', text: `<video path="/tmp/a.mp4">` },
-      { type: 'video_url', videoUrl: { url: 'https://cdn.example/v/abc' } },
+      { type: 'video_url', source: { kind: 'url', url: 'https://cdn.example/v/abc' } },
       { type: 'text', text: '</video>' },
     ]);
     const m = parseReadMediaOutput(out);
