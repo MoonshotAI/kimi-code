@@ -39,7 +39,7 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
     );
     this._register(
       this.runtime.onDidChange(() => {
-        this.activateRecords(this.contributions.items);
+        this.refreshRuntimeRecords();
       }),
     );
     this._register(
@@ -67,12 +67,7 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
       for (const record of records) {
         const { id, options } = record;
         const source = options.source ?? 'builtin';
-        if (this.toolRegistry.resolve(options.name) !== undefined) {
-          if (this.registrations.has(record) && !isToolAvailable(options, accessor, this.runtime)) {
-            this.deactivateRecord(record);
-          }
-          continue;
-        }
+        if (this.toolRegistry.resolve(options.name) !== undefined) continue;
         if (!isToolActive(workspaceVeto, options.name, source)) continue;
         const activeByProfile =
           options.name === SELECT_TOOLS_TOOL_NAME
@@ -89,6 +84,16 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
         this._register(registration);
       }
     });
+  }
+
+  private refreshRuntimeRecords(): void {
+    for (const record of this.contributions.items) {
+      const required = record.options.requiredRuntimeCapabilities;
+      if (required !== undefined && !this.runtime.isAvailable(required)) {
+        this.deactivateRecord(record);
+      }
+    }
+    this.activateRecords(this.contributions.items);
   }
 
   private deactivateRecord(record: AgentToolContribution): void {

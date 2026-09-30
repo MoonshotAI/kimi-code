@@ -693,7 +693,7 @@ describe('Agent tool description', () => {
     expect(agentDescription()).toContain('FetchURL');
   });
 
-  it('does not restore a failed contribution from the caller registry', async () => {
+  it('keeps an unavailable contribution registered but omits it from descriptions', async () => {
     let available = true;
     ctx = createTestAgent(appService(IWebSearchProviderService, {
       _serviceBrand: undefined,
@@ -704,14 +704,13 @@ describe('Agent tool description', () => {
     expect(ctx.get(IAgentToolRegistryService).resolve('WebSearch')).toBeDefined();
 
     available = false;
-    expect(agentDescription()).not.toContain('WebSearch');
     await ctx.get(IAgentToolActivationService).activate();
-    expect(ctx.get(IAgentToolRegistryService).resolve('WebSearch')).toBeUndefined();
+    expect(ctx.get(IAgentToolRegistryService).resolve('WebSearch')).toBeDefined();
+    expect(agentDescription()).not.toContain('WebSearch');
 
     available = true;
     await ctx.get(IAgentToolActivationService).activate();
     expect(agentDescription()).toContain('WebSearch');
-    expect(ctx.get(IAgentToolRegistryService).resolve('WebSearch')).toBeDefined();
   });
 
   it('omits WaitFor when its experimental flag is disabled', () => {
@@ -780,7 +779,7 @@ describe('Agent tool description', () => {
     expect(agentDescription()).toContain('WebSearch');
   });
 
-  it('filters descriptions and activation by the inherited runtime capabilities', async () => {
+  it('filters descriptions by the inherited runtime capabilities without churning the registry', async () => {
     ctx = createTestAgent();
     const runtime = ctx.get(IAgentRuntimeService);
     vi.spyOn(runtime, 'isAvailable').mockImplementation((required = []) => !required.includes('fs'));
@@ -790,13 +789,11 @@ describe('Agent tool description', () => {
     }
     expect(agentDescription()).toMatch(/Tools:.*\bBash\b/);
     await ctx.get(IAgentToolActivationService).activate();
-    expect(ctx.get(IAgentToolRegistryService).resolve('Edit')).toBeUndefined();
+    expect(ctx.get(IAgentToolRegistryService).resolve('Edit')).toBeDefined();
     expect(ctx.get(IAgentToolRegistryService).resolve('Bash')).toBeDefined();
 
     vi.mocked(runtime.isAvailable).mockReturnValue(true);
-    await ctx.get(IAgentToolActivationService).activate();
     expect(agentDescription()).toMatch(/Tools:.*\bEdit\b/);
-    expect(ctx.get(IAgentToolRegistryService).resolve('Edit')).toBeDefined();
   });
 
   it.each([false, true])('uses the NotifyUser contribution condition when enabled=%s', (enabled) => {
