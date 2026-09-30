@@ -601,6 +601,7 @@ describe('server-v2 /api/v1/sessions', () => {
       expect(created.body.code).not.toBe(0);
       expect(records.filter((record) => record.event === 'session_started')).toEqual([]);
       expect((await getJson<PageWire>('/api/v1/sessions')).body.data.items).toEqual([]);
+      expect((await getJson<{ items: unknown[] }>('/api/v1/workspaces')).body.data.items).toEqual([]);
     } finally {
       registration.dispose();
     }

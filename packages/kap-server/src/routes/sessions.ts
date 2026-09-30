@@ -7,6 +7,8 @@ import {
   IAgentLifecycleService,
   IAgentLoopService,
   IAuthSummaryService,
+  IConfigService,
+  IModelCatalog,
   ISessionActivityView,
   ISessionBtwService,
   ISessionContext,
@@ -239,8 +241,12 @@ export function registerSessionsRoutes(
       }
 
       try {
-        const touched = await registry.createOrTouch(workDir);
         const model = body.agent_config?.model || undefined;
+        if (model !== undefined) {
+          await core.accessor.get(IConfigService).ready;
+          core.accessor.get(IModelCatalog).get(model);
+        }
+        const touched = await registry.createOrTouch(workDir);
         const handle = await core.accessor.get(ISessionManager).create({
           workspaceId: touched.id,
           workDir,

@@ -2238,6 +2238,49 @@ describe('SDKRpcClientV2 engine telemetry', () => {
     }
   });
 
+  it.each([undefined, 'default-model'])(
+    'attributes direct SDK session_started events to requested models with default %s',
+    async (defaultModel) => {
+      const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-tel-model-'));
+      const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-tel-model-work-'));
+      tempDirs.push(homeDir, workDir);
+      await writeFile(join(homeDir, 'config.toml'), [
+        defaultModel === undefined ? '' : `default_model = "${defaultModel}"`,
+        '[providers.example]',
+        'type = "openai"',
+        'base_url = "https://example.test/v1"',
+        'api_key = "YOUR_API_KEY"',
+        '[models.default-model]',
+        'provider = "example"',
+        'model = "default-model"',
+        'max_context_size = 4096',
+        '[models.selected-model]',
+        'provider = "example"',
+        'model = "selected-model"',
+        'max_context_size = 4096',
+      ].join('\n'), 'utf-8');
+      const records: TelemetryRecord[] = [];
+      const client = new SDKRpcClientV2({
+        homeDir,
+        identity: TEST_IDENTITY,
+        telemetry: recordingTelemetry(records),
+      });
+      try {
+        const models = ['selected-model', 'default-model'];
+        const sessions = await Promise.all(models.map((model) => client.createSession({ workDir, model })));
+        const started = records.filter((record) => record.event === 'session_started');
+        expect(started).toHaveLength(2);
+        for (const [index, session] of sessions.entries()) {
+          expect(started.find((record) => record.properties?.['sessionId'] === session.id)).toMatchObject({
+            properties: { model: models[index], model_source: 'agent', resumed: false },
+          });
+        }
+      } finally {
+        await client.close();
+      }
+    },
+  );
+
   it('keeps forwarding the engine session_started to a direct SDKRpcClientV2 consumer', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-tel-direct-'));
     tempDirs.push(homeDir);
