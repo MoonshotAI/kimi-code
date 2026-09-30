@@ -70,6 +70,7 @@ import {
   parseAllowedHosts,
 } from './middleware/hostnames';
 import { createOriginHook, isOriginAllowed, parseCorsOrigins } from './middleware/origin';
+import { registerResponseCompression } from './middleware/compression';
 import { createSecurityHeadersHook } from './middleware/securityHeaders';
 import { createAuthHook } from './middleware/auth';
 import { GuiStoreService } from './services/guiStore/guiStoreService';
@@ -311,6 +312,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   if (exposureClass !== 'loopback') {
     app.addHook('onSend', createSecurityHeadersHook({ tls: false }));
   }
+  registerResponseCompression(app);
 
   const close = async (): Promise<void> => {
     if (wssDebug !== undefined) {
@@ -469,7 +471,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
             : undefined,
     },
     onShutdown: () => {
-      void close().catch((err: unknown) => logger.error({ err }, 'server close failed'));
+      void close().catch((error: unknown) => logger.error({ error }, 'server close failed'));
     },
     connectionRegistry,
     broadcaster,
