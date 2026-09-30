@@ -195,7 +195,7 @@ describe('undo feature', () => {
     await runTurn(agent, 'first');
     await runTurn(agent, 'cron', { origin: { kind: 'cron_job' } });
     await runTurn(agent, 'second');
-    const face = agent.resolve(UndoRef);
+    const face = agent.resolve(UndoRef)!;
     expect(face.availability()).toEqual({ maxTurns: 2, stoppedAtCompaction: false });
     await env.app.disposeAsync();
     await env.stores.dispose();
@@ -210,7 +210,7 @@ describe('undo feature', () => {
     const agent = await startMain(env);
     await runTurn(agent, 'first');
     await runTurn(agent, 'second');
-    const face = agent.resolve(UndoRef);
+    const face = agent.resolve(UndoRef)!;
 
     await expect(face.undo(1)).resolves.toBe(1);
 
@@ -256,7 +256,7 @@ describe('undo feature', () => {
     await runTurn(agent, 'first');
     await runTurn(agent, 'cron', { origin: { kind: 'cron_job' } });
     await runTurn(agent, 'second');
-    const face = agent.resolve(UndoRef);
+    const face = agent.resolve(UndoRef)!;
 
     await expect(face.undo(2)).resolves.toBe(2);
 
@@ -273,7 +273,7 @@ describe('undo feature', () => {
   it('rejects with the verbatim error messages', async () => {
     const env = await testEnv();
     const agent = await startMain(env);
-    const face = agent.resolve(UndoRef);
+    const face = agent.resolve(UndoRef)!;
 
     await expectUndoError(face.undo(0), 'invalid-count', 'Undo count must be a positive safe integer');
     await expectUndoError(face.undo(1), 'empty', 'Nothing to undo: no user message to undo');
@@ -320,7 +320,7 @@ describe('undo feature', () => {
           onEvent?.({ type: 'llm.done' });
         }),
     });
-    const face = agent.resolve(UndoRef);
+    const face = agent.resolve(UndoRef)!;
     const started = new Promise<void>((resolve) => {
       agent.on('turn.started', () => {
         resolve();
@@ -363,7 +363,7 @@ describe('undo feature', () => {
     const agent = await startMain(env);
     await runTurn(agent, 'first');
     await runTurn(agent, 'second');
-    await agent.resolve(UndoRef).undo(1);
+    await agent.resolve(UndoRef)!.undo(1);
     await env.stores.flush();
     await env.app.disposeAsync();
     await env.stores.dispose();
@@ -381,7 +381,7 @@ describe('undo feature', () => {
     expect(historyTexts(stores, 'main')).toEqual(['first', 'echo:first']);
     expect(stores.branch('main')).toBe('main~2');
     expect(stores.get('main')?.getState().turnIndex.turns).toHaveLength(1);
-    expect(reopened.resolve(UndoRef).availability()).toEqual({
+    expect(reopened.resolve(UndoRef)!.availability()).toEqual({
       maxTurns: 1,
       stoppedAtCompaction: false,
     });

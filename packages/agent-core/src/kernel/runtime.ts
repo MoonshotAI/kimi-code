@@ -1,7 +1,7 @@
 import { effectScope, shallowReactive, shallowRef } from '@vue/reactivity';
 import type { EffectScope, ShallowRef } from '@vue/reactivity';
 
-import { createToken, type CollectionToken, type Token } from './primitives';
+import { createToken, type CertainToken, type CollectionToken, type FacadeToken, type Token } from './primitives';
 
 export interface RuntimeEvent {
   readonly type: string;
@@ -27,7 +27,8 @@ export interface NodeRef {
   mount(recipe: KernelRecipe, props?: unknown): UnitHandle;
   provide<T>(token: Token<T>, value: T): Unsubscribe;
   providerRef<T>(token: Token<T>): ShallowRef<readonly ProviderEntry<T>[]>;
-  resolve<T>(token: Token<T>): T;
+  resolve<T>(token: CertainToken<T>): T;
+  resolve<T>(token: FacadeToken<T>): T | undefined;
   contribute<T>(collection: CollectionToken<T>, value: T, priority: number): Unsubscribe;
   fold<T>(collection: CollectionToken<T>): readonly T[];
   fire(event: RuntimeEvent): void;
@@ -65,7 +66,8 @@ export interface UnitHandle {
   readonly name: string;
   readonly state: UnitState;
   readonly node: NodeRef;
-  resolve<T>(token: Token<T>): T;
+  resolve<T>(token: CertainToken<T>): T;
+  resolve<T>(token: FacadeToken<T>): T | undefined;
   update(props: unknown): void;
   ready(): Promise<void>;
   unmount(): Promise<void>;
@@ -167,9 +169,14 @@ export class UnitNode implements NodeRef {
     return slot;
   }
 
-  resolve<T>(token: Token<T>): T {
+  resolve<T>(token: CertainToken<T>): T;
+  resolve<T>(token: FacadeToken<T>): T | undefined;
+  resolve<T>(token: CertainToken<T> | FacadeToken<T>): T | undefined {
     const found = this.resolveEntry(token as Token<unknown>);
     if (found === undefined) {
+      if (token.kind === 'facade') {
+        return undefined;
+      }
       throw new Error(`no provider for token '${token.key ?? 'unknown'}'`);
     }
     return found.entry.value as T;
@@ -490,7 +497,8 @@ export function handleFor(node: UnitNode): UnitHandle {
     get node() {
       return node;
     },
-    resolve: (token) => node.resolve(token),
+    resolve: ((token: CertainToken<unknown> | FacadeToken<unknown>) =>
+      token.kind === 'facade' ? node.resolve(token) : node.resolve(token)) as UnitHandle['resolve'],
     update(props: unknown) {
       if (node.state === 'unmounted' || node.state === 'failed') {
         return;

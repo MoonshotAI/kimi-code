@@ -1,4 +1,5 @@
-import { createCollection, lineage, pushCleanup, useNode, type UnitNode } from '#/kernel/index';
+import { createCollection, lineage, useCleanup, type UnitNode } from '#/kernel/index';
+import { useNode } from '#/kernel/hooks';
 import { createProvider, type LlmModelSeed, type ProtocolBinding, type Provider } from '#/llm/provider';
 import { isPlainObject } from '#/builtin/config/index';
 
@@ -14,8 +15,9 @@ export const ProviderProtocols = createCollection<ProviderProtocolContribution>(
 );
 
 export function useProviderProtocol(contribution: ProviderProtocolContribution, priority = 0): void {
-  const node = useNode();
-  pushCleanup(node, ([...lineage(node)].at(-1) as UnitNode).contribute(ProviderProtocols, contribution, priority));
+  useCleanup(
+    ([...lineage(useNode())].at(-1) as UnitNode).contribute(ProviderProtocols, contribution, priority),
+  );
 }
 
 export function materializeProvider(

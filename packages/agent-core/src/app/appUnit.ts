@@ -6,6 +6,8 @@ import {
   provide,
   shallowRef,
   toValue,
+  type CertainToken,
+  type FacadeToken,
   type MountRootOptions,
   type NodeRef,
   type UnitHandle,
@@ -35,6 +37,8 @@ export interface AppCommands {
   create(props: CreateSessionProps): Promise<SessionHandle>;
   open(input?: OpenSessionInput): Promise<SessionHandle>;
   updateSession(id: string, patch: SessionRecordDraft): Promise<SessionRecord>;
+  ready(): Promise<void>;
+  close(): Promise<void>;
   close(sessionId: string): Promise<void>;
   delete(sessionId: string): Promise<void>;
   installFeature(spec: FeatureSpec): void;
@@ -100,7 +104,12 @@ export const AppUnit = createUnit<AppUnitProps>('app', (props, ctx) => {
     },
     open: (input) => openSession(commands, requireSpace(), input),
     updateSession: (id, patch) => updateSession(commands, requireSpace(), id, patch),
-    close: async (sessionId) => {
+    ready: () => ctx.node.ready(),
+    close: async (sessionId?: string) => {
+      if (sessionId === undefined) {
+        await ctx.node.unmount();
+        return;
+      }
       const session = sessions.get(sessionId);
       sessions.delete(sessionId);
       await session?.unmount();
@@ -142,9 +151,10 @@ export function appHandle(handle: UnitHandle): AppHandle {
     get name() { return handle.name; },
     get state() { return handle.state; },
     node: handle.node,
-    resolve: (token) => handle.resolve(token),
+    resolve: ((token: CertainToken<unknown> | FacadeToken<unknown>) =>
+      token.kind === 'facade' ? handle.resolve(token) : handle.resolve(token)) as UnitHandle['resolve'],
     update: (props) => handle.update(props),
-    ready: () => handle.ready(),
+    ready: () => commands().ready(),
     unmount: () => handle.unmount(),
     disposeAsync: () => handle.unmount(),
     ...bindHandleOn(handle.node),
@@ -154,7 +164,8 @@ export function appHandle(handle: UnitHandle): AppHandle {
     create: (props) => commands().create(props),
     open: (input) => commands().open(input),
     updateSession: (id, patch) => commands().updateSession(id, patch),
-    close: (sessionId) => commands().close(sessionId),
+    close: (sessionId?: string) =>
+      sessionId === undefined ? commands().close() : commands().close(sessionId),
     delete: (sessionId) => commands().delete(sessionId),
     installFeature: (spec) => commands().installFeature(spec),
     uninstallFeature: (feature) => commands().uninstallFeature(feature),

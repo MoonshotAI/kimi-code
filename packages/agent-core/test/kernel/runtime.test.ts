@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import {
   createCollection,
+  createFacadeToken,
   createToken,
   createUnit,
   effectScope,
   EventContext,
-  inject,
   mountRoot,
   provide,
   useExpose,
@@ -15,15 +15,17 @@ import {
   useChildren,
   useCollection,
   useContribute,
-  useNode,
+  useInject,
   useOn,
   watch,
   watchEffect,
   type ChildEntry,
   type ComputedRef,
   type Ref,
+  type ShallowRef,
   type UnitNode,
 } from '#/kernel/index';
+import { useNode } from '#/kernel/hooks';
 
 const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
@@ -173,7 +175,7 @@ describe('provide / resolve', () => {
     let childSeen: string | undefined;
     const child = createUnit('child', () => {
       provide(token, 'child-val');
-      childSeen = inject(token);
+      childSeen = useInject(token);
     });
     const root = createUnit('root', () => {
       provide(token, 'root-val');
@@ -182,6 +184,27 @@ describe('provide / resolve', () => {
     const { node } = mountRoot(root);
     expect(childSeen).toBe('child-val');
     expect(node.resolve(token)).toBe('root-val');
+    const facade = createFacadeToken<string>('chain-facade');
+    let seen: Readonly<ShallowRef<string | undefined>> | undefined;
+    const qa = createUnit('qa', () => {
+      const self = useNode();
+      self.mount(createUnit('qa-exposer', () => {
+        useExpose(facade, 'qa-val');
+      }));
+      self.mount(createUnit('reader', () => {
+        seen = useInject(facade);
+      }));
+    });
+    const pa = createUnit('pa', () => {
+      useExpose(facade, 'pa-val');
+    });
+    const host = createUnit('host', () => {
+      const self = useNode();
+      self.mount(qa);
+      self.mount(pa);
+    });
+    mountRoot(host);
+    expect(seen?.value).toBe('qa-val');
   });
 
   it('shadows same-node provisions as a stack and unwinds on unsubscribe', () => {
@@ -196,13 +219,14 @@ describe('provide / resolve', () => {
     expect(() => node.resolve(token)).toThrow("no provider for token 'stack'");
   });
 
-  it('fails loudly when no provider exists, enforcing provider-first mount order', async () => {
+  it('throws for absent certain tokens while facade tokens stay reactively nullable', async () => {
     const token = createToken<string>('timing');
     const injector = createUnit('injector', () => {
-      inject(token);
+      useInject(token);
     });
     const provider = createUnit('provider', () => {
-      useExpose(token, 'value');
+      provide(token, 'value');
+      useNode().mount(injector);
     });
     const rootLate = createUnit('rootLate', () => {
       const node = useNode();
@@ -211,15 +235,33 @@ describe('provide / resolve', () => {
     });
     expect(() => mountRoot(rootLate)).toThrow("no provider for token 'timing'");
     const rootFirst = createUnit('rootFirst', () => {
-      const node = useNode();
-      node.mount(provider);
-      node.mount(injector);
+      useNode().mount(provider);
     });
     const { node, handle } = mountRoot(rootFirst);
-    expect(node.resolve(token)).toBe('value');
+    expect(node.children[0]?.resolve(token)).toBe('value');
     await node.children[0]?.unmount();
     expect(() => node.resolve(token)).toThrow("no provider for token 'timing'");
     await handle.unmount();
+    const facade = createFacadeToken<string>('timing-facade');
+    let seen: Readonly<ShallowRef<string | undefined>> | undefined;
+    const watcher = createUnit('watcher', () => {
+      seen = useInject(facade);
+    });
+    const facadeRoot = createUnit('facadeRoot', () => {
+      useNode().mount(watcher);
+    });
+    const mounted = mountRoot(facadeRoot);
+    expect(seen?.value).toBeUndefined();
+    expect(mounted.node.resolve(facade)).toBeUndefined();
+    const late = mounted.node.mount(createUnit('late-provider', () => {
+      useExpose(facade, 'late-val');
+    }));
+    expect(seen?.value).toBe('late-val');
+    expect(mounted.node.resolve(facade)).toBe('late-val');
+    await late.unmount();
+    expect(seen?.value).toBeUndefined();
+    expect(mounted.node.resolve(facade)).toBeUndefined();
+    await mounted.handle.unmount();
   });
 });
 

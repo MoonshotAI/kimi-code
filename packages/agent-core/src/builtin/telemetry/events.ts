@@ -1,10 +1,10 @@
 import {
   createCollection,
   lineage,
-  pushCleanup,
-  useNode,
+  useCleanup,
   type UnitNode,
 } from '#/kernel/index';
+import { useNode } from '#/kernel/hooks';
 
 import type { TelemetryFace } from './feature';
 import type { TelemetryPrimitive, TelemetryProperties } from './telemetry';
@@ -17,10 +17,9 @@ export interface TelemetryEventDefinition {
 export const TelemetryEvents = createCollection<TelemetryEventDefinition>('telemetry.events');
 
 export function useTelemetryEvents(defs: readonly TelemetryEventDefinition[]): void {
-  const node = useNode();
-  const root = [...lineage(node)].at(-1) as UnitNode;
+  const root = [...lineage(useNode())].at(-1) as UnitNode;
   for (const def of defs) {
-    pushCleanup(node, root.contribute(TelemetryEvents, def, 0));
+    useCleanup(root.contribute(TelemetryEvents, def, 0));
   }
 }
 

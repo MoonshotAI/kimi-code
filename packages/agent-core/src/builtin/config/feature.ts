@@ -1,18 +1,19 @@
 import {
   createCollection,
-  createToken,
-  inject,
+  createFacadeToken,
   lineage,
-  pushCleanup,
+  useCleanup,
   useCollection,
   useExpose,
   useFire,
-  useNode,
+  useInject,
   useReady,
   watch,
   type RuntimeEvent,
+  type ShallowRef,
   type UnitNode,
 } from '#/kernel/index';
+import { useNode } from '#/kernel/hooks';
 import { createFeature, type FeatureSpec } from '#/feature/feature';
 
 import {
@@ -28,26 +29,22 @@ export const ConfigSections = createCollection<ConfigSectionContribution>('confi
 
 export const ConfigOverlays = createCollection<ConfigOverlayContribution>('config.overlays');
 
-export const ConfigRef = createToken<ConfigStore>('config');
+export const ConfigRef = createFacadeToken<ConfigStore>('config');
 
 export function useConfigSection<T>(section: ConfigSectionContribution<T>): void {
-  const node = useNode();
-  pushCleanup(
-    node,
-    ([...lineage(node)].at(-1) as UnitNode).contribute(ConfigSections, section as ConfigSectionContribution, 0),
+  useCleanup(
+    ([...lineage(useNode())].at(-1) as UnitNode).contribute(ConfigSections, section as ConfigSectionContribution, 0),
   );
 }
 
 export function useConfigOverlay(contribution: ConfigOverlayContribution): void {
-  const node = useNode();
-  pushCleanup(
-    node,
-    ([...lineage(node)].at(-1) as UnitNode).contribute(ConfigOverlays, contribution, 0),
+  useCleanup(
+    ([...lineage(useNode())].at(-1) as UnitNode).contribute(ConfigOverlays, contribution, 0),
   );
 }
 
-export function useConfig(): ConfigStore {
-  return inject(ConfigRef);
+export function useConfig(): Readonly<ShallowRef<ConfigStore | undefined>> {
+  return useInject(ConfigRef);
 }
 
 export interface ConfigChangedEvent extends RuntimeEvent {
@@ -64,7 +61,6 @@ export function createConfig(deps: {
 }): FeatureSpec<ConfigChangedEvent> {
   return createFeature<ConfigChangedEvent>('config', {
     app() {
-      const node = useNode();
       const fire = useFire();
       const store = createConfigStore({
         persist: deps.persist,
@@ -101,12 +97,12 @@ export function createConfig(deps: {
             void store.reload();
           }, 150);
         });
-        pushCleanup(node, () => {
+        useCleanup(() => {
           if (timer !== undefined) clearTimeout(timer);
           off();
         });
       }
-      pushCleanup(node, () => {
+      useCleanup(() => {
         store.dispose();
       });
     },

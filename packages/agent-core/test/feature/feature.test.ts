@@ -9,9 +9,9 @@ import type { Projection } from '#/store/store';
 import { treeJournal, type BranchJournal, type RecordEvent } from '#/store/journal';
 import {
   computed,
-  createToken,
-  inject,
+  createFacadeToken,
   useExpose,
+  useInject,
   ref,
   shallowRef,
   type Ref,
@@ -61,13 +61,13 @@ async function testStores(): Promise<{ stores: SessionStores }> {
 describe('feature DSL', () => {
   it('installs feature tools, resolvers and step hooks into a real agent and withdraws them', async () => {
     const order: string[] = [];
-    const Extra = createToken<string>('test.extra');
-    const Side = createToken<{
+    const Extra = createFacadeToken<string>('test.extra');
+    const Side = createFacadeToken<{
       enqueue: ReturnType<typeof useTurn>;
       calls: Ref<number>;
       maxActive: () => number;
     }>('test.side');
-    const Calls = createToken<{
+    const Calls = createFacadeToken<{
       calls: Ref<number>;
       steps: Ref<number>;
       finished: Ref<number>;
@@ -91,8 +91,8 @@ describe('feature DSL', () => {
     const probeSpec = createFeature('probe', {
       agent() {
         order.push('child-setup');
-        expect(inject(Extra)).toBe('extra-value');
-        const state = inject(Calls);
+        expect(useInject(Extra).value).toBe('extra-value');
+        const state = useInject(Calls).value!;
         const agent = useAgent();
         agent.on('turn.done', (event) => { state.finished.value += event.messages.length > 0 ? 1 : 0; });
         useBeforeStep(() => { state.steps.value += 1; });
@@ -184,7 +184,7 @@ describe('feature DSL', () => {
     };
     const app = createHarness({ features: [shared] });
     const session = await app.create({ sessionId: 'sess', stores: env.stores });
-    const state = session.resolve(Calls);
+    const state = session.resolve(Calls)!;
     const agent = await session.create({
       agentId: 'agent-0',
       systemPrompt: 'host-text',
@@ -214,7 +214,7 @@ describe('feature DSL', () => {
       { tools: ['increment'], text: ['run', '', 'count=1|hooked', 'notified', 'reminded', 'resolved'], systemPrompt: assembledPrompt },
     ]);
     expect(store?.getState().history.some((entry) => extractText(entry.message) === 'count=1|hooked')).toBe(true);
-    const side = agent.resolve(Side);
+    const side = agent.resolve(Side)!;
     const sideHistory = [createUserEntry(createUserMessage('side'), { source: 'input' })];
     const [left, right] = await Promise.all([
       side.enqueue({ history: sideHistory, maxSteps: 1 }),
@@ -242,7 +242,7 @@ describe('feature DSL', () => {
     expect(state.steps.value).toBe(3);
     expect(state.finished.value).toBe(2);
     await session.close('agent-0');
-    expect(() => agent.resolve(Side)).toThrow('no provider');
+    expect(agent.resolve(Side)).toBeUndefined();
     const resumed = await session.create({
       agentId: 'agent-0',
       systemPrompt: 'host-text',
@@ -610,9 +610,10 @@ describe('feature DSL', () => {
     interface CounterFace {
       count: Ref<number>;
       lastWriteTurn: Ref<number>;
+      commits: readonly string[];
       write: (patch: Partial<CounterState>) => Promise<void>;
     }
-    const Counter = createToken<CounterFace>('test.counter');
+    const Counter = createFacadeToken<CounterFace>('test.counter');
     const counter: Projection<CounterState, RecordEvent, BranchRef> = {
       initial: () => ({ count: 0, lastWriteTurn: 0 }),
       reduce: (current, event) => {
@@ -625,9 +626,14 @@ describe('feature DSL', () => {
       agent() {
         const store = useAgentStore();
         const state = store.fold(counter);
+        const commits: string[] = [];
+        store.onCommit((entry) => {
+          commits.push(entry.event.type);
+        });
         useExpose(Counter, {
           count: computed(() => state.value.count),
           lastWriteTurn: computed(() => state.value.lastWriteTurn),
+          commits,
           write: (patch) => store.dispatch({ type: 'counter.updated', patch }).then(() => undefined),
         });
       },
@@ -649,17 +655,19 @@ describe('feature DSL', () => {
     };
     const first = mount();
     await first.ready();
-    await first.resolve(Counter).write({ count: 3, lastWriteTurn: 1 });
+    await first.resolve(Counter)!.write({ count: 3, lastWriteTurn: 1 });
+    const firstCommits = first.resolve(Counter)!.commits;
+    expect(firstCommits).toEqual(['spec.frozen', 'counter.updated']);
     installed.value = [];
     await first.ready();
-    expect(() => first.resolve(Counter)).toThrow('no provider');
+    expect(first.resolve(Counter)).toBeUndefined();
     installed.value = [spec];
     await first.ready();
-    expect([first.resolve(Counter).count.value, first.resolve(Counter).lastWriteTurn.value]).toEqual([3, 1]);
+    expect([first.resolve(Counter)!.count.value, first.resolve(Counter)!.lastWriteTurn.value]).toEqual([3, 1]);
     await first.disposeAsync();
     const restored = mount();
     await restored.ready();
-    const face = restored.resolve(Counter);
+    const face = restored.resolve(Counter)!;
     expect([face.count.value, face.lastWriteTurn.value]).toEqual([3, 1]);
     const observations: number[][] = [];
     watch(() => [face.count.value, face.lastWriteTurn.value] as const, (state) => { observations.push([...state]); });
@@ -673,6 +681,8 @@ describe('feature DSL', () => {
     writing.resolve();
     await pendingWrite;
     expect([face.count.value, face.lastWriteTurn.value]).toEqual([5, 2]);
+    expect(face.commits).toEqual(['counter.updated']);
+    expect(firstCommits).toEqual(['spec.frozen', 'counter.updated']);
     expect(observations.length).toBeGreaterThan(0);
     expect(observations.every((state) => state[0] === 5 && state[1] === 2)).toBe(true);
     failWrite = true;
@@ -685,7 +695,7 @@ describe('feature DSL', () => {
     store = await openGatedStore();
     const recovered = mount();
     await recovered.ready();
-    const recoveredFace = recovered.resolve(Counter);
+    const recoveredFace = recovered.resolve(Counter)!;
     expect([recoveredFace.count.value, recoveredFace.lastWriteTurn.value]).toEqual([5, 2]);
     await recoveredFace.write({ count: 6 });
     expect(recoveredFace.count.value).toBe(6);
@@ -694,7 +704,7 @@ describe('feature DSL', () => {
     store = await openGatedStore();
     const again = mount();
     await again.ready();
-    expect([again.resolve(Counter).count.value, again.resolve(Counter).lastWriteTurn.value]).toEqual([6, 2]);
+    expect([again.resolve(Counter)!.count.value, again.resolve(Counter)!.lastWriteTurn.value]).toEqual([6, 2]);
     await again.disposeAsync();
     await store.close();
   });

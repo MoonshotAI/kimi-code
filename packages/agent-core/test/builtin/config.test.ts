@@ -119,7 +119,7 @@ async function mountConfigApp(options: {
     features: [probe, createConfig({ persist: options.persist, env: options.env })],
   });
   await app.ready();
-  return { app, config: app.resolve(ConfigRef) };
+  return { app, config: app.resolve(ConfigRef)! };
 }
 
 describe('config feature', () => {
@@ -286,7 +286,7 @@ describe('config feature', () => {
     release('[limits]\ntimeout = 4\n');
     await app.ready();
     expect(ready).toBe(true);
-    expect(app.resolve(ConfigRef).get('limits')).toEqual({ timeout: 4 });
+    expect(app.resolve(ConfigRef)!.get('limits')).toEqual({ timeout: 4 });
     await app.disposeAsync();
   });
 
@@ -358,7 +358,7 @@ describe('config feature', () => {
       events.push(event);
     });
     await app.ready();
-    const config = app.resolve(ConfigRef);
+    const config = app.resolve(ConfigRef)!;
     await config.set('limits', { maxRetries: 8 }, 'memory');
     expect(
       events.some(

@@ -28,14 +28,14 @@ export type {
   WaitOpts,
 } from './runtime';
 export {
-  inject,
   provide,
   useChildren,
+  useCleanup,
   useCollection,
   useContribute,
   useExpose,
   useFire,
-  useNode,
+  useInject,
   useOn,
   useReady,
 } from './hooks';

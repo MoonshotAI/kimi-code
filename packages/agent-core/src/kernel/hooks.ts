@@ -1,8 +1,16 @@
 import { computed, toValue, type ComputedRef, type MaybeRefOrGetter } from '@vue/reactivity';
 
-import { watchEffect, type CollectionToken, type Token } from './primitives';
+import {
+  watchEffect,
+  type CertainToken,
+  type CollectionToken,
+  type FacadeToken,
+  type ShallowRef,
+  type Token,
+} from './primitives';
 import {
   currentUnit,
+  lineage,
   pushCleanup,
   type EventHandler,
   type KernelRecipe,
@@ -24,7 +32,10 @@ export function provide<T>(token: Token<T>, value: T): void {
   currentUnit().provide(token, value);
 }
 
-export function useExpose<T>(token: Token<T>, value: T): void {
+export function useExpose<T>(token: FacadeToken<T>, value: T): void {
+  if (token.kind !== 'facade') {
+    throw new Error(`useExpose requires a facade token ('${token.key ?? 'unknown'}')`);
+  }
   const node = currentUnit();
   if (node.parent === null) {
     provide(token, value);
@@ -33,7 +44,32 @@ export function useExpose<T>(token: Token<T>, value: T): void {
   pushCleanup(node, node.parent.provide(token, value));
 }
 
-export function inject<T>(token: Token<T>): T {
+export function useInject<T>(token: CertainToken<T>): T;
+export function useInject<T>(token: FacadeToken<T>): Readonly<ShallowRef<T | undefined>>;
+export function useInject<T>(
+  token: CertainToken<T> | FacadeToken<T>,
+): T | Readonly<ShallowRef<T | undefined>> {
+  const node = currentUnit();
+  if (token.kind === 'certain') {
+    return node.resolve(token);
+  }
+  const directory = node.providerRef(token);
+  return computed(() => {
+    for (const unit of lineage(node)) {
+      const entry = directory.value.findLast((candidate) => candidate.node === unit);
+      if (entry !== undefined) {
+        return entry.value;
+      }
+    }
+    return undefined;
+  });
+}
+
+export function useCleanup(cleanup: () => void | Promise<void>): void {
+  pushCleanup(currentUnit(), cleanup);
+}
+
+export function inject<T>(token: CertainToken<T>): T {
   return currentUnit().resolve(token);
 }
 

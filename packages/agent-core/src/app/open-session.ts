@@ -2,13 +2,13 @@ import { randomUUID } from 'node:crypto';
 
 import { openSessionContainer } from '#/stores/session';
 
+import type { SessionOpenSource } from './session-status';
 import type { SessionHandle, SessionUnitProps } from './sessionUnit';
 import type { SessionRecord, SessionRecordDraft, SessionSpace } from './session-space';
 
 export interface OpenSessionInput {
   readonly sessionId?: string;
   readonly title?: string;
-  readonly workspaceId?: string;
   readonly metadata?: Record<string, unknown>;
   readonly from?: string;
 }
@@ -35,10 +35,15 @@ export async function openSession(
     : input.sessionId;
   const container = await materializeContainer(space, sessionId, input);
   const opened = await openSessionContainer(container);
+  const source: SessionOpenSource = input.from !== undefined ? 'fork' : existed ? 'resume' : 'startup';
   const session = await app.create({
     sessionId,
     stores: opened.stores,
+    source,
   });
+  if (!existed) {
+    await session.stores.session.dispatch({ type: 'session.created', from: input.from });
+  }
   if (!existed || draftOf(input) !== undefined) {
     const record = await space.get(session.sessionId);
     if (record !== undefined) {
@@ -85,12 +90,11 @@ async function materializeContainer(
 }
 
 function draftOf(input: OpenSessionInput): SessionRecordDraft | undefined {
-  if (input.title === undefined && input.workspaceId === undefined && input.metadata === undefined) {
+  if (input.title === undefined && input.metadata === undefined) {
     return undefined;
   }
   return {
     ...(input.title !== undefined ? { title: input.title } : {}),
-    ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
     ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
   };
 }

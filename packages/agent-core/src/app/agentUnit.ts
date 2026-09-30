@@ -34,9 +34,10 @@ import {
   mountRoot,
   provide,
   pushCleanup,
-  useNode,
   useReady,
+  type CertainToken,
   type EventHandler,
+  type FacadeToken,
   type MountRootOptions,
   type NodeRef,
   type Ref,
@@ -46,6 +47,7 @@ import {
   type Unsubscribe,
   type WaitOpts,
 } from '#/kernel/index';
+import { useNode } from '#/kernel/hooks';
 import { bindHandleOn, type FeatureSpec, type ListenOpts } from '#/feature/feature';
 import {
   AgentPort,
@@ -308,9 +310,6 @@ export const AgentUnit = createUnit<AgentUnitProps>('agent', (props) => {
       input: {
         promptGate: bindPromptGate(ports, props.promptGate),
         messages: restored.history,
-        notifications: restored.notifications,
-        reminders: restored.reminders,
-        queue: restored.queue,
         turnId: restored.turnIndex.nextTurnId,
         branchId: props.branchId,
       },
@@ -574,7 +573,8 @@ export function agentHandle(handle: UnitHandle): AgentHandle {
     get name() { return handle.name; },
     get state() { return handle.state; },
     node: handle.node,
-    resolve: (token) => handle.resolve(token),
+    resolve: ((token: CertainToken<unknown> | FacadeToken<unknown>) =>
+      token.kind === 'facade' ? handle.resolve(token) : handle.resolve(token)) as UnitHandle['resolve'],
     update: (props) => handle.update(props),
     ready: () => handle.ready(),
     unmount: () => handle.unmount(),

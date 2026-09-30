@@ -2,16 +2,17 @@ import { z } from 'zod';
 
 import {
   createCollection,
-  createToken,
-  inject,
+  createFacadeToken,
   lineage,
-  pushCleanup,
+  useCleanup,
   useCollection,
   useExpose,
-  useNode,
+  useInject,
   watch,
+  type ShallowRef,
   type UnitNode,
 } from '#/kernel/index';
+import { useNode } from '#/kernel/hooks';
 import { ConfigRef, useConfigSection, type ConfigSectionContribution } from '#/builtin/config/index';
 import { useAgent, useSession } from '#/feature/contribution-hooks';
 import { createFeature, type FeatureSpec } from '#/feature/feature';
@@ -33,7 +34,7 @@ import {
   type TelemetryProperties,
 } from './telemetry';
 
-export const TelemetryRef = createToken<TelemetryFace>('telemetry');
+export const TelemetryRef = createFacadeToken<TelemetryFace>('telemetry');
 
 export const TelemetryAppenders = createCollection<TelemetryAppender>('telemetry.appenders');
 
@@ -56,15 +57,13 @@ interface TelemetryView extends TelemetryFace {
   ): void;
 }
 
-export function useTelemetry(): TelemetryFace {
-  return inject(TelemetryRef);
+export function useTelemetry(): Readonly<ShallowRef<TelemetryFace | undefined>> {
+  return useInject(TelemetryRef);
 }
 
 export function useTelemetryAppender(appender: TelemetryAppender): void {
-  const node = useNode();
-  pushCleanup(
-    node,
-    ([...lineage(node)].at(-1) as UnitNode).contribute(TelemetryAppenders, appender, 0),
+  useCleanup(
+    ([...lineage(useNode())].at(-1) as UnitNode).contribute(TelemetryAppenders, appender, 0),
   );
 }
 
@@ -166,7 +165,6 @@ export interface TelemetryProps {
 export function createTelemetry(props?: TelemetryProps): FeatureSpec {
   return createFeature('telemetry', {
     app() {
-      const node = useNode();
       const appenders = useCollection(TelemetryAppenders);
       const definitions = useCollection(TelemetryEvents);
       const hub = createTelemetryHub(
@@ -178,9 +176,9 @@ export function createTelemetry(props?: TelemetryProps): FeatureSpec {
       useTelemetryEvents(machineTelemetryEvents);
       useExpose(TelemetryRef, hub);
       useConfigSection(telemetryConfigSection);
-      const configEntries = node.providerRef(ConfigRef);
+      const config = useInject(ConfigRef);
       watch(
-        () => configEntries.value.at(-1)?.value.section<boolean>(TELEMETRY_CONFIG_SECTION).value,
+        () => config.value?.section<boolean>(TELEMETRY_CONFIG_SECTION).value,
         (value) => {
           if (typeof value === 'boolean') {
             hub.setEnabled(value);
@@ -190,11 +188,13 @@ export function createTelemetry(props?: TelemetryProps): FeatureSpec {
       );
     },
     session() {
-      const parent = inject(TelemetryRef) as TelemetryView;
+      const parent = useInject(TelemetryRef).value as TelemetryView | undefined;
+      if (parent === undefined) throw new Error("no provider for token 'telemetry'");
       useExpose(TelemetryRef, bindTelemetryView(parent, { session_id: useSession().sessionId }));
     },
     agent() {
-      const parent = inject(TelemetryRef) as TelemetryView;
+      const parent = useInject(TelemetryRef).value as TelemetryView | undefined;
+      if (parent === undefined) throw new Error("no provider for token 'telemetry'");
       const agent = useAgent();
       const view = bindTelemetryView(parent, { agent_id: agent.agentId });
       useExpose(TelemetryRef, view);

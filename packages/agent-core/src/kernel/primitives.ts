@@ -21,6 +21,15 @@ export function watchEffect(effect: WatchEffect, options?: WatchOptions): WatchH
 export interface Token<T> {
   readonly key?: string;
   readonly type?: T;
+  readonly kind: 'certain' | 'facade';
+}
+
+export interface CertainToken<T> extends Token<T> {
+  readonly kind: 'certain';
+}
+
+export interface FacadeToken<T> extends Token<T> {
+  readonly kind: 'facade';
 }
 
 export interface CollectionToken<T> {
@@ -28,8 +37,12 @@ export interface CollectionToken<T> {
   readonly type?: T;
 }
 
-export function createToken<T>(key?: string): Token<T> {
-  return { key };
+export function createToken<T>(key?: string): CertainToken<T> {
+  return { key, kind: 'certain' };
+}
+
+export function createFacadeToken<T>(key?: string): FacadeToken<T> {
+  return { key, kind: 'facade' };
 }
 
 export function createCollection<T>(key?: string): CollectionToken<T> {

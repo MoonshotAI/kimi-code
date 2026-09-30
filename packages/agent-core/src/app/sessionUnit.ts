@@ -3,20 +3,31 @@ import { toValue, type MaybeRefOrGetter } from '@vue/reactivity';
 import {
   createUnit,
   EventContext,
-  inject,
   provide,
-  useNode,
+  pushCleanup,
+  type CertainToken,
+  type FacadeToken,
   type NodeRef,
   type UnitHandle,
   type UnitNode,
 } from '#/kernel/index';
+import { inject, useNode } from '#/kernel/hooks';
 import { bindHandleOn, Features, type FeatureHandleOn, type FeatureSpec } from '#/feature/feature';
-import { BlobsRef, SessionStoreRef, SessionUnitRef } from '#/feature/contribution-hooks';
+import { BlobsRef, MAIN_AGENT_ID, SessionStoreRef, SessionUnitRef } from '#/feature/contribution-hooks';
 import { dedupFeatures, useFeatureSlot } from '#/feature/hooks';
 import { SessionNodeRef } from '#/feature/tierNodes';
 import type { SessionStores } from '#/stores/session';
 import type { BranchRef } from '#/store/tree';
 import { AgentUnit, agentHandle, type AgentHandle, type AgentUnitProps } from './agentUnit';
+import {
+  agentWorkOf,
+  lastTurnOfMeta,
+  lastTurnOutcomeOf,
+  sessionStatusOf,
+  type AgentWork,
+  type SessionOpenSource,
+  type SessionStatus,
+} from './session-status';
 
 export type CreateAgentProps = Omit<AgentUnitProps, 'sessionId' | 'store'> & {
   readonly source?: string;
@@ -27,6 +38,7 @@ export interface SessionUnitProps {
   readonly stores: SessionStores;
   readonly features?: MaybeRefOrGetter<readonly FeatureSpec[]>;
   readonly provide?: (node: NodeRef) => void;
+  readonly source?: SessionOpenSource;
 }
 
 export interface SessionCommands {
@@ -37,6 +49,7 @@ export interface SessionCommands {
   create(props: CreateAgentProps): Promise<AgentHandle>;
   fork(sourceId: string, props: CreateAgentProps): Promise<AgentHandle>;
   close(agentId: string): Promise<void>;
+  status(): SessionStatus;
 }
 
 export interface SessionHandle extends UnitHandle, SessionCommands, FeatureHandleOn {
@@ -46,6 +59,21 @@ export interface SessionHandle extends UnitHandle, SessionCommands, FeatureHandl
 export const SessionUnit = createUnit<SessionUnitProps>('session', (props) => {
   const node = useNode();
   const agents = new Map<string, AgentHandle>();
+  pushCleanup(node, props.stores.session.onCommit((entry) => {
+    node.fire(entry.event);
+  }));
+  pushCleanup(node, node.on('turn.ended', (event) => {
+    const payload = event as { readonly agentId?: unknown; readonly turnId?: unknown; readonly outcome?: unknown };
+    if (payload.agentId !== MAIN_AGENT_ID) return;
+    if (typeof payload.turnId !== 'number') return;
+    if (payload.outcome !== 'done' && payload.outcome !== 'failed' && payload.outcome !== 'aborted') return;
+    void props.stores.session
+      .dispatch({
+        type: 'session.meta_updated',
+        meta: { lastTurn: { turnId: payload.turnId, outcome: payload.outcome } },
+      })
+      .catch(() => {});
+  }));
   const sweep = (): void => {
     for (const [agentId, agent] of agents) {
       if (agent.state === 'unmounted') {
@@ -87,6 +115,15 @@ export const SessionUnit = createUnit<SessionUnitProps>('session', (props) => {
       features: features.map((feature) => feature.featureName),
       source,
     });
+    if (createProps.agentId === MAIN_AGENT_ID) {
+      const lastTurn = lastTurnOutcomeOf(store);
+      const folded = lastTurnOfMeta(props.stores.session.getState().sessionMeta.value);
+      if (folded?.turnId !== lastTurn?.turnId || folded?.outcome !== lastTurn?.outcome) {
+        void props.stores.session
+          .dispatch({ type: 'session.meta_updated', meta: { lastTurn: lastTurn ?? null } })
+          .catch(() => {});
+      }
+    }
     let handle: UnitHandle | undefined;
     try {
       handle = node.mount(AgentUnit, {
@@ -141,6 +178,17 @@ export const SessionUnit = createUnit<SessionUnitProps>('session', (props) => {
       }
       if (agent !== undefined) node.fire({ type: 'agent.closed', agentId });
     },
+    status: () => {
+      const works: Array<readonly [string, AgentWork]> = [];
+      for (const [agentId, agent] of agents) {
+        works.push([agentId, agentWorkOf(agent.snapshot.value)]);
+      }
+      return sessionStatusOf(
+        works,
+        lastTurnOfMeta(props.stores.session.getState().sessionMeta.value),
+        props.source ?? 'startup',
+      );
+    },
   };
   provide(EventContext, { sessionId: props.sessionId });
   provide(SessionUnitRef, commands);
@@ -159,7 +207,8 @@ export function sessionHandle(handle: UnitHandle): SessionHandle {
     get name() { return handle.name; },
     get state() { return handle.state; },
     node: handle.node,
-    resolve: (token) => handle.resolve(token),
+    resolve: ((token: CertainToken<unknown> | FacadeToken<unknown>) =>
+      token.kind === 'facade' ? handle.resolve(token) : handle.resolve(token)) as UnitHandle['resolve'],
     update: (props) => handle.update(props),
     ready: () => handle.ready(),
     unmount: () => handle.unmount(),
@@ -172,5 +221,6 @@ export function sessionHandle(handle: UnitHandle): SessionHandle {
     create: (props) => commands().create(props),
     fork: (sourceId, props) => commands().fork(sourceId, props),
     close: (agentId) => commands().close(agentId),
+    status: () => commands().status(),
   };
 }

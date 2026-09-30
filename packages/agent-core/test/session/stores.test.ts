@@ -3,9 +3,10 @@ import { createUserEntry, createUserMessage, extractText } from '#/llm/message';
 import { UNKNOWN_CAPABILITY, type LlmModel } from '#/llm/model';
 import type { LlmRequester } from '#/llm/requester/requester';
 import { openBlobs } from '#/store/blob';
+import { treeJournal } from '#/store/journal';
 import { MemoryBackend, Trees, type Tree } from '#/store/tree';
 import type { AgentStore } from '#/stores/agent';
-import { openSessionStores, type AgentSwitched, type SessionStores } from '#/stores/session';
+import { openSessionStores, SESSION_LOG_BRANCH, type AgentSwitched, type SessionStores } from '#/stores/session';
 import { mountAgent, type AgentHandle } from '#/app/index';
 
 const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
@@ -35,9 +36,10 @@ async function testEnv(): Promise<TestEnv> {
   return { backend, tree, stores: await openSessionStores(tree, openBlobs(backend.blobs)) };
 }
 
-async function reopen(env: TestEnv): Promise<TestEnv> {
+async function reopen(env: TestEnv, beforeReopen?: () => Promise<void>): Promise<TestEnv> {
   await env.stores.flush();
   await env.stores.dispose();
+  await beforeReopen?.();
   const trees = await Trees.open(env.backend.trees, {});
   const tree = await trees.tree('sess');
   return { backend: env.backend, tree, stores: await openSessionStores(tree, openBlobs(env.backend.blobs)) };
@@ -87,6 +89,10 @@ function historyTexts(store: AgentStore): string[] {
 describe('SessionStores open/fork', () => {
   it('folds history and turnIndex for opened and forked agents, then diverges', async () => {
     const env = await testEnv();
+    const sessionJournal: string[] = [];
+    env.stores.session.onCommit((entry) => {
+      sessionJournal.push(entry.event.type);
+    });
     const main = await env.stores.open('main', { source: 'test-source' });
     const journal: string[] = [];
     main.onCommit((entry) => {
@@ -102,6 +108,7 @@ describe('SessionStores open/fork', () => {
 
     const fork = await env.stores.fork('main', 'fork');
     expect(env.stores.branch('fork')).toBe('fork');
+    expect(sessionJournal).toEqual(['agent.created', 'agent.created']);
     expect(historyTexts(fork)).toEqual(['hi', 'echo:hi']);
     expect(fork.getState().turnIndex.nextTurnId).toBe(1);
     const forkHeader = env.tree.openBranch('fork').header;
@@ -142,6 +149,16 @@ describe('SessionStores open/fork', () => {
       main: { branch: 'main' },
       temp: { branch: 'temp' },
     });
+
+    await env.stores.session.dispatch({ type: 'session.meta_updated', meta: { title: 'demo' } });
+    await env.stores.session.dispatch({
+      type: 'session.meta_updated',
+      meta: { lastTurn: { turnId: 0, outcome: 'done' } },
+    });
+    expect(env.stores.session.getState().sessionMeta.value).toEqual({
+      title: 'demo',
+      lastTurn: { turnId: 0, outcome: 'done' },
+    });
   });
 });
 
@@ -161,7 +178,6 @@ describe('SessionStores undo', () => {
     expect(result.branchId).toBe('main~2');
     expect(env.stores.branch('main')).toBe('main~2');
     expect(historyTexts(main)).toEqual(['first', 'echo:first']);
-    expect(main.getState().queue).toEqual([]);
     expect(main.getState().turnIndex.turns).toHaveLength(1);
     expect(main.getState().turnIndex.nextTurnId).toBe(1);
     const header = env.tree.openBranch('main~2').header;
@@ -212,11 +228,18 @@ describe('SessionStores reopen', () => {
     await actor.disposeAsync();
     await env.stores.undo('main', 1);
 
-    const restored = await reopen(env);
+    const restored = await reopen(env, async () => {
+      await treeJournal(env.tree, env.tree.openBranch(SESSION_LOG_BRANCH)).append({
+        type: 'agent.opened',
+        agentId: 'old',
+        branch: 'old',
+      });
+    });
 
     expect(restored.stores.session.getState().roster.agents).toEqual({
       fork: { branch: 'fork' },
       main: { branch: 'main~2' },
+      old: { branch: 'old' },
     });
     const restoredMain = await restored.stores.open('main');
     expect(restored.stores.branch('main')).toBe('main~2');
@@ -272,7 +295,6 @@ describe('SessionStores switchBranch', () => {
         { type: 'message.appended', message: createUserEntry(createUserMessage('seed-user')) },
         { type: 'message.appended', message: createUserEntry(createUserMessage('seed-summary')) },
         { type: 'turn.ended', turnId: 1, outcome: 'done' },
-        { type: 'input.submitted', entry: createUserEntry(createUserMessage('queued')) },
       ],
     });
 
@@ -284,9 +306,6 @@ describe('SessionStores switchBranch', () => {
       turns: [{ turnId: 1, start: { branch: 'main~2', seq: 0 }, end: { branch: 'main~2', seq: 3 } }],
       nextTurnId: 2,
     });
-    expect(main.getState().queue).toEqual([
-      { message: createUserMessage('queued'), meta: { source: 'input' } },
-    ]);
     expect(env.tree.openBranch('main~2').header.parentBranch).toBeUndefined();
     expect(switched).toEqual([
       {
@@ -297,11 +316,9 @@ describe('SessionStores switchBranch', () => {
     ]);
     await expect(env.stores.undo('main', 1)).rejects.toMatchObject({ reason: 'insufficient' });
 
-    const actor2 = mountTestAgent(main, { agentId: 'main', branchId: env.stores.branch('main') });
-    const queued = new Promise<void>((resolve) => { actor2.on('turn.done', () => { resolve(); }); });
-    await actor2.ready();
-    await queued;
-    expect(historyTexts(main)).toEqual(['seed-user', 'seed-summary', 'queued', 'echo:queued']);
+    const actor2 = await startAgent(main, { agentId: 'main', branchId: env.stores.branch('main') });
+    await runTurn(actor2, main, 'again', 4);
+    expect(historyTexts(main)).toEqual(['seed-user', 'seed-summary', 'again', 'echo:again']);
     expect(main.getState().turnIndex.nextTurnId).toBe(3);
 
     await actor2.disposeAsync();

@@ -1,4 +1,4 @@
-import { createUserEntry, type HistoryMessage, type ToolDescription, type UserEntry } from '#/llm/message';
+import { type HistoryMessage, type ToolDescription } from '#/llm/message';
 import { decodeRecord, type RecordEvent } from '#/store/journal';
 import { openStore, type Journal, type Projection, type Store } from '#/store/store';
 import type { BranchRef } from '#/store/tree';
@@ -36,12 +36,6 @@ export type TurnEnded = {
   readonly errorMessage?: string;
 };
 
-export type InputSubmitted = {
-  readonly type: 'input.submitted';
-  readonly time?: number;
-  readonly entry: UserEntry;
-};
-
 export type SpecFrozen = {
   readonly type: 'spec.frozen';
   readonly time?: number;
@@ -57,10 +51,9 @@ export type ContextReset = {
   readonly stats?: Record<string, number>;
 };
 
-export type AgentLogEvent = MessageAppended | TurnStarted | TurnEnded | InputSubmitted | SpecFrozen | ContextReset;
+export type AgentLogEvent = MessageAppended | TurnStarted | TurnEnded | SpecFrozen | ContextReset;
 
 const agentLogTypes = new Set<AgentLogEvent['type']>([
-  'input.submitted',
   'message.appended',
   'turn.started',
   'turn.ended',
@@ -81,9 +74,6 @@ export interface TurnIndex<C> {
 
 export interface AgentLogState<C> {
   readonly history: HistoryMessage[];
-  readonly queue: UserEntry[];
-  readonly notifications: UserEntry[];
-  readonly reminders: HistoryMessage[];
   readonly turnIndex: TurnIndex<C>;
   readonly spec?: AgentSpec;
 }
@@ -112,9 +102,6 @@ export function agent<C>(): Projection<AgentLogState<C>, RecordEvent, C> {
   return {
     initial: () => ({
       history: [],
-      queue: [],
-      notifications: [],
-      reminders: [],
       turnIndex: { turns: [], nextTurnId: 0 },
     }),
     reduce: (state, record, cursor) => {
@@ -128,12 +115,6 @@ export function agent<C>(): Projection<AgentLogState<C>, RecordEvent, C> {
       }
       if (event.type === 'context.reset') {
         return { ...state, history: [...event.messages] };
-      }
-      if (event.type === 'input.submitted') {
-        return {
-          ...state,
-          queue: [...state.queue, createUserEntry(event.entry.message, { source: 'input', ...event.entry.meta })],
-        };
       }
       const turnIndex = foldTurnIndex(state.turnIndex, event, cursor);
       return turnIndex === state.turnIndex ? state : { ...state, turnIndex };

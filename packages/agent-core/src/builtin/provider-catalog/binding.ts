@@ -1,4 +1,4 @@
-import { createToken, type ShallowRef } from '#/kernel/index';
+import { createFacadeToken, type ShallowRef } from '#/kernel/index';
 import type { SessionRecord } from '#/app/session-space';
 import type { RecordEvent } from '#/store/journal';
 import type { Projection } from '#/store/store';
@@ -38,11 +38,12 @@ export const sessionModelDefaultsProjection: Projection<
   reduce: (state, event) => {
     if (event.type !== 'session.meta_updated') return state;
     const metadata = (event['meta'] as SessionRecord | undefined)?.metadata;
+    if (metadata === undefined || metadata === null) return state;
     const read = (value: unknown): string | undefined =>
       typeof value === 'string' && value.length > 0 ? value : undefined;
     return {
-      defaultModel: read(metadata?.['defaultModel']),
-      defaultThinking: read(metadata?.['defaultThinking']),
+      defaultModel: read(metadata['defaultModel']),
+      defaultThinking: read(metadata['defaultThinking']),
     };
   },
 };
@@ -92,8 +93,8 @@ export interface ModelDefaultsFace {
   setDefaultThinking(effort: string): Promise<void>;
 }
 
-export const AgentModelRef = createToken<AgentModelFace>('provider-catalog.agentModel');
+export const AgentModelRef = createFacadeToken<AgentModelFace>('provider-catalog.agentModel');
 
-export const SessionModelRef = createToken<SessionModelFace>('provider-catalog.sessionModel');
+export const SessionModelRef = createFacadeToken<SessionModelFace>('provider-catalog.sessionModel');
 
-export const ModelDefaultsRef = createToken<ModelDefaultsFace>('provider-catalog.modelDefaults');
+export const ModelDefaultsRef = createFacadeToken<ModelDefaultsFace>('provider-catalog.modelDefaults');

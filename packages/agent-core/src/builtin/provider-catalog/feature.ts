@@ -1,18 +1,19 @@
 import {
   createCollection,
-  createToken,
+  createFacadeToken,
   createUnit,
-  inject,
   lineage,
-  pushCleanup,
   shallowRef,
   useChildren,
+  useCleanup,
   useCollection,
   useExpose,
-  useNode,
+  useInject,
   watch,
+  type ShallowRef,
   type UnitNode,
 } from '#/kernel/index';
+import { useNode } from '#/kernel/hooks';
 import { createFeature } from '#/feature/feature';
 import {
   MAIN_AGENT_ID,
@@ -73,27 +74,26 @@ export const Providers = createCollection<ProviderContribution>('provider-catalo
 
 export const CatalogModels = createCollection<CatalogModelBinding>('provider-catalog.models');
 
-export const ProviderCatalogRef = createToken<ProviderStore>('provider-catalog');
+export const ProviderCatalogRef = createFacadeToken<ProviderStore>('provider-catalog');
 
 export function useProvider(contribution: ProviderContribution, priority = 0): void {
-  const node = useNode();
-  pushCleanup(node, ([...lineage(node)].at(-1) as UnitNode).contribute(Providers, contribution, priority));
+  useCleanup(
+    ([...lineage(useNode())].at(-1) as UnitNode).contribute(Providers, contribution, priority),
+  );
 }
 
-export function useProviderCatalog(): ProviderStore {
-  return inject(ProviderCatalogRef);
+export function useProviderCatalog(): Readonly<ShallowRef<ProviderStore | undefined>> {
+  return useInject(ProviderCatalogRef);
 }
 
 const STATIC_CREDENTIAL_RESOLVER_PRIORITY = 1000;
 
 const CatalogModelUnit = createUnit<CatalogModelBinding>('catalog-model', (props) => {
-  const node = useNode();
-  pushCleanup(node, ([...lineage(node)].at(-1) as UnitNode).contribute(CatalogModels, props, 0));
+  useCleanup(([...lineage(useNode())].at(-1) as UnitNode).contribute(CatalogModels, props, 0));
 });
 
 export const providerCatalog = createFeature('provider-catalog', {
   app() {
-    const node = useNode();
     const store = createProviderStore();
     const contributed = useCollection(Providers);
     const synced = new Set<string>();
@@ -122,13 +122,13 @@ export const providerCatalog = createFeature('provider-catalog', {
     useConfigSection(modelCatalogConfigSection);
     useConfigSection(defaultModelConfigSection);
     useConfigOverlay(kimiModelEnvOverlay);
-    const configEntries = node.providerRef(ConfigRef);
+    const config = useInject(ConfigRef);
     const protocolFactories = useCollection(ProviderProtocols);
     const bindings = useCollection(CatalogModels);
     useCredentialResolver(
       {
         resolve: (info) => {
-          const apiKey = resolveProviderInfo(info, configEntries.value.at(-1)?.value)?.apiKey;
+          const apiKey = resolveProviderInfo(info, config.value)?.apiKey;
           return apiKey === undefined ? undefined : createStaticCredentialProvider(apiKey);
         },
       },
@@ -136,9 +136,9 @@ export const providerCatalog = createFeature('provider-catalog', {
     );
     let managed = new Set<string>();
     const reconcileConfig = (): void => {
-      const config = configEntries.value.at(-1)?.value;
-      const providersSection = config?.section<ProvidersSection>(PROVIDERS_CONFIG_SECTION).value ?? {};
-      const modelsSection = config?.section<ModelsSection>(MODELS_CONFIG_SECTION).value ?? {};
+      const current = config.value;
+      const providersSection = current?.section<ProvidersSection>(PROVIDERS_CONFIG_SECTION).value ?? {};
+      const modelsSection = current?.section<ModelsSection>(MODELS_CONFIG_SECTION).value ?? {};
       const nextManaged = new Set<string>([
         ...Object.keys(providersSection),
         ...Object.values(modelsSection).map((model) => model.provider),
@@ -146,7 +146,7 @@ export const providerCatalog = createFeature('provider-catalog', {
       const stale = [...managed].filter((providerId) => !nextManaged.has(providerId));
       managed = nextManaged;
       for (const providerId of nextManaged) {
-        const info = resolveProviderInfo(providersSection[providerId], config);
+        const info = resolveProviderInfo(providersSection[providerId], current);
         const prefix = `${info?.aliasScope ?? providerId}/`;
         const models = Object.entries(modelsSection)
           .filter(([, model]) => model.provider === providerId)
@@ -179,10 +179,10 @@ export const providerCatalog = createFeature('provider-catalog', {
     };
     watch(
       () => {
-        const config = configEntries.value.at(-1)?.value;
+        const current = config.value;
         return [
-          config?.section(PROVIDERS_CONFIG_SECTION).value,
-          config?.section(MODELS_CONFIG_SECTION).value,
+          current?.section(PROVIDERS_CONFIG_SECTION).value,
+          current?.section(MODELS_CONFIG_SECTION).value,
           contributed.value,
           protocolFactories.value,
           store.snapshot.value,
@@ -192,17 +192,17 @@ export const providerCatalog = createFeature('provider-catalog', {
       { immediate: true, scheduler: coalescedMicrotaskScheduler() },
     );
     watch(store.snapshot, () => {
-      const config = configEntries.value.at(-1)?.value;
-      if (config === undefined) return;
-      const current = config.get<ModelsSection>(MODELS_CONFIG_SECTION) ?? {};
-      const next: Record<string, CatalogModelConfig> = { ...current };
+      const current = config.value;
+      if (current === undefined) return;
+      const currentModels = current.get<ModelsSection>(MODELS_CONFIG_SECTION) ?? {};
+      const next: Record<string, CatalogModelConfig> = { ...currentModels };
       let changed = false;
       for (const [providerId, entry] of Object.entries(store.snapshot.value.providers)) {
         const discovered = Object.values(entry.discovered);
         if (discovered.length === 0) continue;
         const prefix = `${entry.info?.aliasScope ?? providerId}/`;
         const upstreamKeys = new Set(discovered.map((model) => `${prefix}${model.model}`));
-        for (const [key, record] of Object.entries(current)) {
+        for (const [key, record] of Object.entries(currentModels)) {
           if (record.provider !== providerId || !key.startsWith(prefix)) continue;
           if (!upstreamKeys.has(key)) {
             delete next[key];
@@ -211,14 +211,14 @@ export const providerCatalog = createFeature('provider-catalog', {
         }
         for (const model of discovered) {
           const record = discoveredModelRecord(model);
-          if (!deepEqual(current[`${prefix}${model.model}`], record)) {
+          if (!deepEqual(currentModels[`${prefix}${model.model}`], record)) {
             next[`${prefix}${model.model}`] = record;
             changed = true;
           }
         }
       }
       if (!changed) return;
-      void config.set(MODELS_CONFIG_SECTION, next, 'user').catch(() => {});
+      void current.set(MODELS_CONFIG_SECTION, next, 'user').catch(() => {});
     });
     useChildren(() => {
       void store.snapshot.value;
@@ -240,39 +240,40 @@ export const providerCatalog = createFeature('provider-catalog', {
         ) {
           throw new ModelCatalogError('model.unknown_alias', `Unknown model alias '${alias}'.`);
         }
-        const config = configEntries.value.at(-1)?.value;
-        if (config === undefined) {
+        const current = config.value;
+        if (current === undefined) {
           throw new ModelCatalogError(
             'config.unavailable',
             'Cannot persist the default model: the config feature is not mounted.',
           );
         }
-        await config.set(DEFAULT_MODEL_CONFIG_SECTION, alias, 'user');
+        await current.set(DEFAULT_MODEL_CONFIG_SECTION, alias, 'user');
       },
       setDefaultThinking: async (effort) => {
-        const config = configEntries.value.at(-1)?.value;
-        if (config === undefined) {
+        const current = config.value;
+        if (current === undefined) {
           throw new ModelCatalogError(
             'config.unavailable',
             'Cannot persist the default thinking effort: the config feature is not mounted.',
           );
         }
         const next: ThinkingConfig = {
-          ...config.get<ThinkingConfig>(THINKING_CONFIG_SECTION),
+          ...current.get<ThinkingConfig>(THINKING_CONFIG_SECTION),
           effort,
         };
         delete next.forcedEffort;
-        await config.set(THINKING_CONFIG_SECTION, next, 'user');
+        await current.set(THINKING_CONFIG_SECTION, next, 'user');
       },
     });
-    pushCleanup(node, () => {
+    useCleanup(() => {
       store.dispose();
     });
   },
   session() {
     const session = useSession();
     const app = useApp();
-    const store = inject(ProviderCatalogRef);
+    const store = useInject(ProviderCatalogRef).value;
+    if (store === undefined) throw new Error("no provider for token 'provider-catalog'");
     const bindings = useCollection(CatalogModels);
     const mainModel = (): AgentModelFace | undefined => {
       try {
@@ -308,8 +309,9 @@ export const providerCatalog = createFeature('provider-catalog', {
   agent() {
     const agent = useAgent();
     const node = useNode();
-    const store = inject(ProviderCatalogRef);
-    const configEntries = node.providerRef(ConfigRef);
+    const store = useInject(ProviderCatalogRef).value;
+    if (store === undefined) throw new Error("no provider for token 'provider-catalog'");
+    const config = useInject(ConfigRef);
     const bindings = useCollection(CatalogModels);
     const resolvers = useCollection(CredentialResolvers);
     const agentStore = useAgentStore();
@@ -319,10 +321,10 @@ export const providerCatalog = createFeature('provider-catalog', {
     if (sessionStore !== undefined) {
       const view = sessionStore.attach(sessionModelDefaultsProjection);
       sessionDefaults.value = view.getState();
-      pushCleanup(node, view.subscribe((next) => {
+      useCleanup(view.subscribe((next) => {
         sessionDefaults.value = next;
       }));
-      pushCleanup(node, () => view.dispose());
+      useCleanup(() => view.dispose());
     }
     const resolveBinding = (alias: string): CatalogModelBinding | undefined =>
       matchCatalogBinding(alias, bindings.value, (providerId) => store.providerInfo(providerId));
@@ -330,7 +332,7 @@ export const providerCatalog = createFeature('provider-catalog', {
       const value =
         bound.value.alias ??
         sessionDefaults.value.defaultModel ??
-        configEntries.value.at(-1)?.value.section<string>(DEFAULT_MODEL_CONFIG_SECTION).value;
+        config.value?.section<string>(DEFAULT_MODEL_CONFIG_SECTION).value;
       return typeof value === 'string' && value.length > 0 ? value : undefined;
     };
     let lastApplied: LlmRequestConfig | undefined;
@@ -340,8 +342,7 @@ export const providerCatalog = createFeature('provider-catalog', {
       if (alias === undefined) return true;
       const binding = resolveBinding(alias);
       if (binding === undefined) return true;
-      const thinkingSection = configEntries.value
-        .at(-1)?.value.section<ThinkingConfig>(THINKING_CONFIG_SECTION).value;
+      const thinkingSection = config.value?.section<ThinkingConfig>(THINKING_CONFIG_SECTION).value;
       const requested =
         bound.value.thinking ??
         sessionDefaults.value.defaultThinking ??
@@ -389,9 +390,9 @@ export const providerCatalog = createFeature('provider-catalog', {
       () => [
         bound.value,
         sessionDefaults.value,
-        configEntries.value,
-        configEntries.value.at(-1)?.value.section(DEFAULT_MODEL_CONFIG_SECTION).value,
-        configEntries.value.at(-1)?.value.section(THINKING_CONFIG_SECTION).value,
+        config.value,
+        config.value?.section(DEFAULT_MODEL_CONFIG_SECTION).value,
+        config.value?.section(THINKING_CONFIG_SECTION).value,
         bindings.value,
         resolvers.value,
       ],
@@ -400,7 +401,7 @@ export const providerCatalog = createFeature('provider-catalog', {
       },
       { immediate: true },
     );
-    pushCleanup(node, stop);
+    useCleanup(stop);
   },
 });
 

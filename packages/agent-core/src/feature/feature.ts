@@ -4,18 +4,18 @@ import {
   createToken,
   createUnit,
   currentUnit,
-  inject,
   pushCleanup,
+  type CertainToken,
   type EventHandler,
   type NodeRef,
   type RuntimeEvent,
-  type Token,
   type UnitNode,
   type UnitRecipe,
   type UnitSetup,
   type Unsubscribe,
   type WaitOpts,
 } from '#/kernel/index';
+import { inject } from '#/kernel/hooks';
 
 import { AgentNodeRef, AppNodeRef, SessionNodeRef } from './tierNodes';
 
@@ -165,7 +165,7 @@ export function useOnAgent(
 }
 
 function useTierOn(
-  token: Token<UnitNode>,
+  token: CertainToken<UnitNode>,
   featureOrType: FeatureSpec | string,
   typeOrHandler?: string | EventHandler,
   handlerOrOpts?: EventHandler | ListenOpts,

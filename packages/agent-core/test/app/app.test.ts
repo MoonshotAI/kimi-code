@@ -6,7 +6,7 @@ import type { LlmRequester } from '#/llm/requester/requester';
 import { openBlobs, type Blobs } from '#/store/blob';
 import { MemoryBackend, Trees } from '#/store/tree';
 import { openSessionStores, type RosterEntry, type SessionStores } from '#/stores/session';
-import { createToken, inject, useExpose, useFire, ref, type Ref, type RuntimeEvent } from '#/kernel/index';
+import { createFacadeToken, useExpose, useFire, useInject, ref, type Ref, type RuntimeEvent } from '#/kernel/index';
 import { createFeature, useAgentTools, useBlobs, useOnAgent, useOnApp, useOnSession, useSession, useSessionStore } from '#/feature/index';
 import { createHarness, memorySessionSpace, type AgentHandle } from '#/app/index';
 
@@ -39,8 +39,8 @@ function turnDone(agent: AgentHandle): Promise<string[]> {
   });
 }
 
-const AppCounter = createToken<{ count: Ref<number> }>('test.appCounter');
-const SessionCounter = createToken<{
+const AppCounter = createFacadeToken<{ count: Ref<number> }>('test.appCounter');
+const SessionCounter = createFacadeToken<{
   count: Ref<number>;
   appCount: Ref<number>;
   roster(): Record<string, RosterEntry>;
@@ -63,7 +63,7 @@ describe('app-session-agent units', () => {
     }
     const sessionSpec = createFeature<ProbeReady>('session-probe', {
       session() {
-        const appState = inject(AppCounter);
+        const appState = useInject(AppCounter).value!;
         const sessionStore = useSessionStore();
         useExpose(SessionCounter, {
           count: ref(0),
@@ -79,8 +79,8 @@ describe('app-session-agent units', () => {
     app.on(sessionSpec, 'session-probe.ready', (event) => {
       seen.push(event.sessionId);
     });
-    app.resolve(AppCounter).count.value += 1;
-    expect(app.resolve(AppCounter).count.value).toBe(1);
+    app.resolve(AppCounter)!.count.value += 1;
+    expect(app.resolve(AppCounter)!.count.value).toBe(1);
     const leftReady = app.wait(sessionSpec, 'session-probe.ready');
     const left = await app.create({ sessionId: 'left', stores: envA.stores });
     expect((await leftReady).sessionId).toBe('left');
@@ -90,27 +90,27 @@ describe('app-session-agent units', () => {
     expect(app.list()).toEqual(['left', 'right']);
     expect(app.get('left')).toBe(left);
     expect(seen).toEqual(['left', 'right']);
-    expect(left.resolve(SessionCounter).blobs).toBe(envA.stores.blobs);
-    expect(right.resolve(SessionCounter).blobs).toBe(envB.stores.blobs);
-    left.resolve(SessionCounter).count.value += 1;
-    expect(left.resolve(SessionCounter).count.value).toBe(1);
-    expect(right.resolve(SessionCounter).count.value).toBe(0);
-    expect(left.resolve(SessionCounter).appCount.value).toBe(1);
-    expect(right.resolve(SessionCounter).appCount.value).toBe(1);
+    expect(left.resolve(SessionCounter)!.blobs).toBe(envA.stores.blobs);
+    expect(right.resolve(SessionCounter)!.blobs).toBe(envB.stores.blobs);
+    left.resolve(SessionCounter)!.count.value += 1;
+    expect(left.resolve(SessionCounter)!.count.value).toBe(1);
+    expect(right.resolve(SessionCounter)!.count.value).toBe(0);
+    expect(left.resolve(SessionCounter)!.appCount.value).toBe(1);
+    expect(right.resolve(SessionCounter)!.appCount.value).toBe(1);
     const agent = await left.create({ agentId: 'agent-0' });
     agent.setConfig({ model });
     agent.setRequester(createEchoRequester());
-    expect(left.resolve(SessionCounter).roster()).toEqual({
+    expect(left.resolve(SessionCounter)!.roster()).toEqual({
       'agent-0': { branch: 'agent-0', features: ['app-probe', 'session-probe'] },
     });
-    expect(right.resolve(SessionCounter).roster()).toEqual({});
+    expect(right.resolve(SessionCounter)!.roster()).toEqual({});
     const done = turnDone(agent);
     expect(agent.submit(createUserMessage('hello'))?.type).toBe('prompt.submitted');
     expect(await done).toContain('echo:hello');
     const store = envA.stores.get('agent-0');
     await envA.stores.flush();
     expect(store?.getState().history.some((entry) => extractText(entry.message) === 'echo:hello')).toBe(true);
-    const ExtraCounter = createToken<{ count: Ref<number> }>('test.extraCounter');
+    const ExtraCounter = createFacadeToken<{ count: Ref<number> }>('test.extraCounter');
     const extraSpec = createFeature('extra', {
       app() {
         useExpose(ExtraCounter, { count: ref(0) });
@@ -118,23 +118,23 @@ describe('app-session-agent units', () => {
     });
     app.installFeature(extraSpec);
     await app.ready();
-    app.resolve(ExtraCounter).count.value = 7;
-    expect(app.resolve(ExtraCounter).count.value).toBe(7);
+    app.resolve(ExtraCounter)!.count.value = 7;
+    expect(app.resolve(ExtraCounter)!.count.value).toBe(7);
     expect(() => app.installFeature(extraSpec)).toThrow('already installed');
     expect(app.uninstallFeature(extraSpec)).toBe(true);
     await app.ready();
-    expect(() => app.resolve(ExtraCounter)).toThrow('no provider');
+    expect(app.resolve(ExtraCounter)).toBeUndefined();
     app.installFeature(extraSpec);
     await app.ready();
-    expect(app.resolve(ExtraCounter).count.value).toBe(0);
+    expect(app.resolve(ExtraCounter)!.count.value).toBe(0);
     expect(app.uninstallFeature('extra')).toBe(true);
     expect(app.uninstallFeature('extra')).toBe(false);
-    await app.disposeAsync();
+    await app.close();
     expect(agent.state).toBe('unmounted');
     expect(left.state).toBe('unmounted');
     expect(app.list()).toEqual([]);
     await expect(agent.ready()).rejects.toThrow('unmounted');
-    expect(() => app.resolve(AppCounter)).toThrow();
+    expect(app.resolve(AppCounter)).toBeUndefined();
     await envA.stores.dispose();
     await envB.stores.dispose();
   });
@@ -422,6 +422,37 @@ describe('app-session-agent units', () => {
     await app.disposeAsync();
   });
 
+  it('tracks the open source of sessions across open paths', async () => {
+    const space = memorySessionSpace();
+    const app = createHarness({ space });
+    const created: Array<{ sessionId?: unknown; from?: unknown }> = [];
+    app.on('session.created', (event) => {
+      created.push({ sessionId: event['sessionId'], from: event['from'] });
+    });
+    const env = await testStores();
+    const direct = await app.create({ sessionId: 'direct', stores: env.stores });
+    expect(direct.status().source).toBe('startup');
+    expect(created).toEqual([]);
+    const fresh = await app.open({});
+    expect(fresh.status().source).toBe('startup');
+    expect(created).toEqual([{ sessionId: fresh.sessionId, from: undefined }]);
+    const live = await app.open({ sessionId: fresh.sessionId });
+    expect(live).toBe(fresh);
+    expect(live.status().source).toBe('startup');
+    await app.close(fresh.sessionId);
+    const resumed = await app.open({ sessionId: fresh.sessionId });
+    expect(resumed.status().source).toBe('resume');
+    expect(created).toHaveLength(1);
+    const forked = await app.open({ from: fresh.sessionId });
+    expect(forked.status().source).toBe('fork');
+    expect(created).toEqual([
+      { sessionId: fresh.sessionId, from: undefined },
+      { sessionId: forked.sessionId, from: fresh.sessionId },
+    ]);
+    await app.disposeAsync();
+    await env.stores.dispose();
+  });
+
   it('deletes cold and live sessions and fires session.deleted on the app node', async () => {
     const space = memorySessionSpace();
     const app = createHarness({ space });
@@ -485,7 +516,7 @@ describe('app-session-agent units', () => {
       readonly sessionId: string;
       readonly agentId: string;
     }
-    const PingerRef = createToken<{ ping(): void }>('test.pinger');
+    const PingerRef = createFacadeToken<{ ping(): void }>('test.pinger');
     const pinger = createFeature<Ping>('pinger', {
       agent() {
         const fire = useFire();
@@ -520,7 +551,7 @@ describe('app-session-agent units', () => {
     const right = await app.create({ sessionId: 'right', stores: envB.stores });
     const leftAgent = await left.create({ agentId: 'main' });
     const rightAgent = await right.create({ agentId: 'main' });
-    leftAgent.resolve(PingerRef).ping();
+    leftAgent.resolve(PingerRef)!.ping();
     expect(seen).toEqual(['agent:main', 'session:main', 'any:pinger.ping', 'app:left:main']);
     seen.length = 0;
     await app.close('left');
@@ -528,7 +559,7 @@ describe('app-session-agent units', () => {
     rightAgent.on(pinger, 'pinger.ping', (event) => {
       viaHandle.push(`handle:${event.agentId}`);
     });
-    rightAgent.resolve(PingerRef).ping();
+    rightAgent.resolve(PingerRef)!.ping();
     expect(seen).toEqual(['agent:main', 'session:main', 'any:pinger.ping', 'app:right:main']);
     expect(viaHandle).toEqual(['handle:main']);
     await app.disposeAsync();

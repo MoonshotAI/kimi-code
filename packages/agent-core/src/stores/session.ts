@@ -5,8 +5,8 @@ import { decodeRecord, treeJournal, type BranchJournal, type RecordEvent } from 
 import { StoreError, Trees, type Branch, type BranchRef, type Tree, type TreeBackend } from '#/store/tree';
 import { openAgentStore, type AgentStore } from '#/stores/agent';
 
-export type AgentOpened = {
-  readonly type: 'agent.opened';
+export type AgentCreated = {
+  readonly type: 'agent.created';
   readonly time?: number;
   readonly agentId: string;
   readonly branch: string;
@@ -14,10 +14,10 @@ export type AgentOpened = {
   readonly source?: string;
 };
 
-export type AgentClosed = {
-  readonly type: 'agent.closed';
+export type SessionCreated = {
+  readonly type: 'session.created';
   readonly time?: number;
-  readonly agentId: string;
+  readonly from?: string;
 };
 
 export type AgentSwitched = {
@@ -35,17 +35,28 @@ export type SessionMetaUpdated = {
   readonly meta: unknown;
 };
 
-export type SessionEvent = AgentOpened | AgentClosed | AgentSwitched | SessionMetaUpdated;
+export type SessionEvent = SessionCreated | AgentCreated | AgentSwitched | SessionMetaUpdated;
 
-const sessionTypes = new Set<SessionEvent['type']>([
+const sessionTypes = new Set<string>([
+  'agent.created',
   'agent.opened',
-  'agent.closed',
   'agent.switched',
+  'session.created',
   'session.meta_updated',
 ]);
 
 export function decodeSession(record: RecordEvent): SessionEvent | undefined {
-  return decodeRecord<SessionEvent>(record, sessionTypes);
+  const event = decodeRecord<SessionEvent>(record, sessionTypes);
+  if (event === undefined || (event.type as string) !== 'agent.opened') return event;
+  const legacy = event as unknown as Omit<AgentCreated, 'type'>;
+  return {
+    type: 'agent.created',
+    agentId: legacy.agentId,
+    branch: legacy.branch,
+    features: legacy.features,
+    source: legacy.source,
+    time: legacy.time,
+  };
 }
 
 export interface RosterEntry {
@@ -65,7 +76,7 @@ export function session<C>(): Projection<SessionLogState, RecordEvent, C> {
     reduce: (state, record) => {
       const event = decodeSession(record);
       if (event === undefined) return state;
-      if (event.type === 'agent.opened') {
+      if (event.type === 'agent.created') {
         return {
           ...state,
           roster: {
@@ -92,7 +103,16 @@ export function session<C>(): Projection<SessionLogState, RecordEvent, C> {
         };
       }
       if (event.type === 'session.meta_updated') {
-        return { ...state, sessionMeta: { value: event.meta } };
+        const current = state.sessionMeta.value;
+        const base =
+          typeof current === 'object' && current !== null
+            ? (current as Record<string, unknown>)
+            : {};
+        const patch =
+          typeof event.meta === 'object' && event.meta !== null
+            ? (event.meta as Record<string, unknown>)
+            : {};
+        return { ...state, sessionMeta: { value: { ...base, ...patch } } };
       }
       return state;
     },
@@ -196,7 +216,7 @@ export async function openSessionStores(tree: Tree, blobs: Blobs): Promise<Sessi
     agents.set(agentId, { store, journal: agentJournal });
     if (registered === undefined) {
       await session.dispatch({
-        type: 'agent.opened',
+        type: 'agent.created',
         agentId,
         branch: branch.name,
         features: opts?.features,
@@ -231,7 +251,6 @@ export async function openSessionStores(tree: Tree, blobs: Blobs): Promise<Sessi
       if (opened === undefined) return;
       agents.delete(agentId);
       await opened.store.close();
-      await session.dispatch({ type: 'agent.closed', agentId });
     },
     undo: async (agentId, turns) => {
       const opened = agents.get(agentId);

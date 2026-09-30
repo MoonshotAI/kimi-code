@@ -6,7 +6,6 @@ export const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 export interface SessionRecord {
   readonly id: string;
   readonly title?: string;
-  readonly workspaceId?: string;
   readonly metadata?: Record<string, unknown>;
 }
 
@@ -55,12 +54,13 @@ export function mergeSessionRecord(
   patch: SessionRecordDraft | undefined,
 ): SessionRecord {
   const title = patch?.title ?? current?.title;
-  const workspaceId = patch?.workspaceId ?? current?.workspaceId;
-  const metadata = patch?.metadata ?? current?.metadata;
+  const metadata =
+    patch?.metadata !== undefined
+      ? { ...current?.metadata, ...patch.metadata }
+      : current?.metadata;
   return {
     id,
     ...(title !== undefined ? { title } : {}),
-    ...(workspaceId !== undefined ? { workspaceId } : {}),
     ...(metadata !== undefined ? { metadata } : {}),
   };
 }

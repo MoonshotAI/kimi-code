@@ -1,9 +1,8 @@
 import {
-  createToken,
-  lineage,
+  createFacadeToken,
   useExpose,
   useFire,
-  useNode,
+  useInject,
   type RuntimeEvent,
 } from '#/kernel/index';
 import {
@@ -41,7 +40,7 @@ export interface UndoFace {
   undo(turns: number): Promise<number>;
 }
 
-export const UndoRef = createToken<UndoFace>('undo');
+export const UndoRef = createFacadeToken<UndoFace>('undo');
 
 const undoTelemetryEvents = [
   { name: 'conversation_undo', properties: ['count'] },
@@ -49,21 +48,14 @@ const undoTelemetryEvents = [
 
 export const undo = createFeature<UndoEvent>('undo', {
   agent() {
-    const node = useNode();
     const agent = useAgent();
     const session = useSession();
     const store = useAgentStore();
     const fire = useFire();
     useTelemetryEvents(undoTelemetryEvents);
+    const telemetry = useInject(TelemetryRef);
     const track = (properties: { count: number }): void => {
-      const providers = node.providerRef(TelemetryRef).value;
-      for (const unit of lineage(node)) {
-        const entry = providers.findLast((candidate) => candidate.node === unit);
-        if (entry !== undefined) {
-          entry.value.track('conversation_undo', properties);
-          return;
-        }
-      }
+      telemetry.value?.track('conversation_undo', properties);
     };
     const availability = (): UndoAvailability => computeUndoAvailability(store.getState().history);
     const idle = (): boolean => {

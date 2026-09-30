@@ -17,11 +17,11 @@ import type { AgentSpec, AgentStore, AgentStoreState, SystemPromptSection } from
 import {
   createToken,
   currentUnit,
-  inject,
   pushCleanup,
   shallowRef,
   type ShallowRef,
 } from '#/kernel/index';
+import { inject } from '#/kernel/hooks';
 import { credentialsRecovery } from '#/llm/builtin/requester/credentials';
 import type { MediaLowerPorts } from '#/llm/media/materialize';
 import type { ToolCall, ToolDescription } from '#/llm/message';
@@ -421,12 +421,14 @@ export const AppUnitRef = createToken<AppCommands>('app.unit');
 interface FoldingStore<State> {
   getState(): State;
   dispatch(event: RecordEvent | readonly RecordEvent[]): Promise<Entry<RecordEvent, BranchRef>>;
+  onCommit(listener: (entry: Entry<RecordEvent, BranchRef>, state: State) => void): () => void;
   attach<T>(projection: Projection<T, RecordEvent, BranchRef>): View<T>;
 }
 
 export interface FeatureStore<State> {
   getState(): State;
   dispatch(event: RecordEvent | readonly RecordEvent[]): Promise<Entry<RecordEvent, BranchRef>>;
+  onCommit(listener: (entry: Entry<RecordEvent, BranchRef>, state: State) => void): () => void;
   fold<S>(projection: Projection<S, RecordEvent, BranchRef>): ShallowRef<S>;
 }
 
@@ -434,6 +436,11 @@ function useFoldingStore<State>(store: FoldingStore<State>): FeatureStore<State>
   return {
     getState: () => store.getState(),
     dispatch: (event) => store.dispatch(event),
+    onCommit: (listener) => {
+      const off = store.onCommit(listener);
+      pushCleanup(currentUnit(), off);
+      return off;
+    },
     fold: (projection) => {
       const view = store.attach(projection);
       const state = shallowRef(view.getState());

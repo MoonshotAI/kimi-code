@@ -149,7 +149,7 @@ describe('provider-catalog app model defaults', () => {
   it('persists the default model to the user config target as a snake_case scalar', async () => {
     const { app, file } = await mountFixture();
     await until(() => app.node.fold(CatalogModels).length === 2);
-    await app.resolve(ModelDefaultsRef).setDefaultModel('other/m2');
+    await app.resolve(ModelDefaultsRef)!.setDefaultModel('other/m2');
     expect(file.saved.at(-1)).toContain('default_model = "other/m2"');
     await app.disposeAsync();
   });
@@ -157,7 +157,7 @@ describe('provider-catalog app model defaults', () => {
   it('edits an existing default_model scalar in place and keeps its trailing comment', async () => {
     const { app, file } = await mountFixture('default_model = "test/m1"   # current pick\n');
     await until(() => app.node.fold(CatalogModels).length === 2);
-    await app.resolve(ModelDefaultsRef).setDefaultModel('other/m2');
+    await app.resolve(ModelDefaultsRef)!.setDefaultModel('other/m2');
     expect(file.saved.at(-1)).toBe('default_model = "other/m2"   # current pick\n');
     await app.disposeAsync();
   });
@@ -165,7 +165,7 @@ describe('provider-catalog app model defaults', () => {
   it('rejects an unknown alias with a coded error', async () => {
     const { app } = await mountFixture();
     await until(() => app.node.fold(CatalogModels).length === 2);
-    await expect(app.resolve(ModelDefaultsRef).setDefaultModel('ghost/nope')).rejects.toMatchObject(
+    await expect(app.resolve(ModelDefaultsRef)!.setDefaultModel('ghost/nope')).rejects.toMatchObject(
       { code: 'model.unknown_alias' },
     );
     await app.disposeAsync();
@@ -185,7 +185,7 @@ describe('provider-catalog app model defaults', () => {
     });
     await app.ready();
     await until(() => app.node.fold(CatalogModels).length === 1);
-    await expect(app.resolve(ModelDefaultsRef).setDefaultModel('test/m1')).rejects.toMatchObject({
+    await expect(app.resolve(ModelDefaultsRef)!.setDefaultModel('test/m1')).rejects.toMatchObject({
       code: 'config.unavailable',
     });
     await app.disposeAsync();
@@ -201,10 +201,10 @@ describe('provider-catalog app model defaults', () => {
       ],
     });
     await app.ready();
-    expect(app.resolve(ConfigRef).get<{ forcedEffort?: string }>('thinking').forcedEffort).toBe(
+    expect(app.resolve(ConfigRef)!.get<{ forcedEffort?: string }>('thinking').forcedEffort).toBe(
       'low',
     );
-    await app.resolve(ModelDefaultsRef).setDefaultThinking('high');
+    await app.resolve(ModelDefaultsRef)!.setDefaultThinking('high');
     const text = file.saved.at(-1)!;
     expect(text).toContain('effort = "high"');
     expect(text).not.toContain('forcedEffort');
@@ -217,7 +217,7 @@ describe('provider-catalog agent model binding', () => {
   it('binds config, requester and credential atomically and records the binding', async () => {
     const { app, main, seen } = await mountFixture('default_model = "test/m1"\n');
     await until(() => main.config?.model.model === 'm1');
-    const face = main.resolve(AgentModelRef);
+    const face = main.resolve(AgentModelRef)!;
     await face.setModel('other/m2');
     await until(() => main.config?.model.model === 'm2');
     expect(face.current.value).toEqual({ alias: 'other/m2', thinking: null });
@@ -233,12 +233,12 @@ describe('provider-catalog agent model binding', () => {
   it('restores the durable binding on remount ahead of app defaults', async () => {
     const { app, session, main } = await mountFixture('default_model = "test/m1"\n');
     await until(() => main.config?.model.model === 'm1');
-    await main.resolve(AgentModelRef).setModel('other/m2');
+    await main.resolve(AgentModelRef)!.setModel('other/m2');
     await until(() => main.config?.model.model === 'm2');
     await session.close('main');
     const remounted = await session.create({ agentId: 'main' });
     await until(() => remounted.config?.model.model === 'm2');
-    expect(remounted.resolve(AgentModelRef).current.value).toEqual({
+    expect(remounted.resolve(AgentModelRef)!.current.value).toEqual({
       alias: 'other/m2',
       thinking: null,
     });
@@ -261,7 +261,7 @@ describe('provider-catalog agent model binding', () => {
     expect(main.config?.model.maxContextSize).toBe(2048);
     const bindings = app.node.fold(CatalogModels);
     const info = (providerId: string) =>
-      app.resolve(ProviderCatalogRef).providerInfo(providerId);
+      app.resolve(ProviderCatalogRef)!.providerInfo(providerId);
     expect(matchCatalogBinding('my-alias', bindings, info)?.model.model).toBe('m1');
     expect(matchCatalogBinding('nick', bindings, info)?.model.model).toBe('m1');
     await app.disposeAsync();
@@ -272,7 +272,7 @@ describe('provider-catalog agent model binding', () => {
     await until(() => main.config?.model.model === 'm1');
     await app.updateSession('sess', { metadata: { defaultModel: 'other/m2' } });
     await until(() => main.config?.model.model === 'm2');
-    await app.resolve(ConfigRef).set('defaultModel', 'test/m1', 'user');
+    await app.resolve(ConfigRef)!.set('defaultModel', 'test/m1', 'user');
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(main.config?.model.model).toBe('m2');
     await app.disposeAsync();
@@ -281,7 +281,7 @@ describe('provider-catalog agent model binding', () => {
   it('prefers the agent binding over session defaults', async () => {
     const { app, main } = await mountFixture('default_model = "test/m1"\n');
     await until(() => main.config?.model.model === 'm1');
-    await main.resolve(AgentModelRef).setModel('other/m2');
+    await main.resolve(AgentModelRef)!.setModel('other/m2');
     await until(() => main.config?.model.model === 'm2');
     await app.updateSession('sess', { metadata: { defaultModel: 'test/m1' } });
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -320,7 +320,7 @@ describe('provider-catalog agent model binding', () => {
     await app.updateSession('sess', { metadata: { defaultModel: 'other/m2' } });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(main.config?.model.model).toBe('custom');
-    await app.resolve(ConfigRef).set('defaultModel', 'other/m2', 'user');
+    await app.resolve(ConfigRef)!.set('defaultModel', 'other/m2', 'user');
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(main.config?.model.model).toBe('custom');
     await app.disposeAsync();
@@ -331,7 +331,7 @@ describe('provider-catalog agent thinking effort', () => {
   it('rejects an unsupported effort and applies a valid one durably', async () => {
     const { app, session, main } = await mountFixture('default_model = "test/m1"\n');
     await until(() => main.config?.model.model === 'm1');
-    const face = main.resolve(AgentModelRef);
+    const face = main.resolve(AgentModelRef)!;
     await expect(face.setThinking('turbo')).rejects.toMatchObject({
       code: 'model.invalid_thinking',
     });
@@ -348,7 +348,7 @@ describe('provider-catalog agent thinking effort', () => {
   it('rejects thinking efforts for a model without thinking support', async () => {
     const { app, main } = await mountFixture('default_model = "other/m2"\n');
     await until(() => main.config?.model.model === 'm2');
-    await expect(main.resolve(AgentModelRef).setThinking('high')).rejects.toMatchObject({
+    await expect(main.resolve(AgentModelRef)!.setThinking('high')).rejects.toMatchObject({
       code: 'model.invalid_thinking',
     });
     await app.disposeAsync();
@@ -359,7 +359,7 @@ describe('provider-catalog session model defaults', () => {
   it('writes session metadata and binds the live main agent', async () => {
     const { app, session, main, space } = await mountFixture('default_model = "test/m1"\n');
     await until(() => main.config?.model.model === 'm1');
-    const face = session.resolve(SessionModelRef);
+    const face = session.resolve(SessionModelRef)!;
     await face.setThinking('high');
     expect((await space.get('sess'))?.metadata?.['defaultThinking']).toBe('high');
     await until(() => main.config?.thinking?.effort === 'high');

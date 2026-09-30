@@ -106,7 +106,7 @@ describe('telemetry feature', () => {
       context: { provider_type: 'test', mode: 'agent' },
     });
     await ready;
-    const telemetry = app.resolve(TelemetryRef);
+    const telemetry = app.resolve(TelemetryRef)!;
     telemetry.setContext({ session_id: 'sess-1' });
     telemetry.track('custom_event', { extra: 1, provider_type: 'override', dropped: undefined });
     expect(recorder.records).toHaveLength(1);
@@ -128,9 +128,9 @@ describe('telemetry feature', () => {
     const env = await testStores();
     const session = await app.create({ sessionId: 'sess', stores: env.stores });
     const agent = await session.create({ agentId: 'main' });
-    const appTelemetry = app.resolve(TelemetryRef);
-    const sessionTelemetry = session.resolve(TelemetryRef);
-    const agentTelemetry = agent.resolve(TelemetryRef);
+    const appTelemetry = app.resolve(TelemetryRef)!;
+    const sessionTelemetry = session.resolve(TelemetryRef)!;
+    const agentTelemetry = agent.resolve(TelemetryRef)!;
     expect(appTelemetry.getContext()).toEqual({});
     expect(sessionTelemetry.getContext()).toEqual({ session_id: 'sess' });
     expect(agentTelemetry.getContext()).toEqual({ session_id: 'sess', agent_id: 'main' });
@@ -156,15 +156,15 @@ describe('telemetry feature', () => {
   it('drops events while disabled and honors the initial enabled flag', async () => {
     const off = mountTelemetryApp({ enabled: false });
     await off.ready;
-    off.app.resolve(TelemetryRef).track('ignored');
+    off.app.resolve(TelemetryRef)!.track('ignored');
     expect(off.recorder.records).toHaveLength(0);
-    off.app.resolve(TelemetryRef).setEnabled(true);
-    off.app.resolve(TelemetryRef).track('kept');
+    off.app.resolve(TelemetryRef)!.setEnabled(true);
+    off.app.resolve(TelemetryRef)!.track('kept');
     expect(eventNames(off.recorder.records)).toEqual(['kept']);
     await off.app.disposeAsync();
     const on = mountTelemetryApp();
     await on.ready;
-    const telemetry = on.app.resolve(TelemetryRef);
+    const telemetry = on.app.resolve(TelemetryRef)!;
     telemetry.setEnabled(false);
     telemetry.track('ignored');
     telemetry.setEnabled(true);
@@ -179,8 +179,8 @@ describe('telemetry feature', () => {
       features: [createConfig({}), createTelemetry(), recorderFeature(recorder)],
     });
     await app.ready();
-    const telemetry = app.resolve(TelemetryRef);
-    const config = app.resolve(ConfigRef);
+    const telemetry = app.resolve(TelemetryRef)!;
+    const config = app.resolve(ConfigRef)!;
     telemetry.track('first');
     expect(recorder.records).toHaveLength(1);
     await config.set('telemetry', false, 'memory');
@@ -202,7 +202,7 @@ describe('telemetry feature', () => {
     });
     await envApp.ready();
     await settleMicrotasks();
-    envApp.resolve(TelemetryRef).track('dropped');
+    envApp.resolve(TelemetryRef)!.track('dropped');
     expect(envRecorder.records).toHaveLength(0);
     await envApp.disposeAsync();
   });
@@ -225,7 +225,7 @@ describe('telemetry feature', () => {
           onEvent?.({ type: 'llm.done' });
         }),
     });
-    const agentTelemetry = agent.resolve(TelemetryRef);
+    const agentTelemetry = agent.resolve(TelemetryRef)!;
     agent.submit(createUserMessage('hello'));
     await waitForEvent(recorder.records, 'turn_started');
     agentTelemetry.track('during_turn');
@@ -382,7 +382,7 @@ describe('telemetry feature', () => {
   it('collects late event definitions and tracks through createTracker', async () => {
     const { app, recorder, ready } = mountTelemetryApp();
     await ready;
-    const telemetry: TelemetryFace = app.resolve(TelemetryRef);
+    const telemetry: TelemetryFace = app.resolve(TelemetryRef)!;
     expect(telemetry.events().map((def) => def.name)).toContain('turn_started');
     const defs = [{ name: 'probe_fired', properties: ['count'] }] as const;
     const late = createFeature('telemetry-late-defs', {
@@ -429,7 +429,7 @@ describe('telemetry feature', () => {
     });
     const app = createHarness({ features: [createTelemetry(), probe] });
     await app.ready();
-    const telemetry = app.resolve(TelemetryRef);
+    const telemetry = app.resolve(TelemetryRef)!;
     expect(() => telemetry.track('survives')).not.toThrow();
     expect(eventNames(recorder.records)).toEqual(['survives']);
     await expect(telemetry.flush()).resolves.toBeUndefined();
