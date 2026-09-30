@@ -62,6 +62,13 @@ export interface AppState {
   contextUsage: number;
   contextTokens: number;
   maxContextTokens: number;
+  /**
+   * Decode TPS of the most recent step that streamed long enough to measure,
+   * feeding the footer's `tps` slot. Steps too short to time leave the previous
+   * reading in place, so the slot holds the last real number instead of
+   * blinking empty through a run of quick tool calls.
+   */
+  decodeTps?: number;
   cumulativeTokens?: number;
   isCompacting: boolean;
   isReplaying: boolean;
