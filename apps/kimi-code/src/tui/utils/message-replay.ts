@@ -53,9 +53,8 @@ export interface SkillActivationProjection {
   readonly activationId: string;
   readonly skillName: string;
   readonly skillArgs?: string;
+  readonly skillSource?: Extract<PromptOrigin, { kind: 'skill_activation' }>['skillSource'];
   readonly trigger: SkillActivationTrigger;
-  /** The activation rode a bundled prompt message, not a standalone one. */
-  readonly bundled?: boolean;
 }
 
 export interface PluginCommandProjection {
@@ -322,6 +321,7 @@ export function skillActivationFromOrigin(
     activationId: origin.activationId,
     skillName: origin.skillName,
     skillArgs: origin.skillArgs,
+    skillSource: origin.skillSource,
     trigger: origin.trigger,
   };
 }
@@ -330,7 +330,7 @@ export function skillActivationFromOrigin(
  * The v2 engine bundles a prompt's inline skill activations into the prompt
  * message itself: the rendered skill blocks precede the caller's parts in
  * the content, and this origin field carries every activation's metadata so
- * replay can rebuild the per-skill cards from the single message. The SDK's
+ * replay can identify the skill parts in the single message. The SDK's
  * origin union is typed from the v1 engine, which never sets the field, so
  * read it structurally here instead of widening the deprecated v1 package's
  * types.
@@ -354,7 +354,6 @@ export function bundledSkillsFromOrigin(
     skillName: activation.skillName,
     skillArgs: activation.skillArgs,
     trigger: 'user-slash' as const,
-    bundled: true,
   }));
 }
 

@@ -1,10 +1,11 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import type { SwarmModeTrigger } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
+import type { PromptWithSkillsResult } from '@moonshot-ai/agent-core-v2/features/skill/skill';
 import type { Kaos } from '@moonshot-ai/kaos';
 
 import type { AgentContextData } from '#/context';
-import { ErrorCodes, makeErrorPayload } from '#/errors';
+import { ErrorCodes, KimiError, makeErrorPayload } from '#/errors';
 import type {
   ApprovalHandler,
   Event,
@@ -87,6 +88,7 @@ export interface SessionPromptRpcInput {
 
 export interface SessionPromptWithSkillsRpcInput extends SessionPromptRpcInput {
   readonly skills: readonly PromptSkillActivation[];
+  readonly steerIfActive?: boolean;
 }
 
 export interface SessionIdRpcInput {
@@ -329,6 +331,12 @@ export abstract class SDKRpcClientBase {
   abstract prompt(input: SessionPromptRpcInput): Promise<void>;
 
   abstract promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<void>;
+
+  async promptWithSkillsResult(
+    _input: SessionPromptWithSkillsRpcInput,
+  ): Promise<PromptWithSkillsResult> {
+    throw new KimiError(ErrorCodes.NOT_IMPLEMENTED, 'Skill message steering is not supported');
+  }
 
   abstract runShellCommand(input: {
     sessionId: string;

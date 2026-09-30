@@ -1167,7 +1167,7 @@ describe('KimiTUI resume message replay', () => {
     ).toEqual(['3 one-shot tasks missed while offline']);
   });
 
-  it('renders user-slash skill activation once without exposing injected prompt text', async () => {
+  it('replays a standalone user-slash skill as one reconstructed user message', async () => {
     const activation = message(
       'user',
       [{ type: 'text', text: 'Review the requested file.\n\nUser request:\nsrc/app.ts' }],
@@ -1177,6 +1177,7 @@ describe('KimiTUI resume message replay', () => {
           activationId: 'act-review',
           skillName: 'review',
           skillArgs: 'src/app.ts',
+          skillSource: 'user',
           trigger: 'user-slash',
         },
       },
@@ -1185,10 +1186,31 @@ describe('KimiTUI resume message replay', () => {
     const driver = await replayIntoDriver([activation, activation]);
     const transcript = driver.state.transcriptContainer.render(120).join('\n');
 
-    expect(transcript).toContain('review');
-    expect(transcript).toContain('src/app.ts');
+    expect(driver.state.transcriptEntries.filter((entry) => entry.kind === 'user').map((entry) => entry.content)).toEqual([
+      '/skill:review src/app.ts',
+    ]);
+    expect(transcript).toContain('/skill:review src/app.ts');
+    expect(transcript).not.toContain('Activated skill');
     expect(transcript).not.toContain('Review the requested file');
-    expect(driver.sessionEventHandler.renderedSkillActivationIds.has('act-review')).toBe(true);
+  });
+
+  it('does not present model-activated skills as user messages', async () => {
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'Review this file' }]),
+      message('user', [{ type: 'text', text: 'Expanded skill instructions' }], {
+        origin: {
+          kind: 'skill_activation',
+          activationId: 'act-model',
+          skillName: 'review',
+          trigger: 'model-tool',
+        },
+      }),
+    ]);
+
+    expect(driver.state.transcriptEntries.filter((entry) => entry.kind === 'user').map((entry) => entry.content)).toEqual([
+      'Review this file',
+    ]);
+    expect(driver.state.transcriptContainer.render(120).join('\n')).not.toContain('Activated skill');
   });
 
   it('renders replayed hook results as assistant transcript entries', async () => {
@@ -1241,7 +1263,7 @@ describe('KimiTUI resume message replay', () => {
       driver.state.transcriptEntries
         .filter((entry) => entry.kind === 'user')
         .map((entry) => entry.content),
-    ).toEqual(['prompt', 'merged prompt']);
+    ).toEqual(['prompt', 'merged prompt', '/review src/app.ts']);
   });
 
   it('renders replayed compaction records as completed compaction blocks', async () => {

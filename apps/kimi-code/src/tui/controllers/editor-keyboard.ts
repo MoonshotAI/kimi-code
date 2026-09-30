@@ -28,6 +28,7 @@ import type {
 } from '../utils/image-attachment-store';
 import { extractMediaAttachments, imageExtensionForMime } from '../utils/image-placeholder';
 import { extractInlineSkillActivations } from '../utils/inline-skill-tokens';
+import { resolveSkillMessageActivations } from '../commands/resolve';
 import type { PendingExit, QueuedMessage, SteerInputItem } from '../types';
 import type { TUIState } from '../tui-state';
 import type { BtwPanelController } from './btw-panel';
@@ -48,14 +49,25 @@ export interface EditorKeyboardHost {
   readonly btwPanelController: BtwPanelController;
   readonly surveyController: SurveyController;
   readonly skillCommandMap: Map<string, string>;
-  steerMessage(session: Session, input: readonly SteerInputItem[]): void;
-  steerSkillActivation(session: Session, skillName: string, skillArgs: string): void;
+  readonly pluginCommandMap: Map<string, string>;
+  isSteerBatchInFlight(): boolean;
+  shouldDeferSteerBatch(): boolean;
+  beginSteerBatch(): void;
+  finishSteerBatch(drainQueued: boolean): void;
+  steerMessage(
+    session: Session,
+    input: readonly SteerInputItem[],
+    onSettled?: (steered: boolean) => void,
+  ): Promise<boolean> | boolean;
+  steerSkillMessage(session: Session, item: QueuedMessage): Promise<boolean>;
+  steerSkillActivation(session: Session, skillName: string, skillArgs: string): Promise<void> | void;
   validateMediaCapabilities(extraction: {
     hasMedia: boolean;
     imageAttachmentIds: readonly number[];
     videoAttachmentIds: readonly number[];
   }): boolean;
   releaseStagingMedia(mediaAttachmentIds: readonly number[]): void;
+  recallStashedMedia(extraction: ReturnType<typeof extractMediaAttachments> | undefined): void;
   recallLastQueued(): QueuedMessage | undefined;
   isSteeringQueuedMessages(): boolean;
   showError(msg: string): void;
@@ -316,6 +328,7 @@ export class EditorKeyboardController {
     editor.onNotifyPanelKey = (key) => host.handleNotifyPanelKey(key);
 
     editor.onCtrlS = () => {
+      if (host.isSteerBatchInFlight()) return;
       if (
         host.state.appState.streamingPhase === 'idle' ||
         host.state.appState.streamingPhase === 'shell' ||
@@ -329,70 +342,72 @@ export class EditorKeyboardController {
       const text = editor.getText().trim();
       const editorIsBash = editor.inputMode === 'bash';
 
-      // Bash commands (`! …`) are not steerable: they stay queued so they run
-      // after the current task. Grouped inline-skill submissions are not
-      // steerable either — steer carries no skill activations, so they stay
-      // queued and submit intact when the session drains; the same applies to
-      // an editor draft carrying inline skill tokens. Steering stops at the
-      // first such bundle: items behind it stay queued too, or a later
-      // message would jump ahead of its bundle and reverse the conversational
-      // order. Everything else steers in queue order — plain text as a
-      // steered message, slash-skill items as activations fired into the
-      // running turn (never as literal text).
       const queued = host.state.queuedMessages;
-      const firstBundle = queued.findIndex((m) => m.inlineSkillActivations !== undefined);
-      const windowBeforeFirstBundle = firstBundle === -1 ? queued : queued.slice(0, firstBundle);
-      const steerable = windowBeforeFirstBundle.filter((m) => m.mode !== 'bash');
-      const editorHasInlineSkills =
-        !editorIsBash &&
-        text.length > 0 &&
-        extractInlineSkillActivations(text, host.skillCommandMap).length > 0;
+      const steerable = queued.filter((message) => message.mode !== 'bash');
+      const editorActivations =
+        editorIsBash || text.length === 0
+          ? []
+          : text.startsWith('/')
+            ? resolveSkillMessageActivations(
+                text,
+                host.skillCommandMap,
+                host.pluginCommandMap,
+              )
+            : extractInlineSkillActivations(text, host.skillCommandMap);
 
       type SteerRun =
-        | { readonly kind: 'text'; readonly items: SteerInputItem[] }
-        | { readonly kind: 'skill'; readonly skillName: string; readonly skillArgs: string };
+        | {
+            readonly kind: 'text';
+            readonly items: SteerInputItem[];
+            readonly queued: QueuedMessage[];
+            readonly draft: boolean;
+          }
+        | { readonly kind: 'skill'; readonly item: QueuedMessage }
+        | { readonly kind: 'bundle'; readonly item: QueuedMessage; readonly draft: boolean };
       const runs: SteerRun[] = [];
       let textRun: SteerInputItem[] = [];
+      let textQueued: QueuedMessage[] = [];
+      let textDraft = false;
       const flushTextRun = (): void => {
         if (textRun.length > 0) {
-          runs.push({ kind: 'text', items: textRun });
+          runs.push({ kind: 'text', items: textRun, queued: textQueued, draft: textDraft });
           textRun = [];
+          textQueued = [];
+          textDraft = false;
         }
       };
-      for (const m of steerable) {
-        if (m.mode === 'skill' && m.skillName !== undefined) {
+      for (const message of steerable) {
+        if (message.mode === 'skill' && message.skillName !== undefined) {
           flushTextRun();
-          runs.push({ kind: 'skill', skillName: m.skillName, skillArgs: m.skillArgs ?? '' });
+          runs.push({ kind: 'skill', item: message });
           continue;
         }
-        const trimmed = m.text.trim();
+        if (message.inlineSkillActivations !== undefined && message.inlineSkillActivations.length > 0) {
+          flushTextRun();
+          runs.push({ kind: 'bundle', item: message, draft: false });
+          continue;
+        }
+        const trimmed = message.text.trim();
         if (trimmed.length > 0) {
-          // Queued items carry the parts extracted when they were submitted
-          // (and were already capability-validated then).
           textRun.push({
             text: trimmed,
-            parts: m.parts,
-            imageAttachmentIds: m.imageAttachmentIds,
-            videoAttachmentIds: m.videoAttachmentIds,
+            parts: message.parts,
+            imageAttachmentIds: message.imageAttachmentIds,
+            videoAttachmentIds: message.videoAttachmentIds,
           });
+          textQueued.push(message);
         }
       }
       let editorExtraction: ReturnType<typeof extractMediaAttachments> | undefined;
-      if (!editorIsBash && text.length > 0 && !editorHasInlineSkills && firstBundle === -1) {
+      let draftItem: QueuedMessage | undefined;
+      if (!editorIsBash && text.length > 0) {
         try {
-          // Synchronous path: an image still ingesting in the background
-          // extracts to its inline fallback here (no bounded wait like
-          // `sendNormalUserInput` — this handler cannot await without
-          // interleaving queue/draft edits); a video still uploading refuses
-          // the submission instead (no inline form exists).
           editorExtraction = extractMediaAttachments(text, this.imageStore);
         } catch (error) {
-          // Media expansion failed (e.g. the pasted video's upload is still
-          // in flight) — leave the queue and the editor draft untouched.
           host.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
           return;
         }
-        textRun.push({
+        draftItem = {
           text,
           parts: editorExtraction.hasMedia ? editorExtraction.parts : undefined,
           imageAttachmentIds:
@@ -403,44 +418,113 @@ export class EditorKeyboardController {
             editorExtraction.videoAttachmentIds.length > 0
               ? editorExtraction.videoAttachmentIds
               : undefined,
-        });
+          inlineSkillActivations: editorActivations.length > 0 ? editorActivations : undefined,
+        };
+        if (editorActivations.length > 0) {
+          flushTextRun();
+          runs.push({ kind: 'bundle', item: draftItem, draft: true });
+        } else {
+          textRun.push(draftItem);
+          textDraft = true;
+        }
       }
       flushTextRun();
 
       if (runs.length > 0) {
-        // The editor draft is fresh input: gate it on the model's media
-        // capabilities before splicing the queue, so a rejection leaves the
-        // queue and the draft untouched.
-        if (
-          editorExtraction !== undefined &&
-          !host.validateMediaCapabilities(editorExtraction)
-        ) {
-          host.releaseStagingMedia([
-            ...editorExtraction.imageAttachmentIds,
-            ...editorExtraction.videoAttachmentIds,
-          ]);
+        if (editorExtraction !== undefined && !host.validateMediaCapabilities(editorExtraction)) {
+          if (editorActivations.length > 0) {
+            host.recallStashedMedia(editorExtraction);
+          } else {
+            host.releaseStagingMedia([
+              ...editorExtraction.imageAttachmentIds,
+              ...editorExtraction.videoAttachmentIds,
+            ]);
+          }
           return;
         }
         const session = host.session;
         if (host.state.appState.model.trim().length === 0 || session === undefined) {
-          host.releaseStagingMedia([
-            ...(editorExtraction?.imageAttachmentIds ?? []),
-            ...(editorExtraction?.videoAttachmentIds ?? []),
-          ]);
+          if (editorActivations.length > 0) {
+            host.recallStashedMedia(editorExtraction);
+          } else {
+            host.releaseStagingMedia([
+              ...(editorExtraction?.imageAttachmentIds ?? []),
+              ...(editorExtraction?.videoAttachmentIds ?? []),
+            ]);
+          }
           host.showError(LLM_NOT_SET_MESSAGE);
           return;
         }
-        host.state.queuedMessages = queued.filter(
-          (m, index) => m.mode === 'bash' || (firstBundle !== -1 && index >= firstBundle),
-        );
-        if (!editorIsBash && !editorHasInlineSkills && firstBundle === -1) editor.setText('');
-        for (const run of runs) {
-          if (run.kind === 'text') {
-            host.steerMessage(session, run.items);
-          } else {
-            host.steerSkillActivation(session, run.skillName, run.skillArgs);
+        const hasSkillMessage = runs.some((run) => run.kind === 'bundle');
+        if (hasSkillMessage) host.beginSteerBatch();
+        host.state.queuedMessages = queued.filter((message) => message.mode === 'bash');
+        if (draftItem !== undefined) editor.setText('');
+        void (async () => {
+          const accepted = new Set<QueuedMessage>();
+          let draftAccepted = false;
+          let batchFailed = false;
+          let skillBundleAccepted = false;
+          try {
+            for (const run of runs) {
+              if (hasSkillMessage && host.shouldDeferSteerBatch()) {
+                host.state.queuedMessages = [
+                  ...queued.filter((item) => item.mode === 'bash' || !accepted.has(item)),
+                  ...(draftItem !== undefined && !draftAccepted ? [draftItem] : []),
+                  ...host.state.queuedMessages.filter((item) => !queued.includes(item)),
+                ];
+                break;
+              }
+              let success: boolean | void;
+              try {
+                if (run.kind === 'text') {
+                  success = skillBundleAccepted
+                    ? await host.steerMessage(session, run.items, () => {
+                        host.updateQueueDisplay();
+                      })
+                    : await host.steerMessage(session, run.items);
+                }
+                else if (run.kind === 'skill') {
+                  success = await host.steerSkillActivation(
+                    session,
+                    run.item.skillName!,
+                    run.item.skillArgs ?? '',
+                  );
+                } else success = await host.steerSkillMessage(session, run.item);
+              } catch (error) {
+                host.showError(`Failed to steer: ${formatErrorMessage(error)}`);
+                success = false;
+              }
+              if (run.kind === 'text' && success === false && !skillBundleAccepted) {
+                for (const item of run.queued) accepted.add(item);
+                if (run.draft) draftAccepted = true;
+                if (!hasSkillMessage) success = true;
+              }
+              if (success === false) {
+                batchFailed = true;
+                host.state.queuedMessages = [
+                  ...queued.filter((item) => item.mode === 'bash' || !accepted.has(item)),
+                  ...host.state.queuedMessages.filter((item) => !queued.includes(item)),
+                ];
+                if (draftItem !== undefined && !draftAccepted) {
+                  if (editor.getText().length === 0) editor.setText(text);
+                  else host.state.queuedMessages.push(draftItem);
+                  if (editor.getText() === text) host.recallStashedMedia(editorExtraction);
+                }
+                break;
+              }
+              if (run.kind === 'text') {
+                for (const item of run.queued) accepted.add(item);
+                if (run.draft) draftAccepted = true;
+              } else if (run.kind === 'skill' || !run.draft) accepted.add(run.item);
+              else draftAccepted = true;
+              if (run.kind === 'bundle') skillBundleAccepted = true;
+            }
+          } finally {
+            if (hasSkillMessage) host.finishSteerBatch(!batchFailed);
           }
-        }
+          host.updateQueueDisplay();
+          host.state.ui.requestRender();
+        })();
       }
       host.updateQueueDisplay();
       host.state.ui.requestRender();

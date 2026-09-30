@@ -6,7 +6,12 @@ import {
 } from './registry';
 import { isExperimentalFlagEnabled } from './experimental-flags';
 import { parseSlashInput } from './parse';
+import {
+  extractInlineSkillActivations,
+  findInlineSkillTokens,
+} from '../utils/inline-skill-tokens';
 import type { TUIState } from '../tui-state';
+import type { InlineSkillActivation } from '../types';
 import type {
   KimiSlashCommand,
   SlashCommandBusyReason,
@@ -84,10 +89,6 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
 
   const skillName = resolveSkillCommand(options.skillCommandMap, parsed.name);
   if (skillName !== undefined) {
-    // Skill activations are never blocked by a busy session: the TUI queues
-    // them behind the running turn exactly like normal messages (see
-    // sendSkillActivation), and Ctrl-S steers them as real activations, so
-    // skill commands can be issued any time.
     return {
       kind: 'skill',
       commandName: parsed.name,
@@ -127,6 +128,34 @@ export function resolveSkillCommand(
   commandName: string,
 ): string | undefined {
   return skillCommandMap.get(commandName) ?? skillCommandMap.get(`skill:${commandName}`);
+}
+
+export function resolveSkillMessageActivations(
+  text: string,
+  skillCommandMap: ReadonlyMap<string, string>,
+  pluginCommandMap: ReadonlyMap<string, string>,
+): InlineSkillActivation[] {
+  const intent = resolveSlashCommandInput({
+    input: text,
+    skillCommandMap,
+    pluginCommandMap,
+    isStreaming: false,
+    isCompacting: false,
+  });
+  if (intent.kind !== 'skill' && intent.kind !== 'message') return [];
+
+  const tokens = findInlineSkillTokens(text, {
+    isKnownSkill: (commandName) =>
+      skillCommandMap.has(commandName) || skillCommandMap.has(`skill:${commandName}`),
+    includeLeading: true,
+  });
+  const activations = extractInlineSkillActivations(text, skillCommandMap, {
+    includeLeading: true,
+  });
+  if (tokens.length === 1 && tokens[0]!.start === 0 && activations.length === 1) {
+    return [{ skillName: activations[0]!.skillName, args: text.slice(tokens[0]!.end).trim() }];
+  }
+  return activations;
 }
 
 export function slashCommandBusyReason(

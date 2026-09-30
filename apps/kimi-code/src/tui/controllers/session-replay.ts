@@ -50,7 +50,6 @@ import {
   withoutUserPromptSubmitHookParts,
   type BackgroundTaskNotificationOrigin,
   type ReplayRenderContext,
-  type SkillActivationProjection,
   type PluginCommandProjection,
 } from '../utils/message-replay';
 import type { StreamingUIController } from './streaming-ui';
@@ -408,9 +407,18 @@ export class SessionReplayRenderer {
     this.flushAssistant(context);
     const skill = skillActivationFromOrigin(message.origin);
     if (skill !== undefined) {
-      this.renderSkillActivation(context, skill);
-      if (message.origin?.kind === 'skill_activation' && message.origin.trigger === 'user-slash') {
-        this.advanceTurn(context);
+      if (!context.skillActivationIds.has(skill.activationId)) {
+        context.skillActivationIds.add(skill.activationId);
+        if (skill.trigger === 'user-slash') {
+          this.advanceTurn(context);
+          const args = skill.skillArgs?.trim();
+          const command = skill.skillSource !== undefined && skill.skillSource !== 'builtin'
+            ? `skill:${skill.skillName}`
+            : skill.skillName;
+          this.host.appendTranscriptEntry(
+            replayEntry(context, 'user', `/${command}${args ? ` ${args}` : ''}`, 'plain'),
+          );
+        }
       }
       this.renderHookParts(context, message);
       return;
@@ -455,11 +463,9 @@ export class SessionReplayRenderer {
     message: ContextMessage,
     hookResults: readonly ContextMessage[] = [],
   ): void {
-    // The bundle is one message: advance once, rebuild the per-skill cards
-    // from the prompt origin, then show the caller's own parts (the engine
-    // prepends one rendered text part per bundled skill to the content).
+    // The bundle is one message: advance once and show the caller's own parts
+    // (the engine prepends one rendered text part per bundled skill).
     this.advanceTurn(context);
-    this.renderBundledSkillCards(context, message);
     for (const hookResult of hookResults) {
       this.renderHookResult(context, hookResult);
     }
@@ -468,12 +474,6 @@ export class SessionReplayRenderer {
     this.host.appendTranscriptEntry(
       replayEntry(context, 'user', contentPartsToText(stripBundledSkillParts(callerMessage)), 'plain'),
     );
-  }
-
-  private renderBundledSkillCards(context: ReplayRenderContext, message: ContextMessage): void {
-    for (const skill of bundledSkillsFromOrigin(message.origin)) {
-      this.renderSkillActivation(context, skill);
-    }
   }
 
   private renderToolCalls(context: ReplayRenderContext, toolCalls: readonly ToolCall[]): void {
@@ -547,25 +547,6 @@ export class SessionReplayRenderer {
   // ---------------------------------------------------------------------------
   // Special content renderers
   // ---------------------------------------------------------------------------
-
-  private renderSkillActivation(
-    context: ReplayRenderContext,
-    skill: SkillActivationProjection,
-  ): void {
-    const { sessionEventHandler } = this.host;
-    if (context.skillActivationIds.has(skill.activationId)) return;
-    if (sessionEventHandler.renderedSkillActivationIds.has(skill.activationId)) return;
-    context.skillActivationIds.add(skill.activationId);
-    sessionEventHandler.renderedSkillActivationIds.add(skill.activationId);
-    this.host.appendTranscriptEntry({
-      ...replayEntry(context, 'skill_activation', `Activated skill: ${skill.skillName}`, 'plain'),
-      skillActivationId: skill.activationId,
-      skillName: skill.skillName,
-      skillArgs: skill.skillArgs,
-      skillTrigger: skill.trigger,
-      bundledWithPrompt: skill.bundled === true ? true : undefined,
-    });
-  }
 
   private renderPluginCommand(
     context: ReplayRenderContext,
