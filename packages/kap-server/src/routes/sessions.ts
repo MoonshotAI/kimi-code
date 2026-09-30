@@ -7,7 +7,6 @@ import {
   IAgentLifecycleService,
   IAgentLoopService,
   IAuthSummaryService,
-  IEnvironmentDeclarationService,
   ISessionActivityView,
   ISessionBtwService,
   ISessionContext,
@@ -20,7 +19,6 @@ import {
   IWorkspaceAliases,
   ISessionManager,
   IWorkspaceService,
-  ensureMainAgent as ensureMainAgentContext,
   getLiveSessionById,
   programForSession,
   resumeSessionById,
@@ -249,17 +247,8 @@ export function registerSessionsRoutes(
           workDir,
           environmentId: body.environment_id,
           environmentCwd: body.environment_cwd,
+          ensureMainAgent: body.environment_id !== undefined && body.environment_id !== 'local',
         });
-        if (body.environment_id !== undefined && body.environment_id !== 'local') {
-          const declarations = await core.accessor.get(IEnvironmentDeclarationService).declarations();
-          const environmentCwd =
-            body.environment_cwd ??
-            declarations?.entries.find((entry) => entry.id === body.environment_id)?.entry.defaultCwd;
-          await ensureMainAgentContext(handle, {
-            environmentId: body.environment_id,
-            environmentCwd,
-          });
-        }
         if (typeof body.title === 'string') {
           await handle.accessor.get(ISessionMetadata).setTitle(body.title);
         }

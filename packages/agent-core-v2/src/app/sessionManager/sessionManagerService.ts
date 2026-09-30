@@ -215,7 +215,7 @@ export class SessionManager implements ISessionManager {
     if (inflight !== undefined) return inflight;
     this.resumeFailures.delete(sessionId);
     const promise = this.serializeLifecycle(sessionId, async () => {
-      const controller = await this.locateSession(sessionId, { connect: true });
+      const controller = await this.locateSession(sessionId, true);
       if (controller === undefined) return undefined;
       return controller.resume(sessionId, options);
     }).finally(() => this.pendingResumes.delete(sessionId));
@@ -297,7 +297,7 @@ export class SessionManager implements ISessionManager {
     sessionId: string,
     options?: ResumeSessionOptions,
   ): Promise<ISessionScopeHandle | undefined> {
-    const controller = await this.locateSession(sessionId, { connect: true });
+    const controller = await this.locateSession(sessionId, true);
     if (controller === undefined) return undefined;
     return controller.restore(sessionId, options);
   }
@@ -431,14 +431,14 @@ export class SessionManager implements ISessionManager {
     return this.locateSession(sessionId);
   }
 
-  private async locateSession(sessionId: string, options?: { readonly connect?: boolean }): Promise<SessionLifecycleService | undefined> {
+  private async locateSession(sessionId: string, connect = false): Promise<SessionLifecycleService | undefined> {
     const live = this.owners.get(sessionId);
     if (live !== undefined) return live;
     const summary = await this.index.get(sessionId);
     if (summary === undefined) return undefined;
     await this.environments.ready;
     const workspace = await this.workspaces.getOrCreate({ workspaceId: summary.workspaceId, root: summary.cwd });
-    if (options?.connect !== true) return this.controllerForWorkspace(workspace.id);
+    if (!connect) return this.controllerForWorkspace(workspace.id);
     const persistedBinding = await this.readPersistedBinding(workspace.id, sessionId);
     const boundEnvironmentId = persistedBinding?.environmentId ?? LOCAL_ENVIRONMENT_ID;
     if (boundEnvironmentId === LOCAL_ENVIRONMENT_ID) return this.controllerForWorkspace(workspace.id);

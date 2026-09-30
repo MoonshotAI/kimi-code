@@ -58,7 +58,6 @@ function validateTaskId(taskId: string): void {
 
 export class AgentTaskPersistence {
   private readonly spillDirsCreated = new Set<string>();
-  private readonly pinnedSpillTargets = new Map<string, AgentTaskSpillTarget>();
 
   constructor(
     private readonly agentDir: string,
@@ -91,30 +90,9 @@ export class AgentTaskPersistence {
   }
 
   private async outputPathFor(taskId: string, root: AgentTaskPersistenceRoot): Promise<string> {
-    const pinnedDir = await this.pinnedSpillDir(taskId);
-    if (pinnedDir !== undefined) return join(pinnedDir, `${taskId}.log`);
     const target = this.spillTarget?.();
     if (target !== undefined) return join(target.dir, `${taskId}.log`);
     return this.taskOutputFileAt(taskId, root);
-  }
-
-  private spillTargetFor(taskId: string): AgentTaskSpillTarget | undefined {
-    const pinned = this.pinnedSpillTargets.get(taskId);
-    if (pinned !== undefined) return pinned;
-    const target = this.spillTarget?.();
-    if (target !== undefined) this.pinnedSpillTargets.set(taskId, target);
-    return target;
-  }
-
-  private async pinnedSpillDir(taskId: string): Promise<string | undefined> {
-    const pinned = this.pinnedSpillTargets.get(taskId);
-    if (pinned !== undefined) return pinned.dir;
-    try {
-      const task = await this.readTask(taskId);
-      return task?.outputSpillDir;
-    } catch {
-      return undefined;
-    }
   }
 
   taskOutputFile(taskId: string): string {
@@ -140,11 +118,11 @@ export class AgentTaskPersistence {
     return normalizePersistedTask(fallback);
   }
 
-  async appendTaskOutput(taskId: string, chunk: string): Promise<string | undefined> {
-    if (chunk.length === 0) return undefined;
+  async appendTaskOutput(taskId: string, chunk: string): Promise<void> {
+    if (chunk.length === 0) return;
     await this.bytes.append(this.taskOutputScope(taskId), OUTPUT_LOG_KEY, textEncoder.encode(chunk));
-    const target = this.spillTargetFor(taskId);
-    if (target === undefined) return undefined;
+    const target = this.spillTarget?.();
+    if (target === undefined) return;
     try {
       if (!this.spillDirsCreated.has(target.dir)) {
         await target.fs.mkdir(target.dir, { recursive: true });
@@ -152,7 +130,6 @@ export class AgentTaskPersistence {
       }
       await target.fs.appendText(join(target.dir, `${taskId}.log`), chunk);
     } catch {}
-    return target.dir;
   }
 
   async taskOutputSizeBytes(taskId: string): Promise<number> {

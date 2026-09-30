@@ -140,10 +140,6 @@ import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir
 import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
 import { loadMcpServers } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
 import { fsSuggestRequestSchema } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
-import type {
-  FsSuggestRequest,
-  FsSuggestResponse,
-} from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
 import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
 import { IAppendLogStore } from '@moonshot-ai/agent-core-v2/persistence/interface/appendLogStore';
 import {
@@ -699,9 +695,31 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * the web client's @ mention results.
    */
   override async suggestFiles(workDir: string, input: SuggestFilesInput): Promise<SuggestFilesResult | undefined> {
-    const parsed = parseSuggestFilesInput(input);
+    const parsed = fsSuggestRequestSchema.safeParse({
+      query: input.query,
+      limit: input.limit ?? 50,
+      follow_gitignore: true,
+      show_hidden: false,
+    });
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      const where = issue !== undefined && issue.path.length > 0 ? `${String(issue.path[0])}: ` : '';
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        `suggestFiles ${where}${issue?.message ?? 'invalid input'}`,
+      );
+    }
     const handler = await this.workspaceHandlerFor('suggestFiles', workDir);
-    return toSuggestFilesResult(await handler.program.fs.suggest(parsed));
+    const result = await handler.program.fs.suggest(parsed.data);
+    return {
+      items: result.items.map((item) => ({
+        path: item.path,
+        name: item.name,
+        kind: item.kind,
+        matchPositions: item.match_positions,
+      })),
+      truncated: result.truncated,
+    };
   }
 
   /**
@@ -2883,36 +2901,6 @@ async function assertUsableWorkDir(fs: IHostFileSystem, workDir: string): Promis
   if (!stat.isDirectory) {
     throw new KimiError(ErrorCodes.FS_PATH_NOT_FOUND, `workDir ${workDir} is not a directory`);
   }
-}
-
-function parseSuggestFilesInput(input: SuggestFilesInput): FsSuggestRequest {
-  const parsed = fsSuggestRequestSchema.safeParse({
-    query: input.query,
-    limit: input.limit ?? 50,
-    follow_gitignore: true,
-    show_hidden: false,
-  });
-  if (!parsed.success) {
-    const issue = parsed.error.issues[0];
-    const where = issue !== undefined && issue.path.length > 0 ? `${String(issue.path[0])}: ` : '';
-    throw new KimiError(
-      ErrorCodes.REQUEST_INVALID,
-      `suggestFiles ${where}${issue?.message ?? 'invalid input'}`,
-    );
-  }
-  return parsed.data;
-}
-
-function toSuggestFilesResult(result: FsSuggestResponse): SuggestFilesResult {
-  return {
-    items: result.items.map((item) => ({
-      path: item.path,
-      name: item.name,
-      kind: item.kind,
-      matchPositions: item.match_positions,
-    })),
-    truncated: result.truncated,
-  };
 }
 
 /**

@@ -31,7 +31,6 @@ export interface AgentTaskInfoBase {
   readonly terminalNotificationSuppressed?: boolean;
   readonly resumeReminded?: boolean;
   readonly timeoutMs?: number;
-  readonly outputSpillDir?: string;
 }
 
 export interface AgentTaskInfoByKind {}

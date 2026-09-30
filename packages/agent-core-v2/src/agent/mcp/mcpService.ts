@@ -11,7 +11,6 @@ import { abortable } from '#/_base/utils/abort';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { environmentTempTarget, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import type { McpOriginalsTarget } from '#/agent/mcp/output';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -101,10 +100,6 @@ export class AgentMcpService extends Service implements IAgentMcpService {
 
   get oauthService() {
     return this.mcpHandle.connectionManager.oauthService;
-  }
-
-  private originalsTarget(): McpOriginalsTarget | undefined {
-    return environmentTempTarget(this.environment, 'original-images');
   }
 
   waitForInitialLoad(signal?: AbortSignal): Promise<void> {
@@ -302,7 +297,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
           createMcpTool(qualified, tool, client, {
             serverName,
             attachmentStore: this.attachmentStore,
-            originals: () => this.originalsTarget(),
+            originals: () => environmentTempTarget(this.environment, 'original-images'),
             telemetry: this.telemetry,
             providerType: () => this.profile.getModelProviderType(),
             reconnect: (signal) => this.reconnectForToolCall(serverName, client, signal),

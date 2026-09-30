@@ -216,16 +216,22 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     try {
       const agents = handle.accessor.get(IAgentLifecycleService);
       const main =
-        opts.mainAgentBinding === undefined
-          ? undefined
-          : await agents.create({
+        opts.mainAgentBinding !== undefined
+          ? await agents.create({
               agentId: MAIN_AGENT_ID,
               binding: opts.mainAgentBinding,
-            environmentId: opts.environmentId,
+              environmentId: opts.environmentId,
               environmentCwd:
                 opts.environmentCwd ??
                 (opts.environmentId === undefined || opts.environmentId === LOCAL_ENVIRONMENT_ID ? undefined : opts.workDir),
-            });
+            })
+          : opts.ensureMainAgent === true
+            ? await agents.create({
+                agentId: MAIN_AGENT_ID,
+                environmentId: opts.environmentId,
+                environmentCwd: opts.environmentCwd,
+              })
+            : undefined;
       if (this.config.get<boolean>(DEFAULT_PLAN_MODE_SECTION) === true) {
         const planAgent = main ?? (await ensureMainAgent(handle));
         const planHandle = agents.handleOf(planAgent.agentId);

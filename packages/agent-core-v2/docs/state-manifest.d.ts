@@ -1156,7 +1156,6 @@ export interface AgentStateSnapshot {
     readonly terminalNotificationSuppressed?: boolean;
     readonly resumeReminded?: boolean;
     readonly timeoutMs?: number;
-    readonly outputSpillDir?: string;
   } | /* SubagentTaskInfo — packages/agent-core-v2/src/agent/tools/agent/subagent-task.ts */ {
     readonly kind: 'agent';
     readonly agentId?: string;
@@ -1175,7 +1174,6 @@ export interface AgentStateSnapshot {
     readonly terminalNotificationSuppressed?: boolean;
     readonly resumeReminded?: boolean;
     readonly timeoutMs?: number;
-    readonly outputSpillDir?: string;
   } | /* ProcessTaskInfo — packages/agent-core-v2/src/agent/tools/os/bash/process-task.ts */ {
     readonly kind: 'process';
     readonly command: string;
@@ -1192,7 +1190,6 @@ export interface AgentStateSnapshot {
     readonly terminalNotificationSuppressed?: boolean;
     readonly resumeReminded?: boolean;
     readonly timeoutMs?: number;
-    readonly outputSpillDir?: string;
   }>;
   // src/agent/task/taskService.ts
   'task.activeTaskReminderPending': boolean;
@@ -1211,7 +1208,6 @@ export interface AgentStateSnapshot {
     readonly terminalNotificationSuppressed?: boolean;
     readonly resumeReminded?: boolean;
     readonly timeoutMs?: number;
-    readonly outputSpillDir?: string;
   } | /* SubagentTaskInfo — packages/agent-core-v2/src/agent/tools/agent/subagent-task.ts */ {
     readonly kind: 'agent';
     readonly agentId?: string;
@@ -1230,7 +1226,6 @@ export interface AgentStateSnapshot {
     readonly terminalNotificationSuppressed?: boolean;
     readonly resumeReminded?: boolean;
     readonly timeoutMs?: number;
-    readonly outputSpillDir?: string;
   } | /* ProcessTaskInfo — packages/agent-core-v2/src/agent/tools/os/bash/process-task.ts */ {
     readonly kind: 'process';
     readonly command: string;
@@ -1247,7 +1242,6 @@ export interface AgentStateSnapshot {
     readonly terminalNotificationSuppressed?: boolean;
     readonly resumeReminded?: boolean;
     readonly timeoutMs?: number;
-    readonly outputSpillDir?: string;
   }>;
   // replayable · durable · undoable — folds: ContextAppendMessage, TaskWaitDelivered
   'task.notificationDelivery': readonly string[];

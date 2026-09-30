@@ -1,5 +1,5 @@
 import { Disposable } from '#/_base/di/lifecycle';
-import { AsyncEmitter, type IWaitUntil } from '#/_base/event';
+import { Emitter } from '#/_base/event';
 import { parseBooleanEnv } from '#/_base/utils/env';
 import { defineState } from '#/state/state';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -10,8 +10,6 @@ import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext
 
 import { IWorkspaceTrust, type WorkspaceTrustChange } from './workspaceTrust';
 import { deleteWorkspaceTrust, readWorkspaceTrust, writeWorkspaceTrust } from './trustRecord';
-
-const NO_ABORT = new AbortController().signal;
 
 export const TRUST_WORKSPACE_ENV = 'KIMI_CODE_TRUST_WORKSPACE';
 
@@ -32,7 +30,7 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
   readonly ready: Promise<void>;
   private readonly root: string;
   private readonly envTrusted: boolean;
-  private readonly changeEmitter = this._register(new AsyncEmitter<WorkspaceTrustChange & IWaitUntil>());
+  private readonly changeEmitter = this._register(new Emitter<WorkspaceTrustChange>());
   readonly onDidChange = this.changeEmitter.event;
 
   constructor(
@@ -70,7 +68,7 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
     if (this.trusted) return;
     await writeWorkspaceTrust(this.docs, this.root, Date.now());
     this.trusted = true;
-    await this.changeEmitter.fireAsync({ trusted: true }, NO_ABORT);
+    this.changeEmitter.fire({ trusted: true });
     this.telemetry.track2('workspace_trust_changed', { trusted: true });
   }
 
@@ -78,7 +76,7 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
     if (!this.trusted) return;
     await deleteWorkspaceTrust(this.docs, this.root);
     this.trusted = false;
-    await this.changeEmitter.fireAsync({ trusted: false }, NO_ABORT);
+    this.changeEmitter.fire({ trusted: false });
     this.telemetry.track2('workspace_trust_changed', { trusted: false });
   }
 

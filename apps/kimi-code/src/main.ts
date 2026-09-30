@@ -17,17 +17,9 @@ if (isExecServerArgv(process.argv)) {
   // stdout is reserved for protocol frames; the runner logs to stderr only.
   // No process.exit: the stdio streams drain on connection EOF and the
   // process exits with this code on its own.
-  void runExecServerCommand('stdio').then(
-      (code) => {
-        process.exitCode = code;
-      },
-      (error: unknown) => {
-        process.stderr.write(
-          `error: exec-server failed: ${error instanceof Error ? error.message : String(error)}\n`,
-        );
-        process.exitCode = 1;
-      },
-    );
+  void runExecServerCommand('stdio').then((code) => {
+    process.exitCode = code;
+  });
 } else {
   void import('./cli/main').then(({ main }) => main());
 }

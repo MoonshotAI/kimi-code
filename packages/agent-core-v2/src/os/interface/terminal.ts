@@ -76,7 +76,6 @@ export interface TerminalSpawnOptions {
   readonly shell: string;
   readonly cols: number;
   readonly rows: number;
-  readonly env?: Record<string, string>;
 }
 
 export interface TerminalProcess {
