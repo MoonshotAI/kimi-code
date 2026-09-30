@@ -11,7 +11,9 @@ import {
 import {
   AgentModelRef,
   CatalogModels,
+  matchCatalogBinding,
   ModelDefaultsRef,
+  ProviderCatalogRef,
   SessionModelRef,
   providerCatalog,
   useProvider,
@@ -247,6 +249,21 @@ describe('provider-catalog agent model binding', () => {
     const { app, main } = await mountFixture('default_model = "test/m1"\n');
     await until(() => main.config?.model.model === 'm1');
     expect(main.config?.model.maxContextSize).toBe(4096);
+    await app.disposeAsync();
+  });
+
+  it('resolves the default model written as a custom models-section alias key or record alias', async () => {
+    const { app, main } = await mountFixture(
+      'default_model = "my-alias"\n\n' +
+        '[models."my-alias"]\nprovider = "test"\nmodel = "m1"\nmax_context_size = 2048\naliases = ["nick"]\n',
+    );
+    await until(() => main.config?.model.model === 'm1');
+    expect(main.config?.model.maxContextSize).toBe(2048);
+    const bindings = app.node.fold(CatalogModels);
+    const info = (providerId: string) =>
+      app.resolve(ProviderCatalogRef).providerInfo(providerId);
+    expect(matchCatalogBinding('my-alias', bindings, info)?.model.model).toBe('m1');
+    expect(matchCatalogBinding('nick', bindings, info)?.model.model).toBe('m1');
     await app.disposeAsync();
   });
 

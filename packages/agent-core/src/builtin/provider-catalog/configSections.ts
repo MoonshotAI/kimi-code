@@ -23,6 +23,8 @@ export const MODEL_CATALOG_CONFIG_SECTION = 'modelCatalog';
 
 export const DEFAULT_MODEL_CONFIG_SECTION = 'defaultModel';
 
+export const ENV_MODEL_PROVIDER_KEY = '__kimi_env__';
+
 const StringRecordSchema = z.record(z.string(), z.string());
 
 const UnknownRecordSchema = z.record(z.string(), z.unknown());
@@ -177,7 +179,7 @@ const CAPABILITY_KEYS = [...REQUIRED_CAPABILITY_KEYS, 'dynamically_loaded_tools'
 
 const CAPABILITY_KEY_SET: ReadonlySet<string> = new Set(CAPABILITY_KEYS);
 
-function capabilityFromArray(
+export function capabilityFromArray(
   value: readonly unknown[],
 ): { capability: Record<string, unknown>; unknowns: unknown[] } {
   const capability: Record<string, unknown> = {};
@@ -371,11 +373,27 @@ function dottedAliasSuffix(alias: string, entry: Record<string, unknown>): strin
   return undefined;
 }
 
+const stripProvidersEnv = (value: ProvidersSection): ProvidersSection | undefined => {
+  if (!isPlainObject(value)) return value;
+  if (!(ENV_MODEL_PROVIDER_KEY in value)) return value;
+  const out = { ...value };
+  delete out[ENV_MODEL_PROVIDER_KEY];
+  return out;
+};
+
 export const providersConfigSection: ConfigSectionContribution<ProvidersSection> = {
   name: PROVIDERS_CONFIG_SECTION,
   schema: ProvidersSectionSchema,
   defaultValue: {},
   merge: deepMerge,
+  envBindings: {
+    [ENV_MODEL_PROVIDER_KEY]: {
+      apiKey: 'KIMI_MODEL_API_KEY',
+      type: 'KIMI_MODEL_PROVIDER_TYPE',
+      baseUrl: 'KIMI_MODEL_BASE_URL',
+    },
+  },
+  stripEnv: stripProvidersEnv,
   fromToml: providersFromToml,
   toToml: providersToToml,
 };

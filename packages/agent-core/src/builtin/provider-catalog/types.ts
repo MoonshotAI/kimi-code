@@ -35,6 +35,7 @@ export interface CatalogModelDefinition extends LlmModel {
   readonly adaptiveThinking?: boolean;
   readonly name?: string;
   readonly aliases?: readonly string[];
+  readonly configKey?: string;
   readonly oauth?: CatalogOAuthRef;
   readonly overrides?: CatalogModelOverrides;
   readonly extras?: Readonly<Record<string, unknown>>;

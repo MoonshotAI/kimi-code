@@ -18,12 +18,15 @@ import { createFeature, type FeatureSpec } from '#/feature/feature';
 import {
   createConfigStore,
   type ConfigChangeSource,
+  type ConfigOverlayContribution,
   type ConfigPersist,
   type ConfigSectionContribution,
   type ConfigStore,
 } from './store';
 
 export const ConfigSections = createCollection<ConfigSectionContribution>('config.sections');
+
+export const ConfigOverlays = createCollection<ConfigOverlayContribution>('config.overlays');
 
 export const ConfigRef = createToken<ConfigStore>('config');
 
@@ -32,6 +35,14 @@ export function useConfigSection<T>(section: ConfigSectionContribution<T>): void
   pushCleanup(
     node,
     ([...lineage(node)].at(-1) as UnitNode).contribute(ConfigSections, section as ConfigSectionContribution, 0),
+  );
+}
+
+export function useConfigOverlay(contribution: ConfigOverlayContribution): void {
+  const node = useNode();
+  pushCleanup(
+    node,
+    ([...lineage(node)].at(-1) as UnitNode).contribute(ConfigOverlays, contribution, 0),
   );
 }
 
@@ -67,6 +78,14 @@ export function createConfig(deps: {
         contributed,
         (list) => {
           store.syncSections(list);
+        },
+        { immediate: true },
+      );
+      const contributedOverlays = useCollection(ConfigOverlays);
+      watch(
+        contributedOverlays,
+        (list) => {
+          store.syncOverlays(list);
         },
         { immediate: true },
       );

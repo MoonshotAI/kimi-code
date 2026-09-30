@@ -5,9 +5,12 @@ import { createHarness, type AppHandle } from '#/app/index';
 import {
   ConfigRef,
   createConfig,
+  isPlainObject,
   planConfigWriteback,
+  useConfigOverlay,
   useConfigSection,
   type ConfigChangedEvent,
+  type ConfigOverlayContribution,
   type ConfigPersist,
   type ConfigSectionContribution,
   type ConfigStore,
@@ -51,6 +54,30 @@ const accountSection: ConfigSectionContribution<AccountConfig> = {
   deprecations: [{ key: 'api_token', replacement: 'api_key' }],
 };
 
+const probeOverlay: ConfigOverlayContribution = {
+  name: 'probe-overlay',
+  apply(effective, getEnv, validate) {
+    if (getEnv('PROBE_OVERLAY') === undefined) return;
+    effective['ghost'] = { injected: true };
+    const limits = isPlainObject(effective['limits']) ? effective['limits'] : {};
+    effective['limits'] = validate('limits', { ...limits, timeout: 999 });
+  },
+  strip(name, value, rawSnake) {
+    if (name === 'ghost') return undefined;
+    if (name === 'limits' && isPlainObject(value) && value['timeout'] === 999) {
+      const raw = isPlainObject(rawSnake['limits']) ? rawSnake['limits'] : undefined;
+      const out = { ...value };
+      if (typeof raw?.['timeout'] === 'number') {
+        out['timeout'] = raw['timeout'];
+      } else {
+        delete out['timeout'];
+      }
+      return out;
+    }
+    return value;
+  },
+};
+
 function fakePersist(initial?: string): {
   saved: string[];
   setText(text: string | undefined): void;
@@ -78,11 +105,14 @@ async function mountConfigApp(options: {
   persist?: ConfigPersist;
   env?: Record<string, string | undefined>;
   sections?: readonly ConfigSectionContribution[];
+  overlays?: readonly ConfigOverlayContribution[];
 }): Promise<{ app: AppHandle; config: ConfigStore }> {
   const sections = options.sections ?? [limitsSection, accountSection];
+  const overlays = options.overlays ?? [];
   const probe = createFeature('config-probe', {
     app() {
       for (const section of sections) useConfigSection(section);
+      for (const overlay of overlays) useConfigOverlay(overlay);
     },
   });
   const app = createHarness({
@@ -274,6 +304,45 @@ describe('config feature', () => {
     expect(config.env('PROBE_KEY')).toBe('from-config');
     expect(config.env('PROBE_MISSING')).toBeUndefined();
     await app.disposeAsync();
+  });
+
+  it('applies contributed overlays over delivered values and keeps them out of persisted content', async () => {
+    const file = fakePersist('[limits]\ntimeout = 5\n');
+    const { app, config } = await mountConfigApp({
+      persist: file.persist,
+      env: { PROBE_OVERLAY: '1' },
+      overlays: [probeOverlay],
+    });
+    expect(config.get('limits')).toEqual({ timeout: 999 });
+    expect(config.section('limits').value).toEqual({ timeout: 999 });
+    expect(config.get('ghost')).toEqual({ injected: true });
+
+    file.setText('[limits]\ntimeout = 8\n');
+    await config.reload();
+    expect(config.get('limits')).toEqual({ timeout: 999 });
+
+    await config.set('limits', { timeout: 100 }, 'memory');
+    expect(config.get('limits')).toEqual({ timeout: 100 });
+    await config.replace({ limits: undefined }, 'memory');
+    expect(config.get('limits')).toEqual({ timeout: 999 });
+
+    await config.replace({ limits: { timeout: 999, maxRetries: 3 }, ghost: { injected: true } }, 'user');
+    const written = file.saved.at(-1)!;
+    expect(written).toContain('timeout = 8');
+    expect(written).toContain('max_retries = 3');
+    expect(written).not.toContain('999');
+    expect(written).not.toContain('ghost');
+    expect(written).not.toContain('injected');
+    expect(config.get('limits')).toEqual({ maxRetries: 3, timeout: 999 });
+    await app.disposeAsync();
+
+    const plain = await mountConfigApp({
+      persist: fakePersist('[limits]\ntimeout = 5\n').persist,
+      overlays: [probeOverlay],
+    });
+    expect(plain.config.get('limits')).toEqual({ timeout: 5 });
+    expect(plain.config.get('ghost')).toBeUndefined();
+    await plain.app.disposeAsync();
   });
 
   it('emits config.changed with the section name and new value', async () => {

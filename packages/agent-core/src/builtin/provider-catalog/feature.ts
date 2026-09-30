@@ -22,7 +22,7 @@ import {
   useApp,
   useSession,
 } from '#/feature/contribution-hooks';
-import { ConfigRef, deepEqual, omitUndefined, useConfigSection, type ConfigStore } from '#/builtin/config/index';
+import { ConfigRef, deepEqual, omitUndefined, useConfigOverlay, useConfigSection, type ConfigStore } from '#/builtin/config/index';
 import { createStaticCredentialProvider } from '#/llm/builtin/requester/credentials';
 import type { LlmModel } from '#/llm/model';
 import type { LlmRequestConfig } from '#/llm/requester/requester';
@@ -67,6 +67,7 @@ import {
   type ProvidersSection,
   type ThinkingConfig,
 } from './configSections';
+import { kimiModelEnvOverlay } from './envOverlay';
 
 export const Providers = createCollection<ProviderContribution>('provider-catalog.providers');
 
@@ -120,6 +121,7 @@ export const providerCatalog = createFeature('provider-catalog', {
     useConfigSection(thinkingConfigSection);
     useConfigSection(modelCatalogConfigSection);
     useConfigSection(defaultModelConfigSection);
+    useConfigOverlay(kimiModelEnvOverlay);
     const configEntries = node.providerRef(ConfigRef);
     const protocolFactories = useCollection(ProviderProtocols);
     const bindings = useCollection(CatalogModels);
@@ -149,7 +151,7 @@ export const providerCatalog = createFeature('provider-catalog', {
         const models = Object.entries(modelsSection)
           .filter(([, model]) => model.provider === providerId)
           .toSorted((a, b) => Number(b[0].startsWith(prefix)) - Number(a[0].startsWith(prefix)))
-          .map(([, model]) => model);
+          .map(([key, model]) => ({ ...model, configKey: key }));
         const entry = store.snapshot.value.providers[providerId];
         if (
           entry === undefined ||

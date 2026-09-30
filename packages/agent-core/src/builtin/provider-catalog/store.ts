@@ -300,6 +300,7 @@ function mergeModel(
     vertexai: record.vertexai,
     name: record.name,
     aliases: record.aliases,
+    configKey: record.configKey,
     oauth: record.oauth,
     extras: record.extras,
   };

@@ -54,7 +54,10 @@ export function matchCatalogBinding(
 ): CatalogModelBinding | undefined {
   return bindings.find((candidate) => {
     const scope = providerInfo(candidate.providerId)?.aliasScope ?? candidate.providerId;
-    return `${scope}/${candidate.model.model}` === alias;
+    if (`${scope}/${candidate.model.model}` === alias) return true;
+    if (candidate.model.configKey === alias) return true;
+    if (candidate.model.name === alias) return true;
+    return candidate.model.aliases?.includes(alias) ?? false;
   });
 }
 

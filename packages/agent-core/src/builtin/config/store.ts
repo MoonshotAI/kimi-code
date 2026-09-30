@@ -48,6 +48,14 @@ export type ConfigToToml = (value: unknown, raw: unknown) => unknown;
 
 export type ConfigCollectDiagnostics = (rawSection: unknown) => readonly ConfigDiagnostic[];
 
+export type ConfigOverlayValidate = (name: string, value: unknown) => unknown;
+
+export interface ConfigOverlayContribution {
+  readonly name: string;
+  apply(effective: Record<string, unknown>, getEnv: GetEnv, validate: ConfigOverlayValidate): void;
+  strip?(name: string, value: unknown, rawSnake: Record<string, unknown>): unknown;
+}
+
 export interface ConfigSectionContribution<T = unknown> {
   readonly name: string;
   readonly schema: ZodType<T>;
@@ -74,6 +82,7 @@ export interface ConfigStore {
 
 export interface ConfigStoreControl extends ConfigStore {
   syncSections(sections: readonly ConfigSectionContribution[]): void;
+  syncOverlays(overlays: readonly ConfigOverlayContribution[]): void;
 }
 
 interface StagedFile {
@@ -98,9 +107,11 @@ export function createConfigStore(deps: {
   const sectionsByName = new Map<string, ConfigSectionContribution>();
   const refs = new Map<string, ShallowRef<unknown>>();
   const diagnosticsList: ConfigDiagnostic[] = [];
+  let overlays: readonly ConfigOverlayContribution[] = [];
   let rawSnake: Record<string, unknown> = {};
   let fileValues: Record<string, unknown> = {};
   let memory: Record<string, unknown> = {};
+  let effectiveCache: Record<string, unknown> | undefined;
   let chain = Promise.resolve();
   let closed = false;
 
@@ -118,42 +129,75 @@ export function createConfigStore(deps: {
     if (!duplicate) diagnosticsList.push(diagnostic);
   };
 
-  const effectiveFor = (section: ConfigSectionContribution): unknown => {
-    const base = Object.prototype.hasOwnProperty.call(fileValues, section.name)
-      ? fileValues[section.name]
-      : section.defaultValue;
-    if (section.envBindings === undefined) return base;
-    try {
-      const next = applySectionEnv(base, section.envBindings as AnyEnvBindings, getEnv, (oldName, newName) => {
-        pushDiagnostic({
-          section: section.name,
-          severity: 'warning',
-          message: `Environment variable ${oldName} is deprecated; use ${newName} instead.`,
+  const validateOverlayValue = (name: string, value: unknown): unknown => {
+    const section = sectionsByName.get(name);
+    return section === undefined ? value : (section.schema.parse(value) as unknown);
+  };
+
+  const computeEffective = (): Record<string, unknown> => {
+    const effective: Record<string, unknown> = {};
+    for (const name of new Set([...Object.keys(fileValues), ...sectionsByName.keys()])) {
+      const section = sectionsByName.get(name);
+      if (section === undefined) {
+        if (fileValues[name] !== undefined) effective[name] = fileValues[name];
+        continue;
+      }
+      const base = Object.prototype.hasOwnProperty.call(fileValues, name)
+        ? fileValues[name]
+        : section.defaultValue;
+      if (section.envBindings === undefined) {
+        if (base !== undefined) effective[name] = base;
+        continue;
+      }
+      try {
+        const next = applySectionEnv(base, section.envBindings as AnyEnvBindings, getEnv, (oldName, newName) => {
+          pushDiagnostic({
+            section: name,
+            severity: 'warning',
+            message: `Environment variable ${oldName} is deprecated; use ${newName} instead.`,
+          });
         });
-      });
-      return section.schema.parse(next) as unknown;
-    } catch (error) {
-      pushDiagnostic({
-        section: section.name,
-        severity: 'warning',
-        message: `Ignoring env overlay for '${section.name}': ${describeUnknownError(error)}`,
-      });
-      return base;
+        effective[name] = section.schema.parse(next) as unknown;
+      } catch (error) {
+        pushDiagnostic({
+          section: name,
+          severity: 'warning',
+          message: `Ignoring env overlay for '${name}': ${describeUnknownError(error)}`,
+        });
+        if (base !== undefined) effective[name] = base;
+      }
     }
+    for (const overlay of overlays) {
+      try {
+        overlay.apply(effective, getEnv, validateOverlayValue);
+      } catch (error) {
+        pushDiagnostic({
+          severity: 'warning',
+          message: `Ignoring config environment overlay: ${describeUnknownError(error)}`,
+        });
+      }
+    }
+    return effective;
+  };
+
+  const effectiveValues = (): Record<string, unknown> => (effectiveCache ??= computeEffective());
+
+  const invalidateEffective = (): void => {
+    effectiveCache = undefined;
   };
 
   const deliveredValue = (name: string): unknown => {
     if (Object.prototype.hasOwnProperty.call(memory, name)) return memory[name];
-    const section = sectionsByName.get(name);
-    if (section === undefined) return fileValues[name];
-    return effectiveFor(section);
+    return effectiveValues()[name];
   };
 
   const recompute = (source: ConfigChangeSource, names?: readonly string[]): void => {
+    const effective = effectiveValues();
     const targets =
-      names ?? [...new Set([...sectionsByName.keys(), ...Object.keys(fileValues), ...refs.keys()])];
+      names ??
+      [...new Set([...sectionsByName.keys(), ...Object.keys(effective), ...refs.keys()])];
     for (const name of targets) {
-      const value = deliveredValue(name);
+      const value = Object.prototype.hasOwnProperty.call(memory, name) ? memory[name] : effective[name];
       let ref = refs.get(name);
       if (ref === undefined) {
         ref = shallowRef(value);
@@ -233,6 +277,7 @@ export function createConfigStore(deps: {
       }
     }
     fileValues = buildFileValues(data);
+    invalidateEffective();
     recompute(source);
   };
 
@@ -272,8 +317,15 @@ export function createConfigStore(deps: {
       delete staged.values[name];
       return;
     }
-    const stripped =
+    let stripped: unknown =
       section?.stripEnv === undefined ? value : section.stripEnv(value, staged.values[name], getEnv);
+    if (stripped !== undefined) {
+      for (const overlay of overlays) {
+        if (overlay.strip === undefined) continue;
+        stripped = overlay.strip(name, stripped, staged.data);
+        if (stripped === undefined) break;
+      }
+    }
     if (stripped === undefined) {
       applySectionToToml(staged.data, name, undefined, lookupSection);
       delete staged.values[name];
@@ -303,6 +355,7 @@ export function createConfigStore(deps: {
     if (nextText !== staged.text) await persist.save(nextText);
     rawSnake = staged.data;
     fileValues = staged.values;
+    invalidateEffective();
     recompute('set', names);
   };
 
@@ -414,7 +467,18 @@ export function createConfigStore(deps: {
           });
         }
       }
-      if (changed.length > 0) recompute('reload', changed);
+      if (changed.length > 0) {
+        invalidateEffective();
+        recompute('reload', changed);
+      }
+    },
+    syncOverlays: (list) => {
+      if (list.length === overlays.length && list.every((item, index) => item === overlays[index])) {
+        return;
+      }
+      overlays = list;
+      invalidateEffective();
+      recompute('reload');
     },
     dispose: () => {
       closed = true;
