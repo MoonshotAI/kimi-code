@@ -7,6 +7,7 @@ export interface FileEditInput {
   readonly old_string: string;
   readonly new_string: string;
   readonly replace_all: boolean;
+  readonly allow_large_delete?: boolean;
 }
 
 export type FileEditResult =
