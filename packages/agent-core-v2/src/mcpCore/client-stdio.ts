@@ -176,6 +176,12 @@ class EnvironmentStdioTransport implements Transport {
   async start(): Promise<void> {
     if (this.started) throw new Error('Environment stdio transport is already started');
     if (this.closed) throw new Error('Environment stdio transport is closed');
+    if (this.config.executor !== undefined && this.config.executor !== 'local') {
+      throw new Error2(
+        ErrorCodes.NOT_IMPLEMENTED,
+        `MCP stdio executor '${this.config.executor}' is not supported; use environment_id to select the execution environment`,
+      );
+    }
     this.started = true;
     const binding = {
       environmentId: this.options.environmentId,

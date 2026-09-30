@@ -1,5 +1,8 @@
+import type { KimiHarnessEnvironmentOptions } from '#/kimi-harness';
 export { KimiHarness } from '#/kimi-harness';
 export type { KimiHarnessEnvironmentOptions } from '#/kimi-harness';
+/** @deprecated Use {@link KimiHarnessEnvironmentOptions}. */
+export type KimiHarnessRuntimeOptions = KimiHarnessEnvironmentOptions;
 export { Session } from '#/session';
 export { KimiAuthFacade } from '#/auth';
 export {

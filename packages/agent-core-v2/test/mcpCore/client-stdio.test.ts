@@ -176,6 +176,24 @@ describe('StdioMcpClient', () => {
     }
   }, 15000);
 
+  it('rejects a removed executor value instead of silently running on local', async () => {
+    const client = createClient({ transport: 'stdio', command: process.execPath, executor: 'kaos' });
+    await expect(client.connect()).rejects.toThrowError(
+      expect.objectContaining({ code: 'not_implemented' }),
+    );
+  });
+
+  it('accepts executor local for backward compatibility', async () => {
+    const client = createClient({ transport: 'stdio', command: process.execPath, args: [stdioFixture], executor: 'local' });
+    try {
+      await client.connect();
+      const result = await client.callTool('echo', { text: 'hello' });
+      expect(result.content).toEqual([{ type: 'text', text: 'hello' }]);
+    } finally {
+      await client.close();
+    }
+  }, 15000);
+
   it('sends only the configured env overlay to a non-local environment', async () => {
     const harness = createEnvironmentClient(
       {
