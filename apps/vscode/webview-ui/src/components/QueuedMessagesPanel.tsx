@@ -2,23 +2,18 @@ import { useState } from "react";
 import { IconTrash, IconArrowUp, IconPencil, IconCheck, IconX, IconBolt } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
 import { useChatStore } from "@/stores";
-import { bridge } from "@/services";
+import { canSteerQueuedContent } from "@/stores/chat.store";
 import { Content } from "@/lib/content";
 
 import type { ContentPart } from "shared/legacy-sdk";
 
 function QueueItem({ id, content, isStreaming, onEdit }: { id: string; content: string | ContentPart[]; isStreaming: boolean; onEdit: (id: string) => void }) {
-  const { removeFromQueue, moveQueueItemUp, queue } = useChatStore();
+  const { removeFromQueue, moveQueueItemUp, steerQueued, queue } = useChatStore();
   const text = Content.getText(content);
   const hasMedia = Content.hasMedia(content);
   const isFirst = queue[0]?.id === id;
 
-  const handleSteer = async () => {
-    const result = await bridge.steerChat(content);
-    if (result.ok) {
-      removeFromQueue(id);
-    }
-  };
+  const canSteer = canSteerQueuedContent(content);
 
   return (
     <div className="group flex items-start px-2.5 py-0.5 hover:bg-muted/50 transition-colors">
@@ -27,13 +22,13 @@ function QueueItem({ id, content, isStreaming, onEdit }: { id: string; content: 
         {hasMedia && text && <span className="text-[10px] text-muted-foreground">+ media</span>}
       </div>
       <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-        {isStreaming && (
+        {isStreaming && canSteer && (
           <Button
             variant="ghost"
             size="icon"
             className="size-5 border-0! text-amber-500 hover:text-amber-600"
             onClick={() => {
-              void handleSteer();
+              void steerQueued(id);
             }}
             title="Insert now (steer)"
           >
