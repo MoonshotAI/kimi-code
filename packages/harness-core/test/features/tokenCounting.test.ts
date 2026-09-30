@@ -37,6 +37,7 @@ import {
   requestSize,
   statusSize,
   TOKEN_COUNTING_SECTION,
+  TOKEN_COUNTING_STRATEGY_ENV,
   tokenCounting,
   tokenCountingConfigSection,
   TokenCountingRef,
@@ -266,6 +267,11 @@ describe('tokenCounting feature', () => {
     );
     expect(
       tokenCountingConfigSection.stripEnv?.({ strategy: 'measured' }, undefined, () => undefined),
+    ).toEqual({ strategy: 'measured' });
+    expect(
+      tokenCountingConfigSection.stripEnv?.({ strategy: 'measured' }, undefined, (name) =>
+        name === TOKEN_COUNTING_STRATEGY_ENV ? 'measured' : undefined,
+      ),
     ).toBeUndefined();
     await env.dispose();
   });

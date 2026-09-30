@@ -716,7 +716,7 @@ describe('createSkill app slot', () => {
     expect(names).toContain('write-goal');
     await bound.dispose();
 
-    const tomlOff = await startSkillApp({ toml: 'builtinProductSkills = false\n' });
+    const tomlOff = await startSkillApp({ toml: 'builtin_product_skills = false\n' });
     const tomlNames = tomlOff.catalog().list().map((skill) => skill.name).toSorted();
     expect(tomlNames).not.toContain('update-config');
     expect(tomlNames).not.toContain('check-kimi-code-docs');

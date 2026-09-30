@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
-import type { ConfigSectionContribution } from '@moonshot-ai/agent-core';
+import type { ConfigSectionContribution, EnvBindings } from '@moonshot-ai/agent-core';
+
+import { stripEnvBoundFields } from '#/config-env';
 
 import { MAX_IMAGE_EDGE_PX, READ_IMAGE_BYTE_BUDGET } from '../transform/compress';
 
@@ -35,18 +37,15 @@ function parsePositiveInt(raw: string): number | undefined {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+const imageEnvBindings: EnvBindings<ImageConfig> = {
+  maxEdgePx: { env: IMAGE_MAX_EDGE_ENV, parse: parsePositiveInt },
+  readByteBudget: { env: IMAGE_READ_BYTE_BUDGET_ENV, parse: parsePositiveInt },
+};
+
 export const imageConfigSection: ConfigSectionContribution<ImageConfig> = {
   name: IMAGE_CONFIG_SECTION,
   schema: ImageConfigSchema,
   defaultValue: {},
-  envBindings: {
-    maxEdgePx: { env: IMAGE_MAX_EDGE_ENV, parse: parsePositiveInt },
-    readByteBudget: { env: IMAGE_READ_BYTE_BUDGET_ENV, parse: parsePositiveInt },
-  },
-  stripEnv: (value) => {
-    const out = { ...value };
-    delete out.maxEdgePx;
-    delete out.readByteBudget;
-    return out;
-  },
+  envBindings: imageEnvBindings,
+  stripEnv: stripEnvBoundFields<ImageConfig>(imageEnvBindings),
 };

@@ -243,18 +243,25 @@ describe('permission feature', () => {
     const env = await startPermissionTest({
       configText: [
         '[permission]',
-        'dangerousCommandGuard = false',
+        'dangerous_command_guard = false',
         '',
         '[[permission.rules]]',
         'decision = "deny"',
         'pattern = "Bash(sudo *)"',
         'reason = "no sudo"',
         '',
+        '[[permission.deny]]',
+        'tool = "Bash"',
+        'match = "rm *"',
+        '',
       ].join('\n'),
     });
     expect(env.app.resolve(ConfigRef).get('permission')).toEqual({
       dangerousCommandGuard: true,
-      rules: [{ decision: 'deny', scope: 'user', pattern: 'Bash(sudo *)', reason: 'no sudo' }],
+      rules: [
+        { decision: 'deny', scope: 'user', pattern: 'Bash(sudo *)', reason: 'no sudo' },
+        { decision: 'deny', scope: 'user', pattern: 'Bash(rm *)' },
+      ],
     });
     await env.dispose();
   });

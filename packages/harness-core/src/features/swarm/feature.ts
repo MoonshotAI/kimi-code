@@ -12,6 +12,7 @@ import {
   useConfigSection,
   useSession,
   type ConfigSectionContribution,
+  type EnvBindings,
   type FeatureSpec,
 } from '@moonshot-ai/agent-core';
 import {
@@ -22,6 +23,7 @@ import {
   type ShallowRef,
 } from '@moonshot-ai/agent-core/kernel/index';
 
+import { stripEnvBoundFields } from '#/config-env';
 import { createNodeOsHost, type OsHost } from '#/features/os/host/index';
 import { ProfileCatalogRef, type ProfileCatalog } from '#/features/profiles/index';
 import {
@@ -58,18 +60,16 @@ function parseSwarmTimeoutMsEnv(raw: string): number | undefined {
   return Number.isInteger(parsed) && parsed >= 1 ? parsed : undefined;
 }
 
+const swarmEnvBindings: EnvBindings<SwarmConfig> = {
+  timeoutMs: { env: SWARM_TIMEOUT_ENV, parse: parseSwarmTimeoutMsEnv },
+};
+
 export const swarmConfigSection: ConfigSectionContribution<SwarmConfig> = {
   name: SWARM_CONFIG_SECTION,
   schema: swarmConfigSchema,
   defaultValue: { timeoutMs: DEFAULT_SWARM_TIMEOUT_MS },
-  envBindings: {
-    timeoutMs: { env: SWARM_TIMEOUT_ENV, parse: parseSwarmTimeoutMsEnv },
-  },
-  stripEnv: (value) => {
-    const out = { ...value };
-    delete out.timeoutMs;
-    return out;
-  },
+  envBindings: swarmEnvBindings,
+  stripEnv: stripEnvBoundFields<SwarmConfig>(swarmEnvBindings),
 };
 
 export interface SwarmFace {

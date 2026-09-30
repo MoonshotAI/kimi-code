@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
-import type { ConfigSectionContribution } from '@moonshot-ai/agent-core';
+import type { ConfigSectionContribution, EnvBindings } from '@moonshot-ai/agent-core';
+
+import { stripEnvBoundFields } from '#/config-env';
 
 import type { TokenCountingStrategy } from './tokenCounting';
 
@@ -27,12 +29,14 @@ function parseStrategy(raw: string): TokenCountingStrategy | undefined {
     : undefined;
 }
 
+const tokenCountingEnvBindings: EnvBindings<TokenCountingConfig> = {
+  strategy: { env: TOKEN_COUNTING_STRATEGY_ENV, parse: parseStrategy },
+};
+
 export const tokenCountingConfigSection: ConfigSectionContribution<TokenCountingConfig> = {
   name: TOKEN_COUNTING_SECTION,
   schema: tokenCountingConfigSchema,
   defaultValue: DEFAULT_TOKEN_COUNTING_CONFIG,
-  envBindings: {
-    strategy: { env: TOKEN_COUNTING_STRATEGY_ENV, parse: parseStrategy },
-  },
-  stripEnv: () => undefined,
+  envBindings: tokenCountingEnvBindings,
+  stripEnv: stripEnvBoundFields<TokenCountingConfig>(tokenCountingEnvBindings),
 };

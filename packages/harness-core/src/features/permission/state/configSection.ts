@@ -1,6 +1,15 @@
 import { z } from 'zod';
 
-import type { ConfigSectionContribution } from '@moonshot-ai/agent-core';
+import {
+  cloneRecord,
+  isPlainObject,
+  plainObjectToToml,
+  transformPlainObject,
+  type ConfigSectionContribution,
+  type EnvBindings,
+} from '@moonshot-ai/agent-core';
+
+import { stripEnvBoundFields } from '#/config-env';
 
 import { parsePermissionPattern } from '../language/pattern';
 import type { PermissionRule } from '../types';
@@ -39,6 +48,13 @@ function parseDangerousCommandGuardEnv(raw: string): boolean | undefined {
   return undefined;
 }
 
+const permissionEnvBindings: EnvBindings<PermissionConfig> = {
+  dangerousCommandGuard: {
+    env: DANGEROUS_COMMAND_GUARD_ENV,
+    parse: parseDangerousCommandGuardEnv,
+  },
+};
+
 function isValidPermissionPattern(pattern: string): boolean {
   try {
     parsePermissionPattern(pattern);
@@ -56,19 +72,89 @@ export function isDangerousCommandGuardEnabled(config: PermissionConfig | undefi
   return config?.dangerousCommandGuard ?? true;
 }
 
+const permissionFromToml = (rawSnake: unknown): unknown => {
+  if (!isPlainObject(rawSnake)) return rawSnake;
+  const raw = transformPlainObject(rawSnake);
+  const rules: unknown[] = [];
+  appendPermissionRules(rules, raw['rules']);
+  appendPermissionRules(rules, raw['deny'], 'deny');
+  appendPermissionRules(rules, raw['allow'], 'allow');
+  appendPermissionRules(rules, raw['ask'], 'ask');
+  const out: Record<string, unknown> = {};
+  if (rules.length > 0) out['rules'] = rules;
+  if (raw['dangerousCommandGuard'] !== undefined) {
+    out['dangerousCommandGuard'] = raw['dangerousCommandGuard'];
+  }
+  return out;
+};
+
+function appendPermissionRules(
+  target: unknown[],
+  value: unknown,
+  decision?: 'allow' | 'deny' | 'ask',
+): void {
+  if (value === undefined) return;
+  const entries = Array.isArray(value) ? value : [value];
+  for (const entry of entries) {
+    target.push(transformPermissionRule(entry, decision));
+  }
+}
+
+function transformPermissionRule(value: unknown, decision?: 'allow' | 'deny' | 'ask'): unknown {
+  if (!isPlainObject(value)) return value;
+  const rule = transformPlainObject(value);
+  const tool = rule['tool'];
+  const match = rule['match'];
+  const pattern = rule['pattern'];
+  const out: Record<string, unknown> = {
+    decision: decision !== undefined ? decision : rule['decision'],
+    scope: rule['scope'],
+    reason: rule['reason'],
+  };
+  if (typeof tool === 'string') {
+    const argPattern = typeof match === 'string' ? match : pattern;
+    out['pattern'] = typeof argPattern === 'string' ? `${tool}(${argPattern})` : tool;
+  } else {
+    out['pattern'] = pattern;
+  }
+  return out;
+}
+
+const permissionToToml = (value: unknown, rawSnake: unknown): unknown => {
+  if (!isPlainObject(value)) return value;
+  const out = cloneRecord(rawSnake);
+  delete out['deny'];
+  delete out['allow'];
+  delete out['ask'];
+  const rules = value['rules'];
+  if (Array.isArray(rules)) {
+    out['rules'] = rules.map((rule) =>
+      isPlainObject(rule) ? plainObjectToToml(rule, undefined) : rule,
+    );
+  } else {
+    delete out['rules'];
+  }
+  return out;
+};
+
 export const permissionConfigSection: ConfigSectionContribution<PermissionConfig> = {
   name: PERMISSION_CONFIG_SECTION,
   schema: PermissionConfigSchema,
   defaultValue: {},
-  envBindings: {
-    dangerousCommandGuard: {
-      env: DANGEROUS_COMMAND_GUARD_ENV,
-      parse: parseDangerousCommandGuardEnv,
-    },
-  },
-  stripEnv: (value) => {
-    const out = { ...value };
-    delete out.dangerousCommandGuard;
-    return out;
-  },
+  envBindings: permissionEnvBindings,
+  stripEnv: stripEnvBoundFields<PermissionConfig>(permissionEnvBindings),
+  fromToml: permissionFromToml,
+  toToml: permissionToToml,
 };
+
+export const DEFAULT_PERMISSION_MODE_CONFIG_SECTION = 'defaultPermissionMode';
+
+export const DefaultPermissionModeSchema = z.enum(['manual', 'auto', 'yolo']);
+
+export type DefaultPermissionMode = z.infer<typeof DefaultPermissionModeSchema>;
+
+export const defaultPermissionModeConfigSection: ConfigSectionContribution<DefaultPermissionMode> =
+  {
+    name: DEFAULT_PERMISSION_MODE_CONFIG_SECTION,
+    schema: DefaultPermissionModeSchema,
+  };

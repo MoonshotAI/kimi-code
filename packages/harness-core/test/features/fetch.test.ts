@@ -109,17 +109,17 @@ function stubFetch(handler: (call: FetchCall) => Response): {
 const MANAGED_PROVIDER_TOML =
   '[providers."managed:kimi-code"]\n' +
   'type = "kimi"\n' +
-  'baseUrl = "https://managed.example.com"\n' +
-  'modelSource = "oauth-catalog"\n' +
-  'customHeaders = { "X-Custom" = "yes" }\n\n' +
+  'base_url = "https://managed.example.com"\n' +
+  'model_source = "oauth-catalog"\n' +
+  'custom_headers = { "X-Custom" = "yes" }\n\n' +
   '[providers."managed:kimi-code".oauth]\n' +
   'storage = "file"\n' +
   'key = "oauth/kimi-code"\n';
 
 const SERVICES_FETCH_TOML =
   '[services.moonshot_fetch]\n' +
-  'baseUrl = "https://fetch.example.com/fetch"\n' +
-  'apiKey = "sk-fetch"\n';
+  'base_url = "https://fetch.example.com/fetch"\n' +
+  'api_key = "sk-fetch"\n';
 
 async function mountFetchApp(
   toml: string | undefined,

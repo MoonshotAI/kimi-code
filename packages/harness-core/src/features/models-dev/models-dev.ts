@@ -321,13 +321,14 @@ export function modelsDevModelToConfig(
   providerId: string,
   model: ModelsDevImportedModel,
 ): CatalogModelConfig {
+  const { dynamically_loaded_tools: dynamicallyLoadedTools, ...capability } = model.capability;
   return omitUndefined({
     provider: providerId,
     model: model.id,
     maxContextSize: model.maxContextSize,
     maxInputSize: model.maxInputSize,
     maxOutputSize: model.maxOutputSize,
-    capability: model.capability,
+    capability: dynamicallyLoadedTools === true ? model.capability : capability,
     displayName: model.name,
     reasoningKey: model.reasoningKey,
     supportEfforts: model.supportEfforts,

@@ -1,7 +1,8 @@
 import { z } from 'zod';
 
-import type { ConfigSectionContribution } from '@moonshot-ai/agent-core';
+import type { ConfigSectionContribution, EnvBindings } from '@moonshot-ai/agent-core';
 
+import { stripEnvBoundFields } from '#/config-env';
 import { MAX_MCP_TIMEOUT_MS, McpTimeoutMsSchema } from '#/features/mcp/core/config-schema';
 
 export const MCP_CONFIG_SECTION = 'mcp';
@@ -23,18 +24,15 @@ function parseTimeoutMsEnv(raw: string): number | undefined {
     : undefined;
 }
 
+const mcpEnvBindings: EnvBindings<McpSection> = {
+  startupTimeoutMs: { env: MCP_STARTUP_TIMEOUT_ENV, parse: parseTimeoutMsEnv },
+  toolTimeoutMs: { env: MCP_TOOL_TIMEOUT_ENV, parse: parseTimeoutMsEnv },
+};
+
 export const mcpConfigSection: ConfigSectionContribution<McpSection> = {
   name: MCP_CONFIG_SECTION,
   schema: McpSectionSchema,
   defaultValue: {},
-  envBindings: {
-    startupTimeoutMs: { env: MCP_STARTUP_TIMEOUT_ENV, parse: parseTimeoutMsEnv },
-    toolTimeoutMs: { env: MCP_TOOL_TIMEOUT_ENV, parse: parseTimeoutMsEnv },
-  },
-  stripEnv: (value) => {
-    const out = { ...value };
-    delete out.startupTimeoutMs;
-    delete out.toolTimeoutMs;
-    return out;
-  },
+  envBindings: mcpEnvBindings,
+  stripEnv: stripEnvBoundFields<McpSection>(mcpEnvBindings),
 };

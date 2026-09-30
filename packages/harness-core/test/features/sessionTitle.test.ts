@@ -48,8 +48,8 @@ import {
 const MANAGED_PROVIDER_TOML =
   '[providers."managed:kimi-code"]\n' +
   'type = "kimi"\n' +
-  'baseUrl = "https://managed.example.com"\n' +
-  'modelSource = "oauth-catalog"\n\n' +
+  'base_url = "https://managed.example.com"\n' +
+  'model_source = "oauth-catalog"\n\n' +
   '[providers."managed:kimi-code".oauth]\n' +
   'storage = "file"\n' +
   'key = "oauth/kimi-code"\n';
@@ -468,7 +468,7 @@ describe('sessionTitle facade', () => {
     await noProvider.dispose();
 
     const staticProvider = await openTitleSession({
-      toml: '[providers."managed:kimi-code"]\ntype = "kimi"\nbaseUrl = "https://managed.example.com"\n',
+      toml: '[providers."managed:kimi-code"]\ntype = "kimi"\nbase_url = "https://managed.example.com"\n',
       tokens,
     });
     await seedPrompts(staticProvider.store, userEntry('hello title'));

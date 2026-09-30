@@ -287,7 +287,7 @@ describe('media feature', () => {
   it('registers ReadMediaFile and the image config section, and mounts without the config feature', async () => {
     const configured = await startApp({
       script: () => ({ text: 'ok' }),
-      toml: '[image]\nmaxEdgePx = 123\nreadByteBudget = 4096\n',
+      toml: '[image]\nmax_edge_px = 123\nread_byte_budget = 4096\n',
     });
     let done = nextTurnDone(configured.main);
     configured.main.submit(createUserMessage('hi'));

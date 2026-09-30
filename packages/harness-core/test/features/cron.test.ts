@@ -223,7 +223,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 
 const UUID_PATTERN_GLOBAL = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
-const MANUAL_TICK_TOML = '[cron]\nmanualTick = true\nnoJitter = true\n';
+const MANUAL_TICK_TOML = '[cron]\nmanual_tick = true\nno_jitter = true\n';
 
 describe('cron feature', () => {
   it('registers the cron config section and applies env bindings', async () => {
@@ -299,7 +299,7 @@ describe('cron feature', () => {
     const { clockFile, setClock } = setupClockDir();
     setClock(new Date(2026, 0, 2, 0, 0, 0, 0).getTime());
     const env = await startCronTest({
-      toml: `[cron]\nmanualTick = true\nnoJitter = true\nclock = "file:${clockFile}"\n`,
+      toml: `[cron]\nmanual_tick = true\nno_jitter = true\nclock = "file:${clockFile}"\n`,
     });
     const lastResult = (): string => toolResultTexts(env.stores).at(-1) ?? '';
     const create = (args: Record<string, unknown>): ScriptStep[] => [
@@ -429,7 +429,7 @@ describe('cron feature', () => {
     const { clockFile, setClock } = setupClockDir();
     setClock(WALL_ANCHOR);
     const env = await startCronTest({
-      toml: `[cron]\nmanualTick = true\nnoJitter = true\nclock = "file:${clockFile}"\n`,
+      toml: `[cron]\nmanual_tick = true\nno_jitter = true\nclock = "file:${clockFile}"\n`,
     });
     const fired: CronJobOrigin[] = [];
     env.session.on(env.cronFeature, 'cron.fired', (event) => {
@@ -474,7 +474,7 @@ describe('cron feature', () => {
     const { clockFile, setClock } = setupClockDir();
     setClock(WALL_ANCHOR);
     const env = await startCronTest({
-      toml: `[cron]\nmanualTick = true\nnoJitter = true\nclock = "file:${clockFile}"\n`,
+      toml: `[cron]\nmanual_tick = true\nno_jitter = true\nclock = "file:${clockFile}"\n`,
     });
     const cron = env.cron();
     const task = await cron.addTask({ cron: '* * * * *', prompt: 'once', recurring: false });
@@ -500,7 +500,7 @@ describe('cron feature', () => {
     const { clockFile, setClock } = setupClockDir();
     setClock(WALL_ANCHOR);
     const env = await startCronTest({
-      toml: `[cron]\nmanualTick = true\nnoJitter = true\nclock = "file:${clockFile}"\n`,
+      toml: `[cron]\nmanual_tick = true\nno_jitter = true\nclock = "file:${clockFile}"\n`,
     });
     const cron = env.cron();
     await cron.addTask({ cron: '0 * * * *', prompt: 'old', recurring: true });
@@ -523,7 +523,7 @@ describe('cron feature', () => {
     const { clockFile, setClock } = setupClockDir();
     setClock(WALL_ANCHOR);
     const env = await startCronTest({
-      toml: `[cron]\nmanualTick = true\nnoJitter = true\nclock = "file:${clockFile}"\n`,
+      toml: `[cron]\nmanual_tick = true\nno_jitter = true\nclock = "file:${clockFile}"\n`,
     });
     const firstFire = minuteAfter(WALL_ANCHOR);
     const task = await env.cron().addTask({ cron: '* * * * *', prompt: 'persisted', recurring: true });

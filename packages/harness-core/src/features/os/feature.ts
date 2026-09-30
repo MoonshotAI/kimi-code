@@ -10,7 +10,14 @@ import {
 } from '@moonshot-ai/agent-core';
 import { createToken, useExpose, useNode, useReady } from '@moonshot-ai/agent-core/kernel/index';
 
-import { bashConfigSection, readConfigSection, type BashSection, type ReadSection } from './configSections';
+import {
+  legacyBackgroundConfigSection,
+  readConfigSection,
+  resolveAgentTaskConfig,
+  taskConfigSection,
+  type ReadSection,
+  type TaskSection,
+} from './configSections';
 import { createNodeOsHost, type OsHost } from './host/index';
 import {
   createBashTool,
@@ -35,7 +42,8 @@ export function createOs(props: CreateOsProps): FeatureSpec {
   return createFeature('os', {
     app() {
       useConfigSection(readConfigSection);
-      useConfigSection(bashConfigSection);
+      useConfigSection(taskConfigSection);
+      useConfigSection(legacyBackgroundConfigSection);
       useReady(host.environment.ready);
     },
     agent() {
@@ -47,14 +55,16 @@ export function createOs(props: CreateOsProps): FeatureSpec {
       const config = node.providerRef(ConfigRef);
       const readSection = (): ReadSection =>
         config.value.at(-1)?.value.get<ReadSection>('read') ?? {};
-      const bashSection = (): BashSection | undefined =>
-        config.value.at(-1)?.value.get<BashSection>('bash');
+      const taskSection = (): TaskSection | undefined => {
+        const store = config.value.at(-1)?.value;
+        return store === undefined ? undefined : resolveAgentTaskConfig(store);
+      };
       const bash = createBashTool({
         host,
         workspace,
         spillDir,
-        autoBackgroundOnTimeout: () => bashSection()?.autoBackgroundOnTimeout ?? true,
-        backgroundTaskTimeoutS: () => bashSection()?.backgroundTaskTimeoutS ?? 600,
+        autoBackgroundOnTimeout: () => taskSection()?.bashAutoBackgroundOnTimeout ?? true,
+        backgroundTaskTimeoutS: () => taskSection()?.bashTaskTimeoutS ?? 600,
       });
       useAgentTools(
         bash,

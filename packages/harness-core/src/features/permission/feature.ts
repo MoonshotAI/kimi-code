@@ -22,6 +22,7 @@ import type { PathClass } from '#/features/os/path-access';
 import { formatDenyMessage, requestToolApproval } from './ask';
 import {
   configRules,
+  defaultPermissionModeConfigSection,
   PERMISSION_CONFIG_SECTION,
   permissionConfigSection,
   type PermissionConfig,
@@ -58,6 +59,7 @@ export function createPermission(props: CreatePermissionProps = {}): FeatureSpec
   return createFeature<PermissionEvent>('permission', {
     app() {
       useConfigSection(permissionConfigSection);
+      useConfigSection(defaultPermissionModeConfigSection);
     },
     agent() {
       const agent = useAgent();

@@ -1009,7 +1009,7 @@ describe('AgentSwarm tool', () => {
       if (text.startsWith('SUB:')) return { text: `echo:${text.slice('SUB:'.length)}` };
       return { text: 'parent done' };
     };
-    const env = await startApp({ script: hanging, withConfig: true, toml: '[swarm]\ntimeoutMs = 75\n' });
+    const env = await startApp({ script: hanging, withConfig: true, toml: '[swarm]\ntimeout_ms = 75\n' });
 
     await env.runTurn(
       swarmCall({
