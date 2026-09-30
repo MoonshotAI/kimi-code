@@ -3,8 +3,17 @@ import type { ZodType } from 'zod';
 import { shallowRef, type ShallowRef, type Unsubscribe } from '#/kernel/index';
 
 import { applySectionEnv, type AnyEnvBindings, type EnvBindings, type GetEnv } from './env';
-import { deepEqual, describeUnknownError, isPlainObject } from './pure';
-import { describeTomlSyntaxError, parseConfigText, serializeConfig } from './toml';
+import { deepEqual, deepMerge, describeUnknownError, isPlainObject } from './pure';
+import {
+  applySectionToToml,
+  camelToSnake,
+  cloneRecord,
+  defaultFromToml,
+  describeTomlSyntaxError,
+  parseConfigText,
+  serializeConfig,
+  transformTomlData,
+} from './toml';
 import { planConfigWriteback } from './writeback';
 
 export interface ConfigPersist {
@@ -33,6 +42,12 @@ export type ConfigMerge<T = unknown> = (base: T | undefined, patch: unknown) => 
 
 export type ConfigStripEnv<T = unknown> = (value: T, raw: unknown, getEnv: GetEnv) => T | undefined;
 
+export type ConfigFromToml = (raw: unknown) => unknown;
+
+export type ConfigToToml = (value: unknown, raw: unknown) => unknown;
+
+export type ConfigCollectDiagnostics = (rawSection: unknown) => readonly ConfigDiagnostic[];
+
 export interface ConfigSectionContribution<T = unknown> {
   readonly name: string;
   readonly schema: ZodType<T>;
@@ -40,7 +55,10 @@ export interface ConfigSectionContribution<T = unknown> {
   readonly merge?: ConfigMerge<T>;
   readonly envBindings?: EnvBindings<T>;
   readonly stripEnv?: ConfigStripEnv<T>;
+  readonly fromToml?: ConfigFromToml;
+  readonly toToml?: ConfigToToml;
   readonly deprecations?: readonly ConfigKeyDeprecation[];
+  readonly collectDiagnostics?: ConfigCollectDiagnostics;
 }
 
 export interface ConfigStore {
@@ -80,13 +98,15 @@ export function createConfigStore(deps: {
   const sectionsByName = new Map<string, ConfigSectionContribution>();
   const refs = new Map<string, ShallowRef<unknown>>();
   const diagnosticsList: ConfigDiagnostic[] = [];
-  let rawFile: Record<string, unknown> = {};
+  let rawSnake: Record<string, unknown> = {};
   let fileValues: Record<string, unknown> = {};
   let memory: Record<string, unknown> = {};
   let chain = Promise.resolve();
   let closed = false;
 
   const getEnv: GetEnv = (name) => (deps.env === undefined ? process.env[name] : deps.env[name]);
+
+  const lookupSection = (name: string): ConfigSectionContribution | undefined => sectionsByName.get(name);
 
   const pushDiagnostic = (diagnostic: ConfigDiagnostic): void => {
     const duplicate = diagnosticsList.some(
@@ -122,17 +142,18 @@ export function createConfigStore(deps: {
     }
   };
 
-  const deliveredFor = (section: ConfigSectionContribution): unknown =>
-    Object.prototype.hasOwnProperty.call(memory, section.name)
-      ? memory[section.name]
-      : effectiveFor(section);
+  const deliveredValue = (name: string): unknown => {
+    if (Object.prototype.hasOwnProperty.call(memory, name)) return memory[name];
+    const section = sectionsByName.get(name);
+    if (section === undefined) return fileValues[name];
+    return effectiveFor(section);
+  };
 
   const recompute = (source: ConfigChangeSource, names?: readonly string[]): void => {
-    const targets = names ?? [...sectionsByName.keys()];
+    const targets =
+      names ?? [...new Set([...sectionsByName.keys(), ...Object.keys(fileValues), ...refs.keys()])];
     for (const name of targets) {
-      const section = sectionsByName.get(name);
-      if (section === undefined) continue;
-      const value = deliveredFor(section);
+      const value = deliveredValue(name);
       let ref = refs.get(name);
       if (ref === undefined) {
         ref = shallowRef(value);
@@ -148,17 +169,21 @@ export function createConfigStore(deps: {
   };
 
   const buildFileValues = (data: Record<string, unknown>): Record<string, unknown> => {
+    const transformed = transformTomlData(data, lookupSection);
     const values: Record<string, unknown> = {};
-    for (const section of sectionsByName.values()) {
-      const raw = data[section.name];
-      if (raw === undefined) continue;
+    for (const [name, value] of Object.entries(transformed)) {
+      const section = sectionsByName.get(name);
+      if (section === undefined) {
+        values[name] = value;
+        continue;
+      }
       try {
-        values[section.name] = section.schema.parse(raw) as unknown;
+        values[name] = section.schema.parse(value) as unknown;
       } catch (error) {
         pushDiagnostic({
-          section: section.name,
+          section: name,
           severity: 'warning',
-          message: `Ignored invalid config section '${section.name}': ${describeUnknownError(error)}`,
+          message: `Ignored invalid config section '${name}': ${describeUnknownError(error)}`,
         });
       }
     }
@@ -180,22 +205,31 @@ export function createConfigStore(deps: {
         if (source !== 'load') return;
       }
     }
-    rawFile = data;
+    rawSnake = data;
     for (const section of sectionsByName.values()) {
+      const snakeName = camelToSnake(section.name);
+      const rawSection = data[snakeName];
       const deprecations = section.deprecations;
-      if (deprecations === undefined || deprecations.length === 0) continue;
-      const rawSection = data[section.name];
-      if (!isPlainObject(rawSection)) continue;
+      if (deprecations === undefined || deprecations.length === 0 || !isPlainObject(rawSection)) {
+        continue;
+      }
       for (const deprecation of deprecations) {
         if (rawSection[deprecation.key] === undefined) continue;
         pushDiagnostic({
           section: section.name,
           severity: 'warning',
           message:
-            `[${section.name}] '${deprecation.key}' is deprecated and no longer used; ` +
+            `[${snakeName}] '${deprecation.key}' is deprecated and no longer used; ` +
             `rename it to '${deprecation.replacement}'.` +
             (deprecation.message === undefined ? '' : ` ${deprecation.message}`),
         });
+      }
+    }
+    for (const section of sectionsByName.values()) {
+      if (section.collectDiagnostics === undefined) continue;
+      const rawSection = data[camelToSnake(section.name)];
+      for (const diagnostic of section.collectDiagnostics(rawSection)) {
+        pushDiagnostic(diagnostic);
       }
     }
     fileValues = buildFileValues(data);
@@ -224,29 +258,30 @@ export function createConfigStore(deps: {
       });
       throw new Error('refusing to persist config: the config file could not be read');
     }
-    return { text, previous, data: { ...previous }, values: buildFileValues(previous) };
+    return { text, previous, data: cloneRecord(previous), values: buildFileValues(previous) };
   };
 
   const applyStagedSection = (
     staged: StagedFile,
-    section: ConfigSectionContribution,
+    name: string,
+    section: ConfigSectionContribution | undefined,
     value: unknown,
   ): void => {
     if (value === undefined) {
-      delete staged.data[section.name];
-      delete staged.values[section.name];
+      applySectionToToml(staged.data, name, undefined, lookupSection);
+      delete staged.values[name];
       return;
     }
     const stripped =
-      section.stripEnv === undefined ? value : section.stripEnv(value, staged.previous[section.name], getEnv);
+      section?.stripEnv === undefined ? value : section.stripEnv(value, staged.values[name], getEnv);
     if (stripped === undefined) {
-      delete staged.data[section.name];
-      delete staged.values[section.name];
+      applySectionToToml(staged.data, name, undefined, lookupSection);
+      delete staged.values[name];
       return;
     }
-    const parsed = section.schema.parse(stripped) as unknown;
-    staged.data[section.name] = parsed;
-    staged.values[section.name] = parsed;
+    const parsed = section === undefined ? stripped : (section.schema.parse(stripped) as unknown);
+    staged.values[name] = parsed;
+    applySectionToToml(staged.data, name, parsed, lookupSection);
   };
 
   const persistStaged = async (
@@ -254,26 +289,21 @@ export function createConfigStore(deps: {
     staged: StagedFile,
     names: readonly string[],
   ): Promise<void> => {
-    const updates = names.map((name) => ({
-      key: name,
-      previousValue: staged.previous[name],
-      nextValue: staged.data[name],
-    }));
+    const updates = names.map((name) => {
+      const snakeKey = camelToSnake(name);
+      return {
+        snakeKey,
+        previousValue: staged.previous[snakeKey],
+        nextValue: staged.data[snakeKey],
+      };
+    });
     const planned =
       staged.text === undefined ? undefined : planConfigWriteback(staged.text, updates, staged.data);
     const nextText = planned ?? serializeConfig(staged.data);
     if (nextText !== staged.text) await persist.save(nextText);
-    rawFile = staged.data;
+    rawSnake = staged.data;
     fileValues = staged.values;
     recompute('set', names);
-  };
-
-  const requireSection = (name: string): ConfigSectionContribution => {
-    const section = sectionsByName.get(name);
-    if (section === undefined) {
-      throw new Error(`config section '${name}' is not registered`);
-    }
-    return section;
   };
 
   const requirePersist = (): ConfigPersist => {
@@ -283,28 +313,26 @@ export function createConfigStore(deps: {
     return deps.persist;
   };
 
+  const mergeFor = (section: ConfigSectionContribution | undefined): ConfigMerge =>
+    section === undefined ? deepMerge : ((section.merge ?? replaceMerge) as ConfigMerge);
+
   return {
     section: <T,>(name: string): ShallowRef<T> => {
       let ref = refs.get(name);
       if (ref === undefined) {
-        const registered = sectionsByName.get(name);
-        ref = shallowRef(registered === undefined ? undefined : deliveredFor(registered));
+        ref = shallowRef(deliveredValue(name));
         refs.set(name, ref);
       }
       return ref as ShallowRef<T>;
     },
-    get: <T,>(name: string): T => {
-      const registered = sectionsByName.get(name);
-      if (registered === undefined) return undefined as T;
-      return deliveredFor(registered) as T;
-    },
+    get: <T,>(name: string): T => deliveredValue(name) as T,
     env: (name) => getEnv(name),
     set: async (name, value, target) => {
-      const section = requireSection(name);
-      const merge = (section.merge ?? replaceMerge) as ConfigMerge;
+      const section = sectionsByName.get(name);
+      const merge = mergeFor(section);
       if (target === 'memory') {
         const merged = merge(memory[name], value);
-        const validated = section.schema.parse(merged) as unknown;
+        const validated = section === undefined ? merged : (section.schema.parse(merged) as unknown);
         if (validated === undefined) {
           delete memory[name];
         } else {
@@ -317,22 +345,22 @@ export function createConfigStore(deps: {
       await enqueue(async () => {
         const staged = await stageOnDisk(persist);
         const merged = merge(staged.values[name], value);
-        const validated = section.schema.parse(merged) as unknown;
-        applyStagedSection(staged, section, validated);
+        const validated = section === undefined ? merged : (section.schema.parse(merged) as unknown);
+        applyStagedSection(staged, name, section, validated);
         await persistStaged(persist, staged, [name]);
       });
     },
     replace: async (sections, target) => {
       const names = Object.keys(sections);
       if (names.length === 0) return;
-      for (const name of names) requireSection(name);
       if (target === 'memory') {
         for (const name of names) {
+          const section = sectionsByName.get(name);
           const value = sections[name];
           if (value === undefined || value === null) {
             delete memory[name];
           } else {
-            memory[name] = sectionsByName.get(name)!.schema.parse(value) as unknown;
+            memory[name] = section === undefined ? value : (section.schema.parse(value) as unknown);
           }
         }
         recompute('set', names);
@@ -343,7 +371,7 @@ export function createConfigStore(deps: {
         const staged = await stageOnDisk(persist);
         for (const name of names) {
           const value = sections[name];
-          applyStagedSection(staged, sectionsByName.get(name)!, value === null ? undefined : value);
+          applyStagedSection(staged, name, sectionsByName.get(name), value === null ? undefined : value);
         }
         await persistStaged(persist, staged, names);
       });
@@ -357,23 +385,28 @@ export function createConfigStore(deps: {
       for (const name of [...sectionsByName.keys()]) {
         if (next.has(name)) continue;
         sectionsByName.delete(name);
-        delete fileValues[name];
-        const ref = refs.get(name);
-        if (ref !== undefined && ref.value !== undefined) {
-          const previousValue = ref.value;
-          ref.value = undefined;
-          deps.onChanged?.(name, undefined, previousValue, 'reload');
+        changed.push(name);
+        const rawValue = rawSnake[camelToSnake(name)];
+        if (rawValue === undefined) {
+          delete fileValues[name];
+        } else {
+          fileValues[name] = defaultFromToml(rawValue);
         }
       }
       for (const [name, section] of next) {
         if (sectionsByName.get(name) === section) continue;
         sectionsByName.set(name, section);
         changed.push(name);
-        const raw = rawFile[name];
-        if (raw === undefined) continue;
+        const raw = rawSnake[camelToSnake(name)];
+        if (raw === undefined) {
+          delete fileValues[name];
+          continue;
+        }
         try {
-          fileValues[name] = section.schema.parse(raw) as unknown;
+          const converted = section.fromToml === undefined ? defaultFromToml(raw) : section.fromToml(raw);
+          fileValues[name] = section.schema.parse(converted) as unknown;
         } catch (error) {
+          delete fileValues[name];
           pushDiagnostic({
             section: name,
             severity: 'warning',

@@ -144,11 +144,19 @@ async function mountFixture(initial?: string): Promise<Fixture> {
 }
 
 describe('provider-catalog app model defaults', () => {
-  it('persists the default model to the user config target', async () => {
+  it('persists the default model to the user config target as a snake_case scalar', async () => {
     const { app, file } = await mountFixture();
     await until(() => app.node.fold(CatalogModels).length === 2);
     await app.resolve(ModelDefaultsRef).setDefaultModel('other/m2');
-    expect(file.saved.at(-1)).toContain('defaultModel = "other/m2"');
+    expect(file.saved.at(-1)).toContain('default_model = "other/m2"');
+    await app.disposeAsync();
+  });
+
+  it('edits an existing default_model scalar in place and keeps its trailing comment', async () => {
+    const { app, file } = await mountFixture('default_model = "test/m1"   # current pick\n');
+    await until(() => app.node.fold(CatalogModels).length === 2);
+    await app.resolve(ModelDefaultsRef).setDefaultModel('other/m2');
+    expect(file.saved.at(-1)).toBe('default_model = "other/m2"   # current pick\n');
     await app.disposeAsync();
   });
 
@@ -198,13 +206,14 @@ describe('provider-catalog app model defaults', () => {
     const text = file.saved.at(-1)!;
     expect(text).toContain('effort = "high"');
     expect(text).not.toContain('forcedEffort');
+    expect(text).not.toContain('forced_effort');
     await app.disposeAsync();
   });
 });
 
 describe('provider-catalog agent model binding', () => {
   it('binds config, requester and credential atomically and records the binding', async () => {
-    const { app, main, seen } = await mountFixture('defaultModel = "test/m1"\n');
+    const { app, main, seen } = await mountFixture('default_model = "test/m1"\n');
     await until(() => main.config?.model.model === 'm1');
     const face = main.resolve(AgentModelRef);
     await face.setModel('other/m2');
@@ -220,7 +229,7 @@ describe('provider-catalog agent model binding', () => {
   });
 
   it('restores the durable binding on remount ahead of app defaults', async () => {
-    const { app, session, main } = await mountFixture('defaultModel = "test/m1"\n');
+    const { app, session, main } = await mountFixture('default_model = "test/m1"\n');
     await until(() => main.config?.model.model === 'm1');
     await main.resolve(AgentModelRef).setModel('other/m2');
     await until(() => main.config?.model.model === 'm2');
@@ -235,14 +244,14 @@ describe('provider-catalog agent model binding', () => {
   });
 
   it('binds the app-level default model when no session or agent default exists', async () => {
-    const { app, main } = await mountFixture('defaultModel = "test/m1"\n');
+    const { app, main } = await mountFixture('default_model = "test/m1"\n');
     await until(() => main.config?.model.model === 'm1');
     expect(main.config?.model.maxContextSize).toBe(4096);
     await app.disposeAsync();
   });
 
   it('prefers session defaults over the app default', async () => {
-    const { app, main } = await mountFixture('defaultModel = "test/m1"\n');
+    const { app, main } = await mountFixture('default_model = "test/m1"\n');
     await until(() => main.config?.model.model === 'm1');
     await app.updateSession('sess', { metadata: { defaultModel: 'other/m2' } });
     await until(() => main.config?.model.model === 'm2');
@@ -253,7 +262,7 @@ describe('provider-catalog agent model binding', () => {
   });
 
   it('prefers the agent binding over session defaults', async () => {
-    const { app, main } = await mountFixture('defaultModel = "test/m1"\n');
+    const { app, main } = await mountFixture('default_model = "test/m1"\n');
     await until(() => main.config?.model.model === 'm1');
     await main.resolve(AgentModelRef).setModel('other/m2');
     await until(() => main.config?.model.model === 'm2');
@@ -264,7 +273,7 @@ describe('provider-catalog agent model binding', () => {
   });
 
   it('rebinds a live agent when the session default changes', async () => {
-    const { app, main, seen } = await mountFixture('defaultModel = "test/m1"\n');
+    const { app, main, seen } = await mountFixture('default_model = "test/m1"\n');
     await until(() => main.config?.model.model === 'm1');
     await app.updateSession('sess', { metadata: { defaultModel: 'other/m2' } });
     await until(() => main.config?.model.model === 'm2');
@@ -277,7 +286,7 @@ describe('provider-catalog agent model binding', () => {
   });
 
   it('keeps the current binding silently when the effective alias cannot be resolved', async () => {
-    const { app, main } = await mountFixture('defaultModel = "test/m1"\n');
+    const { app, main } = await mountFixture('default_model = "test/m1"\n');
     await until(() => main.config?.model.model === 'm1');
     await app.updateSession('sess', { metadata: { defaultModel: 'ghost/nope' } });
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -286,7 +295,7 @@ describe('provider-catalog agent model binding', () => {
   });
 
   it('stops managing an agent after an external setConfig', async () => {
-    const { app, main } = await mountFixture('defaultModel = "test/m1"\n');
+    const { app, main } = await mountFixture('default_model = "test/m1"\n');
     await until(() => main.config?.model.model === 'm1');
     main.setConfig({
       model: { provider: 'test', model: 'custom', capability: thinkingCapability(true) },
@@ -303,7 +312,7 @@ describe('provider-catalog agent model binding', () => {
 
 describe('provider-catalog agent thinking effort', () => {
   it('rejects an unsupported effort and applies a valid one durably', async () => {
-    const { app, session, main } = await mountFixture('defaultModel = "test/m1"\n');
+    const { app, session, main } = await mountFixture('default_model = "test/m1"\n');
     await until(() => main.config?.model.model === 'm1');
     const face = main.resolve(AgentModelRef);
     await expect(face.setThinking('turbo')).rejects.toMatchObject({
@@ -320,7 +329,7 @@ describe('provider-catalog agent thinking effort', () => {
   });
 
   it('rejects thinking efforts for a model without thinking support', async () => {
-    const { app, main } = await mountFixture('defaultModel = "other/m2"\n');
+    const { app, main } = await mountFixture('default_model = "other/m2"\n');
     await until(() => main.config?.model.model === 'm2');
     await expect(main.resolve(AgentModelRef).setThinking('high')).rejects.toMatchObject({
       code: 'model.invalid_thinking',
@@ -331,7 +340,7 @@ describe('provider-catalog agent thinking effort', () => {
 
 describe('provider-catalog session model defaults', () => {
   it('writes session metadata and binds the live main agent', async () => {
-    const { app, session, main, space } = await mountFixture('defaultModel = "test/m1"\n');
+    const { app, session, main, space } = await mountFixture('default_model = "test/m1"\n');
     await until(() => main.config?.model.model === 'm1');
     const face = session.resolve(SessionModelRef);
     await face.setThinking('high');

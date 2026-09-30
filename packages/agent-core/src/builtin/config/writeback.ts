@@ -2,8 +2,8 @@ import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 
 import { deepEqual, isPlainObject } from './pure';
 
-export interface ConfigWritebackUpdate {
-  readonly key: string;
+export interface DomainUpdate {
+  readonly snakeKey: string;
   readonly previousValue: unknown;
   readonly nextValue: unknown;
 }
@@ -24,7 +24,11 @@ interface RootRegion {
   dotted: boolean;
 }
 
-interface SectionStatement {
+type RootSegment =
+  | { readonly kind: 'trivia'; readonly start: number; readonly end: number }
+  | { readonly kind: 'region'; readonly region: RootRegion };
+
+interface DomainStatement {
   readonly key: string;
   readonly startLine: number;
   readonly endLine: number;
@@ -34,17 +38,17 @@ interface SectionStatement {
   readonly valueEnd: number;
 }
 
-interface SectionBlock {
+interface DomainBlock {
   readonly path: readonly string[];
   readonly hasHeader: boolean;
   readonly isArray: boolean;
   readonly startLine: number;
   endLine: number;
-  readonly statements: SectionStatement[];
+  readonly statements: DomainStatement[];
 }
 
-interface SectionScan {
-  readonly blocks: readonly SectionBlock[];
+interface DomainScan {
+  readonly blocks: readonly DomainBlock[];
   readonly ambiguous: boolean;
 }
 
@@ -190,6 +194,44 @@ function scanValueEnd(text: string, offset: number): number | undefined {
   return i === offset ? undefined : i;
 }
 
+function decodeBasicEscape(body: string, offset: number): { char: string; end: number } | undefined {
+  const code = body.charAt(offset + 1);
+  switch (code) {
+    case 'b':
+      return { char: '\b', end: offset + 2 };
+    case 't':
+      return { char: '\t', end: offset + 2 };
+    case 'n':
+      return { char: '\n', end: offset + 2 };
+    case 'f':
+      return { char: '\f', end: offset + 2 };
+    case 'r':
+      return { char: '\r', end: offset + 2 };
+    case '"':
+      return { char: '"', end: offset + 2 };
+    case '\\':
+      return { char: '\\', end: offset + 2 };
+    case 'u':
+      return decodeUnicodeEscape(body, offset, 4);
+    case 'U':
+      return decodeUnicodeEscape(body, offset, 8);
+    default:
+      return undefined;
+  }
+}
+
+function decodeUnicodeEscape(
+  body: string,
+  offset: number,
+  digits: number,
+): { char: string; end: number } | undefined {
+  const hex = body.slice(offset + 2, offset + 2 + digits);
+  if (hex.length !== digits || !/^[0-9a-fA-F]+$/.test(hex)) return undefined;
+  const codePoint = Number.parseInt(hex, 16);
+  if (codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)) return undefined;
+  return { char: String.fromCodePoint(codePoint), end: offset + 2 + digits };
+}
+
 function skipInlineWhitespace(body: string, offset: number): number {
   let i = offset;
   while (i < body.length) {
@@ -206,11 +248,25 @@ interface HeaderSegment {
 }
 
 function scanBasicHeaderSegment(body: string, offset: number): HeaderSegment | undefined {
-  const close = body.indexOf('"', offset + 1);
-  if (close === -1) return undefined;
-  const value = body.slice(offset + 1, close);
-  if (value.length === 0) return undefined;
-  return { value, end: close + 1 };
+  let i = offset + 1;
+  let value = '';
+  while (i < body.length) {
+    const ch = body.charAt(i);
+    if (ch === '"') {
+      if (value.length === 0) return undefined;
+      return { value, end: i + 1 };
+    }
+    if (ch === '\\') {
+      const escape = decodeBasicEscape(body, i);
+      if (escape === undefined) return undefined;
+      value += escape.char;
+      i = escape.end;
+      continue;
+    }
+    value += ch;
+    i++;
+  }
+  return undefined;
 }
 
 function scanLiteralHeaderSegment(body: string, offset: number): HeaderSegment | undefined {
@@ -284,26 +340,32 @@ interface ScannedDocument {
   lines: string[];
   offsets: number[];
   eol: string;
-  regions: RootRegion[];
+  segments: RootSegment[];
 }
 
 function scanRootRegions(text: string): ScannedDocument | undefined {
   const lines = splitLinesKeepEnds(text);
   const offsets = lineStartOffsets(lines);
   const eol = detectEol(text);
-  const regions: RootRegion[] = [];
+  const segments: RootSegment[] = [];
   let region: RootRegion | undefined;
+  let triviaStart = -1;
   let i = 0;
   while (i < lines.length) {
     const body = stripLineEnding(lines[i]!);
     if (isTriviaBody(body)) {
+      if (triviaStart < 0) triviaStart = i;
       i++;
       continue;
+    }
+    if (triviaStart >= 0) {
+      segments.push({ kind: 'trivia', start: triviaStart, end: i - 1 });
+      triviaStart = -1;
     }
     const header = matchHeader(body);
     if (header !== undefined) {
       if (region === undefined || region.rootKey !== header.rootKey) {
-        if (region !== undefined) regions.push(region);
+        if (region !== undefined) segments.push({ kind: 'region', region });
         region = { rootKey: header.rootKey, start: i, end: i, dotted: false };
       } else {
         region.end = i;
@@ -319,7 +381,7 @@ function scanRootRegions(text: string): ScannedDocument | undefined {
     const endLine = lineIndexAt(offsets, valueEnd - 1);
     const rootKey = region === undefined ? kv.keySegments[0]! : region.rootKey;
     if (region === undefined || region.rootKey !== rootKey) {
-      if (region !== undefined) regions.push(region);
+      if (region !== undefined) segments.push({ kind: 'region', region });
       region = { rootKey, start: i, end: endLine, dotted: kv.dotted };
     } else {
       region.end = endLine;
@@ -327,24 +389,27 @@ function scanRootRegions(text: string): ScannedDocument | undefined {
     }
     i = endLine + 1;
   }
-  if (region !== undefined) regions.push(region);
-  return { lines, offsets, eol, regions };
+  if (triviaStart >= 0) segments.push({ kind: 'trivia', start: triviaStart, end: lines.length - 1 });
+  if (region !== undefined) segments.push({ kind: 'region', region });
+  return { lines, offsets, eol, segments };
 }
 
-function scanSectionRegion(
+function scanDomainRegion(
   text: string,
   lines: readonly string[],
   offsets: readonly number[],
   region: RootRegion,
-): SectionScan | undefined {
-  const blocks: SectionBlock[] = [];
+  snakeKey: string,
+): DomainScan | undefined {
+  const blocks: DomainBlock[] = [];
   let ambiguous = false;
-  let current: SectionBlock | undefined;
+  let current: DomainBlock | undefined;
   for (let i = region.start; i <= region.end; i++) {
     const body = stripLineEnding(lines[i]!);
     if (isTriviaBody(body)) continue;
     const header = matchHeader(body);
     if (header !== undefined) {
+      if (header.rootKey !== snakeKey) return undefined;
       current = {
         path: header.path.slice(1),
         hasHeader: true,
@@ -359,11 +424,12 @@ function scanSectionRegion(
     }
     const kv = matchKeyValue(body);
     if (kv === undefined) return undefined;
+    if (kv.dotted) ambiguous = true;
     const valueStart = offsets[i]! + kv.valueStart;
     const valueEnd = scanValueEnd(text, valueStart);
     if (valueEnd === undefined) return undefined;
     const endLine = lineIndexAt(offsets, valueEnd - 1);
-    const statement: SectionStatement = {
+    const statement: DomainStatement = {
       key: kv.keySegments.at(-1)!,
       startLine: i,
       endLine,
@@ -399,7 +465,7 @@ function pathsEqual(a: readonly string[], b: readonly string[]): boolean {
   return true;
 }
 
-function blocksNestedUnder(blocks: readonly SectionBlock[], path: readonly string[]): readonly SectionBlock[] {
+function blocksNestedUnder(blocks: readonly DomainBlock[], path: readonly string[]): readonly DomainBlock[] {
   return blocks.filter(
     (block) => block.path.length >= path.length && pathsEqual(block.path.slice(0, path.length), path),
   );
@@ -418,13 +484,13 @@ function insertMerged(edits: LineEdit[], afterLine: number, text: string): void 
   edits.push({ type: 'insert', afterLine, text });
 }
 
-function statementSuffix(text: string, statement: SectionStatement): string {
+function statementSuffix(text: string, statement: DomainStatement): string {
   const lineEnd = text.indexOf('\n', statement.valueEnd);
   const end = lineEnd === -1 ? text.length : lineEnd;
   return text.slice(statement.valueEnd, end).replace(/\r$/, '');
 }
 
-function renderStatement(text: string, statement: SectionStatement, valueText: string, eol: string): string {
+function renderStatement(text: string, statement: DomainStatement, valueText: string, eol: string): string {
   const suffix = statementSuffix(text, statement);
   const rendered = `${statement.indent}${statement.key}${statement.separator}${valueText}${suffix}`;
   return rendered.endsWith('\n') ? rendered : `${rendered}${eol}`;
@@ -446,15 +512,45 @@ function serializeTableBlock(path: readonly string[], value: unknown, eol: strin
   return stringifyToml(nested as Record<string, unknown>).replaceAll('\n', eol);
 }
 
-function blockAnchorLine(block: SectionBlock): number {
+function blockAnchorLine(block: DomainBlock): number {
   const last = block.statements.at(-1);
   return last === undefined ? block.startLine : last.endLine;
+}
+
+function planScalarDomainEdit(
+  text: string,
+  scan: DomainScan,
+  update: DomainUpdate,
+  eol: string,
+): LineEdit[] | undefined {
+  const block = scan.blocks[0];
+  if (
+    block === undefined ||
+    scan.blocks.length !== 1 ||
+    block.hasHeader ||
+    block.path.length > 0 ||
+    block.statements.length !== 1
+  ) {
+    return undefined;
+  }
+  const statement = block.statements[0]!;
+  if (statement.key !== update.snakeKey) return undefined;
+  const valueText = serializeValueText(statement.key, update.nextValue);
+  if (valueText === undefined) return undefined;
+  return [
+    {
+      type: 'replace',
+      startLine: statement.startLine,
+      endLine: statement.endLine,
+      text: renderStatement(text, statement, valueText, eol),
+    },
+  ];
 }
 
 function planObjectLevel(
   text: string,
   rootKey: string,
-  blocks: readonly SectionBlock[],
+  blocks: readonly DomainBlock[],
   prefix: readonly string[],
   previousValue: Record<string, unknown>,
   nextValue: Record<string, unknown>,
@@ -471,8 +567,10 @@ function planObjectLevel(
     const childPath = [...prefix, key];
     const statement = block?.statements.find((candidate) => candidate.key === key);
     const childBlock = blocks.find((candidate) => pathsEqual(candidate.path, childPath));
+    if (statement !== undefined && childBlock !== undefined) return false;
     if (next === undefined) {
       if (childBlock !== undefined) {
+        if (childBlock.isArray) return false;
         for (const nested of blocksNestedUnder(blocks, childPath)) {
           edits.push(removeLines(nested.startLine, nested.endLine));
         }
@@ -497,6 +595,7 @@ function planObjectLevel(
       continue;
     }
     if (isPlainObject(previous) && isPlainObject(next)) {
+      if (statement !== undefined || childBlock === undefined || childBlock.isArray) return false;
       if (!planObjectLevel(text, rootKey, blocks, childPath, previous, next, edits, appends, eol)) {
         return false;
       }
@@ -509,6 +608,7 @@ function planObjectLevel(
       continue;
     }
     if (isPlainObject(previous)) {
+      if (childBlock === undefined || childBlock.isArray) return false;
       for (const nested of blocksNestedUnder(blocks, childPath)) {
         edits.push(removeLines(nested.startLine, nested.endLine));
       }
@@ -534,22 +634,23 @@ function planObjectLevel(
   return true;
 }
 
-function planSectionKeyEdit(
+function planDomainKeyEdit(
   text: string,
-  scan: SectionScan,
+  scan: DomainScan,
   region: RootRegion,
-  update: ConfigWritebackUpdate,
+  update: DomainUpdate,
   eol: string,
 ): LineEdit[] | undefined {
   if (scan.ambiguous) return undefined;
   const previousValue = update.previousValue;
   const nextValue = update.nextValue;
   if (!isPlainObject(previousValue) || !isPlainObject(nextValue)) {
-    return undefined;
+    if (isPlainObject(previousValue) || isPlainObject(nextValue)) return undefined;
+    return planScalarDomainEdit(text, scan, update, eol);
   }
   const edits: LineEdit[] = [];
   const appends: string[] = [];
-  if (!planObjectLevel(text, update.key, scan.blocks, [], previousValue, nextValue, edits, appends, eol)) {
+  if (!planObjectLevel(text, update.snakeKey, scan.blocks, [], previousValue, nextValue, edits, appends, eol)) {
     return undefined;
   }
   if (appends.length > 0) {
@@ -587,57 +688,57 @@ function verifyPlannedText(text: string, expected: Record<string, unknown>): boo
 
 export function planConfigWriteback(
   originalText: string,
-  updates: readonly ConfigWritebackUpdate[],
+  updates: readonly DomainUpdate[],
   expected: Record<string, unknown>,
 ): string | undefined {
   const scanned = scanRootRegions(originalText);
   if (scanned === undefined) return undefined;
   const regionsByKey = new Map<string, RootRegion[]>();
-  for (const region of scanned.regions) {
-    const list = regionsByKey.get(region.rootKey);
+  for (const segment of scanned.segments) {
+    if (segment.kind !== 'region') continue;
+    const list = regionsByKey.get(segment.region.rootKey);
     if (list === undefined) {
-      regionsByKey.set(region.rootKey, [region]);
+      regionsByKey.set(segment.region.rootKey, [segment.region]);
     } else {
-      list.push(region);
+      list.push(segment.region);
     }
   }
   const edits: LineEdit[] = [];
   const appends: string[] = [];
   for (const update of updates) {
     if (deepEqual(update.previousValue, update.nextValue)) continue;
-    const regions = regionsByKey.get(update.key) ?? [];
+    const regions = regionsByKey.get(update.snakeKey) ?? [];
+    if (update.previousValue === undefined && regions.length > 0) return undefined;
     if (update.nextValue === undefined) {
       if (update.previousValue === undefined) continue;
+      if (regions.length === 0) return undefined;
       for (const region of regions) edits.push(removeLines(region.start, region.end));
       continue;
     }
     if (regions.length === 0) {
-      appends.push(serializeTableBlock([update.key], update.nextValue, scanned.eol));
+      if (update.previousValue !== undefined) return undefined;
+      appends.push(serializeTableBlock([update.snakeKey], update.nextValue, scanned.eol));
       continue;
     }
-    if (regions.length > 1) return undefined;
-    const region = regions[0]!;
-    if (region.dotted) {
+    const replacement = serializeTableBlock([update.snakeKey], update.nextValue, scanned.eol);
+    if (regions.length > 1 || regions[0]!.dotted) {
       edits.push({
         type: 'replace',
-        startLine: region.start,
-        endLine: region.end,
-        text: serializeTableBlock([update.key], update.nextValue, scanned.eol),
+        startLine: regions[0]!.start,
+        endLine: regions[0]!.end,
+        text: replacement,
       });
+      for (const extra of regions.slice(1)) edits.push(removeLines(extra.start, extra.end));
       continue;
     }
-    const scan = scanSectionRegion(originalText, scanned.lines, scanned.offsets, region);
+    const region = regions[0]!;
+    const scan = scanDomainRegion(originalText, scanned.lines, scanned.offsets, region, update.snakeKey);
     const planned =
       scan === undefined
         ? undefined
-        : planSectionKeyEdit(originalText, scan, region, update, scanned.eol);
+        : planDomainKeyEdit(originalText, scan, region, update, scanned.eol);
     if (planned === undefined) {
-      edits.push({
-        type: 'replace',
-        startLine: region.start,
-        endLine: region.end,
-        text: serializeTableBlock([update.key], update.nextValue, scanned.eol),
-      });
+      edits.push({ type: 'replace', startLine: region.start, endLine: region.end, text: replacement });
       continue;
     }
     edits.push(...planned);
