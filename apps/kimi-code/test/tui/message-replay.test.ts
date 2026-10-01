@@ -966,11 +966,12 @@ describe('KimiTUI resume message replay', () => {
     ).toBe(false);
     expect(driver.sessionEventHandler.backgroundTaskTranscriptedTerminal.has('task-bg-timeout'))
       .toBe(true);
-    expect(
-      driver.state.transcriptEntries.some(
-        (entry) => entry.backgroundAgentStatus?.phase === 'failed',
-      ),
-    ).toBe(false);
+    const terminalCards = driver.state.transcriptEntries.filter(
+      (entry) => entry.backgroundAgentStatus !== undefined,
+    );
+    expect(terminalCards.map((entry) => entry.backgroundAgentStatus?.headline)).toEqual([
+      'agent task timed out',
+    ]);
   });
 
   it('renders replayed bash background notifications as bash tasks', async () => {
@@ -1137,6 +1138,27 @@ describe('KimiTUI resume message replay', () => {
 
     const transcript = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
     expect(transcript).toContain('cron report final');
+    expect(transcript).toContain('real answer');
+  });
+
+  it('keeps the previous turn’s final answer visible when a task-notification turn follows in replay', async () => {
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'real prompt' }]),
+      message('assistant', [{ type: 'text', text: 'real answer' }]),
+      message('user', [{ type: 'text', text: 'task finished' }], {
+        origin: {
+          kind: 'task',
+          taskId: 'task-1',
+          status: 'completed',
+          notificationId: 'ntf-1',
+        },
+      }),
+      message('assistant', [{ type: 'text', text: 'task report part one' }]),
+      message('assistant', [{ type: 'text', text: 'task report final' }]),
+    ]);
+
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('task report final');
     expect(transcript).toContain('real answer');
   });
 
