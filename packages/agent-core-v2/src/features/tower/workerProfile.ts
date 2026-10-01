@@ -14,6 +14,7 @@ import TOWER_WORKER_ROLE_OVERLAY from './tower-worker-overlay.md?raw';
 const TOWER_WORKER_TOOLS = [
   'Agent',
   'Bash',
+  'TowerComplete',
   'TowerFinding',
   'TowerInbox',
   'TowerMission',

@@ -15,7 +15,7 @@ import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTaskService } from '#/agent/task/task';
-import { STATE_FILE, TowerStore } from '#/features/tower/protocol/index';
+import { STATE_FILE, TowerProtocolError, TowerStore } from '#/features/tower/protocol/index';
 import type { TowerState } from '#/features/tower/protocol/index';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
@@ -71,6 +71,7 @@ describe('TowerSpawnTool', () => {
   let store: TowerStore;
 
   let towerActive: boolean;
+  let branchLeaseError: string | undefined;
   let gate: { readonly ok: true } | { readonly ok: false; readonly reason: string };
   let release: Mock<() => void>;
   let createAgent: Mock<IAgentLifecycleService['create']>;
@@ -104,6 +105,7 @@ describe('TowerSpawnTool', () => {
     await store.plan([{ title: 'Build gemm', scope: ['src/**'] }]);
 
     towerActive = true;
+    branchLeaseError = undefined;
     gate = { ok: true };
     release = vi.fn();
     completion = deferred();
@@ -132,11 +134,13 @@ describe('TowerSpawnTool', () => {
       get isActive() {
         return towerActive;
       },
-      get requestedBase() {
-        return undefined;
-      },
       enter: () => Promise.resolve({ entered: true as const }),
       exit: () => {},
+      isBranchLeased: () => branchLeaseError !== undefined,
+      withBranchLease: async <T>(_branch: string, execute: () => Promise<T>) => {
+        if (branchLeaseError !== undefined) throw new TowerProtocolError(branchLeaseError);
+        return execute();
+      },
     } as unknown as IAgentTowerService);
     ix.stub(ITowerRateLimitService, {
       acquire: () => gate,
@@ -236,6 +240,44 @@ describe('TowerSpawnTool', () => {
     expect(createAgent).not.toHaveBeenCalled();
   });
 
+  it('respects a branch lease before worktree or agent side effects', async () => {
+    branchLeaseError = 'branch feat/build-gemm is leased by a merge';
+
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('leased by a merge');
+    expect(createAgent).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(registerTask).not.toHaveBeenCalled();
+    await expect(git(repo, 'rev-parse', '--verify', 'refs/heads/feat/build-gemm')).rejects.toThrow();
+  });
+
+  it.each(['merged', 'abandoned'] as const)(
+    'refuses a %s mission before any worktree, agent, task, or roster side effect',
+    async (status) => {
+      const state = await store.load();
+      state.missions.find((mission) => mission.id === 'M1')!.status = status;
+      await writeFile(store.abs(STATE_FILE), `${JSON.stringify(state, null, 2)}\n`);
+
+      const result = await execute(WORKER_ARGS);
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain(`mission M1 is ${status}`);
+      expect(result.output).toContain('terminal missions cannot spawn workers');
+      expect(createAgent).not.toHaveBeenCalled();
+      expect(runAgent).not.toHaveBeenCalled();
+      expect(registerTask).not.toHaveBeenCalled();
+      expect(release).not.toHaveBeenCalled();
+      const after = await store.load();
+      expect(after.roster.agents).toHaveLength(0);
+      const mission = after.missions.find((candidate) => candidate.id === 'M1');
+      expect(mission?.status).toBe(status);
+      expect(mission?.owner).toBeUndefined();
+      await expect(git(repo, 'rev-parse', '--verify', 'refs/heads/feat/build-gemm')).rejects.toThrow();
+    },
+  );
+
   it('records the death of a worker whose task settled before roster registration finished', async () => {
     taskInfoLookup = () => ({
       taskId: 'task-1',
@@ -296,6 +338,22 @@ describe('TowerSpawnTool', () => {
     expect(mission?.status).toBe('planned');
     expect(mission?.owner).toBeUndefined();
     expect(state.roster.agents).toHaveLength(0);
+  });
+
+  it('aborts the launched run when post-registration setup fails', async () => {
+    const forced = vi
+      .spyOn(TowerStore.prototype, 'updateMission')
+      .mockRejectedValueOnce(new TowerProtocolError('forced post-launch failure'));
+    try {
+      const result = await execute(WORKER_ARGS);
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain('forced post-launch failure');
+      expect(runAgent.mock.calls[0]?.[2]?.signal.aborted).toBe(true);
+      expect((await store.load()).roster.agents.some((agent) => agent.agentId === 'agent-7')).toBe(true);
+    } finally {
+      forced.mockRestore();
+    }
   });
 
   it('spawns a detached tower-worker, registers the roster entry, and releases the slot on settle', async () => {
@@ -536,6 +594,9 @@ describe('TowerSpawnTool', () => {
 
     expect(result.isError).toBeUndefined();
     expect(result.output).toContain('review_target: feat/build-gemm');
+    expect(result.output).toContain('A reviewer is one-shot');
+    expect(result.output).toContain('spawn a fresh reviewer only if the mission still needs one');
+    expect(result.output).not.toContain('Agent(resume=');
     const state = await store.load();
     const entry = state.roster.agents.find((agent) => agent.name === 'reviewer-a');
     expect(entry).toMatchObject({
@@ -587,6 +648,29 @@ describe('TowerSpawnTool', () => {
     expect(result.isError).toBe(true);
     expect(result.output).toContain('already registered');
     expect(result.output).toContain('Agent(resume="agent-old", run_in_background=true');
+    expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it('does not recommend resuming a duplicate reviewer', async () => {
+    await store.registerAgent({
+      name: 'reviewer-a',
+      agentId: 'agent-reviewer-old',
+      kind: 'reviewer',
+      reviewTarget: 'feat/build-gemm',
+      reviewMissionId: 'M1',
+      spawnedAt: new Date().toISOString(),
+    });
+
+    const result = await execute({
+      name: 'reviewer-a',
+      kind: 'reviewer',
+      review_target: 'feat/build-gemm',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('a reviewer is one-shot');
+    expect(result.output).toContain('spawn a fresh reviewer with a new name');
+    expect(result.output).not.toContain('Agent(resume=');
     expect(createAgent).not.toHaveBeenCalled();
   });
 
@@ -715,10 +799,11 @@ describe('TowerSpawnTool', () => {
       'call TowerInbox once and incorporate anything new into the delivery',
     );
     expect(prompt).toContain(
-      'the store refuses status="completed" while unread messages wait in your inbox',
+      'TowerComplete refuses while unread messages wait in your inbox',
     );
     expect(prompt).toContain('Re-read your mission too (TowerMission(id="M1") with no patch fields)');
-    expect(prompt).toContain('split them into chunks and check TowerInbox between chunks');
+    expect(prompt).toContain('Call TowerComplete(report=what you changed and why');
+    expect(prompt).not.toContain('Mark the mission completed: TowerMission');
   });
 
   it('briefs the survey worker to read the inbox before completing', async () => {
@@ -732,6 +817,8 @@ describe('TowerSpawnTool', () => {
     const prompt = (runAgent.mock.calls.at(-1)?.[1] as { prompt: string }).prompt;
     expect(prompt).toContain('# When the survey is done');
     expect(prompt).toContain('Call TowerInbox once and fold anything new into your summary');
+    expect(prompt).toContain('Call TowerComplete(report=the full survey result)');
+    expect(prompt).not.toContain('subject="survey-summary"');
   });
 
   it('briefs the reviewer with the mission text and the worker self-report', async () => {
@@ -766,6 +853,8 @@ describe('TowerSpawnTool', () => {
     expect(prompt).toContain("# The author's own account");
     expect(prompt).toContain('Rewrote the intro; tone kept friendly, internals left out.');
     expect(prompt).toContain('1. Intent');
+    expect(prompt).toContain('Standard review-result notifications are stored automatically');
+    expect(prompt).not.toContain('Notify the author with TowerSend');
   });
 
   it('falls back to the generic checklist when the review target owns no mission', async () => {
