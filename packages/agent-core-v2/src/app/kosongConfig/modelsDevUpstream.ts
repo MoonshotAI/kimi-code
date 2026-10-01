@@ -41,9 +41,11 @@ let nowImpl: () => number = Date.now;
 export function setModelsDevUpstreamForTest(options: {
   fetchImpl?: typeof fetch;
   now?: () => number;
+  builtInCatalog?: ModelsDevCatalog;
 }): void {
   if (options.fetchImpl !== undefined) fetchImpl = options.fetchImpl;
   if (options.now !== undefined) nowImpl = options.now;
+  if ('builtInCatalog' in options) builtInMemo = options.builtInCatalog;
 }
 
 export function resetModelsDevUpstreamForTest(): void {
