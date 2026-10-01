@@ -15,6 +15,10 @@ import {
 import { getCapabilities, isImageLine, setCellDimensions } from "./terminal-image.ts";
 import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.ts";
 
+const TERMINAL_STATUS_RESPONSE_PATTERN =
+	/^(?:\x1b\[\?[\d;]*c|\x1b(?:P.*\x1b\\|_.*\x1b\\))$/s;
+const OSC_STATUS_RESPONSE_PATTERN = /^\x1b\].*(?:\x07|\x1b\\)$/s;
+
 /**
  * Component interface - all components must implement this
  */
@@ -1020,6 +1024,11 @@ export abstract class TuiBase extends Container implements TUI {
 		if (this.consumeTerminalColorSchemeReport(data)) {
 			return;
 		}
+		// Terminal query replies are control traffic, not keyboard input. Consume
+		// known replies before global listeners can interpret them as user intent.
+		if (this.consumeCellSizeResponse(data) || TERMINAL_STATUS_RESPONSE_PATTERN.test(data)) {
+			return;
+		}
 
 		if (this.inputListeners.size > 0) {
 			let current = data;
@@ -1037,9 +1046,9 @@ export abstract class TuiBase extends Container implements TUI {
 			}
 			data = current;
 		}
-
-		// Consume terminal cell size responses without blocking unrelated input.
-		if (this.consumeCellSizeResponse(data)) {
+		// OSC reports may be consumed by application listeners (for example,
+		// live theme tracking), but must never fall through to focused input.
+		if (OSC_STATUS_RESPONSE_PATTERN.test(data)) {
 			return;
 		}
 
