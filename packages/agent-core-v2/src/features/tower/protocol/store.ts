@@ -1,8 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { appendFile, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-
-import picomatch from 'picomatch';
+import { dirname, join, resolve } from 'node:path';
 
 import { listBaseDirtyEntries, snapshotBaseWip } from './baseWip';
 import { parseFrontmatter, renderFrontmatter } from './frontmatter';
@@ -14,6 +13,8 @@ import {
   commitPaths,
   currentBranch,
   diffNameOnly,
+  git,
+  GitError,
   hasAnyCommit,
   initRepository,
   isAncestor,
@@ -26,6 +27,8 @@ import {
   worktreeAddNewBranch,
   worktreeRemove,
 } from './git';
+import { evaluateMissionGate } from './missionGate';
+import type { TowerMissionGateResult, TowerMissionGitObservations } from './missionGate';
 import {
   ACTIVITY_LOG,
   BROADCAST_NAME,
@@ -69,12 +72,29 @@ export class TowerProtocolError extends Error {
 
 export const MAX_REVIEW_ROUNDS = 5;
 
+export type TowerReanchorRelation = 'no-branch' | 'up-to-date' | 'stale';
+
+export interface TowerReanchorMissionDigest {
+  readonly id: string;
+  readonly branch: string;
+  readonly relation: TowerReanchorRelation;
+  readonly branchTip?: string;
+}
+
+export interface TowerReanchorDigest {
+  readonly from: string;
+  readonly to: string;
+  readonly baseTip: string;
+  readonly missions: readonly TowerReanchorMissionDigest[];
+}
+
 export interface TowerInitResult {
   readonly base: string;
   readonly created: boolean;
   readonly retiredAgents: readonly string[];
   readonly checkout: string;
-  readonly ignoredBase?: string;
+  readonly rebasedFrom?: string;
+  readonly rebaseDigest?: TowerReanchorDigest;
   readonly openMissions: readonly string[];
 }
 
@@ -95,6 +115,20 @@ export interface TowerSendInput {
   readonly action?: string;
   readonly consentRef?: string;
   readonly tokens?: number;
+}
+
+export interface TowerSendResult {
+  readonly item: TowerInboxItem;
+  readonly missionId?: string;
+  readonly activityLogError?: string;
+}
+
+export interface TowerCompleteResult {
+  readonly mission: TowerMission;
+  readonly message?: TowerSendResult;
+  readonly notificationCreated: boolean;
+  readonly notificationError?: string;
+  readonly activityLogError?: string;
 }
 
 export interface TowerFindingInput {
@@ -118,6 +152,13 @@ export interface TowerReviewInput {
   readonly tokens?: number;
 }
 
+export interface TowerReviewResult {
+  readonly review: TowerReviewInfo;
+  readonly storedMessages: readonly TowerSendResult[];
+  readonly notificationError?: string;
+  readonly activityLogError?: string;
+}
+
 export interface TowerMissionPatch {
   readonly status?: TowerMissionStatus;
   readonly note?: string;
@@ -138,6 +179,29 @@ export interface TowerAddWorktreeResult {
 export interface TowerStoreOptions {
   readonly stateLockTimeoutMs?: number;
   readonly stateLockPollMs?: number;
+}
+
+export interface TowerMissionRuntimeOptions {
+  readonly activeAgentIds?: ReadonlySet<string> | (() => ReadonlySet<string>);
+}
+
+export interface TowerMergeResult {
+  readonly status: 'merged' | 'advanced' | 'noop';
+  readonly mergeCommit: string;
+  readonly evaluatedBranchTip: string;
+  readonly currentBranchTip: string;
+  readonly conflictsWith: ReadonlyArray<{
+    readonly branch: string;
+    readonly files: readonly string[];
+  }>;
+  readonly noop?: boolean;
+}
+
+export interface TowerRebaseMissionResult {
+  readonly status: 'up-to-date' | 'rebased' | 'conflict';
+  readonly fromCommit?: string;
+  readonly toCommit?: string;
+  readonly files?: readonly string[];
 }
 
 export interface TowerTeardownOptions {
@@ -165,6 +229,63 @@ function isOpenMission(mission: Pick<TowerMission, 'status'>): boolean {
 function missionNumber(id: string): number {
   const n = Number.parseInt(id.replace(/^M/, ''), 10);
   return Number.isNaN(n) ? 0 : n;
+}
+
+function scopeStem(raw: string): string {
+  return raw.replace(/\/\*\*?$/, '').replace(/\/+$/, '').replace(/\*+$/, '');
+}
+
+export function scopesOverlap(a: readonly string[], b: readonly string[]): boolean {
+  for (const rawA of a) {
+    const stemA = scopeStem(rawA);
+    if (stemA.length === 0) continue;
+    for (const rawB of b) {
+      const stemB = scopeStem(rawB);
+      if (stemB.length === 0) continue;
+      if (stemA === stemB || stemA.startsWith(`${stemB}/`) || stemB.startsWith(`${stemA}/`)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function depPathExists(fromId: string, toId: string, byId: ReadonlyMap<string, TowerMission>): boolean {
+  const seen = new Set<string>();
+  const queue = [fromId];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (current === toId) return true;
+    if (seen.has(current)) continue;
+    seen.add(current);
+    const mission = byId.get(current);
+    if (mission === undefined || !isOpenMission(mission)) continue;
+    for (const dep of mission.deps) {
+      if (!seen.has(dep)) queue.push(dep);
+    }
+  }
+  return false;
+}
+
+function autoDepNote(mission: TowerMission, other: TowerMission): string {
+  return `auto dependency on ${other.id}: scope overlaps ${other.id} ("${other.scope.join(', ')}") — merges are serialized so shared files land in dependency order instead of colliding`;
+}
+
+function addAutoDeps(
+  mission: TowerMission,
+  candidates: readonly TowerMission[],
+  byId: ReadonlyMap<string, TowerMission>,
+): void {
+  if (mission.kind === 'survey') return;
+  for (const other of candidates) {
+    if (other.id === mission.id || other.kind === 'survey') continue;
+    if (!scopesOverlap(mission.scope, other.scope)) continue;
+    if (depPathExists(mission.id, other.id, byId) || depPathExists(other.id, mission.id, byId)) {
+      continue;
+    }
+    mission.deps.push(other.id);
+    mission.notes.push(autoDepNote(mission, other));
+  }
 }
 
 export function resolveMissionByBranch(
@@ -308,14 +429,24 @@ export class TowerStore {
     await mkdir(dirname(this.abs(STATE_FILE)), { recursive: true });
     return this.withStateLock(async () => {
       if (await this.isInitialized()) {
-        const state = await this.load();
+        const loaded = await this.load();
+        let rebasedFrom: string | undefined;
+        let rebaseDigest: TowerReanchorDigest | undefined;
+        let state = loaded;
+        if (base !== undefined && base !== loaded.base) {
+          const reanchor = await this.reanchorLocked(loaded, base);
+          rebasedFrom = reanchor.digest.from;
+          rebaseDigest = reanchor.digest;
+          state = reanchor.state;
+        }
         const retiredAgents = await this.adoptForeignRoster(state, sessionId);
         return {
           base: state.base,
           created: false,
           retiredAgents,
           checkout: await this.checkedOutBranch(),
-          ignoredBase: base !== undefined && base !== state.base ? base : undefined,
+          rebasedFrom,
+          rebaseDigest,
           openMissions: state.missions.filter(isOpenMission).map((m) => m.id),
         };
       }
@@ -356,20 +487,54 @@ export class TowerStore {
     });
   }
 
-  async rebase(base: string): Promise<void> {
-    await this.withStateLock(async () => {
-      const state = await this.load();
-      if (state.base === base) return;
-      const open = state.missions.filter(isOpenMission);
-      if (open.length > 0) {
-        throw new TowerProtocolError(
-          `cannot rebase the tower from "${state.base}" to "${base}" — ${String(open.length)} mission(s) are still open (${open.map((m) => m.id).join(', ')}); merge or abandon them first (or TowerTeardown and start over)`,
-        );
+  private async reanchorLocked(
+    state: TowerState,
+    base: string,
+  ): Promise<{ readonly digest: TowerReanchorDigest; readonly state: TowerState }> {
+    await assertLocalBaseBranch(this.repoRoot, base);
+    const baseTip = await branchTip(this.repoRoot, base);
+    const open = state.missions.filter(isOpenMission);
+    const missions: TowerReanchorMissionDigest[] = [];
+    for (const mission of open) {
+      if (!(await branchExists(this.repoRoot, mission.branch))) {
+        missions.push({ id: mission.id, branch: mission.branch, relation: 'no-branch' });
+        continue;
       }
-      await assertLocalBaseBranch(this.repoRoot, base);
-      const from = state.base;
-      await this.save({ ...state, base });
-      await this.appendLog(TOWER_NAME, 'rebase', { from, to: base });
+      const branchTipForMission = await branchTip(this.repoRoot, mission.branch);
+      missions.push({
+        id: mission.id,
+        branch: mission.branch,
+        relation: (await isAncestor(this.repoRoot, baseTip, branchTipForMission))
+          ? 'up-to-date'
+          : 'stale',
+        branchTip: branchTipForMission,
+      });
+    }
+    const digest: TowerReanchorDigest = {
+      from: state.base,
+      to: base,
+      baseTip,
+      missions,
+    };
+    const next = { ...state, base };
+    await this.save(next);
+    await this.appendLog(TOWER_NAME, 'rebase', {
+      from: digest.from,
+      to: base,
+      open_missions: open.length > 0 ? open.length : undefined,
+      relations:
+        missions.length > 0
+          ? missions.map((mission) => `${mission.id}:${mission.relation}`).join(',')
+          : undefined,
+    });
+    return { digest, state: next };
+  }
+
+  async rebase(base: string): Promise<TowerReanchorDigest | undefined> {
+    return this.withStateLock(async () => {
+      const state = await this.load();
+      if (state.base === base) return undefined;
+      return (await this.reanchorLocked(state, base)).digest;
     });
   }
 
@@ -646,7 +811,7 @@ export class TowerStore {
           scope: [...item.scope],
           branch: `feat/${slug}`,
           worktree: `wt-${n}`,
-          deps: item.deps ?? [],
+          deps: [...(item.deps ?? [])],
           status: 'planned',
           context:
             item.context !== undefined && item.context.trim().length > 0
@@ -683,8 +848,18 @@ export class TowerStore {
         }
         takenBranches.set(mission.branch, mission);
       }
+      const openExisting = state.missions.filter(isOpenMission);
+      const byId = new Map<string, TowerMission>();
+      for (const existing of [...openExisting, ...missions]) byId.set(existing.id, existing);
+      for (const mission of missions) {
+        const older = [
+          ...openExisting,
+          ...missions.filter((m) => missionNumber(m.id) < missionNumber(mission.id)),
+        ];
+        addAutoDeps(mission, older, byId);
+      }
       this.assertScopesDisjoint([
-        ...state.missions.filter(isOpenMission),
+        ...openExisting,
         ...missions,
       ]);
 
@@ -709,7 +884,7 @@ export class TowerStore {
     for (const mission of missions) {
       if (mission.kind === 'survey') continue;
       for (const raw of mission.scope) {
-        const stem = raw.replace(/\/\*\*?$/, '').replace(/\*$/, '').replace(/\/+$/, '');
+        const stem = scopeStem(raw);
         if (stem.length === 0) {
           throw new TowerProtocolError(
             `mission ${mission.id} scope "${raw}" covers the whole repo — narrow it down`,
@@ -718,14 +893,16 @@ export class TowerStore {
         scopes.push({ id: mission.id, raw, stem });
       }
     }
+    const byId = new Map(missions.map((m) => [m.id, m]));
     for (let i = 0; i < scopes.length; i++) {
       for (let j = i + 1; j < scopes.length; j++) {
         const a = scopes[i]!;
         const b = scopes[j]!;
         if (a.id === b.id) continue;
         if (a.stem === b.stem || a.stem.startsWith(`${b.stem}/`) || b.stem.startsWith(`${a.stem}/`)) {
+          if (depPathExists(a.id, b.id, byId) || depPathExists(b.id, a.id, byId)) continue;
           throw new TowerProtocolError(
-            `mission scopes overlap: ${a.id} ("${a.raw}") vs ${b.id} ("${b.raw}") — split the shared files into exactly one mission; if one of them is stale finished work, abandon it first (TowerMission status=abandoned)`,
+            `mission scopes overlap: ${a.id} ("${a.raw}") vs ${b.id} ("${b.raw}") without a dependency between them — split the shared files into exactly one mission, or wire a dependency so the merges serialize (TowerPlan and scope widening auto-add one when scopes overlap; if one of them is stale finished work, abandon it first (TowerMission status=abandoned))`,
           );
         }
       }
@@ -740,139 +917,166 @@ export class TowerStore {
   ): Promise<TowerMission> {
     return this.withStateLock(async () => {
       const state = await this.load();
-      const mission = state.missions.find((m) => m.id === id);
-      if (mission === undefined) {
-        throw new TowerProtocolError(`unknown mission "${id}"`);
-      }
-      if (callerName !== TOWER_NAME) {
-        const caller = this.findAgent(state, callerName);
-        if (caller?.kind !== 'worker' || caller.missionId !== id) {
-          throw new TowerProtocolError(
-            `agent "${callerName}" does not own mission ${id} — workers update only their own mission file`,
-          );
-        }
-      }
-
-      const isNoOp =
-        patch.status === mission.status &&
-        patch.note === undefined &&
-        patch.blocker === undefined &&
-        patch.clearBlockers === undefined &&
-        patch.taskDone === undefined &&
-        patch.taskDrop === undefined &&
-        patch.owner === undefined &&
-        patch.scope === undefined &&
-        patch.spawnBase === undefined;
-      if (isNoOp) return mission;
-
-      if (patch.spawnBase !== undefined) {
-        if (callerName !== TOWER_NAME) {
-          throw new TowerProtocolError(
-            `agent "${callerName}" cannot record a mission spawn base — only the tower does`,
-          );
-        }
-        mission.spawnBase = patch.spawnBase;
-      }
-
-      if (patch.owner !== undefined) {
-        if (callerName !== TOWER_NAME) {
-          throw new TowerProtocolError(
-            `agent "${callerName}" cannot assign mission ownership — only the tower sets owner`,
-          );
-        }
-        mission.owner = patch.owner;
-      }
-      if (patch.scope !== undefined) {
-        if (callerName !== TOWER_NAME) {
-          throw new TowerProtocolError(
-            `agent "${callerName}" cannot change mission scope — only the tower widens a scope, and every change is logged`,
-          );
-        }
-        this.assertScopesDisjoint([
-          ...state.missions.filter((m) => m.id !== id && isOpenMission(m)),
-          { ...mission, scope: [...patch.scope] },
-        ]);
-        mission.scope = [...patch.scope];
-      }
-      if (patch.status !== undefined) {
-        if (patch.status === 'abandoned' && callerName !== TOWER_NAME) {
-          throw new TowerProtocolError(
-            `agent "${callerName}" cannot abandon mission ${id} — abandoning releases the mission scope, so only the tower does it`,
-          );
-        }
-        mission.status = patch.status;
-      }
-      if (patch.note !== undefined) mission.notes.push(patch.note);
-      if (patch.blocker !== undefined) {
-        mission.blockers.push(patch.blocker);
-        mission.status = 'blocked';
-      }
-      if (patch.clearBlockers === true) mission.blockers = [];
-      if (patch.taskDone !== undefined) {
-        const task = mission.tasks.find(
-          (t) => !t.done && t.dropped !== true && t.text.includes(patch.taskDone!),
-        );
-        if (task === undefined) {
-          throw new TowerProtocolError(
-            `mission ${id} has no open task matching "${patch.taskDone}"`,
-          );
-        }
-        task.done = true;
-      }
-      let taskDropLog: string | undefined;
-      if (patch.taskDrop !== undefined) {
-        const reason = patch.taskDrop.reason?.trim() ?? '';
-        if (reason.length === 0) {
-          throw new TowerProtocolError(
-            `dropping a task from mission ${id} requires a reason — the drop is the escape hatch for legitimately descoped work, and the reason is recorded in the mission notes and the activity log for audit`,
-          );
-        }
-        const task = mission.tasks.find(
-          (t) => !t.done && t.dropped !== true && t.text.includes(patch.taskDrop!.text),
-        );
-        if (task === undefined) {
-          throw new TowerProtocolError(
-            `mission ${id} has no open task matching "${patch.taskDrop.text}"`,
-          );
-        }
-        task.dropped = true;
-        taskDropLog = `dropped task "${task.text}": ${reason}`;
-        mission.notes.push(taskDropLog);
-      }
-      if (patch.status === 'completed' && patch.blocker === undefined) {
-        await this.assertCompletable(state, mission);
-        if (callerName !== TOWER_NAME) {
-          await this.assertInboxRead(state, callerName, mission);
-        }
-      }
-
-      await this.save(state);
-      await this.renderMissionsIndex(state);
-      await this.renderMissionFile(mission);
-      const taskTickOnly =
-        patch.taskDone !== undefined &&
-        patch.status === undefined &&
-        patch.note === undefined &&
-        patch.blocker === undefined &&
-        patch.clearBlockers === undefined &&
-        patch.taskDrop === undefined &&
-        patch.owner === undefined &&
-        patch.scope === undefined &&
-        patch.spawnBase === undefined;
-      if (!taskTickOnly && options.silent !== true) {
-        await this.appendLog(callerName, 'mission.update', {
-          id,
-          status: patch.status,
-          note: patch.note !== undefined ? 'added' : undefined,
-          blocker: patch.blocker !== undefined ? 'added' : undefined,
-          task_drop: taskDropLog,
-          owner: patch.owner,
-          scope: patch.scope?.join(','),
-          spawn_base: patch.spawnBase,
-        });
-      }
-      return mission;
+      return this.updateMissionLocked(callerName, id, patch, state, options);
     });
+  }
+
+  private async updateMissionLocked(
+    callerName: string,
+    id: string,
+    patch: TowerMissionPatch,
+    state: TowerState,
+    options: { readonly silent?: boolean } = {},
+  ): Promise<TowerMission> {
+    const mission = state.missions.find((m) => m.id === id);
+    if (mission === undefined) {
+      throw new TowerProtocolError(`unknown mission "${id}"`);
+    }
+    if (callerName !== TOWER_NAME) {
+      const caller = this.findAgent(state, callerName);
+      if (caller?.kind !== 'worker' || caller.missionId !== id) {
+        throw new TowerProtocolError(
+          `agent "${callerName}" does not own mission ${id} — workers update only their own mission file`,
+        );
+      }
+    }
+
+    const isNoOp =
+      patch.status === mission.status &&
+      patch.note === undefined &&
+      patch.blocker === undefined &&
+      patch.clearBlockers === undefined &&
+      patch.taskDone === undefined &&
+      patch.taskDrop === undefined &&
+      patch.owner === undefined &&
+      patch.scope === undefined &&
+      patch.spawnBase === undefined;
+    if (isNoOp) return mission;
+
+    if (patch.status === 'merged') {
+      throw new TowerProtocolError(
+        `mission ${id} cannot transition to merged through a generic mission patch — only TowerMerge records merged after its merge gate succeeds`,
+      );
+    }
+    if (
+      !isOpenMission(mission) &&
+      ((patch.status !== undefined && patch.status !== mission.status) ||
+        patch.blocker !== undefined)
+    ) {
+      throw new TowerProtocolError(
+        `mission ${id} is ${mission.status} — merged and abandoned are terminal, so a generic mission patch cannot reopen it`,
+      );
+    }
+
+    if (patch.spawnBase !== undefined) {
+      if (callerName !== TOWER_NAME) {
+        throw new TowerProtocolError(
+          `agent "${callerName}" cannot record a mission spawn base — only the tower does`,
+        );
+      }
+      mission.spawnBase = patch.spawnBase;
+    }
+
+    if (patch.owner !== undefined) {
+      if (callerName !== TOWER_NAME) {
+        throw new TowerProtocolError(
+          `agent "${callerName}" cannot assign mission ownership — only the tower sets owner`,
+        );
+      }
+      mission.owner = patch.owner;
+    }
+    if (patch.scope !== undefined) {
+      if (callerName !== TOWER_NAME) {
+        throw new TowerProtocolError(
+          `agent "${callerName}" cannot change mission scope — only the tower widens a scope, and every change is logged`,
+        );
+      }
+      const patched: TowerMission = { ...mission, scope: [...patch.scope] };
+      const others = state.missions.filter((m) => m.id !== id && isOpenMission(m));
+      const byId = new Map(state.missions.map((m) => [m.id, m]));
+      byId.set(id, patched);
+      addAutoDeps(patched, others, byId);
+      this.assertScopesDisjoint([...others, patched]);
+      mission.scope = [...patch.scope];
+    }
+    if (patch.status !== undefined) {
+      if (patch.status === 'abandoned' && callerName !== TOWER_NAME) {
+        throw new TowerProtocolError(
+          `agent "${callerName}" cannot abandon mission ${id} — abandoning releases the mission scope, so only the tower does it`,
+        );
+      }
+      mission.status = patch.status;
+    }
+    if (patch.note !== undefined) mission.notes.push(patch.note);
+    if (patch.blocker !== undefined) {
+      mission.blockers.push(patch.blocker);
+      mission.status = 'blocked';
+    }
+    if (patch.clearBlockers === true) mission.blockers = [];
+    if (patch.taskDone !== undefined) {
+      const task = mission.tasks.find(
+        (t) => !t.done && t.dropped !== true && t.text.includes(patch.taskDone!),
+      );
+      if (task === undefined) {
+        throw new TowerProtocolError(
+          `mission ${id} has no open task matching "${patch.taskDone}"`,
+        );
+      }
+      task.done = true;
+    }
+    let taskDropLog: string | undefined;
+    if (patch.taskDrop !== undefined) {
+      const reason = patch.taskDrop.reason?.trim() ?? '';
+      if (reason.length === 0) {
+        throw new TowerProtocolError(
+          `dropping a task from mission ${id} requires a reason — the drop is the escape hatch for legitimately descoped work, and the reason is recorded in the mission notes and the activity log for audit`,
+        );
+      }
+      const task = mission.tasks.find(
+        (t) => !t.done && t.dropped !== true && t.text.includes(patch.taskDrop!.text),
+      );
+      if (task === undefined) {
+        throw new TowerProtocolError(
+          `mission ${id} has no open task matching "${patch.taskDrop.text}"`,
+        );
+      }
+      task.dropped = true;
+      taskDropLog = `dropped task "${task.text}": ${reason}`;
+      mission.notes.push(taskDropLog);
+    }
+    if (patch.status === 'completed' && patch.blocker === undefined) {
+      await this.assertCompletable(state, mission);
+      if (callerName !== TOWER_NAME) {
+        await this.assertInboxRead(state, callerName, mission);
+      }
+    }
+
+    await this.save(state);
+    await this.renderMissionsIndex(state);
+    await this.renderMissionFile(mission);
+    const taskTickOnly =
+      patch.taskDone !== undefined &&
+      patch.status === undefined &&
+      patch.note === undefined &&
+      patch.blocker === undefined &&
+      patch.clearBlockers === undefined &&
+      patch.taskDrop === undefined &&
+      patch.owner === undefined &&
+      patch.scope === undefined &&
+      patch.spawnBase === undefined;
+    if (!taskTickOnly && options.silent !== true) {
+      await this.appendLog(callerName, 'mission.update', {
+        id,
+        status: patch.status,
+        note: patch.note !== undefined ? 'added' : undefined,
+        blocker: patch.blocker !== undefined ? 'added' : undefined,
+        task_drop: taskDropLog,
+        owner: patch.owner,
+        scope: patch.scope?.join(','),
+        spawn_base: patch.spawnBase,
+      });
+    }
+    return mission;
   }
 
   private async assertCompletable(state: TowerState, mission: TowerMission): Promise<void> {
@@ -882,7 +1086,22 @@ export class TowerStore {
         `mission ${mission.id} cannot transition to completed — ${String(open.length)} open task(s): ${open.map((t) => `"${t.text}"`).join(', ')}; tick finished tasks with task_done, or drop legitimately descoped ones with task_drop (a reason is mandatory and lands in the mission notes and the activity log)`,
       );
     }
-    if (mission.kind === 'survey') return;
+    if (mission.blockers.length > 0) {
+      throw new TowerProtocolError(
+        `mission ${mission.id} cannot transition to completed — ${String(mission.blockers.length)} blocker(s) remain: ${mission.blockers.join(' | ')}; clear or resolve them before completing`,
+      );
+    }
+    if (mission.kind === 'survey') {
+      if (!(await branchExists(this.repoRoot, mission.branch))) return;
+      const base = await this.diffBase(state, mission);
+      const changed = await diffNameOnly(this.repoRoot, base, mission.branch);
+      if (changed.length > 0) {
+        throw new TowerProtocolError(
+          `mission ${mission.id} cannot transition to completed — it is a read-only survey but branch "${mission.branch}" has ${String(changed.length)} changed file(s) vs "${base}": ${changed.slice(0, 5).join(', ')}; move any changes worth keeping to a build mission and leave the survey branch zero-diff`,
+        );
+      }
+      return;
+    }
     if (!(await branchExists(this.repoRoot, mission.branch))) {
       throw new TowerProtocolError(
         `mission ${mission.id} cannot transition to completed — its branch "${mission.branch}" does not exist, so no work has landed; a build mission must produce a diff on its branch: spawn a worker to do the work, or have the tower abandon the mission (status=abandoned) if it is no longer needed`,
@@ -902,20 +1121,29 @@ export class TowerStore {
     callerName: string,
     mission: TowerMission,
   ): Promise<void> {
-    const entry = this.findAgent(state, callerName);
-    if (entry === undefined) return;
-    const since = entry.lastInboxReadAt ?? entry.spawnedAt;
-    const unread = (await this.listInboxItems()).filter(
-      (item) => (item.to === callerName || item.to === BROADCAST_NAME) && item.sentAt > since,
-    );
+    const unread = await this.listUnreadInboxItems(state, callerName);
     if (unread.length === 0) return;
     throw new TowerProtocolError(
-      `mission ${mission.id} cannot transition to completed — ${String(unread.length)} unread inbox message(s) for ${callerName} arrived since the inbox was last read; call TowerInbox, incorporate anything new into the delivery, then retry status=completed`,
+      `mission ${mission.id} cannot transition to completed — ${String(unread.length)} unread inbox message(s) for ${callerName}; call TowerInbox until no unread messages remain, incorporate anything new into the delivery, then retry status=completed`,
     );
   }
 
   async send(callerName: string, input: TowerSendInput): Promise<string> {
-    const state = await this.load();
+    return (await this.sendDetailed(callerName, input)).item.file;
+  }
+
+  async sendDetailed(callerName: string, input: TowerSendInput): Promise<TowerSendResult> {
+    return this.withStateLock(async () => {
+      const state = await this.load();
+      return this.sendDetailedLocked(callerName, input, state);
+    });
+  }
+
+  private async sendDetailedLocked(
+    callerName: string,
+    input: TowerSendInput,
+    state: TowerState,
+  ): Promise<TowerSendResult> {
     const to = input.to.trim();
     if (
       to !== TOWER_NAME &&
@@ -931,36 +1159,196 @@ export class TowerStore {
       throw new TowerProtocolError('cannot send an inbox message to yourself');
     }
 
+    const messageId = randomUUID();
+    const sentAt = new Date().toISOString();
+    const body = input.body.trim();
     const frontmatter = renderFrontmatter({
       type: 'inbox',
-      message_id: randomUUID(),
+      message_id: messageId,
       from: callerName,
       to,
       subject: input.subject,
-      sent_at: new Date().toISOString(),
+      sent_at: sentAt,
       scope: input.scope,
       action: input.action,
       consent_ref: input.consentRef,
       tokens: String(input.tokens ?? -1),
     });
-    const content = `${frontmatter}\n\n${input.body.trim()}\n`;
+    const content = `${frontmatter}\n\n${body}\n`;
     const baseName = inboxFileName({ from: callerName, to, subject: input.subject });
     const rel = await this.writeUnique(join(INBOX_DIR, baseName), content);
-    await this.appendLog(
-      callerName,
-      'inbox.send',
-      { to, subject: slugify(input.subject), tokens: input.tokens ?? -1 },
-      rel,
+    let activityLogError: string | undefined;
+    try {
+      await this.appendLog(
+        callerName,
+        'inbox.send',
+        { to, subject: slugify(input.subject), tokens: input.tokens ?? -1 },
+        rel,
+      );
+    } catch (error) {
+      activityLogError = `inbox message ${rel} was stored, but appending its inbox.send activity log failed: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    const caller = this.findAgent(state, callerName);
+    const recipient =
+      to === TOWER_NAME || to === BROADCAST_NAME ? undefined : this.findAgent(state, to);
+    const missionId =
+      caller?.missionId ??
+      caller?.reviewMissionId ??
+      (callerName === TOWER_NAME
+        ? (recipient?.missionId ?? recipient?.reviewMissionId)
+        : undefined);
+    return {
+      item: {
+        messageId,
+        file: rel,
+        from: callerName,
+        to,
+        subject: input.subject,
+        sentAt,
+        scope: input.scope,
+        action: input.action,
+        consentRef: input.consentRef,
+        body,
+      },
+      missionId,
+      activityLogError,
+    };
+  }
+
+  async complete(
+    callerName: string,
+    report: string,
+    tokens?: number,
+  ): Promise<TowerCompleteResult> {
+    const trimmed = report.trim();
+    if (trimmed.length === 0) {
+      throw new TowerProtocolError('TowerComplete report must not be empty');
+    }
+    return this.withStateLock(async () => {
+      const state = await this.load();
+      const caller = this.findAgent(state, callerName);
+      if (
+        callerName === TOWER_NAME ||
+        caller?.kind !== 'worker' ||
+        caller.missionId === undefined
+      ) {
+        throw new TowerProtocolError(
+          `agent "${callerName}" cannot use TowerComplete — only the worker who owns a mission can complete it`,
+        );
+      }
+      const beforeMission = state.missions.find((mission) => mission.id === caller.missionId);
+      if (beforeMission === undefined) {
+        throw new TowerProtocolError(`unknown mission "${caller.missionId}"`);
+      }
+      const wasCompleted = beforeMission.status === 'completed';
+      const subject = beforeMission.kind === 'survey' ? 'survey-summary' : 'review-request';
+      if (wasCompleted) {
+        const existing = await this.findCompletionMessage(
+          callerName,
+          beforeMission,
+          subject,
+          trimmed,
+        );
+        if (existing !== undefined) {
+          return {
+            mission: beforeMission,
+            message: { item: existing, missionId: beforeMission.id },
+            notificationCreated: false,
+          };
+        }
+        await this.assertCompletable(state, beforeMission);
+        await this.assertInboxRead(state, callerName, beforeMission);
+      }
+      const mission = await this.updateMissionLocked(
+        callerName,
+        caller.missionId,
+        { status: 'completed' },
+        state,
+      );
+      try {
+        const message = await this.sendDetailedLocked(
+          callerName,
+          {
+            to: TOWER_NAME,
+            subject,
+            body: trimmed,
+            scope: mission.id,
+            action: 'complete',
+            tokens,
+          },
+          state,
+        );
+        return {
+          mission,
+          message,
+          notificationCreated: true,
+          activityLogError: message.activityLogError,
+        };
+      } catch (error) {
+        const existing = await this.findCompletionMessage(callerName, mission, subject, trimmed);
+        return {
+          mission,
+          message:
+            existing === undefined ? undefined : { item: existing, missionId: mission.id },
+          notificationCreated: false,
+          notificationError: `mission ${mission.id} was persisted as completed, but storing its ${subject} notification failed: ${error instanceof Error ? error.message : String(error)} — retry with the same report to reuse an already stored notification instead of duplicating it`,
+        };
+      }
+    });
+  }
+
+  private async findCompletionMessage(
+    callerName: string,
+    mission: TowerMission,
+    subject: string,
+    report: string,
+  ): Promise<TowerInboxItem | undefined> {
+    return (await this.listInboxItems()).find(
+      (item) =>
+        item.from === callerName &&
+        item.to === TOWER_NAME &&
+        item.subject === subject &&
+        item.scope === mission.id &&
+        item.action === 'complete' &&
+        item.body === report,
     );
-    return rel;
   }
 
   async readInbox(callerName: string, limit: number): Promise<readonly TowerInboxItem[]> {
-    const items = (await this.listInboxItems()).filter(
-      (item) => callerName === TOWER_NAME || item.to === callerName || item.to === BROADCAST_NAME,
+    const items = (await this.listInboxItems()).filter((item) =>
+      this.inboxItemVisibleTo(callerName, item),
     );
-    items.sort((a, b) => b.sentAt.localeCompare(a.sentAt));
     return items.slice(0, Math.max(1, limit));
+  }
+
+  async readUnreadInbox(callerName: string, limit: number): Promise<readonly TowerInboxItem[]> {
+    const state = await this.load();
+    const items = await this.listUnreadInboxItems(state, callerName);
+    return items.slice(0, Math.max(1, limit));
+  }
+
+  async ackInbox(callerName: string, messageIds: readonly string[]): Promise<number> {
+    return this.withStateLock(async () => {
+      const state = await this.load();
+      const index = state.roster.agents.findIndex((agent) => agent.name === callerName);
+      const entry = state.roster.agents[index];
+      const current = callerName === TOWER_NAME ? state.inboxAckIds : entry?.inboxAckIds;
+      const ackIds = new Set(current);
+      const previousSize = ackIds.size;
+      for (const messageId of messageIds) ackIds.add(messageId);
+      let changed = false;
+      if (ackIds.size > previousSize) {
+        if (callerName === TOWER_NAME) {
+          state.inboxAckIds = [...ackIds];
+          changed = true;
+        } else if (entry !== undefined) {
+          state.roster.agents[index] = { ...entry, inboxAckIds: [...ackIds] };
+          changed = true;
+        }
+      }
+      if (changed) await this.save(state);
+      return (await this.listUnreadInboxItems(state, callerName)).length;
+    });
   }
 
   async markInboxRead(callerName: string, newestSeenSentAt?: string): Promise<void> {
@@ -974,6 +1362,33 @@ export class TowerStore {
       state.roster.agents[index] = { ...entry, lastInboxReadAt: at };
       await this.save(state);
     });
+  }
+
+  private inboxItemVisibleTo(callerName: string, item: TowerInboxItem): boolean {
+    return callerName === TOWER_NAME || item.to === callerName || item.to === BROADCAST_NAME;
+  }
+
+  private async listUnreadInboxItems(
+    state: TowerState,
+    callerName: string,
+  ): Promise<TowerInboxItem[]> {
+    return (await this.listInboxItems()).filter(
+      (item) =>
+        this.inboxItemVisibleTo(callerName, item) && this.isInboxItemUnread(state, callerName, item),
+    );
+  }
+
+  private isInboxItemUnread(
+    state: TowerState,
+    callerName: string,
+    item: TowerInboxItem,
+  ): boolean {
+    const entry = callerName === TOWER_NAME ? undefined : this.findAgent(state, callerName);
+    const ackIds = callerName === TOWER_NAME ? state.inboxAckIds : entry?.inboxAckIds;
+    if (ackIds?.includes(item.messageId) === true) return false;
+    if (callerName === TOWER_NAME) return true;
+    const since = entry?.lastInboxReadAt ?? entry?.spawnedAt;
+    return since === undefined || item.sentAt > since;
   }
 
   private async listInboxItems(): Promise<TowerInboxItem[]> {
@@ -995,6 +1410,7 @@ export class TowerStore {
       const { fields, body } = parseFrontmatter(text);
       if (fields['type'] !== 'inbox') continue;
       items.push({
+        messageId: fields['message_id'] ?? rel,
         file: rel,
         from: fields['from'] ?? 'unknown',
         to: fields['to'] ?? '',
@@ -1006,6 +1422,7 @@ export class TowerStore {
         body,
       });
     }
+    items.sort((a, b) => b.sentAt.localeCompare(a.sentAt) || a.file.localeCompare(b.file));
     return items;
   }
 
@@ -1071,7 +1488,7 @@ export class TowerStore {
     return rel;
   }
 
-  async submitReview(callerName: string, input: TowerReviewInput): Promise<string> {
+  async submitReview(callerName: string, input: TowerReviewInput): Promise<TowerReviewResult> {
     return this.withStateLock(async () => {
       const state = await this.load();
       let callerEntry: TowerRosterEntry | undefined;
@@ -1095,84 +1512,316 @@ export class TowerStore {
       }
 
       const existing = await this.reviewsFor(input.target);
-      const myRounds = existing.filter((r) => r.reviewer === callerName).length;
-      if (myRounds >= MAX_REVIEW_ROUNDS) {
-        throw new TowerProtocolError(
-          `branch "${input.target}" has already been through ${String(MAX_REVIEW_ROUNDS)} review rounds by "${callerName}" — the rework loop is not converging, so another round from the same reviewer is refused; redirect instead: reassign the work (spawn a different worker or a fresh reviewer), split the mission into smaller pieces, or descope it (TowerMission status=abandoned)`,
-        );
-      }
-      const round = myRounds + 1;
-      const seq = await this.nextReviewSeq();
       const reviewedCommit = await branchTip(this.repoRoot, input.target);
       const reviewMissionId =
         callerEntry === undefined
           ? resolveMissionByBranch(state, input.target)?.id
           : callerEntry.reviewMissionId;
-
-      const frontmatter = renderFrontmatter({
-        date: dateDash(),
-        reviewer: callerName,
-        target: input.target,
-        round: String(round),
-        seq: String(seq),
-        status: input.status,
-        merge: input.merge,
-        reviewed_commit: reviewedCommit,
-        mission: reviewMissionId,
-        tokens: String(input.tokens ?? -1),
-      });
-      const checks = (input.checks ?? []).map((c) => `- [x] ${c}`).join('\n');
-      const content = [
-        frontmatter,
-        '',
-        '## Findings',
-        '',
-        input.findings.trim(),
-        '',
-        '## Checks',
-        checks.length > 0 ? checks : '- [x] (reviewer reported no formal checks)',
-        '',
-        '## Decision',
-        input.decision.trim(),
-        '',
-      ].join('\n');
-
-      const rel = await this.writeUnique(
-        join(REVIEWS_DIR, reviewFileName({ target: input.target, reviewer: callerName, round })),
-        content,
-      );
-      await this.appendLog(
+      const reviewMission =
+        reviewMissionId !== undefined
+          ? state.missions.find((mission) => mission.id === reviewMissionId)
+          : resolveMissionByBranch(state, input.target);
+      const activityLogErrors: string[] = [];
+      let review = await this.findReviewRecovery(
+        state,
         callerName,
-        'review.write',
-        {
-          target: input.target,
-          round,
-          verdict: input.status,
-          reviewed: reviewedCommit.slice(0, 7),
-          tokens: input.tokens ?? -1,
-        },
-        rel,
+        input,
+        existing,
+        reviewedCommit,
+        reviewMission,
       );
-      if (input.status !== 'clean') {
-        const reworkMission =
-          reviewMissionId !== undefined
-            ? state.missions.find((m) => m.id === reviewMissionId)
-            : resolveMissionByBranch(state, input.target);
-        if (reworkMission !== undefined && reworkMission.status === 'completed') {
-          reworkMission.status = 'active';
-          await this.save(state);
-          await this.renderMissionsIndex(state);
-          await this.renderMissionFile(reworkMission);
+      if (review !== undefined && !(await this.hasActivityLogRef('review.write', review.file))) {
+        try {
           await this.appendLog(
             callerName,
-            'mission.rework',
-            { id: reworkMission.id, verdict: input.status },
-            join(MISSIONS_DIR, missionFileName(reworkMission.id, reworkMission.slug)),
+            'review.write',
+            {
+              target: input.target,
+              round: review.round,
+              verdict: review.status,
+              reviewed: review.reviewedCommit.slice(0, 7),
+              tokens: input.tokens ?? -1,
+            },
+            review.file,
+          );
+        } catch (error) {
+          activityLogErrors.push(
+            `review ${review.file} was stored, but appending its review.write activity log failed: ${error instanceof Error ? error.message : String(error)}`,
           );
         }
       }
-      return rel;
+      if (review === undefined) {
+        const myRounds = existing.filter((candidate) => candidate.reviewer === callerName).length;
+        if (myRounds >= MAX_REVIEW_ROUNDS) {
+          throw new TowerProtocolError(
+            `branch "${input.target}" has already been through ${String(MAX_REVIEW_ROUNDS)} review rounds by "${callerName}" — the rework loop is not converging, so another round from the same reviewer is refused; redirect instead: reassign the work (spawn a different worker or a fresh reviewer), split the mission into smaller pieces, or descope it (TowerMission status=abandoned)`,
+          );
+        }
+        const round = myRounds + 1;
+        const seq = await this.nextReviewSeq();
+        const date = dateDash();
+        const frontmatter = renderFrontmatter({
+          date,
+          reviewer: callerName,
+          target: input.target,
+          round: String(round),
+          seq: String(seq),
+          status: input.status,
+          merge: input.merge,
+          reviewed_commit: reviewedCommit,
+          mission: reviewMissionId,
+          tokens: String(input.tokens ?? -1),
+        });
+        const content = `${frontmatter}\n\n${reviewDocumentBody(input)}\n`;
+        const rel = await this.writeUnique(
+          join(REVIEWS_DIR, reviewFileName({ target: input.target, reviewer: callerName, round })),
+          content,
+        );
+        review = {
+          reviewer: callerName,
+          target: input.target,
+          round,
+          status: input.status,
+          merge: input.merge,
+          reviewedCommit,
+          date,
+          file: rel,
+          mtimeMs: (await stat(this.abs(rel))).mtimeMs,
+          seq,
+          mission: reviewMissionId,
+        };
+        try {
+          await this.appendLog(
+            callerName,
+            'review.write',
+            {
+              target: input.target,
+              round,
+              verdict: input.status,
+              reviewed: reviewedCommit.slice(0, 7),
+              tokens: input.tokens ?? -1,
+            },
+            rel,
+          );
+        } catch (error) {
+          activityLogErrors.push(
+            `review ${rel} was stored, but appending its review.write activity log failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+      if (input.status !== 'clean' && reviewMission?.status === 'completed') {
+        reviewMission.status = 'active';
+        await this.save(state);
+        await this.renderMissionsIndex(state);
+        await this.renderMissionFile(reviewMission);
+        try {
+          await this.appendLog(
+            callerName,
+            'mission.rework',
+            { id: reviewMission.id, verdict: input.status },
+            join(MISSIONS_DIR, missionFileName(reviewMission.id, reviewMission.slug)),
+          );
+        } catch (error) {
+          activityLogErrors.push(
+            `mission ${reviewMission.id} was marked active, but appending mission.rework activity log failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+      const { storedMessages, notificationErrors } = await this.storeReviewMessages(
+        state,
+        callerName,
+        input,
+        review,
+        reviewMission,
+        activityLogErrors,
+      );
+      return {
+        review,
+        storedMessages,
+        notificationError:
+          notificationErrors.length > 0
+            ? `review ${review.file} was stored, but storing review-result notification(s) failed: ${notificationErrors.join(' | ')}`
+            : undefined,
+        activityLogError:
+          activityLogErrors.length > 0 ? activityLogErrors.join(' | ') : undefined,
+      };
     });
+  }
+
+  private async findReviewRecovery(
+    state: TowerState,
+    callerName: string,
+    input: TowerReviewInput,
+    existing: readonly TowerReviewInfo[],
+    reviewedCommit: string,
+    reviewMission: TowerMission | undefined,
+  ): Promise<TowerReviewInfo | undefined> {
+    const expectedBody = reviewDocumentBody(input);
+    const recipients = this.reviewRecipients(state, callerName, input, reviewMission);
+    for (const candidate of existing.toReversed()) {
+      if (
+        candidate.reviewer !== callerName ||
+        candidate.reviewedCommit !== reviewedCommit ||
+        candidate.status !== input.status ||
+        candidate.merge !== input.merge
+      ) {
+        continue;
+      }
+      const { body } = parseFrontmatter(await readFile(this.abs(candidate.file), 'utf8'));
+      if (body !== expectedBody) continue;
+      if (!(await this.hasActivityLogRef('review.write', candidate.file))) return candidate;
+      const messages = await this.listInboxItems();
+      let needsRecovery = false;
+      for (const recipient of recipients) {
+        const message = messages.find(
+          (item) => this.isReviewResultMessage(item, callerName, recipient, candidate, reviewMission, input),
+        );
+        if (message === undefined || !(await this.hasActivityLogRef('inbox.send', message.file))) {
+          needsRecovery = true;
+          break;
+        }
+      }
+      if (needsRecovery) return candidate;
+      return undefined;
+    }
+    return undefined;
+  }
+
+  private async storeReviewMessages(
+    state: TowerState,
+    callerName: string,
+    input: TowerReviewInput,
+    review: TowerReviewInfo,
+    reviewMission: TowerMission | undefined,
+    activityLogErrors: string[],
+  ): Promise<{
+    readonly storedMessages: readonly TowerSendResult[];
+    readonly notificationErrors: readonly string[];
+  }> {
+    const recipients = this.reviewRecipients(state, callerName, input, reviewMission);
+    const body = this.reviewNotificationBody(review, reviewMission, input);
+    const messages = await this.listInboxItems();
+    const storedMessages: TowerSendResult[] = [];
+    const notificationErrors: string[] = [];
+    for (const recipient of recipients) {
+      const existing = messages.find(
+        (item) => this.isReviewResultMessage(item, callerName, recipient, review, reviewMission, input),
+      );
+      if (existing !== undefined) {
+        storedMessages.push({
+          item: existing,
+          missionId: reviewMission?.id ?? review.mission,
+        });
+        if (!(await this.hasActivityLogRef('inbox.send', existing.file))) {
+          try {
+            await this.appendLog(
+              callerName,
+              'inbox.send',
+              { to: recipient, subject: slugify('review-result'), tokens: input.tokens ?? -1 },
+              existing.file,
+            );
+          } catch (error) {
+            activityLogErrors.push(
+              `inbox message ${existing.file} was stored, but appending its inbox.send activity log failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
+        continue;
+      }
+      try {
+        const sent = await this.sendDetailedLocked(
+          callerName,
+          {
+            to: recipient,
+            subject: 'review-result',
+            body,
+            scope: reviewMission?.id ?? review.mission,
+            action: 'review-result',
+            tokens: input.tokens,
+          },
+          state,
+        );
+        storedMessages.push(sent);
+        if (sent.activityLogError !== undefined) activityLogErrors.push(sent.activityLogError);
+      } catch (error) {
+        notificationErrors.push(
+          `${recipient}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    return { storedMessages, notificationErrors };
+  }
+
+  private reviewRecipients(
+    state: TowerState,
+    callerName: string,
+    input: TowerReviewInput,
+    reviewMission: TowerMission | undefined,
+  ): readonly string[] {
+    const owner =
+      reviewMission !== undefined && isOpenMission(reviewMission) && reviewMission.owner !== undefined
+        ? state.roster.agents.find(
+            (agent) =>
+              agent.name === reviewMission.owner &&
+              agent.kind === 'worker' &&
+              agent.missionId === reviewMission.id &&
+              agent.diedAt === undefined,
+          )
+        : undefined;
+    const recipients: string[] = [];
+    if (input.status !== 'clean' && owner !== undefined && owner.name !== callerName) {
+      recipients.push(owner.name);
+    }
+    if (callerName !== TOWER_NAME) recipients.push(TOWER_NAME);
+    return recipients;
+  }
+
+  private reviewNotificationBody(
+    review: TowerReviewInfo,
+    reviewMission: TowerMission | undefined,
+    input: TowerReviewInput,
+  ): string {
+    return [
+      `file: ${review.file}`,
+      `target: ${review.target}`,
+      `mission: ${reviewMission?.id ?? review.mission ?? '(none)'}`,
+      `round: ${String(review.round)}`,
+      `verdict: ${input.status}`,
+      `merge recommendation: ${input.merge}`,
+      `reviewedCommit: ${review.reviewedCommit}`,
+      `owner: ${reviewMission?.owner ?? '(none)'}`,
+    ].join('\n');
+  }
+
+  private isReviewResultMessage(
+    item: TowerInboxItem,
+    callerName: string,
+    recipient: string,
+    review: TowerReviewInfo,
+    reviewMission: TowerMission | undefined,
+    input: TowerReviewInput,
+  ): boolean {
+    return (
+      item.from === callerName &&
+      item.to === recipient &&
+      item.subject === 'review-result' &&
+      item.scope === (reviewMission?.id ?? review.mission) &&
+      item.action === 'review-result' &&
+      item.body === this.reviewNotificationBody(review, reviewMission, input)
+    );
+  }
+
+  private async hasActivityLogRef(action: string, rel: string): Promise<boolean> {
+    let content: string;
+    try {
+      content = await readFile(this.abs(ACTIVITY_LOG), 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      throw error;
+    }
+    return content
+      .split('\n')
+      .some((line) => line.includes(` ${action} `) && line.endsWith(`ref=${rel}`));
   }
 
   async reviewsFor(target: string): Promise<readonly TowerReviewInfo[]> {
@@ -1247,11 +1896,10 @@ export class TowerStore {
     return max + 1;
   }
 
-  async merge(branch: string): Promise<{
-    readonly mergeCommit: string;
-    readonly conflictsWith: ReadonlyArray<{ readonly branch: string; readonly files: readonly string[] }>;
-    readonly noop?: boolean;
-  }> {
+  async merge(
+    branch: string,
+    runtime: TowerMissionRuntimeOptions = {},
+  ): Promise<TowerMergeResult> {
     return this.withStateLock(async () => {
       const state = await this.load();
       const block = async (reason: string, message: string): Promise<TowerProtocolError> => {
@@ -1260,141 +1908,392 @@ export class TowerStore {
       };
       const mission = resolveMissionByBranch(state, branch);
       if (mission === undefined) {
-        const closed = state.missions.filter((m) => m.branch === branch);
+        const closed = state.missions.filter((candidate) => candidate.branch === branch);
         if (closed.length > 0) {
           throw await block(
             'branch-owned-by-closed-missions',
-            `merge blocked: branch "${branch}" resolves only to closed mission(s) ${closed.map((m) => `${m.id} (${m.status})`).join(', ')} — TowerMerge never flips a closed mission's status; re-plan the work under a new title if it should land`,
+            `merge blocked: branch "${branch}" resolves only to closed mission(s) ${closed.map((candidate) => `${candidate.id} (${candidate.status})`).join(', ')} — TowerMerge never flips a closed mission's status; re-plan the work under a new title if it should land`,
           );
         }
         throw new TowerProtocolError(`no tower mission owns branch "${branch}"`);
       }
 
-      const unmergedDeps = mission.deps.filter((dep) => {
-        const depMission = state.missions.find((m) => m.id === dep);
-        return depMission !== undefined && isOpenMission(depMission);
-      });
-      if (unmergedDeps.length > 0) {
-        throw await block(
-          'deps-unmerged',
-          `merge blocked: dependencies not merged yet (${unmergedDeps.join(', ')}) — merge in Dependency Flow order`,
-        );
+      const gate = await this.missionGate(state, mission, runtime);
+      if (!gate.ready) {
+        const primary = gate.blocks[0]!;
+        throw await block(primary.reason, primary.message);
       }
+      const observation = gate.observations.branch!;
+      const evaluatedBranchTip = observation.tip;
 
-      if (mission.kind === 'survey') {
-        const changed = await diffNameOnly(this.repoRoot, await this.diffBase(state, mission), branch);
-        if (changed.length > 0) {
-          throw await block(
-            'read-only-survey',
-            `merge blocked: survey mission ${mission.id} is read-only but ${branch} has ${String(changed.length)} changed file(s): ${changed.slice(0, 5).join(', ')} — investigate the worker; if the changes are worth keeping, move them onto a build mission's branch`,
-          );
+      if (gate.noop) {
+        const currentBranchTip = await branchTip(this.repoRoot, branch);
+        if (currentBranchTip !== evaluatedBranchTip) {
+          await this.appendLog(TOWER_NAME, 'merge.advanced', {
+            branch,
+            evaluated: evaluatedBranchTip.slice(0, 7),
+            current: currentBranchTip.slice(0, 7),
+          });
+          return {
+            status: 'advanced',
+            mergeCommit: gate.observations.headTip,
+            evaluatedBranchTip,
+            currentBranchTip,
+            conflictsWith: [],
+            noop: true,
+          };
         }
         mission.status = 'merged';
         await this.save(state);
         await this.renderMissionsIndex(state);
         await this.renderMissionFile(mission);
-        const tip = await branchTip(this.repoRoot, state.base);
         await this.appendLog(TOWER_NAME, 'merge.noop', { branch, kind: 'survey' });
-        return { mergeCommit: tip, conflictsWith: [], noop: true };
+        return {
+          status: 'noop',
+          mergeCommit: gate.observations.headTip,
+          evaluatedBranchTip,
+          currentBranchTip,
+          conflictsWith: [],
+          noop: true,
+        };
       }
 
-      const reviews = await this.reviewsFor(branch);
-      const siblingMissions = state.missions.filter((m) => m.branch === branch && m.id !== mission.id);
-      const stamped = reviews.filter((r) => r.mission === mission.id);
-      const candidates =
-        stamped.length > 0
-          ? reviews.filter(
-              (r) =>
-                r.mission === mission.id || (r.mission === undefined && siblingMissions.length === 0),
-            )
-          : reviews.filter((r) => r.mission === undefined);
-      const review = candidates.at(-1);
-      if (review === undefined) {
-        throw await block(
-          'no-review',
-          `merge blocked: ${branch} has no review — assign a reviewer first`,
-        );
-      }
-      if (review.status !== 'clean') {
-        throw await block(
-          'not-clean',
-          `merge blocked: latest review (round ${review.round} by ${review.reviewer}) is "${review.status}" — a clean round is required`,
-        );
-      }
-      const tip = await branchTip(this.repoRoot, branch);
-      if (review.reviewedCommit !== tip) {
-        throw await block(
-          'tip-moved',
-          `merge blocked: ${branch} moved since the clean review (reviewed ${review.reviewedCommit.slice(0, 7)}, tip ${tip.slice(0, 7)}) — re-review required`,
-        );
-      }
-      if (review.mission === undefined && siblingMissions.length > 0) {
-        throw await block(
-          'review-mission-mismatch',
-          `merge blocked: "${branch}" is shared with other mission record(s) ${siblingMissions.map((m) => `${m.id} (${m.status})`).join(', ')}, and the latest clean review (round ${review.round} by ${review.reviewer}) predates mission-stamped reviews — re-review ${mission.id} so the gate can tell which mission was audited`,
-        );
-      }
-
-      const changed = await diffNameOnly(this.repoRoot, await this.diffBase(state, mission), branch);
-      const outOfScope = changed.filter(
-        (file) => !mission.scope.some((glob) => picomatch.isMatch(file, glob)),
+      const mergeCommit = await mergeNoFf(
+        this.repoRoot,
+        evaluatedBranchTip,
+        `Merge branch '${branch}'`,
       );
-      if (outOfScope.length > 0) {
-        throw await block(
-          'out-of-scope',
-          `merge blocked: ${branch} changed files outside mission ${mission.id} scope (${mission.scope.join(', ')}): ${outOfScope.join(', ')} — the tower must widen the mission scope (TowerMission scope patch) or revert those changes`,
+      const headTip = await branchTip(this.repoRoot, 'HEAD');
+      if (!(await isAncestor(this.repoRoot, evaluatedBranchTip, headTip))) {
+        throw new TowerProtocolError(
+          `recovery-required: merge of ${branch} returned but HEAD ${headTip} does not contain the evaluated commit ${evaluatedBranchTip} — mission ${mission.id} was not marked merged; inspect the base checkout before retrying`,
         );
       }
-
-      let checkedOut: string;
-      try {
-        checkedOut = await currentBranch(this.repoRoot);
-      } catch {
-        throw await block(
-          'base-mismatch',
-          `merge blocked: the main checkout is in a detached HEAD state — check out the recorded base branch "${state.base}" before merging; nothing was merged`,
-        );
-      }
-      if (checkedOut !== state.base) {
-        throw await block(
-          'base-mismatch',
-          `merge blocked: the main checkout is on "${checkedOut}", not the recorded base "${state.base}" — switch it back (\`git checkout ${state.base}\`) and retry; nothing was merged`,
-        );
-      }
-
-      const touched = await diffNameOnly(this.repoRoot, 'HEAD', branch);
-      if (touched.length > 0) {
-        const dirty = new Set((await listBaseDirtyEntries(this.repoRoot)).map((entry) => entry.path));
-        const blocked = touched.filter((file) => dirty.has(file));
-        if (blocked.length > 0) {
-          throw await block(
-            'base-dirty',
-            `merge blocked: the main checkout has uncommitted changes in file(s) this merge would overwrite: ${blocked.slice(0, 5).join(', ')} — commit or stash them first, then retry; nothing was merged`,
-          );
-        }
+      const currentBranchTip = await branchTip(this.repoRoot, branch);
+      if (currentBranchTip !== evaluatedBranchTip) {
+        await this.appendLog(TOWER_NAME, 'merge.advanced', {
+          branch,
+          evaluated: evaluatedBranchTip.slice(0, 7),
+          current: currentBranchTip.slice(0, 7),
+          merge_commit: mergeCommit.slice(0, 7),
+        });
+        return {
+          status: 'advanced',
+          mergeCommit,
+          evaluatedBranchTip,
+          currentBranchTip,
+          conflictsWith: [],
+        };
       }
 
-      const mergeCommit = await mergeNoFf(this.repoRoot, branch);
-      mission.status = 'merged';
-
-      const changedSet = new Set(changed);
+      const changedSet = new Set(observation.changedFiles);
       const conflictsWith: Array<{ readonly branch: string; readonly files: readonly string[] }> = [];
       for (const other of state.missions) {
         if (other.branch === branch || !isOpenMission(other)) continue;
         if (!(await branchExists(this.repoRoot, other.branch))) continue;
-        const otherChanged = await diffNameOnly(this.repoRoot, await this.diffBase(state, other), other.branch);
+        const otherChanged = await diffNameOnly(
+          this.repoRoot,
+          await this.diffBase(state, other),
+          other.branch,
+        );
         const overlap = otherChanged.filter((file) => changedSet.has(file));
         if (overlap.length > 0) {
           conflictsWith.push({ branch: other.branch, files: overlap });
         }
       }
 
+      mission.status = 'merged';
       await this.save(state);
       await this.renderMissionsIndex(state);
       await this.renderMissionFile(mission);
-      await this.appendLog(TOWER_NAME, 'merge', { branch, base: state.base, merge_commit: mergeCommit.slice(0, 7) });
-      return { mergeCommit, conflictsWith };
+      await this.appendLog(TOWER_NAME, 'merge', {
+        branch,
+        base: state.base,
+        merge_commit: mergeCommit.slice(0, 7),
+        review_waived: gate.reviewBinding === 'clean-rebase-waived' ? 'yes' : undefined,
+      });
+      return {
+        status: 'merged',
+        mergeCommit,
+        evaluatedBranchTip,
+        currentBranchTip,
+        conflictsWith,
+      };
     });
+  }
+
+  async missionGate(
+    state: TowerState,
+    mission: TowerMission,
+    runtime: TowerMissionRuntimeOptions = {},
+  ): Promise<TowerMissionGateResult> {
+    const reviews = await this.reviewsFor(mission.branch);
+    const observations = await this.observeMissionGit(state, mission);
+    const activeAgentIds =
+      typeof runtime.activeAgentIds === 'function'
+        ? runtime.activeAgentIds()
+        : runtime.activeAgentIds;
+    const workers = state.roster.agents
+      .filter(
+        (agent) =>
+          agent.kind === 'worker' &&
+          (agent.missionId === mission.id ||
+            agent.branch === mission.branch ||
+            agent.worktree === mission.worktree),
+      )
+      .map((agent) => ({
+        agentId: agent.agentId,
+        name: agent.name,
+        status:
+          activeAgentIds === undefined
+            ? ('unknown' as const)
+            : activeAgentIds.has(agent.agentId)
+              ? ('busy' as const)
+              : ('idle' as const),
+      }));
+    return evaluateMissionGate({ state, mission, reviews, workers, observations });
+  }
+
+  private async observeMissionGit(
+    state: TowerState,
+    mission: TowerMission,
+  ): Promise<TowerMissionGitObservations> {
+    const baseTip = await branchTip(this.repoRoot, state.base);
+    const headTip = await branchTip(this.repoRoot, 'HEAD');
+    let checkedOutBranch: string | undefined;
+    try {
+      checkedOutBranch = await currentBranch(this.repoRoot);
+    } catch (error) {
+      if (error instanceof GitError) throw error;
+    }
+    const baseDirtyFiles = (await listBaseDirtyEntries(this.repoRoot)).map((entry) => entry.path);
+    if (!(await branchExists(this.repoRoot, mission.branch))) {
+      return { baseTip, headTip, checkedOutBranch, baseDirtyFiles };
+    }
+    const tip = await branchTip(this.repoRoot, mission.branch);
+    const baseIsAncestor = await isAncestor(this.repoRoot, baseTip, tip);
+    const diffBase =
+      mission.spawnBase !== undefined && (await isAncestor(this.repoRoot, mission.spawnBase, tip))
+        ? mission.spawnBase
+        : baseTip;
+    const changedFiles = await diffNameOnly(this.repoRoot, diffBase, tip);
+    const mergeTouchedFiles = await diffNameOnly(this.repoRoot, headTip, tip);
+    return {
+      baseTip,
+      headTip,
+      checkedOutBranch,
+      baseDirtyFiles,
+      branch: { tip, baseIsAncestor, diffBase, changedFiles, mergeTouchedFiles },
+    };
+  }
+
+  async rebaseMission(
+    callerName: string,
+    id: string,
+    runtime: TowerMissionRuntimeOptions = {},
+  ): Promise<TowerRebaseMissionResult> {
+    return this.withStateLock(async () => {
+      if (callerName !== TOWER_NAME) {
+        throw new TowerProtocolError(
+          `agent "${callerName}" cannot rebase a mission branch — only the tower runs TowerRebase; a worker rebases only when the tower asks it to`,
+        );
+      }
+      const state = await this.load();
+      const mission = state.missions.find((candidate) => candidate.id === id);
+      if (mission === undefined) {
+        throw new TowerProtocolError(`unknown mission "${id}"`);
+      }
+      if (!isOpenMission(mission)) {
+        throw new TowerProtocolError(
+          `mission ${id} is ${mission.status} — only open missions rebase; closed missions are historical records`,
+        );
+      }
+      if (mission.kind === 'survey') {
+        throw new TowerProtocolError(
+          `mission ${id} is a read-only survey — it has no work branch to rebase`,
+        );
+      }
+      const activeAgentIds =
+        typeof runtime.activeAgentIds === 'function'
+          ? runtime.activeAgentIds()
+          : runtime.activeAgentIds;
+      const workers = state.roster.agents.filter(
+        (agent) =>
+          agent.kind === 'worker' &&
+          (agent.missionId === mission.id ||
+            agent.branch === mission.branch ||
+            agent.worktree === mission.worktree),
+      );
+      const busyWorkers = workers.filter(
+        (worker) => activeAgentIds?.has(worker.agentId) === true,
+      );
+      if (busyWorkers.length > 0) {
+        throw new TowerProtocolError(
+          `worker(s) ${busyWorkers.map((worker) => worker.name).join(', ')} are mid-turn — rebasing under a running worker could race its edits; TowerSend a message asking for a worker-run rebase, or retry once every worker is idle`,
+        );
+      }
+      if (activeAgentIds === undefined && workers.length > 0) {
+        throw new TowerProtocolError(
+          `worker runtime for ${workers.map((worker) => worker.name).join(', ')} cannot be observed authoritatively — unknown is not idle; retry TowerRebase from the main tower agent`,
+        );
+      }
+      if (!(await branchExists(this.repoRoot, mission.branch))) {
+        throw new TowerProtocolError(
+          `mission ${id} has no branch "${mission.branch}" yet — spawn a worker to create it before rebasing`,
+        );
+      }
+      const worktreeAbs = this.abs(join(WORKTREES_DIR, mission.worktree));
+      if (!(await isRegisteredWorktree(this.repoRoot, worktreeAbs))) {
+        throw new TowerProtocolError(
+          `mission ${id} has no registered worktree at ${join(WORKTREES_DIR, mission.worktree)} — spawn a worker to create it before rebasing`,
+        );
+      }
+      if (await isWorktreeDirty(worktreeAbs)) {
+        throw new TowerProtocolError(
+          `worktree ${mission.worktree} has uncommitted changes — rebasing under uncommitted work could lose it; have the worker commit or stash first, then retry`,
+        );
+      }
+      const gitDir = resolve(worktreeAbs, (await git(worktreeAbs, ['rev-parse', '--git-dir'])).trim());
+      if (existsSync(join(gitDir, 'rebase-merge')) || existsSync(join(gitDir, 'rebase-apply'))) {
+        throw new TowerProtocolError(
+          `worktree ${mission.worktree} already has a rebase in progress — finish or abort it (git rebase --continue / --abort in the worktree) before the tower rebases the branch`,
+        );
+      }
+      const baseCommit = await branchTip(this.repoRoot, state.base);
+      const fromCommit = await branchTip(this.repoRoot, mission.branch);
+      const checkedOut = await git(worktreeAbs, ['rev-parse', '--abbrev-ref', 'HEAD']);
+      if (checkedOut !== mission.branch) {
+        throw new TowerProtocolError(
+          `worktree ${mission.worktree} is on "${checkedOut}", not mission branch "${mission.branch}" — restore the registered checkout before rebasing; nothing was changed`,
+        );
+      }
+      const worktreeHead = await branchTip(worktreeAbs, 'HEAD');
+      if (worktreeHead !== fromCommit) {
+        throw new TowerProtocolError(
+          `worktree ${mission.worktree} HEAD ${worktreeHead} does not match mission branch "${mission.branch}" at ${fromCommit} — repair the diverged checkout before rebasing; nothing was changed`,
+        );
+      }
+      if (await isAncestor(this.repoRoot, baseCommit, fromCommit)) {
+        await this.appendLog(TOWER_NAME, 'rebase.mission', { id, result: 'up-to-date' });
+        return { status: 'up-to-date' };
+      }
+
+      let rebaseErrorMessage: string | undefined;
+      try {
+        await git(worktreeAbs, ['rebase', baseCommit]);
+      } catch (error) {
+        rebaseErrorMessage = error instanceof Error ? error.message : 'non-Error thrown value';
+      }
+      if (rebaseErrorMessage !== undefined) {
+        let conflicted: string;
+        let inProgress: boolean;
+        try {
+          conflicted = await git(worktreeAbs, ['diff', '--name-only', '--diff-filter=U']);
+          inProgress =
+            existsSync(join(gitDir, 'rebase-merge')) || existsSync(join(gitDir, 'rebase-apply'));
+        } catch (error) {
+          throw new TowerProtocolError(
+            `recovery-required: rebase of mission ${id} failed and its state could not be inspected: ${error instanceof Error ? error.message : String(error)} — no waiver was recorded and the mission was not marked blocked`,
+          );
+        }
+        const files = conflicted.split('\n').filter((file) => file.trim().length > 0);
+        if (inProgress) {
+          try {
+            await git(worktreeAbs, ['rebase', '--abort']);
+          } catch (error) {
+            throw new TowerProtocolError(
+              `recovery-required: rebase of mission ${id} failed and git rebase --abort also failed: ${error instanceof Error ? error.message : String(error)} — no recovery is claimed, no waiver was recorded, and the mission was not marked blocked`,
+            );
+          }
+        }
+        await this.assertRebaseRecovered(worktreeAbs, gitDir, mission, fromCommit);
+        if (inProgress && files.length > 0) {
+          mission.blockers.push(
+            `tower rebase onto ${state.base} conflicted in: ${files.join(', ')} — the rebase was aborted and your worktree is back to the pre-rebase state. Resolve it yourself: run \`git rebase ${state.base}\` in your worktree, fix the listed conflicts, \`git add\` the resolved files, then continue with \`GIT_EDITOR=true git rebase --continue\` (a plain \`git rebase --continue\` opens an editor and hangs a non-interactive shell). Re-run your tests, then clear this blocker (TowerMission clear_blockers) and TowerSend the tower asking for a fresh review — a worker-run rebase is not covered by the clean-rebase waiver, so the moved tip needs a new clean review before the merge can land`,
+          );
+          mission.status = 'blocked';
+          await this.save(state);
+          await this.renderMissionsIndex(state);
+          await this.renderMissionFile(mission);
+          await this.appendLog(TOWER_NAME, 'rebase.mission', {
+            id,
+            result: 'conflict',
+            files: files.join(','),
+          });
+          return { status: 'conflict', fromCommit, files };
+        }
+        throw new TowerProtocolError(
+          `rebase of mission ${id} failed: ${rebaseErrorMessage} — no rebase conflict with unmerged paths was observed, so the mission was not marked blocked and no review waiver was recorded`,
+        );
+      }
+
+      let toCommit: string;
+      const problems: string[] = [];
+      try {
+        toCommit = await branchTip(this.repoRoot, mission.branch);
+        if ((await git(worktreeAbs, ['rev-parse', '--abbrev-ref', 'HEAD'])) !== mission.branch) {
+          problems.push('the worktree no longer has the mission branch checked out');
+        }
+        if ((await branchTip(worktreeAbs, 'HEAD')) !== toCommit) {
+          problems.push('worktree HEAD and the mission branch tip differ');
+        }
+        if (await isWorktreeDirty(worktreeAbs)) problems.push('the worktree is dirty');
+        if (!(await isAncestor(this.repoRoot, baseCommit, toCommit))) {
+          problems.push('the rebased branch does not contain the evaluated base commit');
+        }
+      } catch (error) {
+        throw new TowerProtocolError(
+          `recovery-required: rebase of mission ${id} returned success but its postconditions could not be inspected: ${error instanceof Error ? error.message : String(error)} — no review waiver was recorded`,
+        );
+      }
+      if (problems.length > 0) {
+        throw new TowerProtocolError(
+          `recovery-required: rebase of mission ${id} returned success but its postconditions failed (${problems.join('; ')}) — no review waiver was recorded; inspect the worktree and branch before retrying`,
+        );
+      }
+      mission.lastRebase = { fromCommit, toCommit };
+      await this.save(state);
+      await this.renderMissionsIndex(state);
+      await this.renderMissionFile(mission);
+      await this.appendLog(TOWER_NAME, 'rebase.mission', {
+        id,
+        result: 'clean',
+        from: fromCommit.slice(0, 7),
+        to: toCommit.slice(0, 7),
+      });
+      return { status: 'rebased', fromCommit, toCommit };
+    });
+  }
+
+  private async assertRebaseRecovered(
+    worktreeAbs: string,
+    gitDir: string,
+    mission: TowerMission,
+    fromCommit: string,
+  ): Promise<void> {
+    const problems: string[] = [];
+    if (existsSync(join(gitDir, 'rebase-merge')) || existsSync(join(gitDir, 'rebase-apply'))) {
+      problems.push('a rebase is still in progress');
+    }
+    try {
+      if ((await git(worktreeAbs, ['rev-parse', '--abbrev-ref', 'HEAD'])) !== mission.branch) {
+        problems.push('the mission branch is not checked out');
+      }
+      if ((await branchTip(worktreeAbs, 'HEAD')) !== fromCommit) {
+        problems.push('worktree HEAD was not restored to the pre-rebase commit');
+      }
+      if ((await branchTip(this.repoRoot, mission.branch)) !== fromCommit) {
+        problems.push('the mission branch tip was not restored');
+      }
+      if (await isWorktreeDirty(worktreeAbs)) problems.push('the worktree is not clean');
+    } catch (error) {
+      problems.push(`recovery inspection failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (problems.length > 0) {
+      throw new TowerProtocolError(
+        `recovery-required: rebase recovery for mission ${mission.id} failed its postconditions (${problems.join('; ')}) — no recovery is claimed, no waiver was recorded, and the mission was not marked blocked`,
+      );
+    }
   }
 
   async diffBase(state: TowerState, mission: TowerMission): Promise<string> {
@@ -1648,6 +2547,21 @@ export class TowerStore {
     }
     throw new TowerProtocolError(`could not create a unique file for ${rel}`);
   }
+}
+
+function reviewDocumentBody(input: TowerReviewInput): string {
+  const checks = (input.checks ?? []).map((check) => `- [x] ${check}`).join('\n');
+  return [
+    '## Findings',
+    '',
+    input.findings.trim(),
+    '',
+    '## Checks',
+    checks.length > 0 ? checks : '- [x] (reviewer reported no formal checks)',
+    '',
+    '## Decision',
+    input.decision.trim(),
+  ].join('\n');
 }
 
 async function readGitDir(cwd: string): Promise<string | null> {
