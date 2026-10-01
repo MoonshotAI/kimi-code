@@ -105,7 +105,14 @@ export type AgentEvent =
 export type AgentEmitted =
   | TurnLlmEvent
   | ToolEvent
-  | { type: 'turn.started'; turnId: number; branchId: string; queueItemId?: string; entry?: UserEntry }
+  | {
+      type: 'turn.started';
+      turnId: number;
+      branchId: string;
+      queueItemId?: string;
+      entry?: UserEntry;
+      entries: UserEntry[];
+    }
   | { type: 'step.started'; step: number }
   | { type: 'turn.aborting' }
   | { type: 'turn.reminders_consumed'; reminders: HistoryMessage[] }
@@ -147,11 +154,13 @@ export interface AgentMachineContext {
   notifications: UserEntry[];
   reminders: HistoryMessage[];
   queue: UserEntry[];
+  drainBatch?: UserEntry[];
   turnId: number;
   activeTurnId?: number;
   branchId: string;
   drainedId?: string;
   drainedEntry?: UserEntry;
+  drainedEntries: UserEntry[];
   paused: boolean;
   abortReason?: unknown;
 }
@@ -245,20 +254,51 @@ function hasBackgroundWork(context: AgentMachineContext): boolean {
   return Object.keys(context.background).length > 0;
 }
 
+function sameQueueEntry(left: UserEntry, right: UserEntry): boolean {
+  const promptId = left.meta?.promptId;
+  return promptId === undefined ? left === right : promptId === right.meta?.promptId;
+}
+
+interface PromptGateResult {
+  readonly entry: UserEntry;
+  readonly id?: string;
+  readonly block: boolean;
+  readonly message?: UserMessage;
+  readonly error?: unknown;
+}
+
+interface PromptGateOutput {
+  readonly results: PromptGateResult[];
+}
+
+function isPromptGateOutput(output: unknown): output is PromptGateOutput {
+  return typeof output === 'object' && output !== null && Array.isArray((output as PromptGateOutput).results);
+}
+
 function drainPendingPatch(
   context: AgentMachineContext,
-): Pick<AgentMachineContext, 'messages' | 'notifications' | 'queue' | 'drainedId' | 'drainedEntry'> {
-  const [head, ...rest] = context.queue;
+): Pick<
+  AgentMachineContext,
+  | 'messages'
+  | 'notifications'
+  | 'queue'
+  | 'drainBatch'
+  | 'drainedId'
+  | 'drainedEntry'
+  | 'drainedEntries'
+> {
+  const drainedEntries = context.drainBatch ?? context.queue;
+  const head = drainedEntries[0];
   return {
-    messages: [
-      ...context.messages,
-      ...context.notifications,
-      ...(head === undefined ? [] : [head]),
-    ],
+    messages: [...context.messages, ...context.notifications, ...drainedEntries],
     notifications: [],
-    queue: rest,
+    queue: context.queue.filter(
+      (entry) => !drainedEntries.some((drained) => sameQueueEntry(drained, entry)),
+    ),
+    drainBatch: undefined,
     drainedId: head?.meta?.promptId,
     drainedEntry: head,
+    drainedEntries,
   };
 }
 
@@ -322,18 +362,28 @@ export function createAgentMachine({
         ({ input, signal }) => input.scopeFactory(input.self, signal),
       ),
       promptGateActor: fromPromise<
-        { id?: string; block: boolean; message?: UserMessage; error?: unknown },
-        { gate?: PromptGate; head?: UserEntry }
+        PromptGateOutput,
+        { gate?: PromptGate; items: UserEntry[] }
       >(async ({ input }) => {
-        const { gate, head } = input;
-        if (gate === undefined || head === undefined) return { id: head?.meta?.promptId, block: false };
-        try {
-          const verdict = await gate(head.meta?.promptId, head.message);
-          if (typeof verdict === 'boolean') return { id: head.meta?.promptId, block: verdict };
-          return { id: head.meta?.promptId, block: verdict.block, message: verdict.message };
-        } catch (error) {
-          return { id: head.meta?.promptId, block: false, error };
+        const results: PromptGateResult[] = [];
+        for (const entry of input.items) {
+          const id = entry.meta?.promptId;
+          if (input.gate === undefined) {
+            results.push({ entry, id, block: false });
+            continue;
+          }
+          try {
+            const verdict = await input.gate(id, entry.message);
+            if (typeof verdict === 'boolean') {
+              results.push({ entry, id, block: verdict });
+            } else {
+              results.push({ entry, id, block: verdict.block, message: verdict.message });
+            }
+          } catch (error) {
+            results.push({ entry, id, block: false, error });
+          }
         }
+        return { results };
       }),
       disposeScopeActor: fromPromise<void, { handle?: AgentScopeHandle }>(async ({ input }) => {
         await input.handle?.disposeAsync();
@@ -344,17 +394,50 @@ export function createAgentMachine({
         self._parent?.send(event);
       },
       commitPendingToHistory: enqueueActions(({ context, enqueue }) => {
-        const head = context.queue[0];
+        const drainedEntries = context.drainBatch ?? context.queue;
         enqueue.sendTo('store', {
           type: 'store.append' as const,
           event: [
             ...context.notifications.map((entry) => messageAppended({ message: entry })),
-            ...(head === undefined
-              ? []
-              : [messageAppended({ message: head })]),
+            ...drainedEntries.map((entry) => messageAppended({ message: entry })),
           ],
         });
         enqueue.assign(drainPendingPatch(context));
+      }),
+      applyPromptGateResults: enqueueActions(({ context, event, enqueue }) => {
+        if (!('output' in event) || !isPromptGateOutput(event.output)) return;
+        const results = event.output.results;
+        const passed: UserEntry[] = [];
+        for (const result of results) {
+          if (result.error !== undefined) {
+            enqueue.emit({
+              type: 'prompt.gate_failed' as const,
+              queueItemId: result.id,
+              error: result.error,
+              entry: result.entry,
+            });
+          } else if (result.block) {
+            enqueue.emit({
+              type: 'prompt.blocked' as const,
+              queueItemId: result.id,
+              entry: result.entry,
+            });
+          } else {
+            passed.push(
+              result.message === undefined
+                ? result.entry
+                : { ...result.entry, message: result.message },
+            );
+          }
+        }
+        const arrivals = context.queue.filter(
+          (entry) =>
+            !results.some((result) => sameQueueEntry(result.entry, entry)),
+        );
+        enqueue.assign({
+          queue: [...passed, ...arrivals],
+          drainBatch: passed.length > 0 ? passed : undefined,
+        });
       }),
       resetMirror: assign(({ context, event }) => {
         if (event.type !== 'store.reset') return {};
@@ -440,6 +523,7 @@ export function createAgentMachine({
       notifications: [],
       reminders: [],
       queue: [],
+      drainedEntries: [],
       turnId: 0,
       branchId: 'main',
       paused: false,
@@ -663,62 +747,43 @@ export function createAgentMachine({
           gating: {
             invoke: {
               src: 'promptGateActor',
-              input: ({ context }) => ({ gate: context.promptGate, head: context.queue[0] }),
+              input: ({ context }) => ({ gate: context.promptGate, items: context.queue }),
               onDone: [
                 {
                   guard: ({ context, event }) =>
-                    context.paused || context.queue[0]?.meta?.promptId !== event.output.id,
+                    context.paused ||
+                    event.output.results.some(
+                      (result) =>
+                        !context.queue.some((entry) => sameQueueEntry(result.entry, entry)),
+                    ),
                   target: 'ready',
                 },
                 {
-                  guard: ({ event }) => event.output.error !== undefined,
+                  guard: ({ event }) =>
+                    !event.output.results.some(
+                      (result) => result.error === undefined && !result.block,
+                    ),
                   target: 'ready',
-                  actions: [
-                    emit(({ context, event }) => ({
-                      type: 'prompt.gate_failed' as const,
-                      queueItemId: context.queue[0]?.meta?.promptId,
-                      error: event.output.error,
-                      entry: context.queue[0],
-                    })),
-                    assign(({ context }) => ({ queue: context.queue.slice(1) })),
-                  ],
-                },
-                {
-                  guard: ({ event }) => event.output.block,
-                  target: 'ready',
-                  actions: [
-                    emit(({ context }) => ({
-                      type: 'prompt.blocked' as const,
-                      queueItemId: context.queue[0]?.meta?.promptId,
-                      entry: context.queue[0],
-                    })),
-                    assign(({ context }) => ({ queue: context.queue.slice(1) })),
-                  ],
+                  actions: ['applyPromptGateResults'],
                 },
                 {
                   target: '#agent.running',
-                  actions: [
-                    assign(({ context, event }) => {
-                      const rewritten = event.output.message;
-                      const head = context.queue[0];
-                      if (rewritten === undefined || head === undefined) return {};
-                      return { queue: [{ ...head, message: rewritten }, ...context.queue.slice(1)] };
-                    }),
-                    'commitPendingToHistory',
-                  ],
+                  actions: ['applyPromptGateResults', 'commitPendingToHistory'],
                 },
               ],
               onError: {
                 target: 'ready',
-                actions: [
-                  emit(({ context, event }) => ({
-                    type: 'prompt.gate_failed' as const,
-                    queueItemId: context.queue[0]?.meta?.promptId,
-                    error: event.error,
-                    entry: context.queue[0],
-                  })),
-                  assign(({ context }) => ({ queue: context.queue.slice(1) })),
-                ],
+                actions: enqueueActions(({ context, event, enqueue }) => {
+                  for (const entry of context.queue) {
+                    enqueue.emit({
+                      type: 'prompt.gate_failed' as const,
+                      queueItemId: entry.meta?.promptId,
+                      error: event.error,
+                      entry,
+                    });
+                  }
+                  enqueue.assign({ queue: [], drainBatch: undefined });
+                }),
               },
             },
           },
@@ -733,6 +798,7 @@ export function createAgentMachine({
             branchId: context.branchId,
             queueItemId: context.drainedId,
             entry: context.drainedEntry,
+            entries: context.drainedEntries,
           })),
           sendTo('store', ({ context }) => ({
             type: 'store.append' as const,

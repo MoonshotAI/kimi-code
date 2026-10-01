@@ -136,6 +136,11 @@ describe('usage plugin', () => {
     connectPlugins(actor, [plugin, timingPlugin]);
     actor.start();
     actor.send({ type: 'input.submit', entry: { message: createUserMessage('hi') } });
+    await waitFor(
+      actor,
+      (s) => s.matches('idle') && store.getState().history.length === 2,
+      { timeout: 5000 },
+    );
     actor.send({ type: 'input.submit', entry: { message: createUserMessage('again') } });
     await waitFor(
       actor,
