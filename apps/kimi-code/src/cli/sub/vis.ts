@@ -21,6 +21,7 @@ export interface StartedVisServer {
   readonly port: number;
   readonly host: string;
   readonly url: string;
+  readonly lanUrls?: string[];
   readonly close: () => Promise<void>;
 }
 
@@ -86,6 +87,12 @@ export async function handleVis(deps: VisDeps, opts: VisOptions): Promise<void> 
       : `${server.url}sessions/${encodeURIComponent(opts.sessionId)}`;
 
   deps.stdout.write(`kimi vis is running at ${server.url}\n`);
+  if (server.lanUrls !== undefined && server.lanUrls.length > 0) {
+    deps.stdout.write(`LAN access:\n`);
+    for (const lanUrl of server.lanUrls) {
+      deps.stdout.write(`  ${lanUrl}\n`);
+    }
+  }
   deps.stdout.write('Press Ctrl-C to stop.\n');
 
   if (opts.open) {
