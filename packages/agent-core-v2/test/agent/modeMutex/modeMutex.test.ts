@@ -10,6 +10,9 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+import { GoalUpdated } from '#/features/goal/goalOps';
+import { IAgentGoalService } from '#/features/goal/goalService';
+import type { GoalSnapshot } from '#/features/goal/types';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { PlanModeEnter, planKey } from '#/features/plan/planOps';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
@@ -25,8 +28,10 @@ describe('AgentModeMutexService', () => {
   let planExit: ReturnType<typeof vi.fn>;
   let swarmExit: ReturnType<typeof vi.fn>;
   let towerExit: ReturnType<typeof vi.fn>;
+  let goalPause: ReturnType<typeof vi.fn>;
   let swarmActive: boolean;
   let towerActive: boolean;
+  let goalStatus: string | undefined;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -39,8 +44,10 @@ describe('AgentModeMutexService', () => {
     planExit = vi.fn();
     swarmExit = vi.fn();
     towerExit = vi.fn();
+    goalPause = vi.fn();
     swarmActive = false;
     towerActive = false;
+    goalStatus = undefined;
     ix.stub(IAgentPlanService, { exit: planExit } as unknown as IAgentPlanService);
     ix.stub(IAgentSwarmService, {
       exit: swarmExit,
@@ -54,13 +61,17 @@ describe('AgentModeMutexService', () => {
         return towerActive;
       },
     } as unknown as IAgentTowerService);
+    ix.stub(IAgentGoalService, {
+      pauseGoal: goalPause,
+      getGoal: () => ({ goal: goalStatus === undefined ? null : { status: goalStatus } }),
+    } as unknown as IAgentGoalService);
     ix.get(IAgentStateService).contributeState(planKey);
     ix.set(IAgentModeMutexService, new SyncDescriptor(AgentModeMutexService));
     ix.get(IAgentModeMutexService);
   });
   afterEach(() => disposables.dispose());
 
-  function publish(event: PlanModeEnter | SwarmModeEnter | TowerModeEnter): void {
+  function publish(event: PlanModeEnter | SwarmModeEnter | TowerModeEnter | GoalUpdated): void {
     const agentContext = ix.get(IAgentScopeContext).agentContext;
     ix.get(IEventBus).publish(event, agentContext);
   }
@@ -99,5 +110,49 @@ describe('AgentModeMutexService', () => {
     publish(new TowerModeEnter({ agentId: 'test-agent' }));
     expect(planExit).not.toHaveBeenCalled();
     expect(swarmExit).not.toHaveBeenCalled();
+  });
+
+  it('tower mode entry pauses an active goal', () => {
+    goalStatus = 'active';
+    publish(new TowerModeEnter({ agentId: 'test-agent' }));
+    expect(goalPause).toHaveBeenCalledTimes(1);
+  });
+
+  it('tower mode entry leaves a non-active goal alone', () => {
+    goalStatus = 'paused';
+    publish(new TowerModeEnter({ agentId: 'test-agent' }));
+    expect(goalPause).not.toHaveBeenCalled();
+  });
+
+  it('goal activation exits an active tower mode', () => {
+    towerActive = true;
+    publish(
+      new GoalUpdated({
+        agentId: 'test-agent',
+        snapshot: { status: 'active' } as GoalSnapshot,
+      }),
+    );
+    expect(towerExit).toHaveBeenCalledTimes(1);
+  });
+
+  it('goal activation leaves an inactive tower mode alone', () => {
+    publish(
+      new GoalUpdated({
+        agentId: 'test-agent',
+        snapshot: { status: 'active' } as GoalSnapshot,
+      }),
+    );
+    expect(towerExit).not.toHaveBeenCalled();
+  });
+
+  it('a non-active goal update does not exit tower mode', () => {
+    towerActive = true;
+    publish(
+      new GoalUpdated({
+        agentId: 'test-agent',
+        snapshot: { status: 'paused' } as GoalSnapshot,
+      }),
+    );
+    expect(towerExit).not.toHaveBeenCalled();
   });
 });
