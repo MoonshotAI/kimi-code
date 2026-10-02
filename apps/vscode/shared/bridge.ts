@@ -41,6 +41,7 @@ export const Methods = {
 
   GetKimiSessions: "getKimiSessions",
   GetAllKimiSessions: "getAllKimiSessions",
+  IsSessionBusy: "isSessionBusy",
   GetRegisteredWorkDirs: "getRegisteredWorkDirs",
   SetWorkDir: "setWorkDir",
   BrowseWorkDir: "browseWorkDir",
@@ -194,6 +195,8 @@ function validateParams(method: RpcMethod, params: unknown): boolean {
       return isPlainObject(params) && (params["workDir"] === null || typeof params["workDir"] === "string");
     case Methods.LoadKimiSessionHistory:
       return hasNonEmptyString(params, "kimiSessionId");
+    case Methods.IsSessionBusy:
+      return hasNonEmptyString(params, "sessionId");
     case Methods.DeleteKimiSession:
       return hasNonEmptyString(params, "sessionId");
     case Methods.ForkKimiSession:
