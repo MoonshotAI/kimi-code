@@ -161,15 +161,15 @@ export class BashTool implements IBashTool {
     command: string,
   ): Promise<IHostProcess> {
     const shellCwd = getShellPathBridge(env).toShellPath(effectiveCwd);
-    const shellCommand = `cd ${shellQuote(shellCwd)} && ${command}`;
-    const noninteractiveEnv: Record<string, string> = {
+    const shellEnv: Record<string, string> = {
       NO_COLOR: '1',
       TERM: 'dumb',
       GIT_TERMINAL_PROMPT: process.env['GIT_TERMINAL_PROMPT'] ?? '0',
+      PWD: shellCwd,
       SHELL: env.shellPath,
     };
 
-    return processService.spawn(env.shellPath, ['-c', shellCommand], { env: noninteractiveEnv });
+    return processService.spawn(env.shellPath, ['-c', command], { cwd: effectiveCwd, env: shellEnv });
   }
 
   private async execution(
@@ -467,10 +467,6 @@ async function killSpawnedProcess(proc: IHostProcess): Promise<void> {
   } finally {
     await disposeProcess(proc);
   }
-}
-
-function shellQuote(s: string): string {
-  return `'${s.replaceAll("'", "'\\''")}'`;
 }
 
 const WINDOWS_NUL_REDIRECT = /(\d?&?>+\s*)[Nn][Uu][Ll](?=\s|$|[|&;)\n])/g;
