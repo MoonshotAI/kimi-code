@@ -21,7 +21,7 @@ import type {
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
-  timeout: ReturnType<typeof setTimeout>;
+  timeout?: ReturnType<typeof setTimeout>;
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
@@ -64,7 +64,7 @@ class Bridge {
 
     if (msg.id && this.pending.has(msg.id)) {
       const { resolve, reject, timeout } = this.pending.get(msg.id)!;
-      clearTimeout(timeout);
+      if (timeout !== undefined) clearTimeout(timeout);
       this.pending.delete(msg.id);
 
       if (msg.error) {
@@ -81,14 +81,16 @@ class Bridge {
     }
   };
 
-  private call<T>(method: string, params?: unknown, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS): Promise<T> {
+  private call<T>(method: string, params?: unknown, timeoutMs: number | null = DEFAULT_REQUEST_TIMEOUT_MS): Promise<T> {
     const id = `${++this.requestId}_${Date.now()}`;
 
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`Bridge ${method} timed out`));
-      }, timeoutMs);
+      const timeout = timeoutMs === null
+        ? undefined
+        : setTimeout(() => {
+          this.pending.delete(id);
+          reject(new Error(`Bridge ${method} timed out`));
+        }, timeoutMs);
 
       this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timeout });
       this.vscode.postMessage({ id, method, params, webviewId: this.webviewId });
@@ -184,7 +186,7 @@ class Bridge {
   }
 
   streamChat(content: string | ContentPart[], model: string, effort: string, planMode: boolean, sessionId?: string) {
-    return this.call<{ done: boolean }>(Methods.StreamChat, { content, model, effort, planMode, sessionId });
+    return this.call<{ done: boolean }>(Methods.StreamChat, { content, model, effort, planMode, sessionId }, null);
   }
 
   abortChat() {

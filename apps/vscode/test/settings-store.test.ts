@@ -245,6 +245,40 @@ describe("Webview MCP update bridge", () => {
       }),
     ]);
   });
+
+  it("does not expire a streamChat request at the generic ten-minute bridge timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const posted: Array<{ id: string; method: string }> = [];
+      let receiveMessage: ((event: { data: unknown }) => void) | undefined;
+      vi.stubGlobal("document", {
+        body: { getAttribute: () => "stream-test-view" },
+      });
+      vi.stubGlobal("window", {
+        addEventListener: (_type: string, listener: (event: { data: unknown }) => void) => {
+          receiveMessage = listener;
+        },
+      });
+      vi.stubGlobal("acquireVsCodeApi", () => ({
+        postMessage: (message: { id: string; method: string }) => posted.push(message),
+        getState: () => undefined,
+        setState: () => undefined,
+      }));
+      vi.resetModules();
+      const { bridge } = await import("../webview-ui/src/services/bridge");
+
+      let settled = false;
+      const pending = bridge.streamChat("long turn", "model", "off", false);
+      void pending.then(() => { settled = true; }, () => { settled = true; });
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 1);
+      expect(settled).toBe(false);
+
+      receiveMessage?.({ data: { id: posted[0]?.id, result: { done: true } } });
+      await expect(pending).resolves.toEqual({ done: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("Webview chat error recovery", () => {
