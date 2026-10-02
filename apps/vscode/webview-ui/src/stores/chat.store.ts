@@ -104,6 +104,7 @@ export interface ChatState {
 
   sendMessage: (text: string) => void;
   retryLastMessage: () => void;
+  compactAndRetry: () => Promise<void>;
   processEvent: (event: UIStreamEvent) => void;
   loadSession: (sessionId: string, events: UIStreamEvent[]) => Promise<void>;
   startNewConversation: () => Promise<void>;
@@ -246,6 +247,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
     useApprovalStore.getState().clearRequests();
 
     doSend(get(), pendingInput.content, pendingInput.model);
+  },
+
+  compactAndRetry: async () => {
+    const { pendingInput, isStreaming, isCompacting } = get();
+    if (isStreaming || isCompacting || !pendingInput) {
+      return;
+    }
+
+    // Compact first; only resend once the context has actually shrunk.
+    // retryLastMessage pops the failed turn right before resending, so the
+    // compaction card stays attached to the failed message until then.
+    try {
+      const result = await bridge.compactContext();
+      if (!result.ok) {
+        toast.error("Failed to compact the conversation context.");
+        return;
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    get().retryLastMessage();
   },
 
   processEvent: (event) => {

@@ -12,6 +12,7 @@ const boundary = vi.hoisted(() => ({
   saveConfig: vi.fn(),
   streamChat: vi.fn(),
   abortChat: vi.fn(),
+  compactContext: vi.fn(),
   trackFiles: vi.fn(),
   toastError: vi.fn(),
   toastWarning: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock("@/services", () => ({
     saveConfig: boundary.saveConfig,
     streamChat: boundary.streamChat,
     abortChat: boundary.abortChat,
+    compactContext: boundary.compactContext,
     trackFiles: boundary.trackFiles,
   },
 }));
@@ -57,6 +59,8 @@ beforeEach(() => {
   boundary.streamChat.mockResolvedValue({ done: false });
   boundary.abortChat.mockReset();
   boundary.abortChat.mockResolvedValue({ aborted: true });
+  boundary.compactContext.mockReset();
+  boundary.compactContext.mockResolvedValue({ ok: true });
   boundary.trackFiles.mockReset();
   boundary.toastError.mockReset();
   boundary.toastWarning.mockReset();
@@ -288,6 +292,62 @@ describe("Webview chat error recovery", () => {
       message: "Service temporarily unavailable.",
       detail: "HTTP 400: function name is invalid",
     });
+  });
+
+  it("compacts and then resends the pending input after a context overflow", async () => {
+    useChatStore.getState().sendMessage("too long request");
+    useChatStore.getState().processEvent({
+      type: "TurnBegin",
+      payload: { user_input: "too long request" },
+    });
+    useChatStore.getState().processEvent({
+      type: "error",
+      code: "context.overflow",
+      message: "The conversation is too long for the model's context window.",
+      detail: "Compaction failed to bring the context under the model window after 3 attempts.",
+      phase: "runtime",
+    });
+    boundary.streamChat.mockClear();
+
+    await useChatStore.getState().compactAndRetry();
+
+    expect(boundary.compactContext).toHaveBeenCalledOnce();
+    // retryLastMessage cleared the inline error and resent the same input.
+    expect(boundary.streamChat).toHaveBeenCalledTimes(1);
+    expect(boundary.streamChat).toHaveBeenCalledWith("too long request", "plain", "off", false, undefined);
+    expect(useChatStore.getState().messages.at(-1)?.inlineError).toBeUndefined();
+    expect(useChatStore.getState().isStreaming).toBe(true);
+  });
+
+  it("keeps the failed turn and does not resend when compaction fails", async () => {
+    boundary.compactContext.mockRejectedValue(new Error("No messages to compact in current history."));
+    useChatStore.getState().sendMessage("too long request");
+    useChatStore.getState().processEvent({
+      type: "TurnBegin",
+      payload: { user_input: "too long request" },
+    });
+    useChatStore.getState().processEvent({
+      type: "error",
+      code: "context.overflow",
+      message: "The conversation is too long for the model's context window.",
+      phase: "runtime",
+    });
+    boundary.streamChat.mockClear();
+
+    await useChatStore.getState().compactAndRetry();
+
+    expect(boundary.streamChat).not.toHaveBeenCalled();
+    expect(boundary.toastError).toHaveBeenCalledWith("No messages to compact in current history.");
+    expect(useChatStore.getState().messages).toHaveLength(2);
+    expect(useChatStore.getState().isStreaming).toBe(false);
+  });
+
+  it("does not compact while a response is streaming", async () => {
+    useChatStore.getState().sendMessage("start a turn");
+
+    await useChatStore.getState().compactAndRetry();
+
+    expect(boundary.compactContext).not.toHaveBeenCalled();
   });
 });
 
