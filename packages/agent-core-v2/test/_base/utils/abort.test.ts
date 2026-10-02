@@ -1,3 +1,10 @@
+/**
+ * Covers abort classification and promise ownership for abort-signal helpers.
+ *
+ * Uses real AbortController and Node rejection events. Run with:
+ * pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/_base/utils/abort.test.ts
+ */
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -38,6 +45,32 @@ describe('abortable', () => {
     controller.abort(reason);
 
     await expect(abortable(Promise.resolve('ok'), controller.signal)).rejects.toBe(reason);
+  });
+
+  it('observes the source rejection when the signal is already aborted', async () => {
+    const controller = new AbortController();
+    const reason = userCancellationReason();
+    controller.abort(reason);
+    const sourceError = new Error('source failed');
+    let rejectSource: (reason: unknown) => void = () => {};
+    const source = new Promise<never>((_resolve, reject) => {
+      rejectSource = reject;
+    });
+    let sourceWasUnhandled = false;
+    const onUnhandledRejection = (_reason: unknown, promise: Promise<unknown>): void => {
+      if (promise === source) sourceWasUnhandled = true;
+    };
+    process.on('unhandledRejection', onUnhandledRejection);
+
+    try {
+      await expect(abortable(source, controller.signal)).rejects.toBe(reason);
+      rejectSource(sourceError);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
+
+    expect(sourceWasUnhandled).toBe(false);
   });
 
   it('rejects with the signal reason when aborted while pending', async () => {
