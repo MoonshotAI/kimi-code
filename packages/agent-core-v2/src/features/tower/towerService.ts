@@ -262,6 +262,33 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       }),
     );
     this._register(
+      toolExecutor.onBeforeExecuteTool((event) => {
+        if (!this.flags.enabled(TOWER_FLAG_ID)) return;
+        if (!this.isActive) return;
+        if (event.toolCall.name === 'CreateGoal') {
+          event.veto(
+            denyToolExecution(
+              this.toolApproval.formatDenyMessage(
+                'CreateGoal is not available while tower mode is active — tower mode and goals are mutually exclusive, and the previously active goal was paused when tower mode entered. If the work genuinely needs a goal instead, exit tower mode first.',
+              ),
+            ),
+          );
+          return;
+        }
+        if (event.toolCall.name !== 'UpdateGoal') return;
+        const args = event.args;
+        if (typeof args !== 'object' || args === null) return;
+        if ((args as { readonly status?: unknown }).status !== 'active') return;
+        event.veto(
+          denyToolExecution(
+            this.toolApproval.formatDenyMessage(
+              'Resuming a goal is not available while tower mode is active — tower mode and goals are mutually exclusive. If the work genuinely needs the goal instead, exit tower mode first.',
+            ),
+          ),
+        );
+      }),
+    );
+    this._register(
       toolExecutor.onBeforeExecuteTool(async (event) => {
         if (event.toolCall.name !== 'Agent') return;
         const args = event.args;

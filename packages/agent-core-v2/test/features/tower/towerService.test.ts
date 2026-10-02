@@ -1130,6 +1130,79 @@ describe('AgentTowerService', () => {
     expect(formatDenyMessage).not.toHaveBeenCalled();
   });
 
+  function goalHookContext(
+    toolName: 'CreateGoal' | 'UpdateGoal',
+    args: Record<string, unknown>,
+  ): ResolvedToolExecutionHookContext {
+    const call = toolCall(toolName, `call_${toolName.toLowerCase()}`);
+    return {
+      turnId: 0,
+      signal,
+      toolCall: call,
+      toolCalls: [call],
+      args,
+      execution: { approvalRule: toolName, execute: async () => ({ output: '' }) },
+    };
+  }
+
+  it('vetoes CreateGoal while tower mode is active', async () => {
+    const tower = ix.get(IAgentTowerService);
+    await tower.enter();
+
+    const decision = await fire(goalHookContext('CreateGoal', { objective: 'x' }));
+
+    expect(decision).toEqual({
+      veto: {
+        output: expect.stringContaining('CreateGoal is not available while tower mode is active'),
+        isError: true,
+      },
+    });
+    expect(decision?.veto?.output).toContain('mutually exclusive');
+    expect(decision?.veto?.output).toContain('exit tower mode first');
+    expect(permissionGateRan).toBe(false);
+    expect(formatDenyMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('abstains on CreateGoal while tower mode is inactive', async () => {
+    ix.get(IAgentTowerService);
+
+    const decision = await fire(goalHookContext('CreateGoal', { objective: 'x' }));
+
+    expect(decision).toBeUndefined();
+    expect(permissionGateRan).toBe(true);
+    expect(formatDenyMessage).not.toHaveBeenCalled();
+  });
+
+  it('vetoes an UpdateGoal resume while tower mode is active', async () => {
+    const tower = ix.get(IAgentTowerService);
+    await tower.enter();
+
+    const decision = await fire(goalHookContext('UpdateGoal', { status: 'active' }));
+
+    expect(decision).toEqual({
+      veto: {
+        output: expect.stringContaining(
+          'Resuming a goal is not available while tower mode is active',
+        ),
+        isError: true,
+      },
+    });
+    expect(decision?.veto?.output).toContain('exit tower mode first');
+    expect(permissionGateRan).toBe(false);
+    expect(formatDenyMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('abstains on an UpdateGoal complete while tower mode is active', async () => {
+    const tower = ix.get(IAgentTowerService);
+    await tower.enter();
+
+    const decision = await fire(goalHookContext('UpdateGoal', { status: 'complete' }));
+
+    expect(decision).toBeUndefined();
+    expect(permissionGateRan).toBe(true);
+    expect(formatDenyMessage).not.toHaveBeenCalled();
+  });
+
   it('denies tower tools while the tower flag is off, even with the mode active', async () => {
     const tower = ix.get(IAgentTowerService);
     await tower.enter();
