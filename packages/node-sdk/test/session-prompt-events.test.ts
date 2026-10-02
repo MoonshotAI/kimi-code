@@ -771,6 +771,187 @@ describe('Session.prompt events', () => {
     }
   });
 
+  it('forks a running session clamped to the last completed turn', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      await configureFakeProvider(harness);
+      const source = await harness.createSession({ id: 'ses_turn_fork_running_source', workDir });
+      await runPrompt(source, 'first question', 'first answer');
+      await runPrompt(source, 'second question', 'second answer');
+
+      const gate = deferredResponse();
+      fetchStub!.mockImplementationOnce(() => gate.promise);
+      const started = waitForEvent(source, (event) => event.type === 'turn.started');
+      const ended = waitForEvent(source, (event) => event.type === 'turn.ended');
+      await source.prompt('third question');
+      await started;
+
+      const fork = await harness.forkSession({
+        id: source.id,
+        forkId: 'ses_turn_fork_running_child',
+      });
+      await fork.close();
+      const resumed = await harness.resumeSession({ id: fork.id });
+      const replayText = visibleReplayText(resumed.getResumeState()?.agents['main']?.replay ?? []);
+
+      expect(replayText).toEqual([
+        'user:first question',
+        'assistant:first answer',
+        'user:second question',
+        'assistant:second answer',
+      ]);
+
+      gate.resolve(sseResponse('third answer'));
+      await ended;
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('forks a running session at an explicit completed turn', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      await configureFakeProvider(harness);
+      const source = await harness.createSession({ id: 'ses_turn_fork_running_pick_source', workDir });
+      await runPrompt(source, 'first question', 'first answer');
+      await runPrompt(source, 'second question', 'second answer');
+
+      const gate = deferredResponse();
+      fetchStub!.mockImplementationOnce(() => gate.promise);
+      const started = waitForEvent(source, (event) => event.type === 'turn.started');
+      const ended = waitForEvent(source, (event) => event.type === 'turn.ended');
+      await source.prompt('third question');
+      await started;
+
+      const fork = await harness.forkSession({
+        id: source.id,
+        forkId: 'ses_turn_fork_running_pick_child',
+        turnIndex: 0,
+      });
+      await fork.close();
+      const resumed = await harness.resumeSession({ id: fork.id });
+      const replayText = visibleReplayText(resumed.getResumeState()?.agents['main']?.replay ?? []);
+
+      expect(replayText).toEqual(['user:first question', 'assistant:first answer']);
+
+      gate.resolve(sseResponse('third answer'));
+      await ended;
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('rejects an explicit turn beyond the last completed turn while running', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      await configureFakeProvider(harness);
+      const source = await harness.createSession({ id: 'ses_turn_fork_running_range_source', workDir });
+      await runPrompt(source, 'first question', 'first answer');
+      await runPrompt(source, 'second question', 'second answer');
+
+      const gate = deferredResponse();
+      fetchStub!.mockImplementationOnce(() => gate.promise);
+      const started = waitForEvent(source, (event) => event.type === 'turn.started');
+      const ended = waitForEvent(source, (event) => event.type === 'turn.ended');
+      await source.prompt('third question');
+      await started;
+
+      await expect(
+        harness.forkSession({ id: source.id, turnIndex: 2 }),
+      ).rejects.toMatchObject({
+        name: 'KimiError',
+        code: 'request.invalid',
+        details: { turnIndex: 2, availableTurns: 2 },
+      });
+
+      gate.resolve(sseResponse('third answer'));
+      await ended;
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('rejects forking a running session without any completed turn', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      await configureFakeProvider(harness);
+      const source = await harness.createSession({ id: 'ses_turn_fork_first_turn_source', workDir });
+
+      const gate = deferredResponse();
+      fetchStub!.mockImplementationOnce(() => gate.promise);
+      const started = waitForEvent(source, (event) => event.type === 'turn.started');
+      const ended = waitForEvent(source, (event) => event.type === 'turn.ended');
+      await source.prompt('first question');
+      await started;
+
+      await expect(harness.forkSession({ id: source.id })).rejects.toMatchObject({
+        name: 'KimiError',
+        code: 'session.fork_active_turn',
+      });
+
+      gate.resolve(sseResponse('first answer'));
+      await ended;
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('clamps a running fork when another prompt is queued behind the active turn', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      await configureFakeProvider(harness);
+      const source = await harness.createSession({ id: 'ses_turn_fork_queued_source', workDir });
+      await runPrompt(source, 'first question', 'first answer');
+
+      const gate = deferredResponse();
+      fetchStub!.mockImplementationOnce(() => gate.promise);
+      const started = waitForEvent(source, (event) => event.type === 'turn.started');
+      await source.prompt('second question');
+      await started;
+      await source.prompt('third question');
+
+      const fork = await harness.forkSession({
+        id: source.id,
+        forkId: 'ses_turn_fork_queued_child',
+      });
+      await fork.close();
+      const resumed = await harness.resumeSession({ id: fork.id });
+      const replayText = visibleReplayText(resumed.getResumeState()?.agents['main']?.replay ?? []);
+
+      expect(replayText).toEqual(['user:first question', 'assistant:first answer']);
+
+      const endedTurns: unknown[] = [];
+      const unsubscribe = source.onEvent((event) => {
+        if (event.type === 'turn.ended') endedTurns.push(event);
+      });
+      gate.resolve(sseResponse('second answer'));
+      await vi.waitFor(
+        () => {
+          expect(endedTurns).toHaveLength(2);
+        },
+        { timeout: 5_000 },
+      );
+      unsubscribe();
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('rejects empty prompt input', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
@@ -800,6 +981,24 @@ async function runPrompt(
   const done = waitForEvent(session, (event) => event.type === 'turn.ended');
   await session.prompt(input);
   await done;
+}
+
+function sseResponse(text: string): Response {
+  return new Response(sseBody(text), {
+    status: 200,
+    headers: { 'Content-Type': 'text/event-stream' },
+  });
+}
+
+function deferredResponse(): {
+  promise: Promise<Response>;
+  resolve: (response: Response) => void;
+} {
+  let resolve!: (response: Response) => void;
+  const promise = new Promise<Response>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
 }
 
 function visibleReplayText(
