@@ -8,7 +8,7 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
 
 import { deliverTowerMessage } from '../delivery';
-import { callerName, callerTokens, newTowerStore, runTowerTool } from '../support';
+import { callerTokens, newTowerStore, runTowerTool } from '../support';
 import DESCRIPTION from './send.md?raw';
 import { ITowerSendTool, TowerSendToolInputSchema, type TowerSendToolInput } from './send';
 
@@ -34,8 +34,11 @@ export class TowerSendTool implements ITowerSendTool {
       execute: () =>
         runTowerTool(async () => {
           const store = newTowerStore(this.sessionContext);
-          const state = await store.load();
-          const caller = callerName(this.scopeContext.agentId, store, state);
+          const resolved = await store.resolveMessagingCaller(
+            await store.loadOrRecover(),
+            this.scopeContext.agentId,
+          );
+          const caller = resolved.caller;
           const to = args.to.trim();
           const sent = await store.sendDetailed(caller, {
             to,
@@ -51,11 +54,16 @@ export class TowerSendTool implements ITowerSendTool {
               sessionBus: this.sessionBus,
               tasks: this.tasks,
               agentLifecycle: this.agentLifecycle,
-              state,
+              state: resolved.state,
             },
             sent,
           );
           const lines = [`message sent to ${args.to}\nfile: ${sent.item.file}${delivery}`];
+          if (resolved.placeholder === true) {
+            lines.push(
+              `note: the tower state was recovered after a loss, so your roster entry was reconstructed as placeholder "${caller}" — your original name and mission assignment are gone; the recovered state's recoveredAt marker reminds the tower to report the history loss to the user`,
+            );
+          }
           if (sent.activityLogError !== undefined) {
             lines.push(`activity log error: ${sent.activityLogError}`);
           }

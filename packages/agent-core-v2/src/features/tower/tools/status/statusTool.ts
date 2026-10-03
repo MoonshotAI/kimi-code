@@ -58,6 +58,9 @@ export class TowerStatusTool implements ITowerStatusTool {
             concurrency: () => this.rateLimit.snapshot(),
           });
           if (!status.initialized) {
+            if (status.stateLost) {
+              return { output: renderStateLostReport() };
+            }
             return {
               output: 'tower is not initialized in this repository — run TowerInit first',
               isError: true,
@@ -68,6 +71,7 @@ export class TowerStatusTool implements ITowerStatusTool {
           const sections: string[] = [
             `# Tower status — base: ${state.base} (mode: ${state.mode}), you are: ${caller}`,
             '',
+            ...renderRecoveredAtWarning(state),
             '## Missions',
             '',
             ...renderMissions(state),
@@ -115,6 +119,31 @@ export class TowerStatusTool implements ITowerStatusTool {
         }),
     };
   }
+}
+
+function renderStateLostReport(): string {
+  return [
+    '# Tower status — STATE LOST',
+    '',
+    '.tower/comms/state.json is missing but the .tower/ directory still exists — this tower was initialized here before, and its comms state was deleted (e.g. by git clean). All recorded mission, roster, and review history is lost.',
+    '',
+    'Report this history loss to the user now — continuing silently would pretend the loss never happened.',
+    '',
+    'What still works:',
+    '- TowerSend and TowerComplete recover a minimal state automatically (stamped recoveredAt, base taken from the current checkout branch) and keep delivering messages — worker reports are not lost.',
+    '- TowerMerge and TowerRebase refuse with an explicit state-lost error instead of silently running against an empty history.',
+    '- Mission branches and worktrees under .tower/worktrees survive on disk; re-plan from that evidence only after the user decides how to proceed.',
+  ].join('\n');
+}
+
+function renderRecoveredAtWarning(state: TowerStatusState): string[] {
+  if (state.recoveredAt === undefined) return [];
+  return [
+    '## ⚠️ State recovered after a loss',
+    '',
+    `This tower's state was reconstructed at ${state.recoveredAt} after .tower/comms/state.json was lost — every mission, roster entry, and review from before that point is gone, so the lists below are the recovered minimum, not reality. Report the history loss to the user before continuing routine orchestration.`,
+    '',
+  ];
 }
 
 function renderReviewGate(

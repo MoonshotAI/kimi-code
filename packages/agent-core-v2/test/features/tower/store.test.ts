@@ -390,6 +390,155 @@ describe('release', () => {
   });
 });
 
+describe('state loss degradation', () => {
+  async function destroyComms(): Promise<void> {
+    await rm(join(repo, '.tower/comms'), { recursive: true, force: true });
+  }
+
+  it('reports never-initialized (not state-lost) when .tower never existed', async () => {
+    expect(await store.isInitialized()).toBe(false);
+    expect(await store.isStateLost()).toBe(false);
+    await expect(store.load()).rejects.toThrow(
+      'tower is not initialized in this repository — run TowerInit first',
+    );
+    await expect(store.loadOrRecover()).rejects.toThrow(
+      'tower is not initialized in this repository — run TowerInit first',
+    );
+    await expect(store.merge('feat/x')).rejects.toThrow(
+      'tower is not initialized in this repository — run TowerInit first',
+    );
+  });
+
+  it('detects state loss when comms is deleted but .tower survives', async () => {
+    await store.init();
+    await destroyComms();
+
+    expect(await store.isInitialized()).toBe(false);
+    expect(await store.isStateLost()).toBe(true);
+    await expect(store.load()).rejects.toThrow('tower state was lost');
+    await expect(store.load()).rejects.not.toThrow('not initialized');
+  });
+
+  it('refuses locked mutations like merge and rebaseMission with an explicit state-lost error, recovering nothing', async () => {
+    await store.init();
+    const mission = await setupMission({
+      title: 'engine work',
+      scope: 'src/engine/**',
+      file: 'src/engine/a.ts',
+      content: 'export {}\n',
+    });
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: mission.branch }),
+    );
+    await cleanReview('rev', mission.branch);
+    await destroyComms();
+
+    await expect(store.merge(mission.branch)).rejects.toThrow('tower state was lost');
+    await expect(store.merge(mission.branch)).rejects.not.toThrow('not initialized');
+    await expect(store.rebaseMission('tower', mission.id)).rejects.toThrow('tower state was lost');
+
+    expect(await store.isInitialized()).toBe(false);
+    expect(await git(repo, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('main');
+  });
+
+  it('recovers a minimal state stamped recoveredAt with the current checkout branch as base', async () => {
+    await store.init();
+    await git(repo, 'checkout', '-b', 'hotfix');
+    await destroyComms();
+
+    const state = await store.loadOrRecover();
+
+    expect(state.base).toBe('hotfix');
+    expect(state.mode).toBe('branch');
+    expect(state.recoveredAt).toBeTruthy();
+    expect(state.missions).toEqual([]);
+    expect(state.roster.agents).toEqual([]);
+    for (const sub of ['inbox', 'findings', 'reviews', 'missions', 'log']) {
+      expect((await stat(join(repo, '.tower/comms', sub))).isDirectory()).toBe(true);
+    }
+    expect((await stat(join(repo, '.tower/comms/MISSIONS.md'))).isFile()).toBe(true);
+    const log = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
+    expect(log).toContain('state.recovered');
+    expect(log).toContain('base=hotfix');
+
+    expect((await store.load()).recoveredAt).toBe(state.recoveredAt);
+    expect((await store.loadOrRecover()).recoveredAt).toBe(state.recoveredAt);
+  });
+
+  it('recovers exactly once under concurrent loadOrRecover calls', async () => {
+    await store.init();
+    await destroyComms();
+
+    const [a, b] = await Promise.all([store.loadOrRecover(), store.loadOrRecover()]);
+
+    expect(a.recoveredAt).toBeTruthy();
+    expect(a.recoveredAt).toBe(b.recoveredAt);
+  });
+
+  it('registers a placeholder roster entry for an unknown caller of a recovered state', async () => {
+    await store.init();
+    await destroyComms();
+    const recovered = await store.loadOrRecover();
+
+    const resolved = await store.resolveMessagingCaller(recovered, 'agent-99');
+
+    expect(resolved.caller).toBe('agent-99');
+    expect(resolved.placeholder).toBe(true);
+    expect(resolved.state.roster.agents).toEqual([
+      expect.objectContaining({
+        name: 'agent-99',
+        agentId: 'agent-99',
+        kind: 'worker',
+        spawnedAt: recovered.recoveredAt,
+      }),
+    ]);
+    const log = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
+    expect(log).toContain('roster.placeholder');
+
+    const again = await store.resolveMessagingCaller(resolved.state, 'agent-99');
+    expect(again.caller).toBe('agent-99');
+    expect(again.placeholder).toBeUndefined();
+    expect((await store.load()).roster.agents).toHaveLength(1);
+
+    const asTower = await store.resolveMessagingCaller(resolved.state, 'main');
+    expect(asTower.caller).toBe('tower');
+    expect(asTower.placeholder).toBeUndefined();
+  });
+
+  it('still rejects unknown callers when the state was never recovered', async () => {
+    await store.init();
+
+    await expect(store.resolveMessagingCaller(await store.load(), 'agent-99')).rejects.toThrow(
+      'not a tower participant',
+    );
+  });
+
+  it('delivers a degraded TowerComplete report without marking any mission completed', async () => {
+    await store.init();
+    await destroyComms();
+    const recovered = await store.loadOrRecover();
+    const { caller } = await store.resolveMessagingCaller(recovered, 'agent-99');
+
+    const result = await store.complete(caller, 'the work is done — full details');
+
+    expect(result.mission).toBeUndefined();
+    expect(result.recoveredAt).toBe(recovered.recoveredAt);
+    expect(result.notificationCreated).toBe(true);
+    expect(result.message?.item).toMatchObject({
+      from: 'agent-99',
+      to: 'tower',
+      subject: 'completion-report-state-lost',
+      body: 'the work is done — full details',
+    });
+
+    const retry = await store.complete(caller, 'the work is done — full details');
+    expect(retry.notificationCreated).toBe(false);
+    expect(retry.message?.item.file).toBe(result.message?.item.file);
+
+    expect((await store.load()).missions).toEqual([]);
+  });
+});
+
 describe('markAgentDied', () => {
   it('marks the roster entry and appends an activity log line', async () => {
     await store.init('session-a');

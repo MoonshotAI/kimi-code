@@ -40,6 +40,7 @@ import {
   REVIEWS_DIR,
   STATE_FILE,
   TOWER_NAME,
+  TOWER_ROOT,
   WORKTREES_DIR,
   isReservedTowerAgentName,
   dateDash,
@@ -124,7 +125,8 @@ export interface TowerSendResult {
 }
 
 export interface TowerCompleteResult {
-  readonly mission: TowerMission;
+  readonly mission?: TowerMission;
+  readonly recoveredAt?: string;
   readonly message?: TowerSendResult;
   readonly notificationCreated: boolean;
   readonly notificationError?: string;
@@ -382,9 +384,7 @@ export class TowerStore {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === 'EEXIST') return false;
       if (code === 'ENOENT') {
-        throw new TowerProtocolError(
-          'tower is not initialized in this repository — run TowerInit first',
-        );
+        throw await this.stateMissingError();
       }
       throw error;
     }
@@ -397,6 +397,22 @@ export class TowerStore {
     } catch {
       return false;
     }
+  }
+
+  async isStateLost(): Promise<boolean> {
+    if (await this.isInitialized()) return false;
+    return existsSync(this.abs(TOWER_ROOT));
+  }
+
+  private async stateMissingError(): Promise<TowerProtocolError> {
+    if (await this.isStateLost()) {
+      return new TowerProtocolError(
+        'tower state was lost: .tower/comms/state.json is missing but the .tower/ directory still exists — the tower was initialized here and its comms state was deleted (e.g. by git clean), so all recorded mission, roster, and review history is gone. This operation is refused instead of silently running against an empty history; TowerStatus reports the loss, and TowerSend/TowerComplete recover a minimal state (stamped recoveredAt) automatically',
+      );
+    }
+    return new TowerProtocolError(
+      'tower is not initialized in this repository — run TowerInit first',
+    );
   }
 
   async ensureRepository(base?: string): Promise<void> {
@@ -606,15 +622,79 @@ export class TowerStore {
     try {
       raw = await readFile(this.abs(STATE_FILE), 'utf8');
     } catch {
-      throw new TowerProtocolError(
-        'tower is not initialized in this repository — run TowerInit first',
-      );
+      throw await this.stateMissingError();
     }
     const state = JSON.parse(raw) as TowerState;
     for (const mission of state.missions) {
       mission.kind ??= 'build';
     }
     return state;
+  }
+
+  async loadOrRecover(): Promise<TowerState> {
+    if (await this.isInitialized()) return this.load();
+    if (!(await this.isStateLost())) {
+      throw new TowerProtocolError(
+        'tower is not initialized in this repository — run TowerInit first',
+      );
+    }
+    return this.recoverMinimalState();
+  }
+
+  private async recoverMinimalState(): Promise<TowerState> {
+    for (const dir of [INBOX_DIR, FINDINGS_DIR, REVIEWS_DIR, MISSIONS_DIR, LOG_DIR, WORKTREES_DIR]) {
+      await mkdir(this.abs(dir), { recursive: true });
+    }
+    return this.withStateLock(async () => {
+      if (await this.isInitialized()) return this.load();
+      const checkout = await this.checkedOutBranch();
+      if (checkout === 'HEAD') {
+        throw new TowerProtocolError(
+          'tower state was lost and the checkout is on a detached HEAD — the recovered minimal state takes the current checkout branch as its base, which a detached HEAD cannot provide; check out the previous base branch and retry, or run TowerInit with an explicit base',
+        );
+      }
+      const now = new Date().toISOString();
+      const state: TowerState = {
+        version: 1,
+        base: checkout,
+        mode: 'branch',
+        createdAt: now,
+        recoveredAt: now,
+        roster: { agents: [] },
+        missions: [],
+      };
+      await this.save(state);
+      await this.renderMissionsIndex(state);
+      await this.appendLog(
+        TOWER_NAME,
+        'state.recovered',
+        { base: checkout, recovered_at: now },
+        MISSIONS_INDEX,
+      );
+      return state;
+    });
+  }
+
+  async resolveMessagingCaller(
+    state: TowerState,
+    agentId: string,
+  ): Promise<{ readonly caller: string; readonly state: TowerState; readonly placeholder?: boolean }> {
+    if (agentId === 'main' || state.recoveredAt === undefined) {
+      return { caller: this.resolveCallerName(state, agentId), state };
+    }
+    const entry = this.resolveAgent(state, agentId);
+    if (entry !== undefined) return { caller: entry.name, state };
+    await this.registerAgent({
+      name: agentId,
+      agentId,
+      kind: 'worker',
+      spawnedAt: state.recoveredAt,
+    });
+    await this.appendLog(TOWER_NAME, 'roster.placeholder', {
+      agent: agentId,
+      recovered_at: state.recoveredAt,
+    });
+    return { caller: agentId, state: await this.load(), placeholder: true };
   }
 
   private async save(state: TowerState): Promise<void> {
@@ -1227,19 +1307,22 @@ export class TowerStore {
     return this.withStateLock(async () => {
       const state = await this.load();
       const caller = this.findAgent(state, callerName);
-      if (
-        callerName === TOWER_NAME ||
-        caller?.kind !== 'worker' ||
-        caller.missionId === undefined
-      ) {
+      const ownedMission =
+        caller?.missionId !== undefined
+          ? state.missions.find((mission) => mission.id === caller.missionId)
+          : undefined;
+      if (callerName === TOWER_NAME || caller?.kind !== 'worker' || ownedMission === undefined) {
+        if (caller?.kind === 'worker' && state.recoveredAt !== undefined) {
+          return this.completeStateLostLocked(caller, trimmed, state, state.recoveredAt, tokens);
+        }
+        if (caller?.kind === 'worker' && caller.missionId !== undefined) {
+          throw new TowerProtocolError(`unknown mission "${caller.missionId}"`);
+        }
         throw new TowerProtocolError(
           `agent "${callerName}" cannot use TowerComplete — only the worker who owns a mission can complete it`,
         );
       }
-      const beforeMission = state.missions.find((mission) => mission.id === caller.missionId);
-      if (beforeMission === undefined) {
-        throw new TowerProtocolError(`unknown mission "${caller.missionId}"`);
-      }
+      const beforeMission = ownedMission;
       const wasCompleted = beforeMission.status === 'completed';
       const subject = beforeMission.kind === 'survey' ? 'survey-summary' : 'review-request';
       if (wasCompleted) {
@@ -1261,7 +1344,7 @@ export class TowerStore {
       }
       const mission = await this.updateMissionLocked(
         callerName,
-        caller.missionId,
+        beforeMission.id,
         { status: 'completed' },
         state,
       );
@@ -1295,6 +1378,56 @@ export class TowerStore {
         };
       }
     });
+  }
+
+  private async completeStateLostLocked(
+    caller: TowerRosterEntry,
+    report: string,
+    state: TowerState,
+    recoveredAt: string,
+    tokens?: number,
+  ): Promise<TowerCompleteResult> {
+    const subject = 'completion-report-state-lost';
+    const existing = (await this.listInboxItems()).find(
+      (item) =>
+        item.from === caller.name &&
+        item.to === TOWER_NAME &&
+        item.subject === subject &&
+        item.action === 'complete' &&
+        item.body === report,
+    );
+    if (existing !== undefined) {
+      return {
+        recoveredAt,
+        message: { item: existing },
+        notificationCreated: false,
+      };
+    }
+    try {
+      const message = await this.sendDetailedLocked(
+        caller.name,
+        {
+          to: TOWER_NAME,
+          subject,
+          body: report,
+          action: 'complete',
+          tokens,
+        },
+        state,
+      );
+      return {
+        recoveredAt,
+        message,
+        notificationCreated: true,
+        activityLogError: message.activityLogError,
+      };
+    } catch (error) {
+      return {
+        recoveredAt,
+        notificationCreated: false,
+        notificationError: `the tower state was recovered at ${recoveredAt} after a loss, so no mission was marked completed — and storing the degraded completion report also failed: ${error instanceof Error ? error.message : String(error)} — retry with the same report to deliver it`,
+      };
+    }
   }
 
   private async findCompletionMessage(
