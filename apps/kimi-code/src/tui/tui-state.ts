@@ -1,17 +1,18 @@
 import {
   Container,
   ProcessTerminal,
-  ScrollView,
   TuiAltScreen,
   TuiMainScreen,
   VStack,
   type TUI,
 } from '@moonshot-ai/pi-tui';
 
+import { TranscriptView } from '#/tui/components/messages/transcript-view';
 import { clipboard } from '#/utils/clipboard/clipboard-native';
 import { openUrl } from '#/utils/open-url';
 
-import { FooterComponent } from './components/chrome/footer';import { GutterContainer } from './components/chrome/gutter-container';
+import { FooterComponent } from './components/chrome/footer';
+import { GutterContainer } from './components/chrome/gutter-container';
 import type { MoonLoader, SpinnerStyle } from './components/chrome/moon-loader';
 import { NotifyPanelComponent } from './components/chrome/notify-panel';
 import { TodoPanelComponent } from './components/chrome/todo-panel';
@@ -21,8 +22,6 @@ import { DEFAULT_MARKDOWN_CONFIG, DEFAULT_TUI_CONFIG } from './config';
 import { CHROME_GUTTER } from './constant/rendering';
 import type { TasksBrowserState } from './controllers/tasks-browser';
 import { currentTheme, type Theme } from './theme';
-import { setMarkdownAltScreenActive, setMarkdownMermaidMode, setMarkdownRenderLatex, setMarkdownRenderRequester } from './utils/markdown-options';
-import { createTerminalState, type TerminalState } from './utils/terminal-state';
 import {
   INITIAL_LIVE_PANE,
   type AppState,
@@ -32,6 +31,13 @@ import {
   type TranscriptEntry,
   type TUIStartupState,
 } from './types';
+import {
+  setMarkdownAltScreenActive,
+  setMarkdownMermaidMode,
+  setMarkdownRenderLatex,
+  setMarkdownRenderRequester,
+} from './utils/markdown-options';
+import { createTerminalState, type TerminalState } from './utils/terminal-state';
 
 export interface TUIState {
   ui: TUI;
@@ -154,12 +160,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     // from basis 0 and grows; the dock keeps its intrinsic height, with the
     // editor never squeezed below its 3 rows (top border / input / bottom
     // border) and the footer below 1 — otherwise the box outline gets clipped.
-    const scrollView = new ScrollView(transcriptContainer, {
-      follow: 'end',
-      primary: true,
-      overscroll: 'chain',
-      scrollbar: 'auto',
-    });
+    const transcriptView = new TranscriptView(transcriptContainer);
     dockContainer = new VStack();
     dockContainer.addChild(activityContainer, { shrink: 1, minSize: 0 });
     dockContainer.addChild(todoPanelContainer, { shrink: 1, minSize: 0 });
@@ -169,9 +170,12 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     dockContainer.addChild(surveyContainer, { shrink: 0, minSize: 0 });
     dockContainer.addChild(editorContainer, { shrink: 1, minSize: 3 });
     const root = new VStack();
-    root.addChild(scrollView, { basis: 0, grow: 1, shrink: 1, minSize: 1 });
+    root.addChild(transcriptView, { basis: 0, grow: 1, shrink: 1, minSize: 1 });
     root.addChild(dockContainer, { basis: 'auto', grow: 0, shrink: 1, minSize: 1 });
     ui.setLayoutRoot(root);
+    ui.addLayoutEffect(() => {
+      if (ui.getLayoutRoot() === root && transcriptView.updateStickyMessage()) ui.requestRender();
+    });
   }
 
   return {
