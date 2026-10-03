@@ -3028,9 +3028,11 @@ describe('AgentTowerService', () => {
     }
 
     async function flushWake(): Promise<void> {
-      await new Promise((resolve) => {
-        setImmediate(resolve);
-      });
+      for (let i = 0; i < 50 && !loop.queue.hasPendingRequests(); i++) {
+        await new Promise((resolve) => {
+          setImmediate(resolve);
+        });
+      }
     }
 
     function drainWakeMessages(): ContextMessage[] {
@@ -3064,6 +3066,39 @@ describe('AgentTowerService', () => {
       expect(text).toContain('w1');
       expect(text).toContain('need wider scope');
       expect(text).toContain('TowerInbox');
+    });
+
+    it('warns in the wake text when the tower state was recovered after a loss', async () => {
+      const repo = await mkdtemp(join(tmpdir(), 'tower-wake-recovered-'));
+      try {
+        await initGitRepo(repo);
+        await writeFile(join(repo, 'README.md'), '# fixture\n');
+        await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
+        await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+        const store = new TowerStore(repo);
+        await store.init('session-wake');
+        const statePath = join(repo, '.tower/comms/state.json');
+        const stored = JSON.parse(await readFile(statePath, 'utf8')) as TowerState;
+        await writeFile(
+          statePath,
+          JSON.stringify({ ...stored, recoveredAt: '2026-10-03T00:00:00.000Z' }),
+        );
+
+        ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-wake' } as unknown as ISessionContext);
+        const tower = ix.get(IAgentTowerService);
+        await tower.enter();
+
+        publishInbox({ from: 'w1', to: 'tower', subject: 'after loss' });
+        await flushWake();
+        const messages = drainWakeMessages();
+
+        expect(messages).toHaveLength(1);
+        const text = wakeText(messages[0]!);
+        expect(text).toContain('recovered after a loss at 2026-10-03T00:00:00.000Z');
+        expect(text).toContain('Report the loss to the user');
+      } finally {
+        await rm(repo, { recursive: true, force: true });
+      }
     });
 
     it('coalesces a burst of inbox messages into a single wake naming the latest', async () => {
