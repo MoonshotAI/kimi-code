@@ -119,7 +119,8 @@
  *   `ISessionBtwService`; `setSwarmMode` / `swarm` → the agent scope's
  *   `IAgentSwarmService` (the v2 port of v1's `SwarmMode`), with `swarm()`
  *   recomposed over the `setSwarmMode` + `prompt` overrides; `setTowerMode` →
- *   the agent scope's `IAgentTowerService` (v2-only — the base class throws
+ *   the agent scope's `IAgentTowerService`; `getTowerStatus` → the shared
+ *   tower status summary reader (v2-only — the base class throws
  *   `not_implemented`).
  *   `createSessionWithKaos` / `resumeSessionWithKaos` deliberately keep the
  *   base class's kaos-ignoring degradation (the v2 engine has no kaos
@@ -132,6 +133,8 @@ import { join } from 'node:path';
 
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
+import { ITowerRateLimitService } from '@moonshot-ai/agent-core-v2/features/tower/towerRateLimit';
+import { readTowerStatusSummary } from '@moonshot-ai/agent-core-v2/features/tower/tools/status/statusReader';
 import { loadMcpServers } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
 import { fsSuggestRequestSchema } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
 import { IAppendLogStore } from '@moonshot-ai/agent-core-v2/persistence/interface/appendLogStore';
@@ -2242,6 +2245,18 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       await tower.exit();
     }
     await agent.accessor.get(IAgentReminderService).reconcileWhenIdle('tower_mode');
+  }
+
+  /** Reads the shared tower status summary; the main agent's tower service is authoritative. */
+  override async getTowerStatus(input: SessionIdRpcInput): Promise<string> {
+    const agent = await this.materializeMainAgent(this.requireLiveSession(input.sessionId));
+    return readTowerStatusSummary({
+      active: agent.accessor.get(IAgentTowerService).isActive,
+      cwd: agent.accessor.get(ISessionContext).cwd,
+      agentId: MAIN_AGENT_ID,
+      tasks: agent.accessor.get(IAgentTaskService),
+      concurrency: () => agent.accessor.get(ITowerRateLimitService).snapshot(),
+    });
   }
 
   // -----------------------------------------------------------------------

@@ -1,10 +1,13 @@
 import { IAgentScopeContext, agentContextOfScope } from '#/agent/scopeContext/scopeContext';
-import { resolveMissionByBranch } from '#/features/tower/protocol/index';
+import { IAgentTaskService } from '#/agent/task/task';
+import { ISessionEventBus } from '#/app/event/eventBus';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
 
+import { deliverTowerMessage } from '../delivery';
 import { callerName, callerTokens, newTowerStore, runTowerTool } from '../support';
 import DESCRIPTION from './review.md?raw';
 import {
@@ -23,6 +26,9 @@ export class TowerReviewTool implements ITowerReviewTool {
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ISessionUsageService private readonly usage: ISessionUsageService,
+    @ISessionEventBus private readonly sessionBus: ISessionEventBus,
+    @IAgentTaskService private readonly tasks: IAgentTaskService,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) {}
 
   resolveExecution(args: TowerReviewToolInput): ToolExecution {
@@ -34,7 +40,7 @@ export class TowerReviewTool implements ITowerReviewTool {
           const store = newTowerStore(this.sessionContext);
           const state = await store.load();
           const caller = callerName(this.scopeContext.agentId, store, state);
-          const rel = await store.submitReview(caller, {
+          const result = await store.submitReview(caller, {
             target: args.target,
             status: args.status,
             merge: args.merge,
@@ -43,28 +49,53 @@ export class TowerReviewTool implements ITowerReviewTool {
             decision: args.decision,
             tokens: callerTokens(this.usage, agentContextOfScope(this.scopeContext)),
           });
-          const lines = [`review submitted: ${rel}`];
-          if (args.status === 'clean') {
+          const delivery = result.storedMessages
+            .map((message) =>
+              deliverTowerMessage(
+                {
+                  sessionBus: this.sessionBus,
+                  tasks: this.tasks,
+                  agentLifecycle: this.agentLifecycle,
+                  state,
+                },
+                message,
+              ),
+            )
+            .join('');
+          const notified = result.storedMessages.map((message) => message.item.to);
+          const lines = [
+            `review submitted: ${result.review.file}`,
+            `notified: ${notified.length > 0 ? notified.join(', ') : '(none)'}`,
+          ];
+          if (result.notificationError !== undefined) {
+            lines.push(`notification error: ${result.notificationError}`);
+          }
+          if (result.activityLogError !== undefined) {
+            lines.push(`activity log error: ${result.activityLogError}`);
+          }
+          if (args.status === 'clean' && args.merge === 'merge') {
             lines.push(
               `next: ${args.target} is merge-ready — the tower can TowerMerge it in Dependency Flow order.`,
             );
+          } else if (args.status === 'clean') {
+            lines.push(
+              args.merge === 'hold'
+                ? `next: ${args.target} is blocked by the latest review's "hold" verdict — the merge gate rejects it; do not TowerMerge until a later clean review with merge verdict "merge" supersedes it.`
+                : `next: ${args.target} is not merge-approved — "fix-then-merge" is not approval; the merge gate requires a clean review with merge verdict "merge" before TowerMerge.`,
+            );
           } else {
-            const owner = resolveMissionByBranch(state, args.target)?.owner;
-            const worker = owner === undefined ? undefined : store.findAgent(state, owner);
-            if (owner !== undefined && worker !== undefined) {
-              lines.push(
-                `next: resume ${owner} with this review file (${rel}): Agent(resume="${worker.agentId}", run_in_background=true, prompt="...") — never foreground: its output flows back through the tower protocol files. The branch must be fixed and re-reviewed before it can merge.`,
-              );
-            } else {
-              lines.push(
-                `next: no worker on record owns ${args.target} — route this review file (${rel}) through the tower so it can reassign the fixes.`,
-              );
-            }
+            lines.push(
+              `next: ${args.target} is not merge-ready — the gate requires a clean review with merge verdict "merge" on the exact tip; the author must fix and re-review.`,
+            );
           }
-          lines.push(
-            'Also notify the branch author (or the tower) with TowerSend so the verdict is seen.',
-          );
-          return { output: lines.join('\n') };
+          if (delivery.length > 0) lines.push(delivery);
+          return {
+            output: lines.join('\n'),
+            isError:
+              result.notificationError === undefined && result.activityLogError === undefined
+                ? undefined
+                : true,
+          };
         }),
     };
   }

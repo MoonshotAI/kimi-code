@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -32,6 +33,8 @@ import type {
 } from '#/agent/toolExecutor/toolHooks';
 import { STATE_FILE, TowerStore, type TowerState } from '#/features/tower/protocol/index';
 import { TowerSendTool } from '#/features/tower/tools/send/sendTool';
+import { TowerReviewTool } from '#/features/tower/tools/review/reviewTool';
+import { TowerCompleteTool } from '#/features/tower/tools/complete/completeTool';
 import {
   IAgentTowerService,
   TOWER_FLAG_ID,
@@ -40,7 +43,7 @@ import {
 } from '#/features/tower/tower';
 import { _setTowerFeatureAssembledForTests } from '#/features/tower/towerFeature';
 import { AgentTowerService, TOWER_INBOX_WAKE_VARIANT, TOWER_MODE_TOOLS } from '#/features/tower/towerService';
-import { towerKey, TowerInboxSent } from '#/features/tower/towerOps';
+import { towerKey, TowerInboxSent, type TowerInboxSentPayload } from '#/features/tower/towerOps';
 import { TaskTerminatedNotice } from '#/agent/task/taskOps';
 import { IAgentTaskService } from '#/agent/task/task';
 import { SubagentStarted } from '#/session/subagent/mirrorAgentRun';
@@ -50,6 +53,8 @@ import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+import { IBashParserService } from '#/app/bashParser/bashParser';
+import { BashParserService } from '#/app/bashParser/bashParserService';
 import { IConfigService } from '#/app/config/config';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { IFlagService } from '#/app/flag/flag';
@@ -317,6 +322,31 @@ describe('AgentTowerService', () => {
     expect(events).toEqual([{ type: 'agent.status.updated', towerMode: true }]);
   });
 
+  it('offers non-waiting branch leases and always releases them', async () => {
+    const tower = ix.get(IAgentTowerService);
+    let release!: () => void;
+    const running = tower.withBranchLease(
+      'feat/leased',
+      () => new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    expect(tower.isBranchLeased('feat/leased')).toBe(true);
+    await expect(tower.withBranchLease('feat/leased', () => Promise.resolve())).rejects.toThrow(
+      /not waiting/,
+    );
+    await tower.withBranchLease('feat/other', () => Promise.resolve());
+    release();
+    await running;
+    expect(tower.isBranchLeased('feat/leased')).toBe(false);
+
+    await expect(
+      tower.withBranchLease('feat/leased', () => Promise.reject(new Error('boom'))),
+    ).rejects.toThrow('boom');
+    expect(tower.isBranchLeased('feat/leased')).toBe(false);
+  });
+
   it('tracks tower_mode_enter and tower_mode_exit on transitions only', async () => {
     const tower = ix.get(IAgentTowerService);
 
@@ -335,7 +365,7 @@ describe('AgentTowerService', () => {
     expect(telemetryTrack2).not.toHaveBeenCalled();
   });
 
-  it('enter(base) records the requested base; exit clears it', async () => {
+  it('enter(base) prepares the workspace base and records the session owner', async () => {
     const repo = await mkdtemp(join(tmpdir(), 'tower-enter-base-'));
     try {
       await initGitRepo(repo);
@@ -346,17 +376,15 @@ describe('AgentTowerService', () => {
       ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-base' } as unknown as ISessionContext);
       const tower = ix.get(IAgentTowerService);
 
-      expect(tower.requestedBase).toBeUndefined();
       await tower.enter('develop');
 
       expect(tower.isActive).toBe(true);
-      expect(tower.requestedBase).toBe('develop');
       const state = await new TowerStore(repo).load();
       expect(state.base).toBe('develop');
       expect(state.sessionId).toBe('session-base');
 
       await tower.exit();
-      expect(tower.requestedBase).toBeUndefined();
+      expect(tower.isActive).toBe(false);
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
@@ -375,7 +403,6 @@ describe('AgentTowerService', () => {
       await tower.enter('integration');
 
       expect(tower.isActive).toBe(true);
-      expect(tower.requestedBase).toBe('integration');
       const { stdout: checkout } = await execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repo });
       expect(checkout.trim()).toBe('integration');
       const { stdout: branchTip } = await execFileAsync('git', ['rev-parse', 'integration'], { cwd: repo });
@@ -402,7 +429,6 @@ describe('AgentTowerService', () => {
       await expect(tower.enter('no..dots')).rejects.toThrow('git checkout -b no..dots failed');
 
       expect(tower.isActive).toBe(false);
-      expect(tower.requestedBase).toBeUndefined();
       expect(addedTools).toEqual([]);
       expect(await new TowerStore(repo).isInitialized()).toBe(false);
     } finally {
@@ -426,7 +452,6 @@ describe('AgentTowerService', () => {
       await tower.enter('develop');
 
       expect(tower.isActive).toBe(true);
-      expect(tower.requestedBase).toBe('develop');
       const state = await store.load();
       expect(state.base).toBe('develop');
       const { stdout: checkout } = await execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repo });
@@ -452,7 +477,6 @@ describe('AgentTowerService', () => {
       await tower.enter('add-new-feature');
 
       expect(tower.isActive).toBe(true);
-      expect(tower.requestedBase).toBe('add-new-feature');
       const { stdout: checkout } = await execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repo });
       expect(checkout.trim()).toBe('add-new-feature');
       const { stdout: status } = await execFileAsync('git', ['status', '--porcelain'], { cwd: repo });
@@ -465,26 +489,26 @@ describe('AgentTowerService', () => {
     }
   });
 
-  it('enter(base) refuses to rebase while missions are open and creates nothing', async () => {
-    const repo = await mkdtemp(join(tmpdir(), 'tower-enter-rebase-blocked-'));
+  it('enter(base) re-anchors the workspace while missions are open', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'tower-enter-reanchor-'));
     try {
       await initGitRepo(repo);
       await writeFile(join(repo, 'README.md'), '# fixture\n');
       await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
       await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+      await execFileAsync('git', ['branch', 'develop'], { cwd: repo });
       const store = new TowerStore(repo);
       await store.init('session-previous', 'main');
       await store.plan([{ title: 'engine', scope: ['src/engine/**'] }]);
       ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-next' } as unknown as ISessionContext);
       const tower = ix.get(IAgentTowerService);
 
-      await expect(tower.enter('add-new-feature')).rejects.toThrow('open mission(s)');
+      await tower.enter('develop');
 
-      expect(tower.isActive).toBe(false);
-      expect(tower.requestedBase).toBeUndefined();
-      const { stdout: branches } = await execFileAsync('git', ['branch', '--list', 'add-new-feature'], { cwd: repo });
-      expect(branches.trim()).toBe('');
-      expect((await store.load()).base).toBe('main');
+      expect(tower.isActive).toBe(true);
+      const state = await store.load();
+      expect(state.base).toBe('develop');
+      expect(state.missions).toHaveLength(1);
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
@@ -550,7 +574,6 @@ describe('AgentTowerService', () => {
       await expect(tower.enter('integration')).rejects.toThrow('unmerged paths');
 
       expect(tower.isActive).toBe(false);
-      expect(tower.requestedBase).toBeUndefined();
       const { stdout: branches } = await execFileAsync('git', ['branch', '--list', 'integration'], { cwd: repo });
       expect(branches.trim()).toBe('');
       expect(await new TowerStore(repo).isInitialized()).toBe(false);
@@ -559,7 +582,7 @@ describe('AgentTowerService', () => {
     }
   });
 
-  it('re-enter while active updates only the requested base', async () => {
+  it('re-enter while active only prepares the base again and does not re-dispatch', async () => {
     const repo = await mkdtemp(join(tmpdir(), 'tower-enter-rebase-'));
     try {
       await initGitRepo(repo);
@@ -579,20 +602,16 @@ describe('AgentTowerService', () => {
       );
 
       await tower.enter();
-      expect(tower.requestedBase).toBeUndefined();
 
       await tower.enter('develop');
       expect(tower.isActive).toBe(true);
-      expect(tower.requestedBase).toBe('develop');
+      expect((await new TowerStore(repo).load()).base).toBe('develop');
 
       await tower.enter('develop');
       await tower.enter();
-      expect(tower.requestedBase).toBe('develop');
+      expect(tower.isActive).toBe(true);
 
-      expect(events).toEqual([
-        { type: 'agent.status.updated', towerMode: true },
-        { type: 'agent.status.updated', towerMode: true },
-      ]);
+      expect(events).toEqual([{ type: 'agent.status.updated', towerMode: true }]);
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
@@ -962,7 +981,6 @@ describe('AgentTowerService', () => {
 
       await tower.enter('develop');
 
-      expect(tower.requestedBase).toBe('develop');
       expect((await store.load()).base).toBe('develop');
     } finally {
       await rm(repo, { recursive: true, force: true });
@@ -1108,6 +1126,79 @@ describe('AgentTowerService', () => {
     await tower.enter();
 
     const decision = await fire(hookContext([toolCall('Bash', 'call_bash')]));
+
+    expect(decision).toBeUndefined();
+    expect(permissionGateRan).toBe(true);
+    expect(formatDenyMessage).not.toHaveBeenCalled();
+  });
+
+  function goalHookContext(
+    toolName: 'CreateGoal' | 'UpdateGoal',
+    args: Record<string, unknown>,
+  ): ResolvedToolExecutionHookContext {
+    const call = toolCall(toolName, `call_${toolName.toLowerCase()}`);
+    return {
+      turnId: 0,
+      signal,
+      toolCall: call,
+      toolCalls: [call],
+      args,
+      execution: { approvalRule: toolName, execute: async () => ({ output: '' }) },
+    };
+  }
+
+  it('vetoes CreateGoal while tower mode is active', async () => {
+    const tower = ix.get(IAgentTowerService);
+    await tower.enter();
+
+    const decision = await fire(goalHookContext('CreateGoal', { objective: 'x' }));
+
+    expect(decision).toEqual({
+      veto: {
+        output: expect.stringContaining('CreateGoal is not available while tower mode is active'),
+        isError: true,
+      },
+    });
+    expect(decision?.veto?.output).toContain('mutually exclusive');
+    expect(decision?.veto?.output).toContain('exit tower mode first');
+    expect(permissionGateRan).toBe(false);
+    expect(formatDenyMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('abstains on CreateGoal while tower mode is inactive', async () => {
+    ix.get(IAgentTowerService);
+
+    const decision = await fire(goalHookContext('CreateGoal', { objective: 'x' }));
+
+    expect(decision).toBeUndefined();
+    expect(permissionGateRan).toBe(true);
+    expect(formatDenyMessage).not.toHaveBeenCalled();
+  });
+
+  it('vetoes an UpdateGoal resume while tower mode is active', async () => {
+    const tower = ix.get(IAgentTowerService);
+    await tower.enter();
+
+    const decision = await fire(goalHookContext('UpdateGoal', { status: 'active' }));
+
+    expect(decision).toEqual({
+      veto: {
+        output: expect.stringContaining(
+          'Resuming a goal is not available while tower mode is active',
+        ),
+        isError: true,
+      },
+    });
+    expect(decision?.veto?.output).toContain('exit tower mode first');
+    expect(permissionGateRan).toBe(false);
+    expect(formatDenyMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('abstains on an UpdateGoal complete while tower mode is active', async () => {
+    const tower = ix.get(IAgentTowerService);
+    await tower.enter();
+
+    const decision = await fire(goalHookContext('UpdateGoal', { status: 'complete' }));
 
     expect(decision).toBeUndefined();
     expect(permissionGateRan).toBe(true);
@@ -2671,13 +2762,17 @@ describe('AgentTowerService', () => {
       await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
       const store = new TowerStore(repo);
       await store.init('session-main');
+      await store.plan([{ title: 'Build engine', scope: ['src/engine/**'] }]);
+      await execFileAsync('git', ['branch', 'feat/build-engine'], { cwd: repo });
       await store.registerAgent({
         name: 'w1',
         kind: 'worker',
         agentId: 'agent-w1',
         sessionId: 'session-main',
+        missionId: 'M1',
         spawnedAt: new Date().toISOString(),
       });
+      await store.updateMission('tower', 'M1', { owner: 'w1' }, { silent: true });
       await store.registerAgent({
         name: 'w2',
         kind: 'worker',
@@ -2709,6 +2804,7 @@ describe('AgentTowerService', () => {
         bus,
         { list: () => [] } as unknown as IAgentTaskService,
         undefined as unknown as ISessionUsageService,
+        { handleOf: () => undefined } as unknown as IAgentLifecycleService,
       );
       const result = await executeTool(tool, { turnId: 0, toolCallId: 'call_send', args: input, signal });
       expect(result.isError).toBeFalsy();
@@ -2718,6 +2814,25 @@ describe('AgentTowerService', () => {
       await sendAs('agent-w1', { to: 'tower', subject: 'need wider scope', body: 'x' });
 
       expect(sent).toEqual([{ from: 'w1', to: 'tower', subject: 'need wider scope' }]);
+    });
+
+    it('includes stored message references and mission metadata in the inbox event', async () => {
+      let payload: TowerInboxSent | undefined;
+      disposables.add(
+        bus.subscribe(TowerInboxSent, (event) => {
+          payload = event;
+        }),
+      );
+
+      await sendAs('agent-w1', { to: 'tower', subject: 'digest me', body: 'x' });
+
+      expect(payload?.messageId).toBeTruthy();
+      expect(payload?.file).toBeTruthy();
+      expect(payload?.sentAt).toBeTruthy();
+      expect(payload?.missionId).toBe('M1');
+      const raw = await readFile(join(repo, payload!.file!), 'utf8');
+      expect(raw).toContain(payload!.messageId);
+      expect(raw).toContain(payload!.sentAt);
     });
 
     it('publishes an inbox event when a worker broadcasts', async () => {
@@ -2737,6 +2852,166 @@ describe('AgentTowerService', () => {
 
       expect(sent).toEqual([]);
     });
+
+    it('steers a non-clean review to its owner and wakes the tower without duplicate messages', async () => {
+      const store = new TowerStore(repo);
+      await store.registerAgent({
+        name: 'r1',
+        kind: 'reviewer',
+        agentId: 'agent-r1',
+        sessionId: 'session-main',
+        reviewTarget: 'feat/build-engine',
+        reviewMissionId: 'M1',
+        spawnedAt: new Date().toISOString(),
+      });
+      const submissions: string[] = [];
+      const lockStates: boolean[] = [];
+      disposables.add(
+        bus.subscribe(TowerInboxSent, () => {
+          lockStates.push(existsSync(join(repo, `${STATE_FILE}.lock`)));
+        }),
+      );
+      const ownerLoop = {
+        snapshot: () => ({ state: 'running' }),
+        submit: (entry: unknown) => {
+          lockStates.push(existsSync(join(repo, `${STATE_FILE}.lock`)));
+          submissions.push(JSON.stringify(entry));
+        },
+      };
+      const tool = new TowerReviewTool(
+        { cwd: repo } as unknown as ISessionContext,
+        makeAgentScopeContext({ agentId: 'agent-r1', agentScope: testWireScope('wire', 'tower-test'), generation: 0 }),
+        undefined as unknown as ISessionUsageService,
+        bus,
+        {
+          list: () => {
+            lockStates.push(existsSync(join(repo, `${STATE_FILE}.lock`)));
+            return [];
+          },
+        } as unknown as IAgentTaskService,
+        {
+          handleOf: (agentId: string) =>
+            agentId === 'agent-w1'
+              ? {
+                  accessor: {
+                    get: (token: unknown) => (token === IAgentLoopService ? ownerLoop : undefined),
+                  },
+                }
+              : undefined,
+        } as unknown as IAgentLifecycleService,
+      );
+
+      const result = await executeTool(tool, {
+        turnId: 0,
+        toolCallId: 'call_review',
+        args: {
+          target: 'feat/build-engine',
+          status: 'p1-1items',
+          merge: 'hold',
+          findings: 'problem',
+          decision: 'fix it',
+        },
+        signal,
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(result.output).toContain('notified: w1, tower');
+      expect(submissions).toHaveLength(1);
+      expect(submissions[0]).toContain('review-result');
+      expect(sent).toEqual([{ from: 'r1', to: 'tower', subject: 'review-result' }]);
+      const messages = await store.readInbox('tower', 20);
+      expect(messages.filter((item) => item.subject === 'review-result')).toHaveLength(2);
+      expect(messages.filter((item) => item.to === 'w1')).toHaveLength(1);
+      expect(messages.filter((item) => item.to === 'tower')).toHaveLength(1);
+      expect(lockStates.length).toBeGreaterThan(0);
+      expect(lockStates).not.toContain(true);
+    });
+
+    it('wakes the tower for TowerComplete only after the state lock is released', async () => {
+      await execFileAsync('git', ['checkout', 'feat/build-engine'], { cwd: repo });
+      await mkdir(join(repo, 'src/engine'), { recursive: true });
+      await writeFile(join(repo, 'src/engine/engine.ts'), 'export const engine = 1;\n');
+      await execFileAsync('git', ['add', 'src/engine/engine.ts'], { cwd: repo });
+      await execFileAsync('git', ['commit', '-m', 'engine work'], { cwd: repo });
+      await execFileAsync('git', ['checkout', 'main'], { cwd: repo });
+      const lockStates: boolean[] = [];
+      disposables.add(
+        bus.subscribe(TowerInboxSent, () => {
+          lockStates.push(existsSync(join(repo, `${STATE_FILE}.lock`)));
+        }),
+      );
+      const tool = new TowerCompleteTool(
+        { cwd: repo } as unknown as ISessionContext,
+        makeAgentScopeContext({ agentId: 'agent-w1', agentScope: testWireScope('wire', 'tower-test'), generation: 0 }),
+        undefined as unknown as ISessionUsageService,
+        bus,
+        { list: () => [] } as unknown as IAgentTaskService,
+        { handleOf: () => undefined } as unknown as IAgentLifecycleService,
+      );
+
+      const result = await executeTool(tool, {
+        turnId: 0,
+        toolCallId: 'call_complete',
+        args: { report: 'completed the engine' },
+        signal,
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(result.output).toContain('mission M1 persisted as completed');
+      expect(sent).toEqual([{ from: 'w1', to: 'tower', subject: 'review-request' }]);
+      expect(lockStates).toEqual([false]);
+      const store = new TowerStore(repo);
+      expect((await store.load()).missions[0]?.status).toBe('completed');
+      expect((await store.readInbox('tower', 20)).filter((item) => item.action === 'complete')).toHaveLength(1);
+    });
+
+    it('redelivers a reused completion message after an initial publish failure', async () => {
+      await execFileAsync('git', ['checkout', 'feat/build-engine'], { cwd: repo });
+      await mkdir(join(repo, 'src/engine'), { recursive: true });
+      await writeFile(join(repo, 'src/engine/engine.ts'), 'export const engine = 1;\n');
+      await execFileAsync('git', ['add', 'src/engine/engine.ts'], { cwd: repo });
+      await execFileAsync('git', ['commit', '-m', 'engine work'], { cwd: repo });
+      await execFileAsync('git', ['checkout', 'main'], { cwd: repo });
+      const tool = new TowerCompleteTool(
+        { cwd: repo } as unknown as ISessionContext,
+        makeAgentScopeContext({ agentId: 'agent-w1', agentScope: testWireScope('wire', 'tower-test'), generation: 0 }),
+        undefined as unknown as ISessionUsageService,
+        bus,
+        { list: () => [] } as unknown as IAgentTaskService,
+        { handleOf: () => undefined } as unknown as IAgentLifecycleService,
+      );
+      const publish = vi.spyOn(bus, 'publish').mockImplementationOnce(() => {
+        throw new Error('forced publish failure');
+      });
+      try {
+        await expect(
+          executeTool(tool, {
+            turnId: 0,
+            toolCallId: 'call_complete_publish',
+            args: { report: 'completed after publish failure' },
+            signal,
+          }),
+        ).rejects.toThrow('forced publish failure');
+        const store = new TowerStore(repo);
+        expect((await store.load()).missions[0]?.status).toBe('completed');
+        expect((await store.readInbox('tower', 20)).filter((item) => item.action === 'complete')).toHaveLength(1);
+        publish.mockRestore();
+
+        const result = await executeTool(tool, {
+          turnId: 0,
+          toolCallId: 'call_complete_publish_retry',
+          args: { report: 'completed after publish failure' },
+          signal,
+        });
+
+        expect(result.isError).toBeFalsy();
+        expect(result.output).toContain('reused the stored message');
+        expect(sent).toEqual([{ from: 'w1', to: 'tower', subject: 'review-request' }]);
+        expect((await store.readInbox('tower', 20)).filter((item) => item.action === 'complete')).toHaveLength(1);
+      } finally {
+        publish.mockRestore();
+      }
+    });
   });
 
   describe('inbox wake', () => {
@@ -2748,14 +3023,16 @@ describe('AgentTowerService', () => {
       ix.stub(ISessionEventBus, ix.get(IEventBus) as ISessionEventBus);
     });
 
-    function publishInbox(input: { from: string; to: string; subject: string }): void {
+    function publishInbox(input: TowerInboxSentPayload): void {
       ix.get(IEventBus).publish(new TowerInboxSent(input));
     }
 
     async function flushWake(): Promise<void> {
-      await new Promise((resolve) => {
-        setImmediate(resolve);
-      });
+      for (let i = 0; i < 50 && !loop.queue.hasPendingRequests(); i++) {
+        await new Promise((resolve) => {
+          setImmediate(resolve);
+        });
+      }
     }
 
     function drainWakeMessages(): ContextMessage[] {
@@ -2791,6 +3068,39 @@ describe('AgentTowerService', () => {
       expect(text).toContain('TowerInbox');
     });
 
+    it('warns in the wake text when the tower state was recovered after a loss', async () => {
+      const repo = await mkdtemp(join(tmpdir(), 'tower-wake-recovered-'));
+      try {
+        await initGitRepo(repo);
+        await writeFile(join(repo, 'README.md'), '# fixture\n');
+        await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
+        await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+        const store = new TowerStore(repo);
+        await store.init('session-wake');
+        const statePath = join(repo, '.tower/comms/state.json');
+        const stored = JSON.parse(await readFile(statePath, 'utf8')) as TowerState;
+        await writeFile(
+          statePath,
+          JSON.stringify({ ...stored, recoveredAt: '2026-10-03T00:00:00.000Z' }),
+        );
+
+        ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-wake' } as unknown as ISessionContext);
+        const tower = ix.get(IAgentTowerService);
+        await tower.enter();
+
+        publishInbox({ from: 'w1', to: 'tower', subject: 'after loss' });
+        await flushWake();
+        const messages = drainWakeMessages();
+
+        expect(messages).toHaveLength(1);
+        const text = wakeText(messages[0]!);
+        expect(text).toContain('recovered after a loss at 2026-10-03T00:00:00.000Z');
+        expect(text).toContain('Report the loss to the user');
+      } finally {
+        await rm(repo, { recursive: true, force: true });
+      }
+    });
+
     it('coalesces a burst of inbox messages into a single wake naming the latest', async () => {
       const tower = ix.get(IAgentTowerService);
       await tower.enter();
@@ -2811,6 +3121,21 @@ describe('AgentTowerService', () => {
       expect(drainWakeMessages()).toEqual([]);
     });
 
+    it('queues consecutive legacy events with the same sender and subject independently', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      publishInbox({ from: 'w1', to: 'tower', subject: 'same legacy subject' });
+      publishInbox({ from: 'w1', to: 'tower', subject: 'same legacy subject' });
+      await flushWake();
+      const messages = drainWakeMessages();
+
+      expect(messages).toHaveLength(1);
+      const text = wakeText(messages[0]!);
+      expect(text).toContain('2 new tower inbox messages');
+      expect(text.match(/- w1: "same legacy subject"/g)).toHaveLength(2);
+    });
+
     it('schedules exactly one follow-up wake for messages arriving while a wake is pending', async () => {
       const tower = ix.get(IAgentTowerService);
       await tower.enter();
@@ -2829,6 +3154,178 @@ describe('AgentTowerService', () => {
       expect(second).toHaveLength(1);
       expect(wakeText(second[0]!)).toContain('2 new tower inbox messages');
       expect(wakeText(second[0]!)).toContain('third');
+    });
+
+    it('deduplicates a burst and bounds references while preserving the omitted count', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      for (let index = 1; index <= 8; index += 1) {
+        publishInbox({
+          from: 'w1',
+          to: 'tower',
+          subject: `subject-${String(index)}`,
+          messageId: `msg-${String(index)}`,
+        });
+      }
+      publishInbox({ from: 'w1', to: 'tower', subject: 'duplicate', messageId: 'msg-1' });
+      await flushWake();
+      const messages = drainWakeMessages();
+
+      expect(messages).toHaveLength(1);
+      const text = wakeText(messages[0]!);
+      expect(text).toContain('8 new tower inbox messages');
+      expect(text).toContain('omitted=2');
+      expect(text).not.toContain('messageId=msg-1\n');
+      expect(text).not.toContain('messageId=msg-2\n');
+      expect(text).toContain('messageId=msg-3');
+      expect(text).toContain('messageId=msg-8');
+    });
+
+    it('still wakes with message references when gate observation fails', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      publishInbox({
+        from: 'w1',
+        to: 'tower',
+        subject: 'needs review',
+        messageId: 'msg-observation',
+        file: '.tower/comms/inbox/needs-review.md',
+        missionId: 'M1',
+      });
+      await flushWake();
+      await vi.waitFor(() => {
+        expect(loop.snapshot().hasPendingRequests).toBe(true);
+      });
+      const messages = drainWakeMessages();
+
+      expect(messages).toHaveLength(1);
+      const text = wakeText(messages[0]!);
+      expect(text).toContain('messageId=msg-observation');
+      expect(text).toContain('M1: gate=unavailable');
+      expect(text).toContain('TowerInbox');
+    });
+
+    it('includes message references and computes each related mission gate once', async () => {
+      const repo = await mkdtemp(join(tmpdir(), 'tower-wake-digest-'));
+      const gate = vi.spyOn(TowerStore.prototype, 'missionGate');
+      try {
+        await initGitRepo(repo);
+        await writeFile(join(repo, 'README.md'), '# fixture\n');
+        await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
+        await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+        const store = new TowerStore(repo);
+        await store.init('session-main');
+        await store.plan([
+          { title: 'first mission', scope: ['src/first/**'] },
+          { title: 'second mission', scope: ['src/second/**'] },
+        ]);
+        ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-main' } as unknown as ISessionContext);
+        ix.stub(IAgentTaskService, { list: () => [] } as unknown as IAgentTaskService);
+        const tower = ix.get(IAgentTowerService);
+        await tower.enter();
+
+        publishInbox({
+          from: 'w1',
+          to: 'tower',
+          subject: 'first update',
+          messageId: 'msg-digest-1',
+          file: '.tower/comms/inbox/first.md',
+          sentAt: '2026-09-30T00:00:00.000Z',
+          missionId: 'M1',
+        });
+        publishInbox({
+          from: 'w1',
+          to: 'tower',
+          subject: 'second update',
+          messageId: 'msg-digest-2',
+          file: '.tower/comms/inbox/second.md',
+          sentAt: '2026-09-30T00:00:01.000Z',
+          missionId: 'M1',
+        });
+        publishInbox({
+          from: 'w2',
+          to: 'all',
+          subject: 'third update',
+          messageId: 'msg-digest-3',
+          file: '.tower/comms/inbox/third.md',
+          sentAt: '2026-09-30T00:00:02.000Z',
+          missionId: 'M2',
+        });
+        await flushWake();
+        await vi.waitFor(() => {
+          expect(loop.snapshot().hasPendingRequests).toBe(true);
+        });
+        const messages = drainWakeMessages();
+
+        expect(messages).toHaveLength(1);
+        const text = wakeText(messages[0]!);
+        expect(text).toContain('messageId=msg-digest-1');
+        expect(text).toContain('file=.tower/comms/inbox/first.md');
+        expect(text).toContain('sentAt=2026-09-30T00:00:00.000Z');
+        expect(text).toContain('mission=M1');
+        expect(text).toContain('M1: gate=BLOCKED reasons=not-completed');
+        expect(text).toContain('M2: gate=BLOCKED reasons=not-completed');
+        expect(gate.mock.calls.filter(([, mission]) => mission.id === 'M1')).toHaveLength(1);
+        expect(gate.mock.calls.filter(([, mission]) => mission.id === 'M2')).toHaveLength(1);
+        expect(gate.mock.calls[0]?.[2]?.activeAgentIds).toEqual(new Set());
+      } finally {
+        gate.mockRestore();
+        await rm(repo, { recursive: true, force: true });
+      }
+    });
+
+    it('does not notify a stale flush after exit and re-entry while gate evaluation is deferred', async () => {
+      const repo = await mkdtemp(join(tmpdir(), 'tower-wake-epoch-'));
+      let release!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const gate = vi.spyOn(TowerStore.prototype, 'missionGate').mockImplementationOnce(async () => {
+        await pending;
+        return { ready: false, blocks: [], observations: {} } as never;
+      });
+      try {
+        await initGitRepo(repo);
+        await writeFile(join(repo, 'README.md'), '# fixture\n');
+        await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
+        await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+        const store = new TowerStore(repo);
+        await store.init('session-main');
+        await store.plan([{ title: 'deferred mission', scope: ['src/deferred/**'] }]);
+        ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-main' } as unknown as ISessionContext);
+        ix.stub(IAgentTaskService, { list: () => [] } as unknown as IAgentTaskService);
+        const tower = ix.get(IAgentTowerService);
+        await tower.enter();
+        publishInbox({
+          from: 'w1',
+          to: 'tower',
+          subject: 'old flush',
+          messageId: 'msg-old-flush',
+          missionId: 'M1',
+        });
+        await vi.waitFor(() => {
+          expect(gate).toHaveBeenCalled();
+        });
+
+        await tower.exit();
+        await tower.enter();
+        release();
+        await flushWake();
+        expect(drainWakeMessages()).toEqual([]);
+
+        publishInbox({ from: 'w1', to: 'tower', subject: 'new flush', messageId: 'msg-new-flush' });
+        await flushWake();
+        const messages = drainWakeMessages();
+        expect(messages).toHaveLength(1);
+        expect(wakeText(messages[0]!)).toContain('messageId=msg-new-flush');
+        expect(wakeText(messages[0]!)).not.toContain('messageId=msg-old-flush');
+      } finally {
+        release();
+        gate.mockRestore();
+        await rm(repo, { recursive: true, force: true });
+      }
     });
 
     it('ignores messages addressed to a specific agent and messages from the tower itself', async () => {
@@ -2992,7 +3489,13 @@ describe('AgentTowerService', () => {
       const tower = ix.get(IAgentTowerService);
       await tower.enter();
 
-      publishInbox({ from: 'w1', to: 'tower', subject: 'need review' });
+      publishInbox({
+        from: 'w1',
+        to: 'tower',
+        subject: 'need review',
+        messageId: 'msg-rearm',
+        file: '.tower/comms/inbox/rearm.md',
+      });
       await flushWake();
       expect(drainWakeMessages()).toHaveLength(1);
 
@@ -3017,6 +3520,8 @@ describe('AgentTowerService', () => {
       expect(rearmed).toHaveLength(1);
       expect(wakeText(rearmed[0]!)).toContain('1 new tower inbox message');
       expect(wakeText(rearmed[0]!)).toContain('w1');
+      expect(wakeText(rearmed[0]!)).toContain('messageId=msg-rearm');
+      expect(wakeText(rearmed[0]!)).toContain('file=.tower/comms/inbox/rearm.md');
     });
   });
 
@@ -3037,6 +3542,7 @@ describe('AgentTowerService', () => {
         agentId: 'agent-w1',
         sessionId: 'session-main',
         missionId: 'M1',
+        branch: 'feat/leased',
         spawnedAt: new Date().toISOString(),
       });
       ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-main' } as unknown as ISessionContext);
@@ -3103,6 +3609,28 @@ describe('AgentTowerService', () => {
       expect(formatDenyMessage).not.toHaveBeenCalled();
     });
 
+    it('vetoes even a background resume while its branch is leased', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      await tower.withBranchLease('feat/leased', async () => {
+        const decision = await fire(
+          agentHookContext({
+            resume: 'agent-w1',
+            run_in_background: true,
+            prompt: 'keep going',
+            description: 'resume w1',
+          }),
+        );
+        expect(decision?.veto?.isError).toBe(true);
+        expect(decision?.veto?.output).toContain('leased by a merge/rebase');
+        expect(decision?.veto?.output).toContain('no agent was started');
+      });
+
+      expect(permissionGateRan).toBe(false);
+      expect(formatDenyMessage).toHaveBeenCalledTimes(1);
+    });
+
     it('allows a foreground resume of an agent outside the roster', async () => {
       const tower = ix.get(IAgentTowerService);
       await tower.enter();
@@ -3153,6 +3681,407 @@ describe('AgentTowerService', () => {
       expect(decision).toBeUndefined();
       expect(permissionGateRan).toBe(true);
       expect(formatDenyMessage).not.toHaveBeenCalled();
+    });
+
+    async function useReviewer(): Promise<void> {
+      const store = new TowerStore(repo);
+      await store.registerAgent({
+        name: 'r1',
+        kind: 'reviewer',
+        agentId: 'agent-r1',
+        sessionId: 'session-main',
+        reviewTarget: 'feat/leased',
+        reviewMissionId: 'M1',
+        spawnedAt: new Date().toISOString(),
+      });
+      ix.stub(
+        IAgentScopeContext,
+        makeAgentScopeContext({
+          agentId: 'agent-r1',
+          agentScope: testWireScope('wire', 'tower-test'),
+          generation: 0,
+        }),
+      );
+      ix.get(IAgentTowerService);
+    }
+
+    it.each([
+      ['main', false],
+      ['main', true],
+      ['agent-w1', false],
+      ['agent-w1', true],
+    ])('vetoes reviewer resume of %s with run_in_background=%s', async (resumeId, background) => {
+      await useReviewer();
+
+      const decision = await fire(
+        agentHookContext({
+          resume: resumeId,
+          run_in_background: background,
+          prompt: 'review again',
+          description: 'forbidden reviewer resume',
+        }),
+      );
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('Reviewer agents cannot resume');
+      expect(decision?.veto?.output).toContain('Non-roster explore/plan subagents are still allowed');
+      expect(permissionGateRan).toBe(false);
+    });
+
+    it('allows a reviewer to resume a non-roster agent', async () => {
+      await useReviewer();
+
+      const decision = await fire(
+        agentHookContext({
+          resume: 'agent-stranger',
+          run_in_background: true,
+          prompt: 'keep exploring',
+          description: 'non-roster resume',
+        }),
+      );
+
+      expect(decision).toBeUndefined();
+      expect(permissionGateRan).toBe(true);
+    });
+
+    it.each(['explore', 'plan'])('allows a fresh non-roster %s subagent for a reviewer', async (type) => {
+      await useReviewer();
+
+      const decision = await fire(
+        agentHookContext({
+          subagent_type: type,
+          prompt: 'inspect the branch',
+          description: 'fresh analysis',
+        }),
+      );
+
+      expect(decision).toBeUndefined();
+      expect(permissionGateRan).toBe(true);
+    });
+  });
+  describe('bash destructive guard', () => {
+    let repo: string;
+    let slot: string;
+
+    beforeEach(async () => {
+      repo = await mkdtemp(join(tmpdir(), 'tower-bash-guard-'));
+      await initGitRepo(repo);
+      await writeFile(join(repo, 'README.md'), '# fixture\n');
+      await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
+      await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+      await new TowerStore(repo).init('session-main');
+      slot = join(repo, '.tower', 'worktrees', 'wt-1');
+      await mkdir(slot, { recursive: true });
+      ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-main' } as unknown as ISessionContext);
+      ix.stub(IBashParserService, new BashParserService());
+    });
+
+    afterEach(async () => {
+      await rm(repo, { recursive: true, force: true });
+    });
+
+    function bashHookContext(command: string, cwd?: string): ResolvedToolExecutionHookContext {
+      const call = toolCall('Bash', 'call_bash');
+      return {
+        turnId: 0,
+        signal,
+        toolCall: call,
+        toolCalls: [call],
+        args: cwd === undefined ? { command } : { command, cwd },
+        execution: { approvalRule: 'Bash', execute: async () => ({ output: '' }) },
+      };
+    }
+
+    it.each([
+      'git clean -fdx',
+      'git clean -ffdx',
+      'git clean -f -d -x',
+      'git clean --force -dx',
+      'git clean -fdx .',
+      'git clean -fdx .tower',
+      'git clean -fdx -- .tower/comms',
+      'git clean -fdx .tower/comms/state.json',
+    ])('vetoes "%s" at the main checkout without tower mode active (worker shape)', async (command) => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext(command));
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('.tower/comms');
+      expect(decision?.veto?.output).toContain('worktree');
+      expect(permissionGateRan).toBe(false);
+      expect(formatDenyMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('vetoes git clean at the main checkout while tower mode is active (main agent shape)', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      const decision = await fire(bashHookContext('git clean -fdx'));
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('.tower/comms');
+      expect(permissionGateRan).toBe(false);
+    });
+
+    it('vetoes git clean targeting the main checkout from outside via git -C', async () => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext(`git -C ${repo} clean -fdx`, tmpdir()));
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(permissionGateRan).toBe(false);
+    });
+
+    it.each([
+      'git clean -ndx',
+      'git clean -n',
+      'git clean --dry-run -fdx',
+      'git clean -fdxn',
+      'git clean -f',
+      'git clean -fdx packages',
+    ])('allows "%s" (dry-run, files-only, or out-of-scope pathspec)', async (command) => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext(command));
+
+      expect(decision).toBeUndefined();
+      expect(permissionGateRan).toBe(true);
+      expect(formatDenyMessage).not.toHaveBeenCalled();
+    });
+
+    it('allows git clean and git reset --hard inside a tower worktree', async () => {
+      ix.get(IAgentTowerService);
+
+      for (const command of [
+        `cd ${slot} && git clean -fdx`,
+        `cd ${slot} && git clean -fdx .`,
+        `cd ${slot} && git clean -fdx ./`,
+        `cd ${slot} && git clean -fdx -- .`,
+        `cd ${slot} && git clean -fdx node_modules`,
+        `cd ${join(slot, 'pkg')} && git clean -fdx ..`,
+        `git -C ${slot} clean -fdx`,
+        `git -C ${slot} clean -fdx .`,
+        `cd ${slot} && git reset --hard`,
+        `git -C ${slot} reset --hard HEAD~1`,
+      ]) {
+        const decision = await fire(bashHookContext(command));
+
+        expect(decision, command).toBeUndefined();
+      }
+      expect(permissionGateRan).toBe(true);
+    });
+
+    it('allows git clean with a dot pathspec in a worktree via the Bash cwd argument', async () => {
+      ix.get(IAgentTowerService);
+
+      for (const command of ['git clean -fdx', 'git clean -fdx .', 'git clean -fdx -- .']) {
+        const decision = await fire(bashHookContext(command, slot));
+
+        expect(decision, command).toBeUndefined();
+      }
+      expect(permissionGateRan).toBe(true);
+    });
+
+    it('still vetoes git clean naming a worktree slot root from the main checkout', async () => {
+      ix.get(IAgentTowerService);
+
+      for (const command of [
+        'git clean -fdx .tower/worktrees/wt-1',
+        'git clean -ffdx .tower/worktrees/wt-1',
+        `git clean -fdx ${slot}`,
+      ]) {
+        const decision = await fire(bashHookContext(command));
+
+        expect(decision?.veto?.isError, command).toBe(true);
+      }
+    });
+
+    it('still vetoes git clean whose pathspec escapes a worktree slot into tower protocol paths', async () => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext(`cd ${slot} && git clean -fdx ../../comms`));
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('.tower/comms');
+    });
+
+    it.each([
+      'git reset --hard',
+      'git reset --hard HEAD~1',
+      'git reset --hard origin/main',
+    ])('vetoes "%s" at the main checkout', async (command) => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext(command));
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('git reset --hard');
+      expect(decision?.veto?.output).toContain('worktree');
+      expect(permissionGateRan).toBe(false);
+    });
+
+    it.each(['git reset', 'git reset --soft HEAD~1', 'git reset --mixed'])(
+      'allows "%s" without --hard',
+      async (command) => {
+        ix.get(IAgentTowerService);
+
+        const decision = await fire(bashHookContext(command));
+
+        expect(decision).toBeUndefined();
+        expect(permissionGateRan).toBe(true);
+      },
+    );
+
+    it('vetoes git -C reset --hard whose target is the main checkout even from a worktree cwd', async () => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext(`git -C ${repo} reset --hard`, slot));
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(permissionGateRan).toBe(false);
+    });
+
+    it.each([
+      'rm -rf .tower',
+      'rm -rf .tower/comms',
+      'rm -f .tower/comms/state.json',
+      'rm --recursive --force .tower',
+      'rm -rf .tower/worktrees',
+    ])('vetoes "%s" on tower protocol paths', async (command) => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext(command));
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('.tower/comms');
+      expect(permissionGateRan).toBe(false);
+    });
+
+    it('vetoes recursive rm of the main checkout root (an ancestor of .tower)', async () => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext(`rm -rf ${repo}`));
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(permissionGateRan).toBe(false);
+    });
+
+    it.each([
+      'rm -rf node_modules',
+      'rm -f README.md',
+      'rm -rf .tmp',
+    ])('allows "%s" on ordinary main-checkout paths', async (command) => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext(command));
+
+      expect(decision).toBeUndefined();
+      expect(permissionGateRan).toBe(true);
+    });
+
+    it('allows rm -rf inside a worktree slot', async () => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext(`rm -rf ${join(slot, 'node_modules')}`));
+
+      expect(decision).toBeUndefined();
+      expect(permissionGateRan).toBe(true);
+    });
+
+    it('tracks cd chains across && lists', async () => {
+      ix.get(IAgentTowerService);
+
+      const allowed = await fire(bashHookContext('cd packages && git clean -fdx'));
+      const vetoed = await fire(bashHookContext('cd packages && cd .. && git clean -fdx'));
+
+      expect(allowed).toBeUndefined();
+      expect(vetoed?.veto?.isError).toBe(true);
+    });
+
+    it.each([
+      "bash -c 'git clean -fdx'",
+      'sudo rm -rf .tower',
+      'env FOO=1 git reset --hard',
+      'eval "git clean -fdx"',
+    ])('vetoes "%s" through wrappers and nested shells', async (command) => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext(command));
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(permissionGateRan).toBe(false);
+    });
+
+    it('allows a command that only mentions the keywords in string literals', async () => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext('echo "git clean -fdx" && printf "rm -rf"'));
+
+      expect(decision).toBeUndefined();
+      expect(permissionGateRan).toBe(true);
+      expect(formatDenyMessage).not.toHaveBeenCalled();
+    });
+
+    it('passes commands without dangerous keywords with zero parse cost', async () => {
+      const parse = vi.fn();
+      ix.stub(IBashParserService, { parse } as unknown as IBashParserService);
+      ix.get(IAgentTowerService);
+
+      const first = await fire(bashHookContext('ls -la && git status'));
+      const second = await fire(bashHookContext('echo format armory cleanup resetting'));
+
+      expect(first).toBeUndefined();
+      expect(second).toBeUndefined();
+      expect(parse).not.toHaveBeenCalled();
+    });
+
+    it('allows dangerous-shaped commands when no tower state exists, without parsing', async () => {
+      const plain = await mkdtemp(join(tmpdir(), 'tower-bash-guard-plain-'));
+      try {
+        ix.stub(ISessionContext, { cwd: plain, sessionId: 'session-plain' } as unknown as ISessionContext);
+        const parse = vi.fn();
+        ix.stub(IBashParserService, { parse } as unknown as IBashParserService);
+        ix.get(IAgentTowerService);
+
+        const decision = await fire(bashHookContext('git clean -fdx'));
+
+        expect(decision).toBeUndefined();
+        expect(parse).not.toHaveBeenCalled();
+      } finally {
+        await rm(plain, { recursive: true, force: true });
+      }
+    });
+
+    it('vetoes conservatively when the command cannot be parsed', async () => {
+      const parse = vi.fn(() => ({ ok: false as const, reason: 'aborted' as const }));
+      ix.stub(IBashParserService, { parse } as unknown as IBashParserService);
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext('git clean -fdx'));
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('could not parse');
+      expect(permissionGateRan).toBe(false);
+    });
+
+    it('vetoes conservatively when the parsed tree carries errors', async () => {
+      const root = {
+        type: 'program',
+        text: 'git clean -fdx',
+        startIndex: 0,
+        endIndex: 'git clean -fdx'.length,
+        isNamed: true,
+        children: [],
+      };
+      const parse = vi.fn(() => ({ ok: true as const, hasError: true, root }));
+      ix.stub(IBashParserService, { parse } as unknown as IBashParserService);
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext('git clean -fdx'));
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('could not parse');
     });
   });
 });
@@ -3220,8 +4149,16 @@ describe('TowerModeInjection', () => {
     expect(text).toContain('Tower mode is active');
     expect(text).toContain('TowerSpawn');
     expect(text).toContain('TowerMerge');
-    expect(text).toContain('TowerSend` is delivery, not interruption');
-    expect(text).toContain('no silent miss is possible');
+    expect(text).toContain('message references and a compact gate digest');
+    expect(text).toContain('with `TowerInbox` only when it is needed');
+    expect(text).toContain('structured reason and recovery details');
+    expect(text).toContain('per reviewer');
+    expect(text).toContain('merged or abandoned');
+    expect(text).toContain('background execution is unavailable');
+    expect(text).toContain('break-glass');
+    expect(text).toContain('.tower/comms/');
+    expect(text).not.toContain('This supersedes any other instructions');
+    expect(text).not.toContain('never create or edit files under `.tower/` by hand');
   });
 
   it('injects the exit reminder when tower mode turns off after being active', async () => {
@@ -3299,6 +4236,17 @@ describe('TowerModeInjection', () => {
     expect(text).not.toContain('Tower mode still active');
   });
 
+  it('does not refresh the full reminder for an internal injection user-role message', async () => {
+    await tower.enter();
+
+    await injectDynamic(ctx);
+    appendAssistantTurn(ctx, context, 'assistant one');
+    ctx.appendSystemReminder('inbox wake', { kind: 'injection', variant: 'tower_inbox' });
+    await injectDynamic(ctx);
+
+    expect(towerReminderMessages(context)).toHaveLength(1);
+  });
+
   it('refreshes the full reminder when a user message follows at least one assistant turn', async () => {
     await tower.enter();
 
@@ -3338,6 +4286,7 @@ describe('TowerModeInjection', () => {
     expect(towerReminderMessages(context)).toHaveLength(3);
     expect(lastTowerReminder(context)).toContain('Tower mode is active');
   });
+
 });
 
 describe('towerEnterFailureMessage', () => {
