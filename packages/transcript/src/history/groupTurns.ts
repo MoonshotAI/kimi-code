@@ -138,6 +138,7 @@ const MARKER_USER_ORIGINS: Readonly<Record<string, string>> = {
   skill_activation: 'skill',
   plugin_command: 'skill',
   compaction_summary: 'compaction',
+  hook_result: 'hook',
 };
 
 const FALLBACK_ORIGIN: TurnOrigin = { kind: 'other' };
