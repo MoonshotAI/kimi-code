@@ -274,8 +274,14 @@ function analyzeGitClean(
   if (pathspecs.length === 0) {
     return isWithinOrEqual(layout.commsDir, gitCwd) ? gitCleanVeto() : undefined;
   }
+  const gitCwdSlotDepth = slotDepth(gitCwd, layout.worktreesDir);
   for (const spec of pathspecs) {
-    if (operandBucket(resolveOperand(gitCwd, spec), layout) !== undefined) return gitCleanVeto();
+    const abs = resolveOperand(gitCwd, spec);
+    if (gitCwdSlotDepth !== undefined && gitCwdSlotDepth >= 1) {
+      const specSlotDepth = slotDepth(abs, layout.worktreesDir);
+      if (specSlotDepth !== undefined && specSlotDepth >= 1) continue;
+    }
+    if (operandBucket(abs, layout) !== undefined) return gitCleanVeto();
   }
   return undefined;
 }
