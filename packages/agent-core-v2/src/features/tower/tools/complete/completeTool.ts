@@ -8,7 +8,7 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
 
 import { deliverTowerMessage } from '../delivery';
-import { callerName, callerTokens, newTowerStore, runTowerTool } from '../support';
+import { callerTokens, newTowerStore, runTowerTool } from '../support';
 import DESCRIPTION from './complete.md?raw';
 import {
   ITowerCompleteTool,
@@ -38,10 +38,12 @@ export class TowerCompleteTool implements ITowerCompleteTool {
       execute: () =>
         runTowerTool(async () => {
           const store = newTowerStore(this.sessionContext);
-          const state = await store.load();
-          const caller = callerName(this.scopeContext.agentId, store, state);
+          const resolved = await store.resolveMessagingCaller(
+            await store.loadOrRecover(),
+            this.scopeContext.agentId,
+          );
           const result = await store.complete(
-            caller,
+            resolved.caller,
             args.report.trim(),
             callerTokens(this.usage, agentContextOfScope(this.scopeContext)),
           );
@@ -52,19 +54,34 @@ export class TowerCompleteTool implements ITowerCompleteTool {
                     sessionBus: this.sessionBus,
                     tasks: this.tasks,
                     agentLifecycle: this.agentLifecycle,
-                    state,
+                    state: resolved.state,
                   },
                   result.message,
                 )
               : '';
-          const lines = [`mission ${result.mission.id} persisted as ${result.mission.status}`];
-          if (result.message !== undefined) {
+          const lines: string[] = [];
+          if (result.mission === undefined) {
             lines.push(
-              `${result.message.item.subject} notification: ${result.message.item.file}`,
-              result.notificationCreated
-                ? 'notification: stored once'
-                : 'notification: reused the stored message; no duplicate was written',
+              `the tower state was recovered at ${result.recoveredAt ?? 'an unknown time'} after a loss — your mission record is gone, so no mission was marked completed and nothing pretends otherwise`,
             );
+            if (result.message !== undefined) {
+              lines.push(
+                `your report was still delivered to the tower as a ${result.message.item.subject} message: ${result.message.item.file}`,
+                result.notificationCreated
+                  ? 'notification: stored once'
+                  : 'notification: reused the stored message; no duplicate was written',
+              );
+            }
+          } else {
+            lines.push(`mission ${result.mission.id} persisted as ${result.mission.status}`);
+            if (result.message !== undefined) {
+              lines.push(
+                `${result.message.item.subject} notification: ${result.message.item.file}`,
+                result.notificationCreated
+                  ? 'notification: stored once'
+                  : 'notification: reused the stored message; no duplicate was written',
+              );
+            }
           }
           if (result.notificationError !== undefined) {
             lines.push(`notification error: ${result.notificationError}`);
