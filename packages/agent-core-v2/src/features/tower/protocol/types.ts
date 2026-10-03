@@ -66,6 +66,7 @@ export interface TowerState {
   readonly base: string;
   readonly mode: 'branch' | 'pr';
   readonly createdAt: string;
+  recoveredAt?: string;
   sessionId?: string;
   inboxAckIds?: string[];
   roster: TowerRoster;

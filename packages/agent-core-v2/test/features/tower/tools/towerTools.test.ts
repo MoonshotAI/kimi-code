@@ -857,10 +857,10 @@ describe('TowerSendTool + TowerInboxTool', () => {
 
 describe('TowerStatusTool', () => {
   it('keeps active independent from the initialized dashboard data', async () => {
-    expect(await readStatus()).toEqual({ active: false, initialized: false });
+    expect(await readStatus()).toEqual({ active: false, initialized: false, stateLost: false });
 
     towerActive = true;
-    expect(await readStatus()).toEqual({ active: true, initialized: false });
+    expect(await readStatus()).toEqual({ active: true, initialized: false, stateLost: false });
 
     await run(ix.get(ITowerInitTool), {});
     const activeStatus = await readStatus();
@@ -1642,6 +1642,146 @@ describe('TowerRebaseTool', () => {
     expect(result.output).toContain('conflicted and was aborted');
     expect(result.output).toContain('src/engine/engine.ts');
     expect((await store.load()).missions[0]?.status).toBe('blocked');
+  });
+});
+
+describe('tower state loss degradation', () => {
+  async function destroyComms(): Promise<void> {
+    await rm(join(repo, '.tower/comms'), { recursive: true, force: true });
+  }
+
+  it('TowerStatus returns a state-lost report instead of hard-failing, and keeps not-initialized for a fresh repo', async () => {
+    towerActive = true;
+    const fresh = await run(ix.get(ITowerStatusTool), {});
+    expect(fresh.isError).toBe(true);
+    expect(fresh.output).toContain('tower is not initialized in this repository');
+    expect(await readStatus()).toEqual({ active: true, initialized: false, stateLost: false });
+
+    await initViaTool();
+    await destroyComms();
+
+    expect(await readStatus()).toEqual({ active: true, initialized: false, stateLost: true });
+    const result = await run(ix.get(ITowerStatusTool), {});
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('# Tower status — STATE LOST');
+    expect(result.output).toContain('Report this history loss to the user');
+    expect(result.output).toContain('TowerMerge and TowerRebase refuse');
+
+    const summary = await readStatusSummary();
+    expect(summary).toContain('Tower mode: ON');
+    expect(summary).toContain('Tower state was lost');
+  });
+
+  it('TowerSend recovers a minimal state stamped recoveredAt and delivers normally', async () => {
+    await initViaTool();
+    await destroyComms();
+
+    const result = await run(ix.get(ITowerSendTool), {
+      to: 'all',
+      subject: 'state check',
+      body: 'x',
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('message sent to all');
+    const state = await new TowerStore(repo).load();
+    expect(state.base).toBe('main');
+    expect(state.recoveredAt).toBeTruthy();
+    expect(state.missions).toEqual([]);
+    expect(state.roster.agents).toEqual([]);
+  });
+
+  it('a worker whose roster entry was lost is re-registered as a placeholder and its report reaches the tower', async () => {
+    await initViaTool();
+    const store = new TowerStore(repo);
+    await store.registerAgent({
+      name: 'w1',
+      kind: 'worker',
+      agentId: 'agent-w1',
+      spawnedAt: '2026-09-20T00:00:00.000Z',
+    });
+    await destroyComms();
+
+    currentAgentId = 'agent-w1';
+    const result = await run(ix.get(ITowerSendTool), {
+      to: 'tower',
+      subject: 'accident report',
+      body: 'comms was deleted',
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('message sent to tower');
+    expect(result.output).toContain('placeholder "agent-w1"');
+    expect((await store.load()).roster.agents).toEqual([
+      expect.objectContaining({ name: 'agent-w1', agentId: 'agent-w1', kind: 'worker' }),
+    ]);
+
+    currentAgentId = 'main';
+    const inbox = await run(ix.get(ITowerInboxTool), {});
+    expect(inbox.output).toContain('subject: accident report');
+    expect(inbox.output).toContain('from: agent-w1');
+  });
+
+  it('TowerComplete degrades explicitly: the report reaches the tower and no mission is marked completed', async () => {
+    await initViaTool();
+    const store = new TowerStore(repo);
+    await store.plan([{ title: 'Build engine', scope: ['src/engine/**'] }]);
+    await store.registerAgent({
+      name: 'w1',
+      kind: 'worker',
+      agentId: 'agent-w1',
+      missionId: 'M1',
+      spawnedAt: new Date().toISOString(),
+    });
+    await destroyComms();
+
+    currentAgentId = 'agent-w1';
+    const result = await run(ix.get(ITowerCompleteTool), { report: 'done: implemented engine' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('no mission was marked completed');
+    expect(result.output).toContain('completion-report-state-lost');
+    expect((await store.load()).missions).toEqual([]);
+
+    currentAgentId = 'main';
+    const inbox = await run(ix.get(ITowerInboxTool), {});
+    expect(inbox.output).toContain('done: implemented engine');
+
+    currentAgentId = 'agent-w1';
+    const retry = await run(ix.get(ITowerCompleteTool), { report: 'done: implemented engine' });
+    expect(retry.output).toContain('reused the stored message');
+  });
+
+  it('TowerStatus and the status summary flag a recovered state with its recoveredAt marker', async () => {
+    await initViaTool();
+    await destroyComms();
+    await run(ix.get(ITowerSendTool), { to: 'all', subject: 'trigger recovery', body: 'x' });
+
+    const result = await run(ix.get(ITowerStatusTool), {});
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('## ⚠️ State recovered after a loss');
+    expect(result.output).toContain('Report the history loss to the user');
+
+    const summary = await readStatusSummary();
+    expect(summary).toContain('⚠️ State recovered at');
+    expect(summary).toContain('report this history loss to the user');
+  });
+
+  it('TowerMerge and TowerRebase fail with an explicit state-lost error instead of a not-initialized one', async () => {
+    await initViaTool();
+    await destroyComms();
+
+    const merge = await run(ix.get(ITowerMergeTool), { branch: 'feat/x' });
+    expect(merge.isError).toBe(true);
+    expect(merge.output).toContain('tower state was lost');
+    expect(merge.output).not.toContain('tower is not initialized');
+
+    const rebase = await run(ix.get(ITowerRebaseTool), { mission: 'M1' });
+    expect(rebase.isError).toBe(true);
+    expect(rebase.output).toContain('tower state was lost');
+    expect(rebase.output).not.toContain('tower is not initialized');
+
+    expect(await new TowerStore(repo).isInitialized()).toBe(false);
   });
 });
 
