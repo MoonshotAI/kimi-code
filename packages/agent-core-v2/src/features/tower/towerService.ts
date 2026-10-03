@@ -872,13 +872,19 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
 
   private async renderInboxWakeDigests(items: readonly InboxWakeItem[]): Promise<string[]> {
     const missionIds = [...new Set(items.flatMap((item) => item.missionId ?? []))];
-    if (missionIds.length === 0) return [];
-    const lines = ['Gate digest:'];
     const store = new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd));
     const state = await store.load().then(
       (loaded) => loaded,
       () => undefined,
     );
+    const lines: string[] = [];
+    if (state?.recoveredAt !== undefined) {
+      lines.push(
+        `⚠️ Tower state was recovered after a loss at ${state.recoveredAt} — missions, roster, and protocol history before that point are gone. Report the loss to the user instead of continuing silently.`,
+      );
+    }
+    if (missionIds.length === 0) return lines;
+    lines.push('Gate digest:');
     if (state === undefined) {
       for (const missionId of missionIds.slice(0, WAKE_DIGEST_LIMIT)) {
         lines.push(`- ${missionId}: gate=unavailable`);
