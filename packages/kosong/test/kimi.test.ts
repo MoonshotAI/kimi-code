@@ -1250,7 +1250,7 @@ describe('KimiChatProvider', () => {
       ]);
     });
 
-    it('yields an empty ThinkPart when reasoning_content is explicitly empty', async () => {
+    it('skips an empty reasoning_content field instead of journaling a no-op think part', async () => {
       const provider = createProvider();
       (provider as any)._client.chat.completions.create = vi.fn().mockImplementation(() =>
         mockCreateResult({
@@ -1279,7 +1279,6 @@ describe('KimiChatProvider', () => {
       for await (const part of stream) parts.push(part);
 
       expect(parts).toEqual([
-        { type: 'think', think: '' },
         {
           type: 'function',
           id: 'call_1',
@@ -1588,12 +1587,20 @@ describe('KimiChatProvider', () => {
       }
     }
 
-    it('yields an empty ThinkPart from an explicitly empty streaming delta', async () => {
+    it('skips empty streaming reasoning deltas so reasoning_content: "" chunks do not bloat the journal', async () => {
       const provider = createProvider(true);
       const chunks = [
         {
           id: 'chatcmpl-empty-reasoning',
+          choices: [{ index: 0, delta: { reasoning_content: 'hmm' }, finish_reason: null }],
+        },
+        {
+          id: 'chatcmpl-empty-reasoning',
           choices: [{ index: 0, delta: { reasoning_content: '' }, finish_reason: null }],
+        },
+        {
+          id: 'chatcmpl-empty-reasoning',
+          choices: [{ index: 0, delta: { content: 'hi' }, finish_reason: null }],
         },
       ];
       (
@@ -1604,7 +1611,10 @@ describe('KimiChatProvider', () => {
       const parts = [];
       for await (const part of stream) parts.push(part);
 
-      expect(parts).toEqual([{ type: 'think', think: '' }]);
+      expect(parts).toEqual([
+        { type: 'think', think: 'hmm' },
+        { type: 'text', text: 'hi' },
+      ]);
     });
 
     it('buffers indexed argument deltas until the real tool name arrives', async () => {
