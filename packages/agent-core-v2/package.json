@@ -71,6 +71,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
     "@moonshot-ai/minidb": "workspace:^",
+    "@moonshot-ai/exec-policy": "workspace:^",
     "@moonshot-ai/tree-sitter-bash": "workspace:^",
     "@mozilla/readability": "^0.6.0",
     "@noble/hashes": "^2.0.0",
