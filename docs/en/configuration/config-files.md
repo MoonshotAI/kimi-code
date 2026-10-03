@@ -486,11 +486,14 @@ Both values must be positive integers. A call's `max_chars` overrides the defaul
 <!--
 ## `experimental`
 
-`experimental` stores persistent overrides for experimental-feature flags. Currently, `micro_compaction` is the only user-facing entry and defaults to `false`; set it to `true` to enable automatic trimming of older large tool results.
+`experimental` stores persistent overrides for experimental-feature flags. Keys are flag ids; every flag can also be toggled per process by its `KIMI_CODE_EXPERIMENTAL_*` environment variable (see [Environment variables](./env-vars.md)), and `KIMI_CODE_EXPERIMENTAL_FLAG=1` enables all of them at once.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `micro_compaction` | `boolean` | `false` | Trim older large tool results from context while preserving recent conversation |
+| `sandbox` | `boolean` | `false` | Run agent shell commands inside an OS sandbox; see [`sandbox`](#sandbox) |
+| `exec-policy` | `boolean` | `false` | Evaluate shell commands against layered `.rules` files; see [Exec policy rules](#exec-policy-rules) |
+| `network-egress` | `boolean` | `false` | Route sandboxed commands through a loopback egress proxy; see [`sandbox.network`](#sandboxnetwork) |
 -->
 
 ## `services`
@@ -552,6 +555,76 @@ pattern = "Bash"
 ::: tip
 MCP server declarations are configured in `~/.kimi-code/mcp.json` or the project-local `.kimi-code/mcp.json`, not in `config.toml`. The interactive configuration entry point is `/mcp-config`; see [Model Context Protocol](../customization/mcp.md).
 :::
+
+## `sandbox`
+
+`sandbox` confines agent-initiated `Bash` commands inside an OS-level sandbox (a restricted child process that cannot touch files or the network outside its granted scope). This is an experimental feature: enable it with `KIMI_CODE_EXPERIMENTAL_SANDBOX=1` or `sandbox = true` under `[experimental]`, then set `mode` to anything other than `off`. Sandboxing is available on macOS (Seatbelt) and Linux (bubblewrap); on other platforms the setting is ignored.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `mode` | `string` | `off` | Sandbox mode: `off` (no sandboxing), `read-only` (commands may read the workspace but not write), `workspace-write` (commands may read and write the workspace), `danger-full-access` (no filesystem restriction) |
+| `writable_roots` | `string[]` | workspace | Extra directories commands may write to, on top of the workspace |
+| `readable_roots` | `string[]` | workspace | Extra directories commands may read |
+| `deny_read` | `string[]` | `~/.ssh`, credentials | Paths that stay unreadable even inside readable roots |
+| `deny_write` | `string[]` | — | Paths that stay unwritable even inside writable roots |
+| `excluded_commands` | `string[]` | — | Command glob patterns that always run unsandboxed (use sparingly) |
+| `auto_approve_sandboxed` | `boolean` | `false` | Auto-approve commands that will run inside the sandbox |
+| `allow_unsandboxed_commands` | `boolean` | `true` | When a sandbox backend is unavailable on this platform, run commands normally instead of failing |
+| `enable_weaker_nested_sandbox` | `boolean` | `false` | Allow sandboxed commands to spawn their own nested sandboxes with reduced restrictions |
+
+`mode` can also be set per invocation with the `KIMI_CODE_SANDBOX_MODE` environment variable, which takes priority over `config.toml`.
+
+Sensitive locations such as `.git` metadata and SSH credentials remain protected inside writable roots: `.git` is read-only, and `deny_read` paths cannot be opened at all. When a command is blocked by the sandbox, the CLI reports it as a sandbox denial instead of a normal failure; in interactive sessions you can approve a one-time unsandboxed retry, while `kimi -p` fails closed.
+
+### `[sandbox.network]`
+
+`[sandbox.network]` controls what sandboxed commands may reach over the network. It requires the separate `KIMI_CODE_EXPERIMENTAL_NETWORK_EGRESS=1` (or `network-egress = true` under `[experimental]`) flag on top of the sandbox flag. With `mode = "allowlist"`, sandboxed commands are given proxy environment variables pointing at a loopback egress proxy that enforces the domain lists and `network_rule` entries (see [Exec policy rules](#exec-policy-rules)); direct connections are still blocked by the sandbox where the platform supports it.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `mode` | `string` | `off` | Network access: `off` (no network), `allowlist` (only listed domains, via the egress proxy), `all` (unrestricted) |
+| `allowed_domains` | `string[]` | — | Domains reachable through the proxy; `*.example.com` also covers subdomains |
+| `denied_domains` | `string[]` | — | Domains always refused, checked before `allowed_domains` |
+| `allow_local_binding` | `boolean` | `true` | Allow sandboxed commands to listen on loopback ports (for local dev servers) |
+| `allow_unix_sockets` | `string[]` | — | Unix socket paths commands may connect to (e.g. a Docker or database socket) |
+
+```toml
+[experimental]
+sandbox = true
+network-egress = true
+exec-policy = true
+
+[sandbox]
+mode = "workspace-write"
+
+[sandbox.network]
+mode = "allowlist"
+allowed_domains = ["registry.npmjs.org", "*.githubusercontent.com"]
+```
+
+## Exec policy rules
+
+Exec policy rules decide individual shell commands inside a compound `Bash` call — unlike `Bash(...)` glob patterns, they are matched against the parsed command segments, so `rm -rf build && echo done` is judged per segment. This is an experimental feature: enable it with `KIMI_CODE_EXPERIMENTAL_EXEC_POLICY=1` or `exec-policy = true` under `[experimental]`.
+
+Rules live in `.rules` files loaded from layered directories; a forbidden match at any layer always wins, then prompt beats allow:
+
+| Layer | Directory | Precedence |
+| --- | --- | --- |
+| Managed | `/etc/kimi-code/rules.d/` (POSIX only) | Highest |
+| User | `~/.kimi-code/rules.d/` (moves with `KIMI_CODE_HOME`) | — |
+| Project | `.kimi-code/rules.d/` in the workspace root | Lowest |
+
+Each file contains one rule call per statement, using two forms:
+
+```
+prefix_rule(pattern = ["git", "status"], decision = "allow", justification = "read-only git")
+network_rule(host = "registry.npmjs.org", protocol = "https", decision = "allow")
+```
+
+- `prefix_rule` matches when a command's argv starts with every `pattern` token; `decision` is `allow`, `prompt`, or `forbidden`.
+- `network_rule` matches outbound connections made through the sandbox egress proxy; `host` accepts an exact name or `*.domain` wildcard, `protocol` is optional.
+
+`forbidden` denies the command outright. `prompt` asks for approval interactively and fails closed under `kimi -p`. `allow` approves the segment without a prompt. Commands the parser cannot analyze safely are treated conservatively rather than silently allowed.
 
 ## `tui.toml`
 

@@ -64,6 +64,7 @@
       workspacePaths = [
         ./packages/acp-server
         ./packages/agent-core-v2
+        ./packages/exec-policy
         ./packages/kap-server
         ./packages/kaos
         ./packages/klient
@@ -89,6 +90,7 @@
       workspaceNames = [
         "@moonshot-ai/acp-server"
         "@moonshot-ai/agent-core-v2"
+        "@moonshot-ai/exec-policy"
         "@moonshot-ai/kap-server"
         "@moonshot-ai/kaos"
         "@moonshot-ai/kosong"
