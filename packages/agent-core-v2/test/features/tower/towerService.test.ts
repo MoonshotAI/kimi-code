@@ -3820,7 +3820,13 @@ describe('AgentTowerService', () => {
 
       for (const command of [
         `cd ${slot} && git clean -fdx`,
+        `cd ${slot} && git clean -fdx .`,
+        `cd ${slot} && git clean -fdx ./`,
+        `cd ${slot} && git clean -fdx -- .`,
+        `cd ${slot} && git clean -fdx node_modules`,
+        `cd ${join(slot, 'pkg')} && git clean -fdx ..`,
         `git -C ${slot} clean -fdx`,
+        `git -C ${slot} clean -fdx .`,
         `cd ${slot} && git reset --hard`,
         `git -C ${slot} reset --hard HEAD~1`,
       ]) {
@@ -3831,13 +3837,38 @@ describe('AgentTowerService', () => {
       expect(permissionGateRan).toBe(true);
     });
 
-    it('allows git clean in a worktree via the Bash cwd argument', async () => {
+    it('allows git clean with a dot pathspec in a worktree via the Bash cwd argument', async () => {
       ix.get(IAgentTowerService);
 
-      const decision = await fire(bashHookContext('git clean -fdx', slot));
+      for (const command of ['git clean -fdx', 'git clean -fdx .', 'git clean -fdx -- .']) {
+        const decision = await fire(bashHookContext(command, slot));
 
-      expect(decision).toBeUndefined();
+        expect(decision, command).toBeUndefined();
+      }
       expect(permissionGateRan).toBe(true);
+    });
+
+    it('still vetoes git clean naming a worktree slot root from the main checkout', async () => {
+      ix.get(IAgentTowerService);
+
+      for (const command of [
+        'git clean -fdx .tower/worktrees/wt-1',
+        'git clean -ffdx .tower/worktrees/wt-1',
+        `git clean -fdx ${slot}`,
+      ]) {
+        const decision = await fire(bashHookContext(command));
+
+        expect(decision?.veto?.isError, command).toBe(true);
+      }
+    });
+
+    it('still vetoes git clean whose pathspec escapes a worktree slot into tower protocol paths', async () => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext(`cd ${slot} && git clean -fdx ../../comms`));
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('.tower/comms');
     });
 
     it.each([
