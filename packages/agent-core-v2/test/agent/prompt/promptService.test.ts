@@ -7,6 +7,7 @@ import { IFileService } from '#/app/file/fileService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type PromptHandle } from '#/agent/loop/loop';
+import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnSteer } from '#/agent/loop/turnOps';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -33,10 +34,18 @@ function message(text: string): ContextMessage {
   return { role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' } };
 }
 
-function bundledMessage(skillName: string, user: string, extra: readonly ContentPart[] = []): ContextMessage {
+function bundledMessage(skillName: string, user: string, extra: readonly ContentPart[] = [], marked = false): ContextMessage {
   return {
     role: 'user',
-    content: [{ type: 'text', text: `<skill>${skillName}</skill>` }, { type: 'text', text: user }, ...extra],
+    content: [
+      {
+        type: 'text',
+        text: `<skill>${skillName}</skill>`,
+        meta: marked ? { source: 'skill activation', activationId: `act-${skillName}` } : undefined,
+      },
+      { type: 'text', text: user },
+      ...extra,
+    ],
     toolCalls: [],
     origin: { kind: 'user', skillActivations: [{ activationId: `act-${skillName}`, skillName }] },
   };
@@ -469,17 +478,27 @@ describe('prompt queue', () => {
     const entered = new Promise<void>((resolve) => {
       markEntered = resolve;
     });
-    loop.hooks.onBeforeSubmitPrompt.register('gate', async (_hookCtx, next) => {
+    const started: string[] = [];
+    ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
+      if (event.prompt !== undefined) started.push(event.prompt);
+    });
+    loop.hooks.onBeforeSubmitPrompt.register('gate', async (hookCtx, next) => {
       markEntered();
+      hookCtx.hookParts.push({
+        type: 'text',
+        text: '<hook_result hook_event="UserPromptSubmit">\nfrom hook\n</hook_result>',
+        meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+      });
       await new Promise<void>((resolve) => {
         releaseHook = resolve;
       });
       await next();
     });
 
+    const bundled = bundledMessage('review', 'launching');
     const { id } = loop.submit({
-      message: { role: 'user', content: message('launching').content },
-      meta: { tracked: true },
+      message: { role: 'user', content: bundled.content },
+      meta: { tracked: true, origin: bundled.origin as PromptOrigin },
     });
     await entered;
     expect(pendingIds(loop)).toEqual([id]);
@@ -488,6 +507,31 @@ describe('prompt queue', () => {
     await loop.promptHandle(id)!.launched;
     expect(loop.snapshot().queue).toHaveLength(0);
     await loop.settled();
+
+    const history = ctx.context.get();
+    expect(history[0]?.role).toBe('user');
+    expect(history[0]?.content).toEqual([
+      {
+        type: 'text',
+        text: '<hook_result hook_event="UserPromptSubmit">\nfrom hook\n</hook_result>',
+        meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+      },
+      { type: 'text', text: '<skill>review</skill>' },
+      { type: 'text', text: 'launching' },
+    ]);
+    expect(started).toEqual(['launching']);
+    const turnPrompt = (await ctx.persistedWireRecords()).find(
+      (record) => record.type === 'turn.prompt',
+    );
+    expect((turnPrompt as { input?: unknown } | undefined)?.input).toEqual([
+      {
+        type: 'text',
+        text: '<hook_result hook_event="UserPromptSubmit">\nfrom hook\n</hook_result>',
+        meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+      },
+      { type: 'text', text: '<skill>review</skill>' },
+      { type: 'text', text: 'launching' },
+    ]);
   });
 
   it('delivers a blocked prompt’s compression captions inline in their host message', async () => {
@@ -692,9 +736,11 @@ describe('prompt queue', () => {
     await hold.started;
 
     await enqueue(loop, { id: 'bundled', message: bundledMessage('review', 'user text') });
+    await enqueue(loop, { id: 'marked-bundled', message: bundledMessage('security', 'marked text', [], true) });
 
     expect(queued).toEqual([
       { promptId: 'bundled', content: [{ type: 'text', text: 'user text' }] },
+      { promptId: 'marked-bundled', content: [{ type: 'text', text: 'marked text' }] },
     ]);
 
     hold.release();
@@ -775,8 +821,16 @@ describe('prompt queue', () => {
       (entry) => entry.origin?.kind === 'user' && entry.origin.skillActivations !== undefined,
     );
     expect(merged?.content).toEqual([
-      { type: 'text', text: '<skill>review</skill>' },
-      { type: 'text', text: '<skill>security</skill>' },
+      {
+        type: 'text',
+        text: '<skill>review</skill>',
+        meta: { source: 'skill activation', activationId: 'act-review' },
+      },
+      {
+        type: 'text',
+        text: '<skill>security</skill>',
+        meta: { source: 'skill activation', activationId: 'act-security' },
+      },
       { type: 'text', text: 'user A' },
       { type: 'text', text: 'user B' },
     ]);

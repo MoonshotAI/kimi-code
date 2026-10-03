@@ -498,7 +498,19 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
   it('groups flat messages into turns with folded tool results', () => {
     const snapshot = groupMessagesIntoSnapshot([
       { role: 'system', content: [{ type: 'text', text: 'sys' }] },
-      { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [], origin: { kind: 'user' } },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: '<hook_result hook_event="UserPromptSubmit">\nnoise\n</hook_result>',
+            meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+          },
+          { type: 'text', text: 'hello' },
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
       {
         role: 'assistant',
         content: [{ type: 'think', think: 'hmm' }, { type: 'text', text: 'checking' }],
@@ -521,15 +533,19 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     ]);
 
     const kinds = snapshot.items.map((i) => i.kind);
-    expect(kinds).toEqual(['turn', 'turn', 'marker', 'turn']);
-    const firstTurn = snapshot.items[0];
+    expect(kinds).toEqual(['marker', 'turn', 'turn', 'marker', 'turn']);
+    const hookMarker = snapshot.items[0];
+    if (hookMarker?.kind !== 'marker') throw new Error('expected marker');
+    expect(hookMarker.marker).toBe('hook');
+    expect(hookMarker.payload).toEqual({ hookEvent: 'UserPromptSubmit', content: 'noise' });
+    const firstTurn = snapshot.items[1];
     if (firstTurn?.kind !== 'turn') throw new Error('expected turn');
     expect(firstTurn.prompt).toBe('hello');
     expect(firstTurn.steps).toHaveLength(2);
     const tool = firstTurn.steps[0]?.frames.find((f) => f.kind === 'tool');
     expect(tool?.kind === 'tool' && tool.output).toBe('file body');
     expect(tool?.kind === 'tool' && tool.input).toEqual({ path: '/a' });
-    const marker = snapshot.items[2];
+    const marker = snapshot.items[3];
     expect(marker?.kind === 'marker' && marker.marker).toBe('compaction');
   });
 
@@ -641,12 +657,27 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
       [
         { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } },
         { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
-        { role: 'user', content: [{ type: 'text', text: 'steered in' }], toolCalls: [], origin: { kind: 'user' } },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: '<hook_result hook_event="UserPromptSubmit">\nnoise\n</hook_result>',
+              meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+            },
+            { type: 'text', text: 'steered in' },
+          ],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
       ],
       { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), new Map([['user', 1]])]]) },
     );
 
-    expect(snapshot.items.map((i) => i.kind)).toEqual(['turn']);
+    expect(snapshot.items.map((i) => i.kind)).toEqual(['turn', 'marker']);
+    const hookMarker = snapshot.items[1];
+    if (hookMarker?.kind !== 'marker') throw new Error('expected marker');
+    expect(hookMarker.marker).toBe('hook');
     const turn = snapshot.items[0];
     if (turn?.kind !== 'turn') throw new Error('expected turn');
     const lastStep = turn.steps.at(-1);
@@ -873,42 +904,56 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
   });
 
   it('expands a bundled prompt into per-skill markers and a caller-text turn', () => {
-    const snapshot = groupMessagesIntoSnapshot([
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: 'rendered review block' },
-          { type: 'text', text: 'rendered security block' },
-          { type: 'text', text: 'please /skill:review and /skill:security' },
-        ],
-        toolCalls: [],
-        origin: {
-          kind: 'user',
-          skillActivations: [
-            { activationId: 'act-1', skillName: 'review' },
-            { activationId: 'act-2', skillName: 'security', skillArgs: 'src/app.ts' },
-          ],
-        } as { kind: string },
-      },
-      { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
-    ]);
+    const origin = {
+      kind: 'user',
+      skillActivations: [
+        { activationId: 'act-1', skillName: 'review' },
+        { activationId: 'act-2', skillName: 'security', skillArgs: 'src/app.ts' },
+      ],
+    } as { kind: string };
+    const variants: readonly (readonly HistoryContentPart[])[] = [
+      [
+        { type: 'text', text: 'rendered review block' },
+        { type: 'text', text: 'rendered security block' },
+        { type: 'text', text: 'please /skill:review and /skill:security' },
+      ],
+      [
+        {
+          type: 'text',
+          text: 'rendered review block',
+          meta: { source: 'skill activation', activationId: 'act-1' },
+        },
+        {
+          type: 'text',
+          text: 'rendered security block',
+          meta: { source: 'skill activation', activationId: 'act-2' },
+        },
+        { type: 'text', text: 'please /skill:review and /skill:security' },
+      ],
+    ];
+    for (const content of variants) {
+      const snapshot = groupMessagesIntoSnapshot([
+        { role: 'user', content, toolCalls: [], origin },
+        { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
+      ]);
 
-    expect(snapshot.items.map((item) => item.kind)).toEqual(['marker', 'marker', 'turn']);
-    const first = snapshot.items[0];
-    expect(first?.kind === 'marker' && first.marker).toBe('skill');
-    expect(first?.kind === 'marker' && first.payload).toMatchObject({
-      text: 'rendered review block',
-      origin: { kind: 'skill_activation', trigger: 'user-slash', skillName: 'review' },
-    });
-    const second = snapshot.items[1];
-    expect(second?.kind === 'marker' && second.payload).toMatchObject({
-      text: 'rendered security block',
-      origin: { skillName: 'security', skillArgs: 'src/app.ts' },
-    });
-    const turn = snapshot.items[2];
-    if (turn?.kind !== 'turn') throw new Error('expected turn');
-    expect(turn.prompt).toBe('please /skill:review and /skill:security');
-    expect(turn.steps).toHaveLength(1);
+      expect(snapshot.items.map((item) => item.kind)).toEqual(['marker', 'marker', 'turn']);
+      const first = snapshot.items[0];
+      expect(first?.kind === 'marker' && first.marker).toBe('skill');
+      expect(first?.kind === 'marker' && first.payload).toMatchObject({
+        text: 'rendered review block',
+        origin: { kind: 'skill_activation', trigger: 'user-slash', skillName: 'review' },
+      });
+      const second = snapshot.items[1];
+      expect(second?.kind === 'marker' && second.payload).toMatchObject({
+        text: 'rendered security block',
+        origin: { skillName: 'security', skillArgs: 'src/app.ts' },
+      });
+      const turn = snapshot.items[2];
+      if (turn?.kind !== 'turn') throw new Error('expected turn');
+      expect(turn.prompt).toBe('please /skill:review and /skill:security');
+      expect(turn.steps).toHaveLength(1);
+    }
   });
 
   it('maps media parts on the opening user message to attachment entities, dropping base64 bytes', () => {
