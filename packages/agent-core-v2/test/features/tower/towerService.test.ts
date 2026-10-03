@@ -53,6 +53,8 @@ import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+import { IBashParserService } from '#/app/bashParser/bashParser';
+import { BashParserService } from '#/app/bashParser/bashParserService';
 import { IConfigService } from '#/app/config/config';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { IFlagService } from '#/app/flag/flag';
@@ -3722,6 +3724,331 @@ describe('AgentTowerService', () => {
       expect(permissionGateRan).toBe(true);
     });
   });
+  describe('bash destructive guard', () => {
+    let repo: string;
+    let slot: string;
+
+    beforeEach(async () => {
+      repo = await mkdtemp(join(tmpdir(), 'tower-bash-guard-'));
+      await initGitRepo(repo);
+      await writeFile(join(repo, 'README.md'), '# fixture\n');
+      await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
+      await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+      await new TowerStore(repo).init('session-main');
+      slot = join(repo, '.tower', 'worktrees', 'wt-1');
+      await mkdir(slot, { recursive: true });
+      ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-main' } as unknown as ISessionContext);
+      ix.stub(IBashParserService, new BashParserService());
+    });
+
+    afterEach(async () => {
+      await rm(repo, { recursive: true, force: true });
+    });
+
+    function bashHookContext(command: string, cwd?: string): ResolvedToolExecutionHookContext {
+      const call = toolCall('Bash', 'call_bash');
+      return {
+        turnId: 0,
+        signal,
+        toolCall: call,
+        toolCalls: [call],
+        args: cwd === undefined ? { command } : { command, cwd },
+        execution: { approvalRule: 'Bash', execute: async () => ({ output: '' }) },
+      };
+    }
+
+    it.each([
+      'git clean -fdx',
+      'git clean -ffdx',
+      'git clean -f -d -x',
+      'git clean --force -dx',
+      'git clean -fdx .',
+      'git clean -fdx .tower',
+      'git clean -fdx -- .tower/comms',
+      'git clean -fdx .tower/comms/state.json',
+    ])('vetoes "%s" at the main checkout without tower mode active (worker shape)', async (command) => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext(command));
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('.tower/comms');
+      expect(decision?.veto?.output).toContain('worktree');
+      expect(permissionGateRan).toBe(false);
+      expect(formatDenyMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('vetoes git clean at the main checkout while tower mode is active (main agent shape)', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      const decision = await fire(bashHookContext('git clean -fdx'));
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('.tower/comms');
+      expect(permissionGateRan).toBe(false);
+    });
+
+    it('vetoes git clean targeting the main checkout from outside via git -C', async () => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext(`git -C ${repo} clean -fdx`, tmpdir()));
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(permissionGateRan).toBe(false);
+    });
+
+    it.each([
+      'git clean -ndx',
+      'git clean -n',
+      'git clean --dry-run -fdx',
+      'git clean -fdxn',
+      'git clean -f',
+      'git clean -fdx packages',
+    ])('allows "%s" (dry-run, files-only, or out-of-scope pathspec)', async (command) => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext(command));
+
+      expect(decision).toBeUndefined();
+      expect(permissionGateRan).toBe(true);
+      expect(formatDenyMessage).not.toHaveBeenCalled();
+    });
+
+    it('allows git clean and git reset --hard inside a tower worktree', async () => {
+      ix.get(IAgentTowerService);
+
+      for (const command of [
+        `cd ${slot} && git clean -fdx`,
+        `cd ${slot} && git clean -fdx .`,
+        `cd ${slot} && git clean -fdx ./`,
+        `cd ${slot} && git clean -fdx -- .`,
+        `cd ${slot} && git clean -fdx node_modules`,
+        `cd ${join(slot, 'pkg')} && git clean -fdx ..`,
+        `git -C ${slot} clean -fdx`,
+        `git -C ${slot} clean -fdx .`,
+        `cd ${slot} && git reset --hard`,
+        `git -C ${slot} reset --hard HEAD~1`,
+      ]) {
+        const decision = await fire(bashHookContext(command));
+
+        expect(decision, command).toBeUndefined();
+      }
+      expect(permissionGateRan).toBe(true);
+    });
+
+    it('allows git clean with a dot pathspec in a worktree via the Bash cwd argument', async () => {
+      ix.get(IAgentTowerService);
+
+      for (const command of ['git clean -fdx', 'git clean -fdx .', 'git clean -fdx -- .']) {
+        const decision = await fire(bashHookContext(command, slot));
+
+        expect(decision, command).toBeUndefined();
+      }
+      expect(permissionGateRan).toBe(true);
+    });
+
+    it('still vetoes git clean naming a worktree slot root from the main checkout', async () => {
+      ix.get(IAgentTowerService);
+
+      for (const command of [
+        'git clean -fdx .tower/worktrees/wt-1',
+        'git clean -ffdx .tower/worktrees/wt-1',
+        `git clean -fdx ${slot}`,
+      ]) {
+        const decision = await fire(bashHookContext(command));
+
+        expect(decision?.veto?.isError, command).toBe(true);
+      }
+    });
+
+    it('still vetoes git clean whose pathspec escapes a worktree slot into tower protocol paths', async () => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext(`cd ${slot} && git clean -fdx ../../comms`));
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('.tower/comms');
+    });
+
+    it.each([
+      'git reset --hard',
+      'git reset --hard HEAD~1',
+      'git reset --hard origin/main',
+    ])('vetoes "%s" at the main checkout', async (command) => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext(command));
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('git reset --hard');
+      expect(decision?.veto?.output).toContain('worktree');
+      expect(permissionGateRan).toBe(false);
+    });
+
+    it.each(['git reset', 'git reset --soft HEAD~1', 'git reset --mixed'])(
+      'allows "%s" without --hard',
+      async (command) => {
+        ix.get(IAgentTowerService);
+
+        const decision = await fire(bashHookContext(command));
+
+        expect(decision).toBeUndefined();
+        expect(permissionGateRan).toBe(true);
+      },
+    );
+
+    it('vetoes git -C reset --hard whose target is the main checkout even from a worktree cwd', async () => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext(`git -C ${repo} reset --hard`, slot));
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(permissionGateRan).toBe(false);
+    });
+
+    it.each([
+      'rm -rf .tower',
+      'rm -rf .tower/comms',
+      'rm -f .tower/comms/state.json',
+      'rm --recursive --force .tower',
+      'rm -rf .tower/worktrees',
+    ])('vetoes "%s" on tower protocol paths', async (command) => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext(command));
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('.tower/comms');
+      expect(permissionGateRan).toBe(false);
+    });
+
+    it('vetoes recursive rm of the main checkout root (an ancestor of .tower)', async () => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext(`rm -rf ${repo}`));
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(permissionGateRan).toBe(false);
+    });
+
+    it.each([
+      'rm -rf node_modules',
+      'rm -f README.md',
+      'rm -rf .tmp',
+    ])('allows "%s" on ordinary main-checkout paths', async (command) => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext(command));
+
+      expect(decision).toBeUndefined();
+      expect(permissionGateRan).toBe(true);
+    });
+
+    it('allows rm -rf inside a worktree slot', async () => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext(`rm -rf ${join(slot, 'node_modules')}`));
+
+      expect(decision).toBeUndefined();
+      expect(permissionGateRan).toBe(true);
+    });
+
+    it('tracks cd chains across && lists', async () => {
+      ix.get(IAgentTowerService);
+
+      const allowed = await fire(bashHookContext('cd packages && git clean -fdx'));
+      const vetoed = await fire(bashHookContext('cd packages && cd .. && git clean -fdx'));
+
+      expect(allowed).toBeUndefined();
+      expect(vetoed?.veto?.isError).toBe(true);
+    });
+
+    it.each([
+      "bash -c 'git clean -fdx'",
+      'sudo rm -rf .tower',
+      'env FOO=1 git reset --hard',
+      'eval "git clean -fdx"',
+    ])('vetoes "%s" through wrappers and nested shells', async (command) => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext(command));
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(permissionGateRan).toBe(false);
+    });
+
+    it('allows a command that only mentions the keywords in string literals', async () => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext('echo "git clean -fdx" && printf "rm -rf"'));
+
+      expect(decision).toBeUndefined();
+      expect(permissionGateRan).toBe(true);
+      expect(formatDenyMessage).not.toHaveBeenCalled();
+    });
+
+    it('passes commands without dangerous keywords with zero parse cost', async () => {
+      const parse = vi.fn();
+      ix.stub(IBashParserService, { parse } as unknown as IBashParserService);
+      ix.get(IAgentTowerService);
+
+      const first = await fire(bashHookContext('ls -la && git status'));
+      const second = await fire(bashHookContext('echo format armory cleanup resetting'));
+
+      expect(first).toBeUndefined();
+      expect(second).toBeUndefined();
+      expect(parse).not.toHaveBeenCalled();
+    });
+
+    it('allows dangerous-shaped commands when no tower state exists, without parsing', async () => {
+      const plain = await mkdtemp(join(tmpdir(), 'tower-bash-guard-plain-'));
+      try {
+        ix.stub(ISessionContext, { cwd: plain, sessionId: 'session-plain' } as unknown as ISessionContext);
+        const parse = vi.fn();
+        ix.stub(IBashParserService, { parse } as unknown as IBashParserService);
+        ix.get(IAgentTowerService);
+
+        const decision = await fire(bashHookContext('git clean -fdx'));
+
+        expect(decision).toBeUndefined();
+        expect(parse).not.toHaveBeenCalled();
+      } finally {
+        await rm(plain, { recursive: true, force: true });
+      }
+    });
+
+    it('vetoes conservatively when the command cannot be parsed', async () => {
+      const parse = vi.fn(() => ({ ok: false as const, reason: 'aborted' as const }));
+      ix.stub(IBashParserService, { parse } as unknown as IBashParserService);
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext('git clean -fdx'));
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('could not parse');
+      expect(permissionGateRan).toBe(false);
+    });
+
+    it('vetoes conservatively when the parsed tree carries errors', async () => {
+      const root = {
+        type: 'program',
+        text: 'git clean -fdx',
+        startIndex: 0,
+        endIndex: 'git clean -fdx'.length,
+        isNamed: true,
+        children: [],
+      };
+      const parse = vi.fn(() => ({ ok: true as const, hasError: true, root }));
+      ix.stub(IBashParserService, { parse } as unknown as IBashParserService);
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext('git clean -fdx'));
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('could not parse');
+    });
+  });
 });
 
 async function injectDynamic(ctx: TestAgentContext): Promise<void> {
@@ -3924,6 +4251,7 @@ describe('TowerModeInjection', () => {
     expect(towerReminderMessages(context)).toHaveLength(3);
     expect(lastTowerReminder(context)).toContain('Tower mode is active');
   });
+
 });
 
 describe('towerEnterFailureMessage', () => {

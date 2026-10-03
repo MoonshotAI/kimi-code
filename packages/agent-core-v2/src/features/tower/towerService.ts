@@ -1,4 +1,5 @@
-import { join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { isAbsolute, join, resolve } from 'node:path';
 
 import { Disposable, toDisposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from '#/_base/di/scope';
@@ -29,17 +30,20 @@ import { LifecycleScope } from '#/app/scopes';
 import { IFlagService } from '#/app/flag/flag';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IBashParserService } from '#/app/bashParser/bashParser';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionActivityView } from '#/session/sessionActivity/sessionActivity';
 import { isWithinDirectory } from '#/tool/path-access';
 import type { ToolFileAccess } from '#/tool/toolContract';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { isUntitled } from '#/session/sessionMetadata/promptMetadata';
 import { SubagentStarted } from '#/session/subagent/mirrorAgentRun';
 import { TowerModeInjection } from './injection/towerModeInjection';
 import {
   BROADCAST_NAME,
+  STATE_FILE,
   TOWER_NAME,
   TowerStore,
   WORKTREES_DIR,
@@ -51,6 +55,11 @@ import {
   resolveTowerRepoRoot,
   TowerProtocolError,
 } from './protocol/index';
+import {
+  analyzeTowerBashCommand,
+  commandNeedsTowerGuard,
+  TOWER_BASH_GUARD_PARSE_OPTIONS,
+} from './bashGuard';
 import {
   IAgentTowerService,
   TOWER_FLAG_ID,
@@ -111,6 +120,8 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentTaskService private readonly tasks: IAgentTaskService | undefined,
     @ISessionEventBus sessionBus: ISessionEventBus,
+    @IBashParserService private readonly bashParser: IBashParserService,
+    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext | undefined,
   ) {
     super();
     this.agentState.contributeState(towerKey);
@@ -403,6 +414,32 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         );
       }),
     );
+    this._register(
+      toolExecutor.onBeforeExecuteTool((event) => {
+        if (event.toolCall.name !== 'Bash') return;
+        const args = event.args;
+        if (typeof args !== 'object' || args === null) return;
+        const command = (args as { readonly command?: unknown }).command;
+        if (typeof command !== 'string' || !commandNeedsTowerGuard(command)) return;
+        const mainCheckout = resolveTowerRepoRoot(this.sessionCtx.cwd);
+        if (!existsSync(join(mainCheckout, STATE_FILE))) return;
+        const cwdArg = (args as { readonly cwd?: unknown }).cwd;
+        const cwd =
+          typeof cwdArg === 'string'
+            ? this.resolveBashGuardCwd(cwdArg)
+            : (this.workspaceCtx?.workDir ?? this.sessionCtx.cwd);
+        const reason = analyzeTowerBashCommand({ command, cwd, mainCheckout }, (source) =>
+          this.bashParser.parse(source, TOWER_BASH_GUARD_PARSE_OPTIONS),
+        );
+        if (reason === undefined) return;
+        event.veto(denyToolExecution(this.toolApproval.formatDenyMessage(reason)));
+      }),
+    );
+  }
+
+  private resolveBashGuardCwd(cwdArg: string): string {
+    if (this.workspaceCtx !== undefined) return this.workspaceCtx.resolve(cwdArg);
+    return isAbsolute(cwdArg) ? resolve(cwdArg) : resolve(this.sessionCtx.cwd, cwdArg);
   }
 
   async enter(base?: string): Promise<TowerEnterResult> {
