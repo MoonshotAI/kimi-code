@@ -8,7 +8,7 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (29 sections · 2 overlay(s))
+# Index (30 sections · 2 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   builtinProductSkills     src/features/skill/catalog/configSection.ts
 #   cron                     src/features/cron/configSection.ts
@@ -29,6 +29,7 @@
 #   permission               src/agent/permissionRules/configSection.ts
 #   providers                src/app/kosongConfig/configSection.ts
 #   read                     src/agent/tools/os/read/configSection.ts
+#   sandbox                  src/os/sandbox/configSection.ts
 #   secondaryModel           src/session/subagent/configSection.ts
 #   services                 src/app/auth/configSection.ts
 #   subagent                 src/session/subagent/configSection.ts
@@ -355,6 +356,33 @@ merge_all_available_skills = true
 [read]
 # default_max_chars: integer
 # max_chars: integer
+
+# ##########################################################################
+# sandbox
+#   owner: src/os/sandbox/configSection.ts
+#   scope: core
+#   hooks: custom fromToml · custom toToml · stripEnv
+#   env:
+#     mode <- KIMI_CODE_SANDBOX_MODE (custom parse)
+# ##########################################################################
+
+[sandbox]
+# mode: "off" | "read-only" | "workspace-write" | "danger-full-access"
+# auto_approve_sandboxed: boolean
+# allow_unsandboxed_commands: boolean
+# excluded_commands: string[]
+# writable_roots: string[]
+# readable_roots: string[]
+# deny_read: string[]
+# deny_write: string[]
+# enable_weaker_nested_sandbox: boolean
+
+# [sandbox.network]
+  # mode: "off" | "allowlist" | "all"
+  # allowed_domains: string[]
+  # denied_domains: string[]
+  # allow_local_binding: boolean
+  # allow_unix_sockets: string[]
 
 # ##########################################################################
 # secondaryModel (config.toml: secondary_model)

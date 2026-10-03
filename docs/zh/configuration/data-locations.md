@@ -31,6 +31,7 @@ $KIMI_CODE_HOME  （默认 ~/.kimi-code）
 ├── tui.toml                # 终端界面偏好（含自动更新开关）
 ├── AGENTS.md               # 全局 Kimi 专属 Agent 指令（可选）
 ├── mcp.json                # 用户级 MCP server 声明（可选）
+├── rules.d/                # 用户级 exec policy .rules 文件（可选，实验功能）
 ├── skills/                 # Kimi 专属用户级 Skills（可选）
 ├── plugins/
 │   ├── installed.json      # 已安装 plugin 记录与启用状态
@@ -64,6 +65,7 @@ $KIMI_CODE_HOME  （默认 ~/.kimi-code）
 - **`tui.toml`**：终端界面客户端偏好，包括自动更新开关 `[upgrade].auto_install`（默认开启）。可在 `/settings` 关闭，或手动设为 `auto_install = false`。
 - **`AGENTS.md`**：全局 Kimi 专属 Agent 指令。该文件会随 `KIMI_CODE_HOME` 移动；跨工具通用指令仍可放在 `~/.agents/AGENTS.md`。
 - **`mcp.json`**：用户级 MCP server 声明，启动时与项目内的 `.kimi-code/mcp.json` 合并加载。详见 [MCP](../customization/mcp.md)。
+- **`rules.d/`**：用户级 exec policy `.rules` 文件，位于 `/etc/kimi-code/rules.d/`（managed）与项目内 `.kimi-code/rules.d/` 之间的一层。仅在实验性 exec-policy flag 开启时读取。详见 [Exec policy 规则](./config-files.md#exec-policy-规则)。
 - **`skills/`**：Kimi 专属用户级 Skills。该目录会随 `KIMI_CODE_HOME` 移动；跨工具通用 Skills 仍可放在 `~/.agents/skills/`。详见 [Agent Skills](../customization/skills.md)。
 - **`plugins/installed.json`**：记录已安装的 plugin、每个 plugin 的启用状态，以及通过 `/plugins` 或 `/plugins mcp disable|enable` 修改的 MCP server 能力状态。本地路径和 zip URL 安装的文件会复制到 `plugins/managed/<id>/`。详见 [Plugins](../customization/plugins.md)。
 - **`credentials/`**：OAuth 凭据目录，权限 `0o700`（目录）/ `0o600`（文件），仅当前用户可读写。托管供应商凭据存为 `credentials/<name>.json`，MCP server 凭据存在 `credentials/mcp/` 子目录下。凭据写入使用原子流程（tmp → fsync → rename）防止写损。

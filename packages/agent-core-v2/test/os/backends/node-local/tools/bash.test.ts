@@ -22,6 +22,10 @@ import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { type ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
+import type { ISandboxService } from '#/os/sandbox/sandboxService';
+import type { INetworkEgressPolicy } from '#/agent/networkEgress/networkEgress';
+import type { ITelemetryService } from '#/app/telemetry/telemetry';
+import { recordingTelemetry } from '../../../../app/telemetry/stubs';
 import { type BashInput, BashInputSchema } from '#/agent/tools/os/bash/bash';
 import { BashTool } from '#/agent/tools/os/bash/bashTool';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
@@ -710,6 +714,24 @@ function stubConfig(values: Record<string, unknown> = {}): IConfigService {
   } as unknown as IConfigService;
 }
 
+function stubSandbox(): ISandboxService {
+  return {
+    _serviceBrand: undefined,
+    backendName: 'unsupported',
+    supported: false,
+    wrap: (command: string, args: readonly string[]) => ({ command, args, env: {} }),
+    isLikelyDenial: () => false,
+  } as unknown as ISandboxService;
+}
+
+function stubNetworkEgress(): INetworkEgressPolicy {
+  return {
+    _serviceBrand: undefined,
+    decide: async () => 'deny',
+    acquireProxyEnvironment: async () => undefined,
+  };
+}
+
 function bashTool(
   runner: IHostProcessService,
   env: IHostEnvironment = createTestEnv(),
@@ -717,6 +739,9 @@ function bashTool(
   background: IAgentTaskService = createFakeTaskService().service,
   toolPolicy: IAgentToolPolicyService = stubToolPolicy(),
   config: IConfigService = stubConfig(),
+  sandbox: ISandboxService = stubSandbox(),
+  telemetry: ITelemetryService = recordingTelemetry([]),
+  networkEgress: INetworkEgressPolicy = stubNetworkEgress(),
 ): BashTool {
   const processService: IHostProcessService = {
     _serviceBrand: undefined,
@@ -740,7 +765,17 @@ function bashTool(
       dispose: () => {},
     }),
   };
-  return new BashTool(runtime, ctx, stubWorkspaceContext(ctx.cwd), background, toolPolicy, config);
+  return new BashTool(
+    runtime,
+    ctx,
+    stubWorkspaceContext(ctx.cwd),
+    background,
+    toolPolicy,
+    config,
+    sandbox,
+    telemetry,
+    networkEgress,
+  );
 }
 
 describe('BashTool', () => {
