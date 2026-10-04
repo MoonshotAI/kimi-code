@@ -85,7 +85,7 @@ export function createProgram(
     .addOption(
       new Option(
         '--agent <name>',
-        'Agent profile name for a new session (catalog / discovered profiles). Mutually exclusive with --agent-file. Cannot be combined with --session/--continue.',
+        'Agent profile name for a new session (catalog / discovered profiles). Mutually exclusive with --agent-file. Cannot be combined with --session/--resume/--continue.',
       )
         .argParser((value: string, previous: string | undefined) => {
           if (previous !== undefined) {
@@ -98,7 +98,7 @@ export function createProgram(
     .addOption(
       new Option(
         '--agent-file <path>',
-        'Load one agent Markdown file for a new session (tools/disallowedTools in frontmatter restrict the tool set). Mutually exclusive with --agent. Cannot be combined with --session/--continue.',
+        'Load one agent Markdown file for a new session (tools/disallowedTools in frontmatter restrict the tool set). Mutually exclusive with --agent. Cannot be combined with --session/--resume/--continue.',
       )
         .argParser((value: string, previous: string[] | undefined) => {
           if ((previous?.length ?? 0) > 0) {

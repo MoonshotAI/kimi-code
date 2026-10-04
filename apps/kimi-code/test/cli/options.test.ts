@@ -409,6 +409,9 @@ describe('CLI options parsing', () => {
       expect(normalizedHelp).toContain('tools/disallowedTools in frontmatter');
       expect(normalizedHelp).toContain('alias: -r, --resume');
       expect(normalizedHelp).toContain('Alias for --session');
+      expect(
+        normalizedHelp.match(/Cannot be combined with --session\/--resume\/--continue\./g),
+      ).toHaveLength(2);
       expect(normalizedHelp).not.toContain('loaded via --agent-file');
       expect(normalizedHelp).not.toContain('print-mode invocation');
     });
