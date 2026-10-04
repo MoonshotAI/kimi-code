@@ -17,6 +17,7 @@ import { toast } from "@/components/ui/sonner";
 import { useChatStore } from "@/stores";
 import { bridge } from "@/services";
 import type { ChatMessage as ChatMessageType, UIStep, UIStepItem } from "@/stores/chat.store";
+import { steerAnchorId } from "./inputarea/hooks/useQuestionsHistory";
 import type { ContentPart } from "shared/legacy-sdk";
 
 interface ChatMessageProps {
@@ -35,10 +36,10 @@ function ThinkingIndicator() {
   );
 }
 
-function SteerBubble({ content }: { content: string | ContentPart[] }) {
+function SteerBubble({ content, anchorId }: { content: string | ContentPart[]; anchorId?: string }) {
   const text = typeof content === "string" ? content : Content.getText(content);
   return (
-    <div className="flex justify-end my-1">
+    <div className="flex justify-end my-1 scroll-mt-16" data-message-id={anchorId}>
       <div className="max-w-[85%] px-3 py-1 rounded-2xl rounded-br-md bg-zinc-100 dark:bg-zinc-800 text-foreground">
         <p className="text-xs leading-relaxed">{text}</p>
       </div>
@@ -46,7 +47,7 @@ function SteerBubble({ content }: { content: string | ContentPart[] }) {
   );
 }
 
-function StepItemRenderer({ item }: { item: UIStepItem }) {
+function StepItemRenderer({ item, anchorId }: { item: UIStepItem; anchorId?: string }) {
   switch (item.type) {
     case "thinking":
       return <ThinkingBlock content={item.content} finished={item.finished} />;
@@ -57,13 +58,13 @@ function StepItemRenderer({ item }: { item: UIStepItem }) {
     case "compaction":
       return <CompactionCard />;
     case "steer":
-      return <SteerBubble content={item.content} />;
+      return <SteerBubble content={item.content} anchorId={anchorId} />;
     default:
       return null;
   }
 }
 
-function StepContent({ step, showConnector }: { step: UIStep; showConnector?: boolean }) {
+function StepContent({ step, showConnector, messageId }: { step: UIStep; showConnector?: boolean; messageId?: string }) {
   const hasItems = step.items.length > 0;
   const hasToolOrThinking = step.items.some((item) => item.type === "tool_use" || item.type === "thinking" || item.type === "compaction");
   const showIndicator = hasToolOrThinking;
@@ -95,7 +96,7 @@ function StepContent({ step, showConnector }: { step: UIStep; showConnector?: bo
       )}
       <div className="flex-1 min-w-0 space-y-2">
         {step.items.map((item, idx) => (
-          <StepItemRenderer key={`${step.n}-${idx}`} item={item} />
+          <StepItemRenderer key={`${step.n}-${idx}`} item={item} anchorId={item.type === "steer" && messageId ? steerAnchorId(messageId, step.n, idx) : undefined} />
         ))}
       </div>
     </div>
@@ -217,7 +218,7 @@ function UserMessage({ message }: { message: ChatMessageType }) {
   const videos = Content.getVideos(message.content);
 
   return (
-    <div className="px-3 pt-3 pb-1 flex justify-end">
+    <div className="px-3 pt-3 pb-1 flex justify-end scroll-mt-16" data-message-id={message.id}>
       <div className={cn("max-w-[85%] px-3.5 py-1.5 rounded-2xl rounded-br-md", "bg-zinc-100 dark:bg-zinc-800", "text-foreground")}>
         {displayContent && (
           // FIX: removed whitespace-pre-wrap — it conflicted with ReactMarkdown's
@@ -249,7 +250,7 @@ function AssistantMessage({ message, turnIndex, isStreaming }: { message: ChatMe
     if (!hasSteps) {
       return typeof message.content === "string" ? message.content : "";
     }
-    const lastStep = steps[steps.length - 1];
+    const lastStep = steps.at(-1);
     const textItems = lastStep.items.filter((item) => item.type === "text");
     if (textItems.length > 0) {
       return textItems.map((item) => (item as { type: "text"; content: string }).content).join("\n");
@@ -285,7 +286,7 @@ function AssistantMessage({ message, turnIndex, isStreaming }: { message: ChatMe
                     const hasIndicator = stepHasIndicator[globalIndex];
                     const hasNextIndicator = stepHasIndicator.slice(globalIndex + 1).some(Boolean);
                     const showConnector = hasIndicator && hasNextIndicator && !isLastInGroup && !isLastOverall;
-                    return <StepContent key={step.n} step={step} showConnector={showConnector} />;
+                    return <StepContent key={step.n} step={step} showConnector={showConnector} messageId={message.id} />;
                   });
 
                   if (group.planMode) {
