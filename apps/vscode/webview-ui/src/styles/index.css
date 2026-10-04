@@ -198,3 +198,16 @@ body {
   border-radius: 3px;
   text-align: center;
 }
+
+@keyframes message-flash-ring {
+  from {
+    box-shadow: 0 0 0 2px var(--ring);
+  }
+  to {
+    box-shadow: 0 0 0 2px transparent;
+  }
+}
+
+.message-flash > div:first-child {
+  animation: message-flash-ring 1.5s ease-out;
+}
