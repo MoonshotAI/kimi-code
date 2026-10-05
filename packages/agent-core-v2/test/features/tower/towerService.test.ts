@@ -3028,11 +3028,14 @@ describe('AgentTowerService', () => {
     }
 
     async function flushWake(): Promise<void> {
-      for (let i = 0; i < 50 && !loop.queue.hasPendingRequests(); i++) {
-        await new Promise((resolve) => {
-          setImmediate(resolve);
-        });
-      }
+      await vi
+        .waitFor(
+          () => {
+            expect(loop.queue.hasPendingRequests()).toBe(true);
+          },
+          { timeout: 3000, interval: 5 },
+        )
+        .catch(() => {});
     }
 
     function drainWakeMessages(): ContextMessage[] {
