@@ -107,7 +107,7 @@ Hook 命令的工作目录是当前会话的项目目录。
 
 | 事件 | Matcher 匹配的是 | 会触发阻断？ | 说明 |
 | --- | --- | --- | --- |
-| `UserPromptSubmit` | 用户提交的文本内容 | ✓ | 用户发送消息时触发；返回文本会附加到上下文，阻断则本轮不调用模型 |
+| `UserPromptSubmit` | 用户提交的文本内容 | ✓ | 用户发送消息及 goal 自动续跑时触发；payload 含 `prompt`、`is_steer`、`origin_kind`、`origin_name`（续跑为 `system_trigger` / `goal_continuation`）；返回文本会附加到上下文，阻断则本轮不调用模型——被阻断的 goal 续跑会将 goal 置为 blocked |
 | `UserPromptQueued` | 排队消息的文本内容 | — | 上一回合仍在运行、新消息进入队列时触发；payload 含 `prompt_id`、`prompt`、`queue_length` |
 | `PreToolUse` | 工具名 | ✓ | 工具调用前、权限检查前触发；阻断后工具不会执行 |
 | `Stop` | 空字符串 | ✓ | 模型准备结束本轮时触发；阻断后可追加一条消息让模型继续 |
