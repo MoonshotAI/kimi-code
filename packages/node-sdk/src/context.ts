@@ -1,7 +1,13 @@
+import { isUndoAnchorOrigin } from '@moonshot-ai/agent-core-v2';
+import type { PromptOrigin as EnginePromptOrigin } from '@moonshot-ai/agent-core-v2';
 import type { ToolInputDisplay } from '@moonshot-ai/agent-core-v2/tool/toolInputDisplay';
 import type { ContentPart, Message } from '@moonshot-ai/kosong';
 
 import type { BackgroundTaskStatus } from '#/task';
+
+export function isUserTurnOrigin(origin: PromptOrigin | undefined): boolean {
+  return isUndoAnchorOrigin(origin as EnginePromptOrigin | undefined);
+}
 
 export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
 

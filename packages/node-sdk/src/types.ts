@@ -9,6 +9,7 @@ import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { ResumeSessionResult } from '#/replay';
 import type { PermissionMode } from '#/permission';
+import type { PromptOrigin } from '#/context';
 import type {
   TelemetryClient,
   TelemetryContextPatch,
@@ -71,6 +72,11 @@ export type {
   ThinkingConfig,
 } from '#/config/index';
 export type { ContextMessage, PromptOrigin } from '#/context';
+
+export interface SessionLogRecord {
+  readonly type: string;
+  readonly origin?: PromptOrigin;
+}
 export type {
   ExperimentalFeatureState,
   ExperimentalFlagMap,

@@ -32,6 +32,7 @@ import {
   toKimiErrorPayload,
   type Event,
   type KimiConfig,
+  type SessionLogRecord,
 } from '#/index';
 import { foldAgentWireReplay } from '#/v2/resume-replay';
 import {
@@ -61,6 +62,7 @@ import {
 import { McpOAuthService as McpOAuthServiceV2 } from '@moonshot-ai/agent-core-v2/mcpCore/oauth/service';
 
 import { TEST_IDENTITY } from './test-identity';
+import { sseBody, waitForSDKEvent } from './session-runtime-helpers';
 import {
   resetModelsDevUpstreamForTest,
   setModelsDevUpstreamForTest,
@@ -708,6 +710,72 @@ key = "${titleOAuthRef.key}"
       expect(harness.getSession('ses_resume_race')).toBe(resumed);
     } finally {
       await harness.close();
+    }
+  });
+
+  it('reads the whole main agent log across turns, undo, and resume', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url !== 'https://model.example.test/v1/chat/completions') {
+        throw new Error(`Unexpected fetch: ${url}`);
+      }
+      return new Response(sseBody('hello from fake provider'), {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+    });
+    const userTurnPrompts = (log: readonly SessionLogRecord[]) =>
+      log.filter((record) => record.type === 'turn.prompt' && record.origin?.kind === 'user')
+        .length;
+
+    try {
+      await harness.setConfig({
+        providers: {
+          local: {
+            type: 'openai',
+            baseUrl: 'https://model.example.test/v1',
+            apiKey: 'sk-test',
+          },
+        },
+        models: {
+          'fake-model': { provider: 'local', model: 'fake-model', maxContextSize: 262144 },
+        },
+        defaultModel: 'fake-model',
+      });
+      const session = await harness.createSession({ id: 'ses_main_log', workDir });
+      for (const text of ['first prompt', 'second prompt']) {
+        const done = waitForSDKEvent(session, (event) => event.type === 'turn.ended');
+        await session.prompt(text);
+        await done;
+      }
+      expect(userTurnPrompts(await session.readMainAgentLog())).toBe(2);
+
+      const cancelStarted = waitForSDKEvent(session, (event) => event.type === 'turn.started');
+      const cancelEnded = waitForSDKEvent(
+        session,
+        (event) => event.type === 'turn.ended' && event.reason === 'cancelled',
+        5_000,
+      );
+      fetchSpy.mockImplementationOnce(async () => new Promise<Response>(() => {}));
+      await session.prompt('third prompt');
+      await cancelStarted;
+      await session.cancel();
+      await cancelEnded;
+      expect(userTurnPrompts(await session.readMainAgentLog())).toBe(3);
+
+      await session.undoHistory(1);
+      expect(userTurnPrompts(await session.readMainAgentLog())).toBe(3);
+
+      await session.close();
+      const resumed = await harness.resumeSession({ id: 'ses_main_log' });
+      expect(userTurnPrompts(await resumed.readMainAgentLog())).toBe(3);
+      await resumed.close();
+    } finally {
+      await harness.close();
+      fetchSpy.mockRestore();
     }
   });
 

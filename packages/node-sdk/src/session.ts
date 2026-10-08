@@ -30,6 +30,7 @@ import type {
   ReloadSummary,
   ResumedSessionState,
   ResumedSessionSummary,
+  SessionLogRecord,
   SessionPlan,
   SessionStatus,
   SessionSummary,
@@ -404,6 +405,11 @@ export class Session {
   async getContext(): Promise<AgentContextData> {
     this.ensureOpen();
     return this.rpc.getContext({ sessionId: this.id });
+  }
+
+  async readMainAgentLog(): Promise<readonly SessionLogRecord[]> {
+    this.ensureOpen();
+    return this.rpc.readMainAgentLog({ sessionId: this.id });
   }
 
   async getUsage(): Promise<SessionUsage> {

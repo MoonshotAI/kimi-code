@@ -135,6 +135,7 @@ import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connect
 import { loadMcpServers } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
 import { fsSuggestRequestSchema } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
 import { IAppendLogStore } from '@moonshot-ai/agent-core-v2/persistence/interface/appendLogStore';
+import { IEventDispatcher } from '@moonshot-ai/agent-core-v2/state/eventDispatcher';
 import {
   bootstrap,
   DEFAULT_AGENT_PROFILE_NAME,
@@ -190,6 +191,7 @@ import {
   ITelemetryService,
   IWorkspaceAliases,
   ISessionActivityView,
+  IWireService,
   IWorkspaceInstanceManager,
   closeSessionById,
   followSessionLifecycles,
@@ -236,7 +238,7 @@ import { assertKimiHostIdentity, createKimiDefaultHeaders } from '@moonshot-ai/k
 
 import { KimiAuthFacade } from '#/auth';
 import { ensureConfigFile, HookDefSchema } from '#/config/index';
-import type { AgentContextData } from '#/context';
+import type { AgentContextData, PromptOrigin } from '#/context';
 import { ErrorCodes, isKimiErrorCode, KimiError, type KimiErrorCode } from '#/errors';
 import type { ExperimentalFeatureState } from '#/flag';
 import { KimiHarness } from '#/kimi-harness';
@@ -306,6 +308,7 @@ import type {
   ResumeSessionInput,
   ResumedAgentState,
   ResumedSessionSummary,
+  SessionLogRecord,
   SessionPlan,
   SessionStatus,
   SessionSummary,
@@ -1874,6 +1877,18 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async getContext(input: SessionIdRpcInput): Promise<AgentContextData> {
     const agent = await this.agentFacade(input.sessionId);
     return agent.getContext() as Promise<AgentContextData>;
+  }
+
+  override async readMainAgentLog(input: SessionIdRpcInput): Promise<readonly SessionLogRecord[]> {
+    const session = this.requireLiveSession(input.sessionId);
+    const agent = await this.materializeMainAgent(session);
+    await agent.accessor.get(IEventDispatcher).flush();
+    const wire = agent.accessor.get(IWireService);
+    const records: SessionLogRecord[] = [];
+    for await (const record of wire.readJournal()) {
+      records.push({ type: record.type, origin: record['origin'] as PromptOrigin | undefined });
+    }
+    return records;
   }
 
   override async getUsage(input: SessionIdRpcInput): Promise<SessionUsage> {

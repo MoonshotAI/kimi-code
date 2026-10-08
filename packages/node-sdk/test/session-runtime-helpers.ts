@@ -10,6 +10,22 @@ export interface AgentWirePayload {
   readonly [key: string]: unknown;
 }
 
+export function sseChunk(delta: Record<string, unknown>, finishReason: string | null = null): string {
+  return `data: ${JSON.stringify({
+    id: 'chatcmpl-stub',
+    object: 'chat.completion.chunk',
+    created: 0,
+    model: 'fake-model',
+    choices: [{ index: 0, delta, finish_reason: finishReason }],
+  })}`;
+}
+
+export function sseBody(text: string): string {
+  return [sseChunk({ role: 'assistant', content: text }), sseChunk({}, 'stop'), 'data: [DONE]']
+    .map((line) => `${line}\n\n`)
+    .join('');
+}
+
 export interface AgentSessionWireRecord {
   readonly type: 'agent';
   readonly agentId: string;

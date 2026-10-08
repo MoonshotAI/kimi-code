@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { SessionLogRecord } from '@moonshot-ai/kimi-code-sdk';
+
 import { GutterContainer } from '#/tui/components/chrome/gutter-container';
 import {
   SurveyController,
@@ -202,6 +204,10 @@ function createHarness(deps: Partial<SurveyControllerDeps> = {}): Harness {
 
 function userEntry(content: string): TranscriptEntry {
   return { id: content, kind: 'user', turnId: undefined, renderMode: 'plain', content };
+}
+
+function turnPrompt(origin?: SessionLogRecord['origin']): SessionLogRecord {
+  return { type: 'turn.prompt', origin: origin ?? { kind: 'user' } };
 }
 
 const HARNESS_ENVIRONMENT = {
@@ -2794,5 +2800,189 @@ describe('SurveyController copilot stats', () => {
     const appeared = trackedEvent(harness, 'appeared');
     expect(appeared).toMatchObject({ subagent_count: 0, swarm_run_count: 0 });
     expect(appeared['subagent_models']).toBeUndefined();
+  });
+});
+
+describe('SurveyController session user turns', () => {
+  function loggedUserTurns(count: number): SessionLogRecord[] {
+    return Array.from({ length: count }, () => turnPrompt());
+  }
+
+  it('reports the session user turns counted from the main agent log', async () => {
+    const harness = createHarness({
+      mainAgentLog: () => [
+        turnPrompt(),
+        turnPrompt(),
+        turnPrompt(),
+        turnPrompt(),
+        turnPrompt(),
+        turnPrompt(),
+        turnPrompt(),
+      ],
+    });
+    await harness.flush();
+    harness.appear();
+
+    expect(harness.track).toHaveBeenCalledWith(
+      'feedback_survey',
+      expect.objectContaining({ event_type: 'appeared', user_turn_count: 7 }),
+    );
+  });
+
+  it('counts only the turn.prompt records that belong to a user turn', async () => {
+    const harness = createHarness({
+      mainAgentLog: () => [
+        turnPrompt(),
+        turnPrompt({
+          kind: 'user',
+          skillActivations: [{ activationId: 'a0', skillName: 'bundled' }],
+        } as SessionLogRecord['origin']),
+        turnPrompt({
+          kind: 'skill_activation',
+          activationId: 'a1',
+          skillName: 'implement',
+          trigger: 'user-slash',
+        }),
+        turnPrompt({
+          kind: 'plugin_command',
+          activationId: 'a2',
+          pluginId: 'official',
+          commandName: 'review',
+          trigger: 'user-slash',
+        }),
+        { type: 'turn.prompt' },
+        turnPrompt({ kind: 'user', inTurn: true } as SessionLogRecord['origin']),
+        { type: 'turn.steer', origin: { kind: 'user' } },
+        turnPrompt({
+          kind: 'skill_activation',
+          activationId: 'a3',
+          skillName: 'auto',
+          trigger: 'model-tool',
+        }),
+        turnPrompt({
+          kind: 'cron_job',
+          jobId: 'job-1',
+          cron: '*/5 * * * *',
+          recurring: true,
+          coalescedCount: 0,
+          stale: false,
+        }),
+        turnPrompt({ kind: 'system_trigger', name: 'goal_continuation' }),
+        turnPrompt({ kind: 'system_trigger', name: 'session_start' }),
+        turnPrompt({ kind: 'shell_command', phase: 'input' }),
+        turnPrompt({ kind: 'injection', variant: 'task_notification' }),
+        turnPrompt({ kind: 'compaction_summary' }),
+        { type: 'context.append_message', origin: { kind: 'user' } },
+        { type: 'context.undo' },
+        { type: 'context.apply_compaction' },
+        turnPrompt(),
+        { type: 'turn.ended' },
+      ],
+    });
+    await harness.flush();
+    harness.appear();
+
+    expect(harness.track).toHaveBeenCalledWith(
+      'feedback_survey',
+      expect.objectContaining({ event_type: 'appeared', user_turn_count: 6 }),
+    );
+  });
+
+  it('keeps the gate on mount turns even when the log already has many turns', async () => {
+    const harness = createHarness({ mainAgentLog: () => loggedUserTurns(20) });
+    await harness.flush();
+    harness.clock.mono += 600_000;
+    harness.runTurns(4);
+    harness.elapse(2000);
+    expect(harness.container.children).toHaveLength(0);
+
+    harness.runTurns(1);
+    harness.elapse(2000);
+    expect(harness.container.children).not.toHaveLength(0);
+    expect(trackedEvent(harness, 'appeared')).toMatchObject({ user_turn_count: 20 });
+  });
+
+  it('carries the open-time count into responded and abandoned of the same appearance', async () => {
+    const respondedLog = loggedUserTurns(5);
+    const responded = createHarness({ mainAgentLog: () => respondedLog });
+    await responded.flush();
+    responded.appear();
+    respondedLog.push(...loggedUserTurns(3));
+    responded.typeDigit('3');
+    responded.elapse(400);
+    responded.elapse(3000);
+    expect(responded.track).toHaveBeenCalledWith(
+      'feedback_survey',
+      expect.objectContaining({ event_type: 'appeared', user_turn_count: 5 }),
+    );
+    expect(responded.track).toHaveBeenCalledWith(
+      'feedback_survey',
+      expect.objectContaining({ event_type: 'responded', user_turn_count: 5 }),
+    );
+
+    const abandonedLog = loggedUserTurns(5);
+    const abandoned = createHarness({ mainAgentLog: () => abandonedLog });
+    await abandoned.flush();
+    abandoned.appear();
+    abandonedLog.push(...loggedUserTurns(3));
+    abandoned.controller.handleEditorChange('hello');
+    expect(abandoned.track).toHaveBeenCalledWith(
+      'feedback_survey',
+      expect.objectContaining({ event_type: 'abandoned', user_turn_count: 5 }),
+    );
+  });
+
+  it('reports the session user turns on the long-context arm while tokens drive the trigger', async () => {
+    const harness = createHarness({ mainAgentLog: () => loggedUserTurns(9) });
+    harness.state.appState.contextTokens = 250_000;
+    await harness.flush();
+
+    harness.controller.notifyTurnStarted(true);
+    harness.controller.notifyTurnEnded();
+    harness.elapse(2000);
+
+    expect(harness.track).toHaveBeenCalledWith(
+      'long_context_survey',
+      expect.objectContaining({ event_type: 'appeared', user_turn_count: 9 }),
+    );
+  });
+
+  it('follows the worked example across a resume: 20 logged turns, 3 mount turns, remount', async () => {
+    const log = loggedUserTurns(20);
+    const harness = createHarness({
+      mainAgentLog: () => log,
+      config: () => ({
+        ...DEFAULT_SURVEY_POPUP_PAYLOAD,
+        min_user_turns_before_feedback: 3,
+        min_time_between_global_feedback_ms: 0,
+      }),
+    });
+    const runLoggedTurn = () => {
+      harness.controller.notifyTurnStarted(true);
+      log.push(turnPrompt());
+      harness.controller.notifyTurnEnded();
+    };
+    await harness.flush();
+    harness.clock.mono += 600_000;
+    runLoggedTurn();
+    runLoggedTurn();
+    runLoggedTurn();
+    harness.elapse(2000);
+    expect(harness.container.children).not.toHaveLength(0);
+
+    harness.controller.reset();
+    await harness.flush();
+    harness.clock.mono += 600_000;
+    runLoggedTurn();
+    runLoggedTurn();
+    harness.elapse(2000);
+    expect(harness.container.children).toHaveLength(0);
+
+    runLoggedTurn();
+    harness.elapse(2000);
+    const appearedCounts = harness.track.mock.calls
+      .filter((call) => (call[1] as Record<string, unknown>)['event_type'] === 'appeared')
+      .map((call) => (call[1] as Record<string, unknown>)['user_turn_count']);
+    expect(appearedCounts).toEqual([23, 26]);
   });
 });

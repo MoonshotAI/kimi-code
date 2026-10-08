@@ -204,6 +204,9 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     init: vi.fn(async () => {}),
     startBtw: vi.fn(async () => 'agent-btw'),
     undoHistory: vi.fn(async () => {}),
+    readMainAgentLog: vi.fn(async () => {
+      throw new Error('readMainAgentLog unavailable');
+    }),
     cancel: vi.fn(async () => {}),
     cancelCompaction: vi.fn(async () => {}),
     getStatus: vi.fn(async () => ({
@@ -9413,6 +9416,44 @@ describe('KimiTUI session rating survey', () => {
       };
       expect(persisted.version).toBe(1);
       expect(typeof persisted.last_shown_time).toBe('number');
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('reports the log-derived session user turns through the TUI wiring', async () => {
+    vi.useFakeTimers();
+    const homeDir = await makeTempHome();
+    process.env['KIMI_CODE_HOME'] = homeDir;
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    try {
+      const session = makeSession({
+        readMainAgentLog: vi.fn(async () =>
+          Array.from({ length: 8 }, () => ({ type: 'turn.prompt', origin: { kind: 'user' } })),
+        ),
+      });
+      const { driver, harness } = await makeDriver(session);
+      vi.useRealTimers();
+      await vi.waitFor(() => {
+        expect(
+          (driver.surveyController as unknown as { cooldownReady: boolean }).cooldownReady,
+        ).toBe(true);
+      });
+      vi.useFakeTimers();
+      harness.track.mockClear();
+
+      for (let turn = 1; turn <= 4; turn++) emitTurn(driver, turn);
+      await vi.advanceTimersByTimeAsync(600_000);
+      emitTurn(driver, 5);
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      expect(harness.trackWithContext).toHaveBeenCalledTimes(1);
+      expect(harness.trackWithContext).toHaveBeenCalledWith(
+        'feedback_survey',
+        expect.objectContaining({ event_type: 'appeared', user_turn_count: 8 }),
+        { sessionId: 'ses-1' },
+      );
     } finally {
       vi.useRealTimers();
       vi.restoreAllMocks();

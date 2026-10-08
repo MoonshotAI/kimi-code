@@ -1,4 +1,6 @@
 
+import { isUserTurnOrigin, type SessionLogRecord } from '@moonshot-ai/kimi-code-sdk';
+
 import type { SurveyPopupConfig } from '#/utils/survey-popup-config';
 
 import {
@@ -6,6 +8,14 @@ import {
   SURVEY_MIN_OPTIONS_WIDTH,
   surveyMinTotalHeight,
 } from '../constant/survey';
+
+export function countSessionUserTurns(log: readonly SessionLogRecord[]): number {
+  let count = 0;
+  for (const record of log) {
+    if (record.type === 'turn.prompt' && isUserTurnOrigin(record.origin)) count += 1;
+  }
+  return count;
+}
 
 export type SurveyKind = 'session' | 'long_context';
 

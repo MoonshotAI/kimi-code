@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createKimiHarness, type Event, type KimiHarness } from '#/index';
 
 import { TEST_IDENTITY } from './test-identity';
+import { sseBody, sseChunk } from './session-runtime-helpers';
 
 const MODEL_URL = 'https://model.example.test/v1/chat/completions';
 
@@ -18,22 +19,6 @@ const fakeProviderState = vi.hoisted(() => ({
   }>,
   responseText: 'hello from fake provider',
 }));
-
-function sseChunk(delta: Record<string, unknown>, finishReason: string | null = null): string {
-  return `data: ${JSON.stringify({
-    id: 'chatcmpl-stub',
-    object: 'chat.completion.chunk',
-    created: 0,
-    model: 'fake-model',
-    choices: [{ index: 0, delta, finish_reason: finishReason }],
-  })}`;
-}
-
-function sseBody(text: string): string {
-  return [sseChunk({ role: 'assistant', content: text }), sseChunk({}, 'stop'), 'data: [DONE]']
-    .map((line) => `${line}\n\n`)
-    .join('');
-}
 
 let fetchStub: ReturnType<typeof vi.spyOn> | undefined;
 

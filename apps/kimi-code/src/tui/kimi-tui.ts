@@ -15,6 +15,7 @@ import type {
   PluginCommandDef,
   PromptPart,
   Session,
+  SessionLogRecord,
   SkillSummary,
   TokenUsage,
   TurnEndedEvent,
@@ -394,6 +395,9 @@ export class KimiTUI {
   readonly tasksBrowserController: TasksBrowserController;
   readonly surveyController: SurveyController;
   readonly editorKeyboard: EditorKeyboardController;
+  private mainAgentLogCache: readonly SessionLogRecord[] | undefined;
+  private mainAgentLogReadSeq = 0;
+  private lastTurnUserOrigin = false;
 
   /** Timer that auto-clears the one-shot "moved to background" footer hint. */
   private detachHintClearTimer: ReturnType<typeof setTimeout> | undefined;
@@ -507,6 +511,7 @@ export class KimiTUI {
     this.surveyController = new SurveyController(this, {
       accessToken: () => this.harness.auth.getCachedAccessToken(),
       telemetryDisabled: () => isTelemetryDisabledByEnv() || this.telemetryDisabled,
+      mainAgentLog: () => this.mainAgentLogCache,
     });
     this.editorKeyboard = new EditorKeyboardController(this, this.imageStore);
     this.editorKeyboard.install();
@@ -1786,12 +1791,30 @@ export class KimiTUI {
 
   handleTurnStarted(event: TurnStartedEvent): void {
     this.staging.handleTurnStarted(event);
-    this.surveyController.notifyTurnStarted(isUserSubmittedTurnOrigin(event.origin));
+    const userOrigin = isUserSubmittedTurnOrigin(event.origin);
+    this.lastTurnUserOrigin = userOrigin;
+    this.surveyController.notifyTurnStarted(userOrigin);
   }
 
   handleTurnEnded(event: TurnEndedEvent): void {
     this.staging.handleTurnEnded(event);
     this.surveyController.notifyTurnEnded(event.traceId);
+    if (this.lastTurnUserOrigin) this.refreshMainAgentLog();
+  }
+
+  private refreshMainAgentLog(): void {
+    const session = this.session;
+    if (session === undefined) return;
+    const seq = ++this.mainAgentLogReadSeq;
+    void session
+      .readMainAgentLog()
+      .then((log) => {
+        if (seq !== this.mainAgentLogReadSeq || this.session !== session) return;
+        this.mainAgentLogCache = log;
+      })
+      .catch((error: unknown) => {
+        log.warn('main agent log read failed', { error });
+      });
   }
 
   releaseStagingMedia(mediaAttachmentIds: readonly number[]): void {
@@ -2729,6 +2752,8 @@ export class KimiTUI {
     this.aborted = false;
     this.cacheHint.resetRuntime();
     this.surveyController.reset();
+    this.mainAgentLogCache = undefined;
+    this.mainAgentLogReadSeq += 1;
     this.streamingUI.discardPending();
     this.clearQueuedMessages();
     this.state.swarmModeEntry = undefined;

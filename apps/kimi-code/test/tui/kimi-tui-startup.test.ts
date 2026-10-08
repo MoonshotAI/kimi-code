@@ -130,6 +130,9 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     getGoal: vi.fn(async () => ({ goal: null })),
     onEvent: vi.fn(() => () => {}),
     getResumeState: vi.fn(() => null),
+    readMainAgentLog: vi.fn(async () => {
+      throw new Error('readMainAgentLog unavailable');
+    }),
     listSkills: vi.fn(async () => []),
     close: vi.fn(async () => {}),
     ...overrides,

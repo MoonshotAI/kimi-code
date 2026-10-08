@@ -57,6 +57,7 @@ import type {
   PluginSummary,
   ReloadSummary,
   CompactOptions,
+  SessionLogRecord,
   SessionPlan,
   SessionStatus,
   SessionTodoItem,
@@ -383,6 +384,8 @@ export abstract class SDKRpcClientBase {
   abstract undoHistory(input: SessionIdRpcInput & { count: number }): Promise<void>;
 
   abstract getContext(input: SessionIdRpcInput): Promise<AgentContextData>;
+
+  abstract readMainAgentLog(input: SessionIdRpcInput): Promise<readonly SessionLogRecord[]>;
 
   abstract getUsage(input: SessionIdRpcInput): Promise<SessionUsage>;
 
