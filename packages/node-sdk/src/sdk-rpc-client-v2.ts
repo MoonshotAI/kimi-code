@@ -132,14 +132,9 @@ import { join } from 'node:path';
 
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
-import {
-  loadMcpServers,
-  loadMcpServersDetailed,
-  resolveMcpJsonPaths,
-} from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
+import { loadMcpServers } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
 import { fsSuggestRequestSchema } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
 import { IAppendLogStore } from '@moonshot-ai/agent-core-v2/persistence/interface/appendLogStore';
-import type { McpServerConfig as WorkspaceMcpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
 import {
   bootstrap,
   DEFAULT_AGENT_PROFILE_NAME,
@@ -323,6 +318,7 @@ import type {
   TelemetryClient,
   UploadFileOptions,
   WorkspaceTrustInfo,
+  WorkspaceTrustInstructionSources,
 } from '#/types';
 import {
   diagnosticsToConfigDiagnostics,
@@ -686,39 +682,33 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   /**
    * klient has no workspace-trust facade; composed directly from the engine
    * via {@link engineAccessor} — the same `handlerFor({ root })` path
-   * `createSession` takes (materializing the workspace handler is a no-op
-   * cost here: session creation does it anyway). The gated-server list is
-   * the final merged config entries whose origins are project files (the
-   * workspaceTrust gate inside the engine's `workspaceMcpConfig`),
-   * computed best-effort: an unreadable/invalid project file degrades to an
-   * empty list rather than failing the caller.
+   * `createSession` takes. The disclosure of what trusting would activate is
+   * computed inside the engine by `WorkspaceTrustDisclosureService`.
    */
   override async getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo> {
     const handler = await this.engineAccessor
       .get(IWorkspaceInstanceManager)
       .getOrCreate({ root: workDir });
     const trusted = await handler.program.trust.get();
-    if (trusted) return { trusted: true, gatedMcpServers: [] };
-    try {
-      const fs = this.engineAccessor.get(IHostFileSystem);
-      const [paths, loaded] = await Promise.all([
-        resolveMcpJsonPaths({ fs, cwd: workDir, homeDir: this.homeDir }),
-        loadMcpServersDetailed({
-          fs,
-          cwd: workDir,
-          homeDir: this.homeDir,
-          includeProject: true,
-        }),
-      ]);
-      const projectPaths = new Set([paths.projectRoot, paths.project]);
-      const gatedMcpServers = Object.entries(loaded.servers)
-        .filter(([name]) => projectPaths.has(loaded.origins[name] ?? ''))
-        .map(([name, config]) => describeWorkspaceMcpServer(name, config))
-        .toSorted((a, b) => a.name.localeCompare(b.name));
-      return { trusted: false, gatedMcpServers };
-    } catch {
-      return { trusted: false, gatedMcpServers: [] };
+    if (trusted) {
+      return {
+        trusted: true,
+        gatedMcpServers: [],
+        gatedAdditionalDirs: [],
+        additionalDirSources: [],
+        warnings: [],
+        instructionSources: EMPTY_INSTRUCTION_SOURCES,
+      };
     }
+    const activation = await handler.program.trustDisclosure.describeGatedActivation();
+    return {
+      trusted: false,
+      gatedMcpServers: activation.mcpServers,
+      gatedAdditionalDirs: activation.additionalDirs,
+      additionalDirSources: activation.additionalDirSources,
+      warnings: activation.warnings,
+      instructionSources: activation.instructionSources,
+    };
   }
 
   /**
@@ -2872,18 +2862,10 @@ function toManagedServerInfo(server: McpManagedServer): McpManagedServerInfo {
   } as McpManagedServerInfo;
 }
 
-function describeWorkspaceMcpServer(
-  name: string,
-  config: WorkspaceMcpServerConfig,
-): WorkspaceTrustInfo['gatedMcpServers'][number] {
-  if (config.transport === 'stdio') {
-    return {
-      name,
-      transport: config.transport,
-      command: config.command,
-      args: config.args,
-      cwd: config.cwd,
-    };
-  }
-  return { name, transport: config.transport, url: config.url };
-}
+const EMPTY_INSTRUCTION_SOURCES: WorkspaceTrustInstructionSources = {
+  agentsMdPaths: [],
+  skills: [],
+  agentProfiles: [],
+  paths: [],
+};
+

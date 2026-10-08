@@ -132,7 +132,7 @@ The input box remains usable while the agent is thinking or calling tools, and s
 - **`Esc` / `Ctrl-C`**: interrupt the current turn
 - **`Ctrl-O`**: globally toggle the collapsed/expanded state of tool output and compaction summaries
 
-When the agent is waiting for background tasks through `WaitFor`, pressing `Ctrl-S` ends that wait early. Background tasks keep running and existing tool results are preserved. If other foreground tools remain in the same batch, the agent processes your message after they return.
+When the agent is waiting for background tasks through `WaitFor`, sending a message with `Enter` (or `Ctrl-S`) steers it in and ends that wait early; messages already queued when the wait starts are steered in as well. If the queue holds a shell command or a skill, the queue and new input stay queued until the turn ends instead. Background tasks keep running and existing tool results are preserved. If other foreground tools remain in the same batch, the agent processes your message after they return.
 
 ## External editor
 

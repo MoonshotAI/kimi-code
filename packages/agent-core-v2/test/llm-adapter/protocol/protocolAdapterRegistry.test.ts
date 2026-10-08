@@ -111,7 +111,7 @@ describe('resolveAdapterIdentity', () => {
     expect(registry.resolveAdapterIdentity('openai_responses', 'kimi').baseId).toBe(
       'openai_responses',
     );
-    expect(registry.resolveAdapterIdentity('openai_responses', 'kimi').trait).toBeUndefined();
+    expect(registry.resolveAdapterIdentity('openai_responses', 'kimi').trait).toBeDefined();
   });
 
   it('resolves unregistered pairs to the protocol itself with no vendor trait', () => {
@@ -273,7 +273,7 @@ describe('kimi provider definitions', () => {
     expect(anthropic?.baseProtocol).toBe('anthropic');
     expect(anthropic?.trait).toBeDefined();
     expect(responses?.baseProtocol).toBe('openai_responses');
-    expect(responses?.trait).toBeUndefined();
+    expect(responses?.trait).toBeDefined();
     for (const definition of [native, anthropic, responses]) {
       expect(definition?.endpoint).toEqual({
         apiKeyEnv: 'KIMI_API_KEY',

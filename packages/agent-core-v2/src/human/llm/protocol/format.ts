@@ -12,7 +12,7 @@ export type FormatRequestInput = LlmRequestConfig & {
 
 export function resolveMaxCompletionCap(input: FormatRequestInput): number | undefined {
   const { maxCompletionTokens, usedContextTokens, maxContextTokens } = input;
-  if (maxCompletionTokens === undefined) {
+  if (maxCompletionTokens === undefined || maxCompletionTokens <= 0) {
     return undefined;
   }
   let cap = maxCompletionTokens;
