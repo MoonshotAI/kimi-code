@@ -338,6 +338,66 @@ describe('StagingLeaseTracker', () => {
     });
   });
 
+  describe('trackDispatch across turn end', () => {
+    const origin: StagingLeaseOrigin = 'user';
+
+    function pending(): { promise: Promise<void>; resolve: () => void; reject: (error: Error) => void } {
+      let resolve!: () => void;
+      let reject!: (error: Error) => void;
+      const promise = new Promise<void>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      return { promise, resolve, reject };
+    }
+
+    it('holds an in-flight lease past turn end and releases it once the dispatch succeeds', async () => {
+      const { tracker, deleted } = makeTracker();
+      const lease = tracker.create([1], ['/cache/a'], origin);
+      tracker.bindToTurn(lease, '7');
+      const request = pending();
+
+      tracker.trackDispatch(lease, request.promise, vi.fn());
+      tracker.handleTurnEnded(turnEnded(7));
+      expect(deleted.fileIds).toEqual([]);
+
+      request.resolve();
+      await tracker.drain();
+      expect(deleted.fileIds).toEqual(['file-1']);
+      expect(deleted.paths).toEqual([]);
+    });
+
+    it('keeps media a failed in-flight dispatch hands back after its turn ended', async () => {
+      const { tracker, deleted } = makeTracker();
+      const lease = tracker.create([1], ['/cache/a'], origin);
+      tracker.bindToTurn(lease, '7');
+      const request = pending();
+
+      tracker.trackDispatch(lease, request.promise, () => tracker.defer(lease));
+      tracker.handleTurnEnded(turnEnded(7));
+      request.reject(new Error('boom'));
+      await tracker.drain();
+
+      expect(deleted.fileIds).toEqual([]);
+      expect(deleted.paths).toEqual([]);
+    });
+
+    it('deletes media of a failed in-flight dispatch nobody reclaims after its turn ended', async () => {
+      const { tracker, deleted } = makeTracker();
+      const lease = tracker.create([1], ['/cache/a'], origin);
+      tracker.bindToTurn(lease, '7');
+      const request = pending();
+
+      tracker.trackDispatch(lease, request.promise, vi.fn());
+      tracker.handleTurnEnded(turnEnded(7));
+      request.reject(new Error('boom'));
+      await tracker.drain();
+
+      expect(deleted.fileIds).toEqual(['file-1']);
+      expect(deleted.paths).toEqual(['/cache/a']);
+    });
+  });
+
   describe('track/drain', () => {
     it('drain awaits in-flight cleanups and track swallows rejections', async () => {
       const { tracker } = makeTracker();
