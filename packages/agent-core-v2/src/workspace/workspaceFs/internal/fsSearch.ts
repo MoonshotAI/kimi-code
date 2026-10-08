@@ -48,7 +48,7 @@ export function matchesAnyGlob(rel: string, globs: readonly string[]): boolean {
 export function globCanMatchBelow(rel: string, globs: readonly string[]): boolean {
   const relSegments = rel.split('/');
   for (const g of globs) {
-    const parts = picomatch.scan(g, { parts: true }).parts ?? [];
+    const parts = picomatch.scan(g, { parts: true, nonegate: true }).parts ?? [];
     if (parts.length === 0) {
       if (g === '**' || g.includes('/')) return true;
       continue;
@@ -66,17 +66,17 @@ function globSegmentsMatchPrefix(globSegments: readonly string[], relSegments: r
   const dp = new Uint8Array((g + 1) * width);
   for (let gi = g; gi >= 0; gi--) {
     const head = gi < g ? globSegments[gi]! : undefined;
-    const headMatch = head !== undefined && head !== '**' ? picomatch(head, { dot: true, nonegate: true }) : undefined;
+    const headMatch = head !== undefined && head !== '**' && head !== '' ? picomatch(head, { dot: true, nonegate: true }) : undefined;
     for (let ri = r; ri >= 0; ri--) {
       const at = gi * width + ri;
       if (ri === r) {
         dp[at] = 1;
-      } else if (head === undefined) {
-        dp[at] = 0;
       } else if (head === '**') {
         dp[at] = dp[(gi + 1) * width + ri]! | dp[gi * width + ri + 1]!;
+      } else if (headMatch === undefined) {
+        dp[at] = 0;
       } else {
-        dp[at] = headMatch!(relSegments[ri]!) ? dp[(gi + 1) * width + ri + 1]! : 0;
+        dp[at] = headMatch(relSegments[ri]!) ? dp[(gi + 1) * width + ri + 1]! : 0;
       }
     }
   }

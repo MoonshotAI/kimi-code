@@ -107,6 +107,12 @@ describe('globCanMatchBelow', () => {
     expect(matchesAnyGlob('!foo', ['!foo'])).toBe(true);
     expect(matchesAnyGlob('foo', ['!foo'])).toBe(false);
     expect(matchesAnyGlob('bar', ['!foo'])).toBe(false);
+    expect(globCanMatchBelow('!foo', ['!foo/keep.txt'])).toBe(true);
+  });
+
+  it('treats empty path segments as non-matching without throwing', () => {
+    expect(globCanMatchBelow('a', ['a//b'])).toBe(true);
+    expect(globCanMatchBelow('a/b', ['a//b'])).toBe(false);
   });
 
   it('handles deeply segmented globs without exhausting the call stack', () => {
