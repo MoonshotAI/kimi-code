@@ -4222,7 +4222,8 @@ describe('TowerModeInjection', () => {
 
     const text = lastTowerReminder(context);
     expect(text).toContain('Tower mode still active');
-    expect(text).toContain('see full instructions earlier');
+    expect(text).toContain('TodoList is code-denied');
+    expect(text).not.toContain('see full instructions earlier');
   });
 
   it('refreshes the full reminder after the long assistant-turn threshold', async () => {
