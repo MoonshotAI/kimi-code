@@ -6168,6 +6168,62 @@ command = "vim"
     expect(driver.state.appState.towerMode).toBe(false);
   });
 
+  it('renders a marker when tower mode exits because a goal was activated', async () => {
+    const { driver } = await makeDriver();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        towerMode: true,
+      } as Event,
+      vi.fn(),
+    );
+    expect(driver.state.appState.towerMode).toBe(true);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        towerMode: false,
+        towerExitReason: 'goal-activated',
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(driver.state.appState.towerMode).toBe(false);
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(countOccurrences(transcript, 'Tower mode ended — a goal was activated')).toBe(1);
+  });
+
+  it('does not render the goal-exit marker for a reasonless tower exit', async () => {
+    const { driver } = await makeDriver();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        towerMode: true,
+      } as Event,
+      vi.fn(),
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        towerMode: false,
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(driver.state.appState.towerMode).toBe(false);
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Tower mode ended');
+  });
+
   it('renders swarm mode markers from /swarm commands, not tool-triggered status updates', async () => {
     const { driver } = await makeDriver();
 

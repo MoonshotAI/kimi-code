@@ -8,6 +8,7 @@ import { AgentModeMutexService } from '#/agent/modeMutex/modeMutexService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
+import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { GoalUpdated } from '#/features/goal/goalOps';
@@ -19,6 +20,7 @@ import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { SwarmModeEnter } from '#/features/swarm/swarmOps';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { TowerModeEnter } from '#/features/tower/towerOps';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { registerTestAgentWire, testWireScope } from '../../wire/stubs';
 
@@ -29,6 +31,7 @@ describe('AgentModeMutexService', () => {
   let swarmExit: ReturnType<typeof vi.fn>;
   let towerExit: ReturnType<typeof vi.fn>;
   let goalPause: ReturnType<typeof vi.fn>;
+  let dispatch: ReturnType<typeof vi.fn>;
   let swarmActive: boolean;
   let towerActive: boolean;
   let goalStatus: string | undefined;
@@ -45,6 +48,7 @@ describe('AgentModeMutexService', () => {
     swarmExit = vi.fn();
     towerExit = vi.fn();
     goalPause = vi.fn();
+    dispatch = vi.fn();
     swarmActive = false;
     towerActive = false;
     goalStatus = undefined;
@@ -65,6 +69,7 @@ describe('AgentModeMutexService', () => {
       pauseGoal: goalPause,
       getGoal: () => ({ goal: goalStatus === undefined ? null : { status: goalStatus } }),
     } as unknown as IAgentGoalService);
+    ix.stub(IEventDispatcher, { dispatch } as unknown as IEventDispatcher);
     ix.get(IAgentStateService).contributeState(planKey);
     ix.set(IAgentModeMutexService, new SyncDescriptor(AgentModeMutexService));
     ix.get(IAgentModeMutexService);
@@ -80,6 +85,7 @@ describe('AgentModeMutexService', () => {
     towerActive = true;
     publish(new PlanModeEnter({ agentId: 'test-agent', id: 'plan_1' }));
     expect(towerExit).toHaveBeenCalledTimes(1);
+    expect(towerExit).toHaveBeenCalledWith();
   });
 
   it('plan mode entry leaves an inactive tower mode alone', () => {
@@ -91,6 +97,7 @@ describe('AgentModeMutexService', () => {
     towerActive = true;
     publish(new SwarmModeEnter({ agentId: 'test-agent', trigger: 'manual' }));
     expect(towerExit).toHaveBeenCalledTimes(1);
+    expect(towerExit).toHaveBeenCalledWith();
   });
 
   it('swarm mode entry leaves an inactive tower mode alone', () => {
@@ -124,7 +131,7 @@ describe('AgentModeMutexService', () => {
     expect(goalPause).not.toHaveBeenCalled();
   });
 
-  it('goal activation exits an active tower mode', () => {
+  it('goal activation exits an active tower mode with the goal-activated reason', () => {
     towerActive = true;
     publish(
       new GoalUpdated({
@@ -133,6 +140,16 @@ describe('AgentModeMutexService', () => {
       }),
     );
     expect(towerExit).toHaveBeenCalledTimes(1);
+    expect(towerExit).toHaveBeenCalledWith('goal-activated');
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const status = dispatch.mock.calls[0]![0] as AgentStatusUpdated;
+    expect(status).toBeInstanceOf(AgentStatusUpdated);
+    expect(status.agentId).toBe('test-agent');
+    expect(status.towerMode).toBe(false);
+    expect(status.towerExitReason).toBe('goal-activated');
+    expect(dispatch.mock.invocationCallOrder[0]).toBeLessThan(
+      towerExit.mock.invocationCallOrder[0]!,
+    );
   });
 
   it('goal activation leaves an inactive tower mode alone', () => {
@@ -143,6 +160,7 @@ describe('AgentModeMutexService', () => {
       }),
     );
     expect(towerExit).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it('a non-active goal update does not exit tower mode', () => {
@@ -154,5 +172,6 @@ describe('AgentModeMutexService', () => {
       }),
     );
     expect(towerExit).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
   });
 });
