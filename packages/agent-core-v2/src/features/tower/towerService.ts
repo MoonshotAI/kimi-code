@@ -457,12 +457,6 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     if (this.agentCtx.agentId !== 'main') return { entered: false, reason: 'not-main-agent' };
     if (!this.flags.enabled(TOWER_FLAG_ID)) return { entered: false, reason: 'experiment-off' };
     if (!isTowerFeatureAssembled(this.flags)) return { entered: false, reason: 'feature-not-assembled' };
-    if (base !== undefined) {
-      await this.prepareUserBase(base);
-    }
-    if (this.isActive) {
-      return { entered: true };
-    }
     const owner = await this.resolveTowerOwner();
     if (owner !== undefined && owner !== this.sessionCtx.sessionId) {
       const ownerHandle = this.sessions.get(owner);
@@ -478,6 +472,12 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
           ?.accessor.get(IAgentTowerService)
           .exit('takeover');
       }
+    }
+    if (base !== undefined) {
+      await this.prepareUserBase(base);
+    }
+    if (this.isActive) {
+      return { entered: true };
     }
     await this.adoptTowerRoster();
     for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);

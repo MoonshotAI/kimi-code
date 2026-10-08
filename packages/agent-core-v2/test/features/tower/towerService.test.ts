@@ -1351,6 +1351,59 @@ describe('AgentTowerService', () => {
     }
   });
 
+  it('enter(base) rejects a non-owner re-anchor while a live owner is busy and leaves the store untouched', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'tower-enter-reanchor-denied-'));
+    try {
+      await initGitRepo(repo);
+      await writeFile(join(repo, 'README.md'), '# fixture\n');
+      await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
+      await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+      await execFileAsync('git', ['branch', 'develop'], { cwd: repo });
+      const store = new TowerStore(repo);
+      await store.init('session-original', 'main');
+
+      stubLiveSession('session-original', { busy: true });
+      ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-fork' } as unknown as ISessionContext);
+      const tower = ix.get(IAgentTowerService);
+
+      await expect(tower.enter('develop')).resolves.toEqual({
+        entered: false,
+        reason: 'owned-by-live-session',
+        owner: 'session-original',
+      });
+
+      expect(tower.isActive).toBe(false);
+      expect(addedTools).toEqual([]);
+      const state = await store.load();
+      expect(state.base).toBe('main');
+      expect(state.sessionId).toBe('session-original');
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('enter(base) lets the owning session re-anchor the workspace base', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'tower-enter-owner-reanchor-'));
+    try {
+      await initGitRepo(repo);
+      await writeFile(join(repo, 'README.md'), '# fixture\n');
+      await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
+      await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+      await execFileAsync('git', ['branch', 'develop'], { cwd: repo });
+      const store = new TowerStore(repo);
+      await store.init('session-main', 'main');
+      ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-main' } as unknown as ISessionContext);
+      const tower = ix.get(IAgentTowerService);
+
+      await tower.enter('develop');
+
+      expect(tower.isActive).toBe(true);
+      expect((await store.load()).base).toBe('develop');
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
   it('enter() reports owned-by-live-session while the owning session waits on an interaction', async () => {
     const repo = await mkdtemp(join(tmpdir(), 'tower-enter-pending-'));
     try {
