@@ -1706,6 +1706,7 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 | `show_hidden` | body | boolean | 包含点文件。默认 `false` |
 | `follow_gitignore` | body | boolean | 跳过 gitignore 的路径。默认 `true` |
 | `exclude_globs` | body | string[] | 额外要跳过的 glob |
+| `allow_ignored_globs` | body | string[] | 即使被 gitignore 也指定放行的 glob（如 `.tmp`）。命中项被忽略的祖先目录会自动保留以保证可达。放行点开头路径还需同时传 `show_hidden: true` |
 | `sort` | body | string | `type_first`（默认）/ `name_asc` / `name_desc` / `mtime_desc` / `size_desc` |
 | `include_git_status` | body | boolean | 附带每个条目的 git 状态。默认 `false` |
 
