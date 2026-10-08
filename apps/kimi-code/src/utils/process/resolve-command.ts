@@ -71,7 +71,7 @@ export function resolveCommandPath(command: string, cwd: string = process.cwd())
     for (const name of names) {
       const candidate = join(dir, name);
       if (!isExecutableFile(candidate, platform)) continue;
-      if (isInsideCwd(candidate, cwd, platform)) return undefined;
+      if (isInsideCwd(candidate, cwd, platform)) continue;
       return resolve(candidate);
     }
   }

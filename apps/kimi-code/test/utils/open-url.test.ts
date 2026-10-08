@@ -14,7 +14,6 @@ afterEach(() => {
 
 it.each([
   ['darwin', 'open', []],
-  ['win32', 'rundll32.exe', ['url.dll,FileProtocolHandler']],
   ['linux', 'xdg-open', []],
 ])('opens URLs as one argument on %s using an absolute executable', (platform, command, args) => {
   vi.spyOn(process, 'platform', 'get').mockReturnValue(platform as NodeJS.Platform);
@@ -22,7 +21,7 @@ it.each([
   const url = 'kimi-code://open?root=%2Ftmp%2Fa%25NAME%25%26b&new=1';
   openUrl(url);
   expect(resolveCommandPath).toHaveBeenCalledWith(command);
-  expect(execFile).toHaveBeenCalledWith(`/system/${command}`, [...args, url], expect.any(Function));
+  expect(execFile).toHaveBeenCalledWith(`/system/${command}`, [...args, url], { windowsHide: true }, expect.any(Function));
 });
 
 it('reports a missing opener without spawning a bare command', () => {
@@ -37,8 +36,23 @@ it('reports OS opener failures', () => {
   vi.mocked(resolveCommandPath).mockReturnValue('/system/open');
   const onError = vi.fn();
   openUrl('kimi-code://open?root=/tmp', onError);
-  const callback = vi.mocked(execFile).mock.calls[0]![2] as (error: Error) => void;
+  const callback = vi.mocked(execFile).mock.calls[0]![3] as (error: Error) => void;
   const error = new Error('no scheme handler');
   callback(error);
   expect(onError).toHaveBeenCalledWith(error);
+});
+
+it('uses a failure-reporting Windows opener and quotes URLs as literal strings', () => {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  vi.mocked(resolveCommandPath).mockReturnValue('/system/powershell.exe');
+  const url = "kimi-code://open?root=C%3A%5Ctest's%26%25&new=1";
+  openUrl(url);
+  expect(resolveCommandPath).toHaveBeenCalledWith('powershell.exe');
+  const call = vi.mocked(execFile).mock.calls[0]!;
+  const args = call[1] as string[];
+  expect(args.slice(0, 3)).toEqual(['-NoProfile', '-NonInteractive', '-EncodedCommand']);
+  expect(Buffer.from(args[3]!, 'base64').toString('utf16le')).toBe(
+    "try { Start-Process -FilePath 'kimi-code://open?root=C%3A%5Ctest''s%26%25&new=1' -ErrorAction Stop } catch { exit 1 }",
+  );
+  expect(call[2]).toEqual({ windowsHide: true });
 });

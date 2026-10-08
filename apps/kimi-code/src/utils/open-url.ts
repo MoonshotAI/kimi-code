@@ -7,14 +7,17 @@ export function openUrl(url: string, onError?: (error: Error) => void): void {
     process.platform === 'darwin'
       ? ['open', [url]]
       : process.platform === 'win32'
-        ? ['rundll32.exe', ['url.dll,FileProtocolHandler', url]]
+        ? ['powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(
+          `try { Start-Process -FilePath '${url.replaceAll("'", "''")}' -ErrorAction Stop } catch { exit 1 }`,
+          'utf16le',
+        ).toString('base64')]]
         : ['xdg-open', [url]];
   const executable = resolveCommandPath(command[0]);
   if (executable === undefined) {
     onError?.(new Error(`Cannot find ${command[0]}`));
     return;
   }
-  execFile(executable, command[1], (error) => {
+  execFile(executable, command[1], { windowsHide: true }, (error) => {
     if (error) onError?.(error);
   });
 }
