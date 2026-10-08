@@ -41,7 +41,7 @@ export function computeMatchPositions(
 }
 
 export function matchesAnyGlob(rel: string, globs: readonly string[]): boolean {
-  return picomatch.isMatch(rel, globs, { dot: true });
+  return picomatch.isMatch(rel, globs as string[], { dot: true });
 }
 
 export function globCanMatchBelow(rel: string, globs: readonly string[]): boolean {
