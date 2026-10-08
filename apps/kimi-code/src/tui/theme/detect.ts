@@ -113,7 +113,8 @@ export function parseColorFgBg(value: string | undefined): ResolvedTheme | null 
   const parts = value.split(";");
   const bgRaw = parts.at(-1);
   if (bgRaw === undefined) return null;
-  const bg = parseInt(bgRaw, 10);
+  if (!/^\d+$/.test(bgRaw)) return null;
+  const bg = Number.parseInt(bgRaw, 10);
   if (!Number.isInteger(bg)) return null;
   // ANSI 0=black, 1=red, 2=green, 3=yellow, 4=blue, 5=magenta, 6=cyan, 8=bright black.
   const darkBgs = new Set([0, 1, 2, 3, 4, 5, 6, 8]);
