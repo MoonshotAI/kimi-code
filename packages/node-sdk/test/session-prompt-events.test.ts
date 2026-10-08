@@ -7,7 +7,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createKimiHarness, type Event, type KimiHarness } from '#/index';
 
+import {
+  getLiveSessionById,
+  IAgentLifecycleService,
+  IAgentLoopService,
+  MAIN_AGENT_ID,
+  type ServicesAccessor,
+} from '@moonshot-ai/agent-core-v2';
+
 import { TEST_IDENTITY } from './test-identity';
+
+async function settleSessionLoop(harness: KimiHarness, sessionId: string): Promise<void> {
+  const accessor = (harness as unknown as { rpc: { engineAccessor: ServicesAccessor } }).rpc
+    .engineAccessor;
+  const agent = getLiveSessionById(accessor, sessionId)
+    ?.accessor.get(IAgentLifecycleService)
+    .handleOf(MAIN_AGENT_ID);
+  await agent?.accessor.get(IAgentLoopService).settled();
+}
 
 const MODEL_URL = 'https://model.example.test/v1/chat/completions';
 
@@ -626,6 +643,7 @@ describe('Session.prompt events', () => {
       await runPrompt(source, 'kept prompt one', 'kept answer one', 'p1');
       await runPrompt(source, 'kept prompt two', 'kept answer two', 'p2');
       await runPrompt(source, 'retracted prompt', 'retracted answer', 'p3');
+      await settleSessionLoop(harness, source.id);
       await source.undoHistory(1);
       await runPrompt(source, 'follow-up prompt', 'follow-up answer', 'p4');
 
@@ -1078,6 +1096,55 @@ describe('Session.prompt events', () => {
 
       followUpGate.resolve(sseResponse('follow-up answer'));
       await followUpEnded;
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('forks a running session clamped through a completed shell command', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      await configureFakeProvider(harness);
+      const source = await harness.createSession({ id: 'ses_turn_fork_shell_source', workDir });
+      await source.runShellCommand('echo shell-output');
+
+      const gate = deferredResponse();
+      fetchStub!.mockImplementationOnce(() => gate.promise);
+      const started = waitForEvent(source, (event) => event.type === 'turn.started');
+      const ended = waitForEvent(source, (event) => event.type === 'turn.ended');
+      await source.prompt('first question');
+      await started;
+
+      const fork = await harness.forkSession({
+        id: source.id,
+        forkId: 'ses_turn_fork_shell_child',
+      });
+      await fork.close();
+      const resumed = await harness.resumeSession({ id: fork.id });
+      const replay = resumed.getResumeState()?.agents['main']?.replay ?? [];
+      const shellTexts = replay
+        .filter(
+          (record): record is Extract<(typeof replay)[number], { type: 'message' }> =>
+            record.type === 'message' &&
+            (record.message.origin as { kind?: string } | undefined)?.kind === 'shell_command',
+        )
+        .map((record) =>
+          record.message.content
+            .filter((part) => part.type === 'text')
+            .map((part) => part.text)
+            .join(''),
+        );
+      expect(shellTexts).toEqual([
+        '<bash-input>\necho shell-output\n</bash-input>',
+        '<bash-stdout>shell-output\n</bash-stdout><bash-stderr></bash-stderr>',
+      ]);
+      expect(visibleReplayText(replay)).toEqual([]);
+
+      gate.resolve(sseResponse('first answer'));
+      await ended;
     } finally {
       await harness.close();
     }

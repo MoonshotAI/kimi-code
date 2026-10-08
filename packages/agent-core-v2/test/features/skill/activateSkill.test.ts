@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
 
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { stubSkill } from './catalog/stubs';
 import { createTestAgent, skillServices, type TestAgentContext } from '../../harness';
 
@@ -175,6 +176,7 @@ describe('promptWithSkills', () => {
       skills: [{ name: 'review' }, { name: 'security' }],
     });
     await ctx.untilTurnEnd();
+    await ctx.get(IAgentLoopService).settled();
     expect(ctx.context.get().length).toBeGreaterThan(0);
 
     const undone = await ctx.rpc.undoHistory({ count: 1 });

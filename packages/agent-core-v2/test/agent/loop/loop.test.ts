@@ -950,6 +950,33 @@ describe('Agent loop', () => {
     await expect(active.result).resolves.toMatchObject({ type: 'completed' });
   });
 
+  it('refuses a quiescence lease while a turn is finalizing', async () => {
+    let releaseDrain!: () => void;
+    const drainGate = new Promise<void>((resolve) => {
+      releaseDrain = resolve;
+    });
+    const drain = vi
+      .spyOn(ctx.wire, 'drainPersisted')
+      .mockImplementationOnce(() => drainGate);
+
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+    const active = submitTurn(loop, 'go').turn;
+    await vi.waitFor(() => {
+      expect(drain).toHaveBeenCalled();
+    });
+
+    expect(loop.snapshot().state).toBe('idle');
+    expect(loop.tryAcquireQuiescence()).toBeUndefined();
+    expect(loop.hasTurnActivity()).toBe(true);
+
+    releaseDrain();
+    await expect(active.result).resolves.toMatchObject({ type: 'completed' });
+    drain.mockRestore();
+
+    expect(loop.tryAcquireQuiescence()).toBeDefined();
+    expect(loop.hasTurnActivity()).toBe(false);
+  });
+
   it('holds new admissions until an idle quiescence lease is released', async () => {
     const lease = loop.tryAcquireQuiescence();
     expect(lease).toBeDefined();
@@ -1624,6 +1651,7 @@ describe('turn telemetry', () => {
       });
       await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
       await local.untilTurnEnd();
+      await local.get(IAgentLoopService).settled();
 
       local.appendExchange(2, 'old user two', 'old assistant two', 80);
       local.mockNextProviderResponse({
@@ -1957,6 +1985,7 @@ describe('interruption reminder', () => {
     const subscription = cancelOnFirstDelta();
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
     await ctx.untilTurnEnd();
+    await ctx.get(IAgentLoopService).settled();
     subscription.dispose();
     expect(interruptionReminders()).toHaveLength(1);
 

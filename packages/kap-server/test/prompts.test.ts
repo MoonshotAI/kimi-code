@@ -365,6 +365,7 @@ describe('server-v2 /api/v1 prompts', () => {
     await vi.waitFor(() => {
       expect(ended).toHaveLength(1);
     });
+    await main.accessor.get(IAgentLoopService).settled();
     subscription.dispose();
     expect(ended[0]).toMatchObject({
       reason: 'failed',
@@ -427,6 +428,7 @@ describe('server-v2 /api/v1 prompts', () => {
       },
       { timeout: 15000 },
     );
+    await main.accessor.get(IAgentLoopService).settled();
     subscription.dispose();
     expect(ended[0]?.reason).toBe('failed');
     expect(ended[0]?.error?.message).toContain('stub');
@@ -1713,6 +1715,9 @@ describe('server-v2 /api/v1 prompts', () => {
       content: [{ type: 'text', text: 'hello' }],
     });
     const promptId = submitted.body.data.prompt_id;
+    const session = getLiveSessionById(server!.core.accessor, id);
+    const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    await main.accessor.get(IAgentLoopService).settled();
 
     const aborted = await call<{ aborted: boolean }>(
       'POST',

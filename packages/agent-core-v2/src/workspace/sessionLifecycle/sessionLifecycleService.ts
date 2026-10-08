@@ -101,11 +101,12 @@ import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressin
 import { SessionArchived, SessionDeleted } from './sessionLifecycleEvents';
 import {
   assertForkTurnIndex,
+  capForkRecordsAtActiveTurn,
   lastCompletedUserVisibleTurnIndex,
   type MainTurnSlice,
+  resolveForkPromptIndex,
   sliceMainRecordsAtTurn,
   sliceSubagentRecordsAtTime,
-  visibleTurnIndexOfPrompt,
 } from './internal/forkTurnSlice';
 import {
   type CreateChildSessionOptions,
@@ -533,16 +534,31 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     try {
       let busy = false;
       if (sourceHandle !== undefined) {
-        const holds = this.tryAcquireForkQuiescence(sourceHandle);
-        if (holds === undefined) {
-          if (!this.hasTurnActivity(sourceHandle)) {
-            throw new Error2(
-              ErrorCodes.SESSION_FORK_ACTIVE_TURN,
-              `Session "${sourceId}" cannot be forked while another operation is in progress`,
-              { details: { sessionId: sourceId } },
-            );
+        const holds: IDisposable[] = [];
+        let nonTurnContention = false;
+        const sourceAgents = sourceHandle.accessor.get(IAgentLifecycleService);
+        for (const agent of sourceAgents.list()) {
+          const agentHandle = sourceAgents.handleOf(agent.agentId);
+          if (agentHandle === undefined) continue;
+          const loop = agentHandle.accessor.get(IAgentLoopService);
+          const hold = loop.tryAcquireQuiescence();
+          if (hold === undefined) {
+            if (!loop.hasTurnActivity()) nonTurnContention = true;
+            busy = true;
+          } else {
+            holds.push(hold);
           }
-          busy = true;
+        }
+        if (nonTurnContention) {
+          for (const hold of holds) hold.dispose();
+          throw new Error2(
+            ErrorCodes.SESSION_FORK_ACTIVE_TURN,
+            `Session "${sourceId}" cannot be forked while another operation is in progress`,
+            { details: { sessionId: sourceId } },
+          );
+        }
+        if (busy) {
+          for (const hold of holds) hold.dispose();
         } else {
           quiescenceHolds.push(...holds);
         }
@@ -705,32 +721,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     });
   }
 
-  private tryAcquireForkQuiescence(sourceHandle: ISessionScopeHandle): IDisposable[] | undefined {
-    const holds: IDisposable[] = [];
-    const sourceAgents = sourceHandle.accessor.get(IAgentLifecycleService);
-    for (const agent of sourceAgents.list()) {
-      const agentHandle = sourceAgents.handleOf(agent.agentId);
-      if (agentHandle === undefined) continue;
-      const hold = agentHandle.accessor.get(IAgentLoopService).tryAcquireQuiescence();
-      if (hold === undefined) {
-        for (const acquired of holds) acquired.dispose();
-        return undefined;
-      }
-      holds.push(hold);
-    }
-    return holds;
-  }
-
-  private hasTurnActivity(sourceHandle: ISessionScopeHandle): boolean {
-    const sourceAgents = sourceHandle.accessor.get(IAgentLifecycleService);
-    for (const agent of sourceAgents.list()) {
-      const agentHandle = sourceAgents.handleOf(agent.agentId);
-      if (agentHandle === undefined) continue;
-      if (agentHandle.accessor.get(IAgentLoopService).hasTurnActivity()) return true;
-    }
-    return false;
-  }
-
   private async resolveForkTurnSlice(
     sourceHandle: ISessionScopeHandle | undefined,
     sourceId: string,
@@ -744,14 +734,17 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     );
     let resolved = turnIndex;
     if (promptId !== undefined) {
-      resolved = visibleTurnIndexOfPrompt(records, promptId);
-      if (resolved === undefined) {
+      const resolution = resolveForkPromptIndex(records, promptId);
+      if (resolution.status !== 'found') {
         throw new Error2(
           ErrorCodes.REQUEST_INVALID,
-          `Prompt "${promptId}" was not found in session "${sourceId}"`,
+          resolution.status === 'ambiguous'
+            ? `Prompt "${promptId}" matches multiple turns in session "${sourceId}"`
+            : `Prompt "${promptId}" was not found in session "${sourceId}"`,
           { details: { promptId, sessionId: sourceId } },
         );
       }
+      resolved = resolution.index;
     }
     if (!busy) {
       return sliceMainRecordsAtTurn(records, sourceId, resolved!);
@@ -771,7 +764,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         { details: { turnIndex: resolved, availableTurns: lastCompleted + 1 } },
       );
     }
-    return sliceMainRecordsAtTurn(records, sourceId, resolved ?? lastCompleted);
+    return sliceMainRecordsAtTurn(
+      capForkRecordsAtActiveTurn(records, lastCompleted),
+      sourceId,
+      resolved ?? lastCompleted,
+    );
   }
 
   private async resolveSourceTitle(sourceId: string): Promise<string | undefined> {

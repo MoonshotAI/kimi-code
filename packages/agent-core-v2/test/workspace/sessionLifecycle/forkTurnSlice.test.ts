@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  capForkRecordsAtActiveTurn,
   lastCompletedUserVisibleTurnIndex,
+  resolveForkPromptIndex,
   sliceMainRecordsAtTurn,
-  visibleTurnIndexOfPrompt,
 } from '#/workspace/sessionLifecycle/internal/forkTurnSlice';
 import type { WireRecord } from '#/wire/record';
 
@@ -11,10 +12,26 @@ function userTurnRecord(text: string, time: number, id?: string): WireRecord {
   return {
     type: 'context.append_message',
     message: {
-      ...(id === undefined ? {} : { id }),
+      id,
       role: 'user',
       content: [{ type: 'text', text }],
       origin: { kind: 'user' },
+    },
+    time,
+  };
+}
+
+function shellCommandRecord(
+  text: string,
+  time: number,
+  phase: 'input' | 'output',
+): WireRecord {
+  return {
+    type: 'context.append_message',
+    message: {
+      role: phase === 'input' ? 'user' : 'assistant',
+      content: [{ type: 'text', text }],
+      origin: { kind: 'shell_command', phase },
     },
     time,
   };
@@ -101,7 +118,7 @@ describe('sliceMainRecordsAtTurn lastTurnReason', () => {
   });
 });
 
-describe('visibleTurnIndexOfPrompt', () => {
+describe('resolveForkPromptIndex', () => {
   it('resolves the visible turn index of a prompt message id', () => {
     const records: WireRecord[] = [
       { type: 'metadata', protocol_version: '1.5', created_at: 1 },
@@ -111,9 +128,9 @@ describe('visibleTurnIndexOfPrompt', () => {
       turnEndedRecord(1, 5),
       userTurnRecord('third still running', 6, 'p3'),
     ];
-    expect(visibleTurnIndexOfPrompt(records, 'p1')).toBe(0);
-    expect(visibleTurnIndexOfPrompt(records, 'p2')).toBe(1);
-    expect(visibleTurnIndexOfPrompt(records, 'p3')).toBe(2);
+    expect(resolveForkPromptIndex(records, 'p1')).toEqual({ status: 'found', index: 0 });
+    expect(resolveForkPromptIndex(records, 'p2')).toEqual({ status: 'found', index: 1 });
+    expect(resolveForkPromptIndex(records, 'p3')).toEqual({ status: 'found', index: 2 });
   });
 
   it('resolves the index of a steered prompt message id', () => {
@@ -124,10 +141,40 @@ describe('visibleTurnIndexOfPrompt', () => {
       userTurnRecord('steered input', 4, 'p2'),
       turnEndedRecord(0, 5),
     ];
-    expect(visibleTurnIndexOfPrompt(records, 'p2')).toBe(1);
+    expect(resolveForkPromptIndex(records, 'p2')).toEqual({ status: 'found', index: 1 });
   });
 
-  it('returns undefined for an unknown prompt id or a non-visible append', () => {
+  it('resolves an original prompt id of a merged steer through the steer record', () => {
+    const records: WireRecord[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      userTurnRecord('original prompt', 2, 'p1'),
+      {
+        type: 'turn.steer',
+        turnId: 0,
+        messageId: 'merged-1',
+        promptIds: ['p2', 'p3'],
+        origin: { kind: 'user' },
+        time: 3,
+      },
+      userTurnRecord('merged steered input', 4, 'merged-1'),
+      turnEndedRecord(0, 5),
+    ];
+    expect(resolveForkPromptIndex(records, 'p2')).toEqual({ status: 'found', index: 1 });
+    expect(resolveForkPromptIndex(records, 'p3')).toEqual({ status: 'found', index: 1 });
+  });
+
+  it('reports ambiguous when a prompt id matches multiple visible turns', () => {
+    const records: WireRecord[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      userTurnRecord('first', 2, 'p1'),
+      turnEndedRecord(0, 3),
+      userTurnRecord('second', 4, 'p1'),
+      turnEndedRecord(1, 5),
+    ];
+    expect(resolveForkPromptIndex(records, 'p1')).toEqual({ status: 'ambiguous' });
+  });
+
+  it('reports unknown for a missing prompt id or a non-visible append', () => {
     const records: WireRecord[] = [
       { type: 'metadata', protocol_version: '1.5', created_at: 1 },
       userTurnRecord('real prompt', 2, 'p1'),
@@ -143,8 +190,56 @@ describe('visibleTurnIndexOfPrompt', () => {
         time: 4,
       },
     ];
-    expect(visibleTurnIndexOfPrompt(records, 'missing')).toBeUndefined();
-    expect(visibleTurnIndexOfPrompt(records, 'cron-1')).toBeUndefined();
+    expect(resolveForkPromptIndex(records, 'missing')).toEqual({ status: 'unknown' });
+    expect(resolveForkPromptIndex(records, 'cron-1')).toEqual({ status: 'unknown' });
+  });
+});
+
+describe('capForkRecordsAtActiveTurn', () => {
+  it('cuts the records before an active non-visible turn', () => {
+    const records: WireRecord[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      userTurnRecord('done', 2, 'p1'),
+      turnEndedRecord(0, 3),
+      {
+        type: 'turn.prompt',
+        turnId: 1,
+        origin: { kind: 'system_trigger', name: 'goal_continuation' },
+        time: 4,
+      },
+      { type: 'agent.turn.started', turnId: 1, time: 5 },
+    ];
+    const capped = capForkRecordsAtActiveTurn(records, 0);
+    expect(capped.map((record) => record.type)).toEqual([
+      'metadata',
+      'context.append_message',
+      'turn.ended',
+    ]);
+  });
+
+  it('cuts the records before an active turn that follows a shell command', () => {
+    const records: WireRecord[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      shellCommandRecord('!ls', 2, 'input'),
+      shellCommandRecord('file.ts', 3, 'output'),
+      { type: 'turn.prompt', turnId: 0, origin: { kind: 'user' }, time: 4 },
+      { type: 'agent.turn.started', turnId: 0, time: 5 },
+    ];
+    const capped = capForkRecordsAtActiveTurn(records, 0);
+    expect(capped.map((record) => record.type)).toEqual([
+      'metadata',
+      'context.append_message',
+      'context.append_message',
+    ]);
+  });
+
+  it('keeps the records when no engine turn follows the last completed one', () => {
+    const records: WireRecord[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      userTurnRecord('done', 2, 'p1'),
+      turnEndedRecord(0, 3),
+    ];
+    expect(capForkRecordsAtActiveTurn(records, 0)).toBe(records);
   });
 });
 
@@ -193,6 +288,24 @@ describe('lastCompletedUserVisibleTurnIndex', () => {
       userTurnRecord('follow-up still running', 6),
     ];
     expect(lastCompletedUserVisibleTurnIndex(records)).toBe(1);
+  });
+
+  it('counts a shell command with an output append as completed', () => {
+    const records: WireRecord[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      shellCommandRecord('!ls', 2, 'input'),
+      shellCommandRecord('file.ts', 3, 'output'),
+      userTurnRecord('follow-up still running', 4, 'p1'),
+    ];
+    expect(lastCompletedUserVisibleTurnIndex(records)).toBe(0);
+  });
+
+  it('does not count a shell command still running as completed', () => {
+    const records: WireRecord[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      shellCommandRecord('!ls', 2, 'input'),
+    ];
+    expect(lastCompletedUserVisibleTurnIndex(records)).toBeUndefined();
   });
 
   it('does not treat system-triggered appends as turn starts', () => {

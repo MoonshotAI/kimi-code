@@ -1389,7 +1389,7 @@ describe('server-v2 /api/v1/sessions', () => {
       content: [{ type: 'text', text }],
       toolCalls: [],
       origin: { kind: 'user' },
-      ...(promptId === undefined ? {} : { id: promptId }),
+      id: promptId,
     });
     const assistant = (text: string): ContextMessage => ({
       role: 'assistant',

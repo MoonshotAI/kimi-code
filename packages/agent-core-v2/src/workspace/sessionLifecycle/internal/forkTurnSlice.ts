@@ -84,26 +84,92 @@ export function lastCompletedUserVisibleTurnIndex(
   for (let start = 0; start < turnStarts.length; start += 1) {
     const from = turnStarts[start]! + 1;
     const to = turnStarts[start + 1] ?? records.length;
-    for (let index = from; index < to; index += 1) {
-      if (records[index]!.type === 'turn.ended') {
-        lastCompleted = start;
-        break;
-      }
+    if (turnCompletionAt(records, from, to, records[turnStarts[start]!]!) !== -1) {
+      lastCompleted = start;
     }
   }
   return lastCompleted;
 }
 
-export function visibleTurnIndexOfPrompt(
+export function capForkRecordsAtActiveTurn(
+  records: readonly WireRecord[],
+  lastCompleted: number,
+): readonly WireRecord[] {
+  const turnStarts = userVisibleTurnStartIndices(records);
+  const completedAt = turnCompletionAt(
+    records,
+    turnStarts[lastCompleted]! + 1,
+    turnStarts[lastCompleted + 1] ?? records.length,
+    records[turnStarts[lastCompleted]!]!,
+  );
+  if (completedAt === -1) return records;
+  for (let index = completedAt + 1; index < records.length; index += 1) {
+    const type = records[index]!.type;
+    if (type === 'agent.turn.started' || type === 'turn.prompt') {
+      return records.slice(0, index);
+    }
+  }
+  return records;
+}
+
+export type ForkPromptResolution =
+  | { readonly status: 'found'; readonly index: number }
+  | { readonly status: 'unknown' }
+  | { readonly status: 'ambiguous' };
+
+export function resolveForkPromptIndex(
   records: readonly WireRecord[],
   promptId: string,
-): number | undefined {
+): ForkPromptResolution {
   const turnStarts = userVisibleTurnStartIndices(records);
+  const targetIds = new Set<string>([promptId]);
+  for (const record of records) {
+    if (record.type !== 'turn.steer') continue;
+    const promptIds = record['promptIds'];
+    if (!Array.isArray(promptIds) || !promptIds.includes(promptId)) continue;
+    const messageId = record['messageId'];
+    if (typeof messageId === 'string' && messageId.length > 0) targetIds.add(messageId);
+  }
+  let found: number | undefined;
+  let ambiguous = false;
   for (let start = 0; start < turnStarts.length; start += 1) {
     const message = asRecord(records[turnStarts[start]!]!['message']);
-    if (message?.['id'] === promptId) return start;
+    const id = message?.['id'];
+    if (typeof id !== 'string' || !targetIds.has(id)) continue;
+    if (found !== undefined && found !== start) ambiguous = true;
+    found = found ?? start;
   }
-  return undefined;
+  if (ambiguous) return { status: 'ambiguous' };
+  return found === undefined ? { status: 'unknown' } : { status: 'found', index: found };
+}
+
+function turnCompletionAt(
+  records: readonly WireRecord[],
+  from: number,
+  to: number,
+  startRecord: WireRecord,
+): number {
+  const shellStart = isShellCommandTurnStart(startRecord);
+  for (let index = from; index < to; index += 1) {
+    const record = records[index]!;
+    if (record.type === 'turn.ended') return index;
+    if (shellStart && isShellCommandOutputRecord(record)) return index;
+  }
+  return -1;
+}
+
+function isShellCommandTurnStart(record: WireRecord): boolean {
+  if (record.type !== 'context.append_message') return false;
+  const message = asRecord(record['message']);
+  const origin = asRecord(message?.['origin']);
+  return origin?.['kind'] === 'shell_command' && origin?.['phase'] === 'input';
+}
+
+function isShellCommandOutputRecord(record: WireRecord): boolean {
+  if (record.type !== 'context.append_message') return false;
+  const message = asRecord(record['message']);
+  const origin = asRecord(message?.['origin']);
+  return origin?.['kind'] === 'shell_command' && origin?.['phase'] === 'output';
 }
 
 function userVisibleTurnStartIndices(records: readonly WireRecord[]): number[] {
