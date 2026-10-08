@@ -1819,6 +1819,9 @@ export class KimiTUI {
       })
       .catch((error: unknown) => {
         log.warn('main agent log read failed', { error });
+        if (seq === this.mainAgentLogReadSeq && this.session === session) {
+          this.mainAgentLogCache = undefined;
+        }
       })
       .finally(() => {
         if (seq === this.mainAgentLogReadSeq) this.mainAgentLogReadInFlight = false;
