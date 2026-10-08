@@ -1130,6 +1130,44 @@ describe('SurveyController model overrides', () => {
     ).toHaveLength(1);
   });
 
+  it('does not replay a consumed long-context roll after switching models twice', async () => {
+    const harness = createHarness({
+      config: () => ({
+        ...DEFAULT_SURVEY_POPUP_PAYLOAD,
+        model_overrides: { k3: { long_context_probability: 1 } },
+      }),
+    });
+    useManagedModel(harness);
+    harness.state.appState.contextTokens = 250_000;
+    await harness.flush();
+
+    const appeared = () =>
+      harness.track.mock.calls.filter(
+        (call) => (call[1] as { event_type?: string }).event_type === 'appeared',
+      ).length;
+
+    harness.controller.notifyTurnStarted(true);
+    harness.controller.notifyTurnEnded();
+    harness.elapse(2000);
+    expect(appeared()).toBe(1);
+    harness.clock.mono += 600;
+    harness.controller.handlePreInput(ESC);
+
+    useManagedModel(harness, 'other-model');
+    harness.controller.notifyTurnStarted(true);
+    harness.controller.notifyTurnEnded();
+    harness.elapse(2000);
+    expect(appeared()).toBe(2);
+    harness.clock.mono += 600;
+    harness.controller.handlePreInput(ESC);
+
+    useManagedModel(harness);
+    harness.controller.notifyTurnStarted(true);
+    harness.controller.notifyTurnEnded();
+    harness.elapse(2000);
+    expect(appeared()).toBe(2);
+  });
+
   it('reports the merged effective config in the policy snapshot', async () => {
     const harness = createHarness({
       config: () => ({

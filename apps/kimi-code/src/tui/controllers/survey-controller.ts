@@ -147,8 +147,7 @@ export class SurveyController {
   private userTurnsAtLastShown: number | undefined;
   private appearanceCount = 0;
   private globalLastShownAt: number | undefined;
-  private longContextRollConsumed = false;
-  private longContextRollConsumedFor: string | undefined;
+  private readonly longContextRollConsumedModels = new Set<string | undefined>();
   private generation = 0;
   private idleSince: number | undefined;
   private openedAt = 0;
@@ -199,8 +198,7 @@ export class SurveyController {
     this.lastShownAt = undefined;
     this.userTurnsAtLastShown = undefined;
     this.appearanceCount = 0;
-    this.longContextRollConsumed = false;
-    this.longContextRollConsumedFor = undefined;
+    this.longContextRollConsumedModels.clear();
     this.idleSince = undefined;
     this.stickySample = undefined;
     this.toolCallCount = 0;
@@ -478,8 +476,7 @@ export class SurveyController {
     const inputs = this.gateInputs();
     const verdict = evaluateSurveyGate({ ...inputs, config });
     if (verdict.longContextRollConsumed === true) {
-      this.longContextRollConsumed = true;
-      this.longContextRollConsumedFor = inputs.longContext.kfcModelId;
+      this.longContextRollConsumedModels.add(inputs.longContext.kfcModelId);
     }
     if (!verdict.show) return;
     this.open(verdict.survey, config);
@@ -523,8 +520,7 @@ export class SurveyController {
         ...shared,
         cumulativeTokens: appState.cumulativeTokens ?? 0,
         virtualContextTokens: appState.contextTokens,
-        mountRollConsumed:
-          this.longContextRollConsumed && this.longContextRollConsumedFor === shared.kfcModelId,
+        mountRollConsumed: this.longContextRollConsumedModels.has(shared.kfcModelId),
         drawMountRoll: () => (this.deps.random ?? defaultDeps.random)(),
       },
     };
