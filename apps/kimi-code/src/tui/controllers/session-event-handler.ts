@@ -733,7 +733,7 @@ export class SessionEventHandler {
     const shouldRenderTowerGoalExit =
       event.towerMode === false &&
       this.host.state.appState.towerMode &&
-      event.towerExitReason === 'goal-activated';
+      event.towerExitReason === 'mode-mutex';
     const patch: Partial<AppState> = {};
     if (event.contextTokens !== undefined) patch.contextTokens = event.contextTokens;
     if (event.maxContextTokens !== undefined) patch.maxContextTokens = event.maxContextTokens;

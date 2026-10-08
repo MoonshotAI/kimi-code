@@ -36,7 +36,7 @@ export type TowerEnterFailure =
 
 export type TowerEnterResult = { readonly entered: true } | TowerEnterFailure;
 
-export type TowerExitReason = 'user' | 'takeover' | 'foreign-reconcile' | 'goal-activated';
+export type TowerExitReason = 'user' | 'takeover' | 'foreign-reconcile' | 'mode-mutex';
 
 export function towerEnterFailureMessage(failure: TowerEnterFailure): string {
   switch (failure.reason) {

@@ -85,7 +85,7 @@ describe('AgentModeMutexService', () => {
     towerActive = true;
     publish(new PlanModeEnter({ agentId: 'test-agent', id: 'plan_1' }));
     expect(towerExit).toHaveBeenCalledTimes(1);
-    expect(towerExit).toHaveBeenCalledWith();
+    expect(towerExit).toHaveBeenCalledWith('mode-mutex');
   });
 
   it('plan mode entry leaves an inactive tower mode alone', () => {
@@ -97,7 +97,7 @@ describe('AgentModeMutexService', () => {
     towerActive = true;
     publish(new SwarmModeEnter({ agentId: 'test-agent', trigger: 'manual' }));
     expect(towerExit).toHaveBeenCalledTimes(1);
-    expect(towerExit).toHaveBeenCalledWith();
+    expect(towerExit).toHaveBeenCalledWith('mode-mutex');
   });
 
   it('swarm mode entry leaves an inactive tower mode alone', () => {
@@ -131,7 +131,7 @@ describe('AgentModeMutexService', () => {
     expect(goalPause).not.toHaveBeenCalled();
   });
 
-  it('goal activation exits an active tower mode with the goal-activated reason', () => {
+  it('goal activation exits an active tower mode with the mode-mutex reason', () => {
     towerActive = true;
     publish(
       new GoalUpdated({
@@ -140,13 +140,13 @@ describe('AgentModeMutexService', () => {
       }),
     );
     expect(towerExit).toHaveBeenCalledTimes(1);
-    expect(towerExit).toHaveBeenCalledWith('goal-activated');
+    expect(towerExit).toHaveBeenCalledWith('mode-mutex');
     expect(dispatch).toHaveBeenCalledTimes(1);
     const status = dispatch.mock.calls[0]![0] as AgentStatusUpdated;
     expect(status).toBeInstanceOf(AgentStatusUpdated);
     expect(status.agentId).toBe('test-agent');
     expect(status.towerMode).toBe(false);
-    expect(status.towerExitReason).toBe('goal-activated');
+    expect(status.towerExitReason).toBe('mode-mutex');
     expect(dispatch.mock.invocationCallOrder[0]).toBeLessThan(
       towerExit.mock.invocationCallOrder[0]!,
     );

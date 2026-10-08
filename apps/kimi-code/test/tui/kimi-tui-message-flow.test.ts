@@ -6188,7 +6188,7 @@ command = "vim"
         agentId: 'main',
         sessionId: 'ses-1',
         towerMode: false,
-        towerExitReason: 'goal-activated',
+        towerExitReason: 'mode-mutex',
       } as Event,
       vi.fn(),
     );

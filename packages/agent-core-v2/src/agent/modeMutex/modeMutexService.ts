@@ -31,12 +31,12 @@ export class AgentModeMutexService extends Disposable implements IAgentModeMutex
     super();
     this._register(
       eventBus.subscribe(PlanModeEnter, () => {
-        if (this.tower.isActive) void this.tower.exit();
+        if (this.tower.isActive) void this.tower.exit('mode-mutex');
       }),
     );
     this._register(
       eventBus.subscribe(SwarmModeEnter, () => {
-        if (this.tower.isActive) void this.tower.exit();
+        if (this.tower.isActive) void this.tower.exit('mode-mutex');
       }),
     );
     this._register(
@@ -56,10 +56,10 @@ export class AgentModeMutexService extends Disposable implements IAgentModeMutex
           new AgentStatusUpdated({
             agentId: event.agentId,
             towerMode: false,
-            towerExitReason: 'goal-activated',
+            towerExitReason: 'mode-mutex',
           }),
         );
-        void this.tower.exit('goal-activated');
+        void this.tower.exit('mode-mutex');
       }),
     );
   }
