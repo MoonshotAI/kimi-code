@@ -55,6 +55,15 @@
       "homepage": "https://github.com/TencentCloudBase/CloudBase-AI-Toolkit",
       "keywords": ["cloudbase", "tencent-cloud", "baas", "database", "cloud-function", "mcp"],
       "source": "https://github.com/TencentCloudBase/CloudBase-AI-Toolkit/releases/latest/download/cloudbase-kimi.zip"
+    },
+    {
+      "id": "aeon",
+      "tier": "curated",
+      "displayName": "Aeon",
+      "description": "Run and manage your Aeon autonomous agent from chat: skills, runs, memory, strategy, packs, and settings, via Aeon's hosted MCP server with GitHub sign-in.",
+      "homepage": "https://www.aeon.fun/connect",
+      "keywords": ["agents", "automation", "github-actions", "mcp"],
+      "source": "https://github.com/aeonfun/aeon-mcp"
     }
   ]
 }
