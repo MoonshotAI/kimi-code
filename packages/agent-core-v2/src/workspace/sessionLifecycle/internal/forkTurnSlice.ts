@@ -11,6 +11,7 @@ export interface MainTurnSlice {
   readonly records: readonly WireRecord[];
   readonly cutoffTime?: number;
   readonly lastPrompt?: string;
+  readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
 
 export function assertForkTurnIndex(turnIndex: number | undefined): void {
@@ -55,6 +56,7 @@ export function sliceMainRecordsAtTurn(
     records: retained,
     cutoffTime: cutoffTimes.length === 0 ? undefined : Math.max(...cutoffTimes),
     lastPrompt,
+    lastTurnReason: turnOutcomeOfRecords(retained),
   };
 }
 
@@ -74,20 +76,22 @@ export function sliceSubagentRecordsAtTime(
   return records.slice(0, end);
 }
 
-export function countCompletedUserVisibleTurns(records: readonly WireRecord[]): number {
+export function lastCompletedUserVisibleTurnIndex(
+  records: readonly WireRecord[],
+): number | undefined {
   const turnStarts = userVisibleTurnStartIndices(records);
-  let completed = 0;
+  let lastCompleted: number | undefined;
   for (let start = 0; start < turnStarts.length; start += 1) {
     const from = turnStarts[start]! + 1;
     const to = turnStarts[start + 1] ?? records.length;
     for (let index = from; index < to; index += 1) {
       if (records[index]!.type === 'turn.ended') {
-        completed += 1;
+        lastCompleted = start;
         break;
       }
     }
   }
-  return completed;
+  return lastCompleted;
 }
 
 function userVisibleTurnStartIndices(records: readonly WireRecord[]): number[] {
@@ -220,6 +224,20 @@ function recordTime(record: WireRecord): number | undefined {
   if (record.type === 'metadata') {
     const createdAt = record['created_at'];
     if (typeof createdAt === 'number' && Number.isFinite(createdAt)) return createdAt;
+  }
+  return undefined;
+}
+
+function turnOutcomeOfRecords(
+  records: readonly WireRecord[],
+): 'completed' | 'cancelled' | 'failed' | undefined {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index]!;
+    if (record.type !== 'turn.ended') continue;
+    const reason = record['reason'];
+    if (reason === 'completed' || reason === 'cancelled') return reason;
+    if (reason === 'failed' || reason === 'blocked') return 'failed';
+    return undefined;
   }
   return undefined;
 }

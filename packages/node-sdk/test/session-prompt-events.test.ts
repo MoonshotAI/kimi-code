@@ -793,6 +793,10 @@ describe('Session.prompt events', () => {
         id: source.id,
         forkId: 'ses_turn_fork_running_child',
       });
+      const forkSummary = (await harness.listSessions()).find(
+        (summary) => summary.id === fork.id,
+      );
+      expect(forkSummary?.lastTurnReason).toBe('completed');
       await fork.close();
       const resumed = await harness.resumeSession({ id: fork.id });
       const replayText = visibleReplayText(resumed.getResumeState()?.agents['main']?.replay ?? []);
@@ -947,6 +951,74 @@ describe('Session.prompt events', () => {
         { timeout: 5_000 },
       );
       unsubscribe();
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('forks a running session through a steered turn at the steered index', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      await configureFakeProvider(harness);
+      const source = await harness.createSession({ id: 'ses_turn_fork_steer_source', workDir });
+
+      const firstGate = deferredResponse();
+      fetchStub!.mockImplementationOnce(() => firstGate.promise);
+      const started = waitForEvent(source, (event) => event.type === 'turn.started');
+      const steeredTurnEnded = waitForEvent(source, (event) => event.type === 'turn.ended');
+      await source.prompt('original question');
+      await started;
+      await source.steer('steered input');
+      fakeProviderState.responseText = 'answer after steer';
+      firstGate.resolve(sseResponse('answer before steer'));
+      await steeredTurnEnded;
+
+      const followUpGate = deferredResponse();
+      fetchStub!.mockImplementationOnce(() => followUpGate.promise);
+      const followUpStarted = waitForEvent(source, (event) => event.type === 'turn.started');
+      const followUpEnded = waitForEvent(source, (event) => event.type === 'turn.ended');
+      await source.prompt('follow-up question');
+      await followUpStarted;
+
+      const expectedReplay = [
+        'user:original question',
+        'assistant:answer before steer',
+        'user:steered input',
+        'assistant:answer after steer',
+      ];
+
+      const fork = await harness.forkSession({
+        id: source.id,
+        forkId: 'ses_turn_fork_steer_child',
+      });
+      await fork.close();
+      const resumed = await harness.resumeSession({ id: fork.id });
+      expect(
+        visibleReplayText(resumed.getResumeState()?.agents['main']?.replay ?? []),
+      ).toEqual(expectedReplay);
+
+      const picked = await harness.forkSession({
+        id: source.id,
+        forkId: 'ses_turn_fork_steer_pick_child',
+        turnIndex: 1,
+      });
+      await picked.close();
+      const resumedPicked = await harness.resumeSession({ id: picked.id });
+      expect(
+        visibleReplayText(resumedPicked.getResumeState()?.agents['main']?.replay ?? []),
+      ).toEqual(expectedReplay);
+
+      await expect(harness.forkSession({ id: source.id, turnIndex: 2 })).rejects.toMatchObject({
+        name: 'KimiError',
+        code: 'request.invalid',
+        details: { turnIndex: 2, availableTurns: 2 },
+      });
+
+      followUpGate.resolve(sseResponse('follow-up answer'));
+      await followUpEnded;
     } finally {
       await harness.close();
     }

@@ -247,6 +247,10 @@ class FakeLoopService implements IAgentLoopService {
     return toDisposable(() => {});
   }
 
+  hasTurnActivity(): boolean {
+    return false;
+  }
+
   buildAttachBundle(): never {
     throw new Error('unused in this suite');
   }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  countCompletedUserVisibleTurns,
+  lastCompletedUserVisibleTurnIndex,
   sliceMainRecordsAtTurn,
 } from '#/workspace/sessionLifecycle/internal/forkTurnSlice';
 import type { WireRecord } from '#/wire/record';
@@ -61,18 +61,56 @@ describe('sliceMainRecordsAtTurn', () => {
   });
 });
 
-describe('countCompletedUserVisibleTurns', () => {
-  it('returns zero for empty records and for a first turn still running', () => {
-    expect(countCompletedUserVisibleTurns([])).toBe(0);
+describe('sliceMainRecordsAtTurn lastTurnReason', () => {
+  it('derives the outcome from the last retained turn.ended record', () => {
+    const records: WireRecord[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      userTurnRecord('first', 2),
+      turnEndedRecord(0, 3, 'completed'),
+      userTurnRecord('second', 4),
+      turnEndedRecord(1, 5, 'cancelled'),
+      userTurnRecord('third', 6),
+      turnEndedRecord(2, 7, 'failed'),
+    ];
+    expect(sliceMainRecordsAtTurn(records, 'ses_source', 0).lastTurnReason).toBe('completed');
+    expect(sliceMainRecordsAtTurn(records, 'ses_source', 1).lastTurnReason).toBe('cancelled');
+    expect(sliceMainRecordsAtTurn(records, 'ses_source', 2).lastTurnReason).toBe('failed');
+  });
+
+  it('maps a blocked outcome to failed', () => {
+    const records: WireRecord[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      userTurnRecord('blocked turn', 2),
+      turnEndedRecord(0, 3, 'blocked'),
+    ];
+    expect(sliceMainRecordsAtTurn(records, 'ses_source', 0).lastTurnReason).toBe('failed');
+  });
+
+  it('returns undefined when the slice retains no turn.ended record', () => {
+    const records: WireRecord[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      userTurnRecord('original prompt', 2),
+      { type: 'turn.steer', turnId: 0, messageId: 'msg_steer', origin: { kind: 'user' }, time: 3 },
+      userTurnRecord('steered input', 4),
+      turnEndedRecord(0, 5),
+    ];
+    expect(sliceMainRecordsAtTurn(records, 'ses_source', 0).lastTurnReason).toBeUndefined();
+    expect(sliceMainRecordsAtTurn(records, 'ses_source', 1).lastTurnReason).toBe('completed');
+  });
+});
+
+describe('lastCompletedUserVisibleTurnIndex', () => {
+  it('returns undefined for empty records and for a first turn still running', () => {
+    expect(lastCompletedUserVisibleTurnIndex([])).toBeUndefined();
     expect(
-      countCompletedUserVisibleTurns([
+      lastCompletedUserVisibleTurnIndex([
         { type: 'metadata', protocol_version: '1.5', created_at: 1 },
         userTurnRecord('running turn', 2),
       ]),
-    ).toBe(0);
+    ).toBeUndefined();
   });
 
-  it('counts turns closed by a turn.ended record and ignores a running tail turn', () => {
+  it('returns the last turn start closed by a turn.ended record and ignores a running tail turn', () => {
     const records: WireRecord[] = [
       { type: 'metadata', protocol_version: '1.5', created_at: 1 },
       userTurnRecord('first', 2),
@@ -81,30 +119,31 @@ describe('countCompletedUserVisibleTurns', () => {
       turnEndedRecord(1, 5),
       userTurnRecord('third still running', 6),
     ];
-    expect(countCompletedUserVisibleTurns(records)).toBe(2);
+    expect(lastCompletedUserVisibleTurnIndex(records)).toBe(1);
   });
 
   it.each(['cancelled', 'failed', 'blocked'] as const)(
-    'counts a turn ended with reason "%s" as completed',
+    'treats a turn ended with reason "%s" as completed',
     (reason) => {
       const records: WireRecord[] = [
         { type: 'metadata', protocol_version: '1.5', created_at: 1 },
         userTurnRecord('interrupted', 2),
         turnEndedRecord(0, 3, reason),
       ];
-      expect(countCompletedUserVisibleTurns(records)).toBe(1);
+      expect(lastCompletedUserVisibleTurnIndex(records)).toBe(0);
     },
   );
 
-  it('treats a steer-split pair sharing one turn.ended as a single completable turn', () => {
+  it('returns the steered start index when a steer-split turn completes before a running tail', () => {
     const records: WireRecord[] = [
       { type: 'metadata', protocol_version: '1.5', created_at: 1 },
       userTurnRecord('original prompt', 2),
       { type: 'turn.steer', turnId: 0, messageId: 'msg_steer', origin: { kind: 'user' }, time: 3 },
       userTurnRecord('steered input', 4),
       turnEndedRecord(0, 5),
+      userTurnRecord('follow-up still running', 6),
     ];
-    expect(countCompletedUserVisibleTurns(records)).toBe(1);
+    expect(lastCompletedUserVisibleTurnIndex(records)).toBe(1);
   });
 
   it('does not treat system-triggered appends as turn starts', () => {
@@ -123,6 +162,6 @@ describe('countCompletedUserVisibleTurns', () => {
       },
       turnEndedRecord(1, 5),
     ];
-    expect(countCompletedUserVisibleTurns(records)).toBe(1);
+    expect(lastCompletedUserVisibleTurnIndex(records)).toBe(0);
   });
 });

@@ -101,7 +101,7 @@ import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressin
 import { SessionArchived, SessionDeleted } from './sessionLifecycleEvents';
 import {
   assertForkTurnIndex,
-  countCompletedUserVisibleTurns,
+  lastCompletedUserVisibleTurnIndex,
   type MainTurnSlice,
   sliceMainRecordsAtTurn,
   sliceSubagentRecordsAtTime,
@@ -527,6 +527,13 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       if (sourceHandle !== undefined) {
         const holds = this.tryAcquireForkQuiescence(sourceHandle);
         if (holds === undefined) {
+          if (!this.hasTurnActivity(sourceHandle)) {
+            throw new Error2(
+              ErrorCodes.SESSION_FORK_ACTIVE_TURN,
+              `Session "${sourceId}" cannot be forked while another operation is in progress`,
+              { details: { sessionId: sourceId } },
+            );
+          }
           busy = true;
         } else {
           quiescenceHolds.push(...holds);
@@ -637,7 +644,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         agents,
         custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
         lastPrompt: turnSlice === undefined ? sourceMeta?.lastPrompt : turnSlice.lastPrompt,
-        lastTurnReason: sourceMeta?.lastTurnReason,
+        lastTurnReason:
+          turnSlice === undefined ? sourceMeta?.lastTurnReason : turnSlice.lastTurnReason,
       };
       await this.docs.set(
         sessionScopeOf(this.handlerScope, targetId),
@@ -704,6 +712,16 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return holds;
   }
 
+  private hasTurnActivity(sourceHandle: ISessionScopeHandle): boolean {
+    const sourceAgents = sourceHandle.accessor.get(IAgentLifecycleService);
+    for (const agent of sourceAgents.list()) {
+      const agentHandle = sourceAgents.handleOf(agent.agentId);
+      if (agentHandle === undefined) continue;
+      if (agentHandle.accessor.get(IAgentLoopService).hasTurnActivity()) return true;
+    }
+    return false;
+  }
+
   private async resolveForkTurnSlice(
     sourceHandle: ISessionScopeHandle | undefined,
     sourceId: string,
@@ -722,22 +740,22 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const records = flattenChain(
       await this.readSourceWireRecords(sourceHandle, sourceId, MAIN_AGENT_ID),
     );
-    const completedTurns = countCompletedUserVisibleTurns(records);
-    if (completedTurns === 0) {
+    const lastCompleted = lastCompletedUserVisibleTurnIndex(records);
+    if (lastCompleted === undefined) {
       throw new Error2(
         ErrorCodes.SESSION_FORK_ACTIVE_TURN,
         `Session "${sourceId}" cannot be forked yet because no turn has completed`,
         { details: { sessionId: sourceId } },
       );
     }
-    if (turnIndex !== undefined && turnIndex > completedTurns - 1) {
+    if (turnIndex !== undefined && turnIndex > lastCompleted) {
       throw new Error2(
         ErrorCodes.REQUEST_INVALID,
         `Turn ${String(turnIndex)} was not found in session "${sourceId}"`,
-        { details: { turnIndex, availableTurns: completedTurns } },
+        { details: { turnIndex, availableTurns: lastCompleted + 1 } },
       );
     }
-    return sliceMainRecordsAtTurn(records, sourceId, turnIndex ?? completedTurns - 1);
+    return sliceMainRecordsAtTurn(records, sourceId, turnIndex ?? lastCompleted);
   }
 
   private async resolveSourceTitle(sourceId: string): Promise<string | undefined> {
