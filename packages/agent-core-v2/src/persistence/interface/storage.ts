@@ -94,6 +94,7 @@ const REASONS: Record<StorageIoErrorCode, string> = {
 function mapErrno(errno: string | undefined): StorageIoErrorCode {
   switch (errno) {
     case 'ENOENT':
+    case 'ENOTDIR':
       return StorageErrors.codes.STORAGE_NOT_FOUND;
     case 'EACCES':
     case 'EPERM':
