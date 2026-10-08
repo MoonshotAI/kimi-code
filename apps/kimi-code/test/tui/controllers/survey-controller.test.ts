@@ -2914,7 +2914,6 @@ describe('SurveyController session user turns', () => {
     expect(harness.track).not.toHaveBeenCalled();
 
     ready = true;
-    harness.runTurns(1);
     harness.elapse(2000);
     expect(harness.container.children).not.toHaveLength(0);
     expect(trackedEvent(harness, 'appeared')).toMatchObject({ user_turn_count: 20 });

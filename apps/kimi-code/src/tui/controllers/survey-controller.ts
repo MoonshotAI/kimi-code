@@ -263,6 +263,10 @@ export class SurveyController {
     }
     this.currentTurnUserOrigin = undefined;
     if (!this.evaluationPending) return;
+    this.scheduleIdleEvaluation();
+  }
+
+  private scheduleIdleEvaluation(): void {
     this.idleSince = this.now();
     this.clearIdleTimer();
     this.idleTimer = this.setT(() => {
@@ -465,7 +469,11 @@ export class SurveyController {
     if (this.machine.phase !== 'closed') return;
     if (!this.configReady) return;
     if (!this.cooldownReady) return;
-    if (!(this.deps.mainAgentLogReady ?? defaultDeps.mainAgentLogReady)()) return;
+    if (!(this.deps.mainAgentLogReady ?? defaultDeps.mainAgentLogReady)()) {
+      this.evaluationPending = true;
+      this.scheduleIdleEvaluation();
+      return;
+    }
     const region = (this.deps.configRegion ?? defaultDeps.configRegion)();
     const cacheCold = !(this.deps.configFresh ?? defaultDeps.configFresh)();
     if (
