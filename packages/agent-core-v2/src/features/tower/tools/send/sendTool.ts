@@ -1,14 +1,13 @@
-import { IAgentScopeContext, agentContextOfScope } from '#/agent/scopeContext/scopeContext';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionEventBus } from '#/app/event/eventBus';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
 
 import { deliverTowerMessage } from '../delivery';
-import { callerTokens, newTowerStore, runTowerTool } from '../support';
+import { newTowerStore, runTowerTool } from '../support';
 import DESCRIPTION from './send.md?raw';
 import { ITowerSendTool, TowerSendToolInputSchema, type TowerSendToolInput } from './send';
 
@@ -23,7 +22,6 @@ export class TowerSendTool implements ITowerSendTool {
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ISessionEventBus private readonly sessionBus: ISessionEventBus,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
-    @ISessionUsageService private readonly usage: ISessionUsageService,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) {}
 
@@ -47,7 +45,6 @@ export class TowerSendTool implements ITowerSendTool {
             scope: args.scope,
             action: args.action,
             consentRef: args.consent_ref,
-            tokens: callerTokens(this.usage, agentContextOfScope(this.scopeContext)),
           });
           const delivery = deliverTowerMessage(
             {

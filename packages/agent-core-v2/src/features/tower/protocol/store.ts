@@ -115,7 +115,6 @@ export interface TowerSendInput {
   readonly scope?: string;
   readonly action?: string;
   readonly consentRef?: string;
-  readonly tokens?: number;
 }
 
 export interface TowerSendResult {
@@ -141,7 +140,6 @@ export interface TowerFindingInput {
   readonly location?: string;
   readonly details: string;
   readonly suggestedFix: string;
-  readonly tokens?: number;
 }
 
 export interface TowerReviewInput {
@@ -151,7 +149,6 @@ export interface TowerReviewInput {
   readonly findings: string;
   readonly checks?: readonly string[];
   readonly decision: string;
-  readonly tokens?: number;
 }
 
 export interface TowerReviewResult {
@@ -1252,7 +1249,6 @@ export class TowerStore {
       scope: input.scope,
       action: input.action,
       consent_ref: input.consentRef,
-      tokens: String(input.tokens ?? -1),
     });
     const content = `${frontmatter}\n\n${body}\n`;
     const baseName = inboxFileName({ from: callerName, to, subject: input.subject });
@@ -1262,7 +1258,7 @@ export class TowerStore {
       await this.appendLog(
         callerName,
         'inbox.send',
-        { to, subject: slugify(input.subject), tokens: input.tokens ?? -1 },
+        { to, subject: slugify(input.subject) },
         rel,
       );
     } catch (error) {
@@ -1298,7 +1294,6 @@ export class TowerStore {
   async complete(
     callerName: string,
     report: string,
-    tokens?: number,
   ): Promise<TowerCompleteResult> {
     const trimmed = report.trim();
     if (trimmed.length === 0) {
@@ -1313,7 +1308,7 @@ export class TowerStore {
           : undefined;
       if (callerName === TOWER_NAME || caller?.kind !== 'worker' || ownedMission === undefined) {
         if (caller?.kind === 'worker' && state.recoveredAt !== undefined) {
-          return this.completeStateLostLocked(caller, trimmed, state, state.recoveredAt, tokens);
+          return this.completeStateLostLocked(caller, trimmed, state, state.recoveredAt);
         }
         if (caller?.kind === 'worker' && caller.missionId !== undefined) {
           throw new TowerProtocolError(`unknown mission "${caller.missionId}"`);
@@ -1357,7 +1352,6 @@ export class TowerStore {
             body: trimmed,
             scope: mission.id,
             action: 'complete',
-            tokens,
           },
           state,
         );
@@ -1385,7 +1379,6 @@ export class TowerStore {
     report: string,
     state: TowerState,
     recoveredAt: string,
-    tokens?: number,
   ): Promise<TowerCompleteResult> {
     const subject = 'completion-report-state-lost';
     const existing = (await this.listInboxItems()).find(
@@ -1411,7 +1404,6 @@ export class TowerStore {
           subject,
           body: report,
           action: 'complete',
-          tokens,
         },
         state,
       );
@@ -1567,7 +1559,6 @@ export class TowerStore {
       `**Type**: ${input.type}`,
       `**Severity**: ${input.severity ?? 'medium'}`,
       `**Mission**: ${mission === undefined ? '(none)' : `${mission.id} — ${mission.title}`}`,
-      `**Tokens**: ${String(input.tokens ?? -1)}`,
       '',
       '---',
       '',
@@ -1602,7 +1593,7 @@ export class TowerStore {
     await this.appendLog(
       callerName,
       'finding.file',
-      { type: input.type, slug: slugify(input.title), tokens: input.tokens ?? -1 },
+      { type: input.type, slug: slugify(input.title) },
       rel,
     );
     return rel;
@@ -1660,7 +1651,6 @@ export class TowerStore {
               round: review.round,
               verdict: review.status,
               reviewed: review.reviewedCommit.slice(0, 7),
-              tokens: input.tokens ?? -1,
             },
             review.file,
           );
@@ -1690,7 +1680,6 @@ export class TowerStore {
           merge: input.merge,
           reviewed_commit: reviewedCommit,
           mission: reviewMissionId,
-          tokens: String(input.tokens ?? -1),
         });
         const content = `${frontmatter}\n\n${reviewDocumentBody(input)}\n`;
         const rel = await this.writeUnique(
@@ -1719,7 +1708,6 @@ export class TowerStore {
               round,
               verdict: input.status,
               reviewed: reviewedCommit.slice(0, 7),
-              tokens: input.tokens ?? -1,
             },
             rel,
           );
@@ -1837,7 +1825,7 @@ export class TowerStore {
             await this.appendLog(
               callerName,
               'inbox.send',
-              { to: recipient, subject: slugify('review-result'), tokens: input.tokens ?? -1 },
+              { to: recipient, subject: slugify('review-result') },
               existing.file,
             );
           } catch (error) {
@@ -1857,7 +1845,6 @@ export class TowerStore {
             body,
             scope: reviewMission?.id ?? review.mission,
             action: 'review-result',
-            tokens: input.tokens,
           },
           state,
         );

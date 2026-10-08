@@ -47,7 +47,6 @@ import { towerKey, TowerInboxSent, type TowerInboxSentPayload } from '#/features
 import { TaskTerminatedNotice } from '#/agent/task/taskOps';
 import { IAgentTaskService } from '#/agent/task/task';
 import { SubagentStarted } from '#/session/subagent/mirrorAgentRun';
-import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -2856,7 +2855,6 @@ describe('AgentTowerService', () => {
         makeAgentScopeContext({ agentId, agentScope: testWireScope('wire', 'tower-test'), generation: 0 }),
         bus,
         { list: () => [] } as unknown as IAgentTaskService,
-        undefined as unknown as ISessionUsageService,
         { handleOf: () => undefined } as unknown as IAgentLifecycleService,
       );
       const result = await executeTool(tool, { turnId: 0, toolCallId: 'call_send', args: input, signal });
@@ -2934,7 +2932,6 @@ describe('AgentTowerService', () => {
       const tool = new TowerReviewTool(
         { cwd: repo } as unknown as ISessionContext,
         makeAgentScopeContext({ agentId: 'agent-r1', agentScope: testWireScope('wire', 'tower-test'), generation: 0 }),
-        undefined as unknown as ISessionUsageService,
         bus,
         {
           list: () => {
@@ -2996,7 +2993,6 @@ describe('AgentTowerService', () => {
       const tool = new TowerCompleteTool(
         { cwd: repo } as unknown as ISessionContext,
         makeAgentScopeContext({ agentId: 'agent-w1', agentScope: testWireScope('wire', 'tower-test'), generation: 0 }),
-        undefined as unknown as ISessionUsageService,
         bus,
         { list: () => [] } as unknown as IAgentTaskService,
         { handleOf: () => undefined } as unknown as IAgentLifecycleService,
@@ -3028,7 +3024,6 @@ describe('AgentTowerService', () => {
       const tool = new TowerCompleteTool(
         { cwd: repo } as unknown as ISessionContext,
         makeAgentScopeContext({ agentId: 'agent-w1', agentScope: testWireScope('wire', 'tower-test'), generation: 0 }),
-        undefined as unknown as ISessionUsageService,
         bus,
         { list: () => [] } as unknown as IAgentTaskService,
         { handleOf: () => undefined } as unknown as IAgentLifecycleService,

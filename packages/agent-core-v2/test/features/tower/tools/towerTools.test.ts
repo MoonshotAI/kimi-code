@@ -21,9 +21,7 @@ import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
 import { TowerStore, parseFrontmatter } from '#/features/tower/protocol/index';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import type { ExecutableTool } from '#/tool/toolContract';
-import type { TokenUsage } from '#human/llm/usage';
 
 import { ITowerInitTool } from '#/features/tower/tools/init/init';
 import { TowerInitTool } from '#/features/tower/tools/init/initTool';
@@ -85,7 +83,6 @@ let currentAgentId: string;
 let currentSessionId: string;
 let liveSessionIds: string[];
 let liveAgentTaskIds: string[];
-let usageTotal: TokenUsage | undefined;
 const agentContexts = new Map<string, AgentContext>();
 const agentLoops = new Map<string, { state: 'idle' | 'running'; submitted: string[] }>();
 
@@ -100,7 +97,6 @@ beforeEach(async () => {
   currentAgentId = 'main';
   liveSessionIds = [];
   liveAgentTaskIds = [];
-  usageTotal = undefined;
   currentSessionId = 'session-test';
   agentContexts.clear();
   agentLoops.clear();
@@ -156,9 +152,6 @@ beforeEach(async () => {
       } as unknown as ISessionManager);
       reg.definePartialInstance(ITowerRateLimitService, {
         snapshot: () => ({ budget: 2, inflight: 0, blockedUntil: null }),
-      });
-      reg.definePartialInstance(ISessionUsageService, {
-        status: () => ({ total: usageTotal }),
       });
       reg.definePartialInstance(IAgentTaskService, {
         list: () =>
@@ -700,26 +693,6 @@ describe('TowerSendTool + TowerInboxTool', () => {
     liveAgentTaskIds.push('agent-w1');
     const busy = await run(ix.get(ITowerSendTool), { to: 'w1', subject: 'wake', body: 'x' });
     expect(busy.output).not.toContain('has no running task');
-  });
-
-  it('stamps the sender token count from the usage service into the message frontmatter', async () => {
-    usageTotal = { inputOther: 100, output: 50, inputCacheRead: 10, inputCacheCreation: 5 };
-
-    await run(ix.get(ITowerSendTool), { to: 'w1', subject: 'metered', body: 'x' });
-
-    const dir = join(repo, '.tower/comms/inbox');
-    const file = (await readdir(dir)).find((name) => name.includes('metered'));
-    const { fields } = parseFrontmatter(await readFile(join(dir, file!), 'utf8'));
-    expect(fields['tokens']).toBe('165');
-  });
-
-  it('records tokens as -1 when the usage service reports nothing', async () => {
-    await run(ix.get(ITowerSendTool), { to: 'w1', subject: 'unmetered', body: 'x' });
-
-    const dir = join(repo, '.tower/comms/inbox');
-    const file = (await readdir(dir)).find((name) => name.includes('unmetered'));
-    const { fields } = parseFrontmatter(await readFile(join(dir, file!), 'utf8'));
-    expect(fields['tokens']).toBe('-1');
   });
 
   it('skips the delivery note for broadcasts and for sends from workers', async () => {

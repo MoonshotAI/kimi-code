@@ -1,14 +1,13 @@
-import { IAgentScopeContext, agentContextOfScope } from '#/agent/scopeContext/scopeContext';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionEventBus } from '#/app/event/eventBus';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
 
 import { deliverTowerMessage } from '../delivery';
-import { callerTokens, newTowerStore, runTowerTool } from '../support';
+import { newTowerStore, runTowerTool } from '../support';
 import DESCRIPTION from './complete.md?raw';
 import {
   ITowerCompleteTool,
@@ -25,7 +24,6 @@ export class TowerCompleteTool implements ITowerCompleteTool {
   constructor(
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @ISessionUsageService private readonly usage: ISessionUsageService,
     @ISessionEventBus private readonly sessionBus: ISessionEventBus,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
@@ -45,7 +43,6 @@ export class TowerCompleteTool implements ITowerCompleteTool {
           const result = await store.complete(
             resolved.caller,
             args.report.trim(),
-            callerTokens(this.usage, agentContextOfScope(this.scopeContext)),
           );
           const delivery =
             result.message !== undefined

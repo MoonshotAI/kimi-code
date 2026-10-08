@@ -1,10 +1,9 @@
-import { IAgentScopeContext, agentContextOfScope } from '#/agent/scopeContext/scopeContext';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
 
-import { callerName, callerTokens, newTowerStore, runTowerTool } from '../support';
+import { callerName, newTowerStore, runTowerTool } from '../support';
 import DESCRIPTION from './finding.md?raw';
 import {
   ITowerFindingTool,
@@ -21,7 +20,6 @@ export class TowerFindingTool implements ITowerFindingTool {
   constructor(
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @ISessionUsageService private readonly usage: ISessionUsageService,
   ) {}
 
   resolveExecution(args: TowerFindingToolInput): ToolExecution {
@@ -41,7 +39,6 @@ export class TowerFindingTool implements ITowerFindingTool {
             location: args.location,
             details: args.details,
             suggestedFix: args.suggested_fix,
-            tokens: callerTokens(this.usage, agentContextOfScope(this.scopeContext)),
           });
           return {
             output: `finding filed: ${rel}\nThe tower will route it — do not fix out-of-scope issues yourself.`,
