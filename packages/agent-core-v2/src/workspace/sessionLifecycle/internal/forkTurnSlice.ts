@@ -76,59 +76,6 @@ export function sliceSubagentRecordsAtTime(
   return records.slice(0, end);
 }
 
-export function lastCompletedUserVisibleTurnIndex(
-  records: readonly WireRecord[],
-): number | undefined {
-  const turnStarts = userVisibleTurnStartIndices(records);
-  let lastCompleted: number | undefined;
-  for (let start = 0; start < turnStarts.length; start += 1) {
-    const from = turnStarts[start]! + 1;
-    const to = turnStarts[start + 1] ?? records.length;
-    if (turnCompletionAt(records, from, to, records[turnStarts[start]!]!) !== -1) {
-      lastCompleted = start;
-    }
-  }
-  return lastCompleted;
-}
-
-export function capForkRecordsAtActiveTurn(
-  records: readonly WireRecord[],
-  lastCompleted: number,
-): readonly WireRecord[] {
-  const turnStarts = userVisibleTurnStartIndices(records);
-  const completedAt = turnCompletionAt(
-    records,
-    turnStarts[lastCompleted]! + 1,
-    turnStarts[lastCompleted + 1] ?? records.length,
-    records[turnStarts[lastCompleted]!]!,
-  );
-  if (completedAt === -1) return records;
-  let openTurnStart = -1;
-  let openShellInput = false;
-  for (let index = completedAt + 1; index < records.length; index += 1) {
-    const record = records[index]!;
-    if (openTurnStart === -1) {
-      if (isEngineTurnStartRecord(record) || isUserVisibleTurnRecord(record)) {
-        openTurnStart = index;
-        openShellInput = isShellCommandTurnStart(record);
-      }
-      continue;
-    }
-    if (record.type === 'turn.ended') {
-      openTurnStart = -1;
-      continue;
-    }
-    if (isShellCommandTurnStart(record)) {
-      openShellInput = true;
-      continue;
-    }
-    if (openShellInput && isShellCommandOutputRecord(record)) {
-      openTurnStart = -1;
-    }
-  }
-  return openTurnStart === -1 ? records : records.slice(0, openTurnStart);
-}
-
 export type ForkPromptResolution =
   | { readonly status: 'found'; readonly index: number }
   | { readonly status: 'unknown' }
@@ -158,35 +105,6 @@ export function resolveForkPromptIndex(
   }
   if (ambiguous) return { status: 'ambiguous' };
   return found === undefined ? { status: 'unknown' } : { status: 'found', index: found };
-}
-
-function turnCompletionAt(
-  records: readonly WireRecord[],
-  from: number,
-  to: number,
-  startRecord: WireRecord,
-): number {
-  const shellStart = isShellCommandTurnStart(startRecord);
-  for (let index = from; index < to; index += 1) {
-    const record = records[index]!;
-    if (record.type === 'turn.ended') return index;
-    if (shellStart && isShellCommandOutputRecord(record)) return index;
-  }
-  return -1;
-}
-
-function isShellCommandTurnStart(record: WireRecord): boolean {
-  if (record.type !== 'context.append_message') return false;
-  const message = asRecord(record['message']);
-  const origin = asRecord(message?.['origin']);
-  return origin?.['kind'] === 'shell_command' && origin?.['phase'] === 'input';
-}
-
-function isShellCommandOutputRecord(record: WireRecord): boolean {
-  if (record.type !== 'context.append_message') return false;
-  const message = asRecord(record['message']);
-  const origin = asRecord(message?.['origin']);
-  return origin?.['kind'] === 'shell_command' && origin?.['phase'] === 'output';
 }
 
 function userVisibleTurnStartIndices(records: readonly WireRecord[]): number[] {

@@ -101,8 +101,6 @@ import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressin
 import { SessionArchived, SessionDeleted } from './sessionLifecycleEvents';
 import {
   assertForkTurnIndex,
-  capForkRecordsAtActiveTurn,
-  lastCompletedUserVisibleTurnIndex,
   type MainTurnSlice,
   resolveForkPromptIndex,
   sliceMainRecordsAtTurn,
@@ -532,35 +530,21 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     let targetSessionDir: string | undefined;
     const quiescenceHolds: IDisposable[] = [];
     try {
-      let busy = false;
       if (sourceHandle !== undefined) {
-        const holds: IDisposable[] = [];
-        let nonTurnContention = false;
         const sourceAgents = sourceHandle.accessor.get(IAgentLifecycleService);
         for (const agent of sourceAgents.list()) {
           const agentHandle = sourceAgents.handleOf(agent.agentId);
           if (agentHandle === undefined) continue;
-          const loop = agentHandle.accessor.get(IAgentLoopService);
-          const hold = loop.tryAcquireQuiescence();
+          const hold = agentHandle.accessor.get(IAgentLoopService).tryAcquireQuiescence();
           if (hold === undefined) {
-            if (!loop.hasTurnActivity()) nonTurnContention = true;
-            busy = true;
-          } else {
-            holds.push(hold);
+            for (const acquired of quiescenceHolds) acquired.dispose();
+            throw new Error2(
+              ErrorCodes.SESSION_FORK_ACTIVE_TURN,
+              `Session "${sourceId}" cannot be forked while another operation is in progress`,
+              { details: { sessionId: sourceId } },
+            );
           }
-        }
-        if (nonTurnContention) {
-          for (const hold of holds) hold.dispose();
-          throw new Error2(
-            ErrorCodes.SESSION_FORK_ACTIVE_TURN,
-            `Session "${sourceId}" cannot be forked while another operation is in progress`,
-            { details: { sessionId: sourceId } },
-          );
-        }
-        if (busy) {
-          for (const hold of holds) hold.dispose();
-        } else {
-          quiescenceHolds.push(...holds);
+          quiescenceHolds.push(hold);
         }
       }
       await drainSessionMetadataWrites();
@@ -590,7 +574,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         sourceId,
         opts.turnIndex,
         opts.promptId,
-        busy,
       );
 
       targetSessionDir = sessionDirOf(this.bootstrap.homeDir, this.handlerScope, targetId);
@@ -726,9 +709,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     sourceId: string,
     turnIndex: number | undefined,
     promptId: string | undefined,
-    busy: boolean,
   ): Promise<MainTurnSlice | undefined> {
-    if (!busy && turnIndex === undefined && promptId === undefined) return undefined;
+    if (turnIndex === undefined && promptId === undefined) return undefined;
     const records = flattenChain(
       await this.readSourceWireRecords(sourceHandle, sourceId, MAIN_AGENT_ID),
     );
@@ -746,29 +728,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       }
       resolved = resolution.index;
     }
-    if (!busy) {
-      return sliceMainRecordsAtTurn(records, sourceId, resolved!);
-    }
-    const lastCompleted = lastCompletedUserVisibleTurnIndex(records);
-    if (lastCompleted === undefined) {
-      throw new Error2(
-        ErrorCodes.SESSION_FORK_ACTIVE_TURN,
-        `Session "${sourceId}" cannot be forked yet because no turn has completed`,
-        { details: { sessionId: sourceId } },
-      );
-    }
-    if (resolved !== undefined && resolved > lastCompleted) {
-      throw new Error2(
-        ErrorCodes.REQUEST_INVALID,
-        `Turn ${String(resolved)} was not found in session "${sourceId}"`,
-        { details: { turnIndex: resolved, availableTurns: lastCompleted + 1 } },
-      );
-    }
-    return sliceMainRecordsAtTurn(
-      capForkRecordsAtActiveTurn(records, lastCompleted),
-      sourceId,
-      resolved ?? lastCompleted,
-    );
+    return sliceMainRecordsAtTurn(records, sourceId, resolved!);
   }
 
   private async resolveSourceTitle(sourceId: string): Promise<string | undefined> {
