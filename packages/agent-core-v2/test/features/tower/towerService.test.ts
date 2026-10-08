@@ -3827,6 +3827,19 @@ describe('AgentTowerService', () => {
       expect(permissionGateRan).toBe(false);
     });
 
+    it('passes dangerous commands once the tower workspace ownership is released', async () => {
+      const statePath = join(repo, '.tower/comms/state.json');
+      const stored = JSON.parse(await readFile(statePath, 'utf8')) as TowerState;
+      await writeFile(statePath, JSON.stringify({ ...stored, sessionId: undefined }));
+
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(bashHookContext('git clean -fdx'));
+
+      expect(decision).toBeUndefined();
+      expect(permissionGateRan).toBe(true);
+    });
+
     it('vetoes git clean targeting the main checkout from outside via git -C', async () => {
       ix.get(IAgentTowerService);
 

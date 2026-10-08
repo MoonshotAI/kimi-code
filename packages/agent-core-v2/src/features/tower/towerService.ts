@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 
 import { Disposable, toDisposable } from '#/_base/di/lifecycle';
@@ -59,6 +58,7 @@ import {
   analyzeTowerBashCommand,
   commandNeedsTowerGuard,
   TOWER_BASH_GUARD_PARSE_OPTIONS,
+  towerWorkspaceOwned,
 } from './bashGuard';
 import {
   IAgentTowerService,
@@ -308,7 +308,9 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         if (typeof resume !== 'string') return;
         const resumeId = resume.trim();
         if (resumeId.length === 0) return;
-        const store = new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd));
+        const mainCheckout = resolveTowerRepoRoot(this.sessionCtx.cwd);
+        if (!(await towerWorkspaceOwned(join(mainCheckout, STATE_FILE)))) return;
+        const store = new TowerStore(mainCheckout);
         const forbidden = await store.load().then(
           (state) => {
             const caller = store.resolveAgent(state, this.agentCtx.agentId);
@@ -415,14 +417,14 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       }),
     );
     this._register(
-      toolExecutor.onBeforeExecuteTool((event) => {
+      toolExecutor.onBeforeExecuteTool(async (event) => {
         if (event.toolCall.name !== 'Bash') return;
         const args = event.args;
         if (typeof args !== 'object' || args === null) return;
         const command = (args as { readonly command?: unknown }).command;
         if (typeof command !== 'string' || !commandNeedsTowerGuard(command)) return;
         const mainCheckout = resolveTowerRepoRoot(this.sessionCtx.cwd);
-        if (!existsSync(join(mainCheckout, STATE_FILE))) return;
+        if (!(await towerWorkspaceOwned(join(mainCheckout, STATE_FILE)))) return;
         const cwdArg = (args as { readonly cwd?: unknown }).cwd;
         const cwd =
           typeof cwdArg === 'string'

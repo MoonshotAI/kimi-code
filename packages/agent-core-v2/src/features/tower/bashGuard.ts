@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
@@ -8,6 +9,16 @@ import { COMMS_DIR, TOWER_ROOT, WORKTREES_DIR } from './protocol/paths';
 export const TOWER_BASH_GUARD_PARSE_OPTIONS = { timeoutMs: 500, maxNodes: 10_000 } as const;
 
 export type TowerBashGuardParse = (source: string) => BashParseResult;
+
+export async function towerWorkspaceOwned(stateFile: string): Promise<boolean> {
+  return readFile(stateFile, 'utf8').then(
+    (raw) => {
+      const sessionId = (JSON.parse(raw) as { sessionId?: unknown }).sessionId;
+      return typeof sessionId === 'string' && sessionId.length > 0;
+    },
+    () => false,
+  );
+}
 
 export interface TowerBashGuardTarget {
   readonly command: string;
@@ -475,12 +486,15 @@ function dropLaunchWrapperOperands(name: string, args: readonly string[]): strin
   return rest;
 }
 
+const TOWER_GUARD_ESCAPE =
+  'to retire the tower workspace deliberately, turn tower mode off and remove .tower/comms manually in a terminal — this guard only intercepts agent Bash calls.';
+
 function gitCleanVeto(): string {
   return (
     '`git clean` with force and -d/-x is not allowed when its scope covers the tower main checkout — ' +
     'it would delete .tower/comms, the tower protocol state, which git does not track and cannot restore. ' +
     'Run the clean inside your own tower worktree or a temporary `git worktree add` checkout instead; ' +
-    'to destroy the tower workspace deliberately, remove .tower/comms/state.json first.'
+    TOWER_GUARD_ESCAPE
   );
 }
 
@@ -489,7 +503,7 @@ function gitResetVeto(): string {
     '`git reset --hard` is not allowed in the tower main checkout — ' +
     'it would silently discard base-checkout work the tower fleet depends on. ' +
     'Run it inside your own tower worktree or a temporary worktree instead; ' +
-    'to destroy the tower workspace deliberately, remove .tower/comms/state.json first.'
+    TOWER_GUARD_ESCAPE
   );
 }
 
@@ -498,7 +512,7 @@ function rmVeto(operand: string): string {
     `\`rm\` is not allowed on tower protocol paths ("${operand}") — ` +
     '.tower/comms holds the tower protocol state and deleting it orphans the fleet. ' +
     'Remove paths inside your own worktree instead; ' +
-    'to destroy the tower workspace deliberately, remove .tower/comms/state.json first.'
+    TOWER_GUARD_ESCAPE
   );
 }
 
