@@ -216,8 +216,6 @@ export interface IAgentLoopService {
 
   tryAcquireQuiescence(): IDisposable | undefined;
 
-  hasTurnActivity(): boolean;
-
   notify(note?: LoopNotify): LoopNotifyHandle;
 
   buildAttachBundle(): MachineEngineAttachBundle;

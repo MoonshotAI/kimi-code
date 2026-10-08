@@ -780,15 +780,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return toDisposable(() => this.releaseQuiescence());
   }
 
-  hasTurnActivity(): boolean {
-    return (
-      this.active !== undefined ||
-      this.hasPendingRequests() ||
-      this.pendingMachineTurn !== undefined ||
-      this.pendingTurnCloses > 0
-    );
-  }
-
   private releaseQuiescence(): void {
     if (this.quiescenceDepth === 0) return;
     this.quiescenceDepth -= 1;

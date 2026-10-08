@@ -967,14 +967,12 @@ describe('Agent loop', () => {
 
     expect(loop.snapshot().state).toBe('idle');
     expect(loop.tryAcquireQuiescence()).toBeUndefined();
-    expect(loop.hasTurnActivity()).toBe(true);
 
     releaseDrain();
     await expect(active.result).resolves.toMatchObject({ type: 'completed' });
     drain.mockRestore();
 
     expect(loop.tryAcquireQuiescence()).toBeDefined();
-    expect(loop.hasTurnActivity()).toBe(false);
   });
 
   it('exposes a quiescence lease once the turn.ended event is observable', async () => {
