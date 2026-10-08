@@ -55,6 +55,14 @@ describe('matchesAnyGlob', () => {
     expect(matchesAnyGlob('notkeep.txt', ['**/keep.txt'])).toBe(false);
     expect(matchesAnyGlob('a/xxb', ['a/**/b'])).toBe(false);
   });
+
+  it('treats globstars inside a path segment as within-segment wildcards', () => {
+    expect(matchesAnyGlob('foo/keep.txt', ['foo**/keep.txt'])).toBe(true);
+    expect(matchesAnyGlob('fooX/keep.txt', ['foo**/keep.txt'])).toBe(true);
+    expect(matchesAnyGlob('foo/sub/keep.txt', ['foo**/keep.txt'])).toBe(false);
+    expect(matchesAnyGlob('foobar', ['foo**'])).toBe(true);
+    expect(matchesAnyGlob('foo/bar', ['foo**'])).toBe(true);
+  });
 });
 
 describe('globCanMatchBelow', () => {

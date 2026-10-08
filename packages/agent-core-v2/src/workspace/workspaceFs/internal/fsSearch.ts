@@ -83,11 +83,15 @@ function globToRegExp(glob: string): RegExp {
   while (i < glob.length) {
     const ch = glob[i]!;
     if (ch === '*' && glob[i + 1] === '*') {
-      if (glob[i + 2] === '/') {
+      const atSegmentStart = i === 0 || glob[i - 1] === '/';
+      if (atSegmentStart && glob[i + 2] === '/') {
         re += '(?:[^/]+/)*';
         i += 3;
-      } else {
+      } else if (glob[i + 2] === undefined) {
         re += '.*';
+        i += 2;
+      } else {
+        re += '[^/]*';
         i += 2;
       }
     } else if (ch === '*') {
