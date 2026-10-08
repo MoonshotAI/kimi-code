@@ -42,7 +42,7 @@ export function computeMatchPositions(
 
 export function matchesAnyGlob(rel: string, globs: readonly string[]): boolean {
   const valid = globs.filter((g) => g !== '');
-  return valid.length > 0 && picomatch.isMatch(rel, valid, { dot: true });
+  return valid.length > 0 && picomatch.isMatch(rel, valid, { dot: true, nonegate: true });
 }
 
 export function globCanMatchBelow(rel: string, globs: readonly string[]): boolean {
@@ -66,7 +66,7 @@ function globSegmentsMatchPrefix(globSegments: readonly string[], relSegments: r
   const dp = new Uint8Array((g + 1) * width);
   for (let gi = g; gi >= 0; gi--) {
     const head = gi < g ? globSegments[gi]! : undefined;
-    const headMatch = head !== undefined && head !== '**' ? picomatch(head, { dot: true }) : undefined;
+    const headMatch = head !== undefined && head !== '**' ? picomatch(head, { dot: true, nonegate: true }) : undefined;
     for (let ri = r; ri >= 0; ri--) {
       const at = gi * width + ri;
       if (ri === r) {

@@ -103,6 +103,12 @@ describe('globCanMatchBelow', () => {
     expect(globCanMatchBelow('src', [''])).toBe(false);
   });
 
+  it('treats leading exclamation marks as literal characters', () => {
+    expect(matchesAnyGlob('!foo', ['!foo'])).toBe(true);
+    expect(matchesAnyGlob('foo', ['!foo'])).toBe(false);
+    expect(matchesAnyGlob('bar', ['!foo'])).toBe(false);
+  });
+
   it('handles deeply segmented globs without exhausting the call stack', () => {
     expect(globCanMatchBelow('a/b', [`${'**/'.repeat(5000)}keep.txt`])).toBe(true);
     expect(globCanMatchBelow('a/b', [`${'x/'.repeat(5000)}keep.txt`])).toBe(false);
