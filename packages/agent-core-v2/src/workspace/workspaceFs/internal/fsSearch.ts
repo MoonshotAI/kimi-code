@@ -46,17 +46,22 @@ export function matchesAnyGlob(rel: string, globs: readonly string[]): boolean {
 }
 
 export function globCanMatchBelow(rel: string, globs: readonly string[]): boolean {
+  const relSegments = rel.split('/');
   for (const g of globs) {
-    const literalSegments: string[] = [];
-    for (const segment of g.split('/')) {
-      if (/[*?]/.test(segment)) break;
-      literalSegments.push(segment);
-    }
-    if (literalSegments.length === 0) continue;
-    const prefix = literalSegments.join('/');
-    if (prefix === rel || prefix.startsWith(`${rel}/`)) return true;
+    if (globSegmentsMatchPrefix(g.split('/'), relSegments)) return true;
   }
   return false;
+}
+
+function globSegmentsMatchPrefix(globSegments: readonly string[], relSegments: readonly string[]): boolean {
+  if (relSegments.length === 0) return true;
+  const [head, ...rest] = globSegments;
+  if (head === undefined) return false;
+  if (head === '**') {
+    return globSegmentsMatchPrefix(rest, relSegments) || globSegmentsMatchPrefix(globSegments, relSegments.slice(1));
+  }
+  const [relHead, ...relRest] = relSegments;
+  return globToRegExp(head).test(relHead!) && globSegmentsMatchPrefix(rest, relRest);
 }
 
 function globToRegExp(glob: string): RegExp {

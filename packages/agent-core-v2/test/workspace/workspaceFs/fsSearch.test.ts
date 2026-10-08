@@ -56,11 +56,19 @@ describe('globCanMatchBelow', () => {
     expect(globCanMatchBelow('a/b', ['a/b/c'])).toBe(true);
   });
 
-  it('rejects non-ancestors and magic-leading globs', () => {
+  it('detects ancestors across wildcard segments', () => {
+    expect(globCanMatchBelow('ignored-a', ['ignored-*/keep.txt'])).toBe(true);
+    expect(globCanMatchBelow('ignored-dir/sub', ['ignored-dir/**/keep.txt'])).toBe(true);
+    expect(globCanMatchBelow('ignored-dir', ['ignored-dir/**/keep.txt'])).toBe(true);
+    expect(globCanMatchBelow('src', ['**/keep.txt'])).toBe(true);
+  });
+
+  it('rejects non-ancestors and non-matching segments', () => {
     expect(globCanMatchBelow('ignored', ['ignored-dir/keep.txt'])).toBe(false);
     expect(globCanMatchBelow('other-dir', ['ignored-dir/keep.txt'])).toBe(false);
-    expect(globCanMatchBelow('src', ['**/keep.txt'])).toBe(false);
     expect(globCanMatchBelow('src', ['*.txt'])).toBe(false);
+    expect(globCanMatchBelow('ignored-b', ['ignored-a/keep.txt'])).toBe(false);
+    expect(globCanMatchBelow('ignored-dir/sub', ['ignored-dir/nested/keep.txt'])).toBe(false);
   });
 });
 

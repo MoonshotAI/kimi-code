@@ -289,6 +289,37 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(body.data.items.map((i) => i.name)).not.toContain('data.bin');
   });
 
+  it('fs:list traverses ignored ancestors across wildcard glob segments', async () => {
+    await writeFile(join(work!, '.gitignore'), 'ignored-a/\nignored-dir/\nother-dir/\n');
+    await mkdir(join(work!, 'ignored-a'), { recursive: true });
+    await mkdir(join(work!, 'ignored-dir/sub'), { recursive: true });
+    await mkdir(join(work!, 'other-dir'), { recursive: true });
+    await writeFile(join(work!, 'ignored-a/keep.txt'), '');
+    await writeFile(join(work!, 'ignored-dir/sub/keep.txt'), '');
+    await writeFile(join(work!, 'ignored-dir/drop.txt'), '');
+    await writeFile(join(work!, 'other-dir/drop.txt'), '');
+    const id = await createSession();
+
+    const wildcard = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {
+      allow_ignored_globs: ['ignored-*/keep.txt'],
+    });
+    const wildcardNames = wildcard.data.items.map((i) => i.name);
+    expect(wildcardNames).toContain('ignored-a');
+    expect(wildcardNames).not.toContain('other-dir');
+
+    const mid = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {
+      path: 'ignored-dir',
+      allow_ignored_globs: ['ignored-dir/**/keep.txt'],
+    });
+    expect(mid.data.items.map((i) => i.name)).toEqual(['sub']);
+
+    const leaf = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {
+      path: 'ignored-dir/sub',
+      allow_ignored_globs: ['ignored-dir/**/keep.txt'],
+    });
+    expect(leaf.data.items.map((i) => i.name)).toEqual(['keep.txt']);
+  });
+
   it('fs:mkdir creates a directory and rejects duplicates', async () => {
     const id = await createSession();
     const created = await postFs<FsEntryWire>(id, 'mkdir', { path: 'sub' });
