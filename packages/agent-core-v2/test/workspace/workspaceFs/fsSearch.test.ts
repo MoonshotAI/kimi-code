@@ -94,6 +94,13 @@ describe('globCanMatchBelow', () => {
     expect(globCanMatchBelow('c', ['{a,b}/keep.txt'])).toBe(false);
     expect(globCanMatchBelow('src', ['keep.txt'])).toBe(false);
     expect(globCanMatchBelow('anything', ['**'])).toBe(true);
+    expect(globCanMatchBelow('a', ['{a/b,c}/x'])).toBe(true);
+  });
+
+  it('treats empty patterns as non-matching', () => {
+    expect(matchesAnyGlob('keep.txt', [''])).toBe(false);
+    expect(matchesAnyGlob('a.ts', ['', '*.ts'])).toBe(true);
+    expect(globCanMatchBelow('src', [''])).toBe(false);
   });
 
   it('handles deeply segmented globs without exhausting the call stack', () => {

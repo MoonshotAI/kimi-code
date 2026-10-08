@@ -41,7 +41,8 @@ export function computeMatchPositions(
 }
 
 export function matchesAnyGlob(rel: string, globs: readonly string[]): boolean {
-  return picomatch.isMatch(rel, globs as string[], { dot: true });
+  const valid = globs.filter((g) => g !== '');
+  return valid.length > 0 && picomatch.isMatch(rel, valid, { dot: true });
 }
 
 export function globCanMatchBelow(rel: string, globs: readonly string[]): boolean {
@@ -52,6 +53,7 @@ export function globCanMatchBelow(rel: string, globs: readonly string[]): boolea
       if (g === '**' || g.includes('/')) return true;
       continue;
     }
+    if (parts.some((part) => part.includes('/'))) return true;
     if (globSegmentsMatchPrefix(parts, relSegments)) return true;
   }
   return false;

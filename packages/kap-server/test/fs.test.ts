@@ -331,6 +331,17 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(braceNames).not.toContain('ignored-b');
   });
 
+  it('fs:list tolerates empty glob patterns', async () => {
+    await writeFile(join(work!, 'a.txt'), '');
+    const id = await createSession();
+    const body = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {
+      exclude_globs: [''],
+      allow_ignored_globs: [''],
+    });
+    expect(body.code).toBe(0);
+    expect(body.data.items.map((i) => i.name)).toContain('a.txt');
+  });
+
   it('fs:mkdir creates a directory and rejects duplicates', async () => {
     const id = await createSession();
     const created = await postFs<FsEntryWire>(id, 'mkdir', { path: 'sub' });
