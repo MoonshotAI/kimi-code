@@ -1484,19 +1484,6 @@ export class TowerStore {
     });
   }
 
-  async markInboxRead(callerName: string, newestSeenSentAt?: string): Promise<void> {
-    await this.withStateLock(async () => {
-      const state = await this.load();
-      const index = state.roster.agents.findIndex((agent) => agent.name === callerName);
-      const entry = state.roster.agents[index];
-      if (entry === undefined) return;
-      const at = newestSeenSentAt ?? new Date().toISOString();
-      if ((entry.lastInboxReadAt ?? entry.spawnedAt) >= at) return;
-      state.roster.agents[index] = { ...entry, lastInboxReadAt: at };
-      await this.save(state);
-    });
-  }
-
   private inboxItemVisibleTo(callerName: string, item: TowerInboxItem): boolean {
     return callerName === TOWER_NAME || item.to === callerName || item.to === BROADCAST_NAME;
   }

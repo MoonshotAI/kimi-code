@@ -248,7 +248,6 @@ function analyzeGitClean(
   layout: TowerLayout,
 ): string | undefined {
   let forceCount = 0;
-  let dirs = false;
   let ignored = false;
   let dryRun = false;
   let interactive = false;
@@ -273,7 +272,6 @@ function analyzeGitClean(
       forceCount += (cluster.match(/f/g) ?? []).length;
       if (cluster.includes('n')) dryRun = true;
       if (cluster.includes('i')) interactive = true;
-      if (cluster.includes('d')) dirs = true;
       if (cluster.includes('x') || cluster.includes('X')) ignored = true;
       if (excludeAt === arg.length - 1) i += 1;
       continue;
@@ -281,7 +279,7 @@ function analyzeGitClean(
     pathspecs.push(arg);
   }
   if (dryRun || interactive || forceCount === 0) return undefined;
-  if (!dirs && !ignored) return undefined;
+  if (!ignored) return undefined;
   if (pathspecs.length === 0) {
     return isWithinOrEqual(layout.commsDir, gitCwd) ? gitCleanVeto() : undefined;
   }
@@ -491,7 +489,7 @@ const TOWER_GUARD_ESCAPE =
 
 function gitCleanVeto(): string {
   return (
-    '`git clean` with force and -d/-x is not allowed when its scope covers the tower main checkout — ' +
+    '`git clean` with force and -x/-X is not allowed when its scope covers the tower main checkout — ' +
     'it would delete .tower/comms, the tower protocol state, which git does not track and cannot restore. ' +
     'Run the clean inside your own tower worktree or a temporary `git worktree add` checkout instead; ' +
     TOWER_GUARD_ESCAPE

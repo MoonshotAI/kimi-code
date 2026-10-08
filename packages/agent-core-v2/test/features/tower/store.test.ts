@@ -1064,25 +1064,6 @@ describe('inbox read tracking', () => {
     );
   });
 
-  it('markInboxRead advances to the newest seen sent_at, falls back to now, and never regresses', async () => {
-    await store.registerAgent(
-      rosterEntry({ name: 'w1', kind: 'worker', spawnedAt: '2026-09-20T10:00:00.000Z' }),
-    );
-
-    await store.markInboxRead('w1', '2026-09-21T00:00:00.000Z');
-    expect((await store.load()).roster.agents[0]?.lastInboxReadAt).toBe('2026-09-21T00:00:00.000Z');
-
-    await store.markInboxRead('w1', '2026-09-20T12:00:00.000Z');
-    expect((await store.load()).roster.agents[0]?.lastInboxReadAt).toBe('2026-09-21T00:00:00.000Z');
-
-    await store.markInboxRead('w1');
-    const at = (await store.load()).roster.agents[0]?.lastInboxReadAt;
-    expect(Date.parse(at!)).toBeGreaterThan(Date.parse('2026-09-21T00:00:00.000Z'));
-
-    await store.markInboxRead('ghost', '2030-01-01T00:00:00.000Z');
-    expect((await store.load()).roster.agents).toHaveLength(1);
-  });
-
   it('refuses a worker completion while unread inbox messages wait and names the count', async () => {
     const mission = await seedOwnedMission();
     await store.registerAgent(

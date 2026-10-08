@@ -3798,11 +3798,13 @@ describe('AgentTowerService', () => {
     it.each([
       'git clean -fdx',
       'git clean -ffdx',
+      'git clean -fx',
       'git clean -f -d -x',
       'git clean --force -dx',
       'git clean -fdx .',
       'git clean -fdx .tower',
       'git clean -fdx -- .tower/comms',
+      'git clean -fdX -- .tower/comms',
       'git clean -fdx .tower/comms/state.json',
     ])('vetoes "%s" at the main checkout without tower mode active (worker shape)', async (command) => {
       ix.get(IAgentTowerService);
@@ -3855,8 +3857,14 @@ describe('AgentTowerService', () => {
       'git clean --dry-run -fdx',
       'git clean -fdxn',
       'git clean -f',
+      'git clean -fd',
+      'git clean -ffd',
+      'git clean --force -d',
+      'git clean -fd .tower',
+      'git clean -fd -- .tower/comms',
+      'git clean -fd .tower/comms/state.json',
       'git clean -fdx packages',
-    ])('allows "%s" (dry-run, files-only, or out-of-scope pathspec)', async (command) => {
+    ])('allows "%s" (dry-run, no -x/-X, files-only, or out-of-scope pathspec)', async (command) => {
       ix.get(IAgentTowerService);
 
       const decision = await fire(bashHookContext(command));
