@@ -54,14 +54,27 @@ export function globCanMatchBelow(rel: string, globs: readonly string[]): boolea
 }
 
 function globSegmentsMatchPrefix(globSegments: readonly string[], relSegments: readonly string[]): boolean {
-  if (relSegments.length === 0) return true;
-  const [head, ...rest] = globSegments;
-  if (head === undefined) return false;
-  if (head === '**') {
-    return globSegmentsMatchPrefix(rest, relSegments) || globSegmentsMatchPrefix(globSegments, relSegments.slice(1));
+  const g = globSegments.length;
+  const r = relSegments.length;
+  const width = r + 1;
+  const dp = new Uint8Array((g + 1) * width);
+  for (let gi = g; gi >= 0; gi--) {
+    const head = gi < g ? globSegments[gi]! : undefined;
+    const headRe = head !== undefined && head !== '**' ? globToRegExp(head) : undefined;
+    for (let ri = r; ri >= 0; ri--) {
+      const at = gi * width + ri;
+      if (ri === r) {
+        dp[at] = 1;
+      } else if (head === undefined) {
+        dp[at] = 0;
+      } else if (head === '**') {
+        dp[at] = dp[(gi + 1) * width + ri] | dp[gi * width + ri + 1];
+      } else {
+        dp[at] = headRe!.test(relSegments[ri]!) ? dp[(gi + 1) * width + ri + 1] : 0;
+      }
+    }
   }
-  const [relHead, ...relRest] = relSegments;
-  return globToRegExp(head).test(relHead!) && globSegmentsMatchPrefix(rest, relRest);
+  return dp[0] === 1;
 }
 
 function globToRegExp(glob: string): RegExp {
@@ -70,9 +83,13 @@ function globToRegExp(glob: string): RegExp {
   while (i < glob.length) {
     const ch = glob[i]!;
     if (ch === '*' && glob[i + 1] === '*') {
-      re += '.*';
-      i += 2;
-      if (glob[i] === '/') i++;
+      if (glob[i + 2] === '/') {
+        re += '(?:[^/]+/)*';
+        i += 3;
+      } else {
+        re += '.*';
+        i += 2;
+      }
     } else if (ch === '*') {
       re += '[^/]*';
       i++;

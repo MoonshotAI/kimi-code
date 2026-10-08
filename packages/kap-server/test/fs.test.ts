@@ -296,6 +296,7 @@ describe('server-v2 /api/v1 fs routes', () => {
     await mkdir(join(work!, 'other-dir'), { recursive: true });
     await writeFile(join(work!, 'ignored-a/keep.txt'), '');
     await writeFile(join(work!, 'ignored-dir/sub/keep.txt'), '');
+    await writeFile(join(work!, 'ignored-dir/sub/notkeep.txt'), '');
     await writeFile(join(work!, 'ignored-dir/drop.txt'), '');
     await writeFile(join(work!, 'other-dir/drop.txt'), '');
     const id = await createSession();

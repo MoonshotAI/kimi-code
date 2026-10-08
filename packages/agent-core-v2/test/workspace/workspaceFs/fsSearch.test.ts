@@ -46,6 +46,15 @@ describe('matchesAnyGlob', () => {
     expect(matchesAnyGlob('src/a.ts', ['**/*.ts'])).toBe(true);
     expect(matchesAnyGlob('src/a.js', ['**/*.ts'])).toBe(false);
   });
+
+  it('preserves segment boundaries around recursive wildcards', () => {
+    expect(matchesAnyGlob('ignored-dir/keep.txt', ['ignored-dir/**/keep.txt'])).toBe(true);
+    expect(matchesAnyGlob('ignored-dir/sub/keep.txt', ['ignored-dir/**/keep.txt'])).toBe(true);
+    expect(matchesAnyGlob('ignored-dir/notkeep.txt', ['ignored-dir/**/keep.txt'])).toBe(false);
+    expect(matchesAnyGlob('keep.txt', ['**/keep.txt'])).toBe(true);
+    expect(matchesAnyGlob('notkeep.txt', ['**/keep.txt'])).toBe(false);
+    expect(matchesAnyGlob('a/xxb', ['a/**/b'])).toBe(false);
+  });
 });
 
 describe('globCanMatchBelow', () => {
@@ -69,6 +78,11 @@ describe('globCanMatchBelow', () => {
     expect(globCanMatchBelow('src', ['*.txt'])).toBe(false);
     expect(globCanMatchBelow('ignored-b', ['ignored-a/keep.txt'])).toBe(false);
     expect(globCanMatchBelow('ignored-dir/sub', ['ignored-dir/nested/keep.txt'])).toBe(false);
+  });
+
+  it('handles deeply segmented globs without exhausting the call stack', () => {
+    expect(globCanMatchBelow('a/b', [`${'**/'.repeat(5000)}keep.txt`])).toBe(true);
+    expect(globCanMatchBelow('a/b', [`${'x/'.repeat(5000)}keep.txt`])).toBe(false);
   });
 });
 
