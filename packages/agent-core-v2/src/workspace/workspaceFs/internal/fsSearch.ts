@@ -68,9 +68,9 @@ function globSegmentsMatchPrefix(globSegments: readonly string[], relSegments: r
       } else if (head === undefined) {
         dp[at] = 0;
       } else if (head === '**') {
-        dp[at] = dp[(gi + 1) * width + ri] | dp[gi * width + ri + 1];
+        dp[at] = dp[(gi + 1) * width + ri]! | dp[gi * width + ri + 1]!;
       } else {
-        dp[at] = headRe!.test(relSegments[ri]!) ? dp[(gi + 1) * width + ri + 1] : 0;
+        dp[at] = headRe!.test(relSegments[ri]!) ? dp[(gi + 1) * width + ri + 1]! : 0;
       }
     }
   }
