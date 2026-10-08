@@ -1438,12 +1438,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   /**
    * Through `engineAccessor` (the handler chain's `ISessionLifecycleService.fork`) because the
-   * klient facade fork takes no explicit target id. `turnIndex` truncation and
+   * klient facade fork takes no explicit target id. `promptId` truncation and
    * the busy-source handling (a live session mid-turn forks through its last
    * completed turn; v1's `SESSION_FORK_ACTIVE_TURN` only when no turn has
    * completed yet) are the engine's own now, so their failures cross the
-   * in-process call with v1's codes and details (`request.invalid` with
-   * `{turnIndex, availableTurns}` / `session.fork_active_turn`). The default
+   * in-process call with v1's codes and details (`request.invalid` /
+   * `session.fork_active_turn`). The default
    * title still differs by design (v1: "New Session", v2: "Fork: <source>") —
    * pass an explicit title for identical results.
    */
@@ -1464,6 +1464,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
             title: input.title,
             metadata: input.metadata,
             turnIndex: input.turnIndex,
+            promptId: input.promptId,
           });
           const handle = await resumeSessionById(this.engineAccessor, meta.id);
           if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(meta.id);

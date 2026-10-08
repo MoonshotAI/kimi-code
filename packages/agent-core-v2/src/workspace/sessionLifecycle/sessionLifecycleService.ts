@@ -105,6 +105,7 @@ import {
   type MainTurnSlice,
   sliceMainRecordsAtTurn,
   sliceSubagentRecordsAtTime,
+  visibleTurnIndexOfPrompt,
 } from './internal/forkTurnSlice';
 import {
   type CreateChildSessionOptions,
@@ -518,6 +519,13 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       await this.appendLogStore.flush();
     }
     assertForkTurnIndex(opts.turnIndex);
+    if (opts.turnIndex !== undefined && opts.promptId !== undefined) {
+      throw new Error2(
+        ErrorCodes.REQUEST_INVALID,
+        'forkSession turnIndex and promptId are mutually exclusive',
+        { details: { turnIndex: opts.turnIndex, promptId: opts.promptId } },
+      );
+    }
 
     let targetId: string | undefined;
     let targetSessionDir: string | undefined;
@@ -565,6 +573,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         sourceHandle,
         sourceId,
         opts.turnIndex,
+        opts.promptId,
         busy,
       );
 
@@ -726,20 +735,27 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     sourceHandle: ISessionScopeHandle | undefined,
     sourceId: string,
     turnIndex: number | undefined,
+    promptId: string | undefined,
     busy: boolean,
   ): Promise<MainTurnSlice | undefined> {
-    if (!busy) {
-      return turnIndex === undefined
-        ? undefined
-        : sliceMainRecordsAtTurn(
-            flattenChain(await this.readSourceWireRecords(sourceHandle, sourceId, MAIN_AGENT_ID)),
-            sourceId,
-            turnIndex,
-          );
-    }
+    if (!busy && turnIndex === undefined && promptId === undefined) return undefined;
     const records = flattenChain(
       await this.readSourceWireRecords(sourceHandle, sourceId, MAIN_AGENT_ID),
     );
+    let resolved = turnIndex;
+    if (promptId !== undefined) {
+      resolved = visibleTurnIndexOfPrompt(records, promptId);
+      if (resolved === undefined) {
+        throw new Error2(
+          ErrorCodes.REQUEST_INVALID,
+          `Prompt "${promptId}" was not found in session "${sourceId}"`,
+          { details: { promptId, sessionId: sourceId } },
+        );
+      }
+    }
+    if (!busy) {
+      return sliceMainRecordsAtTurn(records, sourceId, resolved!);
+    }
     const lastCompleted = lastCompletedUserVisibleTurnIndex(records);
     if (lastCompleted === undefined) {
       throw new Error2(
@@ -748,14 +764,14 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         { details: { sessionId: sourceId } },
       );
     }
-    if (turnIndex !== undefined && turnIndex > lastCompleted) {
+    if (resolved !== undefined && resolved > lastCompleted) {
       throw new Error2(
         ErrorCodes.REQUEST_INVALID,
-        `Turn ${String(turnIndex)} was not found in session "${sourceId}"`,
-        { details: { turnIndex, availableTurns: lastCompleted + 1 } },
+        `Turn ${String(resolved)} was not found in session "${sourceId}"`,
+        { details: { turnIndex: resolved, availableTurns: lastCompleted + 1 } },
       );
     }
-    return sliceMainRecordsAtTurn(records, sourceId, turnIndex ?? lastCompleted);
+    return sliceMainRecordsAtTurn(records, sourceId, resolved ?? lastCompleted);
   }
 
   private async resolveSourceTitle(sourceId: string): Promise<string | undefined> {

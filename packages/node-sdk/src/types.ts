@@ -302,9 +302,16 @@ export interface ForkSessionInput {
   readonly metadata?: JsonObject;
   /**
    * Zero-based index of the user-visible turn to retain through. Omit it to
-   * preserve the existing full-session fork behavior.
+   * preserve the existing full-session fork behavior. Mutually exclusive with
+   * `promptId`.
    */
   readonly turnIndex?: number;
+  /**
+   * Id of the user prompt to retain through (the fork keeps everything up to
+   * the end of that prompt's turn segment), resolved by the engine against the
+   * full wire history. Mutually exclusive with `turnIndex`.
+   */
+  readonly promptId?: string;
 }
 
 export interface ExportSessionInput {

@@ -708,19 +708,19 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 #### `POST /api/v1/sessions/{session_id}:fork`
 
-将会话——其转录、Agent 状态与文件——复制到同一工作区中的新会话，并广播 `event.session.created`。传入 `turn_index` 可从更早的轮次分叉，而不是复制最新状态：副本只保留到该用户可见轮次为止的对话（轮次 `0` 是首个提示词），其后的内容全部丢弃。
+将会话——其转录、Agent 状态与文件——复制到同一工作区中的新会话，并广播 `event.session.created`。传入 `prompt_id` 可从更早的位置分叉，而不是复制最新状态：副本只保留到该提示词所在轮次段结束为止的对话，其后的内容全部丢弃。
 
-会话有进行中或排队中的轮次时也可以 fork。此时分叉点以最后一个已完成轮次为上限：超出上限的 `turn_index` 返回 `40001`；不传 `turn_index` 则复制到最后一个已完成轮次，而不是最新状态。
+会话有进行中或排队中的轮次时也可以 fork。此时分叉点以最后一个已完成轮次为上限：`prompt_id` 属于更晚的轮次时返回 `40001`；不传 `prompt_id` 则复制到最后一个已完成轮次，而不是最新状态。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `title` | body | string | fork 的标题（至少 1 个字符）。默认 `Fork: <source title>` |
 | `metadata` | body | object | fork 的自定义元数据 |
-| `turn_index` | body | integer | 要从中分叉的用户可见轮次下标，从 0 开始。默认为最新状态；有进行中轮次时为最后一个已完成轮次 |
+| `prompt_id` | body | string | 要从中分叉的用户提示词 id。默认为最新状态；有进行中轮次时为最后一个已完成轮次 |
 
 成功时，`data` 为新会话的 [session 对象](#session-对象)。
 
-- `40001`：`turn_index` 不是非负整数，或超出最后一个可用轮次
+- `40001`：`prompt_id` 在会话中不存在，或属于最后一个已完成轮次之后的轮次
 - `40901`：有轮次正在进行且尚无任何已完成轮次，没有可 fork 的内容
 
 #### `POST /api/v1/sessions/{session_id}:compact`

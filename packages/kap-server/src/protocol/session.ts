@@ -75,7 +75,7 @@ export type SessionCreate = z.infer<typeof sessionCreateSchema>;
 export const sessionForkSchema = z.object({
   title: z.string().min(1).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
-  turn_index: z.number().int().nonnegative().optional(),
+  prompt_id: z.string().min(1).optional(),
 });
 
 export type SessionFork = z.infer<typeof sessionForkSchema>;

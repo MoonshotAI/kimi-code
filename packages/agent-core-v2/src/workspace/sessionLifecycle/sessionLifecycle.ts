@@ -23,6 +23,7 @@ export interface ForkSessionOptions {
   readonly title?: string;
   readonly metadata?: Record<string, unknown>;
   readonly turnIndex?: number;
+  readonly promptId?: string;
 }
 
 export interface ResumeSessionOptions {

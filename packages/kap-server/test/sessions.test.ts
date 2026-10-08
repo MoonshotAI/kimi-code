@@ -1283,7 +1283,7 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(forkedState.titleKind).toBe('custom');
   });
 
-  it('passes turn_index through :fork to the session manager fork', async () => {
+  it('passes prompt_id through :fork to the session manager fork', async () => {
     const cwd = home as string;
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const parentId = parent.body.data.id;
@@ -1294,7 +1294,7 @@ describe('server-v2 /api/v1/sessions', () => {
 
     try {
       const response = await postJson<null>(`/api/v1/sessions/${parentId}:fork`, {
-        turn_index: 2,
+        prompt_id: 'prompt-1',
       });
 
       expect(response.body.code).toBe(40901);
@@ -1302,14 +1302,14 @@ describe('server-v2 /api/v1/sessions', () => {
         sourceSessionId: parentId,
         title: undefined,
         metadata: undefined,
-        turnIndex: 2,
+        promptId: 'prompt-1',
       });
     } finally {
       fork.mockRestore();
     }
   });
 
-  it('forks through :fork without turn_index as before', async () => {
+  it('forks through :fork without prompt_id as before', async () => {
     const cwd = home as string;
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const parentId = parent.body.data.id;
@@ -1324,15 +1324,15 @@ describe('server-v2 /api/v1/sessions', () => {
         sourceSessionId: parentId,
         title: undefined,
         metadata: undefined,
-        turnIndex: undefined,
+        promptId: undefined,
       });
     } finally {
       fork.mockRestore();
     }
   });
 
-  it.each([{ turn_index: 1.5 }, { turn_index: -1 }])(
-    'rejects an out-of-contract turn_index on :fork (%s)',
+  it.each([{ prompt_id: 1 }, { prompt_id: '' }])(
+    'rejects an out-of-contract prompt_id on :fork (%s)',
     async (body) => {
       const cwd = home as string;
       const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
@@ -1341,7 +1341,7 @@ describe('server-v2 /api/v1/sessions', () => {
         body,
       );
       expect(response.body.code).toBe(40001);
-      expect(response.body.details?.[0]?.path).toBe('turn_index');
+      expect(response.body.details?.[0]?.path).toBe('prompt_id');
     },
   );
 
@@ -1384,22 +1384,23 @@ describe('server-v2 /api/v1/sessions', () => {
     await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
     const agent = session!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
     const context = agent.accessor.get(IAgentContextMemoryService);
-    const user = (text: string): ContextMessage => ({
+    const user = (text: string, promptId?: string): ContextMessage => ({
       role: 'user',
       content: [{ type: 'text', text }],
       toolCalls: [],
       origin: { kind: 'user' },
+      ...(promptId === undefined ? {} : { id: promptId }),
     });
     const assistant = (text: string): ContextMessage => ({
       role: 'assistant',
       content: [{ type: 'text', text }],
       toolCalls: [],
     });
-    context.append(user('first prompt'), assistant('first answer'));
+    context.append(user('first prompt', 'p1'), assistant('first answer'));
     await agent.accessor.get(IEventDispatcher).dispatch(
       new TurnEnded({ agentId: MAIN_AGENT_ID, turnId: 0, reason: 'completed' }),
     );
-    context.append(user('second prompt'), assistant('second answer'));
+    context.append(user('second prompt', 'p2'), assistant('second answer'));
     await agent.accessor.get(IEventDispatcher).dispatch(
       new TurnEnded({ agentId: MAIN_AGENT_ID, turnId: 1, reason: 'failed' }),
     );
@@ -1407,7 +1408,7 @@ describe('server-v2 /api/v1/sessions', () => {
     await agent.accessor.get(IWireService).flush();
 
     const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {
-      turn_index: 0,
+      prompt_id: 'p1',
     });
     expect(forked.body.code).toBe(0);
     const forkedId = forked.body.data.id;

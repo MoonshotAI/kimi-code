@@ -708,19 +708,19 @@ Session actions are dispatched through one route: the path tail is parsed as `{s
 
 #### `POST /api/v1/sessions/{session_id}:fork`
 
-Copies the session — its transcript, agent state, and files — into a new session in the same workspace, and broadcasts `event.session.created`. Pass `turn_index` to fork from an earlier turn instead of the latest state: the copy keeps only the conversation through that user-visible turn (turn `0` is the first prompt) and discards everything after it.
+Copies the session — its transcript, agent state, and files — into a new session in the same workspace, and broadcasts `event.session.created`. Pass `prompt_id` to fork from an earlier point instead of the latest state: the copy keeps only the conversation through that prompt's turn segment and discards everything after it.
 
-Forking is allowed while the session has an active or queued turn. In that case the fork point is capped at the last completed turn: a `turn_index` beyond it fails `40001`, and omitting `turn_index` forks through the last completed turn rather than the very latest state.
+Forking is allowed while the session has an active or queued turn. In that case the fork point is capped at the last completed turn: a `prompt_id` belonging to a later turn fails `40001`, and omitting `prompt_id` forks through the last completed turn rather than the very latest state.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `title` | body | string | Title for the fork (at least 1 character). Default `Fork: <source title>` |
 | `metadata` | body | object | Custom metadata for the fork |
-| `turn_index` | body | integer | Zero-based index of the user-visible turn to fork from. Default: the latest state, or the last completed turn while a turn is active |
+| `prompt_id` | body | string | Id of the user prompt to fork from. Default: the latest state, or the last completed turn while a turn is active |
 
 On success, `data` is [the session object](#the-session-object) of the new session.
 
-- `40001`: `turn_index` is not a non-negative integer, or points past the last available turn
+- `40001`: `prompt_id` is unknown in the session, or belongs to a turn past the last completed one
 - `40901`: a turn is active and no turn has completed yet, so there is nothing to fork
 
 #### `POST /api/v1/sessions/{session_id}:compact`

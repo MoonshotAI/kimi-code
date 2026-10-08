@@ -3,13 +3,15 @@ import { describe, expect, it } from 'vitest';
 import {
   lastCompletedUserVisibleTurnIndex,
   sliceMainRecordsAtTurn,
+  visibleTurnIndexOfPrompt,
 } from '#/workspace/sessionLifecycle/internal/forkTurnSlice';
 import type { WireRecord } from '#/wire/record';
 
-function userTurnRecord(text: string, time: number): WireRecord {
+function userTurnRecord(text: string, time: number, id?: string): WireRecord {
   return {
     type: 'context.append_message',
     message: {
+      ...(id === undefined ? {} : { id }),
       role: 'user',
       content: [{ type: 'text', text }],
       origin: { kind: 'user' },
@@ -96,6 +98,53 @@ describe('sliceMainRecordsAtTurn lastTurnReason', () => {
     ];
     expect(sliceMainRecordsAtTurn(records, 'ses_source', 0).lastTurnReason).toBeUndefined();
     expect(sliceMainRecordsAtTurn(records, 'ses_source', 1).lastTurnReason).toBe('completed');
+  });
+});
+
+describe('visibleTurnIndexOfPrompt', () => {
+  it('resolves the visible turn index of a prompt message id', () => {
+    const records: WireRecord[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      userTurnRecord('first', 2, 'p1'),
+      turnEndedRecord(0, 3),
+      userTurnRecord('second', 4, 'p2'),
+      turnEndedRecord(1, 5),
+      userTurnRecord('third still running', 6, 'p3'),
+    ];
+    expect(visibleTurnIndexOfPrompt(records, 'p1')).toBe(0);
+    expect(visibleTurnIndexOfPrompt(records, 'p2')).toBe(1);
+    expect(visibleTurnIndexOfPrompt(records, 'p3')).toBe(2);
+  });
+
+  it('resolves the index of a steered prompt message id', () => {
+    const records: WireRecord[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      userTurnRecord('original prompt', 2, 'p1'),
+      { type: 'turn.steer', turnId: 0, messageId: 'p2', origin: { kind: 'user' }, time: 3 },
+      userTurnRecord('steered input', 4, 'p2'),
+      turnEndedRecord(0, 5),
+    ];
+    expect(visibleTurnIndexOfPrompt(records, 'p2')).toBe(1);
+  });
+
+  it('returns undefined for an unknown prompt id or a non-visible append', () => {
+    const records: WireRecord[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      userTurnRecord('real prompt', 2, 'p1'),
+      turnEndedRecord(0, 3),
+      {
+        type: 'context.append_message',
+        message: {
+          id: 'cron-1',
+          role: 'user',
+          content: [{ type: 'text', text: 'cron follow-up' }],
+          origin: { kind: 'cron_job', jobId: 'job-1' },
+        },
+        time: 4,
+      },
+    ];
+    expect(visibleTurnIndexOfPrompt(records, 'missing')).toBeUndefined();
+    expect(visibleTurnIndexOfPrompt(records, 'cron-1')).toBeUndefined();
   });
 });
 

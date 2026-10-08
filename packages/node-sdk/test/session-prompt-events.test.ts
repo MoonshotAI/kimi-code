@@ -541,7 +541,7 @@ describe('Session.prompt events', () => {
     }
   });
 
-  it('persists only conversation through the selected turn across resume', async () => {
+  it('persists only conversation through the selected prompt across resume', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
@@ -549,14 +549,14 @@ describe('Session.prompt events', () => {
     try {
       await configureFakeProvider(harness);
       const source = await harness.createSession({ id: 'ses_turn_fork_source', workDir });
-      await runPrompt(source, 'first question', 'first answer');
-      await runPrompt(source, 'second question', 'second answer');
-      await runPrompt(source, 'third question', 'third answer');
+      await runPrompt(source, 'first question', 'first answer', 'p1');
+      await runPrompt(source, 'second question', 'second answer', 'p2');
+      await runPrompt(source, 'third question', 'third answer', 'p3');
 
       const fork = await harness.forkSession({
         id: source.id,
         forkId: 'ses_turn_fork_child',
-        turnIndex: 1,
+        promptId: 'p2',
       });
       await fork.close();
       const resumed = await harness.resumeSession({ id: fork.id });
@@ -585,15 +585,15 @@ describe('Session.prompt events', () => {
         workDir,
         metadata: { source: 'vscode' },
       });
-      await runPrompt(source, 'branch here', 'kept answer');
-      await runPrompt(source, 'future prompt', 'discarded answer');
+      await runPrompt(source, 'branch here', 'kept answer', 'p1');
+      await runPrompt(source, 'future prompt', 'discarded answer', 'p2');
 
       const fork = await harness.forkSession({
         id: source.id,
         forkId: 'ses_turn_fork_metadata_child',
         title: 'Historical branch',
         metadata: { branch: 'historical' },
-        turnIndex: 0,
+        promptId: 'p1',
       });
       const state = fork.getResumeState();
 
@@ -623,16 +623,16 @@ describe('Session.prompt events', () => {
     try {
       await configureFakeProvider(harness);
       const source = await harness.createSession({ id: 'ses_turn_fork_undo_source', workDir });
-      await runPrompt(source, 'kept prompt one', 'kept answer one');
-      await runPrompt(source, 'kept prompt two', 'kept answer two');
-      await runPrompt(source, 'retracted prompt', 'retracted answer');
+      await runPrompt(source, 'kept prompt one', 'kept answer one', 'p1');
+      await runPrompt(source, 'kept prompt two', 'kept answer two', 'p2');
+      await runPrompt(source, 'retracted prompt', 'retracted answer', 'p3');
       await source.undoHistory(1);
-      await runPrompt(source, 'follow-up prompt', 'follow-up answer');
+      await runPrompt(source, 'follow-up prompt', 'follow-up answer', 'p4');
 
       const fork = await harness.forkSession({
         id: source.id,
         forkId: 'ses_turn_fork_undo_child',
-        turnIndex: 2,
+        promptId: 'p4',
       });
       await fork.close();
       const resumed = await harness.resumeSession({ id: fork.id });
@@ -688,9 +688,9 @@ describe('Session.prompt events', () => {
     try {
       await configureFakeProvider(harness);
       const source = await harness.createSession({ id: 'ses_turn_fork_id_source', workDir });
-      await runPrompt(source, 'kept prompt', 'kept answer');
-      await runPrompt(source, 'future prompt', 'future answer');
-      const fork = await harness.forkSession({ id: source.id, turnIndex: 0 });
+      await runPrompt(source, 'kept prompt', 'kept answer', 'p1');
+      await runPrompt(source, 'future prompt', 'future answer', 'p2');
+      const fork = await harness.forkSession({ id: source.id, promptId: 'p1' });
       const started = waitForEvent(fork, (event) => event.type === 'turn.started');
       const ended = waitForEvent(fork, (event) => event.type === 'turn.ended');
 
@@ -711,11 +711,11 @@ describe('Session.prompt events', () => {
     try {
       await configureFakeProvider(harness);
       const source = await harness.createSession({ id: 'ses_turn_fork_agents_source', workDir });
-      await runPrompt(source, 'kept prompt', 'kept answer');
-      await runPrompt(source, 'future prompt', 'future answer');
+      await runPrompt(source, 'kept prompt', 'kept answer', 'p1');
+      await runPrompt(source, 'future prompt', 'future answer', 'p2');
       await source.init();
 
-      const fork = await harness.forkSession({ id: source.id, turnIndex: 0 });
+      const fork = await harness.forkSession({ id: source.id, promptId: 'p1' });
 
       expect(Object.keys(fork.getResumeState()?.sessionMetadata.agents ?? {})).toEqual(['main']);
     } finally {
@@ -771,6 +771,56 @@ describe('Session.prompt events', () => {
     }
   });
 
+  it('rejects an unknown fork prompt id without creating the fork', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      await configureFakeProvider(harness);
+      const source = await harness.createSession({ id: 'ses_prompt_fork_unknown_source', workDir });
+      await runPrompt(source, 'only question', 'only answer', 'p1');
+
+      await expect(
+        harness.forkSession({
+          id: source.id,
+          forkId: 'ses_prompt_fork_unknown_child',
+          promptId: 'missing',
+        }),
+      ).rejects.toMatchObject({
+        name: 'KimiError',
+        code: 'request.invalid',
+        details: { promptId: 'missing', sessionId: source.id },
+      });
+      await expect(
+        harness.listSessions({ sessionId: 'ses_prompt_fork_unknown_child' }),
+      ).resolves.toEqual([]);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('rejects a fork with both turnIndex and promptId', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      await configureFakeProvider(harness);
+      const source = await harness.createSession({ id: 'ses_prompt_fork_both_source', workDir });
+      await runPrompt(source, 'only question', 'only answer', 'p1');
+
+      await expect(
+        harness.forkSession({ id: source.id, turnIndex: 0, promptId: 'p1' }),
+      ).rejects.toMatchObject({
+        name: 'KimiError',
+        code: 'request.invalid',
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('forks a running session clamped to the last completed turn', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
@@ -815,7 +865,7 @@ describe('Session.prompt events', () => {
     }
   });
 
-  it('forks a running session at an explicit completed turn', async () => {
+  it('forks a running session at an explicit completed prompt', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
@@ -823,8 +873,8 @@ describe('Session.prompt events', () => {
     try {
       await configureFakeProvider(harness);
       const source = await harness.createSession({ id: 'ses_turn_fork_running_pick_source', workDir });
-      await runPrompt(source, 'first question', 'first answer');
-      await runPrompt(source, 'second question', 'second answer');
+      await runPrompt(source, 'first question', 'first answer', 'p1');
+      await runPrompt(source, 'second question', 'second answer', 'p2');
 
       const gate = deferredResponse();
       fetchStub!.mockImplementationOnce(() => gate.promise);
@@ -836,7 +886,7 @@ describe('Session.prompt events', () => {
       const fork = await harness.forkSession({
         id: source.id,
         forkId: 'ses_turn_fork_running_pick_child',
-        turnIndex: 0,
+        promptId: 'p1',
       });
       await fork.close();
       const resumed = await harness.resumeSession({ id: fork.id });
@@ -851,7 +901,7 @@ describe('Session.prompt events', () => {
     }
   });
 
-  it('rejects an explicit turn beyond the last completed turn while running', async () => {
+  it('rejects a prompt of the running turn while forking', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
@@ -859,18 +909,18 @@ describe('Session.prompt events', () => {
     try {
       await configureFakeProvider(harness);
       const source = await harness.createSession({ id: 'ses_turn_fork_running_range_source', workDir });
-      await runPrompt(source, 'first question', 'first answer');
-      await runPrompt(source, 'second question', 'second answer');
+      await runPrompt(source, 'first question', 'first answer', 'p1');
+      await runPrompt(source, 'second question', 'second answer', 'p2');
 
       const gate = deferredResponse();
       fetchStub!.mockImplementationOnce(() => gate.promise);
       const started = waitForEvent(source, (event) => event.type === 'turn.started');
       const ended = waitForEvent(source, (event) => event.type === 'turn.ended');
-      await source.prompt('third question');
+      await source.prompt('third question', { promptId: 'p3' });
       await started;
 
       await expect(
-        harness.forkSession({ id: source.id, turnIndex: 2 }),
+        harness.forkSession({ id: source.id, promptId: 'p3' }),
       ).rejects.toMatchObject({
         name: 'KimiError',
         code: 'request.invalid',
@@ -980,7 +1030,7 @@ describe('Session.prompt events', () => {
       fetchStub!.mockImplementationOnce(() => followUpGate.promise);
       const followUpStarted = waitForEvent(source, (event) => event.type === 'turn.started');
       const followUpEnded = waitForEvent(source, (event) => event.type === 'turn.ended');
-      await source.prompt('follow-up question');
+      await source.prompt('follow-up question', { promptId: 'p3' });
       await followUpStarted;
 
       const expectedReplay = [
@@ -996,14 +1046,23 @@ describe('Session.prompt events', () => {
       });
       await fork.close();
       const resumed = await harness.resumeSession({ id: fork.id });
-      expect(
-        visibleReplayText(resumed.getResumeState()?.agents['main']?.replay ?? []),
-      ).toEqual(expectedReplay);
+      const replayRecords = resumed.getResumeState()?.agents['main']?.replay ?? [];
+      expect(visibleReplayText(replayRecords)).toEqual(expectedReplay);
+      const steerMessage = replayRecords.find(
+        (record): record is Extract<(typeof replayRecords)[number], { type: 'message' }> =>
+          record.type === 'message' &&
+          record.message.role === 'user' &&
+          record.message.content.some(
+            (part) => part.type === 'text' && part.text === 'steered input',
+          ),
+      );
+      const steerPromptId = (steerMessage?.message as { id?: string } | undefined)?.id;
+      expect(steerPromptId).toBeDefined();
 
       const picked = await harness.forkSession({
         id: source.id,
         forkId: 'ses_turn_fork_steer_pick_child',
-        turnIndex: 1,
+        promptId: steerPromptId!,
       });
       await picked.close();
       const resumedPicked = await harness.resumeSession({ id: picked.id });
@@ -1011,7 +1070,7 @@ describe('Session.prompt events', () => {
         visibleReplayText(resumedPicked.getResumeState()?.agents['main']?.replay ?? []),
       ).toEqual(expectedReplay);
 
-      await expect(harness.forkSession({ id: source.id, turnIndex: 2 })).rejects.toMatchObject({
+      await expect(harness.forkSession({ id: source.id, promptId: 'p3' })).rejects.toMatchObject({
         name: 'KimiError',
         code: 'request.invalid',
         details: { turnIndex: 2, availableTurns: 2 },
@@ -1045,13 +1104,16 @@ describe('Session.prompt events', () => {
 });
 
 async function runPrompt(
-  session: Parameters<typeof waitForEvent>[0] & { prompt(input: string): Promise<void> },
+  session: Parameters<typeof waitForEvent>[0] & {
+    prompt(input: string, options?: { promptId?: string }): Promise<void>;
+  },
   input: string,
   response: string,
+  promptId?: string,
 ): Promise<void> {
   fakeProviderState.responseText = response;
   const done = waitForEvent(session, (event) => event.type === 'turn.ended');
-  await session.prompt(input);
+  await session.prompt(input, promptId === undefined ? undefined : { promptId });
   await done;
 }
 

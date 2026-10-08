@@ -266,6 +266,7 @@ export class KimiHarness {
       title: input.title,
       metadata: input.metadata,
       turnIndex: input.turnIndex,
+      promptId: input.promptId,
     });
     const session = new Session({
       id: summary.id,

@@ -94,6 +94,18 @@ export function lastCompletedUserVisibleTurnIndex(
   return lastCompleted;
 }
 
+export function visibleTurnIndexOfPrompt(
+  records: readonly WireRecord[],
+  promptId: string,
+): number | undefined {
+  const turnStarts = userVisibleTurnStartIndices(records);
+  for (let start = 0; start < turnStarts.length; start += 1) {
+    const message = asRecord(records[turnStarts[start]!]!['message']);
+    if (message?.['id'] === promptId) return start;
+  }
+  return undefined;
+}
+
 function userVisibleTurnStartIndices(records: readonly WireRecord[]): number[] {
   const turnStarts: number[] = [];
   for (let index = 0; index < records.length; index += 1) {

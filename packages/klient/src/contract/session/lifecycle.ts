@@ -41,10 +41,14 @@ export const forkSessionOptionsSchema = z.object({
   title: z.string().optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
   turnIndex: z.number().optional(),
+  promptId: z.string().optional(),
 });
 
 /** Same fields as `ForkSessionOptions` in the engine, minus the fork-only truncation. */
-export const createChildSessionOptionsSchema = forkSessionOptionsSchema.omit({ turnIndex: true });
+export const createChildSessionOptionsSchema = forkSessionOptionsSchema.omit({
+  turnIndex: true,
+  promptId: true,
+});
 
 /** `IScopeHandle` as it survives JSON — `{ id, kind }` plus extras. */
 export const handleWireSchema = z.looseObject({
