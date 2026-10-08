@@ -45,6 +45,20 @@ export function matchesAnyGlob(rel: string, globs: readonly string[]): boolean {
   return false;
 }
 
+export function globCanMatchBelow(rel: string, globs: readonly string[]): boolean {
+  for (const g of globs) {
+    const literalSegments: string[] = [];
+    for (const segment of g.split('/')) {
+      if (/[*?]/.test(segment)) break;
+      literalSegments.push(segment);
+    }
+    if (literalSegments.length === 0) continue;
+    const prefix = literalSegments.join('/');
+    if (prefix === rel || prefix.startsWith(`${rel}/`)) return true;
+  }
+  return false;
+}
+
 function globToRegExp(glob: string): RegExp {
   let re = '^';
   let i = 0;
@@ -79,7 +93,7 @@ export function compileGrepPattern(req: FsGrepRequest): RegExp {
 }
 
 function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return s.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export function stripTrailingNewline(s: string): string {
@@ -188,7 +202,7 @@ function matchSuggestName(name: string, queryLower: string): SuggestMatch | null
   if (positions === null) return null;
   const nameLower = name.toLowerCase();
   const tier = nameLower === queryLower ? 3 : nameLower.startsWith(queryLower) ? 2 : 1;
-  const span = positions[positions.length - 1]! - positions[0]! + 1;
+  const span = positions.at(-1)! - positions[0]! + 1;
   return { tier, span, positions };
 }
 
@@ -227,7 +241,7 @@ function matchSuggestPath(path: string, querySegments: readonly string[]): Sugge
       : lastSeg === pathSegments.length - 1 && lastSegPrefix
         ? 2
         : 1;
-  const span = positions[positions.length - 1]! - positions[0]! + 1;
+  const span = positions.at(-1)! - positions[0]! + 1;
   return { tier, span, positions };
 }
 
@@ -239,7 +253,7 @@ export function evaluateSuggestCandidate(
   const segments = relPath.split('/');
   if (segments.some((s) => VCS_METADATA_DIRS.has(s))) return null;
   if (!query.showHidden && segments.some((s) => s.startsWith('.'))) return null;
-  const name = segments[segments.length - 1]!;
+  const name = segments.at(-1)!;
   const pathMode = query.pathSegments.length > 0;
   const match = pathMode
     ? matchSuggestPath(relPath, query.pathSegments)
@@ -302,7 +316,7 @@ export class SuggestTopHeap {
   }
 
   drain(): SuggestCandidate[] {
-    return this.heap.slice().sort(compareSuggestCandidates);
+    return this.heap.slice().toSorted(compareSuggestCandidates);
   }
 
   private siftUp(index: number): void {

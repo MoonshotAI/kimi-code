@@ -62,6 +62,7 @@ import {
   computeFuzzyScore,
   computeMatchPositions,
   evaluateSuggestCandidate,
+  globCanMatchBelow,
   matchesAnyGlob,
   type RgJsonRecord,
   rgPath,
@@ -187,12 +188,17 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       for (const name of names) {
         if (!req.show_hidden && isHidden(name)) continue;
         const childRel = entry.relPath === '' ? name : `${entry.relPath}/${name}`;
+        let ancestorOfAllowed = false;
         if (gitignore && (gitignore.ignores(childRel) || gitignore.ignores(`${childRel}/`))) {
-          if (req.allow_ignored_globs === undefined || !matchesAnyGlob(childRel, req.allow_ignored_globs)) continue;
+          if (req.allow_ignored_globs === undefined) continue;
+          if (!matchesAnyGlob(childRel, req.allow_ignored_globs)) {
+            if (!globCanMatchBelow(childRel, req.allow_ignored_globs)) continue;
+            ancestorOfAllowed = true;
+          }
         }
         if (req.exclude_globs && matchesAnyGlob(childRel, req.exclude_globs)) continue;
         const st = await this.hostFs.lstat(this.absOf(childRel)).catch(() => undefined);
-        if (st === undefined) continue;
+        if (st === undefined || (ancestorOfAllowed && !st.isDirectory)) continue;
         visible.push({ name, relPath: childRel, stat: st });
       }
 

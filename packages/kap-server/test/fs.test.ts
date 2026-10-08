@@ -237,6 +237,58 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(children.data.items.map((i) => i.name)).toContain('keep.txt');
   });
 
+  it('fs:list traverses ignored ancestor directories of allowed matches', async () => {
+    await writeFile(join(work!, '.gitignore'), 'ignored-dir/\n');
+    await mkdir(join(work!, 'ignored-dir/nested'), { recursive: true });
+    await writeFile(join(work!, 'ignored-dir/nested/keep.txt'), '');
+    await writeFile(join(work!, 'ignored-dir/drop.txt'), '');
+    await writeFile(join(work!, 'visible.txt'), '');
+    const id = await createSession();
+    const globs = ['ignored-dir/nested/keep.txt'];
+
+    const root = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {
+      allow_ignored_globs: globs,
+    });
+    const rootNames = root.data.items.map((i) => i.name);
+    expect(rootNames).toContain('ignored-dir');
+    expect(rootNames).toContain('visible.txt');
+
+    const mid = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {
+      path: 'ignored-dir',
+      allow_ignored_globs: globs,
+    });
+    expect(mid.data.items.map((i) => i.name)).toEqual(['nested']);
+
+    const leaf = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {
+      path: 'ignored-dir/nested',
+      allow_ignored_globs: globs,
+    });
+    expect(leaf.data.items.map((i) => i.name)).toEqual(['keep.txt']);
+
+    const recursive = await postFs<{
+      items: FsEntryWire[];
+      truncated: boolean;
+      children_by_path?: Record<string, FsEntryWire[]>;
+    }>(id, 'list', { depth: 3, allow_ignored_globs: globs });
+    const descendants = Object.values(recursive.data.children_by_path ?? {})
+      .flat()
+      .map((i) => i.path);
+    expect(descendants).toContain('ignored-dir/nested');
+    expect(descendants).toContain('ignored-dir/nested/keep.txt');
+    expect(descendants).not.toContain('ignored-dir/drop.txt');
+  });
+
+  it('fs:list does not surface a non-directory prefix of an allowed glob', async () => {
+    await writeFile(join(work!, '.gitignore'), 'data.bin\n');
+    await writeFile(join(work!, 'data.bin'), '');
+    const id = await createSession();
+
+    const body = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {
+      allow_ignored_globs: ['data.bin/keep.txt'],
+    });
+    expect(body.data.items.map((i) => i.name)).not.toContain('data.bin');
+  });
+
   it('fs:mkdir creates a directory and rejects duplicates', async () => {
     const id = await createSession();
     const created = await postFs<FsEntryWire>(id, 'mkdir', { path: 'sub' });

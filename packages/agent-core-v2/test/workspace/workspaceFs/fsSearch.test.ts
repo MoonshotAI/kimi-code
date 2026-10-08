@@ -4,6 +4,7 @@ import {
   compileGrepPattern,
   computeFuzzyScore,
   computeMatchPositions,
+  globCanMatchBelow,
   matchesAnyGlob,
   rgPath,
   stripTrailingNewline,
@@ -44,6 +45,22 @@ describe('matchesAnyGlob', () => {
   it('matches a recursive wildcard', () => {
     expect(matchesAnyGlob('src/a.ts', ['**/*.ts'])).toBe(true);
     expect(matchesAnyGlob('src/a.js', ['**/*.ts'])).toBe(false);
+  });
+});
+
+describe('globCanMatchBelow', () => {
+  it('detects a literal-prefix ancestor of a nested glob', () => {
+    expect(globCanMatchBelow('ignored-dir', ['ignored-dir/keep.txt'])).toBe(true);
+    expect(globCanMatchBelow('ignored-dir', ['ignored-dir/**'])).toBe(true);
+    expect(globCanMatchBelow('a', ['a/b/c'])).toBe(true);
+    expect(globCanMatchBelow('a/b', ['a/b/c'])).toBe(true);
+  });
+
+  it('rejects non-ancestors and magic-leading globs', () => {
+    expect(globCanMatchBelow('ignored', ['ignored-dir/keep.txt'])).toBe(false);
+    expect(globCanMatchBelow('other-dir', ['ignored-dir/keep.txt'])).toBe(false);
+    expect(globCanMatchBelow('src', ['**/keep.txt'])).toBe(false);
+    expect(globCanMatchBelow('src', ['*.txt'])).toBe(false);
   });
 });
 
