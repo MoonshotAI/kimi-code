@@ -61,7 +61,7 @@ describe('matchesAnyGlob', () => {
     expect(matchesAnyGlob('fooX/keep.txt', ['foo**/keep.txt'])).toBe(true);
     expect(matchesAnyGlob('foo/sub/keep.txt', ['foo**/keep.txt'])).toBe(false);
     expect(matchesAnyGlob('foobar', ['foo**'])).toBe(true);
-    expect(matchesAnyGlob('foo/bar', ['foo**'])).toBe(true);
+    expect(matchesAnyGlob('foo/bar', ['foo**'])).toBe(false);
   });
 });
 

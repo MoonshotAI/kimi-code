@@ -290,11 +290,13 @@ describe('server-v2 /api/v1 fs routes', () => {
   });
 
   it('fs:list traverses ignored ancestors across wildcard glob segments', async () => {
-    await writeFile(join(work!, '.gitignore'), 'ignored-a/\nignored-dir/\nother-dir/\n');
+    await writeFile(join(work!, '.gitignore'), 'ignored-a/\nignored-b/\nignored-dir/\nother-dir/\n');
     await mkdir(join(work!, 'ignored-a'), { recursive: true });
+    await mkdir(join(work!, 'ignored-b'), { recursive: true });
     await mkdir(join(work!, 'ignored-dir/sub'), { recursive: true });
     await mkdir(join(work!, 'other-dir'), { recursive: true });
     await writeFile(join(work!, 'ignored-a/keep.txt'), '');
+    await writeFile(join(work!, 'ignored-b/drop.txt'), '');
     await writeFile(join(work!, 'ignored-dir/sub/keep.txt'), '');
     await writeFile(join(work!, 'ignored-dir/sub/notkeep.txt'), '');
     await writeFile(join(work!, 'ignored-dir/drop.txt'), '');
@@ -306,6 +308,7 @@ describe('server-v2 /api/v1 fs routes', () => {
     });
     const wildcardNames = wildcard.data.items.map((i) => i.name);
     expect(wildcardNames).toContain('ignored-a');
+    expect(wildcardNames).not.toContain('ignored-b');
     expect(wildcardNames).not.toContain('other-dir');
 
     const mid = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {

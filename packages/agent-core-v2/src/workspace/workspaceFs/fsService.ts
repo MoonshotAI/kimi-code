@@ -199,6 +199,10 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         if (req.exclude_globs && matchesAnyGlob(childRel, req.exclude_globs)) continue;
         const st = await this.hostFs.lstat(this.absOf(childRel)).catch(() => undefined);
         if (st === undefined || (ancestorOfAllowed && !st.isDirectory)) continue;
+        if (
+          ancestorOfAllowed &&
+          !(await this.hasAllowedDescendant(childRel, req.allow_ignored_globs!, req.exclude_globs, req.show_hidden))
+        ) continue;
         visible.push({ name, relPath: childRel, stat: st });
       }
 
@@ -231,6 +235,40 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       response.children_by_path = childrenByPath;
     }
     return response;
+  }
+
+  private async hasAllowedDescendant(
+    relDir: string,
+    globs: readonly string[],
+    excludeGlobs: readonly string[] | undefined,
+    showHidden: boolean,
+  ): Promise<boolean> {
+    const MAX_PROBE_DEPTH = 6;
+    const MAX_PROBE_ENTRIES = 500;
+    let visited = 0;
+    const walk = async (rel: string, depth: number): Promise<boolean> => {
+      if (depth > MAX_PROBE_DEPTH || visited >= MAX_PROBE_ENTRIES) return true;
+      let names: readonly string[];
+      try {
+        names = (await this.hostFs.readdir(this.absOf(rel))).map((e) => e.name);
+      } catch {
+        return false;
+      }
+      for (const name of names) {
+        if (visited >= MAX_PROBE_ENTRIES) return true;
+        visited += 1;
+        if (!showHidden && isHidden(name)) continue;
+        const childRel = `${rel}/${name}`;
+        if (excludeGlobs !== undefined && matchesAnyGlob(childRel, excludeGlobs)) continue;
+        if (matchesAnyGlob(childRel, globs)) return true;
+        const st = await this.hostFs.lstat(this.absOf(childRel)).catch(() => undefined);
+        if (st?.isDirectory === true && globCanMatchBelow(childRel, globs)) {
+          if (await walk(childRel, depth + 1)) return true;
+        }
+      }
+      return false;
+    };
+    return walk(relDir, 1);
   }
 
   async read(req: FsReadRequest): Promise<FsReadResponse> {

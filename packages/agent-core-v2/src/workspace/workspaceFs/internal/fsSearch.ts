@@ -1,3 +1,5 @@
+import picomatch from 'picomatch';
+
 import type { FsGrepRequest } from '../fs';
 
 export function computeFuzzyScore(name: string, queryLower: string): number {
@@ -39,10 +41,7 @@ export function computeMatchPositions(
 }
 
 export function matchesAnyGlob(rel: string, globs: readonly string[]): boolean {
-  for (const g of globs) {
-    if (globToRegExp(g).test(rel)) return true;
-  }
-  return false;
+  return picomatch.isMatch(rel, globs, { dot: true });
 }
 
 export function globCanMatchBelow(rel: string, globs: readonly string[]): boolean {
@@ -60,7 +59,7 @@ function globSegmentsMatchPrefix(globSegments: readonly string[], relSegments: r
   const dp = new Uint8Array((g + 1) * width);
   for (let gi = g; gi >= 0; gi--) {
     const head = gi < g ? globSegments[gi]! : undefined;
-    const headRe = head !== undefined && head !== '**' ? globToRegExp(head) : undefined;
+    const headMatch = head !== undefined && head !== '**' ? picomatch(head, { dot: true }) : undefined;
     for (let ri = r; ri >= 0; ri--) {
       const at = gi * width + ri;
       if (ri === r) {
@@ -70,46 +69,11 @@ function globSegmentsMatchPrefix(globSegments: readonly string[], relSegments: r
       } else if (head === '**') {
         dp[at] = dp[(gi + 1) * width + ri]! | dp[gi * width + ri + 1]!;
       } else {
-        dp[at] = headRe!.test(relSegments[ri]!) ? dp[(gi + 1) * width + ri + 1]! : 0;
+        dp[at] = headMatch!(relSegments[ri]!) ? dp[(gi + 1) * width + ri + 1]! : 0;
       }
     }
   }
   return dp[0] === 1;
-}
-
-function globToRegExp(glob: string): RegExp {
-  let re = '^';
-  let i = 0;
-  while (i < glob.length) {
-    const ch = glob[i]!;
-    if (ch === '*' && glob[i + 1] === '*') {
-      const atSegmentStart = i === 0 || glob[i - 1] === '/';
-      if (atSegmentStart && glob[i + 2] === '/') {
-        re += '(?:[^/]+/)*';
-        i += 3;
-      } else if (glob[i + 2] === undefined) {
-        re += '.*';
-        i += 2;
-      } else {
-        re += '[^/]*';
-        i += 2;
-      }
-    } else if (ch === '*') {
-      re += '[^/]*';
-      i++;
-    } else if (ch === '?') {
-      re += '[^/]';
-      i++;
-    } else if (/[.+^${}()|[\]\\]/.test(ch)) {
-      re += `\\${ch}`;
-      i++;
-    } else {
-      re += ch;
-      i++;
-    }
-  }
-  re += '$';
-  return new RegExp(re);
 }
 
 export function compileGrepPattern(req: FsGrepRequest): RegExp {
