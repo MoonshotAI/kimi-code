@@ -9474,10 +9474,16 @@ describe('KimiTUI session rating survey', () => {
       );
 
       vi.useRealTimers();
-      await new Promise<void>((resolve) => {
-        setImmediate(resolve);
+      const stateFile = join(homeDir, 'feedback-survey-state.json');
+      await vi.waitFor(() => {
+        expect(existsSync(stateFile)).toBe(true);
       });
-      expect(existsSync(join(homeDir, 'feedback-survey-state.json'))).toBe(false);
+      const persisted = JSON.parse(await readFile(stateFile, 'utf-8')) as {
+        version: number;
+        last_shown_time: number;
+      };
+      expect(persisted.version).toBe(1);
+      expect(typeof persisted.last_shown_time).toBe('number');
     } finally {
       vi.useRealTimers();
       vi.restoreAllMocks();
