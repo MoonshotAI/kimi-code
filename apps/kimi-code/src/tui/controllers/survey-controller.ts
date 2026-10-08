@@ -148,6 +148,7 @@ export class SurveyController {
   private appearanceCount = 0;
   private globalLastShownAt: number | undefined;
   private readonly longContextRollConsumedModels = new Set<string | undefined>();
+  private longContextShownThisMount = false;
   private generation = 0;
   private idleSince: number | undefined;
   private openedAt = 0;
@@ -199,6 +200,7 @@ export class SurveyController {
     this.userTurnsAtLastShown = undefined;
     this.appearanceCount = 0;
     this.longContextRollConsumedModels.clear();
+    this.longContextShownThisMount = false;
     this.idleSince = undefined;
     this.stickySample = undefined;
     this.toolCallCount = 0;
@@ -521,6 +523,11 @@ export class SurveyController {
         cumulativeTokens: appState.cumulativeTokens ?? 0,
         virtualContextTokens: appState.contextTokens,
         mountRollConsumed: this.longContextRollConsumedModels.has(shared.kfcModelId),
+        mountSurveyShown: this.longContextShownThisMount,
+        msSinceGlobalLastShown:
+          this.globalLastShownAt === undefined
+            ? undefined
+            : this.wallNow() - this.globalLastShownAt,
         drawMountRoll: () => (this.deps.random ?? defaultDeps.random)(),
       },
     };
@@ -576,7 +583,7 @@ export class SurveyController {
     this.openedEditorText = this.host.state.editor.getText();
     this.lastShownAt = shownAt;
     this.userTurnsAtLastShown = this.userTurnCount;
-    if (survey !== 'session') return;
+    if (survey === 'long_context') this.longContextShownThisMount = true;
     this.globalLastShownAt = this.wallNow();
     try {
       (this.deps.writeGlobalLastShown ?? defaultDeps.writeGlobalLastShown)(

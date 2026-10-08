@@ -11,6 +11,7 @@ export type SurveyKind = 'session' | 'long_context';
 
 export type SurveyGateSkipReason =
   | 'mount-roll-consumed'
+  | 'mount-survey-shown'
   | 'survey-active'
   | 'turn-in-progress'
   | 'idle-too-short'
@@ -60,6 +61,8 @@ export interface LongContextArmGateInput extends SharedArmGateInput {
   readonly cumulativeTokens: number;
   readonly virtualContextTokens: number;
   readonly mountRollConsumed: boolean;
+  readonly mountSurveyShown: boolean;
+  readonly msSinceGlobalLastShown: number | undefined;
   readonly drawMountRoll: () => number;
 }
 
@@ -141,6 +144,7 @@ function evaluateSessionArm(input: SurveyGateInput): SurveyGateVerdict {
 
 export function evaluateLongContextArm(input: SurveyGateInput): SurveyGateVerdict {
   const { longContext, config } = input;
+  if (longContext.mountSurveyShown) return { show: false, reason: 'mount-survey-shown' };
   if (longContext.mountRollConsumed) return { show: false, reason: 'mount-roll-consumed' };
   if (longContext.phase !== 'closed') return { show: false, reason: 'survey-active' };
   if (longContext.turnInProgress) return { show: false, reason: 'turn-in-progress' };
@@ -178,6 +182,12 @@ export function evaluateLongContextArm(input: SurveyGateInput): SurveyGateVerdic
       : longContext.virtualContextTokens;
   if (counter < config.long_context_survey_threshold) {
     return { show: false, reason: 'below-threshold' };
+  }
+  if (
+    longContext.msSinceGlobalLastShown !== undefined &&
+    longContext.msSinceGlobalLastShown < config.min_time_between_global_feedback_ms
+  ) {
+    return { show: false, reason: 'global-cooldown' };
   }
   if (longContext.drawMountRoll() >= config.long_context_probability) {
     return { show: false, reason: 'sampled-out', longContextRollConsumed: true };

@@ -451,7 +451,7 @@ describe('SurveyController long-context arm', () => {
       swarm_run_count: 0,
       ...DEFAULT_SNAPSHOT,
     });
-    expect(harness.writes).toEqual([]);
+    expect(harness.writes).toEqual([1_700_000_000_000]);
   });
 
   it('reports the responded and abandoned states under the long_context_survey name', async () => {
@@ -664,7 +664,7 @@ describe('SurveyController long-context arm', () => {
       'long_context_survey',
       expect.objectContaining({ event_type: 'appeared', appearance_index: 1 }),
     );
-    expect(harness.writes).toEqual([]);
+    expect(harness.writes).toEqual([1_700_000_000_000]);
   });
 
   it('does not spend the roll while an active prompt suppresses the evaluation', async () => {
@@ -712,7 +712,7 @@ describe('SurveyController long-context arm', () => {
     );
   });
 
-  it('ignores the persisted global cooldown that gates the session arm', async () => {
+  it('honors the shared persisted cooldown without spending the roll', async () => {
     const harness = createHarness({
       readGlobalLastShown: async () => 1_700_000_000_000 - 1000,
     });
@@ -723,14 +723,21 @@ describe('SurveyController long-context arm', () => {
     harness.controller.notifyTurnEnded();
     harness.elapse(2000);
 
+    expect(harness.container.children).toHaveLength(0);
+    expect(harness.track).not.toHaveBeenCalled();
+
+    harness.clock.wall += 100_000_000;
+    harness.controller.notifyTurnStarted(true);
+    harness.controller.notifyTurnEnded();
+    harness.elapse(2000);
     expect(harness.track).toHaveBeenCalledWith(
       'long_context_survey',
       expect.objectContaining({ event_type: 'appeared' }),
     );
-    expect(harness.writes).toEqual([]);
+    expect(harness.writes).toEqual([1_700_000_000_000 + 100_000_000]);
   });
 
-  it('does not suppress the session arm through the persisted cooldown after a long-context appearance', async () => {
+  it('writes the shared global cooldown on a long-context appearance', async () => {
     const harness = createHarness();
     harness.state.appState.contextTokens = 250_000;
     await harness.flush();
@@ -742,18 +749,49 @@ describe('SurveyController long-context arm', () => {
       'long_context_survey',
       expect.objectContaining({ event_type: 'appeared' }),
     );
+    expect(harness.writes).toEqual([1_700_000_000_000]);
     harness.clock.mono += 600;
     harness.controller.handlePreInput(ESC);
-    expect(harness.writes).toEqual([]);
+    expect(harness.container.children).toHaveLength(0);
+    harness.track.mockClear();
 
     harness.clock.mono += 3_600_000;
     harness.runTurns(10);
+    harness.elapse(2000);
+    expect(harness.track).not.toHaveBeenCalled();
+
+    harness.clock.wall += 100_000_000;
+    harness.runTurns(1);
     harness.elapse(2000);
     expect(harness.track).toHaveBeenCalledWith(
       'feedback_survey',
       expect.objectContaining({ event_type: 'appeared' }),
     );
-    expect(harness.writes).toEqual([1_700_000_000_000]);
+  });
+
+  it('keeps the long-context arm closed across a remount inside the shared cooldown', async () => {
+    let stored: number | undefined;
+    const harness = createHarness({
+      readGlobalLastShown: async () => stored,
+      writeGlobalLastShown: (wallTime) => {
+        stored = wallTime;
+      },
+    });
+    harness.state.appState.contextTokens = 250_000;
+    await harness.flush();
+
+    harness.controller.notifyTurnStarted(true);
+    harness.controller.notifyTurnEnded();
+    harness.elapse(2000);
+    expect(harness.track).toHaveBeenCalledTimes(1);
+
+    harness.controller.reset();
+    await harness.flush();
+    harness.track.mockClear();
+    harness.controller.notifyTurnStarted(true);
+    harness.controller.notifyTurnEnded();
+    harness.elapse(2000);
+    expect(harness.track).not.toHaveBeenCalled();
   });
 });
 
@@ -1130,7 +1168,7 @@ describe('SurveyController model overrides', () => {
     ).toHaveLength(1);
   });
 
-  it('does not replay a consumed long-context roll after switching models twice', async () => {
+  it('closes the long-context arm for the rest of the mount after the first appearance', async () => {
     const harness = createHarness({
       config: () => ({
         ...DEFAULT_SURVEY_POPUP_PAYLOAD,
@@ -1157,15 +1195,34 @@ describe('SurveyController model overrides', () => {
     harness.controller.notifyTurnStarted(true);
     harness.controller.notifyTurnEnded();
     harness.elapse(2000);
-    expect(appeared()).toBe(2);
-    harness.clock.mono += 600;
-    harness.controller.handlePreInput(ESC);
+    expect(appeared()).toBe(1);
 
     useManagedModel(harness);
     harness.controller.notifyTurnStarted(true);
     harness.controller.notifyTurnEnded();
     harness.elapse(2000);
-    expect(appeared()).toBe(2);
+    expect(appeared()).toBe(1);
+  });
+
+  it('honors the override global cooldown on the long-context arm', async () => {
+    const harness = createHarness({
+      readGlobalLastShown: async () => 1_700_000_000_000 - 1000,
+      config: () => ({
+        ...DEFAULT_SURVEY_POPUP_PAYLOAD,
+        model_overrides: { k3: { min_time_between_global_feedback_ms: 0 } },
+      }),
+    });
+    useManagedModel(harness);
+    harness.state.appState.contextTokens = 250_000;
+    await harness.flush();
+
+    harness.controller.notifyTurnStarted(true);
+    harness.controller.notifyTurnEnded();
+    harness.elapse(2000);
+    expect(harness.track).toHaveBeenCalledWith(
+      'long_context_survey',
+      expect.objectContaining({ event_type: 'appeared' }),
+    );
   });
 
   it('reports the merged effective config in the policy snapshot', async () => {
