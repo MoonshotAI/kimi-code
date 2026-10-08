@@ -20,6 +20,8 @@
  *  - no `Turn.result` promise → settlement relies solely on `turn.ended`.
  */
 
+import { randomUUID } from 'node:crypto';
+
 import type {
   AvailableCommand,
   ContentBlock,
@@ -168,6 +170,7 @@ interface TurnDriver {
    * events are buffered in {@link early} instead of being dropped.
    */
   turnId?: number;
+  promptId?: string;
   settled: boolean;
   /**
    * Set when `cancel()` arrives while {@link turnId} is still unknown: the
@@ -290,6 +293,27 @@ export class AcpSession {
       events.on('turn.started', (event) => {
         if (isScheduledTurnOrigin(event.origin)) {
           this.scheduledTurnIds.add(event.turnId);
+        }
+        const driver = this.driver;
+        if (driver?.promptId !== undefined && driver.promptId === event.promptId) {
+          driver.turnId = event.turnId;
+          if (driver.cancelRequested === true) {
+            void this.agent.cancel({ turnId: event.turnId }).catch((error) => {
+              log.warn('acp: queued prompt cancel failed', { sessionId: this.sessionId, error });
+            });
+          }
+        }
+      }),
+      events.on('prompt.completed', (event) => {
+        const driver = this.driver;
+        if (driver?.promptId === event.promptId && driver.turnId === undefined) {
+          this.settleDriver(driver, () => driver.resolve({ stopReason: 'end_turn' }));
+        }
+      }),
+      events.on('prompt.aborted', (event) => {
+        const driver = this.driver;
+        if (driver?.promptId === event.promptId) {
+          this.settleDriver(driver, () => driver.resolve({ stopReason: 'cancelled' }));
         }
       }),
       events.on('assistant.delta', (event) => {
@@ -663,7 +687,8 @@ export class AcpSession {
    */
   private driveTurn(input: readonly ContentPart[]): Promise<PromptResponse> {
     this.assertNoActiveTurn();
-    return this.driveLaunch(this.agent.prompt({ input }));
+    const promptId = this.scheduledTurnIds.size > 0 ? randomUUID() : undefined;
+    return this.driveLaunch(this.agent.prompt({ input, promptId }), promptId);
   }
 
   /**
@@ -674,14 +699,17 @@ export class AcpSession {
    * {@link assertNoActiveTurn}), so the prompt settles gracefully with
    * `end_turn`.
    */
-  private driveLaunch(launch: Promise<PromptLaunchResult>): Promise<PromptResponse> {
+  private driveLaunch(launch: Promise<PromptLaunchResult>, promptId?: string): Promise<PromptResponse> {
     return new Promise<PromptResponse>((resolve, reject) => {
-      const driver: TurnDriver = { resolve, reject, settled: false, early: [] };
+      const driver: TurnDriver = { resolve, reject, settled: false, early: [], promptId };
       this.driver = driver;
       launch.then(
         (launched) => {
           if (driver.settled) return;
           if (launched === undefined) {
+            // The current engine acknowledges queued prompts before their turn
+            // starts. Attribute their later events through the submitted ID.
+            if (driver.promptId !== undefined) return;
             // No turn will emit `turn.ended`, so settle gracefully. The engine
             // publishes a `prompt.completed` with reason 'blocked' for the
             // hook-blocked case; the wire carries no blocking message to

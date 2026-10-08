@@ -16,7 +16,6 @@ import { fileURLToPath } from 'node:url';
 
 import { getLiveSessionById, IAgentLifecycleService, IEventBus } from '@moonshot-ai/agent-core-v2';
 import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
-import { IAgentPromptService } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
 import { ToolProgress } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -321,24 +320,16 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     await c.waitForSessionUpdate('available_commands_update', 10_000);
 
     const session = getLiveSessionById(c.server.core.accessor, created.sessionId);
-    const agentHandle = session?.accessor.get(IAgentLifecycleService).get('main');
+    const agentHandle = session?.accessor.get(IAgentLifecycleService).handleOf('main');
     const loop = agentHandle?.accessor.get(IAgentLoopService);
-    const prompts = agentHandle?.accessor.get(IAgentPromptService);
     expect(loop).toBeDefined();
-    expect(prompts).toBeDefined();
 
-    const scheduled = await prompts!.inject({
-      role: 'user',
-      content: [{ type: 'text', text: 'run the scheduled task' }],
-      toolCalls: [],
-      origin: {
-        kind: 'cron_job',
-        jobId: 'scheduled-visibility',
-        cron: '* * * * *',
-        recurring: true,
-        coalescedCount: 1,
-        stale: false,
+    const scheduled = loop!.submit({
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'run the scheduled task' }],
       },
+      meta: { origin: { kind: 'cron_job' } },
     });
     expect(scheduled).toBeDefined();
     await permissionSeen;
@@ -347,13 +338,13 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
       sessionId: created.sessionId,
       prompt: [{ type: 'text', text: 'status?' }],
     });
-    for (let attempt = 0; attempt < 100 && loop!.status().pendingTurnIds.length === 0; attempt++) {
+    for (let attempt = 0; attempt < 100 && loop!.snapshot().queue.length === 0; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
-    const queuedStatus = loop!.status();
+    const queuedStatus = loop!.snapshot();
     answerPermission!({ outcome: { outcome: 'selected', optionId: 'approve_once' } });
-    expect(queuedStatus.activeTurnId).toBe(scheduled!.id);
-    expect(queuedStatus.pendingTurnIds).toHaveLength(1);
+    expect(queuedStatus.activeTurnId).toBeDefined();
+    expect(queuedStatus.queue).toHaveLength(1);
     const result = (await queuedPrompt) as { stopReason: string };
     expect(result.stopReason).toBe('end_turn');
 
