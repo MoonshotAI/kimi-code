@@ -13,6 +13,7 @@ import { modelDisplayName } from '../components/dialogs/model-selector';
 import { MAIN_AGENT_ID } from '../constant/kimi-tui';
 import type {
   BackgroundAgentMetadata,
+  BackgroundAgentStatusPhase,
   ToolCallBlockData,
   ToolResultBlockData,
   TranscriptEntry,
@@ -90,8 +91,10 @@ export class SubAgentEventHandler {
     const { parentToolCallId } = info;
     const swarmProgress = this.agentSwarmProgress.get(parentToolCallId);
     if (swarmProgress !== undefined) {
+      // No per-event requestRender: the swarm component's own frame timer
+      // (kept alive while members run) batches these deltas into ~12.5fps
+      // re-renders instead of rendering the whole tree per delta.
       this.applySubagentEventToSwarmProgress(swarmProgress, event, childAgentId);
-      this.requestRender();
       return true;
     }
 
@@ -170,6 +173,9 @@ export class SubAgentEventHandler {
         return;
       case 'subagent.failed':
         this.handleSubagentFailed(event);
+        return;
+      case 'subagent.cancelled':
+        this.handleSubagentCancelled(event);
         return;
     }
   }
@@ -364,6 +370,40 @@ export class SubAgentEventHandler {
     this.handleForegroundSubagentFailed(event, info);
   }
 
+  private handleSubagentCancelled(
+    event: SubagentLifecycleEventOf<'subagent.cancelled'>,
+  ): void {
+    this.activityStore.markFailed(event.subagentId);
+    this.pruneForegroundOnlyRecord(event.subagentId);
+    const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
+    if (backgroundMeta !== undefined) {
+      const taskId = this.findAgentTaskId(
+        event.subagentId,
+        backgroundMeta,
+        this.deps.backgroundTasks,
+      );
+      this.backgroundAgentMetadata.delete(event.subagentId);
+      this.deps.syncBackgroundAgentBadge();
+      this.host.streamingUI.applyBackgroundTaskTerminalStatus({
+        agentId: event.subagentId,
+        description: backgroundMeta.description ?? '',
+        status: 'killed',
+      });
+      if (taskId !== undefined && this.deps.backgroundTaskTranscriptedTerminal.has(taskId)) {
+        return;
+      }
+      if (taskId !== undefined) {
+        this.deps.backgroundTaskTranscriptedTerminal.add(taskId);
+      }
+      this.appendBackgroundAgentEntry('killed', backgroundMeta);
+      return;
+    }
+
+    const info = this.subagentInfo.get(event.subagentId);
+    if (info === undefined || info.runInBackground) return;
+    this.handleForegroundSubagentCancelled(event, info);
+  }
+
   private findAgentTaskId(
     subagentId: string,
     meta: BackgroundAgentMetadata,
@@ -423,7 +463,7 @@ export class SubAgentEventHandler {
   }
 
   private appendBackgroundAgentEntry(
-    phase: 'started' | 'completed' | 'failed',
+    phase: BackgroundAgentStatusPhase,
     meta: BackgroundAgentMetadata,
     extras: { resultSummary?: string; error?: string } | undefined = undefined,
   ): void {
@@ -581,6 +621,24 @@ export class SubAgentEventHandler {
     this.host.streamingUI.removeToolComponentIfInactive(parentToolCallId);
   }
 
+  private handleForegroundSubagentCancelled(
+    event: SubagentLifecycleEventOf<'subagent.cancelled'>,
+    info: SubagentInfo,
+  ): void {
+    const { parentToolCallId } = info;
+    if (this.updateAgentSwarmProgress(parentToolCallId, (progress) => {
+      progress.markCancelled(event.subagentId);
+    })) {
+      this.host.streamingUI.removeToolComponentIfInactive(parentToolCallId);
+      return;
+    }
+
+    const tc = this.host.streamingUI.getToolComponent(parentToolCallId);
+    if (tc === undefined) return;
+    tc.onSubagentFailed({ error: 'Aborted by the user' });
+    this.host.streamingUI.removeToolComponentIfInactive(parentToolCallId);
+  }
+
   private applySubagentEventToSwarmProgress(
     progress: AgentSwarmProgressComponent,
     event: Event,
@@ -657,7 +715,41 @@ export class SubAgentEventHandler {
     this.host.updateActivityPane();
   }
 
+  private agentSwarmGridHeightFrame:
+    | { readonly columns: number; readonly rows: number; readonly value: number | undefined }
+    | undefined;
+
+  /**
+   * The measurement re-renders every dock child, so it is shared by every
+   * swarm component for the rest of the current synchronous render pass
+   * (frames are macrotask-separated, hence the microtask reset) instead of
+   * being recomputed per component per frame.
+   */
   private agentSwarmGridHeight(): number | undefined {
+    const { state } = this.host;
+    const terminalRows = state.ui.terminal.rows;
+    const terminalColumns = state.ui.terminal.columns;
+    const frame = this.agentSwarmGridHeightFrame;
+    if (
+      frame !== undefined &&
+      frame.columns === terminalColumns &&
+      frame.rows === terminalRows
+    ) {
+      return frame.value;
+    }
+    const entry = {
+      columns: terminalColumns,
+      rows: terminalRows,
+      value: this.measureAgentSwarmGridHeight(),
+    };
+    this.agentSwarmGridHeightFrame = entry;
+    queueMicrotask(() => {
+      if (this.agentSwarmGridHeightFrame === entry) this.agentSwarmGridHeightFrame = undefined;
+    });
+    return entry.value;
+  }
+
+  private measureAgentSwarmGridHeight(): number | undefined {
     const { state } = this.host;
     const terminalRows = state.ui.terminal.rows;
     const terminalColumns = state.ui.terminal.columns;
@@ -729,7 +821,8 @@ function isSubagentLifecycleEvent(event: Event): event is SubagentLifecycleEvent
     event.type === 'subagent.started' ||
     event.type === 'subagent.suspended' ||
     event.type === 'subagent.completed' ||
-    event.type === 'subagent.failed'
+    event.type === 'subagent.failed' ||
+    event.type === 'subagent.cancelled'
   );
 }
 

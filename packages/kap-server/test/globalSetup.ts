@@ -13,8 +13,8 @@ import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 export const SHARED_SERVER_TOKEN = 'test-token';
 
 export default async function globalSetup(project: TestProject): Promise<() => Promise<void>> {
-  process.env['KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER'] = 'false';
-  process.env['KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL'] = 'false';
+  process.env['KIMI_CODE_SEARCH_WORKER'] = 'false';
+  process.env['KIMI_CODE_PERSISTENCE_MINIDB_READMODEL'] = 'false';
   const home = await mkdtemp(join(tmpdir(), 'kimi-kap-server-shared-home-'));
   const server = await startServer({
     hostIdentity: TEST_HOST_IDENTITY,

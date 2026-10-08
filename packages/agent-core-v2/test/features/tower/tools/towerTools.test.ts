@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, stat, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, stat, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -9,15 +9,19 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import type { ServiceIdentifier } from '#/_base/di/instantiation';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
+import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentTaskService, type AgentTaskInfo } from '#/agent/task/task';
 import type { AnyAgentTool } from '#/agent/toolRegistry/toolContribution';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { TOWER_TOOL_CONTRIBUTIONS } from '#/features/tower/towerFeature';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
-import { TowerStore } from '#/features/tower/protocol/index';
+import { TowerStore, parseFrontmatter } from '#/features/tower/protocol/index';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import type { ExecutableTool } from '#/tool/toolContract';
+import type { TokenUsage } from '#human/llm/usage';
 
 import { ITowerInitTool } from '#/features/tower/tools/init/init';
 import { TowerInitTool } from '#/features/tower/tools/init/initTool';
@@ -74,6 +78,8 @@ let towerRequestedBase: string | undefined;
 let currentAgentId: string;
 let currentSessionId: string;
 let liveSessionIds: string[];
+let liveAgentTaskIds: string[];
+let usageTotal: TokenUsage | undefined;
 const agentContexts = new Map<string, AgentContext>();
 
 beforeEach(async () => {
@@ -87,6 +93,8 @@ beforeEach(async () => {
   towerRequestedBase = undefined;
   currentAgentId = 'main';
   liveSessionIds = [];
+  liveAgentTaskIds = [];
+  usageTotal = undefined;
   currentSessionId = 'session-test';
   agentContexts.clear();
 
@@ -134,6 +142,7 @@ beforeEach(async () => {
         },
         exit: () => {
           towerActive = false;
+          return Promise.resolve();
         },
       });
       reg.defineInstance(ISessionManager, {
@@ -141,6 +150,15 @@ beforeEach(async () => {
       } as unknown as ISessionManager);
       reg.definePartialInstance(ITowerRateLimitService, {
         snapshot: () => ({ budget: 2, inflight: 0, blockedUntil: null }),
+      });
+      reg.definePartialInstance(ISessionUsageService, {
+        status: () => ({ total: usageTotal }),
+      });
+      reg.definePartialInstance(IAgentTaskService, {
+        list: () =>
+          liveAgentTaskIds.map(
+            (agentId) => ({ kind: 'agent', agentId }) as unknown as AgentTaskInfo,
+          ),
       });
       reg.define(ITowerInitTool, TowerInitTool);
       reg.define(ITowerPlanTool, TowerPlanTool);
@@ -344,6 +362,70 @@ describe('TowerPlanTool', () => {
     expect(result.output).toContain('| M1 | Build engine | build | feat/build-engine | wt-1 | src/engine/** |');
     expect(result.output).toContain('| M2 | Build UI | build | feat/build-ui | wt-2 | src/ui/** |');
   });
+
+  it('passes mission context through to the stored mission', async () => {
+    await initViaTool();
+
+    const result = await run(ix.get(ITowerPlanTool), {
+      missions: [
+        {
+          title: 'Build engine',
+          scope: ['src/engine/**'],
+          tasks: ['scaffold'],
+          context: 'Ship it as a single binary.',
+        },
+      ],
+    });
+
+    expect(result.isError).toBeFalsy();
+    const state = await new TowerStore(repo).load();
+    expect(state.missions[0]?.context).toBe('Ship it as a single binary.');
+  });
+
+  it('rejects a re-planned title whose slugged branch is already taken, guiding a title change', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Build engine', scope: ['src/engine/**'] }],
+    });
+
+    const result = await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'build engine', scope: ['src/engine-v2/**'] }],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('feat/build-engine');
+    expect(result.output).toContain('already used by M1');
+    expect(result.output).toContain('change the title');
+    expect((await new TowerStore(repo).load()).missions).toHaveLength(1);
+  });
+
+  it('rejects the slug of an abandoned mission too — reuse would corrupt branch-to-mission resolution', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Build engine', scope: ['src/engine/**'] }],
+    });
+    await new TowerStore(repo).updateMission('tower', 'M1', { status: 'abandoned' });
+
+    const result = await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Build engine', scope: ['src/web/**'] }],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('already used by M1 (abandoned)');
+    expect((await new TowerStore(repo).load()).missions).toHaveLength(1);
+  });
+
+  it('rejects a non-ASCII mission title and tells the tower to re-plan in English', async () => {
+    await initViaTool();
+
+    const result = await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Исправить ошибку входа', scope: ['src/x/**'] }],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('contains non-ASCII characters');
+    expect((await new TowerStore(repo).load()).missions).toHaveLength(0);
+  });
 });
 
 describe('TowerTeardownTool', () => {
@@ -384,6 +466,78 @@ describe('TowerTeardownTool', () => {
     const result = await run(ix.get(ITowerTeardownTool), {});
     expect(result.isError).toBeFalsy();
     expect(result.output).toContain('tower teardown:');
+  });
+
+  it('keeps worktrees whose roster agent has a running task, even with force', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Build engine', scope: ['src/engine/**'] }],
+    });
+    const store = new TowerStore(repo);
+    const state = await store.load();
+    const mission = state.missions[0]!;
+    await store.addWorktree(mission.worktree, mission.branch, state.base);
+    await store.registerAgent({
+      name: 'w1',
+      kind: 'worker',
+      agentId: 'agent-w1',
+      worktree: mission.worktree,
+      spawnedAt: new Date().toISOString(),
+    });
+    liveAgentTaskIds.push('agent-w1');
+
+    const result = await run(ix.get(ITowerTeardownTool), { force: true });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain(
+      `kept .tower/worktrees/${mission.worktree} (live agent: w1)`,
+    );
+    expect(
+      (await stat(join(repo, '.tower/worktrees', mission.worktree))).isDirectory(),
+    ).toBe(true);
+
+    liveAgentTaskIds.length = 0;
+    const settled = await run(ix.get(ITowerTeardownTool), {});
+    expect(settled.output).toContain(`removed .tower/worktrees/${mission.worktree}`);
+  });
+
+  it('dry run reports the decisions and changes nothing', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Build engine', scope: ['src/engine/**'] }],
+    });
+    const store = new TowerStore(repo);
+    const state = await store.load();
+    const mission = state.missions[0]!;
+    await store.addWorktree(mission.worktree, mission.branch, state.base);
+
+    const result = await run(ix.get(ITowerTeardownTool), { dry_run: true });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('tower teardown (dry run');
+    expect(result.output).toContain(`would remove .tower/worktrees/${mission.worktree}`);
+    expect(
+      (await stat(join(repo, '.tower/worktrees', mission.worktree))).isDirectory(),
+    ).toBe(true);
+  });
+
+  it('keeps worktrees named in exclude', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Build engine', scope: ['src/engine/**'] }],
+    });
+    const store = new TowerStore(repo);
+    const state = await store.load();
+    const mission = state.missions[0]!;
+    await store.addWorktree(mission.worktree, mission.branch, state.base);
+
+    const result = await run(ix.get(ITowerTeardownTool), { exclude: [mission.worktree] });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain(`kept .tower/worktrees/${mission.worktree} (excluded)`);
+    expect(
+      (await stat(join(repo, '.tower/worktrees', mission.worktree))).isDirectory(),
+    ).toBe(true);
   });
 });
 
@@ -429,6 +583,37 @@ describe('TowerSendTool + TowerInboxTool', () => {
     }
   });
 
+  it('reads and stamps the mailbox of the latest registration when the agent id collides with a stale roster entry', async () => {
+    const file = join(repo, '.tower/comms/state.json');
+    const state = JSON.parse(await readFile(file, 'utf8')) as {
+      roster: { agents: Record<string, unknown>[] };
+    };
+    state.roster.agents.unshift({
+      name: 'w-stale',
+      kind: 'worker',
+      agentId: 'agent-w1',
+      sessionId: 'session-old',
+      spawnedAt: '2026-09-13T08:00:00.000Z',
+    });
+    await writeFile(file, `${JSON.stringify(state, null, 2)}\n`);
+
+    await run(ix.get(ITowerSendTool), { to: 'w1', subject: 'for current w1', body: 'a' });
+    await run(ix.get(ITowerSendTool), { to: 'w-stale', subject: 'for stale identity', body: 'b' });
+
+    currentAgentId = 'agent-w1';
+    const inbox = await run(ix.get(ITowerInboxTool), {});
+    expect(inbox.isError).toBeFalsy();
+    expect(inbox.output).toContain('message(s) for w1');
+    expect(inbox.output).toContain('subject: for current w1');
+    expect(inbox.output).not.toContain('subject: for stale identity');
+
+    const sent = await run(ix.get(ITowerSendTool), { to: 'tower', subject: 'report', body: 'c' });
+    expect(sent.isError).toBeFalsy();
+    currentAgentId = 'main';
+    const towerInbox = await run(ix.get(ITowerInboxTool), {});
+    expect(towerInbox.output).toContain('from: w1');
+  });
+
   it('maps a TowerProtocolError (unknown recipient) to an isError result', async () => {
     const result = await run(ix.get(ITowerSendTool), {
       to: 'ghost',
@@ -439,6 +624,89 @@ describe('TowerSendTool + TowerInboxTool', () => {
     expect(result.isError).toBe(true);
     expect(result.output).toContain('unknown recipient "ghost"');
     expect(result.output).toContain('known: tower, all, w1, w2');
+  });
+
+  it('notes when the tower messages a roster agent that has no running task to deliver it', async () => {
+    const idle = await run(ix.get(ITowerSendTool), { to: 'w1', subject: 'wake', body: 'x' });
+    expect(idle.isError).toBeFalsy();
+    expect(idle.output).toContain('w1 has no running task');
+    expect(idle.output).toContain('Agent(resume="agent-w1", run_in_background=true');
+
+    liveAgentTaskIds.push('agent-w1');
+    const busy = await run(ix.get(ITowerSendTool), { to: 'w1', subject: 'wake', body: 'x' });
+    expect(busy.output).not.toContain('has no running task');
+  });
+
+  it('stamps the sender token count from the usage service into the message frontmatter', async () => {
+    usageTotal = { inputOther: 100, output: 50, inputCacheRead: 10, inputCacheCreation: 5 };
+
+    await run(ix.get(ITowerSendTool), { to: 'w1', subject: 'metered', body: 'x' });
+
+    const dir = join(repo, '.tower/comms/inbox');
+    const file = (await readdir(dir)).find((name) => name.includes('metered'));
+    const { fields } = parseFrontmatter(await readFile(join(dir, file!), 'utf8'));
+    expect(fields['tokens']).toBe('165');
+  });
+
+  it('records tokens as -1 when the usage service reports nothing', async () => {
+    await run(ix.get(ITowerSendTool), { to: 'w1', subject: 'unmetered', body: 'x' });
+
+    const dir = join(repo, '.tower/comms/inbox');
+    const file = (await readdir(dir)).find((name) => name.includes('unmetered'));
+    const { fields } = parseFrontmatter(await readFile(join(dir, file!), 'utf8'));
+    expect(fields['tokens']).toBe('-1');
+  });
+
+  it('skips the delivery note for broadcasts and for sends from workers', async () => {
+    const broadcast = await run(ix.get(ITowerSendTool), { to: 'all', subject: 'b', body: 'x' });
+    expect(broadcast.output).not.toContain('has no running task');
+
+    currentAgentId = 'agent-w1';
+    const fromWorker = await run(ix.get(ITowerSendTool), { to: 'w2', subject: 'b', body: 'x' });
+    expect(fromWorker.output).not.toContain('has no running task');
+  });
+
+  it('marks the caller inbox read, so a completion refused for unread messages passes after TowerInbox', async () => {
+    const store = new TowerStore(repo);
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Build engine', scope: ['src/engine/**'] }],
+    });
+    await git(repo, 'checkout', '-b', 'feat/build-engine');
+    await commitFile(repo, 'src/engine/engine.ts', 'export const engine = 1;\n', 'engine work');
+    await git(repo, 'checkout', 'main');
+    await store.registerAgent({
+      name: 'w3',
+      kind: 'worker',
+      agentId: 'agent-w3',
+      missionId: 'M1',
+      branch: 'feat/build-engine',
+      spawnedAt: '2026-09-20T00:00:00.000Z',
+    });
+    await store.updateMission('tower', 'M1', { status: 'active', owner: 'w3' }, { silent: true });
+    const sent = await run(ix.get(ITowerSendTool), {
+      to: 'w3',
+      subject: 'requirement change',
+      body: 'add tests',
+    });
+    expect(sent.isError).toBeFalsy();
+
+    currentAgentId = 'agent-w3';
+    const refused = await run(ix.get(ITowerMissionTool), { id: 'M1', status: 'completed' });
+    expect(refused.isError).toBe(true);
+    expect(refused.output).toContain('1 unread inbox message(s) for w3');
+    expect(refused.output).toContain('call TowerInbox');
+
+    const inbox = await run(ix.get(ITowerInboxTool), {});
+    expect(inbox.isError).toBeFalsy();
+    expect(inbox.output).toContain('subject: requirement change');
+    const entry = (await store.load()).roster.agents.find((agent) => agent.name === 'w3');
+    expect(Date.parse(entry!.lastInboxReadAt!)).toBeGreaterThan(
+      Date.parse('2026-09-20T00:00:00.000Z'),
+    );
+
+    const accepted = await run(ix.get(ITowerMissionTool), { id: 'M1', status: 'completed' });
+    expect(accepted.isError).toBeFalsy();
+    expect(accepted.output).toContain('status: completed');
   });
 });
 
@@ -477,7 +745,230 @@ describe('TowerStatusTool', () => {
     expect(result.output).toContain('💀 failed');
     expect(result.output).toContain('## Dead workers');
     expect(result.output).toContain('M1 owner w1 died (failed)');
-    expect(result.output).toContain('Agent(resume="agent-w1"');
+    expect(result.output).toContain('diagnose first: check why it died');
+    expect(result.output).toContain('lost contact, timeout, OOM');
+    expect(result.output).toMatch(
+      /died \(failed\) — diagnose first[\s\S]*Agent\(resume="agent-w1", run_in_background=true/,
+    );
+  });
+
+  it('advises fixing or escalating a systematic death cause before any revive', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'engine', scope: ['src/engine/**'] }],
+    });
+    const store = new TowerStore(repo);
+    await store.registerAgent({
+      name: 'w1',
+      kind: 'worker',
+      agentId: 'agent-w1',
+      missionId: 'M1',
+      spawnedAt: new Date().toISOString(),
+    });
+    await store.updateMission('tower', 'M1', { status: 'active', owner: 'w1' }, { silent: true });
+    await store.markAgentDied('agent-w1', 'failed', 'TS2304: Cannot find name');
+
+    const result = await run(ix.get(ITowerStatusTool), {});
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('M1 owner w1 died (failed)');
+    expect(result.output).toContain('systematic cause');
+    expect(result.output).toContain('fixed or escalated to the human before any revive');
+  });
+
+  it('shows a user-stopped roster agent without the recovery hint', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'engine', scope: ['src/engine/**'] }],
+    });
+    const store = new TowerStore(repo);
+    await store.registerAgent({
+      name: 'w1',
+      kind: 'worker',
+      agentId: 'agent-w1',
+      missionId: 'M1',
+      spawnedAt: new Date().toISOString(),
+    });
+    await store.updateMission('tower', 'M1', { status: 'active', owner: 'w1' }, { silent: true });
+    await store.markAgentDied('agent-w1', 'killed', userCancellationReason().message);
+
+    const result = await run(ix.get(ITowerStatusTool), {});
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('w1 (worker) — agent agent-w1, mission M1');
+    expect(result.output).toContain('💀 killed');
+    expect(result.output).toContain('## Dead workers');
+    expect(result.output).toContain('M1 owner w1 was stopped by the user (killed)');
+    expect(result.output).toContain('dead by intent');
+    expect(result.output).not.toContain('diagnose first');
+    expect(result.output).not.toContain('Agent(resume=');
+  });
+
+  it('flags planned missions without a spawned worker in an Awaiting spawn section', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [
+        { title: 'Build engine', scope: ['src/engine/**'] },
+        { title: 'Build UI', scope: ['src/ui/**'] },
+      ],
+    });
+    const store = new TowerStore(repo);
+    await store.updateMission('tower', 'M2', { status: 'active', owner: 'w-ui' }, { silent: true });
+
+    const result = await run(ix.get(ITowerStatusTool), {});
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('## Awaiting spawn');
+    expect(result.output).toContain('M1 (feat/build-engine) — planned but no worker spawned yet');
+    expect(result.output).toContain('TowerSpawn(kind="worker", mission_id="M1"');
+    expect(result.output).not.toContain('M2 (feat/build-ui) — planned but no worker spawned yet');
+
+    await store.updateMission('tower', 'M1', { status: 'active', owner: 'w-engine' }, { silent: true });
+    const settled = await run(ix.get(ITowerStatusTool), {});
+    expect(settled.output).not.toContain('## Awaiting spawn');
+  });
+});
+
+describe('TowerReviewTool', () => {
+  async function setupReviewableBranch(options: { readonly withOwner?: boolean } = {}) {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Build engine', scope: ['src/engine/**'] }],
+    });
+    await git(repo, 'branch', 'feat/build-engine');
+    const store = new TowerStore(repo);
+    if (options.withOwner !== false) {
+      await store.registerAgent({
+        name: 'w1',
+        kind: 'worker',
+        agentId: 'agent-w1',
+        missionId: 'M1',
+        spawnedAt: new Date().toISOString(),
+      });
+      await store.updateMission('tower', 'M1', { status: 'active', owner: 'w1' }, { silent: true });
+    }
+    await store.registerAgent({
+      name: 'r1',
+      kind: 'reviewer',
+      agentId: 'agent-r1',
+      reviewTarget: 'feat/build-engine',
+      reviewMissionId: 'M1',
+      spawnedAt: new Date().toISOString(),
+    });
+    currentAgentId = 'agent-r1';
+    return store;
+  }
+
+  it('routes a non-clean verdict at the owning worker with the review file', async () => {
+    const store = await setupReviewableBranch();
+
+    const result = await run(ix.get(ITowerReviewTool), {
+      target: 'feat/build-engine',
+      status: 'p1-2items',
+      merge: 'hold',
+      findings: 'broken error handling',
+      decision: 'needs rework',
+    });
+
+    expect(result.isError).toBeFalsy();
+    const review = await store.latestReview('feat/build-engine');
+    expect(review).toBeDefined();
+    expect(result.output).toContain(`review submitted: ${review!.file}`);
+    expect(result.output).toContain(`next: resume w1 with this review file (${review!.file})`);
+    expect(result.output).toContain('Agent(resume="agent-w1", run_in_background=true');
+    expect(result.output).not.toContain('merge-ready');
+  });
+
+  it('reports a clean verdict as merge-ready for TowerMerge', async () => {
+    await setupReviewableBranch();
+
+    const result = await run(ix.get(ITowerReviewTool), {
+      target: 'feat/build-engine',
+      status: 'clean',
+      merge: 'merge',
+      findings: 'none',
+      decision: 'looks good',
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('next: feat/build-engine is merge-ready');
+    expect(result.output).toContain('TowerMerge');
+    expect(result.output).not.toContain('resume w1');
+  });
+
+  it('routes a non-clean verdict through the tower when no worker owns the branch', async () => {
+    await setupReviewableBranch({ withOwner: false });
+
+    const result = await run(ix.get(ITowerReviewTool), {
+      target: 'feat/build-engine',
+      status: 'p2-1items',
+      merge: 'fix-then-merge',
+      findings: 'minor cleanup',
+      decision: 'rework needed',
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('next: no worker on record owns feat/build-engine');
+    expect(result.output).not.toContain('Agent(resume=');
+  });
+});
+
+describe('TowerMergeTool', () => {
+  async function setupMergeableBranch() {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Build engine', scope: ['src/engine/**'] }],
+    });
+    await git(repo, 'checkout', '-b', 'feat/build-engine');
+    await commitFile(repo, 'src/engine/engine.ts', 'export const engine = 1;\n', 'engine work');
+    await git(repo, 'checkout', 'main');
+    const store = new TowerStore(repo);
+    await store.submitReview('tower', {
+      target: 'feat/build-engine',
+      status: 'clean',
+      merge: 'merge',
+      findings: 'none',
+      decision: 'ok',
+    });
+    return store;
+  }
+
+  it('points at TowerTeardown when the merge closes the last open mission', async () => {
+    await setupMergeableBranch();
+
+    const result = await run(ix.get(ITowerMergeTool), { branch: 'feat/build-engine' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('merged feat/build-engine');
+    expect(result.output).toContain('ready for TowerTeardown');
+    expect(result.output).not.toContain('Continue with the remaining missions');
+  });
+
+  it('points at the remaining missions while others are still open', async () => {
+    await setupMergeableBranch();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Build UI', scope: ['src/ui/**'] }],
+    });
+
+    const result = await run(ix.get(ITowerMergeTool), { branch: 'feat/build-engine' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('Continue with the remaining missions in Dependency Flow order');
+    expect(result.output).not.toContain('ready for TowerTeardown');
+  });
+
+  it('points at TowerTeardown when a survey noop-merge closes the last mission', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Survey engine', scope: ['src/engine/**'], kind: 'survey' }],
+    });
+    await git(repo, 'branch', 'feat/survey-engine');
+
+    const result = await run(ix.get(ITowerMergeTool), { branch: 'feat/survey-engine' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('read-only survey');
+    expect(result.output).toContain('ready for TowerTeardown');
   });
 });
 

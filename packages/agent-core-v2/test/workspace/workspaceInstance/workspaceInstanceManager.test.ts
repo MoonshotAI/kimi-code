@@ -58,7 +58,7 @@ class TestRuntimeUnitHost implements RuntimeUnitHost {
     try {
       attachment = await prepare(host);
     } catch (error) {
-      for (const registration of registrations.reverse()) await registration.remove();
+      for (const registration of registrations.toReversed()) await registration.remove();
       throw error;
     }
     let active = true;
@@ -66,7 +66,7 @@ class TestRuntimeUnitHost implements RuntimeUnitHost {
       if (!active) return;
       active = false;
       await attachment.dispose();
-      for (const registration of registrations.reverse()) await registration.remove();
+      for (const registration of registrations.toReversed()) await registration.remove();
       const index = this.units.indexOf(handle);
       if (index >= 0) this.units.splice(index, 1);
     };
@@ -88,7 +88,7 @@ class TestRuntimeUnitHost implements RuntimeUnitHost {
   }
 
   async dispose(): Promise<void> {
-    for (const unit of [...this.units].reverse()) await unit.dispose();
+    for (const unit of [...this.units].toReversed()) await unit.dispose();
   }
 }
 
@@ -139,7 +139,7 @@ function manager(
     { scope: () => 'sessions' },
     workspaces,
     { ready },
-    ...Array.from({ length: 22 }, () => undefined),
+    ...Array.from({ length: 23 }, () => undefined),
     new TestRuntimeUnitHostFactory(),
   ];
   args[18] = { entries: () => [] };
@@ -198,7 +198,7 @@ describe('WorkspaceInstanceManager', () => {
     await remote.dispose();
     expect(one.runtimes.current('remote')).toBeUndefined();
     expect(two.runtimes.current('remote')).toBeUndefined();
-    expect(events.filter((event) => event.startsWith('detach:remote-provider:')).sort()).toEqual([
+    expect(events.filter((event) => event.startsWith('detach:remote-provider:')).toSorted()).toEqual([
       'detach:remote-provider:one',
       'detach:remote-provider:two',
     ]);

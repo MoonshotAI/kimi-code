@@ -15,9 +15,9 @@ import {
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { BuiltinAgentProfileLoaderService } from '#/app/agentProfileCatalog/builtinAgentProfileLoaderService';
 import { registerAgentProfile } from '#/app/agentProfileCatalog/contribution';
-import type { ToolCall } from '#/kosong/contract/message';
+import type { ToolCall } from '#human/llm/message';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
-import type { HostFsChange } from '#/os/interface/hostFsWatch';
+import type { WatchChange } from '#human/utils/watch';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -74,7 +74,6 @@ function createAtomicDocumentStore(): AtomicDocumentStore {
       [...documents.keys()]
         .filter((key) => key.startsWith(`${scope}/${prefix}`))
         .map((key) => key.slice(scope.length + 1)),
-    watch: () => Event.None as Event<void>,
     acquire: () => ({ dispose: () => {} }),
   };
 }
@@ -263,7 +262,7 @@ describe('AgentProfileService.bind', () => {
 
   it('freezes the system prompt when the session instructions change', async () => {
     const persistence = new InMemoryWireRecordPersistence();
-    const emitter = new Emitter<readonly HostFsChange[]>();
+    const emitter = new Emitter<readonly WatchChange[]>();
     let agentsMd = 'v1 instructions';
     ctx = createTestAgent(
       { persistence },

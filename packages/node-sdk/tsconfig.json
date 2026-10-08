@@ -4,5 +4,5 @@
     "lib": ["ESNext"],
     "experimentalDecorators": true
   },
-  "include": ["src", "test", "examples", "../agent-core/src/prompt-modules.d.ts"]
+  "include": ["src", "test", "examples", "../agent-core-v2/src/env.d.ts"]
 }

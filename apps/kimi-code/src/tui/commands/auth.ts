@@ -184,7 +184,7 @@ async function handleOpenPlatformLogin(
       selection.thinking !== 'off' && selection.thinking !== 'on'
         ? selection.thinking
         : undefined,
-    apiKey,
+    credential: { apiKey },
   });
 
   await host.harness.setConfig({

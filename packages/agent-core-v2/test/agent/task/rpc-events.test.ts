@@ -22,7 +22,6 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { IEventBus } from '#/app/event/eventBus';
 import type { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { MessageStepRequest } from '#/agent/loop/stepRequest';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { ErrorCodes } from '#/errors';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -35,6 +34,7 @@ import {
   type TestAgentContext,
   type TestAgentServiceOverride,
 } from '../../harness';
+import { submitPromptTurn } from '../loop/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { executeTool, type TestExecutableToolContext } from '../../tools/fixtures/execute-tool';
 import {
@@ -263,8 +263,8 @@ async function drainNotifications(ctx: TestAgentContext): Promise<void> {
   ctx.mockNextResponse({ type: 'text', text: 'notification drain ack' });
   await vi.waitFor(() => {
     const loop = ctx.get(IAgentLoopService);
-    expect(loop.status().state).toBe('idle');
-    expect(loop.hasPendingRequests()).toBe(false);
+    expect(loop.snapshot().state).toBe('idle');
+    expect(loop.snapshot().hasPendingRequests).toBe(false);
   });
 }
 
@@ -654,6 +654,7 @@ describe('AgentTaskService — notification delivery', () => {
     const text = message.content[0]!.text;
     expect(text).toContain('Background process completed');
     expect(text).toContain('shell task completed.');
+    expect(text).toMatch(/Wall time: \d+\.\d{3} seconds/);
   });
 
   it('enqueues stopped process task notifications into the turn flow', async () => {
@@ -691,7 +692,7 @@ describe('AgentTaskService — notification delivery', () => {
     expect(outputString(result)).toContain('status: killed');
     expect(notifiedCount(ctx)).toBe(0);
     expect(agent.context.appendUserMessage).not.toHaveBeenCalled();
-    expect(ctx.get(IAgentLoopService).hasPendingRequests()).toBe(false);
+    expect(ctx.get(IAgentLoopService).snapshot().hasPendingRequests).toBe(false);
     expect(manager.getTask(taskId)).toMatchObject({
       status: 'killed',
       terminalNotificationSuppressed: true,
@@ -729,7 +730,7 @@ describe('AgentTaskService — notification delivery', () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(agent.context.appendUserMessage).not.toHaveBeenCalled();
-      expect(readerFixture.ctx.get(IAgentLoopService).hasPendingRequests()).toBe(false);
+      expect(readerFixture.ctx.get(IAgentLoopService).snapshot().hasPendingRequests).toBe(false);
     } finally {
       if (readerFixture !== undefined) {
         await readerFixture.ctx.dispose();
@@ -890,6 +891,7 @@ describe('AgentTaskService — notification delivery', () => {
         new Error('output unavailable'),
       );
 
+      await ctx.restorePersisted();
       await ctx.get(IAgentConversationUndoService).undo(1);
 
       expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(2);
@@ -922,24 +924,15 @@ describe('AgentTaskService — notification delivery', () => {
 
     try {
       ctx.appendTurnExchange('kept prompt', 'kept answer');
-      const active = (
-        await loop.enqueue(
-          new MessageStepRequest(
-            {
-              role: 'user',
-              content: [{ type: 'text', text: 'remove me' }],
-              toolCalls: [],
-              origin: { kind: 'user' },
-            },
-            { admission: 'newTurn' },
-          ),
-        ).assigned
-      ).turn;
+      const active = submitPromptTurn(loop, {
+        message: { role: 'user', content: [{ type: 'text', text: 'remove me' }] },
+        meta: { origin: { kind: 'user' } },
+      }).turn;
       await started;
       const taskId = registerProcess(manager, immediateProcess(0, 'done'), 'echo done', 'done');
       await vi.waitFor(() => {
         expect(manager.getTask(taskId)?.status).toBe('completed');
-        expect(loop.hasPendingRequests()).toBe(true);
+        expect(loop.snapshot().hasPendingRequests).toBe(true);
       });
       expect(notifiedCount(ctx)).toBe(0);
 
@@ -1169,7 +1162,7 @@ describe('AgentTaskService — notification delivery', () => {
         sink: 'context',
         notificationType: 'task.completed',
         title: 'Background agent completed',
-        body: 'inspect repository completed.',
+        body: expect.stringMatching(/^Wall time: \d+\.\d{3} seconds\ninspect repository completed\.$/),
         severity: 'info',
         sourceKind: 'background_task',
         sourceId: taskId,
@@ -1223,7 +1216,7 @@ describe('AgentTaskService — notification delivery', () => {
         sink: 'context',
         notificationType: 'task.completed',
         title: 'Background process completed',
-        body: 'done completed.',
+        body: expect.stringMatching(/^Wall time: \d+\.\d{3} seconds\ndone completed\.$/),
         severity: 'info',
         sourceKind: 'background_task',
         sourceId: taskId,

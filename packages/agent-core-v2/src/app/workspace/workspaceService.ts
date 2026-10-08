@@ -1,10 +1,12 @@
 import { basename, isAbsolute } from 'pathe';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { ILogService } from '#/_base/log/log';
 import { encodeWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { IEventService } from '#/app/event/event';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
 import { IWorkspaceService, type Workspace, type WorkspaceUpdate } from './workspace';
@@ -15,6 +17,7 @@ import {
 } from './workspaceEvents';
 import {
   collectAliasIds,
+  compactSessionIndexIfStale,
   dedupeByRoot,
   readSessionIndexEntries,
   readSessionIndexWorkDirs,
@@ -30,7 +33,9 @@ export class WorkspaceService implements IWorkspaceService {
   constructor(
     @IWorkspacePersistence private readonly store: IWorkspacePersistence,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
+    @IAppendLogStore private readonly appendLogs: IAppendLogStore,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
+    @ILogService private readonly log: ILogService,
     @IEventService private readonly event: IEventService,
   ) {}
 
@@ -166,15 +171,39 @@ export class WorkspaceService implements IWorkspaceService {
     if (loaded === undefined) {
       const rebuilt = await this.rebuildFromSessionIndex();
       await this.store.save({ workspaces: [...rebuilt.values()], deletedIds: [] });
-      this.merged = true;
-      return;
-    }
-    const byId = new Map(loaded.workspaces.map((ws) => [ws.id, ws]));
-    const deletedIds = new Set(loaded.deletedIds);
-    if (await this.mergeFromSessionIndex(byId, deletedIds)) {
-      await this.store.save({ workspaces: [...byId.values()], deletedIds: [...deletedIds] });
+    } else {
+      const byId = new Map(loaded.workspaces.map((ws) => [ws.id, ws]));
+      const deletedIds = new Set(loaded.deletedIds);
+      if (await this.mergeFromSessionIndex(byId, deletedIds)) {
+        await this.store.save({ workspaces: [...byId.values()], deletedIds: [...deletedIds] });
+      }
     }
     this.merged = true;
+    await this.compactSessionIndex();
+  }
+
+  private async compactSessionIndex(): Promise<void> {
+    try {
+      await compactSessionIndexIfStale({
+        storage: this.storage,
+        appendLogs: this.appendLogs,
+        sessionDirExists: (dir) => this.sessionDirExists(dir),
+      });
+    } catch (error) {
+      this.log.warn('session index compaction failed; will retry on the next startup', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async sessionDirExists(dir: string): Promise<boolean> {
+    try {
+      return (await this.hostFs.stat(dir)).isDirectory;
+    } catch (error) {
+      const code = (unwrapErrorCause(error) as NodeJS.ErrnoException | undefined)?.code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') return false;
+      return true;
+    }
   }
 
   private async loadCatalog(): Promise<WorkspaceCatalog> {

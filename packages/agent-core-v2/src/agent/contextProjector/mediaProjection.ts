@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 
-import type { ContentPart, Message } from '#/kosong/contract/message';
+import type { Message } from '#/llm-adapter/contract/message';
+import type { ContentPart } from '#human/llm/message';
+
+import { buildMediaPathTag, mediaKindOfPart } from '#/agent/media/mediaRef';
 
 import type { MediaStripSnapshot } from './contextProjector';
 
@@ -81,6 +84,17 @@ function mediaStripSnapshotKeys(snapshot: MediaStripSnapshot): ReadonlySet<strin
   return (snapshot as unknown as MediaStripSnapshotData).keys;
 }
 
+function mediaPathTag(
+  part: DegradableMediaPart,
+  mediaPaths: ReadonlyMap<string, string> | undefined,
+): ContentPart | undefined {
+  const path = mediaPaths?.get(mediaContainer(part).url);
+  if (path === undefined) return undefined;
+  const kind = mediaKindOfPart(part);
+  if (kind === undefined) return undefined;
+  return { type: 'text', text: buildMediaPathTag(kind, path) };
+}
+
 export function captureMediaStripSnapshot(
   messages: readonly Message[],
 ): MediaStripSnapshot {
@@ -96,6 +110,7 @@ export function captureMediaStripSnapshot(
 export function stripMediaPartsBySnapshot(
   messages: readonly Message[],
   snapshot: MediaStripSnapshot,
+  mediaPaths?: ReadonlyMap<string, string>,
 ): readonly Message[] {
   const keys = mediaStripSnapshotKeys(snapshot);
   let changed = false;
@@ -105,7 +120,7 @@ export function stripMediaPartsBySnapshot(
       if (!isDegradableMediaPart(part) || !keys.has(mediaStripKey(part))) return part;
       changed = true;
       messageChanged = true;
-      return { type: 'text', text: MEDIA_STRIPPED_PLACEHOLDERS[part.type] };
+      return mediaPathTag(part, mediaPaths) ?? { type: 'text', text: MEDIA_STRIPPED_PLACEHOLDERS[part.type] };
     });
     return messageChanged ? { ...message, content } : message;
   });
@@ -116,6 +131,7 @@ export function degradeOlderMediaParts(
   messages: readonly Message[],
   keepRecent: number,
   placeholders: MediaPlaceholderSet = MEDIA_DEGRADED_PLACEHOLDERS,
+  mediaPaths?: ReadonlyMap<string, string>,
 ): readonly Message[] {
   const mediaCount = messages.reduce(
     (count, message) => count + message.content.filter(isDegradableMediaPart).length,
@@ -129,7 +145,7 @@ export function degradeOlderMediaParts(
     const content = message.content.map((part): ContentPart => {
       if (toDegrade === 0 || !isDegradableMediaPart(part)) return part;
       toDegrade -= 1;
-      return { type: 'text', text: placeholders[part.type] };
+      return mediaPathTag(part, mediaPaths) ?? { type: 'text', text: placeholders[part.type] };
     });
     return { ...message, content };
   });

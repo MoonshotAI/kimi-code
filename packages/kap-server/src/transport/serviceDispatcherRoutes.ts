@@ -1,6 +1,7 @@
 import type { Scope } from '@moonshot-ai/agent-core-v2';
 
 import { requestLog } from '../lib/requestLog';
+import { reservePromptId, type PromptIdReservation } from '../routes/prompts';
 import { okEnvelope } from '../protocol/envelope';
 import { ErrorCode } from '../protocol/error-codes';
 import type { ScopeKind } from './channel';
@@ -84,7 +85,15 @@ function makeHandler(
       );
     }
 
+    let promptReservation: PromptIdReservation | undefined;
     try {
+      promptReservation =
+        scopeKind === 'agent' && service === 'agentPromptService' && method === 'submit'
+          ? reservePromptId(
+              (req.params as Record<string, string>)['session_id'] ?? '',
+              (arg as { promptId?: string } | undefined)?.promptId,
+            )
+          : undefined;
       const result = await withTimeout(
         dispatch(
           core,
@@ -92,13 +101,15 @@ function makeHandler(
           req.params as Record<string, string>,
           service,
           method,
-          arg,
+          promptReservation === undefined ? arg : { ...(arg as object), promptId: promptReservation.id },
           lookup,
         ),
         opts.callTimeoutMs ?? 30_000,
       );
+      promptReservation?.submit();
       return reply.send(okEnvelope(result, requestId));
     } catch (error) {
+      promptReservation?.dispose();
       const envelope = mapError(error, requestId);
       const log = requestLog(req);
       if (envelope.code === ErrorCode.INTERNAL_ERROR) {

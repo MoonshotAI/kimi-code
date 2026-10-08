@@ -1,6 +1,16 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { IModelCatalog } from '@moonshot-ai/agent-core-v2';
+import { createActor, setup } from '@moonshot-ai/agent-core-v2/human/xstate2';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
 
+import { startServer } from '../src/start';
+import { fakeModelCatalog } from './helpers/fakeModelCatalog';
+import { fixedTokenAuth } from './helpers/fixedAuth';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { sharedServer } from './helpers/sharedServer';
 
 function rawToString(data: RawData): string {
@@ -85,14 +95,6 @@ describe('WS upgrade auth', () => {
       expect(firstFrame).toMatchObject({ type: firstType });
     });
 
-    it('accepts a valid Authorization bearer header', async () => {
-      const { ws, firstFrame } = await openConn(url(), {
-        headers: { Authorization: `Bearer ${token()}` },
-      });
-      sockets.push(ws);
-      expect(firstFrame).toMatchObject({ type: firstType });
-    });
-
     it('rejects a wrong bearer token', async () => {
       await expectRejected(url(), { protocols: ['kimi-code.bearer.wrong'] });
     });
@@ -102,8 +104,63 @@ describe('WS upgrade auth', () => {
     });
   });
 
+  describe('/api/v1/debug/ws', () => {
+    it('streams xstate inspection envelopes to an authorized client', async () => {
+      const home = await mkdtemp(join(tmpdir(), 'kimi-kap-debug-ws-'));
+      const server = await startServer({
+        hostIdentity: TEST_HOST_IDENTITY,
+        host: '127.0.0.1',
+        port: 0,
+        homeDir: home,
+        logLevel: 'silent',
+        debugEndpoints: true,
+        authTokenService: fixedTokenAuth(),
+        seeds: [[IModelCatalog, fakeModelCatalog()]],
+      });
+      const ws = new WebSocket(`ws://127.0.0.1:${server.port}/api/v1/debug/ws`, {
+        headers: { Authorization: 'Bearer test-token' },
+      });
+      sockets.push(ws);
+      try {
+        const envelope = await new Promise<Record<string, unknown>>((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error('no inspection envelope within timeout')),
+            5000,
+          );
+          ws.on('message', (data) => {
+            const frame = JSON.parse(rawToString(data)) as Record<string, unknown>;
+            if (frame['eventType'] === 'debug.probe') {
+              clearTimeout(timer);
+              resolve(frame);
+            }
+          });
+          ws.on('error', reject);
+          ws.once('open', () => {
+            const machine = setup({}).createMachine({
+              id: 'debugWsProbe',
+              initial: 'idle',
+              states: { idle: { on: { 'debug.probe': 'done' } }, done: {} },
+            });
+            const actor = createActor(machine);
+            actor.start();
+            actor.send({ type: 'debug.probe' });
+          });
+        });
+        expect(envelope['type']).toBe('@xstate.event');
+        expect(envelope['logicId']).toBe('debugWsProbe');
+        expect(typeof envelope['actorSessionId']).toBe('string');
+        expect(typeof envelope['timestamp']).toBe('number');
+      } finally {
+        await server.close();
+        await rm(home, { recursive: true, force: true });
+      }
+    });
+  });
+
   it('rejects upgrades to a non-WS path', async () => {
     const badUrl = `${v1Url().replace('/api/v1/ws', '/api/v1/other')}`;
     await expectRejected(badUrl, { protocols: [`kimi-code.bearer.${token()}`] });
+    const debugUrl = `${v1Url().replace('/api/v1/ws', '/api/v1/debug/ws')}`;
+    await expectRejected(debugUrl, { protocols: [`kimi-code.bearer.${token()}`] });
   });
 });

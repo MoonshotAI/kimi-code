@@ -4,7 +4,7 @@ import { createControlledPromise } from '@antfu/utils';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
 import { summarizeSkill } from '#/features/skill/catalog/types';
 import { IAgentSkillService } from '#/features/skill/skillService';
-import type { generate as kosongGenerate } from '#/kosong/contract/generate';
+import type { LlmRequester } from '#human/llm/requester/requester';
 import {
   ISkillTool,
   MAX_SKILL_QUERY_DEPTH,
@@ -21,7 +21,7 @@ import {
   type TestAgentContext,
 } from '../../harness';
 
-type GenerateFn = typeof kosongGenerate;
+type GenerateFn = LlmRequester;
 
 const COMMIT_SKILL = stubSkill('commit', {
   description: 'commit changes',
@@ -272,23 +272,26 @@ describe('AgentSkillService busy delivery (harness)', () => {
 
     const gate = createControlledPromise<void>();
     let generateCalls = 0;
-    const generate: GenerateFn = async (_chat, _systemPrompt, _tools, _history, callbacks, options) => {
-      generateCalls += 1;
-      const n = generateCalls;
-      options?.onRequestStart?.();
-      if (n === 1) await gate;
-      options?.signal?.throwIfAborted();
-      const text = `response-${String(n)}`;
-      await callbacks?.onMessagePart?.({ type: 'text', text });
-      options?.onStreamEnd?.();
-      return {
-        id: `mock-${String(n)}`,
-        message: { role: 'assistant', content: [{ type: 'text', text }], toolCalls: [] },
-        usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
-        finishReason: 'completed',
-        rawFinishReason: 'stop',
-        traceId: null,
-      };
+    const generate: GenerateFn = {
+      generate: async (_config, _content, control) => {
+        generateCalls += 1;
+        const n = generateCalls;
+        control.onEvent?.({ type: 'llm.sent' });
+        if (n === 1) await gate;
+        control.signal.throwIfAborted();
+        const text = `response-${String(n)}`;
+        control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text } });
+        control.onEvent?.({
+          type: 'llm.streaming.usage',
+          usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        });
+        control.onEvent?.({
+          type: 'llm.streaming.finish',
+          finish: { finishReason: 'completed', rawFinishReason: 'stop' },
+        });
+        control.onEvent?.({ type: 'llm.streaming.message_id', messageId: `mock-${String(n)}` });
+        control.onEvent?.({ type: 'llm.done' });
+      },
     };
 
     const persistence = new InMemoryWireRecordPersistence();
@@ -308,7 +311,7 @@ describe('AgentSkillService busy delivery (harness)', () => {
     await ctx.untilTurnEnd();
 
     const idleResult = await ctx.get(IAgentSkillService).activate({ name: 'tower', args: 'mission-2' });
-    expect(idleResult.turn_id).toBe(1);
+    expect(idleResult.turn_id).toBe(2);
     await ctx.untilTurnEnd();
     expect(generateCalls).toBe(3);
 

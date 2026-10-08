@@ -16,6 +16,13 @@ function userTurnRecord(text: string, time: number): WireRecord {
 }
 
 describe('sliceMainRecordsAtTurn', () => {
+  it('derives a fork last prompt from readable client metadata while retaining the original message', () => {
+    const record: WireRecord = { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: '<browser_ref>serialized</browser_ref>' }], origin: { kind: 'user', clientMetadata: [{ display_text: 'Save button · Rename it' }] } }, time: 2 };
+    const slice = sliceMainRecordsAtTurn([{ type: 'metadata', protocol_version: '1.5', created_at: 1 }, record, userTurnRecord('next', 3)], 'example-source', 0);
+    expect(slice.lastPrompt).toBe('Save button · Rename it');
+    expect(slice.records).toContainEqual(record);
+  });
+
   it('keeps cron records that fall inside a truncated fork slice', () => {
     const records: WireRecord[] = [
       { type: 'metadata', protocol_version: '1.5', created_at: 1 },

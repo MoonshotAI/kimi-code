@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
 
+import { Immer } from 'immer';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -15,11 +16,17 @@ import { TurnEnded } from '#/agent/loop/turnOps';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import { IEventBus, type ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
-import { IAgentFileHistoryService } from '#/features/fileHistory/fileHistory';
+import { IAgentFileHistoryService, type FileBackupEntry, type FileHistoryState } from '#/features/fileHistory/fileHistory';
 import { AgentFileHistoryService, countLineDiff } from '#/features/fileHistory/fileHistoryService';
-import { displacedCheckpoints } from '#/features/fileHistory/fileHistoryOps';
+import {
+  displacedCheckpoints,
+  fileHistoryKey,
+  FileHistoryCheckpointed,
+  FileHistoryTracked,
+} from '#/features/fileHistory/fileHistoryOps';
+import type { FoldContext } from '#/state/state';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import type { ToolCall } from '#/kosong/contract/message';
+import type { ToolCall } from '#human/llm/message';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
@@ -659,5 +666,184 @@ describe('countLineDiff', () => {
     const budget = { remaining: 10 };
     expect(countLineDiff(before, after, budget)).toBeUndefined();
     expect(budget.remaining).toBe(10);
+  });
+});
+
+describe('fileHistoryKey folds at scale', () => {
+  interface ReferenceCheckpoint {
+    turnId: number;
+    phase?: 'start' | 'end';
+    entries: Record<string, FileBackupEntry>;
+  }
+
+  interface ReferenceState {
+    checkpoints: ReferenceCheckpoint[];
+    tracked: string[];
+  }
+
+  type FoldEvent = FileHistoryTracked | FileHistoryCheckpointed;
+
+  function referenceFold(state: ReferenceState, event: FoldEvent): void {
+    if (event instanceof FileHistoryCheckpointed) {
+      const phase = event.phase ?? 'start';
+      const existing = state.checkpoints.find(
+        (c) => c.turnId === event.turnId && (c.phase ?? 'start') === phase,
+      );
+      if (existing !== undefined) {
+        existing.entries = { ...event.entries };
+        return;
+      }
+      state.checkpoints.push({ turnId: event.turnId, phase, entries: { ...event.entries } });
+      const displaced = new Set(displacedCheckpoints(state.checkpoints));
+      if (displaced.size > 0) {
+        state.checkpoints = state.checkpoints.filter((c) => !displaced.has(c));
+        const kept = new Set<string>();
+        for (const checkpoint of state.checkpoints) {
+          for (const path of Object.keys(checkpoint.entries)) kept.add(path);
+        }
+        state.tracked = state.tracked.filter((path) => kept.has(path));
+      }
+      return;
+    }
+    if (!state.tracked.includes(event.path)) state.tracked.push(event.path);
+    let checkpoint = state.checkpoints.find(
+      (c) => c.turnId === event.turnId && (c.phase ?? 'start') === 'start',
+    );
+    if (checkpoint === undefined) {
+      state.checkpoints.push({ turnId: event.turnId, phase: 'start', entries: {} });
+      checkpoint = state.checkpoints.at(-1);
+    }
+    if (checkpoint !== undefined && !Object.hasOwn(checkpoint.entries, event.path)) {
+      checkpoint.entries[event.path] = { ...event.entry };
+    }
+  }
+
+  function scriptedEvents(): FoldEvent[] {
+    const events: FoldEvent[] = [];
+    const agentId = 'main';
+    let pathCounter = 0;
+    for (let turn = 1; turn <= 40; turn += 1) {
+      const touched: string[] = [];
+      for (let edit = 0; edit < 8; edit += 1) {
+        if (turn <= 15 && edit < 3) pathCounter += 1;
+        const path =
+          turn <= 15 && edit < 3
+            ? `src/module-${String(pathCounter)}.ts`
+            : `src/module-${String(1 + ((turn * 7 + edit * 13) % pathCounter))}.ts`;
+        touched.push(path);
+        events.push(
+          new FileHistoryTracked({
+            agentId,
+            turnId: turn,
+            path,
+            entry: { key: `blob-${path}-${String(turn)}`, version: turn },
+          }),
+        );
+      }
+      if (turn === 10 || turn === 25) {
+        events.push(
+          new FileHistoryCheckpointed({
+            agentId,
+            turnId: turn,
+            phase: 'end',
+            entries: { 'replaced.txt': { key: 'replaced-key', version: 99 } },
+          }),
+        );
+      }
+      if (turn === 12) {
+        events.push(
+          new FileHistoryCheckpointed({
+            agentId,
+            turnId: 12,
+            entries: { 'start-replaced.txt': { key: null, version: 7 } },
+          }),
+        );
+      }
+      events.push(
+        new FileHistoryCheckpointed({
+          agentId,
+          turnId: turn,
+          phase: 'end',
+          entries: Object.fromEntries(
+            touched.map((path) => [path, { key: `end-${path}`, version: turn }]),
+          ),
+        }),
+      );
+      if (turn === 30) {
+        events.push(
+          new FileHistoryTracked({
+            agentId,
+            turnId: 5,
+            path: 'src/module-1.ts',
+            entry: { key: 'late-touch', version: 30 },
+          }),
+        );
+      }
+    }
+    return events;
+  }
+
+  const replayImmer = new Immer({ autoFreeze: false });
+
+  const foldCtx: FoldContext = {
+    silent: true,
+    checkpoint: () => {},
+    clearCheckpoints: () => {},
+    undoToCheckpoint: () => {},
+    emit: () => {},
+  };
+
+  function foldEvents(
+    events: readonly FoldEvent[],
+    initial: FileHistoryState,
+    reference: ReferenceState,
+  ): FileHistoryState {
+    let state = initial;
+    for (const event of events) {
+      const fold = fileHistoryKey.replayable.folds.get(
+        event instanceof FileHistoryCheckpointed ? FileHistoryCheckpointed : FileHistoryTracked,
+      )!;
+      state = replayImmer.produce(state, (draft) => {
+        fold(draft, event, foldCtx);
+      });
+      referenceFold(reference, event);
+      expect(state.tracked).toEqual(reference.tracked);
+      expect(state.checkpoints).toEqual(reference.checkpoints);
+    }
+    return state;
+  }
+
+  function freshState(): FileHistoryState {
+    return fileHistoryKey.initial() as FileHistoryState;
+  }
+
+  it('folds many tracked paths and checkpoints to the same state as the linear reference', () => {
+    const events = scriptedEvents();
+    const first = foldEvents(events, freshState(), { checkpoints: [], tracked: [] });
+
+    expect(first.checkpoints).toHaveLength(10);
+    expect(Math.min(...first.checkpoints.map((c) => c.turnId))).toBe(36);
+    expect(first.checkpoints.some((c) => c.turnId === 10)).toBe(false);
+    const endOf40 = first.checkpoints.find((c) => c.turnId === 40 && c.phase === 'end');
+    expect(endOf40?.entries['src/module-5.ts']).toEqual({
+      key: 'end-src/module-5.ts',
+      version: 40,
+    });
+    const keptPaths = new Set(first.checkpoints.flatMap((c) => Object.keys(c.entries)));
+    expect(first.tracked).toHaveLength(keptPaths.size);
+    expect(first.tracked).toContain('src/module-5.ts');
+
+    const second = foldEvents(events, freshState(), { checkpoints: [], tracked: [] });
+    expect(second).toEqual(first);
+  });
+
+  it('resumes folding from a mid-sequence state snapshot identically', () => {
+    const events = scriptedEvents();
+    const split = 200;
+    const reference: ReferenceState = { checkpoints: [], tracked: [] };
+    const snapshot = foldEvents(events.slice(0, split), freshState(), reference);
+    const continued = foldEvents(events.slice(split), snapshot, structuredClone(reference));
+    const fresh = foldEvents(events, freshState(), { checkpoints: [], tracked: [] });
+    expect(continued).toEqual(fresh);
   });
 });

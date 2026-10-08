@@ -20,8 +20,10 @@ export default defineConfig({
     ].join('\n'),
   },
   alias: {
-    '@moonshot-ai/agent-core': fileURLToPath(new URL('../agent-core/src/index.ts', import.meta.url)),
     '@moonshot-ai/kaos': fileURLToPath(new URL('../kaos/src/index.ts', import.meta.url)),
+    '@moonshot-ai/kimi-code-oauth/provider-credential': fileURLToPath(
+      new URL('../oauth/src/provider-credential.ts', import.meta.url),
+    ),
     '@moonshot-ai/kimi-code-oauth': fileURLToPath(new URL('../oauth/src/index.ts', import.meta.url)),
     '@moonshot-ai/kosong': fileURLToPath(new URL('../kosong/src/index.ts', import.meta.url)),
   },

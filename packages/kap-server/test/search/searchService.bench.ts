@@ -5,16 +5,16 @@ import { monitorEventLoopDelay, performance, type IntervalHistogram } from 'node
 
 import type {
   IBootstrapService,
-  IFlagService,
+  IConfigService,
   ILogService,
   ISessionIndex,
   SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
+import { DATABASE_SECTION } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   GlobalSearchService,
-  SEARCH_WORKER_FLAG_ID,
   drainGlobalSearchDisposals,
 } from '../../src/search/searchService';
 
@@ -89,14 +89,15 @@ const noopLog = {
   debug: () => {},
 } as unknown as ILogService;
 
-function makeFlags(workerEnabled: boolean): IFlagService {
+function makeConfig(searchEnabled: boolean): IConfigService {
   return {
-    enabled: (id: string) => id === SEARCH_WORKER_FLAG_ID && workerEnabled,
-  } as unknown as IFlagService;
+    ready: Promise.resolve(),
+    get: (domain: string) => (domain === DATABASE_SECTION ? { search: searchEnabled } : undefined),
+  } as unknown as IConfigService;
 }
 
 function makeService(home: string, index: ISessionIndex): GlobalSearchService {
-  const service = new GlobalSearchService(index, makeBootstrap(home), noopLog, makeFlags(true));
+  const service = new GlobalSearchService(index, makeBootstrap(home), noopLog, makeConfig(true));
   service.syncDebounceMs = 0;
   return service;
 }

@@ -7,9 +7,11 @@ export interface TowerRosterEntry {
   readonly kind: TowerAgentKind;
   readonly missionId?: string;
   readonly reviewTarget?: string;
+  readonly reviewMissionId?: string;
   readonly worktree?: string;
   readonly branch?: string;
   readonly spawnedAt: string;
+  readonly lastInboxReadAt?: string;
   readonly diedAt?: string;
   readonly deathStatus?: string;
   readonly deathReason?: string;
@@ -33,6 +35,7 @@ export type TowerMissionKind = 'build' | 'survey';
 export interface TowerMissionTask {
   text: string;
   done: boolean;
+  dropped?: boolean;
 }
 
 export interface TowerMission {
@@ -47,6 +50,7 @@ export interface TowerMission {
   readonly deps: readonly string[];
   status: TowerMissionStatus;
   owner?: string;
+  context?: string;
   tasks: TowerMissionTask[];
   notes: string[];
   blockers: string[];
@@ -77,6 +81,9 @@ export interface TowerReviewInfo {
   readonly reviewedCommit: string;
   readonly date: string;
   readonly file: string;
+  readonly mtimeMs: number;
+  readonly seq?: number;
+  readonly mission?: string;
 }
 
 export interface TowerInboxItem {

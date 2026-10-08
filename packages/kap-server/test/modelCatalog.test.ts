@@ -294,7 +294,7 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       getRequester: () => {
         throw new Error('unused');
       },
-      inspect: () => {
+      generate: () => {
         throw new Error('unused');
       },
       ping: async () => {

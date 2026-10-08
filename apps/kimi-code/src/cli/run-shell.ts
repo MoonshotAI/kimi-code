@@ -3,7 +3,6 @@ import { homedir } from 'node:os';
 
 import {
   createKimiHarness,
-  createKimiHarnessV2,
   flushDiagnosticLogsSync,
   log,
   type KimiHarness,
@@ -18,7 +17,7 @@ import {
   withTelemetryContext,
 } from '@moonshot-ai/kimi-telemetry';
 
-import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE } from '#/constant/app';
+import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE, TUI_HOST_UI_CAPABILITIES } from '#/constant/app';
 import { detectPendingMigration, resolveLegacySourceHome, sameLegacyPath } from '#/migration/index';
 import type { TuiConfig } from '#/tui/config';
 import { loadTuiConfig, TuiConfigParseError } from '#/tui/config';
@@ -32,7 +31,6 @@ import { resolveCommandPath } from '#/utils/process/resolve-command';
 
 import type { CLIOptions } from './options';
 import { resolveAgentProfileSelection } from './agent-selection';
-import { isKimiV2Enabled } from './experimental-v2';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { createKimiCodeHostIdentity } from './version';
 
@@ -68,6 +66,9 @@ export async function runShell(
     homeDir: telemetryBootstrap.homeDir,
     identity: createKimiCodeHostIdentity(version),
     skillDirs: opts.skillsDirs,
+    // The TUI renders the mid-turn update panel; declaring it here is what
+    // makes the engine offer NotifyUser to this process and to no other host.
+    uiCapabilities: TUI_HOST_UI_CAPABILITIES,
     telemetry: telemetryClient,
     onOAuthRefresh: (outcome) => {
       if (outcome.success) {
@@ -81,13 +82,7 @@ export async function runShell(
     },
     sessionStartedProperties: { yolo: opts.yolo, auto: opts.auto, plan: opts.plan, afk: false },
   };
-  // The agent-core-v2 route is the default (same engine gate as `kimi -p`):
-  // the harness is the SDK's v2-backed client, so the whole TUI runs on the
-  // agent-core-v2 engine unless the legacy flag is set.
-  const engineV2 = isKimiV2Enabled();
-  const harness = engineV2
-    ? createKimiHarnessV2(harnessOptions)
-    : createKimiHarness(harnessOptions);
+  const harness = createKimiHarness(harnessOptions);
   startupTrace('harness:created');
   log.info('kimi-code starting', {
     version,
@@ -139,7 +134,6 @@ export async function runShell(
     startupNotice: configWarning,
     migrationPlan,
     migrateOnly: runOptions.migrateOnly,
-    engineV2,
     telemetryDisabled: config.telemetry === false,
   });
 
@@ -244,7 +238,9 @@ export async function runShell(
     const hasContent = tui.hasSessionContent();
     setCrashPhase('shutdown');
     trackLifecycle('exit', { duration_ms: Date.now() - startedAt, tui_mode: tui.state.ui.mode });
-    await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
+    try {
+      await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
+    } catch {}
     const gutter = ' '.repeat(CHROME_GUTTER);
     process.stdout.write(`${gutter}Bye!\n`);
     const hints: string[] = [];
@@ -287,7 +283,9 @@ export async function runShell(
     removeCrashHandlers();
     setCrashPhase('shutdown');
     trackLifecycle('exit', { duration_ms: Date.now() - startedAt, tui_mode: tui.state.ui.mode });
-    await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
+    try {
+      await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
+    } catch {}
     await harness.close();
     throw error;
   }

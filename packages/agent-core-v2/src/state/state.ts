@@ -1,4 +1,4 @@
-import { enableMapSet, enablePatches, type Draft, type Patch } from 'immer';
+import { enableMapSet, type Draft } from 'immer';
 import type { z } from 'zod';
 
 import { BugIndicatingError } from '#/_base/errors/errors';
@@ -9,7 +9,6 @@ import type { PartsTransformer, RecordDehydrator } from '#/wire/record';
 import { StateError, StateErrors } from './errors';
 
 enableMapSet();
-enablePatches();
 
 export type { StateKey } from '#/_base/state/stateRegistry';
 export type { PartsTransformer } from '#/wire/record';
@@ -32,13 +31,6 @@ export type StateFold<S, E extends Event2<any> = Event2<any>> = (
   event: E,
   ctx: FoldContext,
 ) => S | void;
-
-export interface PatchEntry {
-  readonly id: number;
-  readonly eventType: string;
-  readonly patches: readonly Patch[];
-  readonly inversePatches: readonly Patch[];
-}
 
 export interface ReplayableOptions<S> {
   readonly schema: z.ZodType<S>;
@@ -166,13 +158,6 @@ export function registerUndoableProtocol(protocol: UndoableProtocol): void {
   for (const cls of Object.values(protocol.events)) {
     registerEvent2Class(cls);
   }
-}
-
-export function keepsUndoCheckpoints(
-  key: ReplayableStateKey<any>,
-): boolean {
-  const undoable = key.replayable.undoable;
-  return undoable !== undefined && undoable.onUndo === undefined;
 }
 
 export function expandedStateFolds(

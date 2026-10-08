@@ -14,6 +14,7 @@ import {
 } from '#/os/interface/hostProcess';
 
 const isWindows: boolean = process.platform === 'win32';
+const TASKKILL_TIMEOUT_MS = 5_000;
 
 function buildSpawnOptions(options: HostProcessOptions): SpawnOptions {
   const detached = options.detached ?? !isWindows;
@@ -115,17 +116,32 @@ class HostProcess implements IHostProcess {
 
     if (isWindows) {
       const taskkillArgs = ['/T', '/F', '/PID', String(this.pid)];
-      return new Promise<void>((resolve) => {
-        const killer = spawn('taskkill', taskkillArgs, {
-          stdio: 'ignore',
-          windowsHide: true,
-        });
-        const done = (): void => {
-          resolve();
-        };
-        killer.once('error', done);
-        killer.once('close', done);
+      const killer = spawn('taskkill', taskkillArgs, {
+        stdio: 'ignore',
+        windowsHide: true,
       });
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const exited = await Promise.race([
+        new Promise<true>((resolve) => {
+          const done = (): void => {
+            resolve(true);
+          };
+          killer.once('error', done);
+          killer.once('close', done);
+        }),
+        new Promise<false>((resolve) => {
+          timeout = setTimeout(() => {
+            resolve(false);
+          }, TASKKILL_TIMEOUT_MS);
+          timeout.unref?.();
+        }),
+      ]);
+      clearTimeout(timeout);
+      if (!exited) {
+        killer.unref();
+        killer.kill();
+      }
+      return;
     }
 
     try {

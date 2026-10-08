@@ -4,8 +4,8 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEventBus } from '#/app/event/eventBus';
-import { type ToolCall } from '#/kosong/contract/message';
-import { emptyUsage } from '#/kosong/contract/usage';
+import { type ToolCall } from '#human/llm/message';
+import { emptyUsage } from '#human/llm/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
@@ -17,13 +17,18 @@ import { AgentStateService } from '#/agent/state/agentStateService';
 import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult, ToolExecution, ToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext, ResolvedToolExecutionHookContext, BeforeExecuteDecision } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolDedupeService, type ToolDedupeResult } from '#/agent/toolDedupe/toolDedupe';
-import { AgentToolDedupeService, __testing as toolDedupeTesting } from '#/agent/toolDedupe/toolDedupeService';
+import {
+  AgentToolDedupeService,
+  REPEAT_BREAKER_ENV,
+  __testing as toolDedupeTesting,
+} from '#/agent/toolDedupe/toolDedupeService';
 import { IAgentToolExecutorService, type ToolExecutionResult } from '#/agent/toolExecutor/toolExecutor';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
+import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { stubLoopWithHooks, type StubLoop } from '../loop/stubs';
 import { stubToolExecutorEvents } from '../toolExecutor/stubs';
 import { registerToolResultTruncationServices } from '../toolResultTruncation/stubs';
@@ -63,7 +68,7 @@ interface Harness {
 
 function createHarness(
   telemetry: ITelemetryService = recordingTelemetry(telemetryEvents),
-  options: { readonly executorEvents?: boolean } = {},
+  options: { readonly executorEvents?: boolean; readonly env?: Record<string, string> } = {},
 ): Harness {
   const loop = stubLoopWithHooks();
   const events = options.executorEvents === true ? stubToolExecutorEvents() : undefined;
@@ -89,9 +94,7 @@ function createHarness(
         agentContext: stubAgentContext('main', 0),
         scope: (sub?: string): string => (sub ? `agents/main/${sub}` : 'agents/main'),
       } satisfies IAgentScopeContext);
-      reg.defineInstance(IBootstrapService, {
-        homeDir: homedir,
-      } as unknown as IBootstrapService);
+      reg.defineInstance(IBootstrapService, stubBootstrap(homedir, options.env));
       reg.defineInstance(IAgentLoopService, loop);
       reg.defineInstance(IAgentStateService, new AgentStateService());
       reg.define(IAgentToolRegistryService, AgentToolRegistryService);
@@ -673,6 +676,40 @@ describe('AgentToolDedupeService', () => {
     });
   });
 
+  describe('repeat breaker env switch', () => {
+    function disabledHarness(): Harness {
+      return createHarness(recordingTelemetry(telemetryEvents), {
+        env: { [REPEAT_BREAKER_ENV]: '0' },
+      });
+    }
+
+    it('injects no reminders and never force-stops when KIMI_CODE_REPEAT_BREAKER is 0', async () => {
+      const h = disabledHarness();
+      h.registry.register(new EchoTool('Read'));
+      let last: ToolResult | undefined;
+      for (let i = 0; i < 14; i += 1) {
+        const [result] = await runStep(h, 1, i + 1, [toolCall(`c${String(i)}`, 'Read', { p: 1 })]);
+        last = result!.result;
+      }
+      expect(last!.output as string).not.toContain('<system-reminder>');
+      expect(last!.stopTurn).toBeFalsy();
+      expect(h.loop.queue.hasPendingRequests()).toBe(false);
+    });
+
+    it('keeps same-step dedupe active when KIMI_CODE_REPEAT_BREAKER is 0', async () => {
+      const h = disabledHarness();
+      const tool = new EchoTool('Read');
+      h.registry.register(tool);
+      const results = await runStep(h, 1, 1, [
+        toolCall('orig', 'Read', { p: 1 }),
+        toolCall('dup', 'Read', { p: 1 }),
+      ]);
+      expect(tool.calls).toHaveLength(1);
+      const byId = new Map(results.map((result) => [result.toolCallId, result.result]));
+      expect(byId.get('dup')!.output).toBe(byId.get('orig')!.output);
+    });
+  });
+
   describe('repeat breaker handoff step', () => {
     const { REPEAT_BREAKER_STOP_REASON, HANDOFF_VETO_TEXT } = toolDedupeTesting;
 
@@ -1141,8 +1178,7 @@ describe('AgentToolDedupeService', () => {
       ctx.mockNextResponse({ type: 'text', text: 'must never be generated' });
 
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Repeat the bad call' }] });
-      const turn = (ctx.get(IAgentLoopService) as unknown as { activeTurnJob?: { turn: Turn } })
-        .activeTurnJob?.turn;
+      const turn = (ctx.get(IAgentLoopService) as unknown as { active?: { turn: Turn } }).active?.turn;
       await ctx.untilTurnEnd();
 
       expect(exec).not.toHaveBeenCalled();
@@ -1170,8 +1206,7 @@ describe('AgentToolDedupeService', () => {
       ctx.mockNextResponse({ type: 'text', text: 'must never be generated' });
 
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Repeat the bad call' }] });
-      const turn = (ctx.get(IAgentLoopService) as unknown as { activeTurnJob?: { turn: Turn } })
-        .activeTurnJob?.turn;
+      const turn = (ctx.get(IAgentLoopService) as unknown as { active?: { turn: Turn } }).active?.turn;
       await ctx.untilTurnEnd();
 
       expect(exec).not.toHaveBeenCalled();
@@ -1201,8 +1236,7 @@ describe('AgentToolDedupeService', () => {
       ctx.mockNextResponse({ type: 'text', text: 'Handoff: still blocked on the same call.' });
 
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Repeat the bad call' }] });
-      const turn = (ctx.get(IAgentLoopService) as unknown as { activeTurnJob?: { turn: Turn } })
-        .activeTurnJob?.turn;
+      const turn = (ctx.get(IAgentLoopService) as unknown as { active?: { turn: Turn } }).active?.turn;
       await ctx.untilTurnEnd();
 
       expect(exec).not.toHaveBeenCalled();
@@ -1224,8 +1258,7 @@ describe('AgentToolDedupeService', () => {
       ctx.mockNextResponse({ type: 'text', text: 'must never be generated' });
 
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Repeat the bad call' }] });
-      const turn = (ctx.get(IAgentLoopService) as unknown as { activeTurnJob?: { turn: Turn } })
-        .activeTurnJob?.turn;
+      const turn = (ctx.get(IAgentLoopService) as unknown as { active?: { turn: Turn } }).active?.turn;
       await ctx.untilTurnEnd();
 
       expect(exec).not.toHaveBeenCalled();

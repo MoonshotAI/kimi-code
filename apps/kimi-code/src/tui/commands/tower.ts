@@ -1,10 +1,6 @@
 import type { Session } from '@moonshot-ai/kimi-code-sdk';
 
-import {
-  NO_ACTIVE_SESSION_MESSAGE,
-  TOWER_STATUS_PROMPT,
-  TOWER_TEARDOWN_PROMPT,
-} from '../constant/kimi-tui';
+import { TOWER_STATUS_PROMPT, TOWER_TEARDOWN_PROMPT } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import type { SlashCommandHost } from './dispatch';
 
@@ -88,10 +84,6 @@ async function setTowerMode(
 
 async function requireSessionEnsured(host: SlashCommandHost): Promise<Session | undefined> {
   if (host.session !== undefined) return host.session;
-  if (!host.engineV2) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
-    return undefined;
-  }
   // v2 session-less: lazy-create the session, then toggle — the same path
   // the first prompt takes.
   return host.ensureSession();

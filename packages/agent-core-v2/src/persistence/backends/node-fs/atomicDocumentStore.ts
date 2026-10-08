@@ -3,7 +3,6 @@ import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { Event } from '#/_base/event';
 
 import { IFileSystemStorageService, StorageError, StorageErrors } from '#/persistence/interface/storage';
 import {
@@ -72,10 +71,6 @@ class AtomicDocumentStoreBase implements IAtomicDocumentStore {
 
   async list(scope: string, prefix?: string): Promise<readonly string[]> {
     return this.storage.list(scope, prefix);
-  }
-
-  watch(scope: string, key: string): Event<void> {
-    return this.storage.watch?.(scope, key) ?? (Event.None as Event<void>);
   }
 
   acquire(_scope: string, _key: string): IDisposable {

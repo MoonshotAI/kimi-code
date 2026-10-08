@@ -16,7 +16,7 @@ import {
 } from '#/index';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentPlanService } from '#/features/plan/plan';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { turnKey } from '#/agent/loop/turnOps';
 import {
   createAgentTaskPersistence,
@@ -264,7 +264,6 @@ describe('Agent resume', () => {
 
       await vi.waitFor(() => {
         const types = persistence.appended.map((record) => record.type);
-        expect(types).toContain('prompt.accepted');
         expect(types).toContain('prompt.completed');
       });
     } finally {
@@ -619,7 +618,7 @@ describe('Agent resume', () => {
         'agent-seen0000',
         'already delivered summary',
       );
-      const steer = vi.spyOn(ctx.get(IAgentPromptService), 'steer');
+      const steer = vi.spyOn(ctx.get(IAgentLoopService), 'steer');
 
       await ctx.restorePersisted();
       expect(
@@ -708,7 +707,7 @@ describe('Agent resume', () => {
         status: 'completed',
       });
       await backgroundPersistence.appendTaskOutput('agent-new00000', 'newly delivered summary');
-      const steer = vi.spyOn(ctx.get(IAgentPromptService), 'steer');
+      const steer = vi.spyOn(ctx.get(IAgentLoopService), 'steer');
 
       await ctx.restorePersisted();
 
@@ -816,7 +815,7 @@ describe('Agent resume', () => {
     expect(ctx.context.get()).toHaveLength(0);
   });
 
-  it('restores an envelope-less active interval into a budget-reached paused goal', async () => {
+  it('restores an envelope-less active goal without charging offline time', async () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(6_000);
     const persistence = new RecordingAgentPersistence(
       [
@@ -851,11 +850,11 @@ describe('Agent resume', () => {
       const goal = ctx.get(IAgentGoalService).getGoal().goal;
       expect(goal).toMatchObject({
         status: 'paused',
-        wallClockMs: 7_000,
+        wallClockMs: 2_000,
         budget: {
-          wallClockBudgetReached: true,
-          remainingWallClockMs: 0,
-          overBudget: true,
+          wallClockBudgetReached: false,
+          remainingWallClockMs: 4_000,
+          overBudget: false,
         },
       });
       expect(persistence.appended).toEqual([
@@ -863,7 +862,7 @@ describe('Agent resume', () => {
           type: 'goal.update',
           status: 'paused',
           reason: 'Paused after agent resume',
-          wallClockMs: 7_000,
+          wallClockMs: 2_000,
         }),
       ]);
       expect(persistence.rewritten).toContainEqual(
@@ -879,7 +878,7 @@ describe('Agent resume', () => {
     }
   });
 
-  it('restores only post-checkpoint active time from a 1.3 wall-clock checkpoint', async () => {
+  it('restores persisted elapsed time from a 1.3 checkpoint without charging offline time', async () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(6_000);
     const persistence = new RecordingAgentPersistence([
       {
@@ -907,13 +906,13 @@ describe('Agent resume', () => {
 
       expect(ctx.get(IAgentGoalService).getGoal().goal).toMatchObject({
         status: 'paused',
-        wallClockMs: 5_000,
+        wallClockMs: 3_000,
       });
       expect(persistence.appended).toEqual([
         expect.objectContaining({
           type: 'goal.update',
           status: 'paused',
-          wallClockMs: 5_000,
+          wallClockMs: 3_000,
         }),
       ]);
       expect(persistence.rewritten).toContainEqual(
@@ -1012,15 +1011,65 @@ describe('Agent resume', () => {
           step: 1,
         },
       },
+      {
+        type: 'agent.switched',
+        agentId: 'main',
+        branch: 'b1',
+        reason: 'undo',
+        base: { branch: 'main', line: 1 },
+        turns: 1,
+        time: 3,
+      },
+      {
+        type: 'agent.switched',
+        agentId: 'main',
+        branch: 'b1',
+        reason: 'undo',
+        base: { branch: 'main', line: 5 },
+        turns: 1,
+        legacyUndoLine: 12,
+        time: 3,
+      },
       { type: 'context.undo', count: 1 },
+      { type: 'context.undone', agentId: 'main', turns: 1, time: 3 },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'third prompt' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'agent.switched',
+        agentId: 'main',
+        reason: 'undo',
+        turns: 1,
+        time: 4,
+      },
     ] as unknown as WireRecord[]);
     const ctx = testAgent({ persistence, autoConfigure: false });
 
-    await ctx.restorePersisted();
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    try {
+      await ctx.restorePersisted();
 
-    expect(ctx.context.get()).toHaveLength(2);
-    expect(ctx.context.get()[0]?.role).toBe('user');
-    expect(ctx.context.get()[1]?.role).toBe('assistant');
+      expect(ctx.context.get()).toHaveLength(3);
+      expect(ctx.context.get()[0]?.role).toBe('user');
+      expect(ctx.context.get()[1]?.role).toBe('assistant');
+      expect(ctx.context.get()[2]?.role).toBe('user');
+      const skipped = unexpected.filter(
+        (error) => (error as { code?: unknown }).code === 'wire.unknown_record',
+      );
+      expect(skipped.map((error) => (error as Error).message)).toEqual([
+        'Malformed agent.switched record ignored during tree projection',
+        "Duplicate agent.switched branch 'b1' ignored during tree projection",
+      ]);
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
   });
 
   it('skips a fractional undo record on resume without corrupting checkpointed state', async () => {

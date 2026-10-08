@@ -40,12 +40,10 @@ describe('status panel report lines', () => {
         contextUsage: 0.25,
       },
       managedUsage: {
-        summary: null,
-        limits: [
+        rows: [
           {
-            window: { duration: 5, unit: 'hour' },
-            used: 8,
-            limit: 100,
+            name: '5h limit',
+            usedRatio: 0.08,
             resetAt: new Date(Date.now() + 3600_000).toISOString(),
           },
         ],
@@ -140,8 +138,7 @@ describe('status panel report lines', () => {
       maxContextTokens: 0,
       availableModels: {},
       managedUsage: {
-        summary: null,
-        limits: [],
+        rows: [],
         extraUsage: {
           balanceCents: 15000,
           totalCents: 20000,

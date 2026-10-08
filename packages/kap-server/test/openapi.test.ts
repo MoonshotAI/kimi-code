@@ -32,12 +32,13 @@ describe('server-v2 OpenAPI', () => {
     expect(paths['/api/v1/sessions/{session_id}/fs/{*}']).toBeDefined();
   });
 
-  it('projects the session-action dispatcher into archive only', async () => {
+  it('projects the session-action dispatcher into archive and delete only', async () => {
     const doc = await fetchOpenApi();
     const paths = asRecord(doc['paths']);
 
     expect(paths['/api/v1/sessions/{tail}']).toBeUndefined();
     expect(paths['/api/v1/sessions/{session_id}:archive']).toBeDefined();
+    expect(paths['/api/v1/sessions/{session_id}:delete']).toBeDefined();
     expect(paths['/api/v1/sessions/{session_id}:fork']).toBeUndefined();
     expect(paths['/api/v1/sessions/{session_id}:undo']).toBeUndefined();
 
@@ -46,6 +47,12 @@ describe('server-v2 OpenAPI', () => {
     const params = archiveOp['parameters'] as Array<Record<string, unknown>>;
     expect(params.some((p) => p['in'] === 'path' && p['name'] === 'session_id')).toBe(true);
     expect(params.some((p) => p['name'] === 'tail')).toBe(false);
+
+    const deleteOp = operation(doc, '/api/v1/sessions/{session_id}:delete', 'post');
+    expect(deleteOp['operationId']).toBe('runSessionDeleteAction');
+    const deleteParams = deleteOp['parameters'] as Array<Record<string, unknown>>;
+    expect(deleteParams.some((p) => p['in'] === 'path' && p['name'] === 'session_id')).toBe(true);
+    expect(deleteParams.some((p) => p['name'] === 'tail')).toBe(false);
   });
 
   it('describes the file upload as multipart/form-data', async () => {

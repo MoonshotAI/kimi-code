@@ -1,5 +1,5 @@
 import { createDecorator } from '#/_base/di/instantiation';
-import type { Message } from '#/kosong/contract/message';
+import type { Message } from '#/llm-adapter/contract/message';
 
 import type { ContextMessage } from '#/agent/contextMemory/types';
 
@@ -20,6 +20,7 @@ export interface IAgentContextProjectorService {
   project(
     messages: readonly ContextMessage[],
     policy?: ProjectionPolicy,
+    mediaPaths?: ReadonlyMap<string, string>,
   ): readonly Message[];
   captureMediaStripSnapshot(messages: readonly ContextMessage[]): MediaStripSnapshot;
 }

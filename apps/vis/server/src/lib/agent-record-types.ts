@@ -30,12 +30,15 @@ import type {
   CronCursorPayload,
   CronDeletePayload,
   CronTask,
+  ExportSessionManifest,
+  FileHistoryCheckpointed,
+  FileHistoryTracked,
+  Forked,
   FullCompactionBegin,
   FullCompactionCancel,
   FullCompactionComplete,
   GoalClear,
   GoalCreate,
-  GoalForked,
   GoalUpdate,
   InteractionRequestEvent,
   InteractionResolvedEvent,
@@ -49,9 +52,13 @@ import type {
   PlanRevision,
   PluginSessionStartEvent,
   PromptAborted,
-  PromptAccepted,
   PromptCompleted,
   PromptSteered,
+  SubagentCancelled,
+  SubagentCompleted,
+  SubagentFailed,
+  SubagentSpawned,
+  SubagentStarted,
   TaskStarted,
   TaskTerminated,
   TaskWaitDelivered,
@@ -71,7 +78,7 @@ import type {
 } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
 import type { TurnCancel, TurnEnded, TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type { TurnStepInterrupted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
-import type { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/stepRetry/stepRetryService';
+import type { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { UsageRecord } from '@moonshot-ai/agent-core-v2/agent/usage/usageOps';
 import type {
   ConfigUpdate,
@@ -126,6 +133,16 @@ export interface StaleGuardClearedRecord {
   readonly time?: number;
 }
 
+/** v2-dropped durable record: removed with the loop-side prompt admission
+ *  facility, but old wires still contain it. */
+export interface PromptAcceptedRecord {
+  readonly type: 'prompt.accepted';
+  readonly agentId: string;
+  readonly promptId: string;
+  readonly content?: unknown;
+  readonly time?: number;
+}
+
 /** The wire file header record. Declared locally (rather than via v2's
  *  `WireMetadataRecord`) so the union member keeps concrete field types —
  *  the upstream interface carries an index signature that would widen
@@ -155,7 +172,9 @@ export type AgentRecord =
   | WireRecordOf<'cron.add', CronAddPayload>
   | WireRecordOf<'cron.cursor', CronCursorPayload>
   | WireRecordOf<'cron.delete', CronDeletePayload>
-  | WireRecordOf<'forked', GoalForked>
+  | WireRecordOf<'file_history.checkpoint', FileHistoryCheckpointed>
+  | WireRecordOf<'file_history.tracked', FileHistoryTracked>
+  | WireRecordOf<'forked', Forked>
   | WireRecordOf<'full_compaction.begin', FullCompactionBegin>
   | WireRecordOf<'full_compaction.cancel', FullCompactionCancel>
   | WireRecordOf<'full_compaction.complete', FullCompactionComplete>
@@ -177,10 +196,15 @@ export type AgentRecord =
   | WireRecordOf<'plugin.session_start', PluginSessionStartEvent>
   | WireRecordOf<'profile.bind', ProfileBind>
   | WireRecordOf<'prompt.aborted', PromptAborted>
-  | WireRecordOf<'prompt.accepted', PromptAccepted>
+  | PromptAcceptedRecord
   | WireRecordOf<'prompt.completed', PromptCompleted>
   | WireRecordOf<'prompt.steered', PromptSteered>
   | WireRecordOf<'runtime.set_binding', RuntimeSetBinding>
+  | WireRecordOf<'subagent.cancelled', SubagentCancelled>
+  | WireRecordOf<'subagent.completed', SubagentCompleted>
+  | WireRecordOf<'subagent.failed', SubagentFailed>
+  | WireRecordOf<'subagent.spawned', SubagentSpawned>
+  | WireRecordOf<'subagent.started', SubagentStarted>
   | WireRecordOf<'swarm_mode.enter', SwarmModeEnter>
   | WireRecordOf<'swarm_mode.exit', SwarmModeExit>
   | WireRecordOf<'task.started', TaskStarted>
@@ -217,26 +241,10 @@ export type AgentRecordOf<K extends AgentRecord['type']> = Extract<
 
 /**
  * `manifest.json` shape inside a `/export-debug-zip` bundle. Structural
- * mirror of the engine's `ExportSessionManifest`, which is not re-exported
- * from the package entry. All fields optional-tolerant because the manifest
- * comes from another machine / kimi-code version.
+ * current engine manifest with every field optional because the bundle may
+ * come from another machine or an older kimi-code version.
  */
-export interface ImportManifest {
-  sessionId?: string;
-  exportedAt?: string;
-  kimiCodeVersion?: string;
-  wireProtocolVersion?: string;
-  os?: string;
-  nodejsVersion?: string;
-  sessionFirstActivity?: string;
-  sessionLastActivity?: string;
-  title?: string;
-  workspaceDir?: string;
-  sessionLogPath?: string;
-  globalLogPath?: string;
-  installSource?: string;
-  shellEnv?: unknown;
-}
+export type ImportManifest = Partial<ExportSessionManifest>;
 
 /** vis-side bookkeeping for one imported bundle, written to
  *  `imported/<importId>/import-meta.json`. */
@@ -294,6 +302,7 @@ export interface AgentInfo {
   agentId: string;
   type: 'main' | 'sub' | 'independent';
   parentAgentId: string | null;
+  profileName: string | null;
   homedir: string;
   wireExists: boolean;
   wireRecordCount: number;

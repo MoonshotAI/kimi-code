@@ -10,5 +10,6 @@ export const skillDescriptorSchema = z.object({
   source: skillSourceSchema,
   type: z.string().optional(),
   disable_model_invocation: z.boolean().optional(),
+  scopes: z.array(z.enum(['tui', 'web'])).optional(),
 });
 export type SkillDescriptor = z.infer<typeof skillDescriptorSchema>;

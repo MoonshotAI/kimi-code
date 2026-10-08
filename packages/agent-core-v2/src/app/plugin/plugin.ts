@@ -61,6 +61,7 @@ export interface IPluginService {
   mcpServerEntries(): Promise<readonly PluginMcpServerEntry[]>;
   enabledHooks(): Promise<readonly HookDef[]>;
   hasLoadedSnapshot(): boolean;
+  enabledPluginIds(): readonly string[] | undefined;
   readonly onDidReload: Event<PluginReloadEvent>;
   readonly onDidMutate: Event<PluginMutationSummary>;
 }

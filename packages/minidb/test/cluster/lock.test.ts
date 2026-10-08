@@ -2,13 +2,15 @@
 //
 // Lock semantics inside one process: same-shard writer contention with
 // acquire timeout, per-shard independence, read-only coexistence, lock lease
-// renewal, and writer handoff after close.
+// renewal, and cluster-wipe exclusion while a writer is held.
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { ClusterDb } from '../../src/cluster/index.js';
+import { MiniDb } from '../../src/index.js';
+import { ClusterDb, wipeCluster } from '../../src/cluster/index.js';
+import { LockError, LockFile } from '../../src/lockfile.js';
 import { ShardLockPool } from '../../src/cluster/lock-pool.js';
 import { ShardHandle } from '../../src/cluster/shard.js';
 import { shardDirName } from '../../src/cluster/utils.js';
@@ -49,19 +51,57 @@ test('two writers contend on the same shard; loser times out with LockError', as
   }
 });
 
-test('writer handoff: after close, another instance takes the shard over', async () => {
+test('wipe refuses while any shard writer is held and proceeds once released', async () => {
   const dir = await tmpDir('minidb-cluster-');
   try {
-    const key = keyOnShard('handoff', 2, 4);
-    const db1 = await ClusterDb.open({ dir, shardCount: 4, valueCodec: 'json' });
-    await db1.set(key, { n: 1 });
-    await db1.close();
+    const key = keyOnShard('wipe', 2, 4);
+    const db1 = await ClusterDb.open({ dir, shardCount: 4, valueCodec: 'json', lockHoldMs: 0 });
+    await db1.set(key, { v: 1 });
 
-    const db2 = await ClusterDb.open({ dir, shardCount: 4, valueCodec: 'json', lockAcquireTimeoutMs: 500 });
-    assert.deepEqual(await db2.get(key), { n: 1 });
-    await db2.set(key, { n: 2 });
-    assert.deepEqual(await db2.get(key), { n: 2 });
+    assert.equal(await wipeCluster({ dir }), 'locked');
+    assert.deepEqual(await db1.get(key), { v: 1 });
+
+    await db1.close();
+    assert.equal(await wipeCluster({ dir }), 'wiped');
+    assert.equal(await fs.stat(dir).catch(() => null), null);
+
+    const db2 = await ClusterDb.open({ dir, shardCount: 4, valueCodec: 'json' });
+    assert.equal(await db2.get(key), undefined);
+    await db2.set('after', { v: 2 });
+    assert.deepEqual(await db2.get('after'), { v: 2 });
     await db2.close();
+
+    const siblings = await fs.readdir(path.dirname(dir));
+    assert.equal(
+      siblings.filter((entry) => entry.startsWith(`${path.basename(dir)}.wiping-`)).length,
+      0,
+      'wipe leaves no isolated-tree residue behind',
+    );
+
+    const single = await tmpDir('minidb-cluster-single-');
+    try {
+      const wiper = new LockFile(path.join(single, 'db.lock'));
+      assert.equal(await wiper.acquire(), true);
+      const moved = `${single}.isolated`;
+      await fs.rename(single, moved);
+      const fresh = await MiniDb.open({ dir: single, valueCodec: 'string' });
+      await fresh.set('k', 'v');
+      await wiper.release();
+      assert.equal(
+        await fs.stat(path.join(moved, 'db.lock')).then(() => true, () => false),
+        true,
+        'release after the rename neither follows the moved corpse nor errors',
+      );
+      await assert.rejects(
+        () => MiniDb.open({ dir: single, valueCodec: 'string' }),
+        LockError,
+        'release after the rename never unlinks the new owner\'s lock',
+      );
+      await fresh.close();
+      await rmrf(moved);
+    } finally {
+      await rmrf(single);
+    }
   } finally {
     await rmrf(dir);
   }

@@ -15,6 +15,7 @@ import {
   type RegisterAgentTaskOptions,
 } from '#/agent/task/task';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import {
   isToolActive as evaluateToolActive,
   resolveActiveToolNames,
@@ -25,6 +26,7 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import {
   ToolAccesses,
+  isMcpToolName,
   type ExecutableToolContext,
   type ExecutableToolResult,
   type ToolExecution,
@@ -45,7 +47,10 @@ import { ILogService } from '#/_base/log/log';
 import { hasPinnedPermissionMode } from '#/features/tower/tower';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
+import { ISessionNotify } from '#/features/notify/sessionNotify';
+import { NOTIFY_USER_TOOL_NAME } from '#/features/notify/tools/notify-user/notify-user';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { createAgentAwaitingClose } from '#/session/agentLifecycle/createAwaitingClose';
 import {
   isSubagentMeta,
   labelsFromAgentMeta,
@@ -64,6 +69,8 @@ import {
   buildSubagentModelDescriptions,
   exposesSubagentModelChoice,
   formatSubagentTimeoutDescription,
+  isSubagentModelForced,
+  resolveSubagentModelPool,
   resolveSubagentTimeoutMs,
   stripSubagentForkParameter,
   stripSubagentModelParameter,
@@ -89,13 +96,19 @@ import AGENT_FORK_DESCRIPTION from './agent-fork.md?raw';
 
 const SUBAGENT_TOOL_PARAMETERS = toInputJsonSchema(SubagentToolInputSchema);
 const SUBAGENT_TOOL_PARAMETERS_NO_MODEL = stripSubagentModelParameter(SUBAGENT_TOOL_PARAMETERS);
+const READ_MEDIA_FILE_TOOL_NAME = 'ReadMediaFile';
+const MCP_GLOB_MAGIC = /[*?[\]{}!@+()]/;
+
+function isToolNamePattern(name: string): boolean {
+  return isMcpToolName(name) && MCP_GLOB_MAGIC.test(name);
+}
 
 export class SubagentTool implements ISubagentTool {
   declare readonly _serviceBrand: undefined;
   readonly name: string = 'Agent';
 
   get parameters(): Record<string, unknown> {
-    const parameters = exposesSubagentModelChoice(this.config, this.flags)
+    const parameters = exposesSubagentModelChoice(this.config)
       ? SUBAGENT_TOOL_PARAMETERS
       : SUBAGENT_TOOL_PARAMETERS_NO_MODEL;
     return this.flags.enabled(SUBAGENT_FORK_FLAG_ID)
@@ -115,6 +128,7 @@ export class SubagentTool implements ISubagentTool {
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
@@ -122,6 +136,7 @@ export class SubagentTool implements ISubagentTool {
     @ILogService private readonly log: ILogService,
     @IConfigService private readonly config: IConfigService,
     @IFlagService private readonly flags: IFlagService,
+    @ISessionNotify private readonly notify: ISessionNotify,
     @AgentToolContribution private readonly contributions: CollectionView<AgentToolContribution>,
   ) {
     this.callerAgentId = scopeContext.agentId;
@@ -149,9 +164,23 @@ export class SubagentTool implements ISubagentTool {
       allowlist === undefined
         ? catalogProfiles
         : catalogProfiles.filter((profile) => allowlist.includes(profile.name));
+    const notifyAvailable = this.notify.enabled;
+    const knownTools = this.knownToolReferences();
+    const available = new Set(knownTools.map((ref) => ref.name));
+    const anyMediaModel = this.anyMediaCapableModel();
     const typeLines = buildProfileDescriptions(
-      profiles,
-      this.knownToolReferences(),
+      profiles.map((profile) => ({
+        ...profile,
+        tools: profile.tools?.filter(
+          (name) =>
+            (name !== NOTIFY_USER_TOOL_NAME || notifyAvailable) &&
+            (isToolNamePattern(name) ||
+              (name === READ_MEDIA_FILE_TOOL_NAME
+                ? anyMediaModel && this.toolPolicy.isToolActiveForProfile(profile, name, 'builtin')
+                : available.has(name))),
+        ),
+      })),
+      knownTools,
       (profile, name, source) =>
         this.toolPolicy.isToolActiveForProfile(profile, name, source),
     );
@@ -160,7 +189,6 @@ export class SubagentTool implements ISubagentTool {
     }
     const modelLines = buildSubagentModelDescriptions(
       this.config,
-      this.flags,
       this.profile.data().modelAlias,
     );
     if (modelLines !== undefined) {
@@ -215,6 +243,31 @@ export class SubagentTool implements ISubagentTool {
       if (!refs.has(ref.name)) refs.set(ref.name, ref);
     }
     return [...refs.values()];
+  }
+
+  private anyMediaCapableModel(): boolean {
+    if (isSubagentModelForced(this.config)) {
+      const forced = resolveSubagentModelPool(this.config)?.defaultModel;
+      if (forced === undefined) return false;
+      try {
+        const capabilities = this.modelCatalog.get(forced).capabilities;
+        return capabilities.image_in || capabilities.video_in;
+      } catch {
+        return false;
+      }
+    }
+    const own = this.profile.getModelCapabilities();
+    if (own.image_in || own.video_in) return true;
+    const pool = resolveSubagentModelPool(this.config);
+    if (pool === undefined) return false;
+    for (const alias of Object.keys(pool.models)) {
+      try {
+        const capabilities = this.modelCatalog.get(alias).capabilities;
+        if (capabilities.image_in || capabilities.video_in) return true;
+      } catch {
+      }
+    }
+    return false;
   }
 
   async resolveExecution(args: SubagentToolInput): Promise<ToolExecution> {
@@ -291,7 +344,7 @@ export class SubagentTool implements ISubagentTool {
     let displayModelSource: SubagentModelSource | undefined;
     let promptText = args.prompt;
     if (isResume) {
-      const target = await this.resolveResumeTarget(resumeAgentId);
+      const target = await this.resolveResumeTarget(resumeAgentId, controller.signal);
       agentId = target.id;
       const resumed = target.accessor.get(IAgentProfileService).data();
       profileName = resumed.profileName ?? RESUMED_LABEL;
@@ -349,9 +402,12 @@ export class SubagentTool implements ISubagentTool {
     };
   }
 
-  private async resolveResumeTarget(agentId: string): Promise<IAgentScopeHandle> {
-    const live = this.agentLifecycle.handleOf(agentId);
+  private async resolveResumeTarget(
+    agentId: string,
+    signal: AbortSignal,
+  ): Promise<IAgentScopeHandle> {
     const meta = (await this.sessionMetadata.read()).agents?.[agentId];
+    const live = this.agentLifecycle.handleOf(agentId);
     if (meta === undefined && live === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent instance "${agentId}" does not exist`, {
         details: { agentId },
@@ -369,8 +425,8 @@ export class SubagentTool implements ISubagentTool {
         { details: { agentId, callerAgentId: this.callerAgentId } },
       );
     }
-    const target = live ?? (await this.rebuildSubagent(agentId, meta));
-    if (target.accessor.get(IAgentLoopService).status().state === 'running') {
+    const target = live ?? (await this.rebuildSubagent(agentId, meta, signal));
+    if (target.accessor.get(IAgentLoopService).snapshot().state === 'running') {
       throw new Error2(
         ErrorCodes.AGENT_ALREADY_RUNNING,
         `Agent instance "${agentId}" is already running and cannot run concurrently`,
@@ -380,12 +436,16 @@ export class SubagentTool implements ISubagentTool {
     return target;
   }
 
-  private async rebuildSubagent(agentId: string, meta: AgentMeta): Promise<IAgentScopeHandle> {
-    await this.agentLifecycle.create({
-      agentId,
-      labels: labelsFromAgentMeta(meta),
-      forkedFrom: meta.forkedFrom,
-    });
+  private async rebuildSubagent(
+    agentId: string,
+    meta: AgentMeta,
+    signal: AbortSignal,
+  ): Promise<IAgentScopeHandle> {
+    await createAgentAwaitingClose(
+      this.agentLifecycle,
+      { agentId, labels: labelsFromAgentMeta(meta), forkedFrom: meta.forkedFrom },
+      signal,
+    );
     const rebuilt = this.agentLifecycle.handleOf(agentId);
     if (rebuilt === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent instance "${agentId}" does not exist`, {

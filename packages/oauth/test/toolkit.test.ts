@@ -86,6 +86,9 @@ describe('resolveKimiTokenStorageName', () => {
       }),
     ).toBe('kimi-code');
     expect(resolveKimiTokenStorageName({ oauthKey: 'kimi-code' })).toBe('kimi-code');
+    expect(
+      resolveKimiTokenStorageName({ oauthKey: 'oauth/kimi-code-env-0123456789abcdef' }),
+    ).toBe('kimi-code-env-0123456789abcdef');
   });
 
   it('accepts non-managed providers with a valid key and rejects unsafe token keys', () => {
@@ -568,14 +571,17 @@ describe('KimiOAuthToolkit', () => {
     expect((await storage.load(storageName))?.accessToken).toBe('fresh-access');
   });
 
-  it('propagates extraUsage from the managed usage response', async () => {
+  it('propagates the managed quota response', async () => {
     const storage = new MemoryTokenStorage();
     storage.tokens.set('kimi-code', token('access-1'));
     const fetchImpl = vi.fn(async (_input: unknown, _init?: RequestInit) =>
       new Response(
         JSON.stringify({
-          usage: { used: 10, limit: 100, name: 'Weekly limit' },
-          limits: [],
+          goods_version: 1,
+          usages: {
+            limit_5h: { used_ratio: 0.5, reset_time: '2026-09-11T18:00:00Z' },
+            limit_7d: { used_ratio: 0.1, reset_time: '2026-09-17T00:00:00Z' },
+          },
           boosterWallet: {
             balance: {
               type: 'BOOSTER',
@@ -600,20 +606,19 @@ describe('KimiOAuthToolkit', () => {
 
     await expect(toolkit.getManagedUsage()).resolves.toMatchObject({
       kind: 'ok',
-      summary: {
-        name: 'Weekly limit',
-        window: { duration: 1, unit: 'week' },
-        used: 10,
-        limit: 100,
-      },
-      limits: [],
-      extraUsage: {
-        balanceCents: 10000,
-        totalCents: 20000,
-        monthlyChargeLimitEnabled: true,
-        monthlyChargeLimitCents: 20000,
-        monthlyUsedCents: 5000,
-        currency: 'USD',
+      quota: {
+        usages: {
+          limit5h: { usedRatio: 0.5, resetAt: '2026-09-11T18:00:00Z' },
+          limit7d: { usedRatio: 0.1, resetAt: '2026-09-17T00:00:00Z' },
+        },
+        extraUsage: {
+          balanceCents: 10000,
+          totalCents: 20000,
+          monthlyChargeLimitEnabled: true,
+          monthlyChargeLimitCents: 20000,
+          monthlyUsedCents: 5000,
+          currency: 'USD',
+        },
       },
     });
   });
@@ -624,8 +629,10 @@ describe('KimiOAuthToolkit', () => {
     const fetchImpl = vi.fn(async (_input: unknown, _init?: RequestInit) =>
       new Response(
         JSON.stringify({
-          usage: { used: 10, limit: 100, name: 'Weekly limit' },
-          limits: [],
+          goods_version: 2,
+          usages: {
+            limit_month_total: { used_ratio: 0.4, reset_time: '2026-10-01T00:00:00Z' },
+          },
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       ),
@@ -640,14 +647,12 @@ describe('KimiOAuthToolkit', () => {
 
     await expect(toolkit.getManagedUsage()).resolves.toMatchObject({
       kind: 'ok',
-      summary: {
-        name: 'Weekly limit',
-        window: { duration: 1, unit: 'week' },
-        used: 10,
-        limit: 100,
+      quota: {
+        usages: {
+          monthTotal: { usedRatio: 0.4, resetAt: '2026-10-01T00:00:00Z' },
+        },
+        extraUsage: null,
       },
-      limits: [],
-      extraUsage: null,
     });
   });
 
@@ -659,6 +664,7 @@ describe('KimiOAuthToolkit', () => {
         JSON.stringify({
           user_id: 'u_123',
           global_id: 'u_123',
+          goods_version: 2,
           nickname: 'moonwalker',
           avatar: 'https://example.com/avatar.png',
           phone: { country_code: '86', number: '176****0000' },
@@ -683,6 +689,7 @@ describe('KimiOAuthToolkit', () => {
       userInfo: {
         userId: 'u_123',
         globalId: 'u_123',
+        goodsVersion: 2,
         nickname: 'moonwalker',
         avatar: 'https://example.com/avatar.png',
         phone: { countryCode: '86', number: '176****0000' },

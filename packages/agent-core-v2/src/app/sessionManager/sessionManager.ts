@@ -31,6 +31,7 @@ export interface ISessionManager {
   readonly onDidCreateSession?: Event<SessionCreatedEvent & IWaitUntil>;
   readonly onWillCloseSession?: Event<SessionWillCloseEvent & IWaitUntil>;
   readonly onDidCloseSession?: Event<SessionClosedEvent>;
+  readonly onWillDeleteSession?: Event<{ readonly sessionId: string } & IWaitUntil>;
   readonly onDidArchiveSession?: Event<SessionArchivedEvent>;
   readonly onDidForkSession?: Event<SessionForkedEvent>;
   create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle>;

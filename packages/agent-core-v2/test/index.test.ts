@@ -29,7 +29,7 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { TokenCountingMeasured } from '#/agent/tokenCounting/tokenCountingOps';
 import { TurnStepInterrupted } from '#/agent/loop/turnEvents';
-import { TurnStepRetrying } from '#/agent/stepRetry/stepRetryService';
+import { TurnStepRetrying } from '#/agent/loop/turnEvents';
 import { ToolsUpdateStore } from '#/features/todo/todoOps';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { Event2Class } from '#/app/event/event2';
@@ -92,7 +92,6 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'plugin.session_start',
   'runtime.set_binding',
   'turn.ended',
-  'prompt.accepted',
   'prompt.aborted',
   'prompt.completed',
   'prompt.steered',
@@ -105,6 +104,11 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'token_counting.turn_recorded',
   'turn.step.retrying',
   'turn.step.interrupted',
+  'subagent.spawned',
+  'subagent.started',
+  'subagent.completed',
+  'subagent.failed',
+  'subagent.cancelled',
 ]);
 
 describe('v1 wire vocabulary', () => {
@@ -286,14 +290,14 @@ describe('conversation-time checkpoint registration', () => {
   it('registers every context-reacting state as checkpointed or explicitly exempt', () => {
     const violations: string[] = [];
     let entries = 0;
-    const undoable = BUILTIN_REPLAYABLE_STATE_KEYS.filter(
+    const undoable = new Set(BUILTIN_REPLAYABLE_STATE_KEYS.filter(
       (key) => key.replayable.undoable !== undefined,
-    );
+    ));
     for (const key of BUILTIN_REPLAYABLE_STATE_KEYS) {
       if (key.name === CONTEXT_OWNER_STATE) continue;
       if (!CONTEXT_EVENTS.some((cls) => key.replayable.folds.has(cls))) continue;
       entries += 1;
-      if (undoable.includes(key)) continue;
+      if (undoable.has(key)) continue;
       if (CHECKPOINT_EXEMPT_STATES.has(key.name)) continue;
       violations.push(key.name);
     }
@@ -376,6 +380,23 @@ describe('AgentRecords persistence metadata', () => {
 
     expect(persistence.rewrites).toEqual([]);
     expect(persistence.records.filter((record) => record.type === 'metadata')).toHaveLength(1);
+  });
+
+  it('keeps restore history stable after a consumer stops reading the journal early', async () => {
+    persistence.records.push(
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      ...['first', 'second'].map((text) => ({
+        type: 'context.append_message',
+        message: {
+          role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' },
+        },
+      })),
+    );
+    for await (const record of ctx.get(IAppendLogStore).read<WireRecord>('', AGENT_WIRE_RECORD_KEY)) {
+      if (record.type === 'context.append_message') break;
+    }
+    await ctx.restorePersisted();
+    expect(ctx.context.get()).toHaveLength(2);
   });
 
   it('rewrites migrated records to the current wire version after replay', async () => {

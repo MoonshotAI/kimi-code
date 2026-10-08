@@ -2,13 +2,30 @@ import { run } from './exec.mjs';
 import { nativeBinPath, targetTriple } from './paths.mjs';
 
 export async function runVerifyStep({ requireGatekeeper = false } = {}) {
+  const target = targetTriple();
+  const executable = nativeBinPath(target);
+
+  if (process.platform === 'win32') {
+    if (process.env.KIMI_AZURE_TRUSTED_SIGNING !== 'true') {
+      console.log('Verify step skipped (unsigned Windows build)');
+      return;
+    }
+    console.log(`==> Get-AuthenticodeSignature ${executable}`);
+    await run('pwsh', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `$sig = Get-AuthenticodeSignature '${executable}'; ` +
+        '"$($sig.Status) | $($sig.SignerCertificate.Subject)"; ' +
+        "if ($sig.Status -ne 'Valid') { exit 1 }",
+    ]);
+    return;
+  }
+
   if (process.platform !== 'darwin') {
     console.log('Verify step skipped (not macOS)');
     return;
   }
-
-  const target = targetTriple();
-  const executable = nativeBinPath(target);
 
   console.log(`==> codesign -dv ${executable}`);
   await run('codesign', ['-dv', '--verbose=2', executable]);

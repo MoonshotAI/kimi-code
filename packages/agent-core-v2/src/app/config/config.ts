@@ -24,6 +24,8 @@ export interface ConfigKeyDeprecation {
   readonly message?: string;
 }
 
+export type ConfigCollectDiagnostics = (rawSection: unknown) => readonly ConfigDiagnostic[];
+
 export type EnvBindings<T> = EnvBinding | { [K in keyof T]?: EnvBinding | EnvBindings<T[K]> };
 
 export type AnyEnvBindings = EnvBinding | { readonly [key: string]: EnvBinding | AnyEnvBindings };
@@ -93,6 +95,7 @@ export interface ConfigSection<T = unknown> {
   readonly fromToml?: ConfigFromToml;
   readonly toToml?: ConfigToToml;
   readonly deprecations?: readonly ConfigKeyDeprecation[];
+  readonly collectDiagnostics?: ConfigCollectDiagnostics;
 }
 
 export interface RegisterSectionOptions<T> {
@@ -104,6 +107,7 @@ export interface RegisterSectionOptions<T> {
   readonly fromToml?: ConfigFromToml;
   readonly toToml?: ConfigToToml;
   readonly deprecations?: readonly ConfigKeyDeprecation[];
+  readonly collectDiagnostics?: ConfigCollectDiagnostics;
 }
 
 export interface ConfigEffectiveOverlay {
@@ -189,6 +193,12 @@ export interface ConfigInspectValue<T = unknown> {
   readonly memoryValue: T | undefined;
 }
 
+export interface ConfigReplaceSectionsOptions {
+  readonly preserveUnknown?: boolean;
+  readonly exactKeys?: Readonly<Record<string, readonly string[]>>;
+  readonly expectedValues?: Readonly<Record<string, unknown>>;
+}
+
 export interface IConfigService {
   readonly _serviceBrand: undefined;
 
@@ -204,6 +214,7 @@ export interface IConfigService {
   replaceSections(
     sections: Readonly<Record<string, unknown>>,
     target?: ConfigTarget,
+    options?: ConfigReplaceSectionsOptions,
   ): Promise<void>;
   reload(): Promise<void>;
   diagnostics(): readonly ConfigDiagnostic[];

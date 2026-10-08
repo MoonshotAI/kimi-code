@@ -192,7 +192,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `GET /api/v1/oauth/login` | 轮询登录流程状态 |
 | `DELETE /api/v1/oauth/login` | 取消进行中的登录流程 |
 | `POST /api/v1/oauth/logout` | 登出托管供应商 |
-| `GET /api/v1/oauth/usage` | 套餐用量与限额 |
+| `GET /api/v1/oauth/usage` | 套餐额度与加油包 |
 | `GET /api/v1/oauth/userinfo` | 账号资料 |
 | `GET /api/v1/oauth/region` | 解析客户端所属区域（`mainland-cn` / `global`） |
 
@@ -245,13 +245,13 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 #### `GET /api/v1/oauth/usage`
 
-托管账号的套餐用量与限额，实时取自账号服务。上游失败不会让信封失败——它以 `kind: "error"` 的形式带内返回。
+托管账号的套餐额度与加油包，实时取自账号服务。上游失败不会让信封失败——它以 `kind: "error"` 的形式带内返回。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `provider` | query | string | 托管供应商名称。默认 `managed:kimi-code` |
 
-成功时 `data` 为 `{ kind: "ok", summary, limits, extra_usage }` 或 `{ kind: "error", message, status? }`，其中 `status` 为上游 HTTP 状态码（如存在）。在 `ok` 形态中，`summary`（可空）是主配额行，`limits` 列出每个配额窗口；一行的结构为 `{ name?, window?, used, limit, reset_at? }`，其中 `window` 为 `{ duration, unit }`，`unit` 为 `minute` / `hour` / `day` / `week` 之一。`extra_usage`（可空）是按量付费钱包：`{ balance_cents, total_cents, monthly_charge_limit_enabled, monthly_charge_limit_cents, monthly_used_cents, currency }`。
+成功时 `data` 为 `{ kind: "ok", quota }` 或 `{ kind: "error", message, status? }`，其中 `status` 为上游 HTTP 状态码（如存在）。在 `ok` 形态中，`quota` 为 `{ usages, extraUsage }`：`usages` 按窗口携带 `{ usedRatio, resetAt? }` 条目——`limit5h`、`limit7d`、`monthTotal`、`monthCode`——其中 `usedRatio` 为 0–1 浮点数，`resetAt` 为 RFC3339 重置时间，客户端按实际下发的条目渲染；`extraUsage`（可空）是按量付费钱包：`{ balanceCents, totalCents, monthlyChargeLimitEnabled, monthlyChargeLimitCents, monthlyUsedCents, currency }`。
 
 #### `GET /api/v1/oauth/userinfo`
 
@@ -304,6 +304,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `secondary_model` | object | subagent 的次级模型池 |
 | `experimental` | object | 实验开关 id → 是否启用 |
 | `telemetry` | boolean | 是否启用匿名遥测 |
+| `auto_session_title` | boolean | 是否允许客户端自动生成会话标题 |
 | `raw` | object | 原始解析的 `config.toml` 内容，包含未建模字段 |
 
 #### `POST /api/v1/config`
@@ -336,6 +337,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `secondary_model` | body | object | subagent 的次级模型池 |
 | `experimental` | body | object | 实验开关 id → 是否启用 |
 | `telemetry` | body | boolean | 是否启用匿名遥测 |
+| `auto_session_title` | body | boolean | 是否允许客户端自动生成会话标题 |
 
 成功时 `data` 为完整的更新后配置，形态与 `GET /api/v1/config` 相同。
 
@@ -530,7 +532,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 浏览 models.dev 目录，由服务端代理，带 10 分钟内存缓存与内置快照兜底。条目保持上游目录顺序。服务无法导入的条目携带 `rejected: true` 与机器可读的 `reject_reason`；`needs_base_url: true` 的条目在导入时要求提供 base URL。
 
-成功时 `data.items` 为 `{ id, name, wire_type, guessed, needs_base_url, rejected, reject_reason, env_key, models }` 数组：`wire_type` 是解析出的协议（可空，枚举与供应商 `type` 相同），`guessed` 标记启发式解析，`env_key` 是上游约定的 API 密钥环境变量（可空），`models` 是 `{ id, name?, max_context_size, capabilities?, reasoning }` 的数组。
+成功时 `data.items` 为 `{ id, name, wire_type, base_url, guessed, needs_base_url, rejected, reject_reason, env_key, models }` 数组：`wire_type` 是解析出的协议（可空，枚举与供应商 `type` 相同），`base_url` 是解析出的端点（可空；`needs_base_url` 或被拒绝的条目为 null），`guessed` 标记启发式解析，`env_key` 是上游约定的 API 密钥环境变量（可空），`models` 是 `{ id, name?, max_context_size, capabilities?, reasoning }` 的数组。
 
 - `50004`：目录不可用（在线拉取与内置快照均失败）
 
@@ -687,7 +689,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 #### `POST /api/v1/sessions/{session_id}/title/generate`
 
-通过托管供应商的 `chat_title` 工具根据会话的提示词生成标题并应用，同时广播 `session.meta.updated`。生成需要托管 OAuth 登录和 `auto_session_title` 实验开关；未提供 `force` 时，已有自定义标题或已生成标题的会话会上报为不可用，而不会被覆盖。
+通过托管供应商的 `chat_title` 工具根据会话的提示词生成标题并应用，同时广播 `session.meta.updated`。生成需要托管 OAuth 登录；未提供 `force` 时，已有自定义标题或已生成标题的会话会上报为不可用，而不会被覆盖。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -751,7 +753,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 #### `POST /api/v1/sessions/{session_id}:btw`
 
-开启一个 `"by the way"` 旁路对话：把 main agent fork 成一个禁用工具调用的子 Agent，让快速的临时问题在隔离环境中运行，不触碰工作上下文。需要可用的模型配置。
+开启一个 `"by the way"` 旁路对话：把 main agent fork 成一个仅可使用只读工具（`Read`、`Grep`、`Glob`）的子 Agent，让快速的临时问题在隔离环境中运行，不触碰工作上下文。需要可用的模型配置。
 
 成功时，`data` 为 `{ agent_id }`——新子 Agent 的 id。
 
@@ -1126,7 +1128,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `session_id` | path | string | **必填。** 会话 id |
 | `status` | query | string | **必填。** 必须为 `pending` |
 
-成功时，`data` 为 `{ items }`，每个元素为 `{ approval_id, session_id, turn_id?, tool_call_id, tool_name, action, tool_input_display, created_at, expires_at }`：`tool_name` / `action` / `tool_input_display` 描述等待许可的调用，`expires_at` 为 `created_at` 之后 24 小时。
+成功时，`data` 为 `{ items }`，每个元素为 `{ approval_id, session_id, agent_id, turn_id?, tool_call_id, tool_name, action, tool_input_display, created_at, expires_at }`：`agent_id` 是发起审批的 agent id（主 agent 为 `main`）；`tool_name` / `action` / `tool_input_display` 描述等待许可的调用，`expires_at` 为 `created_at` 之后 24 小时。
 
 - `40001`：`status` 缺失或不是 `pending`
 - `40401`：会话不存在
@@ -1160,7 +1162,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `session_id` | path | string | **必填。** 会话 id |
 | `status` | query | string | **必填。** 必须为 `pending` |
 
-成功时，`data` 为 `{ items }`，每个元素为 `{ question_id, session_id, turn_id?, tool_call_id?, questions, created_at }`。`questions` 包含 1–4 个 `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }` 条目，每个条目带 2–4 个 `{ id, label, description? }` 形式的 `options`；`multi_select` 允许选择多个选项，`allow_other` 允许自由文本回答。
+成功时，`data` 为 `{ items }`，每个元素为 `{ question_id, session_id, agent_id?, turn_id?, tool_call_id?, questions, created_at }`。`agent_id?` 是发起提问的 agent id（已知时；主 agent 为 `main`）。`questions` 包含 1–4 个 `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }` 条目，每个条目带 2–4 个 `{ id, label, description? }` 形式的 `options`；`multi_select` 允许选择多个选项，`allow_other` 允许自由文本回答。
 
 - `40001`：`status` 缺失或不是 `pending`
 - `40401`：会话不存在
@@ -1369,7 +1371,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 ### 能力与插件
 
-能力是带有分层就绪状态的内置特性——由检测步骤加后台安装组成；当前版本注册了 `kimi-cu`（Kimi Computer Use）与 `kimi-webbridge`（Kimi WebBridge）。插件是已安装的技能、MCP 服务、hook 与命令的打包集合。这组端点报告能力状态、驱动能力安装，并管理插件从市场列表到移除的整个生命周期。
+能力是带有分层就绪状态的内置特性——由检测步骤加后台安装组成；当前版本注册了 `kimi-cu`（Kimi Computer Use）与 `kimi-webbridge`（Kimi Browser Extension）。插件是已安装的技能、MCP 服务、hook 与命令的打包集合。这组端点报告能力状态、驱动能力安装，并管理插件从市场列表到移除的整个生命周期。
 
 | 方法与路径 | 说明 |
 | --- | --- |
@@ -2365,7 +2367,6 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | `unsubscribe` | `{ session_ids }` | 取消会话订阅 |
 | `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | 订阅转录流（唯一的转录订阅通道），`transcript` 按 agent 指定粒度 |
 | `unsubscribe_v2` | `{ session_id, agent_ids? }` | 退订转录流；省略 `agent_ids` 表示整个会话 |
-| `watch_fs_add` / `watch_fs_remove` | `{ session_id, paths, recursive? }` | 订阅 / 取消文件变更通知（`event.fs.changed`） |
 | `client_hello` | `{ client_id }` | 握手帧，其余字段为遗留兼容 |
 
 ### 事件

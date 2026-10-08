@@ -9,6 +9,7 @@ import {
   IAppendLogStore,
   type AppendLogOptions,
   type AppendLogReadOptions,
+  type AppendLogRewriteOptions,
   type AppendLogWrite,
 } from '#/persistence/interface/appendLogStore';
 
@@ -110,7 +111,12 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
     }
   }
 
-  async rewrite<R>(scope: string, key: string, records: readonly R[]): Promise<void> {
+  async rewrite<R>(
+    scope: string,
+    key: string,
+    records: readonly R[],
+    options?: AppendLogRewriteOptions,
+  ): Promise<void> {
     const encoded = encodeBatch(records);
     const state = this.state(scope, key);
     state.cutoverEpoch++;
@@ -125,6 +131,10 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
         state.storageFailure = undefined;
         return true;
       } catch (error) {
+        if (options?.onError !== undefined) {
+          options.onError(error);
+          return false;
+        }
         state.storageFailure = { error };
         throw error;
       }
@@ -189,7 +199,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
     });
   }
 
-  private flushLog(scope: string, key: string): Promise<void> {
+  flushLog(scope: string, key: string): Promise<void> {
     const state = this.state(scope, key);
     return this.flushState(scope, key, state);
   }

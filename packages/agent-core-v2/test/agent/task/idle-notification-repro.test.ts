@@ -5,12 +5,14 @@ import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LifecycleScope } from '#/app/scopes';
 import { type IAgentScopeHandle } from '#/_base/di/scope';
-import type { generate as kosongGenerate } from '#/kosong/contract/generate';
+import type { LlmRequester } from '#human/llm/requester/requester';
 import { IAgentTaskService } from '#/agent/task/task';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { TurnStarted } from '#/agent/loop/turnEvents';
+import { IEventBus } from '#/app/event/eventBus';
 import {
   taskServices,
   createTestAgent,
@@ -61,7 +63,7 @@ describe('task notification → main agent (real Agent instance)', () => {
     });
 
     it('IDLE: completed bg agent notification auto-launches a turn that consumes it', async () => {
-      expect(loop.status().activeTurnId).toBeUndefined();
+      expect(loop.snapshot().activeTurnId).toBeUndefined();
       expect(ctx.llmCalls.length).toBe(0);
 
       ctx.mockNextResponse({ type: 'text', text: 'ack from main agent' });
@@ -168,8 +170,8 @@ describe('task notification → main agent (real Agent instance)', () => {
       await turnEnd;
       await vi.waitFor(
         () => {
-          expect(loop.status().state).toBe('idle');
-          expect(loop.status().hasPendingRequests).toBe(false);
+          expect(loop.snapshot().state).toBe('idle');
+          expect(loop.snapshot().hasPendingRequests).toBe(false);
         },
         { timeout: 2000 },
       );
@@ -222,7 +224,7 @@ describe('task notification → main agent (real Agent instance)', () => {
   });
 
   describe('kill ordering vs child loop unwind', () => {
-    type GenerateFn = typeof kosongGenerate;
+    type GenerateFn = LlmRequester;
 
     function agentScopeHandle(ctx: TestAgentContext, id: string): IAgentScopeHandle {
       return {
@@ -238,29 +240,23 @@ describe('task notification → main agent (real Agent instance)', () => {
       const inFlight = new Promise<void>((resolve) => {
         generateStarted = resolve;
       });
-      const slowToCancelGenerate: GenerateFn = async (
-        _chat,
-        _systemPrompt,
-        _tools,
-        _history,
-        _callbacks,
-        options,
-      ) => {
-        const signal = options?.signal;
-        signal?.throwIfAborted();
-        generateStarted();
-        await new Promise<never>((_resolve, reject) => {
-          signal?.addEventListener(
-            'abort',
-            () => {
-              setTimeout(() => {
-                reject(signal.reason);
-              }, 200);
-            },
-            { once: true },
-          );
-        });
-        throw new Error('slowToCancelGenerate returned without being aborted');
+      const slowToCancelGenerate: GenerateFn = {
+        generate: (_config, _content, control) => {
+          const signal = control.signal;
+          signal.throwIfAborted();
+          generateStarted();
+          return new Promise<never>((_resolve, reject) => {
+            signal.addEventListener(
+              'abort',
+              () => {
+                setTimeout(() => {
+                  reject(signal.reason);
+                }, 200);
+              },
+              { once: true },
+            );
+          });
+        },
       };
 
       const main = createTestAgent(taskServices());
@@ -279,7 +275,7 @@ describe('task notification → main agent (real Agent instance)', () => {
         void completion.catch(() => {});
 
         await inFlight;
-        expect(childLoop.status().state).toBe('running');
+        expect(childLoop.snapshot().state).toBe('running');
 
         const background = main.get(IAgentTaskService);
         const taskId = background.registerTask(
@@ -296,7 +292,7 @@ describe('task notification → main agent (real Agent instance)', () => {
 
         const info = await background.stop(taskId, 'User initiated stop');
         expect(info?.status).toBe('killed');
-        expect(childLoop.status().state).toBe('idle');
+        expect(childLoop.snapshot().state).toBe('idle');
 
         await vi.waitFor(
           () => {
@@ -307,7 +303,7 @@ describe('task notification → main agent (real Agent instance)', () => {
         const notified = JSON.stringify(main.llmCalls.at(-1)!.history);
         expect(notified).toContain('task.killed');
         expect(notified).toContain(taskId);
-        expect(childLoop.status().state).toBe('idle');
+        expect(childLoop.snapshot().state).toBe('idle');
 
         await notificationTurnEnd;
       } finally {
@@ -366,7 +362,10 @@ describe('task notification → main agent (real Agent instance)', () => {
 
     it('RESUME: previous-session lost tasks surface as one unified reminder (no auto-turn)', async () => {
 
-      const launchSpy = vi.spyOn(loop as unknown as { startTurn: () => unknown }, 'startTurn');
+      const launches: number[] = [];
+      const launchSubscription = ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
+        launches.push(event.turnId);
+      });
 
       await background.loadFromDisk();
       await background.reconcile();
@@ -381,9 +380,10 @@ describe('task notification → main agent (real Agent instance)', () => {
         expect(flatContext).toContain('bash-prev0000');
       });
 
-      expect(launchSpy).not.toHaveBeenCalled();
+      expect(launches).toEqual([]);
       expect(ctx.llmCalls.length).toBe(0);
-      expect(loop.status().activeTurnId).toBeUndefined();
+      expect(loop.snapshot().activeTurnId).toBeUndefined();
+      launchSubscription.dispose();
 
       const flatContext = JSON.stringify(ctx.contextData());
       expect(flatContext).toContain('<output-file');

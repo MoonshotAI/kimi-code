@@ -869,4 +869,299 @@ describe('SessionPickerComponent', () => {
 
     expect(renderPlain(component)).toContain('· searching all…');
   });
+
+  describe('session deletion', () => {
+    const CTRL_X = '\u0018';
+
+    function deferred(): {
+      promise: Promise<void>;
+      resolve: () => void;
+      reject: (error: unknown) => void;
+    } {
+      let resolve!: () => void;
+      let reject!: (error: unknown) => void;
+      const promise = new Promise<void>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      return { promise, resolve, reject };
+    }
+
+    async function flushMicrotasks(): Promise<void> {
+      await new Promise<void>((r) => {
+        setTimeout(r, 0);
+      });
+    }
+
+    const alpha = { id: 'ses_alpha', title: 'Alpha session', work_dir: '/tmp/p', updated_at: 2 };
+    const beta = { id: 'ses_beta', title: 'Beta session', work_dir: '/tmp/p', updated_at: 1 };
+
+    it('arms an inline delete confirmation on Ctrl+X for the selected row', () => {
+      const onDeleteRequest = vi.fn(async () => {});
+      const component = new SessionPickerComponent({
+        sessions: [alpha, beta],
+        loading: false,
+        currentSessionId: '',
+        onSelect: vi.fn(),
+        onCancel: vi.fn(),
+        onDeleteRequest,
+      });
+
+      component.handleInput(CTRL_X);
+
+      expect(renderPlain(component)).toContain('Delete session "Alpha session"? [y/N]');
+      expect(onDeleteRequest).not.toHaveBeenCalled();
+    });
+
+    it('does nothing on Ctrl+X without a delete handler or a selected row', () => {
+      const noHandler = new SessionPickerComponent({
+        sessions: [alpha],
+        loading: false,
+        currentSessionId: '',
+        onSelect: vi.fn(),
+        onCancel: vi.fn(),
+      });
+      noHandler.handleInput(CTRL_X);
+      expect(renderPlain(noHandler)).not.toContain('Delete session');
+
+      const noRows = new SessionPickerComponent({
+        sessions: [],
+        loading: false,
+        currentSessionId: '',
+        onSelect: vi.fn(),
+        onCancel: vi.fn(),
+        onDeleteRequest: vi.fn(async () => {}),
+      });
+      noRows.handleInput(CTRL_X);
+      expect(renderPlain(noRows)).not.toContain('Delete session');
+    });
+
+    it('confirms on y, shows a deleting state, and clears it after success', async () => {
+      const { promise, resolve } = deferred();
+      const onDeleteRequest = vi.fn(() => promise);
+      const component = new SessionPickerComponent({
+        sessions: [alpha, beta],
+        loading: false,
+        currentSessionId: '',
+        onSelect: vi.fn(),
+        onCancel: vi.fn(),
+        onDeleteRequest,
+      });
+
+      component.handleInput(CTRL_X);
+      component.handleInput('y');
+
+      expect(onDeleteRequest).toHaveBeenCalledOnce();
+      expect(onDeleteRequest).toHaveBeenCalledWith(alpha);
+      expect(renderPlain(component)).toContain('Deleting session "Alpha session"…');
+
+      resolve();
+      await flushMicrotasks();
+
+      const output = renderPlain(component);
+      expect(output).not.toContain('Deleting session');
+      expect(output).not.toContain('Delete session');
+    });
+
+    it('cancels on n and on Esc without calling onDeleteRequest or onCancel', () => {
+      const onDeleteRequest = vi.fn(async () => {});
+      const onCancel = vi.fn();
+      const component = new SessionPickerComponent({
+        sessions: [alpha, beta],
+        loading: false,
+        currentSessionId: '',
+        onSelect: vi.fn(),
+        onCancel,
+        onDeleteRequest,
+      });
+
+      component.handleInput(CTRL_X);
+      component.handleInput('n');
+      expect(renderPlain(component)).not.toContain('Delete session');
+
+      component.handleInput(CTRL_X);
+      component.handleInput(ESC);
+      expect(renderPlain(component)).not.toContain('Delete session');
+
+      expect(onDeleteRequest).not.toHaveBeenCalled();
+      expect(onCancel).not.toHaveBeenCalled();
+    });
+
+    it('ignores all other keys while the confirmation is armed', () => {
+      const onDeleteRequest = vi.fn(async () => {});
+      const onSelect = vi.fn();
+      const component = new SessionPickerComponent({
+        sessions: [alpha, beta],
+        loading: false,
+        currentSessionId: '',
+        onSelect,
+        onCancel: vi.fn(),
+        onDeleteRequest,
+      });
+
+      component.handleInput(CTRL_X);
+      component.handleInput('\r');
+      component.handleInput('\u001B[B');
+      component.handleInput('x');
+      component.handleInput(CTRL_X);
+
+      expect(renderPlain(component)).toContain('Delete session "Alpha session"? [y/N]');
+      expect(onDeleteRequest).not.toHaveBeenCalled();
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it('ignores keys while a delete is in flight', async () => {
+      const { promise, resolve } = deferred();
+      const onDeleteRequest = vi.fn(() => promise);
+      const component = new SessionPickerComponent({
+        sessions: [alpha, beta],
+        loading: false,
+        currentSessionId: '',
+        onSelect: vi.fn(),
+        onCancel: vi.fn(),
+        onDeleteRequest,
+      });
+
+      component.handleInput(CTRL_X);
+      component.handleInput('y');
+      component.handleInput('y');
+      component.handleInput(CTRL_X);
+      component.handleInput('\r');
+      component.handleInput(ESC);
+
+      expect(onDeleteRequest).toHaveBeenCalledOnce();
+
+      resolve();
+      await flushMicrotasks();
+    });
+
+    it('returns to the list when the delete fails', async () => {
+      const { promise, reject } = deferred();
+      const onDeleteRequest = vi.fn(() => promise);
+      const component = new SessionPickerComponent({
+        sessions: [alpha, beta],
+        loading: false,
+        currentSessionId: '',
+        onSelect: vi.fn(),
+        onCancel: vi.fn(),
+        onDeleteRequest,
+      });
+
+      component.handleInput(CTRL_X);
+      component.handleInput('y');
+      reject(new Error('boom'));
+      await flushMicrotasks();
+
+      const output = renderPlain(component);
+      expect(output).not.toContain('Deleting session');
+      expect(output).not.toContain('Delete session');
+      expect(onDeleteRequest).toHaveBeenCalledOnce();
+    });
+
+    it('adds Ctrl+X delete to the hint when deletion is available', () => {
+      const component = new SessionPickerComponent({
+        sessions: [alpha],
+        loading: false,
+        currentSessionId: '',
+        onSelect: vi.fn(),
+        onCancel: vi.fn(),
+        onDeleteRequest: vi.fn(async () => {}),
+      });
+
+      expect(renderPlain(component)).toContain('Ctrl+X delete');
+    });
+
+    it('ignores input while a selection is in flight', async () => {
+      const { promise, resolve } = deferred();
+      const onSelect = vi.fn(() => promise);
+      const onDeleteRequest = vi.fn(async () => {});
+      const component = new SessionPickerComponent({
+        sessions: [alpha, beta],
+        loading: false,
+        currentSessionId: '',
+        onSelect,
+        onCancel: vi.fn(),
+        onDeleteRequest,
+      });
+
+      component.handleInput('\r');
+      expect(onSelect).toHaveBeenCalledOnce();
+
+      component.handleInput(CTRL_X);
+      expect(renderPlain(component)).not.toContain('Delete session');
+      component.handleInput('y');
+      component.handleInput('\r');
+      expect(onSelect).toHaveBeenCalledOnce();
+      expect(onDeleteRequest).not.toHaveBeenCalled();
+
+      resolve();
+      await flushMicrotasks();
+
+      component.handleInput(CTRL_X);
+      expect(renderPlain(component)).toContain('Delete session "Alpha session"? [y/N]');
+    });
+
+    it('unlocks input when the selection fails', async () => {
+      const { promise, reject } = deferred();
+      const onSelect = vi.fn(() => promise);
+      const component = new SessionPickerComponent({
+        sessions: [alpha, beta],
+        loading: false,
+        currentSessionId: '',
+        onSelect,
+        onCancel: vi.fn(),
+        onDeleteRequest: vi.fn(async () => {}),
+      });
+
+      component.handleInput('\r');
+      expect(onSelect).toHaveBeenCalledOnce();
+
+      reject(new Error('boom'));
+      await flushMicrotasks();
+
+      component.handleInput(CTRL_X);
+      expect(renderPlain(component)).toContain('Delete session "Alpha session"? [y/N]');
+    });
+
+    it('keeps every line within the terminal width with a delete confirmation armed', () => {
+      const component = new SessionPickerComponent({
+        sessions: [alpha, beta],
+        loading: false,
+        currentSessionId: '',
+        onSelect: vi.fn(),
+        onCancel: vi.fn(),
+        onDeleteRequest: vi.fn(async () => {}),
+      });
+      component.handleInput(CTRL_X);
+
+      for (const width of [10, 20, 24, 40]) {
+        for (const line of component.render(width)) {
+          expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+        }
+      }
+    });
+
+    it('keeps the [y/N] confirmation keys visible when the title is truncated', () => {
+      const longTitled = {
+        id: 'ses_long',
+        title: 'A very long session title that cannot fit a narrow terminal',
+        work_dir: '/tmp/p',
+        updated_at: 2,
+      };
+      const component = new SessionPickerComponent({
+        sessions: [longTitled],
+        loading: false,
+        currentSessionId: '',
+        onSelect: vi.fn(),
+        onCancel: vi.fn(),
+        onDeleteRequest: vi.fn(async () => {}),
+      });
+
+      component.handleInput(CTRL_X);
+
+      for (const width of [40, 24, 20, 12, 8]) {
+        expect(renderPlain(component, width)).toContain('? [y/N]');
+      }
+    });
+  });
 });

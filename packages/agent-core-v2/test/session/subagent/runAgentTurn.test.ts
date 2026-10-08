@@ -10,7 +10,6 @@ import {
   type Turn,
   type TurnResult,
 } from '#/agent/loop/loop';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { ErrorCodes, isError2 } from '#/errors';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 
@@ -39,16 +38,16 @@ function handleWith(
   const prompts: unknown[] = [];
   const services = new Map<unknown, unknown>([
     [
-      IAgentPromptService,
+      IAgentLoopService,
       {
-        enqueue: async (input: unknown) => {
+        submit: (input: unknown) => {
           prompts.push(input);
-          return { launched: Promise.resolve(turn) };
+          return { id: 'p' };
         },
-        retry: async () => turn,
+        promptHandle: () => ({ launched: Promise.resolve(turn) }),
+        cancel: () => true,
       },
     ],
-    [IAgentLoopService, { cancel: () => true }],
     [IAgentContextMemoryService, { get: () => messages }],
   ]);
   const handle: IAgentScopeHandle = {

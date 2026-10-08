@@ -14,3 +14,9 @@ export class CapabilityChanged extends Event2<{ readonly payload: CapabilityChan
 export interface CapabilityChanged {
   readonly payload: CapabilityChangedPayload;
 }
+
+export interface CapabilityChangedEvent {
+  readonly type: 'event.capability.changed';
+  readonly capability_id: string;
+  readonly install: CapabilityInstallProgress;
+}

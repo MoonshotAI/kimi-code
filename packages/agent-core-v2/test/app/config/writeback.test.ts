@@ -13,7 +13,7 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
-import { type ThinkingConfig } from '#/kosong/model/thinking';
+import { type ThinkingConfig } from '#/llm-adapter/model/thinking';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -178,16 +178,4 @@ describe('config.toml writeback preservation', () => {
     disposables.dispose();
   });
 
-  it('migrates thinking effort max to high without dropping the surrounding comments', async () => {
-    const seed = '# 思考配置\n[thinking]\n# 不要动我\neffort = "max"\n';
-    const { config, disposables, readText } = await setup(seed);
-
-    const text = await readText();
-    expect(text.includes('# 思考配置')).toBe(true);
-    expect(text.includes('effort = "high"')).toBe(true);
-    expect(text.includes('effort = "max"')).toBe(false);
-    expect(config.get<ThinkingConfig>(THINKING_SECTION)).toEqual({ effort: 'high' });
-
-    disposables.dispose();
-  });
 });

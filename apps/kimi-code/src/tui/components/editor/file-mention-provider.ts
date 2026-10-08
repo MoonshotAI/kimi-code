@@ -307,9 +307,26 @@ export class FileMentionProvider implements AutocompleteProvider {
     // it, no second `/`) and prepends another `/`, producing e.g.
     // `//Applications/ ` with a trailing space that also blocks further
     // completion. Handle path completion ourselves so the value replaces the
-    // prefix verbatim. `@` mentions keep pi-tui's behaviour.
+    // prefix verbatim.
     if (this.getInputMode() === 'bash' && prefix.startsWith('/')) {
       return applyPathCompletion(lines, cursorLine, cursorCol, item, prefix);
+    }
+    // Editor caches suggestions.prefix across in-flight refreshes. Re-cut the
+    // live `@` token so Tab/Enter does not splice a second `@` onto a stale range.
+    // Only mention pickers have a prefix that starts with `@`. Path/slash lists
+    // can still be visible after the user types `@`, including a `@scope/` entry.
+    if (prefix.startsWith('@')) {
+      const currentLine = lines[cursorLine] ?? '';
+      const textBeforeCursor = currentLine.slice(0, cursorCol);
+      const livePrefix = extractAtPrefix(textBeforeCursor);
+      if (livePrefix === null) {
+        return { lines, cursorLine, cursorCol };
+      }
+      const applyItem =
+        livePrefix.startsWith('@"') && item.value.startsWith('@') && !item.value.startsWith('@"')
+          ? { ...item, value: `@"${item.value.slice(1)}"` }
+          : item;
+      return this.inner.applyCompletion(lines, cursorLine, cursorCol, applyItem, livePrefix);
     }
     return this.inner.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
   }
@@ -342,6 +359,9 @@ export function extractInlineSkillPrefix(text: string, cursorLine: number = 0): 
 }
 
 export function extractAtPrefix(text: string): string | null {
+  const quotedPrefix = extractQuotedAtPrefix(text);
+  if (quotedPrefix !== null) return quotedPrefix;
+
   let tokenStart = 0;
   for (let i = text.length - 1; i >= 0; i -= 1) {
     if (PATH_DELIMITERS.has(text[i] ?? '')) {
@@ -351,6 +371,21 @@ export function extractAtPrefix(text: string): string | null {
   }
   if (text[tokenStart] !== '@') return null;
   return text.slice(tokenStart);
+}
+
+function extractQuotedAtPrefix(text: string): string | null {
+  let inQuotes = false;
+  let quoteStart = -1;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === '"') {
+      inQuotes = !inQuotes;
+      if (inQuotes) quoteStart = i;
+    }
+  }
+  if (!inQuotes || quoteStart <= 0 || text[quoteStart - 1] !== '@') return null;
+  const atIndex = quoteStart - 1;
+  if (atIndex > 0 && !PATH_DELIMITERS.has(text[atIndex - 1] ?? '')) return null;
+  return text.slice(atIndex);
 }
 
 function isExecutableFd(fdPath: string): boolean {
@@ -418,7 +453,8 @@ function getFsMentionSuggestions(
 ): AutocompleteSuggestions | null {
   if (signal.aborted) return null;
 
-  const query = atPrefix.slice(1);
+  const isQuotedPrefix = atPrefix.startsWith('@"');
+  const query = isQuotedPrefix ? atPrefix.slice(2) : atPrefix.slice(1);
   const candidates = collectFsMentionCandidates(workDir, additionalDirs, signal);
   if (candidates.length === 0 || signal.aborted) return null;
 
@@ -427,7 +463,7 @@ function getFsMentionSuggestions(
 
   return {
     prefix: atPrefix,
-    items: ranked.map(toMentionItem),
+    items: ranked.map((candidate) => toMentionItem(candidate, isQuotedPrefix)),
   };
 }
 
@@ -536,9 +572,10 @@ function scoreCandidate(candidate: FsMentionCandidate, lowerQuery: string): numb
   return score;
 }
 
-function toMentionItem(candidate: FsMentionCandidate): AutocompleteItem {
+function toMentionItem(candidate: FsMentionCandidate, isQuotedPrefix: boolean): AutocompleteItem {
   const valuePath = candidate.isDirectory ? `${candidate.path}/` : candidate.path;
-  const value = valuePath.includes(' ') ? `@"${valuePath}"` : `@${valuePath}`;
+  const value =
+    isQuotedPrefix || valuePath.includes(' ') ? `@"${valuePath}"` : `@${valuePath}`;
   const label = `${basename(candidate.path)}${candidate.isDirectory ? '/' : ''}`;
   return {
     value,

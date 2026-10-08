@@ -8,7 +8,7 @@
  * Wiring: real v2 engine bootstrapped on a temp KIMI_CODE_HOME; remote provider calls are stubbed.
  * Run: pnpm exec vitest run test/sdk-rpc-client-v2.test.ts
  */
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -21,11 +21,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   buildDaemonFileUrl,
-  createKimiHarnessV2,
+  createKimiHarness,
   ErrorCodes,
   isDaemonFileUrl,
   isKimiError,
   KimiHarness,
+  limitAgentReplayByTurns,
   removeProviderFromConfig,
   SDKRpcClientV2,
   toKimiErrorPayload,
@@ -39,20 +40,31 @@ import {
   Error2,
   getLiveSessionById,
   HostProcessError,
+  IAgentIdentity,
   IAgentTodoService,
   IAgentLifecycleService,
+  IAgentProfileService,
+  IAgentToolActivationService,
+  IAgentToolRegistryService,
+  INotifyUserTool,
+  IAtomicDocumentStore,
+  ISessionContext,
   IAgentTowerService,
   IHostRequestHeaders,
   IMcpManagementService,
   IMcpOAuthService,
   ISessionManager,
+  MAIN_AGENT_ID,
   OsProcessErrors,
 } from '@moonshot-ai/agent-core-v2';
 
-import { McpOAuthService } from '../../agent-core/src/mcp/oauth/service';
 import { McpOAuthService as McpOAuthServiceV2 } from '@moonshot-ai/agent-core-v2/mcpCore/oauth/service';
 
 import { TEST_IDENTITY } from './test-identity';
+import {
+  resetModelsDevUpstreamForTest,
+  setModelsDevUpstreamForTest,
+} from '@moonshot-ai/agent-core-v2/app/kosongConfig/modelsDevUpstream';
 import { recordingTelemetry, type TelemetryRecord } from './telemetry';
 
 const hostEnvProbe = vi.hoisted(() => ({ failWithMissingShell: false }));
@@ -77,6 +89,7 @@ vi.mock('@moonshot-ai/agent-core-v2/_base/execEnv/environmentProbe', async (impo
 const tempDirs: string[] = [];
 
 afterEach(async () => {
+  resetModelsDevUpstreamForTest();
   // The read-model mirror/query-store close asynchronously on dispose; await
   // the drains so the rm below never races their final flush (ENOTEMPTY).
   await drainSessionIndexMirror();
@@ -99,7 +112,7 @@ function stubProcessPlatform(platform: NodeJS.Platform): () => void {
 async function makeHarness(): Promise<{ harness: KimiHarness; homeDir: string }> {
   const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
   tempDirs.push(homeDir);
-  return { harness: createKimiHarnessV2({ homeDir, identity: TEST_IDENTITY }), homeDir };
+  return { harness: createKimiHarness({ homeDir, identity: TEST_IDENTITY }), homeDir };
 }
 
 /** Whether the persisted session directory exists under `<home>/sessions/<bucket>/<id>`. */
@@ -119,6 +132,20 @@ async function sessionDirExists(homeDir: string, sessionId: string): Promise<boo
     }
   }
   return false;
+}
+
+/** The persisted session directory under `<home>/sessions/<bucket>/<id>`. */
+async function findSessionDir(homeDir: string, sessionId: string): Promise<string> {
+  for (const bucket of await readdir(join(homeDir, 'sessions'))) {
+    const candidate = join(homeDir, 'sessions', bucket, sessionId);
+    try {
+      await readdir(candidate);
+      return candidate;
+    } catch {
+      // Not under this bucket.
+    }
+  }
+  throw new Error(`no persisted directory found for session ${sessionId}`);
 }
 
 describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
@@ -144,13 +171,6 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     const implicitOAuthUrl = 'https://implicit-oauth.example.test/mcp';
     const authorizedUrl = 'https://authorized.example.test/mcp';
     const requiredUrl = 'https://required.example.test/mcp';
-    const externalOAuth = new McpOAuthService({ kimiHomeDir: homeDir });
-    await externalOAuth
-      .getProvider('oauth-authorized', authorizedUrl)
-      .saveTokens({ access_token: 'test-access-token', token_type: 'Bearer' });
-    await externalOAuth
-      .getProvider('sse', implicitOAuthUrl)
-      .saveTokens({ access_token: 'stale-sse-token', token_type: 'Bearer' });
     await writeFile(
       join(homeDir, 'mcp.json'),
       JSON.stringify({
@@ -179,10 +199,19 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       }),
       'utf-8',
     );
-    const harness = createKimiHarnessV2({ homeDir, identity: TEST_IDENTITY });
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const oauth = client.engineAccessor.get(IMcpOAuthService);
 
     try {
-      await expect(harness.listMcpServerAuthStatuses({ verify: false })).resolves.toEqual([
+      await client.engineAccessor.get(IAgentIdentity).resolved();
+      await oauth
+        .getProvider('oauth-authorized', authorizedUrl)
+        .saveTokens({ access_token: 'test-access-token', token_type: 'Bearer' });
+      await oauth
+        .getProvider('sse', implicitOAuthUrl)
+        .saveTokens({ access_token: 'stale-sse-token', token_type: 'Bearer' });
+
+      await expect(client.listGlobalMcpServerAuthStatuses({ verify: false })).resolves.toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
         { name: 'plain', authStatus: 'not-applicable' },
         { name: 'detected', authStatus: 'not-applicable' },
@@ -193,12 +222,12 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
         { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
       ]);
 
-      await externalOAuth
+      await oauth
         .getProvider('oauth-required', requiredUrl)
         .saveTokens({ access_token: 'new-test-access-token', token_type: 'Bearer' });
-      await externalOAuth.invalidate('oauth-authorized', authorizedUrl, 'tokens');
+      await oauth.invalidate('oauth-authorized', authorizedUrl, 'tokens');
 
-      await expect(harness.listMcpServerAuthStatuses({ verify: false })).resolves.toEqual([
+      await expect(client.listGlobalMcpServerAuthStatuses({ verify: false })).resolves.toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
         { name: 'plain', authStatus: 'not-applicable' },
         { name: 'detected', authStatus: 'not-applicable' },
@@ -209,7 +238,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
         { name: 'oauth-authorized', authStatus: 'oauth-required' },
       ]);
     } finally {
-      await harness.close();
+      await client.close();
     }
   }, 15_000);
 
@@ -343,7 +372,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     try {
       const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
       tempDirs.push(homeDir);
-      const harness = createKimiHarnessV2({ homeDir, identity: TEST_IDENTITY });
+      const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
       try {
         await expect(harness.ensureConfigFile()).rejects.toBeInstanceOf(HostProcessError);
         await expect(harness.ensureConfigFile()).rejects.toMatchObject({
@@ -364,7 +393,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     try {
       const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
       tempDirs.push(homeDir);
-      const harness = createKimiHarnessV2({ homeDir, identity: TEST_IDENTITY });
+      const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
       try {
         await expect(harness.ensureConfigFile()).resolves.toBeUndefined();
       } finally {
@@ -445,9 +474,6 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       `
 default_model = "stub"
 
-[experimental]
-auto_session_title = true
-
 [providers.stub]
 type = "openai"
 base_url = "https://model.example.test/v1"
@@ -478,7 +504,7 @@ key = "${titleOAuthRef.key}"
       }
       throw new Error(`Unexpected fetch: ${url}`);
     });
-    const harness = createKimiHarnessV2({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_generated_title_event', workDir });
@@ -549,9 +575,6 @@ key = "${titleOAuthRef.key}"
       join(homeDir, 'config.toml'),
       `
 default_model = "stub"
-
-[experimental]
-auto_session_title = true
 
 [providers.stub]
 type = "openai"
@@ -700,7 +723,7 @@ key = "${titleOAuthRef.key}"
       ]);
 
       const outcomes = [first, second].map((result) => result.status);
-      expect(outcomes.sort()).toEqual(['fulfilled', 'rejected']);
+      expect(outcomes.toSorted()).toEqual(['fulfilled', 'rejected']);
       const rejection = [first, second].find((result) => result.status === 'rejected');
       expect((rejection as PromiseRejectedResult).reason).toMatchObject({
         code: 'session.already_exists',
@@ -778,6 +801,94 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('folds the resumed main agent replay from the persisted wire on cold and live resumes', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-resume-fold-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(homeDir, workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      await client.createSession({ id: 'ses_resume_fold', workDir });
+      await client.importContext({
+        sessionId: 'ses_resume_fold',
+        content: 'first imported turn',
+        source: "session 'source-a'",
+      });
+      await client.importContext({
+        sessionId: 'ses_resume_fold',
+        content: 'second imported turn',
+        source: "session 'source-b'",
+      });
+      await client.closeSession({ sessionId: 'ses_resume_fold' });
+      const sessionDir = await findSessionDir(homeDir, 'ses_resume_fold');
+      const wirePath = join(sessionDir, 'agents', MAIN_AGENT_ID, 'wire.jsonl');
+
+      // Cold resume with a turn window: the summary serves exactly the fold
+      // of the persisted wire, trimmed to the last user turn.
+      const limited = await client.resumeSession({ id: 'ses_resume_fold', replayTurnLimit: 1 });
+      const expectedLimited = await foldAgentWireReplay(wirePath, 1);
+      const limitedMain = limited.agents[MAIN_AGENT_ID];
+      expect(limitedMain?.replay).toEqual(expectedLimited.replay);
+      expect(limitedMain?.toolStore).toEqual(expectedLimited.toolStore);
+      expect(JSON.stringify(limitedMain?.replay)).toContain('second imported turn');
+      expect(JSON.stringify(limitedMain?.replay)).not.toContain('first imported turn');
+      expect(Object.keys(limited.agents)).toEqual([MAIN_AGENT_ID]);
+
+      // A live re-resume serves the same fold off the live scope.
+      const live = await client.resumeSession({ id: 'ses_resume_fold', replayTurnLimit: 1 });
+      expect(live.agents[MAIN_AGENT_ID]?.replay).toEqual(expectedLimited.replay);
+      await client.closeSession({ sessionId: 'ses_resume_fold' });
+
+      // Without a window the whole journal folds in.
+      const full = await client.resumeSession({ id: 'ses_resume_fold' });
+      const expectedFull = await foldAgentWireReplay(wirePath);
+      expect(full.agents[MAIN_AGENT_ID]?.replay).toEqual(expectedFull.replay);
+      expect(JSON.stringify(full.agents[MAIN_AGENT_ID]?.replay)).toContain('first imported turn');
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('rejects a resume whose engine restore fails without an unhandled rejection from the overlapped fold', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-resume-fail-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(homeDir, workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+
+    try {
+      await client.createSession({ id: 'ses_resume_fail', workDir });
+      await client.importContext({
+        sessionId: 'ses_resume_fail',
+        content: 'imported turn',
+        source: "session 'source-a'",
+      });
+      await client.closeSession({ sessionId: 'ses_resume_fail' });
+      // Malform the wire's metadata record: the engine's cold restore throws,
+      // while the index entry (and thus the overlapped fold's wire path)
+      // stays intact.
+      const sessionDir = await findSessionDir(homeDir, 'ses_resume_fail');
+      await writeFile(
+        join(sessionDir, 'agents', MAIN_AGENT_ID, 'wire.jsonl'),
+        '{"type":"metadata"}\n',
+        'utf-8',
+      );
+      await expect(client.resumeSession({ id: 'ses_resume_fail' })).rejects.toThrow(
+        'Agent wire metadata is malformed',
+      );
+      // The abandoned fold promise must settle quietly.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.removeListener('unhandledRejection', onUnhandled);
+      await client.close();
+    }
+  });
+
   it('serves listWorkspaceSkills through the engineAccessor escape hatch', async () => {
     const { harness, homeDir } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
@@ -850,7 +961,7 @@ key = "${titleOAuthRef.key}"
     await writeSkill(join(homeDir, 'skills', 'demo-user-skill'), 'demo-user-skill');
     await writeSkill(join(workDir, '.kimi-code', 'skills', 'demo-project-skill'), 'demo-project-skill');
     await writeSkill(join(explicitDir, 'demo-explicit-skill'), 'demo-explicit-skill');
-    const harness = createKimiHarnessV2({
+    const harness = createKimiHarness({
       homeDir,
       identity: TEST_IDENTITY,
       skillDirs: [explicitDir],
@@ -992,6 +1103,34 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('imports a registry through the harness without selecting a default when the caller defers selection', async () => {
+    setModelsDevUpstreamForTest({
+      fetchImpl: async () => Response.json({
+        example: {
+          id: 'example',
+          name: 'Example',
+          type: 'openai',
+          api: 'https://api.example.test/v1',
+          models: { m1: { id: 'm1' } },
+        },
+      }),
+    });
+    const { harness } = await makeHarness();
+    try {
+      const result = await harness.importCustomRegistry({
+        url: 'https://registry.example.test/api.json',
+        setDefaultWhenUnset: false,
+      });
+      expect(result.modelsImported).toBe(1);
+      const config = await harness.getConfig({ reload: true });
+      expect(config.providers['example']).toMatchObject({ type: 'openai', apiKey: '' });
+      expect(config.models?.['example/m1']).toMatchObject({ provider: 'example', model: 'm1' });
+      expect(config.defaultModel).toBeUndefined();
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('round-trips the secondaryModel pool field to the [secondary_model] config section', async () => {
     const { harness, homeDir } = await makeHarness();
     try {
@@ -1018,6 +1157,21 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('round-trips autoSessionTitle to the auto_session_title config.toml field', async () => {
+    const { harness, homeDir } = await makeHarness();
+    try {
+      await harness.setConfig({ autoSessionTitle: false });
+
+      const toml = await readFile(join(homeDir, 'config.toml'), 'utf-8');
+      expect(toml).toContain('auto_session_title = false');
+
+      const reread = await harness.getConfig({ reload: true });
+      expect(reread.autoSessionTitle).toBe(false);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('deleteSession removes a session and rejects a missing id with session_not_found', async () => {
     const { harness, homeDir } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
@@ -1036,6 +1190,168 @@ key = "${titleOAuthRef.key}"
       await harness.close();
     }
   });
+
+  it.each([
+    { enabled: false, panel: true },
+    { enabled: true, panel: false },
+    { enabled: true, panel: true },
+  ])(
+    'gates NotifyUser for all profiles and preserves fork prompts: %j',
+    async ({ enabled, panel }) => {
+      vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+      vi.stubEnv('KIMI_CODE_EXPERIMENTAL_NOTIFY_USER', '');
+      const homeDir = await mkdtemp(join(tmpdir(), 'kimi-notify-home-'));
+      const workDir = await mkdtemp(join(tmpdir(), 'kimi-notify-work-'));
+      tempDirs.push(homeDir, workDir);
+      const client = new SDKRpcClientV2({
+        homeDir,
+        identity: TEST_IDENTITY,
+        uiCapabilities: panel ? ['update_panel'] : [],
+      });
+      try {
+        await client.setConfig({
+          providers: {
+            stub: {
+              type: 'openai',
+              baseUrl: 'https://model.example.test/v1',
+              apiKey: 'YOUR_API_KEY',
+            },
+          },
+          models: { stub: { provider: 'stub', model: 'stub', maxContextSize: 32000 } },
+          defaultModel: 'stub',
+          experimental: { notify_user: enabled },
+        });
+        await client.createSession({ id: 'ses_notify', workDir });
+        const session = getLiveSessionById(client.engineAccessor, 'ses_notify')!;
+        const lifecycle = session.accessor.get(IAgentLifecycleService);
+        for (const profile of ['agent', 'coder', 'explore', 'plan']) {
+          const id = profile === 'agent' ? 'main' : `worker-${profile}`;
+          if (lifecycle.get(id) === undefined)
+            await lifecycle.create({ agentId: id, binding: { profile, model: 'stub' } });
+          const agent = lifecycle.handleOf(id)!;
+          await agent.accessor.get(IAgentToolActivationService).activate();
+          const offered = agent.accessor
+            .get(IAgentToolRegistryService)
+            .list()
+            .some((tool) => tool.name === 'NotifyUser');
+          expect(offered).toBe(enabled && panel);
+          if (profile === 'agent') {
+            const delegation = agent.accessor
+              .get(IAgentToolRegistryService)
+              .list()
+              .find((tool) => tool.name === 'Agent');
+            expect(delegation?.description.includes('NotifyUser')).toBe(enabled && panel);
+          }
+          const prompt = agent.accessor.get(IAgentProfileService).getSystemPrompt();
+          expect(prompt.includes('When `NotifyUser` is available')).toBe(enabled && panel);
+          if (offered) {
+            expect(
+              agent.accessor
+                .get(INotifyUserTool)
+                .resolveExecution({ message: 'Checking this subtask.' }),
+            ).toMatchObject({ accesses: [], approvalRule: 'NotifyUser' });
+          }
+        }
+        const main = lifecycle.handleOf('main')!;
+        const originalPrompt = main.accessor.get(IAgentProfileService).getSystemPrompt();
+        const fork = await lifecycle.fork(lifecycle.get('main')!, { agentId: 'fork-worker' });
+        expect(
+          lifecycle.handleOf(fork.agentId)!.accessor.get(IAgentProfileService).getSystemPrompt(),
+        ).toBe(originalPrompt);
+        const originalTools = structuredClone(main.accessor.get(IAgentToolRegistryService).list());
+        for (const [index, nextEnabled] of [!enabled, enabled, !enabled].entries()) {
+          await client.setConfig({ experimental: { notify_user: nextEnabled } });
+          let current = getLiveSessionById(client.engineAccessor, 'ses_notify')!;
+          let currentMain = current.accessor.get(IAgentLifecycleService).handleOf('main')!;
+          expect(currentMain.accessor.get(IAgentProfileService).getSystemPrompt()).toBe(
+            originalPrompt,
+          );
+          expect(currentMain.accessor.get(IAgentToolRegistryService).list()).toEqual(originalTools);
+          if (enabled && panel) {
+            const execution = currentMain.accessor
+              .get(INotifyUserTool)
+              .resolveExecution({ message: 'Still working.' });
+            if (!('execute' in execution)) throw new Error('Expected executable notification');
+            expect(
+              await execution.execute({ signal: new AbortController().signal } as never),
+            ).toEqual({
+              isError: false,
+              output: nextEnabled
+                ? 'Update shown to the user.'
+                : 'Notifications are disabled; the update was not displayed.',
+            });
+          }
+          await current.accessor.get(IAgentLifecycleService).create({
+            agentId: `late-worker-${index}`,
+            binding: { profile: 'coder', model: 'stub' },
+          });
+          const child = current.accessor
+            .get(IAgentLifecycleService)
+            .handleOf(`late-worker-${index}`)!;
+          expect(
+            child.accessor
+              .get(IAgentToolRegistryService)
+              .list()
+              .some((tool) => tool.name === 'NotifyUser'),
+          ).toBe(enabled && panel);
+          expect(
+            child.accessor
+              .get(IAgentProfileService)
+              .getSystemPrompt()
+              .includes('When `NotifyUser` is available'),
+          ).toBe(enabled && panel);
+          await client.reloadSession({ sessionId: 'ses_notify' });
+          current = getLiveSessionById(client.engineAccessor, 'ses_notify')!;
+          currentMain = current.accessor.get(IAgentLifecycleService).handleOf('main')!;
+          expect(currentMain.accessor.get(IAgentToolRegistryService).list()).toEqual(originalTools);
+          expect(currentMain.accessor.get(IAgentProfileService).getSystemPrompt()).toBe(
+            originalPrompt,
+          );
+        }
+        await client.createSession({ id: 'ses_notify_fresh', workDir });
+        await client.setConfig({ experimental: { notify_user: enabled } });
+        await client.getStatus({ sessionId: 'ses_notify_fresh' });
+        const fresh = getLiveSessionById(client.engineAccessor, 'ses_notify_fresh')!
+          .accessor.get(IAgentLifecycleService)
+          .handleOf('main')!;
+        expect(
+          fresh.accessor
+            .get(IAgentToolRegistryService)
+            .list()
+            .some((tool) => tool.name === 'NotifyUser'),
+        ).toBe(!enabled && panel);
+        expect(
+          fresh.accessor
+            .get(IAgentProfileService)
+            .getSystemPrompt()
+            .includes('When `NotifyUser` is available'),
+        ).toBe(!enabled && panel);
+        if (enabled || !panel) {
+          expect(fresh.accessor.get(IAgentProfileService).getSystemPrompt()).not.toContain(
+            'NotifyUser',
+          );
+          expect(
+            JSON.stringify(fresh.accessor.get(IAgentToolRegistryService).list()),
+          ).not.toContain('NotifyUser');
+        }
+        await client.setConfig({ experimental: { notify_user: !enabled } });
+        const legacy = getLiveSessionById(client.engineAccessor, 'ses_notify')!;
+        await legacy.accessor
+          .get(IAtomicDocumentStore)
+          .delete(legacy.accessor.get(ISessionContext).scope('notify'), 'state.json');
+        await client.reloadSession({ sessionId: 'ses_notify' });
+        const migrated = getLiveSessionById(client.engineAccessor, 'ses_notify')!
+          .accessor.get(IAgentLifecycleService)
+          .handleOf('main')!;
+        expect(migrated.accessor.get(IAgentProfileService).getSystemPrompt()).toBe(originalPrompt);
+        expect(migrated.accessor.get(IAgentToolRegistryService).list()).toEqual(originalTools);
+      } finally {
+        await client.close();
+        vi.unstubAllEnvs();
+      }
+    },
+    30_000,
+  );
 
   it('serves getTodos from the live session todo state', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
@@ -1179,6 +1495,10 @@ describe('SDKRpcClientV2 workspace trust', () => {
             cwd: '/tmp/root',
             env: { SECRET: 'hidden' },
           },
+          'disabled-server': {
+            command: 'never-runs',
+            enabled: false,
+          },
           'http-server': {
             transport: 'http',
             url: 'https://example.test/mcp',
@@ -1199,27 +1519,204 @@ describe('SDKRpcClientV2 workspace trust', () => {
       const info = await harness.getWorkspaceTrustInfo(workDir);
       expect(info.trusted).toBe(false);
       expect(info.gatedMcpServers).toEqual([
-        { name: 'http-server', transport: 'http', url: 'https://example.test/mcp' },
-        { name: 'nested-server', transport: 'stdio', command: 'nested-cmd' },
-        { name: 'root-server', transport: 'stdio', command: 'root-cmd', args: ['--safe'], cwd: '/tmp/root' },
+        {
+          name: 'http-server',
+          transport: 'http',
+          url: 'https://example.test/mcp',
+          origin: await realpath(join(workDir, '.mcp.json')),
+        },
+        {
+          name: 'nested-server',
+          transport: 'stdio',
+          command: 'nested-cmd',
+          origin: await realpath(join(workDir, '.kimi-code', 'mcp.json')),
+        },
+        {
+          name: 'root-server',
+          transport: 'stdio',
+          command: 'root-cmd',
+          args: ['--safe'],
+          cwd: '/tmp/root',
+          origin: await realpath(join(workDir, '.mcp.json')),
+        },
       ]);
       const serialized = JSON.stringify(info);
+      // Environment variables and headers stay in the source configuration.
       expect(serialized).not.toContain('hidden');
       expect(serialized).not.toContain('SECRET');
       expect(serialized).not.toContain('TOKEN');
+      // Disabled servers never connect, so they are not part of the disclosure.
+      expect(serialized).not.toContain('disabled-server');
     } finally {
       await harness.close();
     }
   });
 
-  it('degrades the gated-server list to empty on an invalid project mcp.json', async () => {
+  it('reports project servers that override same-named user entries', async () => {
+    const { harness, homeDir } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    await writeFile(
+      join(homeDir, 'mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          github: { command: 'user-github', enabled: false },
+        },
+      }),
+      'utf-8',
+    );
+    await writeFile(
+      join(workDir, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          github: { command: 'project-github' },
+          toString: { transport: 'http', url: 'https://example.test/mcp' },
+        },
+      }),
+      'utf-8',
+    );
+    try {
+      const info = await harness.getWorkspaceTrustInfo(workDir);
+      expect(info.trusted).toBe(false);
+      expect(info.gatedMcpServers).toEqual([
+        {
+          name: 'github',
+          transport: 'stdio',
+          command: 'project-github',
+          args: undefined,
+          cwd: workDir,
+          origin: await realpath(join(workDir, '.mcp.json')),
+        },
+        {
+          name: 'toString',
+          transport: 'http',
+          url: 'https://example.test/mcp',
+          origin: await realpath(join(workDir, '.mcp.json')),
+        },
+      ]);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('reports failed configuration and instruction sources while retaining readable instructions', async () => {
     const { harness } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
     await writeFile(join(workDir, '.mcp.json'), '{not json', 'utf-8');
+    await writeFile(join(workDir, 'AGENTS.md'), '# Project instructions\n', 'utf-8');
+    await mkdir(join(workDir, '.kimi-code'));
+    await symlink(join(workDir, 'missing.md'), join(workDir, '.kimi-code', 'AGENTS.md'));
     try {
       const info = await harness.getWorkspaceTrustInfo(workDir);
-      expect(info).toEqual({ trusted: false, gatedMcpServers: [] });
+      expect(info).toEqual({
+        trusted: false,
+        gatedMcpServers: [],
+        gatedAdditionalDirs: [],
+        additionalDirSources: [],
+        warnings: expect.arrayContaining([
+          'Could not inspect MCP configuration.',
+          expect.stringContaining(join(workDir, '.kimi-code', 'AGENTS.md')),
+        ]),
+        instructionSources: {
+          agentsMdPaths: [await realpath(join(workDir, 'AGENTS.md'))],
+          skills: [], agentProfiles: [], paths: [await realpath(join(workDir, 'AGENTS.md'))],
+        },
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('discloses additional directories and instruction sources of an untrusted workspace', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    const outsideDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-outside-'));
+    tempDirs.push(workDir, outsideDir);
+    const insideDir = join(workDir, 'sub');
+    await mkdir(insideDir, { recursive: true });
+    await mkdir(join(workDir, '..cache'));
+    // linked-dir lexically sits inside the project but points outside it, so
+    // trusting would grant access to the target; inner-link points back into
+    // the project and grants nothing new.
+    await symlink(outsideDir, join(workDir, 'linked-dir'), 'dir');
+    await symlink(insideDir, join(workDir, 'inner-link'), 'dir');
+    await mkdir(join(workDir, '.kimi-code'), { recursive: true });
+    await writeFile(
+      join(workDir, '.kimi-code', 'local.toml'),
+      `[workspace]\nadditional_dir = [${JSON.stringify(outsideDir)}, ".", "sub", "..cache", "linked-dir", "inner-link"]\n`,
+      'utf-8',
+    );
+    await writeFile(join(outsideDir, 'AGENTS.md'), '# Demo\n', 'utf-8');
+    await symlink(join(outsideDir, 'AGENTS.md'), join(workDir, 'AGENTS.md'), 'file');
+    const outsideSkills = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-skills-'));
+    tempDirs.push(outsideSkills);
+    await mkdir(join(outsideSkills, 'demo-skill'), { recursive: true });
+    await writeFile(
+      join(outsideSkills, 'demo-skill', 'SKILL.md'),
+      '---\nname: demo-skill\ndescription: Demo skill\n---\n\nDo demo things.\n',
+      'utf-8',
+    );
+    await symlink(outsideSkills, join(workDir, '.kimi-code', 'skills'), 'dir');
+    await mkdir(join(workDir, '.kimi-code', 'agents'), { recursive: true });
+    await writeFile(
+      join(workDir, '.kimi-code', 'agents', 'demo-agent.md'),
+      '---\nname: demo-agent\ndescription: Demo agent\n---\n\nYou are demo-agent.\n',
+      'utf-8',
+    );
+    await writeFile(
+      join(workDir, '.kimi-code', 'agents', 'clash-agent.md'),
+      '---\nname: agent\ndescription: Clashes with the builtin default without override\n---\n\nYou are not loaded.\n',
+      'utf-8',
+    );
+    try {
+      const info = await harness.getWorkspaceTrustInfo(workDir);
+      expect(info.trusted).toBe(false);
+      expect(info.gatedAdditionalDirs).toEqual([
+        await realpath(outsideDir),
+        // The symlinked .kimi-code/skills grants access to its real target.
+        await realpath(outsideSkills),
+      ]);
+      // The project AGENTS.md is a symlink escaping the project, so its real
+      // target is disclosed instead of the lexical link path.
+      expect(info.instructionSources.agentsMdPaths).toEqual([
+        await realpath(join(outsideDir, 'AGENTS.md')),
+      ]);
+      expect(info.additionalDirSources).toEqual([
+        await realpath(join(workDir, '.kimi-code', 'local.toml')),
+        await realpath(outsideSkills),
+      ]);
+      expect(info.instructionSources.paths).toEqual([
+        await realpath(join(outsideDir, 'AGENTS.md')),
+        `${await realpath(outsideSkills)}/`,
+        `${await realpath(join(workDir, '.kimi-code', 'agents'))}/`,
+      ]);
+      expect(info.warnings).toEqual([]);
+      expect(info.instructionSources.skills).toEqual(['demo-skill']);
+      // The agent file clashing with the builtin default without override is
+      // suppressed by the session catalog, so it is not part of the disclosure.
+      expect(info.instructionSources.agentProfiles).toEqual(['demo-agent']);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('points to the scanned agent directory for an effective workspace profile', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    const outsideDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-agent-source-'));
+    tempDirs.push(workDir, outsideDir);
+    await mkdir(join(workDir, '.kimi-code', 'agents'), { recursive: true });
+    await writeFile(
+      join(outsideDir, 'override-agent.md'),
+      '---\nname: agent\noverride: true\ndescription: Replaces the builtin default\n---\n\nYou are the override.\n',
+      'utf-8',
+    );
+    await symlink(join(outsideDir, 'override-agent.md'), join(workDir, '.kimi-code', 'agents', 'override-agent.md'));
+    try {
+      const info = await harness.getWorkspaceTrustInfo(workDir);
+      expect(info.instructionSources.agentProfiles).toEqual(['agent']);
+      expect(info.instructionSources.paths).toEqual([`${await realpath(join(workDir, '.kimi-code', 'agents'))}/`]);
     } finally {
       await harness.close();
     }
@@ -1234,6 +1731,10 @@ describe('SDKRpcClientV2 workspace trust', () => {
       expect(await harness.getWorkspaceTrustInfo(workDir)).toEqual({
         trusted: true,
         gatedMcpServers: [],
+        gatedAdditionalDirs: [],
+        additionalDirSources: [],
+        warnings: [],
+        instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] },
       });
       // The trust marker lives in the kimi home, never in the checkout.
       const markers = await readdir(join(homeDir, 'workspace-trust'));
@@ -1314,6 +1815,337 @@ describe('foldAgentWireReplay', () => {
   });
 });
 
+describe('foldAgentWireReplay turn limiting', () => {
+  function appendUser(
+    text: string,
+    time: number,
+    origin?: Record<string, unknown>,
+  ): Record<string, unknown> {
+    return {
+      type: 'context.append_message',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text }],
+        toolCalls: [],
+        ...(origin === undefined ? {} : { origin }),
+      },
+      time,
+    };
+  }
+
+  function stepRecords(
+    uuid: string,
+    time: number,
+    opts: { readonly withTool?: boolean; readonly text?: string } = {},
+  ): Record<string, unknown>[] {
+    const records: Record<string, unknown>[] = [
+      { type: 'context.append_loop_event', event: { type: 'step.begin', uuid }, time },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'content.part',
+          stepUuid: uuid,
+          part: { type: 'text', text: opts.text ?? `answer ${uuid}` },
+        },
+        time: time + 1,
+      },
+    ];
+    if (opts.withTool === true) {
+      records.push(
+        {
+          type: 'context.append_loop_event',
+          event: {
+            type: 'tool.call',
+            stepUuid: uuid,
+            toolCallId: `call-${uuid}`,
+            name: 'Bash',
+            args: { command: 'ls' },
+          },
+          time: time + 2,
+        },
+        {
+          type: 'context.append_loop_event',
+          event: {
+            type: 'tool.result',
+            toolCallId: `call-${uuid}`,
+            result: { output: 'ok', isError: false },
+          },
+          time: time + 3,
+        },
+        { type: 'context.append_loop_event', event: { type: 'step.end', uuid }, time: time + 4 },
+      );
+    } else {
+      records.push({
+        type: 'context.append_loop_event',
+        event: { type: 'step.end', uuid },
+        time: time + 2,
+      });
+    }
+    return records;
+  }
+
+  function turnRecords(index: number, time: number): Record<string, unknown>[] {
+    return [
+      appendUser(`prompt ${index}`, time),
+      ...stepRecords(`s${index}`, time + 1, { withTool: index % 3 === 0 }),
+    ];
+  }
+
+  async function writeWire(records: readonly Record<string, unknown>[]): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-fold-limit-'));
+    tempDirs.push(dir);
+    const wirePath = join(dir, 'wire.jsonl');
+    await writeFile(
+      wirePath,
+      records.map((record) => JSON.stringify(record)).join('\n') + '\n',
+      'utf-8',
+    );
+    return wirePath;
+  }
+
+  async function referenceFold(wirePath: string, turnLimit?: number) {
+    const full = await foldAgentWireReplay(wirePath);
+    return {
+      replay: limitAgentReplayByTurns(full.replay, turnLimit),
+      toolStore: full.toolStore,
+    };
+  }
+
+  it('matches the unlimited fold truncated to the last N turns on a rich journal', async () => {
+    const records: Record<string, unknown>[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      { type: 'config.update', modelAlias: 'm1', thinkingEffort: 'high', time: 2 },
+      { type: 'permission.set_mode', mode: 'auto', time: 3 },
+      { type: 'goal.create', goalId: 'g1', objective: 'ship it', time: 4 },
+      {
+        type: 'tools.update_store',
+        key: 'todo',
+        value: [{ title: 'early', status: 'pending' }],
+        time: 5,
+      },
+    ];
+    let time = 100;
+    for (let index = 0; index < 15; index++) {
+      records.push(...turnRecords(index, time));
+      time += 10;
+      records.push({
+        type: 'goal.update',
+        status: 'active',
+        turnsUsed: index + 1,
+        tokensUsed: (index + 1) * 100,
+        wallClockMs: (index + 1) * 1000,
+        time: time++,
+      });
+      if (index === 5) {
+        records.push({
+          type: 'tools.update_store',
+          key: 'todo',
+          value: [{ title: 'mid', status: 'done' }],
+          time: time++,
+        });
+      }
+      if (index === 7) {
+        records.push(
+          { type: 'plan_mode.enter', time: time++ },
+          { type: 'plan_mode.exit', time: time++ },
+        );
+      }
+      if (index === 9 || index === 13) {
+        records.push(
+          { type: 'full_compaction.begin', instruction: 'compact', time: time++ },
+          {
+            type: 'context.apply_compaction',
+            summary: 'summary',
+            contextSummary: 'context summary',
+            compactedCount: 3,
+            tokensBefore: 1000,
+            tokensAfter: 100,
+            keptUserMessageCount: 2,
+            time: time++,
+          },
+        );
+      }
+      if (index === 12) {
+        records.push({ type: 'forked', time: time++ });
+      }
+    }
+    records.push({
+      type: 'tools.update_store',
+      key: 'todo',
+      value: [{ title: 'final', status: 'done' }],
+      time: time++,
+    });
+    const wirePath = await writeWire(records);
+    for (const limit of [1, 3, 11, 15, 16]) {
+      expect(await foldAgentWireReplay(wirePath, limit)).toEqual(
+        await referenceFold(wirePath, limit),
+      );
+    }
+  });
+
+  it('matches the reference on a legacy-version journal with goal usage records', async () => {
+    const records: Record<string, unknown>[] = [
+      { type: 'metadata', protocol_version: '1.3', created_at: 1 },
+      { type: 'goal.create', goalId: 'g1', objective: 'legacy goal', time: 2 },
+      { type: 'goal.account_usage', goalId: 'g1', tokensUsed: 42, wallClockMs: 900, time: 3 },
+      { type: 'goal.continuation', goalId: 'g1', turnsUsed: 7, time: 4 },
+    ];
+    let time = 100;
+    for (let index = 0; index < 6; index++) {
+      records.push(...turnRecords(index, time));
+      time += 10;
+    }
+    records.push({
+      type: 'goal.update',
+      goalId: 'g1',
+      status: 'complete',
+      reason: 'done',
+      turnsUsed: 8,
+      time: time++,
+    });
+    const wirePath = await writeWire(records);
+    expect(await foldAgentWireReplay(wirePath, 2)).toEqual(await referenceFold(wirePath, 2));
+  });
+
+  it('shifts the window across undo-erased turns exactly like the reference', async () => {
+    const records: Record<string, unknown>[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+    ];
+    let time = 100;
+    for (let index = 0; index < 14; index++) {
+      records.push(...turnRecords(index, time));
+      time += 10;
+    }
+    records.push(
+      appendUser('cron fire', time++, {
+        kind: 'cron_job',
+        jobId: 'job-1',
+        cron: '*/15 * * * *',
+        recurring: true,
+        coalescedCount: 1,
+        stale: false,
+      }),
+      ...stepRecords('cron-step', time, {}),
+    );
+    time += 10;
+    records.push({ type: 'context.undo', count: 2, time: time++ });
+    const wirePath = await writeWire(records);
+    for (const limit of [5, 11, 12, 13]) {
+      expect(await foldAgentWireReplay(wirePath, limit)).toEqual(
+        await referenceFold(wirePath, limit),
+      );
+    }
+  });
+
+  it('reproduces a tool call pending across the turn boundary', async () => {
+    const records: Record<string, unknown>[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+    ];
+    let time = 100;
+    for (let index = 0; index < 3; index++) {
+      records.push(...turnRecords(index, time));
+      time += 10;
+    }
+    records.push(
+      { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 'sx' }, time: time++ },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'tool.call', stepUuid: 'sx', toolCallId: 'call-x', name: 'Bash', args: {} },
+        time: time++,
+      },
+      appendUser('prompt while pending', time++),
+      { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 'sy' }, time: time++ },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'content.part',
+          stepUuid: 'sy',
+          part: { type: 'text', text: 'recovered' },
+        },
+        time: time++,
+      },
+      { type: 'context.append_loop_event', event: { type: 'step.end', uuid: 'sy' }, time: time++ },
+    );
+    const wirePath = await writeWire(records);
+    for (const limit of [1, 2, 4]) {
+      expect(await foldAgentWireReplay(wirePath, limit)).toEqual(
+        await referenceFold(wirePath, limit),
+      );
+    }
+  });
+
+  it('falls back to a full fold when a legacy compaction lands inside the window', async () => {
+    const records: Record<string, unknown>[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+    ];
+    let time = 100;
+    for (let index = 0; index < 11; index++) {
+      if (index === 8) {
+        records.push(
+          { type: 'full_compaction.begin', instruction: 'compact', time: time++ },
+          {
+            type: 'context.apply_compaction',
+            summary: 'legacy summary',
+            compactedCount: 2,
+            tokensBefore: 5000,
+            time: time++,
+          },
+        );
+      }
+      records.push(...turnRecords(index, time));
+      time += 10;
+    }
+    const wirePath = await writeWire(records);
+    for (const limit of [1, 3]) {
+      expect(await foldAgentWireReplay(wirePath, limit)).toEqual(
+        await referenceFold(wirePath, limit),
+      );
+    }
+  });
+
+  it('returns the full replay when the journal has fewer turns than the limit', async () => {
+    const records: Record<string, unknown>[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      { type: 'permission.set_mode', mode: 'auto', time: 2 },
+      ...turnRecords(0, 100),
+      ...turnRecords(1, 200),
+    ];
+    const wirePath = await writeWire(records);
+    expect(await foldAgentWireReplay(wirePath, 11)).toEqual(await referenceFold(wirePath, 11));
+  });
+
+  it('returns an empty replay but the full tool store for a zero turn limit', async () => {
+    const records: Record<string, unknown>[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      { type: 'tools.update_store', key: 'todo', value: [{ title: 'kept', status: 'done' }], time: 2 },
+      ...turnRecords(0, 100),
+      ...turnRecords(1, 200),
+    ];
+    const wirePath = await writeWire(records);
+    expect(await foldAgentWireReplay(wirePath, 0)).toEqual(await referenceFold(wirePath, 0));
+  });
+
+  it('tolerates a truncated tail line with a turn limit and degrades like the reference', async () => {
+    const records: Record<string, unknown>[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      ...turnRecords(0, 100),
+      ...turnRecords(1, 200),
+      ...turnRecords(2, 300),
+    ];
+    const wirePath = await writeWire(records);
+    await writeFile(
+      wirePath,
+      records.map((record) => JSON.stringify(record)).join('\n') + '\n{"type":"context.append_messa',
+      'utf-8',
+    );
+    expect(await foldAgentWireReplay(wirePath, 2)).toEqual(await referenceFold(wirePath, 2));
+    await expect(foldAgentWireReplay(join(wirePath, '..', 'missing.jsonl'), 2)).resolves.toEqual({
+      replay: [],
+      toolStore: {},
+    });
+  });
+});
+
 describe('SDKRpcClientV2 engine telemetry', () => {
   it('forwards engine-side events to the host-supplied telemetry client', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-tel-'));
@@ -1321,7 +2153,7 @@ describe('SDKRpcClientV2 engine telemetry', () => {
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-tel-work-'));
     tempDirs.push(workDir);
     const records: TelemetryRecord[] = [];
-    const harness = createKimiHarnessV2({
+    const harness = createKimiHarness({
       homeDir,
       identity: TEST_IDENTITY,
       telemetry: recordingTelemetry(records),
@@ -1343,7 +2175,7 @@ describe('SDKRpcClientV2 engine telemetry', () => {
     tempDirs.push(workDir);
     await writeFile(join(homeDir, 'config.toml'), 'telemetry = false\n', 'utf-8');
     const records: TelemetryRecord[] = [];
-    const harness = createKimiHarnessV2({
+    const harness = createKimiHarness({
       homeDir,
       identity: TEST_IDENTITY,
       telemetry: recordingTelemetry(records),
@@ -1365,7 +2197,7 @@ describe('SDKRpcClientV2 engine telemetry', () => {
     tempDirs.push(workDir);
     await writeFile(join(homeDir, 'config.toml'), '[experimental]\nsubagent_fork = true\n', 'utf-8');
     const records: TelemetryRecord[] = [];
-    const harness = createKimiHarnessV2({
+    const harness = createKimiHarness({
       homeDir,
       identity: TEST_IDENTITY,
       telemetry: recordingTelemetry(records),
@@ -1379,6 +2211,7 @@ describe('SDKRpcClientV2 engine telemetry', () => {
       expect(started[0]).toMatchObject({
         sessionId: session.id,
         properties: {
+          client_id: '',
           client_name: 'kimi-code-cli',
           client_version: '0.0.0-test',
           ui_mode: 'shell',

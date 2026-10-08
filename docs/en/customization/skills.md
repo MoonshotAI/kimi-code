@@ -8,8 +8,29 @@ Compared to pasting the same instructions into a prompt every time, Skills offer
 
 Skill files must be placed in a [known scan directory](#skill-locations). Two file structures are supported:
 
-- **Directory form (recommended)**: Create a subdirectory under the Skills directory, name the main file `SKILL.md`, and place scripts, reference materials, and other supporting files in the same directory. When both `<name>/SKILL.md` and a same-named `<name>.md` exist in the same directory, the subdirectory takes precedence.
-- **Flat form**: Use a single `.md` file directly; the Skill name is taken from the filename (minus `.md`).
+- **Directory form (recommended)**: Create a subdirectory under the skills directory with the main file named `SKILL.md`, and place scripts, reference material, and other supporting files alongside it.
+- **Flat form**: Skip the subdirectory and drop a single `.md` file directly into the skills directory — handy for simple Skills that need no supporting files.
+
+Both structures register a Skill; they differ only in how the files are organized:
+
+```text
+skills/
+├── review-pr/              # Directory form → Skill name review-pr
+│   ├── SKILL.md            # Main file
+│   └── checklist.md        # Supporting file, referenced via ${KIMI_SKILL_DIR}
+└── commit.md               # Flat form → Skill name commit
+```
+
+How the Skill name is derived:
+
+- Directory form: from the required frontmatter `name` field (see the table below); by convention the subdirectory carries the same name — `review-pr/SKILL.md` with `name: review-pr` registers as `review-pr`.
+- Flat form: `name` may be omitted, falling back to the filename without the `.md` extension — `commit.md` registers as `commit`. The extension is stripped only from the registered Skill name; the file on disk must keep its `.md` extension to be picked up by the scanner, so don't actually create an extensionless `commit` file.
+- When both `<name>/SKILL.md` and `<name>.md` exist in the same directory, the directory form wins and the flat file is ignored.
+
+Two limitations of the flat form:
+
+- Only `.md` files placed directly at the top level of a skills directory are recognized; loose `.md` files inside subdirectories (other than `SKILL.md`) are not treated as Skills.
+- A flat Skill has no directory of its own, so `${KIMI_SKILL_DIR}` points at the skills directory itself — switch to the directory form whenever the Skill needs supporting files.
 
 ### File Format
 
@@ -39,7 +60,7 @@ Please handle code according to the following guidelines:
 
 | Field | Description |
 | --- | --- |
-| `name` | Skill name (case-insensitive). Required in directory-form `SKILL.md`; flat `.md` uses the filename |
+| `name` | Skill name (case-insensitive). Required in directory-form `SKILL.md`; flat `.md` falls back to the filename without the `.md` extension |
 | `description` | One-line summary the model uses to decide when to invoke. Required in directory-form `SKILL.md`; flat `.md` falls back to the first non-empty body line (up to 240 characters) |
 | `type` | Skill type: `prompt` (default), `inline` (same as `prompt`), `flow` (manual invocation only). Other values are skipped |
 | `whenToUse` | Description of when the Skill should be triggered. Also accepts `when-to-use` and `when_to_use` |

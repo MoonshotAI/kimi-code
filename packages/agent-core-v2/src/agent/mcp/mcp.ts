@@ -1,4 +1,4 @@
-import type { Tool as KosongTool } from '#/kosong/contract/tool';
+import type { ToolDescription as KosongTool } from '#human/llm/message';
 
 import { createDecorator } from "#/_base/di/instantiation";
 import { type IDisposable } from "#/_base/di/lifecycle";
@@ -11,6 +11,7 @@ export interface McpResolvedServer {
   readonly tools: readonly KosongTool[];
   readonly rawTools: readonly MCPToolDefinition[];
   readonly enabledNames: ReadonlySet<string>;
+  readonly deferred: boolean;
 }
 
 export interface IAgentMcpService {

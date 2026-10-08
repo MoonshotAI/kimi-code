@@ -1,4 +1,4 @@
-import { IConfigService, type Scope } from '@moonshot-ai/agent-core-v2';
+import { IConfigService, ITelemetryService, type Scope } from '@moonshot-ai/agent-core-v2';
 import { FiberState } from '@moonshot-ai/agent-core-v2/_base/di/fiber';
 import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
 import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
@@ -28,6 +28,7 @@ import { registerOAuthRoutes } from './oauth';
 import { registerPluginsRoutes } from './plugins';
 import { registerPromptsRoutes } from './prompts';
 import { registerQuestionsRoutes } from './questions';
+import { registerRemoteControlRoutes, type RemoteControlRouteOptions } from './remoteControl';
 import { registerRuntimeRoutes } from './runtime';
 import { registerSearchRoutes } from './search';
 import { registerSessionMediaRoutes } from './sessionMedia';
@@ -71,6 +72,7 @@ export interface RegisterApiV1RoutesOptions {
   readonly transcriptService: TranscriptService;
   readonly pluginMarketplaceUrl: () => string;
   readonly pluginMarketplaceIsDefault: boolean;
+  readonly remoteControl: RemoteControlRouteOptions;
   readonly dangerousBypassAuth?: boolean;
   readonly webTitle?: string;
 }
@@ -153,6 +155,10 @@ export async function registerApiV1Routes(
       registerPromptsRoutes(
         apiV1 as unknown as Parameters<typeof registerPromptsRoutes>[0],
         core,
+      );
+      registerRemoteControlRoutes(
+        apiV1 as unknown as Parameters<typeof registerRemoteControlRoutes>[0],
+        { ...opts.remoteControl, telemetry: core.accessor.get(ITelemetryService) },
       );
       registerWorkspacesRoutes(
         apiV1 as unknown as Parameters<typeof registerWorkspacesRoutes>[0],

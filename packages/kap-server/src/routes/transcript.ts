@@ -306,18 +306,22 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
       if (agent_id === undefined && !agentIds.includes(MAIN_AGENT_ID)) {
         agentIds.unshift(MAIN_AGENT_ID);
       }
-      const agents = [];
-      for (const agentId of agentIds) {
-        const snapshot = await transcriptService.readColdSnapshot(session_id, agentId);
-        if (snapshot === undefined) {
-          sendSessionNotFound(reply, req.id, session_id);
-          return;
-        }
-        const byId = new Map(snapshot.attachments.map((a) => [a.attachmentId, a]));
-        agents.push({
-          agent_id: agentId,
-          ...projectUserMessages(snapshot.items, (id) => byId.get(id)),
-        });
+      const agents = await mapBoundedOrdered(
+        agentIds,
+        USER_MESSAGES_COLD_CONCURRENCY,
+        async (agentId) => {
+          const snapshot = await transcriptService.readColdSnapshot(session_id, agentId);
+          if (snapshot === undefined) return undefined;
+          const byId = new Map(snapshot.attachments.map((a) => [a.attachmentId, a]));
+          return {
+            agent_id: agentId,
+            ...projectUserMessages(snapshot.items, (id) => byId.get(id)),
+          };
+        },
+      );
+      if (agents.some((entry) => entry === undefined)) {
+        sendSessionNotFound(reply, req.id, session_id);
+        return;
       }
       reply.send(okEnvelope({ agents }, req.id));
     },
@@ -380,6 +384,27 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
     },
   );
   app.get(planRoute.path, planRoute.options, planRoute.handler as Parameters<TranscriptRouteHost['get']>[2]);
+}
+
+const USER_MESSAGES_COLD_CONCURRENCY = 8;
+
+async function mapBoundedOrdered<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const out = Array.from({ length: items.length }) as R[];
+  let next = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    for (;;) {
+      const index = next;
+      next += 1;
+      if (index >= items.length) return;
+      out[index] = await fn(items[index]!);
+    }
+  });
+  await Promise.all(workers);
+  return out;
 }
 
 interface UserMessageEntry {

@@ -18,7 +18,7 @@ export class AutoModeAskUserQuestionDenyPermissionPolicyService implements Permi
     return {
       kind: 'deny',
       message:
-        'AskUserQuestion is disabled while auto permission mode is active. Make a reasonable decision and continue without asking the user.',
+        'AskUserQuestion is disabled while auto permission mode is active; decide and continue.',
     };
   }
 }

@@ -12,21 +12,24 @@ import type {
   ToolCallTurnRepeatEvent,
 } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
+import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import { parseBooleanEnv } from '#/_base/utils/env';
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { HandoffStepRequest } from '#/agent/loop/handoffStep';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventBus } from '#/app/event/eventBus';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { IAgentToolExecutorService, type ToolCallDupType } from '#/agent/toolExecutor/toolExecutor';
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 import {
   IAgentToolDedupeService,
   REPEAT_BREAKER_STOP_REASON,
   type ToolDedupeResult,
 } from './toolDedupe';
+
+export const REPEAT_BREAKER_ENV = 'KIMI_CODE_REPEAT_BREAKER';
 
 const REMINDER_TEXT_1 =
   '\n\n' +
@@ -186,15 +189,18 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
   private readonly stepDeferreds = new Map<string, Deferred<ToolDedupeResult>>();
   private readonly handoffVetoedCallIds = new Set<string>();
   private forceStoppedInStep = false;
+  private readonly repeatBreakerEnabled: boolean;
 
   constructor(
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IBootstrapService bootstrap: IBootstrapService,
     @IEventBus eventBus: IEventBus,
   ) {
     super();
+    this.repeatBreakerEnabled = parseBooleanEnv(bootstrap.getEnv(REPEAT_BREAKER_ENV)) !== false;
     this.states.contributeState(toolDedupeStepCallsKey);
     this.states.contributeState(toolDedupeOriginalCallIndexKey);
     this.states.contributeState(toolDedupeSyntheticCallIdsKey);
@@ -389,16 +395,15 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
     }
     if (phase !== 'idle' || !this.forceStoppedInStep) return;
     this.handoffPhase = 'pending';
-    this.loop.enqueue(
-      new HandoffStepRequest({
-        onMaterialize: () => {
-          this.handoffPhase = 'active';
-        },
-        onAbort: () => {
-          this.handoffPhase = 'done';
-        },
-      }),
-    );
+    this.loop.notify({
+      bypassMaxSteps: true,
+      onConsume: () => {
+        this.handoffPhase = 'active';
+      },
+      onDrop: () => {
+        this.handoffPhase = 'done';
+      },
+    });
   }
 
   private recordTurnRepeat(
@@ -529,19 +534,21 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
 
     let finalResult = result;
     let action: 'none' | 'r1' | 'r2' | 'r3' | 'stop' = 'none';
-    if (streak >= REPEAT_FORCE_STOP_STREAK) {
-      finalResult = forceStopResult(result, REMINDER_TEXT_3);
-      action = 'stop';
-      this.forceStoppedInStep = true;
-    } else if (streak >= REPEAT_REMINDER_3_START) {
-      finalResult = appendReminder(result, REMINDER_TEXT_3);
-      action = 'r3';
-    } else if (streak >= REPEAT_REMINDER_2_START) {
-      finalResult = appendReminder(result, makeReminderText2(streak));
-      action = 'r2';
-    } else if (streak >= REPEAT_REMINDER_1_START) {
-      finalResult = appendReminder(result, REMINDER_TEXT_1);
-      action = 'r1';
+    if (this.repeatBreakerEnabled) {
+      if (streak >= REPEAT_FORCE_STOP_STREAK) {
+        finalResult = forceStopResult(result, REMINDER_TEXT_3);
+        action = 'stop';
+        this.forceStoppedInStep = true;
+      } else if (streak >= REPEAT_REMINDER_3_START) {
+        finalResult = appendReminder(result, REMINDER_TEXT_3);
+        action = 'r3';
+      } else if (streak >= REPEAT_REMINDER_2_START) {
+        finalResult = appendReminder(result, makeReminderText2(streak));
+        action = 'r2';
+      } else if (streak >= REPEAT_REMINDER_1_START) {
+        finalResult = appendReminder(result, REMINDER_TEXT_1);
+        action = 'r1';
+      }
     }
 
     if (streak >= 2) {

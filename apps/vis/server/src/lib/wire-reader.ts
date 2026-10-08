@@ -1,7 +1,10 @@
 import { createReadStream } from 'node:fs';
+import { basename, dirname } from 'node:path';
 import { createInterface } from 'node:readline';
 
 import {
+  isNewerWireVersion,
+  migrateV1_4ToV1_5,
   migrateWireRecord,
   resolveWireMigrations,
   type WireMigration,
@@ -37,6 +40,8 @@ function bestEffortMigrations(): readonly WireMigration[] {
  *    - below-1.0 (or otherwise unrecognized-low) — `resolveWireMigrations`
  *      throws, so records run through the 1.0-onwards best-effort chain and a
  *      warning is added to `warnings[]` so the UI can surface the caveat;
+ *    - no metadata header — mirrors core-v2's recovery path by treating the
+ *      journal as v1.4 and applying the v1.4 → v1.5 migration in memory;
  *    - at/above the current 1.5 (including future versions) — resolves to an
  *      empty chain, so records are passed through unchanged, with no migration
  *      and no warning. */
@@ -46,8 +51,10 @@ export async function readAgentWire(path: string): Promise<WireReadResult> {
   let lineNo = 0;
   let metadata: WireReadResult['metadata'] | null = null;
   let migrations: readonly WireMigration[] = [];
+  let newerWireVersion = false;
   const records: WireEntry[] = [];
   const warnings: string[] = [];
+  const agentId = basename(dirname(path));
 
   for await (const line of rl) {
     lineNo += 1;
@@ -64,31 +71,40 @@ export async function readAgentWire(path: string): Promise<WireReadResult> {
       continue;
     }
     if (metadata === null) {
-      if (parsed['type'] !== 'metadata') {
-        throw new Error(`Wire file missing metadata header at line ${lineNo}`);
-      }
-      const pv = parsed['protocol_version'];
-      const ca = parsed['created_at'];
-      if (typeof pv !== 'string' || typeof ca !== 'number') {
-        throw new TypeError(`Wire metadata malformed at line ${lineNo}`);
-      }
-      try {
-        migrations = resolveWireMigrations(pv);
-      } catch (error) {
+      if (parsed['type'] === 'metadata') {
+        const pv = parsed['protocol_version'];
+        const ca = parsed['created_at'];
+        if (typeof pv !== 'string' || typeof ca !== 'number') {
+          throw new TypeError(`Wire metadata malformed at line ${lineNo}`);
+        }
+        newerWireVersion = isNewerWireVersion(pv);
+        try {
+          migrations = resolveWireMigrations(pv);
+        } catch (error) {
+          warnings.push(
+            `unrecognised protocol_version "${pv}" — parsing as best-effort (${(error as Error).message})`,
+          );
+          migrations = bestEffortMigrations();
+        }
+        metadata = { protocolVersion: pv, createdAt: ca };
+        continue;
+      } else {
         warnings.push(
-          `unrecognised protocol_version "${pv}" — parsing as best-effort (${(error as Error).message})`,
+          `line ${lineNo}: missing metadata header — assuming protocol_version "${migrateV1_4ToV1_5.sourceVersion}"`,
         );
-        migrations = bestEffortMigrations();
+        migrations = [migrateV1_4ToV1_5];
+        metadata = {
+          protocolVersion: migrateV1_4ToV1_5.sourceVersion,
+          createdAt: 0,
+        };
       }
-      metadata = { protocolVersion: pv, createdAt: ca };
-      continue;
     }
-    const raw = parsed as Record<string, unknown>;
+    const raw = parsed;
     let migrated: Record<string, unknown>;
     try {
       migrated =
         migrations.length === 0
-          ? (structuredClone(raw) as Record<string, unknown>)
+          ? structuredClone(raw)
           : (migrateWireRecord(
               raw as Record<string, unknown> & { type: string },
               migrations,
@@ -99,14 +115,52 @@ export async function readAgentWire(path: string): Promise<WireReadResult> {
       warnings.push(
         `line ${lineNo}: migration failed (${(error as Error).message}); using raw record`,
       );
-      migrated = structuredClone(raw) as Record<string, unknown>;
+      migrated = structuredClone(raw);
     }
-    records.push({ lineNo, data: migrated as AgentRecord, raw });
+    const normalized = newerWireVersion
+      ? migrated
+      : normalizePlanRevisionRecord(migrated, agentId);
+    if (normalized === undefined) {
+      warnings.push(`line ${lineNo}: invalid legacy plan.revision record skipped`);
+      continue;
+    }
+    records.push({ lineNo, data: normalized as AgentRecord, raw });
   }
   if (metadata === null) {
     throw new Error('Wire file is empty (no metadata)');
   }
   return { metadata, records, warnings };
+}
+
+function normalizePlanRevisionRecord(
+  record: Record<string, unknown>,
+  agentId: string,
+): Record<string, unknown> | undefined {
+  if (record['type'] !== 'plan.revision' || 'key' in record) return record;
+  const legacyPath = record['path'];
+  if (typeof legacyPath !== 'string') return undefined;
+  const key = extractLegacyPlanRevisionKey(legacyPath, agentId);
+  if (key === undefined) return undefined;
+  const { path: _path, ...rest } = record;
+  return { ...rest, key };
+}
+
+function extractLegacyPlanRevisionKey(path: string, agentId: string): string | undefined {
+  if (path.includes('\\')) return undefined;
+  const segments = path.split('/');
+  if (
+    segments.length < 8 ||
+    segments[0] !== 'sessions' ||
+    segments[3] !== 'agents' ||
+    segments[4] !== agentId ||
+    segments
+      .slice(1, 3)
+      .some((segment) => segment.length === 0 || segment === '.' || segment === '..')
+  ) {
+    return undefined;
+  }
+  const key = segments.slice(5).join('/');
+  return /^plan\/[^/]+\/v[0-9]+\.md$/.test(key) ? key : undefined;
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {

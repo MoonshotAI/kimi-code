@@ -36,6 +36,10 @@
     "./device": {
       "types": "./src/device.ts",
       "default": "./src/device.ts"
+    },
+    "./provider-credential": {
+      "types": "./src/provider-credential.ts",
+      "default": "./src/provider-credential.ts"
     }
   },
   "scripts": {

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { GutterContainer } from '#/tui/components/chrome/gutter-container';
 import {
@@ -119,6 +119,8 @@ function createHarness(deps: Partial<SurveyControllerDeps> = {}): Harness {
       permissionMode: 'manual',
       thinkingEffort: 'high',
       disableFeedbackSurvey: false,
+      availableModels: {},
+      availableProviders: {},
     },
     ui: { requestRender: vi.fn() },
   };
@@ -211,6 +213,8 @@ const HARNESS_ENVIRONMENT = {
   compaction_count: 0,
   permission_mode: 'manual',
   thinking_effort: 'high',
+  subagent_count: 0,
+  swarm_run_count: 0,
 };
 
 const DEFAULT_SNAPSHOT = {
@@ -223,8 +227,16 @@ const DEFAULT_SNAPSHOT = {
   config_min_time_between_global_feedback_ms: 100_000_000,
   config_long_context_survey_threshold: 200_000,
   config_long_context_probability: 0.2,
-  config_long_context_trigger_mode: 'cumulative',
+  config_long_context_trigger_mode: 'virtual_context',
 };
+
+function trackedEvent(harness: Harness, eventType: string): Record<string, unknown> {
+  const call = harness.track.mock.calls.find(
+    (candidate) => (candidate[1] as Record<string, unknown>)['event_type'] === eventType,
+  );
+  expect(call).toBeDefined();
+  return call![1] as Record<string, unknown>;
+}
 
 describe('SurveyController gating', () => {
   it('appears once the session clears warmup and reports appeared', async () => {
@@ -411,9 +423,9 @@ describe('SurveyController gating', () => {
 });
 
 describe('SurveyController long-context arm', () => {
-  it('shows the long-context survey over the cumulative threshold without any warmup', async () => {
+  it('shows the long-context survey over the context-window threshold without any warmup', async () => {
     const harness = createHarness();
-    harness.state.appState.cumulativeTokens = 250_000;
+    harness.state.appState.contextTokens = 250_000;
     await harness.flush();
 
     harness.controller.notifyTurnStarted(true);
@@ -429,12 +441,14 @@ describe('SurveyController long-context arm', () => {
       response: undefined,
       current_model: 'k2',
       user_turn_count: 1,
-      cumulative_tokens: 250_000,
-      virtual_context_tokens: 640,
+      cumulative_tokens: 1234,
+      virtual_context_tokens: 250_000,
       tool_call_count: 0,
       compaction_count: 0,
       permission_mode: 'manual',
       thinking_effort: 'high',
+      subagent_count: 0,
+      swarm_run_count: 0,
       ...DEFAULT_SNAPSHOT,
     });
     expect(harness.writes).toEqual([]);
@@ -442,7 +456,7 @@ describe('SurveyController long-context arm', () => {
 
   it('reports the responded and abandoned states under the long_context_survey name', async () => {
     const responded = createHarness();
-    responded.state.appState.cumulativeTokens = 250_000;
+    responded.state.appState.contextTokens = 250_000;
     await responded.flush();
     responded.controller.notifyTurnStarted(true);
     responded.controller.notifyTurnEnded();
@@ -462,7 +476,7 @@ describe('SurveyController long-context arm', () => {
     );
 
     const abandoned = createHarness();
-    abandoned.state.appState.cumulativeTokens = 250_000;
+    abandoned.state.appState.contextTokens = 250_000;
     await abandoned.flush();
     abandoned.controller.notifyTurnStarted(true);
     abandoned.controller.notifyTurnEnded();
@@ -478,7 +492,7 @@ describe('SurveyController long-context arm', () => {
 
   it('prefers the long-context survey when the session arm is also eligible', async () => {
     const harness = createHarness();
-    harness.state.appState.cumulativeTokens = 250_000;
+    harness.state.appState.contextTokens = 250_000;
     await harness.flush();
 
     harness.appear();
@@ -490,9 +504,9 @@ describe('SurveyController long-context arm', () => {
     );
   });
 
-  it('compares the cumulative counter by default and ignores the window occupancy', async () => {
+  it('ignores the cumulative counter by default, however large it grows', async () => {
     const harness = createHarness();
-    harness.state.appState.contextTokens = 500_000;
+    harness.state.appState.cumulativeTokens = 500_000;
     await harness.flush();
 
     harness.controller.notifyTurnStarted(true);
@@ -503,14 +517,10 @@ describe('SurveyController long-context arm', () => {
     expect(harness.track).not.toHaveBeenCalled();
   });
 
-  it('compares the window occupancy when the trigger mode is virtual_context', async () => {
-    const harness = createHarness({
-      config: () => ({
-        ...DEFAULT_SURVEY_POPUP_CONFIG,
-        long_context_trigger_mode: 'virtual_context',
-      }),
-    });
+  it('triggers on the current window by default even when the cumulative counter is tiny', async () => {
+    const harness = createHarness();
     harness.state.appState.contextTokens = 250_000;
+    harness.state.appState.cumulativeTokens = 100;
     await harness.flush();
 
     harness.controller.notifyTurnStarted(true);
@@ -521,9 +531,34 @@ describe('SurveyController long-context arm', () => {
       'long_context_survey',
       expect.objectContaining({
         event_type: 'appeared',
-        cumulative_tokens: 1234,
+        cumulative_tokens: 100,
         virtual_context_tokens: 250_000,
         config_long_context_trigger_mode: 'virtual_context',
+      }),
+    );
+  });
+
+  it('compares the cumulative counter when the trigger mode is cumulative', async () => {
+    const harness = createHarness({
+      config: () => ({
+        ...DEFAULT_SURVEY_POPUP_CONFIG,
+        long_context_trigger_mode: 'cumulative',
+      }),
+    });
+    harness.state.appState.cumulativeTokens = 250_000;
+    await harness.flush();
+
+    harness.controller.notifyTurnStarted(true);
+    harness.controller.notifyTurnEnded();
+    harness.elapse(2000);
+
+    expect(harness.track).toHaveBeenCalledWith(
+      'long_context_survey',
+      expect.objectContaining({
+        event_type: 'appeared',
+        cumulative_tokens: 250_000,
+        virtual_context_tokens: 640,
+        config_long_context_trigger_mode: 'cumulative',
       }),
     );
   });
@@ -532,7 +567,7 @@ describe('SurveyController long-context arm', () => {
     const harness = createHarness({
       config: () => ({ ...DEFAULT_SURVEY_POPUP_CONFIG, long_context_survey_threshold: 0 }),
     });
-    harness.state.appState.cumulativeTokens = 500_000;
+    harness.state.appState.contextTokens = 500_000;
     await harness.flush();
 
     harness.controller.notifyTurnStarted(true);
@@ -547,7 +582,7 @@ describe('SurveyController long-context arm', () => {
     const harness = createHarness({
       config: () => ({ ...DEFAULT_SURVEY_POPUP_CONFIG, long_context_survey_threshold: 0 }),
     });
-    harness.state.appState.cumulativeTokens = 500_000;
+    harness.state.appState.contextTokens = 500_000;
     await harness.flush();
 
     harness.appear();
@@ -560,7 +595,7 @@ describe('SurveyController long-context arm', () => {
 
   it('stays hidden when the long-context roll misses, and never rolls again this mount', async () => {
     const harness = createHarness({ random: () => 0.9 });
-    harness.state.appState.cumulativeTokens = 250_000;
+    harness.state.appState.contextTokens = 250_000;
     await harness.flush();
 
     harness.controller.notifyTurnStarted(true);
@@ -582,7 +617,7 @@ describe('SurveyController long-context arm', () => {
 
   it('shows at most once per mount even after the first appearance closes', async () => {
     const harness = createHarness();
-    harness.state.appState.cumulativeTokens = 250_000;
+    harness.state.appState.contextTokens = 250_000;
     await harness.flush();
 
     harness.controller.notifyTurnStarted(true);
@@ -610,7 +645,7 @@ describe('SurveyController long-context arm', () => {
   it('regains its one chance after a session reset', async () => {
     let roll = 0.9;
     const harness = createHarness({ random: () => roll });
-    harness.state.appState.cumulativeTokens = 250_000;
+    harness.state.appState.contextTokens = 250_000;
     await harness.flush();
 
     harness.controller.notifyTurnStarted(true);
@@ -634,7 +669,7 @@ describe('SurveyController long-context arm', () => {
 
   it('does not spend the roll while an active prompt suppresses the evaluation', async () => {
     const harness = createHarness();
-    harness.state.appState.cumulativeTokens = 250_000;
+    harness.state.appState.contextTokens = 250_000;
     (harness.host.btwPanelController as { isActive: () => boolean }).isActive = () => true;
     await harness.flush();
 
@@ -656,7 +691,7 @@ describe('SurveyController long-context arm', () => {
 
   it('evaluates only after the mount produced a user turn, even with tokens past the threshold', async () => {
     const harness = createHarness();
-    harness.state.appState.cumulativeTokens = 250_000;
+    harness.state.appState.contextTokens = 250_000;
     await harness.flush();
 
     harness.elapse(2000);
@@ -681,7 +716,7 @@ describe('SurveyController long-context arm', () => {
     const harness = createHarness({
       readGlobalLastShown: async () => 1_700_000_000_000 - 1000,
     });
-    harness.state.appState.cumulativeTokens = 250_000;
+    harness.state.appState.contextTokens = 250_000;
     await harness.flush();
 
     harness.controller.notifyTurnStarted(true);
@@ -697,7 +732,7 @@ describe('SurveyController long-context arm', () => {
 
   it('does not suppress the session arm through the persisted cooldown after a long-context appearance', async () => {
     const harness = createHarness();
-    harness.state.appState.cumulativeTokens = 250_000;
+    harness.state.appState.contextTokens = 250_000;
     await harness.flush();
 
     harness.controller.notifyTurnStarted(true);
@@ -719,6 +754,188 @@ describe('SurveyController long-context arm', () => {
       expect.objectContaining({ event_type: 'appeared' }),
     );
     expect(harness.writes).toEqual([1_700_000_000_000]);
+  });
+});
+
+describe('SurveyController kfc model gate', () => {
+  const MANAGED_BASE_URL = 'https://api.kimi.com/coding/v1';
+  const GATEWAY_BASE_URL = 'https://gateway.example.com/coding/v1';
+  const savedBaseUrl = process.env['KIMI_CODE_BASE_URL'];
+
+  beforeEach(() => {
+    delete process.env['KIMI_CODE_BASE_URL'];
+  });
+
+  afterEach(() => {
+    if (savedBaseUrl === undefined) {
+      delete process.env['KIMI_CODE_BASE_URL'];
+    } else {
+      process.env['KIMI_CODE_BASE_URL'] = savedBaseUrl;
+    }
+  });
+
+  function useModel(
+    harness: Harness,
+    options: { entryBaseUrl?: string; providerBaseUrl?: string } = {},
+  ): void {
+    harness.state.appState.model = 'main';
+    harness.state.appState.availableModels = {
+      main: {
+        provider: 'managed:kimi-code',
+        model: 'k3',
+        maxContextSize: 256_000,
+        baseUrl: options.entryBaseUrl,
+      },
+    };
+    harness.state.appState.availableProviders = {
+      'managed:kimi-code': { type: 'kimi', baseUrl: options.providerBaseUrl ?? MANAGED_BASE_URL },
+    };
+  }
+
+  function trackedKfcModelId(harness: Harness): unknown {
+    const call = harness.track.mock.calls[0];
+    return call === undefined ? undefined : (call[1] as Record<string, unknown>)['kfc_model_id'];
+  }
+
+  it('opens on "*" for a kfc user and reports the real model id alongside the alias', async () => {
+    const harness = createHarness();
+    useModel(harness);
+    await harness.flush();
+    harness.appear();
+
+    expect(harness.container.children).not.toHaveLength(0);
+    expect(harness.track).toHaveBeenCalledWith(
+      'feedback_survey',
+      expect.objectContaining({
+        event_type: 'appeared',
+        current_model: 'main',
+        kfc_model_id: 'k3',
+      }),
+    );
+  });
+
+  it('opens for a kfc user when the real id is listed', async () => {
+    const harness = createHarness({
+      config: () => ({ ...DEFAULT_SURVEY_POPUP_CONFIG, on_for_models: ['k2', 'k3'] }),
+    });
+    useModel(harness);
+    await harness.flush();
+    harness.appear();
+
+    expect(harness.container.children).not.toHaveLength(0);
+    expect(harness.track).toHaveBeenCalledWith(
+      'feedback_survey',
+      expect.objectContaining({ event_type: 'appeared', kfc_model_id: 'k3' }),
+    );
+  });
+
+  it('stays closed for a kfc user whose real id is not listed', async () => {
+    const harness = createHarness({
+      config: () => ({ ...DEFAULT_SURVEY_POPUP_CONFIG, on_for_models: ['k3-256k'] }),
+    });
+    useModel(harness);
+    await harness.flush();
+    harness.appear();
+
+    expect(harness.container.children).toHaveLength(0);
+    expect(harness.track).not.toHaveBeenCalled();
+  });
+
+  it('opens on "*" for a self-hosted user but omits the kfc model id', async () => {
+    const harness = createHarness();
+    useModel(harness, { providerBaseUrl: GATEWAY_BASE_URL });
+    await harness.flush();
+    harness.appear();
+
+    expect(harness.container.children).not.toHaveLength(0);
+    expect(harness.track).toHaveBeenCalledWith(
+      'feedback_survey',
+      expect.objectContaining({ event_type: 'appeared', current_model: 'main' }),
+    );
+    expect(trackedKfcModelId(harness)).toBeUndefined();
+  });
+
+  it('stays closed for a self-hosted model that happens to share the listed id', async () => {
+    const harness = createHarness({
+      config: () => ({ ...DEFAULT_SURVEY_POPUP_CONFIG, on_for_models: ['k3'] }),
+    });
+    useModel(harness, { providerBaseUrl: GATEWAY_BASE_URL });
+    await harness.flush();
+    harness.appear();
+
+    expect(harness.container.children).toHaveLength(0);
+    expect(harness.track).not.toHaveBeenCalled();
+  });
+
+  it('opens on "*" with a dangling alias and omits the kfc model id', async () => {
+    const harness = createHarness();
+    await harness.flush();
+    harness.appear();
+
+    expect(harness.container.children).not.toHaveLength(0);
+    expect(harness.track).toHaveBeenCalledWith(
+      'feedback_survey',
+      expect.objectContaining({ event_type: 'appeared', current_model: 'k2' }),
+    );
+    expect(trackedKfcModelId(harness)).toBeUndefined();
+  });
+
+  it('stays closed on a concrete list when the alias cannot be resolved', async () => {
+    const harness = createHarness({
+      config: () => ({ ...DEFAULT_SURVEY_POPUP_CONFIG, on_for_models: ['k2'] }),
+    });
+    await harness.flush();
+    harness.appear();
+
+    expect(harness.container.children).toHaveLength(0);
+    expect(harness.track).not.toHaveBeenCalled();
+  });
+
+  it('reports the kfc model id on long-context events as well', async () => {
+    const harness = createHarness();
+    useModel(harness);
+    harness.state.appState.contextTokens = 250_000;
+    await harness.flush();
+
+    harness.controller.notifyTurnStarted(true);
+    harness.controller.notifyTurnEnded();
+    harness.elapse(2000);
+
+    expect(harness.track).toHaveBeenCalledWith(
+      'long_context_survey',
+      expect.objectContaining({
+        event_type: 'appeared',
+        current_model: 'main',
+        kfc_model_id: 'k3',
+      }),
+    );
+  });
+
+  it('prefers the entry baseUrl over the provider baseUrl when the entry is managed', async () => {
+    const harness = createHarness({
+      config: () => ({ ...DEFAULT_SURVEY_POPUP_CONFIG, on_for_models: ['k3'] }),
+    });
+    useModel(harness, { entryBaseUrl: MANAGED_BASE_URL, providerBaseUrl: GATEWAY_BASE_URL });
+    await harness.flush();
+    harness.appear();
+
+    expect(harness.container.children).not.toHaveLength(0);
+    expect(harness.track).toHaveBeenCalledWith(
+      'feedback_survey',
+      expect.objectContaining({ event_type: 'appeared', kfc_model_id: 'k3' }),
+    );
+  });
+
+  it('prefers the entry baseUrl over the provider baseUrl when the entry is self-hosted', async () => {
+    const harness = createHarness({
+      config: () => ({ ...DEFAULT_SURVEY_POPUP_CONFIG, on_for_models: ['k3'] }),
+    });
+    useModel(harness, { entryBaseUrl: GATEWAY_BASE_URL, providerBaseUrl: MANAGED_BASE_URL });
+    await harness.flush();
+    harness.appear();
+
+    expect(harness.container.children).toHaveLength(0);
+    expect(harness.track).not.toHaveBeenCalled();
   });
 });
 
@@ -1175,7 +1392,7 @@ describe('SurveyController interaction', () => {
     expect(harness.timers.pending()).toHaveLength(0);
   });
 
-  it('closes silently when a turn starts while open', async () => {
+  it('reports abandoned when a turn starts while open', async () => {
     const harness = createHarness();
     await harness.flush();
     harness.appear();
@@ -1183,17 +1400,78 @@ describe('SurveyController interaction', () => {
 
     harness.controller.notifyTurnStarted(true);
     expect(harness.container.children).toHaveLength(0);
-    expect(harness.track).not.toHaveBeenCalled();
+    expect(harness.track).toHaveBeenCalledWith(
+      'feedback_survey',
+      expect.objectContaining({ event_type: 'abandoned' }),
+    );
   });
 
-  it('closes silently on a gate flip (editor replacement) without reporting', async () => {
+  it('reports abandoned when displaced by an editor replacement', async () => {
     const harness = createHarness();
     await harness.flush();
     harness.appear();
     harness.track.mockClear();
 
-    harness.controller.closeSilently();
+    harness.controller.notifyDisplaced();
     expect(harness.container.children).toHaveLength(0);
+    expect(harness.track).toHaveBeenCalledWith(
+      'feedback_survey',
+      expect.objectContaining({ event_type: 'abandoned' }),
+    );
+  });
+
+  it('reports the selected rating when displaced while pending', async () => {
+    const harness = createHarness();
+    await harness.flush();
+    harness.appear();
+    harness.typeDigit('2');
+    harness.elapse(400);
+    harness.track.mockClear();
+
+    harness.controller.notifyDisplaced();
+    expect(harness.container.children).toHaveLength(0);
+    expect(harness.track).toHaveBeenCalledWith(
+      'feedback_survey',
+      expect.objectContaining({ event_type: 'responded', response: 'fine' }),
+    );
+  });
+
+  it('reports abandoned when a session reset arrives while open', async () => {
+    const harness = createHarness();
+    await harness.flush();
+    harness.appear();
+    harness.track.mockClear();
+
+    harness.controller.reset();
+    expect(harness.container.children).toHaveLength(0);
+    expect(harness.track).toHaveBeenCalledWith(
+      'feedback_survey',
+      expect.objectContaining({ event_type: 'abandoned' }),
+    );
+  });
+
+  it('reports the selected rating when a session reset arrives while pending', async () => {
+    const harness = createHarness();
+    await harness.flush();
+    harness.appear();
+    harness.typeDigit('2');
+    harness.elapse(400);
+    harness.track.mockClear();
+
+    harness.controller.reset();
+    expect(harness.track).toHaveBeenCalledWith(
+      'feedback_survey',
+      expect.objectContaining({ event_type: 'responded', response: 'fine' }),
+    );
+  });
+
+  it('stays silent when disposed while open', async () => {
+    const harness = createHarness();
+    await harness.flush();
+    harness.appear();
+    harness.track.mockClear();
+
+    harness.controller.dispose();
     expect(harness.track).not.toHaveBeenCalled();
   });
 
@@ -1229,7 +1507,7 @@ describe('SurveyController interaction', () => {
 
   it('does not open while the external editor is running, on either arm', async () => {
     const harness = createHarness();
-    harness.state.appState.cumulativeTokens = 250_000;
+    harness.state.appState.contextTokens = 250_000;
     await harness.flush();
     harness.clock.mono += 600_000;
     harness.state.externalEditorRunning = true;
@@ -1506,10 +1784,10 @@ describe('SurveyController interaction', () => {
     await harness.flush();
     harness.appear();
     expect(harness.writes).toEqual([1_700_000_000_000]);
-    harness.track.mockClear();
 
     harness.controller.reset();
     await harness.flush();
+    harness.track.mockClear();
 
     harness.clock.wall += 1;
     harness.clock.mono += 600_000;
@@ -1525,11 +1803,11 @@ describe('SurveyController interaction', () => {
     await harness.flush();
     harness.appear();
     expect(harness.writes).toEqual([1_700_000_000_000]);
-    harness.track.mockClear();
 
     diskValue = 1_650_000_000_000;
     harness.controller.reset();
     await harness.flush();
+    harness.track.mockClear();
 
     harness.clock.wall += 1;
     harness.clock.mono += 600_000;
@@ -1568,11 +1846,11 @@ describe('SurveyController event payload', () => {
     harness.clock.mono += 600_000;
     for (let turn = 1; turn <= 5; turn++) {
       harness.controller.notifyTurnStarted(true);
-      harness.controller.notifyToolCallStarted();
-      harness.controller.notifyToolCallStarted();
+      harness.controller.notifyToolCallStarted('tc-1', 'Bash');
+      harness.controller.notifyToolCallStarted('tc-2', 'Bash');
       harness.controller.notifyTurnEnded();
     }
-    harness.controller.notifyToolCallStarted();
+    harness.controller.notifyToolCallStarted('tc-3', 'Bash');
     harness.elapse(2000);
 
     expect(harness.track).toHaveBeenCalledWith(
@@ -1880,5 +2158,332 @@ describe('SurveyController cloud config refresh', () => {
     const harness = createHarness();
     await harness.flush();
     expect(mocks.getSurveyPopupConfig).not.toHaveBeenCalled();
+  });
+});
+
+describe('SurveyController appearance snapshot', () => {
+  const MANAGED_BASE_URL = 'https://api.kimi.com/coding/v1';
+  const GATEWAY_BASE_URL = 'https://gateway.example.com/coding/v1';
+  const savedBaseUrl = process.env['KIMI_CODE_BASE_URL'];
+
+  beforeEach(() => {
+    delete process.env['KIMI_CODE_BASE_URL'];
+  });
+
+  afterEach(() => {
+    if (savedBaseUrl === undefined) {
+      delete process.env['KIMI_CODE_BASE_URL'];
+    } else {
+      process.env['KIMI_CODE_BASE_URL'] = savedBaseUrl;
+    }
+  });
+
+  function useManagedModel(harness: Harness): void {
+    harness.state.appState.model = 'main';
+    harness.state.appState.availableModels = {
+      main: { provider: 'managed:kimi-code', model: 'k3', maxContextSize: 256_000 },
+    };
+    harness.state.appState.availableProviders = {
+      'managed:kimi-code': { type: 'kimi', baseUrl: MANAGED_BASE_URL },
+    };
+  }
+
+  function useGatewayModel(harness: Harness): void {
+    harness.state.appState.model = 'main';
+    harness.state.appState.availableModels = {
+      main: { provider: 'acme', model: 'k3', maxContextSize: 256_000 },
+    };
+    harness.state.appState.availableProviders = {
+      acme: { type: 'openai', baseUrl: GATEWAY_BASE_URL },
+    };
+  }
+
+  function runUserTurns(harness: Harness, traces: readonly (string | undefined)[]): void {
+    for (const trace of traces) {
+      harness.controller.notifyTurnStarted(true);
+      harness.controller.notifyTurnEnded(trace);
+    }
+  }
+
+  it('reports the triggering turn trace id on every lifecycle event', async () => {
+    const harness = createHarness();
+    useManagedModel(harness);
+    await harness.flush();
+    harness.clock.mono += 600_000;
+    runUserTurns(harness, ['trace-1', 'trace-2', 'trace-3', 'trace-4', 'trace-final']);
+    harness.elapse(2000);
+    harness.clock.mono += 600;
+
+    expect(trackedEvent(harness, 'appeared')).toMatchObject({
+      kfc_model_id: 'k3',
+      kfc_trace_id: 'trace-final',
+    });
+
+    harness.typeDigit('3');
+    harness.elapse(400);
+    harness.elapse(3000);
+
+    expect(trackedEvent(harness, 'responded')).toMatchObject({
+      response: 'good',
+      kfc_model_id: 'k3',
+      kfc_trace_id: 'trace-final',
+    });
+  });
+
+  it('keeps the environment frozen at open across the lifecycle events', async () => {
+    const harness = createHarness();
+    await harness.flush();
+    harness.appear();
+
+    harness.state.appState.model = 'k2-after';
+    harness.state.appState.cumulativeTokens = 999_999;
+    harness.controller.notifyToolCallStarted('tc-late', 'Bash');
+
+    harness.typeDigit('2');
+    harness.elapse(400);
+    harness.elapse(3000);
+
+    const appeared = trackedEvent(harness, 'appeared');
+    const responded = trackedEvent(harness, 'responded');
+    for (const event of [appeared, responded]) {
+      expect(event).toMatchObject({
+        current_model: 'k2',
+        cumulative_tokens: 1234,
+        virtual_context_tokens: 640,
+        user_turn_count: 5,
+        tool_call_count: 0,
+      });
+    }
+  });
+
+  it('omits kfc_trace_id for a non-kfc model even when a trace id is pending', async () => {
+    const harness = createHarness();
+    useGatewayModel(harness);
+    await harness.flush();
+    harness.clock.mono += 600_000;
+    runUserTurns(harness, [undefined, undefined, undefined, undefined, 'trace-gateway']);
+    harness.elapse(2000);
+
+    const appeared = trackedEvent(harness, 'appeared');
+    expect(appeared['kfc_model_id']).toBeUndefined();
+    expect(appeared['kfc_trace_id']).toBeUndefined();
+  });
+
+  it('omits kfc_trace_id when the triggering turn carried no trace id', async () => {
+    const harness = createHarness();
+    useManagedModel(harness);
+    await harness.flush();
+    harness.appear();
+
+    const appeared = trackedEvent(harness, 'appeared');
+    expect(appeared['kfc_model_id']).toBe('k3');
+    expect(appeared['kfc_trace_id']).toBeUndefined();
+  });
+
+  it('carries kfc_trace_id under the long_context_survey name', async () => {
+    const harness = createHarness();
+    useManagedModel(harness);
+    harness.state.appState.contextTokens = 250_000;
+    await harness.flush();
+    harness.controller.notifyTurnStarted(true);
+    harness.controller.notifyTurnEnded('trace-long-context');
+    harness.elapse(2000);
+
+    expect(trackedEvent(harness, 'appeared')).toMatchObject({
+      kfc_model_id: 'k3',
+      kfc_trace_id: 'trace-long-context',
+    });
+    expect(harness.track).toHaveBeenCalledWith(
+      'long_context_survey',
+      expect.objectContaining({ event_type: 'appeared' }),
+    );
+  });
+
+  it('keeps the pending trace id across an interleaved non-user turn', async () => {
+    const harness = createHarness();
+    useManagedModel(harness);
+    await harness.flush();
+    harness.clock.mono += 600_000;
+    runUserTurns(harness, [undefined, undefined, undefined, undefined, 'trace-user']);
+    harness.controller.notifyTurnStarted(false);
+    harness.controller.notifyTurnEnded(undefined);
+    harness.elapse(2000);
+
+    expect(trackedEvent(harness, 'appeared')).toMatchObject({ kfc_trace_id: 'trace-user' });
+  });
+
+  it('drops the pending trace id once a new user turn starts', async () => {
+    const harness = createHarness();
+    useManagedModel(harness);
+    await harness.flush();
+    harness.clock.mono += 600_000;
+    runUserTurns(harness, [undefined, undefined, undefined, 'trace-stale', undefined]);
+    harness.elapse(2000);
+
+    expect(trackedEvent(harness, 'appeared')['kfc_trace_id']).toBeUndefined();
+  });
+
+  it('attributes lifecycle events to the snapshot session after the session is torn down', async () => {
+    const harness = createHarness();
+    harness.state.appState.sessionId = 'session-A';
+    await harness.flush();
+    harness.appear();
+
+    expect(harness.track).toHaveBeenCalledWith(
+      'feedback_survey',
+      expect.objectContaining({ event_type: 'appeared' }),
+      { sessionId: 'session-A' },
+    );
+
+    harness.typeDigit('1');
+    harness.elapse(400);
+    harness.state.appState.sessionId = '';
+    harness.elapse(3000);
+
+    expect(harness.track).toHaveBeenCalledWith(
+      'feedback_survey',
+      expect.objectContaining({ event_type: 'responded', response: 'bad' }),
+      { sessionId: 'session-A' },
+    );
+  });
+});
+
+describe('SurveyController copilot stats', () => {
+  it('counts Agent tool spawns with their deduplicated sorted models', async () => {
+    const harness = createHarness();
+    await harness.flush();
+    harness.clock.mono += 600_000;
+    for (let turn = 1; turn <= 5; turn++) {
+      harness.controller.notifyTurnStarted(true);
+      harness.controller.notifyToolCallStarted(`tc-agent-${String(turn)}`, 'Agent');
+      harness.controller.notifySubagentSpawned({
+        parentToolCallId: `tc-agent-${String(turn)}`,
+        model: turn % 2 === 0 ? 'k3' : 'k2',
+      });
+      harness.controller.notifyToolCallEnded(`tc-agent-${String(turn)}`);
+      harness.controller.notifyTurnEnded();
+    }
+    harness.elapse(2000);
+
+    expect(trackedEvent(harness, 'appeared')).toMatchObject({
+      subagent_count: 5,
+      subagent_models: 'k2,k3',
+      swarm_run_count: 0,
+    });
+    expect(trackedEvent(harness, 'appeared')['swarm_models']).toBeUndefined();
+  });
+
+  it('counts AgentSwarm runs and member models without inflating subagent stats', async () => {
+    const harness = createHarness();
+    await harness.flush();
+    harness.clock.mono += 600_000;
+    for (let turn = 1; turn <= 5; turn++) {
+      harness.controller.notifyTurnStarted(true);
+      harness.controller.notifyTurnEnded();
+    }
+    harness.controller.notifyToolCallStarted('tc-swarm-1', 'AgentSwarm');
+    harness.controller.notifySubagentSpawned({
+      parentToolCallId: 'tc-swarm-1',
+      swarmIndex: 0,
+      model: 'k2',
+    });
+    harness.controller.notifySubagentSpawned({
+      parentToolCallId: 'tc-swarm-1',
+      swarmIndex: 1,
+      model: 'k2',
+    });
+    harness.controller.notifyToolCallEnded('tc-swarm-1');
+    harness.elapse(2000);
+
+    const appeared = trackedEvent(harness, 'appeared');
+    expect(appeared).toMatchObject({ subagent_count: 0, swarm_run_count: 1, swarm_models: 'k2' });
+    expect(appeared['subagent_models']).toBeUndefined();
+  });
+
+  it('ignores spawns parented to tools outside the two families', async () => {
+    const harness = createHarness();
+    await harness.flush();
+    harness.clock.mono += 600_000;
+    harness.runTurns(5);
+    harness.controller.notifyToolCallStarted('tc-tower', 'TowerSpawn');
+    harness.controller.notifySubagentSpawned({ parentToolCallId: 'tc-tower', model: 'k2' });
+    harness.controller.notifyToolCallEnded('tc-tower');
+    harness.elapse(2000);
+
+    const appeared = trackedEvent(harness, 'appeared');
+    expect(appeared).toMatchObject({ subagent_count: 0, swarm_run_count: 0 });
+    expect(appeared['subagent_models']).toBeUndefined();
+    expect(appeared['swarm_models']).toBeUndefined();
+  });
+
+  it('falls back to swarmIndex and the subagent family for unmapped tool calls', async () => {
+    const harness = createHarness();
+    await harness.flush();
+    harness.clock.mono += 600_000;
+    harness.runTurns(5);
+    harness.controller.notifySubagentSpawned({
+      parentToolCallId: 'tc-missing',
+      swarmIndex: 3,
+      model: 'k3',
+    });
+    harness.controller.notifySubagentSpawned({ parentToolCallId: 'tc-gone', model: 'k2' });
+    harness.controller.notifySubagentSpawned({ model: 'k2' });
+    harness.elapse(2000);
+
+    const appeared = trackedEvent(harness, 'appeared');
+    expect(appeared).toMatchObject({
+      subagent_count: 2,
+      subagent_models: 'k2',
+      swarm_run_count: 0,
+      swarm_models: 'k3',
+    });
+  });
+
+  it('always reports numeric counts and omits empty model lists', async () => {
+    const harness = createHarness();
+    await harness.flush();
+    harness.appear();
+
+    const appeared = trackedEvent(harness, 'appeared');
+    expect(appeared).toMatchObject({ subagent_count: 0, swarm_run_count: 0 });
+    expect(appeared['subagent_models']).toBeUndefined();
+    expect(appeared['swarm_models']).toBeUndefined();
+  });
+
+  it('seeds subagent_count from resumed agents metadata', async () => {
+    const harness = createHarness();
+    await harness.flush();
+    harness.controller.seedFromResumedAgents({
+      main: { type: 'main' },
+      'agent-1': { type: 'sub' },
+      'agent-2': { type: 'sub', swarmItem: 'task one' },
+      'agent-3': { type: 'sub' },
+      'agent-4': { type: 'independent' },
+      'agent-5': { type: 'sub', profileName: 'tower-worker' },
+      'agent-6': { type: 'sub', profileName: 'coder' },
+      'agent-7': { type: 'sub', profileName: 'coder', sessionInit: 'agents-md' },
+    });
+    harness.appear();
+
+    expect(trackedEvent(harness, 'appeared')).toMatchObject({
+      subagent_count: 3,
+      swarm_run_count: 0,
+    });
+  });
+
+  it('ignores session-init agents at runtime', async () => {
+    const harness = createHarness();
+    await harness.flush();
+    harness.clock.mono += 600_000;
+    harness.runTurns(5);
+    harness.controller.notifySubagentSpawned({
+      parentToolCallId: 'generate-agents-md',
+      model: 'k2',
+    });
+    harness.elapse(2000);
+
+    const appeared = trackedEvent(harness, 'appeared');
+    expect(appeared).toMatchObject({ subagent_count: 0, swarm_run_count: 0 });
+    expect(appeared['subagent_models']).toBeUndefined();
   });
 });

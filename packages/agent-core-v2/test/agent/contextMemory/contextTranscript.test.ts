@@ -109,7 +109,7 @@ describe('reduceContextTranscript', () => {
       compaction('SUM', 3, 1),
       appendMessage(userMessage('u4')),
     ]);
-    expect(result.foldedLength).toBe(3);
+    expect(result.foldedLength).toBe(4);
   });
 
   it('accounts for the elision marker when the record kept a head segment', () => {
@@ -119,7 +119,7 @@ describe('reduceContextTranscript', () => {
       ...assistantStep('s1', 'a1'),
       compaction('SUM', 3, 2, 1),
     ]);
-    expect(result.foldedLength).toBe(4);
+    expect(result.foldedLength).toBe(5);
   });
 
   it('carries the originating wire record time per entry', () => {
@@ -148,6 +148,42 @@ describe('reduceContextTranscript', () => {
     expect(result.times).toEqual([100, 200, 220, undefined]);
   });
 
+  it('attaches step.end usage and timing to the sealed assistant message', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('u1')),
+      loopEvent({ type: 'step.begin', uuid: 'st1' }),
+      loopEvent({ type: 'content.part', stepUuid: 'st1', part: { type: 'text', text: 'a1' } }),
+      loopEvent({
+        type: 'step.end',
+        uuid: 'st1',
+        usage: { inputOther: 10, output: 20, inputCacheRead: 30, inputCacheCreation: 40 },
+        llmFirstTokenLatencyMs: 800,
+        llmStreamDurationMs: 5000,
+      }),
+    ]);
+    const assistant = result.entries.find((m) => m.role === 'assistant');
+    expect(assistant?.usage).toEqual({
+      inputOther: 10,
+      output: 20,
+      inputCacheRead: 30,
+      inputCacheCreation: 40,
+    });
+    expect(assistant?.llmTiming).toEqual({
+      llmFirstTokenLatencyMs: 800,
+      llmStreamDurationMs: 5000,
+    });
+  });
+
+  it('seals without usage or timing when step.end carries neither', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('u1')),
+      ...assistantStep('st1', 'a1'),
+    ]);
+    const assistant = result.entries.find((m) => m.role === 'assistant');
+    expect(assistant?.usage).toBeUndefined();
+    expect(assistant?.llmTiming).toBeUndefined();
+  });
+
   it('preserves the pre-compaction assistant reply after a later undo', () => {
     const result = reduceContextTranscript([
       appendMessage(userMessage('message A')),
@@ -159,7 +195,7 @@ describe('reduceContextTranscript', () => {
     ]);
     expect(texts(result)).toEqual(['message A', 'reply A', 'summary text']);
     expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
-    expect(result.foldedLength).toBe(2);
+    expect(result.foldedLength).toBe(3);
   });
 
   it('undo without compaction keeps the earlier exchange intact', () => {
@@ -388,9 +424,10 @@ describe('live fold parity', () => {
     ];
     const live = foldLive(records);
     const transcript = reduceContextTranscript(records);
-    expect(live).toHaveLength(5);
+    expect(live).toHaveLength(6);
     expect(transcript.foldedLength).toBe(live.length);
     expect(live[2]!.origin).toEqual({ kind: 'compaction_summary' });
+    expect(live[3]!.origin).toEqual({ kind: 'injection', variant: 'compaction_continuation' });
   });
 
   it('settles a frame left open by a failed attempt when compaction lands mid-fold', () => {
@@ -403,7 +440,7 @@ describe('live fold parity', () => {
     ];
     const live = foldLive(records);
     const transcript = reduceContextTranscript(records);
-    expect(live.map((m) => m.role)).toEqual(['user', 'user', 'assistant']);
+    expect(live.map((m) => m.role)).toEqual(['user', 'user', 'user', 'assistant']);
     expect(texts(transcript)).toEqual(['u1', 'a1', 'SUM', 'a3']);
     expect(transcript.foldedLength).toBe(live.length);
   });

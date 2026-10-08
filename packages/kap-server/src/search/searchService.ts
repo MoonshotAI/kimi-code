@@ -4,13 +4,14 @@ import { stat } from 'node:fs/promises';
 
 import {
   createDecorator,
+  databaseSearchEnabled,
+  databaseSearchSyncTuning,
   IBootstrapService,
-  IFlagService,
+  IConfigService,
   ILogService,
   ISessionIndex,
   LifecycleScope,
   ScopeActivation,
-  registerFlagDefinition,
   registerScopedService,
   sessionDirOf,
   workspacePersistenceScope,
@@ -76,18 +77,6 @@ async function pathExists(path: string): Promise<boolean> {
     return false;
   }
 }
-
-export const SEARCH_WORKER_FLAG_ID = 'search_worker';
-
-registerFlagDefinition({
-  id: SEARCH_WORKER_FLAG_ID,
-  title: 'search worker isolation',
-  description:
-    'Run the global search-index MiniDB (open, WAL replay, sync, queries) in a dedicated worker thread instead of the server main thread.',
-  env: 'KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER',
-  default: true,
-  surface: 'core',
-});
 
 const pendingDisposals = new Set<Promise<void>>();
 
@@ -169,12 +158,13 @@ export interface SearchBackend {
 export class InlineSearchBackend implements SearchBackend {
   readonly core: SearchIndexCore;
 
-  constructor(options: { indexDir: string; log: ILogService }) {
+  constructor(options: { indexDir: string; log: ILogService; syncSessionCap?: number }) {
     this.core = new SearchIndexCore({
       ...options,
       bootSalt: randomUUID(),
       onLockToken: noteLiveLockToken,
     });
+    if (options.syncSessionCap !== undefined) this.core.syncSessionCap = options.syncSessionCap;
   }
 
   beginClose(): void {
@@ -232,7 +222,8 @@ export class GlobalSearchService implements IGlobalSearchService {
 
   maxQueryTerms = MAX_QUERY_TERMS;
 
-  private readonly backend: SearchBackend;
+  private backend: SearchBackend | null = null;
+  private backendPromise: Promise<SearchBackend> | null = null;
   private syncPromise: Promise<void> | null = null;
   private refreshPromise: Promise<void> | null = null;
   private lastSyncStartedAt = 0;
@@ -249,12 +240,8 @@ export class GlobalSearchService implements IGlobalSearchService {
     @ISessionIndex private readonly sessionIndex: ISessionIndex,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ILogService private readonly log: ILogService,
-    @IFlagService private readonly flags: IFlagService,
+    @IConfigService private readonly config: IConfigService,
   ) {
-    const indexDir = join(this.bootstrap.homeDir, INDEX_DIR_NAME);
-    this.backend = this.flags.enabled(SEARCH_WORKER_FLAG_ID)
-      ? new SearchWorkerHost({ dir: indexDir, log: this.log })
-      : new InlineSearchBackend({ indexDir, log: this.log });
     this.requestSync();
   }
 
@@ -264,6 +251,26 @@ export class GlobalSearchService implements IGlobalSearchService {
 
   private get indexDir(): string {
     return join(this.bootstrap.homeDir, INDEX_DIR_NAME);
+  }
+
+  private ensureBackend(): Promise<SearchBackend> {
+    if (this.backend !== null) return Promise.resolve(this.backend);
+    this.backendPromise ??= this.config.ready.then(() => {
+      if (this.backend === null) {
+        const tuning = databaseSearchSyncTuning(this.config);
+        if (tuning.debounceMs !== undefined) this.syncDebounceMs = tuning.debounceMs;
+        this.backend = databaseSearchEnabled(this.config)
+          ? new SearchWorkerHost({ dir: this.indexDir, log: this.log, syncSessionCap: tuning.sessionCap })
+          : new InlineSearchBackend({
+              indexDir: this.indexDir,
+              log: this.log,
+              syncSessionCap: tuning.sessionCap,
+            });
+        if (this.disposed) this.backend.beginClose();
+      }
+      return this.backend;
+    });
+    return this.backendPromise;
   }
 
   private toSyncInput(summary: SessionSummary): SyncSessionInput {
@@ -286,11 +293,12 @@ export class GlobalSearchService implements IGlobalSearchService {
       clearTimeout(this.syncTimer);
       this.syncTimer = null;
     }
-    this.backend.beginClose();
+    this.backend?.beginClose();
     const pending = (async () => {
       await this.syncPromise?.catch(() => {});
       await this.refreshPromise?.catch(() => {});
-      await this.backend.dispose();
+      const backend = await this.backendPromise;
+      await backend?.dispose();
       this.drainSettled = true;
     })();
     pendingDisposals.add(pending);
@@ -346,6 +354,7 @@ export class GlobalSearchService implements IGlobalSearchService {
 
   private async runSync(): Promise<void> {
     if (this.disposed || this.reindexing) return;
+    const backend = await this.ensureBackend();
     const sessions = await this.listAllSessions();
     if (this.disposed) return;
     if (sessions.length === 0 && !(await pathExists(this.indexDir))) {
@@ -355,7 +364,8 @@ export class GlobalSearchService implements IGlobalSearchService {
     }
     this.summaries = new Map(sessions.map((s) => [s.id, s]));
     this.lastSyncStartedAt = Date.now();
-    await this.backend.sync(sessions.map((s) => this.toSyncInput(s)));
+    const outcome = await backend.sync(sessions.map((s) => this.toSyncInput(s)));
+    if (outcome.truncated || outcome.failures > 0) this.requestSync();
   }
 
   private async listAllSessions(): Promise<SessionSummary[]> {
@@ -371,15 +381,17 @@ export class GlobalSearchService implements IGlobalSearchService {
 
   private refreshReadonly(): Promise<void> {
     if (this.refreshPromise === null) {
-      this.refreshPromise = this.backend.refresh().then(
-        () => {},
-        (error: unknown) => {
-          this.lastRefreshError = { at: Date.now(), message: errorMessage(error) };
-          this.log.warn('global search: read-only refresh failed; serving the stale view', {
-            error: errorMessage(error),
-          });
-        },
-      );
+      this.refreshPromise = this.ensureBackend()
+        .then((backend) => backend.refresh())
+        .then(
+          () => {},
+          (error: unknown) => {
+            this.lastRefreshError = { at: Date.now(), message: errorMessage(error) };
+            this.log.warn('global search: read-only refresh failed; serving the stale view', {
+              error: errorMessage(error),
+            });
+          },
+        );
       void this.refreshPromise.finally(() => {
         this.refreshPromise = null;
       });
@@ -436,7 +448,7 @@ export class GlobalSearchService implements IGlobalSearchService {
       items: pageRows.map((row) => this.projectHit(q, row)),
       hasMore,
       pageToken: hasMore
-        ? encodePageToken(q, 'live', boundaryOf(q, pageRows[pageRows.length - 1]!), undefined)
+        ? encodePageToken(q, 'live', boundaryOf(q, pageRows.at(-1)!), undefined)
         : undefined,
       incomplete: matched.incomplete,
       indexState: {
@@ -563,7 +575,8 @@ export class GlobalSearchService implements IGlobalSearchService {
 
     let result: CoreSearchResult;
     try {
-      result = await this.backend.search({ q, pageToken, budgets: this.budgets() });
+      const backend = await this.ensureBackend();
+      result = await backend.search({ q, pageToken, budgets: this.budgets() });
     } catch (error) {
       if (error instanceof GlobalSearchError) {
         if (error.reason === 'index_unavailable') this.requestSync();
@@ -601,7 +614,7 @@ export class GlobalSearchService implements IGlobalSearchService {
         ? encodePageToken(
             q,
             'index',
-            boundaryOf(q, result.rows[result.rows.length - 1]!),
+            boundaryOf(q, result.rows.at(-1)!),
             result.generation,
           )
         : undefined,
@@ -616,7 +629,7 @@ export class GlobalSearchService implements IGlobalSearchService {
     return {
       sessionId: doc.sessionId,
       workspaceId: doc.workspaceId,
-      sessionTitle: this.summaries.get(doc.sessionId)?.title ?? doc.sessionTitle,
+      sessionTitle: doc.sessionTitle,
       agentId: doc.agentId,
       role: doc.role,
       snippet:
@@ -669,11 +682,12 @@ export class GlobalSearchService implements IGlobalSearchService {
   }
 
   async reindex(): Promise<{ sessions: number; documents: number }> {
+    const backend = await this.ensureBackend();
     try {
       this.reindexing = true;
-      await this.backend.ensureOpen();
+      await backend.ensureOpen();
       await this.syncPromise?.catch(() => {});
-      await this.backend.reindex();
+      await backend.reindex();
       this.reindexing = false;
       await this.ensureSyncStarted();
       this.lastRefreshError = null;
@@ -682,7 +696,7 @@ export class GlobalSearchService implements IGlobalSearchService {
       this.lastRefreshError = { at: Date.now(), message: errorMessage(error) };
       throw error;
     }
-    const stats = await this.backend.status();
+    const stats = await backend.status();
     return { sessions: stats.sessions, documents: stats.documents };
   }
 
@@ -702,7 +716,8 @@ export class GlobalSearchService implements IGlobalSearchService {
       };
     }
     try {
-      const status = await this.backend.status();
+      const backend = await this.ensureBackend();
+      const status = await backend.status();
       if (!status.readOnly) this.requestSync();
       return {
         sessions: status.sessions,
@@ -720,7 +735,7 @@ export class GlobalSearchService implements IGlobalSearchService {
 
   lifecycleReport(): CoreLifecycleReport {
     if (this.disposed) return { state: this.drainSettled ? 'stopped' : 'closing' };
-    return this.backend.lifecycleSnapshot();
+    return this.backend?.lifecycleSnapshot() ?? { state: 'stopped' };
   }
 }
 

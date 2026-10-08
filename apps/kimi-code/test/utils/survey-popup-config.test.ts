@@ -58,7 +58,7 @@ describe('DEFAULT_SURVEY_POPUP_CONFIG', () => {
       min_time_between_global_feedback_ms: 100_000_000,
       long_context_survey_threshold: 200_000,
       long_context_probability: 0.2,
-      long_context_trigger_mode: 'cumulative',
+      long_context_trigger_mode: 'virtual_context',
     });
   });
 });

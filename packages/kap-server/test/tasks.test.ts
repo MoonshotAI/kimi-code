@@ -60,8 +60,8 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
       getRequester: () => {
         throw new Error('modelCatalog.getRequester not exercised in this test');
       },
-      inspect: () => {
-        throw new Error('modelCatalog.inspect not exercised in this test');
+      generate: () => {
+        throw new Error('modelCatalog.generate not exercised in this test');
       },
       ping: () => {
         throw new Error('modelCatalog.ping not exercised in this test');
@@ -384,7 +384,7 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     ]);
     expect(first.body.code).toBe(0);
     expect(second.body.code).toBe(0);
-    const detachedFlags = [first.body.data.detached, second.body.data.detached].sort();
+    const detachedFlags = [first.body.data.detached, second.body.data.detached].toSorted();
     expect(detachedFlags).toEqual([false, true]);
     expect(first.body.data.status).toBe('running');
     expect(second.body.data.status).toBe('running');

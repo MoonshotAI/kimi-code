@@ -9,7 +9,7 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { AgentsMdReminderShownEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import type { HostFsChange } from '#/os/interface/hostFsWatch';
+import type { WatchChange } from '#human/utils/watch';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
@@ -119,9 +119,9 @@ export class AgentAgentsMdReminderService
     this.states.set(agentsMdReminderSeededKey, true);
   }
 
-  private announceChanged(changes: readonly HostFsChange[]): void {
+  private announceChanged(changes: readonly WatchChange[]): void {
     if (!this.states.get(agentsMdReminderSeededKey)) return;
-    const entries = new Map<string, HostFsChange>();
+    const entries = new Map<string, WatchChange>();
     for (const change of changes) {
       const path = normalize(change.path);
       entries.set(path, { ...change, path });
@@ -358,7 +358,7 @@ function reminderText(paths: readonly string[]): string {
   );
 }
 
-function changeReminderText(changes: readonly HostFsChange[]): string {
+function changeReminderText(changes: readonly WatchChange[]): string {
   return (
     'The AGENTS.md instruction file(s) below changed on disk after they were injected into the system prompt:\n' +
     changes

@@ -1,67 +1,21 @@
-/**
- * Resume replay fold — rebuilds the v1 `ResumedAgentState.replay` /
- * `toolStore` pair from a v2 agent's `wire.jsonl`.
- *
- * The v2 engine persists each agent's journal at
- * `<sessionDir>/agents/<agentId>/wire.jsonl` using v1's record vocabulary for
- * every replay-relevant op (see `agent-core-v2/src/wire/record.ts` and the op
- * schemas — e.g. `todoOps.ts` states the on-disk vocabulary stays exactly
- * v1's so either engine's reader rebuilds the same state). The v1 engine's
- * own restore pipeline (`Agent` + `AgentRecords.replay`) is therefore the
- * correct fold: it owns the subtle semantics a re-implementation would drift
- * from — assistant-message assembly from loop events (`step.begin` opens an
- * assistant message, `content.part` / `tool.call` mutate it in place,
- * `tool.result` closes the exchange, mid-history gaps are closed with
- * synthesized interrupted results, messages deferred behind an open tool
- * exchange flush in order), `context.undo` removing replayed messages, and
- * `context.apply_compaction` patching the last compaction record with its
- * result.
- *
- * Record-type → replay-record mapping (all produced by the v1 restore; the
- * fold inherits it verbatim):
- * - `context.append_message`      → `{type:'message'}` (same for the
- *   assistant/tool messages assembled out of `context.append_loop_event`)
- * - `full_compaction.begin`       → `{type:'compaction', instruction}`;
- *   `context.apply_compaction` patches the last one with `result`;
- *   `full_compaction.cancel` marks it `'cancelled'`
- * - `goal.create` / `goal.update` → `{type:'goal_updated'}` (`created` /
- *   `lifecycle` / `completion` change)
- * - `plan_mode.enter`             → `{type:'plan_updated', enabled:true}`;
- *   `plan_mode.cancel` / `plan_mode.exit` → `enabled:false`
- * - `config.update`               → `{type:'config_updated', config}` (the raw
- *   record fields, including `type`/`time` — v1's restore quirk)
- * - `permission.set_mode`         → `{type:'permission_updated', mode}`
- * - `permission.record_approval_result` → `{type:'approval_result', record}`
- * - `tools.update_store`          → no replay record; last-wins into the tool
- *   store returned alongside (v1's `agent.tools.storeData()`)
- * - everything else (`metadata`, `turn.*`, `usage.record`,
- *   `tools.set_active_tools`, `context.update_token_count`, loop bookkeeping)
- *   rebuilds state only; v2-only ops (`profile.bind`, `plan.revision`,
- *   `task.started` / `task.terminated`, `skill.activate`, `interaction.*`,
- *   `token_counting.*`, `llm.*`) fall through v1's restore switch
- *   untouched. Two consequences: the v2 profile BINDING never appears as a
- *   `config_updated` replay record (v1 persists the bind as `config.update`,
- *   v2 as `profile.bind` — pinned in the parity KNOWN_DIFFS), and background
- *   tasks do NOT come from this fold (v1 restores them from a side file, v2
- *   from `task.*` ops) — the caller reads them from the live agent scope.
- *
- * The fold runs on a THROWAWAY v1 `Agent` over an in-memory persistence, so
- * it never mutates the journal (a live restore appends synthesized
- * interrupted-tool-result records at `finishResume`; here those appends land
- * in the memory buffer only). Any failure — missing/corrupt file, newer
- * protocol, unexpected record — degrades to an empty result instead of
- * failing the session resume.
- */
-
-import { readFile } from 'node:fs/promises';
+import { open, readFile } from 'node:fs/promises';
 
 import {
-  Agent,
-  type AgentRecord,
-  type AgentRecordPersistence,
+  FOLD_CARRYOVER_WIRE_TYPES,
+  FOLD_RELEVANT_WIRE_TYPES,
+  foldWireRecords,
+  isRealUserInput,
+  type AgentReplayRecord as V2AgentReplayRecord,
+  type ContextMessage as V2ContextMessage,
+  type WireRecord,
+} from '@moonshot-ai/agent-core-v2';
+
+import type { ContextMessage } from '#/context';
+import {
+  isAgentReplayUserTurnMessage,
+  limitAgentReplayByTurns,
   type AgentReplayRecord,
-} from '@moonshot-ai/agent-core';
-import { LocalKaos } from '@moonshot-ai/kaos';
+} from '#/replay';
 
 export interface FoldedAgentReplay {
   readonly replay: readonly AgentReplayRecord[];
@@ -70,73 +24,432 @@ export interface FoldedAgentReplay {
 
 const EMPTY_FOLD: FoldedAgentReplay = { replay: [], toolStore: {} };
 
-/**
- * Read-only `AgentRecordPersistence` over an already-parsed journal. The
- * throwaway fold agent's live writes (the synthesized interrupted-tool-result
- * records `finishResume` appends) land here and go nowhere — the on-disk
- * journal is never mutated. `InMemoryAgentRecordPersistence` would do, but
- * the package root only exports the interface, and node-sdk's vitest aliases
- * `@moonshot-ai/agent-core` to its index, which swallows every deep subpath.
- */
-class ReadOnlyAgentRecordPersistence implements AgentRecordPersistence {
-  constructor(private readonly records: readonly AgentRecord[]) {}
-
-  async *read(): AsyncIterable<AgentRecord> {
-    for (const record of this.records) {
-      yield record;
-    }
+export async function foldAgentWireReplay(
+  wirePath: string,
+  turnLimit?: number,
+): Promise<FoldedAgentReplay> {
+  if (turnLimit === undefined) return foldAgentWireReplayFull(wirePath);
+  try {
+    const limited = await foldAgentWireReplayWindowed(wirePath, turnLimit);
+    if (limited !== undefined) return limited;
+  } catch {
+    // Any windowed-scan irregularity reproduces the reference behavior below.
   }
-
-  append(_input: AgentRecord): void {}
-
-  rewrite(_records: readonly AgentRecord[]): void {}
-
-  async flush(): Promise<void> {}
-
-  async close(): Promise<void> {}
+  const full = await foldAgentWireReplayFull(wirePath);
+  return { replay: limitAgentReplayByTurns(full.replay, turnLimit), toolStore: full.toolStore };
 }
 
-/**
- * Fold one agent's `wire.jsonl` into the v1 replay records and tool-store
- * snapshot. Best-effort: unreadable or malformed journals yield an empty
- * fold, never a rejected resume.
- */
-export async function foldAgentWireReplay(wirePath: string): Promise<FoldedAgentReplay> {
+async function foldAgentWireReplayFull(wirePath: string): Promise<FoldedAgentReplay> {
   try {
     const records = parseWireRecords(await readFile(wirePath, 'utf-8'));
     if (records.length === 0) return EMPTY_FOLD;
-    const agent = new Agent({
-      kaos: await LocalKaos.create(),
-      persistence: new ReadOnlyAgentRecordPersistence(records),
-      type: 'sub',
-    });
-    await agent.resume({ rewriteMigratedRecords: false });
+    const folded = foldWireRecords(records);
     return {
-      replay: agent.replayBuilder.buildResult(),
-      toolStore: agent.tools.storeData(),
+      replay: folded.replay.map(mapReplayRecord),
+      toolStore: folded.toolStore,
     };
   } catch {
     return EMPTY_FOLD;
   }
 }
 
-/**
- * The v1 line reader's rules: blank lines skipped, a truncated TAIL line
- * tolerated (the last write may have crashed mid-flush), corruption anywhere
- * else is an error.
- */
-function parseWireRecords(content: string): AgentRecord[] {
+function mapReplayRecord(record: V2AgentReplayRecord): AgentReplayRecord {
+  if (record.type === 'config_updated') {
+    return {
+      type: 'config_updated',
+      time: record.time,
+      config: {
+        modelAlias: record.config.modelAlias,
+        profileName: record.config.profileName,
+        thinkingEffort: record.config.thinkingLevel,
+        systemPrompt: record.config.systemPrompt,
+      },
+    };
+  }
+  return record as unknown as AgentReplayRecord;
+}
+
+function parseWireRecords(content: string): WireRecord[] {
   const lines = content.split('\n');
-  const records: AgentRecord[] = [];
+  const records: WireRecord[] = [];
   for (const [index, rawLine] of lines.entries()) {
     const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
     if (line.length === 0) continue;
     try {
-      records.push(JSON.parse(line) as AgentRecord);
+      records.push(JSON.parse(line) as WireRecord);
     } catch (error) {
       if (index === lines.length - 1) break;
       throw error;
     }
   }
   return records;
+}
+
+const SCAN_CHUNK_BYTES = 4 * 1024 * 1024;
+const TYPE_PREFIX = '{"type":"';
+const TYPE_MARKER = '"type":"';
+const TYPE_MARKER_BYTES = Buffer.from(TYPE_MARKER);
+const RELEVANT_TYPE_PREFIXES = [
+  'context.',
+  'goal.',
+  'full_compaction.',
+  'plan_mode.',
+  'config.update',
+  'permission.',
+  'tools.update_store',
+  'forked',
+];
+const CARRYOVER_TYPE_PREFIXES = ['goal.', 'tools.update_store', 'forked'];
+
+interface ScannedRecord {
+  readonly start: number;
+  readonly record: WireRecord;
+}
+
+// Folds exactly the records that the full fold truncated to the last
+// `turnLimit` user turns would produce: the raw-record window starting at the
+// Nth-from-last turn-start append (extended back over an open step / pending
+// tool calls to the last pending-clearing record), plus every earlier
+// FOLD_CARRYOVER record so toolStore and goal state survive the window.
+// Returns undefined when the window cannot be proven equivalent.
+async function foldAgentWireReplayWindowed(
+  wirePath: string,
+  turnLimit: number,
+): Promise<FoldedAgentReplay | undefined> {
+  const handle = await open(wirePath, 'r');
+  try {
+    const { size } = await handle.stat();
+    if (size === 0) return EMPTY_FOLD;
+    const scan = new WireReplayScan(turnLimit);
+    let carry = Buffer.alloc(0);
+    let pos = size;
+    let tailChunk = true;
+    const readChunk = async (start: number, length: number) => {
+      const chunk = Buffer.alloc(length);
+      const { bytesRead } = await handle.read(chunk, 0, length, start);
+      return chunk.subarray(0, bytesRead);
+    };
+    let start = Math.max(0, pos - SCAN_CHUNK_BYTES);
+    let pending = readChunk(start, pos - start);
+    while (true) {
+      const view = await pending;
+      pos = start;
+      let following: ReturnType<typeof readChunk> | undefined;
+      if (pos > 0) {
+        start = Math.max(0, pos - SCAN_CHUNK_BYTES);
+        following = readChunk(start, pos - start);
+      }
+      const firstNl = view.indexOf(0x0a);
+      if (firstNl < 0) {
+        carry = carry.length === 0 ? Buffer.from(view) : Buffer.concat([view, carry]);
+      } else {
+        scan.processChunk(view, firstNl + 1, carry, pos, tailChunk && view.at(-1) !== 0x0a);
+        carry = view.subarray(0, firstNl);
+      }
+      if (pos === 0) break;
+      pending = following!;
+      tailChunk = false;
+    }
+    return scan.finish(carry);
+  } finally {
+    await handle.close();
+  }
+}
+
+class WireReplayScan {
+  private mode: 'boundary' | 'extend' | 'head';
+  private found = 0;
+  private skip = 0;
+  private endsAfter = 0;
+  private beginsAfter = 0;
+  private balanceAtBoundary = 0;
+  private boundaryStart = -1;
+  private windowStart = -1;
+  private walkStepBalance = 0;
+  private readonly walkCalls = new Set<string>();
+  private readonly walkResults = new Set<string>();
+  private readonly windowLines: ScannedRecord[] = [];
+  private readonly seeds: ScannedRecord[] = [];
+  private readonly legacyCompactionStarts: number[] = [];
+
+  constructor(private readonly turnLimit: number) {
+    this.mode = turnLimit > 0 ? 'boundary' : 'head';
+  }
+
+  processChunk(
+    view: Buffer,
+    from: number,
+    tailFragment: Buffer,
+    dataFileStart: number,
+    tolerateTailLine: boolean,
+  ): void {
+    if (this.mode === 'head') {
+      this.scanHeadRegion(view, from, view.length, tailFragment, dataFileStart);
+      return;
+    }
+    let end = view.length;
+    let tailLine = true;
+    while (end > from) {
+      const nl = view.lastIndexOf(0x0a, end - 1);
+      const lineStart = nl < from ? from : nl + 1;
+      const joined =
+        tailLine && tailFragment.length > 0
+          ? Buffer.concat([view.subarray(lineStart, end), tailFragment])
+          : view.subarray(lineStart, end);
+      this.processLine(dataFileStart + lineStart, joined, tailLine && tolerateTailLine);
+      const mode = this.mode as 'boundary' | 'extend' | 'head';
+      if (mode === 'head') {
+        this.scanHeadRegion(view, from, lineStart, EMPTY_BUFFER, dataFileStart);
+        return;
+      }
+      tailLine = false;
+      end = nl < from ? from : nl;
+    }
+  }
+
+  finish(firstLineBytes: Buffer): FoldedAgentReplay | undefined {
+    const firstLine = decodeLine(firstLineBytes);
+    if (firstLine.length === 0) return undefined;
+    let firstRecord: WireRecord;
+    try {
+      firstRecord = JSON.parse(firstLine) as WireRecord;
+    } catch {
+      return EMPTY_FOLD;
+    }
+    const boundaryFound = this.boundaryStart >= 0;
+    const windowStart = this.mode === 'head' ? this.windowStart : boundaryFound ? 0 : -1;
+    if (
+      boundaryFound &&
+      windowStart > 0 &&
+      this.legacyCompactionStarts.some((start) => start >= windowStart)
+    ) {
+      return undefined;
+    }
+    const records: WireRecord[] = [firstRecord];
+    const seeds = this.seeds.toSorted((a, b) => a.start - b.start);
+    for (const seed of seeds) {
+      records.push(seed.record);
+    }
+    for (let index = this.windowLines.length - 1; index >= 0; index--) {
+      const line = this.windowLines[index]!;
+      if (line.start < windowStart) continue;
+      records.push(line.record);
+    }
+    const folded = foldWireRecords(records);
+    if (!boundaryFound || windowStart <= 0) {
+      return {
+        replay: limitAgentReplayByTurns(folded.replay.map(mapReplayRecord), this.turnLimit),
+        toolStore: folded.toolStore,
+      };
+    }
+    const turnStarts = folded.replay.flatMap((record, index) =>
+      record.type === 'message' &&
+      isAgentReplayUserTurnMessage(record.message as unknown as ContextMessage)
+        ? [index]
+        : [],
+    );
+    if (turnStarts.length < this.turnLimit) return undefined;
+    return {
+      replay: folded.replay
+        .slice(turnStarts[turnStarts.length - this.turnLimit])
+        .map(mapReplayRecord),
+      toolStore: folded.toolStore,
+    };
+  }
+
+  private processLine(start: number, joined: Buffer, tolerate: boolean): void {
+    const sniffed = sniffWireTypeBytes(joined);
+    if (sniffed !== undefined && !FOLD_RELEVANT_WIRE_TYPES.has(sniffed)) return;
+    if (sniffed === undefined && !hasRelevantMarkerBytes(joined)) return;
+    const record = parseJsonLine(decodeLine(joined), tolerate);
+    if (record === undefined) return;
+    const parsedType = record['type'];
+    const type = typeof parsedType === 'string' ? parsedType : sniffed;
+    if (type === undefined || !FOLD_RELEVANT_WIRE_TYPES.has(type)) return;
+    this.windowLines.push({ start, record });
+    if (this.mode === 'boundary') this.processBoundaryLine(type, start, record);
+    else this.processExtendLine(type, start, record);
+  }
+
+  private processBoundaryLine(type: string, start: number, record: WireRecord): void {
+    switch (type) {
+      case 'context.append_message': {
+        const message = record['message'] as V2ContextMessage;
+        if (this.skip > 0) {
+          if (isRealUserInput(message)) this.skip--;
+          return;
+        }
+        if (isAgentReplayUserTurnMessage(message as unknown as ContextMessage)) {
+          this.found++;
+          if (this.found === this.turnLimit) {
+            this.boundaryStart = start;
+            this.balanceAtBoundary = this.endsAfter - this.beginsAfter;
+            this.mode = 'extend';
+          }
+        }
+        return;
+      }
+      case 'context.undo': {
+        const count = record['count'];
+        if (typeof count === 'number' && count > 0) this.skip += count;
+        return;
+      }
+      case 'context.clear':
+        this.skip = 0;
+        return;
+      case 'context.apply_compaction':
+        this.skip = 0;
+        this.noteCompaction(record, start);
+        return;
+      case 'context.append_loop_event': {
+        const event = record['event'] as { readonly type?: string };
+        if (event.type === 'step.end') this.endsAfter++;
+        else if (event.type === 'step.begin') this.beginsAfter++;
+        return;
+      }
+      default:
+        return;
+    }
+  }
+
+  private processExtendLine(type: string, start: number, record: WireRecord): void {
+    switch (type) {
+      case 'context.append_loop_event': {
+        const event = record['event'] as {
+          readonly type?: string;
+          readonly toolCallId?: unknown;
+        };
+        if (event.type === 'step.end') {
+          this.walkStepBalance++;
+        } else if (event.type === 'step.begin') {
+          if (this.walkStepBalance > 0) this.walkStepBalance--;
+          this.finishExtend(start);
+        } else if (event.type === 'tool.call') {
+          if (typeof event.toolCallId === 'string') this.walkCalls.add(event.toolCallId);
+        } else if (event.type === 'tool.result') {
+          if (typeof event.toolCallId === 'string') this.walkResults.add(event.toolCallId);
+        }
+        return;
+      }
+      case 'context.undo':
+      case 'context.clear':
+        this.finishExtend(start);
+        return;
+      case 'context.apply_compaction':
+        this.noteCompaction(record, start);
+        this.finishExtend(start);
+        return;
+      default:
+        return;
+    }
+  }
+
+  private noteCompaction(record: WireRecord, start: number): void {
+    if (
+      typeof record['tokensAfter'] !== 'number' ||
+      typeof record['keptUserMessageCount'] !== 'number'
+    ) {
+      this.legacyCompactionStarts.push(start);
+    }
+  }
+
+  private finishExtend(clearingStart: number): void {
+    const hasPending = [...this.walkCalls].some((id) => !this.walkResults.has(id));
+    this.windowStart =
+      this.balanceAtBoundary > 0 || hasPending ? clearingStart : this.boundaryStart;
+    this.mode = 'head';
+  }
+
+  private scanHeadRegion(
+    view: Buffer,
+    from: number,
+    to: number,
+    tailFragment: Buffer,
+    dataFileStart: number,
+  ): void {
+    let lineStart = from;
+    while (lineStart < to) {
+      let lineEnd = view.indexOf(0x0a, lineStart);
+      if (lineEnd < 0 || lineEnd > to) lineEnd = to;
+      const lastLine = lineEnd === to;
+      if (
+        startsWithTypePrefix(view, lineStart)
+          ? hasTypePrefixAt(view, lineStart + TYPE_PREFIX.length, CARRYOVER_TYPE_PREFIXES)
+          : hasCarryoverMarker(view, lineStart, lineEnd)
+      ) {
+        const bytes =
+          lastLine && tailFragment.length > 0
+            ? Buffer.concat([view.subarray(lineStart, lineEnd), tailFragment])
+            : view.subarray(lineStart, lineEnd);
+        const line = decodeLine(bytes);
+        const record = JSON.parse(line) as WireRecord;
+        const recordType = record['type'];
+        if (typeof recordType === 'string' && FOLD_CARRYOVER_WIRE_TYPES.has(recordType)) {
+          this.seeds.push({ start: dataFileStart + lineStart, record });
+        }
+      }
+      if (lastLine) return;
+      lineStart = lineEnd + 1;
+    }
+  }
+}
+
+const EMPTY_BUFFER = Buffer.alloc(0);
+
+function sniffWireTypeBytes(data: Buffer): string | undefined {
+  if (!startsWithBytes(data, 0, TYPE_PREFIX)) return undefined;
+  const end = data.indexOf(0x22, TYPE_PREFIX.length);
+  return end < 0 ? undefined : data.subarray(TYPE_PREFIX.length, end).toString('utf-8');
+}
+
+function hasRelevantMarkerBytes(data: Buffer): boolean {
+  let from = 0;
+  for (;;) {
+    const hit = data.indexOf(TYPE_MARKER_BYTES, from);
+    if (hit < 0) return false;
+    if (hasTypePrefixAt(data, hit + TYPE_MARKER.length, RELEVANT_TYPE_PREFIXES)) return true;
+    from = hit + 1;
+  }
+}
+
+function decodeLine(bytes: Buffer): string {
+  const raw = bytes.toString('utf-8');
+  return raw.endsWith('\r') ? raw.slice(0, -1) : raw;
+}
+
+function parseJsonLine(line: string, tolerate: boolean): WireRecord | undefined {
+  try {
+    return JSON.parse(line) as WireRecord;
+  } catch (error) {
+    if (tolerate) return undefined;
+    throw error;
+  }
+}
+
+function startsWithTypePrefix(data: Buffer, start: number): boolean {
+  return startsWithBytes(data, start, TYPE_PREFIX);
+}
+
+function hasTypePrefixAt(data: Buffer, start: number, prefixes: readonly string[]): boolean {
+  for (const prefix of prefixes) {
+    if (startsWithBytes(data, start, prefix)) return true;
+  }
+  return false;
+}
+
+function hasCarryoverMarker(data: Buffer, start: number, end: number): boolean {
+  let from = start;
+  for (;;) {
+    const hit = data.indexOf(TYPE_MARKER_BYTES, from);
+    if (hit < 0 || hit >= end) return false;
+    if (hasTypePrefixAt(data, hit + TYPE_MARKER.length, CARRYOVER_TYPE_PREFIXES)) return true;
+    from = hit + 1;
+  }
+}
+
+function startsWithBytes(data: Buffer, start: number, text: string): boolean {
+  for (let index = 0; index < text.length; index++) {
+    if (data[start + index] !== text.codePointAt(index)) return false;
+  }
+  return true;
 }

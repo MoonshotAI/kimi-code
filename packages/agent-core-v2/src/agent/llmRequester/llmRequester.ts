@@ -1,10 +1,12 @@
 import { createDecorator } from '#/_base/di/instantiation';
-import type { FinishReason, ThinkingEffort } from '#/kosong/contract/provider';
-import type { Message, StreamedMessagePart } from '#/kosong/contract/message';
-import type { Tool } from '#/kosong/contract/tool';
-import type { TokenUsage } from '#/kosong/contract/usage';
-import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
-import type { ModelRequestTiming } from '#/kosong/model/modelRequester';
+import type { FinishReason } from '#human/llm/finish-reason';
+import type { LlmCredentialProvider } from '#human/llm/requester/requester';
+import type { ThinkingEffort } from '#human/llm/thinking';
+import type { Message } from '#/llm-adapter/contract/message';
+import type { StreamedMessagePart, ToolDescription as Tool } from '#human/llm/message';
+import type { TokenUsage } from '#human/llm/usage';
+import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
 import type { LogContext } from '#/_base/log/log';
 
 export type AgentLLMRequestLogFields = Readonly<LogContext>;
@@ -42,6 +44,7 @@ export interface AgentLLMRequestOverrides {
   systemPrompt?: string;
   source?: AgentLLMRequestSource;
   maxOutputSize?: number;
+  onAttemptRetry?: () => void;
 }
 
 export interface AgentLLMRequestTask {
@@ -57,6 +60,10 @@ export interface IAgentLLMRequesterService {
   readonly _serviceBrand: undefined;
 
   prepareTurnConfig(turnId: number): PreparedTurnRequestConfig | undefined;
+
+  currentCredentialProvider(): LlmCredentialProvider | undefined;
+
+  credentialProviderForTurn(turnId: number): LlmCredentialProvider | undefined;
 
   request(
     overrides?: AgentLLMRequestOverrides,

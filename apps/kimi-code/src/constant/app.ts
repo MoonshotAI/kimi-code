@@ -1,4 +1,4 @@
-import { ErrorCodes } from '@moonshot-ai/kimi-code-sdk';
+import { ErrorCodes, type HostUiCapability } from '@moonshot-ai/kimi-code-sdk';
 
 import { currentKimiProfile } from '#/utils/region';
 
@@ -9,6 +9,9 @@ export const PROCESS_NAME = 'kimi-code';
 // Used in telemetry app names and HTTP User-Agent headers.
 export const CLI_USER_AGENT_PRODUCT = 'kimi-code-cli';
 export const CLI_UI_MODE = 'shell';
+// UI surfaces the TUI renders; declared to the engine at bootstrap so features that need a
+// host-side surface (the NotifyUser update panel) are offered to this process only.
+export const TUI_HOST_UI_CAPABILITIES: readonly HostUiCapability[] = ['update_panel'];
 // Telemetry ui_mode for the `kimi web` host. Same product
 // as the CLI (CLI_USER_AGENT_PRODUCT); the surface is distinguished by ui_mode.
 export const WEB_UI_MODE = 'web';
@@ -65,6 +68,7 @@ export const KIMI_CODE_INPUT_HISTORY_DIR_NAME = 'user-history';
 export const KIMI_CODE_BANNER_DIR_NAME = 'banner';
 export const KIMI_CODE_BANNER_STATE_FILE_NAME = 'state.json';
 export const KIMI_CODE_SURVEY_STATE_FILE_NAME = 'feedback-survey-state.json';
+export const KIMI_CODE_RECOMMENDED_EFFORT_STATE_FILE_NAME = 'recommended-effort-state.json';
 
 // Managed Kimi auth provider key shared with OAuth/SDK config.
 export const DEFAULT_OAUTH_PROVIDER_NAME = 'managed:kimi-code';

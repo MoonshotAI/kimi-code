@@ -109,6 +109,21 @@ describe('server-v2 /api/v1/config', () => {
     expect(after.yolo).toBe(false);
   });
 
+  it('POST { auto_session_title: false } persists and GET echoes it', async () => {
+    await boot();
+    const cfg = await patchConfig({ auto_session_title: false });
+    expect(cfg.auto_session_title).toBe(false);
+
+    const after = await getConfig();
+    expect(after.auto_session_title).toBe(false);
+  });
+
+  it('GET omits auto_session_title when the field is absent from config.toml', async () => {
+    await boot();
+    const cfg = await getConfig();
+    expect(cfg.auto_session_title).toBeUndefined();
+  });
+
   it('POST { secondary_model } persists the subagent model pool and GET echoes it', async () => {
     await boot();
     const cfg = await patchConfig({
@@ -156,6 +171,21 @@ describe('server-v2 /api/v1/config', () => {
       base_url: 'https://example.test',
       has_api_key: true,
     });
+  });
+
+  it('GET reports has_api_key for an api_key_env provider only while the variable is set', async () => {
+    await boot('[providers.acme]\ntype = "openai"\napi_key_env = "KIMI_TEST_CONFIG_ROUTE_KEY"\n');
+    try {
+      vi.stubEnv('KIMI_TEST_CONFIG_ROUTE_KEY', 'sk-live');
+      const live = await getConfig();
+      expect(live.providers['acme']).toMatchObject({ has_api_key: true });
+
+      vi.stubEnv('KIMI_TEST_CONFIG_ROUTE_KEY', '');
+      const empty = await getConfig();
+      expect(empty.providers['acme']).toMatchObject({ has_api_key: false });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('session create with a broken subagent model pool still succeeds', async () => {

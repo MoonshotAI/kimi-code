@@ -6,8 +6,8 @@ import { OrderedHookSlot } from '#/hooks';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
 import { IFlagService } from '#/app/flag/flag';
-import type { ModelCapability } from '#/kosong/contract/capability';
-import type { ToolCall } from '#/kosong/contract/message';
+import type { ModelCapability } from '#/llm-adapter/contract/capability';
+import type { ToolCall } from '#human/llm/message';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { UndoCut } from '#/agent/contextMemory/contextOps';
@@ -20,13 +20,12 @@ import {
   IAgentLoopService,
   type AfterStepContext,
   type BeforeStepContext,
-  type EnqueueReceipt,
-  type LoopRunResult,
-  type StepEnqueueOptions,
+  type LoopNotifyHandle,
+  type LoopSnapshot,
+  type PromptSubmitContext,
   type Turn,
 } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
-import type { StepRequest } from '#/agent/loop/stepRequest';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -207,23 +206,40 @@ class FakeLoopService implements IAgentLoopService {
   readonly hooks: IAgentLoopService['hooks'] = {
     onWillBeginStep: new OrderedHookSlot<BeforeStepContext>(),
     onDidFinishStep: new OrderedHookSlot<AfterStepContext>(),
+    onBeforeSubmitPrompt: new OrderedHookSlot<PromptSubmitContext>(),
   };
 
-  cancelFromUser(): void {}
-
-  enqueue(_request: StepRequest, _options?: StepEnqueueOptions): EnqueueReceipt {
+  submit(): never {
     throw new Error('unused in this suite');
   }
 
-  async run(): Promise<LoopRunResult> {
+  steer(): never {
     throw new Error('unused in this suite');
   }
 
-  status() {
-    return { state: 'idle' as const, pendingTurnIds: [], hasPendingRequests: false };
+  cancel(): never {
+    throw new Error('unused in this suite');
   }
 
-  cancel(_turnId?: number, _reason?: unknown): boolean {
+  snapshot(): LoopSnapshot {
+    return {
+      state: 'idle',
+      activeTurnId: undefined,
+      activePromptId: undefined,
+      queue: [],
+      notificationCount: 0,
+      paused: false,
+      hasPendingRequests: false,
+      turn: undefined,
+      activeTraceId: undefined,
+    };
+  }
+
+  promptHandle(): never {
+    throw new Error('unused in this suite');
+  }
+
+  notify(): LoopNotifyHandle {
     throw new Error('unused in this suite');
   }
 
@@ -231,9 +247,15 @@ class FakeLoopService implements IAgentLoopService {
     return toDisposable(() => {});
   }
 
-  hasPendingRequests(): boolean {
-    return false;
+  buildAttachBundle(): never {
+    throw new Error('unused in this suite');
   }
+
+  attachEngine(): never {
+    throw new Error('unused in this suite');
+  }
+
+  async resetMachineEngine(): Promise<void> {}
 
   async settled(): Promise<void> {}
 
@@ -400,8 +422,12 @@ function createExecutorHarness(): ExecutorHarness {
   };
 }
 
-function registerMcp(h: Harness, tool: StubMcpTool): IDisposable {
-  const registration = h.registry.register(tool, { source: 'mcp' });
+function registerMcp(
+  h: Harness,
+  tool: StubMcpTool,
+  disclosure: ToolDisclosure = 'deferred',
+): IDisposable {
+  const registration = h.registry.register(tool, { source: 'mcp', disclosure });
   disposables.add(registration);
   return registration;
 }
@@ -624,6 +650,21 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     expect(byName.get(SELECT_TOOLS_TOOL_NAME)?.deferred).toBeUndefined();
   });
 
+  it('keeps inline-disclosed MCP tools visible and out of the loadable manifest', () => {
+    const h = createHarness();
+    registerMcp(h, new StubMcpTool(MCP_ALPHA), 'inline');
+    registerMcp(h, new StubMcpTool(MCP_BETA));
+
+    const shaped = h.sut.shapeTools(h.registry.list());
+    const byName = new Map(shaped.map((entry) => [entry.name, entry]));
+    expect(byName.get(MCP_ALPHA)?.deferred).toBeUndefined();
+    expect(byName.has(MCP_BETA)).toBe(false);
+
+    const announcement = h.sut.loadableToolsAnnouncement();
+    expect(announcement).toContain(MCP_BETA);
+    expect(announcement).not.toContain(MCP_ALPHA);
+  });
+
   it('defers only opted-in user tools and restores them after selection', () => {
     const h = createHarness();
     registerUser(h, new EchoTool(USER_DEFERRED), 'deferred');
@@ -701,7 +742,10 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     expect(h.sut.load([USER_DEFERRED])).toEqual({
       toLoad: [],
       alreadyAvailable: [],
+      alreadyCallable: [],
       unknown: [USER_DEFERRED],
+      suggestions: {},
+      loadable: [],
     });
     expect(h.contextMemory.get()[0]?.tools?.map((tool) => tool.name)).toEqual([
       USER_DEFERRED,
@@ -725,7 +769,10 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     expect(h.sut.load([USER_DEFERRED])).toEqual({
       toLoad: [],
       alreadyAvailable: [],
-      unknown: [USER_DEFERRED],
+      alreadyCallable: [USER_DEFERRED],
+      unknown: [],
+      suggestions: {},
+      loadable: [],
     });
   });
 });
@@ -760,7 +807,10 @@ describe('AgentToolSelectService.load', () => {
     expect(h.sut.load([USER_DEFERRED])).toEqual({
       toLoad: [USER_DEFERRED],
       alreadyAvailable: [],
+      alreadyCallable: [],
       unknown: [],
+      suggestions: {},
+      loadable: [USER_DEFERRED],
     });
     const declared = await declareSchemas(h);
     expect(declared?.tools?.map((tool) => tool.name)).toEqual([USER_DEFERRED]);
@@ -901,7 +951,7 @@ describe('AgentToolSelectService.load', () => {
       output: [
         `Loaded: ${MCP_BETA}`,
         `Already available: ${MCP_ALPHA}`,
-        `Unknown tool: ${MCP_GONE}. Pick from the latest announced tools list.`,
+        `Unknown tool: ${MCP_GONE}. Loadable tools: ${MCP_BETA}.`,
       ].join('\n'),
     });
   });
@@ -913,7 +963,142 @@ describe('AgentToolSelectService.load', () => {
     const unknownOnly = selectTools.resolveExecution({ names: [MCP_GONE] });
     if (unknownOnly.isError === true) throw new Error('expected a runnable execution');
     expect(await unknownOnly.execute(ctx)).toEqual({
+      output:
+        `Unknown tool: ${MCP_GONE}. No tools can be loaded in this session — ` +
+        'use the tools you already have.',
+      isError: true,
+    });
+  });
+
+  it('names the loadable tools inline when the list is short', async () => {
+    const h = createHarness();
+    registerMcp(h, new StubMcpTool(MCP_ALPHA));
+    registerMcp(h, new StubMcpTool(MCP_BETA));
+    const selectTools = h.ix.createInstance(SelectToolsTool);
+    const ctx = { turnId: 1, toolCallId: 'call-1', signal: new AbortController().signal };
+    const unknownOnly = selectTools.resolveExecution({ names: [MCP_GONE] });
+    if (unknownOnly.isError === true) throw new Error('expected a runnable execution');
+    expect(await unknownOnly.execute(ctx)).toEqual({
+      output: `Unknown tool: ${MCP_GONE}. Loadable tools: ${MCP_ALPHA}, ${MCP_BETA}.`,
+      isError: true,
+    });
+  });
+
+  it('falls back to the generic hint when the loadable list is long', async () => {
+    const h = createHarness();
+    const names = [
+      'mcp__srv__t1',
+      'mcp__srv__t2',
+      'mcp__srv__t3',
+      'mcp__srv__t4',
+      'mcp__srv__t5',
+      'mcp__srv__t6',
+    ];
+    for (const name of names) registerMcp(h, new StubMcpTool(name));
+    const selectTools = h.ix.createInstance(SelectToolsTool);
+    const ctx = { turnId: 1, toolCallId: 'call-1', signal: new AbortController().signal };
+    const unknownOnly = selectTools.resolveExecution({ names: [MCP_GONE] });
+    if (unknownOnly.isError === true) throw new Error('expected a runnable execution');
+    expect(await unknownOnly.execute(ctx)).toEqual({
       output: `Unknown tool: ${MCP_GONE}. Pick from the latest announced tools list.`,
+      isError: true,
+    });
+  });
+
+  it('says so explicitly when nothing is loadable in the session', async () => {
+    const h = createHarness();
+    const selectTools = h.ix.createInstance(SelectToolsTool);
+    const ctx = { turnId: 1, toolCallId: 'call-1', signal: new AbortController().signal };
+    const unknownOnly = selectTools.resolveExecution({ names: ['some_unavailable_tool'] });
+    if (unknownOnly.isError === true) throw new Error('expected a runnable execution');
+    expect(await unknownOnly.execute(ctx)).toEqual({
+      output:
+        'Unknown tool: some_unavailable_tool. No tools can be loaded in this session — ' +
+        'use the tools you already have.',
+      isError: true,
+    });
+  });
+
+  it('classifies an active static tool as alreadyCallable', () => {
+    const h = createHarness();
+    registerBuiltin(h, new EchoTool());
+
+    expect(h.sut.load(['Echo'])).toEqual({
+      toLoad: [],
+      alreadyAvailable: [],
+      alreadyCallable: ['Echo'],
+      unknown: [],
+      suggestions: {},
+      loadable: [],
+    });
+    expect(h.contextMemory.appended).toHaveLength(0);
+  });
+
+  it('suggests the announced name for a casing-only miss', () => {
+    const h = createHarness();
+    registerMcp(h, new StubMcpTool(MCP_ALPHA));
+
+    expect(h.sut.load(['MCP__SRV__ALPHA'])).toEqual({
+      toLoad: [],
+      alreadyAvailable: [],
+      alreadyCallable: [],
+      unknown: ['MCP__SRV__ALPHA'],
+      suggestions: { 'MCP__SRV__ALPHA': [MCP_ALPHA] },
+      loadable: [MCP_ALPHA],
+    });
+  });
+
+  it('suggests candidates when the input is a substring of a loadable name', () => {
+    const h = createHarness();
+    registerMcp(h, new StubMcpTool(MCP_ALPHA));
+
+    expect(h.sut.load(['mcp__alpha'])).toEqual({
+      toLoad: [],
+      alreadyAvailable: [],
+      alreadyCallable: [],
+      unknown: ['mcp__alpha'],
+      suggestions: { 'mcp__alpha': [MCP_ALPHA] },
+      loadable: [MCP_ALPHA],
+    });
+  });
+
+  it('suggests candidates when the input contains a candidate name segment', () => {
+    const h = createHarness();
+    registerMcp(h, new StubMcpTool(MCP_ALPHA));
+
+    expect(h.sut.load(['alpha_extra'])).toEqual({
+      toLoad: [],
+      alreadyAvailable: [],
+      alreadyCallable: [],
+      unknown: ['alpha_extra'],
+      suggestions: { 'alpha_extra': [MCP_ALPHA] },
+      loadable: [MCP_ALPHA],
+    });
+  });
+
+  it('tells the model to call static tools directly instead of selecting them', async () => {
+    const h = createHarness();
+    registerBuiltin(h, new EchoTool());
+    const selectTools = h.ix.createInstance(SelectToolsTool);
+    const ctx = { turnId: 1, toolCallId: 'call-1', signal: new AbortController().signal };
+    const staticOnly = selectTools.resolveExecution({ names: ['Echo'] });
+    if (staticOnly.isError === true) throw new Error('expected a runnable execution');
+    expect(await staticOnly.execute(ctx)).toEqual({
+      output:
+        '"Echo" is already available — call it directly; ' +
+        'select_tools is only for names in the <tools_added> announcements.',
+    });
+  });
+
+  it('renders did-you-mean candidates in the select_tools output', async () => {
+    const h = createHarness();
+    registerMcp(h, new StubMcpTool(MCP_ALPHA));
+    const selectTools = h.ix.createInstance(SelectToolsTool);
+    const ctx = { turnId: 1, toolCallId: 'call-1', signal: new AbortController().signal };
+    const casingMiss = selectTools.resolveExecution({ names: ['MCP__SRV__ALPHA'] });
+    if (casingMiss.isError === true) throw new Error('expected a runnable execution');
+    expect(await casingMiss.execute(ctx)).toEqual({
+      output: `Unknown tool: MCP__SRV__ALPHA. Did you mean: ${MCP_ALPHA}?`,
       isError: true,
     });
   });
@@ -1083,7 +1268,10 @@ describe('AgentToolSelectService loadable-tools announcements', () => {
   it('diffs registry additions and removals against the folded announcements', async () => {
     const h = createHarness();
     registerMcp(h, new StubMcpTool(MCP_ALPHA));
-    const betaRegistration = h.registry.register(new StubMcpTool(MCP_BETA), { source: 'mcp' });
+    const betaRegistration = h.registry.register(new StubMcpTool(MCP_BETA), {
+      source: 'mcp',
+      disclosure: 'deferred',
+    });
     disposables.add(betaRegistration);
 
     await announce(h);

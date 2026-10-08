@@ -24,26 +24,27 @@ import {
   isImageFormatError,
   isRecoverableRequestStructureError,
   isRetryableGenerateError,
-} from '#/kosong/contract/errors';
-import { isToolCall, type Message, type StreamedMessagePart } from '#/kosong/contract/message';
-import { type ThinkingEffort } from '#/kosong/contract/provider';
-import { type Tool } from '#/kosong/contract/tool';
-import { emptyUsage, inputTotal, type TokenUsage } from '#/kosong/contract/usage';
+} from '#/llm-adapter/contract/errors';
+import type { Message } from '#/llm-adapter/contract/message';
+import { type ThinkingEffort } from '#human/llm/thinking';
+import type { LlmCredentialProvider } from '#human/llm/requester/requester';
+import { isToolCall, type StreamedMessagePart, type ToolDescription as Tool } from '#human/llm/message';
+import { emptyUsage, inputTotal, type TokenUsage } from '#human/llm/usage';
 import { ILogService, type LogContext } from '#/_base/log/log';
-import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import {
   effectiveMaxCompletionTokens,
   type ModelRequestEvent,
   type ModelRequestParams,
   type ModelRequester,
   type ModelRequestTiming,
-} from '#/kosong/model/modelRequester';
-import type { ModelOverrides } from '#/kosong/model/model.types';
-import { IModelService } from '#/kosong/model/model';
-import { completionBudgetParams, resolveCompletionBudget } from '#/kosong/model/completionBudget';
-import { resolveThinkingKeep, type ThinkingConfig } from '#/kosong/model/thinking';
+} from '#/llm-adapter/model/model-requester';
+import type { ModelOverrides } from '#/llm-adapter/model/model.types';
+import { IModelService } from '#/llm-adapter/model/model';
+import { completionBudgetParams, resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
+import { resolveThinkingKeep, type ThinkingConfig } from '#/llm-adapter/model/thinking';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
-import type { Protocol } from '#/kosong/protocol/protocol';
+import type { Protocol } from '#/llm-adapter/protocol/protocol';
 import type {
   ApiErrorEvent,
   LlmRequestProjectionFallbackEvent,
@@ -63,11 +64,11 @@ import {
   type AgentLLMRequestTask,
   type PreparedTurnRequestConfig,
 } from './llmRequester';
-import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
+import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import {
   ToolCallIdNormalizer,
   type ToolCallIdResponseNormalizer,
-} from './toolCallIdNormalizer';
+} from '#human/llm/toolCallIdNormalizer';
 import {
   LlmRequest,
   llmRequestTraceKey,
@@ -210,6 +211,17 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     return { thinkingEffort: config.resolved.thinkingLevel };
   }
 
+  currentCredentialProvider(): LlmCredentialProvider | undefined {
+    if (!this.profile.hasProvider()) return undefined;
+    return this.modelCatalog.get(this.profile.resolveModelContext().modelAlias).credentialProvider;
+  }
+
+  credentialProviderForTurn(turnId: number): LlmCredentialProvider | undefined {
+    if (!this.profile.hasProvider()) return undefined;
+    const resolved = this.turnConfigs.get(turnId)?.resolved ?? this.profile.resolveModelContext();
+    return this.modelCatalog.get(resolved.modelAlias).credentialProvider;
+  }
+
   async request(
     overrides: AgentLLMRequestOverrides = {},
     onPart: AgentLLMRequestPartHandler = noopOnPart,
@@ -251,6 +263,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         onPart,
         signal,
         setTrace,
+        overrides.onAttemptRetry,
       );
     } catch (error) {
       this.logRequestFailure(error, overrides, signal);
@@ -323,6 +336,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     onPart: AgentLLMRequestPartHandler,
     signal: AbortSignal | undefined,
     onRequestTrace: (traceId: string | undefined) => void,
+    onAttemptRetry: (() => void) | undefined,
   ): Promise<AgentLLMRequestFinish> {
     this.toolCallIdNormalizer.seedFrom(this.context.get());
     const shaped = this.toolSelect.shapeHistory(request.messages);
@@ -338,6 +352,9 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       this.markMediaStrippedRecoveryTurn(snapshot, request.source);
       return { strip: snapshot };
     };
+    let previousMediaCount: number | undefined;
+    let previousMediaPolicy: ProjectionPolicy['media'];
+    let mediaPaths: ReadonlyMap<string, string> | undefined;
     const run = async (
       policy: ProjectionPolicy | undefined,
     ): Promise<AgentLLMRequestFinish> => {
@@ -345,15 +362,43 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       const projection = projectionNameOf(policy);
       const fields =
         projection === undefined ? request.logFields : { ...request.logFields, projection };
+      if (policy?.media !== undefined) {
+        mediaPaths ??= await this.mediaResolver.displayPaths(shaped);
+      }
+      const projected = this.projector.project(shaped, policy, mediaPaths);
+      const currentMediaCount = mediaPartCount(projected);
+      const mediaPolicyChanged =
+        previousMediaCount !== undefined && previousMediaPolicy !== policy?.media;
+      const droppedMediaCount =
+        previousMediaCount === undefined ? 0 : previousMediaCount - currentMediaCount;
+      previousMediaCount = currentMediaCount;
+      previousMediaPolicy = policy?.media;
       const input = {
         systemPrompt: request.systemPrompt,
         tools: request.tools,
-        messages: await this.mediaResolver.resolve(
-          this.projector.project(shaped, policy),
-          request.requester,
-          signal,
-        ),
+        messages: await this.mediaResolver.resolve(projected, request.requester, signal),
       };
+      const mediaProjection =
+        projection === 'media-degraded' || projection === 'strict-media-degraded'
+          ? 'media-degraded'
+          : projection === 'media-stripped' || projection === 'strict-media-stripped'
+            ? 'media-stripped'
+            : undefined;
+      if (mediaPolicyChanged && droppedMediaCount > 0 && mediaProjection !== undefined) {
+        try {
+          void this.dispatcher.dispatch(
+            new WarningIssued({
+              agentId: this.scopeContext.agentId,
+              code: mediaProjection,
+              message:
+                mediaProjection === 'media-degraded'
+                  ? 'Provider rejected the request as too large; older media were dropped and the request was retried.'
+                  : 'Provider rejected the media in the request; all media were omitted and the request was retried.',
+            }),
+          );
+        } catch {
+        }
+      }
       this.warnAboutAnthropicThinkingEffort(request);
       const logInput: LLMRequestLogInput = {
         protocol: request.model.protocol,
@@ -465,6 +510,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           captureMediaStripPolicy,
         );
         if (nextPolicy !== undefined) {
+          onAttemptRetry?.();
           policy = nextPolicy;
           continue;
         }
@@ -488,6 +534,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           delayMs,
           ...retryErrorFields(error),
         });
+        onAttemptRetry?.();
         await sleepForRetry(delayMs, signal);
       }
     }
@@ -571,7 +618,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   ): StreamedMessagePart {
     if (!isToolCall(part)) return part;
     const assigned = toolCallIds.remapStreamedId(part.id, part._streamIndex);
-    return assigned === part.id ? part : { ...part, id: assigned };
+    return assigned === part.id ? part : { ...part, id: assigned, rawId: part.rawId ?? part.id };
   }
 
   private warnAboutAnthropicThinkingEffort(request: ResolvedLLMRequest): void {
@@ -644,26 +691,33 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     const turnConfig = this.resolveTurnConfig(overrides.source);
     const resolved = turnConfig?.resolved ?? this.profile.resolveModelContext();
     const baseParams = turnConfig?.params ?? this.profile.resolveRequestParams();
+    const requester = this.modelCatalog.getRequester(resolved.modelAlias);
+    const maxCompletionTokensCap =
+      this.config.get<ModelOverrides>('modelOverrides')?.maxCompletionTokens;
+    const usedContextTokens =
+      overrides.messages === undefined
+        ? this.tokenCounting.get(this.scopeContext.agentContext).size
+        : undefined;
     const budgetParams = completionBudgetParams({
       budget: resolveCompletionBudget({
         maxOutputSize: overrides.maxOutputSize ?? resolved.maxOutputSize,
-        reservedContextSize: resolved.reservedContextSize,
-        maxCompletionTokensCap:
-          this.config.get<ModelOverrides>('modelOverrides')?.maxCompletionTokens,
+        maxCompletionTokensCap,
       }),
       capability: resolved.modelCapabilities,
-      usedContextTokens:
-        overrides.messages === undefined
-          ? this.tokenCounting.get(this.scopeContext.agentContext).measured
-          : undefined,
+      usedContextTokens,
     });
-    const requester = this.modelCatalog.getRequester(resolved.modelAlias);
+    const optedOut = maxCompletionTokensCap !== undefined && maxCompletionTokensCap <= 0;
 
     const messages = overrides.messages ?? this.context.get();
     return {
       requester,
       model: requester.model,
-      params: { ...baseParams, ...budgetParams },
+      params: {
+        ...baseParams,
+        ...budgetParams,
+        ...(usedContextTokens === undefined ? {} : { usedContextTokens }),
+        ...(optedOut ? { maxCompletionTokens: maxCompletionTokensCap } : {}),
+      },
       modelAlias: resolved.modelAlias,
       thinkingEffort: resolved.thinkingLevel,
       systemPrompt: overrides.systemPrompt ?? turnConfig?.systemPrompt ?? this.profile.getSystemPrompt(),
@@ -788,6 +842,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     }
     if (timing.serverDecodeMs !== undefined) payload['serverDecodeMs'] = timing.serverDecodeMs;
     if (timing.clientConsumeMs !== undefined) payload['clientConsumeMs'] = timing.clientConsumeMs;
+    if (timing.clientBlockedMs !== undefined) payload['clientBlockedMs'] = timing.clientBlockedMs;
     this.log.info('llm response', payload);
   }
 
@@ -859,6 +914,18 @@ function stringField(fields: AgentLLMRequestLogFields, key: string): string | un
 function numberField(fields: AgentLLMRequestLogFields, key: string): number | undefined {
   const value = fields[key];
   return typeof value === 'number' ? value : undefined;
+}
+
+function mediaPartCount(messages: readonly Message[]): number {
+  return messages.reduce(
+    (count, message) =>
+      count +
+      message.content.filter(
+        (part) =>
+          part.type === 'image_url' || part.type === 'audio_url' || part.type === 'video_url',
+      ).length,
+    0,
+  );
 }
 
 type LlmRequestProjection = NonNullable<LlmRequestPayload['projection']>;

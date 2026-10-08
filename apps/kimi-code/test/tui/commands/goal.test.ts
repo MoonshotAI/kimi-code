@@ -835,7 +835,6 @@ describe('dispatchInput /goal integration', () => {
   it('restores the input when the post-creation busy re-check rejects /goal', async () => {
     const { host, session } = makeHost({ hasSession: false });
     Object.assign(host, {
-      engineV2: true,
       // A first prompt starts a turn while the lazy session creation awaits.
       ensureSession: vi.fn(async () => {
         host.state.appState.streamingPhase = 'thinking';
@@ -857,7 +856,6 @@ describe('dispatchInput /goal integration', () => {
   it('does not restore over a draft typed while lazy session creation was pending', async () => {
     const { host, session } = makeHost({ hasSession: false });
     Object.assign(host, {
-      engineV2: true,
       ensureSession: vi.fn(async () => {
         host.state.appState.streamingPhase = 'thinking';
         // The user kept typing after submitting /goal.
@@ -880,7 +878,6 @@ describe('dispatchInput /goal integration', () => {
   it('restores the input when lazy session creation fails before /goal runs', async () => {
     const { host, session } = makeHost({ hasSession: false });
     Object.assign(host, {
-      engineV2: true,
       ensureSession: vi.fn(async () => undefined),
     });
 
@@ -895,7 +892,6 @@ describe('dispatchInput /goal integration', () => {
   it('does not restore when an editor-replacement panel opened during creation', async () => {
     const { host, session } = makeHost({ hasSession: false });
     Object.assign(host, {
-      engineV2: true,
       ensureSession: vi.fn(async () => {
         // The user opened a panel (e.g. /help) while creation was pending.
         Object.assign(host.state, { editorReplacementMounted: true });

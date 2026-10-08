@@ -11,10 +11,12 @@ import {
   IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentProfileService,
+  IAgentLoopService,
   IAgentStateService,
   IAgentToolPolicyService,
   IBootstrapService,
   IConfigService,
+  IEventBus,
   IFileService,
   ISessionContext,
   ISessionMetadata,
@@ -43,6 +45,7 @@ interface PromptItemWire {
   status: 'running' | 'queued';
   content: unknown;
   created_at: string;
+  metadata?: Record<string, unknown>;
 }
 
 type PromptContentPart =
@@ -86,6 +89,25 @@ const PROMPT_TOML_OTHER_DEFAULT = [
   'max_context_size = 1000',
   '',
 ].join('\n');
+
+const PROMPT_TOML_KIMI_VISION = [
+  PROMPT_TOML,
+  '[providers.vision]',
+  'type = "kimi"',
+  'base_url = "http://127.0.0.1:9999"',
+  'api_key = "sk-test"',
+  '',
+  '[models.kimi-vision]',
+  'provider = "vision"',
+  'model = "kimi-vision"',
+  'max_context_size = 1000',
+  '',
+].join('\n');
+
+const PROMPT_TOML_KIMI_VISION_DEFAULT = PROMPT_TOML_KIMI_VISION.replace(
+  'default_model = "stub"',
+  'default_model = "kimi-vision"',
+);
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const CRC32_TABLE = makeCrc32Table();
@@ -322,15 +344,33 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.code).toBe(0);
   });
 
-  it('rejects when neither prompt, session, nor default_model resolves a model', async () => {
+  it('accepts the prompt and fails the turn at runtime when no model resolves', async () => {
     await writeConfigToml(home as string, PROMPT_TOML_NO_DEFAULT);
     const id = await createSession(home as string);
     await createMainAgent(id);
 
-    const submitted = await call('POST', `/api/v1/sessions/${id}/prompts`, {
+    const session = getLiveSessionById(server!.core.accessor, id);
+    const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    const ended: { reason?: string; error?: { code?: string; message?: string } }[] = [];
+    const completed: { reason?: string }[] = [];
+    const subscription = main.accessor.get(IEventBus).subscribe((event) => {
+      if (event.type === 'turn.ended') ended.push(event as (typeof ended)[number]);
+      if (event.type === 'prompt.completed') completed.push(event as (typeof completed)[number]);
+    });
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'text', text: 'hello' }],
     });
-    expect(submitted.body.code).toBe(40113);
+    expect(submitted.body.code).toBe(0);
+
+    await vi.waitFor(() => {
+      expect(ended).toHaveLength(1);
+    });
+    subscription.dispose();
+    expect(ended[0]).toMatchObject({
+      reason: 'failed',
+      error: { code: 'model.not_configured', message: 'Model not set' },
+    });
+    expect(completed).toContainEqual(expect.objectContaining({ reason: 'failed' }));
   });
 
   it('rejects a bound profile switch with 40001 even when the session model is stale', async () => {
@@ -361,16 +401,36 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.msg).toContain('already bound');
   });
 
-  it('rejects a stale session model when no profile switch is requested', async () => {
+  it('accepts the prompt and fails the turn at runtime when the session model is stale', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
     await setSessionModel(id, 'stub');
-    await writeConfigToml(home as string, PROMPT_TOML_OTHER_DEFAULT);
+    await writeConfigToml(home as string, PROMPT_TOML_OTHER_DEFAULT.replace('default_model = "other"\n\n', ''));
+    await server!.core.accessor.get(IConfigService).reload();
 
-    const submitted = await call('POST', `/api/v1/sessions/${id}/prompts`, {
+    const session = getLiveSessionById(server!.core.accessor, id);
+    const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    const ended: { reason?: string; error?: { code?: string; message?: string } }[] = [];
+    const completed: { reason?: string }[] = [];
+    const subscription = main.accessor.get(IEventBus).subscribe((event) => {
+      if (event.type === 'turn.ended') ended.push(event as (typeof ended)[number]);
+      if (event.type === 'prompt.completed') completed.push(event as (typeof completed)[number]);
+    });
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'text', text: 'hello' }],
     });
-    expect(submitted.body.code).toBe(40113);
+    expect(submitted.body.code).toBe(0);
+
+    await vi.waitFor(
+      () => {
+        expect(ended).toHaveLength(1);
+      },
+      { timeout: 15000 },
+    );
+    subscription.dispose();
+    expect(ended[0]?.reason).toBe('failed');
+    expect(ended[0]?.error?.message).toContain('stub');
+    expect(completed).toContainEqual(expect.objectContaining({ reason: 'failed' }));
   });
 
   it('submits a bundled skill prompt through the skills field', async () => {
@@ -397,7 +457,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const texts = bundled?.content
       .filter((part) => part.type === 'text')
       .map((part) => part.text);
-    expect(texts?.[texts.length - 1]).toBe('Review this change.');
+    expect(texts?.at(-1)).toBe('Review this change.');
 
     const projected = projectPromptSnapshot({
       id: 'msg_1',
@@ -407,6 +467,11 @@ describe('server-v2 /api/v1 prompts', () => {
       message: {
         role: 'user',
         content: [
+          {
+            type: 'text',
+            text: '<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>',
+            meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+          },
           { type: 'text', text: 'rendered skill block' },
           { type: 'text', text: 'Review this change.' },
         ],
@@ -433,6 +498,69 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(plain.content).toEqual([{ type: 'text', text: 'plain question' }]);
   });
 
+  it('projects client metadata for an active skill activation prompt', () => {
+    const metadata = { display_text: 'Save button', kimi_code_composer: { version: 1 } };
+    const projected = projectPromptSnapshot({
+      id: 'msg_skill',
+      userMessageId: 'msg_skill',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      state: 'running',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'User activated the skill' }],
+        toolCalls: [],
+        origin: { kind: 'skill_activation', activationId: 'act-1', skillName: 'update-config', trigger: 'user-slash', clientMetadata: [metadata] },
+      },
+    });
+    expect(projected.metadata).toEqual(metadata);
+  });
+
+  it('backfills active skill activation metadata on the first transcript connection', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const session = getLiveSessionById(server!.core.accessor, id)!;
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    const metadata = [{ display_text: 'Save button', kimi_code_composer: { version: 1 } }];
+    const loop = agent.accessor.get(IAgentLoopService);
+    const handle = {
+      id: 'active-skill',
+      userMessageId: 'active-skill',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      message: { role: 'user', content: [{ type: 'text', text: 'User activated the skill' }], toolCalls: [], origin: { kind: 'skill_activation', activationId: 'act-1', skillName: 'update-config', trigger: 'user-slash', clientMetadata: metadata } },
+    };
+    const listing = vi.spyOn(loop, 'snapshot').mockReturnValue({ ...loop.snapshot(), activePromptId: 'active-skill', queue: [] });
+    const lookup = vi.spyOn(loop, 'promptHandle').mockImplementation((promptId) => (promptId === 'active-skill' ? handle : undefined) as never);
+    try {
+      const result = await call<{ prompts: unknown[] }>('GET', `/api/v1/sessions/${id}/transcript?agent_id=main`);
+      expect(result.body.code).toBe(0);
+      expect(result.body.data.prompts).toContainEqual(expect.objectContaining({ promptId: 'active-skill', status: 'running', clientMetadata: metadata }));
+    } finally {
+      lookup.mockRestore();
+      listing.mockRestore();
+    }
+  });
+
+  it('backfills queued prompt metadata on the first transcript connection', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const session = getLiveSessionById(server!.core.accessor, id)!;
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    const metadata = [{ display_text: 'Save button', kimi_code_composer: { version: 1 } }];
+    const loop = agent.accessor.get(IAgentLoopService);
+    const origin = { kind: 'user', clientMetadata: metadata };
+    const listing = vi.spyOn(loop, 'snapshot').mockReturnValue({
+      ...loop.snapshot(),
+      queue: [{ message: { role: 'user', content: [{ type: 'text', text: 'browser wire' }] }, meta: { promptId: 'queued-example', userMessageId: 'queued-example', tracked: true, createdAt: '2026-01-01T00:00:00.000Z', origin } }],
+    });
+    try {
+      const result = await call<{ prompts: unknown[] }>('GET', `/api/v1/sessions/${id}/transcript?agent_id=main`);
+      expect(result.body.code).toBe(0);
+      expect(result.body.data.prompts).toContainEqual(expect.objectContaining({ promptId: 'queued-example', status: 'queued', clientMetadata: metadata }));
+    } finally {
+      listing.mockRestore();
+    }
+  });
+
   it('honors a client-chosen prompt_id on submit', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
@@ -444,6 +572,40 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.code).toBe(0);
     expect(submitted.body.data.prompt_id).toBe('submission-1');
     expect(submitted.body.data.user_message_id).toBe('submission-1');
+  });
+
+  it.each([false, true])('preserves client metadata through submission and cold resume (skills=%s)', async (withSkills) => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const metadata = {
+      display_text: 'Example browser element · Example comment',
+      kimi_code_composer: {
+        version: 1,
+        doc: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '[literal](example.md)' }] }] },
+        browserReferences: [{ id: 'ref-example', captureId: 'capture-example', comment: 'Example comment' }],
+      },
+    };
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'Visible prompt' }],
+      metadata,
+      skills: withSkills ? [{ name: 'update-config' }] : undefined,
+    });
+    expect(submitted.body.code).toBe(0);
+    expect(submitted.body.data.metadata).toEqual(metadata);
+    await closeSessionById(server!.core.accessor, id);
+    const resumed = await call('GET', `/api/v1/sessions/${id}/prompts`);
+    expect(resumed.body.code).toBe(0);
+    const session = getLiveSessionById(server!.core.accessor, id);
+    const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
+    const history = agent!.accessor.get(IAgentContextMemoryService).get();
+    const saved = history.find((message) => message.origin?.kind === 'user');
+    expect(saved?.origin).toMatchObject({ clientMetadata: [metadata] });
+    expect(await session!.accessor.get(ISessionMetadata).read()).toMatchObject({ title: metadata.display_text, lastPrompt: metadata.display_text });
+    expect(JSON.stringify(saved?.content)).not.toContain('ref-example');
+    const transcript = await call<{ items: { kind: string; origin?: { payload?: { clientMetadata?: unknown } } }[] }>('GET', `/api/v1/sessions/${id}/transcript?agent_id=main&page_size=20`);
+    expect(transcript.body.code).toBe(0);
+    const turn = transcript.body.data.items.find((item) => item.kind === 'turn');
+    expect(turn?.origin?.payload?.clientMetadata).toEqual([metadata]);
   });
 
   it('updates session metadata for a bundled prompt routed to a non-main agent', async () => {
@@ -700,6 +862,7 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(content[1]).toEqual({
       type: 'video',
       source: { kind: 'session_media', file_id: uploaded.data.id },
+      name: 'clip.mp4',
     });
 
     await expectSessionMedia(server!, id, `${uploaded.data.id}.mp4`, videoBytes);
@@ -752,11 +915,10 @@ describe('server-v2 /api/v1 prompts', () => {
     const session = getLiveSessionById(server!.core.accessor, id);
     const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
     const memory = main.accessor.get(IAgentContextMemoryService).get();
-    const reminder = memory.find((m) => m.origin?.kind === 'injection');
-    const reminderText = reminder?.content[0];
-    expect(reminderText?.type).toBe('text');
-    expect((reminderText as { type: 'text'; text: string }).text).toContain('<system-reminder>');
-    expect((reminderText as { type: 'text'; text: string }).text).toContain('Image compressed');
+    const promptMessage = memory.find((m) => m.origin?.kind === 'user');
+    const captionPart = promptMessage?.content[0];
+    expect(captionPart?.type).toBe('text');
+    expect((captionPart as { type: 'text'; text: string }).text).toContain('Image compressed');
   });
 
   it('rolls back a compressed upload when a later prompt part fails to resolve', async () => {
@@ -814,7 +976,7 @@ describe('server-v2 /api/v1 prompts', () => {
 
     const content = submitted.body.data.content as Array<Record<string, unknown>>;
     expect(content).toEqual([
-      { type: 'image', source: { kind: 'session_media', file_id: uploaded.id } },
+      { type: 'image', source: { kind: 'session_media', file_id: uploaded.id }, name: 'small.png' },
     ]);
 
     const mediaPath = await expectSessionMedia(server!, id, `${uploaded.id}.png`, smallPng);
@@ -846,7 +1008,7 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(replayed.body.code).toBe(0);
     expect(replayed.body.data.content).toEqual([
       { type: 'text', text: 'replay the stored image' },
-      { type: 'image', source: { kind: 'session_media', file_id: uploaded.id } },
+      { type: 'image', source: { kind: 'session_media', file_id: uploaded.id }, name: 'small.png' },
     ]);
 
     const session = getLiveSessionById(server!.core.accessor, id);
@@ -868,6 +1030,7 @@ describe('server-v2 /api/v1 prompts', () => {
         imageUrl: {
           url: `kimi-file://${uploaded.id}`,
           id: uploaded.id,
+          name: 'small.png',
         },
       });
     });
@@ -899,7 +1062,7 @@ describe('server-v2 /api/v1 prompts', () => {
         expect(message).toBeDefined();
         expect(message!.content).toContainEqual({
           type: 'image_url',
-          imageUrl: { url: `kimi-file://${uploaded.id}` },
+          imageUrl: { url: `kimi-file://${uploaded.id}`, name: 'small.png' },
         });
       });
 
@@ -983,6 +1146,119 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(notice.text).toContain('image/avif');
   });
 
+  function heicBytes(): Buffer {
+    const buf = Buffer.alloc(24);
+    buf.writeUInt32BE(24, 0);
+    buf.write('ftyp', 4, 'latin1');
+    buf.write('heic', 8, 'latin1');
+    buf.write('heic', 16, 'latin1');
+    return buf;
+  }
+
+  it('keeps an inline image whose format the session model provider accepts', async () => {
+    await writeConfigToml(home as string, PROMPT_TOML_KIMI_VISION);
+    await (server as RunningServer).core.accessor.get(IConfigService).reload();
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    await setSessionModel(id, 'kimi-vision');
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [
+        {
+          type: 'image',
+          source: {
+            kind: 'base64',
+            media_type: 'image/heic',
+            data: heicBytes().toString('base64'),
+          },
+        },
+      ],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const content = submitted.body.data.content as PromptContentPart[];
+    expect(content).toHaveLength(1);
+    expect(content[0]?.type).toBe('image');
+  });
+
+  it('gates media against the model selected by the same prompt request', async () => {
+    await writeConfigToml(home as string, PROMPT_TOML_KIMI_VISION);
+    await (server as RunningServer).core.accessor.get(IConfigService).reload();
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    await setSessionModel(id, 'stub');
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      model: 'kimi-vision',
+      content: [
+        {
+          type: 'image',
+          source: {
+            kind: 'base64',
+            media_type: 'image/heic',
+            data: heicBytes().toString('base64'),
+          },
+        },
+      ],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const content = submitted.body.data.content as PromptContentPart[];
+    expect(content).toHaveLength(1);
+    expect(content[0]?.type).toBe('image');
+  });
+
+  it('gates a first-prompt image against the configured default model before any model binds', async () => {
+    await writeConfigToml(home as string, PROMPT_TOML_KIMI_VISION_DEFAULT);
+    await (server as RunningServer).core.accessor.get(IConfigService).reload();
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [
+        {
+          type: 'image',
+          source: {
+            kind: 'base64',
+            media_type: 'image/heic',
+            data: heicBytes().toString('base64'),
+          },
+        },
+      ],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const content = submitted.body.data.content as PromptContentPart[];
+    expect(content).toHaveLength(1);
+    expect(content[0]?.type).toBe('image');
+  });
+
+  it('gates media against the default model a same-request profile selection binds', async () => {
+    await writeConfigToml(home as string, PROMPT_TOML_KIMI_VISION_DEFAULT);
+    await (server as RunningServer).core.accessor.get(IConfigService).reload();
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      profile: 'agent',
+      content: [
+        {
+          type: 'image',
+          source: {
+            kind: 'base64',
+            media_type: 'image/heic',
+            data: heicBytes().toString('base64'),
+          },
+        },
+      ],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const content = submitted.body.data.content as PromptContentPart[];
+    expect(content).toHaveLength(1);
+    expect(content[0]?.type).toBe('image');
+  });
+
   it('replaces an uploaded image file in an unsupported format with a text notice', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
@@ -997,7 +1273,7 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(uploaded.code).toBe(0);
 
     const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
-      content: [{ type: 'image', source: { kind: 'file', file_id: uploaded.data.id } }],
+      content: [{ type: 'image', source: { kind: 'file', file_id: uploaded.data.id }, name: 'renamed.avif' }],
     });
     expect(submitted.body.code).toBe(0);
 
@@ -1006,7 +1282,8 @@ describe('server-v2 /api/v1 prompts', () => {
     const notice = content[0];
     if (notice?.type !== 'text') throw new Error('expected a text notice');
     expect(notice.text).toContain('image/avif');
-    expect(notice.text).toContain('photo.avif');
+    expect(notice.text).toContain('renamed.avif');
+    expect(notice.text).not.toContain('photo.avif');
   });
 
   it('replaces a remote image URL with an unsupported extension with a text notice', async () => {
@@ -1111,6 +1388,7 @@ describe('server-v2 /api/v1 prompts', () => {
       content: [
         {
           type: 'image',
+          name: 'scan.avif',
           source: {
             kind: 'base64',
             media_type: 'image/avif',
@@ -1126,11 +1404,11 @@ describe('server-v2 /api/v1 prompts', () => {
     const notice = content[0];
     expect(notice?.type).toBe('text');
     expect(notice?.text).not.toContain('[Image omitted');
-    expect(notice?.text).toContain('"image.avif"');
+    expect(notice?.text).toContain('"scan.avif"');
     expect(notice?.text).toContain('image/avif');
     const attachedPath = attachedPathFrom(notice?.text ?? '');
     expect(attachedPath).toContain('/attachments/');
-    expect(attachedPath.endsWith('-image.avif')).toBe(true);
+    expect(attachedPath.endsWith('-scan.avif')).toBe(true);
     expect(await readFile(attachedPath)).toEqual(data);
   });
 

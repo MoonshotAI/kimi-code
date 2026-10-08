@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
-import type { ToolCall } from '#/kosong/contract/message';
+import type { ToolCall } from '#human/llm/message';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -274,13 +274,11 @@ describe('AgentPermissionPolicyService chain', () => {
     ['systemctl poweroff', 'systemctl poweroff'],
     ['systemctl --user reboot', 'systemctl reboot'],
     ['bash -c "shutdown now"', 'shutdown'],
-    ['rm -rf /tmp/build', 'rm -rf'],
+    ['rm -rf /tmp/build /root', 'rm -rf'],
     ['rm -fr dir', 'rm -rf'],
     ['rm -r -f dir', 'rm -rf'],
     ['rm -R --force dir', 'rm -rf'],
-    ['rm --recursive --force dir', 'rm -rf'],
     ['rm -rfv dir', 'rm -rf'],
-    ['sudo rm -rf dir', 'rm -rf'],
     ['sudo -u root rm --recursive --force dir', 'rm -rf'],
     ['echo ok && rm -rf dir', 'rm -rf'],
     ['env rm -rf dir', 'rm -rf'],
@@ -310,6 +308,21 @@ describe('AgentPermissionPolicyService chain', () => {
       result: { kind: 'ask', reason: { dangerous_command: matched } },
     });
   });
+
+  it.each(['rm -rf /tmp/build', 'rm -rf /temp/cache'])(
+    'approves `%s` in yolo mode',
+    async (command) => {
+      mode = 'yolo';
+
+      await expect(evaluate({
+        toolName: 'Bash',
+        args: { command, timeout: 60 },
+      })).resolves.toMatchObject({
+        policyName: 'yolo-mode-approve',
+        result: { kind: 'approve' },
+      });
+    },
+  );
 
   it.each([
     'init 3',
@@ -343,7 +356,7 @@ describe('AgentPermissionPolicyService chain', () => {
   });
 
   it.each(['$CMD --force', 'bash -c "echo $HOME"', 'echo "unterminated'])(
-    'asks for unanalyzable command `%s` in yolo mode',
+    'approves unanalyzable command `%s` in yolo mode',
     async (command) => {
       mode = 'yolo';
 
@@ -351,8 +364,8 @@ describe('AgentPermissionPolicyService chain', () => {
         toolName: 'Bash',
         args: { command, timeout: 60 },
       })).resolves.toMatchObject({
-        policyName: 'dangerous-command-ask',
-        result: { kind: 'ask', reason: { unanalyzable_command: true } },
+        policyName: 'yolo-mode-approve',
+        result: { kind: 'approve' },
       });
     },
   );

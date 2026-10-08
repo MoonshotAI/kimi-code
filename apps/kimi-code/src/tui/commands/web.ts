@@ -1,21 +1,21 @@
 import chalk from 'chalk';
 
 import { splitTokenFragment } from '#/cli/sub/web/access-urls';
+import { getVersion } from '#/cli/version';
 import {
   buildRemoteControlUrl,
+  formatRemoteControlAlreadyRunning,
   formatRemoteControlOutput,
   formatRemoteControlStatus,
+  inspectRemoteControlLock,
   startRemoteControl,
   type RemoteControlStatus,
 } from '#/cli/sub/web/remote-control';
-import {
-  formatRemoteControlAlreadyRunning,
-  inspectRemoteControlLock,
-} from '#/cli/sub/web/remote-control-lock';
 import { formatReadyBanner, startServerForeground } from '#/cli/sub/web/run';
 import { parseServerOptions, tryResolveServerToken } from '#/cli/sub/web/shared';
 import { openUrl } from '#/utils/open-url';
 import { getDataDir } from '#/utils/paths';
+import { persistedKimiOAuthRef } from '#/utils/region';
 import { generateRemoteControlQr } from '#/utils/remote-control-qr';
 
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
@@ -61,6 +61,7 @@ export async function handleRemoteControlCommand(host: SlashCommandHost): Promis
           const dataDir = getDataDir();
           const token = tryResolveServerToken(dataDir);
           if (token === undefined) throw new Error('Unable to read the local server token.');
+          const persisted = persistedKimiOAuthRef();
           let outputReady = false;
           const pendingStatuses: string[] = [];
           const onStatus = (status: RemoteControlStatus): void => {
@@ -72,14 +73,22 @@ export async function handleRemoteControlCommand(host: SlashCommandHost): Promis
             homeDir: dataDir,
             localOrigin: origin,
             localServerToken: token,
+            clientVersion: `kimi-code/${getVersion()}`,
+            configuredOAuthKey: persisted?.key,
+            configuredOAuthHost: persisted?.oauthHost,
             onStatus,
           });
-          const url = buildRemoteControlUrl(remoteControl.deviceId, session?.id);
+          const url = buildRemoteControlUrl(
+            remoteControl.deviceId,
+            session?.id,
+            remoteControl.relayOrigin,
+          );
           const qrCode = await generateRemoteControlQr(url, dataDir);
           process.stdout.write(
             formatRemoteControlOutput({
               url,
               localOrigin: origin,
+              localServerToken: token,
               deviceName: remoteControl.deviceName,
               qrCode: qrCode.terminal,
               pngPath: qrCode.pngPath,

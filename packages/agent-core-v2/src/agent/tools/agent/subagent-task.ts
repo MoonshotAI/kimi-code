@@ -1,4 +1,4 @@
-import type { TokenUsage } from '#/kosong/contract/usage';
+import type { TokenUsage } from '#human/llm/usage';
 import type { SubagentModelSource } from '#/session/subagent/configSection';
 
 import { isAbortError } from '#/_base/utils/abort';

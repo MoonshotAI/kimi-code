@@ -10,7 +10,6 @@ function makeHost(
   overrides: {
     hasSession?: boolean;
     towerMode?: boolean;
-    engineV2?: boolean;
     refuseTowerEntry?: boolean;
     model?: string;
   } = {},
@@ -30,7 +29,6 @@ function makeHost(
         model: overrides.model ?? 'test-model',
       },
     },
-    engineV2: overrides.engineV2 ?? true,
     session: hasSession ? session : undefined,
     ensureSession: vi.fn(async () => {
       host.session = session as unknown as Session;
@@ -187,17 +185,6 @@ describe('handleTowerCommand', () => {
     expect(host.showError).toHaveBeenCalledWith(expect.stringContaining('could not be enabled'));
     expect(host.setAppState).toHaveBeenCalledWith({ towerMode: false });
     expect(host.showNotice).not.toHaveBeenCalledWith('Tower mode: ON');
-    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
-  });
-
-  it('shows an error when no session is active on the legacy engine', async () => {
-    const { host, session } = makeHost({ hasSession: false, engineV2: false });
-
-    await handleTowerCommand(host, 'on');
-
-    expect(host.showError).toHaveBeenCalledWith(expect.stringContaining('session'));
-    expect(host.ensureSession).not.toHaveBeenCalled();
-    expect(session.setTowerMode).not.toHaveBeenCalled();
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 

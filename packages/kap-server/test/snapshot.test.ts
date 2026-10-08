@@ -10,8 +10,8 @@ import {
   IAppendLogStore,
   IEventBus,
   IAgentLifecycleService,
+  IAgentLoopService,
   IAgentProfileService,
-  IAgentPromptService,
   ISessionContext,
   ISessionIndex,
   ISessionMetadata,
@@ -57,8 +57,8 @@ describe('server-v2 snapshot route enrichment', () => {
       accessor: fakeAccessor([
         [IAgentContextMemoryService, { get: () => [] }],
         [
-          IAgentPromptService,
-          { list: () => ({ active: { id: promptId }, pending: [] }) },
+          IAgentLoopService,
+          { snapshot: () => ({ activePromptId: promptId }) },
         ],
         [IWireService, { flush: async () => {} }],
         [IAgentScopeContext, { scope: () => 'scope/sess_snapshot' }],

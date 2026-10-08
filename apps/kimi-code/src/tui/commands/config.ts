@@ -15,18 +15,21 @@ import {
   ExperimentsSelectorComponent,
   type ExperimentalFeatureDraftChange,
 } from '../components/dialogs/experiments-selector';
+import { MermaidPreferenceSelectorComponent } from '../components/dialogs/mermaid-preference-selector';
 import { modelDisplayName, segmentsFor } from '../components/dialogs/model-selector';
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
 import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
 import { SurveyPreferenceSelectorComponent } from '../components/dialogs/survey-preference-selector';
 import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
+import { TuiModeSelectorComponent } from '../components/dialogs/tui-mode-selector';
 import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-preference-selector';
-import { DEFAULT_TUI_CONFIG, saveTuiConfig, type TuiConfig } from '../config';
+import { DEFAULT_MARKDOWN_CONFIG, DEFAULT_TUI_CONFIG, saveTuiConfig, type MarkdownConfig, type TuiConfig, type TuiMode } from '../config';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
-import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
+import { NO_ACTIVE_SESSION_MESSAGE, TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
+import { setMarkdownMermaidMode, type MermaidRenderMode } from '../utils/markdown-options';
 import { PERMISSION_MODE_DESCRIPTIONS, PERMISSION_MODE_DISPLAY_NAMES } from '../utils/permission-mode';
 import { thinkingEffortToConfig } from '../utils/thinking-config';
 import { showUsage } from './info';
@@ -57,6 +60,7 @@ function hasConversationHistory(host: SlashCommandHost): boolean {
 export function currentTuiConfig(host: Pick<SlashCommandHost, 'state'>): TuiConfig {
   return {
     theme: host.state.appState.theme,
+    tuiMode: host.state.appState.tuiMode,
     editorCommand: host.state.appState.editorCommand,
     disablePasteBurst: host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     renderLatex: host.state.appState.renderLatex ?? DEFAULT_TUI_CONFIG.renderLatex ?? true,
@@ -66,6 +70,7 @@ export function currentTuiConfig(host: Pick<SlashCommandHost, 'state'>): TuiConf
     notifications: host.state.appState.notifications,
     upgrade: host.state.appState.upgrade,
     statusLine: host.state.appState.statusLine ?? DEFAULT_TUI_CONFIG.statusLine,
+    markdown: host.state.appState.markdown ?? DEFAULT_MARKDOWN_CONFIG,
   };
 }
 
@@ -402,7 +407,7 @@ async function performModelSwitch(
   persist: boolean,
 ): Promise<void> {
   let session = host.session;
-  if (session === undefined && host.engineV2) {
+  if (session === undefined) {
     // A first prompt may still be inside lazy creation: wait it out so the
     // switch lands on the new session instead of being overwritten by its
     // assembly.
@@ -711,7 +716,7 @@ export async function applyExperimentalFeatureChanges(
     setExperimentalFeatures(features);
     host.refreshSlashCommandAutocomplete();
     host.restoreEditor();
-    if (host.session !== undefined) {
+    if (host.session !== undefined && changes.some((change) => change.id !== 'notify_user')) {
       const reloadedSession = await host.harness.reloadSession({ id: host.session.id });
       await host.reloadCurrentSessionView(
         reloadedSession,
@@ -719,6 +724,14 @@ export async function applyExperimentalFeatureChanges(
       );
     } else {
       host.showStatus('Experimental features updated.', 'success');
+    }
+    if (
+      host.session !== undefined &&
+      changes.some((change) => change.id === 'notify_user' && change.enabled)
+    ) {
+      host.showNotice(
+        'Start a new session to use Updates if this session was created with the feature disabled.',
+      );
     }
     if (changes.some((change) => change.id === 'tower')) {
       // TowerFeature assembles its tool/profile contributions once at App
@@ -805,9 +818,6 @@ async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMod
   try {
     if (host.session !== undefined) {
       await host.session.setPermission(mode);
-    } else if (!host.engineV2) {
-      host.showError(NO_ACTIVE_SESSION_MESSAGE);
-      return;
     }
     // v2 session-less: the chosen mode is recorded in appState and passed to
     // the lazy-created session.
@@ -879,6 +889,113 @@ export async function applySurveyPreferenceChoice(
   host.showStatus(`Feedback survey ${enabled ? 'enabled' : 'disabled'}.`);
 }
 
+export function showMermaidPreferencePicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new MermaidPreferenceSelectorComponent({
+      currentValue: host.state.appState.markdown?.mermaid !== 'off',
+      onSelect: (value) => {
+        host.restoreEditor();
+        void applyMermaidPreferenceChoice(host, value);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+type MermaidPreferenceHost = {
+  readonly state: {
+    readonly appState: Pick<
+      SlashCommandHost['state']['appState'],
+      'theme' | 'editorCommand' | 'notifications' | 'upgrade' | 'markdown'
+    >;
+    readonly transcriptContainer: { invalidate(): void };
+    readonly ui: { requestRender(force?: boolean): void };
+  };
+  setAppState(patch: Pick<SlashCommandHost['state']['appState'], 'markdown'>): void;
+  showStatus(msg: string, color?: string): void;
+};
+
+export async function applyMermaidPreferenceChoice(
+  host: MermaidPreferenceHost,
+  enabled: boolean,
+): Promise<void> {
+  const mermaid: MermaidRenderMode = enabled ? 'final' : 'off';
+  if (mermaid === (host.state.appState.markdown?.mermaid ?? DEFAULT_MARKDOWN_CONFIG.mermaid)) {
+    host.showStatus(`Mermaid diagrams already ${enabled ? 'enabled' : 'disabled'}.`);
+    return;
+  }
+
+  const markdown: MarkdownConfig = { mermaid };
+  try {
+    await saveTuiConfig({
+      ...currentTuiConfig(host as unknown as SlashCommandHost),
+      markdown,
+    });
+  } catch (error) {
+    host.showStatus(
+      `Failed to save mermaid diagram setting: ${formatErrorMessage(error)}`,
+      'error',
+    );
+    return;
+  }
+
+  setMarkdownMermaidMode(mermaid);
+  host.setAppState({ markdown });
+  host.state.transcriptContainer.invalidate();
+  host.state.ui.requestRender(true);
+  host.showStatus(`Mermaid diagrams ${enabled ? 'enabled' : 'disabled'}.`);
+}
+
+export function showTuiModePicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new TuiModeSelectorComponent({
+      currentValue: host.state.appState.tuiMode ?? 'regular',
+      onSelect: (value) => {
+        host.restoreEditor();
+        void applyTuiModeChoice(host, value);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+type TuiModeHost = {
+  readonly state: {
+    readonly appState: Pick<SlashCommandHost['state']['appState'], 'tuiMode'>;
+    readonly ui: Pick<SlashCommandHost['state']['ui'], 'mode'>;
+  };
+  setAppState(patch: Pick<SlashCommandHost['state']['appState'], 'tuiMode'>): void;
+  showStatus(msg: string, color?: string): void;
+  showNotice(msg: string): void;
+};
+
+export async function applyTuiModeChoice(host: TuiModeHost, tuiMode: TuiMode): Promise<void> {
+  if (tuiMode === (host.state.appState.tuiMode ?? 'regular')) {
+    host.showStatus(`TUI mode already ${tuiMode}.`);
+    return;
+  }
+
+  try {
+    await saveTuiConfig({
+      ...currentTuiConfig(host as unknown as SlashCommandHost),
+      tuiMode,
+    });
+  } catch (error) {
+    host.showStatus(`Failed to save TUI mode: ${formatErrorMessage(error)}`, 'error');
+    return;
+  }
+
+  host.setAppState({ tuiMode });
+  host.showStatus(`TUI mode set to ${tuiMode}.`, 'success');
+  if (tuiMode !== host.state.ui.mode) {
+    host.showNotice(TUI_MODE_RESTART_NOTICE);
+  }
+}
+
 export function showSettingsSelector(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new SettingsSelectorComponent({
@@ -898,6 +1015,8 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'model': showModelPicker(host); return;
     case 'permission': showPermissionPicker(host); return;
     case 'theme': showThemePicker(host); return;
+    case 'tuiMode': showTuiModePicker(host); return;
+    case 'mermaid': showMermaidPreferencePicker(host); return;
     case 'editor': showEditorPicker(host); return;
     case 'survey': showSurveyPreferencePicker(host); return;
     case 'experiments': void showExperimentsPanel(host); return;

@@ -4,11 +4,11 @@ import { join } from 'node:path';
 
 import {
   ErrorCodes,
-  IAgentActivityView,
   IAgentGoalService,
   IAgentLifecycleService,
+  IAgentLoopService,
+  IAgentPromptChannel,
   IAgentPluginCommandService,
-  IAgentPromptService,
   IAgentRuntimeBindingService,
   IAgentShellCommandService,
   IAppendLogStore,
@@ -179,7 +179,9 @@ describe('server-v2 /api/v1/debug RPC', () => {
     expect(meta?.methods.map((m) => m.name)).not.toContain('dispose');
 
     const prompts = byName.get('agentPromptService');
-    expect(prompts?.methods.map((m) => m.name)).toContain('enqueue');
+    expect(prompts?.methods.map((m) => m.name)).toEqual(
+      expect.arrayContaining(['submit', 'submitSteer']),
+    );
     expect(prompts?.methods.map((m) => m.name)).not.toContain('reserve');
   });
 
@@ -353,12 +355,12 @@ describe('server-v2 /api/v1/debug RPC', () => {
   it('reads agent activity state', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
-    const { body } = await call<{ lifecycle: string }>(
+    const { body } = await call<{ turn?: unknown }>(
       'POST',
-      rpc('agent', IAgentActivityView, 'state', { sid: id, aid: 'main' }),
+      rpc('agent', IAgentLoopService, 'snapshot', { sid: id, aid: 'main' }),
     );
     expect(body.code).toBe(0);
-    expect(body.data.lifecycle).toBe('ready');
+    expect(body.data.turn).toBeUndefined();
   });
 
   it('exposes runtime binding through REST and debug dispatcher contracts', async () => {
@@ -436,7 +438,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
 
     const { body } = await call<{ turn_id: number }>(
       'POST',
-      rpc('agent', IAgentPromptService, 'submit', { sid: id, aid: 'main' }),
+      rpc('agent', IAgentPromptChannel, 'submit', { sid: id, aid: 'main' }),
       { input: [{ type: 'text', text: 'hello' }] },
     );
     expect(body.code).toBe(0);
@@ -446,7 +448,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
   it('maps a duplicate promptId to 40927 before metadata changes', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
-    const path = rpc('agent', IAgentPromptService, 'submit', { sid: id, aid: 'main' });
+    const path = rpc('agent', IAgentPromptChannel, 'submit', { sid: id, aid: 'main' });
 
     const first = await call<{ turn_id: number }>('POST', path, {
       input: [{ type: 'text', text: 'first prompt' }],
@@ -467,28 +469,6 @@ describe('server-v2 /api/v1/debug RPC', () => {
     expect(metadata.body.data.lastPrompt).toBe('first prompt');
   });
 
-  it('rejects disabledTools before bind without mutating prompt metadata', async () => {
-    const id = await createSession(home as string);
-    await createMainAgent(id);
-
-    const { body } = await call<null>(
-      'POST',
-      rpc('agent', IAgentPromptService, 'submit', { sid: id, aid: 'main' }),
-      {
-        input: [{ type: 'text', text: 'must not become metadata' }],
-        disabledTools: ['Bash'],
-      },
-    );
-    expect(body.code).toBe(40001);
-
-    const metadata = await call<SessionMetaWire>(
-      'POST',
-      rpc('session', ISessionMetadata, 'read', { sid: id }),
-    );
-    expect(metadata.body.data.title).toBeUndefined();
-    expect(metadata.body.data.lastPrompt).toBeUndefined();
-  });
-
   it('derives the session title and lastPrompt from the first prompt', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
@@ -500,7 +480,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
 
     const { body } = await call<{ turn_id: number }>(
       'POST',
-      rpc('agent', IAgentPromptService, 'submit', { sid: id, aid: 'main' }),
+      rpc('agent', IAgentPromptChannel, 'submit', { sid: id, aid: 'main' }),
       { input: [{ type: 'text', text: 'hello title' }] },
     );
     expect(body.code).toBe(0);
@@ -529,7 +509,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
 
     const { body } = await call<{ turn_id: number }>(
       'POST',
-      rpc('agent', IAgentPromptService, 'submit', { sid: id, aid: 'main' }),
+      rpc('agent', IAgentPromptChannel, 'submit', { sid: id, aid: 'main' }),
       { input: [{ type: 'text', text: 'should not become the title' }] },
     );
     expect(body.code).toBe(0);
@@ -653,7 +633,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
     const id = await createSession(home as string);
     const { body } = await call<null>(
       'POST',
-      rpc('agent', IAgentPromptService, 'submit', { sid: id, aid: 'does-not-exist' }),
+      rpc('agent', IAgentPromptChannel, 'submit', { sid: id, aid: 'does-not-exist' }),
       { input: [{ type: 'text', text: 'hello' }] },
     );
     expect(body.code).toBe(40401);

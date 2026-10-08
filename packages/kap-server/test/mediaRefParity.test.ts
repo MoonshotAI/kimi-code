@@ -11,7 +11,7 @@ import {
   parseDaemonFileRef as mirrorParse,
   type MediaRefPart,
 } from '@moonshot-ai/transcript';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 
 const URLS = [
   'kimi-file://f_1?path=%2Fcache%2Fshot.png',

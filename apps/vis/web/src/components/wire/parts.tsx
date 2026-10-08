@@ -397,6 +397,11 @@ export function LoopEventDetail({ event }: { event: LoopRecordedEvent }) {
                 <span className="text-fg-1">{event.llmClientConsumeMs} ms</span>
               </FieldRow>
             ) : null}
+            {event.llmClientBlockedMs !== undefined ? (
+              <FieldRow label="streamDuration/blocked">
+                <span className="text-fg-1">{event.llmClientBlockedMs} ms</span>
+              </FieldRow>
+            ) : null}
           </div>
           {usage !== undefined ? (
             <div>

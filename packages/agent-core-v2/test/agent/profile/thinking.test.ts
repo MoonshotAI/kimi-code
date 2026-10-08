@@ -5,7 +5,7 @@ import {
   modelSupportsThinkingEffort,
   resolveForcedThinkingEffort,
   resolveThinkingEffortForModel,
-} from '#/kosong/model/thinking';
+} from '#/llm-adapter/model/thinking';
 
 const booleanModel = { capabilities: ['thinking'] };
 const effortModel = {

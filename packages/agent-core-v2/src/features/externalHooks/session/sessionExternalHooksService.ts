@@ -1,7 +1,7 @@
 import { Service } from '#/_base/di/service';
 import { IntervalTimer } from '#/_base/utils/timer';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
-import { IModelService } from '#/kosong/model/model';
+import { IModelService } from '#/llm-adapter/model/model';
 import {
   ISessionAgentProfileCatalog,
 } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';

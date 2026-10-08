@@ -1,18 +1,10 @@
-/**
- * Scenario: public SDK skill discovery and activation.
- * Responsibilities: list workspace/session skills and activate a session skill through KimiHarness.
- * Wiring: the in-process core and filesystem are real; only the remote model provider is stubbed.
- * Run: pnpm exec vitest run packages/node-sdk/test/session-skills.test.ts
- */
-import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type * as KosongModule from '@moonshot-ai/kosong';
-import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
+import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import {
   createKimiHarness,
-  createKimiHarnessV2,
   type Event,
   type KimiError,
   type SkillActivatedEvent,
@@ -20,51 +12,12 @@ import {
 } from '#/index';
 import type { SDKRpcClientBase } from '#/rpc';
 
-import { normalizeWorkDir } from '../../agent-core/src/session/store';
 import {
   makeTempDir,
   removeTempDirs,
-  waitForAgentWireEvent,
   waitForSDKEvent,
 } from './session-runtime-helpers';
 import { TEST_IDENTITY } from './test-identity';
-
-const fakeProviderState = vi.hoisted(() => ({
-  histories: [] as unknown[],
-  responseText: 'skill response',
-}));
-
-vi.mock('@moonshot-ai/kosong', async (importOriginal) => {
-  const actual = await importOriginal<typeof KosongModule>();
-  return {
-    ...actual,
-    createProvider: () => ({
-      name: 'fake',
-      modelName: 'fake-model',
-      thinkingEffort: null,
-      async generate(_systemPrompt: string, _tools: unknown, history: unknown) {
-        fakeProviderState.histories.push(history);
-        return {
-          id: 'fake-response',
-          usage: {
-            inputOther: 0,
-            output: 1,
-            inputCacheRead: 0,
-            inputCacheCreation: 0,
-          },
-          finishReason: 'completed',
-          rawFinishReason: 'stop',
-          async *[Symbol.asyncIterator]() {
-            yield { type: 'text', text: fakeProviderState.responseText };
-          },
-        };
-      },
-      withThinking() {
-        return this;
-      },
-    }),
-  };
-});
 
 const { Session } = await import('#/index');
 
@@ -89,18 +42,13 @@ function scrubConfigEnv(): () => void {
   };
 }
 
-beforeEach(() => {
-  fakeProviderState.histories.length = 0;
-  fakeProviderState.responseText = 'skill response';
-});
-
 afterEach(async () => {
   await removeTempDirs(tempDirs);
   vi.unstubAllEnvs();
 });
 
 describe('Session skills', () => {
-  it('submits multiple skills with a prompt as one grouped turn (v2 engine)', async () => {
+  it('submits multiple skills with a prompt as one grouped turn', async () => {
     const restoreEnv = scrubConfigEnv();
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-work-');
@@ -120,7 +68,7 @@ describe('Session skills', () => {
       '',
       'Check the requested file for security issues.',
     ]);
-    const harness = createKimiHarnessV2({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_sdk_multi_skill', workDir });
@@ -128,8 +76,6 @@ describe('Session skills', () => {
       const unsubscribe = session.onEvent((event) => {
         events.push(event);
       });
-      // Model-less on purpose: the grouped surface (activation events, single
-      // turn) settles before the provider-less turn fails asynchronously.
       const ended = waitForSDKEvent(session, (event) => event.type === 'turn.ended');
 
       await session.promptWithSkills(
@@ -148,23 +94,6 @@ describe('Session skills', () => {
     } finally {
       await harness.close();
       restoreEnv();
-    }
-  });
-
-  it('rejects promptWithSkills on the v1 engine', async () => {
-    const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-home-');
-    const workDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-work-');
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
-
-    try {
-      const session = await harness.createSession({ id: 'ses_sdk_multi_skill_v1', workDir });
-      await expect(
-        session.promptWithSkills('Review this change.', [{ name: 'review' }]),
-      ).rejects.toMatchObject({
-        code: 'not_implemented',
-      });
-    } finally {
-      await harness.close();
     }
   });
 
@@ -258,43 +187,6 @@ describe('Session skills', () => {
           title: '/review src/app.ts',
           isCustomTitle: false,
           lastPrompt: '/review src/app.ts',
-        },
-      });
-
-      const statePath = join(session.summary!.sessionDir, 'state.json');
-      const state = JSON.parse(await readFile(statePath, 'utf-8')) as Record<string, unknown>;
-      expect(state['title']).toBe('/review src/app.ts');
-      expect(state['isCustomTitle']).toBe(false);
-      expect(state['lastPrompt']).toBe('/review src/app.ts');
-
-      const skillDir = normalizeWorkDir(await realpath(join(workDir, '.kimi-code', 'skills', 'review')));
-      await expect(
-        waitForAgentWireEvent(
-          homeDir,
-          session.id,
-          'turn.prompt',
-          (event) => event['origin'] !== undefined,
-        ),
-      ).resolves.toMatchObject({
-        type: 'turn.prompt',
-        input: [
-          {
-            type: 'text',
-            text: [
-              'User activated the skill "review". Follow the loaded skill instructions.',
-              '',
-              `<kimi-skill-loaded name="review" trigger="user-slash" source="project" dir="${skillDir}" args="src/app.ts">`,
-              'Review the requested file.',
-              '',
-              'ARGUMENTS: src/app.ts',
-              '</kimi-skill-loaded>',
-            ].join('\n'),
-          },
-        ],
-        origin: {
-          kind: 'skill_activation',
-          skillName: 'review',
-          skillArgs: 'src/app.ts',
         },
       });
     } finally {

@@ -114,7 +114,7 @@ async function handleMigrateCommand(
   await runShell(MIGRATE_CLI_OPTIONS, version, { migrateOnly: true });
 }
 
-export async function handleUpgradeCommand(version: string): Promise<void> {
+export async function handleUpgradeCommand(version: string, yes: boolean): Promise<void> {
   const telemetryBootstrap = createCliTelemetryBootstrap();
   const telemetryClient: TelemetryClient = {
     track,
@@ -137,7 +137,7 @@ export async function handleUpgradeCommand(version: string): Promise<void> {
       version,
       uiMode: CLI_UI_MODE,
     });
-    exitCode = await handleUpgrade(version, { track, logger: log });
+    exitCode = await handleUpgrade(version, { track, logger: log, yes });
   } finally {
     await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS }).catch(() => {});
     await harness.close().catch(() => {});
@@ -198,7 +198,7 @@ function bootstrap(): void {
   );
   // Same pattern for the global-search worker: extracted from the SEA blob so
   // the search index runs off the main thread; a failure leaves the search
-  // surface degraded (the `search_worker` flag restores the inline host).
+  // surface degraded ([database] search = false restores the inline host).
   const searchWorkerInstall = installKapSearchWorker();
   startupTrace(
     searchWorkerInstall.status === 'installed'
@@ -275,8 +275,8 @@ function bootstrap(): void {
         process.exit(1);
       });
     },
-    () => {
-      void handleUpgradeCommand(version).catch(async (error: unknown) => {
+    (yes) => {
+      void handleUpgradeCommand(version, yes).catch(async (error: unknown) => {
         await logStartupFailure('upgrade', error);
         process.stderr.write(formatStartupError(error, { operation: 'upgrade' }));
         process.stderr.write(`See log: ${resolveGlobalLogPath(resolveKimiHome())}\n`);

@@ -4,12 +4,11 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Event } from '#/_base/event';
 import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/agent/contextMemory/openToolExchange';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 import { IHostTerminalService } from '#/os/interface/terminal';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -74,6 +73,10 @@ class ScopedAppendLogStore implements IAppendLogStore {
     return Promise.resolve();
   }
 
+  flushLog(): Promise<void> {
+    return Promise.resolve();
+  }
+
   close(): Promise<void> {
     return Promise.resolve();
   }
@@ -95,10 +98,9 @@ class TestRuntimeResolver implements IRuntimeResolver {
     @IHostEnvironment environment: IHostEnvironment,
     @IHostFileSystem fs: IHostFileSystem,
     @IHostProcessService processes: IHostProcessService,
-    @IHostFsWatchService watch: IHostFsWatchService,
     @IHostTerminalService terminal: IHostTerminalService,
   ) {
-    this.runtime = new LocalRuntime('test-workspace', environment, fs, processes, watch, terminal);
+    this.runtime = new LocalRuntime('test-workspace', environment, fs, processes, terminal);
   }
 
   inspect(_binding: RuntimeBinding): Runtime {
@@ -161,15 +163,12 @@ describe('fork subagent first-request parity', () => {
     ctx.mockNextResponse({ type: 'text', text: CHILD_FINAL_TEXT });
     ctx.mockNextResponse({ type: 'text', text: 'parent final answer' });
 
-    const handle = await parent.accessor.get(IAgentPromptService).enqueue({
-      message: {
-        role: 'user',
-        content: [{ type: 'text', text: 'start the parity probe' }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
+    const loop = parent.accessor.get(IAgentLoopService);
+    const { id } = loop.submit({
+      message: { role: 'user', content: [{ type: 'text', text: 'start the parity probe' }] },
+      meta: { origin: { kind: 'user' }, tracked: true },
     });
-    const completion = await handle.completion;
+    const completion = await loop.promptHandle(id)!.completion;
     expect(completion.state).toBe('completed');
 
     expect(ctx.llmCalls).toHaveLength(3);

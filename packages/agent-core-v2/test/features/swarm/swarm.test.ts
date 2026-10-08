@@ -9,7 +9,7 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { Error2, ErrorCodes } from '#/errors';
-import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { stubLog } from '../../_base/log/stubs';
 import { stubFlag } from '../../app/flag/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
@@ -46,7 +46,7 @@ import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
-import type { ToolCall } from '#/kosong/contract/message';
+import type { ToolCall } from '#human/llm/message';
 import type { ExecutableToolContext } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
@@ -62,6 +62,7 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
@@ -267,7 +268,6 @@ function realSubagents(
     agentLifecycle,
     catalog,
     config,
-    stubFlag(true),
     modelCatalog,
     sessionContext,
     stubLog(),
@@ -280,6 +280,7 @@ describe('AgentSwarmService', () => {
   let executorEvents: ToolExecutorEventStubs;
   let permissionGateRan: boolean;
   let formatDenyMessage: Mock<(message: string) => string>;
+  let telemetryTrack2: Mock<(event: string, properties?: unknown) => void>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -350,6 +351,8 @@ describe('AgentSwarmService', () => {
     ix.stub(IAgentToolExecutorService, executorEvents.executor);
     formatDenyMessage = vi.fn((message: string) => message);
     ix.stub(IAgentToolApprovalService, { formatDenyMessage });
+    telemetryTrack2 = vi.fn();
+    ix.stub(ITelemetryService, { track2: telemetryTrack2 });
     registerTestAgentWire(ix, testWireScope('wire', 'swarm-test'), {
       log: ix.get(IAppendLogStore),
       eventBus: ix.get(IEventBus),
@@ -390,6 +393,20 @@ describe('AgentSwarmService', () => {
     expect(events).toEqual([
       { type: 'agent.status.updated', swarmMode: true },
       { type: 'agent.status.updated', swarmMode: false },
+    ]);
+  });
+
+  it('tracks swarm_mode_entered / swarm_mode_exited on transitions only', () => {
+    const swarm = ix.get(IAgentSwarmService);
+
+    swarm.enter('manual');
+    swarm.enter('manual');
+    swarm.exit();
+    swarm.exit();
+
+    expect(telemetryTrack2.mock.calls).toEqual([
+      ['swarm_mode_entered', { trigger: 'manual' }],
+      ['swarm_mode_exited', { trigger: 'manual' }],
     ]);
   });
 
@@ -1255,10 +1272,9 @@ describe('AgentSwarmTool', () => {
     const host = mockSwarmHost();
     const configured = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ defaultModel: 'provider/fast', models: { 'provider/fast': 'fast and cheap', 'main-model': 'the main model' } }), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig({ defaultModel: 'provider/fast', models: { 'provider/fast': 'fast and cheap', 'main-model': 'the main model' } }), stubCallerProfile({ modelAlias: 'main-model' })), stubCallerProfile({ modelAlias: 'main-model' }));
 
-    expect(configured.description).toContain('Available models');
-    expect(configured.description).toContain('- provider/fast [default]: fast and cheap');
-    expect(configured.description).toContain('- main-model [main model]: the main model');
-    expect(configured.description).toContain('- primary (main-model)');
+    expect(configured.description).toContain(
+      'Available models (pass via model): provider/fast [default], main-model, primary (your current model and thinking level).',
+    );
 
     const unconfigured = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig(), stubCallerProfile({ modelAlias: 'main-model' })), stubCallerProfile({ modelAlias: 'main-model' }));
 

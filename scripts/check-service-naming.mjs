@@ -8,7 +8,7 @@
  *
  * Domain dirs and service-related .ts files must be camelCase — never
  * kebab-case (no `-` in the name). Anything outside these two roots is
- * ignored (test fixtures, agent-core, etc.).
+ * ignored (test fixtures, etc.).
  *
  * Exit code 0 if clean, 1 with an actionable report otherwise.
  */

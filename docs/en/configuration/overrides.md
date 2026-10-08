@@ -26,7 +26,7 @@ For ordinary runtime parameters such as model alias, Plan mode, permission mode,
 A small number of environment variables explicitly override specific config file fields. For example, `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` has higher priority than `[background].keep_alive_on_exit`. These exceptions are noted in [Environment variables](./env-vars.md) and in the relevant field descriptions in [Configuration files](./config-files.md).
 
 ::: warning
-**Ordinary runtime parameters do not fall back to shell environment variables.** Provider `api_key` / `base_url` are read only from `config.toml` (including the `[providers.<name>.env]` sub-table) and do not fall back to `export`-ed shell variables. The only exception is the explicit `KIMI_MODEL_*` channel; see [Define a model from environment variables](./env-vars.md#define-a-model-from-environment-variables-kimi_model_).
+**Ordinary runtime parameters do not fall back to shell environment variables.** Provider `api_key` / `base_url` are read only from `config.toml` (including the `[providers.<name>.env]` sub-table) and do not fall back to `export`-ed shell variables. The only exceptions are the `KIMI_MODEL_*` family and a provider's `api_key_env` field, two explicit channels that *do* read credentials from the shell; see [Define a model from environment variables](./env-vars.md#define-a-model-from-environment-variables-kimi_model_) and [Provider credentials](#provider-credentials).
 :::
 
 The CLI currently reads a single user-level config file and has no project-level config file mechanism. To isolate config between different projects, point `KIMI_CODE_HOME` at different data directories; see [Common scenarios](#common-scenarios) below.
@@ -37,9 +37,14 @@ Provider credentials (`api_key`, `base_url`) follow their own resolution rules, 
 
 For a single provider, credentials are resolved in this order:
 
-1. `[providers.<name>].api_key`: key written directly in the config file; highest priority
-2. The matching key inside the `[providers.<name>.env]` sub-table (`KIMI_API_KEY`, `ANTHROPIC_API_KEY`, etc.): consulted only when `api_key` is empty
-3. If both are absent, startup fails with an error indicating the provider is missing credentials
+1. `[providers.<name>].api_key`: key written directly in the config file
+2. `[providers.<name>].api_key_env`: name of a shell environment variable to read the key from
+3. The matching key inside the `[providers.<name>.env]` sub-table (`KIMI_API_KEY`, `ANTHROPIC_API_KEY`, etc.): consulted only when neither field above is present
+4. If all are absent, startup fails with an error indicating the provider is missing credentials
+
+`api_key` and `api_key_env` are alternatives, not a priority chain: set exactly one — setting both is rejected as a configuration conflict, as is setting `api_key_env` together with `oauth`.
+
+`api_key_env` is the one deliberate exception to "no shell environment variables for credentials": the value is re-read from the process's own environment on every request, so it is never cached beyond the process lifetime and no secret lands in `config.toml`. Note that a running process only sees the environment it started with — rotating the variable takes a restart of the `kimi` / TUI or kap-server process; a fresh `export` in the parent shell only affects newly spawned processes. Declaring `api_key_env` while the variable is unset or empty fails fast with an error naming the provider and the variable — at session readiness checks (print mode, kap-server session creation) and at request time — and is never silently ignored, with no fallback to another credential source.
 
 `base_url` is resolved the same way: first `[providers.<name>].base_url`, then the `*_BASE_URL` key in `[providers.<name>.env]`.
 

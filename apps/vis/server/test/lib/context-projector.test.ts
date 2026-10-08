@@ -1,6 +1,7 @@
 // apps/vis/server/test/lib/context-projector.test.ts
 import { describe, it, expect, afterEach } from 'vitest';
-import { estimateTokensForMessages } from '@moonshot-ai/agent-core-v2/kosong/contract/tokens';
+import { estimateTokensForMessages } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/tokens';
+import { buildCompactionContinuationText } from '@moonshot-ai/agent-core-v2/agent/contextMemory/compactionHandoff';
 import { buildSessionFixture } from '../fixtures/build';
 import { projectContext } from '../../src/lib/context-projector';
 import { readAgentWire } from '../../src/lib/wire-reader';
@@ -77,7 +78,7 @@ describe('context-projector', () => {
           event: {
             type: 'tool.call' as const,
             uuid: 'tc1', turnId: 't1', step: 0, stepUuid: 's1',
-            toolCallId: 'call_1', name: 'LS', args: '{"path":"/"}',
+            toolCallId: 'call_1', name: 'LS', args: { path: '/' },
           },
         },
         raw: {},
@@ -86,7 +87,12 @@ describe('context-projector', () => {
         lineNo: 6,
         data: {
           type: 'context.append_loop_event' as const,
-          event: { type: 'step.end' as const, uuid: 's1', turnId: 't1', step: 0 },
+          event: {
+            type: 'tool.result' as const,
+            parentUuid: 'tc1',
+            toolCallId: 'call_1',
+            result: { output: 'file1.txt\nfile2.txt' },
+          },
         },
         raw: {},
       },
@@ -94,12 +100,7 @@ describe('context-projector', () => {
         lineNo: 7,
         data: {
           type: 'context.append_loop_event' as const,
-          event: {
-            type: 'tool.result' as const,
-            parentUuid: 'tc1',
-            toolCallId: 'call_1',
-            result: { output: 'file1.txt\nfile2.txt' },
-          },
+          event: { type: 'step.end' as const, uuid: 's1', turnId: 't1', step: 0 },
         },
         raw: {},
       },
@@ -126,6 +127,101 @@ describe('context-projector', () => {
     expect(proj.messages[2]!.message.content).toEqual([
       { type: 'text', text: 'file1.txt\nfile2.txt' },
     ]);
+  });
+
+  it('drops a vacuous assistant when a step ends without output', () => {
+    const entries = [
+      { lineNo: 1, data: { type: 'context.append_loop_event' as const,
+          event: { type: 'step.begin' as const, uuid: 's1' } }, raw: {} },
+      { lineNo: 2, data: { type: 'context.append_loop_event' as const,
+          event: { type: 'step.end' as const, uuid: 's1' } }, raw: {} },
+    ];
+
+    expect(projectContext(entries as any).messages).toEqual([]);
+  });
+
+  it.each(['interrupted', 'error'] as const)(
+    'keeps a %s step open until the next attempt settles it',
+    (finishReason) => {
+      const entries: Array<{ lineNo: number; data: Record<string, unknown>; raw: object }> = [
+        { lineNo: 1, data: { type: 'context.append_loop_event' as const,
+            event: { type: 'step.begin' as const, uuid: 's1' } }, raw: {} },
+        { lineNo: 2, data: { type: 'context.append_loop_event' as const,
+            event: { type: 'content.part' as const, stepUuid: 's1',
+              part: { type: 'text' as const, text: 'partial' } } }, raw: {} },
+        { lineNo: 3, data: { type: 'context.append_loop_event' as const,
+            event: { type: 'step.end' as const, uuid: 's1', finishReason } }, raw: {} },
+      ];
+
+      const interrupted = projectContext(entries as any);
+      expect(interrupted.messages).toHaveLength(1);
+      expect(interrupted.messages[0]!.message.partial).toBe(true);
+
+      entries.push(
+        { lineNo: 4, data: { type: 'context.append_loop_event' as const,
+            event: { type: 'step.begin' as const, uuid: 's2' } }, raw: {} },
+        { lineNo: 5, data: { type: 'context.append_loop_event' as const,
+            event: { type: 'content.part' as const, stepUuid: 's2',
+              part: { type: 'text' as const, text: 'recovered' } } }, raw: {} },
+        { lineNo: 6, data: { type: 'context.append_loop_event' as const,
+            event: { type: 'step.end' as const, uuid: 's2' } }, raw: {} },
+      );
+      const recovered = projectContext(entries as any);
+      expect(recovered.messages.map((message) => message.message.partial)).toEqual([
+        undefined,
+        undefined,
+      ]);
+      expect(recovered.messages.map((message) => message.message.content[0])).toMatchObject([
+        { text: 'partial' },
+        { text: 'recovered' },
+      ]);
+    },
+  );
+
+  it('closes a pending tool call with an interrupted result at step end', () => {
+    const entries = [
+      { lineNo: 1, data: { type: 'context.append_loop_event' as const,
+          event: { type: 'step.begin' as const, uuid: 's1' } }, raw: {} },
+      { lineNo: 2, data: { type: 'context.append_loop_event' as const,
+          event: { type: 'tool.call' as const, stepUuid: 's1', toolCallId: 'c1',
+            name: 'Bash', args: {} } }, raw: {} },
+      { lineNo: 3, data: { type: 'context.append_loop_event' as const,
+          event: { type: 'step.end' as const, uuid: 's1' } }, raw: {} },
+    ];
+
+    const proj = projectContext(entries as any);
+    expect(proj.messages.map((message) => message.message.role)).toEqual(['assistant', 'tool']);
+    expect(proj.messages[1]!.message).toMatchObject({ toolCallId: 'c1', isError: true });
+    expect(proj.messages[1]!.message.content[0]).toMatchObject({
+      text: expect.stringContaining('interrupted before its result was recorded'),
+    });
+    expect(proj.messages[1]!.lineNo).toBeLessThan(3);
+  });
+
+  it('defers appended messages until a pending tool result arrives while preserving line metadata', () => {
+    const entries = [
+      { lineNo: 1, data: { type: 'context.append_loop_event' as const,
+          event: { type: 'step.begin' as const, uuid: 's1' } }, raw: {} },
+      { lineNo: 2, data: { type: 'context.append_loop_event' as const,
+          event: { type: 'tool.call' as const, stepUuid: 's1', toolCallId: 'c1',
+            name: 'Read', args: { path: '/tmp/a' } } }, raw: {} },
+      { lineNo: 3, data: { type: 'context.append_message' as const,
+          message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'reminder' }],
+            toolCalls: [], origin: { kind: 'injection' as const, variant: 'test' } } }, raw: {} },
+      { lineNo: 4, data: { type: 'context.append_loop_event' as const,
+          event: { type: 'tool.result' as const, toolCallId: 'c1', result: { output: 'ok' } } }, raw: {} },
+      { lineNo: 5, data: { type: 'context.append_loop_event' as const,
+          event: { type: 'step.end' as const, uuid: 's1' } }, raw: {} },
+    ];
+
+    const proj = projectContext(entries as any);
+    expect(proj.messages.map((message) => message.message.role)).toEqual([
+      'assistant',
+      'tool',
+      'user',
+    ]);
+    expect(proj.messages[2]!.message.content[0]).toMatchObject({ text: 'reminder' });
+    expect(proj.messages[2]!.lineNo).toBe(3);
   });
 
   it('does not reset contextTokens on a zero-usage step.end', () => {
@@ -184,7 +280,12 @@ describe('context-projector', () => {
         lineNo: 3,
         data: {
           type: 'context.append_loop_event' as const,
-          event: { type: 'step.end' as const, uuid: 's1', turnId: 't1', step: 0 },
+          event: {
+            type: 'tool.result' as const,
+            parentUuid: 'tc1',
+            toolCallId: 'call_1',
+            result,
+          },
         },
         raw: {},
       },
@@ -192,12 +293,7 @@ describe('context-projector', () => {
         lineNo: 4,
         data: {
           type: 'context.append_loop_event' as const,
-          event: {
-            type: 'tool.result' as const,
-            parentUuid: 'tc1',
-            toolCallId: 'call_1',
-            result,
-          },
+          event: { type: 'step.end' as const, uuid: 's1', turnId: 't1', step: 0 },
         },
         raw: {},
       },
@@ -292,6 +388,24 @@ describe('context-projector', () => {
     expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: 'new' });
   });
 
+  it('ignores a malformed compaction record like core-v2 restore', () => {
+    const entries = [
+      { lineNo: 1, data: { type: 'context.append_message' as const,
+          message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'before' }], toolCalls: [] } }, raw: {} },
+      { lineNo: 2, data: { type: 'context.apply_compaction' as const,
+          summary: 'missing compactedCount' }, raw: {} },
+      { lineNo: 3, data: { type: 'context.append_message' as const,
+          message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'after' }], toolCalls: [] } }, raw: {} },
+    ];
+
+    const projection = projectContext(entries as any);
+
+    expect(projection.messages.map((message) => message.message.content[0])).toMatchObject([
+      { text: 'before' },
+      { text: 'after' },
+    ]);
+  });
+
   it('uses contextSummary only for the model view and raw summary for full history', () => {
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const,
@@ -327,16 +441,23 @@ describe('context-projector', () => {
           keptUserMessageCount: 2 }, raw: {} },
     ];
     const proj = projectContext(entries as any);
-    // [m0, m1, summary] — real user prompts are kept verbatim, the assistant
-    // tail is dropped.
-    expect(proj.messages).toHaveLength(3);
+    // [m0, m1, summary, anchor] — real user prompts are kept verbatim, the
+    // assistant tail is dropped, and the continuation anchor follows the summary.
+    expect(proj.messages).toHaveLength(4);
     expect(proj.messages.map((m) => m.source)).toEqual([
-      'append_message', 'append_message', 'compaction_summary',
+      'append_message', 'append_message', 'compaction_summary', 'append_message',
     ]);
     expect(proj.messages[0]!.message.content[0]).toMatchObject({ text: 'm0' });
     expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: 'm1' });
     expect(proj.messages[2]!.compaction).toEqual({ compactedCount: 3, tokensBefore: 100, tokensAfter: 10 });
     expect(proj.messages[2]!.message.content[0]).toMatchObject({ text: 'sum' });
+    expect(proj.messages[3]!.message.origin).toEqual({
+      kind: 'injection',
+      variant: 'compaction_continuation',
+    });
+    expect(proj.messages[3]!.message.content[0]).toMatchObject({
+      text: buildCompactionContinuationText(),
+    });
   });
 
   it('apply_compaction mirrors the legacy verbatim tail for records without keptUserMessageCount (model)', () => {
@@ -386,9 +507,10 @@ describe('context-projector', () => {
     ];
 
     const proj = projectContext(entries as any);
-    // [FIRST, head slice of middle, marker, tail slice of middle, LAST, summary]
-    // — mirrors the engine's selectCompactionUserMessages + elision marker.
-    expect(proj.messages).toHaveLength(6);
+    // [FIRST, head slice of middle, marker, tail slice of middle, LAST, summary, anchor]
+    // — mirrors the engine's selectCompactionUserMessages + elision marker, with
+    // the continuation anchor after the summary.
+    expect(proj.messages).toHaveLength(7);
     const texts = proj.messages.map((m) =>
       m.message.content.map((p: any) => (p.type === 'text' ? p.text : '')).join(''),
     );
@@ -404,9 +526,14 @@ describe('context-projector', () => {
     expect(middle.endsWith(texts[3]!)).toBe(true);
     expect(texts[4]).toBe(last);
     expect(proj.messages[5]!.source).toBe('compaction_summary');
+    expect(proj.messages[6]!.message.origin).toEqual({
+      kind: 'injection',
+      variant: 'compaction_continuation',
+    });
+    expect(texts[6]).toBe(buildCompactionContinuationText());
     // Synthesized entries (the head slice of the same message that anchors the
     // tail, and the marker) get fractional lineNos so keys stay unique.
-    expect(new Set(proj.messages.map((m) => m.lineNo)).size).toBe(6);
+    expect(new Set(proj.messages.map((m) => m.lineNo)).size).toBe(7);
   });
 
   it('apply_compaction drops shell/local-command/background messages in model mode only', () => {
@@ -430,10 +557,10 @@ describe('context-projector', () => {
 
     const model = projectContext(entries as any);
     expect(model.messages.map((m) => m.source)).toEqual([
-      'append_message', 'compaction_summary', 'append_message',
+      'append_message', 'compaction_summary', 'append_message', 'append_message',
     ]);
     expect(model.messages.map((m) => m.message.content[0])).toMatchObject([
-      { text: 'real user' }, { text: 'sum' }, { text: 'new' },
+      { text: 'real user' }, { text: 'sum' }, { text: buildCompactionContinuationText() }, { text: 'new' },
     ]);
 
     const full = projectContext(entries as any, 'full');
@@ -478,12 +605,14 @@ describe('context-projector', () => {
           keptUserMessageCount: 3 }, raw: {} },
     ];
     const proj = projectContext(entries as any);
-    // Correct: [u1, u3, u4, summary]. The marker is gone, all real prompts kept.
+    // Correct: [u1, u3, u4, summary, anchor]. The marker is gone, all real
+    // prompts kept, and the continuation anchor follows the summary.
     expect(proj.messages.map((m) => m.source)).toEqual([
-      'append_message', 'append_message', 'append_message', 'compaction_summary',
+      'append_message', 'append_message', 'append_message', 'compaction_summary', 'append_message',
     ]);
     expect(proj.messages.map((m) => m.message.content[0])).toMatchObject([
       { text: 'u1' }, { text: 'u3' }, { text: 'u4' }, { text: 'sum' },
+      { text: buildCompactionContinuationText() },
     ]);
   });
 
@@ -542,7 +671,7 @@ describe('context-projector', () => {
     expect(proj.messages[2]!.lineNo).toBe(4);
   });
 
-  it('context.undo keeps injection messages inside the undo window (skip, not remove)', () => {
+  it('context.undo removes injection messages inside the undo window', () => {
     const userMsg = (text: string) => ({
       role: 'user' as const, content: [{ type: 'text' as const, text }], toolCalls: [],
       origin: { kind: 'user' as const },
@@ -553,10 +682,10 @@ describe('context-projector', () => {
     });
     // Layout: [u1, a1, u2, INJECTION, a2]. undo(1) walks from the end:
     //   a2  → removed (non-injection)
-    //   INJECTION → skipped (kept), NOT counted
+    //   INJECTION → skipped while finding the user anchor
     //   u2  → removed, real user prompt → count(1) reached → stop.
-    // The injection sits INSIDE the undo window (between the trailing real user
-    // prompt u2 and the cutoff) and must SURVIVE; u2 and a2 around it are gone.
+    // Once u2 is the cut anchor, the engine slices the whole suffix, so the
+    // injection inside that suffix is removed together with u2 and a2.
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const, message: userMsg('u1') }, raw: {} },
       { lineNo: 2, data: { type: 'context.append_message' as const,
@@ -568,16 +697,43 @@ describe('context-projector', () => {
       { lineNo: 6, data: { type: 'context.undo' as const, count: 1 }, raw: {} },
     ];
     const proj = projectContext(entries as any);
-    // u1, a1 remain; the injection survives in place; u2 + a2 removed; undo marker last.
+    // u1 and a1 remain; u2, the injection, and a2 are removed; marker last.
     expect(proj.messages.map((m) => m.source)).toEqual([
-      'append_message', 'append_message', 'append_message', 'undo',
+      'append_message', 'append_message', 'undo',
     ]);
     expect(proj.messages[0]!.message.content[0]).toMatchObject({ text: 'u1' });
     expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: 'a1' });
-    expect(proj.messages[2]!.message.origin).toEqual({ kind: 'injection' });
-    expect(proj.messages[2]!.message.content[0]).toMatchObject({ text: 'inj' });
-    // removedMessageCount counts only the removed (non-skipped) messages: u2 + a2 = 2.
-    expect(proj.messages[3]!.undo).toEqual({ count: 1, removedMessageCount: 2 });
+    expect(proj.messages[2]!.undo).toEqual({ count: 1, removedMessageCount: 3 });
+  });
+
+  it('context.undo includes a prompt-owned injection immediately before its prompt', () => {
+    const entries = [
+      { lineNo: 1, data: { type: 'context.append_message' as const, message: {
+          id: 'p1', role: 'user' as const,
+          content: [{ type: 'text' as const, text: 'u1' }], toolCalls: [],
+          origin: { kind: 'user' as const },
+        } }, raw: {} },
+      { lineNo: 2, data: { type: 'context.append_message' as const, message: {
+          role: 'user' as const,
+          content: [{ type: 'text' as const, text: 'owned reminder' }], toolCalls: [],
+          origin: { kind: 'injection' as const, variant: 'prompt-context', ownerPromptId: 'p2' },
+        } }, raw: {} },
+      { lineNo: 3, data: { type: 'context.append_message' as const, message: {
+          id: 'p2', role: 'user' as const,
+          content: [{ type: 'text' as const, text: 'u2' }], toolCalls: [],
+          origin: { kind: 'user' as const },
+        } }, raw: {} },
+      { lineNo: 4, data: { type: 'context.append_message' as const, message: {
+          role: 'assistant' as const,
+          content: [{ type: 'text' as const, text: 'a2' }], toolCalls: [],
+        } }, raw: {} },
+      { lineNo: 5, data: { type: 'context.undo' as const, count: 1 }, raw: {} },
+    ];
+
+    const proj = projectContext(entries as any);
+    expect(proj.messages.map((message) => message.source)).toEqual(['append_message', 'undo']);
+    expect(proj.messages[0]!.message.content[0]).toMatchObject({ text: 'u1' });
+    expect(proj.messages[1]!.undo).toEqual({ count: 1, removedMessageCount: 3 });
   });
 
   it('micro_compaction.apply blanks tool-result content before the cutoff', () => {
@@ -854,10 +1010,10 @@ describe('context-projector', () => {
           keptUserMessageCount: 2 }, raw: {} },
     ];
     // No 2nd arg → 'model' default: the real user prompts are kept verbatim and
-    // the summary is appended after them.
+    // the summary is appended after them, followed by the continuation anchor.
     const proj = projectContext(entries as any);
     expect(proj.messages.map((m) => m.source)).toEqual([
-      'append_message', 'append_message', 'compaction_summary',
+      'append_message', 'append_message', 'compaction_summary', 'append_message',
     ]);
     expect(proj.messages[0]!.message.content[0]).toMatchObject({ text: 'm0' });
     expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: 'm1' });

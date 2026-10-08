@@ -11,7 +11,7 @@ import {
  * Test-only fixtures that emulate an agent tool-runtime layer on top of
  * kosong's wire types. These were previously exposed by `kosong/src` but
  * have no production consumers — the real tool runtime lives in
- * `@moonshot-ai/agent-core`. Kosong's own e2e tests still need a minimal
+ * `@moonshot-ai/agent-core-v2`. Kosong's own e2e tests still need a minimal
  * Toolset implementation to drive `generate()` through multi-turn flows.
  */
 

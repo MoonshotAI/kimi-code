@@ -1,6 +1,6 @@
 /**
  * `sessionInteractionService` — blocking human-in-the-loop request kernel.
- * Mirrors `agent-core-v2/features/interaction/interaction.ts`.
+ * Mirrors `agent-core-v2/human/interaction/interaction.ts`.
  */
 
 import { z } from 'zod';
@@ -10,16 +10,13 @@ import type { ServiceContract } from '../types.js';
 
 export const interactionKindSchema = z.enum(['approval', 'question', 'user_tool']);
 
-export const interactionOriginSchema = z.object({
-  agentId: z.string().optional(),
-  turnId: z.number().optional(),
-});
+export const interactionTagsSchema = z.record(z.string(), z.union([z.string(), z.number()]));
 
 export const interactionSchema = z.object({
   id: z.string(),
   kind: interactionKindSchema,
   payload: z.unknown(),
-  origin: interactionOriginSchema,
+  tags: interactionTagsSchema,
   createdAt: z.number(),
 });
 

@@ -68,6 +68,8 @@ function makeHost(options: { createGoalRejects?: boolean } = {}) {
       setTurnId: vi.fn(),
       flushNow: vi.fn(),
       resetToolUi: vi.fn(),
+      clearNotifyPanel: vi.fn(),
+      markNotifyPanelEnded: vi.fn(),
       finalizeTurn: vi.fn(),
       hasActiveTurn: vi.fn(() => false),
       hasThinkingDraft: vi.fn(() => false),

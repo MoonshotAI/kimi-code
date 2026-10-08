@@ -1,8 +1,10 @@
-import type { ContentPart } from '#/kosong/contract/message';
-import type { Tool as KosongTool } from '#/kosong/contract/tool';
+import type { ContentPart, ToolDescription as KosongTool } from '#human/llm/message';
 import { Jimp } from 'jimp';
 import { CallToolResultSchema, ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
@@ -13,10 +15,16 @@ import type { Event2 } from '#/app/event/event2';
 import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { McpConnectionManager, McpServerEntry } from '#/mcpCore/connection-manager';
+import type { McpServerConfig } from '#/mcpCore/config-schema';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
+import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { AgentMcpService } from '#/agent/mcp/mcpService';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
+import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
+import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
+import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
 import type { MCPClient, MCPToolDefinition } from '#/mcpCore/types';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -50,10 +58,12 @@ interface ResolvedServer {
   readonly tools: readonly KosongTool[];
   readonly rawTools: readonly MCPToolDefinition[];
   readonly enabledNames: ReadonlySet<string>;
+  readonly deferred: boolean;
 }
 
 class FakeMcpManager {
   private readonly entries = new Map<string, McpServerEntry>();
+  private readonly configs = new Map<string, McpServerConfig>();
   private readonly resolvedEntries = new Map<string, ResolvedServer>();
   private readonly listeners = new Set<(entry: McpServerEntry) => void>();
   readonly oauthService: McpOAuthService | undefined;
@@ -70,6 +80,10 @@ class FakeMcpManager {
     return this.entries.get(name);
   }
 
+  configOf(name: string): McpServerConfig | undefined {
+    return this.configs.get(name);
+  }
+
   resolved(name: string): ResolvedServer | undefined {
     if (this.entries.get(name)?.status !== 'connected') return undefined;
     return this.resolvedEntries.get(name);
@@ -80,6 +94,10 @@ class FakeMcpManager {
   }
 
   reconnectHandler: (name: string) => Promise<void> = async () => {};
+
+  async markNeedsAuth(): Promise<boolean> {
+    return false;
+  }
 
   async reconnect(name: string): Promise<void> {
     await this.reconnectHandler(name);
@@ -118,6 +136,7 @@ class FakeMcpManager {
     tools: readonly KosongTool[],
     enabledNames = new Set(tools.map((tool) => tool.name)),
     rawTools?: readonly MCPToolDefinition[],
+    deferred = false,
   ): void {
     const resolvedRawTools =
       rawTools ??
@@ -131,6 +150,7 @@ class FakeMcpManager {
       tools,
       rawTools: resolvedRawTools,
       enabledNames,
+      deferred,
     });
   }
 
@@ -146,7 +166,10 @@ class FakeMcpManager {
     this.emit(entry);
   }
 
-  needsAuth(name = 'needs-auth'): void {
+  needsAuth(name = 'needs-auth', options: { readonly deferred?: boolean } = {}): void {
+    if (options.deferred !== undefined) {
+      this.configs.set(name, { deferred: options.deferred } as unknown as McpServerConfig);
+    }
     const entry: McpServerEntry = {
       name,
       transport: 'http',
@@ -223,6 +246,7 @@ describe('AgentMcpService', () => {
     ix.stub(IAgentToolResultTruncationService, stubToolResultTruncationService());
     ix.stub(IAgentLoopService, stubLoopWithHooks());
     ix.set(IAgentStateService, new AgentStateService());
+    ix.stub(IAgentProfileService, { getModelProviderType: () => undefined });
     wire = registerTestAgentWire(ix, 'mcp-test', {
       eventBus: ix.get(IEventBus),
       log: recordingWireLog([], (record) => {
@@ -313,6 +337,7 @@ describe('AgentMcpService', () => {
       'mcp__local_server__echo',
       'mcp__local_server__noop',
     ]);
+    expect(infos.every((info) => info.disclosure === 'inline')).toBe(true);
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'tool.list.updated',
@@ -320,6 +345,53 @@ describe('AgentMcpService', () => {
         serverName: 'local server',
       }),
     );
+  });
+
+  it('connects registered MCP tools to the session attachment store', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'mcp-session-attachments-'));
+    try {
+      const storage = new FileStorageService(home);
+      const context = makeSessionContext({
+        sessionId: 'session', workspaceId: 'workspace', cwd: home,
+        sessionDir: join(home, 'sessions/session'), sessionScope: 'sessions/session',
+      });
+      ix.stub(ISessionMediaStore, new SessionMediaStoreService(context, storage, new JsonAtomicDocumentStore(storage)));
+      const bytes = Buffer.from('%PDF-1.4\nexample\n%%EOF');
+      const client: MCPClient = {
+        async listTools() { return [{ name: 'report', description: 'Example report', inputSchema: { type: 'object' } }]; },
+        async callTool() { return { isError: false, content: [{ type: 'resource', resource: {
+          uri: 'example://report', mimeType: 'application/pdf', blob: bytes.toString('base64'),
+        } }] }; },
+        async ping() {},
+      };
+      const manager = new FakeMcpManager();
+      manager.setResolved('example', client, await discoverTools(client));
+      createService(manager);
+      manager.connect('example');
+      const tool = ix.get(IAgentToolRegistryService).resolve('mcp__example__report');
+      const output = await executeTool(tool!, {
+        turnId: 1, toolCallId: 'report', args: {}, signal: new AbortController().signal,
+      });
+      const text = renderToolResultForModel(output).map((part) => part.type === 'text' ? part.text : '').join('\n');
+      const path = /Original attachment saved at: ("[^\n]+")/.exec(text)?.[1];
+      expect(path).toBeDefined();
+      expect((await readFile(JSON.parse(path!) as string)).equals(bytes)).toBe(true);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('registers tools of a deferred=true server with deferred disclosure', async () => {
+    const manager = new FakeMcpManager();
+    const client = fakeMcpClient();
+    manager.setResolved('s', client, await discoverTools(client), undefined, undefined, true);
+    createService(manager);
+
+    manager.connect('s');
+
+    const infos = ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp');
+    expect(infos.length).toBeGreaterThan(0);
+    expect(infos.every((info) => info.disclosure === 'deferred')).toBe(true);
   });
 
   it('ignores status changes from servers outside the session baseline', async () => {
@@ -1181,7 +1253,7 @@ describe('AgentMcpService', () => {
     expect(receivedSignal).toBe(controller.signal);
   });
 
-  it('registers a synthetic authenticate tool when a server needs auth', () => {
+  it('registers a synthetic authenticate tool deferred when the server declares deferred: true', () => {
     const oauthService = {
       beginAuthorization: async () => ({
         authorizationUrl: new URL('https://example.com/authorize'),
@@ -1192,13 +1264,14 @@ describe('AgentMcpService', () => {
     const manager = new FakeMcpManager({ oauthService });
     createService(manager);
 
-    manager.needsAuth();
+    manager.needsAuth('needs-auth', { deferred: true });
 
     const tools = ix.get(IAgentToolRegistryService).list();
     expect(tools).toEqual([
       expect.objectContaining({
         name: 'mcp__needs-auth__authenticate',
         source: 'mcp',
+        disclosure: 'deferred',
       }),
     ]);
   });
@@ -1221,6 +1294,7 @@ describe('AgentMcpService', () => {
       expect.objectContaining({
         name: 'mcp__needs-auth__authenticate',
         source: 'mcp',
+        disclosure: 'inline',
       }),
     ]);
     expect(events).toContainEqual(

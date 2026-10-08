@@ -1,18 +1,25 @@
+import type { HostUiCapability } from '@moonshot-ai/agent-core-v2';
 import type {
   ExportSessionManifest,
-  ResumeSessionResult,
   ShellEnvironment,
-  TelemetryClient,
-  TelemetryContextPatch,
-  TelemetryProperties,
-} from '@moonshot-ai/agent-core';
+} from '@moonshot-ai/agent-core-v2/app/sessionExport/sessionExport';
 import type { Kaos } from '@moonshot-ai/kaos';
 import type { KimiHostIdentity, OAuthRefreshOutcome } from '@moonshot-ai/kimi-code-oauth';
 import type { ContentPart } from '@moonshot-ai/kosong';
 
+import type { ResumeSessionResult } from '#/replay';
+import type { PermissionMode } from '#/permission';
+import type {
+  TelemetryClient,
+  TelemetryContextPatch,
+  TelemetryProperties,
+} from '#/telemetry';
+
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: JsonValue };
 export type JsonObject = { readonly [key: string]: JsonValue };
+
+export type { ImportCustomRegistryOptions, ImportCustomRegistryResult } from '@moonshot-ai/klient';
 
 export type Unsubscribe = () => void;
 
@@ -25,42 +32,60 @@ export type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability
 
 export type {
   AgentReplayRecord,
+  ResumedAgentState,
+} from '#/replay';
+export type {
   AgentBackgroundTaskInfo,
+  BackgroundTaskInfo,
+  BackgroundTaskStatus,
+  ProcessBackgroundTaskInfo,
+  QuestionBackgroundTaskInfo,
+} from '#/task';
+export type {
   AppMcpServerAuthState,
   AppMcpServerConfig,
   AppMcpServerDescriptor,
   AppMcpServerInspection,
-  BackgroundConfig,
-  BackgroundTaskInfo,
-  BackgroundTaskStatus,
-  ConfigDiagnostics,
-  ContextMessage,
-  CronTaskSnapshot,
-  ExperimentalFeatureState,
-  ExperimentalFlagMap,
-  ExperimentalFlagSource,
-  ExportSessionManifest,
-  GoalBudgetLimits,
-  GoalBudgetReport,
-  GoalChange,
-  GoalChangeStats,
-  GetCronTasksResult,
-  GoalSnapshot,
-  GoalStatus,
-  GoalToolResult,
   GlobalMcpServerAuthState,
   GlobalMcpServerAuthStatus,
-  KimiConfig,
-  KimiConfigPatch,
-  LoopControl,
   McpManagedServerInfo,
   McpServerInfo,
   McpServerLocator,
   McpServerSource,
   McpStartupMetrics,
+  McpServerConfig,
+  McpTestResult,
+} from '#/mcp';
+export type {
+  BackgroundConfig,
+  ConfigDiagnostics,
+  KimiConfig,
+  KimiConfigPatch,
+  LoopControl,
   ModelAlias,
   MoonshotServiceConfig,
   OAuthRef,
+  ProviderConfig,
+  ProviderType,
+  ServicesConfig,
+  ThinkingConfig,
+} from '#/config/index';
+export type { ContextMessage, PromptOrigin } from '#/context';
+export type {
+  ExperimentalFeatureState,
+  ExperimentalFlagMap,
+  ExperimentalFlagSource,
+} from '@moonshot-ai/agent-core-v2/app/flag/flag';
+export type {
+  GoalBudgetLimits,
+  GoalBudgetReport,
+  GoalChange,
+  GoalChangeStats,
+  GoalSnapshot,
+  GoalStatus,
+  GoalToolResult,
+} from '@moonshot-ai/agent-core-v2/features/goal/types';
+export type {
   PluginCommandDef,
   PluginGithubMetadata,
   PluginGithubRef,
@@ -68,36 +93,41 @@ export type {
   PluginMcpServerInfo,
   PluginSource,
   PluginSummary,
-  ProcessBackgroundTaskInfo,
-  PromptOrigin,
-  ProviderConfig,
-  ProviderType,
-  QuestionBackgroundTaskInfo,
   ReloadSummary,
-  ResumedAgentState,
-  ServicesConfig,
+} from '@moonshot-ai/agent-core-v2/app/plugin/types';
+export type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/catalog/types';
+export type { ToolInfo } from '#/tool';
+export type {
+  ExportSessionManifest,
   ShellEnvironment,
-  SkillSummary,
-  ThinkingConfig,
-  ToolInfo,
-  GlobalMcpServerConfig as McpServerConfig,
-  GlobalMcpServerTestResult as McpTestResult,
-} from '@moonshot-ai/agent-core';
+} from '@moonshot-ai/agent-core-v2/app/sessionExport/sessionExport';
+
+export interface CronTaskSnapshot {
+  readonly id: string;
+  readonly cron: string;
+  readonly recurring: boolean;
+  readonly createdAt: number;
+  readonly lastFiredAt: number | undefined;
+  readonly nextFireAt: number | null;
+}
+
+export interface GetCronTasksResult {
+  readonly tasks: readonly CronTaskSnapshot[];
+}
 
 export type { KimiHostIdentity, OAuthRefreshOutcome };
+// Host UI capabilities are an agent-core-v2 seam (`BootstrapInput.args.uiCapabilities`);
+// hosts name them through `KimiHarnessOptions.uiCapabilities`, so the type is public here.
+export type { HostUiCapability };
 export type { TelemetryClient, TelemetryContextPatch, TelemetryProperties };
 export type { ContentPart, Role, ThinkingEffort, ToolCall } from '@moonshot-ai/kosong';
 // Contributed commands are an agent-core-v2 seam; the type is re-exported
 // from the v2 engine (v1 sessions report an empty command set).
 export type { AgentCommandInfo } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
 
-export type PermissionMode = 'yolo' | 'manual' | 'auto';
+export type { PermissionMode };
 
-/**
- * Trust state of a workspace directory. Only meaningful on the agent-core-v2
- * engine; the v1 engine has no workspace-trust concept and reports
- * `{ trusted: true, gatedMcpServers: [] }`.
- */
+/** One project-level MCP server that trusting would start. */
 export interface WorkspaceTrustMcpServerInfo {
   readonly name: string;
   readonly transport: 'stdio' | 'http' | 'sse';
@@ -105,12 +135,32 @@ export interface WorkspaceTrustMcpServerInfo {
   readonly args?: readonly string[];
   readonly cwd?: string;
   readonly url?: string;
+  /** Absolute path of the config file declaring this server. */
+  readonly origin: string;
 }
 
+/** Project-sourced instruction inputs that steer the agent once trusted (prompt-level, no code execution). */
+export interface WorkspaceTrustInstructionSources {
+  /** AGENTS.md files inside the project that will be injected into context (symlink-resolved). */
+  readonly agentsMdPaths: readonly string[];
+  /** Names of project-level skills that will load. */
+  readonly skills: readonly string[];
+  /** Names of project-level agent profiles that will load. */
+  readonly agentProfiles: readonly string[];
+  /** Files and configuration directories to inspect; directories end in a slash. */
+  readonly paths: readonly string[];
+}
+
+/** Trust state of a workspace directory, plus everything trusting it would activate. */
 export interface WorkspaceTrustInfo {
   readonly trusted: boolean;
-  /** Safe descriptions of project-level MCP servers that trusting would enable. */
+  /** Project-level MCP servers that trusting would start. */
   readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
+  /** Directories outside the project that trusting grants access to (symlink-resolved). */
+  readonly gatedAdditionalDirs: readonly string[];
+  readonly additionalDirSources: readonly string[];
+  readonly warnings: readonly string[];
+  readonly instructionSources: WorkspaceTrustInstructionSources;
 }
 
 /**
@@ -169,6 +219,14 @@ export interface KimiHarnessOptions {
   readonly autoLoadConfig?: boolean | undefined;
   readonly uiMode?: string;
   readonly skillDirs?: readonly string[];
+  /**
+   * UI surfaces this host can render, declared once per process and passed
+   * into the engine through `BootstrapInput.args.uiCapabilities`. Engine
+   * features gate on them at tool-table build time; nothing is persisted, so
+   * a session opened later by a host without the capability simply does not
+   * offer the dependent tool.
+   */
+  readonly uiCapabilities?: readonly HostUiCapability[];
   readonly telemetry?: TelemetryClient | undefined;
   readonly onOAuthRefresh?: ((outcome: OAuthRefreshOutcome) => void) | undefined;
   readonly sessionStartedProperties?: TelemetryProperties;

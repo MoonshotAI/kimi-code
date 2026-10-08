@@ -1,4 +1,4 @@
-import { createActor, type ActorLogic, type AnyActorRef, type Snapshot } from 'xstate';
+import { createActor, type ActorLogic, type AnyActorRef, type Snapshot } from '#human/xstate2';
 
 import { BugIndicatingError } from '#/_base/errors/errors';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';

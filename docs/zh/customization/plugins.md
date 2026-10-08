@@ -80,7 +80,7 @@ Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元：可以添
 官方插件是 Kimi 官方维护的 plugin 和内置产品能力，目前有以下三种：
 
 - **[Kimi Datasource](#kimi-datasource)**：用自然语言查询金融行情、财经资讯、宏观经济、企业工商、学术文献、法律法规和国际组织官方数据
-- **[Kimi WebBridge](#kimi-webbridge)**：让 AI 直接操控你自己的浏览器，完成各类网页操作
+- **[Kimi Browser Extension](#kimi-browser-extension)**：让 AI 直接操控你自己的浏览器，完成各类网页操作
 - **[Kimi Computer Use](#kimi-computer-use)**：让 AI 操作你的桌面应用（macOS 和 Windows）
 
 ### 安装与升级
@@ -92,7 +92,7 @@ Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元：可以添
 3. 安装完成后运行 `/reload` 或 `/new` 激活
 
 ::: info 说明
-Kimi WebBridge 分两步安装：完成上述步骤后，还需要[安装浏览器扩展](#install-the-browser-extension)才能使用。
+Kimi Browser Extension 分两步安装：完成上述步骤后，还需要[安装浏览器扩展](#install-the-browser-extension)才能使用。
 :::
 
 官方插件不会自动更新，使用旧版时会提示更新。升级到新版本只需重复上述安装步骤。
@@ -164,15 +164,17 @@ Kimi Datasource 是 Kimi Code 官方数据插件。用自然语言直接查询�
 - 技术指标（MACD、KDJ 等）及实时行情仅在交易时段内可用
 - AI 输出内容仅供参考，不构成任何投资或商业决策建议
 
-### Kimi WebBridge <Badge type="tip" text="v1.11.3" />
+<a id="kimi-webbridge"></a>
 
-Kimi WebBridge 让 AI 直接操控你的浏览器，带着你的登录状态和 Cookie 打开网页、阅读内容、点击按钮、填写表单、截图保存，把重复的网页操作交给它完成。产品介绍见 [Kimi WebBridge 官网](https://www.kimi.com/zh-cn/features/webbridge)。
+### Kimi Browser Extension <Badge type="tip" text="v2.0.11" />
+
+Kimi Browser Extension 让 AI 直接操控你的浏览器，带着你的登录状态和 Cookie 打开网页、阅读内容、点击按钮、填写表单、截图保存，把重复的网页操作交给它完成。产品介绍见 [Kimi Browser Extension 官网](https://www.kimi.com/products/kimi-browser-extension)。
 
 <a id="install-the-browser-extension"></a>
 
 #### 安装浏览器扩展
 
-通过 `/plugins` 安装后，还需要在浏览器中安装 Kimi WebBridge 扩展才能使用。有两种安装方式：
+通过 `/plugins` 安装后，还需要在浏览器中安装 Kimi Browser Extension 扩展才能使用。有两种安装方式：
 
 **方式一：应用商店安装（推荐）**
 
@@ -191,9 +193,9 @@ Kimi WebBridge 让 AI 直接操控你的浏览器，带着你的登录状态和 
 
    ![加载未打包的扩展程序](../../media/webbridge-load-unpacked.jpeg)
 
-4. 安装完成后，浏览器工具栏会出现 Kimi WebBridge 图标，即表示安装成功
+4. 安装完成后，浏览器工具栏会出现 Kimi Browser Extension 图标，即表示安装成功
 
-   ![工具栏出现 Kimi WebBridge 图标](../../media/webbridge-install-success.jpeg)
+   ![工具栏出现 Kimi Browser Extension 图标](../../media/webbridge-install-success.jpeg)
 
 #### 能做什么
 
@@ -310,7 +312,7 @@ Plugin 通过 `systemPrompt` 和 `systemPromptPath` 两个字段向 Agent 的系
 
 ### 两个引擎的差异
 
-系统提示词贡献在两个 Agent 引擎上都生效。交互式 TUI、`kimi -p` 和 `kimi web` 默认使用 v2 引擎；设置 `KIMI_CODE_LEGACY_FLAG=1` 后，本地 CLI 界面会改用旧版引擎。
+系统提示词贡献在 Kimi Code 的所有界面上都生效：交互式 TUI、`kimi -p` 和 `kimi web` 都运行在 v2 引擎上。
 
 新会话和新建 Agent 会读取当前已启用 plugin 的指令，正在进行的请求继续使用已有的系统提示词。`/plugins reload` 会刷新 plugin Skill 列表，并请求重建活跃 Agent 的提示词；需要让变更在下一轮前明确收敛时使用该命令。切换 plugin 的 MCP server 不会改变系统提示词指令。
 

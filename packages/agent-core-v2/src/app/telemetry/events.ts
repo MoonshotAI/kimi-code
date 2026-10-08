@@ -58,6 +58,7 @@ export interface TurnStartedEvent {
   provider_type?: string;
   protocol?: string;
   thinking_effort?: string;
+  enabled_plugins?: string;
 }
 
 export interface TurnInterruptedEvent {
@@ -81,6 +82,7 @@ export interface TurnEndedEvent {
   protocol?: string;
   thinking_effort?: string;
   trace_id?: string;
+  enabled_plugins?: string;
 }
 
 export interface PromptCacheProbeEvent {
@@ -199,6 +201,37 @@ export interface PlanEnterResolvedEvent {
   outcome: 'auto_approved';
 }
 
+export interface TowerModeEnterEvent {
+  outcome: 'entered' | 'rejected';
+  reason?: 'not-main-agent' | 'experiment-off' | 'feature-not-assembled' | 'owned-by-live-session';
+}
+
+export interface TowerModeExitEvent {
+  reason: 'user' | 'takeover' | 'foreign-reconcile';
+}
+
+export interface SwarmModeTransitionEvent {
+  trigger: 'manual' | 'task' | 'tool';
+}
+
+export interface ExternalHookResolvedEvent {
+  event: string;
+  action: 'allow' | 'block';
+  matched_count: number;
+  failed_count: number;
+}
+
+export interface RemoteControlToggleEvent {
+  enabled: boolean;
+  outcome: 'ok' | 'already_running' | 'rejected' | 'error';
+}
+
+export interface PluginToggleEvent {
+  plugin_id: string;
+  enabled: boolean;
+  enabled_plugins?: string;
+}
+
 export interface CompactionFinishedEvent {
   turn_id?: number;
   source: 'manual' | 'auto';
@@ -215,24 +248,6 @@ export interface CompactionFinishedEvent {
   input_cache_read?: number;
   input_cache_creation?: number;
   trace_id?: string;
-  ahead_reminder_delivered: boolean;
-  ahead_steps_count?: number;
-  ahead_write_calls_count?: number;
-  ahead_bash_calls_count?: number;
-  ahead_todo_calls_count?: number;
-}
-
-export interface ContextBudgetReminderEvent {
-  bucket: 'half' | 'three_quarters';
-  used_tokens: number;
-  trigger_tokens: number;
-  max_tokens: number;
-}
-
-export interface CompactionAheadReminderEvent {
-  used_tokens: number;
-  trigger_tokens: number;
-  lead_tokens: number;
 }
 
 export interface CompactionFailedEvent {
@@ -272,7 +287,7 @@ export interface BackgroundTaskCompletedEvent {
 }
 
 export interface WaitForCompletedEvent {
-  outcome: 'completed' | 'timed_out' | 'task_not_found' | 'aborted';
+  outcome: 'completed' | 'timed_out' | 'task_not_found' | 'aborted' | 'interrupted';
   timeout_ms: number;
   waited_ms: number;
   has_task_id: boolean;
@@ -600,6 +615,8 @@ export const telemetryEventDefinitions = {
       provider_type: 'Provider protocol type',
       protocol: 'Request protocol',
       thinking_effort: 'Effective thinking effort the turn runs with',
+      enabled_plugins:
+        'Comma-separated sorted ids of enabled, loaded plugins when the turn starts; empty string for a known empty set, absent when no plugin snapshot is available',
     },
   }),
   turn_interrupted: defineAgentTelemetryEvent<TurnInterruptedEvent>({
@@ -631,6 +648,8 @@ export const telemetryEventDefinitions = {
       thinking_effort: 'Effective thinking effort the turn ran with',
       trace_id:
         'Trace id of the most recent LLM request in this turn; absent for non-Kimi protocols',
+      enabled_plugins:
+        'Comma-separated sorted ids of enabled, loaded plugins when the turn ends; empty string for a known empty set, absent when no plugin snapshot is available',
     },
   }),
   prompt_cache_probe: defineAgentTelemetryEvent<PromptCacheProbeEvent>({
@@ -782,6 +801,64 @@ export const telemetryEventDefinitions = {
       outcome: 'How the request was resolved',
     },
   }),
+  tower_mode_enter: defineAgentTelemetryEvent<TowerModeEnterEvent>({
+    owner: 'kimi-code',
+    comment: 'A request to enter tower mode resolves.',
+    properties: {
+      outcome: 'Whether tower mode was entered or the request was rejected',
+      reason: 'Why the request was rejected; omitted when tower mode was entered',
+    },
+  }),
+  tower_mode_exit: defineAgentTelemetryEvent<TowerModeExitEvent>({
+    owner: 'kimi-code',
+    comment: 'Tower mode is exited.',
+    properties: {
+      reason:
+        'Why tower mode was exited: the user turned it off, another session took the tower over, or a foreign tower was reconciled away',
+    },
+  }),
+  swarm_mode_entered: defineAgentTelemetryEvent<SwarmModeTransitionEvent>({
+    owner: 'kimi-code',
+    comment: 'Swarm mode is entered.',
+    properties: {
+      trigger: 'What triggered swarm mode',
+    },
+  }),
+  swarm_mode_exited: defineAgentTelemetryEvent<SwarmModeTransitionEvent>({
+    owner: 'kimi-code',
+    comment: 'Swarm mode is exited.',
+    properties: {
+      trigger: 'What originally triggered the swarm mode being exited',
+    },
+  }),
+  external_hook_resolved: defineTelemetryEvent<ExternalHookResolvedEvent>({
+    owner: 'kimi-code',
+    comment: 'An external hook trigger finishes running its matched hooks.',
+    properties: {
+      event: 'Hook event type (e.g. PreToolUse, UserPromptSubmit, Stop)',
+      action: 'Whether the trigger resolved to allow or block',
+      matched_count: 'Number of hooks that ran for the trigger',
+      failed_count: 'Number of hooks that failed (timeout, spawn error, or a non-zero exit code other than 2)',
+    },
+  }),
+  remote_control_toggle: defineTelemetryEvent<RemoteControlToggleEvent>({
+    owner: 'kimi-code',
+    comment: 'A request to toggle the Remote Control tunnel resolves.',
+    properties: {
+      enabled: 'Whether the request was to enable or disable the tunnel',
+      outcome: 'How the request resolved',
+    },
+  }),
+  plugin_toggle: defineTelemetryEvent<PluginToggleEvent>({
+    owner: 'kimi-code',
+    comment: 'An installed plugin is enabled or disabled.',
+    properties: {
+      plugin_id: 'Id of the toggled plugin',
+      enabled: 'Whether the plugin is enabled after the toggle',
+      enabled_plugins:
+        'Comma-separated sorted ids of enabled, loaded plugins after the toggle commits; empty string for a known empty set',
+    },
+  }),
   compaction_finished: defineAgentTelemetryEvent<CompactionFinishedEvent>({
     owner: 'kimi-code',
     comment: 'Context compaction completes.',
@@ -802,31 +879,6 @@ export const telemetryEventDefinitions = {
       input_cache_creation: 'Cache-creation input tokens',
       trace_id:
         'Trace id of the final compaction request round; absent for non-Kimi protocols',
-      ahead_reminder_delivered:
-        'Whether the compaction-ahead reminder had been delivered in the compacted window',
-      ahead_steps_count: 'Assistant steps taken between the compaction-ahead reminder and compaction',
-      ahead_write_calls_count: 'Write/Edit tool calls made after the compaction-ahead reminder',
-      ahead_bash_calls_count: 'Bash tool calls made after the compaction-ahead reminder',
-      ahead_todo_calls_count: 'Todo tool calls made after the compaction-ahead reminder',
-    },
-  }),
-  context_budget_reminder: defineAgentTelemetryEvent<ContextBudgetReminderEvent>({
-    owner: 'kimi-code',
-    comment: 'The model is told how much of its context budget is used, once per bucket.',
-    properties: {
-      bucket: 'Share of the compaction trigger reached: half or three_quarters',
-      used_tokens: 'Context tokens in use when the reminder was injected',
-      trigger_tokens: 'Token count at which automatic compaction triggers',
-      max_tokens: 'Effective context window size in tokens',
-    },
-  }),
-  compaction_ahead_reminder: defineAgentTelemetryEvent<CompactionAheadReminderEvent>({
-    owner: 'kimi-code',
-    comment: 'The model is warned once per window that automatic compaction is imminent.',
-    properties: {
-      used_tokens: 'Context tokens in use when the reminder was injected',
-      trigger_tokens: 'Token count at which automatic compaction triggers',
-      lead_tokens: 'Tokens between the reminder threshold and the compaction trigger',
     },
   }),
   compaction_failed: defineAgentTelemetryEvent<CompactionFailedEvent>({

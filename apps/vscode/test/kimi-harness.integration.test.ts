@@ -2,7 +2,6 @@
  * Scenario: the VS Code host and another Node SDK client share one in-process Kimi home.
  * Responsibilities: outbound host identity, config/session interoperability, MCP credential/edit compatibility, and terminal provider failures.
  * Wiring: KimiRuntime, KimiHarness, core, storage, and HTTP provider adapter are real; only the remote provider is local.
- * The runtime harness follows the extension engine decision (v2 by default, the legacy v1 under KIMI_CODE_LEGACY_FLAG).
  * Run: pnpm --filter kimi-code exec vitest run test/kimi-harness.integration.test.ts
  */
 
@@ -43,7 +42,6 @@ import { chatHandlers } from "../src/handlers/chat.handler";
 import { mcpHandlers } from "../src/handlers/mcp.handler";
 import { parseHostSlashCommand, runHostSlashCommand } from "../src/handlers/slash-command";
 import type { HandlerContext } from "../src/handlers/types";
-import { VSCodeSettings } from "../src/config/vscode-settings";
 import { KimiRuntime } from "../src/runtime/kimi-runtime";
 import type { SessionRuntime } from "../src/runtime/session-runtime";
 
@@ -108,9 +106,6 @@ async function createRuntimeRig(extraAliases: readonly string[] = []): Promise<R
   const runtime = new KimiRuntime({
     version,
     homeDir,
-    // The dual-engine CI matrix reruns this suite with KIMI_CODE_LEGACY_FLAG=1;
-    // the vscode mock above keeps the setting itself at its default.
-    useAgentCoreV1: VSCodeSettings.useAgentCoreV1,
     broadcast: (event: string, data: unknown, webviewId?: string) => {
       broadcasts.push({ event, data, webviewId });
     },
@@ -406,6 +401,33 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     ]);
   });
 
+  it("omits skills restricted to specific client scopes from the slash commands", async () => {
+    const commands = await configHandlers[Methods.GetSlashCommands]!(undefined, {
+      workDir: "/workspace",
+      harness: {
+        listWorkspaceSkills: async () => [
+          { name: "tui-only", description: "TUI only", path: "/skills/tui-only", source: "builtin", type: "inline", scopes: ["tui"] },
+          { name: "web-only", description: "Web only", path: "/skills/web-only", source: "builtin", type: "inline", scopes: ["web"] },
+          { name: "unrestricted", description: "Unrestricted", path: "/skills/unrestricted", source: "builtin", type: "inline" },
+        ],
+      },
+      logError: () => undefined,
+    } as unknown as HandlerContext);
+
+    expect((commands as Array<{ name: string }>).map((command) => command.name)).toEqual([
+      "init",
+      "compact",
+      "clear",
+      "yolo",
+      "auto",
+      "plan",
+      "add-dir",
+      "export",
+      "import",
+      "skill:unrestricted",
+    ]);
+  });
+
   it("sends the package version in User-Agent when VS Code prompts the provider", async () => {
     const rig = await createRuntimeRig();
     routeSuccessfulPrompt(rig.provider);
@@ -517,6 +539,8 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     const ctx = { ...mcpHandlerContext(rig), workDir: project } as HandlerContext;
     const call = <T>(handler: string, params: unknown) =>
       mcpHandlers[handler]!(params, ctx) as Promise<T>;
+
+    await rig.harness.trustWorkspace(project);
 
     // The initial workspace-aware list shows the project entry as read-only,
     // and every mutation's refreshed list keeps showing it (the mutation RPCs

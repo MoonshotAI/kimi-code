@@ -4,21 +4,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { MiniDb } from '../src/index.js';
+import { MiniDb, classifyStorageError } from '../src/index.js';
+import { CorruptFrameError } from '../src/codec.js';
 import { LockError } from '../src/lockfile.js';
+import { retryEperm } from '../src/rename-replace.js';
 
 async function tmpDir() {
   return fs.mkdtemp(path.join(os.tmpdir(), 'minidb-degrade-'));
 }
-
-test('openOrRebuild opens a healthy db normally', async () => {
-  const dir = await tmpDir();
-  const db = await MiniDb.openOrRebuild({ dir, valueCodec: 'string' });
-  await db.set('a', '1');
-  assert.equal(db.get('a'), '1');
-  await db.close();
-  await fs.rm(dir, { recursive: true, force: true });
-});
 
 test('openOrRebuild preserves data when only a sidecar definition file is corrupt', async () => {
   const dir = await tmpDir();
@@ -118,4 +111,48 @@ test('openOrRebuild with onLockFail readonly + a garbage WAL (strict) degrades t
     await writer.close();
     await fs.rm(dir, { recursive: true, force: true });
   }
+});
+
+test('classifyStorageError and retryEperm drive the rebuild/transient recovery policy', async () => {
+  const walDisabled = Object.assign(new Error('disabled'), { code: 'WAL_WRITE_DISABLED' });
+  const walPoisoned = Object.assign(new Error('poisoned'), { code: 'WAL_POISONED' });
+  assert.equal(classifyStorageError(walDisabled), 'rebuild');
+  assert.equal(classifyStorageError(walPoisoned), 'rebuild');
+  assert.equal(classifyStorageError(new CorruptFrameError('bad frame', 0)), 'rebuild');
+  assert.equal(classifyStorageError(new SyntaxError('unexpected token')), 'rebuild');
+  assert.equal(classifyStorageError(new AggregateError([new Error('x'), walPoisoned], 'partial')), 'rebuild');
+  assert.equal(classifyStorageError(new AggregateError([new Error('x'), new LockError('locked')], 'partial')), 'transient');
+  assert.equal(classifyStorageError(new LockError('locked')), 'transient');
+  assert.equal(classifyStorageError(Object.assign(new Error('perm'), { code: 'EPERM' })), 'transient');
+  assert.equal(classifyStorageError(new Error('unknown')), 'transient');
+
+  const eperm = () => Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+  let attempts = 0;
+  const recovered = await retryEperm(async () => {
+    attempts += 1;
+    if (attempts < 3) throw eperm();
+    return 'ok';
+  }, { baseDelayMs: 1 });
+  assert.equal(recovered, 'ok');
+  assert.equal(attempts, 3);
+
+  attempts = 0;
+  await assert.rejects(
+    retryEperm(async () => {
+      attempts += 1;
+      throw new Error('not eperm');
+    }),
+    /not eperm/,
+  );
+  assert.equal(attempts, 1);
+
+  attempts = 0;
+  await assert.rejects(
+    retryEperm(async () => {
+      attempts += 1;
+      throw eperm();
+    }, { retries: 2, baseDelayMs: 1 }),
+    /operation not permitted/,
+  );
+  assert.equal(attempts, 3);
 });

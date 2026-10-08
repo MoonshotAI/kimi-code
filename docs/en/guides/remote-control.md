@@ -2,8 +2,6 @@
 
 Start Kimi Code CLI with remote control enabled by running `kimi rc` in a terminal — it generates a link that can remotely control this machine. Scan the QR code with your phone to open the link, or visit it directly on another device. After opening the link, log in with the same Kimi account as in your local Kimi Code CLI to check on task progress, handle approvals, continue conversations, or start new sessions. Tasks always run on your machine — the web page is just a remote window.
 
-> Remote Control is currently an experimental feature and requires an environment variable to enable; the interface and behavior are subject to the final release.
-
 ## Getting started
 
 ### Prerequisites
@@ -13,19 +11,6 @@ Before turning on Remote Control, make sure your machine meets the following con
 - **Kimi Code CLI installed**: see [Getting started](../guides/getting-started.md)
 - **Logged in to your Kimi account with a paid membership**: Remote Control requires a paid membership and is not available to free users
 - **Machine stays awake and online**: Remote Control depends on a persistent connection between your machine and the Kimi service; remote sessions are unavailable after shutdown, sleep, or network loss
-- **Experimental flag enabled**: set the environment variable with `export` (or use `KIMI_CODE_EXPERIMENTAL_FLAG=1` to enable all experimental features):
-
-  ```sh
-  export KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL=1
-  # or enable all experimental features
-  export KIMI_CODE_EXPERIMENTAL_FLAG=1
-  ```
-
-  The `export` above only applies to the current terminal session. If you use Remote Control regularly, persist it in your shell configuration file (e.g. `~/.zshrc`):
-
-  ```sh
-  echo 'export KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL=1' >> ~/.zshrc
-  ```
 
 ### Step 1: Start Remote Control
 
@@ -35,7 +20,7 @@ Start it on your machine in any of the following ways — they are equivalent: e
 - **`kimi web --remote-control`**: equivalent to `kimi rc` — starts the local web interface and exposes it to the public internet at the same time
 - **`/remote-control`** (alias `/rc`): use while already in a CLI session to hand the current session over to the remote interface
 
-Once started, the terminal prints the access URL (like `https://code-rc.kimi.com/devices/<device ID>/`), a QR code, and the device name (the machine's hostname), and the default browser opens the URL automatically (use `--no-open` to skip). Besides the terminal rendering, the QR code is also saved as a PNG file (the path is printed in the startup output) — if the QR code doesn't render properly in your terminal, open that file instead.
+Once started, the terminal prints the access URL (like `https://code-rc.kimi.com/devices/<device ID>/` for a mainland-cn login, or `https://code-rc.kimi.ai/devices/<device ID>/` after `kimi login --region global`), a QR code, and the device name (the machine's hostname), and the default browser opens the URL automatically (use `--no-open` to skip). Besides the terminal rendering, the QR code is also saved as a PNG file (the path is printed in the startup output) — if the QR code doesn't render properly in your terminal, open that file instead.
 
 ![Terminal output after starting kimi rc: QR code and connection status](../../media/kimi-rc-banner.jpg)
 

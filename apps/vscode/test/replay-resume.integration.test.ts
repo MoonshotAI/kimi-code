@@ -8,6 +8,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import {
   createKimiHarness,
@@ -72,11 +73,28 @@ async function createReplayRig(): Promise<ReplayRig> {
       try {
         await provider.close();
       } finally {
-        await rm(rootDir, { recursive: true, force: true });
+        await removeTempDir(rootDir);
       }
     }
   });
   return { rootDir, workDir, harness, provider };
+}
+
+async function removeTempDir(dir: string): Promise<void> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      await rm(dir, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOTEMPTY" && code !== "EBUSY" && code !== "EPERM") {
+        throw error;
+      }
+      await delay(10);
+    }
+  }
+
+  await rm(dir, { recursive: true, force: true });
 }
 
 function completionChunk(
