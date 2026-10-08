@@ -660,7 +660,6 @@ describe('swarm context reconciliation', () => {
       ctx.mockNextResponse({ type: 'text', text: 'second answer' });
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'second prompt' }] });
       await ctx.untilTurnEnd();
-      await ctx.get(IAgentLoopService).settled();
 
       await ctx.undoHistory(1);
       ctx.mockNextResponse({ type: 'text', text: 'third answer' });

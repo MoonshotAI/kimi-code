@@ -977,6 +977,16 @@ describe('Agent loop', () => {
     expect(loop.hasTurnActivity()).toBe(false);
   });
 
+  it('exposes a quiescence lease once the turn.ended event is observable', async () => {
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'go' }] });
+    await ctx.untilTurnEnd();
+
+    const lease = loop.tryAcquireQuiescence();
+    expect(lease).toBeDefined();
+    lease?.dispose();
+  });
+
   it('holds new admissions until an idle quiescence lease is released', async () => {
     const lease = loop.tryAcquireQuiescence();
     expect(lease).toBeDefined();
@@ -1651,7 +1661,6 @@ describe('turn telemetry', () => {
       });
       await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
       await local.untilTurnEnd();
-      await local.get(IAgentLoopService).settled();
 
       local.appendExchange(2, 'old user two', 'old assistant two', 80);
       local.mockNextProviderResponse({
@@ -1985,7 +1994,6 @@ describe('interruption reminder', () => {
     const subscription = cancelOnFirstDelta();
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
     await ctx.untilTurnEnd();
-    await ctx.get(IAgentLoopService).settled();
     subscription.dispose();
     expect(interruptionReminders()).toHaveLength(1);
 

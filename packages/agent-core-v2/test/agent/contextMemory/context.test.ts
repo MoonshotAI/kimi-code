@@ -3,7 +3,6 @@ import type { ToolCall } from '#human/llm/message';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { estimateTokens, estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
-import { IAgentLoopService } from '#/agent/loop/loop';
 import { buildImageCompressionCaption } from '#/agent/media/image-compress';
 import {
   buildContextCompactionShape,
@@ -693,7 +692,6 @@ describe('Agent context', () => {
       input: [{ type: 'text', text: `inspect this image ${caption}` }],
     });
     await ctx.untilTurnEnd();
-    await ctx.get(IAgentLoopService).settled();
 
     expect(context.get()).toMatchObject([
       {

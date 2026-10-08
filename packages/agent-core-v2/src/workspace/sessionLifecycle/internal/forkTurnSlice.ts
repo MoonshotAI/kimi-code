@@ -103,13 +103,30 @@ export function capForkRecordsAtActiveTurn(
     records[turnStarts[lastCompleted]!]!,
   );
   if (completedAt === -1) return records;
+  let openTurnStart = -1;
+  let openShellInput = false;
   for (let index = completedAt + 1; index < records.length; index += 1) {
-    const type = records[index]!.type;
-    if (type === 'agent.turn.started' || type === 'turn.prompt') {
-      return records.slice(0, index);
+    const record = records[index]!;
+    if (openTurnStart === -1) {
+      if (isEngineTurnStartRecord(record) || isUserVisibleTurnRecord(record)) {
+        openTurnStart = index;
+        openShellInput = isShellCommandTurnStart(record);
+      }
+      continue;
+    }
+    if (record.type === 'turn.ended') {
+      openTurnStart = -1;
+      continue;
+    }
+    if (isShellCommandTurnStart(record)) {
+      openShellInput = true;
+      continue;
+    }
+    if (openShellInput && isShellCommandOutputRecord(record)) {
+      openTurnStart = -1;
     }
   }
-  return records;
+  return openTurnStart === -1 ? records : records.slice(0, openTurnStart);
 }
 
 export type ForkPromptResolution =
@@ -311,13 +328,23 @@ function turnOutcomeOfRecords(
 ): 'completed' | 'cancelled' | 'failed' | undefined {
   for (let index = records.length - 1; index >= 0; index -= 1) {
     const record = records[index]!;
-    if (record.type !== 'turn.ended') continue;
-    const reason = record['reason'];
-    if (reason === 'completed' || reason === 'cancelled') return reason;
-    if (reason === 'failed' || reason === 'blocked') return 'failed';
-    return undefined;
+    if (record.type === 'turn.ended') {
+      const reason = record['reason'];
+      if (reason === 'completed' || reason === 'cancelled') return reason;
+      if (reason === 'failed' || reason === 'blocked') return 'failed';
+      return undefined;
+    }
+    if (isEngineTurnStartRecord(record) || isUserVisibleTurnRecord(record)) return undefined;
   }
   return undefined;
+}
+
+function isEngineTurnStartRecord(record: WireRecord): boolean {
+  return (
+    record.type === 'turn.prompt' ||
+    record.type === 'turn.steer' ||
+    record.type === 'agent.turn.started'
+  );
 }
 
 function promptMetadataFromTurnRecord(record: WireRecord): string | undefined {

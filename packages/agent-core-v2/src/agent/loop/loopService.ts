@@ -151,6 +151,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private machineTurnSuppressed = false;
   private readonly settleWaiters: Array<() => void> = [];
   private quiescenceDepth = 0;
+  private pendingTurnCloses = 0;
   private pendingFinalizations = 0;
   private activeRequestTrace: LLMRequestTrace | undefined;
   private engine: MachineEngine | undefined;
@@ -770,7 +771,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       this.active !== undefined ||
       this.hasPendingRequests() ||
       this.pendingMachineTurn !== undefined ||
-      this.pendingFinalizations > 0
+      this.pendingTurnCloses > 0
     ) {
       return undefined;
     }
@@ -784,7 +785,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       this.active !== undefined ||
       this.hasPendingRequests() ||
       this.pendingMachineTurn !== undefined ||
-      this.pendingFinalizations > 0
+      this.pendingTurnCloses > 0
     );
   }
 
@@ -2043,6 +2044,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private async endTurn(turn: ActiveTurn, result: TurnResult): Promise<void> {
     if (this.active !== turn) return;
     this.active = undefined;
+    this.pendingTurnCloses += 1;
     this.pendingFinalizations += 1;
     try {
       await this.wire.drainPersisted().catch(() => undefined);
@@ -2113,11 +2115,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       this.telemetry.setContext({ turn_id: undefined, trace_id: undefined, thinking_effort: undefined });
       this.activeRequestTrace = undefined;
       this.lastRequestTraceId = undefined;
+    } finally {
+      this.pendingTurnCloses -= 1;
+    }
+    try {
       await this.dispatcher.flush().catch(() => undefined);
+      turn.result.resolve(result);
     } finally {
       this.pendingFinalizations -= 1;
     }
-    turn.result.resolve(result);
     this.maybeSettle();
   }
 

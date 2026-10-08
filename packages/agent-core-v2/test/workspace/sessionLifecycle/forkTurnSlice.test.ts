@@ -116,6 +116,21 @@ describe('sliceMainRecordsAtTurn lastTurnReason', () => {
     expect(sliceMainRecordsAtTurn(records, 'ses_source', 0).lastTurnReason).toBeUndefined();
     expect(sliceMainRecordsAtTurn(records, 'ses_source', 1).lastTurnReason).toBe('completed');
   });
+
+  it('returns undefined when a later steered turn is cut before its terminal record', () => {
+    const records: WireRecord[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      userTurnRecord('first', 2),
+      turnEndedRecord(0, 3, 'completed'),
+      userTurnRecord('original prompt', 4),
+      { type: 'turn.steer', turnId: 1, messageId: 'msg_steer', origin: { kind: 'user' }, time: 5 },
+      userTurnRecord('steered input', 6),
+      turnEndedRecord(1, 7),
+    ];
+    expect(sliceMainRecordsAtTurn(records, 'ses_source', 0).lastTurnReason).toBe('completed');
+    expect(sliceMainRecordsAtTurn(records, 'ses_source', 1).lastTurnReason).toBeUndefined();
+    expect(sliceMainRecordsAtTurn(records, 'ses_source', 2).lastTurnReason).toBe('completed');
+  });
 });
 
 describe('resolveForkPromptIndex', () => {
@@ -238,6 +253,64 @@ describe('capForkRecordsAtActiveTurn', () => {
       { type: 'metadata', protocol_version: '1.5', created_at: 1 },
       userTurnRecord('done', 2, 'p1'),
       turnEndedRecord(0, 3),
+    ];
+    expect(capForkRecordsAtActiveTurn(records, 0)).toBe(records);
+  });
+
+  it('keeps completed continuation turns before the active turn', () => {
+    const records: WireRecord[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      userTurnRecord('done', 2, 'p1'),
+      turnEndedRecord(0, 3),
+      {
+        type: 'turn.prompt',
+        turnId: 1,
+        origin: { kind: 'system_trigger', name: 'goal_continuation' },
+        time: 4,
+      },
+      { type: 'agent.turn.started', turnId: 1, time: 5 },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'continuation reply' }],
+        },
+        time: 6,
+      },
+      turnEndedRecord(1, 7),
+      {
+        type: 'turn.prompt',
+        turnId: 2,
+        origin: { kind: 'system_trigger', name: 'goal_continuation' },
+        time: 8,
+      },
+      { type: 'agent.turn.started', turnId: 2, time: 9 },
+    ];
+    const capped = capForkRecordsAtActiveTurn(records, 0);
+    expect(capped.map((record) => record.type)).toEqual([
+      'metadata',
+      'context.append_message',
+      'turn.ended',
+      'turn.prompt',
+      'agent.turn.started',
+      'context.append_message',
+      'turn.ended',
+    ]);
+  });
+
+  it('keeps the records when every turn after the last completed one has completed', () => {
+    const records: WireRecord[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      userTurnRecord('done', 2, 'p1'),
+      turnEndedRecord(0, 3),
+      {
+        type: 'turn.prompt',
+        turnId: 1,
+        origin: { kind: 'system_trigger', name: 'goal_continuation' },
+        time: 4,
+      },
+      { type: 'agent.turn.started', turnId: 1, time: 5 },
+      turnEndedRecord(1, 6),
     ];
     expect(capForkRecordsAtActiveTurn(records, 0)).toBe(records);
   });
