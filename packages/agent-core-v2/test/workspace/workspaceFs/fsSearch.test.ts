@@ -88,6 +88,14 @@ describe('globCanMatchBelow', () => {
     expect(globCanMatchBelow('ignored-dir/sub', ['ignored-dir/nested/keep.txt'])).toBe(false);
   });
 
+  it('handles brace and single-segment constructs via whole-pattern parsing', () => {
+    expect(globCanMatchBelow('ignored-a', ['{ignored-a/keep.txt,other}'])).toBe(true);
+    expect(globCanMatchBelow('a', ['{a,b}/keep.txt'])).toBe(true);
+    expect(globCanMatchBelow('c', ['{a,b}/keep.txt'])).toBe(false);
+    expect(globCanMatchBelow('src', ['keep.txt'])).toBe(false);
+    expect(globCanMatchBelow('anything', ['**'])).toBe(true);
+  });
+
   it('handles deeply segmented globs without exhausting the call stack', () => {
     expect(globCanMatchBelow('a/b', [`${'**/'.repeat(5000)}keep.txt`])).toBe(true);
     expect(globCanMatchBelow('a/b', [`${'x/'.repeat(5000)}keep.txt`])).toBe(false);

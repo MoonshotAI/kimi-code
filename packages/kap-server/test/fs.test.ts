@@ -322,6 +322,13 @@ describe('server-v2 /api/v1 fs routes', () => {
       allow_ignored_globs: ['ignored-dir/**/keep.txt'],
     });
     expect(leaf.data.items.map((i) => i.name)).toEqual(['keep.txt']);
+
+    const brace = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {
+      allow_ignored_globs: ['{ignored-a/keep.txt,other}'],
+    });
+    const braceNames = brace.data.items.map((i) => i.name);
+    expect(braceNames).toContain('ignored-a');
+    expect(braceNames).not.toContain('ignored-b');
   });
 
   it('fs:mkdir creates a directory and rejects duplicates', async () => {

@@ -47,7 +47,12 @@ export function matchesAnyGlob(rel: string, globs: readonly string[]): boolean {
 export function globCanMatchBelow(rel: string, globs: readonly string[]): boolean {
   const relSegments = rel.split('/');
   for (const g of globs) {
-    if (globSegmentsMatchPrefix(g.split('/'), relSegments)) return true;
+    const parts = picomatch.scan(g, { parts: true }).parts ?? [];
+    if (parts.length === 0) {
+      if (g === '**' || g.includes('/')) return true;
+      continue;
+    }
+    if (globSegmentsMatchPrefix(parts, relSegments)) return true;
   }
   return false;
 }

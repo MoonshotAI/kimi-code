@@ -75,6 +75,8 @@ import {
 } from './internal/fsSearch';
 
 const SEARCH_HARD_CAP = 500;
+const PROBE_MAX_DEPTH = 6;
+const PROBE_MAX_ENTRIES = 500;
 const GREP_TIMEOUT_MS = 30_000;
 const SUGGEST_TIMEOUT_MS = 10_000;
 const SUGGEST_WALK_ABORTED = new Error('suggest walk aborted');
@@ -156,6 +158,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
 
     const items: FsEntry[] = [];
     const childrenByPath: Record<string, FsEntry[]> = {};
+    const probeBudget = { visited: 0 };
     let truncated = false;
 
     interface QueueEntry {
@@ -201,7 +204,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         if (st === undefined || (ancestorOfAllowed && !st.isDirectory)) continue;
         if (
           ancestorOfAllowed &&
-          !(await this.hasAllowedDescendant(childRel, req.allow_ignored_globs!, req.exclude_globs, req.show_hidden))
+          !(await this.hasAllowedDescendant(childRel, req.allow_ignored_globs!, req.exclude_globs, req.show_hidden, probeBudget))
         ) continue;
         visible.push({ name, relPath: childRel, stat: st });
       }
@@ -242,12 +245,10 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     globs: readonly string[],
     excludeGlobs: readonly string[] | undefined,
     showHidden: boolean,
+    budget: { visited: number },
   ): Promise<boolean> {
-    const MAX_PROBE_DEPTH = 6;
-    const MAX_PROBE_ENTRIES = 500;
-    let visited = 0;
     const walk = async (rel: string, depth: number): Promise<boolean> => {
-      if (depth > MAX_PROBE_DEPTH || visited >= MAX_PROBE_ENTRIES) return true;
+      if (depth > PROBE_MAX_DEPTH || budget.visited >= PROBE_MAX_ENTRIES) return true;
       let names: readonly string[];
       try {
         names = (await this.hostFs.readdir(this.absOf(rel))).map((e) => e.name);
@@ -255,8 +256,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         return false;
       }
       for (const name of names) {
-        if (visited >= MAX_PROBE_ENTRIES) return true;
-        visited += 1;
+        if (budget.visited >= PROBE_MAX_ENTRIES) return true;
+        budget.visited += 1;
         if (!showHidden && isHidden(name)) continue;
         const childRel = `${rel}/${name}`;
         if (excludeGlobs !== undefined && matchesAnyGlob(childRel, excludeGlobs)) continue;
