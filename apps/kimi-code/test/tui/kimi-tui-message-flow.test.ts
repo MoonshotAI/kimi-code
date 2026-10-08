@@ -9295,8 +9295,8 @@ describe('KimiTUI session rating survey', () => {
       harness.track.mockClear();
 
       for (let turn = 1; turn <= 4; turn++) emitTurn(driver, turn);
-      vi.advanceTimersByTime(600_000);
-      vi.advanceTimersByTime(2_000);
+      await vi.advanceTimersByTimeAsync(600_000);
+      await vi.advanceTimersByTimeAsync(2_000);
       expect(driver.state.surveyContainer.children).toHaveLength(0);
 
       emitTurn(driver, 5, () => {
@@ -9325,7 +9325,7 @@ describe('KimiTUI session rating survey', () => {
           () => {},
         );
       });
-      vi.advanceTimersByTime(2_000);
+      await vi.advanceTimersByTimeAsync(2_000);
       const docked = stripSgr(driver.state.surveyContainer.render(120).join('\n'));
       expect(docked).toContain('How is Kimi doing this session? (optional)');
       expect(docked).toContain('1: Bad  2: Fine  3: Good  0: Dismiss');
@@ -9365,13 +9365,13 @@ describe('KimiTUI session rating survey', () => {
       ).appearance_id;
 
       driver.state.editor.handleInput('1');
-      vi.advanceTimersByTime(400);
+      await vi.advanceTimersByTimeAsync(400);
       expect(harness.trackWithContext).toHaveBeenCalledTimes(1);
 
-      vi.advanceTimersByTime(600);
+      await vi.advanceTimersByTimeAsync(600);
       driver.state.editor.setText('');
       driver.state.editor.handleInput('1');
-      vi.advanceTimersByTime(400);
+      await vi.advanceTimersByTimeAsync(400);
       expect(driver.state.editor.getText()).toBe('');
       expect(stripSgr(driver.state.surveyContainer.render(120).join('\n'))).toContain(
         'Feedback: Bad · [escape: undo]',
@@ -9379,7 +9379,7 @@ describe('KimiTUI session rating survey', () => {
       expect(harness.trackWithContext).toHaveBeenCalledTimes(1);
 
       driver.state.editor.handleInput('\u001B');
-      vi.advanceTimersByTime(3_000);
+      await vi.advanceTimersByTimeAsync(3_000);
       expect(harness.trackWithContext).toHaveBeenCalledTimes(1);
       expect(stripSgr(driver.state.surveyContainer.render(120).join('\n'))).toContain(
         'How is Kimi doing this session? (optional)',
@@ -9387,8 +9387,8 @@ describe('KimiTUI session rating survey', () => {
 
       driver.state.editor.setText('');
       driver.state.editor.handleInput('3');
-      vi.advanceTimersByTime(400);
-      vi.advanceTimersByTime(3_000);
+      await vi.advanceTimersByTimeAsync(400);
+      await vi.advanceTimersByTimeAsync(3_000);
       const responded = harness.trackWithContext.mock.calls
         .filter(
           (call) =>
@@ -9402,7 +9402,7 @@ describe('KimiTUI session rating survey', () => {
       expect(stripSgr(driver.state.surveyContainer.render(120).join('\n'))).toContain(
         'Thanks for your feedback!',
       );
-      vi.advanceTimersByTime(5_000);
+      await vi.advanceTimersByTimeAsync(5_000);
       expect(driver.state.surveyContainer.children).toHaveLength(0);
 
       vi.useRealTimers();
@@ -9493,7 +9493,7 @@ describe('KimiTUI session rating survey', () => {
           () => {},
         );
       });
-      vi.advanceTimersByTime(2_000);
+      await vi.advanceTimersByTimeAsync(2_000);
 
       expect(stripSgr(driver.state.surveyContainer.render(120).join('\n'))).toContain(
         'How is Kimi doing this session? (optional)',
@@ -9554,16 +9554,16 @@ describe('KimiTUI session rating survey', () => {
         stale: false,
       };
 
-      vi.advanceTimersByTime(600_000);
+      await vi.advanceTimersByTimeAsync(600_000);
       for (let turn = 1; turn <= 5; turn++) {
         emit({ type: 'turn.started', agentId: 'main', turnId: turn, origin: cronOrigin } as Event);
         emit({ type: 'turn.ended', agentId: 'main', turnId: turn, reason: 'completed' } as Event);
       }
-      vi.advanceTimersByTime(2_000);
+      await vi.advanceTimersByTimeAsync(2_000);
       expect(driver.state.surveyContainer.children).toHaveLength(0);
 
       for (let turn = 6; turn <= 10; turn++) emitTurn(driver, turn);
-      vi.advanceTimersByTime(2_000);
+      await vi.advanceTimersByTimeAsync(2_000);
       expect(driver.state.surveyContainer.children).not.toHaveLength(0);
 
       vi.useRealTimers();
@@ -9593,7 +9593,7 @@ describe('KimiTUI session rating survey', () => {
         driver.sessionEventHandler.handleEvent(event, () => {});
       };
 
-      vi.advanceTimersByTime(600_000);
+      await vi.advanceTimersByTimeAsync(600_000);
       for (let turn = 1; turn <= 5; turn++) {
         emit({
           type: 'turn.started',
@@ -9608,7 +9608,7 @@ describe('KimiTUI session rating survey', () => {
         } as Event);
         emit({ type: 'turn.ended', agentId: 'main', turnId: turn, reason: 'completed' } as Event);
       }
-      vi.advanceTimersByTime(2_000);
+      await vi.advanceTimersByTimeAsync(2_000);
       expect(driver.state.surveyContainer.children).toHaveLength(0);
 
       for (let turn = 6; turn <= 8; turn++) {
@@ -9640,7 +9640,7 @@ describe('KimiTUI session rating survey', () => {
         } as Event);
         emit({ type: 'turn.ended', agentId: 'main', turnId: turn, reason: 'completed' } as Event);
       }
-      vi.advanceTimersByTime(2_000);
+      await vi.advanceTimersByTimeAsync(2_000);
       expect(driver.state.surveyContainer.children).not.toHaveLength(0);
 
       vi.useRealTimers();

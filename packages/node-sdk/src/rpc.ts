@@ -4,7 +4,7 @@ import type { SwarmModeTrigger } from '@moonshot-ai/agent-core-v2/features/swarm
 import type { Kaos } from '@moonshot-ai/kaos';
 
 import type { AgentContextData } from '#/context';
-import { ErrorCodes, makeErrorPayload } from '#/errors';
+import { ErrorCodes, KimiError, makeErrorPayload } from '#/errors';
 import type {
   ApprovalHandler,
   Event,
@@ -385,7 +385,13 @@ export abstract class SDKRpcClientBase {
 
   abstract getContext(input: SessionIdRpcInput): Promise<AgentContextData>;
 
-  abstract readMainAgentLog(input: SessionIdRpcInput): Promise<readonly SessionLogRecord[]>;
+  async readMainAgentLog(input: SessionIdRpcInput): Promise<readonly SessionLogRecord[]> {
+    void input;
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'readMainAgentLog is not implemented by this engine',
+    );
+  }
 
   abstract getUsage(input: SessionIdRpcInput): Promise<SessionUsage>;
 

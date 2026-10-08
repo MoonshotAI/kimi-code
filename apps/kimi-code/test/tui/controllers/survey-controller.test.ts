@@ -2902,6 +2902,24 @@ describe('SurveyController session user turns', () => {
     expect(trackedEvent(harness, 'appeared')).toMatchObject({ user_turn_count: 20 });
   });
 
+  it('waits for an in-flight log read before opening', async () => {
+    let ready = false;
+    const harness = createHarness({
+      mainAgentLog: () => loggedUserTurns(20),
+      mainAgentLogReady: () => ready,
+    });
+    await harness.flush();
+    harness.appear();
+    expect(harness.container.children).toHaveLength(0);
+    expect(harness.track).not.toHaveBeenCalled();
+
+    ready = true;
+    harness.runTurns(1);
+    harness.elapse(2000);
+    expect(harness.container.children).not.toHaveLength(0);
+    expect(trackedEvent(harness, 'appeared')).toMatchObject({ user_turn_count: 20 });
+  });
+
   it('carries the open-time count into responded and abandoned of the same appearance', async () => {
     const respondedLog = loggedUserTurns(5);
     const responded = createHarness({ mainAgentLog: () => respondedLog });

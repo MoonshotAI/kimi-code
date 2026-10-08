@@ -116,6 +116,7 @@ export interface SurveyControllerDeps {
   readonly readGlobalLastShown?: () => Promise<number | undefined>;
   readonly writeGlobalLastShown?: (wallTime: number) => void;
   readonly mainAgentLog?: () => readonly SessionLogRecord[] | undefined;
+  readonly mainAgentLogReady?: () => boolean;
 }
 
 const defaultDeps = {
@@ -136,6 +137,7 @@ const defaultDeps = {
   readGlobalLastShown: readSurveyLastShownTime,
   writeGlobalLastShown: writeSurveyLastShownTime,
   mainAgentLog: () => undefined,
+  mainAgentLogReady: () => true,
 } satisfies Omit<
   Required<SurveyControllerDeps>,
   'feedbackSurveyDisabled' | 'refreshConfig' | 'accessToken'
@@ -463,6 +465,7 @@ export class SurveyController {
     if (this.machine.phase !== 'closed') return;
     if (!this.configReady) return;
     if (!this.cooldownReady) return;
+    if (!(this.deps.mainAgentLogReady ?? defaultDeps.mainAgentLogReady)()) return;
     const region = (this.deps.configRegion ?? defaultDeps.configRegion)();
     const cacheCold = !(this.deps.configFresh ?? defaultDeps.configFresh)();
     if (

@@ -397,6 +397,7 @@ export class KimiTUI {
   readonly editorKeyboard: EditorKeyboardController;
   private mainAgentLogCache: readonly SessionLogRecord[] | undefined;
   private mainAgentLogReadSeq = 0;
+  private mainAgentLogReadInFlight = false;
   private lastTurnUserOrigin = false;
 
   /** Timer that auto-clears the one-shot "moved to background" footer hint. */
@@ -512,6 +513,7 @@ export class KimiTUI {
       accessToken: () => this.harness.auth.getCachedAccessToken(),
       telemetryDisabled: () => isTelemetryDisabledByEnv() || this.telemetryDisabled,
       mainAgentLog: () => this.mainAgentLogCache,
+      mainAgentLogReady: () => !this.mainAgentLogReadInFlight,
     });
     this.editorKeyboard = new EditorKeyboardController(this, this.imageStore);
     this.editorKeyboard.install();
@@ -1803,9 +1805,12 @@ export class KimiTUI {
   }
 
   private refreshMainAgentLog(): void {
+    if (this.telemetryDisabled || isTelemetryDisabledByEnv()) return;
+    if (this.state.appState.disableFeedbackSurvey === true) return;
     const session = this.session;
     if (session === undefined) return;
     const seq = ++this.mainAgentLogReadSeq;
+    this.mainAgentLogReadInFlight = true;
     void session
       .readMainAgentLog()
       .then((log) => {
@@ -1814,6 +1819,9 @@ export class KimiTUI {
       })
       .catch((error: unknown) => {
         log.warn('main agent log read failed', { error });
+      })
+      .finally(() => {
+        if (seq === this.mainAgentLogReadSeq) this.mainAgentLogReadInFlight = false;
       });
   }
 
@@ -2754,6 +2762,7 @@ export class KimiTUI {
     this.surveyController.reset();
     this.mainAgentLogCache = undefined;
     this.mainAgentLogReadSeq += 1;
+    this.mainAgentLogReadInFlight = false;
     this.streamingUI.discardPending();
     this.clearQueuedMessages();
     this.state.swarmModeEntry = undefined;
