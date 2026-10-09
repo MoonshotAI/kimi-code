@@ -1,1 +1,0 @@
-tap02 acceptance: tool action probe on latest base, token-free inbox frontmatter verified.
