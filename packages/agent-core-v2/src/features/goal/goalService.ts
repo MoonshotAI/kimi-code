@@ -732,7 +732,7 @@ function launchContinuationTurn(context: GoalOperationContext, goalId: string, s
   const loop = context.runtime.get(IAgentLoopService);
   const { id } = loop.submit({
     message: { role: 'user', content: message.content },
-    meta: { origin: message.origin },
+    meta: { origin: message.origin, gated: true },
   });
   const handle = loop.promptHandle(id)!;
   const pending: PendingContinuation = { promptId: id, goalId };
@@ -741,10 +741,16 @@ function launchContinuationTurn(context: GoalOperationContext, goalId: string, s
     pending.turn = launchedTurn;
     pending.turnId = launchedTurn?.id;
   }).catch(() => undefined);
-  void handle.completion.finally(() => {
+  void handle.completion.then((completion) => {
+    const isCurrent = context.effects.pendingContinuation === pending;
     if (pending.turnId !== undefined) context.effects.pendingContinuationGoals.delete(pending.turnId);
-    if (context.effects.pendingContinuation === pending) context.effects.pendingContinuation = undefined;
-  });
+    if (isCurrent) context.effects.pendingContinuation = undefined;
+    if (completion.state === 'blocked' && isCurrent) {
+      void markBlocked(context, { reason: 'Blocked by UserPromptSubmit hook' }).catch(
+        () => undefined,
+      );
+    }
+  }).catch(() => undefined);
 }
 
 function canLaunchContinuation(context: GoalOperationContext): boolean {

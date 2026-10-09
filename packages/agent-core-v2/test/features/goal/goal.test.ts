@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PassThrough, Readable, type Writable } from 'node:stream';
 
 import { isUserCancellation } from '#/_base/utils/abort';
@@ -65,6 +68,7 @@ import { stubLoopWithHooks, type StubLoop, type StubTurn } from '../../agent/loo
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
 import { stubAgentSwarm } from './stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
+import { makeHookRunner } from '../externalHooks/runner-stub';
 
 function createUnrestoredTestAgent(
   ...inputs: readonly (TestAgentServiceOverride | TestAgentOptions)[]
@@ -2841,6 +2845,110 @@ describe('AgentGoalService WaitFor flag', () => {
         expect(call.tools.map((tool) => tool.name)).not.toContain('WaitFor');
       }
       expect((await ctx.rpc.getGoal({})).goal).toBeNull();
+    } finally {
+      await ctx.dispose();
+    }
+  });
+});
+
+function nodeCommand(source: string): string {
+  return `node -e ${JSON.stringify(source.replaceAll(/\s*\n\s*/g, ' '))}`;
+}
+
+function readHookLog(path: string): Array<Record<string, unknown>> {
+  if (!existsSync(path)) return [];
+  return readFileSync(path, 'utf8')
+    .trim()
+    .split('\n')
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+describe('AgentGoalService external hook integration', () => {
+  it('fires the UserPromptSubmit hook for goal continuation turns', { timeout: 30_000 }, async () => {
+    const logPath = join(mkdtempSync(join(tmpdir(), 'goal-hook-log-')), 'events.jsonl');
+    const ctx = createTestAgent({
+      hookEngine: makeHookRunner([
+        {
+          event: 'UserPromptSubmit',
+          command: nodeCommand([
+            'let input = "";',
+            'process.stdin.on("data", (chunk) => { input += chunk; });',
+            'process.stdin.on("end", () => {',
+            '  const parsed = input.length === 0 ? {} : JSON.parse(input);',
+            '  require("node:fs").appendFileSync(',
+            `    ${JSON.stringify(logPath)},`,
+            '    JSON.stringify(parsed) + String.fromCharCode(10),',
+            '  );',
+            '});',
+          ].join('\n')),
+          timeout: 10,
+        },
+      ]),
+    });
+    try {
+      ctx.configure();
+      await ctx.restorePersisted();
+      await ctx.rpc.createGoal({ objective: 'finish bounded work' });
+
+      ctx.mockNextResponse({ type: 'text', text: 'slice done' });
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'ug_1',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status: 'complete' }),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start work' }] });
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(3), { timeout: 15_000 });
+      await vi.waitFor(async () => {
+        expect((await ctx.rpc.getGoal({})).goal).toBeNull();
+      }, { timeout: 15_000 });
+
+      const submitted = readHookLog(logPath).filter(
+        (entry) => entry['hook_event_name'] === 'UserPromptSubmit',
+      );
+      expect(submitted).toHaveLength(2);
+      expect(submitted[0]?.['origin_kind']).toBe('user');
+      expect(submitted[0]?.['origin_name']).toBeUndefined();
+      for (const entry of submitted.slice(1)) {
+        expect(entry['origin_kind']).toBe('system_trigger');
+        expect(entry['origin_name']).toBe('goal_continuation');
+        expect(JSON.stringify(entry['prompt'])).toContain('Continue working toward the active goal');
+      }
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('marks the goal blocked when the UserPromptSubmit hook blocks a goal continuation', { timeout: 30_000 }, async () => {
+    const ctx = createTestAgent({
+      hookEngine: makeHookRunner([
+        {
+          event: 'UserPromptSubmit',
+          command: nodeCommand('process.stderr.write("outside working hours"); process.exit(2);'),
+          timeout: 10,
+        },
+      ]),
+    });
+    try {
+      ctx.configure();
+      await ctx.restorePersisted();
+      const goals = ctx.get(IAgentGoalService);
+      await goals.createGoal({ objective: 'finish bounded work' });
+      await goals.markBlocked({ reason: 'need credentials' });
+      await goals.resumeGoal({ continueIfBlocked: true });
+
+      await vi.waitFor(
+        () =>
+          expect(goals.getGoal().goal).toMatchObject({
+            status: 'blocked',
+            terminalReason: 'Blocked by UserPromptSubmit hook',
+          }),
+        { timeout: 15_000 },
+      );
+      expect(ctx.llmCalls).toHaveLength(0);
     } finally {
       await ctx.dispose();
     }

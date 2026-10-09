@@ -7,7 +7,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentTaskService, type AgentTaskInfo, type AgentTaskNotificationContext } from '#/agent/task/task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
+import { USER_PROMPT_ORIGIN, type PromptOrigin } from '#/agent/contextMemory/types';
 import {
   IAgentFullCompactionService,
   type FullCompactionTask,
@@ -335,7 +335,8 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
   private async runPromptSubmitHook(
     ctx: PromptSubmitContext,
   ): Promise<boolean> {
-    if ((ctx.promptMessage.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return false;
+    const origin = ctx.promptMessage.origin ?? USER_PROMPT_ORIGIN;
+    if (!isPromptSubmitOrigin(origin)) return false;
 
     const signal = new AbortController().signal;
     const input = ctx.promptMessage.content;
@@ -344,7 +345,12 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
       matcherValue: input,
       signal,
       sessionId: this.sessionContext.sessionId,
-      inputData: this.withSessionFacts({ prompt: input, isSteer: ctx.isSteer }),
+      inputData: this.withSessionFacts({
+        prompt: input,
+        isSteer: ctx.isSteer,
+        originKind: origin.kind,
+        originName: 'name' in origin ? origin.name : undefined,
+      }),
     });
     signal.throwIfAborted();
 
@@ -464,4 +470,11 @@ function toolOutputText(output: ExecutableToolResult['output']): string {
     })
     .map((part) => part.text)
     .join('');
+}
+
+const GOAL_CONTINUATION_TRIGGER = 'goal_continuation';
+
+function isPromptSubmitOrigin(origin: PromptOrigin): boolean {
+  if (origin.kind === 'user') return true;
+  return origin.kind === 'system_trigger' && origin.name === GOAL_CONTINUATION_TRIGGER;
 }
