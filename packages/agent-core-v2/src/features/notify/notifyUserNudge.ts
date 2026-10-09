@@ -30,16 +30,38 @@ function isToolCallRound(message: ContextMessage): boolean {
   return message.role === 'assistant' && message.toolCalls.length > 0;
 }
 
-export function toolCallRoundsSinceLastNotify(history: readonly ContextMessage[]): number {
-  let count = 0;
+function isNudge(message: ContextMessage): boolean {
+  return message.origin?.kind === 'injection' && message.origin.variant === NOTIFY_USER_NUDGE_VARIANT;
+}
+
+export interface NotifyStreak {
+  readonly rounds: number;
+  readonly nudges: number;
+}
+
+export function notifyStreak(history: readonly ContextMessage[]): NotifyStreak {
+  let rounds = 0;
+  let nudges = 0;
   for (let index = history.length - 1; index >= 0; index -= 1) {
     const message = history[index]!;
     if (startsNewTurn(message)) break;
+    if (isNudge(message)) nudges += 1;
     if (!isToolCallRound(message)) continue;
     if (message.toolCalls.some((call) => call.name === NOTIFY_USER_TOOL_NAME)) break;
-    count += 1;
+    rounds += 1;
   }
-  return count;
+  return { rounds, nudges };
+}
+
+export function notifyStreakBefore(
+  history: readonly ContextMessage[],
+  toolCallId: string,
+): NotifyStreak {
+  const index = history.findLastIndex(
+    (message) =>
+      message.role === 'assistant' && message.toolCalls.some((call) => call.id === toolCallId),
+  );
+  return notifyStreak(index === -1 ? history : history.slice(0, index));
 }
 
 export function toolCallRoundsSincePosition(

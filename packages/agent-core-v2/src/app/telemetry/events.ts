@@ -387,6 +387,20 @@ export interface AgentsMdReminderShownEvent {
   trace_id?: string;
 }
 
+export interface NotifyUserNudgeShownEvent {
+  turn_id?: number;
+  rounds_since_notify: number;
+  nudge_index: number;
+}
+
+export interface NotifyUserSentEvent {
+  turn_id: number;
+  rounds_since_notify: number;
+  after_nudge: boolean;
+  message_chars: number;
+  displayed: boolean;
+}
+
 export interface GrepToolRgFallbackEvent {
   source?: 'share-bin-cached' | 'vendor' | 'share-bin-downloaded';
   outcome: 'resolved' | 'failed';
@@ -1073,6 +1087,26 @@ export const telemetryEventDefinitions = {
       reminded_count: 'Number of AGENTS.md paths listed in the reminder',
       trace_id:
         'Trace id of the LLM request that produced the tool call; absent for non-Kimi protocols',
+    },
+  }),
+  notify_user_nudge_shown: defineAgentTelemetryEvent<NotifyUserNudgeShownEvent>({
+    owner: 'kimi-code',
+    comment: 'A reminder asking the agent to post a NotifyUser update is queued for context injection.',
+    properties: {
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session; omitted when no turn is active',
+      rounds_since_notify: 'Tool-call rounds (assistant steps with tool calls) since the turn started or the last NotifyUser call',
+      nudge_index: 'Position of this reminder within the current silent stretch; 1 for the first, higher when earlier reminders went unanswered',
+    },
+  }),
+  notify_user_sent: defineAgentTelemetryEvent<NotifyUserSentEvent>({
+    owner: 'kimi-code',
+    comment: 'The agent posted a NotifyUser progress update.',
+    properties: {
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session',
+      rounds_since_notify: 'Tool-call rounds (assistant steps with tool calls) before this update since the turn started or the previous NotifyUser call',
+      after_nudge: 'Whether a NotifyUser reminder was injected since the turn started or the previous NotifyUser call',
+      message_chars: 'Length of the update message in UTF-16 code units; the message text itself is not recorded',
+      displayed: 'Whether the update was shown in the Updates panel; false when the feature was turned off mid-session',
     },
   }),
   grep_tool_rg_fallback: defineAgentTelemetryEvent<GrepToolRgFallbackEvent>({

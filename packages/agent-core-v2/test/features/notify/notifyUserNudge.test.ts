@@ -3,9 +3,10 @@ import { describe, expect, it } from 'vitest';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import {
   NOTIFY_USER_NUDGE_THRESHOLD,
+  notifyStreak,
+  notifyStreakBefore,
   renderNotifyUserNudge,
   shouldNudgeNotifyUser,
-  toolCallRoundsSinceLastNotify,
   toolCallRoundsSincePosition,
 } from '#/features/notify/notifyUserNudge';
 
@@ -110,7 +111,7 @@ function assistantWithTools(...names: string[]): ContextMessage {
   };
 }
 
-describe('toolCallRoundsSinceLastNotify', () => {
+describe('notifyStreak', () => {
   it('counts one round per assistant step back to the user prompt, however many calls it batched', () => {
     const history = [
       userPrompt(),
@@ -118,7 +119,7 @@ describe('toolCallRoundsSinceLastNotify', () => {
       assistantWithTools('Grep'),
     ];
 
-    expect(toolCallRoundsSinceLastNotify(history)).toBe(2);
+    expect(notifyStreak(history).rounds).toBe(2);
   });
 
   it('does not count assistant messages without tool calls', () => {
@@ -129,7 +130,7 @@ describe('toolCallRoundsSinceLastNotify', () => {
       assistantWithTools('Read'),
     ] satisfies ContextMessage[];
 
-    expect(toolCallRoundsSinceLastNotify(history)).toBe(2);
+    expect(notifyStreak(history).rounds).toBe(2);
   });
 
   it('counts only the calls after the latest NotifyUser call', () => {
@@ -140,7 +141,7 @@ describe('toolCallRoundsSinceLastNotify', () => {
       assistantWithTools('Bash'),
     ];
 
-    expect(toolCallRoundsSinceLastNotify(history)).toBe(1);
+    expect(notifyStreak(history).rounds).toBe(1);
   });
 
   it('stops at the previous turn', () => {
@@ -151,7 +152,7 @@ describe('toolCallRoundsSinceLastNotify', () => {
       assistantWithTools('Read'),
     ];
 
-    expect(toolCallRoundsSinceLastNotify(history)).toBe(1);
+    expect(notifyStreak(history).rounds).toBe(1);
   });
 
   it('stops at non-user turn boundaries such as cron and slash-skill prompts', () => {
@@ -161,7 +162,7 @@ describe('toolCallRoundsSinceLastNotify', () => {
       cronPrompt(),
       assistantWithTools('Read'),
     ];
-    expect(toolCallRoundsSinceLastNotify(cronTurn)).toBe(1);
+    expect(notifyStreak(cronTurn).rounds).toBe(1);
 
     const slashTurn = [
       userPrompt(),
@@ -169,7 +170,7 @@ describe('toolCallRoundsSinceLastNotify', () => {
       slashSkillPrompt(),
       assistantWithTools('Read'),
     ];
-    expect(toolCallRoundsSinceLastNotify(slashTurn)).toBe(1);
+    expect(notifyStreak(slashTurn).rounds).toBe(1);
   });
 
   it('does not stop at a model-invoked skill in the middle of a turn', () => {
@@ -180,7 +181,7 @@ describe('toolCallRoundsSinceLastNotify', () => {
       assistantWithTools('Read'),
     ];
 
-    expect(toolCallRoundsSinceLastNotify(history)).toBe(2);
+    expect(notifyStreak(history).rounds).toBe(2);
   });
 
   it('stops at task-notification and retry boundaries', () => {
@@ -190,7 +191,7 @@ describe('toolCallRoundsSinceLastNotify', () => {
       taskPrompt(),
       assistantWithTools('Read'),
     ];
-    expect(toolCallRoundsSinceLastNotify(taskTurn)).toBe(1);
+    expect(notifyStreak(taskTurn).rounds).toBe(1);
 
     const retryTurn = [
       userPrompt(),
@@ -198,7 +199,7 @@ describe('toolCallRoundsSinceLastNotify', () => {
       retryPrompt(),
       assistantWithTools('Read'),
     ];
-    expect(toolCallRoundsSinceLastNotify(retryTurn)).toBe(1);
+    expect(notifyStreak(retryTurn).rounds).toBe(1);
   });
 
   it('stops at a subagent system trigger but not at a stop-hook continuation', () => {
@@ -208,7 +209,7 @@ describe('toolCallRoundsSinceLastNotify', () => {
       subagentTriggerPrompt(),
       assistantWithTools('Read'),
     ];
-    expect(toolCallRoundsSinceLastNotify(subagentTurn)).toBe(1);
+    expect(notifyStreak(subagentTurn).rounds).toBe(1);
 
     const continued = [
       userPrompt(),
@@ -216,7 +217,46 @@ describe('toolCallRoundsSinceLastNotify', () => {
       stopHookContinuation(),
       assistantWithTools('Read'),
     ];
-    expect(toolCallRoundsSinceLastNotify(continued)).toBe(2);
+    expect(notifyStreak(continued).rounds).toBe(2);
+  });
+});
+
+describe('notifyStreak nudges', () => {
+  it('counts reminders injected since the last NotifyUser call', () => {
+    const history = [
+      userPrompt(),
+      assistantWithTools('Bash'),
+      nudgeInjection(),
+      assistantWithTools('NotifyUser'),
+      assistantWithTools('Bash'),
+      nudgeInjection(),
+      assistantWithTools('Read'),
+      nudgeInjection(),
+    ];
+
+    expect(notifyStreak(history)).toEqual({ rounds: 2, nudges: 2 });
+  });
+});
+
+describe('notifyStreakBefore', () => {
+  it('measures the streak that precedes the step carrying the given call', () => {
+    const notifying: ContextMessage = {
+      role: 'assistant',
+      content: [],
+      toolCalls: [
+        { type: 'function', id: 'call_notify', name: 'NotifyUser', arguments: '{}' },
+        { type: 'function', id: 'call_read', name: 'Read', arguments: '{}' },
+      ],
+    };
+    const history = [
+      userPrompt(),
+      assistantWithTools('Bash', 'Grep'),
+      nudgeInjection(),
+      assistantWithTools('Read'),
+      notifying,
+    ];
+
+    expect(notifyStreakBefore(history, 'call_notify')).toEqual({ rounds: 2, nudges: 1 });
   });
 });
 

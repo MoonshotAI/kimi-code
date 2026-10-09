@@ -13,6 +13,7 @@ import { NOTIFY_USER_NUDGE_VARIANT } from '#/features/notify/notifyUserNudge';
 import { NOTIFY_USER_TOOL_NAME } from '#/features/notify/tools/notify-user/notify-user';
 import type { ExecutableTool } from '#/tool/toolContract';
 
+import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { runWillBeginStepHooks } from '../../agent/loop/stubs';
 import { createTestAgent, type TestAgentContext } from '../../harness';
 
@@ -35,6 +36,7 @@ describe('AgentNotifyUserNudgeService', () => {
   let context: IAgentContextMemoryService;
   let loop: IAgentLoopService;
   let flags: FlagService;
+  let telemetry: TelemetryRecord[];
 
   function nudgeInjections(): readonly ContextMessage[] {
     return context
@@ -58,7 +60,8 @@ describe('AgentNotifyUserNudgeService', () => {
   }
 
   async function start(uiCapabilities: readonly HostUiCapability[]): Promise<void> {
-    ctx = createTestAgent({ autoConfigure: false });
+    telemetry = [];
+    ctx = createTestAgent({ autoConfigure: false, telemetry: recordingTelemetry(telemetry) });
     Object.assign(ctx.get(IBootstrapService).args, { uiCapabilities });
     context = ctx.get(IAgentContextMemoryService);
     loop = ctx.get(IAgentLoopService);
@@ -102,6 +105,20 @@ describe('AgentNotifyUserNudgeService', () => {
     expect(nudgeInjections()).toHaveLength(2);
   });
 
+  it('tracks each injected nudge with its position in the silent stretch', async () => {
+    await start([NOTIFY_USER_UI_CAPABILITY]);
+    appendSilentRounds(8);
+    await runWillBeginStepHooks(loop);
+    appendSilentRounds(8);
+    await runWillBeginStepHooks(loop);
+
+    const shown = telemetry.filter((record) => record.event === 'notify_user_nudge_shown');
+    expect(shown.map((record) => record.properties)).toEqual([
+      expect.objectContaining({ rounds_since_notify: 8, nudge_index: 1 }),
+      expect.objectContaining({ rounds_since_notify: 16, nudge_index: 2 }),
+    ]);
+  });
+
   it('counts a step of parallel tool calls as a single round', async () => {
     await start([NOTIFY_USER_UI_CAPABILITY]);
     context.append({
@@ -139,6 +156,7 @@ describe('AgentNotifyUserNudgeService', () => {
     appendSilentRounds(8);
     await runWillBeginStepHooks(loop);
     expect(nudgeInjections()).toHaveLength(0);
+    expect(telemetry.filter((record) => record.event === 'notify_user_nudge_shown')).toHaveLength(0);
 
     context.append({
       role: 'assistant',
