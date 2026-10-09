@@ -266,6 +266,48 @@ describe('prepareSystemPromptContext additional directories', () => {
   });
 });
 
+describe('loadAgentsMd AGENTS.override.md', () => {
+  it('loads AGENTS.override.md at the project root when no AGENTS.md exists', async () => {
+    await writeFile(join(workDir, 'AGENTS.override.md'), 'override instructions', 'utf-8');
+
+    const result = await loadAgentsMd({ fs, homeDir }, workDir);
+
+    expect(result).toContain('override instructions');
+  });
+
+  it('prefers AGENTS.override.md over AGENTS.md within one directory', async () => {
+    await writeFile(join(workDir, 'AGENTS.override.md'), 'override wins', 'utf-8');
+    await writeFile(join(workDir, 'AGENTS.md'), 'default instructions', 'utf-8');
+
+    const result = await loadAgentsMdDetailed({ fs, homeDir }, workDir);
+
+    expect(result.paths).toEqual([normalize(join(workDir, 'AGENTS.override.md'))]);
+    expect(result.content).toContain('override wins');
+    expect(result.content).not.toContain('default instructions');
+  });
+
+  it('keeps per-directory replacement while ancestors keep their own files', async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), 'kimi-agents-project-'));
+    extraDirs.push(projectRoot);
+    const leaf = join(projectRoot, 'packages', 'app');
+    await mkdir(leaf, { recursive: true });
+    await mkdir(join(projectRoot, '.git'));
+    await writeFile(join(projectRoot, 'AGENTS.md'), 'root default', 'utf-8');
+    await writeFile(join(projectRoot, 'AGENTS.override.md'), 'root override', 'utf-8');
+    await writeFile(join(leaf, 'AGENTS.md'), 'leaf default', 'utf-8');
+
+    const result = await loadAgentsMdDetailed({ fs, homeDir }, leaf);
+
+    expect(result.paths).toEqual([
+      normalize(join(projectRoot, 'AGENTS.override.md')),
+      normalize(join(leaf, 'AGENTS.md')),
+    ]);
+    expect(result.content).toContain('root override');
+    expect(result.content).not.toContain('root default');
+    expect(result.content).toContain('leaf default');
+  });
+});
+
 describe('loadAgentsMdDetailed discovered paths', () => {
   it('recovers AGENTS.md source annotations without treating plugin annotations as files', () => {
     expect(

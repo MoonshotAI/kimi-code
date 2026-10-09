@@ -76,7 +76,7 @@ export interface LoadedAgentsMd {
   readonly paths: readonly string[];
 }
 
-export const AGENTS_MD_PLAIN_NAMES = ['AGENTS.md', 'agents.md'] as const;
+export const AGENTS_MD_PLAIN_NAMES = ['AGENTS.override.md', 'AGENTS.md', 'agents.md'] as const;
 
 export function dotKimiAgentsMdPath(dir: string): string {
   return join(dir, '.kimi-code', 'AGENTS.md');
@@ -218,11 +218,10 @@ export async function agentsMdWatchRoots(
   const projectRoot = (await findGitWorkTree(deps.fs, rootWorkDir))?.root ?? rootWorkDir;
   const projectCandidates: string[] = [];
   for (const dir of dirsRootToLeaf(rootWorkDir, projectRoot)) {
-    projectCandidates.push(
-      join(dir, '.kimi-code', 'AGENTS.md'),
-      join(dir, 'AGENTS.md'),
-      join(dir, 'agents.md'),
-    );
+    projectCandidates.push(dotKimiAgentsMdPath(dir));
+    for (const fileName of AGENTS_MD_PLAIN_NAMES) {
+      projectCandidates.push(join(dir, fileName));
+    }
   }
   plan.push({ root: projectRoot, candidates: projectCandidates });
   return plan;
