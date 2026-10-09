@@ -12,7 +12,6 @@ import { TOWER_WORKER_PROFILE } from './tower';
 import TOWER_WORKER_ROLE_OVERLAY from './tower-worker-overlay.md?raw';
 
 const TOWER_WORKER_TOOLS = [
-  'Agent',
   'Bash',
   'TowerComplete',
   'TowerFinding',
@@ -61,7 +60,6 @@ export const TOWER_WORKER_PROFILE_DEF: AgentProfile = normalizeAgentProfile({
   whenToUse:
     'Use this agent for non-trivial software engineering work that may require reading files, editing code, running commands, and returning a compact but technically complete summary to the parent agent.',
   tools: TOWER_WORKER_TOOLS,
-  subagents: ['explore', 'plan'],
   renderSystemPrompt: (context) =>
     renderSystemPromptResult(TOWER_WORKER_ROLE, context, {
       skillActive: skillActiveFor(TOWER_WORKER_TOOLS),

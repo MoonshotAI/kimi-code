@@ -301,37 +301,6 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     );
     this._register(
       toolExecutor.onBeforeExecuteTool(async (event) => {
-        if (event.toolCall.name !== 'Agent') return;
-        const args = event.args;
-        if (typeof args !== 'object' || args === null) return;
-        const resume = (args as { readonly resume?: unknown }).resume;
-        if (typeof resume !== 'string') return;
-        const resumeId = resume.trim();
-        if (resumeId.length === 0) return;
-        const mainCheckout = resolveTowerRepoRoot(this.sessionCtx.cwd);
-        if (!(await towerWorkspaceOwned(join(mainCheckout, STATE_FILE)))) return;
-        const store = new TowerStore(mainCheckout);
-        const forbidden = await store.load().then(
-          (state) => {
-            const caller = store.resolveAgent(state, this.agentCtx.agentId);
-            if (caller?.kind !== 'reviewer') return undefined;
-            if (resumeId === 'main') return 'main';
-            return store.resolveAgent(state, resumeId)?.name;
-          },
-          () => undefined,
-        );
-        if (forbidden === undefined) return;
-        event.veto(
-          denyToolExecution(
-            this.toolApproval.formatDenyMessage(
-              `Reviewer agents cannot resume "${forbidden}" — main and every roster agent are orchestration identities; reviewers finish with TowerReview instead. Non-roster explore/plan subagents are still allowed.`,
-            ),
-          ),
-        );
-      }),
-    );
-    this._register(
-      toolExecutor.onBeforeExecuteTool(async (event) => {
         if (!this.flags.enabled(TOWER_FLAG_ID)) return;
         if (!this.isActive) return;
         if (event.toolCall.name !== 'Agent') return;
