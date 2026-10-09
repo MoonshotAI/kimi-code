@@ -1,0 +1,1 @@
+subprobe01 acceptance probe: worker capabilities verified after subagent denial (M49).
