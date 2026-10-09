@@ -45,7 +45,7 @@ describe('AgentNotifyUserNudgeService', () => {
       );
   }
 
-  function appendSilentToolCalls(count: number): void {
+  function appendSilentRounds(count: number): void {
     for (let index = 0; index < count; index += 1) {
       context.append({
         role: 'assistant',
@@ -86,25 +86,57 @@ describe('AgentNotifyUserNudgeService', () => {
 
   it('stops injecting nudges when the flag is disabled mid-session', async () => {
     await start([NOTIFY_USER_UI_CAPABILITY]);
-    appendSilentToolCalls(8);
+    appendSilentRounds(8);
     await runWillBeginStepHooks(loop);
     expect(nudgeInjections()).toHaveLength(1);
     expect(messageText(nudgeInjections()[0]!)).toContain('NotifyUser');
 
     flags.setConfigOverrides({ [NOTIFY_USER_FLAG_ID]: false });
-    appendSilentToolCalls(8);
+    appendSilentRounds(8);
     await runWillBeginStepHooks(loop);
     expect(nudgeInjections()).toHaveLength(1);
 
     flags.setConfigOverrides({ [NOTIFY_USER_FLAG_ID]: true });
-    appendSilentToolCalls(8);
+    appendSilentRounds(8);
     await runWillBeginStepHooks(loop);
     expect(nudgeInjections()).toHaveLength(2);
   });
 
+  it('counts a step of parallel tool calls as a single round', async () => {
+    await start([NOTIFY_USER_UI_CAPABILITY]);
+    context.append({
+      role: 'assistant',
+      content: [],
+      toolCalls: Array.from({ length: 8 }, (_, index) => ({
+        type: 'function' as const,
+        id: `call_parallel_${String(index)}`,
+        name: 'Read',
+        arguments: '{}',
+      })),
+    });
+    await runWillBeginStepHooks(loop);
+    expect(nudgeInjections()).toHaveLength(0);
+
+    appendSilentRounds(7);
+    await runWillBeginStepHooks(loop);
+    expect(nudgeInjections()).toHaveLength(1);
+    expect(messageText(nudgeInjections()[0]!)).toContain('8 rounds of tool calls');
+  });
+
+  it('does not nudge on mid-turn text before the round threshold', async () => {
+    await start([NOTIFY_USER_UI_CAPABILITY]);
+    context.append({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'Checking the parser first.' }],
+      toolCalls: [{ type: 'function', id: 'call_mid', name: 'Bash', arguments: '{}' }],
+    });
+    await runWillBeginStepHooks(loop);
+    expect(nudgeInjections()).toHaveLength(0);
+  });
+
   it('does not inject nudges in a host without the update panel', async () => {
     await start([]);
-    appendSilentToolCalls(8);
+    appendSilentRounds(8);
     await runWillBeginStepHooks(loop);
     expect(nudgeInjections()).toHaveLength(0);
 

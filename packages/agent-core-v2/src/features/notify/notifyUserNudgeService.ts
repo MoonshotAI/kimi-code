@@ -17,13 +17,10 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { notifyUserAvailable } from './notifyUserAvailability';
 import {
   NOTIFY_USER_NUDGE_VARIANT,
-  lastMidResponsePosition,
-  renderMidResponseHint,
   renderNotifyUserNudge,
-  shouldNudgeMidResponse,
   shouldNudgeNotifyUser,
-  toolCallsSinceLastNotify,
-  toolCallsSincePosition,
+  toolCallRoundsSinceLastNotify,
+  toolCallRoundsSincePosition,
 } from './notifyUserNudge';
 import { NOTIFY_USER_TOOL_NAME } from './tools/notify-user/notify-user';
 
@@ -50,13 +47,10 @@ const notifyUserNudgeReminders = fromCallback(({
         return undefined;
       }
       const history = runtime.get(IAgentContextMemoryService).get();
-      const streak = toolCallsSinceLastNotify(history);
-      const callsSinceLastNudge =
-        lastInjectedAt === null ? null : toolCallsSincePosition(history, lastInjectedAt);
-      if (shouldNudgeNotifyUser(streak, callsSinceLastNudge)) return renderNotifyUserNudge(streak);
-      if (shouldNudgeMidResponse(lastMidResponsePosition(history), lastInjectedAt)) {
-        return renderMidResponseHint();
-      }
+      const streak = toolCallRoundsSinceLastNotify(history);
+      const roundsSinceLastNudge =
+        lastInjectedAt === null ? null : toolCallRoundsSincePosition(history, lastInjectedAt);
+      if (shouldNudgeNotifyUser(streak, roundsSinceLastNudge)) return renderNotifyUserNudge(streak);
       return undefined;
     },
   );
