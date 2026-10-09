@@ -49,6 +49,11 @@ export const OUTCOME_GLANCE_SAMPLES = 3;
 // provider error bodies (occasionally whole HTML error pages) can't flood
 // the activity pane.
 export const RETRY_DETAIL_MAX_CHARS = 160;
+// Cap on the MCP server failure summary row in the transcript, so huge
+// connection error bodies (e.g. whole HTML error pages from unreachable
+// intranet servers) collapse to one short line. The full error stays
+// available under `/info`.
+export const MCP_STATUS_ERROR_MAX_CHARS = 160;
 // Left indent (cells) for the detail line under the waiting spinner, aligning
 // it with the label text: 1 (the spinner Text's own paddingX) + 2 (moon
 // frame) + 1 (space between frame and label).
