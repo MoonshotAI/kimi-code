@@ -13,6 +13,7 @@ import { NOTIFY_USER_NUDGE_VARIANT } from '#/features/notify/notifyUserNudge';
 import { NOTIFY_USER_TOOL_NAME } from '#/features/notify/tools/notify-user/notify-user';
 import type { ExecutableTool } from '#/tool/toolContract';
 
+import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { runWillBeginStepHooks } from '../../agent/loop/stubs';
 import { createTestAgent, type TestAgentContext } from '../../harness';
 
@@ -35,6 +36,7 @@ describe('AgentNotifyUserNudgeService', () => {
   let context: IAgentContextMemoryService;
   let loop: IAgentLoopService;
   let flags: FlagService;
+  let telemetry: TelemetryRecord[];
 
   function nudgeInjections(): readonly ContextMessage[] {
     return context
@@ -45,7 +47,7 @@ describe('AgentNotifyUserNudgeService', () => {
       );
   }
 
-  function appendSilentToolCalls(count: number): void {
+  function appendSilentRounds(count: number): void {
     for (let index = 0; index < count; index += 1) {
       context.append({
         role: 'assistant',
@@ -58,7 +60,8 @@ describe('AgentNotifyUserNudgeService', () => {
   }
 
   async function start(uiCapabilities: readonly HostUiCapability[]): Promise<void> {
-    ctx = createTestAgent({ autoConfigure: false });
+    telemetry = [];
+    ctx = createTestAgent({ autoConfigure: false, telemetry: recordingTelemetry(telemetry) });
     Object.assign(ctx.get(IBootstrapService).args, { uiCapabilities });
     context = ctx.get(IAgentContextMemoryService);
     loop = ctx.get(IAgentLoopService);
@@ -86,27 +89,74 @@ describe('AgentNotifyUserNudgeService', () => {
 
   it('stops injecting nudges when the flag is disabled mid-session', async () => {
     await start([NOTIFY_USER_UI_CAPABILITY]);
-    appendSilentToolCalls(8);
+    appendSilentRounds(8);
     await runWillBeginStepHooks(loop);
     expect(nudgeInjections()).toHaveLength(1);
     expect(messageText(nudgeInjections()[0]!)).toContain('NotifyUser');
 
     flags.setConfigOverrides({ [NOTIFY_USER_FLAG_ID]: false });
-    appendSilentToolCalls(8);
+    appendSilentRounds(8);
     await runWillBeginStepHooks(loop);
     expect(nudgeInjections()).toHaveLength(1);
 
     flags.setConfigOverrides({ [NOTIFY_USER_FLAG_ID]: true });
-    appendSilentToolCalls(8);
+    appendSilentRounds(8);
     await runWillBeginStepHooks(loop);
     expect(nudgeInjections()).toHaveLength(2);
   });
 
-  it('does not inject nudges in a host without the update panel', async () => {
-    await start([]);
-    appendSilentToolCalls(8);
+  it('tracks each injected nudge with its position in the silent stretch', async () => {
+    await start([NOTIFY_USER_UI_CAPABILITY]);
+    appendSilentRounds(8);
+    await runWillBeginStepHooks(loop);
+    appendSilentRounds(8);
+    await runWillBeginStepHooks(loop);
+
+    const shown = telemetry.filter((record) => record.event === 'notify_user_nudge_shown');
+    expect(shown.map((record) => record.properties)).toEqual([
+      expect.objectContaining({ rounds_since_notify: 8, nudge_index: 1 }),
+      expect.objectContaining({ rounds_since_notify: 16, nudge_index: 2 }),
+    ]);
+  });
+
+  it('counts a step of parallel tool calls as a single round', async () => {
+    await start([NOTIFY_USER_UI_CAPABILITY]);
+    context.append({
+      role: 'assistant',
+      content: [],
+      toolCalls: Array.from({ length: 8 }, (_, index) => ({
+        type: 'function' as const,
+        id: `call_parallel_${String(index)}`,
+        name: 'Read',
+        arguments: '{}',
+      })),
+    });
     await runWillBeginStepHooks(loop);
     expect(nudgeInjections()).toHaveLength(0);
+
+    appendSilentRounds(7);
+    await runWillBeginStepHooks(loop);
+    expect(nudgeInjections()).toHaveLength(1);
+    expect(messageText(nudgeInjections()[0]!)).toContain('8 rounds of tool calls');
+  });
+
+  it('does not nudge on mid-turn text before the round threshold', async () => {
+    await start([NOTIFY_USER_UI_CAPABILITY]);
+    context.append({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'Checking the parser first.' }],
+      toolCalls: [{ type: 'function', id: 'call_mid', name: 'Bash', arguments: '{}' }],
+    });
+    await runWillBeginStepHooks(loop);
+    expect(nudgeInjections()).toHaveLength(0);
+  });
+
+  it('does not inject nudges in a host without the update panel', async () => {
+    await start([]);
+    appendSilentRounds(8);
+    await runWillBeginStepHooks(loop);
+    expect(nudgeInjections()).toHaveLength(0);
+    expect(telemetry.filter((record) => record.event === 'notify_user_nudge_shown')).toHaveLength(0);
 
     context.append({
       role: 'assistant',
