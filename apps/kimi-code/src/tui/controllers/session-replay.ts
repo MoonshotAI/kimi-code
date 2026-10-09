@@ -22,6 +22,7 @@ import type {
 import { formatErrorMessage, isTodoItemShape } from '../utils/event-payload';
 import { formatBackgroundAgentTranscript } from '../utils/background-agent-status';
 import { formatBackgroundTaskTranscript } from '../utils/background-task-status';
+import { monitorEventFromNotification } from '../utils/monitor-event';
 import { modelDisplayName } from '../components/dialogs/model-selector';
 import { buildGoalCompletionMessage } from '../utils/goal-completion';
 import { PERMISSION_MODE_DISPLAY_NAMES } from '../utils/permission-mode';
@@ -333,6 +334,10 @@ export class SessionReplayRenderer {
     const origin = backgroundOrigin(message);
     if (origin !== undefined) {
       this.flushAssistant(context);
+      if (origin.status === 'running') {
+        this.renderMonitorEvent(context, message);
+        return;
+      }
       this.renderBackgroundTaskNotification(context, origin);
       return;
     }
@@ -801,6 +806,16 @@ export class SessionReplayRenderer {
       // detects the child-list change; no tree-wide invalidate needed.
       children.splice(childIndex, 1);
     }
+  }
+
+  private renderMonitorEvent(context: ReplayRenderContext, message: ContextMessage): void {
+    const status = monitorEventFromNotification(contentPartsToText(message.content));
+    if (status === undefined) return;
+    this.host.appendTranscriptEntry({
+      ...replayEntry(context, 'status', status.headline, 'plain'),
+      detail: status.detail,
+      backgroundAgentStatus: status,
+    });
   }
 
   private renderBackgroundTaskNotification(

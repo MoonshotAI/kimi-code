@@ -682,6 +682,15 @@ describe('agentsMdReminder Bash coverage', () => {
     expect(reminderText(h)).toContain(subAgentsMd);
   });
 
+  it('reminds for the directory a Monitor command reaches', async () => {
+    const h = createHarness();
+    const subAgentsMd = await writeAgentsMd(join(workDir, 'packages', 'kap-server'));
+
+    await fire(h, didCtx('Monitor', { command: "find packages/kap-server -name '*.log'", description: 'new logs' }));
+
+    expect(reminderText(h)).toContain(subAgentsMd);
+  });
+
   it('rebases relative operands across a literal cd', async () => {
     const h = createHarness();
     const subAgentsMd = await writeAgentsMd(join(workDir, 'packages', 'kap-server'));

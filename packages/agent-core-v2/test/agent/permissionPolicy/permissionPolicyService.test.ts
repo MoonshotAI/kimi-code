@@ -235,6 +235,18 @@ describe('AgentPermissionPolicyService chain', () => {
     },
   );
 
+  it('asks for a dangerous Monitor command in yolo mode', async () => {
+    mode = 'yolo';
+
+    await expect(evaluate({
+      toolName: 'Monitor',
+      args: { command: 'sleep 5 && shutdown now', description: 'later' },
+    })).resolves.toMatchObject({
+      policyName: 'dangerous-command-ask',
+      result: { kind: 'ask', reason: { dangerous_command: 'shutdown' } },
+    });
+  });
+
   it.each([
     'shutdown -h now',
     'reboot',

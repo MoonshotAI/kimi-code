@@ -1,4 +1,5 @@
 import { createDecorator } from '#/_base/di/instantiation';
+import type { Event } from '#/_base/event';
 import type { ITaskHandle } from '#/app/task/task';
 import type {
   AgentTask,
@@ -74,7 +75,10 @@ export interface AgentTaskWaitDelivery {
 export interface IAgentTaskService {
   readonly _serviceBrand: undefined;
 
+  readonly onDidQueueEvent: Event<string>;
+
   track(handle: ITaskHandle, options: AgentTaskTrackOptions): IAgentTaskEntry;
+  assertCanRegister(detached: boolean): void;
   registerTask(task: AgentTask, options?: RegisterAgentTaskOptions): string;
   getTask(taskId: string): AgentTaskInfo | undefined;
   list(activeOnly?: boolean, limit?: number): readonly AgentTaskInfo[];
@@ -84,6 +88,7 @@ export interface IAgentTaskService {
     maxPreviewBytes: number,
   ): Promise<AgentTaskOutputSnapshot>;
   readOutput(taskId: string, tail?: number): Promise<string>;
+  hasQueuedEvent(taskId: string): boolean;
   suppressTerminalNotification(taskId: string): Promise<void>;
   suppressAllTerminalNotifications(): Promise<void>;
   markTasksDeliveredViaWait(tasks: readonly AgentTaskWaitDelivery[]): void;

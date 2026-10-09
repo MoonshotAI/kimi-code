@@ -3170,6 +3170,18 @@ describe('sessionEventMessageSchema', () => {
     ).toBe(true);
   });
 
+  it('accepts monitor event envelopes and rejects them without lines', () => {
+    const monitorEvent = {
+      type: 'background.task.event',
+      taskId: 'monitor-log00000',
+      description: 'watch app log',
+      lines: ['ERROR connection refused'],
+      omitted: 0,
+    };
+    expect(sessionEventMessageSchema.safeParse(envelope(monitorEvent)).success).toBe(true);
+    expect(sessionEventMessageSchema.safeParse(envelope({ ...monitorEvent, lines: undefined })).success).toBe(false);
+  });
+
   it('rejects malformed config and model catalog event envelopes', () => {
     expect(
       sessionEventMessageSchema.safeParse(

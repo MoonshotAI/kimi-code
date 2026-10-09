@@ -19,6 +19,7 @@ const AGENT_TOOLS = [
   'TaskOutput',
   'TaskStop',
   'WaitFor',
+  'Monitor',
   'CronCreate',
   'CronList',
   'CronDelete',
