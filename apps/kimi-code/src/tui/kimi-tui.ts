@@ -997,7 +997,10 @@ export class KimiTUI {
     }
 
     if (session !== undefined) {
-      await this.setSession(session);
+      await this.setSession(
+        session,
+        shouldReplayHistory ? session.getResumeState()?.agents[MAIN_AGENT_ID]?.userTurnCount : 0,
+      );
       await this.syncRuntimeState(session);
     }
     this.applyStartupPermissionAndPlanToAppState();
@@ -2473,7 +2476,7 @@ export class KimiTUI {
       return undefined;
     }
     this.resetSessionRuntime();
-    await this.setSession(session);
+    await this.setSession(session, 0);
     this.setAppState({ sessionId: session.id });
     try {
       await this.activateRuntime();
@@ -2500,7 +2503,10 @@ export class KimiTUI {
     return session;
   }
 
-  async setSession(session: Session): Promise<void> {
+  async setSession(
+    session: Session,
+    initialUserTurnCount = session.getResumeState()?.agents[MAIN_AGENT_ID]?.userTurnCount,
+  ): Promise<void> {
     const previous = this.unloadCurrentSession('switching session');
     await previous?.close();
     // A session switch abandons the previous session's in-flight staging
@@ -2513,6 +2519,7 @@ export class KimiTUI {
     // before the engine's intake can read it.
     if (previous !== undefined) this.staging.releaseAll();
     this.session = session;
+    this.surveyController.seedUserTurnCount(initialUserTurnCount);
     this.harness.setTelemetryContext({ sessionId: session.id });
     this.registerSessionHandlers(session);
     this.syncAdditionalDirs(session);
@@ -2834,6 +2841,9 @@ export class KimiTUI {
 
     this.resetSessionRuntime();
     this.session = session;
+    this.surveyController.seedUserTurnCount(
+      session.getResumeState()?.agents[MAIN_AGENT_ID]?.userTurnCount,
+    );
     this.harness.setTelemetryContext({ sessionId: session.id });
     this.registerSessionHandlers(session);
     await this.syncRuntimeState(session);
@@ -2870,7 +2880,7 @@ export class KimiTUI {
     }
 
     this.resetSessionRuntime();
-    await this.setSession(session);
+    await this.setSession(session, 0);
     this.setAppState({ sessionId: session.id });
     try {
       await this.activateRuntime();
