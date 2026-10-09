@@ -1872,6 +1872,7 @@ describe('AgentTowerService', () => {
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
     ix2.stub(ITelemetryService, { track2: () => {} });
     ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
+    ix2.stub(ILogService, stubLog());
     ix2.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
     ix2.stub(
       IAgentReminderService,
@@ -1973,6 +1974,7 @@ describe('AgentTowerService', () => {
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
     ix2.stub(ITelemetryService, { track2: () => {} });
     ix2.stub(IFlagService, stubFlag(() => false));
+    ix2.stub(ILogService, stubLog());
     ix2.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
     ix2.stub(
       IAgentReminderService,
@@ -2039,6 +2041,7 @@ describe('AgentTowerService', () => {
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
     ix2.stub(ITelemetryService, { track2: () => {} });
     ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
+    ix2.stub(ILogService, stubLog());
     ix2.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
     ix2.stub(
       IAgentReminderService,
@@ -2112,6 +2115,7 @@ describe('AgentTowerService', () => {
       ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
       ix2.stub(ITelemetryService, { track2: () => {} });
       ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
+      ix2.stub(ILogService, stubLog());
       ix2.stub(ISessionManager, {
         get: (id: string) => (id === 'session-original' ? {} : undefined),
       } as unknown as ISessionManager);
@@ -2222,6 +2226,7 @@ describe('AgentTowerService', () => {
       ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
       ix2.stub(ITelemetryService, { track2: () => {} });
       ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
+      ix2.stub(ILogService, stubLog());
       ix2.stub(ISessionManager, {
         get: () => undefined,
       } as unknown as ISessionManager);
@@ -2406,6 +2411,7 @@ describe('AgentTowerService', () => {
       ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
       ix2.stub(ITelemetryService, { track2: () => {} });
       ix2.stub(IFlagService, stubFlag(() => false));
+      ix2.stub(ILogService, stubLog());
       ix2.stub(ISessionManager, {
         get: (id: string) => (id === 'session-original' ? {} : undefined),
       } as unknown as ISessionManager);
@@ -2486,6 +2492,7 @@ describe('AgentTowerService', () => {
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
     ix2.stub(ITelemetryService, { track2: () => {} });
     ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
+    ix2.stub(ILogService, stubLog());
     ix2.stub(ISessionManager, {
       get: (id: string) => (id === 'session-original' ? {} : undefined),
     } as unknown as ISessionManager);
@@ -2562,6 +2569,7 @@ describe('AgentTowerService', () => {
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
     ix2.stub(ITelemetryService, { track2: () => {} });
     ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
+    ix2.stub(ILogService, stubLog());
     ix2.stub(ISessionContext, {
       cwd: '/nonexistent-tower-repo',
       sessionId: 'session-owner',
@@ -2619,6 +2627,7 @@ describe('AgentTowerService', () => {
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
     ix2.stub(ITelemetryService, { track2: () => {} });
     ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
+    ix2.stub(ILogService, stubLog());
     ix2.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
     ix2.stub(
       IAgentReminderService,
