@@ -34,6 +34,8 @@
 | `/title [<text>]` | `/rename` | 不带参数时显示当前会话标题；带参数时设置为新标题（最长 200 字符） | 是 |
 | `/compact [<instruction>]` | — | 压缩当前对话上下文，释放 token 占用；可附带自定义指令，提示模型压缩时保留哪些信息 | 否 |
 | `/undo [<count>]` | — | 从当前上下文撤销最近的提示词。不带数量时打开选择器；带数量时撤销对应条数。最后一次上下文压缩之前的提示词不能撤销。撤销会一并回滚这些提示词产生的 todo 列表和计划模式状态（不回滚代码改动） | 否 |
+| `/reload` | — | 重新加载当前会话并应用最新的 `config.toml` 设置（供应商、模型等）和 `tui.toml` 界面偏好，无需重启 CLI；同时会把 AGENTS.md、Skill、subagent 及模型的外部变更告知 Agent | 否 |
+| `/reload-tui` | — | 仅重新加载 `tui.toml` 界面偏好（主题、编辑器、通知等），不重建会话 | 是 |
 | `/init` | — | 分析当前代码库并生成 `AGENTS.md` | 否 |
 | `/export-md [<path>]` | `/export` | 将当前会话导出为 Markdown 文件 | 否 |
 | `/export-debug-zip` | — | 将当前会话导出为调试用 ZIP 压缩包（与 [`kimi export`](./kimi-command.md#kimi-export) 行为一致） | 否 |

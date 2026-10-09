@@ -144,6 +144,7 @@ import {
   ensureKimiHome,
   ensureMainAgent,
   agentContextOf,
+  IAgentChangeNotifierService,
   IAgentContextMemoryService,
   IAgentConversationUndoService,
   IAgentCronService,
@@ -184,6 +185,7 @@ import {
   ISessionManager,
   ISessionMcpHandle,
   ISessionMetadata,
+  ISessionAgentProfileCatalog,
   ISessionSkillCatalog,
   IAgentTodoService,
   ISessionWorkspaceContext,
@@ -210,6 +212,7 @@ import {
   ErrorCodes as V2ErrorCodes,
   resolveAgentTaskConfig,
   resolveConfigPath,
+  resolveSubagentModelPool,
   resolveKimiHome,
   resolveLoggingConfig,
   resolvePrintBackgroundMode,
@@ -1603,6 +1606,19 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       } else if ((await this.engineAccessor.get(ISessionIndex).get(sessionId)) === undefined) {
         throw SDKRpcClientV2.sessionNotFound(sessionId);
       }
+      let previousSubagentNames: readonly string[] | undefined;
+      let previousModelPoolAliases: readonly string[] | undefined;
+      if (live !== undefined) {
+        const main = live.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
+        if (main !== undefined) {
+          previousSubagentNames = main.accessor
+            .get(ISessionAgentProfileCatalog)
+            .list()
+            .map((profile) => profile.name);
+          const pool = resolveSubagentModelPool(main.accessor.get(IConfigService));
+          previousModelPoolAliases = pool === undefined ? [] : Object.keys(pool.models);
+        }
+      }
       await this.configReady;
       await this.klient.global.config.reload();
       await this.klient.global.plugins.reload();
@@ -1614,6 +1630,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
       const main = handle.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
       await main?.accessor.get(IAgentPluginService).refreshSessionStart();
+      if (main !== undefined) {
+        const notifier = main.accessor.get(IAgentChangeNotifierService);
+        await notifier.notifyAgentsMdChanges();
+        await notifier.notifySkillChanges();
+        await notifier.notifySubagentChanges({ previousSubagentNames, previousModelPoolAliases });
+      }
       this.wireSession(handle);
       return this.resumedSessionSummary(handle);
     });
@@ -1624,6 +1646,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     await Promise.all(
       workspaces.list().map(async (handler) => {
         await handler.program.skills.reload();
+        await handler.program.agentProfiles.reload().catch(() => undefined);
+        await handler.program.userAgentProfiles.reload().catch(() => undefined);
         const sessions = this.engineAccessor
           .get(ISessionManager)
           .list()
