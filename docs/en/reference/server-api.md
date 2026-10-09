@@ -708,16 +708,20 @@ Session actions are dispatched through one route: the path tail is parsed as `{s
 
 #### `POST /api/v1/sessions/{session_id}:fork`
 
-Copies the session — its transcript, agent state, and files — into a new session in the same workspace, and broadcasts `event.session.created`. Forking is rejected while any of the session's agents has an active turn.
+Copies the session — its transcript, agent state, and files — into a new session in the same workspace, and broadcasts `event.session.created`. Pass `prompt_id` to fork from an earlier point instead of the latest state: the copy keeps only the conversation through that prompt's turn segment and discards everything after it.
+
+Forking is rejected while the session has an active or queued turn, or while another operation (compaction, undo, another fork) is in progress; retry once the session is idle.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `title` | body | string | Title for the fork (at least 1 character). Default `Fork: <source title>` |
 | `metadata` | body | object | Custom metadata for the fork |
+| `prompt_id` | body | string | Id of the user prompt to fork from. Default: the latest state |
 
 On success, `data` is [the session object](#the-session-object) of the new session.
 
-- `40901`: the session has an active turn and cannot be forked
+- `40001`: `prompt_id` is unknown in the session
+- `40901`: a turn is active or another operation is in progress, so the session cannot be forked right now
 
 #### `POST /api/v1/sessions/{session_id}:compact`
 
@@ -787,7 +791,7 @@ On success, `data` is `{ items, has_more }` where each item is [the session obje
 
 #### `POST /api/v1/sessions/{session_id}/children`
 
-Creates a child session: a fork of this session recorded as its child, so it shows up under `GET /api/v1/sessions/{session_id}/children`. The same active-turn restriction as `:fork` applies.
+Creates a child session: a fork of this session recorded as its child, so it shows up under `GET /api/v1/sessions/{session_id}/children`. The same rules as `:fork` apply: it is rejected while a turn is active or another operation is in progress.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -797,7 +801,7 @@ Creates a child session: a fork of this session recorded as its child, so it sho
 
 On success, `data` is [the session object](#the-session-object) of the new session, and the server broadcasts `event.session.created`.
 
-- `40901`: the session has an active turn and cannot be forked
+- `40901`: a turn is active or another operation is in progress, so the session cannot be forked right now
 
 #### `GET /api/v1/sessions/{session_id}/status`
 

@@ -152,6 +152,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private machineTurnSuppressed = false;
   private readonly settleWaiters: Array<() => void> = [];
   private quiescenceDepth = 0;
+  private pendingTurnCloses = 0;
+  private pendingFinalizations = 0;
   private activeRequestTrace: LLMRequestTrace | undefined;
   private engine: MachineEngine | undefined;
 
@@ -773,7 +775,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       this.quiescenceDepth > 0 ||
       this.active !== undefined ||
       this.hasPendingRequests() ||
-      this.pendingMachineTurn !== undefined
+      this.pendingMachineTurn !== undefined ||
+      this.pendingTurnCloses > 0
     ) {
       return undefined;
     }
@@ -916,7 +919,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (
       this.active === undefined &&
       !this.hasPendingRequests() &&
-      this.pendingMachineTurn === undefined
+      this.pendingMachineTurn === undefined &&
+      this.pendingFinalizations === 0
     ) {
       return Promise.resolve();
     }
@@ -929,6 +933,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (
       this.active !== undefined ||
       this.pendingMachineTurn !== undefined ||
+      this.pendingFinalizations > 0 ||
       this.hasPendingRequests()
     ) return;
     if (this.settleWaiters.length === 0) return;
@@ -2039,75 +2044,86 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private async endTurn(turn: ActiveTurn, result: TurnResult): Promise<void> {
     if (this.active !== turn) return;
     this.active = undefined;
-    await this.wire.drainPersisted().catch(() => undefined);
-    for (const nudge of this.nudges.slice(this.nudgeCursor)) {
-      if (nudge.turnScoped && !nudge.dropped) {
-        nudge.dropped = true;
-        nudge.onDrop?.();
+    this.pendingTurnCloses += 1;
+    this.pendingFinalizations += 1;
+    try {
+      await this.wire.drainPersisted().catch(() => undefined);
+      for (const nudge of this.nudges.slice(this.nudgeCursor)) {
+        if (nudge.turnScoped && !nudge.dropped) {
+          nudge.dropped = true;
+          nudge.onDrop?.();
+        }
       }
-    }
-    turn.turn.state = result.type;
-    if (!turn.readyResolved) {
-      if (result.type === 'failed') {
-        turn.ready.reject(result.error);
-      } else if (result.type === 'cancelled') {
-        turn.ready.reject(
-          result.reason instanceof Error ? result.reason : abortError('Turn cancelled'),
-        );
-      } else {
-        turn.ready.reject(new Error2(ErrorCodes.INTERNAL, 'Turn ended before first step'));
+      turn.turn.state = result.type;
+      if (!turn.readyResolved) {
+        if (result.type === 'failed') {
+          turn.ready.reject(result.error);
+        } else if (result.type === 'cancelled') {
+          turn.ready.reject(
+            result.reason instanceof Error ? result.reason : abortError('Turn cancelled'),
+          );
+        } else {
+          turn.ready.reject(new Error2(ErrorCodes.INTERNAL, 'Turn ended before first step'));
+        }
       }
-    }
-    const durationMs = Date.now() - turn.startedAt;
-    const traceId =
-      result.type === 'completed' ? this.lastRequestTraceId : this.activeRequestTrace?.traceId;
-    const error = result.type === 'failed' ? toKimiErrorPayload(result.error) : undefined;
-    const interruptReason = result.type === 'completed' ? undefined : interruptReasonFor(result);
-    void this.dispatcher.dispatch(
-      new TurnEnded({
-        agentId: this.scopeContext.agentId,
-        turnId: turn.id,
-        reason: result.type,
-        error,
-        durationMs,
-        interruptReason,
-        stopReason: result.type === 'completed' ? result.stopReason : undefined,
-        traceId,
-      }),
-    );
-    if (error !== undefined) {
+      const durationMs = Date.now() - turn.startedAt;
+      const traceId =
+        result.type === 'completed' ? this.lastRequestTraceId : this.activeRequestTrace?.traceId;
+      const error = result.type === 'failed' ? toKimiErrorPayload(result.error) : undefined;
+      const interruptReason = result.type === 'completed' ? undefined : interruptReasonFor(result);
       void this.dispatcher.dispatch(
-        new AgentErrorEvent({ ...error, agentId: this.scopeContext.agentId }),
+        new TurnEnded({
+          agentId: this.scopeContext.agentId,
+          turnId: turn.id,
+          reason: result.type,
+          error,
+          durationMs,
+          interruptReason,
+          stopReason: result.type === 'completed' ? result.stopReason : undefined,
+          traceId,
+        }),
       );
-    }
-    if (interruptReason !== undefined) {
-      const interrupted: TurnInterruptedEvent = {
+      if (error !== undefined) {
+        void this.dispatcher.dispatch(
+          new AgentErrorEvent({ ...error, agentId: this.scopeContext.agentId }),
+        );
+      }
+      if (interruptReason !== undefined) {
+        const interrupted: TurnInterruptedEvent = {
+          turn_id: turn.id,
+          at_step: result.steps,
+          mode: turn.mode ?? 'agent',
+          interrupt_reason: interruptReason,
+          provider_type: turn.providerType,
+          protocol: turn.protocol,
+          trace_id: traceId,
+        };
+        this.telemetry.track2('turn_interrupted', interrupted);
+      }
+      const ended: TurnEndedTelemetryEvent = {
         turn_id: turn.id,
-        at_step: result.steps,
+        reason: result.type,
+        duration_ms: durationMs,
         mode: turn.mode ?? 'agent',
-        interrupt_reason: interruptReason,
+        error_type: error?.code,
         provider_type: turn.providerType,
         protocol: turn.protocol,
         trace_id: traceId,
+        enabled_plugins: this.plugins.enabledPluginIds()?.join(','),
       };
-      this.telemetry.track2('turn_interrupted', interrupted);
+      this.telemetry.track2('turn_ended', ended);
+      this.telemetry.setContext({ turn_id: undefined, trace_id: undefined, thinking_effort: undefined });
+      this.activeRequestTrace = undefined;
+      this.lastRequestTraceId = undefined;
+    } finally {
+      this.pendingTurnCloses -= 1;
     }
-    const ended: TurnEndedTelemetryEvent = {
-      turn_id: turn.id,
-      reason: result.type,
-      duration_ms: durationMs,
-      mode: turn.mode ?? 'agent',
-      error_type: error?.code,
-      provider_type: turn.providerType,
-      protocol: turn.protocol,
-      trace_id: traceId,
-      enabled_plugins: this.plugins.enabledPluginIds()?.join(','),
-    };
-    this.telemetry.track2('turn_ended', ended);
-    this.telemetry.setContext({ turn_id: undefined, trace_id: undefined, thinking_effort: undefined });
-    this.activeRequestTrace = undefined;
-    this.lastRequestTraceId = undefined;
-    turn.result.resolve(result);
+    try {
+      await this.dispatcher.flush().catch(() => undefined);
+      turn.result.resolve(result);
+    } finally {
+      this.pendingFinalizations -= 1;
+    }
     this.maybeSettle();
   }
 

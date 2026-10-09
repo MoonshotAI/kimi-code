@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
 import {
   IAgentLifecycleService,
+  IAgentLoopService,
   IConfigService,
   closeSessionById,
   MAIN_AGENT_ID,
@@ -268,8 +269,13 @@ describe('transcript contract e2e', () => {
     await server!.core.accessor.get(IConfigService).reload();
   }
 
-  const idle = (server: RunningServer, base: string, sid: string) =>
-    until('session idle', async () => !(await getSessionFacts(server, base, sid)).busy);
+  const idle = async (server: RunningServer, base: string, sid: string): Promise<void> => {
+    await until('session idle', async () => !(await getSessionFacts(server, base, sid)).busy);
+    const main = getLiveSessionById(server.core.accessor, sid)
+      ?.accessor.get(IAgentLifecycleService)
+      .handleOf('main');
+    await main?.accessor.get(IAgentLoopService).settled();
+  };
 
   function dumpState(tx: TxSnapshot, hits: string[]): string {
     const turns = tx.items

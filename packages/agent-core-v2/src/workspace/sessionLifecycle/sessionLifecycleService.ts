@@ -101,6 +101,8 @@ import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressin
 import { SessionArchived, SessionDeleted } from './sessionLifecycleEvents';
 import {
   assertForkTurnIndex,
+  type MainTurnSlice,
+  resolveForkPromptIndex,
   sliceMainRecordsAtTurn,
   sliceSubagentRecordsAtTime,
 } from './internal/forkTurnSlice';
@@ -511,18 +513,18 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       for (const agent of sourceAgents.list()) {
         const agentHandle = sourceAgents.handleOf(agent.agentId);
         if (agentHandle === undefined) continue;
-        if (agentHandle.accessor.get(IAgentLoopService).snapshot().state === 'running') {
-          throw new Error2(
-            ErrorCodes.SESSION_FORK_ACTIVE_TURN,
-            `Session "${sourceId}" cannot be forked while a turn is running`,
-            { details: { sessionId: sourceId } },
-          );
-        }
         await agentHandle.accessor.get(IEventDispatcher).flush();
       }
       await this.appendLogStore.flush();
     }
     assertForkTurnIndex(opts.turnIndex);
+    if (opts.turnIndex !== undefined && opts.promptId !== undefined) {
+      throw new Error2(
+        ErrorCodes.REQUEST_INVALID,
+        'forkSession turnIndex and promptId are mutually exclusive',
+        { details: { turnIndex: opts.turnIndex, promptId: opts.promptId } },
+      );
+    }
 
     let targetId: string | undefined;
     let targetSessionDir: string | undefined;
@@ -535,10 +537,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           if (agentHandle === undefined) continue;
           const hold = agentHandle.accessor.get(IAgentLoopService).tryAcquireQuiescence();
           if (hold === undefined) {
+            for (const acquired of quiescenceHolds) acquired.dispose();
             throw new Error2(
               ErrorCodes.SESSION_FORK_ACTIVE_TURN,
-              `Session "${sourceId}" cannot be forked while a turn is running or queued, or while another fork is copying it`,
-              { details: { sessionId: sourceId, agentId: agent.agentId } },
+              `Session "${sourceId}" cannot be forked while another operation is in progress`,
+              { details: { sessionId: sourceId } },
             );
           }
           quiescenceHolds.push(hold);
@@ -566,14 +569,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         );
       }
 
-      const turnSlice =
-        opts.turnIndex === undefined
-          ? undefined
-          : sliceMainRecordsAtTurn(
-              flattenChain(await this.readSourceWireRecords(sourceHandle, sourceId, MAIN_AGENT_ID)),
-              sourceId,
-              opts.turnIndex,
-            );
+      const turnSlice = await this.resolveForkTurnSlice(
+        sourceHandle,
+        sourceId,
+        opts.turnIndex,
+        opts.promptId,
+      );
 
       targetSessionDir = sessionDirOf(this.bootstrap.homeDir, this.handlerScope, targetId);
       await this.copySessionFiles(
@@ -651,7 +652,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         agents,
         custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
         lastPrompt: turnSlice === undefined ? sourceMeta?.lastPrompt : turnSlice.lastPrompt,
-        lastTurnReason: sourceMeta?.lastTurnReason,
+        lastTurnReason:
+          turnSlice === undefined ? sourceMeta?.lastTurnReason : turnSlice.lastTurnReason,
       };
       await this.docs.set(
         sessionScopeOf(this.handlerScope, targetId),
@@ -700,6 +702,33 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       title,
       metadata,
     });
+  }
+
+  private async resolveForkTurnSlice(
+    sourceHandle: ISessionScopeHandle | undefined,
+    sourceId: string,
+    turnIndex: number | undefined,
+    promptId: string | undefined,
+  ): Promise<MainTurnSlice | undefined> {
+    if (turnIndex === undefined && promptId === undefined) return undefined;
+    const records = flattenChain(
+      await this.readSourceWireRecords(sourceHandle, sourceId, MAIN_AGENT_ID),
+    );
+    let resolved = turnIndex;
+    if (promptId !== undefined) {
+      const resolution = resolveForkPromptIndex(records, promptId);
+      if (resolution.status !== 'found') {
+        throw new Error2(
+          ErrorCodes.REQUEST_INVALID,
+          resolution.status === 'ambiguous'
+            ? `Prompt "${promptId}" matches multiple turns in session "${sourceId}"`
+            : `Prompt "${promptId}" was not found in session "${sourceId}"`,
+          { details: { promptId, sessionId: sourceId } },
+        );
+      }
+      resolved = resolution.index;
+    }
+    return sliceMainRecordsAtTurn(records, sourceId, resolved!);
   }
 
   private async resolveSourceTitle(sourceId: string): Promise<string | undefined> {

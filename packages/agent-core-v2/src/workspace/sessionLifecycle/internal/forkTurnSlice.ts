@@ -17,6 +17,7 @@ export interface MainTurnSlice {
   readonly records: readonly WireRecord[];
   readonly cutoffTime?: number;
   readonly lastPrompt?: string;
+  readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
 
 export function assertForkTurnIndex(turnIndex: number | undefined): void {
@@ -34,10 +35,7 @@ export function sliceMainRecordsAtTurn(
   sourceSessionId: string,
   turnIndex: number,
 ): MainTurnSlice {
-  const turnStarts: number[] = [];
-  for (let index = 0; index < records.length; index += 1) {
-    if (isUserVisibleTurnRecord(records[index]!)) turnStarts.push(index);
-  }
+  const turnStarts = userVisibleTurnStartIndices(records);
   const start = turnStarts[turnIndex];
   if (start === undefined) {
     throw new Error2(
@@ -64,6 +62,7 @@ export function sliceMainRecordsAtTurn(
     records: retained,
     cutoffTime: cutoffTimes.length === 0 ? undefined : Math.max(...cutoffTimes),
     lastPrompt,
+    lastTurnReason: turnOutcomeOfRecords(retained),
   };
 }
 
@@ -81,6 +80,45 @@ export function sliceSubagentRecordsAtTime(
     }
   }
   return records.slice(0, end);
+}
+
+export type ForkPromptResolution =
+  | { readonly status: 'found'; readonly index: number }
+  | { readonly status: 'unknown' }
+  | { readonly status: 'ambiguous' };
+
+export function resolveForkPromptIndex(
+  records: readonly WireRecord[],
+  promptId: string,
+): ForkPromptResolution {
+  const turnStarts = userVisibleTurnStartIndices(records);
+  const targetIds = new Set<string>([promptId]);
+  for (const record of records) {
+    if (record.type !== 'turn.steer') continue;
+    const promptIds = record['promptIds'];
+    if (!Array.isArray(promptIds) || !promptIds.includes(promptId)) continue;
+    const messageId = record['messageId'];
+    if (typeof messageId === 'string' && messageId.length > 0) targetIds.add(messageId);
+  }
+  let found: number | undefined;
+  let ambiguous = false;
+  for (let start = 0; start < turnStarts.length; start += 1) {
+    const message = asRecord(records[turnStarts[start]!]!['message']);
+    const id = message?.['id'];
+    if (typeof id !== 'string' || !targetIds.has(id)) continue;
+    if (found !== undefined && found !== start) ambiguous = true;
+    found = found ?? start;
+  }
+  if (ambiguous) return { status: 'ambiguous' };
+  return found === undefined ? { status: 'unknown' } : { status: 'found', index: found };
+}
+
+function userVisibleTurnStartIndices(records: readonly WireRecord[]): number[] {
+  const turnStarts: number[] = [];
+  for (let index = 0; index < records.length; index += 1) {
+    if (isUserVisibleTurnRecord(records[index]!)) turnStarts.push(index);
+  }
+  return turnStarts;
 }
 
 function isUserVisibleTurnRecord(record: WireRecord): boolean {
@@ -207,6 +245,30 @@ function recordTime(record: WireRecord): number | undefined {
     if (typeof createdAt === 'number' && Number.isFinite(createdAt)) return createdAt;
   }
   return undefined;
+}
+
+function turnOutcomeOfRecords(
+  records: readonly WireRecord[],
+): 'completed' | 'cancelled' | 'failed' | undefined {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index]!;
+    if (record.type === 'turn.ended') {
+      const reason = record['reason'];
+      if (reason === 'completed' || reason === 'cancelled') return reason;
+      if (reason === 'failed' || reason === 'blocked') return 'failed';
+      return undefined;
+    }
+    if (isEngineTurnStartRecord(record) || isUserVisibleTurnRecord(record)) return undefined;
+  }
+  return undefined;
+}
+
+function isEngineTurnStartRecord(record: WireRecord): boolean {
+  return (
+    record.type === 'turn.prompt' ||
+    record.type === 'turn.steer' ||
+    record.type === 'agent.turn.started'
+  );
 }
 
 function promptMetadataFromTurnRecord(record: WireRecord): string | undefined {

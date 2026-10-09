@@ -708,16 +708,20 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 #### `POST /api/v1/sessions/{session_id}:fork`
 
-将会话——其转录、Agent 状态与文件——复制到同一工作区中的新会话，并广播 `event.session.created`。当会话中任一 Agent 有进行中的轮次时，fork 会被拒绝。
+将会话——其转录、Agent 状态与文件——复制到同一工作区中的新会话，并广播 `event.session.created`。传入 `prompt_id` 可从更早的位置分叉，而不是复制最新状态：副本只保留到该提示词所在轮次段结束为止的对话，其后的内容全部丢弃。
+
+会话有进行中或排队中的轮次，或者有其他操作（压缩、撤销、另一个 fork）在进行时，fork 会被拒绝；等会话空闲后重试。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `title` | body | string | fork 的标题（至少 1 个字符）。默认 `Fork: <source title>` |
 | `metadata` | body | object | fork 的自定义元数据 |
+| `prompt_id` | body | string | 要从中分叉的用户提示词 id。默认为最新状态 |
 
 成功时，`data` 为新会话的 [session 对象](#session-对象)。
 
-- `40901`：会话有进行中的轮次，无法 fork
+- `40001`：`prompt_id` 在会话中不存在
+- `40901`：有轮次正在进行或有其他操作在进行，暂时无法 fork
 
 #### `POST /api/v1/sessions/{session_id}:compact`
 
@@ -787,7 +791,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 #### `POST /api/v1/sessions/{session_id}/children`
 
-创建子会话：fork 当前会话并记录为其子会话，因此会出现在 `GET /api/v1/sessions/{session_id}/children` 下。适用与 `:fork` 相同的进行中轮次限制。
+创建子会话：fork 当前会话并记录为其子会话，因此会出现在 `GET /api/v1/sessions/{session_id}/children` 下。适用与 `:fork` 相同的规则：有轮次正在进行或有其他操作在进行时会被拒绝。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -797,7 +801,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 成功时，`data` 为新会话的 [session 对象](#session-对象)，并且服务端广播 `event.session.created`。
 
-- `40901`：会话有进行中的轮次，无法 fork
+- `40901`：有轮次正在进行或有其他操作在进行，暂时无法 fork
 
 #### `GET /api/v1/sessions/{session_id}/status`
 

@@ -950,6 +950,41 @@ describe('Agent loop', () => {
     await expect(active.result).resolves.toMatchObject({ type: 'completed' });
   });
 
+  it('refuses a quiescence lease while a turn is finalizing', async () => {
+    let releaseDrain!: () => void;
+    const drainGate = new Promise<void>((resolve) => {
+      releaseDrain = resolve;
+    });
+    const drain = vi
+      .spyOn(ctx.wire, 'drainPersisted')
+      .mockImplementationOnce(() => drainGate);
+
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+    const active = submitTurn(loop, 'go').turn;
+    await vi.waitFor(() => {
+      expect(drain).toHaveBeenCalled();
+    });
+
+    expect(loop.snapshot().state).toBe('idle');
+    expect(loop.tryAcquireQuiescence()).toBeUndefined();
+
+    releaseDrain();
+    await expect(active.result).resolves.toMatchObject({ type: 'completed' });
+    drain.mockRestore();
+
+    expect(loop.tryAcquireQuiescence()).toBeDefined();
+  });
+
+  it('exposes a quiescence lease once the turn.ended event is observable', async () => {
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'go' }] });
+    await ctx.untilTurnEnd();
+
+    const lease = loop.tryAcquireQuiescence();
+    expect(lease).toBeDefined();
+    lease?.dispose();
+  });
+
   it('holds new admissions until an idle quiescence lease is released', async () => {
     const lease = loop.tryAcquireQuiescence();
     expect(lease).toBeDefined();

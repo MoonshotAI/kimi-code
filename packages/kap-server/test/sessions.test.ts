@@ -22,6 +22,7 @@ import {
   IAgentConversationUndoService,
   IAgentCronService,
   IAgentLifecycleService,
+  IAgentLoopService,
   IEventBus,
   IEventDispatcher,
   IEventService,
@@ -38,7 +39,7 @@ import {
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
-import { TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import { TurnSteer, TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type { AgentTranscriptSnapshot } from '@moonshot-ai/transcript';
 import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import { sessionWarningsResponseSchema } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
@@ -1281,6 +1282,146 @@ describe('server-v2 /api/v1/sessions', () => {
     const forkedState = JSON.parse(await readFile(join(forkedDir, 'state.json'), 'utf8'));
     expect(forkedState.title).toBe('Named fork');
     expect(forkedState.titleKind).toBe('custom');
+  });
+
+  it('passes prompt_id through :fork to the session manager fork', async () => {
+    const cwd = home as string;
+    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const parentId = parent.body.data.id;
+    const manager = (server as RunningServer).core.accessor.get(ISessionManager);
+    const fork = vi
+      .spyOn(manager, 'fork')
+      .mockRejectedValue(new Error2(ErrorCodes.SESSION_BUSY, 'session is busy'));
+
+    try {
+      const response = await postJson<null>(`/api/v1/sessions/${parentId}:fork`, {
+        prompt_id: 'prompt-1',
+      });
+
+      expect(response.body.code).toBe(40901);
+      expect(fork).toHaveBeenCalledWith({
+        sourceSessionId: parentId,
+        title: undefined,
+        metadata: undefined,
+        promptId: 'prompt-1',
+      });
+    } finally {
+      fork.mockRestore();
+    }
+  });
+
+  it('forks through :fork without prompt_id as before', async () => {
+    const cwd = home as string;
+    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const parentId = parent.body.data.id;
+    const manager = (server as RunningServer).core.accessor.get(ISessionManager);
+    const fork = vi.spyOn(manager, 'fork');
+
+    try {
+      const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
+
+      expect(forked.body.code).toBe(0);
+      expect(fork).toHaveBeenCalledWith({
+        sourceSessionId: parentId,
+        title: undefined,
+        metadata: undefined,
+        promptId: undefined,
+      });
+    } finally {
+      fork.mockRestore();
+    }
+  });
+
+  it.each([{ prompt_id: 1 }, { prompt_id: '' }])(
+    'rejects an out-of-contract prompt_id on :fork (%s)',
+    async (body) => {
+      const cwd = home as string;
+      const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+      const response = await postJson<null>(
+        `/api/v1/sessions/${parent.body.data.id}:fork`,
+        body,
+      );
+      expect(response.body.code).toBe(40001);
+      expect(response.body.details?.[0]?.path).toBe('prompt_id');
+    },
+  );
+
+  it('rejects :fork while a non-turn operation holds the session quiescence', async () => {
+    const cwd = home as string;
+    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const parentId = parent.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, parentId);
+    expect(session).toBeDefined();
+    await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const agent = session!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    agent.accessor.get(IAgentContextMemoryService).append(
+      { role: 'user', content: [{ type: 'text', text: 'first prompt' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'first answer' }], toolCalls: [] },
+    );
+    await agent.accessor.get(IEventDispatcher).dispatch(
+      new TurnEnded({ agentId: MAIN_AGENT_ID, turnId: 0, reason: 'completed' }),
+    );
+    await agent.accessor.get(IWireService).flush();
+    const hold = agent.accessor.get(IAgentLoopService).tryAcquireQuiescence();
+    expect(hold).toBeDefined();
+
+    try {
+      const response = await postJson<null>(`/api/v1/sessions/${parentId}:fork`, {});
+      expect(response.body.code).toBe(40901);
+    } finally {
+      hold!.dispose();
+    }
+
+    const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
+    expect(forked.body.code).toBe(0);
+  });
+
+  it('derives the fork outcome from the sliced wire instead of the source metadata', async () => {
+    const cwd = home as string;
+    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const parentId = parent.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, parentId);
+    expect(session).toBeDefined();
+    await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const agent = session!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    const context = agent.accessor.get(IAgentContextMemoryService);
+    const user = (text: string, promptId?: string): ContextMessage => ({
+      role: 'user',
+      content: [{ type: 'text', text }],
+      toolCalls: [],
+      origin: { kind: 'user' },
+      id: promptId,
+    });
+    const assistant = (text: string): ContextMessage => ({
+      role: 'assistant',
+      content: [{ type: 'text', text }],
+      toolCalls: [],
+    });
+    context.append(user('first prompt', 'p1'), assistant('first answer'));
+    await agent.accessor.get(IEventDispatcher).dispatch(
+      new TurnEnded({ agentId: MAIN_AGENT_ID, turnId: 0, reason: 'completed' }),
+    );
+    context.append(user('second prompt', 'p2'), assistant('second answer'));
+    await agent.accessor.get(IEventDispatcher).dispatch(
+      new TurnEnded({ agentId: MAIN_AGENT_ID, turnId: 1, reason: 'failed' }),
+    );
+    await session!.accessor.get(ISessionMetadata).update({ lastTurnReason: 'failed' });
+    await agent.accessor.get(IWireService).flush();
+
+    const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {
+      prompt_id: 'p1',
+    });
+    expect(forked.body.code).toBe(0);
+    const forkedId = forked.body.data.id;
+
+    const metaFiles = (await readdir(home as string, { recursive: true })).filter(
+      (path) => path.endsWith(`${forkedId}/state.json`),
+    );
+    expect(metaFiles).toHaveLength(1);
+    const diskMeta = JSON.parse(
+      await readFile(join(home as string, metaFiles[0]!), 'utf8'),
+    ) as { lastTurnReason?: unknown };
+    expect(diskMeta.lastTurnReason).toBe('completed');
   });
 
   it.each([
