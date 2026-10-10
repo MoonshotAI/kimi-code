@@ -15,7 +15,7 @@ apps/kimi-code/CHANGELOG.md
 
 This file is the **only upstream source** for the documentation-site changelog. Internal package changelogs such as `packages/*/CHANGELOG.md` do not go into the documentation site.
 
-After the release flow finishes (Release PR merged → `Version Packages` completed → npm publish succeeded), maintainers manually run this skill to copy the new CLI changelog entries into the docs site, translate the English increment into Chinese, wait for an optional human review, then commit on a dedicated branch and open a PR.
+After the release flow finishes (release version PR merged → CI succeeded → manual Release publication succeeded → version metadata synced to main), maintainers manually run this skill to copy the new CLI changelog entries into the docs site, translate the English increment into Chinese, wait for an optional human review, then commit on a dedicated branch and open a PR.
 
 ## When To Use
 

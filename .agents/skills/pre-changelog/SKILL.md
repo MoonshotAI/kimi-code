@@ -18,7 +18,7 @@ gh pr list --state open --search "ci: release packages in:title" \
   --json number,title,url,headRefName,baseRefName
 ```
 
-Pick the one with `headRefName: changeset-release/main`; record `number`, `url` as `<RELEASE>`. If none is open, nothing to preview — stop.
+Select the PR whose `baseRefName` is the requested `release/<cycle>` and whose `headRefName` is `changeset-release/release/<cycle>`; record `number`, `url` as `<RELEASE>`. If multiple release cycles are open and no cycle was specified, ask which one to preview. If none is open, nothing to preview — stop.
 
 ### 2. Read the pre-generated CLI changelog block
 
