@@ -3504,6 +3504,25 @@ command = "vim"
     expect(harness.deleteFile).toHaveBeenCalledTimes(1);
   });
 
+  it('force-exits instead of waiting for shutdown hooks when Ctrl+C is pressed during stop', async () => {
+    const { driver } = await makeDriver();
+    const emergency = vi
+      .spyOn(
+        driver as unknown as { emergencyTerminalExit(exitCode?: number): never },
+        'emergencyTerminalExit',
+      )
+      .mockImplementation(() => {
+        throw new Error('emergency-exit');
+      });
+    vi.spyOn(driver, 'closeSession').mockReturnValue(new Promise<void>(() => {}));
+
+    const stopped = driver.stop();
+    stopped.catch(() => {});
+
+    expect(() => driver.state.editor.onCtrlC?.()).toThrow('emergency-exit');
+    expect(emergency).toHaveBeenCalledWith(130);
+  });
+
   it('releases goal-steered staging media when the running goal turn ends', async () => {
     const { driver, session, harness } = await makeDriver();
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;

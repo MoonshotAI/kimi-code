@@ -119,6 +119,7 @@ import {
   PRODUCT_NAME,
   SESSION_LIST_PAGE_SIZE,
   SESSIONLESS_STARTUP_NOTICE,
+  SHUTTING_DOWN_HINT,
 } from './constant/kimi-tui';
 import { MEDIA_INGESTION_SUBMIT_WAIT_MS } from './constant/media';
 import { CHROME_GUTTER } from './constant/rendering';
@@ -1013,6 +1014,11 @@ export class KimiTUI {
     this.isShuttingDown = true;
     this.unregisterSignalHandlers();
     this.aborted = true;
+    // A Ctrl+C during shutdown means "don't wait for slow hooks": skip the
+    // remaining graceful close and get out immediately.
+    this.state.editor.onCtrlC = () => {
+      this.emergencyTerminalExit(130);
+    };
     // Give the startup provider-model refresh a brief chance to finish before
     // the harness closes (and the process exits): its config writes are each
     // atomic, so draining can only ever leave a complete file behind. Bounded
@@ -1041,6 +1047,11 @@ export class KimiTUI {
     }
     this.reverseRpcDisposers.length = 0;
     this.disposeTerminalTracking();
+    // closeSession runs SessionEnd hooks, which can take seconds (bounded by
+    // the hook timeout) — keep the last frame from looking like a freeze by
+    // saying the shutdown is in progress.
+    this.state.footer.setTransientHint(SHUTTING_DOWN_HINT);
+    this.state.ui.requestRender();
     // Restore the terminal even if closing the session / harness throws — a
     // SIGTERM during a network or MCP shutdown must not leave the user stuck in
     // raw mode with a hidden cursor.
