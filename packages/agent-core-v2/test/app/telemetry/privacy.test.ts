@@ -67,6 +67,34 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
     expect(cleanTelemetryString('\\\\?\\C:\\Users\\alice\\Secret \\file.txt')).toBe(REDACTED);
   });
 
+  it('redacts Win32 device-drive paths without leaving their tails', () => {
+    expect(cleanTelemetryString(String.raw`\\.\C:\Users\alice\secret.txt`)).toBe(REDACTED);
+    expect(cleanTelemetryString(String.raw`\\.\C:\Users\alice\cache`)).toBe(REDACTED);
+  });
+
+  it('redacts POSIX paths with repeated separators', () => {
+    expect(cleanTelemetryString('/home/alice//secret.txt')).toBe(REDACTED);
+    expect(cleanTelemetryString('/home/alice/secret.txt//')).toBe(REDACTED);
+    expect(cleanTelemetryString('//home///alice//cache///')).toBe(REDACTED);
+    expect(cleanTelemetryString('failed at /home//alice/cache///: permission denied')).toBe(
+      `failed at ${REDACTED}: permission denied`,
+    );
+  });
+
+  it('preserves diagnostics after single-quoted extensionless Windows paths', () => {
+    expect(cleanTelemetryString(String.raw`failure at 'C:\Users\alice\cache' could not be read`)).toBe(
+      `failure at '${REDACTED}' could not be read`,
+    );
+    expect(cleanTelemetryString(String.raw`failure at 'C:\Users\O'Brien\cache' could not be read`)).toBe(
+      `failure at '${REDACTED}' could not be read`,
+    );
+    expect(cleanTelemetryString(String.raw`C:\Users\O'Brien\cache`)).toBe(REDACTED);
+    expect(cleanTelemetryString(String.raw`C:\Users\O' Brien\cache`)).toBe(REDACTED);
+    expect(cleanTelemetryString(String.raw`failure at 'C:\Users\alice\cache' couldn't be read`)).toBe(
+      `failure at '${REDACTED}' couldn't be read`,
+    );
+  });
+
   it('redacts drive-letter paths spelled with forward slashes', () => {
     expect(cleanTelemetryString('C:/Users/alice.chen/proj/secret.txt')).toBe(REDACTED);
   });

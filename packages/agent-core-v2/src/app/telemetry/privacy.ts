@@ -13,25 +13,31 @@ const LABELED_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
 
 const PATH_BOUNDARY = String.raw`(?![\p{L}\p{M}\p{N}.$_~+\\/-])`;
 const EXTENSION_BOUNDARY = String.raw`(?=$|[\s'",;:!?) }])`;
+const WINDOWS_ATOM = String.raw`[^\\/:*?'"<>|\u0000-\u001F]+`;
 const WINDOWS_COMPONENT = String.raw`[^\\/:*?"<>|\u0000-\u001F]+`;
+const WINDOWS_QUOTED_COMPONENT = String.raw`${WINDOWS_ATOM}(?:'(?=[^\s\\/])${WINDOWS_ATOM})*`;
 const WINDOWS_FINAL_WITH_EXTENSION = String.raw`${WINDOWS_COMPONENT}?\.[\p{L}\p{M}\p{N}]{1,16}`;
 const WINDOWS_EXTENSION_TAIL = String.raw`(?:[\\/]${WINDOWS_COMPONENT})*[\\/]${WINDOWS_FINAL_WITH_EXTENSION}${EXTENSION_BOUNDARY}`;
-const WINDOWS_GENERIC_TAIL = String.raw`(?:[\\/]${WINDOWS_COMPONENT})+[\\/]?(?=$|[:*?"<>|\u0000-\u001F])`;
+const WINDOWS_GENERIC_TAIL = String.raw`(?:[\\/]${WINDOWS_COMPONENT})+[\\/]?(?=$|[':*?"<>|\u0000-\u001F])`;
 const WINDOWS_TAIL = String.raw`(?:${WINDOWS_EXTENSION_TAIL}|${WINDOWS_GENERIC_TAIL})`;
 
 const WINDOWS_LONG_BASE = String.raw`\\\\\?\\(?:UNC\\[^\s\\/]+\\${WINDOWS_COMPONENT}|[A-Za-z]:)`;
 const WINDOWS_UNC_BASE = String.raw`\\\\[^\s\\/]+\\${WINDOWS_COMPONENT}`;
 const WINDOWS_UNC_OR_LONG = String.raw`(?:${WINDOWS_LONG_BASE}|${WINDOWS_UNC_BASE})(?:${WINDOWS_TAIL}|[\\/]?)`;
+const WINDOWS_DEVICE_DRIVE = String.raw`\\\\\.\\[A-Za-z]:${WINDOWS_TAIL}${PATH_BOUNDARY}`;
 const WINDOWS_DRIVE = String.raw`\b[A-Za-z]:${WINDOWS_TAIL}${PATH_BOUNDARY}`;
 const POSIX_ATOM = String.raw`(?:(?![,:] | \/)[^/'"\u0000-\u001F])+`;
 const POSIX_COMPONENT = String.raw`${POSIX_ATOM}(?:'${POSIX_ATOM})*`;
 const POSIX_FINAL_WITH_EXTENSION = String.raw`${POSIX_COMPONENT}?\.[\p{L}\p{M}\p{N}]{1,16}`;
-const POSIX_EXTENSION_PATH = String.raw`(?:\/${POSIX_COMPONENT})+\/${POSIX_FINAL_WITH_EXTENSION}${EXTENSION_BOUNDARY}`;
-const POSIX_GENERIC_PATH = String.raw`(?:\/${POSIX_COMPONENT}){2,}\/?(?=$|['"\u0000-\u001F]|[,:] )`;
+const POSIX_EXTENSION_PATH = String.raw`(?:\/+${POSIX_COMPONENT})+\/+${POSIX_FINAL_WITH_EXTENSION}${EXTENSION_BOUNDARY}`;
+const POSIX_GENERIC_PATH = String.raw`(?:\/+${POSIX_COMPONENT}){2,}\/*(?=$|['"\u0000-\u001F]|[,:] )`;
 const POSIX_PATH = String.raw`(?:${POSIX_EXTENSION_PATH}|${POSIX_GENERIC_PATH})`;
-const ABSOLUTE_PATH = new RegExp(`${WINDOWS_UNC_OR_LONG}|${WINDOWS_DRIVE}|${POSIX_PATH}`, 'gu');
+const WINDOWS_PATH = `${WINDOWS_DEVICE_DRIVE}|${WINDOWS_UNC_OR_LONG}|${WINDOWS_DRIVE}`;
+const WINDOWS_QUOTED_PATH = `'(?:${WINDOWS_PATH.replaceAll(WINDOWS_COMPONENT, WINDOWS_QUOTED_COMPONENT)})'`;
+const ABSOLUTE_PATH = new RegExp(`${WINDOWS_QUOTED_PATH}|${WINDOWS_PATH}|${POSIX_PATH}`, 'gu');
 
 function redactAbsolutePath(match: string): string {
+  if (match.startsWith("'")) return `'${redactAbsolutePath(match.slice(1, -1))}'`;
   const normalized = match.replaceAll('\\', '/');
   const windowsPath = /^[A-Za-z]:[\\/]|^\\\\/.test(match);
   const index = windowsPath
