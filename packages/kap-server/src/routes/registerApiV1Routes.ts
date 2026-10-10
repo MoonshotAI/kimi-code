@@ -112,7 +112,12 @@ export async function registerApiV1Routes(
       });
 
       registerAuthRoute(apiV1 as unknown as Parameters<typeof registerAuthRoute>[0], core);
-      registerOAuthRoutes(apiV1 as unknown as Parameters<typeof registerOAuthRoutes>[0], core);
+      registerOAuthRoutes(
+        apiV1 as unknown as Parameters<typeof registerOAuthRoutes>[0],
+        core,
+        opts.remoteControl.service,
+        opts.remoteControl.devices,
+      );
       registerConfigRoutes(apiV1 as unknown as Parameters<typeof registerConfigRoutes>[0], core);
       registerModelCatalogRoutes(
         apiV1 as unknown as Parameters<typeof registerModelCatalogRoutes>[0],
