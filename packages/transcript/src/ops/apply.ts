@@ -547,18 +547,8 @@ function taskEquals(a: TranscriptTask, b: TranscriptTask): boolean {
     a.resultSummary === b.resultSummary &&
     a.error === b.error &&
     a.stateReason === b.stateReason &&
-    a.usage === b.usage &&
-    taskUpdatesEqual(a.updates, b.updates)
+    a.usage === b.usage
   );
-}
-
-function taskUpdatesEqual(a: TranscriptTask['updates'], b: TranscriptTask['updates']): boolean {
-  if (a === b) return true;
-  if (a === undefined || b === undefined || a.length !== b.length) return false;
-  return a.every((update, index) => {
-    const other = b[index]!;
-    return update.title === other.title && update.message === other.message && update.at === other.at;
-  });
 }
 
 function applyMetaMerge(state: AgentState, meta: TranscriptMetaMerge): ApplyResult {

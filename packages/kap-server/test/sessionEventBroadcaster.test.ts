@@ -226,7 +226,6 @@ class FakeSessionActivityView {
   private readonly busSubscriptions = new Map<string, { dispose(): void }>();
   private readonly lifecycle: FakeLifecycle;
   private current: SessionActivityState;
-  private latestUpdate: SessionActivityState['latestUpdate'];
 
   constructor(lifecycle: FakeLifecycle) {
     this.lifecycle = lifecycle;
@@ -248,11 +247,6 @@ class FakeSessionActivityView {
 
   state(): SessionActivityState {
     return this.current;
-  }
-
-  postUpdate(update: NonNullable<SessionActivityState['latestUpdate']>): void {
-    this.latestUpdate = update;
-    this.recompute('update');
   }
 
   onDidChange(listener: (change: SessionActivityChangedEvent) => void): { dispose(): void } {
@@ -333,13 +327,11 @@ class FakeSessionActivityView {
 
   private recompute(cause: SessionActivityCause): void {
     const next = this.aggregate();
-    if (!next.busy) this.latestUpdate = undefined;
     if (
       next.busy === this.current.busy &&
       next.mainTurnActive === this.current.mainTurnActive &&
       next.pendingInteraction === this.current.pendingInteraction &&
-      next.lastTurnReason === this.current.lastTurnReason &&
-      next.latestUpdate === this.current.latestUpdate
+      next.lastTurnReason === this.current.lastTurnReason
     ) {
       return;
     }
@@ -368,7 +360,6 @@ class FakeSessionActivityView {
           ? 'question'
           : 'none',
       lastTurnReason: this.folds.get(MAIN_AGENT_ID)?.lastTurnReason,
-      latestUpdate: busy ? this.latestUpdate : undefined,
     };
   }
 }
@@ -1438,51 +1429,6 @@ describe('SessionEventBroadcaster', () => {
       expect(
         globalView.envelopes.filter((e) => e.type === 'turn.started'),
       ).toHaveLength(0);
-    });
-
-    it('carries the latest progress update on work_changed until the session goes idle', async () => {
-      const lc = new FakeLifecycle();
-      const main = lc.addAgent('main');
-      sessions.set('s1', lc);
-
-      const globalView = collectingTarget();
-      bc.addGlobalTarget(globalView.target);
-      const { target } = collectingTarget();
-      await bc.subscribe('s1', target);
-
-      main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
-      await bc.getCursor('s1');
-      lc.workView.postUpdate({
-        title: 'Found two refresh paths',
-        agentId: 'agent-1',
-        source: 'Audit refresh paths',
-        at: '2026-10-10T08:00:00.000Z',
-      });
-      await bc.getCursor('s1');
-      main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
-      await bc.getCursor('s1');
-
-      const workChanged = globalView.envelopes.filter(
-        (e) => e.type === 'event.session.work_changed',
-      );
-      expect(workChanged).toHaveLength(3);
-      const latestOf = (index: number): unknown =>
-        (workChanged[index]!.payload as Record<string, unknown>)['latest_update'];
-      expect(latestOf(0)).toBeUndefined();
-      expect(workChanged[1]).toMatchObject({
-        session_id: 's1',
-        payload: {
-          busy: true,
-          latest_update: {
-            title: 'Found two refresh paths',
-            agent_id: 'agent-1',
-            source: 'Audit refresh paths',
-            at: '2026-10-10T08:00:00.000Z',
-          },
-        },
-      });
-      expect(workChanged[2]).toMatchObject({ payload: { busy: false, last_turn_reason: 'completed' } });
-      expect(latestOf(2)).toBeUndefined();
     });
 
     it('stops delivering after removeGlobalTarget', async () => {

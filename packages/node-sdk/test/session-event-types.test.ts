@@ -108,7 +108,6 @@ describe('Event public types', () => {
         case 'subagent.spawned':
         case 'subagent.started':
         case 'subagent.suspended':
-        case 'subagent.update':
         case 'subagent.completed':
         case 'subagent.failed':
         case 'subagent.cancelled':

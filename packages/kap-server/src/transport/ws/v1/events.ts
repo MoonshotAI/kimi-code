@@ -6,11 +6,7 @@ import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permission
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 import type { AgentPhase } from '../../../services/legacyStatus/legacyStatus';
 import type { ConfigResponse } from '../../../protocol/rest-config';
-import type {
-  Session,
-  SessionLatestUpdate,
-  SessionPendingInteraction,
-} from '../../../protocol/session';
+import type { Session, SessionPendingInteraction } from '../../../protocol/session';
 import type { Workspace } from '../../../protocol/workspace';
 
 export interface AgentStatusUpdatedEvent {
@@ -79,7 +75,6 @@ export interface SessionWorkChangedEvent {
   readonly main_turn_active?: boolean;
   readonly pending_interaction?: SessionPendingInteraction;
   readonly last_turn_reason?: 'completed' | 'cancelled' | 'failed';
-  readonly latest_update?: SessionLatestUpdate;
 }
 
 type LegacySessionStatus =

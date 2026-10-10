@@ -1275,7 +1275,7 @@ key = "${titleOAuthRef.key}"
           if (enabled && panel) {
             const execution = currentMain.accessor
               .get(INotifyUserTool)
-              .resolveExecution({ title: 'Still working', message: 'Still working.' });
+              .resolveExecution({ title: 'Working', message: 'Still working.' });
             if (!('execute' in execution)) throw new Error('Expected executable notification');
             expect(
               await execution.execute({ signal: new AbortController().signal } as never),

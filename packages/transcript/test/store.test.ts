@@ -324,27 +324,6 @@ describe('AgentTranscript', () => {
     expect(task?.usage?.inputOther).toBe(100);
   });
 
-  it('task upserts that only append an update are applied and stay idempotent', () => {
-    const tx = new AgentTranscript('main');
-    const base = { taskId: 'agent-1', kind: 'subagent' as const, state: 'running' as const, detached: false, outputTail: '' };
-    tx.apply([{ op: 'task.upsert', task: base }]);
-    const first = { title: 'Found two refresh paths', message: 'Interceptor and visibility.', at: '2026-10-10T08:00:00.000Z' };
-    const second = { title: 'All three mapped', message: 'WS reconnect too.' };
-
-    const appended = tx.apply([{ op: 'task.upsert', task: { ...base, updates: [first] } }]);
-    expect(appended.accepted).toHaveLength(1);
-    expect(tx.getTask('agent-1')?.updates).toEqual([first]);
-
-    tx.apply([{ op: 'task.upsert', task: { ...base, updates: [first, second] } }]);
-    expect(tx.getTask('agent-1')?.updates).toEqual([first, second]);
-
-    const replayed = tx.apply([{ op: 'task.upsert', task: { ...base, updates: [{ ...first }, { ...second }] } }]);
-    expect(replayed.accepted).toHaveLength(0);
-
-    tx.apply([{ op: 'task.upsert', task: { ...base, updates: [first, { ...second, message: 'WS reconnect too, on resume.' }] } }]);
-    expect(tx.getTask('agent-1')?.updates?.[1]?.message).toBe('WS reconnect too, on resume.');
-  });
-
   it('items.remove clears anchored interactions and their pending entries', () => {
     const tx = new AgentTranscript('main');
     tx.apply([

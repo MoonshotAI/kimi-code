@@ -1,4 +1,4 @@
-Show the end user a progress update without ending your turn. Main-agent and subagent updates are shown to the user as they arrive, with source labels added automatically. The title is shown on its own wherever space is tight, such as a status line or a session list, and the user can open the full message from it. Updates stay visible after the work ends.
+Show the end user a progress update without ending your turn. Main-agent and subagent updates are shown to the user as they arrive, with source labels added automatically. The title is shown on its own wherever space is tight, and the user can open the full message from it. Updates stay visible after the work ends.
 
 **When to use:**
 1. Early in a multi-step task, describe your approach so the user can follow your work.

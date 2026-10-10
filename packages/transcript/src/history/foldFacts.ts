@@ -2,7 +2,7 @@ import type { AgentRef } from '../model/frame';
 import type { TranscriptInteraction } from '../model/interaction';
 import type { TranscriptItem, TranscriptMarker, TranscriptTaskRef } from '../model/item';
 import type { GoalMeta, GoalStatus, TranscriptMeta } from '../model/meta';
-import { appendTaskUpdate, type TranscriptTask } from '../model/task';
+import type { TranscriptTask } from '../model/task';
 import type { TodoItem, TranscriptTodo } from '../model/todo';
 import type { StepUsage, TranscriptTurn } from '../model/turn';
 import type { AgentTranscriptSnapshot } from '../ops/operation';
@@ -409,24 +409,6 @@ export function foldWireRecordFacts(
         };
         terminalise(taskId);
         if (taskId !== agentId) terminalise(agentId);
-        break;
-      }
-      case 'subagent.update': {
-        const agentId = record['subagentId'];
-        const title = record['title'];
-        const message = record['message'];
-        if (typeof agentId !== 'string' || typeof title !== 'string' || typeof message !== 'string') {
-          break;
-        }
-        const taskId = subagentTasks.get(agentId) ?? agentId;
-        const update = { title, message, at: recordTimeIso(record) };
-        const append = (key: string): void => {
-          const task = tasks.get(key);
-          if (task === undefined) return;
-          tasks.set(key, { ...task, updates: appendTaskUpdate(task.updates, update) });
-        };
-        append(taskId);
-        if (taskId !== agentId) append(agentId);
         break;
       }
       case 'tools.update_store': {

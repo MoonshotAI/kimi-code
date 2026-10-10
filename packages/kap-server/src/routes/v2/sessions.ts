@@ -17,7 +17,6 @@ import { defineRoute } from '../../middleware/defineRoute';
 import { errEnvelope, okEnvelope } from '../../protocol/envelope';
 import { ErrorCode } from '../../protocol/error-codes';
 import { resolveSessionFacts, type SessionFacts } from '../sessions';
-import { sessionLatestUpdateSchema, toWireLatestUpdate } from '../../protocol/session';
 
 interface V2SessionsRouteHost {
   get(
@@ -229,11 +228,7 @@ const v2SessionSchema = z.object({
     archived: z.boolean(),
     archived_at: z.number().int().nullable(),
   }),
-  activity: z.object({
-    status: v2ActivityStatusSchema,
-    model: z.string().nullable(),
-    latest_update: sessionLatestUpdateSchema.optional(),
-  }),
+  activity: z.object({ status: v2ActivityStatusSchema, model: z.string().nullable() }),
   git: v2GitDomainSchema.optional(),
 });
 
@@ -604,7 +599,6 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
             activity: {
               status: mapActivityStatus(facts, summary.lastTurnReason),
               model: facts.model ?? null,
-              latest_update: toWireLatestUpdate(facts.latestUpdate),
             },
             git:
               gitByCwd === undefined

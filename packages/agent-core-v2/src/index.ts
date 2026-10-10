@@ -740,7 +740,6 @@ export * from '#/features/todo/tools/todo-list/todo-list';
 import '#/features/todo/todoFeature';
 export * from '#/features/notify/flag';
 export * from '#/features/notify/notifyUserAvailability';
-export * from '#/features/notify/subagentUpdate';
 export * from '#/features/notify/tools/notify-user/notify-user';
 import '#/features/notify/notifyFeature';
 export * from '#/tool/toolContract';

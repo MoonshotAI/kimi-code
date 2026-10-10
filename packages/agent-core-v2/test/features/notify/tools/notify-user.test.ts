@@ -1,9 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { ILogService } from '#/_base/log/log';
-import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { type HostUiCapability, IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
@@ -14,20 +11,16 @@ import {
 } from '#/features/notify/notifyUserAvailability';
 import {
   INotifyUserTool,
+  NOTIFY_USER_TOOL_NAME,
+  NotifyUserInputSchema,
+} from '#/features/notify/tools/notify-user/notify-user';
+import {
   NOTIFY_USER_DELIVERED_OUTPUT,
   NOTIFY_USER_EMPTY_MESSAGE,
   NOTIFY_USER_EMPTY_TITLE,
   NOTIFY_USER_SUPPRESSED_OUTPUT,
-  NOTIFY_USER_TOOL_NAME,
-  NotifyUserInputSchema,
-} from '#/features/notify/tools/notify-user/notify-user';
-import { NotifyUserTool } from '#/features/notify/tools/notify-user/notifyUserTool';
+} from '#/features/notify/tools/notify-user/notifyUserTool';
 import { NOTIFY_USER_NUDGE_VARIANT } from '#/features/notify/notifyUserNudge';
-import { SubagentUpdate } from '#/features/notify/subagentUpdate';
-import type { Event2 } from '#/app/event/event2';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
-import { IEventDispatcher } from '#/state/eventDispatcher';
 import { recordingTelemetry, type TelemetryRecord } from '../../../app/telemetry/stubs';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 
@@ -234,125 +227,6 @@ describe('NotifyUserTool', () => {
     });
     expect(telemetry.find((record) => record.event === 'notify_user_sent')?.properties).toMatchObject({
       displayed: false,
-    });
-  });
-  describe('forwarding subagent updates to the parent agent', () => {
-    interface Forwarding {
-      readonly tool: NotifyUserTool;
-      readonly dispatched: Event2[];
-      readonly warnings: string[];
-    }
-
-    function forwardingTool(
-      agentId: string,
-      readMeta: () => Promise<Partial<SessionMeta>>,
-    ): Forwarding {
-      const dispatched: Event2[] = [];
-      const warnings: string[] = [];
-      const dispatcher = {
-        dispatch: (event: Event2) => {
-          dispatched.push(event);
-          return Promise.resolve();
-        },
-      } as unknown as IEventDispatcher;
-      const parent = {
-        id: 'main',
-        accessor: { get: (id: unknown) => (id === IEventDispatcher ? dispatcher : undefined) },
-      } as unknown as IAgentScopeHandle;
-      const agents = {
-        handleOf: (id: string) => (id === 'main' ? parent : undefined),
-      } as unknown as IAgentLifecycleService;
-      const metadata = { read: readMeta } as unknown as ISessionMetadata;
-      const scope = { agentId } as unknown as IAgentScopeContext;
-      const log = {
-        warn: (message: string) => {
-          warnings.push(message);
-        },
-      } as unknown as ILogService;
-      const tool = new NotifyUserTool(
-        ctx.get(IFlagService),
-        ctx.get(IBootstrapService),
-        ctx.get(IAgentContextMemoryService),
-        recordingTelemetry([]),
-        scope,
-        metadata,
-        agents,
-        log,
-      );
-      return { tool, dispatched, warnings };
-    }
-
-    const subagentMeta = (): Promise<Partial<SessionMeta>> =>
-      Promise.resolve({
-        agents: { 'agent-1': { type: 'sub', labels: { parentAgentId: 'main' } } },
-      });
-
-    it('dispatches the update on the parent agent once it is shown', async () => {
-      const { tool, dispatched } = forwardingTool('agent-1', subagentMeta);
-
-      const result = await executeTool(tool, {
-        turnId: 1,
-        toolCallId: 'call_1',
-        args: { title: '  Found two refresh paths  ', message: 'Interceptor and visibility.' },
-        signal,
-      });
-
-      expect(result).toEqual({ isError: false, output: NOTIFY_USER_DELIVERED_OUTPUT });
-      expect(dispatched).toHaveLength(1);
-      expect(dispatched[0]).toBeInstanceOf(SubagentUpdate);
-      expect(dispatched[0]).toMatchObject({
-        type: 'subagent.update',
-        subagentId: 'agent-1',
-        title: 'Found two refresh paths',
-        message: 'Interceptor and visibility.',
-      });
-    });
-
-    it('does not forward the main agent updates', async () => {
-      const { tool, dispatched } = forwardingTool('main', () =>
-        Promise.resolve({ agents: { main: { type: 'main' } } }),
-      );
-
-      await executeTool(tool, {
-        turnId: 1,
-        toolCallId: 'call_1',
-        args: { title: 'Plan ready', message: 'Three steps.' },
-        signal,
-      });
-
-      expect(dispatched).toHaveLength(0);
-    });
-
-    it('does not forward an update that was not shown', async () => {
-      Object.assign(ctx.get(IBootstrapService).args, { uiCapabilities: [] });
-      const { tool, dispatched } = forwardingTool('agent-1', subagentMeta);
-
-      const result = await executeTool(tool, {
-        turnId: 1,
-        toolCallId: 'call_1',
-        args: { title: 'Hidden', message: 'Should not appear.' },
-        signal,
-      });
-
-      expect(result).toEqual({ isError: false, output: NOTIFY_USER_SUPPRESSED_OUTPUT });
-      expect(dispatched).toHaveLength(0);
-    });
-
-    it('still reports the update as shown when the parent cannot be resolved', async () => {
-      const { tool, dispatched, warnings } = forwardingTool('agent-1', () =>
-        Promise.reject(new Error('metadata unavailable')),
-      );
-
-      const result = await executeTool(tool, {
-        turnId: 1,
-        toolCallId: 'call_1',
-        args: { title: 'Still shown', message: 'The subagent transcript keeps it.' },
-        signal,
-      });
-
-      expect(result).toEqual({ isError: false, output: NOTIFY_USER_DELIVERED_OUTPUT });
-      expect(dispatched).toHaveLength(0);
-      expect(warnings).toHaveLength(1);
     });
   });
 });

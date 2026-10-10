@@ -59,7 +59,6 @@ import {
 
 import { interactionAgentId, toWireApproval } from '../../../routes/approvals';
 import { toWireQuestion } from '../../../protocol/question-wire';
-import { toWireLatestUpdate } from '../../../protocol/session';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import { projectPromptContentParts } from '../../../services/messages/messageProjection';
 import { readLegacyStatus } from '../../../services/legacyStatus/legacyStatus';
@@ -1065,7 +1064,6 @@ export class SessionEventBroadcaster {
             main_turn_active: work.mainTurnActive,
             pending_interaction: work.pendingInteraction,
             last_turn_reason: work.lastTurnReason,
-            latest_update: toWireLatestUpdate(work.latestUpdate),
             agentId: 'main',
             sessionId: state.sessionId,
           } as Event,
@@ -1249,7 +1247,6 @@ const TRANSCRIPT_PROJECTED_EVENT_TYPES: ReadonlySet<string> = new Set([
   'subagent.failed',
   'subagent.cancelled',
   'subagent.suspended',
-  'subagent.update',
   'compaction.started',
   'compaction.blocked',
   'compaction.cancelled',

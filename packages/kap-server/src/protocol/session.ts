@@ -39,21 +39,6 @@ export function emptySessionUsage(): SessionUsage {
 export const sessionPendingInteractionSchema = z.enum(['none', 'approval', 'question']);
 export type SessionPendingInteraction = z.infer<typeof sessionPendingInteractionSchema>;
 
-export const sessionLatestUpdateSchema = z.object({
-  title: z.string().min(1),
-  agent_id: z.string().min(1),
-  source: z.string().min(1).optional(),
-  at: isoDateTimeSchema,
-});
-export type SessionLatestUpdate = z.infer<typeof sessionLatestUpdateSchema>;
-
-export function toWireLatestUpdate(
-  update: { readonly title: string; readonly agentId: string; readonly source?: string; readonly at: string } | undefined,
-): SessionLatestUpdate | undefined {
-  if (update === undefined) return undefined;
-  return { title: update.title, agent_id: update.agentId, source: update.source, at: update.at };
-}
-
 export const sessionSchema = z.object({
   id: z.string().min(1),
   workspace_id: workspaceIdSchema,
@@ -64,7 +49,6 @@ export const sessionSchema = z.object({
   main_turn_active: z.boolean().optional(),
   pending_interaction: sessionPendingInteractionSchema.optional(),
   last_turn_reason: z.enum(['completed', 'cancelled', 'failed']).optional(),
-  latest_update: sessionLatestUpdateSchema.optional(),
   archived: z.boolean().optional(),
   archived_at: isoDateTimeSchema.optional(),
   current_prompt_id: z.string().min(1).optional(),

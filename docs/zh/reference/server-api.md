@@ -575,7 +575,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 #### session 对象
 
-每个返回会话的端点都使用这种线上格式。实时状态字段（`busy`、`main_turn_active`、`pending_interaction`、`last_turn_reason`、`latest_update`）由会话的活动聚合解析得出：未加载到本服务进程中的会话（冷会话）始终上报为不忙碌且无待处理交互。少数字段在当前投影中是占位值——已逐字段注明。
+每个返回会话的端点都使用这种线上格式。实时状态字段（`busy`、`main_turn_active`、`pending_interaction`、`last_turn_reason`）由会话的活动聚合解析得出：未加载到本服务进程中的会话（冷会话）始终上报为不忙碌且无待处理交互。少数字段在当前投影中是占位值——已逐字段注明。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -589,7 +589,6 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `main_turn_active` | boolean | main agent 是否有进行中的轮次 |
 | `pending_interaction` | string | `none` / `approval` / `question`——有未答复的交互在等待 |
 | `last_turn_reason` | string | main agent 最近一次轮次的结果：`completed` / `cancelled` / `failed` |
-| `latest_update` | object | 会话忙碌期间，main agent 或任一 subagent 最近一条 `NotifyUser` 更新：`{ title, agent_id, source?, at }`，其中 `source` 是 subagent 的任务描述，`at` 为 ISO 8601。main agent 开始新轮次或会话转为空闲时清除，其他情况下不出现 |
 | `last_prompt` | string | 最近一条用户提示词文本（如有） |
 | `metadata` | object | 自定义元数据；始终携带 `cwd`（会话的工作目录） |
 | `agent_config` | object | 投影为 `{ model }`；`model` 在大多数响应中为 `""`，仅由 `GET /api/v1/sessions/{session_id}/snapshot` 填入实时模型 |
@@ -2188,7 +2187,7 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 | `page_token` | 上一页返回的翻页令牌 |
 | `page` | 无状态的 1 起始页码；与 `page_token` 互斥（同传返回 `40001`） |
 
-响应每项固定包含 `workspace`、`meta`、`activity` 三组，`include=git` 时附加 `git` 组；`fields=id,archived` 时仅返回 `{ id, archived }`。`activity` 组还会带上 `model`：会话仍加载在当前进程时为其绑定的模型别名，冷会话（未加载）为 `null`；会话忙碌期间还会带上 `latest_update`，格式与 [session 对象](#session-对象) 中的相同。每页额外携带 `total`，即过滤后的集合大小。翻页令牌绑定首页查询条件（含投影），中途改条件返回 `40922`。`page` 模式是跳页用的无状态替代：每次请求都是独立快照，不签发令牌，`next_page_token` 恒为 `null`。
+响应每项固定包含 `workspace`、`meta`、`activity` 三组，`include=git` 时附加 `git` 组；`fields=id,archived` 时仅返回 `{ id, archived }`。`activity` 组还会带上 `model`：会话仍加载在当前进程时为其绑定的模型别名，冷会话（未加载）为 `null`。每页额外携带 `total`，即过滤后的集合大小。翻页令牌绑定首页查询条件（含投影），中途改条件返回 `40922`。`page` 模式是跳页用的无状态替代：每次请求都是独立快照，不签发令牌，`next_page_token` 恒为 `null`。
 
 `view=by_workspace` 时，同一份过滤、排序后的集合会重新投影为按工作区分组的形态，概览页因此可以用一次请求替代「每个工作区各一轮询」：
 
@@ -2384,7 +2383,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | 流式文本 | `assistant.delta`、`thinking.delta`（带 `offset` 用于对齐） |
 | 工具调用 | `tool.call.started`、`tool.call.delta`、`tool.progress`、`tool.result` |
 | 交互 | `event.approval.requested` / `resolved`、`event.question.requested` / `answered` / `dismissed` |
-| subagent | `subagent.spawned` / `started` / `suspended` / `completed` / `failed`，以及 `subagent.update`（subagent 发布的一条 `NotifyUser` 更新：`{ subagentId, title, message }`，在父 agent 上发出） |
+| subagent | `subagent.spawned` / `started` / `suspended` / `completed` / `failed` |
 | 后台 | `task.started` / `terminated`、`shell.started` / `output` / `completed` |
 | 其他 | `compaction.*`、`skill.activated`、`goal.updated`、`prompt.*`、`error`、`warning` |
 

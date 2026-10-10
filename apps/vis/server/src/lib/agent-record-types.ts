@@ -59,7 +59,6 @@ import type {
   SubagentFailed,
   SubagentSpawned,
   SubagentStarted,
-  SubagentUpdate,
   TaskStarted,
   TaskTerminated,
   TaskWaitDelivered,
@@ -206,7 +205,6 @@ export type AgentRecord =
   | WireRecordOf<'subagent.failed', SubagentFailed>
   | WireRecordOf<'subagent.spawned', SubagentSpawned>
   | WireRecordOf<'subagent.started', SubagentStarted>
-  | WireRecordOf<'subagent.update', SubagentUpdate>
   | WireRecordOf<'swarm_mode.enter', SwarmModeEnter>
   | WireRecordOf<'swarm_mode.exit', SwarmModeExit>
   | WireRecordOf<'task.started', TaskStarted>

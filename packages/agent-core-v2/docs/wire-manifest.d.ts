@@ -24,7 +24,7 @@
 // cross-reducers), blobs (the folding states whose blob codec offloads inline
 // media to blob storage), owner (the source file declaring the class).
 
-// Index (65 record types)
+// Index (64 record types)
 //   config.update                      profile                                               src/agent/profile/profileOps.ts
 //   context.append_loop_event          contextMemory, turn                                   src/agent/contextMemory/contextEvents.ts
 //   context.append_message             contextMemory, plan, task.notificationDelivery        src/agent/contextMemory/contextEvents.ts
@@ -66,7 +66,6 @@
 //   subagent.failed                    (none)                                                src/session/subagent/mirrorAgentRun.ts
 //   subagent.spawned                   (none)                                                src/session/subagent/mirrorAgentRun.ts
 //   subagent.started                   (none)                                                src/session/subagent/mirrorAgentRun.ts
-//   subagent.update                    (none)                                                src/features/notify/subagentUpdate.ts
 //   swarm_mode.enter                   swarm                                                 src/features/swarm/swarmOps.ts
 //   swarm_mode.exit                    contextMemory, swarm                                  src/features/swarm/swarmOps.ts
 //   task.started                       task                                                  src/agent/task/taskOps.ts
@@ -643,17 +642,6 @@ interface SubagentStartedPayload {
 }
 
 /**
- * states: (none)
- * owner: src/features/notify/subagentUpdate.ts
- */
-interface SubagentUpdatePayload {
-  _name: 'subagent.update';
-  subagentId: string;
-  title: string;
-  message: string;
-}
-
-/**
  * states: swarm
  * owner: src/features/swarm/swarmOps.ts
  */
@@ -1012,7 +1000,6 @@ interface WirePayloadMap {
   "subagent.failed": SubagentFailedPayload;
   "subagent.spawned": SubagentSpawnedPayload;
   "subagent.started": SubagentStartedPayload;
-  "subagent.update": SubagentUpdatePayload;
   "swarm_mode.enter": SwarmModeEnterPayload;
   "swarm_mode.exit": SwarmModeExitPayload;
   "task.started": TaskStartedPayload;

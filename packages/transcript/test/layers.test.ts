@@ -15,7 +15,6 @@ import {
   transcriptUserOriginSchema,
 } from '#/contract/schema';
 import type { TranscriptItem } from '#/model/item';
-import { TRANSCRIPT_TASK_UPDATES_LIMIT } from '#/model/task';
 import type { AgentTranscriptSnapshot, TranscriptOperation } from '#/ops/operation';
 
 const idLabel = (i: TranscriptItem): string =>
@@ -1562,67 +1561,6 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(folded.tasks).toHaveLength(4);
     expect(folded.tasks.find((task) => task.taskId === 'reused')?.resultSummary).toBeUndefined();
     expect(folded.tasks.find((task) => task.taskId === 'failed')?.usage).toBeUndefined();
-  });
-
-  it('folds subagent updates onto the subagent task in arrival order', () => {
-    const folded = foldWireRecordFacts([
-      { type: 'subagent.spawned', subagentId: 'child', subagentName: 'explore', parentAgentId: 'main', parentToolCallId: 'agent-a', runInBackground: false, description: 'audit refresh', time: 1000 },
-      { type: 'subagent.update', subagentId: 'child', title: 'Found two paths', message: 'Interceptor and visibility.', time: 1500 },
-      { type: 'subagent.update', subagentId: 'child', title: 'All three paths mapped', message: 'WS reconnect too.', time: 1800 },
-      { type: 'subagent.completed', subagentId: 'child', resultSummary: 'done', time: 2000 },
-      { type: 'subagent.update', subagentId: 'ghost', title: 'Orphan', message: 'No task.', time: 2100 },
-      { type: 'subagent.update', subagentId: 'child', title: 42, message: 'Malformed.', time: 2200 },
-    ], baseWithMarker(), { agentId: 'main' });
-    expect(folded.tasks).toEqual([
-      expect.objectContaining({
-        taskId: 'child',
-        state: 'completed',
-        updates: [
-          { title: 'Found two paths', message: 'Interceptor and visibility.', at: new Date(1500).toISOString() },
-          { title: 'All three paths mapped', message: 'WS reconnect too.', at: new Date(1800).toISOString() },
-        ],
-      }),
-    ]);
-  });
-
-  it('keeps only the most recent subagent updates and resets them for a new generation', () => {
-    const spawned = (time: number): HistoryWireRecord => ({
-      type: 'subagent.spawned', subagentId: 'child', subagentName: 'explore', parentAgentId: 'main',
-      parentToolCallId: `agent-${String(time)}`, runInBackground: false, time,
-    });
-    const updates = Array.from({ length: TRANSCRIPT_TASK_UPDATES_LIMIT + 5 }, (_, index): HistoryWireRecord => ({
-      type: 'subagent.update', subagentId: 'child', title: `update ${String(index)}`, message: 'x', time: 1100 + index,
-    }));
-    const capped = foldWireRecordFacts([spawned(1000), ...updates], baseWithMarker(), { agentId: 'main' });
-    const cappedUpdates = capped.tasks.find((task) => task.taskId === 'child')?.updates;
-    expect(cappedUpdates).toHaveLength(TRANSCRIPT_TASK_UPDATES_LIMIT);
-    expect(cappedUpdates?.[0]?.title).toBe('update 5');
-    expect(cappedUpdates?.at(-1)?.title).toBe(`update ${String(TRANSCRIPT_TASK_UPDATES_LIMIT + 4)}`);
-
-    const respawned = foldWireRecordFacts(
-      [spawned(1000), ...updates.slice(0, 2), { type: 'subagent.completed', subagentId: 'child', resultSummary: 'old', time: 1500 }, spawned(3000)],
-      baseWithMarker(),
-      { agentId: 'main' },
-    );
-    expect(respawned.tasks.find((task) => task.taskId === 'child')?.updates).toBeUndefined();
-  });
-
-  it('carries subagent updates onto the background task registered after the spawn', () => {
-    const folded = foldWireRecordFacts([
-      { type: 'subagent.spawned', subagentId: 'worker', subagentName: 'explore', parentAgentId: 'main', parentToolCallId: 'agent-a', runInBackground: true, description: 'watch the build', time: 1000 },
-      { type: 'subagent.update', subagentId: 'worker', title: 'Build started', message: 'Queued behind lint.', time: 1050 },
-      { type: 'task.started', info: { taskId: 'task-3', kind: 'agent', status: 'running', agentId: 'worker', detached: true, startedAt: 1100 }, time: 1100 },
-      { type: 'subagent.update', subagentId: 'worker', title: 'Build halfway', message: '120 of 240 modules.', time: 1200 },
-    ], baseWithMarker(), { agentId: 'main' });
-    expect(folded.tasks).toEqual([
-      expect.objectContaining({
-        taskId: 'task-3',
-        updates: [
-          { title: 'Build started', message: 'Queued behind lint.', at: new Date(1050).toISOString() },
-          { title: 'Build halfway', message: '120 of 240 modules.', at: new Date(1200).toISOString() },
-        ],
-      }),
-    ]);
   });
 
   it('adopts the spawn placeholder into the task registered afterwards', () => {
