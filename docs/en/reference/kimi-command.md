@@ -28,7 +28,7 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--agent-file <path>` | | Load a custom agent from a Markdown file for the new session and select it. Cannot be repeated or combined with `--agent`, `--session`, or `--continue` |
 | `--add-dir <dir>` | | Add an extra workspace directory for this session. Relative paths resolve against the current working directory. Can be repeated |
 
-`-r` / `--resume` is a hidden alias for `--session`; `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output.
+`-r` / `--resume` is an alias for `--session` and is shown in help output: resume a session by ID, or interactively pick when omitted. `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output.
 
 ::: warning
 `--yolo` skips human approval for regular tool calls, including file writes and shell command execution. Use it only in trusted working directories. Plan mode exit approval is not bypassed by `--yolo`; `Bash` inside Plan mode is handled under the regular allow rules.
