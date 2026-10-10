@@ -359,6 +359,14 @@ function resolveMaxContextSize(model: CustomRegistryModelEntry): number {
   return CUSTOM_REGISTRY_DEFAULT_MAX_CONTEXT;
 }
 
+function resolveMaxOutputSize(model: CustomRegistryModelEntry): number | undefined {
+  const output = model.limit?.output;
+  if (typeof output === 'number' && Number.isInteger(output) && output > 0) {
+    return output;
+  }
+  return undefined;
+}
+
 function resolveCapabilities(model: CustomRegistryModelEntry): string[] {
   if (hasRichCapabilityHints(model)) {
     return capabilitiesFromCustomEntry(model);
@@ -448,6 +456,7 @@ export function applyCustomRegistryProvider(
   for (const [modelKey, model] of Object.entries(entry.models)) {
     const aliasKey = `${providerKey}/${modelKey}`;
     const maxContextSize = resolveMaxContextSize(model);
+    const maxOutputSize = resolveMaxOutputSize(model);
     const capabilities = resolveCapabilities(model);
     const displayName =
       typeof model.name === 'string' && model.name.length > 0 ? model.name : model.id;
@@ -459,6 +468,7 @@ export function applyCustomRegistryProvider(
       maxContextSize,
       capabilities,
       displayName,
+      maxOutputSize,
       supportEfforts: model.support_efforts,
       defaultEffort: model.default_effort,
     };
