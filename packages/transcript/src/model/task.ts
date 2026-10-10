@@ -11,6 +11,14 @@ export type TaskState =
   | 'killed'
   | 'lost';
 
+export interface TranscriptTaskUpdate {
+  readonly title: string;
+  readonly message: string;
+  readonly at?: string;
+}
+
+export const TRANSCRIPT_TASK_UPDATES_LIMIT = 20;
+
 export interface TranscriptTask {
   readonly taskId: TaskId;
   readonly kind: TaskKind;
@@ -27,4 +35,12 @@ export interface TranscriptTask {
   readonly usage?: StepUsage;
   readonly model?: string;
   readonly thinkingEffort?: string;
+  readonly updates?: readonly TranscriptTaskUpdate[];
+}
+
+export function appendTaskUpdate(
+  updates: readonly TranscriptTaskUpdate[] | undefined,
+  update: TranscriptTaskUpdate,
+): readonly TranscriptTaskUpdate[] {
+  return [...(updates ?? []), update].slice(-TRANSCRIPT_TASK_UPDATES_LIMIT);
 }

@@ -55,6 +55,7 @@ import type {
 import type { AgentStatusUpdated } from '@moonshot-ai/agent-core-v2/agent/usage/usageEvents';
 import type { PlanRevision } from '@moonshot-ai/agent-core-v2/features/plan/planOps';
 import type { SubagentSuspended } from '@moonshot-ai/agent-core-v2/features/swarm/session/sessionSwarmService';
+import type { SubagentUpdate } from '@moonshot-ai/agent-core-v2/features/notify/subagentUpdate';
 import type {
   SubagentCancelled,
   SubagentCompleted,
@@ -63,6 +64,7 @@ import type {
   SubagentStarted,
 } from '@moonshot-ai/agent-core-v2/session/subagent/mirrorAgentRun';
 import {
+  appendTaskUpdate,
   projectTranscriptUserOrigin,
   projectTranscriptUserTurnOrigin,
   type AgentRef,
@@ -140,6 +142,7 @@ export type ProjectorBusEvent =
   | ({ readonly type: 'subagent.failed' } & SubagentFailed)
   | ({ readonly type: 'subagent.cancelled' } & SubagentCancelled)
   | ({ readonly type: 'subagent.suspended' } & SubagentSuspended)
+  | ({ readonly type: 'subagent.update' } & SubagentUpdate)
   | ({ readonly type: 'goal.updated' } & GoalUpdated)
   | ({ readonly type: 'agent.status.updated' } & AgentStatusUpdated)
   | PromptQueuedEvent
@@ -267,6 +270,7 @@ export class AgentTranscriptProjector {
       outputTail: prev?.outputTail ?? '',
       startedAt: prev?.startedAt ?? epochMsToIso(info.startedAt),
       endedAt: prev?.endedAt,
+      updates: prev?.updates,
     }));
     return [{ op: 'task.upsert', task }];
   }
@@ -418,6 +422,8 @@ export class AgentTranscriptProjector {
       case 'subagent.cancelled':
       case 'subagent.suspended':
         return this.onSubagentRun(event);
+      case 'subagent.update':
+        return this.onSubagentUpdate(event);
       case 'goal.updated':
         return this.onGoalUpdated(event);
       case 'agent.status.updated':
@@ -1061,6 +1067,7 @@ export class AgentTranscriptProjector {
       stateReason: prev?.stateReason,
       model: prev?.model,
       thinkingEffort: prev?.thinkingEffort,
+      updates: prev?.updates,
     }));
     const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
     if (event.type === 'task.started') {
@@ -1207,6 +1214,7 @@ export class AgentTranscriptProjector {
         endedAt: newGeneration ? undefined : prev?.endedAt,
         model: event.model ?? prev?.model,
         thinkingEffort: event.thinkingEffort ?? prev?.thinkingEffort,
+        updates: newGeneration ? undefined : prev?.updates,
       };
     });
     const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
@@ -1265,6 +1273,7 @@ export class AgentTranscriptProjector {
         stateReason: event.reason ?? (newGeneration ? undefined : prev?.stateReason),
         model: prev?.model,
         thinkingEffort: prev?.thinkingEffort,
+        updates: newGeneration ? undefined : prev?.updates,
       };
     };
     const taskKey = this.subagentTaskIds.get(event.subagentId) ?? event.subagentId;
@@ -1273,6 +1282,28 @@ export class AgentTranscriptProjector {
     if (taskKey !== event.subagentId && this.tasks.has(event.subagentId)) {
       const agentTask = this.upsertTask(event.subagentId, build(event.subagentId));
       ops.push({ op: 'task.upsert', task: agentTask });
+    }
+    return ops;
+  }
+
+  private onSubagentUpdate(event: {
+    subagentId: string;
+    title: string;
+    message: string;
+    time?: number;
+  }): TranscriptOperation[] {
+    const update = {
+      title: event.title,
+      message: event.message,
+      at: typeof event.time === 'number' ? new Date(event.time).toISOString() : nowIso(),
+    };
+    const taskKey = this.subagentTaskIds.get(event.subagentId) ?? event.subagentId;
+    const ops: TranscriptOperation[] = [];
+    for (const key of taskKey === event.subagentId ? [taskKey] : [taskKey, event.subagentId]) {
+      const prev = this.tasks.get(key);
+      if (prev === undefined) continue;
+      const task = this.upsertTask(key, () => ({ ...prev, updates: appendTaskUpdate(prev.updates, update) }));
+      ops.push({ op: 'task.upsert', task });
     }
     return ops;
   }

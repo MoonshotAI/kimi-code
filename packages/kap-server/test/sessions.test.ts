@@ -41,10 +41,13 @@ import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMe
 import { TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type { AgentTranscriptSnapshot } from '@moonshot-ai/transcript';
 import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+import { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import { ToolCallStarted, ToolResultEvent } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import { sessionWarningsResponseSchema } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 
 import { type RunningServer, startServer } from '../src/start';
+import { ensureMainAgent } from '../src/transport/mainAgent';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
@@ -67,6 +70,7 @@ interface SessionWire {
   main_turn_active: boolean;
   pending_interaction: 'none' | 'approval' | 'question';
   last_turn_reason?: 'completed' | 'cancelled' | 'failed';
+  latest_update?: { title: string; agent_id: string; source?: string; at: string };
   archived?: boolean;
   metadata: { cwd: string } & Record<string, unknown>;
   agent_config: { model: string };
@@ -900,6 +904,62 @@ describe('server-v2 /api/v1/sessions', () => {
     } finally {
       await rig.cancel();
     }
+  });
+
+  it('declares the update panel capability so GUI sessions are offered NotifyUser', () => {
+    expect(
+      (server as RunningServer).core.accessor.get(IBootstrapService).args.uiCapabilities,
+    ).toEqual(['update_panel']);
+  });
+
+  it('reports the latest NotifyUser update of a working session and drops it once idle', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const id = created.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, id);
+    if (session === undefined) throw new Error('expected a live session');
+    const agent = await ensureMainAgent(session);
+    const bus = agent.accessor.get(IEventBus);
+
+    bus.publish(new TurnStarted({ agentId: 'main', turnId: 41, origin: { kind: 'user' } }));
+    bus.publish(
+      new ToolCallStarted({
+        agentId: 'main',
+        turnId: 41,
+        toolCallId: 'call-notify',
+        name: 'NotifyUser',
+        args: { title: 'Root cause found', message: 'Two refreshes reuse one token.' },
+      }),
+    );
+    bus.publish(
+      new ToolResultEvent({
+        agentId: 'main',
+        turnId: 41,
+        toolCallId: 'call-notify',
+        output: 'Update shown to the user.',
+      }),
+    );
+
+    const working = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
+    expect(working.body.data.busy).toBe(true);
+    expect(working.body.data.latest_update).toEqual({
+      title: 'Root cause found',
+      agent_id: 'main',
+      at: expect.any(String),
+    });
+    const listed = await getJson<{
+      items: { id: string; activity: { status: string; latest_update?: { title: string } } }[];
+    }>('/api/v2/sessions');
+    expect(listed.body.data.items.find((item) => item.id === id)?.activity).toMatchObject({
+      status: 'running',
+      latest_update: { title: 'Root cause found', agent_id: 'main' },
+    });
+
+    bus.publish(new TurnEnded({ agentId: 'main', turnId: 41, reason: 'completed' }));
+
+    const idle = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
+    expect(idle.body.data.busy).toBe(false);
+    expect(idle.body.data.latest_update).toBeUndefined();
   });
 
   it('archives a session via :archive and reflects archived flag on get', async () => {

@@ -16,6 +16,7 @@ import type { WorkspaceCreatedEvent, WorkspaceDeletedEvent, WorkspaceUpdatedEven
 import type { CronFiredEvent } from '#/features/cron/cronOps';
 import type { HookResultEvent } from '#/features/externalHooks/agent/agentExternalHooksService';
 import type { GoalUpdatedEvent } from '#/features/goal/goalOps';
+import type { SubagentUpdateEvent } from '#/features/notify/subagentUpdate';
 import type { SkillActivatedEvent } from '#/features/skill/skillOps';
 import type { SubagentSuspendedEvent } from '#/features/swarm/session/sessionSwarmService';
 import type { SessionMetaUpdatedEvent } from '#/session/sessionMetadata/sessionMetaEvents';
@@ -67,6 +68,7 @@ export type AgentEvent =
   | SubagentSpawnedEvent
   | SubagentStartedEvent
   | SubagentSuspendedEvent
+  | SubagentUpdateEvent
   | SubagentCompletedEvent
   | SubagentFailedEvent
   | SubagentCancelledEvent

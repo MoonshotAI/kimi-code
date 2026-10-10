@@ -3613,6 +3613,112 @@ describe('AgentTranscriptProjector', () => {
       usage: { inputOther: 10, output: 5, inputCacheRead: 2, inputCacheCreation: 1 },
     });
   });
+  it('appends subagent updates to the subagent task and keeps them through completion', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'agent-1',
+        subagentName: 'explore',
+        parentToolCallId: 'call-agent',
+        description: 'Audit refresh paths',
+        runInBackground: false,
+      }),
+    );
+    feed(
+      ev({
+        type: 'subagent.update',
+        subagentId: 'agent-1',
+        title: 'Found two refresh paths',
+        message: 'Interceptor and visibility.',
+        time: Date.parse('2026-10-10T08:00:00.000Z'),
+      }),
+    );
+    expect(tx.getTask('agent-1')?.updates).toEqual([
+      { title: 'Found two refresh paths', message: 'Interceptor and visibility.', at: '2026-10-10T08:00:00.000Z' },
+    ]);
+    feed(ev({ type: 'subagent.update', subagentId: 'agent-1', title: 'All three mapped', message: 'WS too.' }));
+    expect(tx.getTask('agent-1')).toMatchObject({ state: 'running' });
+    expect(tx.getTask('agent-1')?.updates).toHaveLength(2);
+    feed(ev({ type: 'subagent.update', subagentId: 'ghost', title: 'Orphan', message: 'No task.' }));
+    feed(ev({ type: 'subagent.completed', subagentId: 'agent-1', resultSummary: 'done' }));
+
+    const task = tx.getTask('agent-1');
+    expect(task).toMatchObject({ state: 'completed', resultSummary: 'done' });
+    expect(task?.updates).toEqual([
+      { title: 'Found two refresh paths', message: 'Interceptor and visibility.', at: '2026-10-10T08:00:00.000Z' },
+      { title: 'All three mapped', message: 'WS too.', at: expect.any(String) },
+    ]);
+    expect(tx.getTask('ghost')).toBeUndefined();
+
+    feed(
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'agent-1',
+        subagentName: 'explore',
+        parentToolCallId: 'call-agent-2',
+        description: 'Audit again',
+        runInBackground: false,
+      }),
+    );
+    expect(tx.getTask('agent-1')?.updates).toBeUndefined();
+  });
+
+  it('keeps subagent updates on the background task and its spawn placeholder', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'agent-1',
+        subagentName: 'explore',
+        parentToolCallId: 'call-agent',
+        runInBackground: true,
+        taskId: 'task-1',
+      }),
+    );
+    feed(
+      ev({
+        type: 'task.started',
+        info: {
+          taskId: 'task-1',
+          kind: 'agent',
+          description: 'Watch the build',
+          status: 'running',
+          detached: true,
+          agentId: 'agent-1',
+          startedAt: 1,
+          endedAt: null,
+        },
+      }),
+    );
+    feed(ev({ type: 'subagent.update', subagentId: 'agent-1', title: 'Build halfway', message: '120 of 240.' }));
+    expect(tx.getTask('task-1')).toMatchObject({ state: 'running', updates: [{ title: 'Build halfway' }] });
+    feed(
+      ev({
+        type: 'task.terminated',
+        info: {
+          taskId: 'task-1',
+          kind: 'agent',
+          description: 'Watch the build',
+          status: 'completed',
+          detached: true,
+          agentId: 'agent-1',
+          startedAt: 1,
+          endedAt: 2,
+        },
+      }),
+    );
+
+    expect(tx.getTask('task-1')?.updates).toEqual([
+      { title: 'Build halfway', message: '120 of 240.', at: expect.any(String) },
+    ]);
+  });
 });
 
 describe('AgentTranscript transcript task vocabulary', () => {

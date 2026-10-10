@@ -29,6 +29,7 @@ import {
   type IAgentScopeHandle,
   type ISessionScopeHandle,
   type Scope,
+  type SessionLatestUpdate,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
@@ -56,6 +57,7 @@ import {
 import {
   emptySessionUsage,
   sessionSchema,
+  toWireLatestUpdate,
   type Session,
   type SessionPendingInteraction,
 } from '../protocol/session';
@@ -1040,6 +1042,7 @@ export function toWireSession(
     pending_interaction: facts.pendingInteraction,
     last_turn_reason:
       facts.lastTurnReason ?? (facts.live === false ? fields.lastTurnReason : undefined),
+    latest_update: toWireLatestUpdate(facts.latestUpdate),
     archived: fields.archived,
     last_prompt: fields.lastPrompt,
     metadata: buildWireMetadata(fields.custom, cwd),
@@ -1056,6 +1059,7 @@ export interface SessionFacts {
   readonly mainTurnActive: boolean;
   readonly pendingInteraction: SessionPendingInteraction;
   readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
+  readonly latestUpdate?: SessionLatestUpdate;
   readonly live?: boolean;
   readonly model?: string;
 }

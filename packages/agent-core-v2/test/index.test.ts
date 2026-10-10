@@ -109,6 +109,7 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'subagent.completed',
   'subagent.failed',
   'subagent.cancelled',
+  'subagent.update',
 ]);
 
 describe('v1 wire vocabulary', () => {

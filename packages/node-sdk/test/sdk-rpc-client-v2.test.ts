@@ -1248,7 +1248,7 @@ key = "${titleOAuthRef.key}"
             expect(
               agent.accessor
                 .get(INotifyUserTool)
-                .resolveExecution({ message: 'Checking this subtask.' }),
+                .resolveExecution({ title: 'Checking', message: 'Checking this subtask.' }),
             ).toMatchObject({ accesses: [], approvalRule: 'NotifyUser' });
           }
         }
@@ -1270,7 +1270,7 @@ key = "${titleOAuthRef.key}"
           if (enabled && panel) {
             const execution = currentMain.accessor
               .get(INotifyUserTool)
-              .resolveExecution({ message: 'Still working.' });
+              .resolveExecution({ title: 'Still working', message: 'Still working.' });
             if (!('execute' in execution)) throw new Error('Expected executable notification');
             expect(
               await execution.execute({ signal: new AbortController().signal } as never),

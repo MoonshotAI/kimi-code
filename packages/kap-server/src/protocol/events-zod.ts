@@ -79,11 +79,16 @@ import type {
   SubagentStartedPayload,
 } from '@moonshot-ai/agent-core-v2/session/subagent/mirrorAgentRun';
 import type { SubagentSuspendedPayload } from '@moonshot-ai/agent-core-v2/features/swarm/session/sessionSwarmService';
+import type { SubagentUpdatePayload } from '@moonshot-ai/agent-core-v2/features/notify/subagentUpdate';
 import type { ToolUpdate } from '@moonshot-ai/agent-core-v2/tool/toolContract';
 
 import { ToolInputDisplaySchema } from './display';
 import { configResponseSchema } from './rest-config';
-import { sessionPendingInteractionSchema, sessionSchema } from './session';
+import {
+  sessionLatestUpdateSchema,
+  sessionPendingInteractionSchema,
+  sessionSchema,
+} from './session';
 import { workspaceSchema } from './workspace';
 
 export const tokenUsageSchema = z.object({
@@ -601,6 +606,7 @@ export const sessionWorkChangedEventSchema = z.object({
   main_turn_active: z.boolean().optional(),
   pending_interaction: sessionPendingInteractionSchema.optional(),
   last_turn_reason: z.enum(['completed', 'cancelled', 'failed']).optional(),
+  latest_update: sessionLatestUpdateSchema.optional(),
 });
 
 const legacySessionStatusSchema = z.enum([
@@ -917,6 +923,13 @@ export const subagentSuspendedEventSchema = z.object({
   reason: z.string(),
 }) satisfies z.ZodType<SubagentSuspendedPayload>;
 
+export const subagentUpdateEventSchema = z.object({
+  type: z.literal('subagent.update'),
+  subagentId: z.string(),
+  title: z.string(),
+  message: z.string(),
+}) satisfies z.ZodType<SubagentUpdatePayload>;
+
 export const subagentCompletedEventSchema = z.object({
   type: z.literal('subagent.completed'),
   subagentId: z.string(),
@@ -1093,6 +1106,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   subagentSpawnedEventSchema,
   subagentStartedEventSchema,
   subagentSuspendedEventSchema,
+  subagentUpdateEventSchema,
   subagentCompletedEventSchema,
   subagentFailedEventSchema,
   subagentCancelledEventSchema,

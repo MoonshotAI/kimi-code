@@ -22,7 +22,14 @@ import { TurnEnded, turnKey } from '#/agent/loop/turnOps';
 import { IAgentTaskService } from '#/agent/task/task';
 import { TaskStarted, TaskTerminatedNotice } from '#/agent/task/taskOps';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
+import { ToolCallStarted, ToolResultEvent } from '#/agent/toolExecutor/toolExecutorEvents';
+import {
+  NOTIFY_USER_DELIVERED_OUTPUT,
+  NOTIFY_USER_SUPPRESSED_OUTPUT,
+  NOTIFY_USER_TOOL_NAME,
+} from '#/features/notify/tools/notify-user/notify-user';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { SubagentSpawned } from '#/session/subagent/mirrorAgentRun';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { interactions } from '#/human/interaction/facade';
@@ -146,6 +153,35 @@ class FakeAgentHandle {
 
   async runRestore(): Promise<void> {
     await this.restoreSlot.run({});
+  }
+
+  callTool(toolCallId: string, name: string, args: unknown): void {
+    this.bus.publish(new ToolCallStarted({ agentId: this.id, turnId: 1, toolCallId, name, args }));
+  }
+
+  finishTool(
+    toolCallId: string,
+    output: unknown,
+    extra: { readonly isError?: boolean; readonly synthetic?: boolean } = {},
+  ): void {
+    this.bus.publish(new ToolResultEvent({ agentId: this.id, turnId: 1, toolCallId, output, ...extra }));
+  }
+
+  notify(toolCallId: string, title: string): void {
+    this.callTool(toolCallId, NOTIFY_USER_TOOL_NAME, { title, message: `${title} details` });
+    this.finishTool(toolCallId, NOTIFY_USER_DELIVERED_OUTPUT);
+  }
+
+  spawn(subagentId: string, description?: string): void {
+    this.bus.publish(
+      new SubagentSpawned({
+        subagentId,
+        subagentName: 'explore',
+        parentToolCallId: `call-${subagentId}`,
+        description,
+        runInBackground: false,
+      }),
+    );
   }
 
   dispose(): void {}
@@ -423,5 +459,138 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
 
     expect(view.state().busy).toBe(true);
     expect(changes.at(-1)?.cause).toBe('turn_started');
+  });
+  describe('latest NotifyUser update', () => {
+    it('records the main agent update once the tool result confirms it was shown', () => {
+      const main = lifecycle.addAgent(MAIN_AGENT_ID);
+      const { view, changes } = viewWithChanges();
+      main.startTurn(1);
+
+      main.callTool('call-1', NOTIFY_USER_TOOL_NAME, { title: '  Plan ready  ', message: 'Three steps.' });
+      expect(view.state().latestUpdate).toBeUndefined();
+      main.finishTool('call-1', NOTIFY_USER_DELIVERED_OUTPUT);
+
+      expect(changes.at(-1)?.cause).toBe('update');
+      expect(view.state().latestUpdate).toEqual({
+        title: 'Plan ready',
+        agentId: MAIN_AGENT_ID,
+        source: undefined,
+        at: expect.any(String),
+      });
+      expect(Number.isNaN(Date.parse(view.state().latestUpdate!.at))).toBe(false);
+    });
+
+    it('labels a subagent update with the description it was spawned with', () => {
+      const main = lifecycle.addAgent(MAIN_AGENT_ID);
+      const sub = lifecycle.addAgent('agent-1');
+      const { view } = viewWithChanges();
+      main.startTurn(1);
+      main.spawn('agent-1', '  Audit refresh paths ');
+      sub.startTurn(1);
+
+      sub.notify('call-1', 'Found two refresh paths');
+
+      expect(view.state().latestUpdate).toMatchObject({
+        title: 'Found two refresh paths',
+        agentId: 'agent-1',
+        source: 'Audit refresh paths',
+      });
+
+      main.notify('call-2', 'Root cause found');
+      expect(view.state().latestUpdate).toMatchObject({
+        title: 'Root cause found',
+        agentId: MAIN_AGENT_ID,
+        source: undefined,
+      });
+    });
+
+    it('ignores other tools and updates that failed, were synthetic, or were not shown', () => {
+      const main = lifecycle.addAgent(MAIN_AGENT_ID);
+      const { view, changes } = viewWithChanges();
+      main.startTurn(1);
+      const before = changes.length;
+
+      main.callTool('call-1', 'Bash', { title: 'not an update', command: 'ls' });
+      main.finishTool('call-1', NOTIFY_USER_DELIVERED_OUTPUT);
+      main.callTool('call-2', NOTIFY_USER_TOOL_NAME, { title: 'Errored', message: 'x' });
+      main.finishTool('call-2', 'boom', { isError: true });
+      main.callTool('call-3', NOTIFY_USER_TOOL_NAME, { title: 'Synthetic', message: 'x' });
+      main.finishTool('call-3', NOTIFY_USER_DELIVERED_OUTPUT, { synthetic: true });
+      main.callTool('call-4', NOTIFY_USER_TOOL_NAME, { title: 'Suppressed', message: 'x' });
+      main.finishTool('call-4', NOTIFY_USER_SUPPRESSED_OUTPUT);
+      main.callTool('call-5', NOTIFY_USER_TOOL_NAME, { title: '   ', message: 'x' });
+      main.finishTool('call-5', NOTIFY_USER_DELIVERED_OUTPUT);
+
+      expect(view.state().latestUpdate).toBeUndefined();
+      expect(changes).toHaveLength(before);
+    });
+
+    it('drops a pending update when its agent turn ends before the result', () => {
+      const main = lifecycle.addAgent(MAIN_AGENT_ID);
+      const sub = lifecycle.addAgent('agent-1');
+      const { view } = viewWithChanges();
+      main.startTurn(1);
+      sub.startTurn(1);
+
+      sub.callTool('call-1', NOTIFY_USER_TOOL_NAME, { title: 'Interrupted', message: 'x' });
+      sub.endTurn(1, 'cancelled');
+      sub.finishTool('call-1', NOTIFY_USER_DELIVERED_OUTPUT);
+
+      expect(view.state().latestUpdate).toBeUndefined();
+    });
+
+    it('clears the update in the same change that reports the session going idle', () => {
+      const main = lifecycle.addAgent(MAIN_AGENT_ID);
+      const { view, changes } = viewWithChanges();
+      main.startTurn(1);
+      main.notify('call-1', 'Tests pass');
+
+      main.endTurn(1, 'completed');
+
+      expect(changes.at(-1)).toEqual({
+        state: {
+          busy: false,
+          mainTurnActive: false,
+          pendingInteraction: 'none',
+          lastTurnReason: 'completed',
+          latestUpdate: undefined,
+        },
+        cause: 'turn_ended',
+      });
+      main.startTask('t1');
+      expect(view.state().busy).toBe(true);
+      expect(view.state().latestUpdate).toBeUndefined();
+    });
+
+    it('keeps a background subagent update after the main turn ends while the session stays busy', () => {
+      const main = lifecycle.addAgent(MAIN_AGENT_ID);
+      const sub = lifecycle.addAgent('agent-1');
+      const { view } = viewWithChanges();
+      main.startTurn(1);
+      main.spawn('agent-1', 'Watch the build');
+      sub.startTurn(1);
+      main.endTurn(1, 'completed');
+
+      sub.notify('call-1', 'Build is halfway');
+
+      expect(view.state().mainTurnActive).toBe(false);
+      expect(view.state().latestUpdate).toMatchObject({ title: 'Build is halfway', source: 'Watch the build' });
+    });
+
+    it('clears the previous update when the main agent starts a new turn', () => {
+      const main = lifecycle.addAgent(MAIN_AGENT_ID);
+      const sub = lifecycle.addAgent('agent-1');
+      const { view, changes } = viewWithChanges();
+      main.startTurn(1);
+      sub.startTurn(1);
+      main.notify('call-1', 'Old update');
+      main.endTurn(1, 'completed');
+      expect(view.state().latestUpdate).toMatchObject({ title: 'Old update' });
+
+      main.startTurn(2);
+
+      expect(view.state().latestUpdate).toBeUndefined();
+      expect(changes.at(-1)?.cause).toBe('turn_started');
+    });
   });
 });

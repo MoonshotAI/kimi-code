@@ -664,6 +664,12 @@ export interface SessionStateSnapshot {
     readonly mainTurnActive: boolean;
     readonly pendingInteraction: /* SessionPendingInteraction — packages/agent-core-v2/src/session/sessionActivity/sessionActivity.ts */ 'none' | 'approval' | 'question';
     readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
+    readonly latestUpdate?: /* SessionLatestUpdate — packages/agent-core-v2/src/session/sessionActivity/sessionActivity.ts */ {
+      readonly title: string;
+      readonly agentId: string;
+      readonly source?: string;
+      readonly at: string;
+    };
   };
   'sessionActivity.folds': Map<string, /* AgentWorkFold — packages/agent-core-v2/src/session/sessionActivity/sessionActivityService.ts */ {
     turnActive: boolean;

@@ -231,6 +231,9 @@ export const transcriptTaskSchema = z.object({
   usage: stepUsageSchema.optional(),
   model: z.string().optional(),
   thinkingEffort: z.string().optional(),
+  updates: z
+    .array(z.object({ title: z.string(), message: z.string(), at: z.string().optional() }))
+    .optional(),
 });
 
 export const goalMetaSchema = z.object({

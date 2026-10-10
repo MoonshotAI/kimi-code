@@ -575,7 +575,7 @@ These endpoints create, list, and inspect sessions, drive session-level actions 
 
 #### The session object
 
-Every endpoint that returns a session uses this wire shape. The live facts (`busy`, `main_turn_active`, `pending_interaction`, `last_turn_reason`) are resolved from the session's activity aggregate: a session that is not loaded in this server process (a cold session) always reports not-busy with no pending interaction. A few fields are placeholders in the current projection — this is noted per field.
+Every endpoint that returns a session uses this wire shape. The live facts (`busy`, `main_turn_active`, `pending_interaction`, `last_turn_reason`, `latest_update`) are resolved from the session's activity aggregate: a session that is not loaded in this server process (a cold session) always reports not-busy with no pending interaction. A few fields are placeholders in the current projection — this is noted per field.
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -589,6 +589,7 @@ Every endpoint that returns a session uses this wire shape. The live facts (`bus
 | `main_turn_active` | boolean | The main agent has an active turn |
 | `pending_interaction` | string | `none` / `approval` / `question` — an unanswered interaction is waiting |
 | `last_turn_reason` | string | Main agent's latest turn outcome: `completed` / `cancelled` / `failed` |
+| `latest_update` | object | The most recent `NotifyUser` update from the main agent or any subagent while the session is busy: `{ title, agent_id, source?, at }`, where `source` is the subagent's task description and `at` is ISO 8601. Cleared when the main agent starts a new turn and when the session goes idle; absent otherwise |
 | `last_prompt` | string | Most recent user prompt text, when present |
 | `metadata` | object | Custom metadata; always carries `cwd` (the session's working directory) |
 | `agent_config` | object | Projected as `{ model }`; `model` is `""` in most responses and only filled with the live model by `GET /api/v1/sessions/{session_id}/snapshot` |
@@ -2187,7 +2188,7 @@ A next-generation session query for list views — filtering, sorting, and field
 | `page_token` | Pagination token from the previous page |
 | `page` | Stateless 1-based page number; mutually exclusive with `page_token` (`40001` when combined) |
 
-Every response item carries the `workspace`, `meta`, and `activity` groups, plus `git` when `include=git` — or just `{ id, archived }` under `fields=id,archived`. The `activity` group also reports `model`: the session's bound model alias while it is live in this process, `null` for cold (not currently loaded) sessions. Every page additionally carries `total`, the size of the filtered set. The page token binds the first page's query conditions (including the projection); changing them mid-pagination returns `40922`. `page` mode is a stateless alternative for jumping to arbitrary pages: every request is an independent snapshot, no token is minted, and `next_page_token` is always `null`.
+Every response item carries the `workspace`, `meta`, and `activity` groups, plus `git` when `include=git` — or just `{ id, archived }` under `fields=id,archived`. The `activity` group also reports `model`: the session's bound model alias while it is live in this process, `null` for cold (not currently loaded) sessions; and `latest_update` while the session is busy, with the same shape as on [the session object](#the-session-object). Every page additionally carries `total`, the size of the filtered set. The page token binds the first page's query conditions (including the projection); changing them mid-pagination returns `40922`. `page` mode is a stateless alternative for jumping to arbitrary pages: every request is an independent snapshot, no token is minted, and `next_page_token` is always `null`.
 
 With `view=by_workspace` the same filtered, sorted set is re-projected into per-workspace groups, so an overview client replaces one polling loop per workspace with a single request:
 
@@ -2383,7 +2384,7 @@ Event frames look like `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "sess
 | Streaming text | `assistant.delta`, `thinking.delta` (carry `offset` for alignment) |
 | Tool calls | `tool.call.started`, `tool.call.delta`, `tool.progress`, `tool.result` |
 | Interactions | `event.approval.requested` / `resolved`, `event.question.requested` / `answered` / `dismissed` |
-| Subagents | `subagent.spawned` / `started` / `suspended` / `completed` / `failed` |
+| Subagents | `subagent.spawned` / `started` / `suspended` / `completed` / `failed`, and `subagent.update` (a `NotifyUser` update the subagent posted: `{ subagentId, title, message }`, emitted on the parent agent) |
 | Background | `task.started` / `terminated`, `shell.started` / `output` / `completed` |
 | Misc | `compaction.*`, `skill.activated`, `goal.updated`, `prompt.*`, `error`, `warning` |
 

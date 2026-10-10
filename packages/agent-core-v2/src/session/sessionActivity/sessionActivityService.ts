@@ -21,7 +21,13 @@ import {
   CompactionStarted,
 } from '#/agent/fullCompaction/compactionOps';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { ToolCallStarted, ToolResultEvent } from '#/agent/toolExecutor/toolExecutorEvents';
+import {
+  NOTIFY_USER_DELIVERED_OUTPUT,
+  NOTIFY_USER_TOOL_NAME,
+} from '#/features/notify/tools/notify-user/notify-user';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { SubagentSpawned } from '#/session/subagent/mirrorAgentRun';
 import {
   INTERACTION_TAG_SESSION_ID,
   type Interaction,
@@ -35,6 +41,7 @@ import {
   type SessionActivityCause,
   type SessionActivityChangedEvent,
   type SessionActivityState,
+  type SessionLatestUpdate,
   type SessionPendingInteraction,
   type SessionTurnOutcome,
 } from './sessionActivity';
@@ -64,6 +71,9 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
   readonly onDidChange: Event<SessionActivityChangedEvent> = this._onDidChange.event;
 
   private readonly agentSubscriptions = new Map<string, IDisposable>();
+  private readonly pendingUpdates = new Map<string, { readonly agentId: string; readonly title: string }>();
+  private readonly updateSources = new Map<string, string>();
+  private latestUpdate: SessionLatestUpdate | undefined;
 
   constructor(
     @ISessionStateService private readonly states: ISessionStateService,
@@ -88,6 +98,8 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
       this.agents.onDidClose((agent) => {
         this.agentSubscriptions.get(agent.agentId)?.dispose();
         this.agentSubscriptions.delete(agent.agentId);
+        this.dropPendingUpdates(agent.agentId);
+        this.updateSources.delete(agent.agentId);
         if (this.folds.delete(agent.agentId)) this.recompute('agent_lifecycle');
       }),
     );
@@ -127,22 +139,58 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
     if (bus === undefined) return;
     const subscriptions = new DisposableStore();
     subscriptions.add(
-      bus.subscribe(TurnStarted, () =>
+      bus.subscribe(TurnStarted, () => {
+        const clearsUpdate = handle.id === MAIN_AGENT_ID && this.latestUpdate !== undefined;
+        if (clearsUpdate) this.latestUpdate = undefined;
         this.patchFold(handle.id, (fold) => ({
           ...fold,
           turnActive: true,
           lastTurnReason: handle.id === MAIN_AGENT_ID ? undefined : fold.lastTurnReason,
-        })),
-      ),
+        }));
+        if (clearsUpdate) this.recompute('turn_started');
+      }),
     );
     subscriptions.add(
-      bus.subscribe(TurnEnded, (event) =>
+      bus.subscribe(TurnEnded, (event) => {
+        this.dropPendingUpdates(handle.id);
         this.patchFold(handle.id, (fold) => ({
           ...fold,
           turnActive: false,
           lastTurnReason: handle.id === MAIN_AGENT_ID ? mapTurnReason(event.reason) : fold.lastTurnReason,
-        })),
-      ),
+        }));
+      }),
+    );
+    subscriptions.add(
+      bus.subscribe(ToolCallStarted, (event) => {
+        if (event.name !== NOTIFY_USER_TOOL_NAME) return;
+        const title = updateTitleOf(event.args);
+        if (title === undefined) return;
+        this.pendingUpdates.set(updateKey(handle.id, event.toolCallId), { agentId: handle.id, title });
+      }),
+    );
+    subscriptions.add(
+      bus.subscribe(ToolResultEvent, (event) => {
+        const key = updateKey(handle.id, event.toolCallId);
+        const pending = this.pendingUpdates.get(key);
+        if (pending === undefined) return;
+        this.pendingUpdates.delete(key);
+        if (event.isError === true || event.synthetic === true) return;
+        if (event.output !== NOTIFY_USER_DELIVERED_OUTPUT) return;
+        this.latestUpdate = {
+          title: pending.title,
+          agentId: handle.id,
+          source: this.updateSources.get(handle.id),
+          at: new Date().toISOString(),
+        };
+        this.recompute('update');
+      }),
+    );
+    subscriptions.add(
+      bus.subscribe(SubagentSpawned, (event) => {
+        const description = event.description?.trim();
+        if (description === undefined || description.length === 0) return;
+        this.updateSources.set(event.subagentId, description);
+      }),
     );
     subscriptions.add(
       bus.subscribe(TaskStarted, (event) =>
@@ -209,9 +257,16 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
 
   private recompute(cause: SessionActivityCause): void {
     const next = this.aggregate();
+    if (!next.busy) this.latestUpdate = undefined;
     if (activityEquals(this.current, next)) return;
     this.current = next;
     this._onDidChange.fire({ state: next, cause });
+  }
+
+  private dropPendingUpdates(agentId: string): void {
+    for (const [key, pending] of this.pendingUpdates) {
+      if (pending.agentId === agentId) this.pendingUpdates.delete(key);
+    }
   }
 
   private aggregate(): SessionActivityState {
@@ -232,6 +287,7 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
         }),
       ),
       lastTurnReason: this.folds.get(MAIN_AGENT_ID)?.lastTurnReason,
+      latestUpdate: busy ? this.latestUpdate : undefined,
     };
   }
 }
@@ -267,12 +323,33 @@ function resolvePendingInteraction(pending: readonly Interaction[]): SessionPend
   return 'none';
 }
 
+function updateKey(agentId: string, toolCallId: string): string {
+  return JSON.stringify([agentId, toolCallId]);
+}
+
+function updateTitleOf(args: unknown): string | undefined {
+  if (typeof args !== 'object' || args === null) return undefined;
+  const title = (args as Record<string, unknown>)['title'];
+  if (typeof title !== 'string') return undefined;
+  const trimmed = title.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function latestUpdateEquals(
+  a: SessionLatestUpdate | undefined,
+  b: SessionLatestUpdate | undefined,
+): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return a.title === b.title && a.agentId === b.agentId && a.source === b.source && a.at === b.at;
+}
+
 function activityEquals(a: SessionActivityState, b: SessionActivityState): boolean {
   return (
     a.busy === b.busy &&
     a.mainTurnActive === b.mainTurnActive &&
     a.pendingInteraction === b.pendingInteraction &&
-    a.lastTurnReason === b.lastTurnReason
+    a.lastTurnReason === b.lastTurnReason &&
+    latestUpdateEquals(a.latestUpdate, b.latestUpdate)
   );
 }
 
