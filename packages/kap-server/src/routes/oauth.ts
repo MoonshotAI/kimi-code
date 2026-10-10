@@ -8,11 +8,13 @@ import {
   oauthLogoutResponseSchema,
   oauthRegionResultSchema,
 } from '@moonshot-ai/agent-core-v2/app/auth/oauthProtocol';
+import type { RemoteControlDeviceClient, RemoteControlManager } from '@moonshot-ai/remote-control';
 import { z } from 'zod';
 
-import { okEnvelope } from '../envelope';
+import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
+import { ErrorCode } from '../protocol/error-codes';
 import {
   oauthLoginQuerySchema,
   oauthLoginStartRequestSchema,
@@ -51,7 +53,12 @@ const oauthFlowSnapshotOrNullSchema = z.union([
   z.null(),
 ]);
 
-export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
+export function registerOAuthRoutes(
+  app: RouteHost,
+  core: Scope,
+  remoteControl: RemoteControlManager,
+  remoteControlDevices: Pick<RemoteControlDeviceClient, 'clear'>,
+): void {
   const loginStartRoute = defineRoute(
     {
       method: 'POST',
@@ -125,10 +132,25 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
       path: '/oauth/logout',
       body: oauthLogoutRequestSchema,
       success: { data: oauthLogoutResponseSchema },
+      errors: { [ErrorCode.INTERNAL_ERROR]: {} },
       description: 'Logout the managed OAuth provider',
       tags: ['auth'],
     },
     async (req, reply) => {
+      try {
+        await remoteControl.disable();
+      } catch (error) {
+        requestLog(req)?.error({ err: error }, 'remote-control disable before logout failed');
+        reply.send(
+          errEnvelope(
+            ErrorCode.INTERNAL_ERROR,
+            error instanceof Error ? error.message : String(error),
+            req.id,
+          ),
+        );
+        return;
+      }
+      remoteControlDevices.clear();
       const result = await core.accessor.get(IOAuthService).logout(req.body.provider);
       requestLog(req)?.info({ provider: req.body.provider, action: 'logout' }, 'oauth logout');
       reply.send(okEnvelope(result, req.id));

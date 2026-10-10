@@ -25,6 +25,7 @@ import {
   startRemoteControl,
   type RemoteControlHandle,
 } from '../src/remote-control';
+import { RemoteControlDeviceClient } from '../src/device-client';
 import { remoteControlLockPath } from '../src/lock';
 
 const CLIENT_VERSION = 'kimi-code/test';
@@ -810,7 +811,7 @@ describe('Remote Control single-instance lock', () => {
     second = await startRemoteControl(options);
     expect(second.url).toContain('/devices/');
 
-    relay.managementSockets[relay.managementSockets.length - 1]!.send(
+    relay.managementSockets.at(-1)!.send(
       JSON.stringify({ type: 'disconnect', payload: { reason: 'user_requested' } }),
     );
     await second.closed;
@@ -847,6 +848,247 @@ describe('Remote Control single-instance lock', () => {
       nonce: string;
     };
     expect(lock.nonce).toBe('successor');
+  });
+});
+
+describe('Remote Control device client', () => {
+  const device = {
+    device_id: 'device-1',
+    alias: 'Workstation',
+    status: 'online',
+    platform: 'darwin',
+    client_version: 'kimi-code/1.0.0',
+    local_base_url: 'http://127.0.0.1:58627',
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:00.000Z',
+    last_remote_access_at: '2026-01-01T00:00:00.000Z',
+  };
+
+  it('exchanges once, caches the session cookie, and sends device operations', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    const requests: Array<{
+      method?: string;
+      pathname: string;
+      cookie?: string;
+      body: string;
+    }> = [];
+    const server = createServer((request, response) => {
+      void (async () => {
+        const pathname = new URL(request.url ?? '', 'http://relay.test').pathname;
+        const body = await requestText(request);
+        requests.push({
+          method: request.method,
+          pathname,
+          cookie: Array.isArray(request.headers.cookie)
+            ? request.headers.cookie[0]
+            : request.headers.cookie,
+          body,
+        });
+        if (pathname === '/coding-relay/auth/exchange') {
+          response.writeHead(204, {
+            'Set-Cookie': ['rc_session=one; Path=/; HttpOnly', 'theme=dark; Path=/'],
+          });
+          response.end();
+          return;
+        }
+        if (pathname === '/coding-relay/v1/remote/devices' && request.method === 'GET') {
+          response.writeHead(200, { 'Content-Type': 'application/json' });
+          response.end(JSON.stringify({ devices: [device], max_devices: 3 }));
+          return;
+        }
+        if (pathname === '/coding-relay/v1/remote/devices/device%2Fone' && request.method === 'PATCH') {
+          response.writeHead(204);
+          response.end();
+          return;
+        }
+        response.writeHead(404);
+        response.end();
+      })().catch(() => {
+        response.writeHead(500);
+        response.end();
+      });
+    });
+    const port = await listen(server);
+    cleanups.push(() => closeServer(server));
+    const client = new RemoteControlDeviceClient({
+      homeDir,
+      relayOrigin: `http://127.0.0.1:${port}/coding-relay/`,
+    });
+
+    await expect(client.listDevices()).resolves.toEqual({ devices: [device], max_devices: 3 });
+    await client.renameDevice('device/one', 'Renamed');
+
+    expect(requests).toHaveLength(3);
+    expect(JSON.parse(requests[0]!.body)).toEqual({
+      access_token: TOKEN.accessToken,
+      refresh_token: TOKEN.refreshToken,
+      expires_in: TOKEN.expiresIn,
+    });
+    expect(requests.slice(1).map((request) => request.cookie)).toEqual([
+      'rc_session=one; theme=dark',
+      'rc_session=one; theme=dark',
+    ]);
+    expect(JSON.parse(requests[2]!.body)).toEqual({ alias: 'Renamed' });
+  });
+
+  it('requires a fresh exchange after clearing cached cloud sessions', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    let exchanges = 0;
+    const deviceCookies: Array<string | undefined> = [];
+    const server = createServer((request, response) => {
+      const pathname = new URL(request.url ?? '', 'http://relay.test').pathname;
+      if (pathname === '/auth/exchange') {
+        exchanges += 1;
+        response.writeHead(204, { 'Set-Cookie': `rc_session=${exchanges}; Path=/` });
+        response.end();
+        return;
+      }
+      deviceCookies.push(
+        Array.isArray(request.headers.cookie) ? request.headers.cookie[0] : request.headers.cookie,
+      );
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ devices: [] }));
+    });
+    const port = await listen(server);
+    cleanups.push(() => closeServer(server));
+    const client = new RemoteControlDeviceClient({
+      homeDir,
+      relayOrigin: `http://127.0.0.1:${port}`,
+    });
+
+    await client.listDevices();
+    client.clear();
+    await client.listDevices();
+
+    expect(exchanges).toBe(2);
+    expect(deviceCookies).toEqual(['rc_session=1', 'rc_session=2']);
+  });
+
+  it('re-exchanges and retries once when the cloud session expires', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    let exchanges = 0;
+    const deviceCookies: Array<string | undefined> = [];
+    const server = createServer((request, response) => {
+      const pathname = new URL(request.url ?? '', 'http://relay.test').pathname;
+      if (pathname === '/auth/exchange') {
+        exchanges += 1;
+        response.writeHead(204, { 'Set-Cookie': `rc_session=${exchanges}; Path=/; HttpOnly` });
+        response.end();
+        return;
+      }
+      deviceCookies.push(
+        Array.isArray(request.headers.cookie) ? request.headers.cookie[0] : request.headers.cookie,
+      );
+      if (deviceCookies.length === 1) {
+        response.writeHead(401, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ error: { message: 'session expired' } }));
+        return;
+      }
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ devices: [] }));
+    });
+    const port = await listen(server);
+    cleanups.push(() => closeServer(server));
+    const client = new RemoteControlDeviceClient({
+      homeDir,
+      relayOrigin: `http://127.0.0.1:${port}`,
+    });
+
+    await expect(client.listDevices()).resolves.toEqual({ devices: [], max_devices: undefined });
+
+    expect(exchanges).toBe(2);
+    expect(deviceCookies).toEqual(['rc_session=1', 'rc_session=2']);
+  });
+
+  it('does not retry more than once after re-exchange', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    let exchanges = 0;
+    let deviceRequests = 0;
+    const server = createServer((request, response) => {
+      const pathname = new URL(request.url ?? '', 'http://relay.test').pathname;
+      if (pathname === '/auth/exchange') {
+        exchanges += 1;
+        response.writeHead(204, { 'Set-Cookie': `rc_session=${exchanges}; Path=/` });
+        response.end();
+        return;
+      }
+      deviceRequests += 1;
+      response.writeHead(401, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ message: 'still unauthorized' }));
+    });
+    const port = await listen(server);
+    cleanups.push(() => closeServer(server));
+    const client = new RemoteControlDeviceClient({
+      homeDir,
+      relayOrigin: `http://127.0.0.1:${port}`,
+    });
+
+    await expect(client.listDevices()).rejects.toThrow(/HTTP 401.*still unauthorized/);
+    expect(exchanges).toBe(2);
+    expect(deviceRequests).toBe(2);
+  });
+
+  it('uses the configured OAuth slot when exchanging a session', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'kimi-rc-device-slot-'));
+    cleanups.push(() => {
+      rmSync(homeDir, { recursive: true, force: true });
+    });
+    const oauthRef = resolveKimiCodeOAuthRef({
+      oauthHost: 'https://auth.kimi.ai',
+      baseUrl: 'https://api.kimi.ai/coding/v1',
+    });
+    await new FileTokenStorage(join(homeDir, 'credentials')).save(
+      resolveKimiTokenStorageName({ oauthKey: oauthRef.key }),
+      { ...TOKEN, accessToken: 'custom-access', refreshToken: 'custom-refresh' },
+    );
+    let exchangedBody = '';
+    const server = createServer((request, response) => {
+      void (async () => {
+        const pathname = new URL(request.url ?? '', 'http://relay.test').pathname;
+        if (pathname === '/auth/exchange') {
+          exchangedBody = await requestText(request);
+          response.writeHead(204, { 'Set-Cookie': 'rc_session=custom; Path=/' });
+          response.end();
+          return;
+        }
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ devices: [] }));
+      })().catch(() => {
+        response.writeHead(500);
+        response.end();
+      });
+    });
+    const port = await listen(server);
+    cleanups.push(() => closeServer(server));
+    const client = new RemoteControlDeviceClient({
+      homeDir,
+      configuredOAuthKey: () => oauthRef.key,
+      configuredOAuthHost: () => oauthRef.oauthHost,
+      relayOrigin: `http://127.0.0.1:${port}`,
+    });
+
+    await client.listDevices();
+
+    expect(JSON.parse(exchangedBody)).toEqual({
+      access_token: 'custom-access',
+      refresh_token: 'custom-refresh',
+      expires_in: TOKEN.expiresIn,
+    });
+  });
+
+  it('maps network failures to a safe client error', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    const client = new RemoteControlDeviceClient({
+      homeDir,
+      relayOrigin: 'http://127.0.0.1:1',
+      fetchImpl: async () => {
+        throw new TypeError('network offline');
+      },
+    });
+
+    await expect(client.listDevices()).rejects.toThrow(
+      'Remote Control session exchange failed: network offline',
+    );
   });
 });
 
@@ -954,6 +1196,17 @@ async function startAuthRelay(
   const port = await listen(relayServer);
   cleanups.push(() => closeServer(relayServer));
   return { port, requests, registrations, managementSockets, httpSockets };
+}
+
+function requestText(request: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    request.on('data', (chunk: Buffer | string) => chunks.push(Buffer.from(chunk)));
+    request.once('error', reject);
+    request.once('end', () => {
+      resolve(Buffer.concat(chunks).toString('utf8'));
+    });
+  });
 }
 
 function listen(server: ReturnType<typeof createServer>): Promise<number> {
