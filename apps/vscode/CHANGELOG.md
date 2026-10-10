@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.2
+
+### Patch Changes
+
+- Updated dependencies [[`e5b4b88`](https://github.com/MoonshotAI/kimi-code/commit/e5b4b88ba93d5a27aa9a36cf847eed4f1aa39c48)]:
+  - @moonshot-ai/kimi-code-sdk@0.21.0
+  - @moonshot-ai/migration-legacy@0.1.17
+
 ## 0.8.1
 
 ### Patch Changes

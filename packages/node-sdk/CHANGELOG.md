@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.21.0
+
+### Minor Changes
+
+- [#4156](https://github.com/MoonshotAI/kimi-code/pull/4156) [`e5b4b88`](https://github.com/MoonshotAI/kimi-code/commit/e5b4b88ba93d5a27aa9a36cf847eed4f1aa39c48) Thanks [@Grapedge](https://github.com/Grapedge)! - Add cumulative main-agent user-turn counts to session recovery snapshots.
+
 ## 0.20.0
 
 ### Minor Changes
