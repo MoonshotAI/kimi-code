@@ -1,6 +1,6 @@
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, parse } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -28,6 +28,18 @@ function makeTempDir(prefix: string): string {
 function mockPlatform(platform: NodeJS.Platform): void {
   Object.defineProperty(process, 'platform', { value: platform });
 }
+
+it('resolves a PATH executable from the filesystem root', () => {
+  const bin = makeTempDir('kimi-resolve-bin-');
+  const name = process.platform === 'win32' ? 'mytool.EXE' : 'mytool';
+  const tool = join(bin, name);
+  writeFileSync(tool, '');
+  chmodSync(tool, 0o755);
+  process.env['PATH'] = bin;
+  process.env['PATHEXT'] = '.EXE';
+
+  expect(resolveCommandPath(name, parse(bin).root)).toBe(tool);
+});
 
 describe('resolveCommandPath (posix)', () => {
   // Executable-bit checks only work on a posix host.
@@ -84,6 +96,17 @@ describe('resolveCommandPath (posix)', () => {
     process.env['PATH'] = nested;
 
     expect(resolveCommandPath('mytool', cwd)).toBeUndefined();
+  });
+
+  it.skipIf(process.platform === 'win32')('continues to a safe PATH hit after a workspace executable', () => {
+    const cwd = makeTempDir('kimi-resolve-cwd-');
+    const bin = makeTempDir('kimi-resolve-bin-');
+    for (const dir of [cwd, bin]) {
+      writeFileSync(join(dir, 'mytool'), '#!/bin/sh\nexit 0\n');
+      chmodSync(join(dir, 'mytool'), 0o755);
+    }
+    process.env['PATH'] = `${cwd}:${bin}`;
+    expect(resolveCommandPath('mytool', cwd)).toBe(join(bin, 'mytool'));
   });
 
   it('returns undefined when the command is not on PATH', () => {

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DOUBLE_ESC_WINDOW_MS } from '#/tui/constant/kimi-tui';
+import { CTRL_C_HINT, DOUBLE_ESC_WINDOW_MS } from '#/tui/constant/kimi-tui';
 import {
   EditorKeyboardController,
   type EditorKeyboardHost,
@@ -10,11 +10,14 @@ import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 interface Harness {
   readonly host: EditorKeyboardHost;
   readonly editor: Record<string, ((...args: never[]) => unknown) | undefined>;
+  readonly controller: EditorKeyboardController;
   readonly openUndoSelector: ReturnType<typeof vi.fn>;
   readonly cancelRunningShellCommand: ReturnType<typeof vi.fn>;
   readonly cancelCompaction: ReturnType<typeof vi.fn>;
   readonly btwCancelRunning: ReturnType<typeof vi.fn>;
   readonly btwCloseOrCancel: ReturnType<typeof vi.fn>;
+  readonly footerHint: ReturnType<typeof vi.fn>;
+  readonly stop: ReturnType<typeof vi.fn>;
   readonly survey: {
     readonly handlePreInput: ReturnType<typeof vi.fn<(data: string) => boolean>>;
     readonly handleSubmit: ReturnType<typeof vi.fn<(text: string) => boolean>>;
@@ -35,6 +38,8 @@ function createHarness(options: { streamingPhase?: string; isCompacting?: boolea
   const cancelCompaction = vi.fn(async () => {});
   const btwCancelRunning = vi.fn(() => false);
   const btwCloseOrCancel = vi.fn(() => false);
+  const footerHint = vi.fn();
+  const stop = vi.fn();
   const survey = {
     handlePreInput: vi.fn<(data: string) => boolean>(() => false),
     handleSubmit: vi.fn<(text: string) => boolean>(() => false),
@@ -52,7 +57,7 @@ function createHarness(options: { streamingPhase?: string; isCompacting?: boolea
         isCompacting: options.isCompacting ?? false,
         editorCommand: null,
       },
-      footer: { setTransientHint: vi.fn() },
+      footer: { setTransientHint: footerHint },
       ui: { requestRender: vi.fn() },
     },
     session,
@@ -66,7 +71,7 @@ function createHarness(options: { streamingPhase?: string; isCompacting?: boolea
     track: vi.fn(),
     openExternalEditor: vi.fn(),
     showError: vi.fn(),
-    stop: vi.fn(),
+    stop,
   } as unknown as EditorKeyboardHost;
 
   const controller = new EditorKeyboardController(
@@ -78,11 +83,14 @@ function createHarness(options: { streamingPhase?: string; isCompacting?: boolea
   return {
     host,
     editor,
+    controller,
     openUndoSelector,
     cancelRunningShellCommand,
     cancelCompaction,
     btwCancelRunning,
     btwCloseOrCancel,
+    footerHint,
+    stop,
     survey,
   };
 }
@@ -234,6 +242,27 @@ describe('EditorKeyboardController btw panel priority', () => {
     expect(btwCancelRunning).toHaveBeenCalledOnce();
     expect(btwCloseOrCancel).toHaveBeenCalledOnce();
     expect(cancelCompaction).toHaveBeenCalledOnce();
+  });
+});
+
+describe('EditorKeyboardController disposal', () => {
+  it('consumes every key after dispose so shutdown feedback is not clobbered', () => {
+    const { editor, controller, footerHint, stop } = createHarness();
+
+    pressCtrlC(editor);
+    expect(footerHint).toHaveBeenCalledWith(CTRL_C_HINT);
+
+    controller.dispose();
+    footerHint.mockClear();
+
+    const onPreInput = editor['onPreInput'];
+    if (onPreInput === undefined) throw new Error('onPreInput handler not installed');
+    expect((onPreInput as (data: string) => boolean)('\u0003')).toBe(true);
+    expect((onPreInput as (data: string) => boolean)('\u001B')).toBe(true);
+    expect((onPreInput as (data: string) => boolean)('a')).toBe(true);
+
+    expect(stop).not.toHaveBeenCalled();
+    expect(footerHint).not.toHaveBeenCalled();
   });
 });
 

@@ -39,7 +39,6 @@ import { IAgentToolRegistryService, type ToolReference } from '#/agent/toolRegis
 import { type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import {
-  rootDelegationExtras,
   subagentAllowlistFor,
   withoutDelegatingTargets,
 } from '#/app/agentProfileCatalog/profile-shared';
@@ -159,7 +158,7 @@ export class SubagentTool implements ISubagentTool {
     }
     const own = this.profile.data();
     const catalogProfiles = this.catalogProfiles();
-    const allowlist = this.effectiveAllowlist(own, catalogProfiles);
+    const allowlist = this.effectiveAllowlist(own);
     const profiles =
       allowlist === undefined
         ? catalogProfiles
@@ -204,29 +203,11 @@ export class SubagentTool implements ISubagentTool {
     return profiles;
   }
 
-  private delegationExtras(
-    own: {
-      readonly profileName?: string;
-      readonly subagents?: readonly string[];
-    },
-    profiles: readonly AgentProfile[],
-  ): readonly string[] | undefined {
-    if (this.callerAgentId !== 'main') return undefined;
-    return rootDelegationExtras(this.catalog, own, profiles);
-  }
-
-  private effectiveAllowlist(
-    own: {
-      readonly profileName?: string;
-      readonly subagents?: readonly string[];
-    },
-    profiles: readonly AgentProfile[],
-  ): readonly string[] | undefined {
-    const allowlist = subagentAllowlistFor(
-      this.catalog,
-      own,
-      this.delegationExtras(own, profiles),
-    );
+  private effectiveAllowlist(own: {
+    readonly profileName?: string;
+    readonly subagents?: readonly string[];
+  }): readonly string[] | undefined {
+    const allowlist = subagentAllowlistFor(this.catalog, own);
     if (allowlist === undefined || own.subagents !== undefined) return allowlist;
     return withoutDelegatingTargets(this.catalog, allowlist);
   }
