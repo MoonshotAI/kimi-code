@@ -106,18 +106,12 @@ extra_skill_dirs = ["~/team-skills", ".agents/team-skills"]
 
 ## Invoking a Skill
 
-Users can mention a Skill at the start of an input or within its body, and can mention multiple Skills in one input:
+Users can invoke a Skill manually with a slash command:
 
 ```
 /skill:code-style
 /skill:git-commits fix concurrency issue in login endpoint
-Check this code with /skill:code-style
-Check these changes with /skill:code-style and /skill:review-pr
 ```
-
-The terminal UI preserves the full user input and highlights activated Skill markers instead of showing separate user Skill activation cards. Text after a marker is passed as arguments only when the input contains exactly one Skill mention and the marker is at the start. Inline, multiple, and repeated mentions do not bind arguments; each Skill is activated only once per input.
-
-While the agent is running, press `Enter` to queue an input or `Ctrl-S` to send draft and queued Skill inputs. With an empty editor, press `↑` to recall the most recent queued input; submitting an edited input parses its Skill markers and arguments again.
 
 The model can also invoke a Skill automatically based on `description` and `whenToUse` (unless `disableModelInvocation` is `true` or `type` is `flow`). Skill invocations allow up to 3 levels of nesting; beyond that they are terminated.
 
