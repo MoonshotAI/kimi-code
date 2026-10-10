@@ -7,13 +7,13 @@ import { AutoModeAskUserQuestionDenyPermissionPolicyService } from '#/agent/perm
 import { DangerousCommandAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/dangerous-command-ask';
 import { DefaultToolApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/default-tool-approve';
 import { FallbackAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/fallback-ask';
-import { GitControlPathAccessAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/git-control-path-access-ask';
-import { GitCwdWriteApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/git-cwd-write-approve';
+import { GitControlPathWriteAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/git-control-path-write-ask';
 import { SensitiveFileAccessAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/sensitive-file-access-ask';
 import { SessionApprovalHistoryPermissionPolicyService } from '#/agent/permissionPolicy/policies/session-approval-history';
 import { UserConfiguredAllowPermissionPolicyService } from '#/agent/permissionPolicy/policies/user-configured-allow';
 import { UserConfiguredAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/user-configured-ask';
 import { UserConfiguredDenyPermissionPolicyService } from '#/agent/permissionPolicy/policies/user-configured-deny';
+import { WorkspaceWriteApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/workspace-write-approve';
 import { YoloModeApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/yolo-mode-approve';
 import {
   IAgentPermissionPolicyService,
@@ -47,10 +47,10 @@ export class AgentPermissionPolicyService
       this.instantiation.createInstance(UserConfiguredAskPermissionPolicyService),
       this.instantiation.createInstance(UserConfiguredAllowPermissionPolicyService),
       this.instantiation.createInstance(SensitiveFileAccessAskPermissionPolicyService),
-      this.instantiation.createInstance(GitControlPathAccessAskPermissionPolicyService),
+      this.instantiation.createInstance(GitControlPathWriteAskPermissionPolicyService),
       this.instantiation.createInstance(YoloModeApprovePermissionPolicyService),
       this.instantiation.createInstance(DefaultToolApprovePermissionPolicyService),
-      this.instantiation.createInstance(GitCwdWriteApprovePermissionPolicyService),
+      this.instantiation.createInstance(WorkspaceWriteApprovePermissionPolicyService),
       this.instantiation.createInstance(FallbackAskPermissionPolicyService),
     ];
   }

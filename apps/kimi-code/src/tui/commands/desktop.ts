@@ -6,5 +6,5 @@ import type { SlashCommandHost } from './dispatch';
 export async function handleDesktopCommand(host: SlashCommandHost): Promise<void> {
   const url = kimiCodeOfficialInstallUrl();
   host.showStatus(`${url} — opened in your browser`);
-  openUrl(url);
+  openUrl(url, undefined, host.state.appState.workDir);
 }

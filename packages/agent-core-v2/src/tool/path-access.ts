@@ -83,18 +83,16 @@ export function isSensitiveFile(path: string): boolean {
 }
 
 export type PathClass = 'posix' | 'win32';
-export type PathSecurityCode = 'PATH_OUTSIDE_WORKSPACE' | 'PATH_SENSITIVE' | 'PATH_INVALID';
+export type PathSecurityCode = 'PATH_OUTSIDE_WORKSPACE' | 'PATH_INVALID';
 export type PathAccessOperation = 'read' | 'write' | 'search';
 export type WorkspaceGuardMode = 'absolute-outside-allowed' | 'disabled';
 
 export interface WorkspaceAccessPolicy {
   readonly guardMode: WorkspaceGuardMode;
-  readonly checkSensitive: boolean;
 }
 
 export const DEFAULT_WORKSPACE_ACCESS_POLICY: WorkspaceAccessPolicy = {
   guardMode: 'absolute-outside-allowed',
-  checkSensitive: true,
 };
 
 export interface PathAccess {
@@ -207,7 +205,6 @@ export function extendWorkspaceWithSkillRoots<T extends WorkspaceConfig>(
 
 export interface AssertPathOptions {
   readonly mode: PathAccessOperation;
-  readonly checkSensitive?: boolean | undefined;
   readonly pathClass?: PathClass | undefined;
 }
 
@@ -258,16 +255,6 @@ export function resolvePathAccess(
   const outsideWorkspace = !isWithinWorkspace(canonical, config, pathClass);
   const policy = options.policy ?? DEFAULT_WORKSPACE_ACCESS_POLICY;
 
-  if (policy.checkSensitive && isSensitiveFile(canonical)) {
-    throw new PathSecurityError(
-      'PATH_SENSITIVE',
-      path,
-      canonical,
-      `"${path}" matches a sensitive-file pattern (env / credential / SSH key). ` +
-        `Access is blocked to protect secrets.`,
-    );
-  }
-
   if (outsideWorkspace) {
     switch (policy.guardMode) {
       case 'absolute-outside-allowed':
@@ -313,7 +300,6 @@ export function assertPathAllowed(
     pathClass: options.pathClass,
     policy: {
       guardMode: 'absolute-outside-allowed',
-      checkSensitive: options.checkSensitive ?? DEFAULT_WORKSPACE_ACCESS_POLICY.checkSensitive,
     },
   }).path;
 }

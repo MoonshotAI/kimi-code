@@ -39,6 +39,7 @@ export interface GitStatusCache {
 
 export interface GitStatusCacheOptions {
   readonly onChange?: () => void;
+  readonly trusted?: boolean;
 }
 
 interface BranchState {
@@ -69,9 +70,7 @@ export function createGitStatusCache(
   workDir: string,
   options: GitStatusCacheOptions = {},
 ): GitStatusCache {
-  // Resolve through PATH to an absolute path — a bare name would let cmd.exe
-  // pick up a `git.exe` planted in the workspace.
-  const git = resolveCommandPath('git', workDir);
+  const git = resolveCommandPath('git', workDir, { trusted: options.trusted });
   let repoDetected = false;
   let isRepo = false;
   let branch: BranchState = { value: null, fetchedAt: 0 };
@@ -138,7 +137,7 @@ export function createGitStatusCache(
       requestId,
     };
 
-    void readPullRequest(workDir).then((value) => {
+    void readPullRequest(workDir, options.trusted).then((value) => {
       if (pullRequest.requestId !== requestId) return;
 
       const previous = pullRequest.branch === branchName ? pullRequest.value : null;
@@ -257,11 +256,9 @@ function parseDiffNumstatCount(value: string | undefined): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-function readPullRequest(workDir: string): Promise<PullRequestInfo | null> {
+function readPullRequest(workDir: string, trusted?: boolean): Promise<PullRequestInfo | null> {
   return new Promise((resolve) => {
-    // Resolve gh through PATH as well — this runs with cwd = workDir, where a
-    // planted `gh.exe` would otherwise be picked up by cmd.exe on Windows.
-    const gh = resolveCommandPath('gh', workDir);
+    const gh = resolveCommandPath('gh', workDir, { trusted });
     if (gh === undefined) {
       resolve(null);
       return;

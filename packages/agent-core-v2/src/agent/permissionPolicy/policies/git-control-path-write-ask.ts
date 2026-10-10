@@ -1,5 +1,4 @@
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
-import { isWithinWorkspace } from '#/tool/path-access';
 import { IGitService } from '#/app/git/git';
 import type { IGitService as GitService } from '#/app/git/git';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
@@ -9,10 +8,14 @@ import type {
   PermissionPolicy,
   PermissionPolicyResult,
 } from '#/agent/permissionPolicy/types';
-import { writeFileAccesses } from './path-utils';
+import {
+  writeFileAccesses,
+  hasGitPathComponent,
+  isGitControlPath,
+} from './path-utils';
 
-export class GitCwdWriteApprovePermissionPolicyService implements PermissionPolicy {
-  readonly name = 'git-cwd-write-approve';
+export class GitControlPathWriteAskPermissionPolicyService implements PermissionPolicy {
+  readonly name = 'git-control-path-write-ask';
 
   constructor(
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
@@ -23,32 +26,24 @@ export class GitCwdWriteApprovePermissionPolicyService implements PermissionPoli
   async evaluate(
     context: ResolvedToolExecutionHookContext,
   ): Promise<PermissionPolicyResult | undefined> {
-    const toolName = context.toolCall.name;
-    if (toolName !== 'Write' && toolName !== 'Edit') return undefined;
+    const cwd = this.workspace.workDir;
+    if (cwd.length === 0) return undefined;
     const lease = this.runtime.acquire();
     const pathClass = lease.runtime.environment.pathClass;
     lease.dispose();
-    if (pathClass !== 'posix') return undefined;
+    const accesses = writeFileAccesses(context);
+    if (accesses.length === 0) return undefined;
 
-    const cwd = this.workspace.workDir;
-    if (cwd.length === 0) return undefined;
+    const directGitAccess = accesses.find((fileAccess) =>
+      hasGitPathComponent(fileAccess.path, cwd, pathClass),
+    );
+    if (directGitAccess !== undefined) return { kind: 'ask' };
 
-    const writeAccesses = writeFileAccesses(context);
-    if (writeAccesses.length === 0) return undefined;
-    if (
-      !writeAccesses.every((access) =>
-        isWithinWorkspace(
-          access.path,
-          { workspaceDir: cwd, additionalDirs: this.workspace.additionalDirs },
-          'posix',
-        ),
-      )
-    ) {
-      return undefined;
-    }
-
-    return (await this.git.findWorkTree(cwd)) === null
-      ? undefined
-      : { kind: 'approve' };
+    const marker = await this.git.findWorkTree(cwd);
+    if (marker === null) return undefined;
+    const access = accesses.find((fileAccess) =>
+      isGitControlPath(fileAccess.path, marker, pathClass),
+    );
+    return access === undefined ? undefined : { kind: 'ask' };
   }
 }

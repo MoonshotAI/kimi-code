@@ -1374,6 +1374,20 @@ describe('WorkspaceFsService.list', () => {
 });
 
 describe('WorkspaceFsService.read', () => {
+  it.each(['src/../a.txt', './a.txt', '..notes/../a.txt'])(
+    'accepts %s when normalization stays in the workspace', async (path) => {
+      const fs = makeSession({ 'a.txt': 'hello' }, emptyHandler);
+      await expect(fs.read({ path, offset: 0, length: 1024, encoding: 'utf-8' }))
+        .resolves.toMatchObject({ content: 'hello' });
+    },
+  );
+
+  it('accepts a file name starting with two dots inside the workspace', async () => {
+    const fs = makeSession({ '..notes': 'hello' }, emptyHandler);
+    await expect(fs.read({ path: '..notes', offset: 0, length: 1024, encoding: 'utf-8' }))
+      .resolves.toMatchObject({ content: 'hello' });
+  });
+
   it('reads utf-8 content with metadata', async () => {
     const fs = makeSession({ 'src/a.ts': 'hello\nworld\n' }, emptyHandler);
     const result = await fs.read({

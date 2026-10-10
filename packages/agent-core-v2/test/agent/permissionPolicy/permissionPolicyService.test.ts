@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
@@ -40,6 +40,9 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 
 import { stubPermissionModeService } from '../permissionMode/stubs';
 import { recordingTelemetry } from '../../app/telemetry/stubs';
+import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { GrepTool } from '#/agent/tools/os/grep/grepTool';
+import { WriteTool } from '#/agent/tools/os/write/writeTool';
 
 const signal = new AbortController().signal;
 
@@ -151,6 +154,116 @@ describe('AgentPermissionPolicyService chain', () => {
       policyName: 'auto-mode-ask-user-question-deny',
       result: { kind: 'deny' },
     });
+  });
+
+  it.each(['manual', 'yolo'] as const)('asks for sensitive file contents in %s mode', async (permissionMode) => {
+    mode = permissionMode;
+    await expect(evaluate({ toolName: 'Read', args: { path: '/workspace/.env' } })).resolves.toMatchObject({
+      policyName: 'sensitive-file-access-ask', result: { kind: 'ask' },
+    });
+  });
+
+  it.each(['deny', 'allow'] as const)('honors explicit %s rules for sensitive files', async (decision) => {
+    rules.push({ decision, scope: 'user', pattern: 'Read(.env)' });
+    await expect(evaluate({ toolName: 'Read', args: { path: '/workspace/.env' } })).resolves.toMatchObject({
+      policyName: `user-configured-${decision}`,
+      result: { kind: decision === 'allow' ? 'approve' : decision },
+    });
+  });
+
+  it('supports sensitive reads through session approval and auto mode', async () => {
+    sessionApprovalRulePatterns.push('Read(/workspace/.env)');
+    await expect(evaluate({ toolName: 'Read', args: { path: '/workspace/.env' } })).resolves.toMatchObject({
+      policyName: 'session-approval-history', result: { kind: 'approve' },
+    });
+    sessionApprovalRulePatterns = [];
+    mode = 'auto';
+    await expect(evaluate({ toolName: 'Read', args: { path: '/workspace/.env' } })).resolves.toMatchObject({
+      policyName: 'auto-mode-approve', result: { kind: 'approve' },
+    });
+  });
+
+  it.each(['manual', 'yolo'] as const)('asks for explicitly enabled sensitive searches in %s mode', async (permissionMode) => {
+    mode = permissionMode;
+    await expect(evaluate({ toolName: 'Grep', args: { pattern: 'example', include_sensitive: true } })).resolves.toMatchObject({
+      policyName: 'sensitive-file-access-ask', result: { kind: 'ask' },
+    });
+  });
+
+  it.each(['deny', 'allow'] as const)('preserves configured Grep pattern %s rules for sensitive searches', async (decision) => {
+    const args = { pattern: 'example', include_sensitive: true };
+    const execution = new GrepTool(ix.get(IAgentRuntimeService), workspace.stub, recordingTelemetry([])).resolveExecution(args);
+    if (execution.isError === true) throw new Error(execution.output as string);
+    rules.push({ decision, scope: 'user', pattern: 'Grep(example)' });
+    await expect(service().evaluate({ ...policyContext({ toolName: 'Grep', args }), execution })).resolves.toMatchObject({
+      policyName: `user-configured-${decision}`, result: { kind: decision === 'allow' ? 'approve' : decision },
+    });
+  });
+
+  it('scopes sensitive search session approvals to the pattern and search root', async () => {
+    const tool = new GrepTool(ix.get(IAgentRuntimeService), workspace.stub, recordingTelemetry([]));
+    const args = { pattern: 'example', path: '/workspace', include_sensitive: true };
+    const normal = tool.resolveExecution({ ...args, include_sensitive: false });
+    const sensitive = tool.resolveExecution(args);
+    const elsewhere = tool.resolveExecution({ ...args, path: '/extra' });
+    if (normal.isError === true || sensitive.isError === true || elsewhere.isError === true) throw new Error('resolution failed');
+    sessionApprovalRulePatterns.push(normal.approvalRule, 'Grep');
+    const context = policyContext({ toolName: 'Grep', args });
+    await expect(service().evaluate({ ...context, execution: sensitive })).resolves.toMatchObject({
+      policyName: 'sensitive-file-access-ask', result: { kind: 'ask' },
+    });
+    sessionApprovalRulePatterns.push(sensitive.approvalRule);
+    await expect(service().evaluate({ ...context, execution: sensitive })).resolves.toMatchObject({
+      policyName: 'session-approval-history', result: { kind: 'approve' },
+    });
+    await expect(service().evaluate({ ...context, execution: elsewhere })).resolves.toMatchObject({
+      policyName: 'sensitive-file-access-ask', result: { kind: 'ask' },
+    });
+  });
+
+  it('lists sensitive file names and keeps default Grep filtering outside sensitive approval', async () => {
+    for (const toolName of ['Glob', 'Grep']) {
+      await expect(evaluate({ toolName, args: { path: '/workspace/.env', pattern: '*' } })).resolves.toMatchObject({
+        policyName: 'default-tool-approve', result: { kind: 'approve' },
+      });
+    }
+  });
+
+  it.each(['posix', 'win32'] as const)('approves non-git workspace writes with %s paths', async (pathClass) => {
+    const workDir = pathClass === 'win32' ? 'C:/workspace' : '/workspace';
+    const runtime = new FakeRuntime({ workspaceId: 'test', runtimeId: 'local', generation: 'test' }, { pathClass });
+    ix.stub(IAgentRuntimeService, {
+      inspect: () => runtime,
+      acquire: () => ({ runtime, dispose: () => {}, track: (resource) => resource }),
+    });
+    workspace = workspaceStub(workDir);
+    ix.stub(ISessionWorkspaceContext, workspace.stub);
+    await expect(evaluate({
+      toolName: 'Write', args: { path: `${workDir}/a.ts` }, accesses: ToolAccesses.writeFile(`${workDir}/a.ts`),
+    })).resolves.toMatchObject({ policyName: 'workspace-write-approve', result: { kind: 'approve' } });
+    await expect(evaluate({
+      toolName: 'Edit', args: { path: `${workDir}/a.ts` }, accesses: ToolAccesses.readWriteFile(`${workDir}/a.ts`),
+    })).resolves.toMatchObject({ policyName: 'workspace-write-approve', result: { kind: 'approve' } });
+  });
+
+  it('honors explicit deny rules before ordinary workspace write approval', async () => {
+    rules.push({ decision: 'deny', scope: 'user', pattern: 'Write' });
+    await expect(evaluate({
+      toolName: 'Write', args: { path: '/workspace/a.ts' }, accesses: ToolAccesses.readWriteFile('/workspace/a.ts'),
+    })).resolves.toMatchObject({ policyName: 'user-configured-deny', result: { kind: 'deny' } });
+  });
+
+  it('routes a real sensitive Write execution through permission rules before touching disk', async () => {
+    const tool = new WriteTool(ix.get(IAgentRuntimeService), workspace.stub);
+    const args = { path: '/workspace/.env', content: 'TOKEN=example' };
+    const execution = tool.resolveExecution(args);
+    if (execution.isError === true) throw new Error('resolution failed');
+    const context = { ...policyContext({ toolName: 'Write', args }), execution };
+    await expect(service().evaluate(context)).resolves.toMatchObject({ result: { kind: 'ask' } });
+    rules.push({ decision: 'deny', scope: 'user', pattern: 'Write(.env)' });
+    await expect(service().evaluate(context)).resolves.toMatchObject({ result: { kind: 'deny' } });
+    rules = [{ decision: 'allow', scope: 'user', pattern: 'Write(.env)' }];
+    await expect(service().evaluate(context)).resolves.toMatchObject({ result: { kind: 'approve' } });
   });
 
   it('applies deny rules before yolo-mode approval', async () => {
@@ -562,7 +675,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
       args: { path: 'src/a.ts', content: 'x' },
       accesses: ToolAccesses.writeFile(join(workspaceDir, 'src/a.ts')),
     })).resolves.toMatchObject({
-      policyName: 'git-cwd-write-approve',
+      policyName: 'workspace-write-approve',
       result: { kind: 'approve' },
     });
   });
@@ -576,7 +689,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
       args: { path: join(extraDir, 'src/a.ts'), old_string: 'A', new_string: 'B' },
       accesses: ToolAccesses.readWriteFile(join(extraDir, 'src/a.ts')),
     })).resolves.toMatchObject({
-      policyName: 'git-cwd-write-approve',
+      policyName: 'workspace-write-approve',
       result: { kind: 'approve' },
     });
   });
@@ -596,18 +709,39 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
     });
   });
 
-  it('asks for git control files before git-cwd approval', async () => {
+  it('asks for git control files before workspace write approval', async () => {
     await expect(evaluate({
       toolName: 'Write',
       args: { path: '.git/config', content: 'x' },
       accesses: ToolAccesses.writeFile(join(workspaceDir, '.git/config')),
     })).resolves.toMatchObject({
-      policyName: 'git-control-path-access-ask',
+      policyName: 'git-control-path-write-ask',
       result: { kind: 'ask' },
     });
   });
 
-  it('asks for sensitive files before git-cwd approval', async () => {
+  it.each(['manual', 'yolo'] as const)('allows Git reads but still asks before Git writes in %s mode', async (permissionMode) => {
+    mode = permissionMode;
+    const path = join(workspaceDir, '.git/config');
+    await expect(evaluate({ toolName: 'Read', args: { path }, accesses: ToolAccesses.readFile(path) }))
+      .resolves.toMatchObject({ result: { kind: 'approve' } });
+    await expect(evaluate({ toolName: 'Edit', args: { path }, accesses: ToolAccesses.readWriteFile(path) }))
+      .resolves.toMatchObject({ policyName: 'git-control-path-write-ask', result: { kind: 'ask' } });
+  });
+
+  it('protects writes to a worktree control directory without blocking reads', async () => {
+    const control = await mkdtemp(join(tmpdir(), 'kimi-git-control-'));
+    cleanupDirs.push(control);
+    await rm(join(workspaceDir, '.git'), { recursive: true });
+    await writeFile(join(workspaceDir, '.git'), `gitdir: ${control}\n`);
+    const path = join(control, 'config');
+    await expect(evaluate({ toolName: 'Read', args: { path }, accesses: ToolAccesses.readFile(path) }))
+      .resolves.toMatchObject({ result: { kind: 'approve' } });
+    await expect(evaluate({ toolName: 'Write', args: { path }, accesses: ToolAccesses.writeFile(path) }))
+      .resolves.toMatchObject({ policyName: 'git-control-path-write-ask', result: { kind: 'ask' } });
+  });
+
+  it('asks for sensitive files before workspace write approval', async () => {
     await expect(evaluate({
       toolName: 'Write',
       args: { path: '.env', content: 'SECRET=1' },
@@ -618,7 +752,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
     });
   });
 
-  it('does not use git-cwd approval in auto mode', async () => {
+  it('does not use workspace write approval in auto mode', async () => {
     mode = 'auto';
     await expect(evaluate({
       toolName: 'Write',

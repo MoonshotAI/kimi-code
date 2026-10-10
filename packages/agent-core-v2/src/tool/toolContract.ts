@@ -84,6 +84,7 @@ export interface RunnableToolExecution {
   readonly stopBatchAfterThis?: boolean | undefined;
   readonly approvalRule: string;
   readonly matchesRule?: ((ruleArgs: string) => boolean) | undefined;
+  readonly matchesSessionApproval?: (rule: string) => boolean;
   readonly execute: (ctx: ExecutableToolContext) => Promise<ExecutableToolResult>;
 }
 

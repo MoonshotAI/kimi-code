@@ -86,7 +86,13 @@ export const GrepInputSchema = z.object({
     .boolean()
     .optional()
     .describe(
-      'Also search files excluded by ignore files such as `.gitignore`, `.ignore`, and `.rgignore` (for example `node_modules` or build outputs). Sensitive files (such as `.env`) remain filtered out for safety. VCS metadata directories (`.git` and similar) are always skipped, even when this is true. Defaults to false.',
+      'Also search files excluded by ignore files such as `.gitignore`, `.ignore`, and `.rgignore` (for example `node_modules` or build outputs). Sensitive files remain filtered unless include_sensitive is true. VCS metadata directories (`.git` and similar) are always skipped, even when this is true. Defaults to false.',
+    ),
+  include_sensitive: z
+    .boolean()
+    .optional()
+    .describe(
+      'Include sensitive files such as `.env` and private keys, subject to permission approval. Defaults to false. Only enable when the task requires their contents; results may expose secrets to the model. Ignore files still apply unless include_ignored is also true.',
     ),
 });
 

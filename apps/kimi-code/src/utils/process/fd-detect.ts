@@ -37,14 +37,14 @@ const FD_ARCHIVE_SHA256: Record<string, string> = {
     'b2816e506390a89941c63c9187d58a3cc10e9a55f2ef0685f9ea0eccaf7c98c8',
 };
 
-export function detectFdPath(): string | null {
+export function detectFdPath(trustedCwd?: string): string | null {
   const managed = getManagedFdPath();
   if (managed !== null) return managed;
-  return detectSystemFdPath();
+  return detectSystemFdPath(trustedCwd);
 }
 
-export async function ensureFdPath(): Promise<string | null> {
-  const existing = detectFdPath();
+export async function ensureFdPath(trustedCwd?: string): Promise<string | null> {
+  const existing = detectFdPath(trustedCwd);
   if (existing !== null) return existing;
 
   try {
@@ -54,9 +54,9 @@ export async function ensureFdPath(): Promise<string | null> {
   }
 }
 
-function detectSystemFdPath(): string | null {
+function detectSystemFdPath(trustedCwd?: string): string | null {
   for (const name of CANDIDATES) {
-    const commandPath = resolveCommandPath(name);
+    const commandPath = resolveCommandPath(name, trustedCwd, { trusted: trustedCwd !== undefined });
     if (commandPath === undefined) continue;
     try {
       const result = spawnSync(commandPath, ['--version'], { stdio: 'ignore' });

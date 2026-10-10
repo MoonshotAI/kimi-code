@@ -730,7 +730,7 @@ async function handlePluginsPanelSelection(
       return;
     case 'open-url':
       host.restoreEditor();
-      openUrl(selection.url);
+      openUrl(selection.url, undefined, host.state.appState.workDir);
       host.showStatus(`Opening the ${selection.label} page in your browser…`, 'success');
       host.showStatus(`If it did not open, visit ${selection.url}`);
       return;

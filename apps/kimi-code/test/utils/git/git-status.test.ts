@@ -216,7 +216,7 @@ describe('git status cache', () => {
     expect(mocks.execFile).not.toHaveBeenCalled();
   });
 
-  it('spawns git and gh through their resolved absolute paths', async () => {
+  it.each([undefined, true])('spawns git and gh through absolute paths with trusted=%s', async (trusted) => {
     mocks.execFile.mockImplementation(
       (
         _cmd: string,
@@ -234,11 +234,12 @@ describe('git status cache', () => {
       return { status: 1, stdout: '' };
     });
 
-    const cache = createGitStatusCache('/tmp/repo');
+    const cache = createGitStatusCache('/tmp/repo', { trusted });
     expect(cache.getStatus()).not.toBeNull();
     await Promise.resolve();
 
-    expect(mocks.resolveCommandPath).toHaveBeenCalledWith('git', '/tmp/repo');
+    expect(mocks.resolveCommandPath).toHaveBeenCalledWith('git', '/tmp/repo', { trusted });
+    expect(mocks.resolveCommandPath).toHaveBeenCalledWith('gh', '/tmp/repo', { trusted });
     for (const call of mocks.spawnSync.mock.calls) {
       expect(call[0]).toBe('/usr/bin/git');
     }

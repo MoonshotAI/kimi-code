@@ -107,6 +107,35 @@ describe('resolveCommandPath (posix)', () => {
     }
     process.env['PATH'] = `${cwd}:${bin}`;
     expect(resolveCommandPath('mytool', cwd)).toBe(join(bin, 'mytool'));
+    expect(resolveCommandPath('mytool', cwd, { trusted: true })).toBe(join(cwd, 'mytool'));
+  });
+
+  it.skipIf(process.platform === 'win32').each(['absolute', 'relative', 'empty'])(
+    'resolves workspace executables from an %s PATH entry only after trust', (entry) => {
+      const cwd = makeTempDir('kimi-resolve-cwd-');
+      const bin = entry === 'empty' ? cwd : join(cwd, 'bin');
+      mkdirSync(bin, { recursive: true });
+      const tool = join(bin, 'mytool');
+      writeFileSync(tool, '#!/bin/sh\nexit 0\n');
+      chmodSync(tool, 0o755);
+      process.env['PATH'] = entry === 'absolute' ? bin : entry === 'relative' ? 'bin' : '';
+
+      expect(resolveCommandPath('mytool', cwd)).toBeUndefined();
+      expect(resolveCommandPath('mytool', cwd, { trusted: true })).toBe(tool);
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')('treats dot-prefixed subdirectories as part of the workspace', () => {
+    const cwd = makeTempDir('kimi-resolve-cwd-');
+    const bin = join(cwd, '..tools');
+    mkdirSync(bin);
+    const tool = join(bin, 'mytool');
+    writeFileSync(tool, '#!/bin/sh\nexit 0\n');
+    chmodSync(tool, 0o755);
+    process.env['PATH'] = bin;
+
+    expect(resolveCommandPath('mytool', cwd)).toBeUndefined();
+    expect(resolveCommandPath('mytool', cwd, { trusted: true })).toBe(tool);
   });
 
   it('returns undefined when the command is not on PATH', () => {
@@ -166,5 +195,19 @@ describe('resolveCommandPath (win32)', () => {
     process.env['PATHEXT'] = '.COM;.EXE;.BAT;.CMD';
 
     expect(resolveCommandPath('npm', cwd)).toBeUndefined();
+  });
+
+  it('resolves a trusted workspace executable through PATHEXT', () => {
+    mockPlatform('win32');
+    const cwd = makeTempDir('kimi-resolve-cwd-');
+    const bin = join(cwd, 'bin');
+    mkdirSync(bin);
+    const shim = join(bin, 'npm.CMD');
+    writeFileSync(shim, '@echo off\r\n');
+    process.env['PATH'] = 'bin';
+    process.env['PATHEXT'] = '.COM;.EXE;.BAT;.CMD';
+
+    expect(resolveCommandPath('npm', cwd)).toBeUndefined();
+    expect(resolveCommandPath('npm', cwd, { trusted: true })).toBe(shim);
   });
 });

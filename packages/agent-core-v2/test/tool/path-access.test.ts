@@ -111,6 +111,14 @@ describe('extendWorkspaceWithSkillRoots', () => {
 });
 
 describe('resolvePathAccess shell path bridge', () => {
+  it('resolves sensitive paths without bypassing the later permission policy', () => {
+    expect(resolvePathAccess('.env', '/workspace', {
+      workspaceDir: '/workspace', additionalDirs: [],
+    }, { operation: 'read', pathClass: 'posix' })).toEqual({
+      path: '/workspace/.env', outsideWorkspace: false,
+    });
+  });
+
   const WIN_ENV = {
     pathClass: 'win32' as const,
     homeDir: 'C:\\Users\\test',

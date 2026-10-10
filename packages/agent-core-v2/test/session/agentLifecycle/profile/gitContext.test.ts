@@ -155,7 +155,7 @@ describe('collectGitContext', () => {
     await expect(collectGitContext(hostProcess, '/repo')).resolves.toBe('');
   });
 
-  it('omits both Remote and Project for a disallowed remote host', async () => {
+  it('includes Remote and Project for a self-hosted remote', async () => {
     const { process: hostProcess } = gitRunner({
       'rev-parse --is-inside-work-tree': { stdout: 'true' },
       'remote get-url origin': { stdout: 'git@internal.example.test:secret/repo.git' },
@@ -166,9 +166,8 @@ describe('collectGitContext', () => {
 
     const block = await collectGitContext(hostProcess, '/repo');
 
-    expect(block).not.toContain('Remote:');
-    expect(block).not.toContain('Project:');
-    expect(block).not.toContain('secret/repo');
+    expect(block).toContain('Remote: git@internal.example.test:secret/repo.git');
+    expect(block).toContain('Project: secret/repo');
     expect(block).toContain('Branch: main');
   });
 
@@ -281,8 +280,17 @@ describe('remote url helpers', () => {
     );
   });
 
-  it('rejects private hosts', () => {
-    expect(sanitizeRemoteUrl('https://git.example.test/owner/repo.git')).toBeNull();
+  it.each([
+    ['https://user:token@git.example.test/owner/repo.git?token=example#secret', 'https://git.example.test/owner/repo.git'],
+    ['ssh://git@git.example.test:2222/owner/repo.git', 'ssh://git.example.test:2222/owner/repo.git'],
+    ['git@git.example.test:owner/repo.git', 'git@git.example.test:owner/repo.git'],
+    ['git://git.example.test/owner/repo.git', 'git://git.example.test/owner/repo.git'],
+  ])('includes self-hosted remote %s without URL credentials', (remote, expected) => {
+    expect(sanitizeRemoteUrl(remote)).toBe(expected);
+  });
+
+  it.each(['file:///repo', '/local/repo', 'javascript:alert(1)', 'git@example.test:repo\nBranch: injected'])('rejects non-network or multiline remote %s', (remote) => {
+    expect(sanitizeRemoteUrl(remote)).toBeNull();
   });
 
   it('parses project names from ssh and https urls', () => {

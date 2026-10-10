@@ -90,6 +90,29 @@ describe('FooterComponent', () => {
     setRainbowDance(undefined);
   });
 
+  it('enables workspace commands after trust without extending trust to other directories', () => {
+    const onRefresh = vi.fn();
+    const footer = new FooterComponent(appState, onRefresh);
+    expect(gitStatusMocks.createGitStatusCache).toHaveBeenLastCalledWith(
+      appState.workDir, { onChange: onRefresh },
+    );
+
+    footer.trustWorkspace(appState.workDir);
+    expect(gitStatusMocks.createGitStatusCache).toHaveBeenLastCalledWith(
+      appState.workDir, { onChange: onRefresh, trusted: true },
+    );
+
+    footer.setState({ ...appState, workDir: '/tmp/other-project' });
+    expect(gitStatusMocks.createGitStatusCache).toHaveBeenLastCalledWith(
+      '/tmp/other-project', { onChange: onRefresh, trusted: false },
+    );
+
+    footer.setState(appState);
+    expect(gitStatusMocks.createGitStatusCache).toHaveBeenLastCalledWith(
+      appState.workDir, { onChange: onRefresh, trusted: true },
+    );
+  });
+
   it('paints the model name in rainbow while colored', () => {
     setDanceView(true, 0);
     const footer = new FooterComponent(appState);

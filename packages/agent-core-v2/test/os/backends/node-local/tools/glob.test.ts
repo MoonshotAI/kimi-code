@@ -446,9 +446,9 @@ describe('GlobTool', () => {
   });
 
   it.each([
-    { head_limit: 1, expected: ['b.ts'] },
-    { head_limit: 0, expected: ['b.ts', 'c.ts'] },
-  ])('applies head_limit=$head_limit and offset after sensitive filtering', async ({ head_limit, expected }) => {
+    { head_limit: 1, expected: ['a.ts'] },
+    { head_limit: 0, expected: ['a.ts', 'b.ts', 'c.ts'] },
+  ])('paginates all file names with head_limit=$head_limit', async ({ head_limit, expected }) => {
     const { tool } = makeTool(workspace, {
       exec: execReturning('/workspace/.env\n/workspace/a.ts\n/workspace/.aws/credentials\n/workspace/b.ts\n/workspace/c.ts\n'),
     });
@@ -456,8 +456,8 @@ describe('GlobTool', () => {
     const text = toolContentString(result);
     expect(text.split('\n').filter((line) => line.endsWith('.ts'))).toEqual(expected);
     expect(text).not.toContain('.env');
-    expect(text).not.toContain('credentials');
-    expect(text).toContain('of 3.');
+    if (head_limit === 0) expect(text).toContain('.aws/credentials');
+    expect(text).toContain('of 5.');
   });
 
   it('does not present a capped capture as a complete search when returning all matches', async () => {
@@ -515,15 +515,15 @@ describe('GlobTool', () => {
     expect(recovered).toEqual(names.map((name) => `${root}/${name}`));
   });
 
-  it('filters sensitive files from results', async () => {
+  it('includes sensitive file names without reading their contents', async () => {
     const exec = execReturning('/workspace/.env\n/workspace/src/a.ts\n');
     const { tool } = makeTool(workspace, { exec });
 
-    const result = await execute(tool, { pattern: 'src/**' });
+    const result = await execute(tool, { pattern: '**', include_ignored: true });
 
     expect(result.output).toContain('src/a.ts');
-    expect(result.output).not.toContain('.env');
-    expect(result.output).toContain('Filtered 1 sensitive file');
+    expect(result.output).toContain('.env');
+    expect(result.output).not.toContain('Filtered');
   });
 
   it('surfaces the raw spawn error when rg cannot be spawned', async () => {

@@ -219,7 +219,9 @@ export class SessionEventHandler {
       host.sendQueuedMessage(session, item);
     };
     host.sessionEventUnsubscribe?.();
-    const mcpOAuthOpener = new McpOAuthAuthorizationUrlOpener(openUrl);
+    const mcpOAuthOpener = new McpOAuthAuthorizationUrlOpener((url) => {
+      openUrl(url, undefined, host.state.appState.workDir);
+    });
     const { sessionId } = host.state.appState;
     host.sessionEventUnsubscribe = session.onEvent((event) => {
       if (host.aborted) return;

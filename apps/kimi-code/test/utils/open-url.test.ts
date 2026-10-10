@@ -20,8 +20,20 @@ it.each([
   vi.mocked(resolveCommandPath).mockReturnValue(`/system/${command}`);
   const url = 'kimi-code://open?root=%2Ftmp%2Fa%25NAME%25%26b&new=1';
   openUrl(url);
-  expect(resolveCommandPath).toHaveBeenCalledWith(command);
+  expect(resolveCommandPath).toHaveBeenCalledWith(command, undefined, { trusted: false });
   expect(execFile).toHaveBeenCalledWith(`/system/${command}`, [...args, url], { windowsHide: true }, expect.any(Function));
+});
+
+it('allows a workspace opener only when given a trusted working directory', () => {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('linux');
+  vi.mocked(resolveCommandPath).mockReturnValue('/workspace/bin/xdg-open');
+
+  openUrl('https://example.test', undefined, '/workspace');
+
+  expect(resolveCommandPath).toHaveBeenCalledWith('xdg-open', '/workspace', { trusted: true });
+  expect(execFile).toHaveBeenCalledWith(
+    '/workspace/bin/xdg-open', ['https://example.test'], { windowsHide: true }, expect.any(Function),
+  );
 });
 
 it('reports a missing opener without spawning a bare command', () => {
@@ -47,7 +59,7 @@ it('uses a failure-reporting Windows opener and quotes URLs as literal strings',
   vi.mocked(resolveCommandPath).mockReturnValue('/system/powershell.exe');
   const url = "kimi-code://open?root=C%3A%5Ctest's%26%25&new=1";
   openUrl(url);
-  expect(resolveCommandPath).toHaveBeenCalledWith('powershell.exe');
+  expect(resolveCommandPath).toHaveBeenCalledWith('powershell.exe', undefined, { trusted: false });
   const call = vi.mocked(execFile).mock.calls[0]!;
   const args = call[1] as string[];
   expect(args.slice(0, 3)).toEqual(['-NoProfile', '-NonInteractive', '-EncodedCommand']);

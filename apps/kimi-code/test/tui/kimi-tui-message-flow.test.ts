@@ -2270,7 +2270,9 @@ command = "vim"
     await handleFeedbackCommand(feedbackDriver as any);
 
     expect(openUrl).toHaveBeenCalledTimes(1);
-    expect(openUrl).toHaveBeenCalledWith('https://github.com/MoonshotAI/kimi-code/issues');
+    expect(openUrl).toHaveBeenCalledWith(
+      'https://github.com/MoonshotAI/kimi-code/issues', undefined, driver.state.appState.workDir,
+    );
     expect(promptFeedbackInput).not.toHaveBeenCalled();
     expect(harness.auth.submitFeedback).not.toHaveBeenCalled();
     const transcript = stripSgr(renderTranscript(driver));
@@ -2607,7 +2609,9 @@ command = "vim"
 
     await expect(handleFeedbackCommand(feedbackDriver as any)).rejects.toThrow('socket hangup');
 
-    expect(openUrl).toHaveBeenCalledWith('https://github.com/MoonshotAI/kimi-code/issues');
+    expect(openUrl).toHaveBeenCalledWith(
+      'https://github.com/MoonshotAI/kimi-code/issues', undefined, driver.state.appState.workDir,
+    );
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('Opening GitHub Issues as fallback');
   });

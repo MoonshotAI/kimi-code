@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 
 import { resolveCommandPath } from '#/utils/process/resolve-command';
 
-export function openUrl(url: string, onError?: (error: Error) => void): void {
+export function openUrl(url: string, onError?: (error: Error) => void, trustedCwd?: string): void {
   const command: [string, string[]] =
     process.platform === 'darwin'
       ? ['open', [url]]
@@ -12,7 +12,7 @@ export function openUrl(url: string, onError?: (error: Error) => void): void {
           'utf16le',
         ).toString('base64')]]
         : ['xdg-open', [url]];
-  const executable = resolveCommandPath(command[0]);
+  const executable = resolveCommandPath(command[0], trustedCwd, { trusted: trustedCwd !== undefined });
   if (executable === undefined) {
     onError?.(new Error(`Cannot find ${command[0]}`));
     return;

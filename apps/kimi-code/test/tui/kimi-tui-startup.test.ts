@@ -2478,6 +2478,7 @@ describe('KimiTUI startup', () => {
       .spyOn(driver, 'runMigrationScreen')
       .mockResolvedValue({ decision: 'later' });
     const mountSpy = vi.spyOn(driver, 'mountEditorReplacement');
+    const trustCommands = vi.spyOn(driver.state.footer, 'trustWorkspace');
     const onExit = vi.fn(async () => {});
     driver.onExit = onExit;
 
@@ -2485,15 +2486,58 @@ describe('KimiTUI startup', () => {
     await vi.waitFor(() => {
       expect(mountSpy).toHaveBeenCalled();
     });
+    expect(trustCommands).not.toHaveBeenCalled();
     mountSpy.mock.calls[0]![0].handleInput('\u001B[A');
     mountSpy.mock.calls[0]![0].handleInput('\r');
     await startPromise;
 
     expect(trustWorkspace).toHaveBeenCalledWith('/tmp/proj-a');
+    expect(trustCommands).toHaveBeenCalledWith('/tmp/proj-a');
+    expect(trustWorkspace.mock.invocationCallOrder[0]!).toBeLessThan(
+      trustCommands.mock.invocationCallOrder[0]!,
+    );
     expect(getWorkspaceTrustInfo.mock.invocationCallOrder[0]!).toBeLessThan(
       migrationSpy.mock.invocationCallOrder[0]!,
     );
     expect(onExit).toHaveBeenCalledWith(0);
+  });
+
+  it('does not enable workspace commands or continue startup after trust is declined', async () => {
+    const harness = makeHarness(makeSession(), {
+      getWorkspaceTrustInfo: vi.fn(async () => ({
+        trusted: false,
+        gatedMcpServers: [],
+        gatedAdditionalDirs: [], additionalDirSources: [], warnings: [],
+        instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] },
+      })),
+    });
+    const driver = makeDriver(harness, {
+      ...makeStartupInput(),
+      migrationPlan: MIGRATION_PLAN,
+      migrateOnly: true,
+    }) as unknown as MigrateExitDriver & {
+      aborted: boolean;
+      mountEditorReplacement(panel: { handleInput(data: string): void }): void;
+    };
+    vi.spyOn(driver.state.ui, 'start').mockImplementation(() => {});
+    vi.spyOn(driver.state.terminal, 'write').mockImplementation(() => {});
+    const migrationSpy = vi.spyOn(driver, 'runMigrationScreen');
+    const trustCommands = vi.spyOn(driver.state.footer, 'trustWorkspace');
+    const mountSpy = vi.spyOn(driver, 'mountEditorReplacement');
+    const stopSpy = vi.spyOn(driver, 'stop').mockImplementation(async () => {
+      driver.aborted = true;
+    });
+
+    const startPromise = driver.start();
+    await vi.waitFor(() => {
+      expect(mountSpy).toHaveBeenCalled();
+    });
+    mountSpy.mock.calls[0]![0].handleInput('\u001B');
+    await startPromise;
+
+    expect(stopSpy).toHaveBeenCalledOnce();
+    expect(trustCommands).not.toHaveBeenCalled();
+    expect(migrationSpy).not.toHaveBeenCalled();
   });
 
   it('prompts for workspace trust when trust info cannot be read', async () => {

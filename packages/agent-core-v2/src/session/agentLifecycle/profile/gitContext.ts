@@ -7,15 +7,6 @@ const GIT_TIMEOUT_MS = 5_000;
 const MAX_DIRTY_FILES = 20;
 const MAX_COMMIT_LINE_LENGTH = 200;
 
-const ALLOWED_HOSTS = [
-  'github.com',
-  'gitlab.com',
-  'gitee.com',
-  'bitbucket.org',
-  'codeberg.org',
-  'git.sr.ht',
-] as const;
-
 type GitFailure =
   | { readonly kind: 'timeout' }
   | { readonly kind: 'spawn-error' }
@@ -98,8 +89,9 @@ export async function collectGitContext(
 }
 
 export function sanitizeRemoteUrl(remoteUrl: string): string | null {
-  for (const host of ALLOWED_HOSTS) {
-    if (remoteUrl.startsWith(`git@${host}:`)) return remoteUrl;
+  if (/[\u0000-\u0020\u007F]/.test(remoteUrl)) return null;
+  if (!remoteUrl.includes('://') && /^[^/@:]+@(?:\[[^\]]+\]|[^/:]+):.+$/.test(remoteUrl)) {
+    return remoteUrl;
   }
 
   let parsed: URL;
@@ -108,12 +100,12 @@ export function sanitizeRemoteUrl(remoteUrl: string): string | null {
   } catch {
     return null;
   }
-  if ((ALLOWED_HOSTS as readonly string[]).includes(parsed.hostname)) {
-    const port = parsed.port ? `:${parsed.port}` : '';
-    return `https://${parsed.hostname}${port}${parsed.pathname}`;
-  }
-
-  return null;
+  if (!['https:', 'http:', 'ssh:', 'git:'].includes(parsed.protocol) || !parsed.hostname) return null;
+  parsed.username = '';
+  parsed.password = '';
+  parsed.search = '';
+  parsed.hash = '';
+  return parsed.toString();
 }
 
 export function parseProjectName(remoteUrl: string): string | null {

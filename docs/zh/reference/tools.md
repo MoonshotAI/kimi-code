@@ -2,7 +2,7 @@
 
 内置工具是 Kimi Code CLI 随核心引擎提供的工具集，无需安装 MCP server 即可使用。Agent 在每次对话中会根据任务需要自动选择并调用这些工具；用户可以通过权限审批界面查看每次工具调用的细节。
 
-与 MCP 工具相比，内置工具由运行时直接管理，生命周期与会话绑定，无需外部进程。两者都遵循统一的审批机制：**只读类工具**（如 `Read`、`Grep`、`Glob`）默认自动放行，**写入与执行类工具**（如 `Write`、`Edit`、`Bash`）默认需要用户审批。"Ask When Needed" 模式下普通工具调用的审批会被跳过，但 Plan 模式下的退出审批不受影响。
+与 MCP 工具相比，内置工具由运行时直接管理，生命周期与会话绑定，无需外部进程。两者都遵循统一的审批机制：普通读取和工作区内的 `Write` / `Edit` 默认自动放行，Shell 命令和工作区外写入默认需要审批。敏感文件内容和 Git 控制文件写入有单独的审批检查。"Ask When Needed" 模式下普通工具调用的审批会被跳过，但 Plan 模式下的退出审批不受影响。
 
 ## 文件类
 
@@ -11,11 +11,13 @@
 | 工具 | 默认审批 | 说明 |
 | --- | --- | --- |
 | `Read` | 自动放行 | 读取文本文件内容 |
-| `Write` | 需审批 | 创建或覆盖文件 |
-| `Edit` | 需审批 | 精确字符串替换 |
+| `Write` | 工作区内自动放行 | 创建或覆盖文件 |
+| `Edit` | 工作区内自动放行 | 精确字符串替换 |
 | `Grep` | 自动放行 | 基于 ripgrep 的全文搜索 |
 | `Glob` | 自动放行 | 按 glob 模式查找文件 |
 | `ReadMediaFile` | 自动放行 | 读取图片或视频文件 |
+
+以上默认行为可由[权限规则](../configuration/config-files.md#permission)覆盖。普通工作区写入包含已配置的附加目录，在 Windows 和非 Git 目录中同样适用。读取、写入或编辑 `.env`、私钥等敏感文件会请求审批，不再直接拒绝。读取 Git 控制文件无需特殊审批，写入仍需审批。"Never Ask" 模式或匹配的显式 allow 规则可以授权这些敏感操作。
 
 **`Read`** 接受文件路径（`path`）以及可选的 `line_offset`（起始行号，支持负数从末尾倒数）、`column_offset`（正向读取时，起始行内从 0 开始的位置）、`n_lines`（请求读取的源文件行数）和 `max_chars`（结果的字符上限，包含行号和状态信息）。省略 `n_lines` 时向文件末尾读取。默认上限为 100,000 字符，调用可申请到 500,000 字符；两个值都可通过 [`read` 配置](../configuration/config-files.md#read) 修改。字符数和列偏移按显示文本的 JavaScript 字符串长度计算，列偏移不包含行号前缀：常见字母和汉字各计 1，许多 emoji 计 2。
 
@@ -27,9 +29,9 @@
 
 **`Edit`** 接受 `path`、`old_string`（要替换的精确文本）和 `new_string`（替换后的文本）。默认只替换唯一一处匹配，若文件中存在多处相同内容会报错并提示使用 `replace_all: true`。`old_string` 与 `new_string` 不能相同。目标文件必须在本会话中先用 `Read` 读过；若文件自读取后在磁盘上发生变化，编辑会被拒绝。
 
-**`Grep`** 调用 ripgrep 搜索文件内容，支持正则表达式（`pattern`）、搜索路径（`path`）、文件类型过滤（`type`，如 `ts`、`py`）、glob 过滤（`glob`）和输出模式（`output_mode`：`files_with_matches` / `content` / `count_matches`，默认 `files_with_matches`）。`content` 模式支持上下文行（`-A`、`-B`、`-C`）、忽略大小写（`-i`）、行号（`-n`，默认 true）、跨行匹配（`multiline`）。所有模式支持 `offset` + `head_limit` 分页，`head_limit` 默认 250、传 0 表示不限。`.env`、私钥等敏感文件会被自动过滤；`include_ignored=true` 可搜索被 `.gitignore` 忽略的文件，但敏感文件仍保持过滤。
+**`Grep`** 调用 ripgrep 搜索文件内容，支持正则表达式（`pattern`）、搜索路径（`path`）、文件类型过滤（`type`，如 `ts`、`py`）、glob 过滤（`glob`）和输出模式（`output_mode`：`files_with_matches` / `content` / `count_matches`，默认 `files_with_matches`）。`content` 模式支持上下文行（`-A`、`-B`、`-C`）、忽略大小写（`-i`）、行号（`-n`，默认 true）、跨行匹配（`multiline`）。所有模式支持 `offset` + `head_limit` 分页，`head_limit` 默认 250、传 0 表示不限。`.env`、私钥等敏感文件默认过滤；设置 `include_sensitive=true` 后可按权限审批结果搜索，结果可能将密钥发送给模型。`include_ignored=true` 单独控制是否搜索被 `.gitignore` 忽略的文件；搜索被忽略的敏感文件时需同时开启两项。普通搜索的会话授权不会放行敏感搜索，敏感搜索的会话授权仅适用于相同搜索模式和搜索根目录。
 
-**`Glob`** 按 glob 模式（`pattern`）在指定目录（`path`，默认工作目录）中匹配文件，结果按修改时间倒序排列，默认返回 100 条。默认尊重 `.gitignore`、`.ignore` 和 `.rgignore`；设置 `include_ignored=true` 可包含构建产物等被忽略的文件，但敏感文件仍会被过滤。支持 `*.{ts,tsx}` 这类花括号模式，也允许宽泛通配符模式。
+**`Glob`** 按 glob 模式（`pattern`）在指定目录（`path`，默认工作目录）中匹配文件，结果按修改时间倒序排列，默认返回 100 条。默认尊重 `.gitignore`、`.ignore` 和 `.rgignore`；设置 `include_ignored=true` 可包含构建产物等被忽略的文件。敏感文件名也会列出，但不会读取内容。支持 `*.{ts,tsx}` 这类花括号模式，也允许宽泛通配符模式。
 
 使用 `offset`（默认 0）和 `head_limit`（默认 100）对匹配路径分页；有更多结果时，工具会给出下一页的 offset。设置 `head_limit: 0` 可取消条数限制，但字符上限仍然有效：达到上限时，页面会在完整路径处结束，并给出下一页的 offset。较大的页面会保存到文件，Agent 可用 `Read` 读取。每次调用都会重新搜索当前文件系统，因此文件变化可能导致跨页结果移动。超时、目录无法读取或输出采集上限仍可能造成搜索不完整；结果会提示这些情况，增加 offset 无法恢复尚未收集的路径。
 

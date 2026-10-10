@@ -213,6 +213,7 @@ export class FooterComponent implements Component {
    */
   private backgroundBashTaskCount = 0;
   private backgroundAgentCount = 0;
+  private trustedWorkDir: string | undefined;
 
   constructor(state: AppState, onRefresh: () => void = () => {}) {
     this.state = state;
@@ -231,12 +232,21 @@ export class FooterComponent implements Component {
       this.gitCacheWorkDir = state.workDir;
       this.gitCache = createGitStatusCache(state.workDir, {
         onChange: this.onRefresh,
+        trusted: state.workDir === this.trustedWorkDir,
       });
     }
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);
     this.syncStatusLineRunner(state);
     this.state = state;
+  }
+
+  trustWorkspace(workDir: string): void {
+    this.trustedWorkDir = workDir;
+    this.gitCache = createGitStatusCache(this.gitCacheWorkDir, {
+      onChange: this.onRefresh,
+      trusted: this.gitCacheWorkDir === workDir,
+    });
   }
 
   private syncStatusLineRunner(state: AppState): void {

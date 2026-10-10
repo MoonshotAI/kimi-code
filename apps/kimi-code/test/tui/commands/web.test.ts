@@ -53,6 +53,7 @@ const indentedQr = (url: string): string =>
 function makeHost() {
   const host = {
     session: { id: 'ses-1' },
+    state: { appState: { workDir: '/tmp/project' } },
     showStatus: vi.fn(),
     showError: vi.fn(),
     mountEditorReplacement: vi.fn(),
@@ -136,6 +137,8 @@ describe('handleWebCommand', () => {
     expect(mocks.startServerForeground).toHaveBeenCalledOnce();
     expect(mocks.openUrl).toHaveBeenCalledWith(
       'http://127.0.0.1:58627/sessions/ses-1#token=tok-1',
+      undefined,
+      '/tmp/project',
     );
     const written = writeSpy.mock.calls.map((call) => String(call[0])).join('');
     expect(written).toContain('Kimi server ready');
@@ -234,7 +237,7 @@ describe('handleRemoteControlCommand', () => {
           localServerToken: 'local-server-token',
         }),
       );
-      expect(mocks.openUrl).toHaveBeenCalledWith(sessionUrl);
+      expect(mocks.openUrl).toHaveBeenCalledWith(sessionUrl, undefined, '/tmp/project');
       const written = writeSpy.mock.calls.map((call) => String(call[0])).join('');
       expect(written).toContain('Kimi Remote Control ready');
       expect(written).toContain(indentedQr(sessionUrl));
@@ -304,7 +307,7 @@ describe('handleRemoteControlCommand', () => {
       const task = host.setExitForegroundTask.mock.calls[0]![0] as () => Promise<void>;
       await task();
 
-      expect(mocks.openUrl).toHaveBeenCalledWith(entryUrl);
+      expect(mocks.openUrl).toHaveBeenCalledWith(entryUrl, undefined, '/tmp/project');
       const written = writeSpy.mock.calls.map((call) => String(call[0])).join('');
       expect(written).toContain(indentedQr(entryUrl));
       expect(written).not.toContain('/sessions/');

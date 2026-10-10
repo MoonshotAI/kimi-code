@@ -53,7 +53,9 @@ Type `@` to trigger file-path completion; the selected path is inserted in relat
 
 ## Approval flow
 
-When the agent calls a tool that has side effects — modifying files, running commands — the TUI displays an approval panel for your confirmation.
+When a tool call requires permission under the current rules — for example, running a command or accessing sensitive file contents — the TUI displays an approval panel for your confirmation.
+
+Workspace trust and tool permissions are separate. Trusting a folder allows its project configuration and PATH executables to be used; the TUI can then use workspace-local `git`, `gh`, file-completion helpers, and URL openers. It does not disable permission rules, sensitive-content approval, or workspace filesystem boundaries. Git context includes self-hosted remote hosts as well as public ones, with URL credentials, query strings, and fragments removed.
 
 - **Approve**: select with the arrow keys and press `Enter`, or press `1` / `2` / `3` to choose directly
 - **Reject**: `Esc`, `Ctrl-C`, or `Ctrl-D`
@@ -64,9 +66,9 @@ Approvals are not triggered for regular tool calls in Ask When Needed mode, nor 
 
 ### The three permission modes
 
-**Always Ask mode** (formerly Manual) is the default: read-only operations run automatically, while every other action — editing files, running commands — asks for your confirmation one by one. Use it when you want full control over every change.
+**Always Ask mode** (formerly Manual) is the default: ordinary reads and workspace file edits run automatically, including in non-Git folders and on Windows. Commands, writes outside the workspace, sensitive file contents, and writes to Git control files ask for confirmation unless already authorized. To require approval for ordinary edits too, add `ask` rules for `Write` and `Edit` in [permission configuration](../configuration/config-files.md#permission).
 
-**Ask When Needed mode** (formerly YOLO), enabled with `/yolo`, auto-approves regular tool calls, making it suitable for batch tasks you know are safe. It still asks before sensitive actions — accessing sensitive files such as `.env` or SSH keys, running dangerous commands such as `shutdown` or `rm -rf`, or exiting Plan mode — and the agent can still ask you questions.
+**Ask When Needed mode** (formerly YOLO), enabled with `/yolo`, auto-approves regular tool calls, making it suitable for batch tasks you know are safe. It still asks before sensitive actions — accessing sensitive file contents such as `.env` or SSH keys, writing Git control files, running dangerous commands such as `shutdown` or `rm -rf`, or exiting Plan mode — and the agent can still ask you questions.
 
 **Never Ask mode** (formerly Auto), enabled with `/auto`, is the fully unattended mode: every tool approval is handled automatically, including sensitive files and plan exits, and the agent never asks you questions — it decides everything on its own. The built-in dangerous-command guard asks for your confirmation before commands such as `shutdown`, `reboot`, or `rm -rf` in Always Ask and Ask When Needed mode; in Never Ask mode these commands run without interruption.
 

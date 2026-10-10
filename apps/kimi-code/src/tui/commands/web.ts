@@ -96,7 +96,7 @@ export async function handleRemoteControlCommand(host: SlashCommandHost): Promis
           );
           outputReady = true;
           for (const line of pendingStatuses) process.stdout.write(line);
-          openUrl(url);
+          openUrl(url, undefined, host.state.appState.workDir);
         },
         onShutdown: async () => {
           await remoteControl?.close();
@@ -131,7 +131,7 @@ function startNewServerAfterExit(host: SlashCommandHost, sessionId: string): voi
           const url = webSessionUrl(origin, sessionId, token);
           process.stdout.write(formatReadyBanner(origin, options.host, { token }));
           process.stdout.write(`\n  ${sessionLine(url)}\n`);
-          openUrl(url);
+          openUrl(url, undefined, host.state.appState.workDir);
         },
       });
     } catch (error) {

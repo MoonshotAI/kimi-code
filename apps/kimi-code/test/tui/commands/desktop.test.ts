@@ -22,11 +22,14 @@ vi.mock('#/utils/region', async (importOriginal) => {
 
 describe('handleDesktopCommand', () => {
   it('shows the region-derived desktop app page URL and opens it in the browser', async () => {
-    const host = { showStatus: vi.fn() } as unknown as SlashCommandHost;
+    const host = {
+      showStatus: vi.fn(),
+      state: { appState: { workDir: '/tmp/project' } },
+    } as unknown as SlashCommandHost;
 
     await handleDesktopCommand(host);
 
     expect(host.showStatus).toHaveBeenCalledWith(expect.stringContaining('https://example.com/code'));
-    expect(mocks.openUrl).toHaveBeenCalledWith('https://example.com/code');
+    expect(mocks.openUrl).toHaveBeenCalledWith('https://example.com/code', undefined, '/tmp/project');
   });
 });

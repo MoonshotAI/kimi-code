@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { detectFdPath, getFdAssetName } from '#/utils/process/fd-detect';
+import { detectFdPath, ensureFdPath, getFdAssetName } from '#/utils/process/fd-detect';
 import { getBinDir } from '#/utils/paths';
 
 const mocks = vi.hoisted(() => ({
@@ -63,9 +63,22 @@ describe('detectFdPath', () => {
     mocks.spawnSync.mockReturnValue({ status: 0 });
 
     expect(detectFdPath()).toBe('/usr/local/bin/fd');
+    expect(mocks.resolveCommandPath).toHaveBeenCalledWith('fd', undefined, { trusted: false });
     expect(mocks.spawnSync).toHaveBeenCalledWith('/usr/local/bin/fd', ['--version'], {
       stdio: 'ignore',
     });
+  });
+
+  it('allows workspace PATH executables when called after trust', async () => {
+    tempHome = mkdtempSync(join(tmpdir(), 'kimi-fd-home-'));
+    process.env['KIMI_CODE_HOME'] = tempHome;
+    mocks.resolveCommandPath.mockReturnValue('/workspace/bin/fd');
+    mocks.spawnSync.mockReturnValue({ status: 0 });
+
+    expect(detectFdPath('/workspace')).toBe('/workspace/bin/fd');
+    await expect(ensureFdPath('/workspace')).resolves.toBe('/workspace/bin/fd');
+    expect(mocks.resolveCommandPath).toHaveBeenCalledTimes(2);
+    expect(mocks.resolveCommandPath).toHaveBeenCalledWith('fd', '/workspace', { trusted: true });
   });
 
   it('prefers the managed fd binary under KIMI_CODE_HOME', () => {

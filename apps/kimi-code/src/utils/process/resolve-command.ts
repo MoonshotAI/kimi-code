@@ -1,5 +1,5 @@
 import { accessSync, constants, statSync } from 'node:fs';
-import { isAbsolute, join, parse, relative, resolve } from 'node:path';
+import { isAbsolute, parse, relative, resolve, sep } from 'node:path';
 
 // cmd.exe / CreateProcess search the current directory before PATH, so on
 // Windows a bare command name can execute a binary planted in the workspace
@@ -49,16 +49,19 @@ function isInsideCwd(candidate: string, cwd: string, platform: NodeJS.Platform):
     resolvedCwd = resolvedCwd.toLowerCase();
   }
   const rel = relative(resolvedCwd, resolvedCandidate);
-  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+  return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
 /**
  * Resolve a bare command name to an absolute executable path by searching
  * PATH (PATHEXT-aware on Windows). Returns undefined when the command is not
- * found — or when the only hit lives inside `cwd`, since executing that would
- * run whatever a malicious workspace planted there.
+ * found. Before workspace trust is confirmed, hits inside `cwd` are excluded.
  */
-export function resolveCommandPath(command: string, cwd: string = process.cwd()): string | undefined {
+export function resolveCommandPath(
+  command: string,
+  cwd: string = process.cwd(),
+  options: { readonly trusted?: boolean } = {},
+): string | undefined {
   const platform = process.platform;
   const env = process.env;
   const extensions = pathExtensions(platform, env);
@@ -66,14 +69,12 @@ export function resolveCommandPath(command: string, cwd: string = process.cwd())
   const pathValue = env['PATH'] ?? '';
   const separator = platform === 'win32' ? ';' : ':';
   for (const dir of pathValue.split(separator)) {
-    // An empty PATH entry means the current directory on POSIX — anything it
-    // could produce would be rejected by the cwd check anyway, so skip it.
-    if (dir === '') continue;
+    if (dir === '' && options.trusted !== true) continue;
     for (const name of names) {
-      const candidate = join(dir, name);
+      const candidate = resolve(cwd, dir, name);
       if (!isExecutableFile(candidate, platform)) continue;
-      if (isInsideCwd(candidate, cwd, platform)) continue;
-      return resolve(candidate);
+      if (options.trusted !== true && isInsideCwd(candidate, cwd, platform)) continue;
+      return candidate;
     }
   }
   return undefined;
