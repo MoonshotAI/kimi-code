@@ -6,7 +6,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
-import type { ISessionScopeHandle } from '#/_base/di/scope';
+import type { ServiceIdentifier } from '#/_base/di/instantiation';
+import type { IAgentScopeHandle, ISessionScopeHandle } from '#/_base/di/scope';
 import {
   createServices,
   type ServiceRegistration,
@@ -30,6 +31,9 @@ import {
 import { IAgentExternalHooksService } from '#/features/externalHooks/agent/agentExternalHooks';
 import { AgentExternalHooksService } from '#/features/externalHooks/agent/agentExternalHooksService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
+import { ISessionExternalHooksService } from '#/features/externalHooks/session/sessionExternalHooks';
+import { SessionExternalHooksService } from '#/features/externalHooks/session/sessionExternalHooksService';
+import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import {
   IAgentScopeContext,
   makeAgentScopeContext,
@@ -73,8 +77,6 @@ import {
   type AgentTaskStopHookContext,
   ISessionSubagentService,
 } from '#/session/subagent/subagent';
-import { ISessionExternalHooksService } from '#/features/externalHooks/session/sessionExternalHooks';
-import { SessionExternalHooksService } from '#/features/externalHooks/session/sessionExternalHooksService';
 import {
   ISessionAgentProfileCatalog,
 } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -194,6 +196,13 @@ function stubModelService(model = 'kimi-test'): IModelService {
   } as unknown as IModelService;
 }
 
+function stubAgentLifecycle(mainHandle?: IAgentScopeHandle): IAgentLifecycleService {
+  return {
+    _serviceBrand: undefined,
+    handleOf: (agentId: string) => (agentId === MAIN_AGENT_ID ? mainHandle : undefined),
+  } as unknown as IAgentLifecycleService;
+}
+
 function hookLogPath(): string {
   return join(mkdtempSync(join(tmpdir(), 'session-external-hooks-')), 'events.jsonl');
 }
@@ -223,14 +232,14 @@ function readHookLog(path: string): Array<Record<string, unknown>> {
     .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
-function stubSessionContext(): ISessionContext {
+function stubSessionContext(cwd: string = '/tmp'): ISessionContext {
   return {
     _serviceBrand: undefined,
     sessionId: 'session-1',
     workspaceId: 'workspace-1',
     sessionDir: '/tmp/session-1',
     metaScope: 'sessions/workspace-1/session-1',
-    cwd: '/tmp',
+    cwd,
     scope: (subKey?: string) =>
       subKey === undefined || subKey === ''
         ? 'sessions/workspace-1/session-1'
@@ -577,6 +586,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
           reg.defineInstance(IModelService, stubModelService());
+          reg.definePartialInstance(IAgentLifecycleService, stubAgentLifecycle());
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: stopAgentTask.event,
@@ -919,6 +929,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
           reg.defineInstance(IModelService, stubModelService());
+          reg.definePartialInstance(IAgentLifecycleService, stubAgentLifecycle());
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
@@ -978,6 +989,106 @@ describe('IExternalHooksRunnerService integration', () => {
           cwd,
         },
       ]);
+    } finally {
+      ix?.dispose();
+      disposables.dispose();
+    }
+  });
+
+  it('surfaces SessionStart hook stdout on the main agent as a hook result and context entry', async () => {
+    const disposables = new DisposableStore();
+    let ix: TestInstantiationService | undefined;
+    try {
+      const lifecycle = stubSessionLifecycle();
+      const context = stubContextMemory();
+      const dispatched: Array<Record<string, unknown>> = [];
+      const mainAgentHandle = {
+        id: 'main',
+        kind: 'agent',
+        accessor: {
+          get: (id: ServiceIdentifier<unknown>): unknown => {
+            if (id === IAgentContextMemoryService) return context;
+            if (id === IEventDispatcher) {
+              return {
+                dispatch: async (event: Record<string, unknown>) => {
+                  dispatched.push(event);
+                },
+              };
+            }
+            throw new Error('unexpected service requested from main agent scope');
+          },
+        },
+      } as unknown as IAgentScopeHandle;
+
+      ix = createServices(disposables, {
+        strict: true,
+        additionalServices: (reg) => {
+          registerStateServices(reg);
+          reg.defineInstance(ISessionContext, stubSessionContext(mkdtempSync(join(tmpdir(), 'session-external-hooks-cwd-'))));
+          reg.definePartialInstance(ISessionManager, lifecycle.service);
+          reg.defineInstance(ISessionMetadata, stubSessionMetadata());
+          reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
+          reg.defineInstance(IModelService, stubModelService());
+          reg.definePartialInstance(IAgentLifecycleService, stubAgentLifecycle(mainAgentHandle));
+          reg.definePartialInstance(ISessionSubagentService, {
+            hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
+            onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
+          });
+          reg.definePartialInstance(IConfigService, {
+            ready: Promise.resolve(),
+            get: <T = unknown>(domain: string): T =>
+              (domain === HOOKS_SECTION
+                ? [
+                  {
+                    event: 'SessionStart' as const,
+                    command: nodeCommand('process.stdout.write("hello-from-sessionstart-hook");'),
+                    timeout: 5,
+                  },
+                  {
+                    event: 'SessionEnd' as const,
+                    command: nodeCommand('process.stdout.write("goodbye-from-sessionend-hook");'),
+                    timeout: 5,
+                  },
+                ]
+                : undefined) as T,
+          });
+          reg.definePartialInstance(IPluginService, {
+            enabledHooks: async () => [],
+            onDidReload: Event.None as IPluginService['onDidReload'],
+          });
+          reg.defineInstance(IBootstrapService, stubBootstrap());
+          reg.define(IHostProcessService, HostProcessService);
+        },
+      });
+      ix.stub(ITelemetryService, { track2: () => {} });
+      ix.set(IExternalHooksRunnerService, new SyncDescriptor(ExternalHooksRunnerService));
+      ix.set(ISessionExternalHooksService, new SyncDescriptor(SessionExternalHooksService));
+      ix.get(ISessionExternalHooksService);
+
+      await lifecycle.fireDidCreate('startup');
+      await flushMicrotasks();
+      expect(context.messages).toHaveLength(1);
+      const appended = context.messages[0]!;
+      expect(appended.role).toBe('assistant');
+      expect(appended.origin).toEqual({ kind: 'hook_result', event: 'SessionStart' });
+      expect(appended.content).toEqual([
+        {
+          type: 'text',
+          text: '<hook_result hook_event="SessionStart">\nhello-from-sessionstart-hook\n</hook_result>',
+        },
+      ]);
+      expect(dispatched).toHaveLength(1);
+      expect(dispatched[0]).toMatchObject({
+        type: 'hook.result',
+        agentId: 'main',
+        hookEvent: 'SessionStart',
+        content: 'hello-from-sessionstart-hook',
+      });
+
+      await lifecycle.fireWillClose('exit');
+      await flushMicrotasks();
+      expect(context.messages).toHaveLength(1);
+      expect(dispatched).toHaveLength(1);
     } finally {
       ix?.dispose();
       disposables.dispose();
@@ -1328,6 +1439,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
           reg.defineInstance(IModelService, stubModelService());
+          reg.definePartialInstance(IAgentLifecycleService, stubAgentLifecycle());
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
@@ -1373,6 +1485,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
           reg.defineInstance(IModelService, stubModelService());
+          reg.definePartialInstance(IAgentLifecycleService, stubAgentLifecycle());
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
@@ -1420,6 +1533,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
           reg.defineInstance(IModelService, stubModelService());
+          reg.definePartialInstance(IAgentLifecycleService, stubAgentLifecycle());
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
