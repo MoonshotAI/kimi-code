@@ -561,6 +561,7 @@ export function projectContext(
       case 'subagent.completed':
       case 'subagent.failed':
       case 'subagent.cancelled':
+      case 'subagent.update':
       case 'cron.add':
       case 'cron.cursor':
       case 'cron.delete':

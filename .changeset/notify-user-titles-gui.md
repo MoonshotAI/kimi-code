@@ -1,5 +1,5 @@
 ---
-"@moonshot-ai/kimi-code": patch
+"@moonshot-ai/kimi-code": minor
 ---
 
-Give experimental NotifyUser updates a one-line title that the TUI Updates panel shows above the message, and offer NotifyUser in `kimi web` sessions; enable with `KIMI_CODE_EXPERIMENTAL_NOTIFY_USER=1` or `[experimental] notify_user = true`.
+Turn on NotifyUser progress updates by default in the TUI and `kimi web`, each with a one-line title, so new sessions now show the agent's mid-turn progress instead of staying silent until the reply; set `[experimental] notify_user = false` or `KIMI_CODE_EXPERIMENTAL_NOTIFY_USER=0` to turn them off.

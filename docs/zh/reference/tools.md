@@ -108,7 +108,7 @@ Plan 模式是一种受约束的工作状态：进入后 `Write` 与 `Edit` 只�
 
 在桌面端和 Web UI（`kimi web`）中，每条更新以进展行的形式出现在对话里，显示其标题，点击可展开阅读正文。会话运行期间，对话下方的状态行和会话列表中该会话的条目会显示最新一条更新；来自 subagent 的更新会带上该 subagent 的任务名作为前缀。每个 subagent 卡片显示该 subagent 的最新更新，点击即可查看之前的更新。
 
-整个功能都是默认关闭的实验特性。请在创建会话前，通过 `KIMI_CODE_EXPERIMENTAL_NOTIFY_USER=1`、`config.toml` 中的 `[experimental] notify_user = true` 或 `/experiments` 启用。关闭状态下创建的会话不会提供该工具，也不会包含相关提示词指导。
+该功能默认开启。如需关闭，可设置 `KIMI_CODE_EXPERIMENTAL_NOTIFY_USER=0`、在 `config.toml` 中写入 `[experimental] notify_user = false`，或在 `/experiments` 中关闭；对之后新建的会话生效。关闭状态下创建的会话不会提供该工具，也不会包含相关提示词指导。
 
 已有会话的通知工具可用性和提示词保持不变，重新打开会话后也一样。关闭功能会隐藏面板并停用其快捷键；已有的 `NotifyUser` 调用仍正常结束，并返回更新未展示的说明。重新开启后，已具有该工具的会话恢复展示；如果会话是在关闭状态下创建的，需要新建会话才能使用进展更新。在 `/experiments` 中仅修改这个开关不会重载会话。
 

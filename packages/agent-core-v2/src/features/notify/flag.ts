@@ -9,7 +9,7 @@ export const notifyUserFlag: FlagDefinitionInput = {
   description:
     'Show live progress updates from the main agent and subagents: the Updates panel in the TUI, progress rows and session subtitles in desktop and web.',
   env: NOTIFY_USER_FLAG_ENV,
-  default: false,
+  default: true,
   surface: 'core',
 };
 

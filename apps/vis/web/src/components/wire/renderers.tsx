@@ -1368,6 +1368,19 @@ export const WIRE_RENDERERS: RendererMap = {
     headline: (r) => ({ main: <Mono>{r.subagentId}</Mono> }),
   },
 
+  'subagent.update': {
+    tone: 'subagent',
+    label: 'sub·',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>{r.subagentId}</Mono>
+          <span className="truncate text-fg-1">{truncate(r.title, 120)}</span>
+        </span>
+      ),
+    }),
+  },
+
   'token_counting.measured': {
     tone: 'meta',
     label: 'tokens',

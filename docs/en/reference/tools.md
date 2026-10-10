@@ -108,7 +108,7 @@ In the TUI, updates appear in the `Updates` panel above the input box, with one 
 
 In the desktop app and the web UI (`kimi web`), each update appears in the conversation as a progress row showing its title; click it to read the message. While the session is working, the status line below the conversation and the session's entry in the session list show the latest update, prefixed with the subagent's task when it comes from a subagent, and each subagent card shows that subagent's latest update, with its earlier updates one click away.
 
-The entire feature is experimental and off by default. Enable it with `KIMI_CODE_EXPERIMENTAL_NOTIFY_USER=1`, `[experimental] notify_user = true` in `config.toml`, or `/experiments` before creating a session. Sessions created while it is disabled have neither the tool nor its prompt guidance.
+The feature is on by default. To turn it off, set `KIMI_CODE_EXPERIMENTAL_NOTIFY_USER=0`, put `[experimental] notify_user = false` in `config.toml`, or switch it off in `/experiments`; this applies to sessions created afterwards. Sessions created while it is disabled have neither the tool nor its prompt guidance.
 
 Existing sessions keep their notification tool availability and prompt unchanged, including after reopening. Turning the feature off hides the panel and disables its shortcuts; any existing `NotifyUser` calls finish normally and report that the update was not displayed. Turning it back on restores display for sessions that already have the tool. If a session was created with the feature disabled, start a new session to use updates. Changing only this flag in `/experiments` does not reload the session.
 

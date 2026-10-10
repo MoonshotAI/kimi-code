@@ -84,11 +84,17 @@ describe('NotifyUserTool', () => {
     ]);
   });
 
-  it('is an experimental, off-by-default flag that the default profile allows', () => {
+  it('is on by default, can still be turned off, and the default profile allows it', () => {
     expect(ctx.get(IAgentToolPolicyService).isToolActive(NOTIFY_USER_TOOL_NAME)).toBe(true);
     expect(notifyUserFlag.id).toBe(NOTIFY_USER_FLAG_ID);
     expect(notifyUserFlag.env).toBe(NOTIFY_USER_FLAG_ENV);
-    expect(notifyUserFlag.default).toBe(false);
+    expect(notifyUserFlag.default).toBe(true);
+
+    const flags = ctx.get(IFlagService);
+    flags.setConfigOverrides({});
+    expect(flags.enabled(NOTIFY_USER_FLAG_ID)).toBe(true);
+    flags.setConfigOverrides({ notify_user: false });
+    expect(flags.enabled(NOTIFY_USER_FLAG_ID)).toBe(false);
   });
 
   it('is offered only when the flag is on and the host renders the update panel', () => {
