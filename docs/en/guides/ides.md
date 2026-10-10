@@ -84,6 +84,22 @@ Pick **Kimi Code CLI** from Paseo's built-in ACP provider catalog, or add a cust
 
 Paseo's generic ACP adapter does not drive the login flow, so complete the terminal login first (see [Prerequisites](#prerequisites)) — otherwise session creation fails with `Authentication required`.
 
+## Using Kimi Code CLI in Xcode
+
+[Xcode](https://developer.apple.com/xcode/) is Apple's official integrated development environment (IDE) for building macOS, iOS, watchOS, tvOS, and visionOS apps. It integrates a complete workflow covering code editing, interface building, debugging, performance analysis, and App Store distribution.
+
+ACP is available in Xcode 26.6 and later. Open `Settings...`, go to `Intelligence`, select `Add an Agent...`, and fill in the following configuration:
+
+| Property   | Value             |
+| ---------- | ----------------- |
+| Name       | kimi-code         |
+| Executable | ~/.local/bin/kimi |
+| Arguments  | acp               |
+
+It is recommended to use an absolute path for `Executable`, because child processes launched from the Xcode GUI typically do not inherit the terminal's `PATH`. You can get the path by running `which kimi` in a terminal.
+
+After completing the configuration, you will see Kimi in the `Coding Assistant`.
+
 ## Troubleshooting
 
 - **Session disconnects immediately / IDE shows "agent exited"**: usually a wrong `command` path or a missing login. Run `kimi acp` in a terminal first to verify — if it blocks waiting for stdin, the CLI itself is fine and the problem is in the IDE configuration; if it exits immediately with an error, follow the error message (most commonly you need to run `/login`).
