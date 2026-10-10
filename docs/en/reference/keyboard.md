@@ -18,9 +18,9 @@ The following keys are always available in the input box:
 | `Ctrl-P` | Previous page in the experimental `Updates` panel when it has multiple pages |
 | `Ctrl-N` | Next page in the experimental `Updates` panel when it has multiple pages |
 
-Pressing `Ctrl-C` **during streaming** cancels immediately — no second confirmation needed.
+Pressing `Ctrl-C` **during streaming** cancels immediately — no second confirmation needed; that same press also counts as the first press of the exit confirmation.
 
-**Exiting the program** (pressing `Ctrl-C` with an empty input box, or pressing `Ctrl-D`) uses a double-press confirmation mechanism: after the first press, a prompt appears in the status bar; a second press of the same key actually exits. Pressing any other key in between clears the confirmation state.
+**Exiting the program** (pressing `Ctrl-C` or `Ctrl-D`) uses a double-press confirmation mechanism: after the first press, a prompt appears in the status bar; a second press of the same key actually exits. Pressing any other key in between clears the confirmation state. While a task is running, the first `Ctrl-C` cancels the task first, so pressing `Ctrl-C` twice in a row exits even mid-task.
 
 ## Mode Switching
 

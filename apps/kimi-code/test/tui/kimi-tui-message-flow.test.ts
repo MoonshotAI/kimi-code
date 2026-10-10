@@ -4211,8 +4211,9 @@ command = "vim"
     expect(session.cancel).toHaveBeenCalledTimes(1);
   });
 
-  it('clears streaming editor text before cancelling the active turn on Ctrl-C', async () => {
+  it('clears streaming editor text on the first Ctrl+C and exits on the second', async () => {
     const { driver, session } = await makeDriver();
+    const stop = vi.spyOn(driver, 'stop').mockResolvedValue(undefined);
 
     driver.state.appState.streamingPhase = 'waiting';
     driver.state.editor.setText('draft while streaming');
@@ -4222,10 +4223,12 @@ command = "vim"
     expect(driver.state.editor.getText()).toBe('');
     expect(session.cancel).not.toHaveBeenCalled();
     expect(driver.state.appState.streamingPhase).toBe('waiting');
+    expect(stop).not.toHaveBeenCalled();
 
     driver.state.editor.onCtrlC?.();
 
-    expect(session.cancel).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(session.cancel).not.toHaveBeenCalled();
   });
 
   it('dispatches the next queued message after the active turn ends', async () => {
@@ -5061,8 +5064,9 @@ command = "vim"
     expect(session.cancelCompaction).toHaveBeenCalledTimes(1);
   });
 
-  it('clears editor text before cancelling compaction on Ctrl-C', async () => {
+  it('clears editor text on the first Ctrl+C and exits on the second while compacting', async () => {
     const { driver, session } = await makeDriver();
+    const stop = vi.spyOn(driver, 'stop').mockResolvedValue(undefined);
     driver.sessionEventHandler.handleEvent(
       {
         type: 'compaction.started',
@@ -5079,10 +5083,12 @@ command = "vim"
     expect(driver.state.editor.getText()).toBe('');
     expect(session.cancelCompaction).not.toHaveBeenCalled();
     expect(driver.state.appState.isCompacting).toBe(true);
+    expect(stop).not.toHaveBeenCalled();
 
     driver.state.editor.onCtrlC?.();
 
-    expect(session.cancelCompaction).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(session.cancelCompaction).not.toHaveBeenCalled();
   });
 
   it('dispatches the next queued message after compaction is cancelled', async () => {

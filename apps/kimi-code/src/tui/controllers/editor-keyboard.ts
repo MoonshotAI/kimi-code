@@ -173,52 +173,34 @@ export class EditorKeyboardController {
     };
 
     editor.onCtrlC = () => {
-      if (host.cancelInFlight !== undefined) {
-        const cancel = host.cancelInFlight;
-        host.cancelInFlight = undefined;
-        this.clearPendingExit();
-        cancel();
-        return;
-      }
-
-      // The btw panel stacks above the transcript, so Ctrl+C cancels/closes it
-      // before touching an in-flight compaction or stream.
-      if (host.btwPanelController.cancelRunning()) {
-        this.clearPendingExit();
-        return;
-      }
-      if (host.btwPanelController.closeOrCancel()) {
-        this.clearPendingExit();
-        return;
-      }
-
-      if (host.state.appState.isCompacting) {
-        this.clearPendingExit();
-
-        if (this.clearEditorTextIfPresent()) return;
-
-        this.cancelCurrentCompaction();
-        return;
-      }
-
-      if (host.state.appState.streamingPhase !== 'idle') {
-        this.clearPendingExit();
-
-        if (this.clearEditorTextIfPresent()) return;
-
-        this.cancelCurrentStream();
-        return;
-      }
-
+      // A second Ctrl+C inside the confirm window exits from any state. The
+      // first press may have been spent cancelling a stream/compaction or
+      // closing a panel, so this check must outrank the cancel branches
+      // below — otherwise exiting while busy takes three or more presses.
       if (this.pendingExit?.kind === 'ctrl-c') {
         this.clearPendingExit();
         void host.stop();
         return;
       }
 
-      if (editor.getText().length > 0) {
+      if (host.cancelInFlight !== undefined) {
+        const cancel = host.cancelInFlight;
+        host.cancelInFlight = undefined;
+        cancel();
+      } else if (host.btwPanelController.cancelRunning() || host.btwPanelController.closeOrCancel()) {
+        // The btw panel stacks above the transcript, so Ctrl+C cancels/closes
+        // it before touching an in-flight compaction or stream.
+      } else if (host.state.appState.isCompacting) {
+        if (!this.clearEditorTextIfPresent()) this.cancelCurrentCompaction();
+      } else if (host.state.appState.streamingPhase !== 'idle') {
+        if (!this.clearEditorTextIfPresent()) this.cancelCurrentStream();
+      } else if (editor.getText().length > 0) {
         editor.setText('');
       }
+
+      // Whatever the press just did — cancel, close, or clear the draft — it
+      // counts as the first press of the double-press exit, so the next
+      // Ctrl+C within the window exits instead of starting a fresh cycle.
       this.armPendingExit('ctrl-c', CTRL_C_HINT);
     };
 
