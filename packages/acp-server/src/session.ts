@@ -20,6 +20,8 @@
  *  - no `Turn.result` promise → settlement relies solely on `turn.ended`.
  */
 
+import { randomUUID } from 'node:crypto';
+
 import type {
   AvailableCommand,
   ContentBlock,
@@ -103,6 +105,16 @@ function leadingText(blocks: readonly ContentBlock[]): string | undefined {
  */
 const TURN_AGENT_BUSY_CODE = 'turn.agent_busy';
 
+/** Whether a turn was started by the session cron scheduler. */
+function isScheduledTurnOrigin(origin: unknown): boolean {
+  return (
+    typeof origin === 'object' &&
+    origin !== null &&
+    'kind' in origin &&
+    origin.kind === 'cron_job'
+  );
+}
+
 /**
  * Map a prompt-launch rejection (from `agent.prompt` / `agent.activateSkill`)
  * to the JSON-RPC error the client sees.
@@ -158,6 +170,7 @@ interface TurnDriver {
    * events are buffered in {@link early} instead of being dropped.
    */
   turnId?: number;
+  promptId?: string;
   settled: boolean;
   /**
    * Set when `cancel()` arrives while {@link turnId} is still unknown: the
@@ -194,6 +207,8 @@ export class AcpSession {
   private skills: readonly SkillSummary[] = [];
   /** The in-flight prompt's driver, if any. */
   private driver: TurnDriver | undefined;
+  /** Cron turns whose output must remain visible even without an ACP prompt driver. */
+  private readonly scheduledTurnIds = new Set<number>();
   /**
    * Abort markers of prompts still in their pre-turn image-compression phase
    * (no turn launched yet, so `agent.cancel` has nothing to cancel).
@@ -275,6 +290,32 @@ export class AcpSession {
   async init(): Promise<void> {
     const events = this.agent.events;
     this.subscriptions.push(
+      events.on('turn.started', (event) => {
+        if (isScheduledTurnOrigin(event.origin)) {
+          this.scheduledTurnIds.add(event.turnId);
+        }
+        const driver = this.driver;
+        if (driver?.promptId !== undefined && driver.promptId === event.promptId) {
+          driver.turnId = event.turnId;
+          if (driver.cancelRequested === true) {
+            void this.agent.cancel({ turnId: event.turnId }).catch((error) => {
+              log.warn('acp: queued prompt cancel failed', { sessionId: this.sessionId, error });
+            });
+          }
+        }
+      }),
+      events.on('prompt.completed', (event) => {
+        const driver = this.driver;
+        if (driver?.promptId === event.promptId && driver.turnId === undefined) {
+          this.settleDriver(driver, () => driver.resolve({ stopReason: 'end_turn' }));
+        }
+      }),
+      events.on('prompt.aborted', (event) => {
+        const driver = this.driver;
+        if (driver?.promptId === event.promptId) {
+          this.settleDriver(driver, () => driver.resolve({ stopReason: 'cancelled' }));
+        }
+      }),
       events.on('assistant.delta', (event) => {
         this.dispatchTurnEvent(event.turnId, () => {
           this.onAssistantDelta(event);
@@ -393,6 +434,7 @@ export class AcpSession {
     for (const subscription of this.subscriptions.splice(0)) {
       subscription.dispose();
     }
+    this.scheduledTurnIds.clear();
   }
 
   /**
@@ -645,7 +687,8 @@ export class AcpSession {
    */
   private driveTurn(input: readonly ContentPart[]): Promise<PromptResponse> {
     this.assertNoActiveTurn();
-    return this.driveLaunch(this.agent.prompt({ input }));
+    const promptId = this.scheduledTurnIds.size > 0 ? randomUUID() : undefined;
+    return this.driveLaunch(this.agent.prompt({ input, promptId }), promptId);
   }
 
   /**
@@ -656,14 +699,17 @@ export class AcpSession {
    * {@link assertNoActiveTurn}), so the prompt settles gracefully with
    * `end_turn`.
    */
-  private driveLaunch(launch: Promise<PromptLaunchResult>): Promise<PromptResponse> {
+  private driveLaunch(launch: Promise<PromptLaunchResult>, promptId?: string): Promise<PromptResponse> {
     return new Promise<PromptResponse>((resolve, reject) => {
-      const driver: TurnDriver = { resolve, reject, settled: false, early: [] };
+      const driver: TurnDriver = { resolve, reject, settled: false, early: [], promptId };
       this.driver = driver;
       launch.then(
         (launched) => {
           if (driver.settled) return;
           if (launched === undefined) {
+            // The current engine acknowledges queued prompts before their turn
+            // starts. Attribute their later events through the submitted ID.
+            if (driver.promptId !== undefined) return;
             // No turn will emit `turn.ended`, so settle gracefully. The engine
             // publishes a `prompt.completed` with reason 'blocked' for the
             // hook-blocked case; the wire carries no blocking message to
@@ -706,6 +752,13 @@ export class AcpSession {
    * is still unknown (see {@link TurnDriver.early}), otherwise dispatch live.
    */
   private dispatchTurnEvent(turnId: number, dispatch: () => void): void {
+    // A prompt submitted while a cron turn is running waits for that turn's
+    // launch slot. Its driver therefore has no turn id yet; do not buffer and
+    // later discard the scheduled turn's activity behind that pending driver.
+    if (this.scheduledTurnIds.has(turnId)) {
+      dispatch();
+      return;
+    }
     const driver = this.driver;
     if (driver !== undefined && !driver.settled && driver.turnId === undefined) {
       driver.early.push({ turnId, dispatch });
@@ -734,18 +787,23 @@ export class AcpSession {
     return driver;
   }
 
+  /** Whether this ACP session should stream events from the given turn. */
+  private followsTurn(turnId: number): boolean {
+    return this.driverFor(turnId) !== undefined || this.scheduledTurnIds.has(turnId);
+  }
+
   private onAssistantDelta(event: AgentEventPayloads['assistant.delta']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
+    if (!this.followsTurn(event.turnId)) return;
     this.emit(assistantDeltaToSessionUpdate(this.sessionId, event));
   }
 
   private onThinkingDelta(event: AgentEventPayloads['thinking.delta']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
+    if (!this.followsTurn(event.turnId)) return;
     this.emit(thinkingDeltaToSessionUpdate(this.sessionId, event));
   }
 
   private onToolCallStarted(event: AgentEventPayloads['tool.call.started']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
+    if (!this.followsTurn(event.turnId)) return;
     // The klient payload mirrors `ToolCallStartedEvent` (`args` / `display`
     // arrive as `unknown` — cast at this seam).
     const mapped = event as unknown as ToolCallStartedEvent;
@@ -787,7 +845,7 @@ export class AcpSession {
   }
 
   private onToolCallDelta(event: AgentEventPayloads['tool.call.delta']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
+    if (!this.followsTurn(event.turnId)) return;
     // The klient payload mirrors `ToolCallDeltaEvent` field-for-field.
     const mapped = event as unknown as ToolCallDeltaEvent;
     const key = acpToolCallId(event.turnId, event.toolCallId);
@@ -809,7 +867,7 @@ export class AcpSession {
   }
 
   private onToolProgress(event: AgentEventPayloads['tool.progress']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
+    if (!this.followsTurn(event.turnId)) return;
     // The klient payload mirrors `ToolProgressEvent` field-for-field; the
     // helper forwards only `status` updates with text (as a title refresh)
     // and returns null for everything else, which `emit` drops.
@@ -817,7 +875,7 @@ export class AcpSession {
   }
 
   private onToolResult(event: AgentEventPayloads['tool.result']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
+    if (!this.followsTurn(event.turnId)) return;
     const key = acpToolCallId(event.turnId, event.toolCallId);
     const locations = this.toolLocations.get(key);
     this.toolLocations.delete(key);
@@ -905,8 +963,12 @@ export class AcpSession {
   }
 
   private onTurnEnded(event: AgentEventPayloads['turn.ended']): void {
+    const scheduled = this.scheduledTurnIds.delete(event.turnId);
     const driver = this.driverFor(event.turnId);
-    if (driver === undefined) return;
+    if (driver === undefined) {
+      if (scheduled) void this.emitUsageUpdate();
+      return;
+    }
     const error = event.error as { readonly code: string; readonly message?: string } | undefined;
     this.settleDriver(driver, () => {
       // Auth failures must surface as a JSON-RPC `auth_required` error
@@ -988,17 +1050,22 @@ export class AcpSession {
       // The launch round-trip has not returned the turn id yet. The engine's
       // cancel payload makes turnId optional — an empty call cancels whatever
       // turn is active (the same contract kap-server's cancel route relies
-      // on) — and concurrent prompts are rejected, so the active turn can only
-      // be this driver's. Flag the driver too: when the id lands, the launch
-      // handler re-issues a precisely-addressed cancel, and a no-launch
-      // outcome settles `cancelled` instead of `end_turn`.
+      // on). A tracked scheduled turn may still be active while this prompt's
+      // turn is queued, so an unaddressed cancel would terminate the scheduled
+      // work instead. In that case only flag the driver and wait for its id;
+      // otherwise keep the immediate best-effort cancel for a prompt turn that
+      // started before its launch response arrived. The launch handler always
+      // re-issues a precisely-addressed cancel once the id lands, and a
+      // no-launch outcome settles `cancelled` instead of `end_turn`.
       driver.cancelRequested = true;
-      void this.agent.cancel().catch((error) => {
-        log.warn('acp: cancel (unaddressed) failed', {
-          sessionId: this.sessionId,
-          error: error instanceof Error ? error.message : String(error),
+      if (this.scheduledTurnIds.size === 0) {
+        void this.agent.cancel().catch((error) => {
+          log.warn('acp: cancel (unaddressed) failed', {
+            sessionId: this.sessionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
         });
-      });
+      }
       return;
     }
     void this.agent.cancel({ turnId }).catch((error) => {
