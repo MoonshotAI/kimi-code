@@ -1,3 +1,5 @@
+import type { TowerExitReason } from '#/features/tower/tower';
+
 import type { TelemetryPrimitive } from './telemetry';
 
 export interface TelemetryEventMeta {
@@ -207,7 +209,7 @@ export interface TowerModeEnterEvent {
 }
 
 export interface TowerModeExitEvent {
-  reason: 'user' | 'takeover' | 'foreign-reconcile';
+  reason: TowerExitReason;
 }
 
 export interface SwarmModeTransitionEvent {

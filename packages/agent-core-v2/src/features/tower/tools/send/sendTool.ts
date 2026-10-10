@@ -1,14 +1,13 @@
-import { IAgentScopeContext, agentContextOfScope } from '#/agent/scopeContext/scopeContext';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionEventBus } from '#/app/event/eventBus';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
 
-import { BROADCAST_NAME, TOWER_NAME } from '#/features/tower/protocol/index';
-import { TowerInboxSent } from '#/features/tower/towerOps';
-import { callerName, callerTokens, newTowerStore, runTowerTool } from '../support';
+import { deliverTowerMessage } from '../delivery';
+import { newTowerStore, runTowerTool } from '../support';
 import DESCRIPTION from './send.md?raw';
 import { ITowerSendTool, TowerSendToolInputSchema, type TowerSendToolInput } from './send';
 
@@ -23,7 +22,7 @@ export class TowerSendTool implements ITowerSendTool {
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ISessionEventBus private readonly sessionBus: ISessionEventBus,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
-    @ISessionUsageService private readonly usage: ISessionUsageService,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) {}
 
   resolveExecution(args: TowerSendToolInput): ToolExecution {
@@ -33,39 +32,42 @@ export class TowerSendTool implements ITowerSendTool {
       execute: () =>
         runTowerTool(async () => {
           const store = newTowerStore(this.sessionContext);
-          const state = await store.load();
-          const caller = callerName(this.scopeContext.agentId, store, state);
+          const resolved = await store.resolveMessagingCaller(
+            await store.loadOrRecover(),
+            this.scopeContext.agentId,
+          );
+          const caller = resolved.caller;
           const to = args.to.trim();
-          const rel = await store.send(caller, {
+          const sent = await store.sendDetailed(caller, {
             to,
             subject: args.subject,
             body: args.body,
             scope: args.scope,
             action: args.action,
             consentRef: args.consent_ref,
-            tokens: callerTokens(this.usage, agentContextOfScope(this.scopeContext)),
           });
-          if (
-            this.sessionBus !== undefined &&
-            caller !== TOWER_NAME &&
-            (to === TOWER_NAME || to === BROADCAST_NAME)
-          ) {
-            this.sessionBus.publish(new TowerInboxSent({ from: caller, to, subject: args.subject }));
+          const delivery = deliverTowerMessage(
+            {
+              sessionBus: this.sessionBus,
+              tasks: this.tasks,
+              agentLifecycle: this.agentLifecycle,
+              state: resolved.state,
+            },
+            sent,
+          );
+          const lines = [`message sent to ${args.to}\nfile: ${sent.item.file}${delivery}`];
+          if (resolved.placeholder === true) {
+            lines.push(
+              `note: the tower state was recovered after a loss, so your roster entry was reconstructed as placeholder "${caller}" — your original name and mission assignment are gone; the recovered state's recoveredAt marker reminds the tower to report the history loss to the user`,
+            );
           }
-          const entry =
-            caller === TOWER_NAME && to !== TOWER_NAME && to !== BROADCAST_NAME
-              ? state.roster.agents.find((agent) => agent.name === to)
-              : undefined;
-          const undelivered =
-            entry !== undefined &&
-            this.tasks !== undefined &&
-            !this.tasks
-              .list(true)
-              .some((task) => task.kind === 'agent' && task.agentId === entry.agentId);
-          const note = undelivered
-            ? `\nnote: ${to} has no running task in this session — the message sits in its inbox until you deliver it with Agent(resume="${entry.agentId}", run_in_background=true, prompt="...")`
-            : '';
-          return { output: `message sent to ${args.to}\nfile: ${rel}${note}` };
+          if (sent.activityLogError !== undefined) {
+            lines.push(`activity log error: ${sent.activityLogError}`);
+          }
+          return {
+            output: lines.join('\n'),
+            isError: sent.activityLogError === undefined ? undefined : true,
+          };
         }),
     };
   }

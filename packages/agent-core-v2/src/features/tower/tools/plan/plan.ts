@@ -18,7 +18,7 @@ export const TowerPlanToolInputSchema = z
               .array(z.string())
               .min(1)
               .describe(
-                'Files/globs this mission may touch (e.g. "src/build/**"). Scopes of different missions must not overlap.',
+                'Files/globs this mission may touch (e.g. "src/build/**"). Scopes of different build missions should be disjoint; when they overlap, the store auto-adds a dependency that serializes their merges.',
               ),
             tasks: z
               .array(z.string())

@@ -8,9 +8,11 @@
  * Wiring: real v2 engine bootstrapped on a temp KIMI_CODE_HOME; remote provider calls are stubbed.
  * Run: pnpm exec vitest run test/sdk-rpc-client-v2.test.ts
  */
+import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 
 import {
   FileTokenStorage,
@@ -28,7 +30,9 @@ import {
   KimiHarness,
   limitAgentReplayByTurns,
   removeProviderFromConfig,
+  SDKRpcClientBase,
   SDKRpcClientV2,
+  Session,
   toKimiErrorPayload,
   type Event,
   type KimiConfig,
@@ -59,6 +63,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 
 import { McpOAuthService as McpOAuthServiceV2 } from '@moonshot-ai/agent-core-v2/mcpCore/oauth/service';
+import { TowerStore } from '@moonshot-ai/agent-core-v2/features/tower/protocol/store';
 
 import { TEST_IDENTITY } from './test-identity';
 import {
@@ -1390,6 +1395,15 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('defaults getTowerStatus to not_implemented on backends without support', async () => {
+    const rpc = Object.create(SDKRpcClientBase.prototype) as SDKRpcClientBase;
+    const session = new Session({ id: 'ses_tower_unsupported', workDir: '/tmp/work', rpc });
+
+    await expect(session.getTowerStatus()).rejects.toMatchObject({
+      code: ErrorCodes.NOT_IMPLEMENTED,
+    });
+  });
+
   it('serves setTowerMode and getStatus towerMode through the agent scope tower service', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOWER', '1');
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
@@ -1455,7 +1469,7 @@ key = "${titleOAuthRef.key}"
     }
   });
 
-  it('exposes Session.setTowerMode and getStatus().towerMode on the v2 harness', async () => {
+  it('exposes Session tower mode and status APIs on the v2 harness', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOWER', '1');
     const { harness } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
@@ -1463,16 +1477,74 @@ key = "${titleOAuthRef.key}"
     try {
       const session = await harness.createSession({ workDir });
       expect((await session.getStatus()).towerMode).toBe(false);
+      expect(await session.getTowerStatus()).toBe('Tower mode: OFF');
 
       await expect(session.setTowerMode(true)).resolves.toBeUndefined();
       expect(typeof (await session.getStatus()).towerMode).toBe('boolean');
+      expect(await session.getTowerStatus()).toBe('Tower mode: ON\nTower is not initialized.');
 
       await expect(session.setTowerMode(false)).resolves.toBeUndefined();
       expect((await session.getStatus()).towerMode).toBe(false);
+      expect(await session.getTowerStatus()).toBe('Tower mode: OFF');
 
       await expect(session.setTowerMode('yes' as unknown as boolean)).rejects.toMatchObject({
         code: ErrorCodes.REQUEST_INVALID,
       });
+    } finally {
+      vi.unstubAllEnvs();
+      await harness.close();
+    }
+  });
+
+  it('serves the initialized tower status as an engine-rendered text summary', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOWER', '1');
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    try {
+      const exec = promisify(execFile);
+      await exec('git', ['init', '-b', 'main'], { cwd: workDir });
+      await exec(
+        'git',
+        [
+          '-c',
+          'user.email=tower-test@example.com',
+          '-c',
+          'user.name=Tower Test',
+          'commit',
+          '--allow-empty',
+          '-m',
+          'initial',
+        ],
+        { cwd: workDir },
+      );
+      const session = await harness.createSession({ id: 'ses_tower_status', workDir });
+      await session.setTowerMode(true);
+      const store = new TowerStore(workDir);
+      await store.init(session.id, 'main');
+      await store.plan([{ title: 'Build engine', scope: ['src/engine/**'] }]);
+
+      const status = await session.getTowerStatus();
+
+      const [headline, ...bodyLines] = status.split('\n');
+      expect(headline).toBe('Tower status — ON');
+      const body = bodyLines.join('\n');
+      expect(body).toContain('Base: main (mode: branch) · You are: tower');
+      expect(body).toContain('Missions:\n  M1 Build engine — planned · owner — · feat/build-engine');
+      expect(body).toContain('Roster:\n  (none)');
+      expect(body).toContain('Review gate:\n  M1 feat/build-engine — BLOCKED: not-completed');
+      expect(body).toContain('Inbox: 0 message(s)');
+      expect(body).toContain('Concurrency: budget: ');
+      expect(body).toContain('Recent activity:');
+      expect(body).toContain(' tower init');
+
+      await session.setTowerMode(false);
+      const inactiveStatus = await session.getTowerStatus();
+      const [inactiveHeadline, ...inactiveBodyLines] = inactiveStatus.split('\n');
+      expect(inactiveHeadline).toBe('Tower mode: OFF');
+      const inactiveBody = inactiveBodyLines.join('\n');
+      expect(inactiveBody).toContain(body);
+      expect(inactiveBody).toContain(' tower release session=ses_tower_status');
     } finally {
       vi.unstubAllEnvs();
       await harness.close();
