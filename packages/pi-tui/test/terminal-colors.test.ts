@@ -124,6 +124,94 @@ describe("parseTerminalColorSchemeReport", () => {
 });
 
 describe("TUI.queryTerminalBackgroundColor", () => {
+	it("filters non-OSC terminal status responses before application dispatch", () => {
+		const terminal = new TestTerminal();
+		const tui = new TuiMainScreen(terminal);
+		const component = new InputRecorder();
+		const listenerInputs: string[] = [];
+		tui.addChild(component);
+		tui.setFocus(component);
+		tui.addInputListener((data) => {
+			listenerInputs.push(data);
+			return undefined;
+		});
+		tui.start();
+		try {
+			terminal.sendInput("\x1b[6;18;8t");
+			terminal.sendInput("\x1b[?1;2;4c");
+			terminal.sendInput("\x1bP>|XTerm(390)\x1b\\");
+			terminal.sendInput("\x1b_Gi=1;OK\x1b\\");
+
+			assert.deepStrictEqual(listenerInputs, []);
+			assert.deepStrictEqual(component.inputs, []);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("lets protocol listeners consume OSC status before focused input", () => {
+		const terminal = new TestTerminal();
+		const tui = new TuiMainScreen(terminal);
+		const component = new InputRecorder();
+		const oscStatusResponse = "\x1b]11;rgb:1515/1919/1e1e\x1b\\";
+		let observedStatus: string | undefined;
+		tui.addChild(component);
+		tui.setFocus(component);
+		tui.addInputListener((data) => {
+			if (data !== oscStatusResponse) return undefined;
+			observedStatus = data;
+			return { consume: true };
+		});
+		tui.start();
+		try {
+			terminal.sendInput(oscStatusResponse);
+
+			assert.equal(observedStatus, oscStatusResponse);
+			assert.deepStrictEqual(component.inputs, []);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("filters unhandled OSC status before focused input", () => {
+		const terminal = new TestTerminal();
+		const tui = new TuiMainScreen(terminal);
+		const component = new InputRecorder();
+		tui.addChild(component);
+		tui.setFocus(component);
+		tui.start();
+		try {
+			terminal.sendInput("\x1b]11;rgb:1515/1919/1e1e\x1b\\");
+
+			assert.deepStrictEqual(component.inputs, []);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("preserves keyboard and mouse input after filtering terminal status responses", () => {
+		const terminal = new TestTerminal();
+		const tui = new TuiMainScreen(terminal);
+		const component = new InputRecorder();
+		const listenerInputs: string[] = [];
+		tui.addChild(component);
+		tui.setFocus(component);
+		tui.addInputListener((data) => {
+			listenerInputs.push(data);
+			return undefined;
+		});
+		tui.start();
+		try {
+			const inputSequences = ["a", "\x1b[<0;10;5M", "\x1b[97u"];
+			for (const input of inputSequences) terminal.sendInput(input);
+
+			assert.deepStrictEqual(listenerInputs, inputSequences);
+			assert.deepStrictEqual(component.inputs, inputSequences);
+		} finally {
+			tui.stop();
+		}
+	});
+
 	it("writes OSC 11 query and resolves with the parsed RGB reply", async () => {
 		const terminal = new TestTerminal();
 		const tui: TUI = new TuiMainScreen(terminal);
