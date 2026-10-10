@@ -1,6 +1,12 @@
 name: Deploy Docs to GitHub Pages
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/docs-deploy.yml'
   workflow_call:
   workflow_dispatch:
 

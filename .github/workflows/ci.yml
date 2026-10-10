@@ -1,10 +1,12 @@
 name: CI
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches:
       - main
+      - 'release/*'
 
 permissions:
   contents: read
@@ -152,3 +154,12 @@ jobs:
         run: pnpm --filter @moonshot-ai/vis-server run typecheck
       - name: Typecheck vis-web
         run: pnpm --filter @moonshot-ai/vis-web run typecheck
+
+  release-workflow-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: node --test scripts/release.test.mjs

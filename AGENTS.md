@@ -76,6 +76,8 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 
 ## Workflow Requirements
 
+- Release changesets accumulate on main; only `release/*` maintains version PRs. Merge the version PR and wait for CI, then dispatch `release.yml` with `operation=publish` and the full tested `expected_sha`. Main never publishes packages or the VS Code extension. See `.changeset/README.md` for retry and metadata sync steps.
+
 - Prefer `rg` / `rg --files` when reading code.
 - When designing changes, follow existing boundaries and local patterns first.
 - In public text and test data, replace real internal identifiers with neutral placeholders such as `example.com`, `example.test`, and `YOUR_API_KEY`. Before opening a PR, ask a read-only agent to audit the diff for context-specific internal identifiers.
