@@ -467,6 +467,7 @@ export class KimiTUI {
         agentProfile: startupInput.agentProfile,
         agentFiles: startupInput.cliOptions.agentFiles,
         environment: startupInput.cliOptions.environment,
+        environmentCwd: startupInput.cliOptions.environmentCwd,
         startupNotice: startupInput.startupNotice,
       },
     };
@@ -540,6 +541,27 @@ export class KimiTUI {
       };
     });
     const skillCommandNames = new Set(this.skillCommandMap.keys());
+    const environment = this.state.appState.environment;
+    const environmentBinding =
+      environment !== undefined
+        ? environment
+        : {
+            environmentId: this.options.startup.environment,
+            cwd: this.options.startup.environmentCwd,
+          };
+    const { environmentId, cwd } = environmentBinding;
+    const remoteSuggest =
+      environmentId === undefined || environmentId === 'local'
+        ? undefined
+        : async (query: string) => {
+            if (cwd === undefined) return undefined;
+            const result = await this.harness.suggestFiles(this.state.appState.workDir, {
+              query,
+              environment: { environmentId, cwd },
+              additionalDirs: this.state.appState.additionalDirs,
+            });
+            return result?.items;
+          };
     const provider = new FileMentionProvider(
       slashCommands,
       this.state.appState.workDir,
@@ -547,6 +569,7 @@ export class KimiTUI {
       this.state.appState.additionalDirs,
       () => this.state.appState.inputMode,
       skillCommandNames,
+      remoteSuggest,
     );
     this.state.editor.setAutocompleteProvider(provider);
 
@@ -2435,7 +2458,10 @@ export class KimiTUI {
     }
     const startupEnvironment = this.options.startup.environment;
     if (startupEnvironment === undefined) return undefined;
-    return { environmentId: startupEnvironment };
+    return {
+      environmentId: startupEnvironment,
+      environmentCwd: this.options.startup.environmentCwd,
+    };
   }
 
   private async createSessionFromCurrentState(
@@ -2486,10 +2512,11 @@ export class KimiTUI {
       }
       if (this.options.startup.environment !== undefined) {
         options.environmentId = this.options.startup.environment;
+        options.environmentCwd = this.options.startup.environmentCwd;
       }
     } else if (inherited !== undefined) {
       // `/new` keeps the live binding. Before the first session exists, it
-      // inherits the startup `--environment` flag instead.
+      // inherits the startup environment flags instead.
       options.environmentId = inherited.environmentId;
       options.environmentCwd = inherited.environmentCwd;
     }
@@ -2651,7 +2678,11 @@ export class KimiTUI {
       return;
     }
     this.setAppState({ environment: next });
-    if (previous?.environmentId !== next.environmentId || previous?.type !== next.type) {
+    if (
+      previous?.environmentId !== next.environmentId ||
+      previous?.type !== next.type ||
+      previous?.cwd !== next.cwd
+    ) {
       this.setupAutocomplete();
     }
   }

@@ -3,12 +3,9 @@ import { Readable } from 'node:stream';
 
 import {
   ErrorCodes,
-  IEnvironmentService,
-  type EnvironmentResolver,
   IHostFileSystem,
   ISessionContext,
   ISessionWorkspaceContext,
-  ITelemetryService,
   IWorkspaceFsService,
   IWorkspaceInstanceManager,
   IWorkspaceService,
@@ -35,12 +32,11 @@ import {
   fsSuggestRequestSchema,
   fsSuggestResponseSchema,
 } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
-import { GitService } from '@moonshot-ai/agent-core-v2/app/git/gitService';
 import type { EnvironmentCapability, EnvironmentLease } from '@moonshot-ai/agent-core-v2/environment/environment';
-import { WorkspaceFsService } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fsService';
-import { WorkspaceGitService } from '@moonshot-ai/agent-core-v2/workspace/workspaceGit/workspaceGitService';
-import type { IWorkspaceContext } from '@moonshot-ai/agent-core-v2/workspace/workspaceContext/workspaceContext';
-import type { IWorkspaceDirs } from '@moonshot-ai/agent-core-v2/workspace/workspaceDirs/workspaceDirs';
+import {
+  createEnvironmentFs,
+  type EnvironmentFsScope,
+} from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/environmentFs';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -135,96 +131,6 @@ const FS_ACTIONS = [
 type FsAction = (typeof FS_ACTIONS)[number];
 const FS_TAIL_PREFIX = 'fs:';
 
-interface EnvironmentFsScope {
-  readonly fs: IWorkspaceFsService;
-  readonly hostFs: IHostFileSystem;
-  readonly lease: EnvironmentLease;
-  readonly roots: { readonly workDir: string; readonly additionalDirs: readonly string[] };
-}
-
-function createEnvironmentFs(
-  core: Scope,
-  workspaceId: string,
-  roots: { readonly workDir: string; readonly additionalDirs?: readonly string[] },
-  environmentId: string,
-  required: readonly EnvironmentCapability[],
-): EnvironmentFsScope {
-  const lease = core.accessor.get(IEnvironmentService).acquire(
-    { environmentId },
-    required,
-  );
-  try {
-    return buildEnvironmentFsScope(core, workspaceId, roots, environmentId, lease);
-  } catch (error) {
-    lease.dispose();
-    throw error;
-  }
-}
-
-function buildEnvironmentFsScope(
-  core: Scope,
-  workspaceId: string,
-  roots: { readonly workDir: string; readonly additionalDirs?: readonly string[] },
-  environmentId: string,
-  lease: EnvironmentLease,
-): EnvironmentFsScope {
-  const mapped = lease.environment.workspace!.mapRoots(roots);
-  const workspace = {
-    _serviceBrand: undefined,
-    workspaceId,
-    cwd: mapped.workDir,
-    source: 'local',
-    meta: {
-      id: workspaceId,
-      root: mapped.workDir,
-      name: workspaceId,
-      createdAt: 0,
-      lastOpenedAt: 0,
-    },
-    persistenceScope: `sessions/${workspaceId}`,
-  } satisfies IWorkspaceContext;
-  const dirs: Pick<IWorkspaceDirs, 'additionalDirs'> = {
-    additionalDirs: mapped.additionalDirs ?? [],
-  };
-  const resolver: EnvironmentResolver = {
-    _serviceBrand: undefined,
-    inspect: () => lease.environment,
-    acquire: (_binding, capabilities = []) => {
-      const missing = capabilities.filter((capability) => !lease.environment.capabilities.has(capability));
-      if (missing.length > 0) throw new Error(`environment ${environmentId} missing capabilities: ${missing.join(', ')}`);
-      return {
-        environment: lease.environment,
-        track: (resource) => lease.track(resource),
-        dispose: () => {},
-      };
-    },
-    acquireWhenReady(_binding, capabilities = []) {
-      return Promise.resolve(this.acquire(_binding, capabilities));
-    },
-  };
-  const git = new WorkspaceGitService(
-    workspace,
-    {
-      current: new GitService(resolver, lease.environment.fs!),
-      onDidChange: () => ({ dispose: () => {} }),
-    },
-  );
-  return {
-    fs: new WorkspaceFsService(
-      workspace,
-      dirs,
-      lease.environment.fs!,
-      resolver,
-      core.accessor.get(ITelemetryService),
-      git,
-      environmentId,
-    ),
-    hostFs: lease.environment.fs!,
-    lease,
-    roots: { workDir: mapped.workDir, additionalDirs: mapped.additionalDirs ?? [] },
-  };
-}
-
 function acquireSessionFs(
   core: Scope,
   sessionId: string,
@@ -235,7 +141,7 @@ function acquireSessionFs(
   if (session === undefined) throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
   const context = session.accessor.get(ISessionContext);
   const workspace = session.accessor.get(ISessionWorkspaceContext);
-  return createEnvironmentFs(core, context.workspaceId, workspace, environmentId, required);
+  return createEnvironmentFs(core.accessor, context.workspaceId, workspace, environmentId, required);
 }
 
 async function resolveWorkspaceFs(
@@ -257,7 +163,7 @@ async function resolveWorkspaceFs(
   await core.accessor
     .get(IWorkspaceInstanceManager)
     .getOrCreate({ workspaceId: ws.id, root: ws.root });
-  return createEnvironmentFs(core, ws.id, { workDir: ws.root }, environmentId, required);
+  return createEnvironmentFs(core.accessor, ws.id, { workDir: ws.root }, environmentId, required);
 }
 
 export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
@@ -514,7 +420,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       const fsRoots = { workDir: roots[0]!, additionalDirs: roots.slice(1) };
       let environmentFs: EnvironmentFsScope | undefined;
       try {
-        environmentFs = createEnvironmentFs(core, encodeWorkDirKey(fsRoots.workDir), fsRoots, environmentId, ['fs']);
+        environmentFs = createEnvironmentFs(core.accessor, encodeWorkDirKey(fsRoots.workDir), fsRoots, environmentId, ['fs']);
         for (const root of [environmentFs.roots.workDir, ...environmentFs.roots.additionalDirs]) {
           let stat;
           try {

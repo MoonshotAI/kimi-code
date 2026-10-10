@@ -43,10 +43,16 @@ export function registerAcpCommand(parent: Command): void {
       // bound to the ACP client's own environment (the reverse-RPC fs/terminal
       // bridge), never to a configured [environments] entry. Reject loudly
       // instead of silently dropping the flag.
-      const environment = parent.opts<{ environment?: string }>().environment;
-      if (environment !== undefined) {
+      const rootOptions = parent.opts<{ environment?: string; environmentCwd?: string }>();
+      if (rootOptions.environment !== undefined) {
         process.stderr.write(
           `error: Cannot use --environment with 'acp': ACP sessions run in the ACP client's own environment.\n`,
+        );
+        process.exit(1);
+      }
+      if (rootOptions.environmentCwd !== undefined) {
+        process.stderr.write(
+          `error: Cannot use --environment-cwd with 'acp': ACP sessions run in the ACP client's own environment.\n`,
         );
         process.exit(1);
       }

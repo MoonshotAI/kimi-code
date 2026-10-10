@@ -191,6 +191,10 @@ export interface WorkspaceTrustInfo {
 export interface SuggestFilesInput {
   readonly query: string;
   readonly limit?: number;
+  /** Target environment; omit or use `local` for the workspace's local filesystem. */
+  readonly environment?: AgentEnvironmentBinding;
+  /** Additional roots used only when `environment` selects a non-local environment. */
+  readonly additionalDirs?: readonly string[];
 }
 
 export interface SuggestFilesItem {

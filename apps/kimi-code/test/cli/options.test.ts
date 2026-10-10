@@ -555,6 +555,46 @@ describe('CLI options parsing', () => {
     });
   });
 
+  describe('--environment-cwd', () => {
+    it('parses the remote cwd override alongside --environment', () => {
+      const opts = parse(['--environment', 'dev-box', '--environment-cwd', '/remote/work']);
+      expect(opts.environmentCwd).toBe('/remote/work');
+      expect(validateOptions(opts, {}).uiMode).toBe('shell');
+    });
+
+    it('is hidden from the help output while the feature is experimental', () => {
+      const help = createProgram('0.1.0-test', () => {}, () => {}).helpInformation();
+      expect(help).not.toContain('--environment-cwd');
+    });
+
+    it('rejects empty values', () => {
+      const opts = parse(['--environment', 'dev-box', '--environment-cwd', '   ']);
+      expect(() => validateOptions(opts)).toThrow('Environment cwd cannot be empty.');
+    });
+
+    it('requires --environment', () => {
+      const opts = parse(['--environment-cwd', '/remote/work']);
+      expect(() => validateOptions(opts)).toThrow('--environment-cwd requires --environment.');
+    });
+
+    it('inherits the creation-only conflict with resume flags', () => {
+      const opts = parse([
+        '--environment',
+        'dev-box',
+        '--environment-cwd',
+        '/remote/work',
+        '--session',
+        'ses_123',
+      ]);
+      expect(() => validateOptions(opts)).toThrow('Cannot combine --environment with --session/--continue');
+    });
+
+    it('is accepted in prompt mode', () => {
+      const opts = parse(['-p', 'hi', '--environment', 'dev-box', '--environment-cwd', '/remote/work']);
+      expect(validateOptions(opts, {}).uiMode).toBe('print');
+    });
+  });
+
   describe('--add-dir', () => {
     it('parses one additional workspace directory', () => {
       expect(parse(['--add-dir', '/shared']).addDirs).toEqual(['/shared']);

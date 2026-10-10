@@ -140,6 +140,10 @@ import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir
 import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
 import { loadMcpServers } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
 import { fsSuggestRequestSchema } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
+import {
+  createEnvironmentFs,
+  type EnvironmentFsScope,
+} from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/environmentFs';
 import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
 import { IAppendLogStore } from '@moonshot-ai/agent-core-v2/persistence/interface/appendLogStore';
 import {
@@ -689,10 +693,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Through the workspace handler's `IWorkspaceFsService` — the same engine
-   * suggest the kap-server `fs:suggest` routes serve (fuzzy scoring,
-   * directories included, gitignore respected), so in-process hosts match
-   * the web client's @ mention results.
+   * The same engine suggest the kap-server `fs:suggest` routes serve (fuzzy
+   * scoring, directories included, gitignore respected), either through the
+   * workspace handler's local fs or an explicitly selected environment.
    */
   override async suggestFiles(workDir: string, input: SuggestFilesInput): Promise<SuggestFilesResult | undefined> {
     const parsed = fsSuggestRequestSchema.safeParse({
@@ -710,16 +713,34 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       );
     }
     const handler = await this.workspaceHandlerFor('suggestFiles', workDir);
-    const result = await handler.program.fs.suggest(parsed.data);
-    return {
-      items: result.items.map((item) => ({
-        path: item.path,
-        name: item.name,
-        kind: item.kind,
-        matchPositions: item.match_positions,
-      })),
-      truncated: result.truncated,
-    };
+    let environmentFs: EnvironmentFsScope | undefined;
+    try {
+      const fs =
+        input.environment === undefined || input.environment.environmentId === 'local'
+          ? handler.program.fs
+          : (environmentFs = createEnvironmentFs(
+              this.engineAccessor,
+              handler.id,
+              {
+                workDir: input.environment.cwd ?? workDir,
+                additionalDirs: input.additionalDirs,
+              },
+              input.environment.environmentId,
+              ['fs'],
+            )).fs;
+      const result = await fs.suggest(parsed.data);
+      return {
+        items: result.items.map((item) => ({
+          path: item.path,
+          name: item.name,
+          kind: item.kind,
+          matchPositions: item.match_positions,
+        })),
+        truncated: result.truncated,
+      };
+    } finally {
+      environmentFs?.lease.dispose();
+    }
   }
 
   /**

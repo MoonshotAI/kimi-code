@@ -283,6 +283,109 @@ describe('FileMentionProvider', () => {
     expect(result).toBeNull();
   });
 
+  it('maps remote @ mention candidates without scanning the local workspace', async () => {
+    writeFileSync(join(workDir, 'local-only.ts'), 'local');
+    const remoteSuggest = vi.fn(async () => [
+      { path: 'src/app.ts', kind: 'file' as const },
+      { path: 'src/components', kind: 'directory' as const },
+      { path: 'docs/with space.md', kind: 'file' as const },
+    ]);
+    const provider = new FileMentionProvider(
+      [],
+      workDir,
+      NO_FD,
+      [],
+      () => 'prompt',
+      undefined,
+      remoteSuggest,
+    );
+
+    const result = await provider.getSuggestions(['@'], 0, 1, { signal: ctrl() });
+
+    expect(remoteSuggest).toHaveBeenCalledWith('');
+    expect(result).not.toBeNull();
+    expect(result!.prefix).toBe('@');
+    expect(result!.items.map((item) => item.value)).toEqual([
+      '@src/app.ts',
+      '@src/components/',
+      '@"docs/with space.md"',
+    ]);
+    expect(result!.items.some((item) => item.value.includes('local-only'))).toBe(false);
+  });
+
+  it('preserves quoted prefixes for remote @ mentions', async () => {
+    const remoteSuggest = vi.fn(async () => [
+      { path: 'docs/with space.md', kind: 'file' as const },
+    ]);
+    const provider = new FileMentionProvider(
+      [],
+      workDir,
+      NO_FD,
+      [],
+      () => 'prompt',
+      undefined,
+      remoteSuggest,
+    );
+
+    const result = await provider.getSuggestions(['@"with'], 0, 6, { signal: ctrl() });
+
+    expect(remoteSuggest).toHaveBeenCalledWith('with');
+    expect(result).toMatchObject({ prefix: '@"with' });
+    expect(result!.items[0]).toMatchObject({ value: '@"docs/with space.md"' });
+  });
+
+  it('returns null instead of local candidates when remote suggestions are unavailable', async () => {
+    writeFileSync(join(workDir, 'local-only.ts'), 'local');
+    const unavailable = new FileMentionProvider(
+      [],
+      workDir,
+      NO_FD,
+      [],
+      () => 'prompt',
+      undefined,
+      async () => undefined,
+    );
+    const failing = new FileMentionProvider(
+      [],
+      workDir,
+      NO_FD,
+      [],
+      () => 'prompt',
+      undefined,
+      async () => {
+        throw new Error('remote unavailable');
+      },
+    );
+
+    await expect(unavailable.getSuggestions(['@local'], 0, 6, { signal: ctrl() })).resolves.toBeNull();
+    await expect(failing.getSuggestions(['@local'], 0, 6, { signal: ctrl() })).resolves.toBeNull();
+  });
+
+  it('discards remote suggestions that arrive after the request is aborted', async () => {
+    const controller = new AbortController();
+    let resolveSuggestions!: (items: readonly { path: string; kind: 'file' }[]) => void;
+    const remoteSuggest = vi.fn(
+      () => new Promise<readonly { path: string; kind: 'file' }[]>((resolve) => {
+        resolveSuggestions = resolve;
+      }),
+    );
+    const provider = new FileMentionProvider(
+      [],
+      workDir,
+      NO_FD,
+      [],
+      () => 'prompt',
+      undefined,
+      remoteSuggest,
+    );
+
+    const pending = provider.getSuggestions(['@app'], 0, 4, { signal: controller.signal });
+    controller.abort();
+    resolveSuggestions([{ path: 'src/app.ts', kind: 'file' }]);
+
+    await expect(pending).resolves.toBeNull();
+  });
+
   it('uses a filesystem fallback for @ mentions when fd is not available', async () => {
     mkdirSync(join(workDir, 'src', 'components'), { recursive: true });
     writeFileSync(join(workDir, 'src', 'components', 'Button.tsx'), 'export {};');

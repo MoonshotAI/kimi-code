@@ -121,10 +121,16 @@ export function createProgram(
     .addOption(new Option('--yes').hideHelp().default(false))
     .addOption(new Option('--auto-approve').hideHelp().default(false))
     .addOption(
-      // The [environments] config layer resolves and validates the id (unknown
-      // id / missing defaultCwd → startup error). Hidden from help output.
+      // The [environments] config layer resolves the id and default cwd.
+      // Hidden from help output.
       new Option('--environment <id>', 'Bind the new session to the configured environment <id>.')
         .hideHelp(),
+    )
+    .addOption(
+      new Option(
+        '--environment-cwd <path>',
+        'Set the working directory on the environment selected by --environment.',
+      ).hideHelp(),
     )
     .option('--plan', 'Start in plan mode.', false);
 
@@ -209,6 +215,7 @@ export function createProgram(
       agentFiles: raw['agentFile'] as string[],
       addDirs: raw['addDir'] as string[],
       environment: raw['environment'] as string | undefined,
+      environmentCwd: raw['environmentCwd'] as string | undefined,
     };
 
     onMain(opts);

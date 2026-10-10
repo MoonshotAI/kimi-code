@@ -457,10 +457,10 @@ async function resolveNativeSession(
       profile: agentProfileName ?? 'agent',
       model,
     },
-    // `--environment <id>` one-shot override of the `[environments]` default for the
-    // new session's initial binding; id/defaultCwd validation is enforced by
-    // the environments config-resolution layer at this seam.
+    // One-shot environment overrides for the new session's initial binding;
+    // validation is enforced by the environments config-resolution layer.
     environmentId: opts.environment,
+    environmentCwd: opts.environmentCwd,
   });
   const agentContext = await ensureMainAgent(session);
   const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;

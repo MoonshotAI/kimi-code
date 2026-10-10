@@ -49,11 +49,12 @@ export interface CLIOptions {
   addDirs?: string[];
   /**
    * `--environment <id>`: one-shot override of the configured `[environments]`
-   * default — the new session's initial binding targets this environment, with
-   * the cwd taken from the entry's `defaultCwd`. Creation-only, like
-   * `--agent`: a resumed session restores its recorded binding instead.
+   * default. Creation-only, like `--agent`: a resumed session restores its
+   * recorded binding instead.
    */
   environment: string | undefined;
+  /** `--environment-cwd <path>`: overrides the selected entry's `defaultCwd`. */
+  environmentCwd?: string;
 }
 
 export interface ValidatedOptions {
@@ -97,6 +98,12 @@ export function validateOptions(
   }
   if (opts.environment !== undefined && opts.environment.trim().length === 0) {
     throw new OptionConflictError('Environment cannot be empty.');
+  }
+  if (opts.environmentCwd !== undefined && opts.environmentCwd.trim().length === 0) {
+    throw new OptionConflictError('Environment cwd cannot be empty.');
+  }
+  if (opts.environmentCwd !== undefined && opts.environment === undefined) {
+    throw new OptionConflictError('--environment-cwd requires --environment.');
   }
   if (opts.environment !== undefined && (opts.session !== undefined || opts.continue)) {
     throw new OptionConflictError(

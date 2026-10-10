@@ -44,6 +44,7 @@ interface StartupDriver {
   syncRuntimeState(session?: unknown): Promise<void>;
   ensureSession(): Promise<unknown>;
   waitForLazyCreation(): Promise<void>;
+  refreshSlashCommandAutocomplete(): void;
 }
 
 interface RuntimeStateDriver extends StartupDriver {
@@ -498,7 +499,7 @@ describe('KimiTUI startup', () => {
     });
   });
 
-  it('pre-creates the --environment session in the background at startup (v2)', async () => {
+  it('pre-creates the startup environment session with its cwd override (v2)', async () => {
     const harness = makeHarness(makeSession(), {
       getConfig: vi.fn(async () => ({
         models: {
@@ -507,12 +508,15 @@ describe('KimiTUI startup', () => {
         defaultModel: 'k2',
       })),
     });
-    const driver = makeDriver(harness, makeStartupInput({ environment: 'dev-box' }));
+    const driver = makeDriver(
+      harness,
+      makeStartupInput({ environment: 'dev-box', environmentCwd: '/remote/work' }),
+    );
 
     await expect(driver.init()).resolves.toBe(false);
 
     expect(harness.createSession).toHaveBeenCalledWith(
-      expect.objectContaining({ environmentId: 'dev-box' }),
+      expect.objectContaining({ environmentId: 'dev-box', environmentCwd: '/remote/work' }),
     );
   });
 
@@ -561,6 +565,64 @@ describe('KimiTUI startup', () => {
       status: 'ready',
       cwd: '/remote/work',
     });
+  });
+
+  it('uses the bound environment for remote @ completion', async () => {
+    const suggestFiles = vi.fn(async () => ({
+      items: [{ path: 'src/app.ts', name: 'app.ts', kind: 'file', matchPositions: [0] }],
+      truncated: false,
+    }));
+    const harness = makeHarness(makeSession(), { suggestFiles });
+    const driver = makeDriver(harness, makeStartupInput({ model: 'k2' }));
+    await driver.init();
+    driver.state.appState.environment = {
+      environmentId: 'dev-box',
+      type: 'ssh',
+      status: 'ready',
+      cwd: '/remote/work',
+    };
+    driver.state.appState.additionalDirs = ['/remote/shared'];
+    const setAutocompleteProvider = vi.spyOn(driver.state.editor, 'setAutocompleteProvider');
+    driver.refreshSlashCommandAutocomplete();
+    const provider = setAutocompleteProvider.mock.calls.at(-1)?.[0];
+
+    const result = await provider!.getSuggestions(['@app'], 0, 4, {
+      signal: new AbortController().signal,
+    });
+
+    expect(suggestFiles).toHaveBeenCalledWith(driver.state.appState.workDir, {
+      query: 'app',
+      environment: { environmentId: 'dev-box', cwd: '/remote/work' },
+      additionalDirs: ['/remote/shared'],
+    });
+    expect(result?.items[0]).toMatchObject({ value: '@src/app.ts' });
+  });
+
+  it('uses the startup environment for @ completion before the binding syncs', async () => {
+    const suggestFiles = vi.fn(async () => ({
+      items: [{ path: 'src/app.ts', name: 'app.ts', kind: 'file', matchPositions: [0] }],
+      truncated: false,
+    }));
+    const harness = makeHarness(makeSession(), { suggestFiles });
+    const driver = makeDriver(
+      harness,
+      makeStartupInput({ model: 'k2', environment: 'dev-box', environmentCwd: '/remote/startup' }),
+    );
+    const setAutocompleteProvider = vi.spyOn(driver.state.editor, 'setAutocompleteProvider');
+    expect(driver.state.appState.environment).toBeUndefined();
+    driver.refreshSlashCommandAutocomplete();
+    const provider = setAutocompleteProvider.mock.calls.at(-1)?.[0];
+
+    const result = await provider!.getSuggestions(['@app'], 0, 4, {
+      signal: new AbortController().signal,
+    });
+
+    expect(suggestFiles).toHaveBeenCalledWith(driver.state.appState.workDir, {
+      query: 'app',
+      environment: { environmentId: 'dev-box', cwd: '/remote/startup' },
+      additionalDirs: [],
+    });
+    expect(result?.items[0]).toMatchObject({ value: '@src/app.ts' });
   });
 
   it('binds /new to the current session environment and cwd, not the startup flag', async () => {

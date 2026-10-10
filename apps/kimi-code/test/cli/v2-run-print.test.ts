@@ -487,7 +487,7 @@ describe('runV2Print', () => {
     expect(profile.bind).not.toHaveBeenCalled();
   });
 
-  it('threads --environment into the session creation options as the initial binding', async () => {
+  it('threads the environment flags into the initial session binding', async () => {
     const stdout = writer();
     const stderr = writer();
     const { app, appServices } = makeFakeHarness();
@@ -495,7 +495,11 @@ describe('runV2Print', () => {
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
-    await runV2Print(opts({ environment: 'dev-box' }) as never, '1.2.3-test', { stdout, stderr });
+    await runV2Print(
+      opts({ environment: 'dev-box', environmentCwd: '/remote/work' }) as never,
+      '1.2.3-test',
+      { stdout, stderr },
+    );
 
     const sessions = appServices.get(ISessionManager) as { create: ReturnType<typeof vi.fn> };
     expect(sessions.create).toHaveBeenCalledWith({
@@ -503,6 +507,7 @@ describe('runV2Print', () => {
       additionalDirs: undefined,
       mainAgentBinding: { profile: 'agent', model: 'k2' },
       environmentId: 'dev-box',
+      environmentCwd: '/remote/work',
     });
   });
 

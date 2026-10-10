@@ -345,6 +345,8 @@ export interface TUIStartupOptions {
   readonly agentFiles?: readonly string[];
   /** --environment <id> one-shot binding. The first session consumes it; a later /new keeps the live binding. */
   readonly environment?: string;
+  /** --environment-cwd <path> override for the startup binding. */
+  readonly environmentCwd?: string;
   readonly startupNotice?: string;
 }
 

@@ -1268,6 +1268,52 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('serves suggestFiles from the selected environment and its additional roots', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    const remoteDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-remote-'));
+    const additionalDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-additional-'));
+    tempDirs.push(workDir, remoteDir, additionalDir);
+    await mkdir(join(workDir, 'src'), { recursive: true });
+    await mkdir(join(remoteDir, 'src'), { recursive: true });
+    await mkdir(join(additionalDir, 'lib'), { recursive: true });
+    await writeFile(join(workDir, 'src', 'local-only.ts'), 'local');
+    await writeFile(join(remoteDir, 'src', 'app.ts'), 'remote');
+    await writeFile(join(additionalDir, 'lib', 'extra.ts'), 'extra');
+    const { harness, client } = await makeEnvironmentHarness({ defaultCwd: remoteDir });
+    await attachFakeBoxEnvironment(client);
+    try {
+      const matched = await harness.suggestFiles(workDir, {
+        query: 'app',
+        environment: { environmentId: 'fake-box', cwd: remoteDir },
+        additionalDirs: [additionalDir],
+      });
+      expect(matched?.items).toContainEqual(
+        expect.objectContaining({ kind: 'file', path: 'src/app.ts', name: 'app.ts' }),
+      );
+      expect(matched?.items.some((item) => item.name === 'local-only.ts')).toBe(false);
+
+      const additional = await harness.suggestFiles(workDir, {
+        query: 'extra',
+        environment: { environmentId: 'fake-box', cwd: remoteDir },
+        additionalDirs: [additionalDir],
+      });
+      expect(additional?.items).toContainEqual(
+        expect.objectContaining({ kind: 'file', name: 'extra.ts' }),
+      );
+
+      const explicitLocal = await harness.suggestFiles(workDir, {
+        query: 'local',
+        environment: { environmentId: 'local' },
+      });
+      expect(explicitLocal?.items).toContainEqual(
+        expect.objectContaining({ kind: 'file', path: 'src/local-only.ts' }),
+      );
+    } finally {
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('rejects an out-of-range suggestFiles limit before touching the engine', async () => {
     const { harness } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
