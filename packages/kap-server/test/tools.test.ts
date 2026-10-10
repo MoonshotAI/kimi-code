@@ -84,8 +84,7 @@ describe('server-v2 /api/v1 tools + mcp', () => {
       server = undefined;
     }
     if (home !== undefined) {
-      await new Promise((resolve) => setTimeout(resolve, 25));
-      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as never);
+      await rm(home, { recursive: true, force: true });
       home = undefined;
     }
   });
