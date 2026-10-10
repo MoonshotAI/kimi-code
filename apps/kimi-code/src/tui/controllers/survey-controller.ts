@@ -142,7 +142,8 @@ export class SurveyController {
   private readonly view: SurveyPanelView = { phase: 'open' };
   private mounted = false;
   private mountedAt: number;
-  private userTurnCount = 0;
+  private userTurnsSinceMount = 0;
+  private initialUserTurnCount: number | undefined = 0;
   private lastShownAt: number | undefined;
   private userTurnsAtLastShown: number | undefined;
   private appearanceCount = 0;
@@ -195,7 +196,8 @@ export class SurveyController {
     this.applyClose();
     this.machine = SURVEY_MACHINE_CLOSED;
     this.mountedAt = this.now();
-    this.userTurnCount = 0;
+    this.userTurnsSinceMount = 0;
+    this.initialUserTurnCount = 0;
     this.lastShownAt = undefined;
     this.userTurnsAtLastShown = undefined;
     this.appearanceCount = 0;
@@ -244,7 +246,7 @@ export class SurveyController {
     this.clearIdleTimer();
     this.notifyDisplaced();
     if (userOrigin) {
-      this.userTurnCount += 1;
+      this.userTurnsSinceMount += 1;
       this.evaluationPending = false;
       this.pendingTraceId = undefined;
     }
@@ -302,6 +304,10 @@ export class SurveyController {
     }
     this.subagentCount += 1;
     recordModel(this.subagentModels, event.model);
+  }
+
+  seedUserTurnCount(count: number | undefined): void {
+    this.initialUserTurnCount = count;
   }
 
   seedFromResumedAgents(agents: Readonly<Record<string, ResumedAgentSeed>>): void {
@@ -508,12 +514,12 @@ export class SurveyController {
       session: {
         ...shared,
         mountedForMs: now - this.mountedAt,
-        userTurnsSinceMount: this.userTurnCount,
+        userTurnsSinceMount: this.userTurnsSinceMount,
         msSinceLastShown: this.lastShownAt === undefined ? undefined : now - this.lastShownAt,
         userTurnsSinceLastShown:
           this.userTurnsAtLastShown === undefined
             ? undefined
-            : this.userTurnCount - this.userTurnsAtLastShown,
+            : this.userTurnsSinceMount - this.userTurnsAtLastShown,
         sample: this.currentSample(),
         msSinceGlobalLastShown:
           this.globalLastShownAt === undefined ? undefined : this.wallNow() - this.globalLastShownAt,
@@ -556,9 +562,9 @@ export class SurveyController {
   }
 
   private currentSample(): number {
-    if (this.stickySample?.turnCount !== this.userTurnCount) {
+    if (this.stickySample?.turnCount !== this.userTurnsSinceMount) {
       this.stickySample = {
-        turnCount: this.userTurnCount,
+        turnCount: this.userTurnsSinceMount,
         value: (this.deps.random ?? defaultDeps.random)(),
       };
     }
@@ -582,7 +588,7 @@ export class SurveyController {
     this.openedAt = shownAt;
     this.openedEditorText = this.host.state.editor.getText();
     this.lastShownAt = shownAt;
-    this.userTurnsAtLastShown = this.userTurnCount;
+    this.userTurnsAtLastShown = this.userTurnsSinceMount;
     if (survey === 'long_context') this.longContextShownThisMount = true;
     this.globalLastShownAt = this.wallNow();
     try {
@@ -725,7 +731,10 @@ export class SurveyController {
     return {
       current_model: appState.model,
       kfc_model_id: resolveKfcModelId(appState),
-      user_turn_count: this.userTurnCount,
+      user_turn_count:
+        this.initialUserTurnCount === undefined
+          ? undefined
+          : this.initialUserTurnCount + this.userTurnsSinceMount,
       cumulative_tokens: appState.cumulativeTokens ?? 0,
       virtual_context_tokens: appState.contextTokens,
       tool_call_count: this.toolCallCount,

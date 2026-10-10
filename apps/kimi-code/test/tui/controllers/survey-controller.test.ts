@@ -239,6 +239,99 @@ function trackedEvent(harness: Harness, eventType: string): Record<string, unkno
 }
 
 describe('SurveyController gating', () => {
+  it('reports resumed user turns on the long-context survey without changing warmup', async () => {
+    const harness = createHarness({
+      config: () => ({
+        ...DEFAULT_SURVEY_POPUP_PAYLOAD,
+        long_context_survey_threshold: 500,
+        long_context_probability: 1,
+      }),
+    });
+    await harness.flush();
+    harness.controller.seedUserTurnCount(40);
+    harness.runTurns(1);
+    harness.elapse(2000);
+
+    expect(harness.track).toHaveBeenCalledWith(
+      'long_context_survey',
+      expect.objectContaining({ event_type: 'appeared', user_turn_count: 41 }),
+    );
+  });
+
+  it('keeps mount warmup independent of historical user turns', async () => {
+    const harness = createHarness();
+    await harness.flush();
+    harness.controller.seedUserTurnCount(40);
+    harness.clock.mono += 600_000;
+    harness.runTurns(4);
+    harness.elapse(2000);
+    expect(harness.track).not.toHaveBeenCalled();
+
+    harness.runTurns(1);
+    harness.elapse(2000);
+    expect(trackedEvent(harness, 'appeared')).toMatchObject({ user_turn_count: 45 });
+  });
+
+  it('omits the cumulative count when resumed history is unknown', async () => {
+    const harness = createHarness();
+    await harness.flush();
+    harness.controller.seedUserTurnCount(undefined);
+    harness.appear();
+
+    expect(JSON.parse(JSON.stringify(trackedEvent(harness, 'appeared')))).not.toHaveProperty(
+      'user_turn_count',
+    );
+  });
+
+  it.each([
+    [0, 1],
+    [20, 21],
+    [undefined, undefined],
+  ])('uses the new history base %s after remounting', async (base, expected) => {
+    const harness = createHarness({
+      config: () => ({
+        ...DEFAULT_SURVEY_POPUP_PAYLOAD,
+        min_time_between_global_feedback_ms: 0,
+        long_context_survey_threshold: 500,
+        long_context_probability: 1,
+      }),
+    });
+    await harness.flush();
+    harness.controller.seedUserTurnCount(40);
+    harness.runTurns(1);
+    harness.elapse(2000);
+    expect(trackedEvent(harness, 'appeared')).toMatchObject({ user_turn_count: 41 });
+
+    harness.controller.reset();
+    harness.controller.seedUserTurnCount(base);
+    await harness.flush();
+    harness.track.mockClear();
+    harness.runTurns(1);
+    harness.elapse(2000);
+    expect(trackedEvent(harness, 'appeared')).toHaveProperty('user_turn_count', expected);
+  });
+
+  it.each(['responded', 'abandoned'])(
+    'freezes the cumulative count for the %s lifecycle event',
+    async (eventType) => {
+      const harness = createHarness();
+      await harness.flush();
+      harness.controller.seedUserTurnCount(40);
+      harness.appear();
+      harness.controller.seedUserTurnCount(100);
+      if (eventType === 'responded') {
+        harness.typeDigit('3');
+        harness.elapse(400);
+        harness.elapse(3000);
+      } else {
+        harness.controller.notifyDisplaced();
+      }
+
+      expect(trackedEvent(harness, 'appeared')).toMatchObject({ user_turn_count: 45 });
+      expect(trackedEvent(harness, eventType)).toMatchObject({ user_turn_count: 45 });
+    },
+  );
+
   it('appears once the session clears warmup and reports appeared', async () => {
     const harness = createHarness();
     await harness.flush();

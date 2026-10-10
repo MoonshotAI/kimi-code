@@ -1795,7 +1795,7 @@ describe('foldAgentWireReplay', () => {
     await expect(foldAgentWireReplay(join(dir, 'missing.jsonl'))).resolves.toEqual(empty);
     const emptyFile = join(dir, 'empty.jsonl');
     await writeFile(emptyFile, '', 'utf-8');
-    await expect(foldAgentWireReplay(emptyFile)).resolves.toEqual(empty);
+    await expect(foldAgentWireReplay(emptyFile)).resolves.toEqual({ ...empty, userTurnCount: 0 });
     const corrupt = join(dir, 'corrupt.jsonl');
     await writeFile(
       corrupt,
@@ -1908,8 +1908,256 @@ describe('foldAgentWireReplay turn limiting', () => {
     return {
       replay: limitAgentReplayByTurns(full.replay, turnLimit),
       toolStore: full.toolStore,
+      userTurnCount: full.userTurnCount,
     };
   }
+
+  it('counts every started user turn independently of the replay window', async () => {
+    const records: Record<string, unknown>[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+    ];
+    for (let index = 0; index < 3; index++) {
+      records.push(
+        {
+          type: 'turn.prompt',
+          agentId: 'main',
+          turnId: index,
+          origin: { kind: 'user' },
+          input: [{ type: 'text', text: `prompt ${index}` }],
+          time: 100 + index * 10,
+        },
+        appendUser(`prompt ${index}`, 101 + index * 10, { kind: 'user' }),
+        ...stepRecords(`s${index}`, 102 + index * 10),
+      );
+    }
+    const wirePath = await writeWire(records);
+
+    for (const limit of [undefined, 0, 1, 11]) {
+      expect(await foldAgentWireReplay(wirePath, limit)).toMatchObject({ userTurnCount: 3 });
+    }
+  });
+
+  it('counts only user-origin prompts, not steers or automatic turns', async () => {
+    const origins = [
+      { kind: 'user' },
+      { kind: 'skill_activation', trigger: 'user-slash' },
+      { kind: 'plugin_command', trigger: 'user-slash' },
+      { kind: 'shell_command', phase: 'input' },
+      { kind: 'skill_activation', trigger: 'model' },
+      { kind: 'plugin_command', trigger: 'model' },
+      { kind: 'shell_command', phase: 'output' },
+      { kind: 'cron_job' },
+      { kind: 'cron_missed' },
+      { kind: 'system_trigger', name: 'goal_continuation' },
+      { kind: 'background_task' },
+      { kind: 'hook_result' },
+      { kind: 'compaction_summary' },
+      { kind: 'injection' },
+      { kind: 'retry' },
+    ];
+    const wirePath = await writeWire([
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      ...origins.map((origin, turnId) => ({ type: 'turn.prompt', agentId: 'main', origin, turnId })),
+      { type: 'turn.steer', agentId: 'main', origin: { kind: 'user' }, turnId: 0 },
+      { type: 'turn.queued', agentId: 'main', origin: { kind: 'user' } },
+    ]);
+
+    for (const limit of [undefined, 0, 1]) {
+      expect(await foldAgentWireReplay(wirePath, limit)).toMatchObject({ userTurnCount: 4 });
+    }
+  });
+
+  it('leaves the count unknown when historical user messages have no turn prompts', async () => {
+    const journals = [
+      [appendUser('legacy prompt', 2)],
+      [appendUser('legacy prompt', 2, { kind: 'user' })],
+      [
+        appendUser('legacy prompt', 2, { kind: 'user' }),
+        { type: 'turn.prompt', agentId: 'main', origin: { kind: 'user' }, turnId: 1, time: 3 },
+        appendUser('new prompt', 4, { kind: 'user' }),
+      ],
+    ];
+    for (const journal of journals) {
+      const wirePath = await writeWire([
+        { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+        ...journal,
+      ]);
+      for (const limit of [undefined, 0, 1]) {
+        expect(await foldAgentWireReplay(wirePath, limit)).toHaveProperty('userTurnCount', undefined);
+      }
+    }
+  });
+
+  it.each([null, { kind: 'skill_activation' }, { kind: 'plugin_command' }, { kind: 'shell_command' }])(
+    'preserves replay when a turn prompt has an invalid origin %j',
+    async (origin) => {
+      const wirePath = await writeWire([
+        { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+        { type: 'turn.prompt', agentId: 'main', origin, turnId: 0, time: 2 },
+        appendUser('kept question', 3, { kind: 'user' }),
+        ...stepRecords('kept', 4),
+      ]);
+
+      for (const limit of [undefined, 1]) {
+        const folded = await foldAgentWireReplay(wirePath, limit);
+        expect(folded.replay).toEqual([
+          {
+            type: 'message',
+            time: 3,
+            message: {
+              role: 'user',
+              content: [{ type: 'text', text: 'kept question' }],
+              toolCalls: [],
+              origin: { kind: 'user' },
+            },
+          },
+          {
+            type: 'message',
+            time: 4,
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'answer kept' }],
+              toolCalls: [],
+            },
+          },
+        ]);
+        expect(folded.userTurnCount).toBeUndefined();
+      }
+    },
+  );
+
+  it('does not treat standalone shell commands as missing user turns', async () => {
+    const wirePath = await writeWire([
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      appendUser('pwd', 2, { kind: 'shell_command', phase: 'input' }),
+      appendUser('/example', 3, { kind: 'shell_command', phase: 'output' }),
+      { type: 'turn.prompt', agentId: 'main', origin: { kind: 'user' }, turnId: 0, time: 4 },
+      appendUser('first question', 5, { kind: 'user' }),
+    ]);
+
+    for (const limit of [undefined, 0, 1]) {
+      expect(await foldAgentWireReplay(wirePath, limit)).toMatchObject({ userTurnCount: 1 });
+    }
+  });
+
+  it('reports zero for an empty journal instead of an unknown count', async () => {
+    const wirePath = await writeWire([]);
+    for (const limit of [undefined, 0, 1]) {
+      expect(await foldAgentWireReplay(wirePath, limit)).toMatchObject({ userTurnCount: 0 });
+    }
+  });
+
+  it('leaves the count unknown when a trailing turn prompt is truncated', async () => {
+    const wirePath = await writeWire([
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      { type: 'turn.prompt', agentId: 'main', origin: { kind: 'user' }, turnId: 0, time: 2 },
+      appendUser('kept question', 3, { kind: 'user' }),
+    ]);
+    await writeFile(
+      wirePath,
+      await readFile(wirePath, 'utf-8') + '{"type":"turn.prompt","origin":{"kind":"user"}',
+      'utf-8',
+    );
+
+    for (const limit of [undefined, 0, 1]) {
+      const folded = await foldAgentWireReplay(wirePath, limit);
+      expect(folded.userTurnCount).toBeUndefined();
+      expect(folded.replay).toHaveLength(limit === 0 ? 0 : 1);
+    }
+  });
+
+  it.each(['llm.request', 'context.append_message'])(
+    'keeps truncated %s tail counts consistent across replay windows',
+    async (type) => {
+      const wirePath = await writeWire([
+        { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+        { type: 'turn.prompt', agentId: 'main', origin: { kind: 'user' }, turnId: 0, time: 2 },
+        appendUser('kept question', 3, { kind: 'user' }),
+      ]);
+      await writeFile(wirePath, (await readFile(wirePath, 'utf-8')) + `{"type":"${type}","data":`);
+
+      for (const limit of [undefined, 0, 1]) {
+        const folded = await foldAgentWireReplay(wirePath, limit);
+        expect(folded.userTurnCount).toBeUndefined();
+        expect(folded.replay).toHaveLength(limit === 0 ? 0 : 1);
+      }
+    },
+  );
+
+  it('counts valid turn prompts with whitespace around JSON separators', async () => {
+    const wirePath = await writeWire([
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      { type: 'turn.prompt', agentId: 'main', origin: { kind: 'user' }, turnId: 0, time: 2 },
+      appendUser('first question', 3, { kind: 'user' }),
+      { type: 'turn.prompt', agentId: 'main', origin: { kind: 'user' }, turnId: 1, time: 4 },
+      appendUser('second question', 5, { kind: 'user' }),
+    ]);
+    await writeFile(wirePath, (await readFile(wirePath, 'utf-8')).replaceAll('":', '": '));
+
+    for (const limit of [undefined, 0, 1]) {
+      expect(await foldAgentWireReplay(wirePath, limit)).toMatchObject({ userTurnCount: 2 });
+    }
+  });
+
+  it('preserves the replay window when a noncanonical turn prompt is corrupt', async () => {
+    const wirePath = await writeWire([
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      { type: 'turn.prompt', agentId: 'main', origin: { kind: 'user' }, turnId: 0, time: 2 },
+      appendUser('first question', 3, { kind: 'user' }),
+      ...stepRecords('first', 4),
+    ]);
+    await writeFile(
+      wirePath,
+      (await readFile(wirePath, 'utf-8')) +
+        '{"time":10,"type":"turn.prompt","origin":null\n' +
+        JSON.stringify({ type: 'turn.prompt', agentId: 'main', origin: { kind: 'user' }, turnId: 1, time: 11 }) + '\n' +
+        JSON.stringify(appendUser('last question', 12, { kind: 'user' })) + '\n',
+      'utf-8',
+    );
+
+    const folded = await foldAgentWireReplay(wirePath, 1);
+    expect(folded.userTurnCount).toBeUndefined();
+    expect(folded.replay).toEqual([
+      {
+        type: 'message',
+        time: 12,
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'last question' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+    ]);
+  });
+
+  it('counts turn prompts whose type header crosses a scan chunk boundary', async () => {
+    const assistant = {
+      type: 'context.append_message',
+      message: { role: 'assistant', content: [{ type: 'text', text: '' }], toolCalls: [] },
+      time: 6,
+    };
+    const records = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      { type: 'turn.prompt', agentId: 'main', origin: { kind: 'user' }, turnId: 0, time: 2 },
+      appendUser('first question', 3, { kind: 'user' }),
+      { type: 'turn.prompt', agentId: 'main', origin: { kind: 'user' }, turnId: 1, time: 4 },
+      appendUser('second question', 5, { kind: 'user' }),
+      assistant,
+    ];
+    const promptStart = records
+      .slice(0, 3)
+      .map((record) => JSON.stringify(record) + '\n')
+      .join('').length;
+    const emptySize = records.map((record) => JSON.stringify(record) + '\n').join('').length;
+    const padding = 4 * 1024 * 1024 + promptStart + '{"type":"tur'.length - emptySize;
+    assistant.message.content[0]!.text = 'x'.repeat(padding);
+    const wirePath = await writeWire(records);
+
+    for (const limit of [undefined, 0, 1]) {
+      expect(await foldAgentWireReplay(wirePath, limit)).toMatchObject({ userTurnCount: 2 });
+    }
+  });
 
   it('matches the unlimited fold truncated to the last N turns on a rich journal', async () => {
     const records: Record<string, unknown>[] = [
@@ -1926,6 +2174,13 @@ describe('foldAgentWireReplay turn limiting', () => {
     ];
     let time = 100;
     for (let index = 0; index < 15; index++) {
+      records.push({
+        type: 'turn.prompt',
+        agentId: 'main',
+        origin: { kind: 'user' },
+        turnId: index,
+        time: time++,
+      });
       records.push(...turnRecords(index, time));
       time += 10;
       records.push({
@@ -1976,10 +2231,10 @@ describe('foldAgentWireReplay turn limiting', () => {
       time: time++,
     });
     const wirePath = await writeWire(records);
-    for (const limit of [1, 3, 11, 15, 16]) {
-      expect(await foldAgentWireReplay(wirePath, limit)).toEqual(
-        await referenceFold(wirePath, limit),
-      );
+    for (const limit of [undefined, 0, 1, 3, 11, 15, 16]) {
+      const folded = await foldAgentWireReplay(wirePath, limit);
+      expect(folded.userTurnCount).toBe(15);
+      if (limit !== undefined) expect(folded).toEqual(await referenceFold(wirePath, limit));
     }
   });
 

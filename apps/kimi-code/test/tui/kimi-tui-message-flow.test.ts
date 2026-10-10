@@ -56,6 +56,7 @@ import type { SurveyController } from '#/tui/controllers/survey-controller';
 import { handleFeedbackCommand } from '#/tui/commands/info';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { openUrl } from '#/utils/open-url';
+import { readSurveyLastShownTime } from '#/utils/survey-state-store';
 import { createFeedbackArchivePath } from '../../src/feedback/archive';
 import { packageCodebase, scanCodebase } from '../../src/feedback/codebase';
 import { uploadArchive } from '../../src/feedback/upload';
@@ -139,6 +140,9 @@ interface MessageDriver {
   clearQueuedMessages(): void;
   closeSession(reason: string): Promise<void>;
   setSession(session: unknown): Promise<void>;
+  switchToSession(session: Session, statusMessage: string): Promise<void>;
+  reloadCurrentSessionView(session: Session, statusMessage: string): Promise<void>;
+  createNewSession(): Promise<void>;
   syncRuntimeState(session?: unknown): Promise<void>;
   getCurrentSessionId(): string;
 }
@@ -245,6 +249,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
           },
           context: { history: [] },
           replay: [],
+          userTurnCount: 0,
         },
       },
     })),
@@ -9277,6 +9282,94 @@ describe('footer ctrl+o hint', () => {
 });
 
 describe('KimiTUI session rating survey', () => {
+  it.each(['startup', 'switch', 'reload'] as const)(
+    'reports cumulative user turns after a %s mount',
+    async (mount) => {
+      process.env['KIMI_CODE_HOME'] = await makeTempHome();
+      vi.spyOn(Math, 'random').mockReturnValue(0);
+      try {
+        const session = makeSession();
+        const resumeState = session.getResumeState();
+        resumeState.agents.main.userTurnCount = 40;
+        session.getResumeState.mockReturnValue(resumeState);
+        const startup = makeStartupInput();
+        startup.cliOptions.session = 'ses-1';
+        const { driver, harness } = await makeDriver(
+          session,
+          { listSessions: vi.fn(async () => [{ id: 'ses-1', workDir: '/tmp/proj-a' }]) },
+          mount === 'startup' ? startup : undefined,
+        );
+        if (mount === 'switch') {
+          emitTurn(driver, 1);
+          await driver.switchToSession(session as unknown as Session, 'Resumed session.');
+        } else if (mount === 'reload') {
+          emitTurn(driver, 1);
+          await driver.reloadCurrentSessionView(session as unknown as Session, 'Reloaded session.');
+        }
+        await readSurveyLastShownTime();
+        vi.useFakeTimers();
+        harness.trackWithContext.mockClear();
+        emitTurn(driver, 41, () => {
+          driver.sessionEventHandler.handleEvent(
+            { type: 'agent.status.updated', agentId: 'main', contextTokens: 205_000 } as Event,
+            () => {},
+          );
+        });
+        await vi.advanceTimersByTimeAsync(2_000);
+
+        expect(harness.trackWithContext).toHaveBeenCalledWith(
+          'long_context_survey',
+          expect.objectContaining({ event_type: 'appeared', user_turn_count: 41 }),
+          { sessionId: 'ses-1' },
+        );
+      } finally {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+      }
+    },
+  );
+
+  it.each(['lazy', 'new-command'] as const)(
+    'starts from zero when a new session is created through %s',
+    async (creation) => {
+      process.env['KIMI_CODE_HOME'] = await makeTempHome();
+      vi.spyOn(Math, 'random').mockReturnValue(0);
+      try {
+        const session = makeSession({ getResumeState: vi.fn(() => undefined) });
+        const startup = makeStartupInput();
+        startup.cliOptions.model = 'k2';
+        const { driver, harness } = await makeDriver(session, {}, startup);
+        if (creation === 'lazy') {
+          driver.handleUserInput('first question');
+          await vi.waitFor(() => {
+            expect(session.prompt).toHaveBeenCalled();
+          });
+        } else {
+          await driver.createNewSession();
+        }
+        await readSurveyLastShownTime();
+        vi.useFakeTimers();
+        harness.trackWithContext.mockClear();
+        emitTurn(driver, 1, () => {
+          driver.sessionEventHandler.handleEvent(
+            { type: 'agent.status.updated', agentId: 'main', contextTokens: 205_000 } as Event,
+            () => {},
+          );
+        });
+        await vi.advanceTimersByTimeAsync(2_000);
+
+        expect(harness.trackWithContext).toHaveBeenCalledWith(
+          'long_context_survey',
+          expect.objectContaining({ event_type: 'appeared', user_turn_count: 1 }),
+          { sessionId: 'ses-1' },
+        );
+      } finally {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+      }
+    },
+  );
+
   it('runs the end-to-end rating flow after five user turns', async () => {
     vi.useFakeTimers();
     const homeDir = await makeTempHome();
