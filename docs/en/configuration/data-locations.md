@@ -31,6 +31,7 @@ $KIMI_CODE_HOME  (default: ~/.kimi-code)
 ├── tui.toml                # Terminal UI preferences (including auto-update toggle)
 ├── AGENTS.md               # Global Kimi-specific agent instructions (optional)
 ├── mcp.json                # User-level MCP server declarations (optional)
+├── rules.d/                # User-level exec policy .rules files (optional, experimental)
 ├── skills/                 # Kimi-specific user-level Skills (optional)
 ├── plugins/
 │   ├── installed.json      # Installed plugin records and enabled state
@@ -64,6 +65,7 @@ Each top-level file under the data root serves a specific purpose; most are mana
 - **`tui.toml`**: terminal UI client preferences, including `[upgrade].auto_install` (auto-update, on by default). You can disable it in `/settings` or by manually setting `auto_install = false`.
 - **`AGENTS.md`**: global Kimi-specific agent instructions. This file moves with `KIMI_CODE_HOME`; generic cross-tool instructions can still live under `~/.agents/AGENTS.md`.
 - **`mcp.json`**: user-level MCP server declarations, merged with the project-local `.kimi-code/mcp.json` on startup. See [MCP](../customization/mcp.md).
+- **`rules.d/`**: user-level exec policy `.rules` files, layered between `/etc/kimi-code/rules.d/` (managed) and the project-local `.kimi-code/rules.d/`. Only read when the experimental exec-policy flag is on. See [Exec policy rules](./config-files.md#exec-policy-rules).
 - **`skills/`**: Kimi-specific user-level Skills. This directory moves with `KIMI_CODE_HOME`; generic cross-tool Skills can still live under `~/.agents/skills/`. See [Agent Skills](../customization/skills.md).
 - **`plugins/installed.json`**: records installed plugins, each plugin's enabled state, and MCP server capability state changes made via `/plugins` or `/plugins mcp disable|enable`. Files installed from local paths or zip URLs are copied to `plugins/managed/<id>/`. See [Plugins](../customization/plugins.md).
 - **`credentials/`**: OAuth credential directory, with permissions `0o700` (directory) / `0o600` (files), readable and writable only by the current user. Managed provider credentials are stored as `credentials/<name>.json`; MCP server credentials are stored under `credentials/mcp/`. Credentials are written using an atomic flow (tmp → fsync → rename) to prevent corruption.

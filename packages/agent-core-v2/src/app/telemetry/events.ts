@@ -612,6 +612,49 @@ export interface WorkspaceTrustReadFailedEvent {
   error_type: string;
 }
 
+export interface SandboxSpawnEvent {
+  backend: string;
+  mode: string;
+  network_mode: string;
+}
+
+export interface SandboxDenialEvent {
+  backend: string;
+  mode: string;
+  auto_retried: boolean;
+}
+
+export interface SandboxUnsupportedPassthroughEvent {
+  platform: string;
+  reason: string;
+}
+
+export interface ExecPolicyDecisionEvent {
+  verdict: string;
+  rule_source: string;
+  segment_count: number;
+}
+
+export interface ExecPolicyRulesErrorEvent {
+  layer: string;
+  error_kind: string;
+}
+
+export interface NetworkEgressDecisionEvent {
+  decision: string;
+  protocol: string;
+}
+
+export interface NetworkProxyStartedEvent {
+  http_port: number;
+  socks_port: number;
+}
+
+export interface NetworkEgressUnenforcedEvent {
+  backend: string;
+  network_mode: string;
+}
+
 export const telemetryEventDefinitions = {
   wire_plan_revision_migrated: defineAgentTelemetryEvent<WirePlanRevisionMigratedEvent>({
     owner: 'kimi-code',
@@ -1391,6 +1434,73 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'Reading the workspace trust record fails and the workspace silently falls back to untrusted.',
     properties: { error_type: 'Classified error category' },
+  }),
+  sandbox_spawn: defineTelemetryEvent<SandboxSpawnEvent>({
+    owner: 'kimi-code',
+    comment: 'An agent-initiated command is spawned through the OS sandbox decorator.',
+    properties: {
+      backend: 'Sandbox backend in use (seatbelt, bwrap, none for danger-full-access)',
+      mode: 'Resolved sandbox mode (read-only, workspace-write, danger-full-access)',
+      network_mode: 'Resolved network policy mode (off, allowlist, all)',
+    },
+  }),
+  sandbox_denial: defineTelemetryEvent<SandboxDenialEvent>({
+    owner: 'kimi-code',
+    comment: 'A sandboxed command exits with a sandbox-denial fingerprint.',
+    properties: {
+      backend: 'Sandbox backend that reported the denial',
+      mode: 'Sandbox mode the command ran under',
+      auto_retried: 'Whether the command was retried unsandboxed per allow_unsandboxed_commands',
+    },
+  }),
+  exec_policy_decision: defineAgentTelemetryEvent<ExecPolicyDecisionEvent>({
+    owner: 'kimi-code',
+    comment: 'A Bash command is evaluated by the exec-policy rules engine.',
+    properties: {
+      verdict: 'Winning verdict across segments (allow, prompt, forbidden, unanalyzable, none)',
+      rule_source: 'Layer of the controlling rule (managed, user, project, session-runtime, builtin, none)',
+      segment_count: 'Number of command segments the command was split into',
+    },
+  }),
+  exec_policy_rules_error: defineAgentTelemetryEvent<ExecPolicyRulesErrorEvent>({
+    owner: 'kimi-code',
+    comment: 'A .rules file failed to load and was skipped.',
+    properties: {
+      layer: 'Rule layer whose file failed (managed, user, project)',
+      error_kind: 'Failure class (syntax:line:col, io)',
+    },
+  }),
+  network_egress_decision: defineTelemetryEvent<NetworkEgressDecisionEvent>({
+    owner: 'kimi-code',
+    comment: 'A sandboxed process attempted a proxied network connection.',
+    properties: {
+      decision: 'Egress verdict applied to the connection (allow, deny)',
+      protocol: 'Proxy protocol the connection arrived on (http, connect, socks5)',
+    },
+  }),
+  network_proxy_started: defineTelemetryEvent<NetworkProxyStartedEvent>({
+    owner: 'kimi-code',
+    comment: 'The loopback network egress proxy started listening.',
+    properties: {
+      http_port: 'Loopback port the HTTP CONNECT listener bound',
+      socks_port: 'Loopback port the SOCKS5 listener bound',
+    },
+  }),
+  network_egress_unenforced: defineTelemetryEvent<NetworkEgressUnenforcedEvent>({
+    owner: 'kimi-code',
+    comment: 'A spawn ran with an allowlist proxy env overlay but no kernel-level egress restriction (advisory only).',
+    properties: {
+      backend: 'Sandbox backend that cannot isolate the proxy loopback',
+      network_mode: 'Configured network policy mode',
+    },
+  }),
+  sandbox_unsupported_passthrough: defineTelemetryEvent<SandboxUnsupportedPassthroughEvent>({
+    owner: 'kimi-code',
+    comment: 'A sandbox-marked spawn runs unsandboxed because no backend exists for the platform.',
+    properties: {
+      platform: 'OS platform the spawn ran on',
+      reason: 'Why no sandbox backend was available',
+    },
   }),
 } as const;
 

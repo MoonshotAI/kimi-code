@@ -1,16 +1,22 @@
 import { IAgentTaskService } from '#/agent/task/task';
 import { resolveAgentTaskConfig } from '#/agent/task/configSection';
 import { IConfigService } from '#/app/config/config';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
+import { INetworkEgressPolicy } from '#/agent/networkEgress/networkEgress';
+import { resolveSandboxConfig } from '#/os/sandbox/configSection';
+import { ISandboxService } from '#/os/sandbox/sandboxService';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
+import type { ContentPart } from '#human/llm/message';
 import {
   DEFAULT_TOOL_RESULT_MAX_CHARS,
+  type ExecutableToolOutput,
   type ExecutableToolResult,
   type ToolExecution,
   type ToolUpdate,
@@ -44,6 +50,14 @@ const SHELL_TIMEOUT_VARS = {
   MAX_TIMEOUT_S,
   MAX_BACKGROUND_TIMEOUT_S,
 };
+
+function outputText(output: ExecutableToolOutput): string {
+  if (typeof output === 'string') return output;
+  return output
+    .filter((part): part is Extract<ContentPart, { type: 'text' }> => part.type === 'text')
+    .map((part) => part.text)
+    .join('');
+}
 
 function timeoutCapS(isBackground: boolean): number {
   return isBackground ? MAX_BACKGROUND_TIMEOUT_S : MAX_TIMEOUT_S;
@@ -105,6 +119,9 @@ export class BashTool implements IBashTool {
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IConfigService private readonly config: IConfigService,
+    @ISandboxService private readonly sandbox: ISandboxService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
+    @INetworkEgressPolicy private readonly networkEgress: INetworkEgressPolicy,
   ) {}
 
   private allowBackground(): boolean {
@@ -154,11 +171,12 @@ export class BashTool implements IBashTool {
     };
   }
 
-  private spawn(
+  private async spawn(
     processService: IHostProcessService,
     env: HostEnvironmentInfo,
     effectiveCwd: string,
     command: string,
+    sandboxDisabled: boolean,
   ): Promise<IHostProcess> {
     const shellCwd = getShellPathBridge(env).toShellPath(effectiveCwd);
     const shellCommand = `cd ${shellQuote(shellCwd)} && ${command}`;
@@ -168,8 +186,20 @@ export class BashTool implements IBashTool {
       GIT_TERMINAL_PROMPT: process.env['GIT_TERMINAL_PROMPT'] ?? '0',
       SHELL: env.shellPath,
     };
+    const proxy = sandboxDisabled
+      ? undefined
+      : await this.networkEgress.acquireProxyEnvironment();
 
-    return processService.spawn(env.shellPath, ['-c', shellCommand], { env: noninteractiveEnv });
+    return processService.spawn(env.shellPath, ['-c', shellCommand], {
+      env: noninteractiveEnv,
+      sandbox: {
+        cwd: effectiveCwd,
+        workspaceRoots: [this.workspaceCtx.workDir, ...this.workspaceCtx.additionalDirs],
+        command,
+        disabled: sandboxDisabled,
+        proxy,
+      },
+    });
   }
 
   private async execution(
@@ -178,6 +208,7 @@ export class BashTool implements IBashTool {
     toolCallId: string,
     onUpdate?: (update: ToolUpdate) => void,
     onForegroundTaskStart?: (taskId: string) => void,
+    sandboxDisabled = false,
   ): Promise<ExecutableToolResult> {
     const validationError = this.validateRunRequest(args, signal);
     if (validationError !== undefined) return validationError;
@@ -197,9 +228,12 @@ export class BashTool implements IBashTool {
       : foregroundTimeoutMs;
 
     const builder = new ToolOutputAccumulator();
+    let outputTail = '';
     let proc: IHostProcess;
     try {
-      proc = lease.track(await this.spawn(lease.runtime.process!, env, effectiveCwd, command));
+      proc = lease.track(
+        await this.spawn(lease.runtime.process!, env, effectiveCwd, command, sandboxDisabled),
+      );
     } catch (error) {
       lease.dispose();
       return {
@@ -215,6 +249,7 @@ export class BashTool implements IBashTool {
     const onProcessOutput = startsInBackground
       ? undefined
       : (kind: 'stdout' | 'stderr', text: string): void => {
+          outputTail = (outputTail + text).slice(-8192);
           if (!collectForegroundOutput) return;
           onUpdate?.({ kind, text });
           builder.write(text);
@@ -284,10 +319,94 @@ export class BashTool implements IBashTool {
         );
       }
 
-      return await this.foregroundCompletionResult(taskId, proc, builder, foregroundTimeoutMs);
+      const result = await this.foregroundCompletionResult(
+        taskId,
+        proc,
+        builder,
+        foregroundTimeoutMs,
+      );
+      return await this.maybeHandleSandboxDenial(
+        result,
+        proc,
+        outputTail,
+        args,
+        signal,
+        toolCallId,
+        onUpdate,
+        onForegroundTaskStart,
+        sandboxDisabled,
+      );
     } finally {
       collectForegroundOutput = false;
     }
+  }
+
+  private async maybeHandleSandboxDenial(
+    result: ExecutableToolResult,
+    proc: IHostProcess,
+    outputTail: string,
+    args: BashInput,
+    signal: AbortSignal,
+    toolCallId: string,
+    onUpdate: ((update: ToolUpdate) => void) | undefined,
+    onForegroundTaskStart: ((taskId: string) => void) | undefined,
+    sandboxDisabled: boolean,
+  ): Promise<ExecutableToolResult> {
+    const sandboxed = proc.sandboxed;
+    const exitCode = proc.exitCode;
+    if (
+      result.isError !== true ||
+      sandboxed === undefined ||
+      exitCode === null ||
+      exitCode === 0 ||
+      !this.sandbox.isLikelyDenial(exitCode, outputTail)
+    ) {
+      return result;
+    }
+
+    if (
+      !sandboxDisabled &&
+      resolveSandboxConfig(this.config)?.allowUnsandboxedCommands === true
+    ) {
+      this.telemetry.track2('sandbox_denial', {
+        backend: sandboxed.backend as string,
+        mode: sandboxed.mode,
+        auto_retried: true,
+      });
+      const retried = await this.execution(
+        args,
+        signal,
+        toolCallId,
+        onUpdate,
+        onForegroundTaskStart,
+        true,
+      );
+      return {
+        ...retried,
+        output:
+          `[sandbox] Command was denied by the OS sandbox ` +
+          `(${sandboxed.backend}, ${sandboxed.mode}); retried unsandboxed per ` +
+          `sandbox.allow_unsandboxed_commands.\n${outputText(retried.output)}`,
+      };
+    }
+
+    this.telemetry.track2('sandbox_denial', {
+      backend: sandboxed.backend as string,
+      mode: sandboxed.mode,
+      auto_retried: false,
+    });
+    return {
+      ...result,
+      isError: true,
+      output:
+        `${outputText(result.output)}\n` +
+        `[sandbox] Command was denied by the OS sandbox (${sandboxed.backend}, ` +
+        `${sandboxed.mode} mode) — the filesystem or network policy blocked it. ` +
+        `Do not retry the same command. Report the denial to the user; they can ` +
+        `allow unsandboxed retries via sandbox.allow_unsandboxed_commands or ` +
+        `adjust sandbox.writable_roots / sandbox.deny_read in config.`,
+      note: 'Denied by OS sandbox',
+    };
   }
 
   private validateRunRequest(

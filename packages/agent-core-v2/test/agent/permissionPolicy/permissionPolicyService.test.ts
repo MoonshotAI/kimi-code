@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
@@ -7,7 +7,10 @@ import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
+import { stubLog } from '../../_base/log/stubs';
+import { stubFlag } from '../../app/flag/stubs';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
+import { ILogService } from '#/_base/log/log';
 import {
   literalRulePattern,
   matchesGlobRuleSubject,
@@ -31,12 +34,20 @@ import { PERMISSION_SECTION } from '#/agent/permissionRules/configSection';
 import { IBashParserService } from '#/app/bashParser/bashParser';
 import { BashParserService } from '#/app/bashParser/bashParserService';
 import { IBootstrapService, type HostArgs } from '#/app/bootstrap/bootstrap';
+import { IFlagService } from '#/app/flag/flag';
 import { IGitService } from '#/app/git/git';
 import { findGitWorkTree } from '#/app/git/workTree';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { ToolAccesses, type ToolAccesses as ToolAccessList } from '#/tool/toolContract';
+import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { ISandboxService } from '#/os/sandbox/sandboxService';
+import { ISandboxProfileResolver } from '#/os/sandbox/sandboxProfileResolver';
+import { IAgentExecPolicyService } from '#/agent/execPolicy/execPolicy';
+import { AgentExecPolicyService } from '#/agent/execPolicy/execPolicyService';
+import { EXEC_POLICY_FLAG_ID } from '#/agent/execPolicy/flag';
 
 import { stubPermissionModeService } from '../permissionMode/stubs';
 import { recordingTelemetry } from '../../app/telemetry/stubs';
@@ -54,6 +65,8 @@ describe('AgentPermissionPolicyService chain', () => {
   let workspace: ReturnType<typeof workspaceStub>;
   let hostArgs: HostArgs;
   let dangerousCommandGuardEnabled: boolean;
+  let enabledFlags: Set<string>;
+  let testHomeDir: string;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -63,6 +76,8 @@ describe('AgentPermissionPolicyService chain', () => {
     workspace = workspaceStub('/workspace');
     hostArgs = { requestHeaders: {}, nonInteractive: false };
     dangerousCommandGuardEnabled = true;
+    enabledFlags = new Set();
+    testHomeDir = join(tmpdir(), 'kimi-test-home-nonexistent');
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
@@ -70,7 +85,26 @@ describe('AgentPermissionPolicyService chain', () => {
           get args() {
             return hostArgs;
           },
+          get homeDir() {
+            return testHomeDir;
+          },
         });
+        reg.defineInstance(IFlagService, stubFlag((id) => enabledFlags.has(id)));
+        reg.defineInstance(ILogService, stubLog());
+        reg.defineInstance(IHostFileSystem, hostFs);
+        reg.defineInstance(
+          ISessionContext,
+          makeSessionContext({
+            sessionId: 'test',
+            workspaceId: 'test',
+            sessionDir: join(tmpdir(), 'kimi-test-session-nonexistent'),
+            sessionScope: 'test',
+            cwd: '/workspace',
+          }),
+        );
+        reg.definePartialInstance(ISandboxService, { supported: false });
+        reg.definePartialInstance(ISandboxProfileResolver, {});
+        reg.define(IAgentExecPolicyService, AgentExecPolicyService);
         reg.definePartialInstance(IConfigService, {
           get: ((section: string) =>
             section === PERMISSION_SECTION && !dangerousCommandGuardEnabled
@@ -482,15 +516,32 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
         reg.definePartialInstance(IBootstrapService, {
           args: { requestHeaders: {}, nonInteractive: false },
+          homeDir: join(tmpdir(), 'kimi-test-home-nonexistent'),
         });
-        reg.definePartialInstance(IConfigService, {
-          get: (() => undefined) as IConfigService['get'],
-          onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
-        });
+        reg.defineInstance(IFlagService, stubFlag(false));
+        reg.defineInstance(ILogService, stubLog());
+        reg.defineInstance(IHostFileSystem, hostFs);
+        reg.defineInstance(
+          ISessionContext,
+          makeSessionContext({
+            sessionId: 'test',
+            workspaceId: 'test',
+            sessionDir: join(tmpdir(), 'kimi-test-session-nonexistent'),
+            sessionScope: 'test',
+            cwd: workspaceDir,
+          }),
+        );
+        reg.definePartialInstance(ISandboxService, { supported: false });
+        reg.definePartialInstance(ISandboxProfileResolver, {});
+        reg.define(IAgentExecPolicyService, AgentExecPolicyService);
         reg.defineInstance(
           IAgentScopeContext,
           makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
         );
+        reg.definePartialInstance(IConfigService, {
+          get: (() => undefined) as IConfigService['get'],
+          onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
+        });
         reg.definePartialInstance(IAgentPermissionRulesService, permissionRulesStub());
         reg.defineInstance(ISessionWorkspaceContext, workspace.stub);
         reg.defineInstance(IHostEnvironment, kaosStub());
@@ -649,6 +700,332 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
         { kind: 'file', operation: 'write', path: join(workspaceDir, 'src/a.ts') },
         { kind: 'file', operation: 'write', path: join(tmpdir(), 'outside.ts') },
       ],
+    })).resolves.toMatchObject({
+      policyName: 'fallback-ask',
+      result: { kind: 'ask' },
+    });
+  });
+});
+
+describe('AgentPermissionPolicyService exec-policy integration', () => {
+  let disposables: DisposableStore;
+  let ix: TestInstantiationService;
+  let mode: PermissionMode;
+  let rules: PermissionRule[];
+  let hostArgs: HostArgs;
+  let enabledFlags: Set<string>;
+  let workspaceDir: string;
+  let homeDir: string;
+  let cleanupDirs: string[];
+
+  beforeEach(async () => {
+    disposables = new DisposableStore();
+    mode = 'manual';
+    rules = [];
+    hostArgs = { requestHeaders: {}, nonInteractive: false };
+    enabledFlags = new Set([EXEC_POLICY_FLAG_ID]);
+    workspaceDir = await mkdtemp(join(tmpdir(), 'kimi-exec-policy-ws-'));
+    homeDir = await mkdtemp(join(tmpdir(), 'kimi-exec-policy-home-'));
+    cleanupDirs = [workspaceDir, homeDir];
+    ix = createServices(disposables, {
+      additionalServices: (reg) => {
+        reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
+        reg.definePartialInstance(IBootstrapService, {
+          get args() {
+            return hostArgs;
+          },
+          get homeDir() {
+            return homeDir;
+          },
+        });
+        reg.defineInstance(IFlagService, stubFlag((id) => enabledFlags.has(id)));
+        reg.defineInstance(ILogService, stubLog());
+        reg.defineInstance(IHostFileSystem, hostFs);
+        reg.defineInstance(
+          ISessionContext,
+          makeSessionContext({
+            sessionId: 'test',
+            workspaceId: 'test',
+            sessionDir: join(tmpdir(), 'kimi-test-session-nonexistent'),
+            sessionScope: 'test',
+            cwd: workspaceDir,
+          }),
+        );
+        reg.definePartialInstance(ISandboxService, { supported: false });
+        reg.definePartialInstance(ISandboxProfileResolver, {});
+        reg.define(IAgentExecPolicyService, AgentExecPolicyService);
+        reg.defineInstance(
+          IAgentScopeContext,
+          makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
+        );
+        reg.definePartialInstance(IConfigService, {
+          get: (() => undefined) as IConfigService['get'],
+          onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
+        });
+        reg.definePartialInstance(IAgentPermissionRulesService, permissionRulesStub({
+          rules: () => rules,
+        }));
+        reg.defineInstance(ISessionWorkspaceContext, workspaceStub(workspaceDir).stub);
+        reg.defineInstance(IHostEnvironment, kaosStub());
+        reg.defineInstance(IAgentRuntimeService, {
+          _serviceBrand: undefined,
+          onDidChange: () => ({ dispose: () => {} }),
+          isAvailable: () => true,
+          inspect() { return (this as IAgentRuntimeService).acquire().runtime; },
+          acquire: () => ({
+            track: (resource) => resource,
+            runtime: {
+              identity: { workspaceId: 'test', runtimeId: 'local', generation: 'test' },
+              capabilities: new Set(),
+              status: 'ready',
+              onDidChangeStatus: () => ({ dispose: () => {} }),
+              dispose: () => {},
+              environment: { pathClass: 'posix' } as never,
+              path: {
+                separator: '/',
+                delimiter: ':',
+                isAbsolute: () => true,
+                join: (...paths: readonly string[]) => join(...paths),
+                relative: (from: string, to: string) => to.replace(`${from}/`, ''),
+                resolve: (...paths: readonly string[]) => join(...paths),
+                basename: (path: string) => basename(path),
+                dirname: (path: string) => dirname(path),
+              },
+              workspace: { mapRoots: (roots) => roots },
+            },
+            dispose: () => {},
+          }),
+        });
+        reg.defineInstance(ITelemetryService, recordingTelemetry([]));
+        reg.definePartialInstance(IGitService, { findWorkTree: async () => null });
+        reg.define(IBashParserService, BashParserService);
+        reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
+      },
+      strict: true,
+    });
+  });
+
+  afterEach(async () => {
+    disposables.dispose();
+    await Promise.all(cleanupDirs.map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  async function evaluate(
+    input: PolicyContextInput,
+  ): Promise<PermissionPolicyEvaluation | undefined> {
+    const svc = ix.get(IAgentPermissionPolicyService);
+    return svc.evaluate(policyContext(input));
+  }
+
+  async function writeProjectRules(name: string, text: string): Promise<void> {
+    const dir = join(workspaceDir, '.kimi-code', 'rules.d');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, name), text);
+  }
+
+  async function writeUserRules(name: string, text: string): Promise<void> {
+    const dir = join(homeDir, 'rules.d');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, name), text);
+  }
+
+  it('approves builtin allow rules (git status)', async () => {
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'git status', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'exec-policy',
+      result: { kind: 'approve', reason: { exec_policy: 'allow', rule_source: 'builtin' } },
+    });
+  });
+
+  it.each(['manual', 'yolo', 'auto'] as const)(
+    'denies builtin forbidden rules in %s mode',
+    async (currentMode) => {
+      mode = currentMode;
+      await expect(evaluate({
+        toolName: 'Bash',
+        args: { command: 'rm -rf /', timeout: 60 },
+      })).resolves.toMatchObject({
+        policyName: 'exec-policy',
+        result: { kind: 'deny', reason: { exec_policy: 'forbidden' } },
+      });
+    },
+  );
+
+  it('asks on builtin prompt rules in manual mode', async () => {
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'curl https://example.com', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'exec-policy',
+      result: { kind: 'ask', reason: { exec_policy: 'prompt' } },
+    });
+  });
+
+  it.each(['yolo', 'auto'] as const)(
+    'auto-approves builtin prompt rules in %s mode',
+    async (currentMode) => {
+      mode = currentMode;
+      await expect(evaluate({
+        toolName: 'Bash',
+        args: { command: 'curl https://example.com', timeout: 60 },
+      })).resolves.toMatchObject({
+        policyName: 'exec-policy',
+        result: { kind: 'approve' },
+      });
+    },
+  );
+
+  it('fails closed on prompt rules in non-interactive mode', async () => {
+    mode = 'auto';
+    hostArgs = { ...hostArgs, nonInteractive: true };
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'curl https://example.com', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'exec-policy',
+      result: { kind: 'deny', reason: { exec_policy: 'prompt', prompt_suppressed: true } },
+    });
+  });
+
+  it('still allows allow-listed commands in non-interactive mode', async () => {
+    mode = 'auto';
+    hostArgs = { ...hostArgs, nonInteractive: true };
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'git status', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'exec-policy',
+      result: { kind: 'approve' },
+    });
+  });
+
+  it('honors --yolo as the explicit override in non-interactive mode', async () => {
+    mode = 'yolo';
+    hostArgs = { ...hostArgs, nonInteractive: true };
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'curl https://example.com', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'exec-policy',
+      result: { kind: 'approve' },
+    });
+  });
+
+  it('fails closed on unanalyzable commands in non-interactive mode', async () => {
+    mode = 'auto';
+    hostArgs = { ...hostArgs, nonInteractive: true };
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'echo $HOME', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'exec-policy',
+      result: { kind: 'deny', reason: { exec_policy: 'unanalyzable' } },
+    });
+  });
+
+  it('evaluates project rules from .kimi-code/rules.d', async () => {
+    await writeProjectRules(
+      '10-build.rules',
+      'prefix_rule(pattern = ["make", "test"], decision = "allow", justification = "test suite")',
+    );
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'make test', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'exec-policy',
+      result: {
+        kind: 'approve',
+        reason: {
+          exec_policy: 'allow',
+          rule_source: 'project',
+          justification: 'test suite',
+        },
+      },
+    });
+  });
+
+  it('lets a forbidden rule from a higher-precedence layer dominate a project allow', async () => {
+    await writeUserRules(
+      '10-deny.rules',
+      'prefix_rule(pattern = ["deploy"], decision = "forbidden", justification = "no deploys")',
+    );
+    await writeProjectRules(
+      '10-allow.rules',
+      'prefix_rule(pattern = ["deploy"], decision = "allow")',
+    );
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'deploy production', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'exec-policy',
+      result: {
+        kind: 'deny',
+        reason: { exec_policy: 'forbidden', rule_source: 'user' },
+      },
+    });
+  });
+
+  it('evaluates every segment of a compound command', async () => {
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'git status && curl https://example.com', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'exec-policy',
+      result: { kind: 'ask', reason: { exec_policy: 'prompt' } },
+    });
+  });
+
+  it('supports session-runtime rules added programmatically', async () => {
+    ix.get(IAgentExecPolicyService).addSessionRule({
+      kind: 'prefix_rule',
+      pattern: ['deploy'],
+      decision: 'prompt',
+      justification: 'deploy gate',
+    });
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'deploy production', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'exec-policy',
+      result: {
+        kind: 'ask',
+        reason: { exec_policy: 'prompt', rule_source: 'session-runtime' },
+      },
+    });
+  });
+
+  it('skips malformed rule files and continues', async () => {
+    await writeProjectRules('10-bad.rules', 'this is not a rule');
+    await writeProjectRules(
+      '20-good.rules',
+      'prefix_rule(pattern = ["make"], decision = "allow")',
+    );
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'make test', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'exec-policy',
+      result: { kind: 'approve' },
+    });
+  });
+
+  it('defers to the rest of the stack when no rule matches', async () => {
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'some-unknown-tool arg', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'fallback-ask',
+      result: { kind: 'ask' },
+    });
+  });
+
+  it('is inert when the flag is off', async () => {
+    enabledFlags.clear();
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'git status', timeout: 60 },
     })).resolves.toMatchObject({
       policyName: 'fallback-ask',
       result: { kind: 'ask' },

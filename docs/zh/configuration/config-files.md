@@ -485,11 +485,14 @@ max_chars = 500000
 <!--
 ## `experimental`
 
-`experimental` 存放实验功能 flag 的持久化覆盖。目前 `micro_compaction` 是唯一用户可见的字段，默认值为 `false`；如需自动清理较旧的大型工具结果，把它设为 `true`。
+`experimental` 存放实验功能 flag 的持久化覆盖。键名即 flag id；每个 flag 也可以用对应的 `KIMI_CODE_EXPERIMENTAL_*` 环境变量按进程开启（见 [环境变量](./env-vars.md)），`KIMI_CODE_EXPERIMENTAL_FLAG=1` 会一次启用全部实验功能。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `micro_compaction` | `boolean` | `false` | 清理较旧的大型工具结果内容，同时保留最近对话 |
+| `sandbox` | `boolean` | `false` | 让 Agent 发起的 shell 命令在操作系统级沙箱中运行，见 [`sandbox`](#sandbox) |
+| `exec-policy` | `boolean` | `false` | 按分层 `.rules` 文件评估 shell 命令，见 [Exec policy 规则](#exec-policy-规则) |
+| `network-egress` | `boolean` | `false` | 将沙箱内命令经本机回环出口代理转发，见 [`sandbox.network`](#sandboxnetwork) |
 -->
 
 ## `services`
@@ -551,6 +554,76 @@ pattern = "Bash"
 ::: tip
 MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-code/mcp.json` 中，不在 `config.toml` 里。交互式配置入口是 `/mcp-config`，详见 [Model Context Protocol](../customization/mcp.md)。
 :::
+
+## `sandbox`
+
+`sandbox` 把 Agent 发起的 `Bash` 命令放进操作系统级沙箱中运行（受限子进程无法访问授权范围之外的文件或网络）。这是实验功能：先用 `KIMI_CODE_EXPERIMENTAL_SANDBOX=1` 或 `[experimental]` 下的 `sandbox = true` 开启，再把 `mode` 设为 `off` 以外的值。沙箱在 macOS（Seatbelt）和 Linux（bubblewrap）上可用；其他平台会忽略该配置。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `mode` | `string` | `off` | 沙箱模式：`off`（不启用）、`read-only`（命令可读工作区但不可写）、`workspace-write`（命令可读写工作区）、`danger-full-access`（不限制文件系统） |
+| `writable_roots` | `string[]` | 工作区 | 工作区之外额外允许写入的目录 |
+| `readable_roots` | `string[]` | 工作区 | 额外允许读取的目录 |
+| `deny_read` | `string[]` | `~/.ssh`、凭据 | 即使在可读根目录内也始终不可读的路径 |
+| `deny_write` | `string[]` | — | 即使在可写根目录内也始终不可写的路径 |
+| `excluded_commands` | `string[]` | — | 始终在沙箱外运行的命令 glob 模式（谨慎使用） |
+| `auto_approve_sandboxed` | `boolean` | `false` | 自动批准将在沙箱中运行的命令 |
+| `allow_unsandboxed_commands` | `boolean` | `true` | 当前平台没有可用沙箱后端时，按普通方式运行命令而不是直接失败 |
+| `enable_weaker_nested_sandbox` | `boolean` | `false` | 允许沙箱内命令再创建限制更弱的嵌套沙箱 |
+
+`mode` 也可以按进程用环境变量 `KIMI_CODE_SANDBOX_MODE` 设置，优先级高于 `config.toml`。
+
+敏感位置在可写根目录内仍受保护：`.git` 元数据只读，`deny_read` 中的路径完全无法打开。命令被沙箱拦截时，CLI 会报告沙箱拒绝而不是普通失败；交互式会话中可批准一次沙箱外重试，`kimi -p` 则直接失败关闭。
+
+### `[sandbox.network]`
+
+`[sandbox.network]` 控制沙箱内命令可访问的网络范围。它需要在沙箱 flag 之外再开启 `KIMI_CODE_EXPERIMENTAL_NETWORK_EGRESS=1`（或 `[experimental]` 下的 `network-egress = true`）。当 `mode = "allowlist"` 时，沙箱内命令会获得指向本机回环出口代理的代理环境变量，由代理执行域名列表和 `network_rule` 规则（见 [Exec policy 规则](#exec-policy-规则)）；在平台支持的前提下，直连仍会被沙箱拦截。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `mode` | `string` | `off` | 网络访问：`off`（无网络）、`allowlist`（仅所列域名，经出口代理）、`all`（不限制） |
+| `allowed_domains` | `string[]` | — | 允许经代理访问的域名；`*.example.com` 同时覆盖其子域名 |
+| `denied_domains` | `string[]` | — | 始终拒绝的域名，先于 `allowed_domains` 检查 |
+| `allow_local_binding` | `boolean` | `true` | 允许沙箱内命令监听回环端口（用于本地开发服务器） |
+| `allow_unix_sockets` | `string[]` | — | 允许连接的 Unix socket 路径（例如 Docker 或数据库 socket） |
+
+```toml
+[experimental]
+sandbox = true
+network-egress = true
+exec-policy = true
+
+[sandbox]
+mode = "workspace-write"
+
+[sandbox.network]
+mode = "allowlist"
+allowed_domains = ["registry.npmjs.org", "*.githubusercontent.com"]
+```
+
+## Exec policy 规则
+
+Exec policy 规则对复合 `Bash` 命令中的每条子命令单独裁决——与 `Bash(...)` glob 模式不同，规则匹配的是解析后的命令段，因此 `rm -rf build && echo done` 会逐段判定。这是实验功能：用 `KIMI_CODE_EXPERIMENTAL_EXEC_POLICY=1` 或 `[experimental]` 下的 `exec-policy = true` 开启。
+
+规则写在分层目录下的 `.rules` 文件中；任意一层命中的 `forbidden` 总是胜出，其次是 `prompt`，最后是 `allow`：
+
+| 层级 | 目录 | 优先级 |
+| --- | --- | --- |
+| Managed | `/etc/kimi-code/rules.d/`（仅 POSIX） | 最高 |
+| User | `~/.kimi-code/rules.d/`（随 `KIMI_CODE_HOME` 迁移） | — |
+| Project | 工作区根目录下的 `.kimi-code/rules.d/` | 最低 |
+
+每个文件由若干条规则调用组成，支持两种形式：
+
+```
+prefix_rule(pattern = ["git", "status"], decision = "allow", justification = "read-only git")
+network_rule(host = "registry.npmjs.org", protocol = "https", decision = "allow")
+```
+
+- `prefix_rule` 在命令 argv 以 `pattern` 中的每个 token 开头时命中；`decision` 取 `allow`、`prompt` 或 `forbidden`。
+- `network_rule` 匹配经沙箱出口代理发出的外部连接；`host` 支持精确域名或 `*.domain` 通配，`protocol` 可省略。
+
+`forbidden` 直接拒绝命令；`prompt` 在交互式会话中询问审批，在 `kimi -p` 下失败关闭；`allow` 不再询问直接放行。无法被安全解析的命令会被保守处理，而不是静默放行。
 
 ## `tui.toml`
 

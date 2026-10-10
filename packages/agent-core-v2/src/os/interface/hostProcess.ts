@@ -3,6 +3,7 @@ import type { Readable, Writable } from 'node:stream';
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 import { Error2, type Error2Options } from '#/_base/errors/errors';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { SandboxProcessInfo, SandboxSpawnRequest } from '#/os/sandbox/types';
 
 export interface HostProcessOptions {
   readonly cwd?: string;
@@ -12,6 +13,7 @@ export interface HostProcessOptions {
   readonly windowsHide?: boolean;
   readonly mergeStderr?: boolean;
   readonly timeout?: number;
+  readonly sandbox?: SandboxSpawnRequest;
 }
 
 export interface IHostProcess {
@@ -22,6 +24,7 @@ export interface IHostProcess {
   readonly stdin: Writable;
   readonly stdout: Readable;
   readonly stderr: Readable;
+  readonly sandboxed?: SandboxProcessInfo;
   wait(): Promise<number>;
   kill(signal?: NodeJS.Signals): Promise<void>;
   dispose(): void | Promise<void>;

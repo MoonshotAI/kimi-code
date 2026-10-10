@@ -12,17 +12,21 @@ import type {
   PermissionPolicyResult,
 } from '#/agent/permissionPolicy/types';
 
+import {
+  LAUNCH_WRAPPERS,
+  MAX_NESTED_SHELL_DEPTH,
+  NESTED_SHELLS,
+  PRIVILEGE_VALUE_OPTIONS,
+  PRIVILEGE_WRAPPERS,
+  SKIPPED_COMMAND_CHILDREN,
+  collectCommands,
+  dropLaunchWrapperOperands,
+  dropLeadingOptions,
+  literalText,
+  normalizeCommandName,
+} from '#/agent/execPolicy/segmentExtractor';
+
 const PARSE_OPTIONS = { timeoutMs: 500, maxNodes: 10_000 } as const;
-
-const MAX_NESTED_SHELL_DEPTH = 4;
-
-const UNSAFE_OPERAND = /[$`*?[\]~]/;
-
-const SKIPPED_COMMAND_CHILDREN: ReadonlySet<string> = new Set([
-  'variable_assignment',
-  'file_redirect',
-  'heredoc_redirect',
-]);
 
 const SIMPLE_DANGEROUS_COMMANDS: ReadonlySet<string> = new Set([
   'shutdown',
@@ -36,52 +40,6 @@ const SIMPLE_DANGEROUS_COMMANDS: ReadonlySet<string> = new Set([
   'stop-computer',
   'mkfs',
   'wipefs',
-]);
-
-const PRIVILEGE_WRAPPERS: ReadonlySet<string> = new Set(['sudo', 'doas']);
-
-const PRIVILEGE_VALUE_OPTIONS: ReadonlySet<string> = new Set([
-  '-u',
-  '--user',
-  '-g',
-  '--group',
-  '-h',
-  '--host',
-  '-p',
-  '--prompt',
-  '-C',
-  '--close-from',
-  '-T',
-  '--command-timeout',
-  '-U',
-  '--other-user',
-  '-r',
-  '--role',
-  '-t',
-  '--type',
-]);
-
-const NESTED_SHELLS: ReadonlySet<string> = new Set(['sh', 'bash', 'dash', 'zsh', 'ksh', 'ash']);
-
-const LAUNCH_WRAPPERS: ReadonlySet<string> = new Set([
-  'env',
-  'command',
-  'exec',
-  'nohup',
-  'builtin',
-  'nice',
-]);
-
-const WRAPPER_VALUE_OPTIONS: ReadonlySet<string> = new Set([
-  '-u',
-  '--unset',
-  '-C',
-  '--chdir',
-  '-S',
-  '--split-string',
-  '-a',
-  '-n',
-  '--adjustment',
 ]);
 
 const SYSTEMCTL_DANGEROUS_SUBCOMMANDS: ReadonlySet<string> = new Set([
@@ -166,11 +124,6 @@ function analyzeSource(
     if (verdict !== undefined) return verdict;
   }
   return undefined;
-}
-
-function collectCommands(node: BashSyntaxNode, out: BashSyntaxNode[]): void {
-  if (node.type === 'command') out.push(node);
-  for (const child of node.children) collectCommands(child, out);
 }
 
 function analyzeCommand(
@@ -314,64 +267,4 @@ function analyzeInvocation(
     return dropped ? { kind: 'unanalyzable' } : undefined;
   }
   return undefined;
-}
-
-function normalizeCommandName(raw: string): string {
-  let name = raw;
-  const separator = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
-  if (separator >= 0) name = name.slice(separator + 1);
-  name = name.toLowerCase();
-  if (name.endsWith('.exe')) name = name.slice(0, -'.exe'.length);
-  return name;
-}
-
-function dropLeadingOptions(args: readonly string[], valueOptions: ReadonlySet<string>): string[] {
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i]!;
-    if (arg === '--') return args.slice(i + 1);
-    if (arg === '-' || !arg.startsWith('-')) return args.slice(i);
-    if (!arg.includes('=') && valueOptions.has(arg)) i += 1;
-  }
-  return [];
-}
-
-function dropLaunchWrapperOperands(name: string, args: readonly string[]): string[] {
-  let rest = dropLeadingOptions(args, WRAPPER_VALUE_OPTIONS);
-  if (name === 'env') {
-    let i = rest[0] === '-' ? 1 : 0;
-    while (i < rest.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(rest[i]!)) i += 1;
-    rest = rest.slice(i);
-  }
-  return rest;
-}
-
-function literalText(node: BashSyntaxNode): string | undefined {
-  switch (node.type) {
-    case 'word': {
-      const raw = node.text;
-      if (UNSAFE_OPERAND.test(raw)) return undefined;
-      const unescaped = raw.replaceAll(/\\(.)/gs, '$1');
-      return UNSAFE_OPERAND.test(unescaped) ? undefined : unescaped;
-    }
-    case 'number':
-      return node.text;
-    case 'raw_string': {
-      if (node.text.length < 2) return undefined;
-      const value = node.text.slice(1, -1);
-      return UNSAFE_OPERAND.test(value) ? undefined : value;
-    }
-    case 'string': {
-      let value = '';
-      for (const child of node.children) {
-        if (child.type === 'string_content') {
-          value += child.text;
-        } else if (child.isNamed) {
-          return undefined;
-        }
-      }
-      return UNSAFE_OPERAND.test(value) ? undefined : value;
-    }
-    default:
-      return undefined;
-  }
 }
