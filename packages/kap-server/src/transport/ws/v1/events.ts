@@ -119,11 +119,23 @@ export interface ModelCatalogRefreshFailure {
   readonly reason: string;
 }
 
+export interface ModelMigrationCandidate {
+  readonly provider_id: string;
+  readonly from_alias: string;
+  readonly from_model: string;
+  readonly to_alias: string;
+  readonly to_model: string;
+  readonly migration_markdown: string;
+  readonly retirement_at?: string;
+  readonly target_default_effort?: string;
+}
+
 export interface ModelCatalogChangedEvent {
   readonly type: 'event.model_catalog.changed';
   readonly changed: readonly ModelCatalogRefreshChange[];
   readonly unchanged: readonly string[];
   readonly failed: readonly ModelCatalogRefreshFailure[];
+  readonly migrations?: readonly ModelMigrationCandidate[];
 }
 
 export interface PluginChangedEvent {

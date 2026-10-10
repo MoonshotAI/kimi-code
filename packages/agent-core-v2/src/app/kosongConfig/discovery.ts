@@ -18,10 +18,23 @@ export const providerRefreshFailureSchema = z.object({
 });
 export type ProviderRefreshFailure = z.infer<typeof providerRefreshFailureSchema>;
 
+export const modelMigrationCandidateSchema = z.object({
+  provider_id: z.string().min(1),
+  from_alias: z.string().min(1),
+  from_model: z.string().min(1),
+  to_alias: z.string().min(1),
+  to_model: z.string().min(1),
+  migration_markdown: z.string(),
+  retirement_at: z.string().optional(),
+  target_default_effort: z.string().optional(),
+});
+export type ModelMigrationCandidate = z.infer<typeof modelMigrationCandidateSchema>;
+
 export const refreshProviderModelsResponseSchema = z.object({
   changed: z.array(providerRefreshChangeSchema),
   unchanged: z.array(z.string().min(1)),
   failed: z.array(providerRefreshFailureSchema),
+  migrations: z.array(modelMigrationCandidateSchema).optional(),
 });
 export type RefreshProviderModelsResponse = z.infer<
   typeof refreshProviderModelsResponseSchema
@@ -43,6 +56,7 @@ export interface ModelCatalogChangedEvent {
   readonly changed: readonly ProviderRefreshChange[];
   readonly unchanged: readonly string[];
   readonly failed: readonly ProviderRefreshFailure[];
+  readonly migrations?: readonly ModelMigrationCandidate[];
 }
 
 export interface RefreshProviderModelsOptions {

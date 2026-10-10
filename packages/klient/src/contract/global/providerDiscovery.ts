@@ -25,6 +25,20 @@ export const refreshProviderModelsResponseSchema = z.object({
   ),
   unchanged: z.array(z.string()),
   failed: z.array(z.object({ provider: z.string(), reason: z.string() })),
+  migrations: z
+    .array(
+      z.object({
+        provider_id: z.string(),
+        from_alias: z.string(),
+        from_model: z.string(),
+        to_alias: z.string(),
+        to_model: z.string(),
+        migration_markdown: z.string(),
+        retirement_at: z.string().optional(),
+        target_default_effort: z.string().optional(),
+      }),
+    )
+    .optional(),
 });
 
 export const providerDiscoveryContract = {

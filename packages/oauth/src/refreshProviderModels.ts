@@ -62,12 +62,24 @@ export interface ProviderChange {
   readonly removed: number;
 }
 
+export interface ModelMigrationCandidate {
+  readonly providerId: string;
+  readonly fromAlias: string;
+  readonly fromModel: string;
+  readonly toAlias: string;
+  readonly toModel: string;
+  readonly migrationMarkdown: string;
+  readonly retirementAt?: string;
+  readonly targetDefaultEffort?: string;
+}
+
 export interface RefreshResult {
   /** Providers whose model list actually changed. */
   readonly changed: readonly ProviderChange[];
   /** Providers whose model list stayed identical after refresh. */
   readonly unchanged: readonly string[];
   readonly failed: ReadonlyArray<{ readonly provider: string; readonly reason: string }>;
+  readonly migrations?: readonly ModelMigrationCandidate[];
 }
 
 export type RefreshProviderScope = 'all' | 'oauth';
@@ -413,6 +425,7 @@ export async function refreshProviderModels(
   const changed: ProviderChange[] = [];
   const unchanged: string[] = [];
   const failed: Array<{ provider: string; reason: string }> = [];
+  const migrations: ModelMigrationCandidate[] = [];
   const scope = options.scope ?? 'all';
   const targetId = options.providerId;
 
@@ -755,6 +768,28 @@ export async function refreshProviderModels(
         }
       }
 
+      for (const entry of remoteEntries) {
+        if (rejectedProviderIds.has(entry.id)) continue;
+        if (targetId !== undefined && entry.id !== targetId) continue;
+        for (const [fromKey, fromModel] of Object.entries(entry.models)) {
+          const upgrade = fromModel.upgrade;
+          if (upgrade === undefined) continue;
+          const target = Object.entries(entry.models).find(([, model]) => model.id === upgrade.model);
+          if (target === undefined || target[1].id === fromModel.id) continue;
+          const [toKey, toModel] = target;
+          migrations.push({
+            providerId: entry.id,
+            fromAlias: `${entry.id}/${fromKey}`,
+            fromModel: fromModel.id,
+            toAlias: `${entry.id}/${toKey}`,
+            toModel: toModel.id,
+            migrationMarkdown: upgrade.migration_markdown,
+            retirementAt: upgrade.retirement_at ?? undefined,
+            targetDefaultEffort: toModel.default_effort,
+          });
+        }
+      }
+
       for (const providerId of providerIdsToSync) {
         if (rejectedProviderIds.has(providerId)) continue;
         if (targetId !== undefined && providerId !== targetId) continue;
@@ -865,5 +900,10 @@ export async function refreshProviderModels(
     }
   }
 
-  return { changed, unchanged, failed };
+  return {
+    changed,
+    unchanged,
+    failed,
+    migrations: migrations.length > 0 ? migrations : undefined,
+  };
 }

@@ -477,7 +477,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | --- | --- | --- | --- |
 | `provider_id` | path | string | **必填。** 供应商 id |
 
-成功时 `data` 为刷新报告：`changed` 是 `{ provider_id, provider_name, added, removed }`（新增 / 移除的别名数）的数组，`unchanged` 是无差异的供应商 id 数组，`failed` 是 `{ provider, reason }` 的数组。
+成功时 `data` 为刷新报告：`changed` 是 `{ provider_id, provider_name, added, removed }`（新增 / 移除的别名数）的数组，`unchanged` 是无差异的供应商 id 数组，`failed` 是 `{ provider, reason }` 的数组。报告还可能包含 `migrations`，即模型升级声明，字段为 `{ provider_id, from_alias, from_model, to_alias, to_model, migration_markdown, retirement_at?, target_default_effort? }`。即使没有任何别名变化，存在 `migrations` 时服务也会广播 `event.model_catalog.changed`。
 
 - `40001`：路径中的动作后缀非法或不支持
 - `40412`：供应商不存在
