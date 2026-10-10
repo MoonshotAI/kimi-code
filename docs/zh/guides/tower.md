@@ -1,8 +1,10 @@
 # Tower 多 Agent 协作
 
-Tower 是一种实验性的多 Agent 协调模式，适合在 Git 仓库中拆解并完成较大的编码目标。开启后，main agent 会成为 Tower：它把目标拆成多个 mission，协调实现与审查，并把通过审核的改动整合到你指定的 base branch（基准分支）。
+Tower 是一种实验性的多 Agent 协调模式，通过在 Git 仓库中异步并行开发，帮助更快完成较大的编码目标。
 
-每个 build mission（实现型任务）都有独立的 branch 和 git worktree（关联到同一仓库的独立工作区）。worker 在对应 worktree 中实现一个 mission 并提交；独立 reviewer 再以只读方式审查该 branch。Tower 负责传递消息与完成报告，只合并通过检查的分支。
+worker 在后台并行推进相互独立的 mission 时，你可以随时查看进展、让 Tower 向 worker 传话、调整方向或优先级，并停止某个 Agent。main agent 会成为 Tower：它把目标拆成多个 mission，并负责协调这些 worker。
+
+独立 review 和合并检查为这种并行流程提供支撑。每个 build mission（实现型任务）都有独立的 branch 和 git worktree（关联到同一仓库的独立工作区）。worker 在对应 worktree 中实现一个 mission 并提交；独立 reviewer 再以只读方式审查该 branch。Tower 负责传递消息与完成报告，只合并通过检查的分支。
 
 因此，Tower 不只是普通 subagent，也不是 AgentSwarm 任务。它是一种由用户显式开启、在会话中持续协调的模式，带有明确的仓库状态、review 门槛和清理命令。
 
@@ -12,13 +14,13 @@ Tower 仍处于实验阶段，工作流程与安全细节可能变化。Tower �
 
 ## 适用与不适用场景
 
-Tower 用更多 token 和仓库管理成本，换取并行实现与独立审查。
+Tower 用更多 token 和仓库管理成本，让相互独立的工作异步并行推进，同时让你始终能够查看和指挥。
 
 适合使用 Tower 的场景：
 
-- 目标足够大，可以拆成相对独立、验证方式明确的 mission。
+- 目标足够大，可以拆成相对独立、验证方式明确的 mission，从而通过异步并行开发减少逐项实现所需的等待时间。
+- 希望在后台运行期间仍能随时查看进展、让 Tower 向 worker 传话、调整方向或优先级，并停止某个 Agent。
 - 希望每项改动在独立 branch 上提交，经独立 review 后整合到本地基准分支。
-- 可以让多个后台 Agent 持续运行，并在 Tower 报告决策或阻塞时介入。
 
 通常不必使用 Tower 的场景：
 
@@ -83,7 +85,7 @@ Tower 合并到本地 branch，不接受 remote-tracking ref 或 tag。如果 `/
 
 ## 理解合并与 rebase
 
-worker 会被分配到各自的 worktree 中实现 mission，而不是在主 checkout 中工作。合并 build mission 前，Tower 会检查它已经完成、没有未完成任务或 blocker、worker 空闲、依赖已合并且 branch 已跟上 base。它还要求具备有效的 clean review 和 merge 批准（通常来自独立 reviewer），同时改动必须位于 mission 范围内、主 checkout 必须位于记录的 base，并且没有冲突的未提交文件。
+worker 会被分配到各自的 worktree 中实现 mission，而不是在主 checkout 中工作。合并 build mission 前，Tower 会检查它已经完成、没有未完成任务或 blocker、worker 空闲、依赖已解决（已合并或已放弃），且 branch 已跟上 base。它还要求具备有效的 clean review 和 merge 批准（通常来自独立 reviewer），同时改动必须位于 mission 范围内、主 checkout 必须位于记录的 base，并且没有冲突的未提交文件。
 
 base 前进后，Tower 可以在 worker 空闲且 worktree 干净时，把 mission branch 在该 worktree 中 rebase 到新 base。无冲突的 rebase 会保留原有 clean review 的绑定；发生冲突时 rebase 会中止，mission 交回 worker 解决。请以结构化结果为准，不要默认每次 rebase 或 merge 都已成功。
 

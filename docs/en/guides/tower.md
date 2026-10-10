@@ -1,8 +1,10 @@
 # Tower multi-agent collaboration
 
-Tower is an experimental coordination mode for larger coding objectives in a Git repository. When you enable it, the main agent becomes the tower: it splits your objective into missions, coordinates their implementation and review, and integrates approved changes into a base branch you choose.
+Tower is an experimental coordination mode that helps complete larger coding objectives faster through asynchronous parallel development in a Git repository.
 
-Each build mission has its own branch and git worktree (a separate checkout linked to the same repository). A worker implements one mission in that worktree and commits there; an independent reviewer then audits the branch read-only. The tower routes messages and completion reports, and merges only branches that pass its checks.
+While workers develop independent missions in the background, you can check progress, send updates for the tower to relay, change direction or priorities, and stop an agent at any time. The main agent becomes the tower: it splits your objective into missions and coordinates the workers.
+
+Independent review and merge checks support this parallel workflow. Each build mission has its own branch and git worktree (a separate checkout linked to the same repository). A worker implements one mission in that worktree and commits there; an independent reviewer then audits the branch read-only. The tower routes messages and completion reports, and merges only branches that pass its checks.
 
 Tower is therefore not just an ordinary subagent or an AgentSwarm task. It is a user-enabled, session-level coordination mode with explicit repository state, review gates, and cleanup commands.
 
@@ -12,13 +14,13 @@ Tower is experimental, and its workflow and safety details may change. Tower can
 
 ## When Tower fits
 
-Tower trades more tokens and repository machinery for parallel implementation and independent review.
+Tower uses more tokens and repository machinery to move independent work forward asynchronously in parallel while keeping you in control.
 
 Tower is a good fit when:
 
-- The objective is large enough to split into mostly independent missions with clear verification.
+- The objective is large enough to split into mostly independent missions with clear verification, so asynchronous parallel development can shorten the wait compared with implementing them one by one.
+- You want to stay in control while they run: check progress, send updates for the tower to relay, adjust direction or priorities, and stop an agent at any time.
 - You want each change committed on its own branch, independently reviewed, and integrated into a local base branch.
-- You can leave several background agents running and intervene when the tower reports a decision or blocker.
 
 Tower is usually unnecessary when:
 
@@ -83,7 +85,7 @@ One workspace has one tower coordinator. If a busy live session already owns it,
 
 ## Understand merges and rebases
 
-Workers are assigned to implement missions in their own worktrees rather than in the main checkout. Before merging a build mission, Tower checks that it is complete with no open tasks or blockers, its workers are idle, dependencies are merged, and its branch is current with the base. It also requires a qualifying clean review with merge approval — normally from an independent reviewer — plus changes inside the mission scope, the main checkout on the recorded base, and no conflicting uncommitted files.
+Workers are assigned to implement missions in their own worktrees rather than in the main checkout. Before merging a build mission, Tower checks that it is complete with no open tasks or blockers, its workers are idle, its dependencies are resolved (merged or abandoned), and its branch is current with the base. It also requires a qualifying clean review with merge approval — normally from an independent reviewer — plus changes inside the mission scope, the main checkout on the recorded base, and no conflicting uncommitted files.
 
 If the base advances, Tower can rebase a mission branch inside that mission's worktree while its worker is idle and the worktree is clean. A conflict-free rebase preserves the existing clean review's binding; a conflicting rebase is aborted and the mission goes back to the worker for resolution. Follow the structured result instead of assuming that every rebase or merge succeeded.
 
