@@ -3516,7 +3516,7 @@ command = "vim"
       });
     vi.spyOn(driver, 'closeSession').mockReturnValue(new Promise<void>(() => {}));
 
-    const stopped = driver.stop();
+    const stopped = (driver as unknown as { stop(): Promise<void> }).stop();
     stopped.catch(() => {});
 
     expect(() => driver.state.editor.onCtrlC?.()).toThrow('emergency-exit');
