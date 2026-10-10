@@ -246,7 +246,7 @@ describe('EditorKeyboardController btw panel priority', () => {
 });
 
 describe('EditorKeyboardController disposal', () => {
-  it('ignores Ctrl+C, Escape, and submit after dispose so shutdown feedback is not clobbered', () => {
+  it('consumes every key after dispose so shutdown feedback is not clobbered', () => {
     const { editor, controller, footerHint, stop } = createHarness();
 
     pressCtrlC(editor);
@@ -255,12 +255,11 @@ describe('EditorKeyboardController disposal', () => {
     controller.dispose();
     footerHint.mockClear();
 
-    pressCtrlC(editor);
-    pressCtrlC(editor);
-    pressEscape(editor);
-    const onSubmit = editor['onSubmit'];
-    if (onSubmit === undefined) throw new Error('onSubmit handler not installed');
-    (onSubmit as (text: string) => void)('hello');
+    const onPreInput = editor['onPreInput'];
+    if (onPreInput === undefined) throw new Error('onPreInput handler not installed');
+    expect((onPreInput as (data: string) => boolean)('\u0003')).toBe(true);
+    expect((onPreInput as (data: string) => boolean)('\u001B')).toBe(true);
+    expect((onPreInput as (data: string) => boolean)('a')).toBe(true);
 
     expect(stop).not.toHaveBeenCalled();
     expect(footerHint).not.toHaveBeenCalled();

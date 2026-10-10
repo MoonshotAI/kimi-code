@@ -97,13 +97,15 @@ export class EditorKeyboardController {
     const editor = host.state.editor;
 
     editor.onSubmit = (text: string) => {
-      if (this.disposed) return;
       if (host.surveyController.handleSubmit(text)) return;
       host.handleUserInput(text);
     };
 
+    // After dispose (shutdown), consume every key here so no shortcut can fire
+    // while the UI is being torn down — Ctrl+C is handled earlier, at the UI
+    // input-listener level.
     editor.onPreInput = (data: string) => {
-      if (this.disposed) return false;
+      if (this.disposed) return true;
       if (matchesKey(data, Key.escape)) this.clearPendingExit();
       const consumed = host.surveyController.handlePreInput(data);
       if (consumed) this.clearPendingUndoEsc();
@@ -111,7 +113,6 @@ export class EditorKeyboardController {
     };
 
     editor.onChange = (text: string) => {
-      if (this.disposed) return;
       if (this.pendingExit) this.clearPendingExit();
       host.surveyController.handleEditorChange(text);
       host.updateEditorBorderHighlight(text);
@@ -177,7 +178,6 @@ export class EditorKeyboardController {
     };
 
     editor.onCtrlC = () => {
-      if (this.disposed) return;
       if (host.cancelInFlight !== undefined) {
         const cancel = host.cancelInFlight;
         host.cancelInFlight = undefined;
@@ -228,7 +228,6 @@ export class EditorKeyboardController {
     };
 
     editor.onCtrlD = () => {
-      if (this.disposed) return;
       if (this.pendingExit?.kind === 'ctrl-d') {
         this.clearPendingExit();
         void host.stop();
@@ -238,7 +237,6 @@ export class EditorKeyboardController {
     };
 
     editor.onEscape = () => {
-      if (this.disposed) return;
       if (this.pendingExit) this.clearPendingExit();
       if (host.state.activeDialog === 'session-picker') {
         host.hideSessionPicker();
@@ -304,7 +302,6 @@ export class EditorKeyboardController {
     };
 
     editor.onToggleTodoExpand = (): boolean => {
-      if (this.disposed) return false;
       if (!host.state.todoPanel.hasOverflow()) return false;
       // Disarm a pending double-press exit confirmation so expanding the
       // todo list in between two Ctrl-C presses does not accidentally exit.
@@ -315,7 +312,6 @@ export class EditorKeyboardController {
     };
 
     editor.onPageNotify = (): boolean => {
-      if (this.disposed) return false;
       if (!host.toggleNotifyPanelFocus()) return false;
       this.clearPendingExit();
       host.track('shortcut_notify_page');

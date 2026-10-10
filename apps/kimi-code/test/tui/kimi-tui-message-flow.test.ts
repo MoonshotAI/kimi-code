@@ -3506,21 +3506,26 @@ command = "vim"
 
   it('force-exits instead of waiting for shutdown hooks when Ctrl+C is pressed during stop', async () => {
     const { driver } = await makeDriver();
-    const emergency = vi
-      .spyOn(
-        driver as unknown as { emergencyTerminalExit(exitCode?: number): never },
-        'emergencyTerminalExit',
-      )
-      .mockImplementation(() => {
-        throw new Error('emergency-exit');
-      });
+    const stopUiForExit = vi
+      .spyOn(driver as unknown as { stopUiForExit(): void }, 'stopUiForExit')
+      .mockImplementation(() => {});
+    const onExit = vi.fn(async () => {});
+    (driver as unknown as { onExit?: (exitCode?: number) => Promise<void> }).onExit = onExit;
+    let captured: ((data: string) => { consume?: boolean } | undefined) | undefined;
+    vi.spyOn(driver.state.ui, 'addInputListener').mockImplementation(((listener: unknown) => {
+      captured = listener as (data: string) => { consume?: boolean } | undefined;
+      return () => {};
+    }) as never);
     vi.spyOn(driver, 'closeSession').mockReturnValue(new Promise<void>(() => {}));
 
     const stopped = (driver as unknown as { stop(): Promise<void> }).stop();
     stopped.catch(() => {});
 
-    expect(() => driver.state.editor.onCtrlC?.()).toThrow('emergency-exit');
-    expect(emergency).toHaveBeenCalledWith(130);
+    expect(captured).toBeDefined();
+    expect(captured?.('\u0003')).toEqual({ consume: true });
+    expect(captured?.('a')).toBeUndefined();
+    expect(stopUiForExit).toHaveBeenCalledOnce();
+    expect(onExit).toHaveBeenCalledWith(130);
   });
 
   it('releases goal-steered staging media when the running goal turn ends', async () => {
