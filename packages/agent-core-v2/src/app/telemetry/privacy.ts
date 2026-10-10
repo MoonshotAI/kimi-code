@@ -23,11 +23,11 @@ const WINDOWS_LONG_BASE = String.raw`\\\\\?\\(?:UNC\\[^\s\\/]+\\${WINDOWS_COMPON
 const WINDOWS_UNC_BASE = String.raw`\\\\[^\s\\/]+\\${WINDOWS_COMPONENT}`;
 const WINDOWS_UNC_OR_LONG = String.raw`(?:${WINDOWS_LONG_BASE}|${WINDOWS_UNC_BASE})(?:${WINDOWS_TAIL}|[\\/]?)`;
 const WINDOWS_DRIVE = String.raw`\b[A-Za-z]:${WINDOWS_TAIL}${PATH_BOUNDARY}`;
-const POSIX_ATOM = String.raw`[^/'"\u0000]+`;
+const POSIX_ATOM = String.raw`(?:(?![,:] | \/)[^/'"\u0000-\u001F])+`;
 const POSIX_COMPONENT = String.raw`${POSIX_ATOM}(?:'${POSIX_ATOM})*`;
 const POSIX_FINAL_WITH_EXTENSION = String.raw`${POSIX_COMPONENT}?\.[\p{L}\p{M}\p{N}]{1,16}`;
 const POSIX_EXTENSION_PATH = String.raw`(?:\/${POSIX_COMPONENT})+\/${POSIX_FINAL_WITH_EXTENSION}${EXTENSION_BOUNDARY}`;
-const POSIX_GENERIC_PATH = String.raw`(?:\/${POSIX_COMPONENT}){2,}\/?(?=$|['"])`;
+const POSIX_GENERIC_PATH = String.raw`(?:\/${POSIX_COMPONENT}){2,}\/?(?=$|['"\u0000-\u001F]|[,:] )`;
 const POSIX_PATH = String.raw`(?:${POSIX_EXTENSION_PATH}|${POSIX_GENERIC_PATH})`;
 const ABSOLUTE_PATH = new RegExp(`${WINDOWS_UNC_OR_LONG}|${WINDOWS_DRIVE}|${POSIX_PATH}`, 'gu');
 

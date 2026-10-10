@@ -107,6 +107,24 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
     );
   });
 
+  it('redacts each POSIX path separately and stops at diagnostic boundaries', () => {
+    expect(cleanTelemetryString('open /home/a/x.txt, see /tmp/log.txt')).toBe(
+      `open ${REDACTED}, see ${REDACTED}`,
+    );
+    expect(cleanTelemetryString('open /home/a/x.txt see /tmp/log.txt')).toBe(
+      `open ${REDACTED} see ${REDACTED}`,
+    );
+    expect(cleanTelemetryString('failed at /home/alice/cache: permission denied')).toBe(
+      `failed at ${REDACTED}: permission denied`,
+    );
+    expect(cleanTelemetryString('failed at /home/alice/cache, retrying now')).toBe(
+      `failed at ${REDACTED}, retrying now`,
+    );
+    expect(cleanTelemetryString('failed at /home/alice/cache\npermission denied')).toBe(
+      `failed at ${REDACTED}\npermission denied`,
+    );
+  });
+
   it('leaves non-path text alone', () => {
     expect(cleanTelemetryString('edit failed: missing old_string')).toBe(
       'edit failed: missing old_string',
