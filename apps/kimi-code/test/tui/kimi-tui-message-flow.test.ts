@@ -3680,12 +3680,18 @@ command = "vim"
     await vi.waitFor(() => { expect(harness.deleteFile).toHaveBeenCalledWith('file-retried-skill'); });
   });
 
-  it('recalls a rejected skill prompt with its media and reparses edited markers', async () => {
-    const promptWithSkills = vi.fn(async () => { throw new Error('Skill unavailable'); });
+  it.each([
+    { input: 'check /skill:review', errorMessage: 'Skill unavailable' },
+    { input: '/skill:review', errorMessage: 'Prompt blocked by UserPromptSubmit hook' },
+    { input: 'check /skill:review', errorMessage: 'Prompt blocked by UserPromptSubmit hook' },
+    { input: '/skill:review /skill:security', errorMessage: 'Prompt blocked by UserPromptSubmit hook' },
+  ])('recalls a rejected skill prompt with its media and reparses edited markers ($input, $errorMessage)', async ({ input, errorMessage }) => {
+    const promptWithSkills = vi.fn(async () => { throw new Error(errorMessage); });
     const session = makeSession({
       promptWithSkills,
       listSkills: vi.fn(async () => [
         { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+        { name: 'security', description: 'Security skill', path: '/tmp/security', source: 'user' },
       ]),
     });
     const { driver, harness } = await makeDriver(session);
@@ -3696,11 +3702,15 @@ command = "vim"
     const attachment = imageStore.addImage(new Uint8Array([0xaa]), 'image/png', 1, 1);
     attachment.fileId = 'file-recalled-skill';
     attachment.fileExpiresAt = Date.now() + 60 * 60 * 1000;
-    const text = `check /skill:review ${attachment.placeholder}`;
+    const text = `${input} ${attachment.placeholder}`;
     driver.handleUserInput(text);
     await vi.waitFor(() => {
       expect(driver.state.queuedMessages).toContainEqual(expect.objectContaining({ text }));
+      expect(driver.state.appState.streamingPhase).toBe('idle');
     });
+    expect(driver.state.livePane.mode).toBe('idle');
+    expect(driver.state.transcriptEntries.filter((entry) => entry.kind === 'user')).toEqual([]);
+    expect(stripSgr(renderTranscript(driver))).toContain(errorMessage);
     expect(harness.deleteFile).not.toHaveBeenCalled();
 
     driver.state.editor.onUpArrowEmpty?.();

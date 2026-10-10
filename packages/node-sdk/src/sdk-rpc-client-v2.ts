@@ -2050,15 +2050,17 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * the engine renders every skill activation into the prompt's own user
    * message, so the bundle launches as one turn and undoes as a single
    * anchor. v2-only: the base class rejects this method on the v1 engine.
-   * The launch result is dropped like `prompt` (v1's RPC shape returns void).
    */
   override async promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<void> {
     const agent = await this.agentFacade(input.sessionId);
-    await agent.promptWithSkills({
+    const submission = await agent.promptWithSkills({
       input: input.input,
       skills: input.skills,
       steerIfActive: input.steerIfActive,
     });
+    if (submission.state === 'blocked') {
+      throw new KimiError(ErrorCodes.REQUEST_INVALID, 'Prompt blocked by UserPromptSubmit hook');
+    }
   }
 
   /**
