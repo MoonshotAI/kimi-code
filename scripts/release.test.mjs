@@ -99,7 +99,7 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-test('accepts only the tested release commit', () => {
+void test('accepts only the tested release commit', () => {
   const f = fixture();
   assert.equal(run(f, 'check').status, 0);
   assert.match(run(f, 'check', { EXPECTED_SHA: otherSha }).stderr, /expected_sha/);
@@ -107,7 +107,7 @@ test('accepts only the tested release commit', () => {
   assert.match(run(f, 'check', { GITHUB_REF: `refs/tags/${branch}` }).stderr, /release\/\*/);
 });
 
-test('rejects an old plan and unconsumed changesets', () => {
+void test('rejects an old plan and unconsumed changesets', () => {
   const f = fixture();
   writeFileSync(join(f.dir, '.changeset/fix.md'), '---\n---\n');
   assert.match(run(f, 'check').stderr, /Unconsumed changesets/);
@@ -118,7 +118,7 @@ test('rejects an old plan and unconsumed changesets', () => {
   assert.match(run(next, 'check', { GITHUB_REF: 'refs/heads/release/next', GITHUB_REF_NAME: 'release/next' }).stderr, /version PR/);
 });
 
-test('does not accept PR checks, another SHA, or a superseded green run', () => {
+void test('does not accept PR checks, another SHA, or a superseded green run', () => {
   for (const override of [{ event: 'pull_request' }, { head_sha: otherSha }, { conclusion: 'failure' }, { status: 'in_progress' }]) {
     const f = fixture();
     const state = f.state();
@@ -129,12 +129,12 @@ test('does not accept PR checks, another SHA, or a superseded green run', () => 
   }
 });
 
-test('API failure and existing tags on another commit stop publication', () => {
+void test('API failure and existing tags on another commit stop publication', () => {
   assert.match(run(fixture({ apiError: true }), 'check').stderr, /Forbidden/);
   assert.match(run(fixture({ tags: { [tag]: otherSha } }), 'prepare').stderr, /another commit/);
 });
 
-test('prepares a draft and retries an interrupted release from the same SHA', () => {
+void test('prepares a draft and retries an interrupted release from the same SHA', () => {
   const f = fixture();
   assert.equal(run(f, 'prepare').status, 0);
   assert.equal(f.state().tags[tag], sha);
@@ -151,7 +151,7 @@ test('prepares a draft and retries an interrupted release from the same SHA', ()
   assert.match(readFileSync(join(f.dir, 'output'), 'utf8'), /build=false/);
 });
 
-test('version command records the consumed changesets and changed package versions', () => {
+void test('version command records the consumed changesets and changed package versions', () => {
   const f = fixture();
   writeFileSync(join(f.dir, '.changeset/fix.md'), '---\n---\n');
   const result = spawnSync(process.execPath, [versionScript], { cwd: f.dir, env: f.env, encoding: 'utf8' });
@@ -162,7 +162,7 @@ test('version command records the consumed changesets and changed package versio
   assert.deepEqual(plan.packages, [{ name, path, version: '1.0.2', private: desktop }]);
 });
 
-test('a later version PR retains earlier packages from the same release cycle', () => {
+void test('a later version PR retains earlier packages from the same release cycle', () => {
   const f = fixture();
   const earlier = { name: '@example/sdk', path: 'packages/sdk', version: '2.0.0', private: false };
   const planFile = join(f.dir, '.changeset/release-plan.json');
@@ -178,7 +178,7 @@ test('a later version PR retains earlier packages from the same release cycle', 
   assert.deepEqual(next.changesets, ['fix.md', 'earlier.md']);
 });
 
-test('the next release cycle discards the old package plan', () => {
+void test('the next release cycle discards the old package plan', () => {
   const f = fixture();
   const planFile = join(f.dir, '.changeset/release-plan.json');
   writeFileSync(planFile, JSON.stringify({ branch: 'release/old', changesets: ['old.md'], packages: [{ name: '@example/old' }] }));
