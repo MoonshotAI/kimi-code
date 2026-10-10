@@ -2,6 +2,7 @@ import type { AgentRef } from '../model/frame';
 import type { TranscriptInteraction } from '../model/interaction';
 import type { TranscriptItem, TranscriptMarker, TranscriptTaskRef } from '../model/item';
 import type { GoalMeta, GoalStatus, TranscriptMeta } from '../model/meta';
+import type { TranscriptPrompt, TranscriptPromptStatus } from '../model/prompt';
 import type { TranscriptTask } from '../model/task';
 import type { TodoItem, TranscriptTodo } from '../model/todo';
 import type { StepUsage, TranscriptTurn } from '../model/turn';
@@ -76,6 +77,50 @@ interface TurnPromptPayload {
   readonly origin?: unknown;
   readonly promptId?: unknown;
   readonly turnId?: unknown;
+  readonly input?: unknown;
+}
+interface AgentTurnStartedPayload {
+  readonly turnId?: unknown;
+}
+interface ContextAppendLoopEventPayload {
+  readonly event?: {
+    readonly type?: unknown;
+    readonly turnId?: unknown;
+    readonly step?: unknown;
+  };
+}
+interface TurnSteerPayload {
+  readonly input?: unknown;
+  readonly origin?: unknown;
+  readonly messageId?: unknown;
+  readonly promptIds?: unknown;
+  readonly turnId?: unknown;
+}
+interface PromptCompletionPayload {
+  readonly promptId?: unknown;
+  readonly finishedAt?: unknown;
+  readonly abortedAt?: unknown;
+  readonly reason?: unknown;
+}
+interface PromptSteeredPayload {
+  readonly activePromptId?: unknown;
+  readonly promptIds?: unknown;
+  readonly steeredAt?: unknown;
+}
+interface StepTimeRecords {
+  begin?: HistoryWireRecord;
+  end?: HistoryWireRecord;
+}
+interface PromptDraft {
+  readonly promptId: string;
+  readonly content?: unknown;
+  readonly clientMetadata?: TranscriptPrompt['clientMetadata'];
+  readonly createdAt?: string;
+  readonly rawTurnId?: number;
+  userMessageId?: string;
+  status?: TranscriptPromptStatus;
+  finishedAt?: string;
+  steeredAt?: string;
 }
 interface ContextUndoPayload {
   readonly count?: unknown;
@@ -197,6 +242,16 @@ function recordTimeIso(record: HistoryWireRecord): string | undefined {
   return undefined;
 }
 
+function readClientMetadata(origin: unknown): TranscriptPrompt['clientMetadata'] {
+  const metadata = (origin as { readonly clientMetadata?: unknown } | undefined)?.clientMetadata;
+  if (!Array.isArray(metadata)) return undefined;
+  const entries = metadata.filter(
+    (entry): entry is Readonly<Record<string, unknown>> =>
+      typeof entry === 'object' && entry !== null,
+  );
+  return entries.length > 0 ? entries : undefined;
+}
+
 function readFiniteNumber(raw: unknown): number | undefined {
   return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
 }
@@ -251,6 +306,19 @@ export function foldWireRecordFacts(
   const tasks = new Map<string, TranscriptTask>();
   const interactions = new Map<string, TranscriptInteraction>();
   const endedTurns = new Map<number, HistoryWireRecord>();
+  const startedTurns = new Map<number, HistoryWireRecord>();
+  const agentStartedTurns = new Map<number, HistoryWireRecord>();
+  const stepTimeTurns = new Map<number, Map<number, StepTimeRecords>>();
+  const promptDrafts = new Map<string, PromptDraft>();
+  const promptCompletions = new Map<
+    string,
+    { readonly status: TranscriptPromptStatus; readonly finishedAt?: string }
+  >();
+  const promptSteers: {
+    readonly activePromptId?: string;
+    readonly promptIds: readonly string[];
+    readonly steeredAt: string;
+  }[] = [];
   const interruptedSteps = new Map<number, Map<number, HistoryWireRecord>>();
   const turnPromptIds = new Map<number, string>();
   const turnOrigins = new Map<number, unknown>();
@@ -660,9 +728,107 @@ export function foldWireRecordFacts(
         hasExplicitTurnId ||= typeof payload.turnId === 'number';
         nextTurnId = Math.max(nextTurnId, turnId + 1);
         turnOrigins.set(turnId, payload.origin);
+        if (!startedTurns.has(turnId)) startedTurns.set(turnId, record);
         if (typeof payload.promptId === 'string') turnPromptIds.set(turnId, payload.promptId);
+        if (typeof payload.promptId === 'string' && !promptDrafts.has(payload.promptId)) {
+          promptDrafts.set(payload.promptId, {
+            promptId: payload.promptId,
+            content: payload.input,
+            clientMetadata: readClientMetadata(payload.origin),
+            createdAt: recordTimeIso(record),
+            userMessageId: payload.promptId,
+            rawTurnId: turnId,
+          });
+        }
         if (isUndoAnchorTurnOrigin(payload.origin)) pendingUndoAnchorTurnIds.push(turnId);
         if (!isVisibleTurnOrigin(payload.origin)) hiddenTurnIds.add(turnId);
+        break;
+      }
+      case 'agent.turn.started': {
+        const payload = record as AgentTurnStartedPayload;
+        if (
+          typeof payload.turnId === 'number' &&
+          Number.isInteger(payload.turnId) &&
+          !agentStartedTurns.has(payload.turnId)
+        ) {
+          agentStartedTurns.set(payload.turnId, record);
+        }
+        break;
+      }
+      case 'context.append_loop_event': {
+        const event = (record as ContextAppendLoopEventPayload).event;
+        if (event?.type !== 'step.begin' && event?.type !== 'step.end') break;
+        const turnId =
+          typeof event.turnId === 'string' ? Number.parseInt(event.turnId, 10) : Number.NaN;
+        if (
+          !Number.isInteger(turnId) ||
+          typeof event.step !== 'number' ||
+          !Number.isInteger(event.step)
+        ) {
+          break;
+        }
+        let steps = stepTimeTurns.get(turnId);
+        if (steps === undefined) {
+          steps = new Map();
+          stepTimeTurns.set(turnId, steps);
+        }
+        const entry = steps.get(event.step) ?? {};
+        if (event.type === 'step.begin') {
+          entry.begin ??= record;
+        } else {
+          entry.end = record;
+        }
+        steps.set(event.step, entry);
+        break;
+      }
+      case 'turn.steer': {
+        const payload = record as TurnSteerPayload;
+        if (!Array.isArray(payload.promptIds)) break;
+        for (const promptId of payload.promptIds) {
+          if (typeof promptId !== 'string' || promptDrafts.has(promptId)) continue;
+          promptDrafts.set(promptId, {
+            promptId,
+            content: payload.input,
+            clientMetadata: readClientMetadata(payload.origin),
+            createdAt: recordTimeIso(record),
+            userMessageId: typeof payload.messageId === 'string' ? payload.messageId : undefined,
+            rawTurnId: typeof payload.turnId === 'number' ? payload.turnId : undefined,
+          });
+        }
+        break;
+      }
+      case 'prompt.completed':
+      case 'prompt.aborted': {
+        const payload = record as PromptCompletionPayload;
+        if (typeof payload.promptId !== 'string') break;
+        const status: TranscriptPromptStatus =
+          record.type === 'prompt.aborted'
+            ? 'aborted'
+            : payload.reason === 'failed' || payload.reason === 'blocked'
+              ? payload.reason
+              : 'completed';
+        const finishedAt =
+          typeof payload.finishedAt === 'string'
+            ? payload.finishedAt
+            : typeof payload.abortedAt === 'string'
+              ? payload.abortedAt
+              : recordTimeIso(record);
+        promptCompletions.set(payload.promptId, { status, finishedAt });
+        break;
+      }
+      case 'prompt.steered': {
+        const payload = record as PromptSteeredPayload;
+        const steeredAt =
+          typeof payload.steeredAt === 'string' ? payload.steeredAt : recordTimeIso(record);
+        if (steeredAt === undefined) break;
+        promptSteers.push({
+          activePromptId:
+            typeof payload.activePromptId === 'string' ? payload.activePromptId : undefined,
+          promptIds: Array.isArray(payload.promptIds)
+            ? payload.promptIds.filter((id): id is string => typeof id === 'string')
+            : [],
+          steeredAt,
+        });
         break;
       }
       default:
@@ -674,6 +840,10 @@ export function foldWireRecordFacts(
     if (entity.state === 'pending') {
       interactions.set(id, { ...entity, state: 'cancelled' });
     }
+  }
+
+  for (const [turnId, record] of agentStartedTurns) {
+    if (!startedTurns.has(turnId)) startedTurns.set(turnId, record);
   }
 
   const baseTurns = base.items.filter((item): item is TranscriptTurn => item.kind === 'turn');
@@ -696,7 +866,12 @@ export function foldWireRecordFacts(
     claimedOrdinals.add(turn.ordinal);
     return turn.ordinal;
   };
-  const lastRawTurnId = Math.max(nextTurnId - 1, ...endedTurns.keys(), ...interruptedSteps.keys());
+  const lastRawTurnId = Math.max(
+    nextTurnId - 1,
+    ...endedTurns.keys(),
+    ...interruptedSteps.keys(),
+    ...stepTimeTurns.keys(),
+  );
   const rawTurnIds = Array.from(
     { length: lastRawTurnId + 1 },
     (_, turnId) => turnId,
@@ -706,7 +881,8 @@ export function foldWireRecordFacts(
       (!hasExplicitTurnId ||
         turnOrigins.has(turnId) ||
         endedTurns.has(turnId) ||
-        interruptedSteps.has(turnId)),
+        interruptedSteps.has(turnId) ||
+        stepTimeTurns.has(turnId)),
   );
   for (const turnId of rawTurnIds) {
     const promptId = turnPromptIds.get(turnId);
@@ -764,17 +940,58 @@ export function foldWireRecordFacts(
     if (ordinal !== undefined) interruptedByOrdinal.set(ordinal, steps);
   }
 
+  const startedByOrdinal = new Map<number, HistoryWireRecord>();
+  for (const [turnId, record] of startedTurns) {
+    const ordinal = ordinalByRawTurnId.get(turnId);
+    if (ordinal !== undefined) startedByOrdinal.set(ordinal, record);
+  }
+
+  const stepTimesByOrdinal = new Map<number, Map<number, StepTimeRecords>>();
+  for (const [turnId, steps] of stepTimeTurns) {
+    const ordinal = ordinalByRawTurnId.get(turnId);
+    if (ordinal !== undefined) stepTimesByOrdinal.set(ordinal, steps);
+  }
+
   const items =
-    endedByOrdinal.size > 0 || interruptedByOrdinal.size > 0
+    endedByOrdinal.size > 0 ||
+    interruptedByOrdinal.size > 0 ||
+    startedByOrdinal.size > 0 ||
+    stepTimesByOrdinal.size > 0
       ? base.items.map((item) => {
           if (item.kind !== 'turn') return item;
           const record = endedByOrdinal.get(item.ordinal);
           const interrupted = interruptedByOrdinal.get(item.ordinal);
-          if (record === undefined && interrupted === undefined) return item;
+          const started = startedByOrdinal.get(item.ordinal);
+          const stepTimes = stepTimesByOrdinal.get(item.ordinal);
+          if (
+            record === undefined &&
+            interrupted === undefined &&
+            started === undefined &&
+            stepTimes === undefined
+          ) {
+            return item;
+          }
           const steps = ((): TranscriptTurn['steps'] => {
-            if (interrupted === undefined) return item.steps;
+            const timed =
+              stepTimes === undefined
+                ? item.steps
+                : item.steps.map((step) => {
+                    const times = stepTimes.get(step.ordinal);
+                    if (times === undefined) return step;
+                    const startedAt =
+                      times.begin === undefined
+                        ? step.startedAt
+                        : (step.startedAt ?? recordTimeIso(times.begin));
+                    const endedAt =
+                      times.end === undefined
+                        ? step.endedAt
+                        : (step.endedAt ?? recordTimeIso(times.end));
+                    if (startedAt === step.startedAt && endedAt === step.endedAt) return step;
+                    return { ...step, startedAt, endedAt };
+                  });
+            if (interrupted === undefined) return timed;
             const hitOrdinals = new Set<number>();
-            const patched = item.steps.map((step) => {
+            const patched = timed.map((step) => {
               const hit = interrupted.get(step.ordinal);
               if (hit === undefined) return step;
               const stepPayload = hit as TurnStepInterruptedPayload;
@@ -808,12 +1025,15 @@ export function foldWireRecordFacts(
             }
             return patched.toSorted((a, b) => a.ordinal - b.ordinal);
           })();
-          if (record === undefined) return { ...item, steps };
+          const startedAt =
+            started === undefined ? item.startedAt : (recordTimeIso(started) ?? item.startedAt);
+          if (record === undefined) return { ...item, steps, startedAt };
           const payload = record as TurnEndedPayload;
           return {
             ...item,
             steps,
             state: mapTurnEndReason(payload.reason) ?? item.state,
+            startedAt,
             endedAt: recordTimeIso(record) ?? item.endedAt,
             durationMs:
               typeof payload.durationMs === 'number' ? payload.durationMs : item.durationMs,
@@ -821,6 +1041,46 @@ export function foldWireRecordFacts(
           };
         })
       : base.items;
+
+  for (const steer of promptSteers) {
+    if (steer.activePromptId !== undefined) {
+      const active = promptDrafts.get(steer.activePromptId);
+      if (active !== undefined) active.steeredAt = steer.steeredAt;
+    }
+    for (const promptId of steer.promptIds) {
+      const child = promptDrafts.get(promptId);
+      if (child === undefined) continue;
+      child.status = 'completed';
+      child.finishedAt = steer.steeredAt;
+      child.steeredAt = steer.steeredAt;
+    }
+  }
+  for (const [promptId, completion] of promptCompletions) {
+    const draft = promptDrafts.get(promptId);
+    if (draft === undefined) continue;
+    draft.status = completion.status;
+    if (completion.finishedAt !== undefined) draft.finishedAt = completion.finishedAt;
+  }
+  const prompts: TranscriptPrompt[] = [];
+  for (const draft of promptDrafts.values()) {
+    if (draft.rawTurnId !== undefined && !ordinalByRawTurnId.has(draft.rawTurnId)) continue;
+    const createdAt = draft.createdAt ?? draft.finishedAt ?? draft.steeredAt;
+    if (createdAt === undefined) continue;
+    prompts.push({
+      promptId: draft.promptId,
+      status:
+        draft.status ??
+        (draft.rawTurnId !== undefined && endedTurns.has(draft.rawTurnId)
+          ? 'completed'
+          : 'running'),
+      userMessageId: draft.userMessageId,
+      content: draft.content,
+      clientMetadata: draft.clientMetadata,
+      createdAt,
+      finishedAt: draft.finishedAt,
+      steeredAt: draft.steeredAt,
+    });
+  }
 
   const modesTouched = planActive !== undefined || swarmActive !== undefined || towerActive !== undefined;
   const meta: TranscriptMeta = {
@@ -871,6 +1131,7 @@ export function foldWireRecordFacts(
     tasks: [...tasks.values()],
     interactions: [...interactions.values()],
     todos: todo !== undefined ? [todo] : base.todos,
+    prompts: prompts.length > 0 ? prompts : base.prompts,
     meta,
   };
 }
