@@ -1,5 +1,6 @@
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Service } from "#/_base/di/service";
+import { ILogService } from '#/_base/log/log';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
@@ -44,6 +45,7 @@ import type { CompactionFailedEvent, CompactionFinishedEvent } from '#/app/telem
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2, isCodedError, isError2, toKimiErrorPayload, unwrapErrorCause } from "#/errors";
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
+import { WarningIssued } from '#/agent/profile/profileOps';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { renderCompactionInstruction } from './compactionInstruction';
 import { renderContextRecoveryPointer } from './contextRecovery';
@@ -79,6 +81,8 @@ const OVERFLOW_CONTEXT_SAFETY_RATIO = 0.85;
 const OVERFLOW_STATUS_RECOVERY_RATIO = 0.5;
 const MAX_COMPACTION_OVERFLOW_SHRINK_ATTEMPTS = 3;
 const COMPACTION_OVERFLOW_SHRINK_RATIOS = [0.7, 0.5, 0.35] as const;
+const INEFFECTIVE_AUTO_COMPACTION_RATIO = 0.8;
+const MAX_INEFFECTIVE_AUTO_COMPACTIONS = 2;
 const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
   type: 'object',
   properties: {},
@@ -129,6 +133,18 @@ export const fullCompactionActiveTurnIdKey = defineState<number | undefined>(
   'fullCompaction.activeTurnId',
   () => undefined as number | undefined,
 );
+export const fullCompactionPendingAutoCompactionCountKey = defineState<number | null>(
+  'fullCompaction.pendingAutoCompactionCount',
+  () => null,
+);
+export const fullCompactionIneffectiveAutoCompactionsKey = defineState<number>(
+  'fullCompaction.ineffectiveAutoCompactions',
+  () => 0,
+);
+export const fullCompactionAutoCompactionDisabledKey = defineState<boolean>(
+  'fullCompaction.autoCompactionDisabled',
+  () => false,
+);
 
 export class AgentFullCompactionService extends Service implements IAgentFullCompactionService {
   declare readonly _serviceBrand: undefined;
@@ -156,6 +172,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     @IAgentLoopService private readonly loopService: IAgentLoopService,
     @IAgentStateService private readonly states: IAgentStateService,
     @IWireService private readonly wire: IWireService,
+    @ILogService private readonly log: ILogService,
   ) {
     super();
     this.states.contributeState(fullCompactionKey);
@@ -165,6 +182,9 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     this.states.contributeState(fullCompactionLastCompactedTokenCountKey);
     this.states.contributeState(fullCompactionConsecutiveOverflowCompactionsKey);
     this.states.contributeState(fullCompactionActiveTurnIdKey);
+    this.states.contributeState(fullCompactionPendingAutoCompactionCountKey);
+    this.states.contributeState(fullCompactionIneffectiveAutoCompactionsKey);
+    this.states.contributeState(fullCompactionAutoCompactionDisabledKey);
     this.strategy = new RuntimeCompactionStrategy(
       () => this.resolveModelContextWithEffectiveMax(),
       (message) => this.tokenCounting.estimateMessage(message),
@@ -238,6 +258,30 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
   private set activeTurnId(value: number | undefined) {
     this.states.set(fullCompactionActiveTurnIdKey, value);
+  }
+
+  private get pendingAutoCompactionCount(): number | null {
+    return this.states.get(fullCompactionPendingAutoCompactionCountKey);
+  }
+
+  private set pendingAutoCompactionCount(value: number | null) {
+    this.states.set(fullCompactionPendingAutoCompactionCountKey, value);
+  }
+
+  private get ineffectiveAutoCompactions(): number {
+    return this.states.get(fullCompactionIneffectiveAutoCompactionsKey);
+  }
+
+  private set ineffectiveAutoCompactions(value: number) {
+    this.states.set(fullCompactionIneffectiveAutoCompactionsKey, value);
+  }
+
+  private get autoCompactionDisabled(): boolean {
+    return this.states.get(fullCompactionAutoCompactionDisabledKey);
+  }
+
+  private set autoCompactionDisabled(value: boolean) {
+    this.states.set(fullCompactionAutoCompactionDisabledKey, value);
   }
 
   get compacting(): FullCompactionTask | null {
@@ -511,14 +555,52 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
   private checkAutoCompaction(throwOnLimit = true): boolean {
     if (this._compacting) return true;
+    const usedSize = this.tokenCountWithPending();
+    this.evaluateAutoCompactionEffectiveness(usedSize);
     if (
       this.lastCompactedTokenCount !== null &&
-      this.tokenCountWithPending() <= this.lastCompactedTokenCount
+      usedSize <= this.lastCompactedTokenCount
     ) {
       return false;
     }
-    if (!this.strategy.shouldCompact(this.tokenCountWithPending())) return false;
-    return this.beginAutoCompaction(throwOnLimit);
+    if (!this.strategy.shouldCompact(usedSize)) return false;
+    if (this.autoCompactionDisabled) return false;
+    const began = this.beginAutoCompaction(throwOnLimit);
+    if (began) this.pendingAutoCompactionCount = usedSize;
+    return began;
+  }
+
+  private evaluateAutoCompactionEffectiveness(usedSize: number): void {
+    const baseline = this.pendingAutoCompactionCount;
+    if (baseline === null) return;
+    this.pendingAutoCompactionCount = null;
+    if (usedSize < baseline * INEFFECTIVE_AUTO_COMPACTION_RATIO) {
+      this.ineffectiveAutoCompactions = 0;
+      return;
+    }
+    this.ineffectiveAutoCompactions += 1;
+    if (this.ineffectiveAutoCompactions < MAX_INEFFECTIVE_AUTO_COMPACTIONS) return;
+    this.autoCompactionDisabled = true;
+    const maxContextTokens = this.getEffectiveMaxContextTokens();
+    const message =
+      `Auto-compaction disabled: repeated compactions failed to reduce the context size ` +
+      `(~${String(usedSize)} tokens remain against a ${String(maxContextTokens)}-token window). ` +
+      `The CLI's baseline request overhead likely exceeds the compaction threshold for this model; ` +
+      `increase the model's max_context_size, lower loop_control.reserved_context_size, or raise loop_control.compaction_trigger_ratio.`;
+    try {
+      this.log.warn(message, { usedSize, maxContextTokens });
+    } catch {
+    }
+    try {
+      void this.dispatcher.dispatch(
+        new WarningIssued({
+          agentId: this.agent.agentId,
+          code: 'auto-compaction-ineffective',
+          message,
+        }),
+      );
+    } catch {
+    }
   }
 
   private beginAutoCompaction(throwOnLimit = true): boolean {
