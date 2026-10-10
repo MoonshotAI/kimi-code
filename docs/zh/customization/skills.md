@@ -106,12 +106,18 @@ extra_skill_dirs = ["~/team-skills", ".agents/team-skills"]
 
 ## 调用 Skill
 
-用户通过斜杠命令主动调用：
+用户可以在输入的行首或正文中提及 Skill，也可以在同一条输入中提及多个 Skill：
 
 ```
 /skill:code-style
 /skill:git-commits 修复登录接口的并发问题
+请按 /skill:code-style 检查这段代码
+请结合 /skill:code-style 和 /skill:review-pr 检查本次改动
 ```
+
+终端界面保留完整用户原文，只高亮已激活的 Skill 标记，不再显示独立的用户 Skill 激活卡。只有输入中恰好提及一次 Skill，且标记位于行首时，其后的文字才作为参数。正文内提及、多次提及和重复提及都不绑定参数；同一个 Skill 在一条输入中只激活一次。
+
+在 Agent 执行期间，按 `Enter` 将输入加入队列，按 `Ctrl-S` 可投递草稿和队列中的 Skill 输入。编辑器为空时，按 `↑` 可召回最近一条排队输入；编辑后提交会重新解析 Skill 标记和参数。
 
 模型也可以根据 `description` 和 `whenToUse` 自动调用 Skill。`disableModelInvocation` 设为 true 或 `type` 设为 flow 时不自动调用。Skill 调用最多允许嵌套 3 层，超过后会被终止。
 

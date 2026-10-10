@@ -7,6 +7,8 @@ import {
 } from '#/tui/commands/index';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { resolveUserInput } from '#/tui/commands/resolve';
+
 function resolve(
   input: string,
   overrides: Partial<Parameters<typeof resolveSlashCommandInput>[0]> = {},
@@ -20,6 +22,42 @@ function resolve(
     ...overrides,
   });
 }
+
+describe('resolveUserInput', () => {
+  const options = {
+    isStreaming: false,
+    isCompacting: false,
+    skillCommandMap: new Map([
+      ['skill:review', 'review'],
+      ['quick', 'review'],
+      ['skill:security', 'security'],
+      ['skill:team/review', 'team/review'],
+    ]),
+    pluginCommandMap: new Map([['example:deploy', 'example']]),
+  };
+
+  it.each([
+    { input: '/skill:review src/app.ts', skills: [{ skillName: 'review', args: 'src/app.ts' }] },
+    { input: '/review', skills: [{ skillName: 'review', args: '' }] },
+    { input: '/skill:team/review src/app.ts', skills: [{ skillName: 'team/review', args: 'src/app.ts' }] },
+    { input: '/team/review src/app.ts', skills: [] },
+    { input: 'check /skill:team/review src/app.ts', skills: [] },
+    { input: '/quick\ncheck src/app.ts', skills: [{ skillName: 'review', args: 'check src/app.ts' }] },
+    { input: 'please /skill:review src/app.ts', skills: [{ skillName: 'review' }] },
+    { input: '/skill:review /review src/app.ts', skills: [{ skillName: 'review' }] },
+    { input: '/quick /skill:review src/app.ts', skills: [{ skillName: 'review' }] },
+    {
+      input: '/skill:security\n/quick /skill:security',
+      skills: [{ skillName: 'security' }, { skillName: 'review' }],
+    },
+    { input: '/unknown /skill:review src/app.ts', skills: [{ skillName: 'review' }] },
+    { input: '/help /skill:review', skills: [] },
+    { input: '/example:deploy /skill:review', skills: [] },
+    { input: 'check src/app.ts https://example.com/review and 1/2', skills: [] },
+  ])('resolves $input without changing argument or command precedence', ({ input, skills }) => {
+    expect(resolveUserInput({ ...options, input }).activations).toEqual(skills);
+  });
+});
 
 describe('resolveSlashCommandInput', () => {
   afterEach(() => {

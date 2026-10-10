@@ -370,6 +370,22 @@ export function stripBundledSkillParts(message: ContextMessage): readonly Conten
   ).filter((part) => !isSkillActivationPart(part));
 }
 
+export function userSlashSkillPromptText(
+  message: ContextMessage,
+  skill: SkillActivationProjection,
+): string {
+  const parts = withoutUserPromptSubmitHookParts(message.content);
+  const [first, ...rest] = parts;
+  const callerText = contentPartsToText(first?.type === 'text' ? rest : parts);
+  if (callerText.trim().length > 0) return callerText;
+  const args = skill.skillArgs ?? '';
+  return args.trim().length > 0 ? `/skill:${skill.skillName} ${args}` : `/skill:${skill.skillName}`;
+}
+
+export function isInTurnOrigin(origin: PromptOrigin | undefined): boolean {
+  return origin !== undefined && 'inTurn' in origin && origin.inTurn === true;
+}
+
 export function pluginCommandFromOrigin(
   origin: PromptOrigin | undefined,
 ): PluginCommandProjection | undefined {

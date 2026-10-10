@@ -4,6 +4,7 @@ import type {
   AgentReplayRecord,
   BackgroundTaskInfo,
   ContentPart,
+  Event,
   GoalSnapshot,
   PromptOrigin,
   ResumedAgentState,
@@ -1167,6 +1168,146 @@ describe('KimiTUI resume message replay', () => {
     ).toEqual(['3 one-shot tasks missed while offline']);
   });
 
+  it('renders a bundled skill prompt as one user entry without skill cards', async () => {
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [
+          {
+            type: 'text',
+            text: 'expanded review instructions',
+            meta: { source: 'skill activation', activationId: 'act-1' },
+          } as ContentPart,
+          {
+            type: 'text',
+            text: 'expanded security instructions',
+            meta: { source: 'skill activation', activationId: 'act-2' },
+          } as ContentPart,
+          { type: 'text', text: 'please /skill:review and /skill:security' },
+        ],
+        {
+          origin: {
+            kind: 'user',
+            skillActivations: [
+              { activationId: 'act-1', skillName: 'review' },
+              { activationId: 'act-2', skillName: 'security' },
+            ],
+          } as PromptOrigin,
+        },
+      ),
+    ]);
+
+    const entries = driver.state.transcriptEntries;
+    expect(entries.map((entry) => entry.kind)).toEqual(['user']);
+    expect(entries[0]!.content).toBe('please /skill:review and /skill:security');
+    expect(entries[0]!.skillNames).toEqual(['review', 'security']);
+    expect(driver.sessionEventHandler.seenSkillActivationIds.has('act-1')).toBe(true);
+    expect(driver.sessionEventHandler.seenSkillActivationIds.has('act-2')).toBe(true);
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('please /skill:review and /skill:security');
+    expect(transcript).not.toContain('expanded review instructions');
+    expect(transcript).not.toContain('Activated skill');
+  });
+
+  it('strips unmarked leading skill parts of legacy bundled prompts', async () => {
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [
+          { type: 'text', text: 'expanded legacy instructions' },
+          { type: 'text', text: 'please /commit' },
+        ],
+        {
+          origin: {
+            kind: 'user',
+            skillActivations: [{ activationId: 'act-3', skillName: 'commit' }],
+          } as PromptOrigin,
+        },
+      ),
+    ]);
+
+    const entries = driver.state.transcriptEntries;
+    expect(entries.map((entry) => entry.kind)).toEqual(['user']);
+    expect(entries[0]!.content).toBe('please /commit');
+    expect(entries[0]!.skillNames).toEqual(['commit']);
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).not.toContain('expanded legacy instructions');
+  });
+
+  it('keeps a steered bundled prompt in the current replay turn', async () => {
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'first prompt' }], { origin: { kind: 'user' } }),
+      message('assistant', [{ type: 'text', text: 'first answer' }]),
+      message(
+        'user',
+        [
+          {
+            type: 'text',
+            text: 'expanded review instructions',
+            meta: { source: 'skill activation', activationId: 'act-steer' },
+          } as ContentPart,
+          { type: 'text', text: 'steered /skill:review note' },
+        ],
+        {
+          origin: {
+            kind: 'user',
+            inTurn: true,
+            skillActivations: [{ activationId: 'act-steer', skillName: 'review' }],
+          } as PromptOrigin,
+        },
+      ),
+    ]);
+
+    const users = driver.state.transcriptEntries.filter((entry) => entry.kind === 'user');
+    expect(users.map((entry) => entry.content)).toEqual([
+      'first prompt',
+      'steered /skill:review note',
+    ]);
+    expect(users[1]!.turnId).toBe(users[0]!.turnId);
+    expect(users[1]!.skillNames).toEqual(['review']);
+  });
+
+  it('records live user-slash skill activations without rendering a card', async () => {
+    const driver = await makeDriver(makeSession([]));
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'skill.activated',
+        sessionId: 'ses-replay',
+        agentId: 'main',
+        activationId: 'act-live-user',
+        skillName: 'review',
+        skillArgs: 'src/app.ts',
+        trigger: 'user-slash',
+      } as Event,
+      () => {},
+    );
+
+    expect(driver.state.transcriptEntries).toEqual([]);
+    expect(driver.sessionEventHandler.seenSkillActivationIds.has('act-live-user')).toBe(true);
+  });
+
+  it('keeps rendering live model-tool skill activation cards', async () => {
+    const driver = await makeDriver(makeSession([]));
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'skill.activated',
+        sessionId: 'ses-replay',
+        agentId: 'main',
+        activationId: 'act-live-model',
+        skillName: 'review',
+        trigger: 'model-tool',
+      } as Event,
+      () => {},
+    );
+
+    expect(driver.state.transcriptEntries.map((entry) => entry.kind)).toEqual([
+      'skill_activation',
+    ]);
+    expect(driver.sessionEventHandler.seenSkillActivationIds.has('act-live-model')).toBe(true);
+  });
+
   it('renders user-slash skill activation once without exposing injected prompt text', async () => {
     const activation = message(
       'user',
@@ -1183,12 +1324,102 @@ describe('KimiTUI resume message replay', () => {
     );
 
     const driver = await replayIntoDriver([activation, activation]);
-    const transcript = driver.state.transcriptContainer.render(120).join('\n');
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
 
-    expect(transcript).toContain('review');
-    expect(transcript).toContain('src/app.ts');
+    const entries = driver.state.transcriptEntries;
+    expect(entries.map((entry) => entry.kind)).toEqual(['user']);
+    expect(entries[0]!.content).toBe('/skill:review src/app.ts');
+    expect(entries[0]!.skillNames).toEqual(['review']);
+    expect(entries[0]!.skillActivationId).toBe('act-review');
+    expect(entries[0]!.skillName).toBe('review');
+    expect(entries[0]!.skillArgs).toBe('src/app.ts');
+    expect(entries[0]!.skillTrigger).toBe('user-slash');
+    expect(transcript).toContain('/skill:review src/app.ts');
     expect(transcript).not.toContain('Review the requested file');
-    expect(driver.sessionEventHandler.renderedSkillActivationIds.has('act-review')).toBe(true);
+    expect(transcript).not.toContain('Activated skill');
+    expect(driver.sessionEventHandler.seenSkillActivationIds.has('act-review')).toBe(true);
+  });
+
+  it('keeps full saved args when reconstructing the canonical skill command', async () => {
+    const longArgs = 'check ' + 'src/very/long/path/file.ts '.repeat(30).trim();
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'expanded skill body' }], {
+        origin: {
+          kind: 'skill_activation',
+          activationId: 'act-long',
+          skillName: 'review',
+          skillArgs: longArgs,
+          trigger: 'user-slash',
+        },
+      }),
+    ]);
+
+    const entries = driver.state.transcriptEntries;
+    expect(entries.map((entry) => entry.kind)).toEqual(['user']);
+    expect(entries[0]!.content).toBe(`/skill:review ${longArgs}`);
+    expect(entries[0]!.content).not.toContain('…');
+  });
+
+  it('reconstructs a bare canonical command when no args were saved', async () => {
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'expanded skill body' }], {
+        origin: {
+          kind: 'skill_activation',
+          activationId: 'act-bare',
+          skillName: 'commit',
+          trigger: 'user-slash',
+        },
+      }),
+    ]);
+
+    const entries = driver.state.transcriptEntries;
+    expect(entries.map((entry) => entry.kind)).toEqual(['user']);
+    expect(entries[0]!.content).toBe('/skill:commit');
+    expect(entries[0]!.skillNames).toEqual(['commit']);
+  });
+
+  it('prefers explicitly saved caller text over the canonical reconstruction', async () => {
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [
+          { type: 'text', text: 'expanded skill body' },
+          { type: 'text', text: '/review please check this carefully' },
+        ],
+        {
+          origin: {
+            kind: 'skill_activation',
+            activationId: 'act-caller',
+            skillName: 'review',
+            skillArgs: 'please check this carefully',
+            trigger: 'user-slash',
+          },
+        },
+      ),
+    ]);
+
+    const entries = driver.state.transcriptEntries;
+    expect(entries.map((entry) => entry.kind)).toEqual(['user']);
+    expect(entries[0]!.content).toBe('/review please check this carefully');
+    expect(entries[0]!.skillNames).toEqual(['review']);
+  });
+
+  it('keeps rendering replayed model-tool skill activation cards', async () => {
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'expanded skill body' }], {
+        origin: {
+          kind: 'skill_activation',
+          activationId: 'act-model',
+          skillName: 'review',
+          trigger: 'model-tool',
+        },
+      }),
+    ]);
+
+    const entries = driver.state.transcriptEntries;
+    expect(entries.map((entry) => entry.kind)).toEqual(['skill_activation']);
+    expect(entries[0]!.skillName).toBe('review');
+    expect(driver.sessionEventHandler.seenSkillActivationIds.has('act-model')).toBe(true);
   });
 
   it('renders replayed hook results as assistant transcript entries', async () => {
@@ -1241,7 +1472,7 @@ describe('KimiTUI resume message replay', () => {
       driver.state.transcriptEntries
         .filter((entry) => entry.kind === 'user')
         .map((entry) => entry.content),
-    ).toEqual(['prompt', 'merged prompt']);
+    ).toEqual(['prompt', 'merged prompt', '/skill:review src/app.ts']);
   });
 
   it('renders replayed compaction records as completed compaction blocks', async () => {

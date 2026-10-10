@@ -2057,6 +2057,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     await agent.promptWithSkills({
       input: input.input,
       skills: input.skills,
+      steerIfActive: input.steerIfActive,
     });
   }
 

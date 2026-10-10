@@ -87,6 +87,7 @@ export interface SessionPromptRpcInput {
 
 export interface SessionPromptWithSkillsRpcInput extends SessionPromptRpcInput {
   readonly skills: readonly PromptSkillActivation[];
+  readonly steerIfActive?: boolean;
 }
 
 export interface SessionIdRpcInput {

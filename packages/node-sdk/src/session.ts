@@ -147,22 +147,17 @@ export class Session {
     });
   }
 
-  /**
-   * Submit one prompt with one or more skill activations bundled into the
-   * same user message: the skills are validated up front (an unknown name
-   * rejects the whole submission), rendered ahead of the prompt in the same
-   * turn, and the bundle undoes as a single anchor. Requires the
-   * agent-core-v2 engine.
-   */
   async promptWithSkills(
     input: string | PromptInput,
     skills: readonly PromptSkillActivation[],
+    options?: { readonly steerIfActive?: boolean },
   ): Promise<void> {
     this.ensureOpen();
     await this.rpc.promptWithSkills({
       sessionId: this.id,
       input: normalizePromptInput(input),
       skills,
+      steerIfActive: options?.steerIfActive,
     });
   }
 

@@ -162,7 +162,7 @@ export class SessionEventHandler {
   backgroundTasks: Map<string, BackgroundTaskInfo> = new Map();
   backgroundTaskTranscriptedTerminal: Set<string> = new Set();
 
-  renderedSkillActivationIds: Set<string> = new Set();
+  seenSkillActivationIds: Set<string> = new Set();
   renderedPluginCommandActivationIds: Set<string> = new Set();
   renderedMcpServerStatusKeys: Map<string, string> = new Map();
   mcpServerStatusSpinners: Map<string, MoonLoader> = new Map();
@@ -183,7 +183,7 @@ export class SessionEventHandler {
     this.backgroundTaskTranscriptedTerminal.clear();
     this.subAgentEventHandler.resetRuntimeState();
     this.notifications.reset();
-    this.renderedSkillActivationIds.clear();
+    this.seenSkillActivationIds.clear();
     this.renderedPluginCommandActivationIds.clear();
     this.renderedMcpServerStatusKeys.clear();
     this.mcpServers.clear();
@@ -1093,8 +1093,9 @@ export class SessionEventHandler {
   }
 
   private handleSkillActivated(event: SkillActivatedEvent): void {
-    if (this.renderedSkillActivationIds.has(event.activationId)) return;
-    this.renderedSkillActivationIds.add(event.activationId);
+    if (this.seenSkillActivationIds.has(event.activationId)) return;
+    this.seenSkillActivationIds.add(event.activationId);
+    if (event.trigger === 'user-slash') return;
     this.host.appendTranscriptEntry({
       id: nextTranscriptId(),
       kind: 'skill_activation',

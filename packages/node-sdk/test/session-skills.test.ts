@@ -215,6 +215,43 @@ describe('Session skills', () => {
     }
   });
 
+  it('forwards the steerIfActive option and the skill args to the RPC input', async () => {
+    const promptWithSkills = vi.fn(async () => {});
+    const session = new Session({
+      id: 'ses_skill_steer_option',
+      workDir: '/tmp/work',
+      rpc: { promptWithSkills } as unknown as SDKRpcClientBase,
+    });
+
+    await session.promptWithSkills(
+      '/review src/app.ts',
+      [{ name: 'review', args: 'src/app.ts' }],
+      { steerIfActive: true },
+    );
+    expect(promptWithSkills).toHaveBeenLastCalledWith({
+      sessionId: 'ses_skill_steer_option',
+      input: [{ type: 'text', text: '/review src/app.ts' }],
+      skills: [{ name: 'review', args: 'src/app.ts' }],
+      steerIfActive: true,
+    });
+
+    await session.promptWithSkills('again', [{ name: 'review' }], { steerIfActive: false });
+    expect(promptWithSkills).toHaveBeenLastCalledWith({
+      sessionId: 'ses_skill_steer_option',
+      input: [{ type: 'text', text: 'again' }],
+      skills: [{ name: 'review' }],
+      steerIfActive: false,
+    });
+
+    await session.promptWithSkills('third', [{ name: 'review' }]);
+    expect(promptWithSkills).toHaveBeenLastCalledWith({
+      sessionId: 'ses_skill_steer_option',
+      input: [{ type: 'text', text: 'third' }],
+      skills: [{ name: 'review' }],
+      steerIfActive: undefined,
+    });
+  });
+
   it('rejects empty names before calling RPC and rejects after close', async () => {
     const activateSkill = vi.fn(async () => {});
     const closeSession = vi.fn(async (_input: { readonly sessionId: string }) => {});

@@ -5,7 +5,7 @@ import {
   EditorKeyboardController,
   type EditorKeyboardHost,
 } from '#/tui/controllers/editor-keyboard';
-import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
+import { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 
 interface Harness {
   readonly host: EditorKeyboardHost;
@@ -476,21 +476,15 @@ describe('EditorKeyboardController Shift-Tab plan toggle', () => {
   });
 });
 
-/**
- * Ctrl-S steering of the TUI queue: plain-text items steer as messages,
- * slash-skill items fire as real activations into the running turn (never as
- * literal text), grouped inline-skill submissions stay queued for the drain
- * path, bash items stay queued — all in queue order.
- */
 describe('EditorKeyboardController Ctrl-S steering', () => {
   function createCtrlSHarness(options: {
     editorText: string;
     queued: Array<Record<string, unknown>>;
     skillCommandMap?: Map<string, string>;
+    pluginCommandMap?: Map<string, string>;
     steering?: boolean;
   }) {
-    const steerMessage = vi.fn();
-    const steerSkillActivation = vi.fn();
+    const steerQueuedMessagesIntoRunningTurn = vi.fn();
     const updateQueueDisplay = vi.fn();
     const setText = vi.fn();
     const editor: Record<string, ((...args: never[]) => unknown) | undefined> = {
@@ -511,10 +505,10 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
       },
       session: { id: 's1' },
       skillCommandMap: options.skillCommandMap ?? new Map(),
-      steerMessage,
-      steerSkillActivation,
-      updateQueueDisplay,
+      pluginCommandMap: options.pluginCommandMap ?? new Map(),
+      steerQueuedMessagesIntoRunningTurn,
       isSteeringQueuedMessages: vi.fn(() => options.steering ?? false),
+      updateQueueDisplay,
       validateMediaCapabilities: vi.fn(() => true),
       showError: vi.fn(),
       track: vi.fn(),
@@ -523,10 +517,7 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
         closeOrCancel: vi.fn(() => false),
       },
     } as unknown as EditorKeyboardHost;
-    const controller = new EditorKeyboardController(
-      host,
-      undefined as unknown as ImageAttachmentStore,
-    );
+    const controller = new EditorKeyboardController(host, new ImageAttachmentStore());
     controller.install();
     const onCtrlS = editor['onCtrlS'];
     if (onCtrlS === undefined) throw new Error('onCtrlS handler not installed');
@@ -534,46 +525,39 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
       host,
       editor,
       setText,
-      steerMessage,
-      steerSkillActivation,
+      steerQueuedMessagesIntoRunningTurn,
       updateQueueDisplay,
       onCtrlS: onCtrlS as () => void,
     };
   }
 
-  it('steers text as a message, skill items as activations, and keeps bash queued', () => {
-    const { host, steerMessage, steerSkillActivation, updateQueueDisplay, onCtrlS } =
-      createCtrlSHarness({
-        editorText: '',
-        queued: [
-          { text: 'queued text', agentId: 'main' },
-          {
-            text: '/tower status',
-            agentId: 'main',
-            mode: 'skill',
-            skillName: 'tower',
-            skillArgs: 'status',
-          },
-          { text: '!ls', agentId: 'main', mode: 'bash' },
-        ],
-      });
+  it('leaves queued inputs owned by the coordinator until dispatch succeeds', () => {
+    const queued = [
+      { text: 'earlier note', agentId: 'main' },
+      {
+        text: 'check /skill:review',
+        agentId: 'main',
+        inlineSkillActivations: [{ skillName: 'review' }],
+      },
+      { text: 'later note', agentId: 'main' },
+      { text: '!ls', agentId: 'main', mode: 'bash' },
+    ];
+    const { host, steerQueuedMessagesIntoRunningTurn, updateQueueDisplay, onCtrlS } =
+      createCtrlSHarness({ editorText: '', queued });
 
     onCtrlS();
 
-    expect(steerMessage).toHaveBeenCalledWith(host.session, [
-      { text: 'queued text', parts: undefined, imageAttachmentIds: undefined },
-    ]);
-    expect(steerSkillActivation).toHaveBeenCalledWith(host.session, 'tower', 'status');
-    expect(host.state.queuedMessages).toEqual([{ text: '!ls', agentId: 'main', mode: 'bash' }]);
+    expect(steerQueuedMessagesIntoRunningTurn).toHaveBeenCalledWith(true);
+    expect(host.state.queuedMessages).toEqual(queued);
     expect(updateQueueDisplay).toHaveBeenCalled();
   });
 
-  it('ignores Ctrl-S while an automatic queue steer is still in flight', () => {
+  it('ignores Ctrl-S while a queue steer is still in flight', () => {
     const queued = [
       { text: 'already steering', agentId: 'main' },
       { text: 'later text', agentId: 'main' },
     ];
-    const { host, setText, steerMessage, steerSkillActivation, onCtrlS } = createCtrlSHarness({
+    const { host, setText, steerQueuedMessagesIntoRunningTurn, onCtrlS } = createCtrlSHarness({
       editorText: 'draft',
       queued,
       steering: true,
@@ -581,102 +565,47 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
 
     onCtrlS();
 
-    expect(steerMessage).not.toHaveBeenCalled();
-    expect(steerSkillActivation).not.toHaveBeenCalled();
+    expect(steerQueuedMessagesIntoRunningTurn).not.toHaveBeenCalled();
     expect(setText).not.toHaveBeenCalled();
     expect(host.state.queuedMessages).toEqual(queued);
   });
 
-  it('steers plain queued messages but keeps grouped inline-skill submissions queued', () => {
-    const { host, steerMessage, updateQueueDisplay, onCtrlS } = createCtrlSHarness({
-      editorText: '',
-      queued: [
-        { text: 'plain note', agentId: 'main' },
-        {
-          text: 'check /skill:review',
-          agentId: 'main',
-          inlineSkillActivations: [{ skillName: 'review' }],
-        },
-      ],
+  it('includes the draft after a leading grouped skill input', () => {
+    const queued = {
+      text: 'check /skill:review',
+      agentId: 'main',
+      inlineSkillActivations: [{ skillName: 'review' }],
+    };
+    const { host, setText, steerQueuedMessagesIntoRunningTurn, onCtrlS } = createCtrlSHarness({
+      editorText: 'later note',
+      queued: [queued],
     });
 
     onCtrlS();
 
-    expect(steerMessage).toHaveBeenCalledWith(host.session, [
-      { text: 'plain note', parts: undefined, imageAttachmentIds: undefined },
-    ]);
-    expect(host.state.queuedMessages).toEqual([
-      {
-        text: 'check /skill:review',
-        agentId: 'main',
-        inlineSkillActivations: [{ skillName: 'review' }],
-      },
-    ]);
-    expect(updateQueueDisplay).toHaveBeenCalled();
+    expect(steerQueuedMessagesIntoRunningTurn).toHaveBeenCalledWith(true);
+    expect(host.state.queuedMessages).toEqual([queued, { text: 'later note' }]);
+    expect(setText).toHaveBeenCalledWith('');
   });
 
-  it('stops steering at the first bundle so later messages keep FIFO order', () => {
-    const { host, steerMessage, onCtrlS } = createCtrlSHarness({
-      editorText: '',
-      queued: [
-        { text: 'earlier note', agentId: 'main' },
-        {
-          text: 'check /skill:review',
-          agentId: 'main',
-          inlineSkillActivations: [{ skillName: 'review' }],
-        },
-        { text: 'later note', agentId: 'main' },
-      ],
-    });
-
-    onCtrlS();
-
-    expect(steerMessage).toHaveBeenCalledWith(host.session, [
-      { text: 'earlier note', parts: undefined, imageAttachmentIds: undefined },
-    ]);
-    expect(host.state.queuedMessages).toEqual([
-      {
-        text: 'check /skill:review',
-        agentId: 'main',
-        inlineSkillActivations: [{ skillName: 'review' }],
-      },
-      { text: 'later note', agentId: 'main' },
-    ]);
-  });
-
-  it('steers nothing when a bundle leads the queue', () => {
-    const { host, steerMessage, onCtrlS } = createCtrlSHarness({
-      editorText: '',
-      queued: [
-        {
-          text: 'check /skill:review',
-          agentId: 'main',
-          inlineSkillActivations: [{ skillName: 'review' }],
-        },
-        { text: 'later note', agentId: 'main' },
-      ],
-    });
-
-    onCtrlS();
-
-    expect(steerMessage).not.toHaveBeenCalled();
-    expect(host.state.queuedMessages).toHaveLength(2);
-  });
-
-  it('leaves an editor draft with inline skill tokens in the editor for the grouped path', () => {
-    const { host, setText, steerMessage, onCtrlS } = createCtrlSHarness({
-      editorText: 'check /skill:review',
-      queued: [{ text: 'plain note', agentId: 'main' }],
+  it.each([
+    ['/skill:review src/app.ts', [{ skillName: 'review', args: 'src/app.ts' }]],
+    ['check /skill:review', [{ skillName: 'review' }]],
+    ['/skill:review check /skill:review', [{ skillName: 'review' }]],
+  ])('parses skill draft %s before asking the coordinator to steer', (text, activations) => {
+    const { host, setText, steerQueuedMessagesIntoRunningTurn, onCtrlS } = createCtrlSHarness({
+      editorText: text,
+      queued: [],
       skillCommandMap: new Map([['skill:review', 'review']]),
     });
 
     onCtrlS();
 
-    expect(steerMessage).toHaveBeenCalledWith(host.session, [
-      { text: 'plain note', parts: undefined, imageAttachmentIds: undefined },
+    expect(steerQueuedMessagesIntoRunningTurn).toHaveBeenCalledWith(true);
+    expect(host.state.queuedMessages).toEqual([
+      { text, inlineSkillActivations: activations },
     ]);
-    expect(setText).not.toHaveBeenCalled();
-    expect(host.state.queuedMessages).toEqual([]);
+    expect(setText).toHaveBeenCalledWith('');
   });
 });
 

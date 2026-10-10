@@ -617,11 +617,18 @@ describe('KimiTUI message flow', () => {
 
     expect(harness.createSession).not.toHaveBeenCalled();
 
-    driver.handleUserInput('/skill:my-skill');
+    driver.handleUserInput('/skill:my-skill src/app.ts');
 
     await vi.waitFor(() => {
-      expect(session.activateSkill).toHaveBeenCalledWith('my-skill', '');
+      expect(session.promptWithSkills).toHaveBeenCalledWith(
+        '/skill:my-skill src/app.ts',
+        [{ name: 'my-skill', args: 'src/app.ts' }],
+      );
+      expect(driver.state.transcriptEntries.filter((entry) => entry.kind === 'user')).toMatchObject([
+        { content: '/skill:my-skill src/app.ts' },
+      ]);
     });
+    expect(session.activateSkill).not.toHaveBeenCalled();
     expect(harness.createSession).toHaveBeenCalledTimes(1);
     expect(driver.getCurrentSessionId()).toBe('ses-lazy');
   });
@@ -1039,20 +1046,13 @@ describe('KimiTUI message flow', () => {
 
     const turns = groupTurns(driver.state.transcriptEntries);
     expect(turns).toHaveLength(3);
-    expect(turns[1]!.entries.map((entry) => entry.kind)).toEqual([
-      'skill_activation',
-      'skill_activation',
-      'assistant',
-      'user',
-      'assistant',
-    ]);
-    expect(turns[1]!.entries[2]!.hookResult).toBe(true);
-    expect(turns[1]!.entries[3]!.content).toBe('please /skill:review and /skill:security');
-    expect(
-      turns[1]!.entries.slice(0, 2).map((entry) => entry.bundledWithPrompt),
-    ).toEqual([true, true]);
-    expect(turns[2]!.entries.map((entry) => entry.kind)).toEqual(['skill_activation', 'user']);
-    expect(turns[2]!.entries[1]!.content).toBe('please /commit');
+    expect(turns[1]!.entries.map((entry) => entry.kind)).toEqual(['assistant', 'user', 'assistant']);
+    expect(turns[1]!.entries[0]!.hookResult).toBe(true);
+    expect(turns[1]!.entries[1]!.content).toBe('please /skill:review and /skill:security');
+    expect(turns[1]!.entries[1]!.skillNames).toEqual(['review', 'security']);
+    expect(turns[2]!.entries.map((entry) => entry.kind)).toEqual(['user']);
+    expect(turns[2]!.entries[0]!.content).toBe('please /commit');
+    expect(stripSgr(renderTranscript(driver))).not.toContain('skill card');
   });
 
   it('pages Updates with Ctrl+N and arrow keys while keeping the editor focused', async () => {
@@ -1365,7 +1365,7 @@ describe('KimiTUI message flow', () => {
     expect(contents).not.toContain('question 0');
   });
 
-  it('appends the user entry after the skill cards for a bundled submission (v2 engine)', async () => {
+  it('renders an accepted skill prompt once without a user activation card (v2 engine)', async () => {
     const session = makeSession({
       id: 'ses-lazy',
       listSkills: vi.fn(async () => [
@@ -1415,12 +1415,50 @@ describe('KimiTUI message flow', () => {
     release();
 
     await vi.waitFor(() => {
-      expect(driver.state.transcriptEntries.map((entry) => entry.kind)).toEqual([
-        'skill_activation',
-        'user',
-      ]);
+      expect(driver.state.transcriptEntries.map((entry) => entry.kind)).toEqual(['user']);
     });
-    expect(driver.state.transcriptEntries[0]!.bundledWithPrompt).toBe(true);
+    expect(driver.state.transcriptEntries[0]).toEqual(expect.objectContaining({
+      content: 'please /skill:review', skillNames: ['review'],
+    }));
+  });
+
+  it('keeps the previous conclusion visible when a skill turn starts before submission settles', async () => {
+    const session = makeSession({
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+    });
+    const { driver } = await makeDriver(session);
+    await (driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }).refreshSkillCommands(session);
+    const emit = (event: Event) => driver.sessionEventHandler.handleEvent(event, () => {});
+    driver.appendTranscriptEntry({
+      id: 'previous-user', kind: 'user', renderMode: 'plain', content: 'previous prompt',
+    });
+    emit({ type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event);
+    driver.appendTranscriptEntry({
+      id: 'previous-answer', kind: 'assistant', turnId: '1', renderMode: 'markdown', content: 'PREVIOUS-CONCLUSION',
+    });
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event);
+    session.promptWithSkills.mockImplementationOnce(async () => {
+      emit({ type: 'turn.started', agentId: 'main', turnId: 2, origin: { kind: 'user' } } as Event);
+    });
+
+    driver.handleUserInput('/skill:review src/app.ts');
+
+    await vi.waitFor(() => {
+      expect(driver.state.transcriptEntries.some((entry) => entry.content === '/skill:review src/app.ts')).toBe(true);
+    });
+    driver.appendTranscriptEntry({
+      id: 'review-progress', kind: 'assistant', turnId: '2', renderMode: 'markdown', content: 'REVIEW-PROGRESS',
+    });
+    driver.appendTranscriptEntry({
+      id: 'review-answer', kind: 'assistant', turnId: '2', renderMode: 'markdown', content: 'REVIEW-CONCLUSION',
+    });
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 2, reason: 'completed' } as Event);
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('PREVIOUS-CONCLUSION');
+    expect(transcript).toContain('REVIEW-CONCLUSION');
   });
 
   it('serializes concurrent lazy session creation (v2 engine)', async () => {
@@ -3241,10 +3279,20 @@ command = "vim"
     expect(transcript).not.toContain('review');
   });
 
-  it('keeps user-slash skill activations as undo anchors', async () => {
-    const { driver } = await makeDriver();
-
+  it('undoes a user skill prompt together with its activation', async () => {
+    const session = makeSession({
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+    });
+    const { driver } = await makeDriver(session);
+    await (
+      driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
+    ).refreshSkillCommands(session);
     driver.handleUserInput('hello');
+    driver.state.appState.streamingPhase = 'idle';
+    driver.handleUserInput('/skill:review');
+    await vi.waitFor(() => { expect(driver.state.transcriptEntries).toHaveLength(2); });
     driver.sessionEventHandler.handleEvent(
       {
         type: 'skill.activated',
@@ -3574,6 +3622,331 @@ command = "vim"
     });
   });
 
+  it('steers a skill draft with its original text and arguments', async () => {
+    const session = makeSession({
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+    });
+    const { driver } = await makeDriver(session);
+    await (
+      driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
+    ).refreshSkillCommands(session);
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.editor.setText('/skill:review src/app.ts');
+
+    driver.state.editor.onCtrlS?.();
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith(
+        '/skill:review src/app.ts',
+        [{ name: 'review', args: 'src/app.ts' }],
+        { steerIfActive: true },
+      );
+    });
+    expect(session.activateSkill).not.toHaveBeenCalled();
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.editor.getText()).toBe('');
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('retains a skill input when media preparation fails and normalizes it again on retry', async () => {
+    const session = makeSession({
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+    });
+    const { driver, harness } = await makeDriver(session);
+    await (
+      driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
+    ).refreshSkillCommands(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addVideo('video/mp4', '/tmp/clip.mp4');
+    const text = `watch /skill:review ${attachment.placeholder}`;
+
+    driver.handleUserInput(text);
+
+    expect(session.promptWithSkills).not.toHaveBeenCalled();
+    expect(driver.state.editor.getText()).toBe(text);
+    imageStore.completeVideo(attachment, { fileId: 'file-retried-skill' });
+    driver.state.editor.handleInput('\r');
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith([
+        { type: 'text', text: 'watch /skill:review ' },
+        { type: 'video_url', videoUrl: { url: 'kimi-file://file-retried-skill' } },
+      ], [{ name: 'review' }]);
+    });
+    emitTurn(driver, 1);
+    await vi.waitFor(() => { expect(harness.deleteFile).toHaveBeenCalledWith('file-retried-skill'); });
+  });
+
+  it('recalls a rejected skill prompt with its media and reparses edited markers', async () => {
+    const promptWithSkills = vi.fn(async () => { throw new Error('Skill unavailable'); });
+    const session = makeSession({
+      promptWithSkills,
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+    });
+    const { driver, harness } = await makeDriver(session);
+    await (
+      driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
+    ).refreshSkillCommands(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addImage(new Uint8Array([0xaa]), 'image/png', 1, 1);
+    attachment.fileId = 'file-recalled-skill';
+    attachment.fileExpiresAt = Date.now() + 60 * 60 * 1000;
+    const text = `check /skill:review ${attachment.placeholder}`;
+    driver.handleUserInput(text);
+    await vi.waitFor(() => {
+      expect(driver.state.queuedMessages).toContainEqual(expect.objectContaining({ text }));
+    });
+    expect(harness.deleteFile).not.toHaveBeenCalled();
+
+    driver.state.editor.onUpArrowEmpty?.();
+
+    expect(driver.state.editor.getText()).toBe(text);
+    expect(driver.state.queuedMessages).toEqual([]);
+    const edited = `check ${attachment.placeholder}`;
+    driver.state.editor.setText(edited);
+    driver.state.editor.handleInput('\r');
+    expect(session.prompt).toHaveBeenCalledWith([
+      { type: 'text', text: 'check ' },
+      { type: 'image_url', imageUrl: { url: 'kimi-file://file-recalled-skill' } },
+    ], { promptId: expect.any(String) });
+    expect(promptWithSkills).toHaveBeenCalledTimes(1);
+    emitTurn(driver, 1);
+    await vi.waitFor(() => { expect(harness.deleteFile).toHaveBeenCalledWith('file-recalled-skill'); });
+    expect(harness.deleteFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps dispatched skill media alive when the remaining queue is discarded', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const session = makeSession({
+      promptWithSkills: vi.fn(() => held),
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+    });
+    const { driver, harness } = await makeDriver(session);
+    await (
+      driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
+    ).refreshSkillCommands(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addImage(new Uint8Array([0xaa]), 'image/png', 1, 1);
+    attachment.fileId = 'file-dispatched-skill';
+    attachment.fileExpiresAt = Date.now() + 60 * 60 * 1000;
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    driver.handleUserInput(`check /skill:review ${attachment.placeholder}`);
+    driver.handleUserInput('discard this later note');
+    driver.state.editor.onCtrlS?.();
+    expect(session.promptWithSkills).toHaveBeenCalledTimes(1);
+
+    (driver as unknown as { clearQueuedMessages(): void }).clearQueuedMessages();
+
+    expect(harness.deleteFile).not.toHaveBeenCalled();
+    release();
+    await vi.waitFor(() => { expect(driver.state.queuedMessages).toEqual([]); });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(harness.deleteFile).not.toHaveBeenCalled();
+    emitTurn(driver, 1);
+    await vi.waitFor(() => { expect(harness.deleteFile).toHaveBeenCalledWith('file-dispatched-skill'); });
+    expect(harness.deleteFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('restores idle when skill preparation fails after the previous turn ends during Ctrl-S delivery', async () => {
+    const session = makeSession({
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+    });
+    const { driver } = await makeDriver(session);
+    await (
+      driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
+    ).refreshSkillCommands(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const missing = imageStore.addVideo('video/quicktime', '/tmp/kimi-missing-source.mov');
+    imageStore.completeVideo(missing, { fileId: 'file-ended-turn-skill' });
+    const text = `/skill:review look ${missing.placeholder}`;
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    driver.handleUserInput('accepted prefix');
+    driver.handleUserInput(text);
+    driver.handleUserInput('later');
+    vi.mocked(session.steer).mockImplementation(async () => {
+      driver.sessionEventHandler.handleEvent(
+        { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+        () => {},
+      );
+    });
+
+    driver.state.editor.onCtrlS?.();
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('Failed to prepare media attachment');
+    });
+    expect(driver.state.appState.streamingPhase).toBe('idle');
+    expect(driver.state.livePane.mode).toBe('idle');
+    expect(driver.state.queuedMessages.map((item) => item.text)).toEqual([text, 'later']);
+    expect(session.steer).toHaveBeenCalledOnce();
+    expect(session.promptWithSkills).not.toHaveBeenCalled();
+    expect(session.prompt).not.toHaveBeenCalled();
+  });
+
+  it('restores idle when skill submission rejects after the previous turn ends during Ctrl-S delivery', async () => {
+    const session = makeSession({
+      promptWithSkills: vi.fn(async () => { throw new Error('Skill unavailable'); }),
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+    });
+    const { driver } = await makeDriver(session);
+    await (
+      driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
+    ).refreshSkillCommands(session);
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    driver.handleUserInput('accepted prefix');
+    driver.handleUserInput('/skill:review keep-me');
+    driver.handleUserInput('later');
+    vi.mocked(session.steer).mockImplementation(async () => {
+      driver.sessionEventHandler.handleEvent(
+        { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+        () => {},
+      );
+    });
+
+    driver.state.editor.onCtrlS?.();
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('Skill unavailable');
+    });
+    expect(driver.state.appState.streamingPhase).toBe('idle');
+    expect(driver.state.livePane.mode).toBe('idle');
+    expect(driver.state.queuedMessages.map((item) => item.text)).toEqual([
+      '/skill:review keep-me', 'later',
+    ]);
+    expect(driver.state.transcriptEntries).not.toContainEqual(expect.objectContaining({
+      kind: 'user', content: '/skill:review keep-me',
+    }));
+    expect(session.steer).toHaveBeenCalledOnce();
+    expect(session.promptWithSkills).toHaveBeenCalledOnce();
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(driver.state.editor.onUpArrowEmpty?.()).toBe(true);
+    expect(driver.state.editor.getText()).toBe('later');
+  });
+
+  it('serializes Ctrl-S inputs and keeps a failed suffix without resending the accepted prefix', async () => {
+    let rejectSkill!: (error: unknown) => void;
+    const held = new Promise<void>((_resolve, reject) => { rejectSkill = reject; });
+    const sent: string[] = [];
+    const promptWithSkills = vi.fn((input: unknown) => {
+      sent.push(String(input));
+      return held;
+    });
+    const steer = vi.fn(async (input: unknown) => { sent.push(String(input)); });
+    const session = makeSession({
+      promptWithSkills,
+      steer,
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+        { name: 'security', description: 'Security skill', path: '/tmp/security', source: 'user' },
+      ]),
+    });
+    const { driver } = await makeDriver(session);
+    await (
+      driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
+    ).refreshSkillCommands(session);
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    driver.handleUserInput('first');
+    driver.handleUserInput('check /skill:review');
+    driver.handleUserInput('later');
+    driver.state.editor.setText('draft /skill:security');
+    driver.state.editor.onCtrlS?.();
+    await vi.waitFor(() => { expect(promptWithSkills).toHaveBeenCalledTimes(1); });
+    expect(sent).toEqual(['first', 'check /skill:review']);
+
+    driver.state.appState.streamingPhase = 'idle';
+    driver.handleUserInput('newer');
+
+    expect(session.prompt).not.toHaveBeenCalled();
+    rejectSkill(new Error('Skill unavailable'));
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('Skill unavailable');
+    });
+    expect(driver.state.queuedMessages.map((item) => item.text)).toEqual([
+      'check /skill:review', 'later', 'draft /skill:security', 'newer',
+    ]);
+    expect(sent).toEqual(['first', 'check /skill:review']);
+    expect(driver.state.editor.getText()).toBe('');
+
+    promptWithSkills.mockImplementation(async (input: unknown) => { sent.push(String(input)); });
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.editor.onCtrlS?.();
+    await vi.waitFor(() => { expect(driver.state.queuedMessages).toEqual([]); });
+    expect(sent).toEqual([
+      'first', 'check /skill:review', 'check /skill:review', 'later', 'draft /skill:security', 'newer',
+    ]);
+    expect(promptWithSkills).toHaveBeenLastCalledWith(
+      'draft /skill:security', [{ name: 'security' }], { steerIfActive: true },
+    );
+  });
+
+  it.each(['enter', 'ctrl-s'])('keeps skill media args and releases uploads on consumption (%s)', async (submission) => {
+    const session = makeSession({
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+    });
+    const { driver, harness } = await makeDriver(session);
+    await (
+      driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
+    ).refreshSkillCommands(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addImage(new Uint8Array([0xaa]), 'image/png', 1, 1);
+    attachment.fileId = 'file-skill-media';
+    attachment.fileExpiresAt = Date.now() + 60 * 60 * 1000;
+    const text = `/skill:review look ${attachment.placeholder}`;
+    if (submission === 'ctrl-s') {
+      driver.state.appState.streamingPhase = 'waiting';
+      driver.streamingUI.setTurnId('1');
+      driver.state.editor.setText(text);
+      driver.state.editor.onCtrlS?.();
+    } else {
+      driver.handleUserInput(text);
+    }
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalled();
+    });
+    const [input, skills] = vi.mocked(session.promptWithSkills).mock.calls[0] as unknown as [
+      unknown,
+      Array<{ name: string; args: string }>,
+    ];
+    expect(input).toEqual([
+      { type: 'text', text: '/skill:review look ' },
+      { type: 'image_url', imageUrl: { url: 'kimi-file://file-skill-media' } },
+    ]);
+    expect(skills[0]?.name).toBe('review');
+    expect(skills[0]?.args).toMatch(/^look Attached image file: .+\.png \(open it with ReadMediaFile\)$/);
+    expect(skills[0]?.args).not.toContain(attachment.placeholder);
+    expect(driver.state.transcriptEntries).toContainEqual(
+      expect.objectContaining({ kind: 'user', content: text, skillNames: ['review'] }),
+    );
+    expect(harness.deleteFile).not.toHaveBeenCalled();
+
+    emitTurn(driver, 1);
+
+    await vi.waitFor(() => {
+      expect(harness.deleteFile).toHaveBeenCalledWith('file-skill-media');
+    });
+    expect(harness.deleteFile).toHaveBeenCalledTimes(1);
+  });
+
   it('queues editor input instead of prompting while a turn is already streaming', async () => {
     const { driver, session, harness } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';
@@ -3587,7 +3960,7 @@ command = "vim"
     expect(harness.track).toHaveBeenCalledWith('input_queue', undefined);
   });
 
-  it('queues a slash-skill activation while a turn is streaming (like any other input) and activates on drain', async () => {
+  it('queues a leading skill prompt while a turn is streaming and submits it on drain', async () => {
     const session = makeSession({
       listSkills: vi.fn(async () => [
         {
@@ -3613,9 +3986,7 @@ command = "vim"
       {
         text: '/demo refactor auth and ui',
         agentId: 'main',
-        mode: 'skill',
-        skillName: 'demo',
-        skillArgs: 'refactor auth and ui',
+        inlineSkillActivations: [{ skillName: 'demo', args: 'refactor auth and ui' }],
       },
     ]);
     expect(harness.track).toHaveBeenCalledWith('input_queue', undefined);
@@ -3625,10 +3996,42 @@ command = "vim"
     driver.state.queuedMessages = [];
     driver.sendQueuedMessage(session, queued);
 
-    expect(session.activateSkill).toHaveBeenCalledWith('demo', 'refactor auth and ui');
+    expect(session.promptWithSkills).toHaveBeenCalledWith(
+      '/demo refactor auth and ui', [{ name: 'demo', args: 'refactor auth and ui' }],
+    );
+    expect(session.activateSkill).not.toHaveBeenCalled();
   });
 
-  it('queues a slash-skill activation while compacting and activates it on drain', async () => {
+  it('uses the existing media queue policy after the selected model changes', async () => {
+    process.env['KIMI_CODE_HOME'] = await makeTempHome();
+    const session = makeSession({
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+    });
+    const { driver } = await makeDriver(session);
+    await (driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }).refreshSkillCommands(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = stagedImage(imageStore, 'file-queued-model-change');
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput(`inspect /skill:review ${attachment.placeholder}`);
+    expect(driver.state.queuedMessages).toHaveLength(1);
+    driver.state.appState.model = 'text-only';
+    driver.state.appState.availableModels = {
+      'text-only': { provider: 'example', model: 'example-model', maxContextSize: 4096, capabilities: [] },
+    };
+    driver.state.appState.streamingPhase = 'idle';
+    const queued = driver.state.queuedMessages.shift()!;
+
+    driver.sendQueuedMessage(session, queued);
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith(expect.any(Array), [{ name: 'review' }]);
+    });
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('queues a leading skill prompt while compacting and submits it on drain', async () => {
     const session = makeSession({
       listSkills: vi.fn(async () => [
         {
@@ -3654,9 +4057,7 @@ command = "vim"
       {
         text: '/demo refactor auth and ui',
         agentId: 'main',
-        mode: 'skill',
-        skillName: 'demo',
-        skillArgs: 'refactor auth and ui',
+        inlineSkillActivations: [{ skillName: 'demo', args: 'refactor auth and ui' }],
       },
     ]);
     expect(driver.state.queueContainer.children.length).toBeGreaterThan(0);
@@ -3667,7 +4068,10 @@ command = "vim"
     driver.state.queuedMessages = [];
     driver.sendQueuedMessage(session, queued);
 
-    expect(session.activateSkill).toHaveBeenCalledWith('demo', 'refactor auth and ui');
+    expect(session.promptWithSkills).toHaveBeenCalledWith(
+      '/demo refactor auth and ui', [{ name: 'demo', args: 'refactor auth and ui' }],
+    );
+    expect(session.activateSkill).not.toHaveBeenCalled();
   });
 
   it('steers fresh input while a goal is active even when the streaming phase is idle', async () => {
@@ -4314,9 +4718,11 @@ command = "vim"
     driver.state.editor.onCtrlS?.();
 
     expect(session.steer).toHaveBeenCalledWith('focus on tests');
-    expect(driver.state.queuedMessages).toEqual([
-      { text: 'ls', agentId: 'main', mode: 'bash' },
-    ]);
+    await vi.waitFor(() => {
+      expect(driver.state.queuedMessages).toEqual([
+        { text: 'ls', agentId: 'main', mode: 'bash' },
+      ]);
+    });
   });
 
   it('does not steer while a shell command is running', async () => {
@@ -4419,7 +4825,7 @@ command = "vim"
       { type: 'text', text: 'look ' },
       { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
     ]);
-    expect(driver.state.queuedMessages).toEqual([]);
+    await vi.waitFor(() => { expect(driver.state.queuedMessages).toEqual([]); });
   });
 
   it('releases every queued use of shared media after a batched steer', async () => {
@@ -4618,20 +5024,30 @@ command = "vim"
     ]);
   });
 
-  it('shows an error instead of throwing when skill media materialization fails', async () => {
-    const session = makeSession();
+  it('keeps skill input and reports failed media argument materialization', async () => {
+    const session = makeSession({
+      listSkills: vi.fn(async () => [
+        { name: 'test', description: 'Test skill', path: '/tmp/test', source: 'user' },
+      ]),
+    });
     const { driver } = await makeDriver(session);
+    await (
+      driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
+    ).refreshSkillCommands(session);
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
     const missing = imageStore.addVideo('video/quicktime', '/tmp/kimi-missing-source.mov');
+    imageStore.completeVideo(missing, { fileId: 'file-missing-source' });
+    const text = `/skill:test look ${missing.placeholder}`;
 
-    (
-      driver as unknown as {
-        sendSkillActivation(s: unknown, name: string, args: string): void;
-      }
-    ).sendSkillActivation(session, 'test', `look ${missing.placeholder}`);
+    driver.handleUserInput(text);
 
+    expect(session.promptWithSkills).not.toHaveBeenCalled();
     expect(session.activateSkill).not.toHaveBeenCalled();
     expect(stripSgr(renderTranscript(driver))).toContain('Failed to prepare media attachment');
+    expect(driver.state.queuedMessages).toContainEqual(expect.objectContaining({
+      text, videoAttachmentIds: [missing.id],
+      inlineSkillActivations: [{ skillName: 'test', args: `look ${missing.placeholder}` }],
+    }));
   });
 
   it('shows an error instead of throwing when plugin command media materialization fails', async () => {
