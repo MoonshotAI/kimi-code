@@ -13,6 +13,7 @@ import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
+import { IConfigService } from '#/app/config/config';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -31,6 +32,7 @@ import {
   SENSITIVE_DOT_VARIANT_SUFFIXES,
   type WorkspaceConfig,
 } from '#/tool/path-access';
+import { TOOLS_SECTION } from '#/agent/toolPolicy/configSection';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import globDescription from './glob.md?raw';
@@ -66,7 +68,8 @@ export class GlobTool implements IGlobTool {
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
+    @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog | undefined,
+    @IConfigService private readonly config: IConfigService,
   ) {}
 
   get description(): string {
@@ -101,13 +104,18 @@ export class GlobTool implements IGlobTool {
     }
     const searchRoots = [path ?? workspace.workspaceDir];
 
+    const effectiveIncludeIgnored =
+      args.include_ignored ?? this.config.get<{ search?: { follow_gitignore?: boolean } }>(TOOLS_SECTION)?.search?.follow_gitignore === false;
+
     const detailParts: string[] = [`pattern: ${args.pattern}`];
     if (args.path !== undefined) {
       detailParts.push(`path: ${args.path}`);
     }
-    if (args.include_ignored === true) {
+    if (effectiveIncludeIgnored) {
       detailParts.push('include_ignored: true');
     }
+
+    const executionArgs = { ...args, include_ignored: effectiveIncludeIgnored };
 
     return {
       accesses: ToolAccesses.searchTree(searchRoots[0]!),
@@ -131,7 +139,7 @@ export class GlobTool implements IGlobTool {
             lease.runtime.process!,
             env,
             workspace,
-            args,
+            executionArgs,
             signal,
             searchRoots,
           );
