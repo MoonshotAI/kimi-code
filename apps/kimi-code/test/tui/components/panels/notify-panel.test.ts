@@ -178,6 +178,30 @@ describe('NotifyPanelComponent', () => {
     expect(render(panel)).toHaveLength(2);
   });
 
+  it('shows the title above the message and previews the title when folded', () => {
+    const panel = new NotifyPanelComponent();
+    panel.upsert({
+      id: 'tc-1',
+      agentId: 'main',
+      time: 0,
+      title: 'Root cause found',
+      text: 'Two refreshes reuse one token.\n\n- interceptor\n- visibility',
+    });
+
+    const lines = render(panel);
+    const titleRow = lines.findIndex((line) => line.includes('Root cause found'));
+    const bodyRow = lines.findIndex((line) => line.includes('Two refreshes reuse one token.'));
+    expect(titleRow).toBeGreaterThan(1);
+    expect(bodyRow).toBe(titleRow + 2);
+    expect(lines[titleRow + 1]).toMatch(/^│\s*│$/);
+
+    panel.setEnded(true);
+    const collapsed = render(panel);
+    expect(collapsed).toHaveLength(2);
+    expect(collapsed[1]).toContain('Root cause found');
+    expect(collapsed[1]).not.toContain('Two refreshes');
+  });
+
   it('stays expanded when the turn ends while the user is reading, folds on blur', () => {
     const panel = new NotifyPanelComponent();
     panel.upsert(entry('tc-1', 'phase one'));
