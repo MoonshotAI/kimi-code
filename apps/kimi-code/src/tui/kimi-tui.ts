@@ -3510,7 +3510,7 @@ export class KimiTUI {
         break;
       }
       case 'thinking': {
-        const spinner = this.ensureActivitySpinner('braille', 'Thinking…', (s) =>
+        const spinner = this.ensureActivitySpinner('braille', 'Working…', (s) =>
           currentTheme.fg('primary', s),
         );
         this.syncAgentSwarmActivitySpinner(undefined);
