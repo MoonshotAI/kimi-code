@@ -18,6 +18,8 @@ import {
   NOTIFY_USER_DELIVERED_OUTPUT,
   NOTIFY_USER_EMPTY_MESSAGE,
   NOTIFY_USER_EMPTY_TITLE,
+  NOTIFY_USER_INVALID_TITLE,
+  NOTIFY_USER_MULTILINE_TITLE,
   NOTIFY_USER_SUPPRESSED_OUTPUT,
 } from '#/features/notify/tools/notify-user/notifyUserTool';
 import { NOTIFY_USER_NUDGE_VARIANT } from '#/features/notify/notifyUserNudge';
@@ -57,7 +59,7 @@ describe('NotifyUserTool', () => {
       }).success,
     ).toBe(true);
     expect(NotifyUserInputSchema.safeParse({ message: 'Reading the parser first.' }).success).toBe(
-      false,
+      true,
     );
     expect(NotifyUserInputSchema.safeParse({ title: 'Reading', message: '' }).success).toBe(false);
     expect(NotifyUserInputSchema.safeParse({ title: '', message: 'Reading' }).success).toBe(false);
@@ -65,7 +67,7 @@ describe('NotifyUserTool', () => {
     expect(tool.parameters).toMatchObject({
       type: 'object',
       additionalProperties: false,
-      required: ['title', 'message'],
+      required: ['message'],
       properties: {
         title: { type: 'string' },
         message: { type: 'string' },
@@ -171,6 +173,20 @@ describe('NotifyUserTool', () => {
     });
   });
 
+  it('accepts a message-only call, matching the pre-title behavior', async () => {
+    const result = await executeTool(ctx.get(INotifyUserTool), {
+      turnId: 1,
+      toolCallId: 'call_1',
+      args: { message: 'Checking the work.' },
+      signal,
+    });
+
+    expect(result).toEqual({ isError: false, output: NOTIFY_USER_DELIVERED_OUTPUT });
+    expect(telemetry.find((record) => record.event === 'notify_user_sent')?.properties).toMatchObject({
+      title_chars: 0,
+    });
+  });
+
   it('rejects a whitespace-only message before execution', async () => {
     const tool = ctx.get(INotifyUserTool);
 
@@ -195,6 +211,34 @@ describe('NotifyUserTool', () => {
     });
 
     expect(result).toEqual({ isError: true, output: NOTIFY_USER_EMPTY_TITLE });
+    expect(telemetry.filter((record) => record.event === 'notify_user_sent')).toHaveLength(0);
+  });
+
+  it('rejects a multi-line title before execution', async () => {
+    const tool = ctx.get(INotifyUserTool);
+
+    const result = await executeTool(tool, {
+      turnId: 1,
+      toolCallId: 'call_1',
+      args: { title: 'First line\nSecond line', message: 'The parser is fine.' },
+      signal,
+    });
+
+    expect(result).toEqual({ isError: true, output: NOTIFY_USER_MULTILINE_TITLE });
+    expect(telemetry.filter((record) => record.event === 'notify_user_sent')).toHaveLength(0);
+  });
+
+  it('rejects a non-string title before execution', async () => {
+    const tool = ctx.get(INotifyUserTool);
+
+    const result = await executeTool(tool, {
+      turnId: 1,
+      toolCallId: 'call_1',
+      args: { title: 42 as unknown as string, message: 'The parser is fine.' },
+      signal,
+    });
+
+    expect(result).toEqual({ isError: true, output: NOTIFY_USER_INVALID_TITLE });
     expect(telemetry.filter((record) => record.event === 'notify_user_sent')).toHaveLength(0);
   });
 

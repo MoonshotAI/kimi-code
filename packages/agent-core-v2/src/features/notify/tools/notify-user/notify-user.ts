@@ -6,7 +6,7 @@ import { type AgentTool } from '#/tool/toolContract';
 export const NOTIFY_USER_TOOL_NAME = 'NotifyUser' as const;
 
 export interface NotifyUserInput {
-  title: string;
+  title?: string;
   message: string;
 }
 
@@ -14,6 +14,7 @@ export const NotifyUserInputSchema: z.ZodType<NotifyUserInput> = z.object({
   title: z
     .string()
     .min(1)
+    .optional()
     .describe(
       "A one-line headline the user can take in at a glance: the conclusion or current phase, in the user's language, under ~60 characters, plain text.",
     ),
