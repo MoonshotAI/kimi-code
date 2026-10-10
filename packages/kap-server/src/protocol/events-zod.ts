@@ -651,6 +651,20 @@ export const modelCatalogChangedEventSchema = z.object({
       reason: z.string().min(1),
     }),
   ),
+  migrations: z
+    .array(
+      z.object({
+        provider_id: z.string().min(1),
+        from_alias: z.string().min(1),
+        from_model: z.string().min(1),
+        to_alias: z.string().min(1),
+        to_model: z.string().min(1),
+        migration_markdown: z.string(),
+        retirement_at: z.string().optional(),
+        target_default_effort: z.string().optional(),
+      }),
+    )
+    .optional(),
 });
 
 export const pluginChangedEventSchema = z.object({

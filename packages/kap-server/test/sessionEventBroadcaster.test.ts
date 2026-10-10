@@ -1641,16 +1641,28 @@ describe('SessionEventBroadcaster', () => {
         { provider_id: 'managed:kimi-code', provider_name: 'Kimi Code', added: 2, removed: 1 },
       ];
       const failed = [{ provider: 'managed:kimi-code', reason: 'network disabled' }];
+      const migrations = [
+        {
+          provider_id: 'managed:kimi-code',
+          from_alias: 'managed:kimi-code/current',
+          from_model: 'current',
+          to_alias: 'managed:kimi-code/next',
+          to_model: 'next',
+          migration_markdown: 'Use next',
+          retirement_at: '2030-01-01T00:00:00Z',
+          target_default_effort: 'high',
+        },
+      ];
       eventBus.emit({
         type: 'event.model_catalog.changed',
-        payload: { changed, unchanged: ['openai-main'], failed },
+        payload: { changed, unchanged: ['openai-main'], failed, migrations },
       });
 
       await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
       expect(globalView.envelopes[0]).toMatchObject({
         type: 'event.model_catalog.changed',
         session_id: '__global__',
-        payload: { changed, unchanged: ['openai-main'], failed },
+        payload: { changed, unchanged: ['openai-main'], failed, migrations },
       });
       expect(globalView.deliveries).toEqual(['immediate']);
     });

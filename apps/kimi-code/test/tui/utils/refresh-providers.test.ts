@@ -347,6 +347,115 @@ describe('refreshAllProviderModels', () => {
     expect(host.current().models?.[userAlias]).toEqual(userAliasModel);
   });
 
+  it('returns valid migration candidates without changing the default model', async () => {
+    const registryUrl = 'https://registry.example.test/v1/models/api.json';
+    const providerId = 'example_chat-completions';
+    const currentAlias = `${providerId}/current`;
+    const host = makeRefreshHost({
+      providers: {
+        [providerId]: {
+          type: 'openai',
+          baseUrl: 'https://api.example.test/v1',
+          apiKey: 'sk-test-token',
+          source: { kind: 'apiJson', url: registryUrl, apiKey: 'sk-test-token' },
+        },
+      },
+      models: {
+        [currentAlias]: {
+          provider: providerId,
+          model: 'current',
+          maxContextSize: 131072,
+          capabilities: ['tool_use'],
+          displayName: 'current',
+        },
+        [`${providerId}/next`]: {
+          provider: providerId,
+          model: 'next',
+          maxContextSize: 131072,
+          capabilities: ['tool_use'],
+          displayName: 'next',
+          defaultEffort: 'high',
+        },
+        [`${providerId}/self`]: {
+          provider: providerId,
+          model: 'self',
+          maxContextSize: 131072,
+          capabilities: ['tool_use'],
+          displayName: 'self',
+        },
+        [`${providerId}/orphan`]: {
+          provider: providerId,
+          model: 'orphan',
+          maxContextSize: 131072,
+          capabilities: ['tool_use'],
+          displayName: 'orphan',
+        },
+      },
+      defaultModel: currentAlias,
+      telemetry: true,
+    } as unknown as KimiConfig);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<FetchMock>(async () => {
+        return new Response(
+          JSON.stringify({
+            [providerId]: {
+              id: providerId,
+              name: 'Example',
+              api: 'https://api.example.test/v1',
+              type: 'openai',
+              models: {
+                current: {
+                  id: 'current',
+                  upgrade: {
+                    model: 'next',
+                    migration_markdown: 'Use next',
+                    retirement_at: '2030-01-01T00:00:00Z',
+                  },
+                },
+                next: { id: 'next', default_effort: 'high' },
+                self: {
+                  id: 'self',
+                  upgrade: { model: 'self', migration_markdown: 'Ignore self' },
+                },
+                orphan: {
+                  id: 'orphan',
+                  upgrade: { model: 'missing', migration_markdown: 'Ignore missing' },
+                },
+              },
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }),
+    );
+
+    const result = await refreshAllProviderModels({
+      getConfig: async () => host.current(),
+      removeProvider: host.removeProvider,
+      setConfig: host.setConfig,
+      resolveOAuthToken: vi.fn(),
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.changed).toEqual([]);
+    expect(result.unchanged).toEqual([providerId]);
+    expect(result.migrations).toEqual([
+      {
+        providerId,
+        fromAlias: currentAlias,
+        fromModel: 'current',
+        toAlias: `${providerId}/next`,
+        toModel: 'next',
+        migrationMarkdown: 'Use next',
+        retirementAt: '2030-01-01T00:00:00Z',
+        targetDefaultEffort: 'high',
+      },
+    ]);
+    expect(host.current().defaultModel).toBe(currentAlias);
+    expect(host.setConfig).not.toHaveBeenCalled();
+  });
+
   it('adds custom-registry providers that appear under an existing source URL', async () => {
     const registryUrl = 'https://registry.example.test/v1/models/api.json';
     const apiKey = 'sk-test-token';

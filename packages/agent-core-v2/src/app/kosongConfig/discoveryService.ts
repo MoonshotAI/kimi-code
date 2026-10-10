@@ -93,7 +93,7 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
       providerId: options.providerId,
     });
     const response = mapRefreshResult(result);
-    if (response.changed.length > 0) {
+    if (response.changed.length > 0 || (response.migrations?.length ?? 0) > 0) {
       this.events.publish(new ModelCatalogChanged({ payload: response }));
     }
     return response;
@@ -282,6 +282,16 @@ function mapRefreshResult(result: RefreshResult): RefreshProviderModelsResponse 
     failed: result.failed.map((failure) => ({
       provider: failure.provider,
       reason: failure.reason,
+    })),
+    migrations: result.migrations?.map((migration) => ({
+      provider_id: migration.providerId,
+      from_alias: migration.fromAlias,
+      from_model: migration.fromModel,
+      to_alias: migration.toAlias,
+      to_model: migration.toModel,
+      migration_markdown: migration.migrationMarkdown,
+      retirement_at: migration.retirementAt,
+      target_default_effort: migration.targetDefaultEffort,
     })),
   };
 }

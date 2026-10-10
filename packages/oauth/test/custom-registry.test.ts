@@ -112,6 +112,61 @@ describe('fetchCustomRegistry', () => {
     });
   });
 
+  it('parses upgrade metadata and null retirement time', async () => {
+    const body = makeKokubResponseBody();
+    body['registry_chat-completions']!.models['gpt-5.5'] = {
+      id: 'gpt-5.5',
+      name: 'GPT 5.5',
+      upgrade: {
+        model: 'gpt-6',
+        migration_markdown: 'Use {model_to}',
+        retirement_at: '2030-01-01T00:00:00Z',
+      },
+    };
+    body['registry_chat-completions']!.models['gpt-5.4'] = {
+      id: 'gpt-5.4',
+      upgrade: {
+        model: 'gpt-6',
+        migration_markdown: '',
+        retirement_at: null,
+      },
+    };
+    const fetchMock = vi.fn(async () => makeJsonResponse(body));
+
+    const result = await fetchCustomRegistry(
+      KOKUB_SOURCE,
+      { fetchImpl: fetchMock as unknown as typeof fetch },
+    );
+
+    expect(result['registry_chat-completions']?.models['gpt-5.5']?.upgrade).toEqual({
+      model: 'gpt-6',
+      migration_markdown: 'Use {model_to}',
+      retirement_at: '2030-01-01T00:00:00Z',
+    });
+    expect(result['registry_chat-completions']?.models['gpt-5.4']?.upgrade).toEqual({
+      model: 'gpt-6',
+      migration_markdown: '',
+      retirement_at: null,
+    });
+  });
+
+  it('rejects malformed upgrade timestamps', async () => {
+    const body = makeKokubResponseBody();
+    body['registry_chat-completions']!.models['gpt-5.5'] = {
+      id: 'gpt-5.5',
+      upgrade: {
+        model: 'gpt-6',
+        migration_markdown: 'Use GPT-6',
+        retirement_at: 'not-a-timestamp',
+      },
+    };
+    const fetchMock = vi.fn(async () => makeJsonResponse(body));
+
+    await expect(
+      fetchCustomRegistry(KOKUB_SOURCE, { fetchImpl: fetchMock as unknown as typeof fetch }),
+    ).rejects.toThrow('retirement_at must be an RFC3339 timestamp or null');
+  });
+
   it('omits the Authorization header when the apiKey is empty', async () => {
     const fetchMock = vi.fn(async () => makeJsonResponse(makeKokubResponseBody()));
 

@@ -477,7 +477,7 @@ Re-discovers one provider's model metadata from its upstream source and rewrites
 | --- | --- | --- | --- |
 | `provider_id` | path | string | **Required.** Provider id |
 
-On success, `data` is a refresh report: `changed` is an array of `{ provider_id, provider_name, added, removed }` (added/removed alias counts), `unchanged` is an array of provider ids with no diff, and `failed` is an array of `{ provider, reason }`.
+On success, `data` is a refresh report: `changed` is an array of `{ provider_id, provider_name, added, removed }` (added/removed alias counts), `unchanged` is an array of provider ids with no diff, and `failed` is an array of `{ provider, reason }`. The report may also include `migrations`, an array of model upgrade declarations with `{ provider_id, from_alias, from_model, to_alias, to_model, migration_markdown, retirement_at?, target_default_effort? }`. When `migrations` is present, the server broadcasts `event.model_catalog.changed` even if no aliases changed.
 
 - `40001`: malformed or unsupported action suffix in the path
 - `40412`: provider not found

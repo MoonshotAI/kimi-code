@@ -66,6 +66,12 @@ export type CustomRegistryProviderType =
   | 'openai_responses'
   | 'kimi';
 
+export interface CustomRegistryModelUpgrade {
+  readonly model: string;
+  readonly migration_markdown: string;
+  readonly retirement_at?: string | null;
+}
+
 export interface CustomRegistryModelEntry {
   readonly id: string;
   readonly name?: string;
@@ -78,6 +84,7 @@ export interface CustomRegistryModelEntry {
   };
   readonly support_efforts?: readonly string[];
   readonly default_effort?: string;
+  readonly upgrade?: CustomRegistryModelUpgrade;
 }
 
 export interface CustomRegistryProviderEntry {
@@ -163,6 +170,16 @@ function toStringArrayOrUndefined(value: unknown): readonly string[] | undefined
   return out;
 }
 
+const RFC3339_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+function isValidRetirementAt(value: unknown): value is string | null | undefined {
+  return (
+    value === undefined ||
+    value === null ||
+    (typeof value === 'string' && RFC3339_PATTERN.test(value) && Number.isFinite(Date.parse(value)))
+  );
+}
+
 function toModelEntry(value: unknown): CustomRegistryModelEntry | undefined {
   if (!isRecord(value)) return undefined;
   const id = value['id'];
@@ -177,6 +194,7 @@ function toModelEntry(value: unknown): CustomRegistryModelEntry | undefined {
     modalities?: { input?: readonly string[]; output?: readonly string[] };
     support_efforts?: readonly string[];
     default_effort?: string;
+    upgrade?: CustomRegistryModelUpgrade;
   } = { id };
 
   const name = value['name'];
@@ -212,12 +230,36 @@ function toModelEntry(value: unknown): CustomRegistryModelEntry | undefined {
   if (isRecord(modalities)) {
     const input = toStringArrayOrUndefined(modalities['input']);
     const output = toStringArrayOrUndefined(modalities['output']);
-    if (input !== undefined || output !== undefined) {
+    if (input !== undefined && output !== undefined) {
       entry.modalities = {
         ...(input !== undefined ? { input } : {}),
         ...(output !== undefined ? { output } : {}),
       };
     }
+  }
+
+  const rawUpgrade = value['upgrade'];
+  if (rawUpgrade !== undefined && rawUpgrade !== null) {
+    if (!isRecord(rawUpgrade)) {
+      throw new Error(`Invalid upgrade for model "${id}": expected an object.`);
+    }
+    const targetModel = nonEmptyString(rawUpgrade['model']);
+    if (targetModel === undefined) {
+      throw new Error(`Invalid upgrade for model "${id}": expected a non-empty target model.`);
+    }
+    const migrationMarkdown = rawUpgrade['migration_markdown'];
+    if (typeof migrationMarkdown !== 'string') {
+      throw new Error(`Invalid upgrade for model "${id}": migration_markdown must be a string.`);
+    }
+    const retirementAt = rawUpgrade['retirement_at'];
+    if (!isValidRetirementAt(retirementAt)) {
+      throw new Error(`Invalid upgrade for model "${id}": retirement_at must be an RFC3339 timestamp or null.`);
+    }
+    entry.upgrade = {
+      model: targetModel,
+      migration_markdown: migrationMarkdown,
+      retirement_at: retirementAt,
+    };
   }
 
   return entry;

@@ -200,6 +200,92 @@ describe('refreshProviderModels modelSource short-circuit', () => {
     }
   });
 
+  it('maps migration candidates and publishes them when the catalog is otherwise unchanged', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            acme: {
+              id: 'acme',
+              name: 'Acme',
+              api: 'https://acme.example.test/v1',
+              type: 'openai',
+              models: {
+                current: {
+                  id: 'current',
+                  upgrade: {
+                    model: 'next',
+                    migration_markdown: 'Use next',
+                    retirement_at: '2030-01-01T00:00:00Z',
+                  },
+                },
+                next: { id: 'next', default_effort: 'high' },
+              },
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { host, discovery, events } = await createHost({
+      providers: {
+        ...staticProviders,
+        acme: {
+          type: 'openai',
+          apiKey: 'sk-acme',
+          source: { kind: 'apiJson', url: 'https://registry.example.test/api.json', apiKey: 'sk-registry' },
+        },
+      },
+      models: {
+        ...staticModels,
+        'acme/current': {
+          provider: 'acme',
+          model: 'current',
+          maxContextSize: 131072,
+          capabilities: ['tool_use'],
+          displayName: 'current',
+        },
+        'acme/next': {
+          provider: 'acme',
+          model: 'next',
+          maxContextSize: 131072,
+          capabilities: ['tool_use'],
+          displayName: 'next',
+          defaultEffort: 'high',
+        },
+      },
+      defaultModel: 's1',
+      thinking: { enabled: true },
+    });
+    try {
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+      expect(result.changed).toEqual([]);
+      expect(result.unchanged).toEqual(['acme']);
+      expect(result.failed).toEqual([]);
+      expect(result.migrations).toEqual([
+        {
+          provider_id: 'acme',
+          from_alias: 'acme/current',
+          from_model: 'current',
+          to_alias: 'acme/next',
+          to_model: 'next',
+          migration_markdown: 'Use next',
+          retirement_at: '2030-01-01T00:00:00Z',
+          target_default_effort: 'high',
+        },
+      ]);
+      expect(events.published).toEqual([
+        expect.objectContaining({
+          type: 'event.model_catalog.changed',
+          payload: expect.objectContaining({ migrations: result.migrations }),
+        }),
+      ]);
+    } finally {
+      host.dispose();
+    }
+  });
+
   it('throws provider.not_found for an unknown scoped provider', async () => {
     const { host, discovery } = await createHost(staticSections);
     try {
