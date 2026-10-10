@@ -1,5 +1,15 @@
 # @moonshot-ai/agent-core-v2
 
+## 0.5.0
+
+### Minor Changes
+
+- [#4058](https://github.com/MoonshotAI/kimi-code/pull/4058) [`5b93669`](https://github.com/MoonshotAI/kimi-code/commit/5b936697670ed15444bcb4720bd91e6ee776a941) Thanks [@liruifengv](https://github.com/liruifengv)! - Add an `allow_ignored_globs` option to the workspace `fs:list` request: matching entries are listed even when gitignored, ignored ancestor directories of a match stay traversable, and dot-path allowances require `show_hidden: true`.
+
+### Patch Changes
+
+- [#4058](https://github.com/MoonshotAI/kimi-code/pull/4058) [`5b93669`](https://github.com/MoonshotAI/kimi-code/commit/5b936697670ed15444bcb4720bd91e6ee776a941) Thanks [@liruifengv](https://github.com/liruifengv)! - Match workspace fs globs (`include_globs`, `exclude_globs`, `allow_ignored_globs`) with the standard picomatch engine: `a/**/b` no longer matches paths like `a/xxb`, and `a/**` now also matches `a` itself.
+
 ## 0.4.3
 
 ### Patch Changes

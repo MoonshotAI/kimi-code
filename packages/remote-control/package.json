@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/remote-control",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "private": true,
   "description": "Kimi Remote Control tunnel client: registers this machine with the relay and forwards HTTP/WebSocket traffic to the local server.",
   "license": "MIT",
