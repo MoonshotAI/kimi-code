@@ -6,6 +6,7 @@ export const LLM_NOT_SET_MESSAGE = 'LLM not set, send "/login" to login';
 export const NO_ACTIVE_SESSION_MESSAGE = 'No active session. Send a message to start one.';
 export const CTRL_D_HINT = 'Press Ctrl+D again to exit';
 export const CTRL_C_HINT = 'Press Ctrl+C again to exit';
+export const SHUTTING_DOWN_HINT = 'Shutting down… (running shutdown hooks)';
 export const MAIN_AGENT_ID = 'main';
 export const OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE = 'OAuth login expired. Send /login to login.';
 export const TUI_MODE_RESTART_NOTICE = 'TUI mode takes effect after restarting Kimi Code.';
