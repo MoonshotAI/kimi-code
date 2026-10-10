@@ -27,8 +27,8 @@ import type {
   VideoAttachment,
 } from '../utils/image-attachment-store';
 import { extractMediaAttachments, imageExtensionForMime } from '../utils/image-placeholder';
-import { extractInlineSkillActivations } from '../utils/inline-skill-tokens';
-import type { PendingExit, QueuedMessage, SteerInputItem } from '../types';
+import { resolveUserInput } from '../commands/resolve';
+import type { PendingExit, QueuedMessage } from '../types';
 import type { TUIState } from '../tui-state';
 import type { BtwPanelController } from './btw-panel';
 import type { SurveyController } from './survey-controller';
@@ -48,8 +48,8 @@ export interface EditorKeyboardHost {
   readonly btwPanelController: BtwPanelController;
   readonly surveyController: SurveyController;
   readonly skillCommandMap: Map<string, string>;
-  steerMessage(session: Session, input: readonly SteerInputItem[]): void;
-  steerSkillActivation(session: Session, skillName: string, skillArgs: string): void;
+  readonly pluginCommandMap: Map<string, string>;
+  steerQueuedMessagesIntoRunningTurn(manual?: boolean): void;
   validateMediaCapabilities(extraction: {
     hasMedia: boolean;
     imageAttachmentIds: readonly number[];
@@ -324,129 +324,56 @@ export class EditorKeyboardController {
       if (
         host.state.appState.streamingPhase === 'idle' ||
         host.state.appState.streamingPhase === 'shell' ||
-        host.state.appState.isCompacting
-      )
-        return;
-      // An automatic steer of the queue is still in flight: steering more now
-      // could reach the model ahead of it, so the keypress is ignored for
-      // that brief window and the draft stays in the editor.
-      if (host.isSteeringQueuedMessages()) return;
-      const text = editor.getText().trim();
+        host.state.appState.isCompacting ||
+        host.isSteeringQueuedMessages()
+      ) return;
+      const text = (editor.getExpandedText?.() ?? editor.getText()).trim();
       const editorIsBash = editor.inputMode === 'bash';
-
-      // Bash commands (`! …`) are not steerable: they stay queued so they run
-      // after the current task. Grouped inline-skill submissions are not
-      // steerable either — steer carries no skill activations, so they stay
-      // queued and submit intact when the session drains; the same applies to
-      // an editor draft carrying inline skill tokens. Steering stops at the
-      // first such bundle: items behind it stay queued too, or a later
-      // message would jump ahead of its bundle and reverse the conversational
-      // order. Everything else steers in queue order — plain text as a
-      // steered message, slash-skill items as activations fired into the
-      // running turn (never as literal text).
-      const queued = host.state.queuedMessages;
-      const firstBundle = queued.findIndex((m) => m.inlineSkillActivations !== undefined);
-      const windowBeforeFirstBundle = firstBundle === -1 ? queued : queued.slice(0, firstBundle);
-      const steerable = windowBeforeFirstBundle.filter((m) => m.mode !== 'bash');
-      const editorHasInlineSkills =
-        !editorIsBash &&
-        text.length > 0 &&
-        extractInlineSkillActivations(text, host.skillCommandMap).length > 0;
-
-      type SteerRun =
-        | { readonly kind: 'text'; readonly items: SteerInputItem[] }
-        | { readonly kind: 'skill'; readonly skillName: string; readonly skillArgs: string };
-      const runs: SteerRun[] = [];
-      let textRun: SteerInputItem[] = [];
-      const flushTextRun = (): void => {
-        if (textRun.length > 0) {
-          runs.push({ kind: 'text', items: textRun });
-          textRun = [];
-        }
-      };
-      for (const m of steerable) {
-        if (m.mode === 'skill' && m.skillName !== undefined) {
-          flushTextRun();
-          runs.push({ kind: 'skill', skillName: m.skillName, skillArgs: m.skillArgs ?? '' });
-          continue;
-        }
-        const trimmed = m.text.trim();
-        if (trimmed.length > 0) {
-          // Queued items carry the parts extracted when they were submitted
-          // (and were already capability-validated then).
-          textRun.push({
-            text: trimmed,
-            parts: m.parts,
-            imageAttachmentIds: m.imageAttachmentIds,
-            videoAttachmentIds: m.videoAttachmentIds,
-          });
-        }
-      }
-      let editorExtraction: ReturnType<typeof extractMediaAttachments> | undefined;
-      if (!editorIsBash && text.length > 0 && !editorHasInlineSkills && firstBundle === -1) {
+      let extraction: ReturnType<typeof extractMediaAttachments> | undefined;
+      if (!editorIsBash && text.length > 0) {
         try {
-          // Synchronous path: an image still ingesting in the background
-          // extracts to its inline fallback here (no bounded wait like
-          // `sendNormalUserInput` — this handler cannot await without
-          // interleaving queue/draft edits); a video still uploading refuses
-          // the submission instead (no inline form exists).
-          editorExtraction = extractMediaAttachments(text, this.imageStore);
+          extraction = extractMediaAttachments(text, this.imageStore);
         } catch (error) {
-          // Media expansion failed (e.g. the pasted video's upload is still
-          // in flight) — leave the queue and the editor draft untouched.
           host.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
           return;
         }
-        textRun.push({
-          text,
-          parts: editorExtraction.hasMedia ? editorExtraction.parts : undefined,
-          imageAttachmentIds:
-            editorExtraction.imageAttachmentIds.length > 0
-              ? editorExtraction.imageAttachmentIds
-              : undefined,
-          videoAttachmentIds:
-            editorExtraction.videoAttachmentIds.length > 0
-              ? editorExtraction.videoAttachmentIds
-              : undefined,
+        if (!host.validateMediaCapabilities(extraction)) {
+          host.releaseStagingMedia([
+            ...extraction.imageAttachmentIds,
+            ...extraction.videoAttachmentIds,
+          ]);
+          return;
+        }
+      }
+      if (host.state.appState.model.trim().length === 0 || host.session === undefined) {
+        host.releaseStagingMedia([
+          ...(extraction?.imageAttachmentIds ?? []),
+          ...(extraction?.videoAttachmentIds ?? []),
+        ]);
+        host.showError(LLM_NOT_SET_MESSAGE);
+        return;
+      }
+      if (extraction !== undefined) {
+        const { activations } = resolveUserInput({
+          input: text,
+          skillCommandMap: host.skillCommandMap,
+          pluginCommandMap: host.pluginCommandMap,
+          isStreaming: true,
+          isCompacting: host.state.appState.isCompacting,
         });
+        host.state.queuedMessages.push({
+          text,
+          agentId: host.harness?.interactiveAgentId,
+          parts: extraction.hasMedia ? extraction.parts : undefined,
+          imageAttachmentIds:
+            extraction.imageAttachmentIds.length > 0 ? extraction.imageAttachmentIds : undefined,
+          videoAttachmentIds:
+            extraction.videoAttachmentIds.length > 0 ? extraction.videoAttachmentIds : undefined,
+          inlineSkillActivations: activations.length > 0 ? activations : undefined,
+        });
+        editor.setText('');
       }
-      flushTextRun();
-
-      if (runs.length > 0) {
-        // The editor draft is fresh input: gate it on the model's media
-        // capabilities before splicing the queue, so a rejection leaves the
-        // queue and the draft untouched.
-        if (
-          editorExtraction !== undefined &&
-          !host.validateMediaCapabilities(editorExtraction)
-        ) {
-          host.releaseStagingMedia([
-            ...editorExtraction.imageAttachmentIds,
-            ...editorExtraction.videoAttachmentIds,
-          ]);
-          return;
-        }
-        const session = host.session;
-        if (host.state.appState.model.trim().length === 0 || session === undefined) {
-          host.releaseStagingMedia([
-            ...(editorExtraction?.imageAttachmentIds ?? []),
-            ...(editorExtraction?.videoAttachmentIds ?? []),
-          ]);
-          host.showError(LLM_NOT_SET_MESSAGE);
-          return;
-        }
-        host.state.queuedMessages = queued.filter(
-          (m, index) => m.mode === 'bash' || (firstBundle !== -1 && index >= firstBundle),
-        );
-        if (!editorIsBash && !editorHasInlineSkills && firstBundle === -1) editor.setText('');
-        for (const run of runs) {
-          if (run.kind === 'text') {
-            host.steerMessage(session, run.items);
-          } else {
-            host.steerSkillActivation(session, run.skillName, run.skillArgs);
-          }
-        }
-      }
+      host.steerQueuedMessagesIntoRunningTurn(true);
       host.updateQueueDisplay();
       host.state.ui.requestRender();
     };
@@ -472,7 +399,6 @@ export class EditorKeyboardController {
 
     editor.onUpArrowEmpty = () => {
       if (host.btwPanelController.scroll('up')) return true;
-      if (host.state.appState.streamingPhase === 'idle' && !host.state.appState.isCompacting) return false;
       const recalled = host.recallLastQueued();
       if (recalled !== undefined) {
         editor.setText(recalled.text);

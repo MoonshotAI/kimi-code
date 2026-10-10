@@ -307,6 +307,12 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
   };
 }
 
+interface PreparedSkillActivations {
+  skills: Array<{ name: string; args?: string }>;
+  mediaAttachmentIds: number[];
+  stagingPaths: string[];
+}
+
 interface SendMessageOptions {
   readonly parts?: readonly PromptPart[];
   readonly imageAttachmentIds?: readonly number[];
@@ -1519,45 +1525,46 @@ export class KimiTUI {
   ): Promise<void> {
     if (this.btwPanelController.sendUserInput(text, activations)) return;
     if (this.state.appState.model.trim().length === 0) {
+      if (preExtracted !== undefined) this.queueSkillUserInput(text, activations, preExtracted);
+      else this.state.editor.setText(text);
       this.showError(LLM_NOT_SET_MESSAGE);
       return;
     }
-    let extraction: ReturnType<typeof extractMediaAttachments>;
+    let extraction: ExtractionResult;
     try {
       extraction = preExtracted ?? extractMediaAttachments(text, this.imageStore);
     } catch (error) {
+      this.state.editor.setText(text);
       this.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
       return;
     }
-    if (!this.validateMediaCapabilities(extraction)) return;
+    if (!this.validateMediaCapabilities(extraction)) {
+      if (preExtracted !== undefined) this.queueSkillUserInput(text, activations, extraction);
+      else {
+        this.staging.releaseRecalled([
+          ...extraction.imageAttachmentIds, ...extraction.videoAttachmentIds,
+        ]);
+        this.state.editor.setText(text);
+      }
+      return;
+    }
     if (this.cacheHint.maybeInterceptOnSubmit(text, extraction, activations)) return;
     let session = this.session;
     if (session === undefined) {
-      // Dispatch only routes here on the v2 engine, so the session is created
-      // lazily on first use exactly like a normal prompt.
       session = await this.ensureSession();
-      if (session === undefined) return;
+      if (session === undefined) {
+        this.queueSkillUserInput(text, activations, extraction);
+        return;
+      }
     }
     if (
       this.deferUserMessages ||
+      this.steeringQueuedMessages.size > 0 ||
       this.state.appState.goal?.status === 'active' ||
       this.state.appState.streamingPhase !== 'idle' ||
       this.state.appState.isCompacting
     ) {
-      this.enqueueMessage(
-        text,
-        extraction.hasMedia
-          ? {
-              hasMedia: true,
-              parts: extraction.parts,
-              imageAttachmentIds: extraction.imageAttachmentIds,
-              videoAttachmentIds: extraction.videoAttachmentIds,
-              inlineSkillActivations: activations,
-            }
-          : { inlineSkillActivations: activations },
-      );
-      this.updateQueueDisplay();
-      this.state.ui.requestRender();
+      this.queueSkillUserInput(text, activations, extraction);
       return;
     }
     this.beginSessionRequest();
@@ -1568,45 +1575,115 @@ export class KimiTUI {
     );
   }
 
+  private queueSkillUserInput(
+    text: string,
+    activations: readonly InlineSkillActivation[],
+    extraction: ExtractionResult,
+  ): void {
+    this.enqueueMessage(text, {
+      parts: extraction.hasMedia ? extraction.parts : undefined,
+      imageAttachmentIds: extraction.imageAttachmentIds,
+      videoAttachmentIds: extraction.videoAttachmentIds,
+      inlineSkillActivations: activations,
+    });
+    this.updateQueueDisplay();
+    this.state.ui.requestRender();
+  }
+
+  private prepareSkillActivations(
+    activations: readonly InlineSkillActivation[],
+  ): PreparedSkillActivations {
+    const prepared: PreparedSkillActivations = {
+      skills: [],
+      mediaAttachmentIds: [],
+      stagingPaths: [],
+    };
+    try {
+      for (const activation of activations) {
+        if (activation.args === undefined) {
+          prepared.skills.push({ name: activation.skillName });
+          continue;
+        }
+        const rewrite = rewriteMediaPlaceholders(activation.args, this.imageStore, 'plain');
+        this.imageStore.retainFileIds(rewrite.videoAttachmentIds);
+        prepared.skills.push({ name: activation.skillName, args: rewrite.text });
+        prepared.mediaAttachmentIds.push(
+          ...new Set([...rewrite.imageAttachmentIds, ...rewrite.videoAttachmentIds]),
+        );
+        prepared.stagingPaths.push(...rewrite.stagingPaths);
+      }
+      return prepared;
+    } catch (error) {
+      this.releaseSkillArgumentMedia(prepared);
+      throw error;
+    }
+  }
+
+  private releaseSkillArgumentMedia(prepared: PreparedSkillActivations): void {
+    for (const id of prepared.mediaAttachmentIds) this.staging.releaseRecalled([id]);
+    this.staging.releaseMedia([], prepared.stagingPaths);
+  }
+
   private async runInlineSkillActivations(
     session: Session,
     text: string,
     activations: readonly InlineSkillActivation[],
     extraction: ReturnType<typeof extractMediaAttachments>,
   ): Promise<void> {
-    const knownEntryIds = new Set(this.state.transcriptEntries.map((entry) => entry.id));
-    await session.promptWithSkills(
-      extraction.hasMedia
+    const restoreInput = (): void => {
+      if (this.session !== session) return;
+      this.state.queuedMessages.unshift(
+        this.toQueuedMessage(text, {
+          parts: extraction.hasMedia ? extraction.parts : undefined,
+          imageAttachmentIds: extraction.imageAttachmentIds,
+          videoAttachmentIds: extraction.videoAttachmentIds,
+          inlineSkillActivations: activations,
+        }),
+      );
+      this.updateQueueDisplay();
+    };
+    let prepared: PreparedSkillActivations | undefined;
+    let input: string | readonly PromptPart[];
+    try {
+      prepared = this.prepareSkillActivations(activations);
+      input = extraction.hasMedia
         ? resolveOriginalCaptions(
             extraction.parts,
             extraction.imageAttachmentIds,
             this.imageStore,
             originalsDirForSession(session),
           )
-        : text,
-      activations.map((activation) => ({ name: activation.skillName, args: activation.args })),
-    );
-    // The engine bundles the activations into the prompt's own message, and
-    // the `skill.activated` events land synchronously during the call — so
-    // the cards appended for this submission are the skill_activation entries
-    // with fresh ids (the window trim may replace the entries array mid-call,
-    // so membership is decided by id, not by index into a captured array).
-    // Appending the user entry afterwards keeps the live transcript in the
-    // same order as a resumed replay (skill cards first, prompt last).
-    // Marking only happens once the submission was accepted: a rejected
-    // bundle leaves no cards and must not leave a local undo anchor the
-    // engine never recorded.
-    for (const entry of this.state.transcriptEntries) {
-      if (entry.kind === 'skill_activation' && !knownEntryIds.has(entry.id)) {
-        entry.bundledWithPrompt = true;
-      }
+        : text;
+    } catch (error) {
+      if (prepared !== undefined) this.releaseSkillArgumentMedia(prepared);
+      restoreInput();
+      this.failSessionRequest(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
+      return;
     }
+    const stagingLease = this.staging.create(
+      [
+        ...new Set([...extraction.imageAttachmentIds, ...extraction.videoAttachmentIds]),
+        ...prepared.mediaAttachmentIds,
+      ],
+      prepared.stagingPaths,
+      'user',
+    );
+    const request = session.promptWithSkills(input, prepared.skills);
+    this.staging.trackDispatch(stagingLease, request, () => {
+      if (this.session !== session) return;
+      this.staging.defer(stagingLease);
+      this.releaseSkillArgumentMedia(prepared);
+      restoreInput();
+    });
+    await request;
+    if (this.session !== session) return;
     this.appendTranscriptEntry({
       id: nextTranscriptId(),
       kind: 'user',
       turnId: undefined,
       renderMode: 'plain',
       content: text,
+      skillNames: activations.map((activation) => activation.skillName),
       imageAttachmentIds:
         extraction.imageAttachmentIds.length > 0 ? extraction.imageAttachmentIds : undefined,
     });
@@ -1768,12 +1845,6 @@ export class KimiTUI {
       void this.runShellCommandFromInput(item.text);
       return;
     }
-    if (item.mode === 'skill' && item.skillName !== undefined) {
-      // sendSkillActivation re-checks the busy state, so a premature drain
-      // re-queues at the tail instead of racing the running turn.
-      this.sendSkillActivation(session, item.skillName, item.skillArgs ?? '');
-      return;
-    }
     if (item.inlineSkillActivations !== undefined && item.inlineSkillActivations.length > 0) {
       // Media was extracted and validated at enqueue time; reuse the queued
       // parts rather than re-extracting from a possibly-cleared image store.
@@ -1788,18 +1859,16 @@ export class KimiTUI {
                 this.imageStore,
               ),
             ];
+      const extraction: ExtractionResult = {
+        parts: refreshed,
+        hasMedia: refreshed.length > 0,
+        imageAttachmentIds: item.imageAttachmentIds !== undefined ? [...item.imageAttachmentIds] : [],
+        videoAttachmentIds: item.videoAttachmentIds !== undefined ? [...item.videoAttachmentIds] : [],
+        imageSnapshots: [],
+      };
       this.beginSessionRequest();
       void this.runInlineSkillActivations(
-        session,
-        item.text,
-        item.inlineSkillActivations,
-        {
-          parts: refreshed,
-          hasMedia: refreshed.length > 0,
-          imageAttachmentIds: item.imageAttachmentIds !== undefined ? [...item.imageAttachmentIds] : [],
-          videoAttachmentIds: item.videoAttachmentIds !== undefined ? [...item.videoAttachmentIds] : [],
-          imageSnapshots: [],
-        },
+        session, item.text, item.inlineSkillActivations, extraction,
       ).catch((error: unknown) => {
         this.failSessionRequest(`Skill activation failed: ${formatErrorMessage(error)}`);
       });
@@ -1921,76 +1990,12 @@ export class KimiTUI {
     });
   }
 
-  sendSkillActivation(session: Session, skillName: string, skillArgs: string): void {
-    // Args are a plain-text channel, so pasted media can't ride along as
-    // inline parts. Skill args are XML-escaped on render (renderSkillAttributes
-    // + expandSkillParameters), so rewrite placeholders into escape-proof
-    // plain-text file references the model can open with ReadMediaFile.
-    let rewrite: ReturnType<typeof rewriteMediaPlaceholders>;
-    try {
-      rewrite = rewriteMediaPlaceholders(skillArgs, this.imageStore, 'plain');
-    } catch (error) {
-      // Cache copy failed (unwritable cache dir, vanished video source…);
-      // nothing has been dispatched yet, so just report and keep the input.
-      this.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
-      return;
-    }
-    if (!this.validateMediaCapabilities(rewrite)) {
-      this.staging.releaseMedia(rewrite.imageAttachmentIds, rewrite.stagingPaths);
-      return;
-    }
-    // Compacting (or deferred input): queue behind it — visible and recallable.
-    // Slash-skill items steer like any queued input on Ctrl-S (the activation
-    // fires into the running turn instead of the literal text) — see
-    // editor-keyboard.ts.
-    // A running turn queues the activation too: every skill behaves like
-    // plain input — queued by default, steered on demand — because the engine
-    // steers activations into a running turn exactly like a steered user
-    // message (v2 `prompt.inject`, v1 `SkillManager.recordActivation`).
-    // The rewritten args reference the staging cache copies by plain path,
-    // never the daemon uploads, so queueing takes recall semantics: the
-    // retains are consumed and the copies retire to session lifetime — they
-    // must stay readable until the item drains.
-    const turnRunning = this.state.appState.streamingPhase !== 'idle';
-    if (this.deferUserMessages || this.state.appState.isCompacting || turnRunning) {
-      const args = rewrite.text.trim();
-      this.state.queuedMessages.push({
-        text: `/${skillName}${args.length > 0 ? ` ${args}` : ''}`,
-        agentId: this.harness.interactiveAgentId,
-        mode: 'skill',
-        skillName,
-        skillArgs: rewrite.text,
-      });
-      this.staging.releaseRecalled([...rewrite.imageAttachmentIds], rewrite.stagingPaths);
-      this.track('input_queue');
-      this.updateQueueDisplay();
-      this.state.ui.requestRender();
-      return;
-    }
-    const stagingLease = this.staging.create(
-      [...new Set(rewrite.imageAttachmentIds)],
-      rewrite.stagingPaths,
-      'skill_activation',
-    );
-    this.beginSessionRequest();
-    this.staging.trackDispatch(
-      stagingLease,
-      session.activateSkill(skillName, rewrite.text),
-      (error) => {
-        this.failSessionRequest(`Skill "${skillName}" failed: ${formatErrorMessage(error)}`);
-      },
-    );
-  }
-
   activatePluginCommand(
     session: Session,
     pluginId: string,
     commandName: string,
     args: string,
   ): void {
-    // Plugin command args are expanded verbatim (no XML escaping), so the
-    // standard <image|video path> tag convention works — see
-    // sendSkillActivation for the escaped-channel variant.
     let rewrite: ReturnType<typeof rewriteMediaPlaceholders>;
     try {
       rewrite = rewriteMediaPlaceholders(args, this.imageStore, 'tag');
@@ -2041,6 +2046,7 @@ export class KimiTUI {
     }
     if (
       this.deferUserMessages ||
+      this.steeringQueuedMessages.size > 0 ||
       this.state.appState.streamingPhase !== 'idle' ||
       this.state.appState.isCompacting
     ) {
@@ -2072,52 +2078,75 @@ export class KimiTUI {
     );
   }
 
-  /** Steers the whole queue into the running turn when it is prompt-only.
-   *  The steered items stay at the front of the queue while the steer is in
-   *  flight, and the queue holds (see `shiftQueuedMessage`) so nothing queued
-   *  behind them dispatches first: success removes them, failure leaves them
-   *  queued in place, and a queue left behind by an ended turn drains once
-   *  the steer settles. */
-  steerQueuedMessagesIntoRunningTurn(): void {
+  steerQueuedMessagesIntoRunningTurn(manual = false): void {
     const session = this.session;
     if (session === undefined || this.steeringQueuedMessages.size > 0) return;
-    if (!this.canSteerQueueIntoRunningTurn()) return;
-    const batch = [...this.state.queuedMessages];
-    if (batch.length === 0 || !batch.every(isSteerableQueuedMessage)) return;
-    for (const message of batch) this.steeringQueuedMessages.add(message);
-    this.updateQueueDisplay();
-    // Same expiring-upload refresh as the queue drain (`sendQueuedMessage`):
-    // an image whose daemon upload expired falls back to its retained bytes.
-    const items = batch.map((message) => {
-      const item = toSteerInputItem(message);
-      if (message.parts === undefined) return item;
-      return {
-        ...item,
-        parts: refreshExpiringImageFileRefs(
-          message.parts,
-          message.imageAttachmentIds ?? [],
-          this.imageStore,
-        ),
-      };
-    });
-    this.steerMessage(session, items, (steered) => {
-      for (const message of batch) this.steeringQueuedMessages.delete(message);
-      if (this.session !== session) return;
-      if (steered) {
-        const done = new Set(batch);
-        this.state.queuedMessages = this.state.queuedMessages.filter((m) => !done.has(m));
-      }
-      this.updateQueueDisplay();
-      if (steered && this.canSteerQueueIntoRunningTurn()) {
-        this.steerQueuedMessagesIntoRunningTurn();
+    if (manual ? !this.canManuallySteer() : !this.canSteerQueueIntoRunningTurn()) return;
+    const batch = manual
+      ? this.state.queuedMessages.filter((message) => message.mode !== 'bash')
+      : [...this.state.queuedMessages];
+    if (batch.length === 0 || (!manual && !batch.every(isSteerableQueuedMessage))) return;
+    const pending = [...batch];
+    const sendNext = (): void => {
+      let first = pending.shift();
+      while (first !== undefined && !this.state.queuedMessages.includes(first)) first = pending.shift();
+      if (first === undefined) {
+        this.updateQueueDisplay();
+        if (!manual && this.canSteerQueueIntoRunningTurn()) {
+          this.steerQueuedMessagesIntoRunningTurn();
+        } else {
+          this.drainQueueIfIdle();
+        }
         return;
       }
-      // A turn that ended while the steer was in flight could not drain the
-      // held queue. A prompt dispatched now while the engine still runs a
-      // turn launched by the steer is queued behind it by the engine, so the
-      // order holds either way.
-      this.drainQueueIfIdle();
-    });
+      const group = [first];
+      if (first.inlineSkillActivations === undefined) {
+        while (pending[0] !== undefined && pending[0].inlineSkillActivations === undefined) {
+          const next = pending.shift()!;
+          if (this.state.queuedMessages.includes(next)) group.push(next);
+        }
+      }
+      for (const message of group) this.steeringQueuedMessages.add(message);
+      this.updateQueueDisplay();
+      const items = group.map((message) => {
+        const item = toSteerInputItem(message);
+        if (message.parts === undefined) return item;
+        return {
+          ...item,
+          parts: refreshExpiringImageFileRefs(
+            message.parts,
+            message.imageAttachmentIds ?? [],
+            this.imageStore,
+          ),
+        };
+      });
+      this.steerMessage(session, items, (steered) => {
+        for (const message of group) this.steeringQueuedMessages.delete(message);
+        if (this.session !== session) return;
+        if (steered) {
+          const done = new Set(group);
+          this.state.queuedMessages = this.state.queuedMessages.filter((message) => !done.has(message));
+          this.updateQueueDisplay();
+          sendNext();
+          return;
+        }
+        this.staging.releaseQueued(group.filter((message) => !this.state.queuedMessages.includes(message)));
+        this.updateQueueDisplay();
+        if (!manual) this.drainQueueIfIdle();
+      });
+    };
+    sendNext();
+  }
+
+  canManuallySteer(): boolean {
+    const phase = this.state.appState.streamingPhase;
+    return (
+      !this.deferUserMessages &&
+      !this.state.appState.isCompacting &&
+      phase !== 'idle' &&
+      phase !== 'shell' &&
+      this.steeringQueuedMessages.size === 0
+    );
   }
 
   isSteeringQueuedMessages(): boolean {
@@ -2147,59 +2176,69 @@ export class KimiTUI {
     onSettled?: (steered: boolean) => void,
   ): void {
     if (this.deferUserMessages || this.state.appState.isCompacting) {
-      for (const item of input) {
-        this.enqueueMessage(item.text, item);
+      if (onSettled !== undefined) {
+        onSettled(false);
+      } else {
+        for (const item of input) this.enqueueMessage(item.text, item);
       }
       return;
     }
-    if (this.state.appState.streamingPhase === 'idle') {
-      for (const item of input) {
-        this.sendMessageInternal(session, item.text, item);
-      }
+    const activations = input.flatMap((item) => item.inlineSkillActivations ?? []);
+    let prepared: PreparedSkillActivations | undefined;
+    let resolvedInput: readonly SteerInputItem[];
+    try {
+      if (activations.length > 0) prepared = this.prepareSkillActivations(activations);
+      resolvedInput = input.map((item) =>
+        item.parts === undefined
+          ? item
+          : {
+              ...item,
+              parts: resolveOriginalCaptions(
+                item.parts,
+                item.imageAttachmentIds ?? [],
+                this.imageStore,
+                originalsDirForSession(session),
+              ),
+            },
+      );
+    } catch (error) {
+      if (prepared !== undefined) this.releaseSkillArgumentMedia(prepared);
+      this.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
+      onSettled?.(false);
       return;
     }
-
-    const steeredEntries: TranscriptEntry[] = [];
-    for (const item of input) {
-      const entry: TranscriptEntry = {
-        id: nextTranscriptId(),
-        kind: 'user',
-        turnId: this.streamingUI.getTurnContext().turnId,
-        renderMode: 'plain',
-        content: item.text,
-        imageAttachmentIds:
-          item.imageAttachmentIds !== undefined && item.imageAttachmentIds.length > 0
-            ? item.imageAttachmentIds
-            : undefined,
-      };
-      steeredEntries.push(entry);
-      this.appendTranscriptEntry(entry);
-    }
-
-    // Dedupe per item, not across the batch: each queued message retained a
-    // shared medium once, so the batch's id multiplicity is the retain count.
+    const startsNewTurn = this.state.appState.streamingPhase === 'idle';
+    if (startsNewTurn) this.beginSessionRequest();
+    const steeredEntries: TranscriptEntry[] = input.map((item) => ({
+      id: nextTranscriptId(),
+      kind: 'user',
+      turnId: this.streamingUI.getTurnContext().turnId,
+      renderMode: 'plain',
+      content: item.text,
+      skillNames: item.inlineSkillActivations?.map((activation) => activation.skillName),
+      imageAttachmentIds:
+        item.imageAttachmentIds !== undefined && item.imageAttachmentIds.length > 0
+          ? item.imageAttachmentIds
+          : undefined,
+    }));
+    for (const entry of steeredEntries) this.appendTranscriptEntry(entry);
     const mediaAttachmentIds = input.flatMap((item) => [
       ...new Set([...(item.imageAttachmentIds ?? []), ...(item.videoAttachmentIds ?? [])]),
     ]);
-    const stagingLease = this.staging.create(mediaAttachmentIds, [], 'user');
+    const stagingLease = this.staging.create(
+      [...mediaAttachmentIds, ...(prepared?.mediaAttachmentIds ?? [])],
+      prepared?.stagingPaths ?? [],
+      'user',
+    );
     const currentTurnId = this.streamingUI.getTurnContext().turnId;
     if (currentTurnId !== undefined) this.staging.bindToTurn(stagingLease, currentTurnId);
-    // Same dispatch-time caption resolution as sendMessageInternal — the
-    // running turn's session owns the persisted originals.
-    const resolvedInput = input.map((item) =>
-      item.parts === undefined
-        ? item
-        : {
-            ...item,
-            parts: resolveOriginalCaptions(
-              item.parts,
-              item.imageAttachmentIds ?? [],
-              this.imageStore,
-              originalsDirForSession(session),
-            ),
-          },
-    );
-    const request = session.steer(combineSteerInput(resolvedInput));
+    const request = prepared === undefined
+      ? session.steer(combineSteerInput(resolvedInput))
+      : session.promptWithSkills(
+          combineSteerInput(resolvedInput),
+          prepared.skills,
+          { steerIfActive: true },
+        );
     if (onSettled !== undefined) {
       void request.then(
         () => onSettled(true),
@@ -2213,10 +2252,16 @@ export class KimiTUI {
           return;
         }
         this.staging.defer(stagingLease);
+        if (prepared !== undefined) this.releaseSkillArgumentMedia(prepared);
         this.removeTranscriptEntries(steeredEntries);
         onSettled(false);
       }
-      this.showError(`Failed to steer: ${formatErrorMessage(error)}`);
+      const message = `Failed to steer: ${formatErrorMessage(error)}`;
+      if (startsNewTurn && this.streamingUI.getTurnContext().turnId === undefined) {
+        this.failSessionRequest(message);
+      } else {
+        this.showError(message);
+      }
     });
   }
 
@@ -2236,15 +2281,6 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  steerSkillActivation(session: Session, skillName: string, skillArgs: string): void {
-    // Ctrl-S on a queued slash-skill item: the activation fires into the
-    // running turn (the engine steers it there, never the literal text). No
-    // beginSessionRequest — the live pane belongs to the running turn.
-    void session.activateSkill(skillName, skillArgs).catch((error: unknown) => {
-      this.showError(`Skill "${skillName}" failed: ${formatErrorMessage(error)}`);
-    });
-  }
-
   // =========================================================================
   // State & Accessors
   // =========================================================================
@@ -2256,13 +2292,12 @@ export class KimiTUI {
   clearQueuedMessages(): void {
     const queued = this.state.queuedMessages;
     this.state.queuedMessages = [];
-    this.staging.releaseQueued(queued);
+    this.staging.releaseQueued(queued.filter((message) => !this.steeringQueuedMessages.has(message)));
   }
 
   shiftQueuedMessage(): QueuedMessage | undefined {
-    if (this.state.queuedMessages.length === 0) return undefined;
+    if (this.state.queuedMessages.length === 0 || this.steeringQueuedMessages.size > 0) return undefined;
     const [first, ...rest] = this.state.queuedMessages;
-    if (this.steeringQueuedMessages.has(first!)) return undefined;
     this.state.queuedMessages = rest;
     return first;
   }
@@ -2975,7 +3010,11 @@ export class KimiTUI {
         const images = entry.imageAttachmentIds
           ?.map((id) => this.imageStore.get(id))
           .filter((a): a is ImageAttachment => a?.kind === 'image');
-        return new UserMessageComponent(entry.content, images, entry.bullet);
+        const skillNames = new Set(entry.skillNames);
+        for (const [command, skillName] of this.skillCommandMap) {
+          if (entry.skillNames?.includes(skillName)) skillNames.add(command.replace(/^skill:/, ''));
+        }
+        return new UserMessageComponent(entry.content, images, entry.bullet, [...skillNames]);
       }
       case 'skill_activation':
         return new SkillActivationComponent(
@@ -3630,7 +3669,7 @@ export class KimiTUI {
         messages: queued,
         isCompacting: this.state.appState.isCompacting,
         isStreaming: this.state.appState.streamingPhase !== 'idle',
-        canSteerImmediately: !this.deferUserMessages && !this.isSteeringQueuedMessages(),
+        canSteerImmediately: this.canManuallySteer(),
       }),
     );
   }
@@ -4404,8 +4443,7 @@ export class KimiTUI {
 function isSteerableQueuedMessage(message: QueuedMessage): boolean {
   return (
     message.inlineSkillActivations === undefined &&
-    message.mode !== 'bash' &&
-    message.mode !== 'skill'
+    message.mode !== 'bash'
   );
 }
 
@@ -4415,5 +4453,6 @@ function toSteerInputItem(message: QueuedMessage): SteerInputItem {
     parts: message.parts,
     imageAttachmentIds: message.imageAttachmentIds,
     videoAttachmentIds: message.videoAttachmentIds,
+    inlineSkillActivations: message.inlineSkillActivations,
   };
 }

@@ -7,12 +7,14 @@ export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
 
 export interface UserPromptOrigin {
   readonly kind: 'user';
+  readonly inTurn?: true;
 }
 
 export const USER_PROMPT_ORIGIN: UserPromptOrigin = { kind: 'user' };
 
 export interface SkillActivationOrigin {
   readonly kind: 'skill_activation';
+  readonly inTurn?: true;
   readonly activationId: string;
   readonly skillName: string;
   readonly skillArgs?: string | undefined;
@@ -24,6 +26,7 @@ export interface SkillActivationOrigin {
 
 export interface PluginCommandOrigin {
   readonly kind: 'plugin_command';
+  readonly inTurn?: true;
   readonly activationId: string;
   readonly pluginId: string;
   readonly commandName: string;

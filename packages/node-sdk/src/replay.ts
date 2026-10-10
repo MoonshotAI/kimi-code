@@ -109,6 +109,9 @@ function isAgentReplayUserTurnRecord(record: AgentReplayRecord): boolean {
 
 export function isAgentReplayUserTurnMessage(message: ContextMessage): boolean {
   if (message.role !== 'user') return false;
+  if (message.origin !== undefined && 'inTurn' in message.origin && message.origin.inTurn === true) {
+    return false;
+  }
   switch (message.origin?.kind) {
     case undefined:
     case 'user':

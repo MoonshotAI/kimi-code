@@ -97,6 +97,77 @@ describe('Session skills', () => {
     }
   });
 
+  it.each([
+    {
+      input: '/skill:review src/app.ts',
+      skills: [{ name: 'review', args: 'src/app.ts' }],
+      steerIfActive: undefined,
+    },
+    {
+      input: 'Review /skill:review src/app.ts',
+      skills: [{ name: 'review' }],
+      steerIfActive: undefined,
+    },
+    {
+      input: '/skill:review /skill:security src/app.ts',
+      skills: [{ name: 'review' }, { name: 'security' }],
+      steerIfActive: undefined,
+    },
+    {
+      input: '/skill:review src/app.ts',
+      skills: [{ name: 'review', args: 'src/app.ts' }],
+      steerIfActive: true,
+    },
+  ])('rejects a blocked skill prompt and accepts the next prompt ($input, steer=$steerIfActive)', async ({ input, skills, steerIfActive }) => {
+    const restoreEnv = scrubConfigEnv();
+    const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-home-');
+    const workDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-work-');
+    for (const name of ['review', 'security']) {
+      await writeSkill(workDir, name, [
+        '---',
+        `name: ${name}`,
+        `description: ${name} skill`,
+        '---',
+        '',
+        'Review the requested file.',
+      ]);
+    }
+    const command = `${JSON.stringify(process.execPath)} -e "process.exit(2)"`;
+    await writeFile(join(homeDir, 'config.toml'), [
+      '[[hooks]]',
+      'event = "UserPromptSubmit"',
+      'matcher = "/skill:"',
+      `command = ${JSON.stringify(command)}`,
+      'timeout = 5',
+    ].join('\n'));
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      const session = await harness.createSession({ id: 'ses_sdk_skill_blocked', workDir });
+      const events: Event[] = [];
+      session.onEvent((event) => events.push(event));
+
+      await expect(session.promptWithSkills(input, skills, { steerIfActive })).rejects.toMatchObject({
+        name: 'KimiError',
+        code: 'request.invalid',
+        message: 'Prompt blocked by UserPromptSubmit hook',
+      });
+      expect(events).toContainEqual(expect.objectContaining({
+        type: 'hook.result', hookEvent: 'UserPromptSubmit', blocked: true,
+      }));
+      expect(events.filter((event) => event.type === 'turn.started')).toHaveLength(0);
+      expect(events.filter((event) => event.type === 'turn.ended')).toHaveLength(0);
+
+      const ended = waitForSDKEvent(session, (event) => event.type === 'turn.ended');
+      await session.promptWithSkills('Review the next change.', [{ name: 'review' }]);
+      await ended;
+      expect(events.filter((event) => event.type === 'turn.started')).toHaveLength(1);
+    } finally {
+      await harness.close();
+      restoreEnv();
+    }
+  });
+
   it('lists session skills without exposing content', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-work-');
@@ -213,6 +284,43 @@ describe('Session skills', () => {
     } finally {
       await harness.close();
     }
+  });
+
+  it('forwards the steerIfActive option and the skill args to the RPC input', async () => {
+    const promptWithSkills = vi.fn(async () => {});
+    const session = new Session({
+      id: 'ses_skill_steer_option',
+      workDir: '/tmp/work',
+      rpc: { promptWithSkills } as unknown as SDKRpcClientBase,
+    });
+
+    await session.promptWithSkills(
+      '/review src/app.ts',
+      [{ name: 'review', args: 'src/app.ts' }],
+      { steerIfActive: true },
+    );
+    expect(promptWithSkills).toHaveBeenLastCalledWith({
+      sessionId: 'ses_skill_steer_option',
+      input: [{ type: 'text', text: '/review src/app.ts' }],
+      skills: [{ name: 'review', args: 'src/app.ts' }],
+      steerIfActive: true,
+    });
+
+    await session.promptWithSkills('again', [{ name: 'review' }], { steerIfActive: false });
+    expect(promptWithSkills).toHaveBeenLastCalledWith({
+      sessionId: 'ses_skill_steer_option',
+      input: [{ type: 'text', text: 'again' }],
+      skills: [{ name: 'review' }],
+      steerIfActive: false,
+    });
+
+    await session.promptWithSkills('third', [{ name: 'review' }]);
+    expect(promptWithSkills).toHaveBeenLastCalledWith({
+      sessionId: 'ses_skill_steer_option',
+      input: [{ type: 'text', text: 'third' }],
+      skills: [{ name: 'review' }],
+      steerIfActive: undefined,
+    });
   });
 
   it('rejects empty names before calling RPC and rejects after close', async () => {

@@ -163,6 +163,56 @@ export function defineKlientConformance(
       }
     });
 
+    it('promptWithSkills submits skills, args, and steerIfActive on every transport', async () => {
+      const workDir = await mkdtemp(join(tmpdir(), 'klient-conf-skill-submit-'));
+      try {
+        await mkdir(join(workDir, '.kimi-code', 'skills', 'conf-skill'), { recursive: true });
+        await writeFile(
+          join(workDir, '.kimi-code', 'skills', 'conf-skill', 'SKILL.md'),
+          '---\nname: conf-skill\ndescription: conformance fixture skill\n---\n\n# Conf body\n',
+        );
+        const created = await target.klient.global.sessions.create({ workDir });
+        try {
+          const agent = target.klient.session(created.id).agent('main');
+
+          await expect(
+            agent.promptWithSkills({
+              input: [{ type: 'text', text: 'Run the fixture skill.' }],
+              skills: [{ name: 'missing-skill' }],
+            }),
+          ).rejects.toThrow(/not found/i);
+
+          const launched = await agent.promptWithSkills({
+            input: [{ type: 'text', text: 'Run the fixture skill.' }],
+            skills: [{ name: 'conf-skill', args: 'src/app.ts' }],
+            steerIfActive: true,
+          });
+          expect(launched).toMatchObject({ turn_id: 0, state: 'running' });
+          expect(launched.prompt_id.length).toBeGreaterThan(0);
+          expect(launched.created_at.length).toBeGreaterThan(0);
+
+          const { history } = await agent.getContext();
+          const bundled = history.find(
+            (message) => message.role === 'user' && message.origin?.kind === 'user',
+          );
+          expect(bundled?.origin).toMatchObject({
+            kind: 'user',
+            skillActivations: [{ skillName: 'conf-skill', skillArgs: 'src/app.ts' }],
+          });
+          const texts = bundled?.content
+            .filter((part) => part.type === 'text')
+            .map((part) => part.text);
+          expect(texts?.[0]).toContain('# Conf body');
+          expect(texts?.[0]).toContain('ARGUMENTS: src/app.ts');
+          expect(texts?.[1]).toBe('Run the fixture skill.');
+        } finally {
+          await target.klient.session(created.id).close();
+        }
+      } finally {
+        await rm(workDir, { recursive: true, force: true });
+      }
+    });
+
     it('providers.set/get/delete works and emits kosong.providers.changed', async () => {
       const events: Array<{
         added: readonly string[];
