@@ -1,3 +1,4 @@
+import type { LlmModel } from '#/llm/model';
 import type { ProtocolEndpoint, ProviderConnection } from '#/llm/protocol/connection';
 import type { ContentPart, ToolDescription } from '#/llm/message';
 import { providerImagePolicy } from '#/llm/media/image-formats';
@@ -65,6 +66,22 @@ function convertKimiTool(tool: ToolDescription): Record<string, unknown> {
 
 const kimiAcceptedImageMimes = (): ReadonlySet<string> => providerImagePolicy('kimi').acceptedMimes;
 
+export function kimiUnsetCompletionTokens(input: {
+  readonly model: LlmModel;
+  readonly usedContextTokens?: number;
+}): number | undefined {
+  const window = input.model.maxContextSize;
+  if (window === undefined || window <= 0 || input.usedContextTokens === undefined) return undefined;
+  return Math.max(1, window - input.usedContextTokens);
+}
+
+export const kimiResponsesTrait: OpenAIResponsesTrait = {
+  completionTokensWhenUnset: kimiUnsetCompletionTokens,
+  encodeCacheKey: (key) => ({ prompt_cache_key: key }),
+};
+
+export const kimiOpenAIResponsesTrait: OpenAIResponsesTrait = kimiResponsesTrait;
+
 export const kimiOpenAITrait: OpenAITrait = {
   strictThinkingValidation: true,
 
@@ -91,6 +108,8 @@ export const kimiOpenAITrait: OpenAITrait = {
   encodeMaxCompletionTokens: (maxCompletionTokens) => ({
     max_completion_tokens: maxCompletionTokens,
   }),
+
+  completionTokensWhenUnset: kimiUnsetCompletionTokens,
 
   buildParams: (params) => {
     const { extra_body: extraBody, ...rest } = params;
@@ -163,7 +182,5 @@ export const kimiAnthropicTrait: AnthropicTrait = {
   },
 };
 
-export const kimiOpenAIResponsesTrait: OpenAIResponsesTrait = {
-  encodeCacheKey: (key) => ({ prompt_cache_key: key }),
-};
+
 

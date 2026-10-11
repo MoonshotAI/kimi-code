@@ -691,26 +691,33 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     const turnConfig = this.resolveTurnConfig(overrides.source);
     const resolved = turnConfig?.resolved ?? this.profile.resolveModelContext();
     const baseParams = turnConfig?.params ?? this.profile.resolveRequestParams();
+    const requester = this.modelCatalog.getRequester(resolved.modelAlias);
+    const maxCompletionTokensCap =
+      this.config.get<ModelOverrides>('modelOverrides')?.maxCompletionTokens;
+    const usedContextTokens =
+      overrides.messages === undefined
+        ? this.tokenCounting.get(this.scopeContext.agentContext).size
+        : undefined;
     const budgetParams = completionBudgetParams({
       budget: resolveCompletionBudget({
         maxOutputSize: overrides.maxOutputSize ?? resolved.maxOutputSize,
-        reservedContextSize: resolved.reservedContextSize,
-        maxCompletionTokensCap:
-          this.config.get<ModelOverrides>('modelOverrides')?.maxCompletionTokens,
+        maxCompletionTokensCap,
       }),
       capability: resolved.modelCapabilities,
-      usedContextTokens:
-        overrides.messages === undefined
-          ? this.tokenCounting.get(this.scopeContext.agentContext).measured
-          : undefined,
+      usedContextTokens,
     });
-    const requester = this.modelCatalog.getRequester(resolved.modelAlias);
+    const optedOut = maxCompletionTokensCap !== undefined && maxCompletionTokensCap <= 0;
 
     const messages = overrides.messages ?? this.context.get();
     return {
       requester,
       model: requester.model,
-      params: { ...baseParams, ...budgetParams },
+      params: {
+        ...baseParams,
+        ...budgetParams,
+        ...(usedContextTokens === undefined ? {} : { usedContextTokens }),
+        ...(optedOut ? { maxCompletionTokens: maxCompletionTokensCap } : {}),
+      },
       modelAlias: resolved.modelAlias,
       thinkingEffort: resolved.thinkingLevel,
       systemPrompt: overrides.systemPrompt ?? turnConfig?.systemPrompt ?? this.profile.getSystemPrompt(),

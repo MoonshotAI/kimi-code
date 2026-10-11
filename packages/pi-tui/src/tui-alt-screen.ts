@@ -36,6 +36,7 @@ import {
 	CURSOR_MARKER,
 	compositeTuiLine,
 	dispatchMouseEvent,
+	type LayoutEffect,
 	type OverlayHandle,
 	retargetMouseEvent,
 	TuiBase,
@@ -77,6 +78,7 @@ const MAX_CACHED_OFFSCREEN_KITTY_IMAGES = 16;
 const MAX_CACHED_OFFSCREEN_KITTY_TRANSMISSION_BYTES = 32 * 1024 * 1024;
 const MAX_CACHED_OFFSCREEN_KITTY_DECODED_BYTES = 64 * 1024 * 1024;
 const DOUBLE_CLICK_INTERVAL_MS = 500;
+const MAX_LAYOUT_EFFECT_PASSES = 10;
 // Regular mode delegates double-click selection to the terminal emulator. Fullscreen owns mouse selection,
 // so mirror common terminal word-selection behavior by keeping paths and kebab-case tokens whole.
 const TERMINAL_WORD_SELECTION_JOINERS = new Set(["/", "-"]);
@@ -201,6 +203,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private previousScreenHeight = 0;
 	private layoutRoot: Component | undefined;
 	private currentLayout: LayoutFrame | undefined;
+	private readonly layoutEffects = new Set<LayoutEffect>();
+	private runningLayoutEffects = false;
+	private layoutEffectRenderRequested = false;
+	private layoutEffectForceRequested = false;
 	private readonly implicitDocument: Component;
 	private readonly implicitScrollView: ScrollView;
 	private readonly flashes: AltScreenFlashContainer;
@@ -311,6 +317,22 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	getLayoutRoot(): Component | undefined {
 		return this.layoutRoot;
+	}
+
+	addLayoutEffect(effect: LayoutEffect): () => void {
+		this.layoutEffects.add(effect);
+		return () => {
+			this.layoutEffects.delete(effect);
+		};
+	}
+
+	override requestRender(force = false): void {
+		if (this.runningLayoutEffects) {
+			if (force) this.layoutEffectForceRequested = true;
+			this.layoutEffectRenderRequested = true;
+			return;
+		}
+		super.requestRender(force);
 	}
 
 	override render(width: number): string[] {
@@ -572,7 +594,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		return true;
 	}
 
-	private refreshSearch(layout: LayoutFrame): boolean {
+	private refreshSearch(
+		layout: LayoutFrame,
+		options: { retainIndex?: boolean; revealSelection?: boolean } = {},
+	): boolean {
 		const search = this.activeSearch;
 		if (!search) return false;
 		const scrollView = layout.primaryScrollView ?? this.implicitScrollView;
@@ -587,17 +612,19 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			return false;
 		}
 
-		const shouldRevealSelection = search.selectionMode !== "retain";
+		const shouldRevealSelection = options.revealSelection || search.selectionMode !== "retain";
 		const result = search.index.search(lines, search.query);
 		const matches = result.matches;
 		search.matches = matches;
-		if (!result.changed && search.selectionMode === "retain") return false;
+		if (!result.changed && search.selectionMode === "retain" && !shouldRevealSelection) return false;
 
-		const exactIndex = result.changed
-			? search.selectedKey
-				? matches.findIndex((match) => getAltScreenSearchMatchKey(match) === search.selectedKey)
-				: -1
-			: search.selectedIndex;
+		// A layout effect can shift rows without changing the selected occurrence.
+		const exactIndex =
+			result.changed && !options.retainIndex
+				? search.selectedKey
+					? matches.findIndex((match) => getAltScreenSearchMatchKey(match) === search.selectedKey)
+					: -1
+				: Math.min(search.selectedIndex, matches.length - 1);
 		let selectedIndex = -1;
 		if (matches.length > 0) {
 			if (search.selectionMode === "query") {
@@ -1429,6 +1456,31 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		return { start: Math.max(minColumn, start), end: Math.min(maxColumn, end) };
 	}
 
+	private preserveSelectionAcrossPadding(before: LayoutFrame, after: LayoutFrame): void {
+		const scrollView = this.selectionAnchor?.scrollView;
+		if (!scrollView) return;
+		const oldLines = getScrollViewBox(before, scrollView)?.scrollContentLines;
+		const newLines = getScrollViewBox(after, scrollView)?.scrollContentLines;
+		if (!oldLines || !newLines || oldLines.length === newLines.length) return;
+		const delta = newLines.length - oldLines.length;
+		const longer = delta > 0 ? newLines : oldLines;
+		const shorter = delta > 0 ? oldLines : newLines;
+		const padding = Math.abs(delta);
+		if (!longer.slice(0, padding).every((line) => line === "")) return;
+		if (!shorter.every((line, row) => line === longer[row + padding])) return;
+		// Word/line selections can share their endpoints with the initial range.
+		const points = new Set([
+			this.selectionAnchor,
+			this.selectionFocus,
+			this.selectionInitialRange?.start,
+			this.selectionInitialRange?.end,
+		]);
+		for (const point of points) {
+			if (point?.scrollView === scrollView) point.row = Math.max(0, point.row + delta);
+		}
+		if (this.lastClick?.scrollView === scrollView) this.lastClick.row = Math.max(0, this.lastClick.row + delta);
+	}
+
 	private getActiveSelectionText(): string | undefined {
 		const selection = this.getSelectionBounds();
 		if (!selection) return undefined;
@@ -1666,10 +1718,34 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		if (this.stopped || !this.altScreenActive) return;
 		const width = Math.max(1, this.terminal.columns);
 		const height = Math.max(1, this.terminal.rows);
-		const root = this.layoutRoot ?? this.implicitScrollView;
-		let nextLayout = renderLayoutFrame(root, width, height, () => this.requestRender());
-		if (this.refreshSearch(nextLayout)) {
+		const revealSelection = this.activeSearch !== undefined && this.activeSearch.selectionMode !== "retain";
+		let nextLayout: LayoutFrame;
+		let previousPass: LayoutFrame | undefined;
+		for (let pass = 0; ; pass++) {
+			const root = this.layoutRoot ?? this.implicitScrollView;
 			nextLayout = renderLayoutFrame(root, width, height, () => this.requestRender());
+			if (this.refreshSearch(nextLayout, { retainIndex: pass > 0, revealSelection })) {
+				nextLayout = renderLayoutFrame(root, width, height, () => this.requestRender());
+			}
+			if (previousPass) this.preserveSelectionAcrossPadding(previousPass, nextLayout);
+			if (this.layoutEffects.size === 0) break;
+			this.currentLayout = nextLayout;
+			this.layoutEffectRenderRequested = false;
+			this.layoutEffectForceRequested = false;
+			this.runningLayoutEffects = true;
+			try {
+				for (const effect of [...this.layoutEffects]) {
+					if (this.layoutEffects.has(effect)) effect();
+				}
+			} finally {
+				this.runningLayoutEffects = false;
+			}
+			if (!this.layoutEffectRenderRequested) break;
+			previousPass = nextLayout;
+			if (this.layoutEffectForceRequested) this.resetRenderState();
+			if (pass + 1 >= MAX_LAYOUT_EFFECT_PASSES) {
+				throw new Error(`Layout effects did not stabilize after ${MAX_LAYOUT_EFFECT_PASSES} passes`);
+			}
 		}
 		let screen = nextLayout.lines.map((line) => line.replace(OSC133_ZONE_PREFIX, ""));
 		screen = this.applySearchHighlights(screen, nextLayout);

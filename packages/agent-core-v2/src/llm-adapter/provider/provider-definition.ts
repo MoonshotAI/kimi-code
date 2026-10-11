@@ -7,7 +7,7 @@ import {
   kimiAnthropicTrait,
   kimiConnection,
   kimiOpenAITrait,
-  kimiOpenAIResponsesTrait,
+  kimiResponsesTrait,
   KIMI_DEFAULT_BASE_URL,
 } from '#human/llm-kimi/trait';
 import { classifyKimiQuotaError } from '#human/llm-kimi/errors';
@@ -247,7 +247,7 @@ registerProviderDefinition({
 registerProviderDefinition({
   id: 'kimi',
   baseProtocol: 'openai_responses',
-  trait: kimiOpenAIResponsesTrait,
+  trait: kimiResponsesTrait,
   connection: kimiConnection,
   classifyError: classifyKimiQuotaError,
   endpoint: kimiEndpoint,
