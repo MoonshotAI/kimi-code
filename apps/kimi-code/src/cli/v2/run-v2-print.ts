@@ -419,17 +419,19 @@ async function resolveNativeSession(
   };
 
   function normalizePathForComparison(p: string): string {
-    let resolved: string;
     try {
-      resolved = realpathSync.native(p);
+      return realpathSync.native(p);
     } catch {
-      resolved = resolve(p);
+      return resolve(p);
     }
-    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  }
+
+  function compareNormalizedPaths(a: string, b: string): boolean {
+    return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
   }
 
   function isSamePath(a: string, b: string): boolean {
-    return normalizePathForComparison(a) === normalizePathForComparison(b);
+    return compareNormalizedPaths(normalizePathForComparison(a), normalizePathForComparison(b));
   }
 
   if (opts.session !== undefined) {
@@ -466,11 +468,12 @@ async function resolveNativeSession(
 
   if (opts.continue) {
     const page = await index.listRecent({});
+    const normalizedWorkDir = normalizePathForComparison(workDir);
     const previous = page.items.find(
       (summary) =>
         typeof summary.cwd === 'string' &&
         summary.cwd.length > 0 &&
-        isSamePath(summary.cwd, workDir),
+        compareNormalizedPaths(normalizePathForComparison(summary.cwd), normalizedWorkDir),
     );
     if (previous !== undefined) {
       const session = await resumeById(previous.id);
