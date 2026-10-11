@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
 import {
   completionBudgetParams,
-  computeCompletionBudgetCap,
   resolveCompletionBudget,
 } from '#/llm-adapter/model/completion-budget';
 
@@ -17,43 +16,38 @@ const capability = (maxContextTokens: number): ModelCapability => ({
 });
 
 describe('resolveCompletionBudget', () => {
-  it('prefers the explicit cap, then maxOutputSize, then reservedContextSize', () => {
+  it('prefers the explicit cap, then maxOutputSize, and omits the budget otherwise', () => {
     expect(
-      resolveCompletionBudget({ maxCompletionTokensCap: 100, maxOutputSize: 200, reservedContextSize: 300 }),
-    ).toEqual({ hardCap: 100 });
-    expect(resolveCompletionBudget({ maxOutputSize: 200, reservedContextSize: 300 })).toEqual({ hardCap: 200 });
-    expect(resolveCompletionBudget({ reservedContextSize: 300 })).toEqual({ fallback: 300 });
-    expect(resolveCompletionBudget({})).toEqual({ fallback: 32000 });
+      resolveCompletionBudget({ maxCompletionTokensCap: 100, maxOutputSize: 200 }),
+    ).toBe(100);
+    expect(resolveCompletionBudget({ maxOutputSize: 200 })).toBe(200);
+    expect(resolveCompletionBudget({})).toBeUndefined();
   });
 
   it('ignores non-positive caps and sizes', () => {
     expect(resolveCompletionBudget({ maxCompletionTokensCap: 0 })).toBeUndefined();
     expect(resolveCompletionBudget({ maxCompletionTokensCap: -5, maxOutputSize: 200 })).toBeUndefined();
-    expect(resolveCompletionBudget({ maxOutputSize: 0, reservedContextSize: -1 })).toEqual({ fallback: 32000 });
-  });
-});
-
-describe('computeCompletionBudgetCap', () => {
-  it('hardCap wins over the capability context size', () => {
-    expect(computeCompletionBudgetCap({ budget: { hardCap: 50 }, capability: capability(128000) })).toBe(50);
-  });
-
-  it('falls back to the capability context size, then the configured fallback', () => {
-    expect(computeCompletionBudgetCap({ budget: { fallback: 300 }, capability: capability(128000) })).toBe(128000);
-    expect(computeCompletionBudgetCap({ budget: { fallback: 300 }, capability: capability(0) })).toBe(300);
-    expect(computeCompletionBudgetCap({ budget: {}, capability: undefined })).toBe(32000);
+    expect(resolveCompletionBudget({ maxOutputSize: 0 })).toBeUndefined();
   });
 });
 
 describe('completionBudgetParams (the budget fold)', () => {
+  it('applies the floor to the resolved budget regardless of the capability window', () => {
+    expect(completionBudgetParams({ budget: 50, capability: capability(128000) })).toEqual({
+      maxCompletionTokens: 50,
+      usedContextTokens: undefined,
+      maxContextTokens: 128000,
+    });
+  });
+
   it('returns undefined without a budget', () => {
     expect(completionBudgetParams({ budget: undefined, capability: capability(1000) })).toBeUndefined();
   });
 
-  it('carries the measured usedContextTokens when the caller did not override messages', () => {
+  it('carries the used context size when the caller did not override messages', () => {
     expect(
       completionBudgetParams({
-        budget: { hardCap: 8192 },
+        budget: 8192,
         capability: capability(128000),
         usedContextTokens: 5000,
       }),
@@ -66,7 +60,7 @@ describe('completionBudgetParams (the budget fold)', () => {
 
   it('omits usedContextTokens with explicit messages — no tightening against the current context', () => {
     const params = completionBudgetParams({
-      budget: { hardCap: 8192 },
+      budget: 8192,
       capability: capability(128000),
       usedContextTokens: undefined,
     });

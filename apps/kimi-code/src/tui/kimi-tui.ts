@@ -28,6 +28,8 @@ import {
   type Component,
   type Focusable,
   getCapabilities,
+  Key,
+  matchesKey,
   Spacer,
   TuiAltScreen,
   TuiMainScreen,
@@ -119,6 +121,7 @@ import {
   PRODUCT_NAME,
   SESSION_LIST_PAGE_SIZE,
   SESSIONLESS_STARTUP_NOTICE,
+  SHUTTING_DOWN_HINT,
 } from './constant/kimi-tui';
 import { MEDIA_INGESTION_SUBMIT_WAIT_MS } from './constant/media';
 import { CHROME_GUTTER } from './constant/rendering';
@@ -997,7 +1000,10 @@ export class KimiTUI {
     }
 
     if (session !== undefined) {
-      await this.setSession(session);
+      await this.setSession(
+        session,
+        shouldReplayHistory ? session.getResumeState()?.agents[MAIN_AGENT_ID]?.userTurnCount : 0,
+      );
       await this.syncRuntimeState(session);
     }
     this.applyStartupPermissionAndPlanToAppState();
@@ -1010,6 +1016,15 @@ export class KimiTUI {
     this.isShuttingDown = true;
     this.unregisterSignalHandlers();
     this.aborted = true;
+    // A Ctrl+C during shutdown means "don't wait for slow hooks": skip the
+    // remaining graceful close and get out immediately. Captured at the UI
+    // input-listener level so it works no matter which component holds focus
+    // (a dialog may have replaced the editor).
+    const removeForceExitListener = this.state.ui.addInputListener((data) => {
+      if (!matchesKey(data, Key.ctrl('c'))) return undefined;
+      this.forceExitDuringShutdown();
+      return { consume: true };
+    });
     // Give the startup provider-model refresh a brief chance to finish before
     // the harness closes (and the process exits): its config writes are each
     // atomic, so draining can only ever leave a complete file behind. Bounded
@@ -1038,6 +1053,11 @@ export class KimiTUI {
     }
     this.reverseRpcDisposers.length = 0;
     this.disposeTerminalTracking();
+    // closeSession runs SessionEnd hooks, which can take seconds (bounded by
+    // the hook timeout) — keep the last frame from looking like a freeze by
+    // saying the shutdown is in progress.
+    this.state.footer.setTransientHint(SHUTTING_DOWN_HINT);
+    this.state.ui.requestRender();
     // Restore the terminal even if closing the session / harness throws — a
     // SIGTERM during a network or MCP shutdown must not leave the user stuck in
     // raw mode with a hidden cursor.
@@ -1049,6 +1069,7 @@ export class KimiTUI {
       await this.staging.drain();
       await this.harness.close();
     } finally {
+      removeForceExitListener();
       this.sessionEventHandler.stopAllMcpServerStatusSpinners();
       this.sessionEventHandler.clearStepRetryAttemptTimer();
       this.uninstallRainbowDance();
@@ -1065,6 +1086,23 @@ export class KimiTUI {
     }
     if (this.onExit) {
       await this.onExit(exitCode);
+    }
+  }
+
+  // Ctrl+C while shutdown hooks run → skip the remaining graceful close. The
+  // terminal is still alive (unlike the SIGHUP path), so run the full UI
+  // teardown — alternate screen, mouse reporting, autowrap — and the CLI's
+  // stty restore via onExit, instead of the bare emergency sequences.
+  private forceExitDuringShutdown(): void {
+    try {
+      this.stopUiForExit();
+    } catch {
+      restoreTerminalModes();
+    }
+    if (this.onExit) {
+      void this.onExit(130);
+    } else {
+      process.exit(130);
     }
   }
 
@@ -2473,7 +2511,7 @@ export class KimiTUI {
       return undefined;
     }
     this.resetSessionRuntime();
-    await this.setSession(session);
+    await this.setSession(session, 0);
     this.setAppState({ sessionId: session.id });
     try {
       await this.activateRuntime();
@@ -2500,7 +2538,10 @@ export class KimiTUI {
     return session;
   }
 
-  async setSession(session: Session): Promise<void> {
+  async setSession(
+    session: Session,
+    initialUserTurnCount = session.getResumeState()?.agents[MAIN_AGENT_ID]?.userTurnCount,
+  ): Promise<void> {
     const previous = this.unloadCurrentSession('switching session');
     await previous?.close();
     // A session switch abandons the previous session's in-flight staging
@@ -2513,6 +2554,7 @@ export class KimiTUI {
     // before the engine's intake can read it.
     if (previous !== undefined) this.staging.releaseAll();
     this.session = session;
+    this.surveyController.seedUserTurnCount(initialUserTurnCount);
     this.harness.setTelemetryContext({ sessionId: session.id });
     this.registerSessionHandlers(session);
     this.syncAdditionalDirs(session);
@@ -2834,6 +2876,9 @@ export class KimiTUI {
 
     this.resetSessionRuntime();
     this.session = session;
+    this.surveyController.seedUserTurnCount(
+      session.getResumeState()?.agents[MAIN_AGENT_ID]?.userTurnCount,
+    );
     this.harness.setTelemetryContext({ sessionId: session.id });
     this.registerSessionHandlers(session);
     await this.syncRuntimeState(session);
@@ -2870,7 +2915,7 @@ export class KimiTUI {
     }
 
     this.resetSessionRuntime();
-    await this.setSession(session);
+    await this.setSession(session, 0);
     this.setAppState({ sessionId: session.id });
     try {
       await this.activateRuntime();
@@ -3500,7 +3545,7 @@ export class KimiTUI {
         break;
       }
       case 'thinking': {
-        const spinner = this.ensureActivitySpinner('braille', 'Thinking…', (s) =>
+        const spinner = this.ensureActivitySpinner('braille', 'Working…', (s) =>
           currentTheme.fg('primary', s),
         );
         this.syncAgentSwarmActivitySpinner(undefined);

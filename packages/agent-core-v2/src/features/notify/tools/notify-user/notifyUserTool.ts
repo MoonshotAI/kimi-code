@@ -1,8 +1,11 @@
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { ToolAccesses, type ToolExecution } from '#/tool/toolContract';
 import { notifyUserAvailable } from '../../notifyUserAvailability';
+import { notifyStreakBefore } from '../../notifyUserNudge';
 
 import {
   INotifyUserTool,
@@ -25,6 +28,8 @@ export class NotifyUserTool implements INotifyUserTool {
   constructor(
     @IFlagService private readonly flags: IFlagService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {}
 
   resolveExecution(args: NotifyUserInput): ToolExecution {
@@ -35,10 +40,20 @@ export class NotifyUserTool implements INotifyUserTool {
       description: 'Notifying the user',
       accesses: ToolAccesses.none(),
       approvalRule: this.name,
-      execute: async () =>
-        notifyUserAvailable(this.flags, this.bootstrap)
+      execute: async ({ turnId, toolCallId }) => {
+        const displayed = notifyUserAvailable(this.flags, this.bootstrap);
+        const streak = notifyStreakBefore(this.context.get(), toolCallId);
+        this.telemetry.track2('notify_user_sent', {
+          turn_id: turnId,
+          rounds_since_notify: streak.rounds,
+          after_nudge: streak.nudges > 0,
+          message_chars: args.message.length,
+          displayed,
+        });
+        return displayed
           ? { isError: false, output: NOTIFY_USER_DELIVERED_OUTPUT }
-          : { isError: false, output: NOTIFY_USER_SUPPRESSED_OUTPUT },
+          : { isError: false, output: NOTIFY_USER_SUPPRESSED_OUTPUT };
+      },
     };
   }
 }

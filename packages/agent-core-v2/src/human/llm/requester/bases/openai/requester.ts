@@ -96,7 +96,11 @@ export function prepareOpenAIRequest(
   if (input.responseFormat !== undefined) {
     kwargs = { ...kwargs, response_format: responseFormatToOpenAI(input.responseFormat) };
   }
-  const cap = resolveMaxCompletionCap(input);
+  const requested = input.maxCompletionTokens;
+  const cap =
+    requested !== undefined && requested <= 0
+      ? undefined
+      : (resolveMaxCompletionCap(input) ?? trait?.completionTokensWhenUnset?.(input));
   if (cap !== undefined) {
     kwargs = {
       ...kwargs,

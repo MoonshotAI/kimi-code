@@ -22,7 +22,6 @@ import { abortError, isAbortError, linkAbortSignal } from '#/_base/utils/abort';
 import { WAIT_FOR_FLAG_ID } from './flag';
 import { IWaitForTool, WaitForInputSchema, type WaitForInput } from './task-wait';
 import WAIT_FOR_DESCRIPTION from './task-wait.md?raw';
-import WAIT_FOR_SUBAGENT_GUIDANCE from './task-wait-subagent.md?raw';
 
 const OUTPUT_PREVIEW_BYTES = 32 * 1024;
 
@@ -123,7 +122,7 @@ export function startWaitProgress(
 export class WaitForTool implements IWaitForTool {
   declare readonly _serviceBrand: undefined;
   readonly name = 'WaitFor' as const;
-  readonly description: string;
+  readonly description: string = WAIT_FOR_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(WaitForInputSchema);
 
   private readonly isSubagent: boolean;
@@ -137,9 +136,6 @@ export class WaitForTool implements IWaitForTool {
     @IAgentScopeContext scopeContext: IAgentScopeContext,
   ) {
     this.isSubagent = scopeContext.agentId !== MAIN_AGENT_ID;
-    this.description = this.isSubagent
-      ? `${WAIT_FOR_DESCRIPTION.trimEnd()}\n${WAIT_FOR_SUBAGENT_GUIDANCE}`
-      : WAIT_FOR_DESCRIPTION;
   }
 
   resolveExecution(args: WaitForInput): ToolExecution {

@@ -1,8 +1,9 @@
-
+import { ScrollView, TuiAltScreen, TuiMainScreen, VStack } from '@moonshot-ai/pi-tui';
 import { describe, it, expect } from 'vitest';
 
-import { TuiAltScreen, TuiMainScreen } from '@moonshot-ai/pi-tui';
-
+import { GutterContainer } from '#/tui/components/chrome/gutter-container';
+import { StickyUserMessageComponent } from '#/tui/components/messages/sticky-user-message';
+import { TranscriptView } from '#/tui/components/messages/transcript-view';
 import { createTUIState, type KimiTUIOptions } from '#/tui/kimi-tui';
 import type { AppState } from '#/tui/types';
 
@@ -138,6 +139,17 @@ describe('createTUIState', () => {
     // The layout root is mounted and the root children list stays empty.
     expect((state.ui as TuiAltScreen).getLayoutRoot()).toBeDefined();
     expect(state.ui.children).toHaveLength(0);
+
+    // The sticky user message sits above the transcript ScrollView, outside
+    // the scrolling region, so it is never carried away by scrolling.
+    const rootChildren = ((state.ui as TuiAltScreen).getLayoutRoot() as VStack).children;
+    expect(rootChildren[0]).toBeInstanceOf(TranscriptView);
+    const transcriptChildren = (rootChildren[0] as TranscriptView).children;
+    expect((transcriptChildren[0] as GutterContainer).children[0]).toBeInstanceOf(
+      StickyUserMessageComponent,
+    );
+    expect(transcriptChildren[1]).toBeInstanceOf(ScrollView);
+    expect(rootChildren[1]).toBe(state.dockContainer);
 
     // Mouse capture replaces native terminal link activation / right-click
     // paste, so both must be routed through renderer callbacks.

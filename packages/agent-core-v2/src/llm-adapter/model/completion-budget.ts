@@ -1,50 +1,31 @@
 import type { ModelCapability } from '../contract/capability';
 
-import type { CompletionBudgetConfig, CompletionBudgetParams } from './model.types';
+import type { CompletionBudgetParams } from './model.types';
 
 const MIN_FLOOR = 1;
-const DEFAULT_UNKNOWN_CONTEXT_FALLBACK = 32000;
 
 export function resolveCompletionBudget(args: {
   readonly maxOutputSize?: number;
-  readonly reservedContextSize?: number;
   readonly maxCompletionTokensCap?: number;
-}): CompletionBudgetConfig | undefined {
+}): number | undefined {
   if (args.maxCompletionTokensCap !== undefined) {
     if (args.maxCompletionTokensCap <= 0) return undefined;
-    return { hardCap: args.maxCompletionTokensCap };
+    return args.maxCompletionTokensCap;
   }
   if (args.maxOutputSize !== undefined && args.maxOutputSize > 0) {
-    return { hardCap: args.maxOutputSize };
+    return args.maxOutputSize;
   }
-  if (args.reservedContextSize !== undefined && args.reservedContextSize > 0) {
-    return { fallback: args.reservedContextSize };
-  }
-  return { fallback: DEFAULT_UNKNOWN_CONTEXT_FALLBACK };
-}
-
-export function computeCompletionBudgetCap(args: {
-  readonly budget: CompletionBudgetConfig;
-  readonly capability: ModelCapability | undefined;
-}): number {
-  const maxCtx = args.capability?.max_context_tokens ?? 0;
-  const cap =
-    args.budget.hardCap ??
-    (maxCtx > 0 ? maxCtx : args.budget.fallback ?? DEFAULT_UNKNOWN_CONTEXT_FALLBACK);
-  return Math.max(MIN_FLOOR, cap);
+  return undefined;
 }
 
 export function completionBudgetParams(args: {
-  readonly budget: CompletionBudgetConfig | undefined;
+  readonly budget: number | undefined;
   readonly capability: ModelCapability | undefined;
   readonly usedContextTokens?: number;
 }): CompletionBudgetParams | undefined {
   if (args.budget === undefined) return undefined;
   return {
-    maxCompletionTokens: computeCompletionBudgetCap({
-      budget: args.budget,
-      capability: args.capability,
-    }),
+    maxCompletionTokens: Math.max(MIN_FLOOR, args.budget),
     usedContextTokens: args.usedContextTokens,
     maxContextTokens: args.capability?.max_context_tokens,
   };
