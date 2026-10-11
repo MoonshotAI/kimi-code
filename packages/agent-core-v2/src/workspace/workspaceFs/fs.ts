@@ -77,6 +77,7 @@ export const fsListRequestSchema = z.object({
   show_hidden: z.boolean().default(false),
   follow_gitignore: z.boolean().default(true),
   exclude_globs: z.array(z.string()).optional(),
+  allow_ignored_globs: z.array(z.string()).optional(),
   sort: fsListSortSchema.default('type_first'),
   include_git_status: z.boolean().default(false),
 });

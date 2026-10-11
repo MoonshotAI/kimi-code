@@ -5,6 +5,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventBus } from '#/app/event/eventBus';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
@@ -36,6 +37,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IEventBus eventBus: IEventBus,
+    @IEventDispatcher dispatcher: IEventDispatcher,
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -47,6 +49,12 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     this.states.contributeState(mediaRegisteredKeyKey);
     this.refresh();
     this._register(eventBus.subscribe(AgentStatusUpdated, () => this.refresh()));
+    this._register(
+      dispatcher.hooks.onDidRestore.register('media', async (_ctx, next) => {
+        this.refresh();
+        await next();
+      }),
+    );
     this._register(this.runtime.onDidChange(() => this.refresh()));
     this._register(toDisposable(() => this.registration?.dispose()));
   }

@@ -56,6 +56,7 @@ import type { SurveyController } from '#/tui/controllers/survey-controller';
 import { handleFeedbackCommand } from '#/tui/commands/info';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { openUrl } from '#/utils/open-url';
+import { readSurveyLastShownTime } from '#/utils/survey-state-store';
 import { createFeedbackArchivePath } from '../../src/feedback/archive';
 import { packageCodebase, scanCodebase } from '../../src/feedback/codebase';
 import { uploadArchive } from '../../src/feedback/upload';
@@ -139,6 +140,9 @@ interface MessageDriver {
   clearQueuedMessages(): void;
   closeSession(reason: string): Promise<void>;
   setSession(session: unknown): Promise<void>;
+  switchToSession(session: Session, statusMessage: string): Promise<void>;
+  reloadCurrentSessionView(session: Session, statusMessage: string): Promise<void>;
+  createNewSession(): Promise<void>;
   syncRuntimeState(session?: unknown): Promise<void>;
   getCurrentSessionId(): string;
 }
@@ -245,6 +249,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
           },
           context: { history: [] },
           replay: [],
+          userTurnCount: 0,
         },
       },
     })),
@@ -3499,6 +3504,30 @@ command = "vim"
     expect(harness.deleteFile).toHaveBeenCalledTimes(1);
   });
 
+  it('force-exits instead of waiting for shutdown hooks when Ctrl+C is pressed during stop', async () => {
+    const { driver } = await makeDriver();
+    const stopUiForExit = vi
+      .spyOn(driver as unknown as { stopUiForExit(): void }, 'stopUiForExit')
+      .mockImplementation(() => {});
+    const onExit = vi.fn(async () => {});
+    (driver as unknown as { onExit?: (exitCode?: number) => Promise<void> }).onExit = onExit;
+    let captured: ((data: string) => { consume?: boolean } | undefined) | undefined;
+    vi.spyOn(driver.state.ui, 'addInputListener').mockImplementation(((listener: unknown) => {
+      captured = listener as (data: string) => { consume?: boolean } | undefined;
+      return () => {};
+    }) as never);
+    vi.spyOn(driver, 'closeSession').mockReturnValue(new Promise<void>(() => {}));
+
+    const stopped = (driver as unknown as { stop(): Promise<void> }).stop();
+    stopped.catch(() => {});
+
+    expect(captured).toBeDefined();
+    expect(captured?.('\u0003')).toEqual({ consume: true });
+    expect(captured?.('a')).toBeUndefined();
+    expect(stopUiForExit).toHaveBeenCalledOnce();
+    expect(onExit).toHaveBeenCalledWith(130);
+  });
+
   it('releases goal-steered staging media when the running goal turn ends', async () => {
     const { driver, session, harness } = await makeDriver();
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
@@ -6137,6 +6166,62 @@ command = "vim"
       vi.fn(),
     );
     expect(driver.state.appState.towerMode).toBe(false);
+  });
+
+  it('renders a marker when tower mode exits because a goal was activated', async () => {
+    const { driver } = await makeDriver();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        towerMode: true,
+      } as Event,
+      vi.fn(),
+    );
+    expect(driver.state.appState.towerMode).toBe(true);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        towerMode: false,
+        towerExitReason: 'mode-mutex',
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(driver.state.appState.towerMode).toBe(false);
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(countOccurrences(transcript, 'Tower mode ended — a goal was activated')).toBe(1);
+  });
+
+  it('does not render the goal-exit marker for a reasonless tower exit', async () => {
+    const { driver } = await makeDriver();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        towerMode: true,
+      } as Event,
+      vi.fn(),
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        towerMode: false,
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(driver.state.appState.towerMode).toBe(false);
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Tower mode ended');
   });
 
   it('renders swarm mode markers from /swarm commands, not tool-triggered status updates', async () => {
@@ -9277,6 +9362,94 @@ describe('footer ctrl+o hint', () => {
 });
 
 describe('KimiTUI session rating survey', () => {
+  it.each(['startup', 'switch', 'reload'] as const)(
+    'reports cumulative user turns after a %s mount',
+    async (mount) => {
+      process.env['KIMI_CODE_HOME'] = await makeTempHome();
+      vi.spyOn(Math, 'random').mockReturnValue(0);
+      try {
+        const session = makeSession();
+        const resumeState = session.getResumeState();
+        resumeState.agents.main.userTurnCount = 40;
+        session.getResumeState.mockReturnValue(resumeState);
+        const startup = makeStartupInput();
+        startup.cliOptions.session = 'ses-1';
+        const { driver, harness } = await makeDriver(
+          session,
+          { listSessions: vi.fn(async () => [{ id: 'ses-1', workDir: '/tmp/proj-a' }]) },
+          mount === 'startup' ? startup : undefined,
+        );
+        if (mount === 'switch') {
+          emitTurn(driver, 1);
+          await driver.switchToSession(session as unknown as Session, 'Resumed session.');
+        } else if (mount === 'reload') {
+          emitTurn(driver, 1);
+          await driver.reloadCurrentSessionView(session as unknown as Session, 'Reloaded session.');
+        }
+        await readSurveyLastShownTime();
+        vi.useFakeTimers();
+        harness.trackWithContext.mockClear();
+        emitTurn(driver, 41, () => {
+          driver.sessionEventHandler.handleEvent(
+            { type: 'agent.status.updated', agentId: 'main', contextTokens: 205_000 } as Event,
+            () => {},
+          );
+        });
+        await vi.advanceTimersByTimeAsync(2_000);
+
+        expect(harness.trackWithContext).toHaveBeenCalledWith(
+          'long_context_survey',
+          expect.objectContaining({ event_type: 'appeared', user_turn_count: 41 }),
+          { sessionId: 'ses-1' },
+        );
+      } finally {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+      }
+    },
+  );
+
+  it.each(['lazy', 'new-command'] as const)(
+    'starts from zero when a new session is created through %s',
+    async (creation) => {
+      process.env['KIMI_CODE_HOME'] = await makeTempHome();
+      vi.spyOn(Math, 'random').mockReturnValue(0);
+      try {
+        const session = makeSession({ getResumeState: vi.fn(() => undefined) });
+        const startup = makeStartupInput();
+        startup.cliOptions.model = 'k2';
+        const { driver, harness } = await makeDriver(session, {}, startup);
+        if (creation === 'lazy') {
+          driver.handleUserInput('first question');
+          await vi.waitFor(() => {
+            expect(session.prompt).toHaveBeenCalled();
+          });
+        } else {
+          await driver.createNewSession();
+        }
+        await readSurveyLastShownTime();
+        vi.useFakeTimers();
+        harness.trackWithContext.mockClear();
+        emitTurn(driver, 1, () => {
+          driver.sessionEventHandler.handleEvent(
+            { type: 'agent.status.updated', agentId: 'main', contextTokens: 205_000 } as Event,
+            () => {},
+          );
+        });
+        await vi.advanceTimersByTimeAsync(2_000);
+
+        expect(harness.trackWithContext).toHaveBeenCalledWith(
+          'long_context_survey',
+          expect.objectContaining({ event_type: 'appeared', user_turn_count: 1 }),
+          { sessionId: 'ses-1' },
+        );
+      } finally {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+      }
+    },
+  );
+
   it('runs the end-to-end rating flow after five user turns', async () => {
     vi.useFakeTimers();
     const homeDir = await makeTempHome();
@@ -9474,10 +9647,16 @@ describe('KimiTUI session rating survey', () => {
       );
 
       vi.useRealTimers();
-      await new Promise<void>((resolve) => {
-        setImmediate(resolve);
+      const stateFile = join(homeDir, 'feedback-survey-state.json');
+      await vi.waitFor(() => {
+        expect(existsSync(stateFile)).toBe(true);
       });
-      expect(existsSync(join(homeDir, 'feedback-survey-state.json'))).toBe(false);
+      const persisted = JSON.parse(await readFile(stateFile, 'utf-8')) as {
+        version: number;
+        last_shown_time: number;
+      };
+      expect(persisted.version).toBe(1);
+      expect(typeof persisted.last_shown_time).toBe('number');
     } finally {
       vi.useRealTimers();
       vi.restoreAllMocks();

@@ -6,9 +6,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   DEFAULT_SURVEY_POPUP_CONFIG,
+  DEFAULT_SURVEY_POPUP_PAYLOAD,
   getSurveyPopupConfig,
   peekSurveyPopupConfig,
   resetSurveyPopupConfigCache,
+  resolveSurveyPopupConfig,
+  type SurveyPopupPayload,
 } from '#/utils/survey-popup-config';
 
 const CLOUD_CONFIG = {
@@ -72,7 +75,7 @@ describe('getSurveyPopupConfig', () => {
       cacheFile: null,
     });
 
-    expect(result).toEqual(CLOUD_CONFIG);
+    expect(result).toEqual({ ...CLOUD_CONFIG, model_overrides: {} });
     expect(fetchImpl).toHaveBeenCalledWith(
       expect.stringContaining('/client_configs'),
       expect.objectContaining({
@@ -92,7 +95,7 @@ describe('getSurveyPopupConfig', () => {
       cacheFile: null,
     });
 
-    expect(result).toEqual({ ...DEFAULT_SURVEY_POPUP_CONFIG, probability: 0.5 });
+    expect(result).toEqual({ ...DEFAULT_SURVEY_POPUP_PAYLOAD, probability: 0.5 });
   });
 
   it('drops only the invalid field and keeps the rest', async () => {
@@ -118,6 +121,7 @@ describe('getSurveyPopupConfig', () => {
       probability: DEFAULT_SURVEY_POPUP_CONFIG.probability,
       on_for_models: DEFAULT_SURVEY_POPUP_CONFIG.on_for_models,
       long_context_trigger_mode: DEFAULT_SURVEY_POPUP_CONFIG.long_context_trigger_mode,
+      model_overrides: {},
     });
   });
 
@@ -140,7 +144,7 @@ describe('getSurveyPopupConfig', () => {
       cacheFile: null,
     });
 
-    expect(result).toEqual(DEFAULT_SURVEY_POPUP_CONFIG);
+    expect(result).toEqual(DEFAULT_SURVEY_POPUP_PAYLOAD);
   });
 
   it('accepts zero pacing values as the documented no-limit semantics', async () => {
@@ -163,7 +167,7 @@ describe('getSurveyPopupConfig', () => {
     });
 
     expect(result).toEqual({
-      ...DEFAULT_SURVEY_POPUP_CONFIG,
+      ...DEFAULT_SURVEY_POPUP_PAYLOAD,
       min_time_before_feedback_ms: 0,
       min_user_turns_before_feedback: 0,
       min_time_between_feedback_ms: 0,
@@ -227,7 +231,7 @@ describe('getSurveyPopupConfig', () => {
       cacheFile: null,
     });
 
-    expect(result).toEqual(DEFAULT_SURVEY_POPUP_CONFIG);
+    expect(result).toEqual(DEFAULT_SURVEY_POPUP_PAYLOAD);
   });
 
   it('falls back to the defaults when the fetch fails', async () => {
@@ -240,7 +244,7 @@ describe('getSurveyPopupConfig', () => {
       cacheFile: null,
     });
 
-    expect(result).toEqual(DEFAULT_SURVEY_POPUP_CONFIG);
+    expect(result).toEqual(DEFAULT_SURVEY_POPUP_PAYLOAD);
   });
 
   it('serves the in-process cache within a day and refetches after it', async () => {
@@ -253,7 +257,7 @@ describe('getSurveyPopupConfig', () => {
       now: now + 60_000,
       cacheFile: null,
     });
-    expect(cached).toEqual(CLOUD_CONFIG);
+    expect(cached).toEqual({ ...CLOUD_CONFIG, model_overrides: {} });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
 
     await getSurveyPopupConfig({
@@ -282,7 +286,7 @@ describe('getSurveyPopupConfig', () => {
       now: now + 60_000,
       cacheFile,
     });
-    expect(result).toEqual(CLOUD_CONFIG);
+    expect(result).toEqual({ ...CLOUD_CONFIG, model_overrides: {} });
   });
 
   it('ignores a stale disk cache and falls back to the defaults when the refetch fails', async () => {
@@ -298,13 +302,13 @@ describe('getSurveyPopupConfig', () => {
       now: now + 25 * 60 * 60 * 1000,
       cacheFile,
     });
-    expect(result).toEqual(DEFAULT_SURVEY_POPUP_CONFIG);
+    expect(result).toEqual(DEFAULT_SURVEY_POPUP_PAYLOAD);
   });
 });
 
 describe('peekSurveyPopupConfig', () => {
   it('returns the defaults while the cache is cold', () => {
-    expect(peekSurveyPopupConfig()).toEqual(DEFAULT_SURVEY_POPUP_CONFIG);
+    expect(peekSurveyPopupConfig()).toEqual(DEFAULT_SURVEY_POPUP_PAYLOAD);
   });
 
   it('sees the fetched config once the cache is warm', async () => {
@@ -313,7 +317,139 @@ describe('peekSurveyPopupConfig', () => {
 
     await getSurveyPopupConfig({ fetchImpl: fetchImpl as typeof fetch, now, cacheFile: null });
 
-    expect(peekSurveyPopupConfig(now + 60_000)).toEqual(CLOUD_CONFIG);
-    expect(peekSurveyPopupConfig(now + 25 * 60 * 60 * 1000)).toEqual(DEFAULT_SURVEY_POPUP_CONFIG);
+    expect(peekSurveyPopupConfig(now + 60_000)).toEqual({ ...CLOUD_CONFIG, model_overrides: {} });
+    expect(peekSurveyPopupConfig(now + 25 * 60 * 60 * 1000)).toEqual(DEFAULT_SURVEY_POPUP_PAYLOAD);
+  });
+});
+
+describe('model_overrides parsing', () => {
+  it('parses override entries keyed by model id', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        name: 'survey_popup',
+        config: {
+          ...CLOUD_CONFIG,
+          model_overrides: { k3: { probability: 0.5, min_user_turns_before_feedback: 1 } },
+        },
+      }),
+    );
+
+    const result = await getSurveyPopupConfig({
+      fetchImpl: fetchImpl as typeof fetch,
+      cacheFile: null,
+    });
+
+    expect(result.model_overrides).toEqual({
+      k3: { probability: 0.5, min_user_turns_before_feedback: 1 },
+    });
+  });
+
+  it('drops an entire override entry when any of its fields is invalid', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        name: 'survey_popup',
+        config: {
+          ...CLOUD_CONFIG,
+          model_overrides: { k3: { probability: 'often', min_time_between_feedback_ms: 60_000 } },
+        },
+      }),
+    );
+
+    const result = await getSurveyPopupConfig({
+      fetchImpl: fetchImpl as typeof fetch,
+      cacheFile: null,
+    });
+
+    expect(result.model_overrides).toEqual({});
+  });
+
+  it('keeps sibling entries when one entry is invalid', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        name: 'survey_popup',
+        config: {
+          ...CLOUD_CONFIG,
+          model_overrides: {
+            k3: { probability: 'often' },
+            'other-model': { probability: 0.5 },
+          },
+        },
+      }),
+    );
+
+    const result = await getSurveyPopupConfig({
+      fetchImpl: fetchImpl as typeof fetch,
+      cacheFile: null,
+    });
+
+    expect(result.model_overrides).toEqual({ 'other-model': { probability: 0.5 } });
+  });
+
+  it('strips unknown keys inside an override entry', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        name: 'survey_popup',
+        config: {
+          ...CLOUD_CONFIG,
+          model_overrides: { k3: { probability: 0.5, on_for_models: ['nobody'], future_knob: 1 } },
+        },
+      }),
+    );
+
+    const result = await getSurveyPopupConfig({
+      fetchImpl: fetchImpl as typeof fetch,
+      cacheFile: null,
+    });
+
+    expect(result.model_overrides).toEqual({ k3: { probability: 0.5 } });
+  });
+
+  it('drops non-object entries and treats a non-object table as empty', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        name: 'survey_popup',
+        config: { ...CLOUD_CONFIG, model_overrides: { k3: 42, 'other-model': { probability: 0.5 } } },
+      }),
+    );
+
+    const result = await getSurveyPopupConfig({
+      fetchImpl: fetchImpl as typeof fetch,
+      cacheFile: null,
+    });
+    expect(result.model_overrides).toEqual({ 'other-model': { probability: 0.5 } });
+
+    resetSurveyPopupConfigCache();
+    const stringTable = vi.fn(async () =>
+      jsonResponse({ name: 'survey_popup', config: { ...CLOUD_CONFIG, model_overrides: 'yes' } }),
+    );
+    const fallback = await getSurveyPopupConfig({
+      fetchImpl: stringTable as typeof fetch,
+      cacheFile: null,
+    });
+    expect(fallback.model_overrides).toEqual({});
+  });
+});
+
+describe('resolveSurveyPopupConfig', () => {
+  const PAYLOAD: SurveyPopupPayload = {
+    ...CLOUD_CONFIG,
+    long_context_trigger_mode: 'virtual_context',
+    model_overrides: { k3: { probability: 0.5, min_user_turns_before_feedback: 1 } },
+  };
+
+  it('returns the flat base config when no override matches the model', () => {
+    expect(resolveSurveyPopupConfig(PAYLOAD, 'k2')).toEqual(CLOUD_CONFIG);
+  });
+
+  it('returns the flat base config when the model id is undefined', () => {
+    expect(resolveSurveyPopupConfig(PAYLOAD, undefined)).toEqual(CLOUD_CONFIG);
+  });
+
+  it('merges the matching override over the base and keeps untouched base fields', () => {
+    expect(resolveSurveyPopupConfig(PAYLOAD, 'k3')).toEqual({
+      ...CLOUD_CONFIG,
+      probability: 0.5,
+      min_user_turns_before_feedback: 1,
+    });
   });
 });

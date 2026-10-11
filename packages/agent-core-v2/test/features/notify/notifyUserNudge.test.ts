@@ -3,12 +3,11 @@ import { describe, expect, it } from 'vitest';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import {
   NOTIFY_USER_NUDGE_THRESHOLD,
-  lastMidResponsePosition,
+  notifyStreak,
+  notifyStreakBefore,
   renderNotifyUserNudge,
-  shouldNudgeMidResponse,
   shouldNudgeNotifyUser,
-  toolCallsSinceLastNotify,
-  toolCallsSincePosition,
+  toolCallRoundsSincePosition,
 } from '#/features/notify/notifyUserNudge';
 
 function userPrompt(): ContextMessage {
@@ -112,25 +111,26 @@ function assistantWithTools(...names: string[]): ContextMessage {
   };
 }
 
-function assistantWithText(text: string, ...tools: string[]): ContextMessage {
-  const message = assistantWithTools(...tools);
-  return { ...message, content: [{ type: 'text', text }] };
-}
-
-function assistantWithThink(think: string, ...tools: string[]): ContextMessage {
-  const message = assistantWithTools(...tools);
-  return { ...message, content: [{ type: 'think', think }] };
-}
-
-describe('toolCallsSinceLastNotify', () => {
-  it('counts tool calls back to the user prompt when nothing was notified', () => {
+describe('notifyStreak', () => {
+  it('counts one round per assistant step back to the user prompt, however many calls it batched', () => {
     const history = [
       userPrompt(),
-      assistantWithTools('Bash', 'Read'),
+      assistantWithTools('Bash', 'Read', 'Grep', 'Glob'),
       assistantWithTools('Grep'),
     ];
 
-    expect(toolCallsSinceLastNotify(history)).toBe(3);
+    expect(notifyStreak(history).rounds).toBe(2);
+  });
+
+  it('does not count assistant messages without tool calls', () => {
+    const history = [
+      userPrompt(),
+      assistantWithTools('Bash'),
+      { role: 'assistant', content: [{ type: 'text', text: 'Interim note.' }], toolCalls: [] },
+      assistantWithTools('Read'),
+    ] satisfies ContextMessage[];
+
+    expect(notifyStreak(history).rounds).toBe(2);
   });
 
   it('counts only the calls after the latest NotifyUser call', () => {
@@ -141,7 +141,7 @@ describe('toolCallsSinceLastNotify', () => {
       assistantWithTools('Bash'),
     ];
 
-    expect(toolCallsSinceLastNotify(history)).toBe(1);
+    expect(notifyStreak(history).rounds).toBe(1);
   });
 
   it('stops at the previous turn', () => {
@@ -152,7 +152,7 @@ describe('toolCallsSinceLastNotify', () => {
       assistantWithTools('Read'),
     ];
 
-    expect(toolCallsSinceLastNotify(history)).toBe(1);
+    expect(notifyStreak(history).rounds).toBe(1);
   });
 
   it('stops at non-user turn boundaries such as cron and slash-skill prompts', () => {
@@ -162,7 +162,7 @@ describe('toolCallsSinceLastNotify', () => {
       cronPrompt(),
       assistantWithTools('Read'),
     ];
-    expect(toolCallsSinceLastNotify(cronTurn)).toBe(1);
+    expect(notifyStreak(cronTurn).rounds).toBe(1);
 
     const slashTurn = [
       userPrompt(),
@@ -170,7 +170,7 @@ describe('toolCallsSinceLastNotify', () => {
       slashSkillPrompt(),
       assistantWithTools('Read'),
     ];
-    expect(toolCallsSinceLastNotify(slashTurn)).toBe(1);
+    expect(notifyStreak(slashTurn).rounds).toBe(1);
   });
 
   it('does not stop at a model-invoked skill in the middle of a turn', () => {
@@ -181,7 +181,7 @@ describe('toolCallsSinceLastNotify', () => {
       assistantWithTools('Read'),
     ];
 
-    expect(toolCallsSinceLastNotify(history)).toBe(3);
+    expect(notifyStreak(history).rounds).toBe(2);
   });
 
   it('stops at task-notification and retry boundaries', () => {
@@ -191,7 +191,7 @@ describe('toolCallsSinceLastNotify', () => {
       taskPrompt(),
       assistantWithTools('Read'),
     ];
-    expect(toolCallsSinceLastNotify(taskTurn)).toBe(1);
+    expect(notifyStreak(taskTurn).rounds).toBe(1);
 
     const retryTurn = [
       userPrompt(),
@@ -199,7 +199,7 @@ describe('toolCallsSinceLastNotify', () => {
       retryPrompt(),
       assistantWithTools('Read'),
     ];
-    expect(toolCallsSinceLastNotify(retryTurn)).toBe(1);
+    expect(notifyStreak(retryTurn).rounds).toBe(1);
   });
 
   it('stops at a subagent system trigger but not at a stop-hook continuation', () => {
@@ -209,7 +209,7 @@ describe('toolCallsSinceLastNotify', () => {
       subagentTriggerPrompt(),
       assistantWithTools('Read'),
     ];
-    expect(toolCallsSinceLastNotify(subagentTurn)).toBe(1);
+    expect(notifyStreak(subagentTurn).rounds).toBe(1);
 
     const continued = [
       userPrompt(),
@@ -217,12 +217,51 @@ describe('toolCallsSinceLastNotify', () => {
       stopHookContinuation(),
       assistantWithTools('Read'),
     ];
-    expect(toolCallsSinceLastNotify(continued)).toBe(3);
+    expect(notifyStreak(continued).rounds).toBe(2);
   });
 });
 
-describe('toolCallsSincePosition', () => {
-  it('counts every tool call after the given history position', () => {
+describe('notifyStreak nudges', () => {
+  it('counts reminders injected since the last NotifyUser call', () => {
+    const history = [
+      userPrompt(),
+      assistantWithTools('Bash'),
+      nudgeInjection(),
+      assistantWithTools('NotifyUser'),
+      assistantWithTools('Bash'),
+      nudgeInjection(),
+      assistantWithTools('Read'),
+      nudgeInjection(),
+    ];
+
+    expect(notifyStreak(history)).toEqual({ rounds: 2, nudges: 2 });
+  });
+});
+
+describe('notifyStreakBefore', () => {
+  it('measures the streak that precedes the step carrying the given call', () => {
+    const notifying: ContextMessage = {
+      role: 'assistant',
+      content: [],
+      toolCalls: [
+        { type: 'function', id: 'call_notify', name: 'NotifyUser', arguments: '{}' },
+        { type: 'function', id: 'call_read', name: 'Read', arguments: '{}' },
+      ],
+    };
+    const history = [
+      userPrompt(),
+      assistantWithTools('Bash', 'Grep'),
+      nudgeInjection(),
+      assistantWithTools('Read'),
+      notifying,
+    ];
+
+    expect(notifyStreakBefore(history, 'call_notify')).toEqual({ rounds: 2, nudges: 1 });
+  });
+});
+
+describe('toolCallRoundsSincePosition', () => {
+  it('counts every tool-call round after the given history position', () => {
     const history = [
       userPrompt(),
       assistantWithTools('Bash'),
@@ -231,8 +270,8 @@ describe('toolCallsSincePosition', () => {
       assistantWithTools('Grep'),
     ];
 
-    expect(toolCallsSincePosition(history, 2)).toBe(3);
-    expect(toolCallsSincePosition(history, 0)).toBe(4);
+    expect(toolCallRoundsSincePosition(history, 2)).toBe(2);
+    expect(toolCallRoundsSincePosition(history, 0)).toBe(3);
   });
 });
 
@@ -257,103 +296,10 @@ describe('shouldNudgeNotifyUser', () => {
   });
 });
 
-describe('lastMidResponsePosition', () => {
-  it('finds the latest assistant message carrying visible text', () => {
-    const history = [
-      userPrompt(),
-      assistantWithText('我来搜索一下', 'WebSearch'),
-      assistantWithTools('FetchURL'),
-    ];
-
-    expect(lastMidResponsePosition(history)).toBe(1);
-  });
-
-  it('ignores thinking-only messages', () => {
-    const history = [
-      userPrompt(),
-      assistantWithThink('让我想想', 'WebSearch'),
-      assistantWithTools('FetchURL'),
-    ];
-
-    expect(lastMidResponsePosition(history)).toBe(-1);
-  });
-
-  it('stops at the last NotifyUser call and at the turn boundary', () => {
-    const notified = [
-      userPrompt(),
-      assistantWithText('早期说过的话', 'Bash'),
-      assistantWithTools('NotifyUser'),
-      assistantWithTools('Bash'),
-    ];
-    expect(lastMidResponsePosition(notified)).toBe(-1);
-
-    const previousTurn = [
-      assistantWithText('上一轮的正文', 'Bash'),
-      userPrompt(),
-      assistantWithTools('Bash'),
-    ];
-    expect(lastMidResponsePosition(previousTurn)).toBe(-1);
-  });
-
-  it('does not treat the previous turn\'s reply as mid-response across non-user boundaries', () => {
-    const acrossCron = [
-      assistantWithText('上一轮的正文', 'Bash'),
-      cronPrompt(),
-      assistantWithTools('Bash'),
-    ];
-    expect(lastMidResponsePosition(acrossCron)).toBe(-1);
-
-    const acrossSlashSkill = [
-      assistantWithText('上一轮的正文', 'Bash'),
-      slashSkillPrompt(),
-      assistantWithTools('Bash'),
-    ];
-    expect(lastMidResponsePosition(acrossSlashSkill)).toBe(-1);
-
-    const acrossTask = [
-      assistantWithText('上一轮的正文', 'Bash'),
-      taskPrompt(),
-      assistantWithTools('Bash'),
-    ];
-    expect(lastMidResponsePosition(acrossTask)).toBe(-1);
-
-    const acrossRetry = [
-      assistantWithText('上一轮的正文', 'Bash'),
-      retryPrompt(),
-      assistantWithTools('Bash'),
-    ];
-    expect(lastMidResponsePosition(acrossRetry)).toBe(-1);
-  });
-
-  it('still finds mid-turn text that precedes a stop-hook continuation', () => {
-    const history = [
-      userPrompt(),
-      assistantWithText('中段说明', 'WebSearch'),
-      stopHookContinuation(),
-      assistantWithTools('FetchURL'),
-    ];
-
-    expect(lastMidResponsePosition(history)).toBe(1);
-  });
-});
-
-describe('shouldNudgeMidResponse', () => {
-  it('stays quiet without a mid-response or when already nudged after it', () => {
-    expect(shouldNudgeMidResponse(-1, null)).toBe(false);
-    expect(shouldNudgeMidResponse(3, 3)).toBe(false);
-    expect(shouldNudgeMidResponse(3, 5)).toBe(false);
-  });
-
-  it('fires once for each new mid-response', () => {
-    expect(shouldNudgeMidResponse(3, null)).toBe(true);
-    expect(shouldNudgeMidResponse(5, 3)).toBe(true);
-  });
-});
-
 describe('renderNotifyUserNudge', () => {
   it('mentions the count and the ask', () => {
     const text = renderNotifyUserNudge(8);
-    expect(text).toContain('8 tool calls');
+    expect(text).toContain('8 rounds of tool calls');
     expect(text).toContain('NotifyUser');
   });
 });
