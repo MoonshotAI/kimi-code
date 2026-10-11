@@ -175,6 +175,30 @@ describe('openai requester cacheKey', () => {
     expect(client.body()['prompt_cache_key']).toBeUndefined();
   });
 
+  it('sends prompt_cache_key to third-party OpenAI endpoints when KIMI_CODE_OPENAI_PROMPT_CACHE_KEY is set', async () => {
+    const prev = process.env['KIMI_CODE_OPENAI_PROMPT_CACHE_KEY'];
+    process.env['KIMI_CODE_OPENAI_PROMPT_CACHE_KEY'] = '1';
+    try {
+      const client = stubOpenAIClient(chatCompletionChunks);
+      const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
+      await requester.generate(
+        {
+          model: { ...model, baseUrl: 'https://integrate.api.nvidia.com/v1' },
+          cacheKey: 'session-1',
+        },
+        { messages },
+        { signal: new AbortController().signal },
+      );
+      expect(client.body()['prompt_cache_key']).toBe('session-1');
+    } finally {
+      if (prev === undefined) {
+        delete process.env['KIMI_CODE_OPENAI_PROMPT_CACHE_KEY'];
+      } else {
+        process.env['KIMI_CODE_OPENAI_PROMPT_CACHE_KEY'] = prev;
+      }
+    }
+  });
+
   it('lets a trait override the cache key params', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
     const requester = createOpenAIRequester({
@@ -229,6 +253,30 @@ describe('openai-responses requester cacheKey', () => {
       { signal: new AbortController().signal },
     );
     expect(client.body()['prompt_cache_key']).toBeUndefined();
+  });
+
+  it('sends prompt_cache_key to third-party endpoints when KIMI_CODE_OPENAI_PROMPT_CACHE_KEY is set', async () => {
+    const prev = process.env['KIMI_CODE_OPENAI_PROMPT_CACHE_KEY'];
+    process.env['KIMI_CODE_OPENAI_PROMPT_CACHE_KEY'] = '1';
+    try {
+      const client = stubResponsesClient(responsesStreamEvents);
+      const requester = createOpenAIResponsesRequester({ clientFactory: client.clientFactory });
+      await requester.generate(
+        {
+          model: { ...model, baseUrl: 'https://integrate.api.nvidia.com/v1' },
+          cacheKey: 'session-1',
+        },
+        { messages },
+        { signal: new AbortController().signal },
+      );
+      expect(client.body()['prompt_cache_key']).toBe('session-1');
+    } finally {
+      if (prev === undefined) {
+        delete process.env['KIMI_CODE_OPENAI_PROMPT_CACHE_KEY'];
+      } else {
+        process.env['KIMI_CODE_OPENAI_PROMPT_CACHE_KEY'] = prev;
+      }
+    }
   });
 
   it('preserves prompt_cache_key when a trait provides encodeCacheKey (e.g. Kimi)', async () => {
