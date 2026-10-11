@@ -730,6 +730,10 @@ export class SessionEventHandler {
       event.swarmMode === false &&
       this.host.state.appState.swarmMode &&
       this.host.state.swarmModeEntry === 'task';
+    const shouldRenderTowerGoalExit =
+      event.towerMode === false &&
+      this.host.state.appState.towerMode &&
+      event.towerExitReason === 'mode-mutex';
     const patch: Partial<AppState> = {};
     if (event.contextTokens !== undefined) patch.contextTokens = event.contextTokens;
     if (event.maxContextTokens !== undefined) patch.maxContextTokens = event.maxContextTokens;
@@ -762,6 +766,12 @@ export class SessionEventHandler {
       if (shouldRenderSwarmEnded) {
         this.renderSwarmModeMarker('ended');
       }
+    }
+    if (shouldRenderTowerGoalExit) {
+      this.host.state.transcriptContainer.addChild(
+        new StatusMessageComponent('Tower mode ended — a goal was activated'),
+      );
+      this.host.state.ui.requestRender();
     }
   }
 

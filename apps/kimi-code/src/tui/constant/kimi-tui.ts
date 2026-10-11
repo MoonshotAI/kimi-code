@@ -12,8 +12,6 @@ export const OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE = 'OAuth login expired. Send /l
 export const TUI_MODE_RESTART_NOTICE = 'TUI mode takes effect after restarting Kimi Code.';
 export const SESSIONLESS_STARTUP_NOTICE =
   'No session yet — one will be created on your first message.';
-export const TOWER_STATUS_PROMPT =
-  'Report the current tower status: call TowerStatus and give a compact summary.';
 export const TOWER_TEARDOWN_PROMPT =
   'Tear down the tower: call TowerTeardown and report what it did. It refuses to destroy dirty worktrees unless forced.';
 export const EXIT_CONFIRM_WINDOW_MS = 1500;
