@@ -1,7 +1,7 @@
 import { serve } from '@hono/node-server';
 
 import { createApp } from './app';
-import { hostForUrl, resolveHost, resolveKimiCodeHome, resolvePort, resolveVisAuthToken } from './config';
+import { getLocalNetworkAddresses, hostForUrl, isAllInterfaces, resolveHost, resolveKimiCodeHome, resolvePort, resolveVisAuthToken } from './config';
 import type { WebAsset } from './lib/web-asset';
 
 export interface StartVisServerOptions {
@@ -18,6 +18,7 @@ export interface StartedVisServer {
   readonly port: number;
   readonly host: string;
   readonly url: string;
+  readonly lanUrls?: string[];
   readonly close: () => Promise<void>;
 }
 
@@ -36,6 +37,7 @@ export async function startVisServer(
         port: info.port,
         host,
         url: `http://${hostForUrl(host)}:${info.port}/`,
+        lanUrls: isAllInterfaces(host) ? getLocalNetworkAddresses(info.port) : undefined,
         close: () =>
           new Promise<void>((done, fail) => {
             server.close((err?: Error) => (err ? fail(err) : done()));
