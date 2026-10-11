@@ -20,6 +20,9 @@ const OBJECT_KEYWORDS = [
   'required',
   'minProperties',
   'maxProperties',
+  'dependentRequired',
+  'dependentSchemas',
+  'dependencies',
 ] as const;
 
 const ARRAY_KEYWORDS = [
@@ -75,6 +78,32 @@ function conjoinBounds(
   }
 }
 
+function jsonEquals(a: Json, b: Json): boolean {
+  if (a === b) return true;
+  if (typeof a !== typeof b || a === null || b === null) return false;
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b) || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!jsonEquals(a[i] as Json, b[i] as Json)) return false;
+    }
+    return true;
+  }
+  if (typeof a === 'object') {
+    if (Array.isArray(b) || typeof b !== 'object') return false;
+    const aRec = a as JsonRecord;
+    const bRec = b as JsonRecord;
+    const aKeys = Object.keys(aRec);
+    const bKeys = Object.keys(bRec);
+    if (aKeys.length !== bKeys.length) return false;
+    for (const key of aKeys) {
+      if (!Object.hasOwn(bRec, key)) return false;
+      if (!jsonEquals(aRec[key] as Json, bRec[key] as Json)) return false;
+    }
+    return true;
+  }
+  return false;
+}
+
 function mergeRefSiblings(target: JsonRecord, rest: JsonRecord): JsonRecord {
   const merged: JsonRecord = { ...target, ...rest };
 
@@ -90,8 +119,10 @@ function mergeRefSiblings(target: JsonRecord, rest: JsonRecord): JsonRecord {
   conjoinBounds(target, rest, merged, 'maxProperties', 'min');
 
   if (Array.isArray(target['enum']) && Array.isArray(rest['enum'])) {
-    const restSet = new Set(rest['enum']);
-    merged['enum'] = (target['enum'] as Json[]).filter((x) => restSet.has(x));
+    const restList = rest['enum'] as Json[];
+    merged['enum'] = (target['enum'] as Json[]).filter((x) =>
+      restList.some((y) => jsonEquals(x, y)),
+    );
   }
 
   if (Array.isArray(target['required']) || Array.isArray(rest['required'])) {
@@ -192,7 +223,7 @@ function derefJsonSchema(schema: JsonRecord): JsonRecord {
         const { $ref: _, ...rest } = record;
         const traversedRest: JsonRecord = {};
         for (const [key, value] of Object.entries(rest)) {
-          traversedRest[key] = traverse(value, nextActive);
+          traversedRest[key] = traverse(value, activeRefs);
         }
         if (typeof target === 'boolean') {
           if (!target) return false;
@@ -245,18 +276,102 @@ function inferTypeFromStructure(node: JsonRecord): string {
   return 'string';
 }
 
+function isBranchCompatibleWithTypeSet(
+  branch: Json,
+  allowedTypes: Set<string>,
+): boolean {
+  if (typeof branch === 'string') {
+    return allowedTypes.has(branch) || (branch === 'integer' && allowedTypes.has('number'));
+  }
+  if (typeof branch !== 'object' || branch === null || Array.isArray(branch)) {
+    return true;
+  }
+  const b = branch as JsonRecord;
+  if (typeof b['type'] === 'string') {
+    return (
+      allowedTypes.has(b['type']) ||
+      (b['type'] === 'integer' && allowedTypes.has('number'))
+    );
+  }
+  if (Array.isArray(b['type'])) {
+    return (b['type'] as Json[]).some(
+      (t) =>
+        typeof t === 'string' &&
+        (allowedTypes.has(t) || (t === 'integer' && allowedTypes.has('number'))),
+    );
+  }
+  if ('const' in b) {
+    const t = jsonTypeOf(b['const'] as Json);
+    return allowedTypes.has(t) || (t === 'integer' && allowedTypes.has('number'));
+  }
+  if (Array.isArray(b['enum'])) {
+    return (b['enum'] as Json[]).some((val) => {
+      const t = jsonTypeOf(val);
+      return allowedTypes.has(t) || (t === 'integer' && allowedTypes.has('number'));
+    });
+  }
+  return true;
+}
+
 function normalizeProperty(node: Json): void {
   if (typeof node !== 'object' || node === null || Array.isArray(node)) return;
   const record = node as JsonRecord;
 
   if (Array.isArray(record['type'])) {
     const types = record['type'] as Json[];
-    if (types.length === 1) {
+    if ('anyOf' in record || 'oneOf' in record) {
+      const allowedTypes = new Set(
+        types.filter((t): t is string => typeof t === 'string'),
+      );
+      for (const key of ['anyOf', 'oneOf'] as const) {
+        const branches = record[key];
+        if (Array.isArray(branches)) {
+          const filteredBranches: Json[] = [];
+          for (const branch of branches) {
+            if (isBranchCompatibleWithTypeSet(branch, allowedTypes)) {
+              if (typeof branch === 'object' && branch !== null && !Array.isArray(branch)) {
+                const b = branch as JsonRecord;
+                if (Array.isArray(b['type'])) {
+                  const narrowed = (b['type'] as Json[]).filter(
+                    (t) =>
+                      typeof t === 'string' &&
+                      (allowedTypes.has(t) || (t === 'integer' && allowedTypes.has('number'))),
+                  );
+                  if (narrowed.length === 1) {
+                    b['type'] = narrowed[0] as Json;
+                  } else {
+                    b['type'] = narrowed;
+                  }
+                }
+                if (Array.isArray(b['enum'])) {
+                  b['enum'] = (b['enum'] as Json[]).filter((val) => {
+                    const t = jsonTypeOf(val);
+                    return allowedTypes.has(t) || (t === 'integer' && allowedTypes.has('number'));
+                  });
+                }
+                if (
+                  !('type' in b) &&
+                  !('enum' in b) &&
+                  !('const' in b) &&
+                  !COMBINATOR_KEYS.some((k) => k in b) &&
+                  allowedTypes.size === 1
+                ) {
+                  b['type'] = [...allowedTypes][0]!;
+                }
+              }
+              filteredBranches.push(branch);
+            }
+          }
+          record[key] = filteredBranches;
+        }
+      }
+      delete record['type'];
+    } else if (types.length === 1) {
       record['type'] = types[0] as Json;
     } else if (types.length > 1) {
-      if (!('anyOf' in record) && !('oneOf' in record)) {
-        record['anyOf'] = types.map((t) => (typeof t === 'string' ? { type: t } : (t as Json)));
-      }
+      record['anyOf'] = types.map((t) => (typeof t === 'string' ? { type: t } : (t as Json)));
+      delete record['type'];
+    } else {
       delete record['type'];
     }
   }
@@ -376,7 +491,7 @@ function recurseSchema(node: Json): void {
     }
   }
 
-  for (const key of ['patternProperties', 'dependentSchemas'] as const) {
+  for (const key of ['patternProperties', 'dependentSchemas', 'dependencies'] as const) {
     const map = record[key];
     if (typeof map === 'object' && map !== null && !Array.isArray(map)) {
       for (const value of Object.values(map as JsonRecord)) {

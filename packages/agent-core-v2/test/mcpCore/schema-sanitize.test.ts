@@ -553,5 +553,87 @@ describe('sanitizeMcpSchema — conditional and negation schemas', () => {
       anyOf: [{ type: 'string' }, { type: 'number' }],
     });
   });
+
+  it('resets ref activity before traversing sibling references', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        val: {
+          $ref: '#/$defs/S',
+          allOf: [{ $ref: '#/$defs/S' }],
+        },
+      },
+      $defs: {
+        S: {
+          type: 'string',
+        },
+      },
+    };
+    const result = sanitizeMcpSchema(schema);
+    const val = prop(result, 'val');
+    expect(val['type']).toBe('string');
+    expect(val['description']).toBeUndefined();
+    const allOf = val['allOf'] as Record<string, unknown>[];
+    expect(allOf).toHaveLength(1);
+    expect(allOf[0]?.['type']).toBe('string');
+    expect(allOf[0]?.['description']).toBeUndefined();
+  });
+
+  it('intersects object-valued enums by structural equality instead of reference identity', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        item: {
+          $ref: '#/$defs/Base',
+          enum: [{ a: 1 }, { b: 2 }],
+        },
+      },
+      $defs: {
+        Base: {
+          type: 'object',
+          enum: [{ a: 1 }, { c: 3 }],
+        },
+      },
+    };
+    const result = sanitizeMcpSchema(schema);
+    const item = prop(result, 'item');
+    expect(item['enum']).toEqual([{ a: 1 }]);
+  });
+
+  it('infers object type from dependentSchemas or dependentRequired', () => {
+    const result = sanitizeMcpSchema({
+      type: 'object',
+      properties: {
+        withDepSchemas: {
+          dependentSchemas: {
+            creditCard: { properties: { billingAddress: { type: 'string' } } },
+          },
+        },
+        withDepReq: {
+          dependentRequired: {
+            creditCard: ['billingAddress'],
+          },
+        },
+      },
+    });
+    expect(prop(result, 'withDepSchemas')['type']).toBe('object');
+    expect(prop(result, 'withDepReq')['type']).toBe('object');
+  });
+
+  it('preserves array-valued types beside existing anyOf by filtering incompatible branches', () => {
+    const result = sanitizeMcpSchema({
+      type: 'object',
+      properties: {
+        val: {
+          type: ['string', 'null'],
+          anyOf: [{ type: 'string' }, { type: 'number' }],
+        },
+      },
+    });
+    const val = prop(result, 'val');
+    expect(val['type']).toBeUndefined();
+    expect(val['anyOf']).toEqual([{ type: 'string' }]);
+  });
 });
+
 
