@@ -42,7 +42,13 @@ const NUMERIC_KEYWORDS = [
 ] as const;
 
 function decodePointerSegment(segment: string): string {
-  return segment.replaceAll(/~1/g, '/').replaceAll(/~0/g, '~');
+  let decoded = segment;
+  try {
+    decoded = decodeURIComponent(segment);
+  } catch {
+    decoded = segment;
+  }
+  return decoded.replaceAll('~1', '/').replaceAll('~0', '~');
 }
 
 function jsonTypeOf(value: Json): string {
@@ -53,6 +59,54 @@ function jsonTypeOf(value: Json): string {
   if (Array.isArray(value)) return 'array';
   if (typeof value === 'object') return 'object';
   return 'string';
+}
+
+function mergeRefSiblings(target: JsonRecord, rest: JsonRecord): JsonRecord {
+  const merged: JsonRecord = { ...target, ...rest };
+
+  if (Array.isArray(target['required']) || Array.isArray(rest['required'])) {
+    const targetReq = Array.isArray(target['required']) ? target['required'] : [];
+    const restReq = Array.isArray(rest['required']) ? rest['required'] : [];
+    const reqSet = new Set<string>();
+    for (const item of targetReq) {
+      if (typeof item === 'string') reqSet.add(item);
+    }
+    for (const item of restReq) {
+      if (typeof item === 'string') reqSet.add(item);
+    }
+    merged['required'] = Array.from(reqSet);
+  }
+
+  if (
+    typeof target['properties'] === 'object' &&
+    target['properties'] !== null &&
+    !Array.isArray(target['properties']) &&
+    typeof rest['properties'] === 'object' &&
+    rest['properties'] !== null &&
+    !Array.isArray(rest['properties'])
+  ) {
+    const targetProps = target['properties'] as JsonRecord;
+    const restProps = rest['properties'] as JsonRecord;
+    const mergedProps: JsonRecord = { ...targetProps };
+    for (const [key, value] of Object.entries(restProps)) {
+      if (
+        key in mergedProps &&
+        typeof mergedProps[key] === 'object' &&
+        mergedProps[key] !== null &&
+        !Array.isArray(mergedProps[key]) &&
+        typeof value === 'object' &&
+        value !== null &&
+        !Array.isArray(value)
+      ) {
+        mergedProps[key] = mergeRefSiblings(mergedProps[key] as JsonRecord, value as JsonRecord);
+      } else {
+        mergedProps[key] = value;
+      }
+    }
+    merged['properties'] = mergedProps;
+  }
+
+  return merged;
 }
 
 function derefJsonSchema(schema: JsonRecord): JsonRecord {
@@ -105,18 +159,19 @@ function derefJsonSchema(schema: JsonRecord): JsonRecord {
         const nextActive = new Set(activeRefs);
         nextActive.add(ref);
         const target = traverse(resolvePointer(ref), nextActive);
-        if (typeof target === 'boolean') {
-          return target;
-        }
-        if (typeof target !== 'object' || target === null || Array.isArray(target)) {
-          throw new Error('Local $ref must resolve to a JSON object or boolean');
-        }
         const { $ref: _, ...rest } = record;
         const traversedRest: JsonRecord = {};
         for (const [key, value] of Object.entries(rest)) {
           traversedRest[key] = traverse(value, nextActive);
         }
-        return { ...(target as JsonRecord), ...traversedRest };
+        if (typeof target === 'boolean') {
+          if (!target) return false;
+          return Object.keys(traversedRest).length > 0 ? traversedRest : true;
+        }
+        if (typeof target !== 'object' || target === null || Array.isArray(target)) {
+          throw new Error('Local $ref must resolve to a JSON object or boolean');
+        }
+        return mergeRefSiblings(target as JsonRecord, traversedRest);
       }
       return record;
     }
@@ -237,6 +292,7 @@ function recurseSchema(node: Json): void {
   const prefixItems = record['prefixItems'];
   if (Array.isArray(prefixItems)) {
     for (const value of prefixItems) normalizeProperty(value);
+    const hadItemsFalse = record['items'] === false;
     if (!('items' in record) || typeof record['items'] === 'boolean') {
       if (prefixItems.length === 0) {
         delete record['items'];
@@ -245,6 +301,9 @@ function recurseSchema(node: Json): void {
       } else {
         record['items'] = { anyOf: prefixItems };
       }
+    }
+    if (hadItemsFalse && !('maxItems' in record)) {
+      record['maxItems'] = prefixItems.length;
     }
     delete record['prefixItems'];
   }
@@ -261,7 +320,12 @@ function recurseSchema(node: Json): void {
     }
   } else if (typeof items === 'object' && items !== null) {
     normalizeProperty(items);
-  } else if (typeof items === 'boolean' || (items !== undefined && typeof items !== 'object')) {
+  } else if (items === false) {
+    if (!('maxItems' in record)) {
+      record['maxItems'] = 0;
+    }
+    delete record['items'];
+  } else if (items === true || (items !== undefined && typeof items !== 'object')) {
     delete record['items'];
   }
 
@@ -280,6 +344,8 @@ function recurseSchema(node: Json): void {
           normalizedBranches.push(value);
         } else if (typeof value === 'string') {
           normalizedBranches.push({ type: value });
+        } else if (typeof value === 'boolean') {
+          normalizedBranches.push(value ? {} : { not: {} });
         }
       }
       record[key] = normalizedBranches;

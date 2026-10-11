@@ -366,3 +366,104 @@ describe('sanitizeMcpSchema — coexisting type with unions', () => {
   });
 });
 
+describe('sanitizeMcpSchema — percent-encoded pointer segments', () => {
+  it('resolves URI fragment pointer with percent-encoded characters', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        prop: { $ref: '#/$defs/special%20name' },
+      },
+      $defs: {
+        'special name': {
+          type: 'string',
+        },
+      },
+    };
+    const result = sanitizeMcpSchema(schema);
+    expect(prop(result, 'prop')).toEqual({ type: 'string' });
+  });
+});
+
+describe('sanitizeMcpSchema — ref sibling merging', () => {
+  it('merges required and properties conjunctively from target and sibling', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        entity: {
+          $ref: '#/$defs/Base',
+          description: 'Extended entity',
+          required: ['extra'],
+          properties: {
+            extra: { type: 'number' },
+          },
+        },
+      },
+      $defs: {
+        Base: {
+          type: 'object',
+          required: ['id'],
+          properties: {
+            id: { type: 'string' },
+          },
+        },
+      },
+    };
+    const result = sanitizeMcpSchema(schema);
+    const entity = prop(result, 'entity');
+    expect(entity['description']).toBe('Extended entity');
+    expect(entity['required']).toEqual(['id', 'extra']);
+    expect(props(entity)['id']).toEqual({ type: 'string' });
+    expect(props(entity)['extra']).toEqual({ type: 'number' });
+  });
+});
+
+describe('sanitizeMcpSchema — items false', () => {
+  it('maps items false without prefixItems to maxItems 0', () => {
+    const result = sanitizeMcpSchema({
+      type: 'object',
+      properties: {
+        emptyList: {
+          type: 'array',
+          items: false,
+        },
+      },
+    });
+    const emptyList = prop(result, 'emptyList');
+    expect(emptyList['items']).toBeUndefined();
+    expect(emptyList['maxItems']).toBe(0);
+  });
+
+  it('sets maxItems to prefixItems length when items is false', () => {
+    const result = sanitizeMcpSchema({
+      type: 'object',
+      properties: {
+        pair: {
+          type: 'array',
+          prefixItems: [{ type: 'string' }, { type: 'number' }],
+          items: false,
+        },
+      },
+    });
+    const pair = prop(result, 'pair');
+    expect(pair['maxItems']).toBe(2);
+  });
+});
+
+describe('sanitizeMcpSchema — boolean combinator branches', () => {
+  it('retains boolean branches in combinator arrays as schemas', () => {
+    const result = sanitizeMcpSchema({
+      type: 'object',
+      properties: {
+        allowed: {
+          anyOf: [{ type: 'string' }, true],
+        },
+        denied: {
+          allOf: [{ type: 'string' }, false],
+        },
+      },
+    });
+    expect(prop(result, 'allowed')['anyOf']).toEqual([{ type: 'string' }, {}]);
+    expect(prop(result, 'denied')['allOf']).toEqual([{ type: 'string' }, { not: {} }]);
+  });
+});
+
