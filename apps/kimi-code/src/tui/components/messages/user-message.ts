@@ -2,7 +2,14 @@
  * Renders a user message in the transcript.
  */
 
-import { Spacer, Text, truncateToWidth, visibleWidth, type Component } from '@moonshot-ai/pi-tui';
+import {
+  Spacer,
+  Text,
+  truncateToWidth,
+  visibleWidth,
+  wrapTextWithAnsi,
+  type Component,
+} from '@moonshot-ai/pi-tui';
 
 import { ImageThumbnail } from '#/tui/components/media/image-thumbnail';
 import { USER_MESSAGE_BULLET } from '#/tui/constant/symbols';
@@ -10,6 +17,21 @@ import { currentTheme } from '#/tui/theme';
 import type { ImageAttachment } from '#/tui/utils/image-attachment-store';
 import { markOsc133Zone } from '#/tui/utils/osc133';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
+
+export function firstContentLineIndex(lines: string[]): number {
+  let first = 0;
+  while (first < lines.length && lines[first]!.trim() === '') first++;
+  return first;
+}
+
+export function userMessageLineHeights(text: string, width: number, bullet?: string): number[] {
+  const marker = bullet ?? USER_MESSAGE_BULLET;
+  const contentWidth = Math.max(1, width - visibleWidth(marker));
+  const lines = text.split(/\r?\n/);
+  return lines
+    .slice(firstContentLineIndex(lines))
+    .map((line) => wrapTextWithAnsi(line.replaceAll('\t', '   '), contentWidth).length);
+}
 
 export class UserMessageComponent implements Component {
   private text: string;

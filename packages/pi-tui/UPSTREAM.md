@@ -186,3 +186,9 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 **Decision:** The cached horizontal-scroll origin used for click mapping in `Input` is the grapheme boundary actually displayed first, not the raw column the scroller chose.
 
 **Why not in the app:** The scroll origin is computed inside `Input.render`; the click mapper only sees the cached value.
+
+### viewport-layout-effects — keep
+
+**Decision:** Fullscreen hosts can register synchronous `addLayoutEffect` callbacks after layout and search reveal, before terminal output. An effect's `requestRender` coalesces into another complete layout pass without invalidating component caches; only the settled frame is written. Search keeps its selected occurrence while effect-driven layout shifts rendered rows; selections retain their content when effects only add or remove leading empty rows. Effects must converge within ten passes or rendering throws. With no effects registered, the existing rendering path is preserved.
+
+**Why not in the app:** The settled scroll state and the opportunity to repeat layout before terminal output belong to the alternate-screen render path. Hosts cannot reach this point through component composition alone.

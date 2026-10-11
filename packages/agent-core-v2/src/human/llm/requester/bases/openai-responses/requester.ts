@@ -81,7 +81,11 @@ export function prepareOpenAIResponsesRequest(
       encodeReasoningEffortFallback(t, ctx.model, trait?.strictThinkingValidation === true),
     ).kwargs;
   }
-  const cap = resolveMaxCompletionCap(input);
+  const requested = input.maxCompletionTokens;
+  const cap =
+    requested !== undefined && requested <= 0
+      ? undefined
+      : (resolveMaxCompletionCap(input) ?? trait?.completionTokensWhenUnset?.(input));
   if (cap !== undefined) {
     kwargs = {
       ...kwargs,

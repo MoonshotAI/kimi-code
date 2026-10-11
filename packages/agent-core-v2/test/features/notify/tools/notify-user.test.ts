@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { type HostUiCapability, IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
@@ -18,6 +19,8 @@ import {
   NOTIFY_USER_EMPTY_MESSAGE,
   NOTIFY_USER_SUPPRESSED_OUTPUT,
 } from '#/features/notify/tools/notify-user/notifyUserTool';
+import { NOTIFY_USER_NUDGE_VARIANT } from '#/features/notify/notifyUserNudge';
+import { recordingTelemetry, type TelemetryRecord } from '../../../app/telemetry/stubs';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 
 import { createTestAgent, type TestAgentContext } from '../../../harness';
@@ -26,9 +29,11 @@ const signal = new AbortController().signal;
 
 describe('NotifyUserTool', () => {
   let ctx: TestAgentContext;
+  let telemetry: TelemetryRecord[];
 
   beforeEach(async () => {
-    ctx = createTestAgent();
+    telemetry = [];
+    ctx = createTestAgent({ telemetry: recordingTelemetry(telemetry) });
     ctx.get(IFlagService).setConfigOverrides({ notify_user: true });
     Object.assign(ctx.get(IBootstrapService).args, { uiCapabilities: [NOTIFY_USER_UI_CAPABILITY] });
     await ctx.restorePersisted();
@@ -99,6 +104,52 @@ describe('NotifyUserTool', () => {
     expect(result).toEqual({ isError: false, output: NOTIFY_USER_DELIVERED_OUTPUT });
   });
 
+  it('tracks each update with the silent stretch that preceded it', async () => {
+    const context = ctx.get(IAgentContextMemoryService);
+    context.append({
+      role: 'user',
+      content: [{ type: 'text', text: 'do the thing' }],
+      toolCalls: [],
+      origin: { kind: 'user' },
+    });
+    context.append({
+      role: 'assistant',
+      content: [],
+      toolCalls: [
+        { type: 'function', id: 'call_a', name: 'Bash', arguments: '{}' },
+        { type: 'function', id: 'call_b', name: 'Read', arguments: '{}' },
+      ],
+    });
+    context.append({
+      role: 'user',
+      content: [{ type: 'text', text: 'nudge' }],
+      toolCalls: [],
+      origin: { kind: 'injection', variant: NOTIFY_USER_NUDGE_VARIANT },
+    });
+    context.append({
+      role: 'assistant',
+      content: [],
+      toolCalls: [{ type: 'function', id: 'call_notify', name: NOTIFY_USER_TOOL_NAME, arguments: '{}' }],
+    });
+
+    await executeTool(ctx.get(INotifyUserTool), {
+      turnId: 3,
+      toolCallId: 'call_notify',
+      args: { message: 'Parser checked.' },
+      signal,
+    });
+
+    const sent = telemetry.filter((record) => record.event === 'notify_user_sent');
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.properties).toMatchObject({
+      turn_id: 3,
+      rounds_since_notify: 1,
+      after_nudge: true,
+      message_chars: 'Parser checked.'.length,
+      displayed: true,
+    });
+  });
+
   it('rejects a whitespace-only message before execution', async () => {
     const tool = ctx.get(INotifyUserTool);
 
@@ -136,6 +187,9 @@ describe('NotifyUserTool', () => {
     expect(await execution.execute({ signal } as never)).toEqual({
       isError: false,
       output: NOTIFY_USER_SUPPRESSED_OUTPUT,
+    });
+    expect(telemetry.find((record) => record.event === 'notify_user_sent')?.properties).toMatchObject({
+      displayed: false,
     });
   });
 });

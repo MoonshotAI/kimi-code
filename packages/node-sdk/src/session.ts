@@ -355,6 +355,11 @@ export class Session {
     await this.rpc.setTowerMode({ sessionId: this.id, enabled, base });
   }
 
+  async getTowerStatus(): Promise<string> {
+    this.ensureOpen();
+    return this.rpc.getTowerStatus({ sessionId: this.id });
+  }
+
   async getPlan(): Promise<SessionPlan> {
     this.ensureOpen();
     return this.rpc.getPlan({ sessionId: this.id });

@@ -8,6 +8,8 @@ import { Jimp } from 'jimp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { Emitter } from '#/_base/event';
+import { OrderedHookSlot } from '#/hooks';
+import type { IEventDispatcher } from '#/state/eventDispatcher';
 import {
   resetUnexpectedErrorHandler,
   setUnexpectedErrorHandler,
@@ -872,6 +874,8 @@ describe('AgentMediaToolsRegistrar', () => {
   ) {
     const registry = new AgentToolRegistryService();
     const eventBus = new EventBusService();
+    const onDidRestore = new OrderedHookSlot();
+    const dispatcher = { hooks: { onDidRestore } } as unknown as IEventDispatcher;
     const agentContext = stubAgentContext('main', 1);
     eventBus.activateAgent(agentContext);
     const state: ProfileState = {
@@ -921,6 +925,7 @@ describe('AgentMediaToolsRegistrar', () => {
       profile,
       modelCatalog,
       eventBus,
+      dispatcher,
       runtime,
       workspaceCtx,
       recordingTelemetry([]),
@@ -950,7 +955,7 @@ describe('AgentMediaToolsRegistrar', () => {
     const healAlias = (alias: string): void => {
       brokenAliases.delete(alias);
     };
-    return { registry, registrar, bindModel, setRuntimeAvailable, breakAlias, healAlias };
+    return { registry, registrar, state, onDidRestore, bindModel, setRuntimeAvailable, breakAlias, healAlias };
   }
 
   it('registers nothing until a media-capable model binds, then registers ReadMediaFile', () => {
@@ -961,6 +966,17 @@ describe('AgentMediaToolsRegistrar', () => {
     const tool = registry.resolve('ReadMediaFile');
     expect(tool).toBeInstanceOf(ReadMediaFileTool);
     expect((tool as ReadMediaFileTool).description).toContain('Video files are not supported');
+  });
+
+  it('registers ReadMediaFile after a silent profile restore', async () => {
+    const { registry, state, onDidRestore } = createRegistrarHarness();
+    state.alias = 'vision-model';
+    state.capabilities = capabilities({ image_in: true, video_in: false });
+    expect(registry.resolve('ReadMediaFile')).toBeUndefined();
+
+    await onDidRestore.run({});
+
+    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
   });
 
   it('hands the bound model provider type to ReadMediaFile', async () => {
