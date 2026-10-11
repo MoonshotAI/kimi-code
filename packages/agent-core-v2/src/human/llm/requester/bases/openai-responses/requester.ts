@@ -21,8 +21,10 @@ import {
   type ToolCallIdPolicy,
 } from '#/llm/requester/requester';
 import {
-  getLlmHeadersTimeoutDispatcher,
+  createLlmStreamWatchdog,
+  getLlmDispatcher,
   resolveLlmHeadersTimeoutMs,
+  resolveLlmStreamIdleTimeoutMs,
 } from '#/llm/requester/timeout';
 
 import {
@@ -53,9 +55,7 @@ const OPENAI_RESPONSES_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
 };
 
 function createClient(model: LlmModel, headers: Record<string, string> | undefined): OpenAI {
-  const headersTimeoutMs = resolveLlmHeadersTimeoutMs();
-  const dispatcher =
-    headersTimeoutMs === undefined ? undefined : getLlmHeadersTimeoutDispatcher(headersTimeoutMs);
+  const dispatcher = getLlmDispatcher(resolveLlmHeadersTimeoutMs());
   return new OpenAI({
     apiKey: model.apiKey ?? 'unused',
     baseURL: model.baseUrl,
@@ -142,8 +142,9 @@ async function executeOpenAIResponsesRequest(
     ),
   });
   onEvent?.({ type: 'llm.sent' });
+  const watchdog = createLlmStreamWatchdog(signal, resolveLlmStreamIdleTimeoutMs());
   const { data: stream, response } = await client.responses
-    .create(request.params, { signal })
+    .create(request.params, { signal: watchdog.signal })
     .withResponse();
   onEvent?.({ type: 'llm.streaming.headers', headers: headersToRecord(response.headers) ?? {} });
   const parse = format.createStreamParser({
@@ -156,7 +157,7 @@ async function executeOpenAIResponsesRequest(
           },
   });
   let messageId: string | undefined;
-  for await (const chunk of stream) {
+  for await (const chunk of watchdog.watch(stream)) {
     let failed = false;
     parse(chunk, {
       onDelta: (part) => onEvent?.({ type: 'llm.streaming.part', part }),
