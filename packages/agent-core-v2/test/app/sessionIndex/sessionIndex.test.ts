@@ -764,9 +764,18 @@ describe('FileSessionIndex (read model)', () => {
 
   it('resolves a cursor even when the cached row has a malformed cwd', async () => {
     await seedSession('a', { createdAt: 1, updatedAt: 2 });
-    await seedSession('b', { createdAt: 2, updatedAt: 4, custom: { cwd: '' } });
+    await seedSession('b', { createdAt: 2, updatedAt: 4 });
     const store = build();
     await store.prepare();
+    await queryStore.put(sessionCollection(1), 'b', {
+      id: 'b',
+      workspaceId,
+      title: 'b',
+      createdAt: 2,
+      updatedAt: 4,
+      archived: false,
+      cwd: '',
+    });
 
     const rest = await store.listRecent({
       workspaceIds: [workspaceId],
