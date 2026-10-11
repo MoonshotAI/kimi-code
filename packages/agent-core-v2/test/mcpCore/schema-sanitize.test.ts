@@ -511,5 +511,47 @@ describe('sanitizeMcpSchema — conditional and negation schemas', () => {
     const ifProps = ifSchema['properties'] as Record<string, Record<string, unknown>>;
     expect(ifProps['a']!['items']).toEqual({ type: 'number' });
   });
+
+  it('conjoins numeric bounds and lengths from target and ref siblings', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        val: {
+          $ref: '#/$defs/Str',
+          minLength: 1,
+          maxLength: 15,
+        },
+      },
+      $defs: {
+        Str: {
+          type: 'string',
+          minLength: 5,
+          maxLength: 20,
+        },
+      },
+    };
+    const result = sanitizeMcpSchema(schema);
+    const val = prop(result, 'val');
+    expect(val['minLength']).toBe(5);
+    expect(val['maxLength']).toBe(15);
+  });
+
+  it('retains prefixItems when items is already an object schema', () => {
+    const result = sanitizeMcpSchema({
+      type: 'object',
+      properties: {
+        arr: {
+          type: 'array',
+          prefixItems: [{ type: 'string' }],
+          items: { type: 'number' },
+        },
+      },
+    });
+    const arr = prop(result, 'arr');
+    expect(arr['prefixItems']).toBeUndefined();
+    expect(arr['items']).toEqual({
+      anyOf: [{ type: 'string' }, { type: 'number' }],
+    });
+  });
 });
 

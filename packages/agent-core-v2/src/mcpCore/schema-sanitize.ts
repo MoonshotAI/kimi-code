@@ -61,8 +61,38 @@ function jsonTypeOf(value: Json): string {
   return 'string';
 }
 
+function conjoinBounds(
+  target: JsonRecord,
+  rest: JsonRecord,
+  merged: JsonRecord,
+  key: string,
+  op: 'min' | 'max',
+): void {
+  const a = target[key];
+  const b = rest[key];
+  if (typeof a === 'number' && typeof b === 'number') {
+    merged[key] = op === 'max' ? Math.max(a, b) : Math.min(a, b);
+  }
+}
+
 function mergeRefSiblings(target: JsonRecord, rest: JsonRecord): JsonRecord {
   const merged: JsonRecord = { ...target, ...rest };
+
+  conjoinBounds(target, rest, merged, 'minLength', 'max');
+  conjoinBounds(target, rest, merged, 'maxLength', 'min');
+  conjoinBounds(target, rest, merged, 'minimum', 'max');
+  conjoinBounds(target, rest, merged, 'maximum', 'min');
+  conjoinBounds(target, rest, merged, 'exclusiveMinimum', 'max');
+  conjoinBounds(target, rest, merged, 'exclusiveMaximum', 'min');
+  conjoinBounds(target, rest, merged, 'minItems', 'max');
+  conjoinBounds(target, rest, merged, 'maxItems', 'min');
+  conjoinBounds(target, rest, merged, 'minProperties', 'max');
+  conjoinBounds(target, rest, merged, 'maxProperties', 'min');
+
+  if (Array.isArray(target['enum']) && Array.isArray(rest['enum'])) {
+    const restSet = new Set(rest['enum']);
+    merged['enum'] = (target['enum'] as Json[]).filter((x) => restSet.has(x));
+  }
 
   if (Array.isArray(target['required']) || Array.isArray(rest['required'])) {
     const targetReq = Array.isArray(target['required']) ? target['required'] : [];
@@ -301,6 +331,10 @@ function recurseSchema(node: Json): void {
       } else {
         record['items'] = { anyOf: prefixItems };
       }
+    } else if (typeof record['items'] === 'object' && record['items'] !== null) {
+      const existingItems = record['items'];
+      const combined = [...prefixItems, existingItems];
+      record['items'] = { anyOf: combined };
     }
     if (hadItemsFalse) {
       record['maxItems'] =
