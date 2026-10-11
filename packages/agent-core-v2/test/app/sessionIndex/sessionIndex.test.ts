@@ -762,6 +762,20 @@ describe('FileSessionIndex (read model)', () => {
     expect(unknown.items).toEqual([]);
   });
 
+  it('resolves a cursor even when the cached row has a malformed cwd', async () => {
+    await seedSession('a', { createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { createdAt: 2, updatedAt: 4, custom: { cwd: '' } });
+    const store = build();
+    await store.prepare();
+
+    const rest = await store.listRecent({
+      workspaceIds: [workspaceId],
+      limit: 5,
+      before: 'b',
+    });
+    expect(rest.items.map((s) => s.id)).toEqual(['a']);
+  });
+
   it('remove evicts a queued mirror entry so a deleted session stays unlisted', async () => {
     await seedSession('a', { createdAt: 1, updatedAt: 2 });
     const store = build();
