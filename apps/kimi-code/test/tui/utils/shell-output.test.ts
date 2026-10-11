@@ -38,8 +38,11 @@ describe('sanitizeShellOutput', () => {
     expect(sanitizeShellOutput(link)).toBe('click here');
   });
 
-  it('strips carriage returns (spinner redraw)', () => {
-    expect(sanitizeShellOutput('frame1\rframe2\rframe3')).toBe('frame1frame2frame3');
+  it('resolves carriage-return redraws before rendering', () => {
+    expect(sanitizeShellOutput('frame1\rframe2\rframe3')).toBe('frame3');
+    expect(sanitizeShellOutput('Hello World\rHi')).toBe('Hillo World');
+    expect(sanitizeShellOutput(`Downloading 100%\rDone${ESC}[K`)).toBe('Done');
+    expect(sanitizeShellOutput(`Downloading 100%\r${ESC}[KDone`)).toBe('Done');
     expect(sanitizeShellOutput('line\r\nnext')).toBe('line\nnext');
   });
 
