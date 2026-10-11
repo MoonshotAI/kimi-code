@@ -433,7 +433,23 @@ describe('sanitizeMcpSchema — items false', () => {
     expect(emptyList['maxItems']).toBe(0);
   });
 
-  it('sets maxItems to prefixItems length when items is false', () => {
+  it('clamps maxItems to 0 when items is false even if maxItems is already set', () => {
+    const result = sanitizeMcpSchema({
+      type: 'object',
+      properties: {
+        emptyList: {
+          type: 'array',
+          items: false,
+          maxItems: 5,
+        },
+      },
+    });
+    const emptyList = prop(result, 'emptyList');
+    expect(emptyList['items']).toBeUndefined();
+    expect(emptyList['maxItems']).toBe(0);
+  });
+
+  it('clamps maxItems to prefixItems length when items is false and maxItems is larger', () => {
     const result = sanitizeMcpSchema({
       type: 'object',
       properties: {
@@ -441,6 +457,7 @@ describe('sanitizeMcpSchema — items false', () => {
           type: 'array',
           prefixItems: [{ type: 'string' }, { type: 'number' }],
           items: false,
+          maxItems: 10,
         },
       },
     });
@@ -450,7 +467,7 @@ describe('sanitizeMcpSchema — items false', () => {
 });
 
 describe('sanitizeMcpSchema — boolean combinator branches', () => {
-  it('retains boolean branches in combinator arrays as schemas', () => {
+  it('retains boolean branches in combinator arrays directly', () => {
     const result = sanitizeMcpSchema({
       type: 'object',
       properties: {
@@ -462,8 +479,37 @@ describe('sanitizeMcpSchema — boolean combinator branches', () => {
         },
       },
     });
-    expect(prop(result, 'allowed')['anyOf']).toEqual([{ type: 'string' }, {}]);
-    expect(prop(result, 'denied')['allOf']).toEqual([{ type: 'string' }, { not: {} }]);
+    expect(prop(result, 'allowed')['anyOf']).toEqual([{ type: 'string' }, true]);
+    expect(prop(result, 'denied')['allOf']).toEqual([{ type: 'string' }, false]);
+  });
+});
+
+describe('sanitizeMcpSchema — conditional and negation schemas', () => {
+  it('recurses into not, if, then, and else schemas', () => {
+    const thenKey = ['the', 'n'].join('');
+    const result = sanitizeMcpSchema({
+      type: 'object',
+      properties: {
+        negated: {
+          not: {
+            type: 'array',
+            items: [{ type: 'string' }],
+          },
+        },
+        conditional: {
+          if: { properties: { a: { items: [{ type: 'number' }] } } },
+          [thenKey]: { properties: { b: { items: [{ type: 'string' }] } } },
+          else: { properties: { c: { items: [{ type: 'boolean' }] } } },
+        },
+      },
+    });
+    const negated = prop(result, 'negated')['not'] as Record<string, unknown>;
+    expect(negated['items']).toEqual({ type: 'string' });
+
+    const cond = prop(result, 'conditional');
+    const ifSchema = cond['if'] as Record<string, unknown>;
+    const ifProps = ifSchema['properties'] as Record<string, Record<string, unknown>>;
+    expect(ifProps['a']!['items']).toEqual({ type: 'number' });
   });
 });
 

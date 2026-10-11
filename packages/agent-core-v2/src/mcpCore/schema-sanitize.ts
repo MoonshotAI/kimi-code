@@ -302,8 +302,11 @@ function recurseSchema(node: Json): void {
         record['items'] = { anyOf: prefixItems };
       }
     }
-    if (hadItemsFalse && !('maxItems' in record)) {
-      record['maxItems'] = prefixItems.length;
+    if (hadItemsFalse) {
+      record['maxItems'] =
+        typeof record['maxItems'] === 'number'
+          ? Math.min(record['maxItems'], prefixItems.length)
+          : prefixItems.length;
     }
     delete record['prefixItems'];
   }
@@ -321,9 +324,7 @@ function recurseSchema(node: Json): void {
   } else if (typeof items === 'object' && items !== null) {
     normalizeProperty(items);
   } else if (items === false) {
-    if (!('maxItems' in record)) {
-      record['maxItems'] = 0;
-    }
+    record['maxItems'] = 0;
     delete record['items'];
   } else if (items === true || (items !== undefined && typeof items !== 'object')) {
     delete record['items'];
@@ -332,6 +333,22 @@ function recurseSchema(node: Json): void {
   const additional = record['additionalProperties'];
   if (typeof additional === 'object' && additional !== null && !Array.isArray(additional)) {
     normalizeProperty(additional);
+  }
+
+  for (const key of ['not', 'if', 'then', 'else', 'contains'] as const) {
+    const child = record[key];
+    if (typeof child === 'object' && child !== null && !Array.isArray(child)) {
+      normalizeProperty(child);
+    }
+  }
+
+  for (const key of ['patternProperties', 'dependentSchemas'] as const) {
+    const map = record[key];
+    if (typeof map === 'object' && map !== null && !Array.isArray(map)) {
+      for (const value of Object.values(map as JsonRecord)) {
+        normalizeProperty(value);
+      }
+    }
   }
 
   for (const key of ['anyOf', 'oneOf', 'allOf'] as const) {
@@ -345,7 +362,7 @@ function recurseSchema(node: Json): void {
         } else if (typeof value === 'string') {
           normalizedBranches.push({ type: value });
         } else if (typeof value === 'boolean') {
-          normalizedBranches.push(value ? {} : { not: {} });
+          normalizedBranches.push(value);
         }
       }
       record[key] = normalizedBranches;
