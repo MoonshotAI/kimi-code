@@ -175,9 +175,9 @@ describe('openai requester cacheKey', () => {
     expect(client.body()['prompt_cache_key']).toBeUndefined();
   });
 
-  it('sends prompt_cache_key to third-party OpenAI endpoints when KIMI_CODE_OPENAI_PROMPT_CACHE_KEY is set', async () => {
+  it('sends prompt_cache_key to third-party OpenAI endpoints when KIMI_CODE_OPENAI_PROMPT_CACHE_KEY is set (case-insensitive)', async () => {
     const prev = process.env['KIMI_CODE_OPENAI_PROMPT_CACHE_KEY'];
-    process.env['KIMI_CODE_OPENAI_PROMPT_CACHE_KEY'] = '1';
+    process.env['KIMI_CODE_OPENAI_PROMPT_CACHE_KEY'] = 'TRUE';
     try {
       const client = stubOpenAIClient(chatCompletionChunks);
       const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
@@ -255,9 +255,9 @@ describe('openai-responses requester cacheKey', () => {
     expect(client.body()['prompt_cache_key']).toBeUndefined();
   });
 
-  it('sends prompt_cache_key to third-party endpoints when KIMI_CODE_OPENAI_PROMPT_CACHE_KEY is set', async () => {
+  it('sends prompt_cache_key to third-party endpoints when KIMI_CODE_OPENAI_PROMPT_CACHE_KEY is set (case-insensitive)', async () => {
     const prev = process.env['KIMI_CODE_OPENAI_PROMPT_CACHE_KEY'];
-    process.env['KIMI_CODE_OPENAI_PROMPT_CACHE_KEY'] = '1';
+    process.env['KIMI_CODE_OPENAI_PROMPT_CACHE_KEY'] = 'true';
     try {
       const client = stubResponsesClient(responsesStreamEvents);
       const requester = createOpenAIResponsesRequester({ clientFactory: client.clientFactory });

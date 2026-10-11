@@ -28,6 +28,7 @@ import {
 import { getOpenAILegacyModelCapability } from './capability';
 import type { OpenAIWireMessage } from './contract';
 import type { OpenAITrait } from './trait';
+import { isOfficialOpenAIBaseUrl } from '../openai-base-url';
 import {
   assembleOpenAIRequest,
   convertOpenAIError,
@@ -77,7 +78,7 @@ export function prepareOpenAIRequest(
   if (input.cacheKey !== undefined) {
     kwargs =
       trait?.encodeCacheKey?.(input.cacheKey, ctx) ??
-      encodeOpenAICacheKey(input.cacheKey, ctx.model.baseUrl);
+      (isOfficialOpenAIBaseUrl(ctx.model.baseUrl) ? encodeOpenAICacheKey(input.cacheKey) : {});
   }
   let preserveThinking = false;
   if (input.thinking !== undefined) {

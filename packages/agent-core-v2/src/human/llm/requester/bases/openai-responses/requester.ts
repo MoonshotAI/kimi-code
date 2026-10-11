@@ -29,6 +29,7 @@ import { convertOpenAIError } from '../openai/format';
 import { getOpenAIResponsesModelCapability } from './capability';
 import type { OpenAIResponsesRawChunk } from './contract';
 import type { OpenAIResponsesTrait } from './trait';
+import { isOfficialOpenAIBaseUrl } from '../openai-base-url';
 import {
   applyOpenAIResponsesResponseFormat,
   assembleOpenAIResponsesRequest,
@@ -75,7 +76,9 @@ export function prepareOpenAIResponsesRequest(
   if (input.cacheKey !== undefined) {
     kwargs =
       trait?.encodeCacheKey?.(input.cacheKey, ctx) ??
-      encodeOpenAIResponsesCacheKey(input.cacheKey, ctx.model.baseUrl);
+      (isOfficialOpenAIBaseUrl(ctx.model.baseUrl)
+        ? encodeOpenAIResponsesCacheKey(input.cacheKey)
+        : {});
   }
   if (input.thinking !== undefined) {
     kwargs = applyThinking(kwargs, input.thinking, trait?.thinking, ctx, (t) =>

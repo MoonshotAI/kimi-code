@@ -54,10 +54,6 @@ export KIMI_CODE_CUSTOM_HEADERS=$'X-Gateway-Cluster: my-cluster\nX-Custom-Tag: d
 
 ### `KIMI_CODE_OPENAI_PROMPT_CACHE_KEY`
 
-::: info 新增
-新增于 0.4.3。
-:::
-
 控制是否向非官方 OpenAI 端点发送 `prompt_cache_key`。默认情况下，prompt cache key 仅发送给官方 OpenAI 端点（`api.openai.com`），以避免与拒绝未知字段的第三方网关或代理产生兼容性问题。
 
 设置为 `1` 或 `true`（不区分大小写）可为兼容的第三方 OpenAI 网关强制启用缓存键透传：
