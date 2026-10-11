@@ -1706,6 +1706,7 @@ Lists the entries of a session workspace directory, optionally recursing into su
 | `show_hidden` | body | boolean | Include dotfiles. Default `false` |
 | `follow_gitignore` | body | boolean | Skip gitignored paths. Default `true` |
 | `exclude_globs` | body | string[] | Additional globs to skip |
+| `allow_ignored_globs` | body | string[] | Globs to show even when gitignored (e.g. `.tmp`). Ignored ancestor directories of a match are kept so the match stays reachable. Allowing dot-paths also requires `show_hidden: true` |
 | `sort` | body | string | `type_first` (default) / `name_asc` / `name_desc` / `mtime_desc` / `size_desc` |
 | `include_git_status` | body | boolean | Attach each entry's git status. Default `false` |
 
