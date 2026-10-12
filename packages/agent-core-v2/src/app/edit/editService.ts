@@ -21,7 +21,7 @@ export function countEditLines(text: string): number {
     const char = text[i];
     if (char === '\n' || (char === '\r' && text[i + 1] !== '\n')) lines++;
   }
-  return lines;
+  return text.endsWith('\n') || text.endsWith('\r') ? lines - 1 : lines;
 }
 
 export function isOversizedEmptyDeletion(
@@ -35,10 +35,12 @@ export function isOversizedEmptyDeletion(
   return linesPerMatch * occurrenceCount >= LARGE_DELETE_MIN_OLD_LINES;
 }
 
-function oversizedDeletionMessage(path: string): string {
+function oversizedDeletionMessage(path: string, oldString: string, occurrenceCount: number): string {
+  const linesPerMatch = countEditLines(oldString);
   return (
     `Refusing a multi-line deletion in ${path}: new_string is empty (or whitespace-only) while ` +
-    `old_string spans ${String(LARGE_DELETE_MIN_OLD_LINES)}+ lines. Read the file again, then either ` +
+    `${String(occurrenceCount)} matched occurrence(s) of old_string cover ` +
+    `${String(linesPerMatch * occurrenceCount)} lines in total (${String(linesPerMatch)} per match). Read the file again, then either ` +
     `replace with the intended new content, delete fewer lines at a time, or set allow_large_delete=true ` +
     `if you intentionally want to remove that entire span.`
   );
@@ -70,7 +72,7 @@ export class EditService {
       input.allow_large_delete !== true &&
       isOversizedEmptyDeletion(input.old_string, input.new_string, count)
     ) {
-      return { ok: false, error: oversizedDeletionMessage(input.path) };
+      return { ok: false, error: oversizedDeletionMessage(input.path, input.old_string, count) };
     }
 
     if (input.replace_all) {
