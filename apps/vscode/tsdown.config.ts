@@ -22,7 +22,6 @@ export default defineConfig({
     '@moonshot-ai/kimi-code-sdk': resolve(root, '../../packages/node-sdk/src/index.ts'),
     '@moonshot-ai/kimi-telemetry': resolve(root, '../../packages/telemetry/src/index.ts'),
     '@moonshot-ai/migration-legacy': resolve(root, '../../packages/migration-legacy/src/index.ts'),
-    '@moonshot-ai/kaos': resolve(root, '../../packages/kaos/src/index.ts'),
     '@moonshot-ai/kimi-code-oauth/provider-credential': resolve(
       root,
       '../../packages/oauth/src/provider-credential.ts',
