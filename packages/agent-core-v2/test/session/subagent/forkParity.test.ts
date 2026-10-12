@@ -280,7 +280,10 @@ describe('subagent task reminders and fork request parity', () => {
     expect(probes[0]?.properties?.['parent_request_gap_ms']).toBeGreaterThanOrEqual(0);
   });
 
-  function createMainForkCtx(flags: IFlagService = stubFlag(true)): void {
+  function createMainForkCtx(
+    flags: IFlagService = stubFlag(true),
+    telemetry: TelemetryRecord[] = [],
+  ): void {
     store = new ScopedAppendLogStore();
     ctx = testAgent(
       appService(IAppendLogStore, store),
@@ -290,6 +293,7 @@ describe('subagent task reminders and fork request parity', () => {
         hasWebSearchProvider: () => true,
         getWebSearchProvider: () => ({ search: () => Promise.resolve([]) }),
       }),
+      telemetryServices(recordingTelemetry(telemetry)),
       sessionServices((reg) => {
         reg.defineDescriptor(IRuntimeResolver, new SyncDescriptor(TestRuntimeResolver));
         reg.definePartialInstance(IWorkspaceInstanceManager, {
@@ -600,5 +604,40 @@ describe('subagent task reminders and fork request parity', () => {
     expect(childReq.systemPrompt).toBe(parentReq.systemPrompt);
     expect(childReq.history.slice(0, parentReq.history.length)).toEqual(parentReq.history);
     expect(ctx.llmCalls).toHaveLength(2);
+  });
+
+  it('drops the parent comparison from the btw cache probe once main compacts', async () => {
+    const telemetry: TelemetryRecord[] = [];
+    createMainForkCtx(stubFlag(true), telemetry);
+    await ctx.get(IAgentProfileService).bind({ profile: 'agent', model: 'mock-model' });
+    ctx.get(IAgentProfileService).update({ activeToolNames: contributedToolNames() });
+    const lifecycle = ctx.get(IAgentLifecycleService);
+    const main = lifecycle.handleOf('main')!;
+    await runPrompt(main);
+
+    const beforeCompaction = await ctx.get(ISessionBtwService).start();
+    await runPrompt(lifecycle.handleOf(beforeCompaction)!);
+    const context = main.accessor.get(IAgentContextMemoryService);
+    context.applyCompaction({
+      summary: 'The main agent still needs to finish the task.',
+      compactedCount: context.get().length,
+      tokensBefore: 1000,
+    });
+    const afterCompaction = await ctx.get(ISessionBtwService).start();
+    await runPrompt(lifecycle.handleOf(afterCompaction)!);
+
+    const probes = telemetry
+      .filter((record) => record.event === 'prompt_cache_probe')
+      .map((record) => record.properties ?? {});
+    expect(probes.map((probe) => probe['agent_id'])).toEqual([beforeCompaction, afterCompaction]);
+    expect(probes[0]).toMatchObject({
+      tools_match: true,
+      system_prompt_match: true,
+      parent_input_tokens: expect.any(Number),
+    });
+    expect(probes[1]?.['tools_match']).toBeUndefined();
+    expect(probes[1]?.['system_prompt_match']).toBeUndefined();
+    expect(probes[1]?.['parent_input_tokens']).toBeUndefined();
+    expect(probes[1]?.['parent_request_gap_ms']).toBeUndefined();
   });
 });

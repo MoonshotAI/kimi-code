@@ -4,11 +4,15 @@ import type { StreamedMessagePart, ToolDescription as Tool } from '#human/llm/me
 import { emptyUsage, inputTotal } from '#human/llm/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import {
   IAgentLLMRequesterService,
   type AgentLLMRequestFinish,
 } from '#/agent/llmRequester/llmRequester';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { ContextUndone } from '#/agent/undo/undoService';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ILogger as Logger, LogPayload } from '#/_base/log/log';
 import {
   configServices,
@@ -271,6 +275,35 @@ describe('LLMRequester service migration coverage', () => {
         inputTokens: inputTotal(finish.usage),
       });
       expect(snapshot!.finishedAt).toBeGreaterThanOrEqual(snapshot!.startedAt);
+    });
+
+    it('forgets the last turn request once the context is rewritten', async () => {
+      const context = ctx.get(IAgentContextMemoryService);
+      ctx.mockNextResponse({ type: 'text', text: 'first turn response' });
+      await llmRequester.request({
+        messages: [userMessage('first turn request')],
+        source: { type: 'turn', turnId: 1 },
+      });
+      context.append(userMessage('appended after the request'));
+      expect(llmRequester.lastTurnRequest()).toBeDefined();
+
+      context.applyCompaction({
+        summary: 'The conversation was compacted.',
+        compactedCount: context.get().length,
+        tokensBefore: 1000,
+      });
+      expect(llmRequester.lastTurnRequest()).toBeUndefined();
+
+      ctx.mockNextResponse({ type: 'text', text: 'second turn response' });
+      await llmRequester.request({
+        messages: [userMessage('second turn request')],
+        source: { type: 'turn', turnId: 2 },
+      });
+      expect(llmRequester.lastTurnRequest()).toBeDefined();
+      await ctx
+        .get(IEventDispatcher)
+        .dispatch(new ContextUndone({ agentId: ctx.get(IAgentScopeContext).agentId, turns: 1 }));
+      expect(llmRequester.lastTurnRequest()).toBeUndefined();
     });
   });
 

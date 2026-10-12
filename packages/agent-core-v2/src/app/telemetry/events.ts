@@ -686,13 +686,13 @@ export const telemetryEventDefinitions = {
       input_cache_creation: 'Cache-creation input tokens of the probed request',
       output_tokens: 'Output tokens of the probed request',
       tools_match:
-        "Whether the provider-visible tool table hash equals the parent's; absent when the parent completed no turn request before the fork",
+        "Whether the provider-visible tool table hash equals the parent's; absent when the parent completed no turn request before the fork, or its context was rewritten (undo, compaction) after the last one",
       system_prompt_match:
-        "Whether the system prompt hash equals the parent's; absent when the parent completed no turn request before the fork",
+        "Whether the system prompt hash equals the parent's; absent when the parent completed no turn request before the fork, or its context was rewritten (undo, compaction) after the last one",
       parent_input_tokens:
-        "Total input tokens of the parent's last completed turn request before the fork, i.e. the prefix this request could read from the cache; absent when there is none",
+        "Total input tokens of the parent's last completed turn request before the fork, i.e. the prefix this request could read from the cache; absent when there is none, or the parent's context was rewritten (undo, compaction) after it",
       parent_request_gap_ms:
-        "Milliseconds from the parent's last completed turn request finishing to the probed request starting; absent when the parent completed no turn request before the fork",
+        "Milliseconds from the parent's last completed turn request finishing to the probed request starting; absent when the parent completed no turn request before the fork, or its context was rewritten (undo, compaction) after the last one",
     },
   }),
   tool_call: defineAgentTelemetryEvent<ToolCallEvent>({
