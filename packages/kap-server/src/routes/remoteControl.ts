@@ -218,6 +218,9 @@ export function registerRemoteControlRoutes(
     async (req, reply) => {
       await handleDeviceRoute(req, reply, async () => {
         await opts.devices.deactivateDevice(req.params.id);
+        if (opts.service.status().deviceId === req.params.id) {
+          await opts.service.disable();
+        }
         return { ok: true };
       });
     },
@@ -244,6 +247,9 @@ export function registerRemoteControlRoutes(
     async (req, reply) => {
       await handleDeviceRoute(req, reply, async () => {
         await opts.devices.deleteDevice(req.params.id);
+        if (opts.service.status().deviceId === req.params.id) {
+          await opts.service.disable();
+        }
         return { ok: true };
       });
     },

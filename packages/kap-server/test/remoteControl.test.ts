@@ -263,6 +263,57 @@ describe('server-v2 /api/v1/remote-control', () => {
     await cloud.close();
   });
 
+  it('stops the local tunnel when the current device is deactivated or deleted', async () => {
+    await rm(remoteControlLockPath(home as string), { force: true });
+    const cloud = await startDeviceCloud({ tunnel: true });
+    vi.stubEnv(
+      'KIMI_CODE_REMOTE_CONTROL_RELAY_URL',
+      `http://127.0.0.1:${cloud.port}/coding-relay/`,
+    );
+
+    const currentState = async (): Promise<string> => {
+      const res = await authedFetch(server as RunningServer, base, '/api/v1/remote-control');
+      return ((await res.json()) as Envelope<RemoteControlStatusWire>).data.state;
+    };
+
+    const enabled = await postRemoteControl(true);
+    expect(enabled.data.state).toBe('on');
+    const currentId = enabled.data.device_id;
+    expect(currentId).toBeTruthy();
+
+    const otherRes = await authedFetch(
+      server as RunningServer,
+      base,
+      '/api/v1/remote-control/devices/other-device/deactivate',
+      { method: 'POST' },
+    );
+    expect(((await otherRes.json()) as Envelope<{ ok: true }>).data.ok).toBe(true);
+    expect(await currentState()).toBe('on');
+
+    const ownRes = await authedFetch(
+      server as RunningServer,
+      base,
+      `/api/v1/remote-control/devices/${currentId}/deactivate`,
+      { method: 'POST' },
+    );
+    expect(((await ownRes.json()) as Envelope<{ ok: true }>).data.ok).toBe(true);
+    expect(await currentState()).toBe('off');
+
+    const reenabled = await postRemoteControl(true);
+    expect(reenabled.data.state).toBe('on');
+
+    const deletedRes = await authedFetch(
+      server as RunningServer,
+      base,
+      `/api/v1/remote-control/devices/${currentId}`,
+      { method: 'DELETE' },
+    );
+    expect(((await deletedRes.json()) as Envelope<{ ok: true }>).data.ok).toBe(true);
+    expect(await currentState()).toBe('off');
+
+    await cloud.close();
+  });
+
   it('rejects blank and overlong device aliases before reaching the cloud', async () => {
     const cloud = await startDeviceCloud();
     vi.stubEnv(
@@ -586,7 +637,9 @@ async function startRegisterAckRelay(): Promise<{
   };
 }
 
-async function startDeviceCloud(options: { exchangeStatus?: number } = {}): Promise<{
+async function startDeviceCloud(
+  options: { exchangeStatus?: number; tunnel?: boolean } = {},
+): Promise<{
   port: number;
   requests: Array<{
     method: string;
@@ -640,11 +693,11 @@ async function startDeviceCloud(options: { exchangeStatus?: number } = {}): Prom
         response.end(JSON.stringify({ devices: [device], max_devices: 3 }));
         return;
       }
+      const mutation = pathname.match(/^\/coding-relay\/v1\/remote\/devices\/[^/]+(\/deactivate)?$/);
       if (
-        (pathname === '/coding-relay/v1/remote/devices/device-1' &&
-          (request.method === 'PATCH' || request.method === 'DELETE')) ||
-        (pathname === '/coding-relay/v1/remote/devices/device-1/deactivate' &&
-          request.method === 'POST')
+        mutation !== null &&
+        ((mutation[1] === undefined && (request.method === 'PATCH' || request.method === 'DELETE')) ||
+          (mutation[1] === '/deactivate' && request.method === 'POST'))
       ) {
         response.writeHead(204);
         response.end();
@@ -657,6 +710,27 @@ async function startDeviceCloud(options: { exchangeStatus?: number } = {}): Prom
       response.end();
     });
   });
+  if (options.tunnel === true) {
+    const managementServer = new WebSocketServer({ noServer: true });
+    const httpTunnelServer = new WebSocketServer({ noServer: true });
+    managementServer.on('connection', (ws) => {
+      ws.on('error', () => {});
+      ws.on('message', (data) => {
+        const message = JSON.parse(rawDataText(data)) as { type?: string };
+        if (message.type === 'register') {
+          ws.send(JSON.stringify({ type: 'register_ack', payload: { success: true } }));
+        }
+      });
+    });
+    httpTunnelServer.on('connection', (ws) => {
+      ws.on('error', () => {});
+    });
+    cloudServer.on('upgrade', (request, socket, head) => {
+      const pathname = new URL(request.url ?? '', 'http://cloud.test').pathname;
+      const target = pathname.endsWith('/v1/remote/create') ? managementServer : httpTunnelServer;
+      target.handleUpgrade(request, socket, head, (ws) => target.emit('connection', ws, request));
+    });
+  }
   const port = await new Promise<number>((resolve, reject) => {
     cloudServer.once('error', reject);
     cloudServer.listen(0, '127.0.0.1', () => {
