@@ -974,6 +974,7 @@ export interface AgentStateSnapshot {
   'llmRequester.emittedThinkingEffortWarnings': Set<string>;
   'llmRequester.lastConfigLogSignature': string | undefined;
   'llmRequester.lastTurnRequest': /* AgentLLMTurnRequestSnapshot — packages/agent-core-v2/src/agent/llmRequester/llmRequester.ts */ {
+    readonly modelAlias: string;
     readonly toolsHash: string;
     readonly systemPromptHash: string;
     readonly inputTokens: number;

@@ -2,11 +2,14 @@ import { IInstantiationService } from '#/_base/di/instantiation';
 import { Service } from '#/_base/di/service';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
+import { ISessionEventBus } from '#/app/event/eventBus';
+import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import {
   IAgentLLMRequesterService,
   type AgentLLMTurnRequestSnapshot,
 } from '#/agent/llmRequester/llmRequester';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { ContextUndone } from '#/agent/undo/undoService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { inputTotal } from '#human/llm/usage';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
@@ -26,16 +29,31 @@ export class AgentCacheProbeService extends Service implements IAgentCacheProbeS
     @IModelCatalog private readonly models: IModelCatalog,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
+    @ISessionEventBus eventBus: ISessionEventBus,
   ) {
     super();
     if (scopeContext.forkedFrom === undefined) return;
+    const parentId = scopeContext.forkedFrom;
     const parentRequest = agentLifecycle
-      .handleOf(scopeContext.forkedFrom)
+      .handleOf(parentId)
       ?.accessor.get(IAgentLLMRequesterService)
       .lastTurnRequest();
+    let stale = false;
+    this._register(
+      eventBus.subscribe(ContextSpliced, (e) => {
+        if (e.agentId === parentId && e.deleteCount > 0) stale = true;
+      }),
+    );
+    this._register(
+      eventBus.subscribe(ContextUndone, (e) => {
+        if (e.agentId === parentId) stale = true;
+      }),
+    );
     this._register(
       usage.onDidRecord((e) => {
-        if (e.agent.agentId === scopeContext.agentId) this.probe(e, parentRequest);
+        if (e.agent.agentId === scopeContext.agentId) {
+          this.probe(e, stale ? undefined : parentRequest);
+        }
       }),
     );
   }
@@ -52,7 +70,8 @@ export class AgentCacheProbeService extends Service implements IAgentCacheProbeS
     const own = this.instantiation
       .invokeFunction((accessor) => accessor.get(IAgentLLMRequesterService))
       .lastTurnRequest();
-    const compared = parent !== undefined && own !== undefined;
+    const sameModel = parent !== undefined && parent.modelAlias === e.model;
+    const compared = sameModel && own !== undefined;
     this.telemetry.track2('prompt_cache_probe', {
       source: 'fork',
       turn_id: e.source.turnId,
@@ -64,7 +83,7 @@ export class AgentCacheProbeService extends Service implements IAgentCacheProbeS
       output_tokens: e.usage.output,
       tools_match: compared ? own.toolsHash === parent.toolsHash : undefined,
       system_prompt_match: compared ? own.systemPromptHash === parent.systemPromptHash : undefined,
-      parent_input_tokens: parent?.inputTokens,
+      parent_input_tokens: sameModel ? parent?.inputTokens : undefined,
       parent_request_gap_ms: compared ? own.startedAt - parent.finishedAt : undefined,
     });
   }

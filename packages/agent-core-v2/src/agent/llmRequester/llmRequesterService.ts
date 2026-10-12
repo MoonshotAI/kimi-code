@@ -503,6 +503,7 @@ export class AgentLLMRequesterService extends Disposable implements IAgentLLMReq
 
       if (request.source?.type === 'turn') {
         this.states.set(llmRequesterLastTurnRequestKey, {
+          modelAlias: request.modelAlias,
           toolsHash: recorded.toolsHash,
           systemPromptHash: recorded.systemPromptHash,
           inputTokens: inputTotal(usage ?? emptyUsage()),
