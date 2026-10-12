@@ -1,7 +1,10 @@
+import { watch as fsWatch } from 'node:fs';
+import { readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 import {
+  createConfig,
   createFeature,
   createMemoryMediaStore,
   createMemoryMediaUploadCache,
@@ -70,6 +73,10 @@ export function mountExample(options?: { http?: boolean; acp?: boolean }): Examp
   const app = createHarness({
     space: fsSessionSpace(dataRoot),
     features: [
+      createConfig({
+        persist: fsConfigPersist(join(home, 'config.toml')),
+        env: process.env,
+      }),
       ...features.map((spec) =>
         spec.featureName === 'permission' ? createPermission({ fs: osHost.fs }) : spec,
       ),
@@ -145,6 +152,33 @@ function cachedOpenInApps(host: OsHost): () => Promise<readonly OpenInAppId[]> {
   return () => {
     cached ??= detectOpenInApps(host);
     return cached;
+  };
+}
+
+function fsConfigPersist(path: string) {
+  return {
+    load: async () => {
+      try {
+        return await readFile(path, 'utf8');
+      } catch {
+        return undefined;
+      }
+    },
+    save: async (text: string) => {
+      const tmp = `${path}.tmp-${String(process.pid)}`;
+      await writeFile(tmp, text, 'utf8');
+      await rename(tmp, path);
+    },
+    watch: (onChange: () => void) => {
+      const watcher = fsWatch(dirname(path), (_event, name) => {
+        if (name === basename(path)) {
+          onChange();
+        }
+      });
+      return () => {
+        watcher.close();
+      };
+    },
   };
 }
 
