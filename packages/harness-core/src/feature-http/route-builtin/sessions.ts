@@ -9,6 +9,7 @@ import {
   SessionSpaceError,
   UndoFeatureError,
   UndoRef,
+  parseMediaRefUrl,
   useApp,
   useInject,
   type AgentHandle,
@@ -1037,6 +1038,10 @@ function mapContentPart(part: ContentPart): unknown {
         ? { type: 'thinking', thinking: part.think }
         : { type: 'thinking', thinking: part.think, signature: part.encrypted };
     case 'image_url': {
+      const ref = parseMediaRefUrl(part.imageUrl.url);
+      if (ref !== undefined) {
+        return { type: 'image', source: { kind: 'session_media', file_id: ref }, name: part.imageUrl.name };
+      }
       const match = /^data:([^;]+);base64,(.*)$/.exec(part.imageUrl.url);
       return match === null
         ? { type: 'image', source: { kind: 'url', url: part.imageUrl.url }, name: part.imageUrl.name }
@@ -1049,6 +1054,10 @@ function mapContentPart(part: ContentPart): unknown {
     case 'audio_url':
       return { type: 'text', text: `[audio:${part.audioUrl.url}]` };
     case 'video_url': {
+      const ref = parseMediaRefUrl(part.videoUrl.url);
+      if (ref !== undefined) {
+        return { type: 'video', source: { kind: 'session_media', file_id: ref }, name: part.videoUrl.name };
+      }
       const match = /^data:([^;]+);base64,(.*)$/.exec(part.videoUrl.url);
       return match === null
         ? { type: 'video', source: { kind: 'url', url: part.videoUrl.url }, name: part.videoUrl.name }

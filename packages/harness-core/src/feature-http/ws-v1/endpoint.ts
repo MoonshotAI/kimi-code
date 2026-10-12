@@ -1,7 +1,9 @@
-import { useApp, useCleanup, useOnApp } from '@moonshot-ai/agent-core';
+import { parseMediaRefUrl, useApp, useCleanup, useInject, useOnApp } from '@moonshot-ai/agent-core';
 import { useExpose } from '@moonshot-ai/agent-core/kernel/index';
 
 import { WebSocketServer } from 'ws';
+
+import { MediaLibraryRef } from '#/features/media/index';
 
 import { useHttp } from '../feature';
 import type { WsRegistryStore } from '../ws-registry';
@@ -22,7 +24,28 @@ export function useWsV1Endpoint(options: WsV1EndpointOptions): void {
   const app = useApp();
   const http = useHttp();
   const path = `${options.prefix.replace(/\/+$/, '')}/ws`;
-  const broadcaster = new SessionBroadcaster({ app, maxBufferSize: DEFAULT_MAX_BUFFER_SIZE });
+  const mediaLibrary = useInject(MediaLibraryRef).value;
+  const inlineMediaRef = async (url: string): Promise<string | undefined> => {
+    const ref = parseMediaRefUrl(url);
+    if (ref === undefined || mediaLibrary === undefined) return undefined;
+    const file = await mediaLibrary.open(ref);
+    if (file === undefined) return undefined;
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of file.stream()) chunks.push(chunk);
+    const size = chunks.reduce((total, chunk) => total + chunk.length, 0);
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return `data:${file.mediaType};base64,${Buffer.from(bytes).toString('base64')}`;
+  };
+  const broadcaster = new SessionBroadcaster({
+    app,
+    maxBufferSize: DEFAULT_MAX_BUFFER_SIZE,
+    inlineMediaRef,
+  });
   useExpose(WsV1BroadcasterRef, broadcaster);
   const wss = new WebSocketServer({
     noServer: true,

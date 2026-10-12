@@ -587,6 +587,15 @@ describe('feature-http facade routes', () => {
     expect(main?.resolve(PermissionRef)?.mode()).toBe('auto');
     await expect(main?.resolve(PlanRef)?.status()).resolves.not.toBeNull();
 
+    const listed = ((await (await get(env, '/models')).json()).data.items as { model: string }[])
+      .map((item) => item.model);
+    expect(listed).toContain('test/m1');
+    for (const model of listed) {
+      const switched = await post(env, '/sessions/ses_prof/profile', { agent_config: { model } });
+      expect(switched.status).toBe(200);
+    }
+    await post(env, '/sessions/ses_prof/profile', { agent_config: { model: 'test/m1' } });
+
     const planOff = await post(env, '/sessions/ses_prof/profile', {
       agent_config: { plan_mode: false },
     });
@@ -1788,7 +1797,7 @@ describe('feature-http kap-server aligned routes', () => {
 
     const models = await get(env, '/models');
     const modelIds = ((await models.json()).data.items as { provider: string; model: string }[]).map(
-      (item) => `${item.provider}/${item.model}`,
+      (item) => item.model,
     );
     expect(modelIds).toEqual(expect.arrayContaining(['acme/m1', 'beta/b1']));
 
@@ -1808,7 +1817,7 @@ describe('feature-http kap-server aligned routes', () => {
     const afterIds = ((await afterReplace.json()).data.items as { provider: string; model: string }[])
       .filter((item) => item.provider === 'acme')
       .map((item) => item.model);
-    expect(afterIds).toEqual(['m2']);
+    expect(afterIds).toEqual(['acme/m2']);
 
     const deleted = await del(env, '/providers/acme');
     expect(deleted.status).toBe(204);
@@ -1843,7 +1852,7 @@ describe('feature-http kap-server aligned routes', () => {
       default_model: 'test/m1',
       model: {
         provider: 'test',
-        model: 'm1',
+        model: 'test/m1',
         display_name: 'm1',
         max_context_size: 4096,
         capabilities: ['thinking', 'tool_use'],
@@ -4116,6 +4125,126 @@ describe('feature-http ws v1 (kap-aligned) endpoint', () => {
     interactions!.respond(third.id, null);
     await events.close();
     await transcripts.close();
+  });
+
+  it('projects media refs as session_media sources and inlines tool result media', async () => {
+    const dir = await tempDir('media-proj-');
+    const store = createMemoryMediaStore();
+    const pngBytes = Buffer.from('fake-png-bytes');
+    const ref = await store.put({ bytes: pngBytes, mimeType: 'image/png', filename: 'shot.png' });
+
+    const mediaTool: ToolDefinition = {
+      name: 'MediaProbe',
+      description: 'test media tool',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      execute: () =>
+        Promise.resolve({
+          content: [
+            { type: 'text' as const, text: '<image path="/tmp/shot.png">' },
+            { type: 'image_url' as const, imageUrl: { url: `media://${ref}` } },
+            { type: 'text' as const, text: '</image>' },
+          ],
+        }),
+    };
+    const bindMediaTool = (): FeatureSpec =>
+      createFeature('test-media-tool', {
+        agent() {
+          useAgentTools(mediaTool);
+        },
+      });
+
+    const env = await mountHttp([
+      createMedia({ workDir: dir, store, cache: createMemoryMediaUploadCache() }),
+      bindMediaTool(),
+      bindTestLlm(createMockRequester()),
+    ]);
+    const session = await openMain(env, 'ses_v1_media');
+    const agent = session.get(MAIN_AGENT_ID) as AgentHandle;
+
+    const client = await connectWsV1(env);
+    await client.next((frame) => frame['type'] === 'server_hello');
+    client.send(
+      subscribeV2('s1', { session_id: 'ses_v1_media', transcript: { [MAIN_AGENT_ID]: 'delta' } }),
+    );
+    await client.next((frame) => frame['type'] === 'ack' && frame['id'] === 's1');
+    await client.next((frame) => frame['type'] === 'transcript.reset');
+
+    queue = [{ text: 'noted' }];
+    const imgDone = new Promise<void>((resolve) => {
+      agent.on('turn.done', () => {
+        resolve();
+      });
+    });
+    agent.submit(
+      {
+        role: 'user',
+        content: [
+          { type: 'image_url', imageUrl: { url: `media://${ref}`, name: 'shot.png' } },
+          { type: 'text', text: 'look' },
+        ],
+      },
+      { promptId: 'p-img', origin: { kind: 'user' }, tracked: true },
+    );
+    await imgDone;
+    const attached = await client.next((frame) => {
+      if (frame['type'] !== 'transcript.ops') return false;
+      const ops = ((frame['payload'] as Record<string, unknown>)['ops'] ?? []) as Record<
+        string,
+        unknown
+      >[];
+      return ops.some((op) => op['op'] === 'attachment.upsert');
+    });
+    const attachOps = ((attached['payload'] as Record<string, unknown>)['ops'] ??
+      []) as Record<string, unknown>[];
+    const attachment = attachOps.find((op) => op['op'] === 'attachment.upsert')?.[
+      'attachment'
+    ] as Record<string, unknown>;
+    expect(attachment).toMatchObject({
+      mediaType: 'image/*',
+      source: { kind: 'session_media', fileId: ref },
+    });
+
+    const prompted = collectOps(client).find((op) => op['op'] === 'prompt.upsert');
+    expect(prompted?.['prompt']).toMatchObject({
+      content: [
+        { type: 'image', source: { kind: 'session_media', file_id: ref }, name: 'shot.png' },
+        { type: 'text', text: 'look' },
+      ],
+    });
+
+    queue = [{ toolCall: { name: 'MediaProbe', arguments: '{}' } }, { text: 'done' }];
+    await runTurnWithPrompt(agent, 'p-tool');
+    await client.next((frame) => {
+      if (frame['type'] !== 'transcript.ops') return false;
+      const ops = ((frame['payload'] as Record<string, unknown>)['ops'] ?? []) as Record<
+        string,
+        unknown
+      >[];
+      return ops.some(
+        (op) =>
+          op['op'] === 'frame.upsert' &&
+          (op['frame'] as Record<string, unknown>)['state'] === 'done' &&
+          (op['frame'] as Record<string, unknown>)['name'] === 'MediaProbe',
+      );
+    });
+    const toolOp = collectOps(client).find(
+      (op) =>
+        op['op'] === 'frame.upsert' &&
+        (op['frame'] as Record<string, unknown>)['name'] === 'MediaProbe' &&
+        (op['frame'] as Record<string, unknown>)['state'] === 'done',
+    );
+    const output = (toolOp?.['frame'] as Record<string, unknown>)['output'] as Record<
+      string,
+      unknown
+    >[];
+    const mediaPart = output.find((part) => part['type'] === 'image_url') as {
+      imageUrl: { url: string };
+    };
+    expect(mediaPart.imageUrl.url.startsWith('data:image/png;base64,')).toBe(true);
+    const base64 = mediaPart.imageUrl.url.slice('data:image/png;base64,'.length);
+    expect(Buffer.from(base64, 'base64')).toEqual(pngBytes);
+
+    await client.close();
   });
 });
 

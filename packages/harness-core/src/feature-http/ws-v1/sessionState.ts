@@ -1,6 +1,7 @@
 import {
   createFacadeToken,
   MAIN_AGENT_ID,
+  parseMediaRefUrl,
   type AppCommands,
   type SessionHandle,
 } from '@moonshot-ai/agent-core';
@@ -203,6 +204,7 @@ class InFlightTurnTracker {
 export interface SessionBroadcasterOptions {
   readonly app: AppCommands;
   readonly maxBufferSize: number;
+  readonly inlineMediaRef?: (url: string) => Promise<string | undefined>;
 }
 
 export const WsV1BroadcasterRef = createFacadeToken<SessionBroadcaster>('http.wsV1Broadcaster');
@@ -623,9 +625,10 @@ export class SessionBroadcaster {
       event['turnId'] === undefined && track?.currentTurnId !== undefined
         ? { ...event, turnId: track.currentTurnId }
         : event;
+    const projected = await this.withInlinedMedia(enriched);
     const stream = this.ensureTranscript(state, agentId);
     if (stream !== undefined) {
-      const ops = stream.projector.map(enriched);
+      const ops = stream.projector.map(projected);
       this.dispatchTranscriptOps(state, agentId, ops);
     }
     const wireEvents = await this.mapAgentWireEvent(state, agentId, enriched, track);
@@ -637,6 +640,37 @@ export class SessionBroadcaster {
       track.currentTurnId = undefined;
     }
     this.maybeEmitWorkChanged(state);
+  }
+
+  private async withInlinedMedia(event: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const inline = this.opts.inlineMediaRef;
+    if (inline === undefined || event['type'] !== 'tool.done') return event;
+    const outcome = event['outcome'] as
+      | { type?: unknown; result?: { content?: unknown; isError?: unknown } }
+      | undefined;
+    if (outcome?.type !== 'succeeded') return event;
+    const content = outcome.result?.content;
+    if (!Array.isArray(content)) return event;
+    const parts = await Promise.all(
+      content.map(async (part) => {
+        if (part === null || typeof part !== 'object') return part;
+        const record = part as { [key: string]: unknown; type?: unknown };
+        const key =
+          record.type === 'image_url'
+            ? 'imageUrl'
+            : record.type === 'video_url'
+              ? 'videoUrl'
+              : record.type === 'audio_url'
+                ? 'audioUrl'
+                : undefined;
+        if (key === undefined) return part;
+        const holder = record[key] as { url?: unknown } | undefined;
+        if (typeof holder?.url !== 'string' || parseMediaRefUrl(holder.url) === undefined) return part;
+        const inlined = await inline(holder.url).catch(() => undefined);
+        return inlined === undefined ? part : { ...record, [key]: { ...holder, url: inlined } };
+      }),
+    );
+    return { ...event, outcome: { ...outcome, result: { ...outcome.result, content: parts } } };
   }
 
   private async processSessionEvent(

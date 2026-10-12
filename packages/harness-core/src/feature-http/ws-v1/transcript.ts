@@ -1,3 +1,4 @@
+import { parseMediaRefUrl } from '@moonshot-ai/agent-core';
 import type {
   AssistantEntry,
   ContentPart,
@@ -191,11 +192,12 @@ function attachmentFromPart(
     const target =
       part.type === 'image_url' ? part.imageUrl : part.type === 'video_url' ? part.videoUrl : part.audioUrl;
     const name = 'name' in target && typeof target.name === 'string' ? target.name : undefined;
+    const ref = parseMediaRefUrl(target.url);
     return {
       attachmentId: `att_${index + 1}`,
       mediaType: `${part.type.slice(0, part.type.indexOf('_'))}/*`,
       name,
-      source: { kind: 'url', url: target.url },
+      source: ref === undefined ? { kind: 'url', url: target.url } : { kind: 'session_media', fileId: ref },
     };
   }
   return undefined;
@@ -252,15 +254,23 @@ export function projectPromptContent(parts: readonly ContentPart[]): unknown[] {
     if (part.type === 'text') {
       out.push({ type: 'text', text: part.text });
     } else if (part.type === 'image_url') {
+      const ref = parseMediaRefUrl(part.imageUrl.url);
       out.push({
         type: 'image',
-        source: { kind: 'url', url: part.imageUrl.url },
+        source:
+          ref === undefined
+            ? { kind: 'url', url: part.imageUrl.url }
+            : { kind: 'session_media', file_id: ref },
         name: part.imageUrl.name,
       });
     } else if (part.type === 'video_url') {
+      const ref = parseMediaRefUrl(part.videoUrl.url);
       out.push({
         type: 'video',
-        source: { kind: 'url', url: part.videoUrl.url },
+        source:
+          ref === undefined
+            ? { kind: 'url', url: part.videoUrl.url }
+            : { kind: 'session_media', file_id: ref },
         name: part.videoUrl.name,
       });
     }
