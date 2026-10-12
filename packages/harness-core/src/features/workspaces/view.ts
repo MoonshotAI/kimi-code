@@ -3,6 +3,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'pathe';
 import type { HostDirEntry, HostFileStat, OsFsPort } from '#/features/os/host/types';
 
 import { mapHostFsError, missingPathError, WorkspaceFsError } from './errors';
+import type { WorkspaceGitPort } from './git';
 import {
   buildEtag,
   classifyTextSample,
@@ -25,8 +26,12 @@ import {
 } from './fsSearch';
 import { createGitignore, type GitignoreMatcher } from './gitignore';
 import type {
+  FsDiffRequest,
+  FsDiffResponse,
   FsDownloadResolved,
   FsEntry,
+  FsGitStatusRequest,
+  FsGitStatusResponse,
   FsGrepFileHit,
   FsGrepMatch,
   FsGrepRequest,
@@ -84,6 +89,8 @@ export interface WorkspaceFsView {
   search(req: FsSearchRequest): Promise<FsSearchResponse>;
   suggest(req: FsSuggestRequest): Promise<FsSuggestResponse>;
   grep(req: FsGrepRequest): Promise<FsGrepResponse>;
+  gitStatus(req: FsGitStatusRequest): Promise<FsGitStatusResponse>;
+  diff(req: FsDiffRequest): Promise<FsDiffResponse>;
   resolvePath(relPath: string): Promise<FsPathResolved>;
   resolveDownload(relPath: string): Promise<FsDownloadResolved>;
 }
@@ -94,7 +101,11 @@ interface SuggestRoot {
   readonly primary: boolean;
 }
 
-export function createWorkspaceFsView(fs: OsFsPort, roots: WorkspaceFsRoots): WorkspaceFsView {
+export function createWorkspaceFsView(
+  fs: OsFsPort,
+  roots: WorkspaceFsRoots,
+  git?: WorkspaceGitPort,
+): WorkspaceFsView {
   const workDir = resolve(roots.workDir);
   const additionalDirs = (roots.additionalDirs ?? []).map((dir) => resolve(dir));
   const gitignoreCache = new Map<string, GitignoreMatcher>();
@@ -866,6 +877,31 @@ export function createWorkspaceFsView(fs: OsFsPort, roots: WorkspaceFsRoots): Wo
     }
   };
 
+  const requireGit = (): WorkspaceGitPort => {
+    if (git === undefined) {
+      throw new WorkspaceFsError('fs.git_unavailable', 'git is unavailable on this runtime');
+    }
+    return git;
+  };
+
+  const gitStatus = async (req: FsGitStatusRequest): Promise<FsGitStatusResponse> => {
+    const port = requireGit();
+    let filter: Set<string> | undefined;
+    if (req.paths !== undefined && req.paths.length > 0) {
+      filter = new Set();
+      for (const p of req.paths) {
+        filter.add(toRel(await resolveWithin(p)));
+      }
+    }
+    return port.status(workDir, filter);
+  };
+
+  const diff = async (req: FsDiffRequest): Promise<FsDiffResponse> => {
+    const port = requireGit();
+    const abs = await resolveWithin(req.path);
+    return port.diff(workDir, toRel(abs), abs);
+  };
+
   return {
     list,
     read,
@@ -876,6 +912,8 @@ export function createWorkspaceFsView(fs: OsFsPort, roots: WorkspaceFsRoots): Wo
     search,
     suggest,
     grep,
+    gitStatus,
+    diff,
     resolvePath: resolvePathView,
     resolveDownload,
   };

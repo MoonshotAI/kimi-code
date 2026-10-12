@@ -4,6 +4,7 @@ export * from './projection';
 export * from './wire';
 export * from './fileMeta';
 export * from './fsSearch';
+export * from './git';
 export * from './gitignore';
 export * from './view';
 export * from './browse';

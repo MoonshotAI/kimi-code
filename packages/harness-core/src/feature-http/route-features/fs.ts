@@ -5,11 +5,23 @@ import { isAbsolute } from 'pathe';
 import { z } from 'zod';
 
 import {
+  launchDetached,
+  launchPlatformFor,
+  openFileCommandFor,
+  openInAppCommandFor,
+  revealFileCommandFor,
+} from '#/features/os/fileLaunch';
+import {
+  fsDiffRequestSchema,
+  fsGitStatusRequestSchema,
   fsGrepRequestSchema,
   fsListManyRequestSchema,
   fsListRequestSchema,
   fsMkdirRequestSchema,
+  fsOpenInRequestSchema,
+  fsOpenRequestSchema,
   fsReadRequestSchema,
+  fsRevealRequestSchema,
   fsSearchRequestSchema,
   fsStatManyRequestSchema,
   fsStatRequestSchema,
@@ -104,24 +116,6 @@ export function useFsRoutes(prefix: string): void {
       if (face === undefined) return;
       const fs = workspacesFs(request, response, face);
       if (fs === undefined) return;
-      if (action === 'git_status' || action === 'diff') {
-        sendErr(
-          request,
-          response,
-          ErrorCode.FS_GIT_UNAVAILABLE,
-          'git is unavailable on this runtime',
-        );
-        return;
-      }
-      if (action === 'open' || action === 'open-in' || action === 'reveal') {
-        sendErr(
-          request,
-          response,
-          ErrorCode.VALIDATION_FAILED,
-          `unsupported action: ${tail}`,
-        );
-        return;
-      }
       const envelope = runtimeIdEnvelopeSchema.safeParse(request.body ?? {});
       if (!envelope.success) {
         sendErr(
@@ -195,6 +189,69 @@ export function useFsRoutes(prefix: string): void {
           return;
         case 'grep':
           await runFsAction(request, response, fsGrepRequestSchema, rest, (req) => view.grep(req));
+          return;
+        case 'git_status':
+          await runFsAction(request, response, fsGitStatusRequestSchema, rest, (req) =>
+            view.gitStatus(req),
+          );
+          return;
+        case 'diff':
+          await runFsAction(request, response, fsDiffRequestSchema, rest, (req) => view.diff(req));
+          return;
+        case 'open':
+          await runFsAction(request, response, fsOpenRequestSchema, rest, async (req) => {
+            const resolved = await view.resolvePath(req.path);
+            await launchDetached(
+              fs.host.process,
+              openFileCommandFor(
+                resolved.absolute,
+                req.line,
+                process.env,
+                launchPlatformFor(fs.host.environment),
+              ),
+            );
+            return { opened: true as const };
+          });
+          return;
+        case 'open-in': {
+          const parsed = fsOpenInRequestSchema.safeParse(rest);
+          if (!parsed.success) {
+            sendZodIssues(request, response, parsed.error.issues);
+            return;
+          }
+          try {
+            const resolved = await view.resolvePath(parsed.data.path);
+            await launchDetached(
+              fs.host.process,
+              openInAppCommandFor(
+                parsed.data.app_id,
+                resolved.absolute,
+                { line: parsed.data.line, isDirectory: resolved.isDirectory },
+                launchPlatformFor(fs.host.environment),
+              ),
+            );
+          } catch (error) {
+            if (sendWorkspaceErr(request, response, error)) return;
+            sendErr(
+              request,
+              response,
+              ErrorCode.INTERNAL_ERROR,
+              `failed to open in ${parsed.data.app_id}: ${error instanceof Error ? error.message : String(error)}`,
+            );
+            return;
+          }
+          sendOk(request, response, { opened: true as const });
+          return;
+        }
+        case 'reveal':
+          await runFsAction(request, response, fsRevealRequestSchema, rest, async (req) => {
+            const resolved = await view.resolvePath(req.path);
+            await launchDetached(
+              fs.host.process,
+              revealFileCommandFor(resolved.absolute, launchPlatformFor(fs.host.environment)),
+            );
+            return { revealed: true as const };
+          });
           return;
       }
     },

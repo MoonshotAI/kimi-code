@@ -132,6 +132,7 @@ export type AgentEvent =
   | { type: 'input.cancel'; id: string }
   | { type: 'input.abort'; reason?: unknown }
   | { type: 'input.abort_tool'; toolCallId: string; reason?: unknown }
+  | { type: 'input.detach_tool'; toolCallId: string }
   | { type: 'input.pause' }
   | { type: 'input.continue' }
   | { type: 'input.close' }
@@ -706,6 +707,40 @@ export function createAgentMachine({
               sendTo('turn', ({ event }) => event),
               emit(({ event }) => event),
               'forwardToParent',
+            ],
+          },
+          'input.detach_tool': {
+            guard: ({ context, event }) =>
+              event.type === 'input.detach_tool' &&
+              context.turnTools[event.toolCallId] !== undefined,
+            actions: [
+              assign(({ context, event }) => {
+                const entry = context.turnTools[event.toolCallId] as ToolEntry;
+                const turnTools = { ...context.turnTools };
+                delete turnTools[event.toolCallId];
+                return {
+                  turnTools,
+                  background: { ...context.background, [event.toolCallId]: entry },
+                };
+              }),
+              sendTo('turn', ({ context, event }) => {
+                const entry = context.background[event.toolCallId] as ToolEntry;
+                return {
+                  type: 'tool.detached' as const,
+                  toolCallId: event.toolCallId,
+                  text: `moved to background by the user: ${entry.toolCall.name} (tool_call_id=${event.toolCallId})`,
+                  toolCall: entry.toolCall,
+                };
+              }),
+              emit(({ context, event }) => {
+                const entry = context.background[event.toolCallId] as ToolEntry;
+                return {
+                  type: 'tool.detached' as const,
+                  toolCallId: event.toolCallId,
+                  text: `moved to background by the user: ${entry.toolCall.name} (tool_call_id=${event.toolCallId})`,
+                  toolCall: entry.toolCall,
+                };
+              }),
             ],
           },
           'tool.done': {

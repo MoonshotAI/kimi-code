@@ -38,9 +38,13 @@ import {
   createSpawn,
   createSummarize,
   createToolSelect,
+  createWorkspaces,
+  detectOpenInApps,
   features,
   fsSessionSpace,
   isToolSelectEnabled,
+  type OpenInAppId,
+  type OsHost,
 } from '@moonshot-ai/harness-core';
 
 import { loadKimiCodeDefault } from './kimi-code-config';
@@ -78,6 +82,7 @@ export function mountExample(options?: { http?: boolean; acp?: boolean }): Examp
       createFileHistory({ workDir: process.cwd(), fs: osHost.fs }),
       createAgentsMdReminder({ workDir: process.cwd(), host: osHost }),
       createSkill({ workDir: process.cwd(), fs: osHost.fs, home }),
+      createWorkspaces({ homeDir: home, host: osHost }),
       createSessionInit({ workDir: process.cwd(), host: createNodeOsHost() }),
       createExternalHooks({ workDir: process.cwd(), host: createNodeOsHost() }),
       createSessionExport({
@@ -122,12 +127,21 @@ export function mountExample(options?: { http?: boolean; acp?: boolean }): Examp
                 port: Number.isFinite(port) ? port : 8787,
                 host: process.env['HOST'] ?? '127.0.0.1',
               },
+              openInApps: cachedOpenInApps(osHost),
             }),
           ]),
       ...(options?.acp === true ? [createAcp({ streams: acpStdioStreams() })] : []),
     ],
   });
   return { app, key, model, dataRoot, requester };
+}
+
+function cachedOpenInApps(host: OsHost): () => Promise<readonly OpenInAppId[]> {
+  let cached: Promise<readonly OpenInAppId[]> | undefined;
+  return () => {
+    cached ??= detectOpenInApps(host);
+    return cached;
+  };
 }
 
 function bindExampleLlm(

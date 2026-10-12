@@ -120,6 +120,7 @@ function createFullAgent(agent: AgentCommands, on: AgentCommands['on']): AgentCo
     steer: (ids) => agent.steer(ids),
     abort: (reason) => agent.abort(reason),
     abortTool: (toolCallId, reason) => agent.abortTool(toolCallId, reason),
+    detachTool: (toolCallId) => agent.detachTool(toolCallId),
     pause: () => agent.pause(),
     continue: () => agent.continue(),
     contextReset: (input) => agent.contextReset(input),

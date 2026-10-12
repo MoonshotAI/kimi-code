@@ -229,6 +229,7 @@ export interface AgentCommands {
   steer(ids: string | readonly string[]): AgentAck<'prompt.steered'> | undefined;
   abort(reason?: unknown): AgentAck<'agent.aborted'> | undefined;
   abortTool(toolCallId: string, reason?: unknown): void;
+  detachTool(toolCallId: string): void;
   pause(): AgentAck<'agent.paused'> | undefined;
   continue(): AgentAck<'agent.continued'> | undefined;
   contextReset(input: ContextResetInput): AgentAck<'context.reset'> | undefined;
@@ -465,6 +466,12 @@ export const AgentUnit = createUnit<AgentUnitProps>('agent', (props) => {
       if (status === 'done' || status === 'stopped') return;
       send({ type: 'input.abort_tool', toolCallId, reason });
     },
+    detachTool: (toolCallId) => {
+      if (node.signal.aborted) return;
+      const status = actor.getSnapshot().status;
+      if (status === 'done' || status === 'stopped') return;
+      send({ type: 'input.detach_tool', toolCallId });
+    },
     pause: () => acceptEmitted(actor, node, 'agent.paused', () => send({ type: 'input.pause' })),
     continue: () => acceptEmitted(actor, node, 'agent.continued', () => send({ type: 'input.continue' })),
     contextReset: (input) => {
@@ -592,6 +599,7 @@ export function agentHandle(handle: UnitHandle): AgentHandle {
     steer: (ids) => commands().steer(ids),
     abort: (reason) => commands().abort(reason),
     abortTool: (toolCallId, reason) => commands().abortTool(toolCallId, reason),
+    detachTool: (toolCallId) => commands().detachTool(toolCallId),
     pause: () => commands().pause(),
     continue: () => commands().continue(),
     contextReset: (input) => commands().contextReset(input),

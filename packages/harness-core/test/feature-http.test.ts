@@ -1,7 +1,9 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer as createHttpServer } from 'node:http';
+import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it, vi, afterEach } from 'vitest';
@@ -58,7 +60,7 @@ import {
   INTERACTION_TAG_TOOL_CALL_ID,
 } from '#/features/interaction/index';
 import { createMcp, McpRef } from '#/features/mcp/index';
-import { createNodeOsHost } from '#/features/os/host/index';
+import { createNodeOsHost, type OsHost, type OsProcess } from '#/features/os/host/index';
 import { createPermission, PermissionRef } from '#/features/permission/index';
 import { createPlan, PlanRef } from '#/features/plan/index';
 import { createPlugin } from '#/features/plugin/index';
@@ -71,6 +73,13 @@ import { createWorkspaces, WorkspaceRef } from '#/features/workspaces/index';
 const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
 
 const mcpFixturePath = fileURLToPath(new URL('./features/fixtures/fake-mcp-server.mjs', import.meta.url));
+
+const execFileAsync = promisify(execFile);
+
+async function git(cwd: string, ...args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync('git', args, { cwd });
+  return stdout;
+}
 
 type ScriptStep = { text: string } | { toolCall: { name: string; arguments: string } };
 
@@ -897,6 +906,22 @@ describe('feature-http facade routes', () => {
     const badFilter = await get(env, '/sessions/ses_tasks/tasks?status=bogus');
     expect(badFilter.status).toBe(200);
 
+    const detached = await post(env, `/sessions/ses_tasks/tasks/${taskId}:detach`);
+    expect(detached.status).toBe(200);
+    expect(await detached.json()).toMatchObject({
+      code: 0,
+      data: { detached: false, status: 'running' },
+    });
+    const detachMissing = await post(env, '/sessions/ses_tasks/tasks/task_unknown:detach');
+    expect(detachMissing.status).toBe(200);
+    expect(await detachMissing.json()).toMatchObject({ code: 40406 });
+    const detachBadAction = await post(env, `/sessions/ses_tasks/tasks/${taskId}:cancel`);
+    expect(detachBadAction.status).toBe(200);
+    expect(await detachBadAction.json()).toMatchObject({
+      code: 40001,
+      msg: `unsupported action: ${taskId}:cancel`,
+    });
+
     const abortNotified = new Promise<void>((resolve) => {
       agent.on('turn.done', () => {
         resolve();
@@ -909,6 +934,13 @@ describe('feature-http facade routes', () => {
 
     const view = await get(env, `/sessions/ses_tasks/tasks/${taskId}`);
     expect((await view.json()).data).toMatchObject({ id: taskId, status: 'cancelled' });
+
+    const detachCancelled = await post(env, `/sessions/ses_tasks/tasks/${taskId}:detach`);
+    expect(detachCancelled.status).toBe(200);
+    expect(await detachCancelled.json()).toMatchObject({
+      code: 0,
+      data: { detached: false, status: 'cancelled' },
+    });
 
     const again = await post(env, `/sessions/ses_tasks/tasks/${taskId}:stop`);
     expect(again.status).toBe(200);
@@ -1430,6 +1462,40 @@ describe('feature-http v2 session routes', () => {
     expect(Array.isArray(groupSizeBody.details)).toBe(true);
   });
 
+  it('projects the git domain for sessions inside a repository over include=git', async () => {
+    const root = await tempDir('v2-git-repo-');
+    await git(root, 'init', '-b', 'main');
+    await git(root, 'config', 'user.email', 'v2-test@example.com');
+    await git(root, 'config', 'user.name', 'V2 Test');
+    await git(root, 'config', 'commit.gpgsign', 'false');
+    await writeFile(join(root, 'a.txt'), 'a\n', 'utf8');
+    await git(root, 'add', 'a.txt');
+    await git(root, 'commit', '-m', 'init');
+    const { env } = await mountV2([
+      createWorkspaces({ homeDir: await tempDir('v2-git-home-'), host: createNodeOsHost() }),
+    ]);
+    await env.app.open({ sessionId: 'ses_repo', metadata: { cwd: root } });
+    await env.app.open({ sessionId: 'ses_plain' });
+
+    const body = await (await getV2(env, '/sessions?include=git')).json();
+    const byId = new Map<string, { branch: string | null; pull_request: unknown }>(
+      (body.data.items as { id: string; git: { branch: string | null; pull_request: unknown } }[]).map(
+        (item) => [item.id, item.git],
+      ),
+    );
+    expect(byId.get('ses_repo')).toEqual({ branch: 'main', pull_request: null });
+    expect(byId.get('ses_plain')).toEqual({ branch: null, pull_request: null });
+
+    const grouped = await (await getV2(env, '/sessions?include=git&view=by_workspace')).json();
+    const flat = (grouped.data.groups as { sessions: { id: string; git: unknown }[] }[]).flatMap(
+      (group) => group.sessions,
+    );
+    expect(flat.find((item) => item.id === 'ses_repo')?.git).toEqual({
+      branch: 'main',
+      pull_request: null,
+    });
+  });
+
   it('groups sessions by workspace with per-group totals and group pagination', async () => {
     const home = await tempDir('v2-groups-');
     const { env, tick } = await mountV2([createWorkspaces({ homeDir: home })]);
@@ -1605,11 +1671,11 @@ describe('feature-http kap-server aligned routes', () => {
     expect(body.data).toMatchObject({
       server_version: '1.2.3',
       capabilities: {
-        websocket: false,
+        websocket: true,
         file_upload: false,
         fs_query: false,
-        mcp: true,
-        tasks: true,
+        mcp: false,
+        tasks: false,
         terminal: false,
       },
       dangerous_bypass_auth: false,
@@ -1627,6 +1693,31 @@ describe('feature-http kap-server aligned routes', () => {
     const bare = await mountHttp([]);
     const fallback = await get(bare, '/meta');
     expect((await fallback.json()).data.server_version).toBe('0.0.0');
+  });
+
+  it('reports the installed feature set and configured open_in_apps in server metadata', async () => {
+    const env = await mountHttp(
+      [
+        createTask(),
+        createFiles({ dir: await tempDir('meta-files-') }),
+        createWorkspaces({ homeDir: await tempDir('meta-ws-home-'), host: createNodeOsHost() }),
+      ],
+      { openInApps: ['finder', 'vscode'] },
+    );
+    const body = await (await get(env, '/meta')).json();
+    expect(body.data.capabilities).toEqual({
+      websocket: true,
+      file_upload: true,
+      fs_query: true,
+      mcp: false,
+      tasks: true,
+      terminal: false,
+    });
+    expect(body.data.open_in_apps).toEqual(['finder', 'vscode']);
+
+    const detected = await mountHttp([], { openInApps: async () => ['terminal'] });
+    const getterBody = await (await get(detected, '/meta')).json();
+    expect(getterBody.data.open_in_apps).toEqual(['terminal']);
   });
 
   it('manages providers and models over the catalog routes', async () => {
@@ -2618,12 +2709,12 @@ describe('feature-http workspaces routes', () => {
     expect(escaped.status).toBe(200);
     expect(await escaped.json()).toMatchObject({ code: 41304 });
 
-    const unsupported = await post(env, '/sessions/ses_fs/fs:open', { path: 'docs/note.txt' });
-    expect(unsupported.status).toBe(200);
-    expect(await unsupported.json()).toMatchObject({
-      code: 40001,
-      msg: 'unsupported action: fs:open',
-    });
+    const noGit = await post(env, '/sessions/ses_fs/fs:git_status', {});
+    expect(noGit.status).toBe(200);
+    expect(await noGit.json()).toMatchObject({ code: 40908 });
+    const noGitDiff = await post(env, '/sessions/ses_fs/fs:diff', { path: 'docs/note.txt' });
+    expect(noGitDiff.status).toBe(200);
+    expect(await noGitDiff.json()).toMatchObject({ code: 40908 });
     const badTail = await post(env, '/sessions/ses_fs/other', {});
     expect(badTail.status).toBe(200);
     expect(await badTail.json()).toMatchObject({ code: 40001, msg: 'unsupported action: other' });
@@ -2713,6 +2804,153 @@ describe('feature-http workspaces routes', () => {
     const downloadNoSession = await fetch(`${env.origin}/api/v1/sessions/ses_ghost/fs/a.txt:download`);
     expect(downloadNoSession.status).toBe(200);
     expect(await downloadNoSession.json()).toMatchObject({ code: 40401 });
+  });
+
+  it('serves fs git_status and diff over the session fs action route', async () => {
+    const root = await tempDir('ws-http-git-');
+    await git(root, 'init', '-b', 'main');
+    await git(root, 'config', 'user.email', 'fs-test@example.com');
+    await git(root, 'config', 'user.name', 'FS Test');
+    await git(root, 'config', 'commit.gpgsign', 'false');
+    await writeFile(join(root, 'tracked.txt'), 'one\ntwo\n', 'utf8');
+    await git(root, 'add', 'tracked.txt');
+    await git(root, 'commit', '-m', 'init');
+    await writeFile(join(root, 'tracked.txt'), 'one\ntwo\nthree\n', 'utf8');
+    await writeFile(join(root, 'untracked.txt'), 'new\n', 'utf8');
+    const env = await mountHttp([
+      createWorkspaces({ homeDir: await tempDir('ws-http-home-'), host: createNodeOsHost() }),
+    ]);
+    await env.app.open({ sessionId: 'ses_git', metadata: { cwd: root } });
+
+    const status = await post(env, '/sessions/ses_git/fs:git_status', {});
+    expect(status.status).toBe(200);
+    const statusBody = await status.json();
+    expect(statusBody.data).toMatchObject({
+      branch: 'main',
+      ahead: 0,
+      behind: 0,
+      entries: { 'tracked.txt': 'modified', 'untracked.txt': 'untracked' },
+      pullRequest: null,
+    });
+    expect(statusBody.data.additions).toBe(1);
+    expect(statusBody.data.deletions).toBe(0);
+
+    const filtered = await post(env, '/sessions/ses_git/fs:git_status', { paths: ['tracked.txt'] });
+    expect((await filtered.json()).data.entries).toEqual({ 'tracked.txt': 'modified' });
+    const escaped = await post(env, '/sessions/ses_git/fs:git_status', { paths: ['../x.txt'] });
+    expect((await escaped.json()).code).toBe(41304);
+
+    const diff = await post(env, '/sessions/ses_git/fs:diff', { path: 'tracked.txt' });
+    const diffBody = await diff.json();
+    expect(diffBody.data).toMatchObject({ path: 'tracked.txt', truncated: false });
+    expect(diffBody.data.diff).toContain('+three');
+
+    const untrackedDiff = await post(env, '/sessions/ses_git/fs:diff', { path: 'untracked.txt' });
+    const untrackedBody = await untrackedDiff.json();
+    expect(untrackedBody.data).toMatchObject({ path: 'untracked.txt', truncated: false });
+    expect(untrackedBody.data.diff).toContain('new file mode');
+
+    const missingDiff = await post(env, '/sessions/ses_git/fs:diff', { path: 'ghost.txt' });
+    expect(missingDiff.status).toBe(200);
+    expect((await missingDiff.json()).code).toBe(40409);
+  });
+
+  it('serves fs open, open-in and reveal through the os host launch port', async () => {
+    vi.stubEnv('KIMI_CODE_EDITOR', '');
+    vi.stubEnv('VISUAL', '');
+    vi.stubEnv('EDITOR', '');
+    const root = await tempDir('ws-http-launch-');
+    await mkdir(join(root, 'docs'));
+    await writeFile(join(root, 'docs', 'note.txt'), 'note body\n', 'utf8');
+    const home = await tempDir('ws-http-home-');
+    const node = createNodeOsHost();
+    const spawns: { command: string; args: readonly string[]; shell?: boolean }[] = [];
+    const host: OsHost = {
+      ...node,
+      process: {
+        spawn: async (command, args = [], options = {}) => {
+          spawns.push({ command, args, shell: options.shell });
+          const proc: OsProcess = {
+            pid: 4242,
+            exitCode: 0,
+            stdin: { write: () => {}, end: () => {} },
+            stdout: (async function* () {})(),
+            stderr: (async function* () {})(),
+            wait: async () => 0,
+            kill: async () => {},
+            dispose: () => {},
+          };
+          return await Promise.resolve(proc);
+        },
+      },
+      environment: {
+        osKind: 'macOS',
+        osArch: 'arm64',
+        osVersion: '1',
+        shellName: 'sh',
+        shellPath: '/bin/sh',
+        pathClass: 'posix',
+        homeDir: home,
+        ready: Promise.resolve(),
+      },
+    };
+    const env = await mountHttp([createWorkspaces({ homeDir: home, host })]);
+    await env.app.open({ sessionId: 'ses_launch', metadata: { cwd: root } });
+
+    const opened = await post(env, '/sessions/ses_launch/fs:open', { path: 'docs/note.txt' });
+    expect(opened.status).toBe(200);
+    expect(await opened.json()).toMatchObject({ code: 0, data: { opened: true } });
+    expect(spawns.at(-1)).toMatchObject({
+      command: 'open',
+      args: [join(root, 'docs', 'note.txt')],
+    });
+
+    vi.stubEnv('KIMI_CODE_EDITOR', 'code');
+    const openedAtLine = await post(env, '/sessions/ses_launch/fs:open', {
+      path: 'docs/note.txt',
+      line: 3,
+    });
+    expect((await openedAtLine.json()).data).toMatchObject({ opened: true });
+    expect(spawns.at(-1)).toMatchObject({
+      command: `code '${join(root, 'docs', 'note.txt')}:3'`,
+      shell: true,
+    });
+    vi.stubEnv('KIMI_CODE_EDITOR', '');
+
+    const revealed = await post(env, '/sessions/ses_launch/fs:reveal', { path: 'docs/note.txt' });
+    expect((await revealed.json()).data).toMatchObject({ revealed: true });
+    expect(spawns.at(-1)).toMatchObject({
+      command: 'open',
+      args: ['-R', join(root, 'docs', 'note.txt')],
+    });
+
+    const openedIn = await post(env, '/sessions/ses_launch/fs:open-in', {
+      app_id: 'iterm',
+      path: 'docs',
+    });
+    expect((await openedIn.json()).data).toMatchObject({ opened: true });
+    expect(spawns.at(-1)).toMatchObject({
+      command: 'open',
+      args: ['-a', 'iTerm', join(root, 'docs')],
+    });
+
+    const badApp = await post(env, '/sessions/ses_launch/fs:open-in', {
+      app_id: 'ghost',
+      path: 'docs',
+    });
+    expect((await badApp.json()).code).toBe(40001);
+    const missingPath = await post(env, '/sessions/ses_launch/fs:open', { path: 'ghost.txt' });
+    expect((await missingPath.json()).code).toBe(40409);
+    const escapedOpen = await post(env, '/sessions/ses_launch/fs:reveal', { path: '../secret.txt' });
+    expect((await escapedOpen.json()).code).toBe(41304);
+
+    const hostless = await mountHttp([createWorkspaces({ homeDir: await tempDir('ws-http-mem-') })]);
+    await hostless.app.open({ sessionId: 'ses_no_host', metadata: { cwd: root } });
+    const unavailable = await post(hostless, '/sessions/ses_no_host/fs:open', {
+      path: 'docs/note.txt',
+    });
+    expect(unavailable.status).toBe(200);
+    expect(await unavailable.json()).toMatchObject({ code: 40946 });
   });
 
   it('reports 40945 when workspaces is absent and 40946 when the fs capability is missing', async () => {

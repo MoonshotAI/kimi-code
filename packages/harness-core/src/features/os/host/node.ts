@@ -56,6 +56,8 @@ function buildSpawnOptions(options: OsSpawnOptions): SpawnOptions {
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: !isWindows,
     windowsHide: options.windowsHide ?? true,
+    shell: options.shell,
+    windowsVerbatimArguments: options.windowsVerbatimArguments,
   };
 }
 

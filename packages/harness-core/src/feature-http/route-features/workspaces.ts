@@ -330,6 +330,9 @@ export function sendWorkspaceErr(request: Request, response: Response, error: un
     case 'fs.grep_timeout':
       sendErr(request, response, ErrorCode.FS_GREP_TIMEOUT, error.message);
       return true;
+    case 'fs.git_unavailable':
+      sendErr(request, response, ErrorCode.FS_GIT_UNAVAILABLE, error.message);
+      return true;
     case 'fs.config_invalid':
       sendErr(request, response, ErrorCode.INTERNAL_ERROR, error.message);
       return true;

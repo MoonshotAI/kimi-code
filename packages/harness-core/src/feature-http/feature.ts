@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 
 import { DEFAULT_HTTP_PREFIX, useFacadeRoutes } from './route-builtin/index';
 import { useGuiStoreRoutes } from './route-builtin/gui-store';
-import { useMetaRoutes } from './route-builtin/meta';
+import { useMetaRoutes, type MetaOpenInApps } from './route-builtin/meta';
 import { useWebAssetRoutes } from './route-builtin/web-assets';
 import { useFeatureFacadeRoutes } from './route-features/index';
 import { useV2SessionRoutes, V2_HTTP_PREFIX } from './route-v2/index';
@@ -36,6 +36,7 @@ export interface CreateHttpOptions {
   readonly version?: string;
   readonly guiStorePath?: string;
   readonly webAssetsDir?: string;
+  readonly openInApps?: MetaOpenInApps;
 }
 
 export const HttpRoutes = createCollection<HttpRoute>('http.routes');
@@ -93,6 +94,7 @@ export function createHttp(options: CreateHttpOptions = {}): FeatureSpec {
         version: options.version,
         serverId: randomUUID(),
         startedAt: new Date().toISOString(),
+        openInApps: options.openInApps,
       });
       useGuiStoreRoutes(prefix, { persistPath: options.guiStorePath });
       useWsEndpoint({ prefix });

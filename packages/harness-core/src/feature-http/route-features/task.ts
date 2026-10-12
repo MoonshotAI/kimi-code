@@ -26,7 +26,7 @@ export interface TaskView {
 }
 
 const DEFAULT_TASK_OUTPUT_PREVIEW_BYTES = 32 * 1024;
-const TASK_ACTIONS = ['stop'] as const;
+const TASK_ACTIONS = ['stop', 'detach'] as const;
 const TERMINAL_WIRE_STATUSES: ReadonlySet<TaskWireStatus> = new Set(['completed', 'failed', 'cancelled']);
 
 export function useTaskRoutes(prefix: string): void {
@@ -114,6 +114,14 @@ export function useTaskRoutes(prefix: string): void {
         return;
       }
       const status = wireStatus(record.status);
+      if (parsed.action === 'detach') {
+        const detached = await resolved.facade.detach(parsed.id);
+        sendOk(request, response, {
+          detached: detached?.detached ?? false,
+          status: wireStatus(detached?.record.status ?? record.status),
+        });
+        return;
+      }
       if (TERMINAL_WIRE_STATUSES.has(status)) {
         response.status(200).json({
           code: ErrorCode.TASK_ALREADY_FINISHED,

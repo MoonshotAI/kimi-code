@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -18,6 +20,13 @@ import {
   type WorkspaceEntry,
   type WorkspacesFace,
 } from '#/features/workspaces/index';
+
+const execFileAsync = promisify(execFile);
+
+async function git(cwd: string, ...args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync('git', args, { cwd });
+  return stdout;
+}
 
 const apps: AppHandle[] = [];
 const tempDirs: string[] = [];
@@ -470,6 +479,61 @@ describe('workspaces fs browsing', () => {
     expect(worker?.matches).toHaveLength(2);
     expect(worker?.matches[0]).toMatchObject({ line: 1, col: 1, text: 'marker marker', before: [], after: ['other'] });
     expect(worker?.matches[1]).toMatchObject({ line: 3, col: 1, before: ['other'], after: [''] });
+  });
+
+  it('reports git status and diffs inside a workspace view', async () => {
+    const { face } = await mountWorkspaces({ host: createNodeOsHost() });
+    const fs = face.fs;
+    if (fs === undefined) throw new Error('fs unavailable');
+    const root = await realpath(await tempDir('ws-git-'));
+    await git(root, 'init', '-b', 'main');
+    await git(root, 'config', 'user.email', 'ws-test@example.com');
+    await git(root, 'config', 'user.name', 'WS Test');
+    await git(root, 'config', 'commit.gpgsign', 'false');
+    await writeFile(join(root, 'tracked.txt'), 'one\ntwo\n', 'utf8');
+    await git(root, 'add', 'tracked.txt');
+    await git(root, 'commit', '-m', 'init');
+    await writeFile(join(root, 'tracked.txt'), 'one\ntwo\nthree\n', 'utf8');
+    await writeFile(join(root, 'untracked.txt'), 'new\n', 'utf8');
+
+    const view = fs.view({ workDir: root });
+    const status = await view.gitStatus({});
+    expect(status).toMatchObject({
+      branch: 'main',
+      ahead: 0,
+      behind: 0,
+      entries: { 'tracked.txt': 'modified', 'untracked.txt': 'untracked' },
+      additions: 1,
+      deletions: 0,
+      pullRequest: null,
+    });
+
+    const filtered = await view.gitStatus({ paths: ['tracked.txt'] });
+    expect(filtered.entries).toEqual({ 'tracked.txt': 'modified' });
+
+    const diff = await view.diff({ path: 'tracked.txt' });
+    expect(diff).toMatchObject({ path: 'tracked.txt', truncated: false });
+    expect(diff.diff).toContain('+three');
+
+    const untracked = await view.diff({ path: 'untracked.txt' });
+    expect(untracked.truncated).toBe(false);
+    expect(untracked.diff).toContain('new file mode');
+
+    await expectFsError(view.diff({ path: 'ghost.txt' }), 'fs.path_not_found', 'path not found: ghost.txt');
+    await expectFsError(
+      view.diff({ path: '../escape.txt' }),
+      'fs.path_escapes',
+      'path "../escape.txt" rejected (dotdot segment)',
+    );
+
+    const plain = await realpath(await tempDir('ws-git-plain-'));
+    const plainView = fs.view({ workDir: plain });
+    const unavailable = await plainView.gitStatus({}).catch((error: unknown) => error);
+    expect(unavailable).toBeInstanceOf(WorkspaceFsError);
+    expect((unavailable as WorkspaceFsError).code).toBe('fs.git_unavailable');
+    expect((unavailable as WorkspaceFsError).message).toContain(`git unavailable at ${plain}:`);
+    const unavailableDiff = await plainView.diff({ path: 'x.txt' }).catch((error: unknown) => error);
+    expect((unavailableDiff as WorkspaceFsError).code).toBe('fs.git_unavailable');
   });
 });
 

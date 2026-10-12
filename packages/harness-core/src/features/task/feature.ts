@@ -43,6 +43,9 @@ export type TaskEvent = TaskStartedEvent | TaskSettledEvent;
 export interface TaskFace {
   readonly records: ShallowRef<TaskState>;
   readonly stop: (taskId: string, reason: string) => Promise<TaskRecord | undefined>;
+  readonly detach: (
+    taskId: string,
+  ) => Promise<{ readonly record: TaskRecord; readonly detached: boolean } | undefined>;
 }
 
 export const TaskRef = createFacadeToken<TaskFace>('task');
@@ -130,12 +133,20 @@ export function createTask(): FeatureSpec<TaskEvent> {
         if (record !== undefined) fire({ type: 'task.settled', record });
         return record;
       };
+      const detach: TaskFace['detach'] = async (taskId) => {
+        await writes;
+        const current = state.value.get(taskId);
+        if (current === undefined) return undefined;
+        const detached = current.status === 'running' && !live.has(taskId);
+        if (detached) agent.detachTool(taskId);
+        return { record: current, detached };
+      };
       useAgentTools(
         createTaskListTool(state),
         createTaskOutputTool(state),
         createTaskStopTool(state, stop),
       );
-      useExpose(TaskRef, { records: state, stop });
+      useExpose(TaskRef, { records: state, stop, detach });
     },
   });
 }

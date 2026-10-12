@@ -460,4 +460,94 @@ describe('task feature', () => {
     );
     await env.dispose();
   });
+
+  it('records a foreground tool detached through the agent command and settles it in the background', async () => {
+    const fg = new Map<string, (text: string) => void>();
+    const fgTool: ToolDefinition = {
+      name: 'TestFg',
+      description: 'test foreground tool',
+      parameters: {
+        type: 'object',
+        properties: { description: { type: 'string' } },
+        additionalProperties: false,
+      },
+      execute: ({ toolCall }) =>
+        new Promise<ToolResult>((resolve) => {
+          fg.set(toolCall.id, (text) => {
+            resolve({ content: [{ type: 'text', text }] });
+          });
+        }),
+    };
+    const fgFeature = createFeature('test-fg', {
+      agent() {
+        useAgentTools(fgTool);
+      },
+    });
+    const backend = new MemoryBackend();
+    const trees = await Trees.open(backend.trees, {});
+    const tree = await trees.tree('sess-fg');
+    const stores = await openSessionStores(tree, openBlobs(backend.blobs));
+    const taskFeature = createTask();
+    const app = createHarness({
+      features: [taskFeature, bindTestLlm(createMockRequester()), fgFeature],
+    });
+    await app.ready();
+    const session = await app.create({ sessionId: 'sess-fg', stores });
+    const main = await session.create({ agentId: MAIN_AGENT_ID, systemPrompt: 'main-host' });
+    await main.ready();
+    const started: TaskStartedEvent[] = [];
+    session.on(taskFeature, 'task.started', (event) => {
+      started.push(event);
+    });
+
+    queue = [
+      {
+        toolCall: { name: 'TestFg', arguments: JSON.stringify({ description: 'fg task' }) },
+      },
+      { text: 'done' },
+    ];
+    const spawned = main.wait('turn.spawn_tools', {
+      match: (event) => event.toolCalls.some((call) => call.name === 'TestFg'),
+    });
+    const firstTurn = nextTurnDone(main);
+    main.submit(createUserMessage('go'));
+    const taskId = (await spawned).toolCalls[0]?.id as string;
+    main.detachTool(taskId);
+    await firstTurn;
+    await stores.flush();
+
+    const tasks = main.resolve(TaskRef);
+    const record = tasks.records.value.get(taskId);
+    expect(record).toMatchObject({
+      taskId,
+      toolName: 'TestFg',
+      description: 'fg task',
+      status: 'running',
+    });
+    expect(record?.detachText).toBe(
+      `moved to background by the user: TestFg (tool_call_id=${taskId})`,
+    );
+    expect(started.map((event) => event.record.taskId)).toEqual([taskId]);
+
+    const alreadyBackground = await tasks.detach(taskId);
+    expect(alreadyBackground).toMatchObject({
+      detached: false,
+      record: { taskId, status: 'running' },
+    });
+    expect(await tasks.detach('task_unknown')).toBeUndefined();
+
+    const notified = nextTurnDone(main);
+    fg.get(taskId)?.('fg output');
+    await notified;
+    await stores.flush();
+    expect(tasks.records.value.get(taskId)).toMatchObject({
+      status: 'completed',
+      output: 'fg output',
+    });
+    const afterSettled = await tasks.detach(taskId);
+    expect(afterSettled).toMatchObject({ detached: false, record: { status: 'completed' } });
+
+    await app.disposeAsync();
+    await stores.dispose();
+  });
 });

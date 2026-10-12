@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { OPEN_IN_APP_IDS, type OpenInAppId } from '#/features/os/fileLaunch';
+
 export const fsKindSchema = z.enum(['file', 'directory', 'symlink']);
 export type FsKind = z.infer<typeof fsKindSchema>;
 
@@ -209,6 +211,74 @@ export const fsGrepResponseSchema = z.object({
   elapsed_ms: z.number().int().nonnegative(),
 });
 export type FsGrepResponse = z.infer<typeof fsGrepResponseSchema>;
+
+export const fsGitStatusSchema = z.enum([
+  'clean',
+  'modified',
+  'added',
+  'deleted',
+  'renamed',
+  'untracked',
+  'ignored',
+  'conflicted',
+]);
+export type FsGitStatus = z.infer<typeof fsGitStatusSchema>;
+
+export const fsPullRequestSchema = z.object({
+  number: z.number().int().positive(),
+  state: z.enum(['open', 'merged', 'closed', 'draft']),
+  url: z.string().url(),
+});
+export type FsPullRequest = z.infer<typeof fsPullRequestSchema>;
+
+export const fsGitStatusRequestSchema = z.object({
+  paths: z.array(z.string().min(1)).optional(),
+});
+export type FsGitStatusRequest = z.infer<typeof fsGitStatusRequestSchema>;
+
+export const fsGitStatusResponseSchema = z.object({
+  branch: z.string(),
+  ahead: z.number().int().nonnegative(),
+  behind: z.number().int().nonnegative(),
+  entries: z.record(z.string(), fsGitStatusSchema),
+  additions: z.number().int().nonnegative(),
+  deletions: z.number().int().nonnegative(),
+  pullRequest: fsPullRequestSchema.nullable(),
+});
+export type FsGitStatusResponse = z.infer<typeof fsGitStatusResponseSchema>;
+
+export const fsDiffRequestSchema = z.object({
+  path: z.string().min(1),
+});
+export type FsDiffRequest = z.infer<typeof fsDiffRequestSchema>;
+
+export const fsDiffResponseSchema = z.object({
+  path: z.string(),
+  diff: z.string(),
+  truncated: z.boolean(),
+});
+export type FsDiffResponse = z.infer<typeof fsDiffResponseSchema>;
+
+export const fsOpenRequestSchema = z.object({
+  path: z.string().min(1),
+  line: z.number().int().positive().optional(),
+});
+export type FsOpenRequest = z.infer<typeof fsOpenRequestSchema>;
+
+export const fsRevealRequestSchema = z.object({
+  path: z.string().min(1),
+});
+export type FsRevealRequest = z.infer<typeof fsRevealRequestSchema>;
+
+export const fsOpenInAppIdSchema = z.enum(OPEN_IN_APP_IDS);
+export type FsOpenInAppId = OpenInAppId;
+
+export const fsOpenInRequestSchema = z.object({
+  app_id: fsOpenInAppIdSchema,
+  path: z.string().min(1),
+  line: z.number().int().positive().optional(),
+});
+export type FsOpenInRequest = z.infer<typeof fsOpenInRequestSchema>;
 
 export interface FsPathResolved {
   readonly absolute: string;

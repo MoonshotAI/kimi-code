@@ -6,6 +6,7 @@ import type { LlmRequester } from '#/llm/requester/requester';
 import { openBlobs, type Blobs } from '#/store/blob';
 import { MemoryBackend, Trees } from '#/store/tree';
 import { openSessionStores, type RosterEntry, type SessionStores } from '#/stores/session';
+import type { ToolResult } from '#/tool';
 import { createFacadeToken, useExpose, useFire, useInject, ref, type Ref, type RuntimeEvent } from '#/kernel/index';
 import { createFeature, useAgentTools, useBlobs, useOnAgent, useOnApp, useOnSession, useSession, useSessionStore } from '#/feature/index';
 import { createHarness, memorySessionSpace, type AgentHandle } from '#/app/index';
@@ -368,6 +369,77 @@ describe('app-session-agent units', () => {
     const settled = agent.wait('tool.done', { match: (event) => event.toolCallId === 'call-bg' });
     agent.abortTool('call-bg', 'test stop');
     await expect(settled).resolves.toMatchObject({ outcome: { type: 'aborted', reason: 'test stop' } });
+    await app.disposeAsync();
+    await env.stores.dispose();
+  });
+
+  it('moves a foreground tool to the background with detachTool and still reports its completion', async () => {
+    const requester: LlmRequester = {
+      generate: (_config, { messages }, { onEvent }) => {
+        const last = messages.at(-1);
+        if (last !== undefined && last.role === 'user' && extractText(last) === 'fg') {
+          onEvent?.({ type: 'llm.streaming.part', part: { type: 'function', id: 'call-fg', name: 'fg', arguments: '{}' } });
+        } else {
+          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
+        }
+        onEvent?.({ type: 'llm.done' });
+        return Promise.resolve();
+      },
+    };
+    let settle: ((result: ToolResult) => void) | undefined;
+    const spec = createFeature('probe', {
+      agent() {
+        useAgentTools({
+          name: 'fg',
+          description: 'hang in the foreground',
+          parameters: { type: 'object', properties: {} },
+          execute: () =>
+            new Promise<ToolResult>((resolve) => {
+              settle = resolve;
+            }),
+        });
+      },
+    });
+    const env = await testStores();
+    const app = createHarness({ features: [spec] });
+    const session = await app.create({ sessionId: 'sess', stores: env.stores });
+    const agent = await session.create({ agentId: 'main' });
+    agent.setConfig({ model });
+    agent.setRequester(requester);
+    expect(agent.detachTool('missing')).toBeUndefined();
+    const spawned = agent.wait('turn.spawn_tools', {
+      match: (event) => event.toolCalls.some((call) => call.id === 'call-fg'),
+    });
+    const detached = agent.wait('tool.detached', { match: (event) => event.toolCallId === 'call-fg' });
+    const firstTurn = agent.wait('turn.done', { match: (event) => event.outcome.type === 'done' });
+    expect(agent.submit(createUserMessage('fg'))?.type).toBe('prompt.submitted');
+    await spawned;
+    agent.detachTool('call-fg');
+    await expect(detached).resolves.toMatchObject({
+      toolCallId: 'call-fg',
+      text: 'moved to background by the user: fg (tool_call_id=call-fg)',
+    });
+    await firstTurn;
+    const ackEntry = env.stores
+      .get('main')
+      ?.getState()
+      .history.find(
+        (entry) => entry.message.role === 'tool' && entry.message.toolCallId === 'call-fg',
+      );
+    expect(ackEntry?.message.content).toEqual([
+      { type: 'text', text: 'moved to background by the user: fg (tool_call_id=call-fg)' },
+    ]);
+    const secondTurn = agent.wait('turn.done', { match: (event) => event.outcome.type === 'done' });
+    settle?.({ content: [{ type: 'text', text: 'fg output' }] });
+    await secondTurn;
+    const notification = env.stores
+      .get('main')
+      ?.getState()
+      .history.find((entry) => entry.meta?.source === 'async-tool');
+    expect(notification?.message.content).toEqual([
+      { type: 'text', text: '[async tool completed] fg (tool_call_id=call-fg)' },
+      { type: 'text', text: 'fg output' },
+    ]);
     await app.disposeAsync();
     await env.stores.dispose();
   });

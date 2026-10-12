@@ -27,6 +27,7 @@ import type { HostFileStat, OsFsPort, OsHost } from '#/features/os/host/types';
 
 import { createHostFsBrowser, type FsContentProbe } from './browse';
 import { mapHostFsError, WorkspaceFsError } from './errors';
+import { createWorkspaceGit, type WorkspaceGitPort } from './git';
 import { encodeWorkDirKey, workspaceRootKey, workspaceTrustKey } from './keys';
 import { sessionWorkspaceId, withSessionWorkspace } from './session';
 import {
@@ -78,6 +79,8 @@ export type WorkspacesEvent =
   | WorkspaceTrustChangedEvent;
 
 export interface WorkspaceFsFace {
+  readonly host: OsHost;
+  readonly git: WorkspaceGitPort;
   browse(path?: string): Promise<FsBrowseResponse>;
   home(): Promise<FsHomeResponse>;
   probe(path: string): Promise<FsContentProbe>;
@@ -366,14 +369,17 @@ export function createWorkspaces(props: CreateWorkspacesProps): FeatureSpec<Work
                   () => fsHost.environment.homeDir,
                   async () => dedupeWorkspacesByRoot(await currentState()).map((ws) => ws.root),
                 );
+                const git = createWorkspaceGit(fsHost);
                 return {
+                  host: fsHost,
+                  git,
                   browse: browser.browse,
                   home: browser.home,
                   probe: browser.probe,
                   read: (path, n, offset) => fsHost.fs.readBytes(path, n, offset),
                   stat: (path) => fsHost.fs.stat(path),
                   mkdir: browser.mkdir,
-                  view: (roots) => createWorkspaceFsView(fsHost.fs, roots),
+                  view: (roots) => createWorkspaceFsView(fsHost.fs, roots, git),
                 };
               })(),
         list: () => dedupeWorkspacesByRoot(state.value),

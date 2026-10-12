@@ -11,6 +11,7 @@ export type WorkspaceFsErrorCode =
   | 'fs.already_exists'
   | 'fs.permission_denied'
   | 'fs.grep_timeout'
+  | 'fs.git_unavailable'
   | 'fs.config_invalid';
 
 export class WorkspaceFsError extends Error {

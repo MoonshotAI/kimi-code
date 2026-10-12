@@ -15,6 +15,8 @@ export interface OsSpawnOptions {
   readonly env?: Record<string, string>;
   readonly mergeStderr?: boolean;
   readonly windowsHide?: boolean;
+  readonly shell?: boolean;
+  readonly windowsVerbatimArguments?: boolean;
 }
 
 export interface OsProcessStdin {

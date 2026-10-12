@@ -20,6 +20,8 @@ import {
   getWorkspaceEntry,
   resolveWorkspaceId,
   WorkspaceRef,
+  type FsPullRequest,
+  type WorkspaceGitPort,
   type WorkspacesState,
 } from '#/features/workspaces/index';
 
@@ -52,6 +54,36 @@ const BATCH_CONCURRENCY = 8;
 
 const KNOWN_INCLUDE_DOMAINS = new Set(['git']);
 const KNOWN_FIELDS = new Set(['id', 'archived']);
+
+const GIT_DOMAIN_TTL_MS = 60_000;
+
+interface V2GitDomain {
+  readonly branch: string | null;
+  readonly pull_request: {
+    readonly number: number;
+    readonly state: string;
+    readonly url: string;
+  } | null;
+}
+
+const GIT_DOMAIN_UNAVAILABLE: V2GitDomain = { branch: null, pull_request: null };
+
+function mapPullRequest(pr: FsPullRequest | null): V2GitDomain['pull_request'] {
+  if (pr === null) return null;
+  return { number: pr.number, state: pr.state === 'draft' ? 'open' : pr.state, url: pr.url };
+}
+
+async function fetchGitDomain(git: WorkspaceGitPort, cwd: string): Promise<V2GitDomain> {
+  try {
+    const status = await git.status(cwd);
+    return {
+      branch: status.branch.length === 0 ? null : status.branch,
+      pull_request: mapPullRequest(status.pullRequest),
+    };
+  } catch {
+    return GIT_DOMAIN_UNAVAILABLE;
+  }
+}
 
 interface ValidationDetail {
   readonly path: string;
@@ -86,6 +118,7 @@ interface SessionFacts {
 
 export function useV2SessionRoutes(prefix: string): void {
   const base = prefix.replace(/\/+$/, '');
+  const gitDomainCache = new Map<string, { value: V2GitDomain; fetchedAt: number }>();
 
   useHttpRoute({
     id: 'v2.sessions.list',
@@ -116,7 +149,9 @@ export function useV2SessionRoutes(prefix: string): void {
         }
       }
 
-      const state = useInject(WorkspaceRef).value?.state.value;
+      const workspaces = useInject(WorkspaceRef).value;
+      const state = workspaces?.state.value;
+      const gitPort = workspaces?.fs?.git;
       let workspaceIds: readonly string[] | undefined;
       if (query.workspaceFilter !== undefined) {
         workspaceIds = [
@@ -157,11 +192,46 @@ export function useV2SessionRoutes(prefix: string): void {
       const cwdOf = (row: SessionSummaryRow): string | null =>
         row.cwd ?? workspaceRootOf(state, row.workspaceId);
 
-      const buildItem = (row: SessionSummaryRow): Record<string, unknown> => {
+      const resolveGitDomains = async (
+        rows: readonly SessionSummaryRow[],
+      ): Promise<ReadonlyMap<string, V2GitDomain> | undefined> => {
+        if (!query.includeGit) return undefined;
+        const resolved = new Map<string, V2GitDomain>();
+        if (gitPort === undefined) return resolved;
+        const now = Date.now();
+        const cwds = new Set<string>();
+        for (const row of rows) {
+          const cwd = cwdOf(row);
+          if (cwd !== null) cwds.add(cwd);
+        }
+        const misses: string[] = [];
+        for (const cwd of cwds) {
+          const hit = gitDomainCache.get(cwd);
+          if (hit !== undefined && now - hit.fetchedAt < GIT_DOMAIN_TTL_MS) {
+            resolved.set(cwd, hit.value);
+          } else {
+            misses.push(cwd);
+          }
+        }
+        await Promise.all(
+          misses.map(async (cwd) => {
+            const value = await fetchGitDomain(gitPort, cwd);
+            gitDomainCache.set(cwd, { value, fetchedAt: now });
+            resolved.set(cwd, value);
+          }),
+        );
+        return resolved;
+      };
+
+      const buildItem = (
+        row: SessionSummaryRow,
+        gitByCwd?: ReadonlyMap<string, V2GitDomain>,
+      ): Record<string, unknown> => {
         const facts = factsOf(row.id);
+        const cwd = cwdOf(row);
         return {
           id: row.id,
-          workspace: { id: row.workspaceId ?? '', cwd: cwdOf(row) },
+          workspace: { id: row.workspaceId ?? '', cwd },
           meta: {
             title: row.title ?? null,
             last_prompt: row.lastPrompt ?? null,
@@ -174,7 +244,10 @@ export function useV2SessionRoutes(prefix: string): void {
             status: mapActivityStatus(facts, row.lastTurnOutcome),
             model: facts.model ?? null,
           },
-          git: query.includeGit ? { branch: null, pull_request: null } : undefined,
+          git:
+            gitByCwd === undefined
+              ? undefined
+              : ((cwd !== null ? gitByCwd.get(cwd) : undefined) ?? GIT_DOMAIN_UNAVAILABLE),
         };
       };
 
@@ -238,11 +311,18 @@ export function useV2SessionRoutes(prefix: string): void {
             ? encodePageToken(fingerprint, keyOf(lastGroup.rep), lastGroup.workspaceId)
             : null;
 
+        const gitByCwd = query.projection
+          ? undefined
+          : await resolveGitDomains(
+              windowGroups.flatMap((group) => group.items.slice(0, query.groupPageSize)),
+            );
         const groups = windowGroups.map((group) => {
           const served = group.items.slice(0, query.groupPageSize);
           return {
             workspace: { id: group.workspaceId, cwd: cwdOf(group.rep) },
-            sessions: query.projection ? projectIds(served) : served.map(buildItem),
+            sessions: query.projection
+              ? projectIds(served)
+              : served.map((row) => buildItem(row, gitByCwd)),
             total: group.items.length,
           };
         });
@@ -278,8 +358,11 @@ export function useV2SessionRoutes(prefix: string): void {
           ? encodePageToken(fingerprint, keyOf(lastServed), lastServed.id)
           : null;
 
+      const gitByCwd = query.projection ? undefined : await resolveGitDomains(window);
       sendOk(request, response, {
-        items: query.projection ? projectIds(window) : window.map(buildItem),
+        items: query.projection
+          ? projectIds(window)
+          : window.map((row) => buildItem(row, gitByCwd)),
         total: filtered.length,
         has_more: hasMore,
         next_page_token: nextPageToken,
