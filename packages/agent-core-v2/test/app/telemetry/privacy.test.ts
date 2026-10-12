@@ -50,7 +50,9 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
   });
 
   it('redacts UNC and long-path Windows spellings', () => {
-    expect(cleanTelemetryString('\\\\fileserver\\home\\alice.chen\\proj\\secret.txt')).toBe(REDACTED);
+    expect(cleanTelemetryString('\\\\fileserver\\home\\alice.chen\\proj\\secret.txt')).toBe(
+      REDACTED,
+    );
     expect(cleanTelemetryString('\\\\?\\C:\\Users\\alice\\proj\\secret.txt')).toBe(REDACTED);
     expect(cleanTelemetryString('\\\\?\\UNC\\fileserver\\home\\alice\\proj\\secret.txt')).toBe(
       REDACTED,
@@ -83,17 +85,35 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
   });
 
   it('preserves diagnostics after single-quoted extensionless Windows paths', () => {
-    expect(cleanTelemetryString(String.raw`failure at 'C:\Users\alice\cache' could not be read`)).toBe(
-      `failure at '${REDACTED}' could not be read`,
-    );
-    expect(cleanTelemetryString(String.raw`failure at 'C:\Users\O'Brien\cache' could not be read`)).toBe(
-      `failure at '${REDACTED}' could not be read`,
-    );
+    expect(
+      cleanTelemetryString(String.raw`failure at 'C:\Users\alice\cache' could not be read`),
+    ).toBe(`failure at '${REDACTED}' could not be read`);
+    expect(
+      cleanTelemetryString(String.raw`failure at 'C:\Users\O'Brien\cache' could not be read`),
+    ).toBe(`failure at '${REDACTED}' could not be read`);
     expect(cleanTelemetryString(String.raw`C:\Users\O'Brien\cache`)).toBe(REDACTED);
     expect(cleanTelemetryString(String.raw`C:\Users\O' Brien\cache`)).toBe(REDACTED);
-    expect(cleanTelemetryString(String.raw`failure at 'C:\Users\alice\cache' couldn't be read`)).toBe(
-      `failure at '${REDACTED}' couldn't be read`,
+    expect(
+      cleanTelemetryString(String.raw`failure at 'C:\Users\alice\cache' couldn't be read`),
+    ).toBe(`failure at '${REDACTED}' couldn't be read`);
+  });
+
+  it('keeps Windows paths whole across repeated separators and extension-like components', () => {
+    expect(cleanTelemetryString(String.raw`C:\Users\alice\\project\secret.txt`)).toBe(REDACTED);
+    expect(cleanTelemetryString(String.raw`C:\Users\alice\\cache\\`)).toBe(REDACTED);
+    expect(cleanTelemetryString(String.raw`C:\Users\alice\archive.txt files\secret`)).toBe(
+      REDACTED,
     );
+    expect(cleanTelemetryString(String.raw`opened C:\Users\alice\a.txt and more`)).toBe(
+      `opened ${REDACTED} and more`,
+    );
+  });
+
+  it('preserves diagnostics after single-quoted extensionless POSIX paths', () => {
+    expect(cleanTelemetryString(`failure at '/home/alice/cache' could not be read`)).toBe(
+      `failure at '${REDACTED}' could not be read`,
+    );
+    expect(cleanTelemetryString(`/home/o'brien/cache`)).toBe(REDACTED);
   });
 
   it('redacts drive-letter paths spelled with forward slashes', () => {
