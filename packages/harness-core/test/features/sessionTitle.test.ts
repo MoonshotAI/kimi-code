@@ -54,6 +54,16 @@ const MANAGED_PROVIDER_TOML =
   'storage = "file"\n' +
   'key = "oauth/kimi-code"\n';
 
+const MANAGED_PROVIDER_LEGACY_TOML =
+  '[providers."managed:kimi-code"]\n' +
+  'type = "kimi"\n' +
+  'base_url = "https://managed.example.com"\n' +
+  'api_key = ""\n' +
+  'alias_scope = "kimi-code"\n\n' +
+  '[providers."managed:kimi-code".oauth]\n' +
+  'storage = "file"\n' +
+  'key = "oauth/kimi-code"\n';
+
 const ENV_KEYS = ['KIMI_CODE_BASE_URL', 'KIMI_CODE_OAUTH_HOST', 'KIMI_OAUTH_HOST'] as const;
 
 const savedEnv = new Map<string, string | undefined>();
@@ -191,7 +201,10 @@ async function openTitleSession(options: {
     features.push(
       createFeature('test-oauth', {
         app() {
-          useExpose(OAuthTokensRef, { resolve: () => tokens, refresh: () => {} });
+          useExpose(OAuthTokensRef, {
+            resolve: () => tokens,
+            refresh: () => Promise.resolve({ changed: [], unchanged: [], failed: [] }),
+          });
         },
       }),
     );
@@ -324,6 +337,24 @@ describe('sessionTitle facade', () => {
     const forced = await face.generateTitle({ force: true });
     expect(forced).toBe('题'.repeat(200));
     expect((await app.space.get('sess'))?.title).toBe('题'.repeat(200));
+    await dispose();
+  });
+
+  it('generates a title when the provider entry carries oauth without model_source', async () => {
+    const calls = stubTitleFetch();
+    const tokens: BearerTokenProvider = { getAccessToken: () => Promise.resolve('sk-managed') };
+    const { app, store, face, dispose } = await openTitleSession({
+      toml: MANAGED_PROVIDER_LEGACY_TOML,
+      tokens,
+    });
+    await seedPrompts(store, userEntry('hello title'));
+
+    const title = await face.generateTitle();
+    expect(title).toBe('生成标题');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe('https://managed.example.com/tools');
+    expect(calls[0]?.authorization).toBe('Bearer sk-managed');
+    expect((await app.space.get('sess'))?.title).toBe('生成标题');
     await dispose();
   });
 

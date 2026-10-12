@@ -726,12 +726,12 @@ describe('provider-catalog materialization', () => {
     }
   });
 
-  it('does not fetch models for static providers and skips oauth-catalog and unknown types', async () => {
+  it('does not fetch models for static providers and skips oauth-backed and unknown types', async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
     try {
       const file = fakePersist(
-        '[providers.acme]\ntype = "acme"\nbase_url = "https://acme.example.com"\napi_key = "sk-x"\n\n[providers.managed]\ntype = "acme"\nmodel_source = "oauth-catalog"\nbase_url = "https://managed.example.com"\n\n[providers.ghost]\ntype = "nope"\nbase_url = "https://ghost.example.com"\n',
+        '[providers.acme]\ntype = "acme"\nbase_url = "https://acme.example.com"\napi_key = "sk-x"\n\n[providers.managed]\ntype = "acme"\nmodel_source = "oauth-catalog"\nbase_url = "https://managed.example.com"\n\n[providers.legacy]\ntype = "acme"\nbase_url = "https://legacy.example.com"\n\n[providers.legacy.oauth]\nstorage = "file"\nkey = "oauth/legacy"\n\n[providers.ghost]\ntype = "nope"\nbase_url = "https://ghost.example.com"\n',
       );
       const app = createHarness({
         features: [
@@ -753,6 +753,7 @@ describe('provider-catalog materialization', () => {
       expect(fetchSpy).not.toHaveBeenCalled();
       expect(catalog.isLive('acme')).toBe(true);
       expect(catalog.isLive('managed')).toBe(false);
+      expect(catalog.isLive('legacy')).toBe(false);
       expect(catalog.isLive('ghost')).toBe(false);
       await app.disposeAsync();
     } finally {

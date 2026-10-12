@@ -2,6 +2,7 @@ import {
   ConfigRef,
   createFacadeToken,
   createFeature,
+  isOAuthBackedProvider,
   useAgentTools,
   useConfigOverlay,
   useConfigSection,
@@ -80,7 +81,7 @@ export function createWebSlots(props: CreateWebProps = {}): FeatureSlots {
       };
       const fromManagedOAuth = (): WebSearchProvider | undefined => {
         const info = catalog.value?.providerInfo(KIMI_CODE_PROVIDER_NAME);
-        if (info?.modelSource !== 'oauth-catalog') return undefined;
+        if (info === undefined || !isOAuthBackedProvider(info)) return undefined;
         const tokenProvider = resolveToken(info.oauth);
         if (tokenProvider === undefined) return undefined;
         return createMoonshotWebSearchProvider({

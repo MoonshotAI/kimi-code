@@ -58,6 +58,10 @@ export interface CatalogProviderInfo {
   readonly aliasScope?: string;
 }
 
+export function isOAuthBackedProvider(info: CatalogProviderInfo | undefined): boolean {
+  return info?.oauth !== undefined || info?.modelSource === 'oauth-catalog';
+}
+
 export interface CatalogProviderEntry {
   readonly info?: CatalogProviderInfo;
   readonly discovered: Readonly<Record<string, LlmModel>>;

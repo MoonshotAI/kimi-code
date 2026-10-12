@@ -1,6 +1,7 @@
 import {
   createFacadeToken,
   createFeature,
+  isOAuthBackedProvider,
   MAIN_AGENT_ID,
   useAgentStore,
   useApp,
@@ -67,7 +68,9 @@ export const sessionTitleSlots: FeatureSlots = {
     let shared: Promise<string | undefined> | undefined;
     const channel = (): TitleChannel | undefined => {
       const info = catalog.value?.providerInfo(KIMI_CODE_PROVIDER_NAME);
-      if (info?.modelSource !== 'oauth-catalog' || info.oauth === undefined) return undefined;
+      if (info === undefined || !isOAuthBackedProvider(info) || info.oauth === undefined) {
+        return undefined;
+      }
       const runtimeAuth = resolveKimiCodeRuntimeAuth({
         configuredBaseUrl: info.baseUrl,
         configuredOAuthRef: info.oauth,

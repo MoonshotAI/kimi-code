@@ -2,6 +2,7 @@ import {
   ConfigRef,
   createFacadeToken,
   createFeature,
+  isOAuthBackedProvider,
   useAgentTools,
   useInject,
   useProviderCatalog,
@@ -80,7 +81,7 @@ export function createFetchSlots(props: CreateFetchProps = {}): FeatureSlots {
       };
       const fromManagedOAuth = (): UrlFetcher | undefined => {
         const info = catalog.value?.providerInfo(KIMI_CODE_PROVIDER_NAME);
-        if (info?.modelSource !== 'oauth-catalog') return undefined;
+        if (info === undefined || !isOAuthBackedProvider(info)) return undefined;
         const tokenProvider = resolveToken(info.oauth);
         if (tokenProvider === undefined) return undefined;
         return createMoonshotFetchURLProvider({

@@ -3,7 +3,7 @@ import { useNode } from '#/kernel/hooks';
 import { createProvider, type LlmModelSeed, type ProtocolBinding, type Provider } from '#/llm/provider';
 import { isPlainObject } from '#/builtin/config/index';
 
-import type { CatalogProviderInfo } from './types';
+import { isOAuthBackedProvider, type CatalogProviderInfo } from './types';
 
 export interface ProviderProtocolContribution {
   readonly type: string;
@@ -25,7 +25,7 @@ export function materializeProvider(
   info: CatalogProviderInfo | undefined,
   contributions: readonly ProviderProtocolContribution[],
 ): Provider | undefined {
-  if (info === undefined || info.modelSource === 'oauth-catalog') return undefined;
+  if (info === undefined || isOAuthBackedProvider(info)) return undefined;
   const type = info.type;
   if (type === undefined) return undefined;
   const factory = contributions.findLast((contribution) => contribution.type === type);

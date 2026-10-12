@@ -178,7 +178,10 @@ export function createProviderStore(): ProviderStore {
     refresh: (input: Provider | string) => {
       const provider = typeof input === 'string' ? live.get(input) : input;
       if (provider === undefined) return;
-      bind(provider);
+      if (live.get(provider.id) !== provider) {
+        bind(provider);
+        write({ providers: { ...snapshot.value.providers } });
+      }
       pull(provider);
     },
     isLive: (providerId) => live.has(providerId),

@@ -60,8 +60,8 @@
 `createOauth(props?)`：managed OAuth 凭证地基——token facade + oauth-catalog 物化 + 模型目录刷新调度。web / sessionTitle 等域经它的 facade 取 token。默认经 `createKimi()` 进名单，单独挂载亦可。
 
 - props：`home?`（token 存储根目录，默认 `KIMI_CODE_HOME ?? ~/.kimi-code`）、`fetchImpl?`。
-- 职责：① `CatalogOAuthRef` → `BearerTokenProvider`（FileTokenStorage + OAuthManager `ensureFresh` 惰性刷新，同 key 缓存复用；无后台定时刷新）；② watch catalog snapshot，对 `modelSource: 'oauth-catalog'` 且非 live 的 provider 按 `info.type` 查 `ProviderProtocols` 注册表物化（models 源 = managed 目录拉取，Bearer 经 token facade），`store.refresh` 绑定——discovered 模型走 provider-catalog 既有 writeback 回写 models 节；③ `managed:kimi-code` 缺 `aliasScope` 时补写为 `kimi-code`（config `'user'` target，模型键按 `kimi-code/` 平台前缀分区）；④ refresh 调度：model_catalog 节 `refresh_interval_ms`（默认 6h）/ `refresh_on_start`（默认 true），setTimeout 链 + `pushCleanup`；⑤ 向 provider-catalog 的 `CredentialResolvers` 贡献 oauth resolver（`createOAuthCredentialProvider`，401 canRecover + invalidate 强刷为 agent-core 内建）。
-- facade：`OAuthTokensRef`（`useOauth()`）：`resolve(ref): BearerTokenProvider | undefined` / `refresh(): Promise<{ changed, unchanged, failed }>`——kap `refreshOAuthProviderModels` 同语义编排：遍历 oauth-catalog provider 逐个拉 managed 目录（单链串行），按 `${aliasScope ?? providerId}/` 前缀在 config models 节取旧集合与拉取结果 diff 出 added/removed（记录内容漂移记 changed 0/0），失败聚合进 `failed` 不抛出；成功结果经一次性注入走 store.pull → writeback 落盘（单次拉取）。config 未加载时整体惰性不报错（空 report）。
+- 职责：① `CatalogOAuthRef` → `BearerTokenProvider`（FileTokenStorage + OAuthManager `ensureFresh` 惰性刷新，同 key 缓存复用；无后台定时刷新）；② watch catalog snapshot，对 oauth-backed（`isOAuthBackedProvider`：oauth 字段在场或 `modelSource: 'oauth-catalog'`，覆盖 v2 生产的无 modelSource 条目）且非 live 的 provider 按 `info.type` 查 `ProviderProtocols` 注册表物化（models 源 = managed 目录拉取，Bearer 经 token facade），`store.refresh` 绑定——discovered 模型走 provider-catalog 既有 writeback 回写 models 节；③ `managed:kimi-code` 缺 `aliasScope` 时补写为 `kimi-code`（config `'user'` target，模型键按 `kimi-code/` 平台前缀分区）；④ refresh 调度：model_catalog 节 `refresh_interval_ms`（默认 6h）/ `refresh_on_start`（默认 true），setTimeout 链 + `pushCleanup`；⑤ 向 provider-catalog 的 `CredentialResolvers` 贡献 oauth resolver（`createOAuthCredentialProvider`，401 canRecover + invalidate 强刷为 agent-core 内建）。
+- facade：`OAuthTokensRef`（`useOauth()`）：`resolve(ref): BearerTokenProvider | undefined` / `refresh(): Promise<{ changed, unchanged, failed }>`——kap `refreshOAuthProviderModels` 同语义编排：遍历 oauth-backed provider 逐个拉 managed 目录（单链串行），按 `${aliasScope ?? providerId}/` 前缀在 config models 节取旧集合与拉取结果 diff 出 added/removed（记录内容漂移记 changed 0/0），失败聚合进 `failed` 不抛出；成功结果经一次性注入走 store.pull → writeback 落盘（单次拉取）。config 未加载时整体惰性不报错（空 report）。
 - 无事件。login/logout 设备流不在本域（宿主层职责，`@moonshot-ai/kimi-code-oauth` 的 OAuthManager 已具备能力）。
 
 配套机制（agent-core provider-catalog）：`default_model` config 节持久化模型选择（别名 `${aliasScope ?? providerId}/${modelId}`）；`CredentialResolvers` collection + `useCredentialResolver`（注册序取第一个非 undefined，静态 apiKey/env 兜底排最后）；provider-catalog 的 agent slot 在挂载时读 defaultModel → `CatalogModels` 解析 binding → `setConfig` + `setRequester` + `setCredentialProvider`，显式 `setConfig` 先到则不再覆盖（resume 自动恢复绑定，凭证永不落盘）。
@@ -71,7 +71,7 @@
 `createWeb(props?)`：`WebSearch` 工具 + 搜索 provider 解析。FetchURL 已落地为平级子 Feature fetch（见下节），与其共享 services 节与 OAuth 通道。默认经 `createKimi()` 进名单，单独挂载亦可。
 
 - props：`fetchImpl?`、`identity?`（`KimiIdentityOptions` 生成 `X-Msh-*` 默认头；`KIMI_CODE_CUSTOM_HEADERS` env 层始终生效、优先级最低）。
-- provider 解析（app 层，每次调用惰性重算）：`services.moonshot_search` 配置节（entry 自带 oauth ref 或 apiKey；`KIMI_WEB_SEARCH_BASE_URL` / `KIMI_WEB_SEARCH_API_KEY` env 绑定）> managed OAuth 兜底（catalog 的 `managed:kimi-code` 须 oauth-catalog + oauth ref，baseUrl `{baseUrl ?? kimiCodeBaseUrl()}/search`，token 经 oauth facade）。
+- provider 解析（app 层，每次调用惰性重算）：`services.moonshot_search` 配置节（entry 自带 oauth ref 或 apiKey；`KIMI_WEB_SEARCH_BASE_URL` / `KIMI_WEB_SEARCH_API_KEY` env 绑定）> managed OAuth 兜底（catalog 的 `managed:kimi-code` 须 oauth-backed + oauth ref，baseUrl `{baseUrl ?? kimiCodeBaseUrl()}/search`，token 经 oauth facade）。
 - 工具（agent 层，挂载时门控，无 provider 不注册；spec freeze 下不做会话中途重激活）：`WebSearch({ query })` → POST `{text_query}`，Bearer + `X-Msh-Tool-Call-Id`；输出 `Title:/Site:/Date:/URL:/Snippet:` 块 + `---` 分隔 + markdown 引用提醒，空结果 `'No search results found.'`；错误五类分类（cancelled/timed out/authentication/network/通用）；abort 原样重抛；执行期 provider 消失返回固定降级文案。
 - facade：`WebSearchRef`（`useWebSearch()`）：`getProvider(): WebSearchProvider | undefined`。无事件。
 
@@ -80,7 +80,7 @@
 `createFetch(props?)`：`FetchURL` 工具 + 抓取器三级解析（v2 `app/web` 的 fetch 半）。默认经 `createKimi()` 进名单，单独挂载亦可。
 
 - props：`fetchImpl?`、`identity?`（同 web 子 Feature）。
-- 抓取器解析（app 层 facade，每次调用惰性重算）：`services.moonshot_fetch` 配置节（复用 web 子 Feature 注册的 services 节，不重复注册；`KIMI_WEB_FETCH_BASE_URL` / `KIMI_WEB_FETCH_API_KEY` env 绑定；token 经 `OAuthTokensRef` 解析 oauth ref、回落 apiKey）> managed OAuth 兜底（catalog 的 `managed:kimi-code` 须 oauth-catalog + oauth ref，baseUrl `{baseUrl ?? kimiCodeBaseUrl()}/fetch`）> 本地抓取器（恒在）。
+- 抓取器解析（app 层 facade，每次调用惰性重算）：`services.moonshot_fetch` 配置节（复用 web 子 Feature 注册的 services 节，不重复注册；`KIMI_WEB_FETCH_BASE_URL` / `KIMI_WEB_FETCH_API_KEY` env 绑定；token 经 `OAuthTokensRef` 解析 oauth ref、回落 apiKey）> managed OAuth 兜底（catalog 的 `managed:kimi-code` 须 oauth-backed + oauth ref，baseUrl `{baseUrl ?? kimiCodeBaseUrl()}/fetch`）> 本地抓取器（恒在）。
 - 托管抓取：POST `{url}` + `Accept: text/markdown` + Bearer + `X-Msh-Tool-Call-Id`；非 200 或网络失败（abort 除外）静默回落本地抓取器；成功结果恒 `extracted`（服务端已抽正文）。
 - 本地抓取：仅 http/https；SSRF 私网 BlockList + `localhost` 拒绝 + DNS 逐地址校验 fail-closed；手动重定向 ≤10 跳每跳重校；undici `connect.lookup` DNS 钉扎（代理且不匹配 NO_PROXY 时跳过）；>10MB 拒绝；`text/plain`/`text/markdown` → `passthrough` 原文；其余 `@mozilla/readability` + `linkedom` 抽正文（兜底 article/main/body，全空报「may require JavaScript」）；有标题前缀 `# title`。
 - 工具（agent 层，挂载时注册，本地兜底恒在故无条件）：`FetchURL({ url })`；空 body → `'The response body is empty.'`；成功 → 头部 note（passthrough/extracted 两版）+ 引用提醒 + 正文（整体 10M 字符截断）；错误两版文案；abort 原样重抛。文案与 v2 逐字一致。
@@ -91,7 +91,7 @@
 纯被动会话标题生成（对齐 v2 core：不订阅事件，由宿主/客户端触发）。默认经 `createKimi()` 进名单，单独挂载亦可。
 
 - facade：`SessionTitleRef`（session 层，`useSessionTitle()`）：`generateTitle({ force?, source? }): Promise<string | undefined>`。`source`：`user_prompts`（默认，前 3 条自然语言 prompt 各 400 字符、总长 1000）/ `first_turn`（首条 user 400 + 该轮末条 assistant 300，缺 assistant 返回 undefined）/ `digest`（每轮 user/assistant 各 200、总长 3000、中间 `...` 省略）。摘录从 main agent 的 history 实时组装（origin 过滤、skill 捆绑块剥离、按 userMessageId 去重、跳过 compaction elision/summary、密钥脱敏）。
-- 生成通道：managed `/tools` `chat_title`——catalog 的 `managed:kimi-code` 须 oauth-catalog + oauth ref（env 覆盖经 `resolveKimiCodeRuntimeAuth`）；Bearer 经 oauth facade；8s 超时；401 强刷重试一次仍败返回 undefined；`title.slice(0, 200)`；非 OAuthError 异常上抛。
+- 生成通道：managed `/tools` `chat_title`——catalog 的 `managed:kimi-code` 须 oauth-backed + oauth ref（env 覆盖经 `resolveKimiCodeRuntimeAuth`）；Bearer 经 oauth facade；8s 超时；401 强刷重试一次仍败返回 undefined；`title.slice(0, 200)`；非 OAuthError 异常上抛。
 - titleKind：`SessionRecord.metadata['titleKind']`（`replaceable` / `generated` / `custom`）——非 force 遇 `custom|generated` 早退、写入前再查 `custom`（生成中竞态不覆盖用户标题）、`force` 可覆盖；非 force 调用共享一个 in-flight Promise。写入走 `app.updateSession`（自动派 `session.meta_updated`）。
 - HTTP：`POST {prefix}/sessions/:session_id/title/generate`（body `{force?, source?}`；session 非 live 40401；无可用标题 40923）。
 

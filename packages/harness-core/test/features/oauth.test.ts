@@ -115,6 +115,16 @@ const MANAGED_PROVIDER_TOML =
   'storage = "file"\n' +
   'key = "oauth/kimi-code"\n';
 
+const MANAGED_PROVIDER_LEGACY_TOML =
+  '[providers."managed:kimi-code"]\n' +
+  'type = "kimi"\n' +
+  'base_url = "https://managed.example.com"\n' +
+  'api_key = ""\n' +
+  'alias_scope = "kimi-code"\n\n' +
+  '[providers."managed:kimi-code".oauth]\n' +
+  'storage = "file"\n' +
+  'key = "oauth/kimi-code"\n';
+
 async function mountOauthApp(options: {
   home: string;
   toml?: string;
@@ -319,6 +329,31 @@ describe('oauth feature', () => {
       failed: [],
     });
     await bare.disposeAsync();
+  });
+
+  it('materializes and refreshes a provider whose config entry carries oauth without model_source', async () => {
+    const home = await setupHome();
+    const { calls, fetchImpl } = stubCatalogFetch(managedModelsPayload);
+    const file = fakePersist(
+      `${MANAGED_PROVIDER_LEGACY_TOML}\n[model_catalog]\nrefresh_on_start = false\nrefresh_interval_ms = 0\n`,
+    );
+    const app = createHarness({
+      features: [
+        createConfig({ persist: file.persist }),
+        providerCatalog,
+        createKimi({ oauth: { home, fetchImpl } }),
+      ],
+    });
+    await app.ready();
+    const catalog = app.resolve(ProviderCatalogRef);
+    await until(() => catalog.models('managed:kimi-code').length === 2);
+    expect(catalog.isLive('managed:kimi-code')).toBe(true);
+    await until(() => file.saved.at(-1)?.includes('kimi-code/kimi-for-coding') === true);
+
+    const report = await app.resolve(OAuthTokensRef).refresh();
+    expect(report).toEqual({ changed: [], unchanged: ['managed:kimi-code'], failed: [] });
+    expect(calls.every((call) => call.url === 'https://managed.example.com/models')).toBe(true);
+    await app.disposeAsync();
   });
 });
 

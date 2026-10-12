@@ -7,6 +7,7 @@ import {
   createProvider,
   deepEqual,
   DEFAULT_MODEL_CONFIG_SECTION,
+  isOAuthBackedProvider,
   matchCatalogBinding,
   MODEL_CATALOG_CONFIG_SECTION,
   MODELS_CONFIG_SECTION,
@@ -347,7 +348,7 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
         const config = configRef.value;
         for (const providerId of store.providers()) {
           const info = store.providerInfo(providerId);
-          if (info?.modelSource !== 'oauth-catalog') continue;
+          if (info === undefined || !isOAuthBackedProvider(info)) continue;
           const ref = info.oauth;
           const token = ref === undefined ? undefined : tokens.resolve(ref);
           if (token === undefined) {
@@ -662,7 +663,9 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
           if (store === undefined) return;
           for (const [providerId, entry] of Object.entries(store.snapshot.value.providers)) {
             const info = entry.info;
-            if (info?.modelSource !== 'oauth-catalog' || info.type === undefined) continue;
+            if (info === undefined || !isOAuthBackedProvider(info) || info.type === undefined) {
+              continue;
+            }
             if (store.isLive(providerId) || materializing.has(providerId)) continue;
             const factory = protocolFactories.value.findLast(
               (contribution) => contribution.type === info.type,
