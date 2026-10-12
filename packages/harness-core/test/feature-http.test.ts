@@ -1786,6 +1786,7 @@ describe('feature-http kap-server aligned routes', () => {
 
     const refreshOauth = await post(env, '/providers:refresh_oauth');
     expect(refreshOauth.status).toBe(200);
+    expect(await refreshOauth.json()).toMatchObject({ code: 40948 });
 
     const noConfig = await mountHttp([providerCatalog, bindTestLlm(createMockRequester())]);
     const configUnavailable = await get(noConfig, '/providers');
@@ -3240,7 +3241,11 @@ function jsonResponse(payload: unknown, status = 200): Response {
   });
 }
 
-function stubOAuthFetch(options: { polls?: readonly (() => Response)[] } = {}): void {
+function stubOAuthFetch(
+  options: { polls?: readonly (() => Response)[] } & {
+    models?: { current: readonly unknown[] };
+  } = {},
+): void {
   let pollIndex = 0;
   const realFetch = globalThis.fetch;
   vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -3273,7 +3278,7 @@ function stubOAuthFetch(options: { polls?: readonly (() => Response)[] } = {}): 
       return next();
     }
     if (url.endsWith('/models')) {
-      return jsonResponse({ data: [] });
+      return jsonResponse({ data: options.models?.current ?? [] });
     }
     if (url.endsWith('/usages')) {
       return jsonResponse({ usages: { limit_5h: { used_ratio: 0.5 } }, boosterWallet: null });
@@ -3396,12 +3401,85 @@ describe('feature-http auth/oauth routes', () => {
       () => get(bare, '/oauth/usage'),
       () => get(bare, '/oauth/userinfo'),
       () => get(bare, '/oauth/region'),
+      () => post(bare, '/providers:refresh_oauth'),
     ];
     for (const probe of probes) {
       const response = await probe();
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({ code: 40948 });
     }
+  });
+
+  it('refreshes oauth-backed providers through the providers collection action', async () => {
+    const home = await tempDir('oauth-http-refresh-');
+    await seedManagedToken(home);
+    const models: { current: readonly unknown[] } = {
+      current: [
+        {
+          id: 'kimi-for-coding',
+          context_length: 262144,
+          supports_reasoning: true,
+          supports_image_in: true,
+          supports_video_in: false,
+          supports_tool_use: true,
+        },
+      ],
+    };
+    stubOAuthFetch({ models });
+    const file = fakePersist(
+      '[providers."managed:kimi-code"]\n' +
+        'type = "kimi"\n' +
+        'base_url = "https://managed.example.com"\n' +
+        'model_source = "oauth-catalog"\n\n' +
+        '[providers."managed:kimi-code".oauth]\n' +
+        'storage = "file"\n' +
+        'key = "oauth/kimi-code"\n\n' +
+        '[model_catalog]\n' +
+        'refresh_on_start = false\n' +
+        'refresh_interval_ms = 0\n',
+    );
+    const env = await mountHttp([
+      createConfig({ persist: file.persist }),
+      providerCatalog,
+      createKimi({ oauth: { home } }),
+    ]);
+    await vi.waitFor(async () => {
+      expect(file.saved.at(-1)?.includes('kimi-code/kimi-for-coding')).toBe(true);
+    });
+
+    const first = await post(env, '/providers:refresh_oauth');
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({
+      code: 0,
+      data: { changed: [], unchanged: ['managed:kimi-code'], failed: [] },
+    });
+
+    models.current = [
+      ...models.current,
+      {
+        id: 'kimi-latest',
+        context_length: 131072,
+        supports_reasoning: false,
+        supports_image_in: false,
+        supports_video_in: false,
+        supports_tool_use: true,
+      },
+    ];
+    const second = await post(env, '/providers:refresh_oauth');
+    expect(second.status).toBe(200);
+    expect(await second.json()).toMatchObject({
+      code: 0,
+      data: {
+        changed: [
+          { provider_id: 'managed:kimi-code', provider_name: 'Kimi Code', added: 1, removed: 0 },
+        ],
+        unchanged: [],
+        failed: [],
+      },
+    });
+    await vi.waitFor(async () => {
+      expect(file.saved.at(-1)?.includes('kimi-code/kimi-latest')).toBe(true);
+    });
   });
 
   it('serves usage, userinfo, region and the auth summary over http', async () => {

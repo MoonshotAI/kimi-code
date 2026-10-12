@@ -21,9 +21,27 @@ import type {
   OAuthLogoutResult,
 } from './auth';
 
+export interface OAuthRefreshChange {
+  readonly provider_id: string;
+  readonly provider_name: string;
+  readonly added: number;
+  readonly removed: number;
+}
+
+export interface OAuthRefreshFailure {
+  readonly provider: string;
+  readonly reason: string;
+}
+
+export interface OAuthRefreshReport {
+  readonly changed: readonly OAuthRefreshChange[];
+  readonly unchanged: readonly string[];
+  readonly failed: readonly OAuthRefreshFailure[];
+}
+
 export interface OAuthTokens {
   resolve(ref: CatalogOAuthRef): BearerTokenProvider | undefined;
-  refresh(): void;
+  refresh(): Promise<OAuthRefreshReport>;
   loginStart(input?: OAuthLoginStartInput): Promise<OAuthFlowStart>;
   loginStatus(provider?: string): OAuthFlowSnapshot | undefined;
   loginCancel(provider?: string): OAuthLoginCancelResult;

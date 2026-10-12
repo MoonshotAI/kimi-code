@@ -2,12 +2,13 @@ import type { Request, Response } from 'express';
 
 import { ProviderCatalogRef, useInject } from '@moonshot-ai/agent-core';
 
+import { OAuthTokensRef } from '#/features/kimi/oauth/index';
 import { ModelsDevError, ModelsDevRef, type ModelsDevFace } from '#/features/models-dev/index';
 
 import { useHttpRoute } from '../feature';
 import { ErrorCode, param, sendErr, sendOk } from '../route/http';
 
-const COLLECTION_ACTIONS = ['refresh', 'import_catalog', 'import_registry'] as const;
+const COLLECTION_ACTIONS = ['refresh', 'refresh_oauth', 'import_catalog', 'import_registry'] as const;
 
 type CollectionAction = (typeof COLLECTION_ACTIONS)[number];
 
@@ -81,6 +82,20 @@ export function useModelsDevRoutes(prefix: string): void {
           store.refresh(providerId);
         }
         sendOk(request, response, { changed: [], unchanged: providers, failed: [] });
+        return;
+      }
+      if (action === 'refresh_oauth') {
+        const oauth = useInject(OAuthTokensRef).value;
+        if (oauth === undefined) {
+          sendErr(
+            request,
+            response,
+            ErrorCode.OAUTH_UNAVAILABLE,
+            'oauth is unavailable (oauth feature is not installed)',
+          );
+          return;
+        }
+        sendOk(request, response, await oauth.refresh());
         return;
       }
       const facade = modelsDevFacade(request, response);

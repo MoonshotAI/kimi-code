@@ -225,6 +225,101 @@ describe('oauth feature', () => {
     await until(() => calls.length >= 3);
     await app.disposeAsync();
   });
+
+  it('reports refresh results, applies models in a single fetch, and detects in-place drift', async () => {
+    const home = await setupHome();
+    const payload = [...managedModelsPayload];
+    const { calls, fetchImpl } = stubCatalogFetch(payload);
+    const file = fakePersist(
+      `${MANAGED_PROVIDER_TOML}\n[model_catalog]\nrefresh_on_start = false\nrefresh_interval_ms = 0\n`,
+    );
+    const app = createHarness({
+      features: [
+        createConfig({ persist: file.persist }),
+        providerCatalog,
+        createKimi({ oauth: { home, fetchImpl } }),
+      ],
+    });
+    await app.ready();
+    const catalog = app.resolve(ProviderCatalogRef);
+    await until(() => catalog.models('managed:kimi-code').length === 2);
+    await until(() => file.saved.at(-1)?.includes('kimi-code/kimi-for-coding') === true);
+    const settled = calls.length;
+
+    const tokens = app.resolve(OAuthTokensRef);
+    const first = await tokens.refresh();
+    expect(first).toEqual({ changed: [], unchanged: ['managed:kimi-code'], failed: [] });
+    expect(calls.length).toBe(settled + 1);
+
+    payload.splice(1, 1, {
+      id: 'kimi-coding-plus',
+      context_length: 131072,
+      supports_reasoning: true,
+      supports_image_in: false,
+      supports_video_in: false,
+      supports_tool_use: true,
+    });
+    const second = await tokens.refresh();
+    expect(second).toEqual({
+      changed: [
+        { provider_id: 'managed:kimi-code', provider_name: 'Kimi Code', added: 1, removed: 1 },
+      ],
+      unchanged: [],
+      failed: [],
+    });
+    await until(
+      () =>
+        catalog.models('managed:kimi-code').some((model) => model.model === 'kimi-coding-plus') &&
+        file.saved.at(-1)?.includes('kimi-code/kimi-coding-plus') === true &&
+        file.saved.at(-1)?.includes('kimi-latest') === false,
+    );
+    expect(calls.length).toBe(settled + 2);
+
+    const third = await tokens.refresh();
+    expect(third).toEqual({ changed: [], unchanged: ['managed:kimi-code'], failed: [] });
+
+    payload[0] = { ...payload[0]!, context_length: 65536 };
+    const drift = await tokens.refresh();
+    expect(drift).toEqual({
+      changed: [
+        { provider_id: 'managed:kimi-code', provider_name: 'Kimi Code', added: 0, removed: 0 },
+      ],
+      unchanged: [],
+      failed: [],
+    });
+    await until(
+      () =>
+        catalog.models('managed:kimi-code').find((model) => model.model === 'kimi-for-coding')
+          ?.maxContextSize === 65536,
+    );
+    await app.disposeAsync();
+  });
+
+  it('reports failed providers when the token is missing and an empty report without oauth providers', async () => {
+    const emptyHome = await setupEmptyHome();
+    const { fetchImpl } = stubCatalogFetch(managedModelsPayload);
+    const app = await mountOauthApp({
+      home: emptyHome,
+      fetchImpl,
+      toml: `${MANAGED_PROVIDER_TOML}\n[model_catalog]\nrefresh_on_start = false\nrefresh_interval_ms = 0\n`,
+    });
+    const failed = await app.resolve(OAuthTokensRef).refresh();
+    expect(failed.changed).toEqual([]);
+    expect(failed.unchanged).toEqual([]);
+    expect(failed.failed).toHaveLength(1);
+    expect(failed.failed[0]?.provider).toBe('managed:kimi-code');
+    expect(failed.failed[0]?.reason).toContain('No token');
+    await app.disposeAsync();
+
+    const home = await setupHome();
+    const bare = await mountOauthApp({ home, fetchImpl });
+    await expect(bare.resolve(OAuthTokensRef).refresh()).resolves.toEqual({
+      changed: [],
+      unchanged: [],
+      failed: [],
+    });
+    await bare.disposeAsync();
+  });
 });
 
 interface LoginFetchCall {

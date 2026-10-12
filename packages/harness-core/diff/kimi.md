@@ -59,7 +59,7 @@
 | --- | --- |
 | 工厂 props 注入 | `CreateKimiProps{oauth,web,fetch}`：`home`/`fetchImpl`/`identity` 三端口（v2 靠 DI bootstrap args + identity 节，无工厂形态）；`resolveOauthHome` 支持 `KIMI_CODE_HOME` env 回落（`oauth/tokens.ts:18-20`） |
 | facade 面 | `OAuthTokensRef`（resolve/refresh——refresh 主动刷新全部 live oauth-catalog provider）、`WebSearchRef`、`WebFetchRef`、`SessionTitleRef`、`SessionTitlePromptSourceRef`、`TraceRef` 六个 `useExpose` facade + `useOauth`/`useWebSearch`/`useWebFetch`/`useSessionTitle` inject helper（v2 为 DI service accessor） |
-| `OAuthTokensRef.refresh()` 主动刷新 | v2 的刷新入口是 REST 编排（`refreshOAuthProviderModels`）；harness-core facade 可直接遍历 catalog 刷新全部 live oauth-catalog provider（`oauth/feature.ts:79-85`） |
+| `OAuthTokensRef.refresh()` 主动刷新 | v2 的刷新入口是 REST 编排（`refreshOAuthProviderModels`，回 `{changed,unchanged,failed}` report）；harness-core facade 同名编排：遍历 catalog 全部 oauth-catalog provider 逐个拉取，按 config models 节 managed 分区 diff 出 kap 同形 report（feature-http `:refresh_oauth` 直接回它），成功结果一次性注入 store.pull 落盘 |
 | TraceFace 响应式 | `traceId` 为 `Ref`，消费方可 watch（v2 为命令式 `traceId()` 读取） |
 | 凭证解析链 | `useCredentialResolver` 贡献 oauth resolver + provider-catalog agent slot 挂载时按 defaultModel 自动 `setConfig + setRequester + setCredentialProvider`，401 恢复走 credentialsRecovery 内建链（v2 为 `ModelOAuthTokenAdapter` + model-auth 解析，无统一 resolver 注册表） |
 | excerpt 纯函数出口 | `excerpt.ts` 把 `firstUserPromptTexts`/`firstTurnExcerpt`/`digestExcerpt`/`composeTitleInput` 作为纯函数导出（v2 封装在 Service 内），可独立测试复用 |

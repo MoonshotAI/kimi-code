@@ -5,6 +5,7 @@ import {
   createFeature,
   createOAuthCredentialProvider,
   createProvider,
+  deepEqual,
   DEFAULT_MODEL_CONFIG_SECTION,
   matchCatalogBinding,
   MODEL_CATALOG_CONFIG_SECTION,
@@ -17,6 +18,7 @@ import {
   useCredentialResolver,
   useInject,
   useProviderCatalog,
+  type CatalogModelConfig,
   type CatalogOAuthRef,
   type CatalogProviderInfo,
   type FeatureSlots,
@@ -72,7 +74,14 @@ import {
   type OAuthFlowStatus,
 } from './auth';
 import { managedKimiCodeModelSeed } from './models';
-import { createOAuthTokenResolver, resolveOauthHome, type OAuthTokens } from './tokens';
+import {
+  createOAuthTokenResolver,
+  resolveOauthHome,
+  type OAuthRefreshChange,
+  type OAuthRefreshFailure,
+  type OAuthRefreshReport,
+  type OAuthTokens,
+} from './tokens';
 
 export const OAuthTokensRef = createFacadeToken<OAuthTokens>('oauth.tokens');
 
@@ -106,7 +115,9 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
       const aliasScopeWrites = new Map<string, Promise<void>>();
       const materializing = new Set<string>();
       const flows = new Map<string, LoginFlowState>();
+      const pendingSeeds = new Map<string, readonly LlmModelSeed[]>();
       let refreshOnStartPending = false;
+      let refreshChain: Promise<void> = Promise.resolve();
       const fetchCatalog = async (info: CatalogProviderInfo): Promise<readonly LlmModelSeed[]> => {
         const ref = info.oauth;
         if (ref === undefined) return [];
@@ -235,7 +246,7 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
           await provisionAfterLogin(state.provider, state.oauthRef, state.loginBaseUrl);
           if (flows.get(state.provider) !== state) return;
           if (state.provider === KIMI_CODE_PROVIDER_NAME) {
-            if (catalog.value?.isLive(KIMI_CODE_PROVIDER_NAME) === true) facade.refresh();
+            if (catalog.value?.isLive(KIMI_CODE_PROVIDER_NAME) === true) void facade.refresh();
             healDefaultModelAfterManagedLogin();
           }
         } catch {
@@ -327,16 +338,82 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
           return false;
         }
       };
+      const doRefresh = async (): Promise<OAuthRefreshReport> => {
+        const changed: OAuthRefreshChange[] = [];
+        const unchanged: string[] = [];
+        const failed: OAuthRefreshFailure[] = [];
+        const store = catalog.value;
+        if (store === undefined) return { changed, unchanged, failed };
+        const config = configRef.value;
+        for (const providerId of store.providers()) {
+          const info = store.providerInfo(providerId);
+          if (info?.modelSource !== 'oauth-catalog') continue;
+          const ref = info.oauth;
+          const token = ref === undefined ? undefined : tokens.resolve(ref);
+          if (token === undefined) {
+            failed.push({ provider: providerId, reason: 'OAuth token provider is not configured.' });
+            continue;
+          }
+          let seeds: readonly LlmModelSeed[];
+          try {
+            const accessToken = await token.getAccessToken();
+            const models = await fetchManagedKimiCodeModels({
+              accessToken,
+              baseUrl: info.baseUrl,
+              fetchImpl: props.fetchImpl,
+            });
+            if (models.length === 0) continue;
+            seeds = models.map(managedKimiCodeModelSeed);
+          } catch (error) {
+            failed.push({
+              provider: providerId,
+              reason: error instanceof Error ? error.message : String(error),
+            });
+            continue;
+          }
+          const prefix = `${info.aliasScope ?? providerId}/`;
+          const before = new Map<string, CatalogModelConfig>();
+          for (const [key, record] of Object.entries(
+            config?.get<ModelsSection>(MODELS_CONFIG_SECTION) ?? {},
+          )) {
+            if (record.provider !== providerId || !key.startsWith(prefix)) continue;
+            before.set(record.model, record);
+          }
+          const afterIds = new Set(seeds.map((seed) => seed.model));
+          const added = [...afterIds].filter((id) => !before.has(id)).length;
+          const removed = [...before.keys()].filter((id) => !afterIds.has(id)).length;
+          const drifted = seeds.some((seed) => {
+            const record = before.get(seed.model);
+            return record !== undefined && !managedRecordEqual(record, seed);
+          });
+          if (added === 0 && removed === 0 && !drifted) {
+            unchanged.push(providerId);
+          } else {
+            changed.push({
+              provider_id: providerId,
+              provider_name: providerId === KIMI_CODE_PROVIDER_NAME ? 'Kimi Code' : providerId,
+              added,
+              removed,
+            });
+          }
+          if (store.isLive(providerId)) {
+            pendingSeeds.set(providerId, seeds);
+            store.refresh(providerId);
+          }
+        }
+        return { changed, unchanged, failed };
+      };
+      const refreshModels = (): Promise<OAuthRefreshReport> => {
+        const run = refreshChain.then(doRefresh);
+        refreshChain = run.then(
+          () => undefined,
+          () => undefined,
+        );
+        return run;
+      };
       const facade: OAuthTokens = {
         resolve: (ref) => tokens.resolve(ref),
-        refresh: () => {
-          const store = catalog.value;
-          if (store === undefined) return;
-          for (const providerId of store.providers()) {
-            if (store.providerInfo(providerId)?.modelSource !== 'oauth-catalog') continue;
-            if (store.isLive(providerId)) store.refresh(providerId);
-          }
-        },
+        refresh: refreshModels,
         loginStart: async (input) => {
           const provider = input?.provider ?? KIMI_CODE_PROVIDER_NAME;
           const auth = resolveLoginAuth(provider, input?.region);
@@ -538,7 +615,7 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
       const runStartRefresh = (): void => {
         if (!refreshOnStartPending || materializing.size > 0) return;
         refreshOnStartPending = false;
-        facade.refresh();
+        void facade.refresh();
       };
       useExpose(OAuthTokensRef, facade);
       useCredentialResolver({
@@ -598,11 +675,19 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
               try {
                 await aliasScopeWrites.get(providerId);
                 if (store.isLive(providerId)) return;
+                pendingSeeds.delete(providerId);
                 store.refresh(
                   createProvider({
                     id: providerId,
                     protocols,
-                    models: () => fetchCatalog(info),
+                    models: () => {
+                      const injected = pendingSeeds.get(providerId);
+                      if (injected !== undefined) {
+                        pendingSeeds.delete(providerId);
+                        return Promise.resolve(injected);
+                      }
+                      return fetchCatalog(info);
+                    },
                   }),
                 );
               } finally {
@@ -648,7 +733,7 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
           if (interval <= 0) return;
           const scheduleNext = (): void => {
             timer = setTimeout(() => {
-              facade.refresh();
+              void facade.refresh();
               scheduleNext();
             }, interval);
             timer.unref?.();
@@ -671,4 +756,13 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
 
 export function createOauth(props: CreateOauthProps = {}): FeatureSpec {
   return createFeature('oauth', createOauthSlots(props));
+}
+
+function managedRecordEqual(record: CatalogModelConfig, seed: LlmModelSeed): boolean {
+  return (
+    record.maxContextSize === seed.maxContextSize &&
+    record.maxInputSize === seed.maxInputSize &&
+    record.baseUrl === seed.baseUrl &&
+    deepEqual(record.capability, seed.capability)
+  );
 }
