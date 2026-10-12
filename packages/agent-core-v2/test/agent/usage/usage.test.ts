@@ -4,7 +4,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import {
   IAgentLLMRequesterService,
   type AgentLLMTurnRequestSnapshot,
@@ -21,7 +21,7 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { SessionUsageService } from '#/session/usage/sessionUsageService';
 import type { Event2 } from '#/app/event/event2';
-import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
+import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
@@ -323,13 +323,8 @@ describe('SessionUsageService (wire-backed)', () => {
 describe('AgentCacheProbeService', () => {
   interface ProbeRequests {
     parent?: AgentLLMTurnRequestSnapshot;
+    parentRevision?: number;
     own?: AgentLLMTurnRequestSnapshot;
-  }
-
-  const busHandlers = new Map<string, (event: Event2<any>) => void>();
-
-  function publishBusEvent(type: string, event: Event2<any>): void {
-    busHandlers.get(type)?.(event);
   }
 
   function requesterReturning(
@@ -347,14 +342,6 @@ describe('AgentCacheProbeService', () => {
       _serviceBrand: undefined,
       track2,
     } as unknown as ITelemetryService);
-    busHandlers.clear();
-    ix.stub(ISessionEventBus, {
-      _serviceBrand: undefined,
-      subscribe: (cls: { type: string }, handler: (event: Event2<any>) => void) => {
-        busHandlers.set(cls.type, handler);
-        return { dispose: () => {} };
-      },
-    } as unknown as ISessionEventBus);
     ix.stub(IModelCatalog, {
       _serviceBrand: undefined,
       get: (alias: string) => {
@@ -368,10 +355,22 @@ describe('AgentCacheProbeService', () => {
     );
     ix.stub(IAgentLLMRequesterService, requesterReturning(() => requests.own));
     const parentRequester = requesterReturning(() => requests.parent);
+    const parentRevisionAtFork = requests.parent?.contextRevision ?? 0;
+    const parentContextMemory = {
+      _serviceBrand: undefined,
+      prefixRevision: () => requests.parentRevision ?? parentRevisionAtFork,
+    } as unknown as IAgentContextMemoryService;
     ix.stub(IAgentLifecycleService, {
       _serviceBrand: undefined,
       handleOf: (agentId: string) =>
-        agentId === forkedFrom ? { accessor: { get: () => parentRequester } } : undefined,
+        agentId === forkedFrom
+          ? {
+              accessor: {
+                get: (id: unknown) =>
+                  id === IAgentContextMemoryService ? parentContextMemory : parentRequester,
+              },
+            }
+          : undefined,
     } as unknown as IAgentLifecycleService);
     return track2;
   }
@@ -399,6 +398,7 @@ describe('AgentCacheProbeService', () => {
     const requests: ProbeRequests = {
       parent: {
         modelAlias: 'model-a',
+        contextRevision: 1,
         toolsHash: 'tools-a',
         systemPromptHash: 'system-a',
         inputTokens: 1_200,
@@ -407,6 +407,7 @@ describe('AgentCacheProbeService', () => {
       },
       own: {
         modelAlias: 'model-a',
+        contextRevision: 1,
         toolsHash: 'tools-a',
         systemPromptHash: 'system-b',
         inputTokens: 8,
@@ -418,6 +419,7 @@ describe('AgentCacheProbeService', () => {
     disposables.add(ix.createInstance(AgentCacheProbeService));
     requests.parent = {
       modelAlias: 'model-a',
+      contextRevision: 2,
       toolsHash: 'tools-b',
       systemPromptHash: 'system-b',
       inputTokens: 1_500,
@@ -447,6 +449,7 @@ describe('AgentCacheProbeService', () => {
     const track2 = stubProbeDeps('main', {
       own: {
         modelAlias: 'model-a',
+        contextRevision: 1,
         toolsHash: 'tools-a',
         systemPromptHash: 'system-a',
         inputTokens: 8,
@@ -474,6 +477,7 @@ describe('AgentCacheProbeService', () => {
     const track2 = stubProbeDeps('main', {
       parent: {
         modelAlias: 'model-b',
+        contextRevision: 1,
         toolsHash: 'tools-a',
         systemPromptHash: 'system-a',
         inputTokens: 1_200,
@@ -482,6 +486,7 @@ describe('AgentCacheProbeService', () => {
       },
       own: {
         modelAlias: 'model-a',
+        contextRevision: 1,
         toolsHash: 'tools-a',
         systemPromptHash: 'system-a',
         inputTokens: 8,
@@ -505,10 +510,11 @@ describe('AgentCacheProbeService', () => {
     });
   });
 
-  it('drops the captured parent request when the parent context is spliced away', async () => {
-    const track2 = stubProbeDeps('main', {
+  it('drops the captured parent request once the parent prefix revision moves on', async () => {
+    const requests: ProbeRequests = {
       parent: {
         modelAlias: 'model-a',
+        contextRevision: 1,
         toolsHash: 'tools-a',
         systemPromptHash: 'system-a',
         inputTokens: 1_200,
@@ -517,19 +523,18 @@ describe('AgentCacheProbeService', () => {
       },
       own: {
         modelAlias: 'model-a',
+        contextRevision: 1,
         toolsHash: 'tools-a',
         systemPromptHash: 'system-a',
         inputTokens: 8,
         startedAt: 6_500,
         finishedAt: 7_000,
       },
-    });
+    };
+    const track2 = stubProbeDeps('main', requests);
     disposables.add(ix.createInstance(AgentCacheProbeService));
 
-    publishBusEvent(
-      ContextSpliced.type,
-      new ContextSpliced({ agentId: 'main', start: 2, deleteCount: 3, messages: [] }),
-    );
+    requests.parentRevision = 2;
     await svc.record(agent, 'model-a', a1, { type: 'turn', turnId: 1 });
 
     expect(track2).toHaveBeenCalledWith('prompt_cache_probe', {
@@ -541,53 +546,6 @@ describe('AgentCacheProbeService', () => {
       input_cache_read: 3,
       input_cache_creation: 4,
       output_tokens: 2,
-    });
-  });
-
-  it('keeps the captured parent request through foreign or non-deleting rewrites', async () => {
-    const track2 = stubProbeDeps('main', {
-      parent: {
-        modelAlias: 'model-a',
-        toolsHash: 'tools-a',
-        systemPromptHash: 'system-a',
-        inputTokens: 1_200,
-        startedAt: 1_000,
-        finishedAt: 4_000,
-      },
-      own: {
-        modelAlias: 'model-a',
-        toolsHash: 'tools-a',
-        systemPromptHash: 'system-a',
-        inputTokens: 8,
-        startedAt: 6_500,
-        finishedAt: 7_000,
-      },
-    });
-    disposables.add(ix.createInstance(AgentCacheProbeService));
-
-    publishBusEvent(
-      ContextSpliced.type,
-      new ContextSpliced({ agentId: 'other-agent', start: 2, deleteCount: 3, messages: [] }),
-    );
-    publishBusEvent(
-      ContextSpliced.type,
-      new ContextSpliced({ agentId: 'main', start: 2, deleteCount: 0, messages: [] }),
-    );
-    await svc.record(agent, 'model-a', a1, { type: 'turn', turnId: 1 });
-
-    expect(track2).toHaveBeenCalledWith('prompt_cache_probe', {
-      source: 'fork',
-      turn_id: 1,
-      provider_type: 'kimi',
-      protocol: 'anthropic',
-      input_tokens: 8,
-      input_cache_read: 3,
-      input_cache_creation: 4,
-      output_tokens: 2,
-      tools_match: true,
-      system_prompt_match: true,
-      parent_input_tokens: 1_200,
-      parent_request_gap_ms: 2_500,
     });
   });
 

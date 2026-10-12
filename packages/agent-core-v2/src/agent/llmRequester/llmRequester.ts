@@ -58,6 +58,7 @@ export interface PreparedTurnRequestConfig {
 
 export interface AgentLLMTurnRequestSnapshot {
   readonly modelAlias: string;
+  readonly contextRevision: number;
   readonly toolsHash: string;
   readonly systemPromptHash: string;
   readonly inputTokens: number;

@@ -1,10 +1,8 @@
 import { createHash } from 'node:crypto';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { Disposable } from '#/_base/di/lifecycle';
 import { defineState } from '#/state/state';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import {
   IAgentContextProjectorService,
   type MediaStripSnapshot,
@@ -54,7 +52,6 @@ import type {
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import { IEventBus } from '#/app/event/eventBus';
 import { WarningIssued } from '#/agent/profile/profileOps';
 
 import {
@@ -157,7 +154,7 @@ export const llmRequesterLastTurnRequestKey = defineState<AgentLLMTurnRequestSna
   () => undefined as AgentLLMTurnRequestSnapshot | undefined,
 );
 
-export class AgentLLMRequesterService extends Disposable implements IAgentLLMRequesterService {
+export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   declare readonly _serviceBrand: undefined;
 
   private readonly toolCallIdNormalizer = new ToolCallIdNormalizer();
@@ -180,9 +177,7 @@ export class AgentLLMRequesterService extends Disposable implements IAgentLLMReq
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
-    @IEventBus eventBus: IEventBus,
   ) {
-    super();
     this.states.contributeState(llmRequestTraceKey);
     this.states.contributeState(llmRequesterLastConfigLogSignatureKey);
     this.states.contributeState(llmRequesterTurnConfigsKey);
@@ -190,11 +185,6 @@ export class AgentLLMRequesterService extends Disposable implements IAgentLLMReq
     this.states.contributeState(llmRequesterMediaStrippedTurnsKey);
     this.states.contributeState(llmRequesterEmittedThinkingEffortWarningsKey);
     this.states.contributeState(llmRequesterLastTurnRequestKey);
-    this._register(
-      eventBus.subscribe(ContextSpliced, (event) => {
-        if (event.deleteCount > 0) this.states.set(llmRequesterLastTurnRequestKey, undefined);
-      }),
-    );
   }
 
   private get lastConfigLogSignature(): string | undefined {
@@ -498,6 +488,7 @@ export class AgentLLMRequesterService extends Disposable implements IAgentLLMReq
       if (request.source?.type === 'turn') {
         this.states.set(llmRequesterLastTurnRequestKey, {
           modelAlias: request.modelAlias,
+          contextRevision: this.context.prefixRevision(),
           toolsHash: recorded.toolsHash,
           systemPromptHash: recorded.systemPromptHash,
           inputTokens: inputTotal(usage ?? emptyUsage()),

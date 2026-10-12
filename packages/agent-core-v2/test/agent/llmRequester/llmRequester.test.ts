@@ -270,11 +270,12 @@ describe('LLMRequester service migration coverage', () => {
         toolsHash: recorded?.['toolsHash'],
         systemPromptHash: recorded?.['systemPromptHash'],
         inputTokens: inputTotal(finish.usage),
+        contextRevision: ctx.get(IAgentContextMemoryService).prefixRevision(),
       });
       expect(snapshot!.finishedAt).toBeGreaterThanOrEqual(snapshot!.startedAt);
     });
 
-    it('forgets the last turn request once the context is rewritten', async () => {
+    it('outdates the recorded context revision when the context is rewritten', async () => {
       const context = ctx.get(IAgentContextMemoryService);
       ctx.mockNextResponse({ type: 'text', text: 'first turn response' });
       await llmRequester.request({
@@ -282,21 +283,21 @@ describe('LLMRequester service migration coverage', () => {
         source: { type: 'turn', turnId: 1 },
       });
       context.append(userMessage('appended after the request'));
-      expect(llmRequester.lastTurnRequest()).toBeDefined();
+      expect(llmRequester.lastTurnRequest()?.contextRevision).toBe(context.prefixRevision());
 
       context.applyCompaction({
         summary: 'The conversation was compacted.',
         compactedCount: context.get().length,
         tokensBefore: 1000,
       });
-      expect(llmRequester.lastTurnRequest()).toBeUndefined();
+      expect(llmRequester.lastTurnRequest()?.contextRevision).not.toBe(context.prefixRevision());
 
       ctx.mockNextResponse({ type: 'text', text: 'second turn response' });
       await llmRequester.request({
         messages: [userMessage('second turn request')],
         source: { type: 'turn', turnId: 2 },
       });
-      expect(llmRequester.lastTurnRequest()).toBeDefined();
+      expect(llmRequester.lastTurnRequest()?.contextRevision).toBe(context.prefixRevision());
     });
   });
 

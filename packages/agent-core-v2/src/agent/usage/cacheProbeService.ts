@@ -2,8 +2,7 @@ import { IInstantiationService } from '#/_base/di/instantiation';
 import { Service } from '#/_base/di/service';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
-import { ISessionEventBus } from '#/app/event/eventBus';
-import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import {
   IAgentLLMRequesterService,
   type AgentLLMTurnRequestSnapshot,
@@ -21,39 +20,45 @@ import { type UsageRecordedContext } from './usage';
 export class AgentCacheProbeService extends Service implements IAgentCacheProbeService {
   declare readonly _serviceBrand: undefined;
 
+  private parentId: string | undefined;
+
+  private parentRequest: AgentLLMTurnRequestSnapshot | undefined;
+
   constructor(
     @ISessionUsageService usage: ISessionUsageService,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IModelCatalog private readonly models: IModelCatalog,
     @IInstantiationService private readonly instantiation: IInstantiationService,
-    @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
-    @ISessionEventBus eventBus: ISessionEventBus,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) {
     super();
     if (scopeContext.forkedFrom === undefined) return;
-    const parentId = scopeContext.forkedFrom;
-    const parentRequest = agentLifecycle
-      .handleOf(parentId)
+    this.parentId = scopeContext.forkedFrom;
+    this.parentRequest = agentLifecycle
+      .handleOf(this.parentId)
       ?.accessor.get(IAgentLLMRequesterService)
       .lastTurnRequest();
-    let stale = false;
-    this._register(
-      eventBus.subscribe(ContextSpliced, (e) => {
-        if (e.agentId === parentId && e.deleteCount > 0) stale = true;
-      }),
-    );
     this._register(
       usage.onDidRecord((e) => {
-        if (e.agent.agentId === scopeContext.agentId) {
-          this.probe(e, stale ? undefined : parentRequest);
-        }
+        if (e.agent.agentId === scopeContext.agentId) this.probe(e);
       }),
     );
   }
 
-  private probe(e: UsageRecordedContext, parent: AgentLLMTurnRequestSnapshot | undefined): void {
+  private probe(e: UsageRecordedContext): void {
     if (!e.firstRecord || e.source?.type !== 'turn') return;
+    const parentRevision =
+      this.parentId === undefined
+        ? undefined
+        : this.agentLifecycle
+            .handleOf(this.parentId)
+            ?.accessor.get(IAgentContextMemoryService)
+            .prefixRevision();
+    const parent =
+      this.parentRequest !== undefined && this.parentRequest.contextRevision === parentRevision
+        ? this.parentRequest
+        : undefined;
     let providerType: string | undefined;
     let protocol: string | undefined;
     try {
