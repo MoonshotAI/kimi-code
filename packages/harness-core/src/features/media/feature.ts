@@ -1,6 +1,5 @@
 import {
   ConfigRef,
-  Providers,
   createFacadeToken,
   createFeature,
   createMediaDegradeRecovery,
@@ -16,7 +15,7 @@ import {
   type MediaStore,
   type MediaUploadCache,
 } from '@moonshot-ai/agent-core';
-import { useCollection, useExpose } from '@moonshot-ai/agent-core/kernel/index';
+import { useExpose } from '@moonshot-ai/agent-core/kernel/index';
 
 import type { OsHost } from '#/features/os/host/types';
 
@@ -84,11 +83,9 @@ export function createMedia(props: CreateMediaProps): FeatureSpec {
         resolveImageLimits(
           config.value?.get<ImageConfig>(IMAGE_CONFIG_SECTION) ?? {},
         );
-      const contributed = useCollection(Providers);
       useMediaLower({
         source: props.store,
         cache: props.cache,
-        providers: () => contributed.value.map((item) => item.provider),
       });
       useLlmRecovery(createMediaDegradeRecovery());
       useAgentTools(

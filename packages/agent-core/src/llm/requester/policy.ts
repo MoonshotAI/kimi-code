@@ -64,6 +64,14 @@ function asRemote(error: LlmErrorMessage): LlmRemoteErrorMessage | undefined {
   return error.kind === 'syntax' ? undefined : error;
 }
 
+function withRequesterMedia(
+  base: MediaLowerPorts | undefined,
+  requester: LlmRequester,
+): MediaLowerPorts | undefined {
+  if (base === undefined || requester.media === undefined) return base;
+  return { ...base, upload: requester.media };
+}
+
 function abortedOf(result: Extract<LlmResult, { type: 'failed' }>): LlmResult {
   return {
     type: 'aborted',
@@ -118,7 +126,7 @@ export async function runLlmRequest(
         content: {
           ...input.content,
           messages: resolvedMessages,
-          media: input.content.media ?? policy.media?.(),
+          media: input.content.media ?? withRequesterMedia(policy.media?.(), requester),
         },
         signal: input.signal,
         toolCallIds: input.toolCallIds,

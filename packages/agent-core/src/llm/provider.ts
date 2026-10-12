@@ -97,16 +97,16 @@ export function createProvider<
     binding.capability?.(modelName) ?? binding.base.capability?.(modelName) ?? UNKNOWN_CAPABILITY;
 
   const requesters = Object.fromEntries(
-    [...entries.entries()].map(([name, binding]) => [
-      name,
-      createRequesterFromHandle(
+    [...entries.entries()].map(([name, binding]) => {
+      const requester = createRequesterFromHandle(
         binding.base.bind({
           connection: binding.connection,
           trait: binding.trait,
           classifyError: binding.classifyError,
         }),
-      ),
-    ]),
+      );
+      return [name, definition.media === undefined ? requester : { ...requester, media: definition.media }];
+    }),
   ) as { readonly [K in Protocol]: LlmRequester };
 
   return {

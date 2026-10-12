@@ -1,5 +1,6 @@
 import type { LlmErrorMessage, LlmRemoteErrorMessage } from '#/llm/errors';
 import type { MediaLowerPorts } from '#/llm/media/materialize';
+import type { ProviderMediaContribution } from '#/llm/media/upload';
 import type {
   Message,
   StreamedMessagePart,
@@ -72,6 +73,7 @@ export interface LlmRequestControl {
 }
 
 export interface LlmRequester {
+  readonly media?: ProviderMediaContribution;
   generate(
     config: LlmRequestConfig,
     content: LlmRequestContent,

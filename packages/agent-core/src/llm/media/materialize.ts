@@ -1,19 +1,18 @@
 import type { AudioURLPart, ContentPart, ImageURLPart, VideoURLPart } from '#/llm/message';
 import type { LlmModel, ModelCapability } from '#/llm/model';
-import type { Provider } from '#/llm/provider';
 
 import type { MediaUploadCache } from './cache';
 import { mediaKindForMime, mediaMimeForPath, type MediaKind } from './mime';
 import { parseMediaRefUrl } from './ref';
 import type { MediaContent, MediaSource } from './source';
-import type { MediaFileRef } from './upload';
+import type { MediaFileRef, ProviderMediaContribution } from './upload';
 
 export type MediaPart = ImageURLPart | AudioURLPart | VideoURLPart;
 
 export interface MediaLowerPorts {
   readonly source: MediaSource;
   readonly cache: MediaUploadCache;
-  readonly providers: () => readonly Provider[];
+  readonly upload?: ProviderMediaContribution;
 }
 
 export interface MediaLowerContext {
@@ -21,7 +20,7 @@ export interface MediaLowerContext {
   readonly signal: AbortSignal;
   readonly source?: MediaSource;
   readonly cache?: MediaUploadCache;
-  readonly providers?: () => readonly Provider[];
+  readonly upload?: ProviderMediaContribution;
 }
 
 export type MaterializedMedia =
@@ -49,7 +48,7 @@ export function mediaContextOf(input: {
     signal: input.signal ?? NEVER_ABORTED,
     source: input.media?.source,
     cache: input.media?.cache,
-    providers: input.media?.providers,
+    upload: input.media?.upload,
   };
 }
 
@@ -121,10 +120,6 @@ function isMediaUploadAuthError(error: unknown): boolean {
   return status === 401 || status === 403;
 }
 
-function providersOf(ctx: MediaLowerContext): Map<string, Provider> {
-  return new Map((ctx.providers?.() ?? []).map((provider) => [provider.id, provider]));
-}
-
 async function materializeLocal(
   ref: string,
   kind: MediaKind | 'audio',
@@ -153,8 +148,7 @@ async function materializeLocal(
   const content = await ctx.source?.get(ref);
   const mimeType = content === undefined ? undefined : resolveMimeType(content, 'video');
   if (content === undefined || mimeType === undefined) return unavailableText('video');
-  const provider = providersOf(ctx).get(providerKey);
-  const uploader = provider?.media?.uploadVideo;
+  const uploader = ctx.upload?.uploadVideo;
   if (uploader !== undefined) {
     try {
       const uploaded: MediaFileRef = await uploader(
@@ -167,7 +161,7 @@ async function materializeLocal(
       if (ctx.signal.aborted || isMediaUploadAuthError(error)) throw error;
     }
   }
-  if (provider?.media?.inlineVideo === true) {
+  if (ctx.upload?.inlineVideo === true) {
     return toInline(content.bytes, mimeType);
   }
   return unavailableText('video');
