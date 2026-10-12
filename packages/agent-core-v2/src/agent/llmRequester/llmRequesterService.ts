@@ -492,7 +492,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           contextRevision: request.contextRevision,
           toolsHash: recorded.toolsHash,
           systemPromptHash: recorded.systemPromptHash,
-          inputTokens: inputTotal(usage ?? emptyUsage()),
+          inputTokens: usage === undefined ? undefined : inputTotal(usage),
           startedAt,
           finishedAt: Date.now(),
         });

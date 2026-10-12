@@ -61,7 +61,7 @@ export interface AgentLLMTurnRequestSnapshot {
   readonly contextRevision: number;
   readonly toolsHash: string;
   readonly systemPromptHash: string;
-  readonly inputTokens: number;
+  readonly inputTokens?: number;
   readonly startedAt: number;
   readonly finishedAt: number;
 }
