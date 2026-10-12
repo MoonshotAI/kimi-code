@@ -154,6 +154,12 @@ describe('readClipboardMedia', () => {
         );
         expect(script).not.toContain('{;');
         expect(script).not.toContain('};');
+        expect(script).toContain(
+          'if (($stream -is [System.IO.MemoryStream]) -and ($stream.Length -gt 0)) {\n' +
+            '    [System.IO.File]::WriteAllBytes($path, $stream.ToArray()); $ok = $true\n' +
+            '  }',
+        );
+        expect(script).toContain('if (-not $ok) {\n  $img = [System.Windows.Forms.Clipboard]::GetImage()');
         // PowerShell writes via the Windows path; under WSL that is the same inode
         // as the Linux temp file created before wslpath.
         writeFileSync(linuxTmpPath, imageBytes);
@@ -203,6 +209,31 @@ describe('readClipboardMedia', () => {
     });
 
     expect(media).toBeNull();
+    expect(runCommand).toHaveBeenCalledWith('wl-paste', ['--list-types'], expect.any(Object));
+    expect(runCommand).toHaveBeenCalledWith(
+      'xclip',
+      ['-selection', 'clipboard', '-t', 'TARGETS', '-o'],
+      expect.any(Object),
+    );
+  });
+
+  it.each(['wl-paste', 'xclip'])('prefers an image from the injected %s runner over PowerShell', async (helper) => {
+    const imageBytes = Buffer.from(png(9, 7));
+    const runCommand = vi.fn((command: string, args: string[]) => {
+      if (command !== helper) return { ok: false, stdout: Buffer.alloc(0) };
+      const listing = args.includes('--list-types') || args.includes('TARGETS');
+      return { ok: true, stdout: listing ? Buffer.from('image/png\n') : imageBytes };
+    });
+
+    const media = await readClipboardMedia({
+      platform: 'linux',
+      env: { WSL_DISTRO_NAME: 'Ubuntu' },
+      clipboard: fakeClipboard({}),
+      runCommand,
+    });
+
+    expect(media).toEqual({ kind: 'image', bytes: imageBytes, mimeType: 'image/png' });
+    expect(runCommand.mock.calls.some(([command]) => command === 'powershell.exe')).toBe(false);
   });
 
   it('rejects pasted videos larger than 100 MB', async () => {
