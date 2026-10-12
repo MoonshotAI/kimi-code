@@ -10,9 +10,6 @@ import {
   type AgentLLMRequestFinish,
 } from '#/agent/llmRequester/llmRequester';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { ContextUndone } from '#/agent/undo/undoService';
-import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ILogger as Logger, LogPayload } from '#/_base/log/log';
 import {
   configServices,
@@ -300,10 +297,6 @@ describe('LLMRequester service migration coverage', () => {
         source: { type: 'turn', turnId: 2 },
       });
       expect(llmRequester.lastTurnRequest()).toBeDefined();
-      await ctx
-        .get(IEventDispatcher)
-        .dispatch(new ContextUndone({ agentId: ctx.get(IAgentScopeContext).agentId, turns: 1 }));
-      expect(llmRequester.lastTurnRequest()).toBeUndefined();
     });
   });
 

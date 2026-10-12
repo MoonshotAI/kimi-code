@@ -12,7 +12,6 @@ import {
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import { ContextUndone } from '#/agent/undo/undoService';
 import { AgentCacheProbeService } from '#/agent/usage/cacheProbeService';
 import {
   type UsageRecordedContext,
@@ -506,42 +505,6 @@ describe('AgentCacheProbeService', () => {
     });
   });
 
-  it('drops the captured parent request when the parent context is undone', async () => {
-    const track2 = stubProbeDeps('main', {
-      parent: {
-        modelAlias: 'model-a',
-        toolsHash: 'tools-a',
-        systemPromptHash: 'system-a',
-        inputTokens: 1_200,
-        startedAt: 1_000,
-        finishedAt: 4_000,
-      },
-      own: {
-        modelAlias: 'model-a',
-        toolsHash: 'tools-a',
-        systemPromptHash: 'system-a',
-        inputTokens: 8,
-        startedAt: 6_500,
-        finishedAt: 7_000,
-      },
-    });
-    disposables.add(ix.createInstance(AgentCacheProbeService));
-
-    publishBusEvent(ContextUndone.type, new ContextUndone({ agentId: 'main', turns: 1 }));
-    await svc.record(agent, 'model-a', a1, { type: 'turn', turnId: 1 });
-
-    expect(track2).toHaveBeenCalledWith('prompt_cache_probe', {
-      source: 'fork',
-      turn_id: 1,
-      provider_type: 'kimi',
-      protocol: 'anthropic',
-      input_tokens: 8,
-      input_cache_read: 3,
-      input_cache_creation: 4,
-      output_tokens: 2,
-    });
-  });
-
   it('drops the captured parent request when the parent context is spliced away', async () => {
     const track2 = stubProbeDeps('main', {
       parent: {
@@ -606,7 +569,6 @@ describe('AgentCacheProbeService', () => {
       ContextSpliced.type,
       new ContextSpliced({ agentId: 'other-agent', start: 2, deleteCount: 3, messages: [] }),
     );
-    publishBusEvent(ContextUndone.type, new ContextUndone({ agentId: 'other-agent', turns: 1 }));
     publishBusEvent(
       ContextSpliced.type,
       new ContextSpliced({ agentId: 'main', start: 2, deleteCount: 0, messages: [] }),

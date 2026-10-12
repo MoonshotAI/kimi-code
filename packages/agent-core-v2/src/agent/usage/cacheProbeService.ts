@@ -9,7 +9,6 @@ import {
   type AgentLLMTurnRequestSnapshot,
 } from '#/agent/llmRequester/llmRequester';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { ContextUndone } from '#/agent/undo/undoService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { inputTotal } from '#human/llm/usage';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
@@ -42,11 +41,6 @@ export class AgentCacheProbeService extends Service implements IAgentCacheProbeS
     this._register(
       eventBus.subscribe(ContextSpliced, (e) => {
         if (e.agentId === parentId && e.deleteCount > 0) stale = true;
-      }),
-    );
-    this._register(
-      eventBus.subscribe(ContextUndone, (e) => {
-        if (e.agentId === parentId) stale = true;
       }),
     );
     this._register(

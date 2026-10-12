@@ -55,7 +55,6 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IEventBus } from '#/app/event/eventBus';
-import { ContextUndone } from '#/agent/undo/undoService';
 import { WarningIssued } from '#/agent/profile/profileOps';
 
 import {
@@ -194,11 +193,6 @@ export class AgentLLMRequesterService extends Disposable implements IAgentLLMReq
     this._register(
       eventBus.subscribe(ContextSpliced, (event) => {
         if (event.deleteCount > 0) this.states.set(llmRequesterLastTurnRequestKey, undefined);
-      }),
-    );
-    this._register(
-      eventBus.subscribe(ContextUndone, () => {
-        this.states.set(llmRequesterLastTurnRequestKey, undefined);
       }),
     );
   }
