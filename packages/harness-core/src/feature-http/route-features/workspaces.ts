@@ -39,7 +39,7 @@ export function useWorkspaceRoutes(prefix: string): void {
       if (face === undefined) return;
       const body = readCreateBody(request.body);
       if (body === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'root is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'root is required');
         return;
       }
       if (body.name !== undefined && (body.name.length === 0 || body.name.length > 100)) {
@@ -67,7 +67,6 @@ export function useWorkspaceRoutes(prefix: string): void {
             response,
             ErrorCode.FS_PATH_NOT_FOUND,
             `root ${body.root} does not exist`,
-            404,
           );
           return;
         }
@@ -77,7 +76,6 @@ export function useWorkspaceRoutes(prefix: string): void {
             response,
             ErrorCode.FS_PATH_NOT_FOUND,
             `root ${body.root} is not a directory`,
-            404,
           );
           return;
         }
@@ -126,7 +124,6 @@ export function useWorkspaceRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           'name must be a string between 1 and 100 characters',
-          400,
         );
         return;
       }
@@ -204,7 +201,7 @@ export function useWorkspaceRoutes(prefix: string): void {
       if (workspaceId === undefined) return;
       const body = readAddDirBody(request.body);
       if (body === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'path is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'path is required');
         return;
       }
       const fs = workspacesFs(request, response, face);
@@ -264,7 +261,6 @@ export function useWorkspaceRoutes(prefix: string): void {
         response,
         ErrorCode.VALIDATION_FAILED,
         `unsupported action: fs:${action ?? ''}`,
-        400,
       );
     },
   });
@@ -278,7 +274,6 @@ export function workspacesFacade(request: Request, response: Response): Workspac
       response,
       ErrorCode.WORKSPACES_UNAVAILABLE,
       'workspaces registry is unavailable (workspaces feature is not installed)',
-      409,
     );
     return undefined;
   }
@@ -296,7 +291,6 @@ export function workspacesFs(
       response,
       ErrorCode.WORKSPACE_FS_UNAVAILABLE,
       'workspace fs is unavailable (workspaces feature was mounted without an os host)',
-      409,
     );
     return undefined;
   }
@@ -307,37 +301,37 @@ export function sendWorkspaceErr(request: Request, response: Response, error: un
   if (!(error instanceof WorkspaceFsError)) return false;
   switch (error.code) {
     case 'fs.not_absolute':
-      sendErr(request, response, ErrorCode.VALIDATION_FAILED, error.message, 400);
+      sendErr(request, response, ErrorCode.VALIDATION_FAILED, error.message);
       return true;
     case 'fs.path_not_found':
-      sendErr(request, response, ErrorCode.FS_PATH_NOT_FOUND, error.message, 404);
+      sendErr(request, response, ErrorCode.FS_PATH_NOT_FOUND, error.message);
       return true;
     case 'fs.path_escapes':
-      sendErr(request, response, ErrorCode.FS_PATH_ESCAPES_SESSION, error.message, 413);
+      sendErr(request, response, ErrorCode.FS_PATH_ESCAPES_SESSION, error.message);
       return true;
     case 'fs.is_directory':
-      sendErr(request, response, ErrorCode.FS_IS_DIRECTORY, error.message, 409);
+      sendErr(request, response, ErrorCode.FS_IS_DIRECTORY, error.message);
       return true;
     case 'fs.is_binary':
-      sendErr(request, response, ErrorCode.FS_IS_BINARY, error.message, 409);
+      sendErr(request, response, ErrorCode.FS_IS_BINARY, error.message);
       return true;
     case 'fs.too_large':
-      sendErr(request, response, ErrorCode.FS_TOO_LARGE, error.message, 413);
+      sendErr(request, response, ErrorCode.FS_TOO_LARGE, error.message);
       return true;
     case 'fs.too_many_results':
-      sendErr(request, response, ErrorCode.FS_TOO_MANY_RESULTS, error.message, 413);
+      sendErr(request, response, ErrorCode.FS_TOO_MANY_RESULTS, error.message);
       return true;
     case 'fs.already_exists':
-      sendErr(request, response, ErrorCode.FS_ALREADY_EXISTS, error.message, 409);
+      sendErr(request, response, ErrorCode.FS_ALREADY_EXISTS, error.message);
       return true;
     case 'fs.permission_denied':
-      sendErr(request, response, ErrorCode.FS_PERMISSION_DENIED, error.message, 404);
+      sendErr(request, response, ErrorCode.FS_PERMISSION_DENIED, error.message);
       return true;
     case 'fs.grep_timeout':
-      sendErr(request, response, ErrorCode.FS_GREP_TIMEOUT, error.message, 413);
+      sendErr(request, response, ErrorCode.FS_GREP_TIMEOUT, error.message);
       return true;
     case 'fs.config_invalid':
-      sendErr(request, response, ErrorCode.INTERNAL_ERROR, error.message, 500);
+      sendErr(request, response, ErrorCode.INTERNAL_ERROR, error.message);
       return true;
   }
 }
@@ -354,7 +348,7 @@ export function sendValidationDetails(
       : first.path === ''
         ? first.message
         : `${first.path}: ${first.message}`;
-  response.status(400).json({
+  response.status(200).json({
     code: ErrorCode.VALIDATION_FAILED,
     msg,
     data: null,
@@ -370,7 +364,7 @@ export async function handleFsMkdir(
 ): Promise<void> {
   const path = readPathBody(request.body);
   if (path === undefined) {
-    sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'path is required', 400);
+    sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'path is required');
     return;
   }
   if (!isAbsolute(path)) {
@@ -379,7 +373,6 @@ export async function handleFsMkdir(
       response,
       ErrorCode.VALIDATION_FAILED,
       `path must be absolute: ${path}`,
-      400,
     );
     return;
   }
@@ -393,7 +386,6 @@ export async function handleFsMkdir(
           response,
           ErrorCode.FS_ALREADY_EXISTS,
           `path already exists: ${path}`,
-          409,
         );
         return;
       }
@@ -403,7 +395,6 @@ export async function handleFsMkdir(
           response,
           ErrorCode.FS_PATH_NOT_FOUND,
           `parent path not found: ${path}`,
-          404,
         );
         return;
       }
@@ -413,7 +404,6 @@ export async function handleFsMkdir(
           response,
           ErrorCode.FS_PERMISSION_DENIED,
           `permission denied: ${path}`,
-          404,
         );
         return;
       }
@@ -448,7 +438,7 @@ async function handleFsContent(
   const raw = request.query['path'];
   const path = typeof raw === 'string' && raw.length > 0 ? raw : undefined;
   if (path === undefined) {
-    sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'path is required', 400);
+    sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'path is required');
     return;
   }
   if (!isAbsolute(path)) {
@@ -457,7 +447,6 @@ async function handleFsContent(
       response,
       ErrorCode.VALIDATION_FAILED,
       `path must be absolute: ${path}`,
-      400,
     );
     return;
   }
@@ -474,7 +463,6 @@ async function handleFsContent(
       response,
       ErrorCode.FS_IS_DIRECTORY,
       `path is a directory: ${path}`,
-      409,
     );
     return;
   }
@@ -484,7 +472,6 @@ async function handleFsContent(
       response,
       ErrorCode.VALIDATION_FAILED,
       `path is not a regular file: ${path}`,
-      400,
     );
     return;
   }
@@ -570,7 +557,6 @@ function sendWorkspaceNotFound(request: Request, response: Response, workspaceId
     response,
     ErrorCode.WORKSPACE_NOT_FOUND,
     `workspace ${workspaceId} does not exist`,
-    404,
   );
 }
 

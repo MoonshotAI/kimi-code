@@ -5,6 +5,7 @@ import { extname, join, normalize, relative, resolve, sep } from 'node:path';
 import type { Request, Response } from 'express';
 
 import { useHttpRoute } from '../feature';
+import { ErrorCode, sendErr } from '../route/http';
 
 export interface WebAssetOptions {
   readonly assetsDir: string;
@@ -30,7 +31,7 @@ export function useWebAssetRoutes(options: WebAssetOptions): void {
 async function serveWebAsset(request: Request, response: Response, options: WebAssetOptions): Promise<void> {
   const pathname = request.path;
   if (isReservedPath(pathname, options.prefix)) {
-    response.status(404).end();
+    sendErr(request, response, ErrorCode.ROUTE_NOT_FOUND, `route ${request.method} ${pathname} not found`);
     return;
   }
   const filePath = await resolveStaticFile(options.assetsDir, pathname);

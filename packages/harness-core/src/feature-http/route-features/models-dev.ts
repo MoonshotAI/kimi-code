@@ -35,7 +35,7 @@ export function useModelsDevRoutes(prefix: string): void {
     handler: async (request, response) => {
       const catalogId = param(request, 'catalog_id');
       if (catalogId === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'catalog_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'catalog_id is required');
         return;
       }
       const facade = modelsDevFacade(request, response);
@@ -62,7 +62,6 @@ export function useModelsDevRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           `unsupported action: ${raw ?? ''}`,
-          400,
         );
         return;
       }
@@ -74,7 +73,6 @@ export function useModelsDevRoutes(prefix: string): void {
             response,
             ErrorCode.PROVIDER_CATALOG_UNAVAILABLE,
             'model catalog is unavailable (provider-catalog feature is not installed)',
-            409,
           );
           return;
         }
@@ -95,7 +93,6 @@ export function useModelsDevRoutes(prefix: string): void {
             response,
             ErrorCode.VALIDATION_FAILED,
             'catalog_id is required for :import_catalog',
-            400,
           );
           return;
         }
@@ -105,7 +102,7 @@ export function useModelsDevRoutes(prefix: string): void {
             id: body.id,
             apiKey: body.apiKey,
             baseUrl: body.baseUrl,
-          }), 201);
+          }));
         } catch (error) {
           if (sendModelsDevErr(request, response, error)) return;
           throw error;
@@ -118,12 +115,11 @@ export function useModelsDevRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           'url is required for :import_registry',
-          400,
         );
         return;
       }
       try {
-        sendOk(request, response, await facade.importRegistry({ url: body.url, apiKey: body.apiKey }), 201);
+        sendOk(request, response, await facade.importRegistry({ url: body.url, apiKey: body.apiKey }));
       } catch (error) {
         if (sendModelsDevErr(request, response, error)) return;
         throw error;
@@ -164,7 +160,6 @@ function modelsDevFacade(request: Request, response: Response): ModelsDevFace | 
       response,
       ErrorCode.MODELS_DEV_UNAVAILABLE,
       'models.dev catalog is unavailable (models-dev feature is not installed)',
-      409,
     );
   }
   return facade;
@@ -173,27 +168,27 @@ function modelsDevFacade(request: Request, response: Response): ModelsDevFace | 
 function sendModelsDevErr(request: Request, response: Response, error: unknown): boolean {
   if (!(error instanceof ModelsDevError)) return false;
   if (error.code === 'modelsDev.catalog_entry_not_found') {
-    sendErr(request, response, ErrorCode.CATALOG_ENTRY_NOT_FOUND, error.message, 404);
+    sendErr(request, response, ErrorCode.CATALOG_ENTRY_NOT_FOUND, error.message);
     return true;
   }
   if (error.code === 'provider.oauth_managed') {
-    sendErr(request, response, ErrorCode.PROVIDER_OAUTH_MANAGED, error.message, 409);
+    sendErr(request, response, ErrorCode.PROVIDER_OAUTH_MANAGED, error.message);
     return true;
   }
   if (error.code === 'modelsDev.import_invalid') {
-    sendErr(request, response, ErrorCode.CATALOG_IMPORT_INVALID, error.message, 400);
+    sendErr(request, response, ErrorCode.CATALOG_IMPORT_INVALID, error.message);
     return true;
   }
   if (error.code === 'modelsDev.registry_import_invalid') {
-    sendErr(request, response, ErrorCode.REGISTRY_IMPORT_INVALID, error.message, 400);
+    sendErr(request, response, ErrorCode.REGISTRY_IMPORT_INVALID, error.message);
     return true;
   }
   if (error.code === 'config.unavailable') {
-    sendErr(request, response, ErrorCode.MODELS_DEV_UNAVAILABLE, error.message, 409);
+    sendErr(request, response, ErrorCode.MODELS_DEV_UNAVAILABLE, error.message);
     return true;
   }
   if (error.code === 'modelsDev.catalog_unavailable') {
-    sendErr(request, response, ErrorCode.CATALOG_UNAVAILABLE, error.message, 502);
+    sendErr(request, response, ErrorCode.CATALOG_UNAVAILABLE, error.message);
     return true;
   }
   return false;

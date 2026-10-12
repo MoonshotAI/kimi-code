@@ -21,7 +21,7 @@ export function useSessionExportRoutes(prefix: string): void {
     handler: async (request, response) => {
       const sessionId = param(request, 'session_id');
       if (sessionId === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
         return;
       }
       const body = readSessionExportInput(request.body);
@@ -31,7 +31,6 @@ export function useSessionExportRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           'desktop must be a boolean and web_log must be a string',
-          400,
         );
         return;
       }
@@ -42,7 +41,6 @@ export function useSessionExportRoutes(prefix: string): void {
           response,
           ErrorCode.SESSION_EXPORT_UNAVAILABLE,
           'session export is unavailable (sessionExport feature is not installed)',
-          409,
         );
         return;
       }
@@ -73,7 +71,7 @@ export function useSessionExportRoutes(prefix: string): void {
         await rm(tempDir, { recursive: true, force: true }).catch(() => {});
         if (sendFacadeErr(request, response, error)) return;
         if (error instanceof SessionExportError) {
-          sendErr(request, response, ErrorCode.INTERNAL_ERROR, error.message, 500);
+          sendErr(request, response, ErrorCode.INTERNAL_ERROR, error.message);
           return;
         }
         throw error;

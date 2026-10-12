@@ -859,7 +859,7 @@ describe('models-dev feature-http routes', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ catalog_id: 'acme', api_key: 'sk-acme' }),
     });
-    expect(imported.status).toBe(201);
+    expect(imported.status).toBe(200);
     expect(await imported.json()).toMatchObject({
       data: { provider: { id: 'acme' }, models_imported: 1 },
     });
@@ -871,14 +871,14 @@ describe('models-dev feature-http routes', () => {
     expect(config.get('providers')).toMatchObject({ acme: { type: 'openai', apiKey: 'sk-acme' } });
 
     const missingEntry = await fetch(`${origin}/api/v1/catalog/providers/unknown`);
-    expect(missingEntry.status).toBe(404);
+    expect(missingEntry.status).toBe(200);
     expect(await missingEntry.json()).toMatchObject({ code: 40417 });
 
     const bare = createHarness({ features: [createHttp()] });
     apps.push(bare);
     await bare.ready();
     const unavailable = await fetch(`${bare.resolve(HttpRef).origin}/api/v1/catalog/providers`);
-    expect(unavailable.status).toBe(409);
+    expect(unavailable.status).toBe(200);
     expect(await unavailable.json()).toMatchObject({ code: 40938 });
   });
 });

@@ -346,7 +346,7 @@ describe('sessionExport feature', () => {
       headers: { 'content-type': 'application/json' },
       body: '{}',
     });
-    expect(missing.status).toBe(409);
+    expect(missing.status).toBe(200);
     expect(await missing.json()).toMatchObject({ code: 40936 });
   });
 });

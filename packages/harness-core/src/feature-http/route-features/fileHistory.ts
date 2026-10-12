@@ -21,7 +21,7 @@ export function useFileHistoryRoutes(prefix: string): void {
       if (face === undefined) return;
       const turnId = readTurnId(request.query['turn_id']);
       if (turnId === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'turn_id must be a non-negative integer', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'turn_id must be a non-negative integer');
         return;
       }
       sendOk(request, response, {
@@ -40,17 +40,17 @@ export function useFileHistoryRoutes(prefix: string): void {
       if (face === undefined) return;
       const turnId = readTurnId(request.query['turn_id']);
       if (turnId === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'turn_id must be a non-negative integer', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'turn_id must be a non-negative integer');
         return;
       }
       const path = request.query['path'];
       if (typeof path !== 'string' || path.length === 0) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'path is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'path is required');
         return;
       }
       const phase = request.query['phase'];
       if (phase !== undefined && phase !== 'start' && phase !== 'end') {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, "phase must be 'start' or 'end'", 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, "phase must be 'start' or 'end'");
         return;
       }
       const content = await face.contentAt(turnId, path, phase as FileHistoryCheckpointPhase | undefined);
@@ -62,12 +62,12 @@ export function useFileHistoryRoutes(prefix: string): void {
 function resolveFileHistory(request: Request, response: Response): FileHistoryFace | undefined {
   const sessionId = param(request, 'session_id');
   if (sessionId === undefined) {
-    sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required', 400);
+    sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
     return undefined;
   }
   const session = useApp().get(sessionId);
   if (session === undefined) {
-    sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`, 404);
+    sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
     return undefined;
   }
   const main = session.get(MAIN_AGENT_ID);
@@ -78,7 +78,6 @@ function resolveFileHistory(request: Request, response: Response): FileHistoryFa
       response,
       ErrorCode.FILE_HISTORY_UNAVAILABLE,
       'file history is unavailable (feature not mounted or no main agent yet)',
-      409,
     );
     return undefined;
   }

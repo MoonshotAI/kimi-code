@@ -98,7 +98,7 @@ export function useModelCatalogRoutes(prefix: string): void {
     handler: (request, response) => {
       const providerId = param(request, 'provider_id');
       if (providerId === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'provider_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'provider_id is required');
         return;
       }
       const resolved = catalogFacades(request, response);
@@ -109,7 +109,6 @@ export function useModelCatalogRoutes(prefix: string): void {
           response,
           ErrorCode.PROVIDER_NOT_FOUND,
           `provider ${providerId} does not exist`,
-          404,
         );
         return;
       }
@@ -132,17 +131,17 @@ export function useModelCatalogRoutes(prefix: string): void {
       if (resolved === undefined) return;
       const form = readProviderForm(request.body, 'create');
       if ('error' in form) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, form.error, 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, form.error);
         return;
       }
       const id = form.id;
       if (id === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, PROVIDER_ID_MESSAGE, 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, PROVIDER_ID_MESSAGE);
         return;
       }
       const providers = resolved.config.get<ProvidersSection>(PROVIDERS_CONFIG_SECTION) ?? {};
       if (providers[id] !== undefined) {
-        sendErr(request, response, ErrorCode.PROVIDER_ALREADY_EXISTS, `provider ${id} already exists`, 409);
+        sendErr(request, response, ErrorCode.PROVIDER_ALREADY_EXISTS, `provider ${id} already exists`);
         return;
       }
       const info = providerInfoFromForm(id, form);
@@ -167,7 +166,6 @@ export function useModelCatalogRoutes(prefix: string): void {
         request,
         response,
         buildProviderView(id, info, Object.keys(aliases), resolved.config, nextModels),
-        201,
       );
     },
   });
@@ -179,14 +177,14 @@ export function useModelCatalogRoutes(prefix: string): void {
     handler: async (request, response) => {
       const providerId = param(request, 'provider_id');
       if (providerId === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'provider_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'provider_id is required');
         return;
       }
       const resolved = catalogFacades(request, response);
       if (resolved === undefined) return;
       const form = readProviderForm(request.body, 'replace');
       if ('error' in form) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, form.error, 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, form.error);
         return;
       }
       const providers = resolved.config.get<ProvidersSection>(PROVIDERS_CONFIG_SECTION) ?? {};
@@ -197,7 +195,6 @@ export function useModelCatalogRoutes(prefix: string): void {
           response,
           ErrorCode.PROVIDER_NOT_FOUND,
           `provider ${providerId} does not exist`,
-          404,
         );
         return;
       }
@@ -207,7 +204,6 @@ export function useModelCatalogRoutes(prefix: string): void {
           response,
           ErrorCode.PROVIDER_OAUTH_MANAGED,
           `provider ${providerId} is managed by OAuth login; use POST /oauth/logout instead`,
-          409,
         );
         return;
       }
@@ -218,7 +214,6 @@ export function useModelCatalogRoutes(prefix: string): void {
           response,
           ErrorCode.PROVIDER_ALREADY_EXISTS,
           `provider ${newId} already exists`,
-          409,
         );
         return;
       }
@@ -239,7 +234,6 @@ export function useModelCatalogRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           `model alias key already owned by another provider: ${colliding.join(', ')}`,
-          400,
         );
         return;
       }
@@ -294,7 +288,7 @@ export function useModelCatalogRoutes(prefix: string): void {
     handler: async (request, response) => {
       const providerId = param(request, 'provider_id');
       if (providerId === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'provider_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'provider_id is required');
         return;
       }
       const resolved = catalogFacades(request, response);
@@ -307,7 +301,6 @@ export function useModelCatalogRoutes(prefix: string): void {
           response,
           ErrorCode.PROVIDER_NOT_FOUND,
           `provider ${providerId} does not exist`,
-          404,
         );
         return;
       }
@@ -317,7 +310,6 @@ export function useModelCatalogRoutes(prefix: string): void {
           response,
           ErrorCode.PROVIDER_OAUTH_MANAGED,
           `provider ${providerId} is managed by OAuth login; use POST /oauth/logout instead`,
-          409,
         );
         return;
       }
@@ -342,7 +334,7 @@ export function useModelCatalogRoutes(prefix: string): void {
     handler: async (request, response) => {
       const tail = param(request, 'tail');
       if (tail === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'provider_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'provider_id is required');
         return;
       }
       const parsed = parseActionSuffix({ tail, allowedActions: PROVIDER_ACTIONS, resourceLabel: 'provider' });
@@ -352,7 +344,6 @@ export function useModelCatalogRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           parsed.kind === 'invalid' ? parsed.reason : `unsupported action: ${tail}`,
-          400,
         );
         return;
       }
@@ -364,7 +355,6 @@ export function useModelCatalogRoutes(prefix: string): void {
           response,
           ErrorCode.PROVIDER_NOT_FOUND,
           `provider ${parsed.id} does not exist`,
-          404,
         );
         return;
       }
@@ -396,7 +386,7 @@ export function useModelCatalogRoutes(prefix: string): void {
     handler: async (request, response) => {
       const tail = param(request, 'tail');
       if (tail === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'model id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'model id is required');
         return;
       }
       const parsed = parseActionSuffix({ tail, allowedActions: MODEL_ACTIONS, resourceLabel: 'model' });
@@ -406,7 +396,6 @@ export function useModelCatalogRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           parsed.kind === 'invalid' ? parsed.reason : `unsupported action: ${tail}`,
-          400,
         );
         return;
       }
@@ -420,7 +409,6 @@ export function useModelCatalogRoutes(prefix: string): void {
           response,
           ErrorCode.PROVIDER_CATALOG_UNAVAILABLE,
           'model catalog is unavailable (provider-catalog feature is not installed)',
-          409,
         );
         return;
       }
@@ -429,10 +417,10 @@ export function useModelCatalogRoutes(prefix: string): void {
       } catch (error) {
         if (error instanceof ModelCatalogError) {
           if (error.code === 'model.unknown_alias') {
-            sendErr(request, response, ErrorCode.MODEL_NOT_FOUND, error.message, 404);
+            sendErr(request, response, ErrorCode.MODEL_NOT_FOUND, error.message);
             return;
           }
-          sendErr(request, response, ErrorCode.CONFIG_UNAVAILABLE, error.message, 409);
+          sendErr(request, response, ErrorCode.CONFIG_UNAVAILABLE, error.message);
           return;
         }
         throw error;
@@ -467,7 +455,6 @@ function catalogFacades(
       response,
       ErrorCode.CONFIG_UNAVAILABLE,
       'config is unavailable (config feature is not installed)',
-      409,
     );
     return undefined;
   }
@@ -478,7 +465,6 @@ function catalogFacades(
       response,
       ErrorCode.PROVIDER_CATALOG_UNAVAILABLE,
       'model catalog is unavailable (provider-catalog feature is not installed)',
-      409,
     );
     return undefined;
   }

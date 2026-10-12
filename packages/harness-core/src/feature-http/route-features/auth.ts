@@ -40,7 +40,7 @@ export function useAuthRoutes(prefix: string): void {
     handler: async (request, response) => {
       const parsed = loginStartBodySchema.safeParse(request.body);
       if (!parsed.success) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, firstIssue(parsed.error), 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, firstIssue(parsed.error));
         return;
       }
       const facade = oauthFacade(request, response);
@@ -48,7 +48,7 @@ export function useAuthRoutes(prefix: string): void {
       try {
         sendOk(request, response, await facade.loginStart(parsed.data));
       } catch (error) {
-        sendErr(request, response, ErrorCode.INTERNAL_ERROR, messageOf(error), 500);
+        sendErr(request, response, ErrorCode.INTERNAL_ERROR, messageOf(error));
       }
     },
   });
@@ -60,7 +60,7 @@ export function useAuthRoutes(prefix: string): void {
     handler: async (request, response) => {
       const parsed = loginQuerySchema.safeParse(request.query);
       if (!parsed.success) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, firstIssue(parsed.error), 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, firstIssue(parsed.error));
         return;
       }
       const facade = oauthFacade(request, response);
@@ -76,7 +76,7 @@ export function useAuthRoutes(prefix: string): void {
     handler: async (request, response) => {
       const parsed = loginQuerySchema.safeParse(request.query);
       if (!parsed.success) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, firstIssue(parsed.error), 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, firstIssue(parsed.error));
         return;
       }
       const facade = oauthFacade(request, response);
@@ -92,7 +92,7 @@ export function useAuthRoutes(prefix: string): void {
     handler: async (request, response) => {
       const parsed = logoutBodySchema.safeParse(request.body);
       if (!parsed.success) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, firstIssue(parsed.error), 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, firstIssue(parsed.error));
         return;
       }
       const facade = oauthFacade(request, response);
@@ -100,7 +100,7 @@ export function useAuthRoutes(prefix: string): void {
       try {
         sendOk(request, response, await facade.logout(parsed.data.provider));
       } catch (error) {
-        sendErr(request, response, ErrorCode.INTERNAL_ERROR, messageOf(error), 500);
+        sendErr(request, response, ErrorCode.INTERNAL_ERROR, messageOf(error));
       }
     },
   });
@@ -112,7 +112,7 @@ export function useAuthRoutes(prefix: string): void {
     handler: async (request, response) => {
       const parsed = loginQuerySchema.safeParse(request.query);
       if (!parsed.success) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, firstIssue(parsed.error), 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, firstIssue(parsed.error));
         return;
       }
       const facade = oauthFacade(request, response);
@@ -128,7 +128,7 @@ export function useAuthRoutes(prefix: string): void {
     handler: async (request, response) => {
       const parsed = loginQuerySchema.safeParse(request.query);
       if (!parsed.success) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, firstIssue(parsed.error), 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, firstIssue(parsed.error));
         return;
       }
       const facade = oauthFacade(request, response);
@@ -157,7 +157,6 @@ function oauthFacade(request: Request, response: Response): OAuthTokens | undefi
       response,
       ErrorCode.OAUTH_UNAVAILABLE,
       'oauth is unavailable (oauth feature is not installed)',
-      409,
     );
   }
   return facade;

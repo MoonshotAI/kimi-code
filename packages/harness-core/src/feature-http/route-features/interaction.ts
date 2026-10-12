@@ -97,7 +97,7 @@ export function useInteractionRoutes(prefix: string): void {
     handler: (request, response) => {
       const approvalId = param(request, 'approval_id');
       if (approvalId === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'approval_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'approval_id is required');
         return;
       }
       const body = readApprovalResponse(request.body);
@@ -107,7 +107,6 @@ export function useInteractionRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           'decision must be one of approved, rejected, cancelled; scope must be session; feedback and selected_label must be strings',
-          400,
         );
         return;
       }
@@ -117,7 +116,7 @@ export function useInteractionRoutes(prefix: string): void {
       const pending = resolved.facade.findOne({ id: approvalId, kind: 'approval', resolved: false, tags });
       if (pending === undefined) {
         if (resolved.facade.findOne({ id: approvalId, kind: 'approval', resolved: true, tags }) !== undefined) {
-          response.status(409).json({
+          response.status(200).json({
             code: ErrorCode.APPROVAL_ALREADY_RESOLVED,
             msg: `approval ${approvalId} already resolved`,
             data: { resolved: false },
@@ -125,7 +124,7 @@ export function useInteractionRoutes(prefix: string): void {
           });
           return;
         }
-        sendErr(request, response, ErrorCode.APPROVAL_NOT_FOUND, `approval ${approvalId} not found`, 404);
+        sendErr(request, response, ErrorCode.APPROVAL_NOT_FOUND, `approval ${approvalId} not found`);
         return;
       }
       resolved.facade.respond(approvalId, {
@@ -163,7 +162,7 @@ export function useInteractionRoutes(prefix: string): void {
     handler: (request, response) => {
       const tail = param(request, 'tail');
       if (tail === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'question_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'question_id is required');
         return;
       }
       const parsed = parseActionSuffix({
@@ -185,7 +184,7 @@ export function useInteractionRoutes(prefix: string): void {
           questionId = tail;
           action = 'resolve';
         } else {
-          sendErr(request, response, ErrorCode.VALIDATION_FAILED, parsed.reason, 400);
+          sendErr(request, response, ErrorCode.VALIDATION_FAILED, parsed.reason);
           return;
         }
       } else {
@@ -195,7 +194,7 @@ export function useInteractionRoutes(prefix: string): void {
       const pending = resolved.facade.findOne({ id: questionId, kind: 'question', resolved: false, tags });
       if (pending === undefined) {
         if (resolved.facade.findOne({ id: questionId, kind: 'question', resolved: true, tags }) !== undefined) {
-          response.status(409).json({
+          response.status(200).json({
             code: ErrorCode.APPROVAL_ALREADY_RESOLVED,
             msg: `question ${questionId} already resolved`,
             data: { resolved: false },
@@ -203,12 +202,12 @@ export function useInteractionRoutes(prefix: string): void {
           });
           return;
         }
-        sendErr(request, response, ErrorCode.QUESTION_NOT_FOUND, `question ${questionId} not found`, 404);
+        sendErr(request, response, ErrorCode.QUESTION_NOT_FOUND, `question ${questionId} not found`);
         return;
       }
       if (action === 'dismiss') {
         resolved.facade.respond(questionId, null);
-        response.status(409).json({
+        response.status(200).json({
           code: ErrorCode.QUESTION_DISMISSED,
           msg: `question ${questionId} dismissed`,
           data: { dismissed: true, dismissed_at: new Date().toISOString() },
@@ -223,7 +222,6 @@ export function useInteractionRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           'answers must be a record of question answers; method must be one of enter, space, number_key, click',
-          400,
         );
         return;
       }
@@ -242,12 +240,12 @@ function interactionFacade(
 ): { readonly sessionId: string; readonly facade: Interactions } | undefined {
   const sessionId = param(request, 'session_id');
   if (sessionId === undefined) {
-    sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required', 400);
+    sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
     return undefined;
   }
   const session = useApp().get(sessionId);
   if (session === undefined) {
-    sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`, 404);
+    sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
     return undefined;
   }
   const facade = session.resolve(InteractionRef);
@@ -257,7 +255,6 @@ function interactionFacade(
       response,
       ErrorCode.INTERACTION_UNAVAILABLE,
       'interactions are unavailable (interaction feature is not installed)',
-      409,
     );
     return undefined;
   }

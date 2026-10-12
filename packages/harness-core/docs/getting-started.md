@@ -21,7 +21,7 @@ pnpm --filter @moonshot-ai/harness-core example -- -p '你好' -c <session-id> -
 
 ## 走 HTTP 暴露同一套能力
 
-把 `createHttp({ listen: { port, host } })` 加进 `features`，同一套能力暴露为 REST（`/api/v1`）。缺 `agent_id` 默认 `MAIN_AGENT_ID`。session 必须已经 live（`get` 不到回 404）。第一次 `submit` / `notify` / `remind` 再创建 agent；读、steer、abort 仍按活表 404。写命令 HTTP 等的是机器接收回执，不是 `turn.ended`。`GET /features` 反射 live 树：app / 每个 session / agent 各列该 tier 真正挂了 slot 的 Feature；catalog 里未挂树的 session 不出现。
+把 `createHttp({ listen: { port, host } })` 加进 `features`，同一套能力暴露为 REST（`/api/v1`）。JSON 响应恒 HTTP 200 + 信封 `{code,msg,data,request_id}`（成功 `code:0`；失败 `code` 取错误码、`data:null`；文件/导出等二进制下载保持真实状态码）。缺 `agent_id` 默认 `MAIN_AGENT_ID`。session 必须已经 live（`get` 不到回 40401）。第一次 `submit` / `notify` / `remind` 再创建 agent；读、steer、abort 仍按活表 40401。写命令 HTTP 等的是机器接收回执，不是 `turn.ended`。`GET /features` 反射 live 树：app / 每个 session / agent 各列该 tier 真正挂了 slot 的 Feature；catalog 里未挂树的 session 不出现。
 
 | 进程内 | HTTP |
 |---|---|

@@ -1,4 +1,4 @@
-import type { IncomingMessage, Server } from 'node:http';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
 
@@ -8,6 +8,8 @@ import express, {
   type RequestHandler,
   type Response,
 } from 'express';
+
+import { ErrorCode, sendErr } from './route/http';
 
 export type HttpHandler = (request: Request, response: Response) => void | Promise<void>;
 
@@ -104,7 +106,16 @@ export function createHttpServer(): Http {
           origin = formatOrigin(address);
           resolve(origin);
         };
-        const listening = app.listen(port, host);
+        const listening = createServer((request, response) => {
+          const handle = app as unknown as (
+            req: IncomingMessage,
+            res: ServerResponse,
+            done: (error?: unknown) => void,
+          ) => void;
+          handle(request, response, (error) => {
+            sendFallback(request, response, error);
+          });
+        });
         server = listening;
         listening.on('upgrade', (request, socket, head) => {
           for (const handler of [...upgrades]) {
@@ -116,6 +127,7 @@ export function createHttpServer(): Http {
         });
         listening.once('error', onError);
         listening.once('listening', onListening);
+        listening.listen(port, host);
       });
     },
     close() {
@@ -143,13 +155,42 @@ function dispatch(slot: Slot): RequestHandler {
   return (request, response, next) => {
     const handler = slot.handlers[slot.handlers.length - 1];
     if (handler === undefined) {
-      response.status(404).end();
+      sendErr(
+        request,
+        response,
+        ErrorCode.ROUTE_NOT_FOUND,
+        `route ${request.method} ${request.path} not found`,
+      );
       return;
     }
     void Promise.resolve(handler(request, response)).catch((error: unknown) => {
       next(error);
     });
   };
+}
+
+function sendFallback(request: IncomingMessage, response: ServerResponse, error: unknown): void {
+  if (response.headersSent) {
+    request.socket.destroy();
+    return;
+  }
+  const code = error === undefined ? ErrorCode.ROUTE_NOT_FOUND : ErrorCode.INTERNAL_ERROR;
+  const msg =
+    error === undefined
+      ? `route ${request.method ?? ''} ${request.url?.split('?')[0] ?? ''} not found`
+      : error instanceof Error && error.message !== ''
+        ? error.message
+        : 'internal error';
+  const header = request.headers['x-request-id'];
+  response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+  response.end(
+    JSON.stringify({
+      code,
+      msg,
+      data: null,
+      request_id: typeof header === 'string' ? header : '',
+    }),
+  );
 }
 
 function attach(app: Express, method: string, path: string, handler: RequestHandler): void {

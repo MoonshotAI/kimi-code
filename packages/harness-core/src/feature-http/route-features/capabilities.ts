@@ -33,7 +33,7 @@ export function useCapabilitiesRoutes(prefix: string): void {
     handler: async (request, response) => {
       const capabilityId = param(request, 'capability_id');
       if (capabilityId === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'capability_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'capability_id is required');
         return;
       }
       const face = capabilitiesFacade(request, response);
@@ -54,7 +54,7 @@ export function useCapabilitiesRoutes(prefix: string): void {
     handler: async (request, response) => {
       const tail = param(request, 'tail');
       if (tail === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'capability id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'capability id is required');
         return;
       }
       const parsed = parseActionSuffix({
@@ -68,7 +68,6 @@ export function useCapabilitiesRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           parsed.kind === 'invalid' ? parsed.reason : `unsupported action: ${tail}`,
-          400,
         );
         return;
       }
@@ -92,7 +91,6 @@ function capabilitiesFacade(request: Request, response: Response): CapabilitiesF
       response,
       ErrorCode.CAPABILITIES_UNAVAILABLE,
       'capabilities are unavailable (capabilities feature is not installed)',
-      409,
     );
   }
   return face;
@@ -101,14 +99,14 @@ function capabilitiesFacade(request: Request, response: Response): CapabilitiesF
 function sendCapabilityErr(request: Request, response: Response, error: unknown): boolean {
   if (error instanceof CapabilityError) {
     if (error.code === 'capability.not_found') {
-      sendErr(request, response, ErrorCode.CAPABILITY_NOT_FOUND, error.message, 404);
+      sendErr(request, response, ErrorCode.CAPABILITY_NOT_FOUND, error.message);
       return true;
     }
     if (error.code === 'capability.unsupported') {
-      sendErr(request, response, ErrorCode.CAPABILITY_UNSUPPORTED, error.message, 409);
+      sendErr(request, response, ErrorCode.CAPABILITY_UNSUPPORTED, error.message);
       return true;
     }
-    sendErr(request, response, ErrorCode.CAPABILITY_INSTALL_IN_PROGRESS, error.message, 409);
+    sendErr(request, response, ErrorCode.CAPABILITY_INSTALL_IN_PROGRESS, error.message);
     return true;
   }
   sendErr(
@@ -116,7 +114,6 @@ function sendCapabilityErr(request: Request, response: Response, error: unknown)
     response,
     ErrorCode.INTERNAL_ERROR,
     error instanceof Error ? error.message : String(error),
-    500,
   );
   return true;
 }

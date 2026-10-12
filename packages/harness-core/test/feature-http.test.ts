@@ -37,7 +37,7 @@ import {
   type ToolResult,
 } from '@moonshot-ai/agent-core';
 
-import { createHttp, HttpRef, type CreateHttpOptions } from '#/feature-http/index';
+import { createHttp, HttpRef, useHttpRoute, type CreateHttpOptions } from '#/feature-http/index';
 import { createBtw } from '#/features/btw/index';
 import { createCapabilities, type CapabilityEntry } from '#/features/capabilities/index';
 import { createCompaction } from '#/features/compaction/index';
@@ -317,7 +317,7 @@ describe('feature-http facade routes', () => {
     expect(await cold.json()).toMatchObject({ data: { archived: true } });
 
     const missing = await post(env, '/sessions/ses_unknown:archive');
-    expect(missing.status).toBe(404);
+    expect(missing.status).toBe(200);
     expect(await missing.json()).toMatchObject({ code: 40401 });
   });
 
@@ -338,17 +338,17 @@ describe('feature-http facade routes', () => {
     expect(await compacted.json()).toMatchObject({ code: 0, data: {} });
 
     const invalid = await post(env, '/sessions/ses_compact:compact', { instruction: 42 });
-    expect(invalid.status).toBe(400);
+    expect(invalid.status).toBe(200);
     expect(await invalid.json()).toMatchObject({ code: 40001 });
 
     const bare = await mountHttp([bindTestLlm(createMockRequester())]);
     await openMain(bare, 'ses_bare');
     const unavailable = await post(bare, '/sessions/ses_bare:compact', {});
-    expect(unavailable.status).toBe(409);
+    expect(unavailable.status).toBe(200);
     expect(await unavailable.json()).toMatchObject({ code: 40910 });
 
     const missing = await post(env, '/sessions/ses_unknown:compact', {});
-    expect(missing.status).toBe(404);
+    expect(missing.status).toBe(200);
     expect(await missing.json()).toMatchObject({ code: 40401 });
   });
 
@@ -376,13 +376,13 @@ describe('feature-http facade routes', () => {
     expect(typeof body.data.messages.items[0].created_at).toBe('string');
 
     const invalid = await post(env, '/sessions/ses_undo:undo', { count: 0 });
-    expect(invalid.status).toBe(400);
+    expect(invalid.status).toBe(200);
     expect(await invalid.json()).toMatchObject({ code: 40001 });
 
     const bare = await mountHttp([builtinUndo, bindTestLlm(createMockRequester())]);
     await openMain(bare, 'ses_empty_undo');
     const empty = await post(bare, '/sessions/ses_empty_undo:undo', { count: 1 });
-    expect(empty.status).toBe(409);
+    expect(empty.status).toBe(200);
     expect(await empty.json()).toMatchObject({
       code: 40911,
       msg: 'Nothing to undo: no user message to undo',
@@ -395,7 +395,7 @@ describe('feature-http facade routes', () => {
       .get('ses_no_undo')
       ?.create({ agentId: MAIN_AGENT_ID, systemPrompt: 'test' });
     const unavailable = await post(noFeature, '/sessions/ses_no_undo:undo', {});
-    expect(unavailable.status).toBe(409);
+    expect(unavailable.status).toBe(200);
     expect(await unavailable.json()).toMatchObject({ code: 40911 });
   });
 
@@ -411,11 +411,11 @@ describe('feature-http facade routes', () => {
     const bare = await mountHttp([bindTestLlm(createMockRequester())]);
     await openMain(bare, 'ses_no_btw');
     const unavailable = await post(bare, '/sessions/ses_no_btw:btw');
-    expect(unavailable.status).toBe(409);
+    expect(unavailable.status).toBe(200);
     expect(await unavailable.json()).toMatchObject({ code: 40931 });
 
     const missing = await post(env, '/sessions/ses_unknown:btw');
-    expect(missing.status).toBe(404);
+    expect(missing.status).toBe(200);
     expect(await missing.json()).toMatchObject({ code: 40401 });
   });
 
@@ -449,11 +449,11 @@ describe('feature-http facade routes', () => {
 
     await env.app.open({ sessionId: 'ses_no_agents' });
     const noAgent = await get(env, '/sessions/ses_no_agents/status');
-    expect(noAgent.status).toBe(404);
+    expect(noAgent.status).toBe(200);
     expect(await noAgent.json()).toMatchObject({ code: 40421 });
 
     const missing = await get(env, '/sessions/ses_unknown/status');
-    expect(missing.status).toBe(404);
+    expect(missing.status).toBe(200);
     expect(await missing.json()).toMatchObject({ code: 40401 });
   });
 
@@ -481,11 +481,11 @@ describe('feature-http facade routes', () => {
     const bare = await mountHttp([bindTestLlm(createMockRequester())]);
     await openMain(bare, 'ses_no_goal');
     const unavailable = await get(bare, '/sessions/ses_no_goal/goal');
-    expect(unavailable.status).toBe(409);
+    expect(unavailable.status).toBe(200);
     expect(await unavailable.json()).toMatchObject({ code: 40935 });
 
     const missing = await get(env, '/sessions/ses_unknown/goal');
-    expect(missing.status).toBe(404);
+    expect(missing.status).toBe(200);
     expect(await missing.json()).toMatchObject({ code: 40401 });
   });
 
@@ -505,11 +505,11 @@ describe('feature-http facade routes', () => {
     const bare = await mountHttp([bindTestLlm(createMockRequester())]);
     await openMain(bare, 'ses_no_skills');
     const unavailable = await get(bare, '/sessions/ses_no_skills/skills');
-    expect(unavailable.status).toBe(409);
+    expect(unavailable.status).toBe(200);
     expect(await unavailable.json()).toMatchObject({ code: 40934 });
 
     const missing = await get(env, '/sessions/ses_unknown/skills');
-    expect(missing.status).toBe(404);
+    expect(missing.status).toBe(200);
     expect(await missing.json()).toMatchObject({ code: 40401 });
   });
 
@@ -542,7 +542,7 @@ describe('feature-http facade routes', () => {
     const filtered = await get(env, '/sessions/ses_tasks/tasks?status=completed');
     expect((await filtered.json()).data.items).toHaveLength(0);
     const badFilter = await get(env, '/sessions/ses_tasks/tasks?status=bogus');
-    expect(badFilter.status).toBe(400);
+    expect(badFilter.status).toBe(200);
 
     const abortNotified = new Promise<void>((resolve) => {
       agent.on('turn.done', () => {
@@ -558,7 +558,7 @@ describe('feature-http facade routes', () => {
     expect((await view.json()).data).toMatchObject({ id: taskId, status: 'cancelled' });
 
     const again = await post(env, `/sessions/ses_tasks/tasks/${taskId}:stop`);
-    expect(again.status).toBe(409);
+    expect(again.status).toBe(200);
     expect(await again.json()).toMatchObject({
       code: 40904,
       data: { cancelled: false },
@@ -566,7 +566,7 @@ describe('feature-http facade routes', () => {
     });
 
     const missingTask = await get(env, '/sessions/ses_tasks/tasks/task_unknown');
-    expect(missingTask.status).toBe(404);
+    expect(missingTask.status).toBe(200);
     expect(await missingTask.json()).toMatchObject({ code: 40406 });
 
     queue = [
@@ -596,11 +596,11 @@ describe('feature-http facade routes', () => {
     const bare = await mountHttp([bindTestLlm(createMockRequester())]);
     await openMain(bare, 'ses_no_tasks');
     const unavailable = await get(bare, '/sessions/ses_no_tasks/tasks');
-    expect(unavailable.status).toBe(409);
+    expect(unavailable.status).toBe(200);
     expect(await unavailable.json()).toMatchObject({ code: 40933 });
 
     const missing = await get(env, '/sessions/ses_unknown/tasks');
-    expect(missing.status).toBe(404);
+    expect(missing.status).toBe(200);
     expect(await missing.json()).toMatchObject({ code: 40401 });
   });
 
@@ -674,16 +674,16 @@ describe('feature-http facade routes', () => {
     expect((await missingContent.json()).data).toEqual({ content: null });
 
     const badTurn = await get(env, '/sessions/ses_fh/file-history/changes?turn_id=abc');
-    expect(badTurn.status).toBe(400);
+    expect(badTurn.status).toBe(200);
 
     const bare = await mountHttp([bindTestLlm(createMockRequester())]);
     await openMain(bare, 'ses_no_fh');
     const unavailable = await get(bare, '/sessions/ses_no_fh/file-history/changes?turn_id=0');
-    expect(unavailable.status).toBe(409);
+    expect(unavailable.status).toBe(200);
     expect(await unavailable.json()).toMatchObject({ code: 40949 });
 
     const missing = await get(env, '/sessions/ses_unknown/file-history/changes?turn_id=0');
-    expect(missing.status).toBe(404);
+    expect(missing.status).toBe(200);
     expect(await missing.json()).toMatchObject({ code: 40401 });
   });
 
@@ -723,7 +723,7 @@ describe('feature-http facade routes', () => {
     expect(Number.isNaN(Date.parse(listBody.data.items[0].expires_at))).toBe(false);
 
     const invalid = await post(env, `/sessions/ses_approvals/approvals/${item.id}`, { decision: 'maybe' });
-    expect(invalid.status).toBe(400);
+    expect(invalid.status).toBe(200);
     expect(await invalid.json()).toMatchObject({ code: 40001 });
 
     const resolved = await post(env, `/sessions/ses_approvals/approvals/${item.id}`, {
@@ -744,21 +744,21 @@ describe('feature-http facade routes', () => {
     });
 
     const duplicate = await post(env, `/sessions/ses_approvals/approvals/${item.id}`, { decision: 'approved' });
-    expect(duplicate.status).toBe(409);
+    expect(duplicate.status).toBe(200);
     expect(await duplicate.json()).toMatchObject({ code: 40902, data: { resolved: false } });
 
     const unknown = await post(env, '/sessions/ses_approvals/approvals/approval_unknown', { decision: 'approved' });
-    expect(unknown.status).toBe(404);
+    expect(unknown.status).toBe(200);
     expect(await unknown.json()).toMatchObject({ code: 40404 });
 
     const bare = await mountHttp([bindTestLlm(createMockRequester())]);
     await openMain(bare, 'ses_no_interaction');
     const unavailable = await get(bare, '/sessions/ses_no_interaction/approvals');
-    expect(unavailable.status).toBe(409);
+    expect(unavailable.status).toBe(200);
     expect(await unavailable.json()).toMatchObject({ code: 40932 });
 
     const missing = await get(env, '/sessions/ses_unknown/approvals');
-    expect(missing.status).toBe(404);
+    expect(missing.status).toBe(200);
     expect(await missing.json()).toMatchObject({ code: 40401 });
   });
 
@@ -824,7 +824,7 @@ describe('feature-http facade routes', () => {
     const second = interactions.enqueue({ kind: 'question', payload, tags: { [INTERACTION_TAG_SESSION_ID]: 'ses_questions' } });
     const dismissedWaiter = interactions.wait(second.id);
     const dismissed = await post(env, `/sessions/ses_questions/questions/${second.id}:dismiss`);
-    expect(dismissed.status).toBe(409);
+    expect(dismissed.status).toBe(200);
     const dismissedBody = await dismissed.json();
     expect(dismissedBody.code).toBe(40909);
     expect(dismissedBody.data.dismissed).toBe(true);
@@ -834,18 +834,18 @@ describe('feature-http facade routes', () => {
     const unknown = await post(env, '/sessions/ses_questions/questions/question_unknown', {
       answers: {},
     });
-    expect(unknown.status).toBe(404);
+    expect(unknown.status).toBe(200);
     expect(await unknown.json()).toMatchObject({ code: 40405 });
 
     const third = interactions.enqueue({ kind: 'question', payload, tags: { [INTERACTION_TAG_SESSION_ID]: 'ses_questions' } });
     const badAnswers = await post(env, `/sessions/ses_questions/questions/${third.id}`, {
       answers: { q_0: { kind: 'single' } },
     });
-    expect(badAnswers.status).toBe(400);
+    expect(badAnswers.status).toBe(200);
     interactions.respond(third.id, null);
 
     const missing = await get(env, '/sessions/ses_unknown/questions');
-    expect(missing.status).toBe(404);
+    expect(missing.status).toBe(200);
     expect(await missing.json()).toMatchObject({ code: 40401 });
   });
 });
@@ -872,21 +872,21 @@ describe('feature-http kap-server aligned routes', () => {
     await done;
 
     const notFound = await post(env, '/sessions/ses_skill_activate/skills/ghost-skill:activate', {});
-    expect(notFound.status).toBe(404);
+    expect(notFound.status).toBe(200);
     expect(await notFound.json()).toMatchObject({ code: 40415 });
 
     const unsupported = await post(env, '/sessions/ses_skill_activate/skills/write-goal:bogus', {});
-    expect(unsupported.status).toBe(400);
+    expect(unsupported.status).toBe(200);
     expect(await unsupported.json()).toMatchObject({ code: 40001 });
 
     const missing = await post(env, '/sessions/ses_ghost/skills/write-goal:activate', {});
-    expect(missing.status).toBe(404);
+    expect(missing.status).toBe(200);
     expect(await missing.json()).toMatchObject({ code: 40401 });
 
     const bare = await mountHttp([bindTestLlm(createMockRequester())]);
     await openMain(bare, 'ses_no_skill');
     const unavailable = await post(bare, '/sessions/ses_no_skill/skills/write-goal:activate', {});
-    expect(unavailable.status).toBe(409);
+    expect(unavailable.status).toBe(200);
     expect(await unavailable.json()).toMatchObject({ code: 40940 });
   });
 
@@ -949,7 +949,7 @@ describe('feature-http kap-server aligned routes', () => {
     expect((await single.json()).data).toMatchObject({ id: 'acme', api_key: 'sk-acme' });
 
     const missing = await get(env, '/providers/ghost');
-    expect(missing.status).toBe(404);
+    expect(missing.status).toBe(200);
     expect(await missing.json()).toMatchObject({ code: 40412 });
 
     const created = await post(env, '/providers', {
@@ -960,7 +960,7 @@ describe('feature-http kap-server aligned routes', () => {
       default_model: 'b1',
       models: [{ model: 'b1', max_context_size: 8192, capabilities: ['tool_use', 'thinking'] }],
     });
-    expect(created.status).toBe(201);
+    expect(created.status).toBe(200);
     expect(await created.json()).toMatchObject({
       data: {
         id: 'beta',
@@ -984,7 +984,7 @@ describe('feature-http kap-server aligned routes', () => {
       type: 'openai',
       models: [{ model: 'x', max_context_size: 1 }],
     });
-    expect(duplicate.status).toBe(409);
+    expect(duplicate.status).toBe(200);
     expect(await duplicate.json()).toMatchObject({ code: 40921 });
 
     const models = await get(env, '/models');
@@ -1015,14 +1015,14 @@ describe('feature-http kap-server aligned routes', () => {
     expect(deleted.status).toBe(204);
     await vi.waitFor(async () => {
       const gone = await get(env, '/providers/acme');
-      expect(gone.status).toBe(404);
+      expect(gone.status).toBe(200);
     });
 
     const deleteMissing = await del(env, '/providers/acme');
-    expect(deleteMissing.status).toBe(404);
+    expect(deleteMissing.status).toBe(200);
 
     const invalid = await post(env, '/providers', { id: 'bad id!', type: 'openai', models: [] });
-    expect(invalid.status).toBe(400);
+    expect(invalid.status).toBe(200);
   });
 
   it('sets the default model and refreshes providers', async () => {
@@ -1055,11 +1055,11 @@ describe('feature-http kap-server aligned routes', () => {
     expect(env.app.resolve(ConfigRef).get('defaultModel')).toBe('test/m1');
 
     const unknown = await post(env, '/models/ghost%2Fnope:set_default');
-    expect(unknown.status).toBe(404);
+    expect(unknown.status).toBe(200);
     expect(await unknown.json()).toMatchObject({ code: 40413 });
 
     const unsupported = await post(env, '/models/test%2Fm1:bogus');
-    expect(unsupported.status).toBe(400);
+    expect(unsupported.status).toBe(200);
 
     const refreshedAll = await post(env, '/providers:refresh');
     expect(refreshedAll.status).toBe(200);
@@ -1074,15 +1074,15 @@ describe('feature-http kap-server aligned routes', () => {
     });
 
     const refreshMissing = await post(env, '/providers/ghost:refresh');
-    expect(refreshMissing.status).toBe(404);
+    expect(refreshMissing.status).toBe(200);
     expect(await refreshMissing.json()).toMatchObject({ code: 40412 });
 
     const refreshOauth = await post(env, '/providers:refresh_oauth');
-    expect(refreshOauth.status).toBe(400);
+    expect(refreshOauth.status).toBe(200);
 
     const noConfig = await mountHttp([providerCatalog, bindTestLlm(createMockRequester())]);
     const configUnavailable = await get(noConfig, '/providers');
-    expect(configUnavailable.status).toBe(409);
+    expect(configUnavailable.status).toBe(200);
     expect(await configUnavailable.json()).toMatchObject({ code: 40941 });
 
     const noCatalog = await mountHttp([
@@ -1090,7 +1090,7 @@ describe('feature-http kap-server aligned routes', () => {
       bindTestLlm(createMockRequester()),
     ]);
     const catalogUnavailable = await get(noCatalog, '/providers');
-    expect(catalogUnavailable.status).toBe(409);
+    expect(catalogUnavailable.status).toBe(200);
     expect(await catalogUnavailable.json()).toMatchObject({ code: 40942 });
   });
 
@@ -1136,7 +1136,7 @@ describe('feature-http kap-server aligned routes', () => {
 
     const bare = await mountHttp([bindTestLlm(createMockRequester())]);
     const unavailable = await get(bare, '/config');
-    expect(unavailable.status).toBe(409);
+    expect(unavailable.status).toBe(200);
     expect(await unavailable.json()).toMatchObject({ code: 40941 });
   });
 
@@ -1183,11 +1183,11 @@ describe('feature-http kap-server aligned routes', () => {
     expect(enabled.status).toBe(200);
 
     const missingPlugin = await post(env, '/plugins/ghost:enable');
-    expect(missingPlugin.status).toBe(404);
+    expect(missingPlugin.status).toBe(200);
     expect(await missingPlugin.json()).toMatchObject({ code: 40419 });
 
     const unsupported = await post(env, '/plugins/local-one:bogus');
-    expect(unsupported.status).toBe(400);
+    expect(unsupported.status).toBe(200);
 
     const dir = await tempDir('plugin-marketplace-');
     const catalogPath = join(dir, 'marketplace.json');
@@ -1234,7 +1234,7 @@ describe('feature-http kap-server aligned routes', () => {
 
     const bare = await mountHttp([bindTestLlm(createMockRequester())]);
     const unavailable = await get(bare, '/plugins');
-    expect(unavailable.status).toBe(409);
+    expect(unavailable.status).toBe(200);
     expect(await unavailable.json()).toMatchObject({ code: 40943 });
   });
 
@@ -1242,7 +1242,7 @@ describe('feature-http kap-server aligned routes', () => {
     const env = await mountHttp([]);
 
     const missingKey = await get(env, '/gui/store/getItem');
-    expect(missingKey.status).toBe(400);
+    expect(missingKey.status).toBe(200);
 
     const set = await post(env, '/gui/store/setItem', { key: 'k1', value: 'v1' });
     expect(set.status).toBe(200);
@@ -1267,7 +1267,7 @@ describe('feature-http kap-server aligned routes', () => {
     expect((await afterClear.json()).data).toEqual({ length: 0 });
 
     const badValue = await post(env, '/gui/store/setItem', { key: 'k' });
-    expect(badValue.status).toBe(400);
+    expect(badValue.status).toBe(200);
 
     const dir = await tempDir('gui-store-');
     const filePath = join(dir, 'gui.json');
@@ -1306,14 +1306,60 @@ describe('feature-http kap-server aligned routes', () => {
     expect(missing.status).toBe(404);
 
     const reserved = await fetch(`${env.origin}/api/v1/nope`);
-    expect(reserved.status).toBe(404);
+    expect(reserved.status).toBe(200);
+    expect(await reserved.json()).toMatchObject({ code: 40422, data: null });
 
     const health = await fetch(`${env.origin}/api/v1/healthz`);
     expect(health.status).toBe(200);
 
     const bare = await mountHttp([]);
     const off = await fetch(`${bare.origin}/`);
-    expect(off.status).toBe(404);
+    expect(off.status).toBe(200);
+    expect(await off.json()).toMatchObject({ code: 40422, data: null });
+  });
+
+  it('answers unmatched routes and uncaught errors with the envelope', async () => {
+    const boom = createFeature('test-boom', {
+      app() {
+        useHttpRoute({
+          id: 'test.boom',
+          method: 'GET',
+          path: '/api/v1/boom',
+          handler: () => {
+            throw new Error('boom');
+          },
+        });
+      },
+    });
+    const env = await mountHttp([boom]);
+
+    const unknownGet = await fetch(`${env.origin}/api/v1/nope`, {
+      headers: { 'x-request-id': 'req-42' },
+    });
+    expect(unknownGet.status).toBe(200);
+    expect(await unknownGet.json()).toEqual({
+      code: 40422,
+      msg: 'route GET /api/v1/nope not found',
+      data: null,
+      request_id: 'req-42',
+    });
+
+    const unknownPost = await post(env, '/definitely/not/a/route', {});
+    expect(unknownPost.status).toBe(200);
+    expect(await unknownPost.json()).toMatchObject({ code: 40422, data: null });
+
+    const thrown = await fetch(`${env.origin}/api/v1/boom`);
+    expect(thrown.status).toBe(200);
+    expect(thrown.headers.get('content-type')).toContain('application/json');
+    expect(await thrown.json()).toMatchObject({ code: 50001, msg: 'boom', data: null });
+
+    const malformed = await fetch(`${env.origin}/api/v1/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{not json',
+    });
+    expect(malformed.status).toBe(200);
+    expect(await malformed.json()).toMatchObject({ code: 50001, data: null });
   });
 
   it('shuts the server down after answering ok', async () => {
@@ -1361,7 +1407,7 @@ describe('feature-http kap-server aligned routes', () => {
     expect(await restarted.json()).toMatchObject({ data: { restarting: true } });
 
     const missingServer = await post(env, '/mcp/servers/nope:restart');
-    expect(missingServer.status).toBe(404);
+    expect(missingServer.status).toBe(200);
     expect(await missingServer.json()).toMatchObject({ code: 40408 });
 
     const tools = await get(env, '/tools?session_id=ses_tools');
@@ -1381,7 +1427,7 @@ describe('feature-http kap-server aligned routes', () => {
 
     const bare = await mountHttp([bindTestLlm(createMockRequester())]);
     const unavailable = await get(bare, '/mcp/servers');
-    expect(unavailable.status).toBe(409);
+    expect(unavailable.status).toBe(200);
     expect(await unavailable.json()).toMatchObject({ code: 40944 });
   });
 
@@ -1427,7 +1473,7 @@ describe('feature-http kap-server aligned routes', () => {
       command: process.execPath,
       args: [mcpFixturePath],
     });
-    expect(duplicate.status).toBe(400);
+    expect(duplicate.status).toBe(200);
     expect(await duplicate.json()).toMatchObject({ code: 40001 });
 
     const single = await get(env, '/mcp/servers/fake');
@@ -1435,7 +1481,7 @@ describe('feature-http kap-server aligned routes', () => {
     expect((await single.json()).data).toMatchObject({ name: 'fake', mutable: true });
 
     const missing = await get(env, '/mcp/servers/nope');
-    expect(missing.status).toBe(404);
+    expect(missing.status).toBe(200);
     expect(await missing.json()).toMatchObject({ code: 40408, msg: 'MCP server "nope" was not found' });
 
     const updated = await put(env, '/mcp/servers/fake', {
@@ -1457,7 +1503,7 @@ describe('feature-http kap-server aligned routes', () => {
     expect(removedAgain.status).toBe(200);
 
     const invalid = await post(env, '/mcp/servers', { name: 'x', transport: 'bogus' });
-    expect(invalid.status).toBe(400);
+    expect(invalid.status).toBe(200);
     expect(await invalid.json()).toMatchObject({ code: 40001 });
 
     const bare = await mountHttp([bindTestLlm(createMockRequester())]);
@@ -1467,10 +1513,10 @@ describe('feature-http kap-server aligned routes', () => {
       command: process.execPath,
       args: [mcpFixturePath],
     });
-    expect(unavailableCreate.status).toBe(409);
+    expect(unavailableCreate.status).toBe(200);
     expect(await unavailableCreate.json()).toMatchObject({ code: 40944 });
     const unavailableStatuses = await get(bare, '/mcp/auth-statuses');
-    expect(unavailableStatuses.status).toBe(409);
+    expect(unavailableStatuses.status).toBe(200);
     expect(await unavailableStatuses.json()).toMatchObject({ code: 40944 });
   }, 30_000);
 
@@ -1504,14 +1550,14 @@ describe('feature-http kap-server aligned routes', () => {
     expect((await testedByName.json()).data.success).toBe(true);
 
     const testedMissing = await post(env, '/mcp/servers:test', { name: 'ghost' });
-    expect(testedMissing.status).toBe(404);
+    expect(testedMissing.status).toBe(200);
     expect(await testedMissing.json()).toMatchObject({ code: 40408 });
 
     const testedBoth = await post(env, '/mcp/servers:test', {
       name: 'fake',
       server: { name: 'other', transport: 'stdio', command: process.execPath, args: [mcpFixturePath] },
     });
-    expect(testedBoth.status).toBe(400);
+    expect(testedBoth.status).toBe(200);
     expect(await testedBoth.json()).toMatchObject({ code: 40001 });
 
     const inspected = await post(env, '/mcp/servers:inspect', {});
@@ -1540,7 +1586,7 @@ describe('feature-http kap-server aligned routes', () => {
     const targeted = await post(env, '/mcp/servers:inspect', {
       targets: [{ source: 'global', name: 'ghost' }],
     });
-    expect(targeted.status).toBe(404);
+    expect(targeted.status).toBe(200);
     expect(await targeted.json()).toMatchObject({ code: 40408 });
 
     const statuses = await get(env, '/mcp/auth-statuses');
@@ -1551,7 +1597,7 @@ describe('feature-http kap-server aligned routes', () => {
     ]);
 
     const badVerify = await get(env, '/mcp/auth-statuses?verify=bogus');
-    expect(badVerify.status).toBe(400);
+    expect(badVerify.status).toBe(200);
     expect(await badVerify.json()).toMatchObject({ code: 40001 });
 
     const restarted = await post(env, '/mcp/servers/fake:restart');
@@ -1559,7 +1605,7 @@ describe('feature-http kap-server aligned routes', () => {
     expect(await restarted.json()).toMatchObject({ data: { restarting: true } });
 
     const unsupported = await post(env, '/mcp/servers/:bogus', {});
-    expect(unsupported.status).toBe(400);
+    expect(unsupported.status).toBe(200);
     expect(await unsupported.json()).toMatchObject({ code: 40001 });
   }, 30_000);
 
@@ -1589,11 +1635,11 @@ describe('feature-http kap-server aligned routes', () => {
       expect(flowId.length).toBeGreaterThan(0);
 
       const unknownComplete = await post(env, '/mcp/auth:complete', { flowId: 'unknown-flow' });
-      expect(unknownComplete.status).toBe(400);
+      expect(unknownComplete.status).toBe(200);
       expect(await unknownComplete.json()).toMatchObject({ code: 40001 });
 
       const timedOut = await post(env, '/mcp/auth:complete', { flowId, timeoutMs: 50 });
-      expect(timedOut.status).toBe(409);
+      expect(timedOut.status).toBe(200);
       expect(await timedOut.json()).toMatchObject({ code: 40929 });
 
       const beginAgain = await post(env, '/mcp/auth:begin', { source: 'global', name: 'auth' });
@@ -1610,15 +1656,15 @@ describe('feature-http kap-server aligned routes', () => {
       expect((await reset.json()).data).toBeNull();
 
       const stdioBegin = await post(env, '/mcp/auth:begin', { source: 'global', name: 'fake' });
-      expect(stdioBegin.status).toBe(400);
+      expect(stdioBegin.status).toBe(200);
       expect(await stdioBegin.json()).toMatchObject({ code: 40001 });
 
       const missingBegin = await post(env, '/mcp/auth:begin', { source: 'global', name: 'ghost' });
-      expect(missingBegin.status).toBe(404);
+      expect(missingBegin.status).toBe(200);
       expect(await missingBegin.json()).toMatchObject({ code: 40408 });
 
       const badAction = await post(env, '/mcp/auth:bogus', {});
-      expect(badAction.status).toBe(400);
+      expect(badAction.status).toBe(200);
       expect(await badAction.json()).toMatchObject({ code: 40001 });
     } finally {
       await oauth.close();
@@ -1633,14 +1679,14 @@ describe('feature-http workspaces routes', () => {
     const env = await mountHttp([createWorkspaces({ homeDir: home, host: createNodeOsHost() })]);
 
     const relative = await post(env, '/workspaces', { root: 'relative/path' });
-    expect(relative.status).toBe(400);
+    expect(relative.status).toBe(200);
     const relativeBody = await relative.json();
     expect(relativeBody.code).toBe(40001);
     expect(relativeBody.details).toEqual([{ path: 'root', message: 'root must be an absolute path' }]);
 
     const missingRoot = join(root, 'missing');
     const missing = await post(env, '/workspaces', { root: missingRoot });
-    expect(missing.status).toBe(404);
+    expect(missing.status).toBe(200);
     expect(await missing.json()).toMatchObject({
       code: 40409,
       msg: `root ${missingRoot} does not exist`,
@@ -1672,7 +1718,7 @@ describe('feature-http workspaces routes', () => {
     expect((await renamed.json()).data).toMatchObject({ id: workspaceId, name: 'Renamed Root' });
 
     const invalidId = await fetch(`${env.origin}/api/v1/workspaces/not-an-id/trust`);
-    expect(invalidId.status).toBe(400);
+    expect(invalidId.status).toBe(200);
 
     const ghostId = 'wd_ghost_000000000000';
     const renameGhost = await fetch(`${env.origin}/api/v1/workspaces/${ghostId}`, {
@@ -1680,7 +1726,7 @@ describe('feature-http workspaces routes', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name: 'x' }),
     });
-    expect(renameGhost.status).toBe(404);
+    expect(renameGhost.status).toBe(200);
     expect(await renameGhost.json()).toMatchObject({
       code: 40410,
       msg: `workspace ${ghostId} does not exist`,
@@ -1709,9 +1755,9 @@ describe('feature-http workspaces routes', () => {
     const addMissing = await post(env, `/workspaces/${workspaceId}/add-dir`, {
       path: join(root, 'ghost'),
     });
-    expect(addMissing.status).toBe(404);
+    expect(addMissing.status).toBe(200);
     const addGhost = await post(env, `/workspaces/${ghostId}/add-dir`, { path: extra });
-    expect(addGhost.status).toBe(404);
+    expect(addGhost.status).toBe(200);
     expect(await addGhost.json()).toMatchObject({ code: 40410 });
 
     const deleted = await del(env, `/workspaces/${workspaceId}`);
@@ -1719,7 +1765,7 @@ describe('feature-http workspaces routes', () => {
     expect(await deleted.json()).toMatchObject({ data: { deleted: true } });
     expect(((await (await get(env, '/workspaces')).json()).data.items)).toEqual([]);
     const deleteAgain = await del(env, `/workspaces/${workspaceId}`);
-    expect(deleteAgain.status).toBe(404);
+    expect(deleteAgain.status).toBe(200);
     expect(await deleteAgain.json()).toMatchObject({ code: 40410 });
   });
 
@@ -1747,7 +1793,7 @@ describe('feature-http workspaces routes', () => {
     ]);
 
     const relativeBrowse = await get(env, '/fs:browse?path=relative%2Fpath');
-    expect(relativeBrowse.status).toBe(400);
+    expect(relativeBrowse.status).toBe(200);
     expect(await relativeBrowse.json()).toMatchObject({ code: 40001 });
 
     const filePath = join(root, 'docs', 'note.txt');
@@ -1774,7 +1820,7 @@ describe('feature-http workspaces routes', () => {
     expect(await ranged.text()).toBe('note');
 
     const dirContent = await get(env, `/fs:content?path=${encodeURIComponent(join(root, 'docs'))}`);
-    expect(dirContent.status).toBe(409);
+    expect(dirContent.status).toBe(200);
     expect(await dirContent.json()).toMatchObject({
       code: 40906,
       msg: `path is a directory: ${join(root, 'docs')}`,
@@ -1784,32 +1830,32 @@ describe('feature-http workspaces routes', () => {
       env,
       `/fs:content?path=${encodeURIComponent(join(root, 'missing.txt'))}`,
     );
-    expect(missingContent.status).toBe(404);
+    expect(missingContent.status).toBe(200);
     expect(await missingContent.json()).toMatchObject({ code: 40409 });
 
     const relativeContent = await get(env, '/fs:content?path=relative%2Ffile.txt');
-    expect(relativeContent.status).toBe(400);
+    expect(relativeContent.status).toBe(200);
 
     const made = await post(env, '/fs:mkdir', { path: join(root, 'newdir') });
     expect(made.status).toBe(200);
     expect(await made.json()).toMatchObject({ data: { path: join(root, 'newdir') } });
 
     const duplicate = await post(env, '/fs:mkdir', { path: join(root, 'newdir') });
-    expect(duplicate.status).toBe(409);
+    expect(duplicate.status).toBe(200);
     expect(await duplicate.json()).toMatchObject({
       code: 40919,
       msg: `path already exists: ${join(root, 'newdir')}`,
     });
 
     const missingParent = await post(env, '/fs:mkdir', { path: join(root, 'ghost', 'child') });
-    expect(missingParent.status).toBe(404);
+    expect(missingParent.status).toBe(200);
     expect(await missingParent.json()).toMatchObject({
       code: 40409,
       msg: `parent path not found: ${join(root, 'ghost', 'child')}`,
     });
 
     const relativeMkdir = await post(env, '/fs:mkdir', { path: 'relative' });
-    expect(relativeMkdir.status).toBe(400);
+    expect(relativeMkdir.status).toBe(200);
   });
 
   it('serves session fs actions, workspace search and suggest, root suggest and downloads', async () => {
@@ -1861,29 +1907,29 @@ describe('feature-http workspaces routes', () => {
     expect(greppedBody.data.files[0]).toMatchObject({ path: 'docs/note.txt' });
 
     const escaped = await post(env, '/sessions/ses_fs/fs:read', { path: '../secret.txt' });
-    expect(escaped.status).toBe(413);
+    expect(escaped.status).toBe(200);
     expect(await escaped.json()).toMatchObject({ code: 41304 });
 
     const unsupported = await post(env, '/sessions/ses_fs/fs:open', { path: 'docs/note.txt' });
-    expect(unsupported.status).toBe(400);
+    expect(unsupported.status).toBe(200);
     expect(await unsupported.json()).toMatchObject({
       code: 40001,
       msg: 'unsupported action: fs:open',
     });
     const badTail = await post(env, '/sessions/ses_fs/other', {});
-    expect(badTail.status).toBe(400);
+    expect(badTail.status).toBe(200);
     expect(await badTail.json()).toMatchObject({ code: 40001, msg: 'unsupported action: other' });
     const invalidBody = await post(env, '/sessions/ses_fs/fs:read', { path: 42 });
-    expect(invalidBody.status).toBe(400);
+    expect(invalidBody.status).toBe(200);
     expect((await invalidBody.json()).code).toBe(40001);
 
     const missingSession = await post(env, '/sessions/ses_ghost/fs:list', {});
-    expect(missingSession.status).toBe(404);
+    expect(missingSession.status).toBe(200);
     expect(await missingSession.json()).toMatchObject({ code: 40401 });
 
     await env.app.open({ sessionId: 'ses_unbound' });
     const unbound = await post(env, '/sessions/ses_unbound/fs:list', {});
-    expect(unbound.status).toBe(404);
+    expect(unbound.status).toBe(200);
     expect(await unbound.json()).toMatchObject({
       code: 40410,
       msg: 'session ses_unbound has no workspace bound',
@@ -1913,7 +1959,7 @@ describe('feature-http workspaces routes', () => {
       workspace: 'wd_ghost_000000000000',
       query: 'x',
     });
-    expect(unknownWorkspace.status).toBe(404);
+    expect(unknownWorkspace.status).toBe(200);
     expect(await unknownWorkspace.json()).toMatchObject({
       code: 40410,
       msg: 'workspace wd_ghost_000000000000 does not exist',
@@ -1925,13 +1971,13 @@ describe('feature-http workspaces routes', () => {
     const rootSuggest = await post(env, '/fs:suggest', { roots: [root], query: 'note' });
     expect(((await rootSuggest.json()).data.items[0]).path).toBe('docs/note.txt');
     const badRoot = await post(env, '/fs:suggest', { roots: ['relative'], query: 'x' });
-    expect(badRoot.status).toBe(400);
+    expect(badRoot.status).toBe(200);
     expect(await badRoot.json()).toMatchObject({
       code: 40001,
       msg: 'root must be an absolute path: relative',
     });
     const missingRoot = await post(env, '/fs:suggest', { roots: [join(root, 'ghost')], query: 'x' });
-    expect(missingRoot.status).toBe(404);
+    expect(missingRoot.status).toBe(200);
     expect(await missingRoot.json()).toMatchObject({
       code: 40409,
       msg: `root not found: ${join(root, 'ghost')}`,
@@ -1944,40 +1990,40 @@ describe('feature-http workspaces routes', () => {
     expect(await download.text()).toBe('note body\n');
 
     const downloadMissing = await fetch(`${env.origin}/api/v1/sessions/ses_fs/fs/ghost.txt:download`);
-    expect(downloadMissing.status).toBe(404);
+    expect(downloadMissing.status).toBe(200);
     expect(await downloadMissing.json()).toMatchObject({ code: 40409 });
 
     const downloadEscape = await fetch(
       `${env.origin}/api/v1/sessions/ses_fs/fs/docs/%2E%2E%2Fsecret.txt:download`,
     );
-    expect(downloadEscape.status).toBe(413);
+    expect(downloadEscape.status).toBe(200);
     expect(await downloadEscape.json()).toMatchObject({ code: 41304 });
 
     const downloadBadAction = await fetch(`${env.origin}/api/v1/sessions/ses_fs/fs/docs/note.txt`);
-    expect(downloadBadAction.status).toBe(400);
+    expect(downloadBadAction.status).toBe(200);
 
     const downloadNoSession = await fetch(`${env.origin}/api/v1/sessions/ses_ghost/fs/a.txt:download`);
-    expect(downloadNoSession.status).toBe(404);
+    expect(downloadNoSession.status).toBe(200);
     expect(await downloadNoSession.json()).toMatchObject({ code: 40401 });
   });
 
   it('reports 40945 when workspaces is absent and 40946 when the fs capability is missing', async () => {
     const bare = await mountHttp([]);
     const unavailable = await get(bare, '/workspaces');
-    expect(unavailable.status).toBe(409);
+    expect(unavailable.status).toBe(200);
     expect(await unavailable.json()).toMatchObject({ code: 40945 });
     const bareAction = await post(bare, '/sessions/ses_x/fs:list', {});
-    expect(bareAction.status).toBe(409);
+    expect(bareAction.status).toBe(200);
     expect(await bareAction.json()).toMatchObject({ code: 40945 });
     const bareSuggest = await post(bare, '/fs:suggest', { roots: ['/'], query: 'x' });
-    expect(bareSuggest.status).toBe(409);
+    expect(bareSuggest.status).toBe(200);
     const bareWorkspaceSearch = await post(bare, '/workspace/fs:search', {
       workspace: '/tmp',
       query: 'x',
     });
-    expect(bareWorkspaceSearch.status).toBe(409);
+    expect(bareWorkspaceSearch.status).toBe(200);
     const bareDownload = await fetch(`${bare.origin}/api/v1/sessions/ses_x/fs/a.txt:download`);
-    expect(bareDownload.status).toBe(409);
+    expect(bareDownload.status).toBe(200);
 
     const memoryOnly = await mountHttp([
       createWorkspaces({ homeDir: await tempDir('ws-http-mem-') }),
@@ -1994,17 +2040,17 @@ describe('feature-http workspaces routes', () => {
     expect(trust.status).toBe(200);
 
     const browseNoHost = await get(memoryOnly, '/fs:browse');
-    expect(browseNoHost.status).toBe(409);
+    expect(browseNoHost.status).toBe(200);
     expect(await browseNoHost.json()).toMatchObject({ code: 40946 });
     const mkdirNoHost = await post(memoryOnly, '/fs:mkdir', { path: join(root, 'x') });
-    expect(mkdirNoHost.status).toBe(409);
+    expect(mkdirNoHost.status).toBe(200);
     const sessionFsNoHost = await post(memoryOnly, '/sessions/ses_x/fs:list', {});
-    expect(sessionFsNoHost.status).toBe(409);
+    expect(sessionFsNoHost.status).toBe(200);
     expect(await sessionFsNoHost.json()).toMatchObject({ code: 40946 });
     const suggestNoHost = await post(memoryOnly, '/fs:suggest', { roots: [root], query: 'x' });
-    expect(suggestNoHost.status).toBe(409);
+    expect(suggestNoHost.status).toBe(200);
     const addDirNoHost = await post(memoryOnly, `/workspaces/${workspaceId}/add-dir`, { path: root });
-    expect(addDirNoHost.status).toBe(409);
+    expect(addDirNoHost.status).toBe(200);
     expect(await addDirNoHost.json()).toMatchObject({ code: 40946 });
   });
 });
@@ -2190,45 +2236,45 @@ describe('feature-http capabilities routes', () => {
     const gated = await post(env, '/capabilities/kimi-cu:install');
     expect((await gated.json()).data.install).toMatchObject({ running: true, step: 'plugin' });
     const inProgress = await post(env, '/capabilities/kimi-cu:install');
-    expect(inProgress.status).toBe(409);
+    expect(inProgress.status).toBe(200);
     expect(await inProgress.json()).toMatchObject({ code: 40924 });
     release?.();
     await waitCapabilityIdle(env, 'kimi-cu');
 
     const unsupported = await post(env, '/capabilities/kimi-webbridge:install');
-    expect(unsupported.status).toBe(409);
+    expect(unsupported.status).toBe(200);
     expect(await unsupported.json()).toMatchObject({ code: 40925 });
 
     const missingGet = await get(env, '/capabilities/nope');
-    expect(missingGet.status).toBe(404);
+    expect(missingGet.status).toBe(200);
     expect(await missingGet.json()).toMatchObject({ code: 40418 });
     const missingInstall = await post(env, '/capabilities/nope:install');
-    expect(missingInstall.status).toBe(404);
+    expect(missingInstall.status).toBe(200);
     expect(await missingInstall.json()).toMatchObject({ code: 40418 });
 
     const badAction = await post(env, '/capabilities/kimi-cu:reinstall');
-    expect(badAction.status).toBe(400);
+    expect(badAction.status).toBe(200);
     expect(await badAction.json()).toMatchObject({
       code: 40001,
       msg: 'unsupported action: kimi-cu:reinstall',
     });
     const bare = await post(env, '/capabilities/kimi-cu');
-    expect(bare.status).toBe(400);
+    expect(bare.status).toBe(200);
     expect(await bare.json()).toMatchObject({ code: 40001, msg: 'unsupported action: kimi-cu' });
   });
 
   it('reports 40947 when the capabilities feature is absent', async () => {
     const env = await mountHttp([]);
     const list = await get(env, '/capabilities');
-    expect(list.status).toBe(409);
+    expect(list.status).toBe(200);
     expect(await list.json()).toMatchObject({ code: 40947 });
 
     const got = await get(env, '/capabilities/kimi-cu');
-    expect(got.status).toBe(409);
+    expect(got.status).toBe(200);
     expect(await got.json()).toMatchObject({ code: 40947 });
 
     const install = await post(env, '/capabilities/kimi-cu:install');
-    expect(install.status).toBe(409);
+    expect(install.status).toBe(200);
     expect(await install.json()).toMatchObject({ code: 40947 });
   });
 });
@@ -2592,7 +2638,7 @@ describe('feature-http auth/oauth routes', () => {
     expect(stored.access_token ?? stored.accessToken).toBe('sk-new-access');
 
     const badRegion = await post(env, '/oauth/login', { region: 'moon' });
-    expect(badRegion.status).toBe(400);
+    expect(badRegion.status).toBe(200);
     expect(await badRegion.json()).toMatchObject({ code: 40001 });
 
     const logout = await post(env, '/oauth/logout', {});
@@ -2624,7 +2670,7 @@ describe('feature-http auth/oauth routes', () => {
     expect((await pending.json()).data.status).toBe('pending');
 
     const badQuery = await get(env, '/oauth/login?provider=');
-    expect(badQuery.status).toBe(400);
+    expect(badQuery.status).toBe(200);
     expect(await badQuery.json()).toMatchObject({ code: 40001 });
 
     const cancelled = await del(env, '/oauth/login');
@@ -2646,7 +2692,7 @@ describe('feature-http auth/oauth routes', () => {
     ];
     for (const probe of probes) {
       const response = await probe();
-      expect(response.status).toBe(409);
+      expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({ code: 40948 });
     }
   });

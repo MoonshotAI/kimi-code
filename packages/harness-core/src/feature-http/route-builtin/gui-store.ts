@@ -26,7 +26,7 @@ export function useGuiStoreRoutes(prefix: string, options: GuiStoreOptions = {})
     handler: async (request, response) => {
       const key = readKey(request.query['key']);
       if (key === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'key must be a string between 1 and 256 characters', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'key must be a string between 1 and 256 characters');
         return;
       }
       sendOk(request, response, { value: await store.getItem(key) });
@@ -49,7 +49,7 @@ export function useGuiStoreRoutes(prefix: string, options: GuiStoreOptions = {})
     handler: async (request, response) => {
       const body = readKeyValueBody(request.body);
       if (body === undefined || typeof body.value !== 'string') {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'key and value are required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'key and value are required');
         return;
       }
       await store.setItem(body.key, body.value);
@@ -64,7 +64,7 @@ export function useGuiStoreRoutes(prefix: string, options: GuiStoreOptions = {})
     handler: async (request, response) => {
       const body = readKeyValueBody(request.body);
       if (body === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'key is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'key is required');
         return;
       }
       await store.removeItem(body.key);

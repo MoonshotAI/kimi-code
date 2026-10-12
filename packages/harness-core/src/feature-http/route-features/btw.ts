@@ -12,11 +12,11 @@ export function useBtwRoutes(prefix: string): void {
     try {
       const session = app.get(sessionId);
       if (session === undefined) {
-        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`, 404);
+        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
       }
       if (session.get(MAIN_AGENT_ID) === undefined) {
-        sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${MAIN_AGENT_ID} does not exist`, 404);
+        sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${MAIN_AGENT_ID} does not exist`);
         return;
       }
       const btw = session.resolve(BtwRef);
@@ -26,7 +26,6 @@ export function useBtwRoutes(prefix: string): void {
           response,
           ErrorCode.SESSION_BTW_UNAVAILABLE,
           'btw is unavailable (btw feature is not installed)',
-          409,
         );
         return;
       }

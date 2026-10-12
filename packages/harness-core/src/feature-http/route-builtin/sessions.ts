@@ -53,7 +53,7 @@ export function useSessionRoutes(prefix: string): void {
       const app = useApp();
       try {
         const session = await app.open(readSessionInput(request.body));
-        sendOk(request, response, { id: session.sessionId, agent_ids: session.list() }, 201);
+        sendOk(request, response, { id: session.sessionId, agent_ids: session.list() });
       } catch (error) {
         if (sendFacadeErr(request, response, error)) return;
         throw error;
@@ -68,14 +68,14 @@ export function useSessionRoutes(prefix: string): void {
     handler: async (request, response) => {
       const sessionId = param(request, 'session_id');
       if (sessionId === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
         return;
       }
       const app = useApp();
       const space = app.space;
       const record = await space.get(sessionId);
       if (record === undefined) {
-        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`, 404);
+        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
       }
       sendOk(request, response, sessionView(record, app.get(record.id)));
@@ -89,7 +89,7 @@ export function useSessionRoutes(prefix: string): void {
     handler: async (request, response) => {
       const sessionId = param(request, 'session_id');
       if (sessionId === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
         return;
       }
       const app = useApp();
@@ -116,7 +116,7 @@ export function useSessionRoutes(prefix: string): void {
     handler: async (request, response) => {
       const sessionId = param(request, 'session_id');
       if (sessionId === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
         return;
       }
       const app = useApp();
@@ -139,7 +139,7 @@ export function useSessionRoutes(prefix: string): void {
         throw new SessionSpaceError('not-found', `session ${sessionId} does not exist`);
       }
       const session = await app.open({ ...readSessionInput(request.body), from: sessionId });
-      sendOk(request, response, { id: session.sessionId, agent_ids: session.list() }, 201);
+      sendOk(request, response, { id: session.sessionId, agent_ids: session.list() });
     } catch (error) {
       if (sendFacadeErr(request, response, error)) return;
       throw error;
@@ -151,13 +151,13 @@ export function useSessionRoutes(prefix: string): void {
     try {
       const session = app.get(sessionId);
       if (session === undefined) {
-        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`, 404);
+        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
       const agent = session.get(agentId);
       if (agent === undefined) {
-        sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`, 404);
+        sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`);
         return;
       }
       agent.abort();
@@ -173,13 +173,13 @@ export function useSessionRoutes(prefix: string): void {
     try {
       const session = app.get(sessionId);
       if (session === undefined) {
-        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`, 404);
+        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
       const agent = session.get(agentId);
       if (agent === undefined) {
-        sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`, 404);
+        sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`);
         return;
       }
       agent.pause();
@@ -195,13 +195,13 @@ export function useSessionRoutes(prefix: string): void {
     try {
       const session = app.get(sessionId);
       if (session === undefined) {
-        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`, 404);
+        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
       const agent = session.get(agentId);
       if (agent === undefined) {
-        sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`, 404);
+        sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`);
         return;
       }
       agent.continue();
@@ -245,13 +245,13 @@ export function useSessionRoutes(prefix: string): void {
     try {
       const session = app.get(sessionId);
       if (session === undefined) {
-        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`, 404);
+        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
       const agent = session.get(agentId);
       if (agent === undefined) {
-        sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`, 404);
+        sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`);
         return;
       }
       const undo = agent.resolve(UndoRef);
@@ -261,7 +261,6 @@ export function useSessionRoutes(prefix: string): void {
           response,
           ErrorCode.SESSION_UNDO_UNAVAILABLE,
           'session undo is unavailable (undo feature is not installed)',
-          409,
         );
         return;
       }
@@ -270,10 +269,10 @@ export function useSessionRoutes(prefix: string): void {
       } catch (error) {
         if (error instanceof UndoFeatureError) {
           if (error.code === 'invalid-count') {
-            sendErr(request, response, ErrorCode.VALIDATION_FAILED, error.message, 400);
+            sendErr(request, response, ErrorCode.VALIDATION_FAILED, error.message);
             return;
           }
-          response.status(409).json({
+          response.status(200).json({
             code: ErrorCode.SESSION_UNDO_UNAVAILABLE,
             msg: error.message,
             data: undoErrorDetails(error),
@@ -286,7 +285,7 @@ export function useSessionRoutes(prefix: string): void {
       const history = session.stores.get(agentId)?.getState().history ?? [];
       const status = await sessionStatusView(session);
       if (status === undefined) {
-        sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`, 404);
+        sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`);
         return;
       }
       sendOk(request, response, {

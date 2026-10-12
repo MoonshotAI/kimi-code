@@ -78,7 +78,7 @@ export function useFsRoutes(prefix: string): void {
       const sessionId = param(request, 'session_id');
       const tail = param(request, 'tail');
       if (sessionId === undefined || tail === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
         return;
       }
       if (!tail.startsWith(FS_TAIL_PREFIX)) {
@@ -87,7 +87,6 @@ export function useFsRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           `unsupported action: ${tail}`,
-          400,
         );
         return;
       }
@@ -98,7 +97,6 @@ export function useFsRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           `unsupported action: ${tail}`,
-          400,
         );
         return;
       }
@@ -112,7 +110,6 @@ export function useFsRoutes(prefix: string): void {
           response,
           ErrorCode.FS_GIT_UNAVAILABLE,
           'git is unavailable on this runtime',
-          409,
         );
         return;
       }
@@ -122,7 +119,6 @@ export function useFsRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           `unsupported action: ${tail}`,
-          400,
         );
         return;
       }
@@ -133,7 +129,6 @@ export function useFsRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           'request body must be an object',
-          400,
         );
         return;
       }
@@ -149,7 +144,6 @@ export function useFsRoutes(prefix: string): void {
               response,
               ErrorCode.WORKSPACE_NOT_FOUND,
               `workspace ${sessionId} does not exist`,
-              404,
             );
             return;
           }
@@ -159,7 +153,6 @@ export function useFsRoutes(prefix: string): void {
             response,
             ErrorCode.SESSION_NOT_FOUND,
             `session ${sessionId} does not exist`,
-            404,
           );
           return;
         }
@@ -266,7 +259,6 @@ export function useFsRoutes(prefix: string): void {
         response,
         ErrorCode.VALIDATION_FAILED,
         `unsupported action: fs:${action ?? ''}`,
-        400,
       );
     },
   });
@@ -299,7 +291,6 @@ export function useFsRoutes(prefix: string): void {
               response,
               ErrorCode.VALIDATION_FAILED,
               `root must be an absolute path: ${root}`,
-              400,
             );
             return;
           }
@@ -317,7 +308,6 @@ export function useFsRoutes(prefix: string): void {
               response,
               ErrorCode.FS_PATH_NOT_FOUND,
               `root not found: ${root}`,
-              404,
             );
             return;
           }
@@ -327,7 +317,6 @@ export function useFsRoutes(prefix: string): void {
               response,
               ErrorCode.FS_PATH_NOT_FOUND,
               `root is not a directory: ${root}`,
-              404,
             );
             return;
           }
@@ -346,7 +335,6 @@ export function useFsRoutes(prefix: string): void {
         response,
         ErrorCode.VALIDATION_FAILED,
         `unsupported action: fs:${action ?? ''}`,
-        400,
       );
     },
   });
@@ -358,7 +346,7 @@ export function useFsRoutes(prefix: string): void {
     handler: async (request, response) => {
       const sessionId = param(request, 'session_id');
       if (sessionId === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
         return;
       }
       const splat = request.params['splat'] as unknown;
@@ -373,13 +361,12 @@ export function useFsRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           `unsupported action: ${wildcard}`,
-          400,
         );
         return;
       }
       const relPath = wildcard.slice(0, -DOWNLOAD_SUFFIX.length);
       if (relPath.length === 0) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'path is empty', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'path is empty');
         return;
       }
       const face = workspacesFacade(request, response);
@@ -393,7 +380,6 @@ export function useFsRoutes(prefix: string): void {
           response,
           ErrorCode.SESSION_NOT_FOUND,
           `session ${sessionId} does not exist`,
-          404,
         );
         return;
       }
@@ -526,7 +512,6 @@ function sendSessionWorkspaceErr(
       response,
       ErrorCode.WORKSPACE_NOT_FOUND,
       `workspace ${resolution.workspaceId ?? ''} does not exist`,
-      404,
     );
     return;
   }
@@ -535,7 +520,6 @@ function sendSessionWorkspaceErr(
     response,
     ErrorCode.WORKSPACE_NOT_FOUND,
     `session ${sessionId} has no workspace bound`,
-    404,
   );
 }
 
@@ -564,7 +548,6 @@ function sendWorkspaceRefNotFound(request: Request, response: Response, ref: str
     response,
     ErrorCode.WORKSPACE_NOT_FOUND,
     `workspace ${ref} does not exist`,
-    404,
   );
 }
 

@@ -28,6 +28,7 @@ export const ErrorCode = {
   CAPABILITY_NOT_FOUND: 40418,
   PLUGIN_NOT_FOUND: 40419,
   AGENT_NOT_FOUND: 40421,
+  ROUTE_NOT_FOUND: 40422,
   SESSION_BUSY: 40901,
   APPROVAL_ALREADY_RESOLVED: 40902,
   TASK_ALREADY_FINISHED: 40904,
@@ -78,8 +79,8 @@ export function requestId(request: Request): string {
   return header === undefined || header.length === 0 ? '' : header;
 }
 
-export function sendOk(request: Request, response: Response, data: unknown, status = 200): void {
-  response.status(status).json({
+export function sendOk(request: Request, response: Response, data: unknown): void {
+  response.status(200).json({
     code: ErrorCode.SUCCESS,
     msg: 'success',
     data,
@@ -87,14 +88,8 @@ export function sendOk(request: Request, response: Response, data: unknown, stat
   });
 }
 
-export function sendErr(
-  request: Request,
-  response: Response,
-  code: number,
-  msg: string,
-  status: number,
-): void {
-  response.status(status).json({
+export function sendErr(request: Request, response: Response, code: number, msg: string): void {
+  response.status(200).json({
     code,
     msg,
     data: null,
@@ -146,14 +141,14 @@ export function sendFacadeErr(request: Request, response: Response, error: unkno
     return false;
   }
   if (error.reason === 'not-found') {
-    sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, error.message, 404);
+    sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, error.message);
     return true;
   }
   if (error.reason === 'already-exists') {
-    sendErr(request, response, ErrorCode.SESSION_EXISTS, error.message, 409);
+    sendErr(request, response, ErrorCode.SESSION_EXISTS, error.message);
     return true;
   }
-  sendErr(request, response, ErrorCode.VALIDATION_FAILED, error.message, 400);
+  sendErr(request, response, ErrorCode.VALIDATION_FAILED, error.message);
   return true;
 }
 

@@ -44,7 +44,6 @@ export function useTaskRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           'status must be one of running, completed, failed, cancelled',
-          400,
         );
         return;
       }
@@ -65,7 +64,7 @@ export function useTaskRoutes(prefix: string): void {
       if (resolved === undefined) return;
       const taskId = param(request, 'task_id');
       if (taskId === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'task_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'task_id is required');
         return;
       }
       const record = resolved.facade.records.value.get(taskId);
@@ -75,7 +74,6 @@ export function useTaskRoutes(prefix: string): void {
           response,
           ErrorCode.TASK_NOT_FOUND,
           `task ${taskId} does not exist in session ${resolved.sessionId}`,
-          404,
         );
         return;
       }
@@ -90,7 +88,7 @@ export function useTaskRoutes(prefix: string): void {
     handler: async (request, response) => {
       const tail = param(request, 'tail');
       if (tail === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'task_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'task_id is required');
         return;
       }
       const parsed = parseActionSuffix({ tail, allowedActions: TASK_ACTIONS, resourceLabel: 'task' });
@@ -100,7 +98,6 @@ export function useTaskRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           parsed.kind === 'invalid' ? parsed.reason : `unsupported action: ${tail}`,
-          400,
         );
         return;
       }
@@ -113,13 +110,12 @@ export function useTaskRoutes(prefix: string): void {
           response,
           ErrorCode.TASK_NOT_FOUND,
           `task ${parsed.id} does not exist in session ${resolved.sessionId}`,
-          404,
         );
         return;
       }
       const status = wireStatus(record.status);
       if (TERMINAL_WIRE_STATUSES.has(status)) {
-        response.status(409).json({
+        response.status(200).json({
           code: ErrorCode.TASK_ALREADY_FINISHED,
           msg: `task ${parsed.id} already finished (status: ${status})`,
           data: { cancelled: false },
@@ -140,17 +136,17 @@ function taskFacade(
 ): { readonly sessionId: string; readonly facade: TaskFace } | undefined {
   const sessionId = param(request, 'session_id');
   if (sessionId === undefined) {
-    sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required', 400);
+    sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
     return undefined;
   }
   const session = useApp().get(sessionId);
   if (session === undefined) {
-    sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`, 404);
+    sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
     return undefined;
   }
   const agent = session.get(MAIN_AGENT_ID);
   if (agent === undefined) {
-    sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${MAIN_AGENT_ID} does not exist`, 404);
+    sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${MAIN_AGENT_ID} does not exist`);
     return undefined;
   }
   const facade = agent.resolve(TaskRef);
@@ -160,7 +156,6 @@ function taskFacade(
       response,
       ErrorCode.TASK_UNAVAILABLE,
       'task tracking is unavailable (task feature is not installed)',
-      409,
     );
     return undefined;
   }

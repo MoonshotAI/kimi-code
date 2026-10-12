@@ -12,19 +12,19 @@ export function usePromptRoutes(prefix: string): void {
     handler: async (request, response) => {
       const sessionId = param(request, 'session_id');
       if (sessionId === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
         return;
       }
       const message = readUserMessage(request.body);
       if (message === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'content is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'content is required');
         return;
       }
       const body = request.body as { prompt_id?: unknown };
       const promptId = typeof body['prompt_id'] === 'string' ? body['prompt_id'] : undefined;
       const session = useApp().get(sessionId);
       if (session === undefined) {
-        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`, 404);
+        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
@@ -55,29 +55,28 @@ export function usePromptRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           `unsupported action: ${raw ?? ''}`,
-          400,
         );
         return;
       }
       const ids = readPromptIds(request.body);
       if (ids === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'prompt_ids is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'prompt_ids is required');
         return;
       }
       const sessionId = param(request, 'session_id');
       if (sessionId === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
         return;
       }
       const session = useApp().get(sessionId);
       if (session === undefined) {
-        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`, 404);
+        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
       const agent = session.get(agentId);
       if (agent === undefined) {
-        sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`, 404);
+        sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`);
         return;
       }
       agent.steer(ids);
@@ -93,11 +92,11 @@ export function usePromptRoutes(prefix: string): void {
       const sessionId = param(request, 'session_id');
       const tail = param(request, 'tail');
       if (sessionId === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
         return;
       }
       if (tail === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'prompt_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'prompt_id is required');
         return;
       }
       const parsed = parseActionSuffix({
@@ -111,19 +110,18 @@ export function usePromptRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           parsed.kind === 'invalid' ? parsed.reason : `unsupported action: ${tail}`,
-          400,
         );
         return;
       }
       const session = useApp().get(sessionId);
       if (session === undefined) {
-        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`, 404);
+        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
       const agent = session.get(agentId);
       if (agent === undefined) {
-        sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`, 404);
+        sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`);
         return;
       }
       if (parsed.action === 'abort') {
@@ -143,17 +141,17 @@ export function usePromptRoutes(prefix: string): void {
     handler: async (request, response) => {
       const sessionId = param(request, 'session_id');
       if (sessionId === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
         return;
       }
       const message = readUserMessage(request.body);
       if (message === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'content is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'content is required');
         return;
       }
       const session = useApp().get(sessionId);
       if (session === undefined) {
-        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`, 404);
+        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
@@ -170,7 +168,7 @@ export function usePromptRoutes(prefix: string): void {
     handler: async (request, response) => {
       const sessionId = param(request, 'session_id');
       if (sessionId === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
         return;
       }
       const body = request.body;
@@ -179,17 +177,17 @@ export function usePromptRoutes(prefix: string): void {
           ? (body as { key?: unknown })['key']
           : undefined;
       if (key !== undefined && (typeof key !== 'string' || key.length === 0)) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'key must be a non-empty string', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'key must be a non-empty string');
         return;
       }
       const message = readUserMessage(request.body);
       if (message === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'content is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'content is required');
         return;
       }
       const session = useApp().get(sessionId);
       if (session === undefined) {
-        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`, 404);
+        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;

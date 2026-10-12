@@ -16,7 +16,7 @@ export function useSessionTitleRoutes(prefix: string): void {
     handler: async (request, response) => {
       const sessionId = param(request, 'session_id');
       if (sessionId === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
         return;
       }
       const input = readTitleGenerateInput(request.body);
@@ -26,13 +26,12 @@ export function useSessionTitleRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           'source must be one of user_prompts, first_turn, digest',
-          400,
         );
         return;
       }
       const session = useApp().get(sessionId);
       if (session === undefined) {
-        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`, 404);
+        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
       }
       const facade = session.resolve(SessionTitleRef);
@@ -43,7 +42,6 @@ export function useSessionTitleRoutes(prefix: string): void {
           response,
           ErrorCode.SESSION_TITLE_UNAVAILABLE,
           'session title generation is unavailable (no managed OAuth login, no prompt yet, or the backend request failed)',
-          409,
         );
         return;
       }

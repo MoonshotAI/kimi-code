@@ -318,7 +318,7 @@ describe('remote-control feature', () => {
       headers: { 'content-type': 'application/json' },
       body: '{"enabled":"yes"}',
     });
-    expect(invalid.status).toBe(400);
+    expect(invalid.status).toBe(200);
     expect(await invalid.json()).toMatchObject({ code: 40001 });
 
     const disabled = await fetch(`${origin}/api/v1/remote-control`, {
@@ -359,7 +359,7 @@ describe('remote-control feature', () => {
       headers: { 'content-type': 'application/json' },
       body: '{"enabled":true}',
     });
-    expect(running.status).toBe(409);
+    expect(running.status).toBe(200);
     expect(await running.json()).toMatchObject({ code: 40928 });
 
     const bare = createHarness({ features: [createHttp()] });
@@ -370,7 +370,7 @@ describe('remote-control feature', () => {
       headers: { 'content-type': 'application/json' },
       body: '{"enabled":true}',
     });
-    expect(missing.status).toBe(409);
+    expect(missing.status).toBe(200);
     expect(await missing.json()).toMatchObject({ code: 40937 });
   });
 });

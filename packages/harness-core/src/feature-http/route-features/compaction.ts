@@ -12,13 +12,13 @@ export function useCompactionRoutes(prefix: string): void {
     try {
       const session = app.get(sessionId);
       if (session === undefined) {
-        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`, 404);
+        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
       const agent = session.get(agentId);
       if (agent === undefined) {
-        sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`, 404);
+        sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`);
         return;
       }
       const compaction = agent.resolve(CompactionRef);
@@ -28,7 +28,6 @@ export function useCompactionRoutes(prefix: string): void {
           response,
           ErrorCode.COMPACTION_UNABLE,
           'compaction is unavailable (compaction feature is not installed)',
-          409,
         );
         return;
       }
@@ -36,7 +35,7 @@ export function useCompactionRoutes(prefix: string): void {
         await compaction.compact(normalizeOptional(body.instruction));
       } catch (error) {
         if (isCodedError(error)) {
-          sendErr(request, response, ErrorCode.COMPACTION_UNABLE, error.message, 409);
+          sendErr(request, response, ErrorCode.COMPACTION_UNABLE, error.message);
           return;
         }
         throw error;

@@ -26,7 +26,7 @@ export function useConfigRoutes(prefix: string): void {
       const config = configFacade(request, response);
       if (config === undefined) return;
       if (request.body === null || typeof request.body !== 'object' || Array.isArray(request.body)) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'body must be an object', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'body must be an object');
         return;
       }
       const camelPatch = convertKeysSnakeToCamel(request.body) as Record<string, unknown>;
@@ -45,7 +45,6 @@ export function useConfigRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           error instanceof Error ? error.message : String(error),
-          400,
         );
         return;
       }
@@ -62,7 +61,6 @@ function configFacade(request: Request, response: Response): ConfigStore | undef
       response,
       ErrorCode.CONFIG_UNAVAILABLE,
       'config is unavailable (config feature is not installed)',
-      409,
     );
   }
   return config;

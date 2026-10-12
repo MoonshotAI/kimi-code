@@ -70,7 +70,6 @@ export function usePluginRoutes(prefix: string): void {
           response,
           ErrorCode.INTERNAL_ERROR,
           `Plugin marketplace is unreachable: ${error instanceof Error ? error.message : String(error)}`,
-          500,
         );
         return;
       }
@@ -82,7 +81,6 @@ export function usePluginRoutes(prefix: string): void {
           response,
           ErrorCode.INTERNAL_ERROR,
           `Plugin marketplace returned an invalid catalog: ${error instanceof Error ? error.message : String(error)}`,
-          500,
         );
         return;
       }
@@ -94,7 +92,6 @@ export function usePluginRoutes(prefix: string): void {
           response,
           ErrorCode.INTERNAL_ERROR,
           `Plugin marketplace is unreachable: ${error instanceof Error ? error.message : String(error)}`,
-          500,
         );
         return;
       }
@@ -143,7 +140,7 @@ export function usePluginRoutes(prefix: string): void {
           ? (body as { source?: unknown }).source
           : undefined;
       if (typeof source !== 'string' || source.length === 0) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'source is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'source is required');
         return;
       }
       try {
@@ -162,7 +159,7 @@ export function usePluginRoutes(prefix: string): void {
     handler: async (request, response) => {
       const tail = param(request, 'tail');
       if (tail === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'plugin id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'plugin id is required');
         return;
       }
       const facade = pluginFacade(request, response);
@@ -183,7 +180,6 @@ export function usePluginRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           parsed.kind === 'invalid' ? parsed.reason : `unsupported action: ${tail}`,
-          400,
         );
         return;
       }
@@ -212,7 +208,6 @@ function pluginFacade(request: Request, response: Response): PluginFace | undefi
       response,
       ErrorCode.PLUGIN_UNAVAILABLE,
       'plugins are unavailable (plugin feature is not installed)',
-      409,
     );
   }
   return facade;
@@ -221,15 +216,15 @@ function pluginFacade(request: Request, response: Response): PluginFace | undefi
 function sendPluginErr(request: Request, response: Response, error: unknown): boolean {
   if (error instanceof PluginError) {
     if (error.code === 'plugin.not_found') {
-      sendErr(request, response, ErrorCode.PLUGIN_NOT_FOUND, error.message, 404);
+      sendErr(request, response, ErrorCode.PLUGIN_NOT_FOUND, error.message);
       return true;
     }
     if (error.code === 'fs.path_not_found') {
-      sendErr(request, response, ErrorCode.FS_PATH_NOT_FOUND, error.message, 404);
+      sendErr(request, response, ErrorCode.FS_PATH_NOT_FOUND, error.message);
       return true;
     }
     if (error.code === 'plugin.load_failed' || error.code === 'validation.failed') {
-      sendErr(request, response, ErrorCode.VALIDATION_FAILED, error.message, 400);
+      sendErr(request, response, ErrorCode.VALIDATION_FAILED, error.message);
       return true;
     }
   }
@@ -238,7 +233,6 @@ function sendPluginErr(request: Request, response: Response, error: unknown): bo
     response,
     ErrorCode.INTERNAL_ERROR,
     error instanceof Error ? error.message : String(error),
-    500,
   );
   return true;
 }

@@ -41,7 +41,7 @@ export function useRemoteControlRoutes(prefix: string): void {
     handler: async (request, response) => {
       const enabled = readEnabled(request.body);
       if (enabled === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'enabled must be a boolean', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'enabled must be a boolean');
         return;
       }
       const facade = remoteControlFacade();
@@ -57,11 +57,11 @@ export function useRemoteControlRoutes(prefix: string): void {
         sendOk(request, response, remoteControlStatusView(await facade.enable()));
       } catch (error) {
         if (error instanceof RemoteControlAlreadyRunningError) {
-          sendErr(request, response, ErrorCode.REMOTE_CONTROL_ALREADY_RUNNING, error.message, 409);
+          sendErr(request, response, ErrorCode.REMOTE_CONTROL_ALREADY_RUNNING, error.message);
           return;
         }
         const message = error instanceof Error ? error.message : String(error);
-        sendErr(request, response, ErrorCode.REMOTE_CONTROL_FAILED, message, 500);
+        sendErr(request, response, ErrorCode.REMOTE_CONTROL_FAILED, message);
       }
     },
   });
@@ -77,7 +77,6 @@ function sendUnavailable(request: Parameters<typeof sendErr>[0], response: Param
     response,
     ErrorCode.REMOTE_CONTROL_UNAVAILABLE,
     'remote control is unavailable (remote-control feature is not installed)',
-    409,
   );
 }
 

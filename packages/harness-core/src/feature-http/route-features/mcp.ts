@@ -89,7 +89,7 @@ export function useMcpRoutes(prefix: string): void {
     handler: async (request, response) => {
       const parsed = parseBody(globalMcpServerConfigSchema, request.body);
       if (!parsed.ok) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, parsed.message, 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, parsed.message);
         return;
       }
       const facade = mcpFacade(request, response);
@@ -110,7 +110,7 @@ export function useMcpRoutes(prefix: string): void {
     handler: async (request, response) => {
       const name = param(request, 'name');
       if (name === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'mcp server name is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'mcp server name is required');
         return;
       }
       const facade = mcpFacade(request, response);
@@ -131,12 +131,12 @@ export function useMcpRoutes(prefix: string): void {
     handler: async (request, response) => {
       const name = param(request, 'name');
       if (name === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'mcp server name is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'mcp server name is required');
         return;
       }
       const parsed = parseBody(mcpServerConfigBodySchema, request.body);
       if (!parsed.ok) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, parsed.message, 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, parsed.message);
         return;
       }
       const facade = mcpFacade(request, response);
@@ -161,7 +161,7 @@ export function useMcpRoutes(prefix: string): void {
     handler: async (request, response) => {
       const name = param(request, 'name');
       if (name === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'mcp server name is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'mcp server name is required');
         return;
       }
       const facade = mcpFacade(request, response);
@@ -188,7 +188,6 @@ export function useMcpRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           `unsupported action: ${raw ?? ''}`,
-          400,
         );
         return;
       }
@@ -197,7 +196,7 @@ export function useMcpRoutes(prefix: string): void {
       if (action === 'test') {
         const parsed = parseBody(testServerBodySchema, request.body);
         if (!parsed.ok) {
-          sendErr(request, response, ErrorCode.VALIDATION_FAILED, parsed.message, 400);
+          sendErr(request, response, ErrorCode.VALIDATION_FAILED, parsed.message);
           return;
         }
         try {
@@ -210,7 +209,7 @@ export function useMcpRoutes(prefix: string): void {
       }
       const parsed = parseBody(inspectServersBodySchema, request.body);
       if (!parsed.ok) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, parsed.message, 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, parsed.message);
         return;
       }
       try {
@@ -233,7 +232,7 @@ export function useMcpRoutes(prefix: string): void {
     handler: async (request, response) => {
       const tail = param(request, 'tail');
       if (tail === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'mcp server id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'mcp server id is required');
         return;
       }
       const parsed = parseActionSuffix({
@@ -247,7 +246,6 @@ export function useMcpRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           parsed.kind === 'invalid' ? parsed.reason : `unsupported action: ${tail}`,
-          400,
         );
         return;
       }
@@ -259,7 +257,6 @@ export function useMcpRoutes(prefix: string): void {
           response,
           ErrorCode.MCP_SERVER_NOT_FOUND,
           `MCP server ${parsed.id} does not exist`,
-          404,
         );
         return;
       }
@@ -282,7 +279,6 @@ export function useMcpRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           'verify must be "true" or "false"',
-          400,
         );
         return;
       }
@@ -318,7 +314,6 @@ export function useMcpRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           `unsupported action: ${raw ?? ''}`,
-          400,
         );
         return;
       }
@@ -327,7 +322,7 @@ export function useMcpRoutes(prefix: string): void {
       if (action === 'begin' || action === 'reset') {
         const parsed = parseBody(mcpServerLocatorSchema, request.body);
         if (!parsed.ok) {
-          sendErr(request, response, ErrorCode.VALIDATION_FAILED, parsed.message, 400);
+          sendErr(request, response, ErrorCode.VALIDATION_FAILED, parsed.message);
           return;
         }
         try {
@@ -350,7 +345,7 @@ export function useMcpRoutes(prefix: string): void {
       if (action === 'complete') {
         const parsed = parseBody(authCompleteBodySchema, request.body);
         if (!parsed.ok) {
-          sendErr(request, response, ErrorCode.VALIDATION_FAILED, parsed.message, 400);
+          sendErr(request, response, ErrorCode.VALIDATION_FAILED, parsed.message);
           return;
         }
         const disconnect = new AbortController();
@@ -372,7 +367,7 @@ export function useMcpRoutes(prefix: string): void {
       }
       const parsed = parseBody(authCancelBodySchema, request.body);
       if (!parsed.ok) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, parsed.message, 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, parsed.message);
         return;
       }
       try {
@@ -411,7 +406,6 @@ function mcpFacade(request: Request, response: Response): McpFacade | undefined 
       response,
       ErrorCode.MCP_UNAVAILABLE,
       'mcp is unavailable (mcp feature is not installed)',
-      409,
     );
   }
   return facade;
@@ -420,13 +414,13 @@ function mcpFacade(request: Request, response: Response): McpFacade | undefined 
 function sendMcpErr(request: Request, response: Response, error: unknown): boolean {
   if (!(error instanceof McpManagementError)) return false;
   if (error.code === 'mcp.server_not_found') {
-    sendErr(request, response, ErrorCode.MCP_SERVER_NOT_FOUND, error.message, 404);
+    sendErr(request, response, ErrorCode.MCP_SERVER_NOT_FOUND, error.message);
     return true;
   }
   if (error.code === 'mcp.oauth_failed') {
-    sendErr(request, response, ErrorCode.MCP_OAUTH_FAILED, error.message, 409);
+    sendErr(request, response, ErrorCode.MCP_OAUTH_FAILED, error.message);
     return true;
   }
-  sendErr(request, response, ErrorCode.VALIDATION_FAILED, error.message, 400);
+  sendErr(request, response, ErrorCode.VALIDATION_FAILED, error.message);
   return true;
 }

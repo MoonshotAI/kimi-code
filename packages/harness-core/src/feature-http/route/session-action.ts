@@ -48,7 +48,7 @@ export function useSessionActionRoutes(prefix: string): void {
     handler: async (request, response) => {
       const tail = param(request, 'tail');
       if (tail === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
         return;
       }
       const entries = contributions.value;
@@ -63,18 +63,17 @@ export function useSessionActionRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           parsed.kind === 'invalid' ? parsed.reason : `unsupported action: ${tail}`,
-          400,
         );
         return;
       }
       const body = readSessionActionBody(request.body);
       if ('error' in body) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, body.error, 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, body.error);
         return;
       }
       const entry = entries.find((candidate) => candidate.action === parsed.action);
       if (entry === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, `unsupported action: ${tail}`, 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, `unsupported action: ${tail}`);
         return;
       }
       await entry.run({ sessionId: parsed.id, body, request, response });

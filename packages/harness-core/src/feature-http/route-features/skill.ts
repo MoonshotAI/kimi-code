@@ -33,11 +33,11 @@ export function useSkillRoutes(prefix: string): void {
     handler: async (request, response) => {
       const sessionId = param(request, 'session_id');
       if (sessionId === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
         return;
       }
       if (useApp().get(sessionId) === undefined) {
-        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`, 404);
+        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
       }
       const facade = useInject(SkillCatalogRef).value;
@@ -47,7 +47,6 @@ export function useSkillRoutes(prefix: string): void {
           response,
           ErrorCode.SKILL_CATALOG_UNAVAILABLE,
           'skill catalog is unavailable (skill feature is not installed)',
-          409,
         );
         return;
       }
@@ -64,7 +63,7 @@ export function useSkillRoutes(prefix: string): void {
       const sessionId = param(request, 'session_id');
       const tail = param(request, 'tail');
       if (sessionId === undefined || tail === undefined) {
-        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required', 400);
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
         return;
       }
       const parsed = parseActionSuffix({ tail, allowedActions: SKILL_ACTIONS, resourceLabel: 'skill_name' });
@@ -74,7 +73,6 @@ export function useSkillRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           parsed.kind === 'invalid' ? parsed.reason : `unsupported action: ${tail}`,
-          400,
         );
         return;
       }
@@ -85,18 +83,17 @@ export function useSkillRoutes(prefix: string): void {
           response,
           ErrorCode.VALIDATION_FAILED,
           'args must be a string and attachments are not supported',
-          400,
         );
         return;
       }
       const session = useApp().get(sessionId);
       if (session === undefined) {
-        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`, 404);
+        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
       }
       const agent = session.get(MAIN_AGENT_ID);
       if (agent === undefined) {
-        sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${MAIN_AGENT_ID} does not exist`, 404);
+        sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${MAIN_AGENT_ID} does not exist`);
         return;
       }
       const facade: SkillFace | undefined = agent.resolve(SkillRef);
@@ -106,7 +103,6 @@ export function useSkillRoutes(prefix: string): void {
           response,
           ErrorCode.SKILL_UNAVAILABLE,
           'skill activation is unavailable (skill feature is not installed)',
-          409,
         );
         return;
       }
@@ -147,15 +143,15 @@ function readActivateBody(body: unknown): { readonly args?: string } | undefined
 function sendSkillActivateErr(request: Request, response: Response, error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   if (/^Skill ".*" was not found$/.test(error.message)) {
-    sendErr(request, response, ErrorCode.SKILL_NOT_FOUND, error.message, 404);
+    sendErr(request, response, ErrorCode.SKILL_NOT_FOUND, error.message);
     return true;
   }
   if (/^Skill ".*" cannot be activated by the user$/.test(error.message)) {
-    sendErr(request, response, ErrorCode.SKILL_NOT_ACTIVATABLE, error.message, 409);
+    sendErr(request, response, ErrorCode.SKILL_NOT_ACTIVATABLE, error.message);
     return true;
   }
   if (error.message === 'Cannot activate skill while another turn is active') {
-    sendErr(request, response, ErrorCode.SESSION_BUSY, error.message, 409);
+    sendErr(request, response, ErrorCode.SESSION_BUSY, error.message);
     return true;
   }
   return false;

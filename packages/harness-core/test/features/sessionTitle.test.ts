@@ -508,16 +508,16 @@ describe('sessionTitle http route', () => {
     expect(okBody.data.title).toBe('生成标题');
 
     const missing = await post('/api/v1/sessions/unknown/title/generate', {});
-    expect(missing.status).toBe(404);
+    expect(missing.status).toBe(200);
     expect(((await missing.json()) as { code: number }).code).toBe(40401);
 
     const invalid = await post('/api/v1/sessions/sess/title/generate', { source: 'bogus' });
-    expect(invalid.status).toBe(400);
+    expect(invalid.status).toBe(200);
     expect(((await invalid.json()) as { code: number }).code).toBe(40001);
 
     await app.updateSession('sess', { title: '手写标题', metadata: { titleKind: 'custom' } });
     const unavailable = await post('/api/v1/sessions/sess/title/generate', {});
-    expect(unavailable.status).toBe(409);
+    expect(unavailable.status).toBe(200);
     expect(((await unavailable.json()) as { code: number }).code).toBe(40923);
     await dispose();
   });
