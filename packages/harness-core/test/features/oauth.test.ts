@@ -517,9 +517,8 @@ describe('oauth login flows', () => {
     );
     await until(
       () =>
-        matchCatalogBinding('kimi-code/kimi-for-coding', app.node.fold(CatalogModels), (id) =>
-          app.resolve(ProviderCatalogRef).providerInfo(id),
-        ) !== undefined,
+        matchCatalogBinding('kimi-code/kimi-for-coding', app.node.fold(CatalogModels)) !==
+        undefined,
     );
 
     const summary = await tokens.summary();
@@ -692,9 +691,8 @@ describe('oauth login flows', () => {
 
     await until(
       () =>
-        matchCatalogBinding('kimi-code/kimi-for-coding', app.node.fold(CatalogModels), (id) =>
-          app.resolve(ProviderCatalogRef).providerInfo(id),
-        ) !== undefined,
+        matchCatalogBinding('kimi-code/kimi-for-coding', app.node.fold(CatalogModels)) !==
+        undefined,
     );
     const summary = await tokens.summary();
     expect(summary).toEqual({
@@ -721,9 +719,8 @@ describe('oauth login flows', () => {
     });
     await until(
       () =>
-        matchCatalogBinding('kimi-code/kimi-for-coding', bare.node.fold(CatalogModels), (id) =>
-          bare.resolve(ProviderCatalogRef).providerInfo(id),
-        ) !== undefined,
+        matchCatalogBinding('kimi-code/kimi-for-coding', bare.node.fold(CatalogModels)) !==
+        undefined,
     );
     expect(await bareTokens.summary()).toEqual({
       models_ready: true,

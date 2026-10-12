@@ -425,9 +425,7 @@ export function useModelCatalogRoutes(prefix: string): void {
         }
         throw error;
       }
-      const binding = matchCatalogBinding(parsed.id, bindings.value, (providerId) =>
-        resolved.store.providerInfo(providerId),
-      );
+      const binding = matchCatalogBinding(parsed.id, bindings.value);
       const slash = parsed.id.indexOf('/');
       sendOk(request, response, {
         default_model: parsed.id,
@@ -675,8 +673,7 @@ function buildProviderView(
 
 function providerView(providerId: string, config: ConfigStore, store: ProviderStore): ProviderView {
   const info = store.providerInfo(providerId);
-  const prefix = `${info?.aliasScope ?? providerId}/`;
-  const aliasIds = store.models(providerId).map((model) => `${prefix}${model.model}`);
+  const aliasIds = store.models(providerId).map((model) => model.alias);
   const modelsSection = config.get<ModelsSection>(MODELS_CONFIG_SECTION) ?? {};
   return buildProviderView(providerId, info, aliasIds, config, modelsSection);
 }
@@ -697,7 +694,7 @@ function capabilityStrings(model: CatalogModel): readonly string[] | undefined {
 function modelCatalogItemView(providerId: string, model: CatalogModel): ModelCatalogItemView {
   return {
     provider: providerId,
-    model: model.model,
+    model: model.alias,
     display_name: model.displayName ?? model.name ?? model.model,
     max_context_size: model.maxContextSize ?? 0,
     capabilities: capabilityStrings(model),

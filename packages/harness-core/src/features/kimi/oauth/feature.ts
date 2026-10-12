@@ -226,17 +226,11 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
             if (current !== undefined && current !== '') {
               const entry = config.get<ModelsSection>(MODELS_CONFIG_SECTION)?.[current];
               if (entry !== undefined && entry.provider !== KIMI_CODE_PROVIDER_NAME) return;
-              if (
-                matchCatalogBinding(current, bindings.value, (providerId) =>
-                  catalog.value?.providerInfo(providerId),
-                ) !== undefined
-              ) {
+              if (matchCatalogBinding(current, bindings.value) !== undefined) {
                 return;
               }
             }
-            const scope =
-              catalog.value?.providerInfo(KIMI_CODE_PROVIDER_NAME)?.aliasScope ?? KIMI_CODE_PROVIDER_NAME;
-            void config.set(DEFAULT_MODEL_CONFIG_SECTION, `${scope}/${first.model}`, 'user').catch(() => {});
+            void config.set(DEFAULT_MODEL_CONFIG_SECTION, first.alias, 'user').catch(() => {});
           },
           { immediate: true },
         );
@@ -595,9 +589,7 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureSlots {
           const defaultModel = config?.get<string>(DEFAULT_MODEL_CONFIG_SECTION);
           const modelsReady =
             defaultModel !== undefined && defaultModel.length > 0
-              ? matchCatalogBinding(defaultModel, bindings.value, (providerId) =>
-                  catalog.value?.providerInfo(providerId),
-                ) !== undefined
+              ? matchCatalogBinding(defaultModel, bindings.value) !== undefined
               : false;
           let managedProvider: ManagedProviderSummary | null = null;
           if (providers[KIMI_CODE_PROVIDER_NAME] !== undefined) {

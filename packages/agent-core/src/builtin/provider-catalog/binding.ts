@@ -4,7 +4,7 @@ import type { RecordEvent } from '#/store/journal';
 import type { Projection } from '#/store/store';
 import type { BranchRef } from '#/store/tree';
 
-import type { CatalogModelBinding, CatalogProviderInfo } from './types';
+import type { CatalogModelBinding } from './types';
 
 export const MODEL_BOUND = 'model.bound';
 
@@ -51,11 +51,9 @@ export const sessionModelDefaultsProjection: Projection<
 export function matchCatalogBinding(
   alias: string,
   bindings: readonly CatalogModelBinding[],
-  providerInfo: (providerId: string) => CatalogProviderInfo | undefined,
 ): CatalogModelBinding | undefined {
   return bindings.find((candidate) => {
-    const scope = providerInfo(candidate.providerId)?.aliasScope ?? candidate.providerId;
-    if (`${scope}/${candidate.model.model}` === alias) return true;
+    if (candidate.model.alias === alias) return true;
     if (candidate.model.configKey === alias) return true;
     if (candidate.model.name === alias) return true;
     return candidate.model.aliases?.includes(alias) ?? false;

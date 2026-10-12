@@ -518,9 +518,7 @@ describe('kimiModelEnvOverlay', () => {
     expect(catalog.providerInfo(ENV_MODEL_PROVIDER_KEY)?.apiKey).toBe('sk-env');
     expect(catalog.resolve(ENV_MODEL_PROVIDER_KEY, 'kimi-for-coding')?.requester).toBeDefined();
     expect(
-      matchCatalogBinding(ENV_MODEL_ALIAS_KEY, app.node.fold(CatalogModels), (providerId) =>
-        catalog.providerInfo(providerId),
-      )?.model.model,
+      matchCatalogBinding(ENV_MODEL_ALIAS_KEY, app.node.fold(CatalogModels))?.model.model,
     ).toBe('kimi-for-coding');
 
     await config.set('defaultModel', config.get('defaultModel'), 'user');

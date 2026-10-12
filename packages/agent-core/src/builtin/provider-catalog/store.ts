@@ -4,15 +4,16 @@ import { requesterOf, type Provider } from '#/llm/provider';
 import type { LlmRequester } from '#/llm/requester/requester';
 import { settleLlmRequest } from '#/llm/requester/settle';
 
-import type {
-  CatalogModel,
-  CatalogModelBinding,
-  CatalogModelConfig,
-  CatalogModelDefinition,
-  CatalogModelOverrides,
-  CatalogProviderEntry,
-  CatalogProviderInfo,
-  CatalogSnapshot,
+import {
+  catalogModelAlias,
+  type CatalogModel,
+  type CatalogModelBinding,
+  type CatalogModelConfig,
+  type CatalogModelDefinition,
+  type CatalogModelOverrides,
+  type CatalogProviderEntry,
+  type CatalogProviderInfo,
+  type CatalogSnapshot,
 } from './types';
 
 export interface ProviderStore {
@@ -140,16 +141,18 @@ export function createProviderStore(): ProviderStore {
     providerInfo: (providerId) => snapshot.value.providers[providerId]?.info,
     models: (providerId) => {
       const entry = snapshot.value.providers[providerId];
-      return entry === undefined ? [] : mergeEntryModels(entry);
+      return entry === undefined ? [] : mergeEntryModels(entry, providerId);
     },
     resolve: (providerId, model) => {
       const provider = live.get(providerId);
       const entry = snapshot.value.providers[providerId];
       const resolved = resolveCatalogModel(entry, model);
-      if (provider === undefined || resolved === undefined) return undefined;
+      if (provider === undefined || entry === undefined || resolved === undefined) {
+        return undefined;
+      }
       const catalogModel =
-        mergeEntryModels(entry as CatalogProviderEntry).find((item) => item.model === model) ??
-        resolved;
+        mergeEntryModels(entry, providerId).find((item) => item.model === model) ??
+        { ...resolved, alias: catalogModelAlias(entry.info, providerId, resolved.model) };
       try {
         return {
           providerId,
@@ -212,10 +215,11 @@ function resolveCatalogModel(
   return mergeModel({ ...discovered }, undefined, entry.info);
 }
 
-function mergeEntryModels(entry: CatalogProviderEntry): CatalogModel[] {
+function mergeEntryModels(entry: CatalogProviderEntry, providerId: string): CatalogModel[] {
   const attach = (model: CatalogModelDefinition): CatalogModel => {
+    const alias = catalogModelAlias(entry.info, providerId, model.model);
     const pingError = entry.pingErrors?.[model.model];
-    return pingError === undefined ? model : { ...model, pingError };
+    return pingError === undefined ? { ...model, alias } : { ...model, alias, pingError };
   };
   const merged = Object.values(entry.override).map((record) =>
     attach(mergeModel(record, entry.discovered[record.model], entry.info)),

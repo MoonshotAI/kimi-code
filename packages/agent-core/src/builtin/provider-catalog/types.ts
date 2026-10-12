@@ -62,6 +62,21 @@ export function isOAuthBackedProvider(info: CatalogProviderInfo | undefined): bo
   return info?.oauth !== undefined || info?.modelSource === 'oauth-catalog';
 }
 
+export function catalogAliasPrefix(
+  info: CatalogProviderInfo | undefined,
+  providerId: string,
+): string {
+  return `${info?.aliasScope ?? providerId}/`;
+}
+
+export function catalogModelAlias(
+  info: CatalogProviderInfo | undefined,
+  providerId: string,
+  model: string,
+): string {
+  return `${catalogAliasPrefix(info, providerId)}${model}`;
+}
+
 export interface CatalogProviderEntry {
   readonly info?: CatalogProviderInfo;
   readonly discovered: Readonly<Record<string, LlmModel>>;
@@ -70,6 +85,7 @@ export interface CatalogProviderEntry {
 }
 
 export interface CatalogModel extends CatalogModelDefinition {
+  readonly alias: string;
   readonly pingError?: string;
 }
 

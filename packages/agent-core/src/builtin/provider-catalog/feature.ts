@@ -42,11 +42,12 @@ import {
   type SessionModelDefaults,
 } from './binding';
 import { createProviderStore, type ProviderStore } from './store';
-import type {
-  CatalogModelBinding,
-  CatalogModelConfig,
-  CatalogProviderInfo,
-  ProviderContribution,
+import {
+  catalogAliasPrefix,
+  type CatalogModelBinding,
+  type CatalogModelConfig,
+  type CatalogProviderInfo,
+  type ProviderContribution,
 } from './types';
 import { materializeProvider, ProviderProtocols } from './materialize';
 import {
@@ -147,7 +148,7 @@ export const providerCatalog = createFeature('provider-catalog', {
       managed = nextManaged;
       for (const providerId of nextManaged) {
         const info = resolveProviderInfo(providersSection[providerId], current);
-        const prefix = `${info?.aliasScope ?? providerId}/`;
+        const prefix = catalogAliasPrefix(info, providerId);
         const models = Object.entries(modelsSection)
           .filter(([, model]) => model.provider === providerId)
           .toSorted((a, b) => Number(b[0].startsWith(prefix)) - Number(a[0].startsWith(prefix)))
@@ -200,7 +201,7 @@ export const providerCatalog = createFeature('provider-catalog', {
       for (const [providerId, entry] of Object.entries(store.snapshot.value.providers)) {
         const discovered = Object.values(entry.discovered);
         if (discovered.length === 0) continue;
-        const prefix = `${entry.info?.aliasScope ?? providerId}/`;
+        const prefix = catalogAliasPrefix(entry.info, providerId);
         const upstreamKeys = new Set(discovered.map((model) => `${prefix}${model.model}`));
         for (const [key, record] of Object.entries(currentModels)) {
           if (record.provider !== providerId || !key.startsWith(prefix)) continue;
@@ -233,11 +234,7 @@ export const providerCatalog = createFeature('provider-catalog', {
     useExpose(ProviderCatalogRef, store);
     useExpose(ModelDefaultsRef, {
       setDefaultModel: async (alias) => {
-        if (
-          matchCatalogBinding(alias, bindings.value, (providerId) =>
-            store.providerInfo(providerId),
-          ) === undefined
-        ) {
+        if (matchCatalogBinding(alias, bindings.value) === undefined) {
           throw new ModelCatalogError('model.unknown_alias', `Unknown model alias '${alias}'.`);
         }
         const current = config.value;
@@ -284,11 +281,7 @@ export const providerCatalog = createFeature('provider-catalog', {
     };
     useExpose(SessionModelRef, {
       setModel: async (alias) => {
-        if (
-          matchCatalogBinding(alias, bindings.value, (providerId) =>
-            store.providerInfo(providerId),
-          ) === undefined
-        ) {
+        if (matchCatalogBinding(alias, bindings.value) === undefined) {
           throw new ModelCatalogError('model.unknown_alias', `Unknown model alias '${alias}'.`);
         }
         const current = await app.space.get(session.sessionId);
@@ -327,7 +320,7 @@ export const providerCatalog = createFeature('provider-catalog', {
       useCleanup(() => view.dispose());
     }
     const resolveBinding = (alias: string): CatalogModelBinding | undefined =>
-      matchCatalogBinding(alias, bindings.value, (providerId) => store.providerInfo(providerId));
+      matchCatalogBinding(alias, bindings.value);
     const effectiveAlias = (): string | undefined => {
       const value =
         bound.value.alias ??

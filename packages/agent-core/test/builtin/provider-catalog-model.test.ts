@@ -13,7 +13,6 @@ import {
   CatalogModels,
   matchCatalogBinding,
   ModelDefaultsRef,
-  ProviderCatalogRef,
   SessionModelRef,
   providerCatalog,
   useProvider,
@@ -260,10 +259,8 @@ describe('provider-catalog agent model binding', () => {
     await until(() => main.config?.model.model === 'm1');
     expect(main.config?.model.maxContextSize).toBe(2048);
     const bindings = app.node.fold(CatalogModels);
-    const info = (providerId: string) =>
-      app.resolve(ProviderCatalogRef)!.providerInfo(providerId);
-    expect(matchCatalogBinding('my-alias', bindings, info)?.model.model).toBe('m1');
-    expect(matchCatalogBinding('nick', bindings, info)?.model.model).toBe('m1');
+    expect(matchCatalogBinding('my-alias', bindings)?.model.model).toBe('m1');
+    expect(matchCatalogBinding('nick', bindings)?.model.model).toBe('m1');
     await app.disposeAsync();
   });
 
