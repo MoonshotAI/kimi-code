@@ -303,64 +303,14 @@ function readApprovalResponse(body: unknown): ApprovalResponseBody | undefined {
 function questionView(interaction: Interaction, sessionId: string): QuestionView {
   const turnId = interaction.tags[INTERACTION_TAG_TURN_ID];
   const toolCallId = interaction.tags[INTERACTION_TAG_TOOL_CALL_ID];
+  const raw = (interaction.payload as { questions?: unknown } | null | undefined)?.questions;
   return {
     question_id: interaction.id,
     session_id: sessionId,
     turn_id: typeof turnId === 'number' ? turnId : undefined,
     tool_call_id: typeof toolCallId === 'string' && toolCallId.length > 0 ? toolCallId : undefined,
-    questions: readQuestionItems(interaction.payload).map((item, index) => buildItem(item, index)),
+    questions: Array.isArray(raw) ? (raw as readonly QuestionItemView[]) : [],
     created_at: new Date(interaction.createdAt).toISOString(),
-  };
-}
-
-interface QuestionItemSource {
-  readonly question: string;
-  readonly header?: string;
-  readonly options: readonly { readonly label: string; readonly description?: string }[];
-  readonly multi_select?: boolean;
-}
-
-function readQuestionItems(payload: unknown): QuestionItemSource[] {
-  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return [];
-  const raw = (payload as { questions?: unknown })['questions'];
-  if (!Array.isArray(raw)) return [];
-  const items: QuestionItemSource[] = [];
-  for (const value of raw) {
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
-    const record = value as { [key: string]: unknown };
-    if (typeof record['question'] !== 'string') continue;
-    const options: { label: string; description?: string }[] = [];
-    if (Array.isArray(record['options'])) {
-      for (const option of record['options']) {
-        if (option === null || typeof option !== 'object' || Array.isArray(option)) continue;
-        const label = (option as { label?: unknown })['label'];
-        if (typeof label !== 'string') continue;
-        const description = (option as { description?: unknown })['description'];
-        options.push({ label, description: typeof description === 'string' && description.length > 0 ? description : undefined });
-      }
-    }
-    items.push({
-      question: record['question'],
-      header: typeof record['header'] === 'string' && record['header'].length > 0 ? record['header'] : undefined,
-      options,
-      multi_select: record['multi_select'] === true ? true : undefined,
-    });
-  }
-  return items;
-}
-
-function buildItem(item: QuestionItemSource, index: number): QuestionItemView {
-  return {
-    id: `q_${index}`,
-    question: item.question,
-    header: item.header,
-    options: item.options.map((option, optionIndex) => ({
-      id: `opt_${index}_${optionIndex}`,
-      label: option.label,
-      description: option.description,
-    })),
-    multi_select: item.multi_select,
-    allow_other: true,
   };
 }
 

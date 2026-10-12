@@ -58,6 +58,7 @@ import {
   INTERACTION_TAG_AGENT_ID,
   INTERACTION_TAG_SESSION_ID,
   INTERACTION_TAG_TOOL_CALL_ID,
+  INTERACTION_TAG_TURN_ID,
 } from '#/features/interaction/index';
 import { createMcp, McpRef } from '#/features/mcp/index';
 import { createNodeOsHost, type OsHost, type OsProcess } from '#/features/os/host/index';
@@ -3984,6 +3985,137 @@ describe('feature-http ws v1 (kap-aligned) endpoint', () => {
     await silent.next((frame) => frame['type'] === 'server_hello');
     const closed = await silent.closed;
     expect(closed.code).toBe(1001);
+  });
+
+  it('projects question interactions with kap wire ids on event frames, transcript ops and REST', async () => {
+    const env = await mountHttp([interaction, bindTestLlm(createMockRequester())]);
+    const session = await openMain(env, 'ses_v1_question');
+    const interactions = session.resolve(InteractionRef);
+    const payload = {
+      questions: [
+        {
+          question: 'Pick one',
+          header: 'Choice',
+          options: [
+            { label: 'A', description: 'alpha' },
+            { label: 'B', description: '' },
+          ],
+          multi_select: false,
+        },
+        {
+          question: 'Pick many',
+          options: [{ label: 'C' }, { label: 'D' }],
+          multi_select: true,
+        },
+      ],
+    };
+    const wireQuestions = [
+      {
+        id: 'q_0',
+        question: 'Pick one',
+        header: 'Choice',
+        options: [
+          { id: 'opt_0_0', label: 'A', description: 'alpha' },
+          { id: 'opt_0_1', label: 'B', description: '' },
+        ],
+        multi_select: false,
+        allow_other: true,
+      },
+      {
+        id: 'q_1',
+        question: 'Pick many',
+        options: [
+          { id: 'opt_1_0', label: 'C' },
+          { id: 'opt_1_1', label: 'D' },
+        ],
+        multi_select: true,
+        allow_other: true,
+      },
+    ];
+
+    const first = interactions!.enqueue({
+      kind: 'question',
+      payload,
+      tags: { [INTERACTION_TAG_SESSION_ID]: 'ses_v1_question' },
+    });
+    const listed = await get(env, '/sessions/ses_v1_question/transcript?agent_id=main');
+    const listedBody = await listed.json();
+    const pendingOnly = listedBody.data.interactions.find(
+      (record: Record<string, unknown>) => record['interactionId'] === first.id,
+    );
+    expect(pendingOnly).toMatchObject({ interactionKind: 'question', state: 'pending' });
+    expect(pendingOnly['request']).toEqual({ questions: wireQuestions });
+    interactions!.respond(first.id, null);
+
+    const events = await connectWsV1(env);
+    await events.next((frame) => frame['type'] === 'server_hello');
+    events.send(hello('h1', { subscriptions: ['ses_v1_question'], cursors: {} }));
+    await events.next((frame) => frame['type'] === 'ack' && frame['id'] === 'h1');
+
+    const second = interactions!.enqueue({
+      kind: 'question',
+      payload,
+      tags: {
+        [INTERACTION_TAG_SESSION_ID]: 'ses_v1_question',
+        [INTERACTION_TAG_AGENT_ID]: MAIN_AGENT_ID,
+        [INTERACTION_TAG_TOOL_CALL_ID]: 'call-q9',
+        [INTERACTION_TAG_TURN_ID]: 7,
+      },
+    });
+    const requested = await events.next((frame) => frame['type'] === 'event.question.requested');
+    expect(requested).toMatchObject({
+      session_id: 'ses_v1_question',
+      payload: {
+        question_id: second.id,
+        session_id: 'ses_v1_question',
+        agent_id: MAIN_AGENT_ID,
+        turn_id: 7,
+        tool_call_id: 'call-q9',
+        questions: wireQuestions,
+      },
+    });
+
+    const transcripts = await connectWsV1(env);
+    await transcripts.next((frame) => frame['type'] === 'server_hello');
+    transcripts.send(
+      subscribeV2('s1', {
+        session_id: 'ses_v1_question',
+        transcript: { [MAIN_AGENT_ID]: 'delta' },
+      }),
+    );
+    await transcripts.next((frame) => frame['type'] === 'ack' && frame['id'] === 's1');
+    await transcripts.next((frame) => frame['type'] === 'transcript.reset');
+    const third = interactions!.enqueue({
+      kind: 'question',
+      payload,
+      tags: {
+        [INTERACTION_TAG_SESSION_ID]: 'ses_v1_question',
+        [INTERACTION_TAG_AGENT_ID]: MAIN_AGENT_ID,
+        [INTERACTION_TAG_TOOL_CALL_ID]: 'call-q10',
+      },
+    });
+    await transcripts.next((frame) => {
+      if (frame['type'] !== 'transcript.ops') return false;
+      const ops = ((frame['payload'] as Record<string, unknown>)['ops'] ?? []) as Record<
+        string,
+        unknown
+      >[];
+      return ops.some((op) => op['op'] === 'interaction.upsert');
+    });
+    const upsert = collectOps(transcripts).find((op) => op['op'] === 'interaction.upsert');
+    const projected = upsert?.['interaction'] as Record<string, unknown>;
+    expect(projected).toMatchObject({
+      interactionId: third.id,
+      interactionKind: 'question',
+      toolCallId: 'call-q10',
+      state: 'pending',
+    });
+    expect(projected['request']).toEqual({ questions: wireQuestions });
+
+    interactions!.respond(second.id, null);
+    interactions!.respond(third.id, null);
+    await events.close();
+    await transcripts.close();
   });
 });
 

@@ -865,6 +865,8 @@ export class SessionBroadcaster {
         );
       } else {
         const payload = interaction.payload as Record<string, unknown>;
+        const turnId = interaction.tags['turnId'];
+        const toolCallId = interaction.tags['toolCallId'];
         this.dispatch(
           state,
           'event.question.requested',
@@ -872,6 +874,8 @@ export class SessionBroadcaster {
             question_id: interaction.id,
             session_id: state.sessionId,
             agent_id: ownerId,
+            turn_id: typeof turnId === 'number' ? turnId : undefined,
+            tool_call_id: typeof toolCallId === 'string' && toolCallId.length > 0 ? toolCallId : undefined,
             questions: payload['questions'] ?? [],
             created_at: createdAt,
           },

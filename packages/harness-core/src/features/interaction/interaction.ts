@@ -1,5 +1,7 @@
 import type { RuntimeEvent } from '@moonshot-ai/agent-core/kernel/index';
 
+import { withQuestionIds } from './question-payload';
+
 export type InteractionKind = 'approval' | 'question' | 'user_tool';
 
 export type InteractionTagValue = string | number;
@@ -181,7 +183,7 @@ export function openInteractions(input?: {
       const item: Interaction<TPayload> = {
         id,
         kind: req.kind,
-        payload: req.payload,
+        payload: withQuestionIds(req.payload),
         tags: req.tags ?? {},
         createdAt: now(),
       };
