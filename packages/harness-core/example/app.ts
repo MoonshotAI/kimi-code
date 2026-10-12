@@ -128,6 +128,10 @@ export function mountExample(options?: { http?: boolean; acp?: boolean }): Examp
                 host: process.env['HOST'] ?? '127.0.0.1',
               },
               openInApps: cachedOpenInApps(osHost),
+              corsOrigins: (process.env['KIMI_CODE_CORS_ORIGINS'] ?? '')
+                .split(',')
+                .map((entry) => entry.trim())
+                .filter((entry) => entry.length > 0),
             }),
           ]),
       ...(options?.acp === true ? [createAcp({ streams: acpStdioStreams() })] : []),

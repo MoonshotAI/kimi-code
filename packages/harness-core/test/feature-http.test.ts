@@ -2161,6 +2161,50 @@ describe('feature-http kap-server aligned routes', () => {
     expect(await malformed.json()).toMatchObject({ code: 50001, data: null });
   });
 
+  it('answers cross-origin requests only for allowed origins', async () => {
+    const env = await mountHttp([], { corsOrigins: ['app://renderer'] });
+
+    const allowed = await fetch(`${env.origin}/api/v1/sessions`, {
+      headers: { origin: 'app://renderer' },
+    });
+    expect(allowed.status).toBe(200);
+    expect(allowed.headers.get('access-control-allow-origin')).toBe('app://renderer');
+    expect(allowed.headers.get('vary')).toBe('Origin');
+
+    const preflight = await fetch(`${env.origin}/api/v1/sessions`, {
+      method: 'OPTIONS',
+      headers: {
+        origin: 'app://renderer',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'content-type, authorization',
+      },
+    });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get('access-control-allow-origin')).toBe('app://renderer');
+    expect(preflight.headers.get('access-control-allow-headers')).toBe('content-type, authorization');
+
+    const denied = await fetch(`${env.origin}/api/v1/sessions`, {
+      headers: { origin: 'https://evil.example.com' },
+    });
+    expect(denied.status).toBe(200);
+    expect(denied.headers.get('access-control-allow-origin')).toBeNull();
+
+    const deniedPreflight = await fetch(`${env.origin}/api/v1/sessions`, {
+      method: 'OPTIONS',
+      headers: { origin: 'https://evil.example.com', 'access-control-request-method': 'POST' },
+    });
+    expect(deniedPreflight.status).toBe(204);
+    expect(deniedPreflight.headers.get('access-control-allow-origin')).toBeNull();
+
+    const loopback = await fetch(`${env.origin}/api/v1/sessions`, {
+      headers: { origin: 'http://localhost:5174' },
+    });
+    expect(loopback.headers.get('access-control-allow-origin')).toBe('http://localhost:5174');
+
+    const sameOrigin = await fetch(`${env.origin}/api/v1/sessions`);
+    expect(sameOrigin.headers.get('access-control-allow-origin')).toBeNull();
+  });
+
   it('shuts the server down after answering ok', async () => {
     const env = await mountHttp([]);
     const response = await post(env, '/shutdown');

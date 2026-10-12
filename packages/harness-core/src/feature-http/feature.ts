@@ -37,6 +37,7 @@ export interface CreateHttpOptions {
   readonly guiStorePath?: string;
   readonly webAssetsDir?: string;
   readonly openInApps?: MetaOpenInApps;
+  readonly corsOrigins?: readonly string[];
 }
 
 export const HttpRoutes = createCollection<HttpRoute>('http.routes');
@@ -80,7 +81,7 @@ export function createHttp(options: CreateHttpOptions = {}): FeatureSpec {
   return createFeature('http', {
     app() {
       const owned = options.server === undefined;
-      const server = options.server ?? createHttpServer();
+      const server = options.server ?? createHttpServer({ corsOrigins: options.corsOrigins });
       if (owned) {
         useCleanup(() => server.close());
         useReady(server.listen(options.listen));

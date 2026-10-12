@@ -20,6 +20,14 @@ export interface HttpListen {
   readonly host?: string;
 }
 
+export interface CreateHttpServerOptions {
+  readonly corsOrigins?: readonly string[];
+}
+
+const CORS_ALLOW_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
+const CORS_ALLOW_HEADERS =
+  'Content-Type, Authorization, X-Kimi-Client-Id, X-Kimi-Client-Name, X-Kimi-Client-Version, X-Kimi-Client-Ui-Mode';
+
 export interface Http {
   readonly app: Express;
   readonly origin: string | undefined;
@@ -33,9 +41,31 @@ interface Slot {
   readonly handlers: HttpHandler[];
 }
 
-export function createHttpServer(): Http {
+export function createHttpServer(options: CreateHttpServerOptions = {}): Http {
   const app = express();
   app.use(express.json());
+  const corsOrigins = options.corsOrigins ?? [];
+  app.use((request, response, next) => {
+    const origin = request.get('origin');
+    if (origin === undefined) {
+      next();
+      return;
+    }
+    if (isOriginAllowed(origin, request.get('host'), corsOrigins)) {
+      response.setHeader('Access-Control-Allow-Origin', origin);
+      response.setHeader('Access-Control-Allow-Methods', CORS_ALLOW_METHODS);
+      response.setHeader(
+        'Access-Control-Allow-Headers',
+        request.get('access-control-request-headers') ?? CORS_ALLOW_HEADERS,
+      );
+      response.setHeader('Vary', 'Origin');
+    }
+    if (request.method === 'OPTIONS') {
+      response.status(204).end();
+      return;
+    }
+    next();
+  });
   const slots = new Map<string, Slot>();
   const upgrades: HttpUpgradeHandler[] = [];
   let server: Server | undefined;
@@ -230,4 +260,53 @@ function attach(app: Express, method: string, path: string, handler: RequestHand
 function formatOrigin(address: AddressInfo): string {
   const host = address.family === 'IPv6' ? `[${address.address}]` : address.address;
   return `http://${host}:${String(address.port)}`;
+}
+
+function isOriginAllowed(origin: string, host: string | undefined, allowed: readonly string[]): boolean {
+  let originHost: string;
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    return true;
+  }
+  const originStripped = stripPort(originHost);
+  if (host !== undefined) {
+    const hostStripped = stripPort(host);
+    if (originStripped === hostStripped) {
+      return true;
+    }
+    if (isLoopbackHost(originStripped) && isLoopbackHost(hostStripped)) {
+      return true;
+    }
+  }
+  return allowed.includes(origin);
+}
+
+function stripPort(host: string): string {
+  if (host.startsWith('[')) {
+    const end = host.indexOf(']');
+    return (end === -1 ? host : host.slice(0, end + 1)).toLowerCase();
+  }
+  const firstColon = host.indexOf(':');
+  if (firstColon === -1) {
+    return host.toLowerCase();
+  }
+  const lastColon = host.lastIndexOf(':');
+  if (firstColon === lastColon) {
+    const after = host.slice(lastColon + 1);
+    if (after.length > 0 && /^\d+$/.test(after)) {
+      return host.slice(0, lastColon).toLowerCase();
+    }
+  }
+  return host.toLowerCase();
+}
+
+function isLoopbackHost(host: string): boolean {
+  return (
+    host === 'localhost' ||
+    host === '::1' ||
+    host === '[::1]' ||
+    host.startsWith('127.') ||
+    host.endsWith('.localhost')
+  );
 }
