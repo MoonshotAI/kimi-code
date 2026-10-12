@@ -205,6 +205,7 @@ describe('handleRemoteControlCommand', () => {
       deviceName: 'example-device',
       url: entryUrl,
       relayOrigin: 'https://code-rc.kimi.com',
+      closed: new Promise(() => {}),
       close,
     });
     mocks.startServerForeground.mockImplementation(
@@ -275,6 +276,7 @@ describe('handleRemoteControlCommand', () => {
       deviceName: 'example-device',
       url: entryUrl,
       relayOrigin: 'https://code-rc.kimi.com',
+      closed: new Promise(() => {}),
       close,
     });
     mocks.startServerForeground.mockImplementation(
