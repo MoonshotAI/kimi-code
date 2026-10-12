@@ -171,6 +171,9 @@ export function registerOAuthRoutes(
         remoteControlDevices.clear();
       }
       const result = await core.accessor.get(IOAuthService).logout(req.body.provider);
+      if (provider === KIMI_CODE_PROVIDER_NAME) {
+        remoteControlDevices.clear();
+      }
       requestLog(req)?.info({ provider: req.body.provider, action: 'logout' }, 'oauth logout');
       reply.send(okEnvelope(result, req.id));
     },

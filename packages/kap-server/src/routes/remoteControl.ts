@@ -5,6 +5,7 @@ import {
   type RemoteControlManager,
   type RemoteControlStatusInfo,
 } from '@moonshot-ai/remote-control';
+import { createKimiDeviceId } from '@moonshot-ai/kimi-code-oauth';
 
 import type { ITelemetryService } from '@moonshot-ai/agent-core-v2';
 
@@ -117,9 +118,16 @@ export function registerRemoteControlRoutes(
     async (req, reply) => {
       const { enabled } = req.body as { enabled: boolean };
       if (!enabled) {
-        const status = await opts.service.disable();
-        opts.telemetry?.track2('remote_control_toggle', { enabled, outcome: 'ok' });
-        reply.send(okEnvelope(toRemoteControlStatusResponse(status), req.id));
+        try {
+          const status = await opts.service.disable();
+          opts.telemetry?.track2('remote_control_toggle', { enabled, outcome: 'ok' });
+          reply.send(okEnvelope(toRemoteControlStatusResponse(status), req.id));
+        } catch (error) {
+          opts.telemetry?.track2('remote_control_toggle', { enabled, outcome: 'error' });
+          const message = error instanceof Error ? error.message : String(error);
+          requestLog(req)?.error({ err: error }, 'remote-control disable failed');
+          reply.send(errEnvelope(ErrorCode.INTERNAL_ERROR, message, req.id));
+        }
         return;
       }
       if (opts.staticEnableError !== undefined) {
@@ -241,7 +249,10 @@ export function registerRemoteControlRoutes(
         await opts.devices.deactivateDevice(req.params.id);
         const status = opts.service.status();
         const holder = await inspectRemoteControlLock(opts.homeDir);
-        const isLocal = status.deviceId === req.params.id || holder?.deviceId === req.params.id;
+        const isLocal =
+          status.deviceId === req.params.id ||
+          holder?.deviceId === req.params.id ||
+          (status.state !== 'off' && req.params.id === createKimiDeviceId(opts.homeDir));
         if (!isLocal) return { ok: true };
         if (status.state !== 'off') {
           await opts.service.disable();

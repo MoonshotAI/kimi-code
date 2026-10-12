@@ -1265,8 +1265,27 @@ describe('Remote Control manager', () => {
     await waitFor(() => !existsSync(remoteControlLockPath(homeDir)));
   });
 
-  it('rejects disable when the tunnel close fails', async () => {
+  it('rejects immediately when the start signal is already aborted', async () => {
     const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      startRemoteControl({
+        homeDir,
+        localOrigin: 'http://127.0.0.1:58627',
+        localServerToken: 'local-server-token',
+        clientVersion: CLIENT_VERSION,
+        urlSource: 'kimi_code_cli',
+        relayOrigin: 'http://127.0.0.1:1',
+        stderr: { write: () => true },
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow();
+    expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
+  });
+
+  it('rejects disable when the tunnel close fails', async () => {const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
     const relay = await startAuthRelay();
     const manager = createRemoteControlManager({
       homeDir,

@@ -321,6 +321,7 @@ export async function startRemoteControl(
   };
   options.signal?.addEventListener('abort', abortStart, { once: true });
   try {
+    options.signal?.throwIfAborted();
     await client.start();
   } catch (error) {
     await lock.release();

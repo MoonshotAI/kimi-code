@@ -447,8 +447,45 @@ describe('server-v2 /api/v1/remote-control', () => {
     await cloud.close();
   }, 8000);
 
-  it('cancels an in-flight start when the current device is deactivated', async () => {
-    await rm(remoteControlLockPath(home as string), { force: true });
+  it('treats the deterministic device id as local before the lock file exists', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-rc-prelock-'));
+    let disabled = false;
+    const service = {
+      status: () => ({ enabled: false, state: 'starting', deviceId: undefined }),
+      disable: async () => {
+        disabled = true;
+        return { enabled: false, state: 'off' };
+      },
+    } as unknown as RemoteControlManager;
+    const devices = {
+      deactivateDevice: async () => {},
+    } as unknown as RemoteControlDeviceClient;
+    let handler: ((req: unknown, reply: unknown) => unknown) | undefined;
+    const app = {
+      get: () => {},
+      post: (path: string, _options: unknown, next: unknown) => {
+        if (path === '/remote-control/devices/:id/deactivate') handler = next as typeof handler;
+      },
+      patch: () => {},
+    };
+    registerRemoteControlRoutes(app as never, { service, devices, homeDir });
+
+    let payload: unknown;
+    await handler!(
+      { id: 'req-1', params: { id: createKimiDeviceId(homeDir) } },
+      {
+        send: (value: unknown) => {
+          payload = value;
+        },
+      },
+    );
+
+    expect(disabled).toBe(true);
+    expect((payload as Envelope<{ ok: true }>).data.ok).toBe(true);
+    await rm(homeDir, { recursive: true, force: true });
+  });
+
+  it('cancels an in-flight start when the current device is deactivated', async () => {await rm(remoteControlLockPath(home as string), { force: true });
     const cloud = await startDeviceCloud({ tunnel: true, registerDelayMs: 1000 });
     vi.stubEnv(
       'KIMI_CODE_REMOTE_CONTROL_RELAY_URL',
@@ -591,20 +628,23 @@ describe('remote-control route telemetry', () => {
     startedAt: 0,
   };
 
-  function fakeService(behavior: 'ok' | 'already' | 'error'): RemoteControlManager {
+  function fakeService(behavior: 'ok' | 'already' | 'error' | 'disableError'): RemoteControlManager {
     return {
       enable: async () => {
         if (behavior === 'already') throw new RemoteControlAlreadyRunningError(HOLDER);
         if (behavior === 'error') throw new Error('boom');
         return { enabled: true, state: 'on' };
       },
-      disable: async () => ({ enabled: false, state: 'off' }),
+      disable: async () => {
+        if (behavior === 'disableError') throw new Error('stop failed');
+        return { enabled: false, state: 'off' };
+      },
     } as unknown as RemoteControlManager;
   }
 
   function postHandler(
     opts: Omit<RemoteControlRouteOptions, 'devices' | 'homeDir'>,
-  ): (enabled: boolean) => Promise<void> {
+  ): (enabled: boolean) => Promise<unknown> {
     let handler: ((req: unknown, reply: unknown) => unknown) | undefined;
     const app = {
       get: () => {},
@@ -620,7 +660,16 @@ describe('remote-control route telemetry', () => {
       homeDir: '/nonexistent',
     });
     return async (enabled) => {
-      await handler!({ id: 'req-1', body: { enabled } }, { send: () => {} });
+      let payload: unknown;
+      await handler!(
+        { id: 'req-1', body: { enabled } },
+        {
+          send: (value: unknown) => {
+            payload = value;
+          },
+        },
+      );
+      return payload;
     };
   }
 
@@ -647,6 +696,21 @@ describe('remote-control route telemetry', () => {
       ['remote_control_toggle', { enabled: true, outcome: 'rejected' }],
       ['remote_control_toggle', { enabled: true, outcome: 'error' }],
     ]);
+  });
+
+  it('tracks disable failures and answers with the internal-error envelope', async () => {
+    const tracked: [string, unknown][] = [];
+    const telemetry = {
+      track2: (event: string, properties: unknown) => tracked.push([event, properties]),
+    } as unknown as ITelemetryService;
+
+    const payload = (await postHandler({ service: fakeService('disableError'), telemetry })(
+      false,
+    )) as Envelope<null>;
+
+    expect(tracked).toEqual([['remote_control_toggle', { enabled: false, outcome: 'error' }]]);
+    expect(payload.code).toBe(ErrorCode.INTERNAL_ERROR);
+    expect(payload.msg).toBe('stop failed');
   });
 });
 
@@ -712,7 +776,7 @@ describe('oauth logout remote-control cleanup', () => {
       provider: string;
     }>;
 
-    expect(events).toEqual(['disable', 'clear', 'logout']);
+    expect(events).toEqual(['disable', 'clear', 'logout', 'clear']);
     expect(payload.code).toBe(0);
     expect(payload.data.logged_out).toBe(true);
   });
@@ -824,7 +888,7 @@ describe('oauth logout remote-control cleanup', () => {
     }>;
 
     expect(payload.code).toBe(0);
-    expect(events).toEqual(['deactivate:cli-device', 'clear', 'logout']);
+    expect(events).toEqual(['deactivate:cli-device', 'clear', 'logout', 'clear']);
     await rm(homeDir, { recursive: true, force: true });
   });
 
