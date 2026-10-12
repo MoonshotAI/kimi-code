@@ -270,7 +270,7 @@ export function registerRemoteControlRoutes(
 }
 
 const LOCK_RELEASE_POLL_MS = 100;
-const LOCK_RELEASE_TIMEOUT_MS = 2000;
+const LOCK_RELEASE_TIMEOUT_MS = 5000;
 
 export async function waitForLockRelease(homeDir: string): Promise<void> {
   const deadline = Date.now() + LOCK_RELEASE_TIMEOUT_MS;
@@ -280,6 +280,9 @@ export async function waitForLockRelease(homeDir: string): Promise<void> {
       setTimeout(resolve, LOCK_RELEASE_POLL_MS);
     });
   }
+  throw new Error(
+    'Remote Control is still running in another process on this machine and did not stop in time. Stop it there and try again.',
+  );
 }
 
 function toRemoteControlStatusResponse(

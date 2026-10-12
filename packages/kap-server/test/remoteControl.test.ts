@@ -410,7 +410,7 @@ describe('server-v2 /api/v1/remote-control', () => {
     await cloud.close();
   });
 
-  it('still answers when the lock holder never releases', async () => {
+  it('fails current-device deactivation when the lock holder never releases', async () => {
     await rm(remoteControlLockPath(home as string), { force: true });
     const cloud = await startDeviceCloud();
     vi.stubEnv(
@@ -441,11 +441,13 @@ describe('server-v2 /api/v1/remote-control', () => {
     );
     const elapsed = Date.now() - startedAt;
 
-    expect(((await res.json()) as Envelope<{ ok: true }>).data.ok).toBe(true);
-    expect(elapsed).toBeGreaterThanOrEqual(1900);
+    const body = (await res.json()) as Envelope<null>;
+    expect(body.code).toBe(ErrorCode.INTERNAL_ERROR);
+    expect(body.msg).toContain('did not stop in time');
+    expect(elapsed).toBeGreaterThanOrEqual(4900);
     await rm(remoteControlLockPath(home as string), { force: true });
     await cloud.close();
-  }, 8000);
+  }, 12000);
 
   it('treats the deterministic device id as local before the lock file exists', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-rc-prelock-'));
@@ -753,10 +755,12 @@ describe('oauth logout remote-control cleanup', () => {
 
   it('disables the tunnel and clears cloud sessions before clearing OAuth credentials', async () => {
     const events: string[] = [];
+    let state = 'on';
     const remoteControl = {
-      status: () => ({ enabled: true, state: 'on' }),
+      status: () => ({ enabled: state === 'on', state }),
       disable: async () => {
         events.push('disable');
+        state = 'off';
         return { enabled: false, state: 'off' };
       },
     } as unknown as RemoteControlManager;
@@ -779,6 +783,66 @@ describe('oauth logout remote-control cleanup', () => {
     expect(events).toEqual(['disable', 'clear', 'logout', 'clear']);
     expect(payload.code).toBe(0);
     expect(payload.data.logged_out).toBe(true);
+  });
+
+  it('runs the cleanup again after logout to catch a start that raced the first sweep', async () => {
+    const events: string[] = [];
+    let state = 'off';
+    const remoteControl = {
+      status: () => ({ enabled: state === 'on', state }),
+      disable: async () => {
+        events.push('disable');
+        state = 'off';
+        return { enabled: false, state: 'off' };
+      },
+    } as unknown as RemoteControlManager;
+    const remoteControlDevices = {
+      clear: () => {
+        events.push('clear');
+      },
+      deactivateDevice: async () => {},
+    };
+    const post = logoutHandler(remoteControl, remoteControlDevices, async (provider) => {
+      events.push('logout');
+      state = 'starting';
+      return { logged_out: true, provider: provider ?? 'managed:kimi-code' };
+    });
+
+    const payload = (await post({ provider: 'managed:kimi-code' })) as Envelope<{
+      logged_out: true;
+      provider: string;
+    }>;
+
+    expect(events).toEqual(['clear', 'logout', 'clear', 'disable']);
+    expect(payload.code).toBe(0);
+  });
+
+  it('reports a cleanup failure from the post-logout sweep instead of claiming success', async () => {
+    const events: string[] = [];
+    let state = 'off';
+    const remoteControl = {
+      status: () => ({ enabled: false, state }),
+      disable: async () => {
+        throw new Error('tunnel stop failed');
+      },
+    } as unknown as RemoteControlManager;
+    const remoteControlDevices = {
+      clear: () => {
+        events.push('clear');
+      },
+      deactivateDevice: async () => {},
+    };
+    const post = logoutHandler(remoteControl, remoteControlDevices, async (provider) => {
+      events.push('logout');
+      state = 'starting';
+      return { logged_out: true, provider: provider ?? 'managed:kimi-code' };
+    });
+
+    const payload = (await post({ provider: 'managed:kimi-code' })) as Envelope<null>;
+
+    expect(events).toEqual(['clear', 'logout', 'clear']);
+    expect(payload.code).toBe(ErrorCode.INTERNAL_ERROR);
+    expect(payload.msg).toBe('tunnel stop failed');
   });
 
   it('does not clear cloud sessions or OAuth credentials when disabling the tunnel fails', async () => {

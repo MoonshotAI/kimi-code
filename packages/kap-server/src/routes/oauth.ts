@@ -145,27 +145,33 @@ export function registerOAuthRoutes(
     },
     async (req, reply) => {
       const provider = req.body.provider ?? KIMI_CODE_PROVIDER_NAME;
+      const sendCleanupError = (error: unknown): unknown => {
+        requestLog(req)?.error({ err: error }, 'remote-control cleanup around logout failed');
+        return reply.send(
+          errEnvelope(
+            ErrorCode.INTERNAL_ERROR,
+            error instanceof Error ? error.message : String(error),
+            req.id,
+          ),
+        );
+      };
+      const cleanupRemoteControl = async (): Promise<void> => {
+        const status = remoteControl.status();
+        if (status.state !== 'off') {
+          await remoteControl.disable();
+          return;
+        }
+        const holder = await inspectRemoteControlLock(homeDir);
+        if (holder !== undefined) {
+          await remoteControlDevices.deactivateDevice(holder.deviceId);
+          await waitForLockRelease(homeDir);
+        }
+      };
       if (provider === KIMI_CODE_PROVIDER_NAME) {
         try {
-          const status = remoteControl.status();
-          if (status.state !== 'off') {
-            await remoteControl.disable();
-          } else {
-            const holder = await inspectRemoteControlLock(homeDir);
-            if (holder !== undefined) {
-              await remoteControlDevices.deactivateDevice(holder.deviceId);
-              await waitForLockRelease(homeDir);
-            }
-          }
+          await cleanupRemoteControl();
         } catch (error) {
-          requestLog(req)?.error({ err: error }, 'remote-control cleanup before logout failed');
-          reply.send(
-            errEnvelope(
-              ErrorCode.INTERNAL_ERROR,
-              error instanceof Error ? error.message : String(error),
-              req.id,
-            ),
-          );
+          sendCleanupError(error);
           return;
         }
         remoteControlDevices.clear();
@@ -173,6 +179,12 @@ export function registerOAuthRoutes(
       const result = await core.accessor.get(IOAuthService).logout(req.body.provider);
       if (provider === KIMI_CODE_PROVIDER_NAME) {
         remoteControlDevices.clear();
+        try {
+          await cleanupRemoteControl();
+        } catch (error) {
+          sendCleanupError(error);
+          return;
+        }
       }
       requestLog(req)?.info({ provider: req.body.provider, action: 'logout' }, 'oauth logout');
       reply.send(okEnvelope(result, req.id));
