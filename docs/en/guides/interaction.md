@@ -66,7 +66,7 @@ Approvals are not triggered for regular tool calls in Ask When Needed mode, nor 
 
 ### The three permission modes
 
-**Always Ask mode** (formerly Manual) is the default: ordinary reads and workspace file edits run automatically, including in non-Git folders and on Windows. Commands, writes outside the workspace, sensitive file contents, and writes to Git control files ask for confirmation unless already authorized. To require approval for ordinary edits too, add `ask` rules for `Write` and `Edit` in [permission configuration](../configuration/config-files.md#permission).
+**Always Ask mode** (formerly Manual) is the default: read-only operations run automatically, while other actions — editing files, running commands — ask for confirmation one by one. Sensitive file contents and writes to Git control files also require confirmation unless already authorized.
 
 **Ask When Needed mode** (formerly YOLO), enabled with `/yolo`, auto-approves regular tool calls, making it suitable for batch tasks you know are safe. It still asks before sensitive actions — accessing sensitive file contents such as `.env` or SSH keys, writing Git control files, running dangerous commands such as `shutdown` or `rm -rf`, or exiting Plan mode — and the agent can still ask you questions.
 

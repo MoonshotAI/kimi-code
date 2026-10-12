@@ -229,7 +229,7 @@ describe('AgentPermissionPolicyService chain', () => {
     }
   });
 
-  it.each(['posix', 'win32'] as const)('approves non-git workspace writes with %s paths', async (pathClass) => {
+  it.each(['posix', 'win32'] as const)('asks for non-git or Windows workspace writes with %s paths', async (pathClass) => {
     const workDir = pathClass === 'win32' ? 'C:/workspace' : '/workspace';
     const runtime = new FakeRuntime({ workspaceId: 'test', runtimeId: 'local', generation: 'test' }, { pathClass });
     ix.stub(IAgentRuntimeService, {
@@ -240,13 +240,13 @@ describe('AgentPermissionPolicyService chain', () => {
     ix.stub(ISessionWorkspaceContext, workspace.stub);
     await expect(evaluate({
       toolName: 'Write', args: { path: `${workDir}/a.ts` }, accesses: ToolAccesses.writeFile(`${workDir}/a.ts`),
-    })).resolves.toMatchObject({ policyName: 'workspace-write-approve', result: { kind: 'approve' } });
+    })).resolves.toMatchObject({ policyName: 'fallback-ask', result: { kind: 'ask' } });
     await expect(evaluate({
       toolName: 'Edit', args: { path: `${workDir}/a.ts` }, accesses: ToolAccesses.readWriteFile(`${workDir}/a.ts`),
-    })).resolves.toMatchObject({ policyName: 'workspace-write-approve', result: { kind: 'approve' } });
+    })).resolves.toMatchObject({ policyName: 'fallback-ask', result: { kind: 'ask' } });
   });
 
-  it('honors explicit deny rules before ordinary workspace write approval', async () => {
+  it('honors explicit deny rules before ordinary git-cwd write approval', async () => {
     rules.push({ decision: 'deny', scope: 'user', pattern: 'Write' });
     await expect(evaluate({
       toolName: 'Write', args: { path: '/workspace/a.ts' }, accesses: ToolAccesses.readWriteFile('/workspace/a.ts'),
@@ -675,7 +675,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
       args: { path: 'src/a.ts', content: 'x' },
       accesses: ToolAccesses.writeFile(join(workspaceDir, 'src/a.ts')),
     })).resolves.toMatchObject({
-      policyName: 'workspace-write-approve',
+      policyName: 'git-cwd-write-approve',
       result: { kind: 'approve' },
     });
   });
@@ -689,7 +689,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
       args: { path: join(extraDir, 'src/a.ts'), old_string: 'A', new_string: 'B' },
       accesses: ToolAccesses.readWriteFile(join(extraDir, 'src/a.ts')),
     })).resolves.toMatchObject({
-      policyName: 'workspace-write-approve',
+      policyName: 'git-cwd-write-approve',
       result: { kind: 'approve' },
     });
   });
@@ -709,7 +709,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
     });
   });
 
-  it('asks for git control files before workspace write approval', async () => {
+  it('asks for git control files before git-cwd write approval', async () => {
     await expect(evaluate({
       toolName: 'Write',
       args: { path: '.git/config', content: 'x' },
@@ -741,7 +741,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
       .resolves.toMatchObject({ policyName: 'git-control-path-write-ask', result: { kind: 'ask' } });
   });
 
-  it('asks for sensitive files before workspace write approval', async () => {
+  it('asks for sensitive files before git-cwd write approval', async () => {
     await expect(evaluate({
       toolName: 'Write',
       args: { path: '.env', content: 'SECRET=1' },
@@ -752,7 +752,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
     });
   });
 
-  it('does not use workspace write approval in auto mode', async () => {
+  it('does not use git-cwd write approval in auto mode', async () => {
     mode = 'auto';
     await expect(evaluate({
       toolName: 'Write',

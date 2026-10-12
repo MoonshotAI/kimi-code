@@ -2,7 +2,7 @@
 
 Built-in tools are the tool set provided by Kimi Code CLI alongside its core engine — no MCP server installation required. The Agent automatically selects and calls these tools based on the task at hand during each conversation; users can inspect the details of each tool call through the approval interface.
 
-Compared to MCP tools, built-in tools are managed directly by the runtime, their lifecycle is bound to the session, and no external process is required. Both follow the same unified approval mechanism: ordinary reads and workspace `Write` / `Edit` calls are automatically allowed by default, while shell commands and writes outside the workspace require approval. Sensitive file contents and writes to Git control files have separate approval checks. In Ask When Needed mode, approval for regular tool calls is skipped; Plan mode exit approval is not affected.
+Compared to MCP tools, built-in tools are managed directly by the runtime, their lifecycle is bound to the session, and no external process is required. Both follow the same unified approval mechanism: **read-only tools** (such as `Read`, `Grep`, `Glob`) are automatically allowed by default, while **write and execution tools** (such as `Write`, `Edit`, `Bash`) require user approval by default. Sensitive file contents and writes to Git control files have separate approval checks. In Ask When Needed mode, approval for regular tool calls is skipped; Plan mode exit approval is not affected.
 
 ## File Tools
 
@@ -11,13 +11,13 @@ File tools handle reading, writing, and searching the local filesystem — the f
 | Tool | Default Approval | Description |
 | --- | --- | --- |
 | `Read` | Auto-allow | Read a text file's contents |
-| `Write` | Auto-allow inside the workspace | Create or overwrite a file |
-| `Edit` | Auto-allow inside the workspace | Precise string replacement |
+| `Write` | Requires approval | Create or overwrite a file |
+| `Edit` | Requires approval | Precise string replacement |
 | `Grep` | Auto-allow | Full-text search powered by ripgrep |
 | `Glob` | Auto-allow | Find files by glob pattern |
 | `ReadMediaFile` | Auto-allow | Read an image or video file |
 
-These defaults apply unless [permission rules](../configuration/config-files.md#permission) override them. Ordinary workspace writes include configured additional directories and work on Windows and in non-Git folders. Reading, writing, or editing sensitive files such as `.env` and private keys requests approval rather than being blocked outright. Reading Git control files does not require special approval; writing them does. Never Ask mode or an applicable explicit allow rule can authorize these sensitive operations.
+These defaults apply unless [permission rules](../configuration/config-files.md#permission) override them. Reading, writing, or editing sensitive files such as `.env` and private keys requests approval rather than being blocked outright. Reading Git control files does not require special approval; writing them does. Never Ask mode or an applicable explicit allow rule can authorize these sensitive operations.
 
 **`Read`** accepts a file path (`path`) plus optional `line_offset` (starting line number; negative values count from the end), `column_offset` (zero-based position within the first line of a forward read), `n_lines` (requested number of source lines), and `max_chars` (maximum characters in the result, including line numbers and status). Omitting `n_lines` reads toward the end of the file. The default is 100,000 characters, and calls can request up to 500,000; both values can be changed in the [`read` configuration](../configuration/config-files.md#read). Characters and column offsets use JavaScript string length in the displayed text, excluding the line-number prefix for column offsets: common letters and Chinese characters count as one, while many emoji count as two.
 
