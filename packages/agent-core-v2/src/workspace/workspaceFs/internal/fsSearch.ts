@@ -1,3 +1,5 @@
+import picomatch from 'picomatch';
+
 import type { FsGrepRequest } from '../fs';
 
 export function computeFuzzyScore(name: string, queryLower: string): number {
@@ -39,37 +41,46 @@ export function computeMatchPositions(
 }
 
 export function matchesAnyGlob(rel: string, globs: readonly string[]): boolean {
+  const valid = globs.filter((g) => g !== '');
+  return valid.length > 0 && picomatch.isMatch(rel, valid, { dot: true, nonegate: true });
+}
+
+export function globCanMatchBelow(rel: string, globs: readonly string[]): boolean {
+  const relSegments = rel.split('/');
   for (const g of globs) {
-    if (globToRegExp(g).test(rel)) return true;
+    const parts = picomatch.scan(g, { parts: true, nonegate: true }).parts ?? [];
+    if (parts.length === 0) {
+      if (g === '**' || g.includes('/')) return true;
+      continue;
+    }
+    if (parts.some((part) => part.includes('/'))) return true;
+    if (globSegmentsMatchPrefix(parts, relSegments)) return true;
   }
   return false;
 }
 
-function globToRegExp(glob: string): RegExp {
-  let re = '^';
-  let i = 0;
-  while (i < glob.length) {
-    const ch = glob[i]!;
-    if (ch === '*' && glob[i + 1] === '*') {
-      re += '.*';
-      i += 2;
-      if (glob[i] === '/') i++;
-    } else if (ch === '*') {
-      re += '[^/]*';
-      i++;
-    } else if (ch === '?') {
-      re += '[^/]';
-      i++;
-    } else if (/[.+^${}()|[\]\\]/.test(ch)) {
-      re += `\\${ch}`;
-      i++;
-    } else {
-      re += ch;
-      i++;
+function globSegmentsMatchPrefix(globSegments: readonly string[], relSegments: readonly string[]): boolean {
+  const g = globSegments.length;
+  const r = relSegments.length;
+  const width = r + 1;
+  const dp = new Uint8Array((g + 1) * width);
+  for (let gi = g; gi >= 0; gi--) {
+    const head = gi < g ? globSegments[gi]! : undefined;
+    const headMatch = head !== undefined && head !== '**' && head !== '' ? picomatch(head, { dot: true, nonegate: true }) : undefined;
+    for (let ri = r; ri >= 0; ri--) {
+      const at = gi * width + ri;
+      if (ri === r) {
+        dp[at] = 1;
+      } else if (head === '**') {
+        dp[at] = dp[(gi + 1) * width + ri]! | dp[gi * width + ri + 1]!;
+      } else if (headMatch === undefined) {
+        dp[at] = 0;
+      } else {
+        dp[at] = headMatch(relSegments[ri]!) ? dp[(gi + 1) * width + ri + 1]! : 0;
+      }
     }
   }
-  re += '$';
-  return new RegExp(re);
+  return dp[0] === 1;
 }
 
 export function compileGrepPattern(req: FsGrepRequest): RegExp {
@@ -79,7 +90,7 @@ export function compileGrepPattern(req: FsGrepRequest): RegExp {
 }
 
 function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return s.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export function stripTrailingNewline(s: string): string {
@@ -188,7 +199,7 @@ function matchSuggestName(name: string, queryLower: string): SuggestMatch | null
   if (positions === null) return null;
   const nameLower = name.toLowerCase();
   const tier = nameLower === queryLower ? 3 : nameLower.startsWith(queryLower) ? 2 : 1;
-  const span = positions[positions.length - 1]! - positions[0]! + 1;
+  const span = positions.at(-1)! - positions[0]! + 1;
   return { tier, span, positions };
 }
 
@@ -227,7 +238,7 @@ function matchSuggestPath(path: string, querySegments: readonly string[]): Sugge
       : lastSeg === pathSegments.length - 1 && lastSegPrefix
         ? 2
         : 1;
-  const span = positions[positions.length - 1]! - positions[0]! + 1;
+  const span = positions.at(-1)! - positions[0]! + 1;
   return { tier, span, positions };
 }
 
@@ -239,7 +250,7 @@ export function evaluateSuggestCandidate(
   const segments = relPath.split('/');
   if (segments.some((s) => VCS_METADATA_DIRS.has(s))) return null;
   if (!query.showHidden && segments.some((s) => s.startsWith('.'))) return null;
-  const name = segments[segments.length - 1]!;
+  const name = segments.at(-1)!;
   const pathMode = query.pathSegments.length > 0;
   const match = pathMode
     ? matchSuggestPath(relPath, query.pathSegments)
@@ -302,7 +313,7 @@ export class SuggestTopHeap {
   }
 
   drain(): SuggestCandidate[] {
-    return this.heap.slice().sort(compareSuggestCandidates);
+    return this.heap.slice().toSorted(compareSuggestCandidates);
   }
 
   private siftUp(index: number): void {

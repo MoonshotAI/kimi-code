@@ -883,15 +883,9 @@ describe('Agent tool description', () => {
     expect(description).not.toContain('- agent:');
   });
 
-  it('lists discovered custom agents for the main agent alongside the builtin allowlist', () => {
+  it('lists discovered custom agents for the main agent alongside the builtin allowlist', async () => {
     ctx = createTestAgent(sessionService(ISessionAgentProfileCatalog, discoveredCatalog()));
-    ctx.get(IAgentProfileService).applyBindingSnapshot({
-      modelAlias: 'mock-model',
-      profileName: 'agent',
-      thinkingLevel: 'off',
-      systemPrompt: 'persisted prompt',
-      subagents: ['coder', 'explore', 'plan'],
-    });
+    await ctx.get(IAgentProfileService).bind({ profile: 'agent', model: 'mock-model' });
 
     const description = agentDescription();
 
