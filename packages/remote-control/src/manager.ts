@@ -25,6 +25,7 @@ export interface RemoteControlManagerOptions {
   readonly localOrigin: () => string;
   readonly localServerToken: () => string;
   readonly clientVersion: string;
+  readonly urlSource: string;
   readonly relayOrigin?: string;
   readonly configuredOAuthKey?: () => string | undefined;
   readonly configuredOAuthHost?: () => string | undefined;
@@ -54,6 +55,7 @@ function createRemoteControlMachine(
           localOrigin: options.localOrigin(),
           localServerToken: options.localServerToken,
           clientVersion: options.clientVersion,
+          urlSource: options.urlSource,
           relayOrigin: options.relayOrigin,
           configuredOAuthKey: options.configuredOAuthKey?.(),
           configuredOAuthHost: options.configuredOAuthHost?.(),

@@ -48,7 +48,12 @@ afterEach(async () => {
 
 describe('Remote Control URLs', () => {
   it('builds the public device entry without a local token', () => {
-    const url = buildRemoteControlUrl('device/one', undefined, 'https://code-rc.kimi.com');
+    const url = buildRemoteControlUrl(
+      'device/one',
+      undefined,
+      'https://code-rc.kimi.com',
+      'kimi_code_cli',
+    );
     expect(url).toBe(
       'https://code-rc.kimi.com/devices/device%2Fone/?rc=1&from=kimi_code_cli',
     );
@@ -56,9 +61,22 @@ describe('Remote Control URLs', () => {
   });
 
   it('builds an encoded session deep link before the query', () => {
-    expect(buildRemoteControlUrl('device-1', 'session/a b', 'https://code-rc.kimi.com')).toBe(
+    expect(
+      buildRemoteControlUrl('device-1', 'session/a b', 'https://code-rc.kimi.com', 'kimi_code_cli'),
+    ).toBe(
       'https://code-rc.kimi.com/devices/device-1/sessions/session%2Fa%20b?rc=1&from=kimi_code_cli',
     );
+  });
+
+  it('tags the public URL with the caller-provided source', () => {
+    expect(
+      buildRemoteControlUrl(
+        'device-1',
+        undefined,
+        'https://code-rc.kimi.com',
+        'kimi_code_desktop',
+      ),
+    ).toBe('https://code-rc.kimi.com/devices/device-1/?rc=1&from=kimi_code_desktop');
   });
 
   it('falls back to the default relay origin when the env is unset or blank', () => {
@@ -74,7 +92,9 @@ describe('Remote Control URLs', () => {
   it('builds device URLs from the relay origin env override', () => {
     vi.stubEnv('KIMI_CODE_REMOTE_CONTROL_RELAY_URL', 'https://rc.example.test/coding-relay/');
     expect(resolveRemoteControlRelayOrigin()).toBe('https://rc.example.test/coding-relay/');
-    expect(buildRemoteControlUrl('device-1', undefined, resolveRemoteControlRelayOrigin())).toBe(
+    expect(
+      buildRemoteControlUrl('device-1', undefined, resolveRemoteControlRelayOrigin(), 'kimi_code_cli'),
+    ).toBe(
       'https://rc.example.test/coding-relay/devices/device-1/?rc=1&from=kimi_code_cli',
     );
   });
@@ -177,6 +197,7 @@ describe('Remote Control tunnel', () => {
         localOrigin: 'http://127.0.0.1:1',
         localServerToken: 'local-server-token',
         clientVersion: CLIENT_VERSION,
+        urlSource: 'kimi_code_cli',
         relayOrigin: `http://127.0.0.1:${relayPort}/coding-relay`,
         stderr: { write: () => true },
       }),
@@ -203,6 +224,7 @@ describe('Remote Control tunnel', () => {
       localOrigin: 'http://127.0.0.1:1',
       localServerToken: 'local-server-token',
       clientVersion: CLIENT_VERSION,
+      urlSource: 'kimi_code_cli',
       configuredOAuthKey: oauthRef.key,
       configuredOAuthHost: oauthRef.oauthHost,
       relayOrigin: `http://127.0.0.1:${relay.port}/coding-relay`,
@@ -227,6 +249,7 @@ describe('Remote Control tunnel', () => {
       localOrigin: 'http://127.0.0.1:1',
       localServerToken: 'local-server-token',
       clientVersion: CLIENT_VERSION,
+      urlSource: 'kimi_code_cli',
       relayOrigin: `http://127.0.0.1:${relay.port}/coding-relay`,
       stderr: { write: () => true },
     });
@@ -254,6 +277,7 @@ describe('Remote Control tunnel', () => {
       localOrigin: 'http://127.0.0.1:1',
       localServerToken: 'local-server-token',
       clientVersion: CLIENT_VERSION,
+      urlSource: 'kimi_code_cli',
       relayOrigin: `http://127.0.0.1:${relay.port}/coding-relay`,
       stderr: { write: () => true },
     });
@@ -273,6 +297,7 @@ describe('Remote Control tunnel', () => {
       localOrigin: 'http://127.0.0.1:1',
       localServerToken: 'local-server-token',
       clientVersion: CLIENT_VERSION,
+      urlSource: 'kimi_code_cli',
       relayOrigin: `http://127.0.0.1:${relay.port}/coding-relay`,
       stderr: { write: () => true },
     });
@@ -398,6 +423,7 @@ describe('Remote Control tunnel', () => {
       localOrigin: `http://127.0.0.1:${localPort}`,
       localServerToken: () => currentToken,
       clientVersion: CLIENT_VERSION,
+      urlSource: 'kimi_code_cli',
       relayOrigin: `http://127.0.0.1:${relayPort}/coding-relay`,
       stderr: { write: () => true },
     });
@@ -679,6 +705,7 @@ describe('Remote Control tunnel', () => {
       localOrigin: 'http://127.0.0.1:1',
       localServerToken: 'local-server-token',
       clientVersion: CLIENT_VERSION,
+      urlSource: 'kimi_code_cli',
       relayOrigin: `http://127.0.0.1:${relay.port}/coding-relay`,
       stderr: { write: (text) => ((logs += String(text)), true) },
       pingIntervalMs: 50,
@@ -707,6 +734,7 @@ describe('Remote Control tunnel', () => {
       localOrigin: 'http://127.0.0.1:1',
       localServerToken: 'local-server-token',
       clientVersion: CLIENT_VERSION,
+      urlSource: 'kimi_code_cli',
       relayOrigin: `http://127.0.0.1:${relay.port}/coding-relay`,
       stderr: { write: (text) => ((logs += String(text)), true) },
     });
@@ -742,6 +770,7 @@ describe('Remote Control single-instance lock', () => {
       localOrigin: 'http://127.0.0.1:58627',
       localServerToken: 'local-server-token',
       clientVersion: CLIENT_VERSION,
+      urlSource: 'kimi_code_cli',
       relayOrigin: `http://127.0.0.1:${relay.port}`,
       stderr: { write: () => true },
     });
@@ -752,6 +781,7 @@ describe('Remote Control single-instance lock', () => {
         localOrigin: 'http://127.0.0.1:58628',
         localServerToken: 'local-server-token',
         clientVersion: CLIENT_VERSION,
+        urlSource: 'kimi_code_cli',
         relayOrigin: `http://127.0.0.1:${relay.port}`,
         stderr: { write: () => true },
       }),
@@ -782,6 +812,7 @@ describe('Remote Control single-instance lock', () => {
       localOrigin: 'http://127.0.0.1:58627',
       localServerToken: 'local-server-token',
       clientVersion: CLIENT_VERSION,
+      urlSource: 'kimi_code_cli',
       relayOrigin: `http://127.0.0.1:${relay.port}`,
       stderr: { write: () => true },
     });
@@ -800,6 +831,7 @@ describe('Remote Control single-instance lock', () => {
       localOrigin: 'http://127.0.0.1:58627',
       localServerToken: 'local-server-token',
       clientVersion: CLIENT_VERSION,
+      urlSource: 'kimi_code_cli',
       relayOrigin: `http://127.0.0.1:${relay.port}`,
       stderr: { write: () => true },
     };
@@ -826,6 +858,7 @@ describe('Remote Control single-instance lock', () => {
       localOrigin: 'http://127.0.0.1:58627',
       localServerToken: 'local-server-token',
       clientVersion: CLIENT_VERSION,
+      urlSource: 'kimi_code_cli',
       relayOrigin: `http://127.0.0.1:${relay.port}`,
       stderr: { write: () => true },
     });

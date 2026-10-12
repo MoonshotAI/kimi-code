@@ -125,6 +125,7 @@ describe('server-v2 /api/v1/remote-control', () => {
     expect(first.data.state).toBe('on');
     expect(second.data.state).toBe('on');
     expect(first.data.url).toContain('/devices/');
+    expect(first.data.url).toContain(`from=${TEST_HOST_IDENTITY.platform}`);
     expect(first.data.device_id).toBeTruthy();
     expect(first.data.device_name).toBeTruthy();
     expect(relay.registrations).toHaveLength(1);
@@ -341,7 +342,9 @@ describe('remote-control registration identity', () => {
           body: JSON.stringify({ enabled: true }),
         },
       );
-      expect(((await res.json()) as Envelope<RemoteControlStatusWire>).code).toBe(0);
+      const body = (await res.json()) as Envelope<RemoteControlStatusWire>;
+      expect(body.code).toBe(0);
+      expect(body.data.url).toContain('from=kimi_code_cli');
       expect(
         (relay.registrations[0] as { payload?: { client_version?: string } }).payload
           ?.client_version,

@@ -228,6 +228,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       opts.hostIdentity.platform === KIMI_CODE_PLATFORM
         ? `kimi-code/${serverVersion}`
         : `${opts.hostIdentity.productName}/${opts.hostIdentity.version}`,
+    urlSource: opts.hostIdentity.platform,
     configuredOAuthKey: () => readManagedOAuth()?.key,
     configuredOAuthHost: () => readManagedOAuth()?.oauthHost,
     stderr: {

@@ -12,6 +12,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { createServerLogger, startServer, type ServerLogger } from '@moonshot-ai/kap-server';
+import { KIMI_CODE_PLATFORM } from '@moonshot-ai/kimi-code-oauth';
 import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
 import chalk from 'chalk';
 import { type Command, Option } from 'commander';
@@ -227,6 +228,7 @@ export async function handleWebCommand(
           localOrigin: origin,
           localServerToken: token,
           clientVersion: `kimi-code/${getVersion()}`,
+          urlSource: KIMI_CODE_PLATFORM,
           configuredOAuthKey: persisted?.key,
           configuredOAuthHost: persisted?.oauthHost,
           stderr: deps.stderr,
