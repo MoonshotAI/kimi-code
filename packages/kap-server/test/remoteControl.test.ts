@@ -1,9 +1,10 @@
 import { createServer, type IncomingMessage } from 'node:http';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  createKimiDeviceId,
   FileTokenStorage,
   KIMI_CODE_PLATFORM,
   KIMI_CODE_PROVIDER_NAME,
@@ -365,6 +366,86 @@ describe('server-v2 /api/v1/remote-control', () => {
 
     await cloud.close();
   });
+
+  it('waits for the lock holder to release before answering current-device deactivation', async () => {
+    await rm(remoteControlLockPath(home as string), { force: true });
+    const cloud = await startDeviceCloud();
+    vi.stubEnv(
+      'KIMI_CODE_REMOTE_CONTROL_RELAY_URL',
+      `http://127.0.0.1:${cloud.port}/coding-relay/`,
+    );
+
+    const deviceId = createKimiDeviceId(home as string);
+    await mkdir(join(home as string, 'server'), { recursive: true });
+    await writeFile(
+      remoteControlLockPath(home as string),
+      JSON.stringify({
+        pid: process.pid,
+        nonce: 'holder',
+        local_origin: 'http://127.0.0.1:58627',
+        device_id: deviceId,
+        url: 'https://code-rc.kimi.com/devices/x/',
+        started_at: Date.now(),
+      }),
+    );
+    const releaser = setTimeout(() => {
+      void rm(remoteControlLockPath(home as string), { force: true });
+    }, 200);
+
+    const startedAt = Date.now();
+    const res = await authedFetch(
+      server as RunningServer,
+      base,
+      `/api/v1/remote-control/devices/${deviceId}/deactivate`,
+      { method: 'POST' },
+    );
+    const elapsed = Date.now() - startedAt;
+    clearTimeout(releaser);
+
+    expect(((await res.json()) as Envelope<{ ok: true }>).data.ok).toBe(true);
+    expect(elapsed).toBeGreaterThanOrEqual(150);
+    expect(
+      await readFile(remoteControlLockPath(home as string), 'utf8').catch(() => undefined),
+    ).toBeUndefined();
+    await cloud.close();
+  });
+
+  it('still answers when the lock holder never releases', async () => {
+    await rm(remoteControlLockPath(home as string), { force: true });
+    const cloud = await startDeviceCloud();
+    vi.stubEnv(
+      'KIMI_CODE_REMOTE_CONTROL_RELAY_URL',
+      `http://127.0.0.1:${cloud.port}/coding-relay/`,
+    );
+
+    const deviceId = createKimiDeviceId(home as string);
+    await mkdir(join(home as string, 'server'), { recursive: true });
+    await writeFile(
+      remoteControlLockPath(home as string),
+      JSON.stringify({
+        pid: process.pid,
+        nonce: 'holder',
+        local_origin: 'http://127.0.0.1:58627',
+        device_id: deviceId,
+        url: 'https://code-rc.kimi.com/devices/x/',
+        started_at: Date.now(),
+      }),
+    );
+
+    const startedAt = Date.now();
+    const res = await authedFetch(
+      server as RunningServer,
+      base,
+      `/api/v1/remote-control/devices/${deviceId}/deactivate`,
+      { method: 'POST' },
+    );
+    const elapsed = Date.now() - startedAt;
+
+    expect(((await res.json()) as Envelope<{ ok: true }>).data.ok).toBe(true);
+    expect(elapsed).toBeGreaterThanOrEqual(1900);
+    await rm(remoteControlLockPath(home as string), { force: true });
+    await cloud.close();
+  }, 8000);
 
   it('rejects blank and overlong device aliases before reaching the cloud', async () => {
     const cloud = await startDeviceCloud();

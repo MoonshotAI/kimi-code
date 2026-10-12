@@ -241,6 +241,11 @@ export function registerRemoteControlRoutes(
         await opts.devices.deactivateDevice(req.params.id);
         if (opts.service.status().deviceId === req.params.id) {
           await opts.service.disable();
+        } else {
+          const holder = await inspectRemoteControlLock(opts.homeDir);
+          if (holder !== undefined && holder.deviceId === req.params.id) {
+            await waitForLockRelease(opts.homeDir);
+          }
         }
         return { ok: true };
       });
@@ -251,6 +256,17 @@ export function registerRemoteControlRoutes(
     deactivateDeviceRoute.options,
     deactivateDeviceRoute.handler as Parameters<RemoteControlRouteHost['post']>[2],
   );
+}
+
+const LOCK_RELEASE_POLL_MS = 100;
+const LOCK_RELEASE_TIMEOUT_MS = 2000;
+
+async function waitForLockRelease(homeDir: string): Promise<void> {
+  const deadline = Date.now() + LOCK_RELEASE_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if ((await inspectRemoteControlLock(homeDir)) === undefined) return;
+    await new Promise((resolve) => setTimeout(resolve, LOCK_RELEASE_POLL_MS));
+  }
 }
 
 function toRemoteControlStatusResponse(
