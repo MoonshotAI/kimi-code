@@ -1,5 +1,3 @@
-import type { Kaos } from '@moonshot-ai/kaos';
-
 import { ErrorCodes, KimiError } from '#/errors';
 import type { ExperimentalFeatureState } from '#/flag';
 import type { ImageLimits } from '#/image';
@@ -140,11 +138,8 @@ export class KimiHarness {
   }
 
   async createSession(options: CreateSessionOptions): Promise<Session> {
-    const { planMode, kaos, persistenceKaos, sessionStartedProperties, ...coreOptions } = options;
-    const summary =
-      kaos === undefined && persistenceKaos === undefined
-        ? await this.rpc.createSession(coreOptions)
-        : await this.rpc.createSessionWithKaos(coreOptions, kaos ?? persistenceKaos as Kaos, persistenceKaos);
+    const { planMode, sessionStartedProperties, ...coreOptions } = stripLegacyKaosOptions(options);
+    const summary = await this.rpc.createSession(coreOptions);
     const session = new Session({
       id: summary.id,
       workDir: summary.workDir,
@@ -169,18 +164,14 @@ export class KimiHarness {
     const id = normalizeSessionId(input.id);
     const active = this.activeSessions.get(id);
     const {
-      kaos,
-      persistenceKaos,
       sessionStartedProperties: _sessionStartedProperties,
       ...resumeInput
-    } = input;
+    } = stripLegacyKaosOptions(input);
     // A session whose close is in flight (`isClosed` but not yet unmapped)
     // is not a valid resume target — fall through and re-resume fresh, which
     // the engine serializes behind that close.
     if (active !== undefined && !active.isClosed) {
-      if (kaos !== undefined || persistenceKaos !== undefined) {
-        await this.rpc.resumeSessionWithKaos({ ...resumeInput, id }, kaos ?? persistenceKaos as Kaos, persistenceKaos);
-      } else if (input.agentProfile !== undefined) {
+      if (input.agentProfile !== undefined) {
         await this.rpc.resumeSession({ ...resumeInput, id });
       }
       return active;
@@ -188,7 +179,7 @@ export class KimiHarness {
 
     // Coalesce concurrent resumes of the same id onto one facade, keyed by
     // the full input so a caller with different options (dirs, replay,
-    // profile, kaos) never has them silently dropped; without this,
+    // profile) never has them silently dropped; without this,
     // parallel identical callers each build their own Session over the
     // shared engine handle, and one facade's close kills the engine handle
     // under the other.
@@ -205,11 +196,8 @@ export class KimiHarness {
   }
 
   private async doResumeSession(input: ResumeSessionInput, id: string): Promise<Session> {
-    const { kaos, persistenceKaos, sessionStartedProperties, ...resumeInput } = input;
-    const summary =
-      kaos === undefined && persistenceKaos === undefined
-        ? await this.rpc.resumeSession({ ...resumeInput, id })
-        : await this.rpc.resumeSessionWithKaos({ ...resumeInput, id }, kaos ?? persistenceKaos as Kaos, persistenceKaos);
+    const { sessionStartedProperties, ...resumeInput } = stripLegacyKaosOptions(input);
+    const summary = await this.rpc.resumeSession({ ...resumeInput, id });
     const session = new Session({
       id: summary.id,
       workDir: summary.workDir,
@@ -671,13 +659,20 @@ export class KimiHarness {
 const DEFAULT_SESSION_STARTED_UI_MODE = 'shell';
 
 function resumeCoalesceKey(id: string, input: ResumeSessionInput): string {
-  const { kaos, persistenceKaos, ...rest } = input;
-  return JSON.stringify({
-    ...rest,
-    id,
-    kaos: kaos !== undefined,
-    persistenceKaos: persistenceKaos !== undefined,
-  });
+  return JSON.stringify({ ...stripLegacyKaosOptions(input), id });
+}
+
+function stripLegacyKaosOptions<T extends object>(input: T): T {
+  // JavaScript hosts may still pass the removed kaos options; keep them out of
+  // forwarded RPC inputs and serialized keys — custom implementations can hold
+  // circular runtime handles.
+  const { kaos, persistenceKaos, ...rest } = input as T & {
+    kaos?: unknown;
+    persistenceKaos?: unknown;
+  };
+  void kaos;
+  void persistenceKaos;
+  return rest as T;
 }
 
 function normalizeSessionId(value: string): string {
