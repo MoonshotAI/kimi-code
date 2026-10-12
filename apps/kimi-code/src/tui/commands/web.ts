@@ -1,9 +1,8 @@
 import chalk from 'chalk';
 
-import { KIMI_CODE_PLATFORM } from '@moonshot-ai/kimi-code-oauth';
-
 import { splitTokenFragment } from '#/cli/sub/web/access-urls';
 import { getVersion } from '#/cli/version';
+import { CLI_MSH_PLATFORM, CLI_USER_AGENT_PRODUCT } from '#/constant/app';
 import {
   buildRemoteControlUrl,
   formatRemoteControlAlreadyRunning,
@@ -75,8 +74,8 @@ export async function handleRemoteControlCommand(host: SlashCommandHost): Promis
             homeDir: dataDir,
             localOrigin: origin,
             localServerToken: token,
-            clientVersion: `kimi-code/${getVersion()}`,
-            urlSource: KIMI_CODE_PLATFORM,
+            clientVersion: `${CLI_USER_AGENT_PRODUCT}/${getVersion()}`,
+            urlSource: CLI_MSH_PLATFORM,
             configuredOAuthKey: persisted?.key,
             configuredOAuthHost: persisted?.oauthHost,
             onStatus,
@@ -98,7 +97,7 @@ export async function handleRemoteControlCommand(host: SlashCommandHost): Promis
             remoteControl.deviceId,
             session?.id,
             remoteControl.relayOrigin,
-            KIMI_CODE_PLATFORM,
+            CLI_MSH_PLATFORM,
           );
           const qrCode = await generateRemoteControlQr(url, dataDir);
           process.stdout.write(

@@ -7,9 +7,9 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
-import { createKimiUserAgent, KIMI_CODE_PLATFORM, type KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
+import { createKimiUserAgent, type KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
 
-import { CLI_USER_AGENT_PRODUCT } from '#/constant/app';
+import { CLI_MSH_PLATFORM, CLI_USER_AGENT_PRODUCT } from '#/constant/app';
 
 import { KIMI_BUILD_INFO } from './build-info';
 
@@ -51,7 +51,7 @@ export function createKimiCodeHostIdentity(version = getVersion()): KimiHostIden
   return {
     productName: CLI_USER_AGENT_PRODUCT,
     version,
-    platform: KIMI_CODE_PLATFORM,
+    platform: CLI_MSH_PLATFORM,
   };
 }
 
