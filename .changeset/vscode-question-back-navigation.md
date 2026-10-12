@@ -2,4 +2,4 @@
 "kimi-code": patch
 ---
 
-add back navigation when AskUserQuestion
+Add Back navigation to the VS Code question prompt so users can return to earlier questions without losing answers.
