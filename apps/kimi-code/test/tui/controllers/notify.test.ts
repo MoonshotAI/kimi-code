@@ -144,6 +144,27 @@ describe('NotifyController', () => {
     expect(h.notifyPanelContainer.children).toEqual([h.notifyPanel]);
   });
 
+  it('carries the update title to the panel entry and ignores a blank one', () => {
+    const h = makeHarness();
+    h.emit('tool.call.started', {
+      toolCallId: 'titled',
+      name: 'NotifyUser',
+      args: { title: '  Root cause found  ', message: 'Two refreshes reuse one token.' },
+    });
+    h.emit('tool.result', { toolCallId: 'titled', output: 'Update shown to the user.' });
+    h.emit('tool.call.started', {
+      toolCallId: 'blank',
+      name: 'NotifyUser',
+      args: { title: '   ', message: 'Untitled detail.' },
+    });
+    h.emit('tool.result', { toolCallId: 'blank', output: 'Update shown to the user.' });
+
+    expect(h.notifyPanel.getEntries().map(({ title, text }) => ({ title, text }))).toEqual([
+      { title: 'Root cause found', text: 'Two refreshes reuse one token.' },
+      { title: undefined, text: 'Untitled detail.' },
+    ]);
+  });
+
   it.each([
     { output: 'Permission denied', isError: true },
     { output: 'Update shown to the user.', synthetic: true },
