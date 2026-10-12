@@ -659,7 +659,15 @@ export class KimiHarness {
 const DEFAULT_SESSION_STARTED_UI_MODE = 'shell';
 
 function resumeCoalesceKey(id: string, input: ResumeSessionInput): string {
-  return JSON.stringify({ ...input, id });
+  // JavaScript hosts may still pass the removed kaos options; keep them out of
+  // the serialized key — custom implementations can hold circular handles.
+  const { kaos, persistenceKaos, ...rest } = input as ResumeSessionInput & {
+    kaos?: unknown;
+    persistenceKaos?: unknown;
+  };
+  void kaos;
+  void persistenceKaos;
+  return JSON.stringify({ ...rest, id });
 }
 
 function normalizeSessionId(value: string): string {
