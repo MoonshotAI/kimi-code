@@ -310,7 +310,7 @@ Blank or over-long aliases fail with `VALIDATION_FAILED` before reaching the clo
 
 #### `POST /api/v1/remote-control/devices/{device_id}/deactivate`
 
-Takes a device offline in the cloud registry. Offline devices stay listed and do not consume the plan's device quota; a device comes back the next time it turns on Remote Control. When the target is this machine — including an enable that is still starting — the local tunnel is stopped (an in-flight start is cancelled) and the response waits briefly for the machine lock to release before returning.
+Takes a device offline in the cloud registry. Offline devices stay listed and do not consume the plan's device quota; a device comes back the next time it turns on Remote Control. When the target is this machine — including an enable that is still starting — the local tunnel is stopped (an in-flight start is cancelled) and the response waits for the machine lock to release before returning; if the holder does not stop in time, the request fails with `INTERNAL_ERROR` instead of reporting success.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
