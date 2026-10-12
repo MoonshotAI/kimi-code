@@ -29,7 +29,6 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import {
   createKimiDefaultHeaders,
-  KIMI_CODE_PLATFORM,
   KIMI_CODE_PROVIDER_NAME,
   kimiRegionProfile,
   type KimiHostIdentity,
@@ -226,10 +225,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     homeDir,
     localOrigin: () => `http://${localOriginHost}:${boundPort}`,
     localServerToken: () => authTokenService.getToken(),
-    clientVersion:
-      opts.hostIdentity.platform === KIMI_CODE_PLATFORM
-        ? `kimi-code/${serverVersion}`
-        : `${opts.hostIdentity.productName}/${opts.hostIdentity.version}`,
+    clientVersion: `${opts.hostIdentity.productName}/${opts.hostIdentity.version}`,
     urlSource: opts.hostIdentity.platform,
     configuredOAuthKey: () => readManagedOAuth()?.key,
     configuredOAuthHost: () => readManagedOAuth()?.oauthHost,

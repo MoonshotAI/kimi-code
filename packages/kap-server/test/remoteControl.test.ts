@@ -494,7 +494,7 @@ describe('server-v2 /api/v1/remote-control', () => {
 });
 
 describe('remote-control registration identity', () => {
-  it('keeps the existing CLI client version shape', async () => {
+  it('registers with the host product name and version', async () => {
     const cliHome = await mkdtemp(join(tmpdir(), 'kimi-server-v2-rc-cli-'));
     const relay = await startRegisterAckRelay();
     let cliServer: RunningServer | undefined;
@@ -532,7 +532,7 @@ describe('remote-control registration identity', () => {
       expect(
         (relay.registrations[0] as { payload?: { client_version?: string } }).payload
           ?.client_version,
-      ).toBe('kimi-code/9.9.9');
+      ).toBe('kimi-code-cli/9.9.9');
     } finally {
       if (cliServer !== undefined) await cliServer.close();
       await relay.close();
