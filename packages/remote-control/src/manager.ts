@@ -1,5 +1,6 @@
 import { assign, createActor, fromPromise, setup, waitFor } from '@moonshot-ai/agent-core-v2/human/xstate2';
 
+import { RemoteControlAlreadyRunningError, type RemoteControlLockInfo } from './lock';
 import { startRemoteControl, type RemoteControlHandle } from './remote-control';
 
 export type RemoteControlState = 'off' | 'starting' | 'on' | 'stopping';
@@ -11,6 +12,7 @@ export interface RemoteControlStatusInfo {
   readonly deviceId?: string;
   readonly deviceName?: string;
   readonly error?: string;
+  readonly conflict?: RemoteControlLockInfo;
 }
 
 export interface RemoteControlManager {
@@ -142,6 +144,8 @@ export function createRemoteControlManager(
       deviceId: handle?.deviceId,
       deviceName: handle?.deviceName,
       error: error === undefined ? undefined : errorMessage(error),
+      conflict:
+        error instanceof RemoteControlAlreadyRunningError ? error.holder : undefined,
     };
   };
 

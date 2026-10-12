@@ -7,6 +7,15 @@ export const remoteControlStatusSchema = z.object({
   device_id: z.string().optional(),
   device_name: z.string().optional(),
   error: z.string().optional(),
+  conflict: z
+    .object({
+      pid: z.number().int(),
+      local_origin: z.string(),
+      device_id: z.string(),
+      url: z.string(),
+      started_at: z.number(),
+    })
+    .optional(),
 });
 export type RemoteControlStatusResponse = z.infer<typeof remoteControlStatusSchema>;
 

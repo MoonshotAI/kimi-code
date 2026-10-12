@@ -43,6 +43,13 @@ interface RemoteControlStatusWire {
   device_id?: string;
   device_name?: string;
   error?: string;
+  conflict?: {
+    pid: number;
+    local_origin: string;
+    device_id: string;
+    url: string;
+    started_at: number;
+  };
 }
 
 interface RemoteControlDeviceWire {
@@ -210,6 +217,17 @@ describe('server-v2 /api/v1/remote-control', () => {
       url: 'https://code-rc.kimi.com/devices/other-device/',
     });
     expect(typeof (posted.details as { started_at?: unknown }).started_at).toBe('number');
+
+    const statusRes = await authedFetch(server as RunningServer, base, '/api/v1/remote-control');
+    const statusBody = (await statusRes.json()) as Envelope<RemoteControlStatusWire>;
+    expect(statusBody.data.state).toBe('off');
+    expect(statusBody.data.error).toContain('already running');
+    expect(statusBody.data.conflict).toMatchObject({
+      pid: process.pid,
+      local_origin: 'http://127.0.0.1:58627',
+      device_id: 'other-device',
+      url: 'https://code-rc.kimi.com/devices/other-device/',
+    });
   });
 
   it('proxies device list and management operations through the Node-side cloud session', async () => {

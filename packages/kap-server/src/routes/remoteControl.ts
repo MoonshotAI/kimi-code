@@ -244,5 +244,15 @@ function toRemoteControlStatusResponse(
     device_id: status.deviceId,
     device_name: status.deviceName,
     error: status.error,
+    conflict:
+      status.conflict === undefined
+        ? undefined
+        : {
+            pid: status.conflict.pid,
+            local_origin: status.conflict.localOrigin,
+            device_id: status.conflict.deviceId,
+            url: status.conflict.url,
+            started_at: status.conflict.startedAt,
+          },
   };
 }
