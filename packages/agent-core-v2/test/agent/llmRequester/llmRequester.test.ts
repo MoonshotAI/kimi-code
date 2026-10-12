@@ -1,7 +1,7 @@
 import { APIConnectionError, APIStatusError } from '#/llm-adapter/contract/errors';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import type { StreamedMessagePart, ToolDescription as Tool } from '#human/llm/message';
-import { emptyUsage } from '#human/llm/usage';
+import { emptyUsage, inputTotal } from '#human/llm/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -242,6 +242,35 @@ describe('LLMRequester service migration coverage', () => {
       expect(requests).toHaveLength(2);
       expect((requests[0]?.args as Record<string, unknown> | undefined)?.['projection']).toBeUndefined();
       expect(requests[1]?.args).toMatchObject({ projection: 'strict' });
+    });
+
+    it('remembers the last completed turn request with its recorded hashes', async () => {
+      ctx.mockNextResponse({ type: 'text', text: 'operation response' });
+      await llmRequester.request({
+        messages: [userMessage('operation request')],
+        systemPrompt: 'request-specific system',
+        tools: requestTools,
+        source: { type: 'operation', requestKind: 'direct_test' },
+      });
+      expect(llmRequester.lastTurnRequest()).toBeUndefined();
+
+      ctx.mockNextResponse({ type: 'text', text: 'turn response' });
+      const finish = await llmRequester.request({
+        messages: [userMessage('turn request')],
+        tools: requestTools,
+        source: { type: 'turn', turnId: 1 },
+      });
+
+      const recorded = wireEvents(ctx, 'llm.request').at(-1)?.args as
+        | Record<string, unknown>
+        | undefined;
+      const snapshot = llmRequester.lastTurnRequest();
+      expect(snapshot).toMatchObject({
+        toolsHash: recorded?.['toolsHash'],
+        systemPromptHash: recorded?.['systemPromptHash'],
+        inputTokens: inputTotal(finish.usage),
+      });
+      expect(snapshot!.finishedAt).toBeGreaterThanOrEqual(snapshot!.startedAt);
     });
   });
 

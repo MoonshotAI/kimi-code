@@ -56,6 +56,14 @@ export interface PreparedTurnRequestConfig {
   readonly thinkingEffort: ThinkingEffort;
 }
 
+export interface AgentLLMTurnRequestSnapshot {
+  readonly toolsHash: string;
+  readonly systemPromptHash: string;
+  readonly inputTokens: number;
+  readonly startedAt: number;
+  readonly finishedAt: number;
+}
+
 export interface IAgentLLMRequesterService {
   readonly _serviceBrand: undefined;
 
@@ -64,6 +72,8 @@ export interface IAgentLLMRequesterService {
   currentCredentialProvider(): LlmCredentialProvider | undefined;
 
   credentialProviderForTurn(turnId: number): LlmCredentialProvider | undefined;
+
+  lastTurnRequest(): AgentLLMTurnRequestSnapshot | undefined;
 
   request(
     overrides?: AgentLLMRequestOverrides,

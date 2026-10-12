@@ -96,6 +96,10 @@ export interface PromptCacheProbeEvent {
   input_cache_read: number;
   input_cache_creation: number;
   output_tokens: number;
+  tools_match?: boolean;
+  system_prompt_match?: boolean;
+  parent_input_tokens?: number;
+  parent_request_gap_ms?: number;
 }
 
 export type ToolCallOutcome = 'success' | 'error' | 'cancelled';
@@ -671,7 +675,7 @@ export const telemetryEventDefinitions = {
   prompt_cache_probe: defineAgentTelemetryEvent<PromptCacheProbeEvent>({
     owner: 'kimi-code',
     comment:
-      'An agent whose first request is expected to hit the prompt cache reports that request\'s cache usage.',
+      'An agent whose first request is expected to hit the prompt cache reports that request\'s cache usage and how its prefix compares with the last turn request the parent agent completed before the fork.',
     properties: {
       source: 'Why a cache hit was expected for this request',
       turn_id: 'Per-agent turn index of the probed request',
@@ -681,6 +685,14 @@ export const telemetryEventDefinitions = {
       input_cache_read: 'Cache-read input tokens of the probed request',
       input_cache_creation: 'Cache-creation input tokens of the probed request',
       output_tokens: 'Output tokens of the probed request',
+      tools_match:
+        "Whether the provider-visible tool table hash equals the parent's; absent when the parent completed no turn request before the fork",
+      system_prompt_match:
+        "Whether the system prompt hash equals the parent's; absent when the parent completed no turn request before the fork",
+      parent_input_tokens:
+        "Total input tokens of the parent's last completed turn request before the fork, i.e. the prefix this request could read from the cache; absent when there is none",
+      parent_request_gap_ms:
+        "Milliseconds from the parent's last completed turn request finishing to the probed request starting; absent when the parent completed no turn request before the fork",
     },
   }),
   tool_call: defineAgentTelemetryEvent<ToolCallEvent>({

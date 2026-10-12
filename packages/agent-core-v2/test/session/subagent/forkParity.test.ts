@@ -25,6 +25,8 @@ import type {
   RuntimeLease,
 } from '#/runtime/runtime';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionUsageService } from '#/session/usage/sessionUsage';
+import { inputTotal } from '#human/llm/usage';
 import { IAgentRuntimeBindingSeed } from '#/agent/runtimeBinding/runtimeBinding';
 import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
@@ -57,10 +59,12 @@ import {
   appService,
   agentServices,
   sessionServices,
+  telemetryServices,
   testAgent,
   type TestAgentContext,
 } from '../../harness';
 import { stubFlag } from '../../app/flag/stubs';
+import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 class ScopedAppendLogStore implements IAppendLogStore {
   declare readonly _serviceBrand: undefined;
@@ -161,9 +165,11 @@ describe('subagent task reminders and fork request parity', () => {
 
   it('keeps system prompt, tools and history prefix identical to the parent first request', async () => {
     store = new ScopedAppendLogStore();
+    const telemetry: TelemetryRecord[] = [];
     ctx = testAgent(
       appService(IAppendLogStore, store),
       appService(IFlagService, stubFlag((id) => id === SUBAGENT_FORK_FLAG_ID)),
+      telemetryServices(recordingTelemetry(telemetry)),
       sessionServices((reg) => {
         reg.defineDescriptor(IRuntimeResolver, new SyncDescriptor(TestRuntimeResolver));
         reg.definePartialInstance(IWorkspaceInstanceManager, {
@@ -174,6 +180,10 @@ describe('subagent task reminders and fork request parity', () => {
     );
 
     const agentLifecycle = ctx.get(IAgentLifecycleService);
+    const parentInputTokens: number[] = [];
+    ctx.get(ISessionUsageService).onDidRecord((e) => {
+      if (e.agent.agentId === 'parent') parentInputTokens.push(inputTotal(e.usage));
+    });
     const parentContext = await agentLifecycle.create({ agentId: 'parent' });
     const parent = agentLifecycle.handleOf(parentContext.agentId)!;
     const profile = parent.accessor.get(IAgentProfileService);
@@ -258,6 +268,16 @@ describe('subagent task reminders and fork request parity', () => {
       systemPromptHash: parentWire?.['systemPromptHash'],
       toolsHash: parentWire?.['toolsHash'],
     });
+
+    const probes = telemetry.filter((record) => record.event === 'prompt_cache_probe');
+    expect(probes).toHaveLength(1);
+    expect(probes[0]?.properties).toMatchObject({
+      agent_id: childId,
+      tools_match: true,
+      system_prompt_match: true,
+      parent_input_tokens: parentInputTokens[0],
+    });
+    expect(probes[0]?.properties?.['parent_request_gap_ms']).toBeGreaterThanOrEqual(0);
   });
 
   function createMainForkCtx(flags: IFlagService = stubFlag(true)): void {
