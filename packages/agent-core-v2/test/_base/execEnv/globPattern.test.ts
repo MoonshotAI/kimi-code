@@ -26,4 +26,29 @@ describe('globPatternToRegex escaped wildcards', () => {
     expect(regex.test('file-1.txt')).toBe(true);
     expect(regex.test('dir/file.txt')).toBe(false);
   });
+
+  it.each(['*', '?'])('keeps %s active after an escaped backslash', (wildcard) => {
+    const regex = globPatternToRegex(`file\\\\${wildcard}.txt`, true);
+
+    expect(regex.test('file\\a.txt')).toBe(true);
+    expect(regex.test('filea.txt')).toBe(false);
+    expect(regex.test('file\\dir/a.txt')).toBe(false);
+    expect(regex.test('file\\.txt')).toBe(wildcard === '*');
+  });
+
+  it('matches escaped brackets literally', () => {
+    const regex = globPatternToRegex('file\\[ab\\].txt', true);
+
+    expect(regex.test('file[ab].txt')).toBe(true);
+    expect(regex.test('filea.txt')).toBe(false);
+    expect(regex.test('fileb.txt')).toBe(false);
+  });
+
+  it('matches a trailing lone backslash literally', () => {
+    const regex = globPatternToRegex('file\\', true);
+
+    expect(regex.test('file\\')).toBe(true);
+    expect(regex.test('file')).toBe(false);
+    expect(regex.test('filea')).toBe(false);
+  });
 });
