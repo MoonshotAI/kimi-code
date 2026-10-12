@@ -1,6 +1,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -10,12 +12,13 @@ import {
   setCapabilities,
   type TuiMouseEvent,
 } from '@moonshot-ai/pi-tui';
-import type {
-  ApprovalRequest,
-  ApprovalResponse,
-  Event,
-  GoalSnapshot,
-  Session,
+import {
+  createKimiHarness,
+  type ApprovalRequest,
+  type ApprovalResponse,
+  type Event,
+  type GoalSnapshot,
+  type Session,
 } from '@moonshot-ai/kimi-code-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -4205,6 +4208,231 @@ command = "vim"
 
     expect(session.cancel).toHaveBeenCalledTimes(1);
   });
+
+  it('returns to idle and allows /clear after cancelling ReadMediaFile', async () => {
+    const nextSession = makeSession({ id: 'ses-2' });
+    const { driver, session, harness } = await makeDriver();
+    harness.createSession.mockResolvedValueOnce(nextSession);
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.started', agentId: 'main', sessionId: 'ses-1', turnId: 0, origin: { kind: 'user' } } as Event,
+      () => {},
+    );
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.step.started', agentId: 'main', sessionId: 'ses-1', turnId: 0, step: 6 } as Event,
+      () => {},
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 0,
+        toolCallId: 'tool_LSp6cwjJVBvL6Zzej7YMboRi',
+        name: 'ReadMediaFile',
+        args: { path: 'analysis/full_small.mp4' },
+        display: { kind: 'file_io', operation: 'read', path: '/tmp/full_small.mp4' },
+      } as Event,
+      () => {},
+    );
+    expect(driver.state.activitySpinner).not.toBeNull();
+
+    session.cancel.mockImplementation(async () => {
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'tool.result',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 0,
+          toolCallId: 'tool_LSp6cwjJVBvL6Zzej7YMboRi',
+          output: 'The user manually interrupted "ReadMediaFile".',
+          isError: true,
+        } as Event,
+        () => {},
+      );
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'turn.step.interrupted',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 0,
+          step: 6,
+          reason: 'aborted',
+        } as Event,
+        () => {},
+      );
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'turn.ended',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 0,
+          reason: 'cancelled',
+          durationMs: 53847,
+          traceId: '87ba9125dc01214ef86100ac03bd4fd9',
+        } as Event,
+        () => {},
+      );
+    });
+
+    driver.state.editor.onEscape?.();
+
+    expect(session.cancel).toHaveBeenCalledTimes(1);
+    expect(driver.state.appState.streamingPhase).toBe('idle');
+    expect(driver.state.livePane.mode).toBe('idle');
+    expect(driver.state.activitySpinner).toBeNull();
+
+    driver.handleUserInput('/clear');
+
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-2');
+    });
+    expect(driver.state.appState.streamingPhase).toBe('idle');
+    expect(driver.state.livePane.mode).toBe('idle');
+    expect(driver.state.activitySpinner).toBeNull();
+  });
+
+  it('aborts an in-flight video upload and recovers through /clear with the real engine', async () => {
+    const homeDir = await makeTempHome();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-code-tui-video-'));
+    tempDirs.push(workDir);
+    await writeFile(
+      join(workDir, 'clip.mp4'),
+      Buffer.from('00000020667479706d703432000000006d70343269736f6d', 'hex'),
+    );
+
+    let notifyUploadStarted!: () => void;
+    const uploadStarted = new Promise<void>((resolve) => {
+      notifyUploadStarted = resolve;
+    });
+    let uploadAborted = false;
+    const server = createServer((req, res) => {
+      void (async () => {
+        for await (const _chunk of req) {
+        }
+        if (req.url === '/v1/files') {
+          notifyUploadStarted();
+          res.on('close', () => {
+            if (!res.writableEnded) uploadAborted = true;
+          });
+          return;
+        }
+        if (req.url === '/v1/chat/completions') {
+          const chunks = [
+            {
+              id: 'chatcmpl-mock',
+              object: 'chat.completion.chunk',
+              created: 1,
+              model: 'mock',
+              choices: [
+                {
+                  index: 0,
+                  delta: {
+                    role: 'assistant',
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: 'call_video_1',
+                        type: 'function',
+                        function: { name: 'ReadMediaFile', arguments: '{"path":"clip.mp4"}' },
+                      },
+                    ],
+                  },
+                  finish_reason: null,
+                },
+              ],
+            },
+            {
+              id: 'chatcmpl-mock',
+              object: 'chat.completion.chunk',
+              created: 1,
+              model: 'mock',
+              choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
+              usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 },
+            },
+          ];
+          res.writeHead(200, { 'content-type': 'text/event-stream' });
+          res.end(`${chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join('')}data: [DONE]\n\n`);
+          return;
+        }
+        res.writeHead(404);
+        res.end();
+      })().catch(() => {
+        res.destroy();
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `
+default_model = "stub"
+
+[providers.stub]
+type = "kimi"
+base_url = "${baseUrl}"
+api_key = "test-key"
+
+[models.stub]
+provider = "stub"
+model = "stub"
+max_context_size = 262144
+capabilities = ["image_in", "video_in"]
+`,
+      'utf-8',
+    );
+
+    let harness: ReturnType<typeof createKimiHarness> | undefined;
+    let driver: MessageDriver | undefined;
+    try {
+      harness = createKimiHarness({
+        homeDir,
+        identity: { productName: 'kimi-code-cli', version: '0.0.0-test', platform: 'kimi_code_cli' },
+      });
+      const startupInput = { ...makeStartupInput(), workDir };
+      startupInput.cliOptions.model = 'stub';
+      driver = new KimiTUI(harness, startupInput) as unknown as MessageDriver;
+      vi.spyOn(driver.state.ui, 'requestRender').mockImplementation(() => {});
+      vi.spyOn(driver.state.terminal, 'setProgress').mockImplementation(() => {});
+      driver.persistInputHistory = vi.fn(async () => {});
+      await driver.init();
+      const session = await harness.createSession({ workDir });
+      await driver.setSession(session);
+      await driver.syncRuntimeState(session);
+      driver.sessionEventHandler.startSubscription();
+
+      driver.handleUserInput('watch clip.mp4');
+      await uploadStarted;
+      driver.state.editor.onEscape?.();
+
+      await vi.waitFor(() => {
+        expect(driver!.state.appState.streamingPhase).toBe('idle');
+      });
+      await vi.waitFor(() => {
+        expect(uploadAborted).toBe(true);
+      });
+      expect(driver.state.activitySpinner).toBeNull();
+      const previousSessionId = driver.getCurrentSessionId();
+
+      driver.handleUserInput('/clear');
+
+      await vi.waitFor(() => {
+        expect(driver!.getCurrentSessionId()).not.toBe(previousSessionId);
+      });
+      expect(driver.state.appState.streamingPhase).toBe('idle');
+      expect(driver.state.livePane.mode).toBe('idle');
+      expect(driver.state.activitySpinner).toBeNull();
+    } finally {
+      driver?.state.activitySpinner?.instance.stop();
+      await driver?.closeSession('test').catch(() => {});
+      await harness?.close();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => {
+        server.close(() => {
+          resolve();
+        });
+      });
+    }
+  }, 20_000);
 
   it('clears streaming editor text before cancelling the active turn on Ctrl-C', async () => {
     const { driver, session } = await makeDriver();
