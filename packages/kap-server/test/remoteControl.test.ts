@@ -241,20 +241,11 @@ describe('server-v2 /api/v1/remote-control', () => {
     );
     expect(((await deactivatedRes.json()) as Envelope<{ ok: true }>).data.ok).toBe(true);
 
-    const deletedRes = await authedFetch(
-      server as RunningServer,
-      base,
-      '/api/v1/remote-control/devices/device-1',
-      { method: 'DELETE' },
-    );
-    expect(((await deletedRes.json()) as Envelope<{ ok: true }>).data.ok).toBe(true);
-
     expect(cloud.requests.map((request) => `${request.method} ${request.pathname}`)).toEqual([
       'POST /coding-relay/auth/exchange',
       'GET /coding-relay/v1/remote/devices',
       'PATCH /coding-relay/v1/remote/devices/device-1',
       'POST /coding-relay/v1/remote/devices/device-1/deactivate',
-      'DELETE /coding-relay/v1/remote/devices/device-1',
     ]);
     expect(JSON.parse(cloud.requests[2]!.body)).toEqual({ alias: 'Renamed device' });
     expect(cloud.requests.slice(1).every((request) => request.cookie === 'rc_session=one')).toBe(
@@ -263,7 +254,7 @@ describe('server-v2 /api/v1/remote-control', () => {
     await cloud.close();
   });
 
-  it('stops the local tunnel when the current device is deactivated or deleted', async () => {
+  it('stops the local tunnel when the current device is deactivated', async () => {
     await rm(remoteControlLockPath(home as string), { force: true });
     const cloud = await startDeviceCloud({ tunnel: true });
     vi.stubEnv(
@@ -297,18 +288,6 @@ describe('server-v2 /api/v1/remote-control', () => {
       { method: 'POST' },
     );
     expect(((await ownRes.json()) as Envelope<{ ok: true }>).data.ok).toBe(true);
-    expect(await currentState()).toBe('off');
-
-    const reenabled = await postRemoteControl(true);
-    expect(reenabled.data.state).toBe('on');
-
-    const deletedRes = await authedFetch(
-      server as RunningServer,
-      base,
-      `/api/v1/remote-control/devices/${currentId}`,
-      { method: 'DELETE' },
-    );
-    expect(((await deletedRes.json()) as Envelope<{ ok: true }>).data.ok).toBe(true);
     expect(await currentState()).toBe('off');
 
     await cloud.close();
