@@ -13,6 +13,7 @@ import {
   DEFAULT_AGENT_PROFILE_NAME,
   normalizeAgentProfile,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { BuiltinAgentProfileLoaderService } from '#/app/agentProfileCatalog/builtinAgentProfileLoaderService';
 import { registerAgentProfile } from '#/app/agentProfileCatalog/contribution';
 import type { ToolCall } from '#human/llm/message';
@@ -122,6 +123,72 @@ describe('AgentProfileService.bind', () => {
     expect(svc.isRunnable()).toBe(true);
     expect(svc.getActiveToolNames()?.length).toBeGreaterThan(0);
     expect(svc.getSystemPrompt()).toContain('Kimi Code CLI');
+  });
+
+  it('unions discovered agent profiles into the bound subagents for the main agent', async () => {
+    const { profile: svc } = buildContext();
+    ctx.get(IAgentProfileRegistry).register({
+      sourceId: 'workspace',
+      priority: 30,
+      contribution: {
+        profiles: [
+          normalizeAgentProfile({
+            name: 'code-reviewer',
+            description: 'Reviews code',
+            tools: ['Read'],
+            systemPrompt: () => 'reviewer',
+          }),
+        ],
+      },
+    });
+
+    await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+
+    expect(svc.data().subagents).toEqual(['coder', 'explore', 'plan', 'code-reviewer']);
+  });
+
+  it('honors the explicit subagents of a discovered profile bound as main', async () => {
+    const { profile: svc } = buildContext();
+    ctx.get(IAgentProfileRegistry).register({
+      sourceId: 'workspace',
+      priority: 30,
+      contribution: {
+        profiles: [
+          normalizeAgentProfile({
+            name: 'custom-main',
+            description: 'Custom main agent',
+            subagents: ['coder'],
+            systemPrompt: () => 'custom main',
+          }),
+        ],
+      },
+    });
+
+    await svc.bind({ profile: 'custom-main', model: MOCK_MODEL });
+
+    expect(svc.data().subagents).toEqual(['coder']);
+  });
+
+  it('preserves an explicit wildcard subagents on a profile bound as main', async () => {
+    const { profile: svc } = buildContext();
+    ctx.get(IAgentProfileRegistry).register({
+      sourceId: 'workspace',
+      priority: 30,
+      contribution: {
+        profiles: [
+          normalizeAgentProfile({
+            name: 'wild-main',
+            description: 'Wildcard main agent',
+            subagents: ['*'],
+            systemPrompt: () => 'wild main',
+          }),
+        ],
+      },
+    });
+
+    await svc.bind({ profile: 'wild-main', model: MOCK_MODEL });
+
+    expect(svc.data().subagents).toEqual(['*']);
   });
 
   it('waits for the identity freeze instead of racing it', async () => {

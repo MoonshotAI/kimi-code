@@ -17,6 +17,7 @@ import {
   ICapabilityService,
   IPluginService,
   IWorkspaceService,
+  NOTIFY_USER_UI_CAPABILITY,
   PluginChanged,
   logSeed,
   resolveConfigPath,
@@ -210,6 +211,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
         skillDirs: opts.skillDirs,
         displayName: opts.hostIdentity.displayName,
         replyStyleGuide: opts.hostIdentity.replyStyleGuide,
+        uiCapabilities: [NOTIFY_USER_UI_CAPABILITY],
       },
     },
     [...logSeed(logging), ...(opts.seeds ?? [])],
@@ -484,7 +486,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
             : undefined,
     },
     onShutdown: () => {
-      void close().catch((error: unknown) => logger.error({ error }, 'server close failed'));
+      void close().catch((error: unknown) => logger.error({ err: error }, 'server close failed'));
     },
     connectionRegistry,
     broadcaster,
