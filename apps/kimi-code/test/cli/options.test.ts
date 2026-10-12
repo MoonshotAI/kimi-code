@@ -160,6 +160,32 @@ describe('CLI options parsing', () => {
       expect(parse(['-S']).session).toBe('');
     });
 
+    it.each(['-r', '--resume'])('bare %s selects the interactive session picker', (flag) => {
+      const opts = parse([flag]);
+      expect(opts.session).toBe('');
+      expect(validateOptions(opts).uiMode).toBe('shell');
+    });
+
+    it.each(['-r', '--resume'])('%s conflicts with --continue even without an ID', (flag) => {
+      expect(() => validateOptions(parse([flag, '--continue']))).toThrow(
+        'Cannot combine --continue, --session.',
+      );
+    });
+
+    it.each([
+      ['-r', '--agent', 'reviewer'],
+      ['--resume', '--agent', 'reviewer'],
+      ['-r', '--agent-file', 'reviewer.md'],
+      ['--resume', '--agent-file', 'reviewer.md'],
+    ])('bare %s conflicts with %s', (resumeFlag, agentFlag, agentValue) => {
+      expect(() => validateOptions(parse([agentFlag, agentValue, resumeFlag]))).toThrow(
+        'Cannot combine --agent/--agent-file with --session/--continue',
+      );
+      expect(() => validateOptions(parse([resumeFlag, 'ses_123', agentFlag, agentValue]))).toThrow(
+        'Cannot combine --agent/--agent-file with --session/--continue',
+      );
+    });
+
     it('-C sets continue', () => {
       expect(parse(['-C']).continue).toBe(true);
     });
