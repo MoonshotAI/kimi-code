@@ -7,6 +7,7 @@ import {
 
 import { useHttpRoute } from '../feature';
 import { ErrorCode, param, sendErr, sendOk } from '../route/http';
+import { resumeSession } from '../route/resume-session';
 
 export function useSessionTitleRoutes(prefix: string): void {
   useHttpRoute({
@@ -29,7 +30,7 @@ export function useSessionTitleRoutes(prefix: string): void {
         );
         return;
       }
-      const session = useApp().get(sessionId);
+      const session = await resumeSession(useApp(), sessionId);
       if (session === undefined) {
         sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;

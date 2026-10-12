@@ -11,6 +11,7 @@ import { PermissionRef } from '#/features/permission/index';
 
 import { sessionBusy, sessionPendingInteraction } from '../route-features/status';
 import { sessionView } from '../route-builtin/sessions';
+import { resumeSession } from '../route/resume-session';
 
 import { EventJournal, TranscriptOpsJournal, type BufferedSinceResult, type EventEnvelope, type SessionCursor } from './journal';
 import type { ResyncReason } from './protocol';
@@ -229,7 +230,7 @@ export class SessionBroadcaster {
     transcriptGrades?: TranscriptGradeSpec,
     opts?: { deferTranscriptReset?: boolean; transcriptSince?: Record<string, number> },
   ): Promise<boolean> {
-    const state = this.ensureState(sessionId);
+    const state = await this.ensureStateResumed(sessionId);
     if (state === undefined) return false;
     const prev = state.targets.get(target);
     state.targets.set(target, { agentFilter: filter, transcriptGrades });
@@ -365,7 +366,7 @@ export class SessionBroadcaster {
     filter?: AgentFilter,
     transcriptGrades?: TranscriptGradeSpec,
   ): Promise<BufferedSinceResult> {
-    const state = this.ensureState(sessionId);
+    const state = await this.ensureStateResumed(sessionId);
     if (state === undefined) {
       return { events: [], resyncRequired: 'session_recreated', currentSeq: 0, epoch: '' };
     }
@@ -384,10 +385,33 @@ export class SessionBroadcaster {
   }
 
   async getCursor(sessionId: string): Promise<{ seq: number; epoch: string }> {
-    const state = this.ensureState(sessionId);
+    const state = await this.ensureStateResumed(sessionId);
     if (state === undefined) return { seq: 0, epoch: '' };
     await state.queue;
     return { seq: state.journal.seq, epoch: state.journal.epoch };
+  }
+
+  private async ensureStateResumed(sessionId: string): Promise<SessionState | undefined> {
+    const existing = this.sessions.get(sessionId);
+    if (existing !== undefined) {
+      if (this.opts.app.get(sessionId) !== undefined) return existing;
+      this.dropState(sessionId);
+    }
+    if (this.opts.app.get(sessionId) === undefined) {
+      await resumeSession(this.opts.app, sessionId).catch(() => undefined);
+    }
+    return this.ensureState(sessionId);
+  }
+
+  private dropState(sessionId: string): void {
+    const state = this.sessions.get(sessionId);
+    if (state === undefined) return;
+    this.sessions.delete(sessionId);
+    for (const off of state.offs) off();
+    for (const track of state.agentTracks.values()) {
+      for (const off of track.offs) off();
+    }
+    state.targets.clear();
   }
 
   onSessionCreated(sessionId: string): void {
@@ -408,15 +432,7 @@ export class SessionBroadcaster {
       type: 'event.session.deleted',
       payload: { sessionId, workspace_id: '', agentId: MAIN_AGENT_ID, session_id: sessionId },
     });
-    const state = this.sessions.get(sessionId);
-    if (state !== undefined) {
-      this.sessions.delete(sessionId);
-      for (const off of state.offs) off();
-      for (const track of state.agentTracks.values()) {
-        for (const off of track.offs) off();
-      }
-      state.targets.clear();
-    }
+    this.dropState(sessionId);
   }
 
   onSessionMetaUpdated(sessionId: string, meta: unknown): void {

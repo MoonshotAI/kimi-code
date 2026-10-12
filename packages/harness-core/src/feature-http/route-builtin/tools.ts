@@ -2,6 +2,7 @@ import { MAIN_AGENT_ID, useApp, type ToolDescription } from '@moonshot-ai/agent-
 
 import { useHttpRoute } from '../feature';
 import { sendOk } from '../route/http';
+import { resumeSession } from '../route/resume-session';
 
 const MCP_NAME_PREFIX = 'mcp__';
 const MCP_NAME_SEPARATOR = '__';
@@ -20,11 +21,14 @@ export function useToolsRoutes(prefix: string): void {
     id: 'tools.list',
     method: 'GET',
     path: `${prefix}/tools`,
-    handler: (request, response) => {
+    handler: async (request, response) => {
       const app = useApp();
       const query = request.query['session_id'];
       const sessionId = typeof query === 'string' && query.length > 0 ? query : app.list().at(-1);
-      const session = sessionId === undefined ? undefined : app.get(sessionId);
+      const session =
+        sessionId === undefined
+          ? undefined
+          : await resumeSession(app, sessionId).catch(() => undefined);
       const agent = session?.get(MAIN_AGENT_ID);
       if (session === undefined || agent === undefined) {
         sendOk(request, response, { tools: [] });

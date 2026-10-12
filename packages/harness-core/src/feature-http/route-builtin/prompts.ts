@@ -3,6 +3,7 @@ import { MAIN_AGENT_ID, useApp } from '@moonshot-ai/agent-core';
 import { useHttpRoute } from '../feature';
 import { parseActionSuffix } from '../route/action-suffix';
 import { ErrorCode, param, readAgentId, readUserMessage, sendErr, sendOk } from '../route/http';
+import { resumeSession } from '../route/resume-session';
 
 export function usePromptRoutes(prefix: string): void {
   useHttpRoute({
@@ -22,7 +23,7 @@ export function usePromptRoutes(prefix: string): void {
       }
       const body = request.body as { prompt_id?: unknown };
       const promptId = typeof body['prompt_id'] === 'string' ? body['prompt_id'] : undefined;
-      const session = useApp().get(sessionId);
+      const session = await resumeSession(useApp(), sessionId);
       if (session === undefined) {
         sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
@@ -68,7 +69,7 @@ export function usePromptRoutes(prefix: string): void {
         sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
         return;
       }
-      const session = useApp().get(sessionId);
+      const session = await resumeSession(useApp(), sessionId);
       if (session === undefined) {
         sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
@@ -113,7 +114,7 @@ export function usePromptRoutes(prefix: string): void {
         );
         return;
       }
-      const session = useApp().get(sessionId);
+      const session = await resumeSession(useApp(), sessionId);
       if (session === undefined) {
         sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
@@ -149,7 +150,7 @@ export function usePromptRoutes(prefix: string): void {
         sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'content is required');
         return;
       }
-      const session = useApp().get(sessionId);
+      const session = await resumeSession(useApp(), sessionId);
       if (session === undefined) {
         sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
@@ -185,7 +186,7 @@ export function usePromptRoutes(prefix: string): void {
         sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'content is required');
         return;
       }
-      const session = useApp().get(sessionId);
+      const session = await resumeSession(useApp(), sessionId);
       if (session === undefined) {
         sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;

@@ -10,6 +10,7 @@ import {
 
 import { useHttpRoute } from '../feature';
 import { ErrorCode, param, sendErr, sendOk } from '../route/http';
+import { resumeSession } from '../route/resume-session';
 
 export function useFileHistoryRoutes(prefix: string): void {
   useHttpRoute({
@@ -17,7 +18,7 @@ export function useFileHistoryRoutes(prefix: string): void {
     method: 'GET',
     path: `${prefix}/sessions/:session_id/file-history/changes`,
     handler: async (request, response) => {
-      const face = resolveFileHistory(request, response);
+      const face = await resolveFileHistory(request, response);
       if (face === undefined) return;
       const turnId = readTurnId(request.query['turn_id']);
       if (turnId === undefined) {
@@ -36,7 +37,7 @@ export function useFileHistoryRoutes(prefix: string): void {
     method: 'GET',
     path: `${prefix}/sessions/:session_id/file-history/content`,
     handler: async (request, response) => {
-      const face = resolveFileHistory(request, response);
+      const face = await resolveFileHistory(request, response);
       if (face === undefined) return;
       const turnId = readTurnId(request.query['turn_id']);
       if (turnId === undefined) {
@@ -59,13 +60,13 @@ export function useFileHistoryRoutes(prefix: string): void {
   });
 }
 
-function resolveFileHistory(request: Request, response: Response): FileHistoryFace | undefined {
+async function resolveFileHistory(request: Request, response: Response): Promise<FileHistoryFace | undefined> {
   const sessionId = param(request, 'session_id');
   if (sessionId === undefined) {
     sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
     return undefined;
   }
-  const session = useApp().get(sessionId);
+  const session = await resumeSession(useApp(), sessionId);
   if (session === undefined) {
     sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
     return undefined;

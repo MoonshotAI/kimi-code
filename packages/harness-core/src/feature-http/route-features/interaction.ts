@@ -14,6 +14,7 @@ import {
 import { useHttpRoute } from '../feature';
 import { parseActionSuffix } from '../route/action-suffix';
 import { ErrorCode, param, requestId, sendErr, sendOk } from '../route/http';
+import { resumeSession } from '../route/resume-session';
 
 export interface ApprovalView {
   readonly approval_id: string;
@@ -76,8 +77,8 @@ export function useInteractionRoutes(prefix: string): void {
     id: 'sessions.approvals.list',
     method: 'GET',
     path: `${prefix}/sessions/:session_id/approvals`,
-    handler: (request, response) => {
-      const resolved = interactionFacade(request, response);
+    handler: async (request, response) => {
+      const resolved = await interactionFacade(request, response);
       if (resolved === undefined) return;
       const pending = resolved.facade.findAll({
         kind: 'approval',
@@ -94,7 +95,7 @@ export function useInteractionRoutes(prefix: string): void {
     id: 'sessions.approvals.resolve',
     method: 'POST',
     path: `${prefix}/sessions/:session_id/approvals/:approval_id`,
-    handler: (request, response) => {
+    handler: async (request, response) => {
       const approvalId = param(request, 'approval_id');
       if (approvalId === undefined) {
         sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'approval_id is required');
@@ -110,7 +111,7 @@ export function useInteractionRoutes(prefix: string): void {
         );
         return;
       }
-      const resolved = interactionFacade(request, response);
+      const resolved = await interactionFacade(request, response);
       if (resolved === undefined) return;
       const tags = { [INTERACTION_TAG_SESSION_ID]: resolved.sessionId };
       const pending = resolved.facade.findOne({ id: approvalId, kind: 'approval', resolved: false, tags });
@@ -141,8 +142,8 @@ export function useInteractionRoutes(prefix: string): void {
     id: 'sessions.questions.list',
     method: 'GET',
     path: `${prefix}/sessions/:session_id/questions`,
-    handler: (request, response) => {
-      const resolved = interactionFacade(request, response);
+    handler: async (request, response) => {
+      const resolved = await interactionFacade(request, response);
       if (resolved === undefined) return;
       const pending = resolved.facade.findAll({
         kind: 'question',
@@ -159,7 +160,7 @@ export function useInteractionRoutes(prefix: string): void {
     id: 'sessions.questions.resolve',
     method: 'POST',
     path: `${prefix}/sessions/:session_id/questions/:tail`,
-    handler: (request, response) => {
+    handler: async (request, response) => {
       const tail = param(request, 'tail');
       if (tail === undefined) {
         sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'question_id is required');
@@ -171,7 +172,7 @@ export function useInteractionRoutes(prefix: string): void {
         defaultAction: 'resolve',
         resourceLabel: 'question',
       });
-      const resolved = interactionFacade(request, response);
+      const resolved = await interactionFacade(request, response);
       if (resolved === undefined) return;
       const tags = { [INTERACTION_TAG_SESSION_ID]: resolved.sessionId };
       let questionId: string;
@@ -234,16 +235,16 @@ export function useInteractionRoutes(prefix: string): void {
   });
 }
 
-function interactionFacade(
+async function interactionFacade(
   request: Request,
   response: Response,
-): { readonly sessionId: string; readonly facade: Interactions } | undefined {
+): Promise<{ readonly sessionId: string; readonly facade: Interactions } | undefined> {
   const sessionId = param(request, 'session_id');
   if (sessionId === undefined) {
     sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
     return undefined;
   }
-  const session = useApp().get(sessionId);
+  const session = await resumeSession(useApp(), sessionId);
   if (session === undefined) {
     sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
     return undefined;

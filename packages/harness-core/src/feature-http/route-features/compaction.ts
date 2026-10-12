@@ -4,13 +4,14 @@ import { CompactionRef } from '#/features/compaction/index';
 
 import { useSessionAction } from '../route/session-action';
 import { ErrorCode, readAgentId, sendErr, sendFacadeErr, sendOk } from '../route/http';
+import { resumeSession } from '../route/resume-session';
 
 export function useCompactionRoutes(prefix: string): void {
   void prefix;
   useSessionAction('compact', async ({ sessionId, body, request, response }) => {
     const app = useApp();
     try {
-      const session = app.get(sessionId);
+      const session = await resumeSession(app, sessionId);
       if (session === undefined) {
         sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;

@@ -1,6 +1,7 @@
 export { ErrorCode } from './http';
 export { parseActionSuffix } from './action-suffix';
 export type { ActionSuffixParse, ParseActionSuffixOptions } from './action-suffix';
+export { resumeSession } from './resume-session';
 export { SessionActionContributions, useSessionAction, useSessionActionRoutes } from './session-action';
 export type {
   SessionActionBody,

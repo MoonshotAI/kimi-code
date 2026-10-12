@@ -47,6 +47,7 @@ import {
 import { useHttpRoute } from '../feature';
 import { useSessionAction, useSessionActionRoutes } from '../route/session-action';
 import { ErrorCode, param, readAgentId, requestId, sendErr, sendFacadeErr, sendOk } from '../route/http';
+import { resumeSession } from '../route/resume-session';
 import {
   sessionBusy,
   sessionPendingInteraction,
@@ -373,10 +374,10 @@ export function useSessionRoutes(prefix: string): void {
     }
   });
 
-  useSessionAction('abort', ({ sessionId, request, response }) => {
+  useSessionAction('abort', async ({ sessionId, request, response }) => {
     const app = useApp();
     try {
-      const session = app.get(sessionId);
+      const session = await resumeSession(app, sessionId);
       if (session === undefined) {
         sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
@@ -395,10 +396,10 @@ export function useSessionRoutes(prefix: string): void {
     }
   });
 
-  useSessionAction('pause', ({ sessionId, request, response }) => {
+  useSessionAction('pause', async ({ sessionId, request, response }) => {
     const app = useApp();
     try {
-      const session = app.get(sessionId);
+      const session = await resumeSession(app, sessionId);
       if (session === undefined) {
         sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
@@ -417,10 +418,10 @@ export function useSessionRoutes(prefix: string): void {
     }
   });
 
-  useSessionAction('continue', ({ sessionId, request, response }) => {
+  useSessionAction('continue', async ({ sessionId, request, response }) => {
     const app = useApp();
     try {
-      const session = app.get(sessionId);
+      const session = await resumeSession(app, sessionId);
       if (session === undefined) {
         sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
@@ -470,7 +471,7 @@ export function useSessionRoutes(prefix: string): void {
   useSessionAction('undo', async ({ sessionId, body, request, response }) => {
     const app = useApp();
     try {
-      const session = app.get(sessionId);
+      const session = await resumeSession(app, sessionId);
       if (session === undefined) {
         sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;

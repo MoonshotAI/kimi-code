@@ -13,6 +13,7 @@ import {
 import { useHttpRoute } from '../feature';
 import { parseActionSuffix } from '../route/action-suffix';
 import { ErrorCode, param, sendErr, sendOk } from '../route/http';
+import { resumeSession } from '../route/resume-session';
 
 export interface SkillView {
   readonly name: string;
@@ -36,11 +37,12 @@ export function useSkillRoutes(prefix: string): void {
         sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
         return;
       }
-      if (useApp().get(sessionId) === undefined) {
+      const app = useApp();
+      const facade = useInject(SkillCatalogRef).value;
+      if ((await app.space.get(sessionId)) === undefined) {
         sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
       }
-      const facade = useInject(SkillCatalogRef).value;
       if (facade === undefined) {
         sendErr(
           request,
@@ -86,7 +88,7 @@ export function useSkillRoutes(prefix: string): void {
         );
         return;
       }
-      const session = useApp().get(sessionId);
+      const session = await resumeSession(useApp(), sessionId);
       if (session === undefined) {
         sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;

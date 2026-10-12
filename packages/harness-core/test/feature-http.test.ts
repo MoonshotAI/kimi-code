@@ -3987,6 +3987,144 @@ describe('feature-http ws v1 (kap-aligned) endpoint', () => {
   });
 });
 
+describe('feature-http cold session resume', () => {
+  async function closeSession(env: HttpEnv, sessionId: string): Promise<void> {
+    await env.app.close(sessionId);
+    expect(env.app.get(sessionId)).toBeUndefined();
+  }
+
+  it('resumes a catalog session for prompt submission instead of answering 40401', async () => {
+    const env = await mountHttp([bindTestLlm(createMockRequester())]);
+    const session = await openMain(env, 'ses_cold_prompt');
+    const agent = session.get(MAIN_AGENT_ID) as AgentHandle;
+    queue = [{ text: 'first turn' }];
+    await runTurn(agent);
+    await closeSession(env, 'ses_cold_prompt');
+
+    queue = [{ text: 'resumed turn' }];
+    const submitted = await post(env, '/sessions/ses_cold_prompt/prompts', {
+      content: [{ type: 'text', text: 'wake up' }],
+      prompt_id: 'prompt-resume-1',
+    });
+    expect(submitted.status).toBe(200);
+    expect(await submitted.json()).toMatchObject({
+      code: 0,
+      data: { prompt_id: 'prompt-resume-1', submitted: true },
+    });
+
+    const resumed = env.app.get('ses_cold_prompt');
+    expect(resumed).toBeDefined();
+    const resumedAgent = resumed?.get(MAIN_AGENT_ID);
+    expect(resumedAgent).toBeDefined();
+    await vi.waitFor(() => {
+      const history = resumed?.stores.get(MAIN_AGENT_ID)?.getState().history ?? [];
+      const text = JSON.stringify(history);
+      expect(text).toContain('resumed turn');
+    });
+
+    const missing = await post(env, '/sessions/ses_cold_ghost/prompts', {
+      content: [{ type: 'text', text: 'nobody' }],
+    });
+    expect(missing.status).toBe(200);
+    expect(await missing.json()).toMatchObject({
+      code: 40401,
+      msg: 'session ses_cold_ghost does not exist',
+    });
+  });
+
+  it('resumes a catalog session for live-dependent session routes', async () => {
+    const env = await mountHttp([bindTestLlm(createMockRequester())]);
+    await openMain(env, 'ses_cold_status');
+    await closeSession(env, 'ses_cold_status');
+
+    const status = await get(env, '/sessions/ses_cold_status/status');
+    expect(status.status).toBe(200);
+    expect(await status.json()).toMatchObject({ code: 0, data: { busy: false } });
+    expect(env.app.get('ses_cold_status')).toBeDefined();
+
+    const agents = await get(env, '/sessions/ses_cold_status/agents');
+    expect(agents.status).toBe(200);
+    expect(await agents.json()).toMatchObject({
+      code: 0,
+      data: { items: [{ id: MAIN_AGENT_ID }] },
+    });
+
+    const missing = await get(env, '/sessions/ses_cold_ghost/status');
+    expect(await missing.json()).toMatchObject({
+      code: 40401,
+      msg: 'session ses_cold_ghost does not exist',
+    });
+  });
+
+  it('resumes a catalog session for ws subscriptions and seeds transcript from persisted history', async () => {
+    const env = await mountHttp([bindTestLlm(createMockRequester())]);
+    const session = await openMain(env, 'ses_cold_ws');
+    const agent = session.get(MAIN_AGENT_ID) as AgentHandle;
+    queue = [{ text: 'persisted cold turn' }];
+    await runTurn(agent);
+    await closeSession(env, 'ses_cold_ws');
+
+    const client = await connectWsV1(env);
+    await client.next((frame) => frame['type'] === 'server_hello');
+    client.send({
+      type: 'client_hello',
+      id: 'h1',
+      payload: { client_id: 'test-client', subscriptions: ['ses_cold_ws'], cursors: {} },
+    });
+    const ack = await client.next((frame) => frame['type'] === 'ack' && frame['id'] === 'h1');
+    expect(ack).toMatchObject({
+      code: 0,
+      payload: { accepted_subscriptions: ['ses_cold_ws'], resync_required: [] },
+    });
+    expect(env.app.get('ses_cold_ws')).toBeDefined();
+
+    client.send({
+      type: 'subscribe_v2',
+      id: 's1',
+      payload: { session_id: 'ses_cold_ws', transcript: { [MAIN_AGENT_ID]: 'delta' } },
+    });
+    await client.next((frame) => frame['type'] === 'ack' && frame['id'] === 's1');
+    const reset = await client.next((frame) => frame['type'] === 'transcript.reset');
+    const payload = reset['payload'] as Record<string, unknown>;
+    expect(payload).toMatchObject({ agent_id: MAIN_AGENT_ID, has_more_older: false });
+    const snapshot = payload['snapshot'] as {
+      items: { kind: string; turnId?: string; state?: string; steps?: { frames: { kind: string; text?: string }[] }[] }[];
+    };
+    expect(snapshot.items).toHaveLength(1);
+    expect(snapshot.items[0]).toMatchObject({ kind: 'turn', turnId: 't0', state: 'completed' });
+    const frames = snapshot.items[0]?.steps?.flatMap((step) => step.frames) ?? [];
+    expect(frames.some((frame) => frame.kind === 'text' && frame.text === 'persisted cold turn')).toBe(
+      true,
+    );
+
+    client.send({
+      type: 'client_hello',
+      id: 'h2',
+      payload: {
+        client_id: 'test-client',
+        subscriptions: ['ses_cold_ws'],
+        cursors: { ses_cold_ws: { seq: 0, epoch: 'ep_stale' } },
+      },
+    });
+    const resync = await client.next((frame) => frame['type'] === 'resync_required');
+    expect(resync).toMatchObject({
+      payload: { session_id: 'ses_cold_ws', reason: 'epoch_changed' },
+    });
+    await client.close();
+
+    const ghost = await connectWsV1(env);
+    await ghost.next((frame) => frame['type'] === 'server_hello');
+    ghost.send({
+      type: 'subscribe',
+      id: 'g1',
+      payload: { session_ids: ['ses_cold_ghost'] },
+    });
+    const ghostAck = await ghost.next((frame) => frame['type'] === 'ack' && frame['id'] === 'g1');
+    expect(ghostAck).toMatchObject({ code: 0, payload: { not_found: ['ses_cold_ghost'] } });
+    await ghost.close();
+  });
+});
+
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,

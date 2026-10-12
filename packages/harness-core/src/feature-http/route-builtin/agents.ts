@@ -2,6 +2,7 @@ import { useApp } from '@moonshot-ai/agent-core';
 
 import { useHttpRoute } from '../feature';
 import { ErrorCode, param, sendErr, sendOk } from '../route/http';
+import { resumeSession } from '../route/resume-session';
 
 export interface AgentView {
   readonly id: string;
@@ -13,13 +14,13 @@ export function useAgentRoutes(prefix: string): void {
     id: 'agents.list',
     method: 'GET',
     path: `${prefix}/sessions/:session_id/agents`,
-    handler: (request, response) => {
+    handler: async (request, response) => {
       const sessionId = param(request, 'session_id');
       if (sessionId === undefined) {
         sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
         return;
       }
-      const session = useApp().get(sessionId);
+      const session = await resumeSession(useApp(), sessionId);
       if (session === undefined) {
         sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
@@ -35,14 +36,14 @@ export function useAgentRoutes(prefix: string): void {
     id: 'agents.get',
     method: 'GET',
     path: `${prefix}/sessions/:session_id/agents/:agent_id`,
-    handler: (request, response) => {
+    handler: async (request, response) => {
       const sessionId = param(request, 'session_id');
       const agentId = param(request, 'agent_id');
       if (sessionId === undefined || agentId === undefined) {
         sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id and agent_id are required');
         return;
       }
-      const session = useApp().get(sessionId);
+      const session = await resumeSession(useApp(), sessionId);
       if (session === undefined) {
         sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
@@ -71,7 +72,7 @@ export function useAgentRoutes(prefix: string): void {
         sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id and agent_id are required');
         return;
       }
-      const session = useApp().get(sessionId);
+      const session = await resumeSession(useApp(), sessionId);
       if (session === undefined) {
         sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;

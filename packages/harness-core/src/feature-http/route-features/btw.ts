@@ -4,13 +4,14 @@ import { BtwRef } from '#/features/btw/index';
 
 import { useSessionAction } from '../route/session-action';
 import { ErrorCode, sendErr, sendFacadeErr, sendOk } from '../route/http';
+import { resumeSession } from '../route/resume-session';
 
 export function useBtwRoutes(prefix: string): void {
   void prefix;
   useSessionAction('btw', async ({ sessionId, request, response }) => {
     const app = useApp();
     try {
-      const session = app.get(sessionId);
+      const session = await resumeSession(app, sessionId);
       if (session === undefined) {
         sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;

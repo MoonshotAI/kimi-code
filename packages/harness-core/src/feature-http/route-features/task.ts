@@ -7,6 +7,7 @@ import { TaskRef, type TaskFace, type TaskRecord, type TaskStatus } from '#/feat
 import { useHttpRoute } from '../feature';
 import { parseActionSuffix } from '../route/action-suffix';
 import { ErrorCode, param, requestId, sendErr, sendOk } from '../route/http';
+import { resumeSession } from '../route/resume-session';
 
 export type TaskWireKind = 'subagent' | 'bash' | 'tool';
 export type TaskWireStatus = 'running' | 'completed' | 'failed' | 'cancelled';
@@ -34,8 +35,8 @@ export function useTaskRoutes(prefix: string): void {
     id: 'sessions.tasks.list',
     method: 'GET',
     path: `${prefix}/sessions/:session_id/tasks`,
-    handler: (request, response) => {
-      const resolved = taskFacade(request, response);
+    handler: async (request, response) => {
+      const resolved = await taskFacade(request, response);
       if (resolved === undefined) return;
       const status = readStatusQuery(request);
       if (status === null) {
@@ -59,8 +60,8 @@ export function useTaskRoutes(prefix: string): void {
     id: 'sessions.tasks.get',
     method: 'GET',
     path: `${prefix}/sessions/:session_id/tasks/:task_id`,
-    handler: (request, response) => {
-      const resolved = taskFacade(request, response);
+    handler: async (request, response) => {
+      const resolved = await taskFacade(request, response);
       if (resolved === undefined) return;
       const taskId = param(request, 'task_id');
       if (taskId === undefined) {
@@ -101,7 +102,7 @@ export function useTaskRoutes(prefix: string): void {
         );
         return;
       }
-      const resolved = taskFacade(request, response);
+      const resolved = await taskFacade(request, response);
       if (resolved === undefined) return;
       const record = resolved.facade.records.value.get(parsed.id);
       if (record === undefined) {
@@ -138,16 +139,16 @@ export function useTaskRoutes(prefix: string): void {
   });
 }
 
-function taskFacade(
+async function taskFacade(
   request: Request,
   response: Response,
-): { readonly sessionId: string; readonly facade: TaskFace } | undefined {
+): Promise<{ readonly sessionId: string; readonly facade: TaskFace } | undefined> {
   const sessionId = param(request, 'session_id');
   if (sessionId === undefined) {
     sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
     return undefined;
   }
-  const session = useApp().get(sessionId);
+  const session = await resumeSession(useApp(), sessionId);
   if (session === undefined) {
     sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
     return undefined;

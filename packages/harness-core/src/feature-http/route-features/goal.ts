@@ -4,6 +4,7 @@ import { GoalRef } from '#/features/goal/index';
 
 import { useHttpRoute } from '../feature';
 import { ErrorCode, param, sendErr, sendOk } from '../route/http';
+import { resumeSession } from '../route/resume-session';
 
 export function useGoalRoutes(prefix: string): void {
   useHttpRoute({
@@ -16,7 +17,7 @@ export function useGoalRoutes(prefix: string): void {
         sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
         return;
       }
-      const session = useApp().get(sessionId);
+      const session = await resumeSession(useApp(), sessionId);
       if (session === undefined) {
         sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
