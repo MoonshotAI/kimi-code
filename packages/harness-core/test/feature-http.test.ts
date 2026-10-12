@@ -615,6 +615,63 @@ describe('feature-http facade routes', () => {
     expect(await unknownModel.json()).toMatchObject({ code: 40413 });
   });
 
+  it('serves session warnings projected from config diagnostics', async () => {
+    const broken = await mountHttp([
+      createConfig({ persist: fakePersist('[unclosed').persist, env: {} }),
+      bindTestLlm(createMockRequester()),
+    ]);
+    await broken.space.create('ses_warn');
+
+    const errored = await get(broken, '/sessions/ses_warn/warnings');
+    expect(errored.status).toBe(200);
+    const erroredBody = await errored.json();
+    expect(erroredBody).toMatchObject({ code: 0, msg: 'success' });
+    expect(erroredBody.data.warnings).toEqual([
+      {
+        code: 'config-diagnostic',
+        message: expect.stringContaining('Failed to load config'),
+        severity: 'error',
+      },
+    ]);
+
+    const catalog = await mountHttp([
+      createConfig({
+        persist: fakePersist(`${CATALOG_TOML}\n[models.broken]\nprovider = "acme"\n`).persist,
+        env: {},
+      }),
+      providerCatalog,
+      bindTestLlm(createMockRequester()),
+    ]);
+    await catalog.space.create('ses_malformed');
+    const warned = await get(catalog, '/sessions/ses_malformed/warnings');
+    expect((await warned.json()).data.warnings).toEqual(
+      expect.arrayContaining([
+        {
+          code: 'config-diagnostic',
+          message: expect.stringContaining("[models] entry 'broken' is missing the 'model' field"),
+          severity: 'warning',
+        },
+      ]),
+    );
+
+    const healthy = await mountHttp([
+      createConfig({ persist: fakePersist(CATALOG_TOML).persist, env: {} }),
+      providerCatalog,
+      bindTestLlm(createMockRequester()),
+    ]);
+    await healthy.space.create('ses_ok');
+    const empty = await get(healthy, '/sessions/ses_ok/warnings');
+    expect((await empty.json()).data).toEqual({ warnings: [] });
+
+    const missing = await get(healthy, '/sessions/ses_ghost/warnings');
+    expect(await missing.json()).toMatchObject({ code: 40401 });
+
+    const bare = await mountHttp([bindTestLlm(createMockRequester())]);
+    await bare.space.create('ses_bare');
+    const unavailable = await get(bare, '/sessions/ses_bare/warnings');
+    expect(await unavailable.json()).toMatchObject({ code: 40941 });
+  });
+
   it('compacts a session and reports 40910 when compaction is unavailable', async () => {
     const env = await mountHttp([
       createCompaction({

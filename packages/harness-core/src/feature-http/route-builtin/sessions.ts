@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 
 import {
   AgentModelRef,
+  ConfigRef,
   MAIN_AGENT_ID,
   ModelCatalogError,
   SessionModelRef,
@@ -66,6 +67,12 @@ export interface SessionUsageView {
 
 export interface SessionAgentConfigView {
   readonly model: string;
+}
+
+export interface SessionWarningView {
+  readonly code: string;
+  readonly message: string;
+  readonly severity: 'info' | 'warning' | 'error';
 }
 
 export interface SessionView {
@@ -263,6 +270,42 @@ export function useSessionRoutes(prefix: string): void {
         if (sendFacadeErr(request, response, error)) return;
         throw error;
       }
+    },
+  });
+
+  useHttpRoute({
+    id: 'sessions.warnings',
+    method: 'GET',
+    path: `${prefix}/sessions/:session_id/warnings`,
+    handler: async (request, response) => {
+      const sessionId = param(request, 'session_id');
+      if (sessionId === undefined) {
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required');
+        return;
+      }
+      const config = useInject(ConfigRef).value;
+      if ((await useApp().space.get(sessionId)) === undefined) {
+        sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
+        return;
+      }
+      if (config === undefined) {
+        sendErr(
+          request,
+          response,
+          ErrorCode.CONFIG_UNAVAILABLE,
+          'config is unavailable (config feature is not installed)',
+        );
+        return;
+      }
+      sendOk(request, response, {
+        warnings: config.diagnostics().map(
+          (diagnostic): SessionWarningView => ({
+            code: 'config-diagnostic',
+            message: diagnostic.message,
+            severity: diagnostic.severity,
+          }),
+        ),
+      });
     },
   });
 
