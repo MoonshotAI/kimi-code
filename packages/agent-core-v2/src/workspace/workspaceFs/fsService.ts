@@ -125,10 +125,13 @@ export class WorkspaceFsService implements IWorkspaceFsService {
 
   private isWithinWorkspace(absPath: string): boolean {
     const target = this.path.resolve(absPath);
-    if (isInsideOrEqual(this.path, target, this.workDir)) return true;
-    return this.workspaceDirs.additionalDirs.some((dir) =>
-      isInsideOrEqual(this.path, target, this.path.resolve(dir)),
-    );
+    if (target === this.workDir) return true;
+    const rel = this.path.relative(this.workDir, target);
+    if (rel !== '' && !rel.startsWith('..') && !this.path.isAbsolute(rel)) return true;
+    return this.workspaceDirs.additionalDirs.some((dir) => {
+      const r = this.path.relative(this.path.resolve(dir), target);
+      return r === '' || (!r.startsWith('..') && !this.path.isAbsolute(r));
+    });
   }
 
   private absOf(rel: string): string {
@@ -1184,6 +1187,12 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         details: { path: inputPath, reason: 'absolute' },
       });
     }
+    const segments = inputPath.split(/[/\\]+/);
+    if (segments.some((s) => s === '..')) {
+      throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" rejected (dotdot segment)`, {
+        details: { path: inputPath, reason: 'dotdot_segment' },
+      });
+    }
     const abs = this.resolvePathInput(inputPath);
     if (!this.isWithinWorkspace(abs)) {
       throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" escapes workspace`, {
@@ -1395,7 +1404,7 @@ function isMissingPathError(err: unknown): boolean {
 function isInsideOrEqual(path: RuntimePath, child: string, parent: string): boolean {
   const rel = path.relative(parent, child);
   if (rel === '') return true;
-  if (rel === '..' || rel.startsWith(`..${path.separator}`)) return false;
+  if (rel.startsWith('..')) return false;
   if (path.isAbsolute(rel)) return false;
   return true;
 }

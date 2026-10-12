@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": minor
 ---
 
-Relax workspace trust and file-access restrictions.
+Stop excluding project-local git, gh, fd, and URL openers from PATH after workspace trust; untrusted workspaces still exclude them.

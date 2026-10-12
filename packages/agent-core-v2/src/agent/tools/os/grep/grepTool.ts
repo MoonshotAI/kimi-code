@@ -95,30 +95,17 @@ export class GrepTool implements IGrepTool {
         env,
         workspace,
         operation: 'search',
+        policy: { guardMode: 'absolute-outside-allowed', checkSensitive: false },
       });
     }
     const searchPaths = [path ?? workspace.workspaceDir];
     const searchPath = args.path ?? workspace.workspaceDir;
-    const ruleSubject = args.include_sensitive === true
-      ? JSON.stringify({ pattern: args.pattern, path: searchPaths[0], include_sensitive: true })
-      : args.pattern;
-    const approvalRule = literalRulePattern(this.name, ruleSubject);
     return {
       accesses: ToolAccesses.searchTree(searchPaths[0]!),
-      description: `Searching for '${args.pattern}' in ${searchPath}${args.include_sensitive === true ? ' (including sensitive files)' : ''}`,
-      display: {
-        kind: 'file_io',
-        operation: 'grep',
-        path: searchPaths[0]!,
-        detail: args.include_sensitive === true
-          ? 'Includes sensitive file contents; may expose secrets to the model.'
-          : undefined,
-      },
-      approvalRule,
+      description: `Searching for '${args.pattern}' in ${searchPath}`,
+      display: { kind: 'file_io', operation: 'grep', path: searchPaths[0]! },
+      approvalRule: literalRulePattern(this.name, args.pattern),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.pattern),
-      matchesSessionApproval: args.include_sensitive === true
-        ? (rule) => rule === approvalRule
-        : undefined,
       execute: async ({ signal }) => {
         const lease = this.runtime.acquire(['fs', 'process']);
         try {
@@ -222,9 +209,7 @@ export class GrepTool implements IGrepTool {
     const rawLines = parseRipgrepOutput(stdoutText, mode);
 
     const filteredSensitive = new Set<string>();
-    const keptLines = args.include_sensitive === true
-      ? rawLines
-      : filterSensitiveLines(rawLines, mode, filteredSensitive, pathClass);
+    const keptLines = filterSensitiveLines(rawLines, mode, filteredSensitive, pathClass);
     let orderedLines: ParsedGrepLine[];
     try {
       orderedLines =
@@ -298,7 +283,7 @@ export class GrepTool implements IGrepTool {
         ? 'No non-sensitive matches found'
         : contentBody;
     const emptyResultMessage =
-      args.include_sensitive === true ? 'No matches found' : 'No non-sensitive matches found';
+      SENSITIVE_GLOBS_TO_EXCLUDE.length > 0 ? 'No non-sensitive matches found' : 'No matches found';
     const body =
       visibleBody === '' && headerLines.length === 0 && messages.length === 0
         ? emptyResultMessage
@@ -476,10 +461,8 @@ function buildRgArgs(
   if (args.type !== undefined) cmd.push('--type', args.type);
   if (args.multiline) cmd.push('-U', '--multiline-dotall');
   if (args.include_ignored) cmd.push('--no-ignore');
-  if (args.include_sensitive !== true) {
-    for (const glob of SENSITIVE_GLOBS_TO_EXCLUDE) {
-      cmd.push('--glob', `!${glob}`);
-    }
+  for (const glob of SENSITIVE_GLOBS_TO_EXCLUDE) {
+    cmd.push('--glob', `!${glob}`);
   }
 
   cmd.push('--', args.pattern, ...searchPaths);

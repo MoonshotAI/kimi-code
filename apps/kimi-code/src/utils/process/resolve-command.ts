@@ -66,7 +66,8 @@ export function resolveCommandPath(
   const env = process.env;
   const extensions = pathExtensions(platform, env);
   const names = candidateNames(command, extensions);
-  const pathValue = env['PATH'] ?? '';
+  const pathValue = env['PATH'];
+  if (pathValue === undefined) return undefined;
   const separator = platform === 'win32' ? ';' : ':';
   for (const dir of pathValue.split(separator)) {
     if (dir === '' && options.trusted !== true) continue;

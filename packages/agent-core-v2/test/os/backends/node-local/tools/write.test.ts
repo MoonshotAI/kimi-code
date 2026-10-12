@@ -252,17 +252,6 @@ describe('WriteTool', () => {
     expect(result.output).toContain('Appended 5 bytes');
   });
 
-  it('resolves sensitive writes for approval without writing early', async () => {
-    const { tool, writeText } = makeTool({}, stubWorkspaceContext('/workspace'));
-    expect(tool.resolveExecution({ path: '.env', content: 'TOKEN=example' })).toMatchObject({
-      accesses: [{ kind: 'file', operation: 'write', path: '/workspace/.env' }],
-    });
-    expect(writeText).not.toHaveBeenCalled();
-    const result = await execute(tool, { path: '.env', content: 'TOKEN=example' });
-    expect(result.isError).toBeFalsy();
-    expect(writeText).toHaveBeenCalledWith('/workspace/.env', 'TOKEN=example');
-  });
-
   it('creates missing parent directories automatically before writing', async () => {
     const enoent = Object.assign(new Error('ENOENT: no such file or directory'), {
       code: 'ENOENT',
@@ -346,13 +335,14 @@ describe('WriteTool', () => {
     expect(writeText).not.toHaveBeenCalled();
   });
 
-  it('executes an authorized sensitive file write', async () => {
+  it('blocks sensitive file writes', async () => {
     const { tool, writeText } = makeTool({}, stubWorkspaceContext('/workspace'));
 
     const result = await execute(tool, { path: '/workspace/id_rsa', content: 'key' });
 
-    expect(result.isError).toBeFalsy();
-    expect(writeText).toHaveBeenCalledWith('/workspace/id_rsa', 'key');
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('sensitive-file pattern');
+    expect(writeText).not.toHaveBeenCalled();
   });
 
   it('round-trips unicode content (CJK + emoji + accented Latin) through fs.writeText', async () => {

@@ -9,13 +9,13 @@ import type {
   PermissionPolicyResult,
 } from '#/agent/permissionPolicy/types';
 import {
-  writeFileAccesses,
+  fileAccesses,
   hasGitPathComponent,
   isGitControlPath,
 } from './path-utils';
 
-export class GitControlPathWriteAskPermissionPolicyService implements PermissionPolicy {
-  readonly name = 'git-control-path-write-ask';
+export class GitControlPathAccessAskPermissionPolicyService implements PermissionPolicy {
+  readonly name = 'git-control-path-access-ask';
 
   constructor(
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
@@ -31,7 +31,7 @@ export class GitControlPathWriteAskPermissionPolicyService implements Permission
     const lease = this.runtime.acquire();
     const pathClass = lease.runtime.environment.pathClass;
     lease.dispose();
-    const accesses = writeFileAccesses(context);
+    const accesses = fileAccesses(context);
     if (accesses.length === 0) return undefined;
 
     const directGitAccess = accesses.find((fileAccess) =>

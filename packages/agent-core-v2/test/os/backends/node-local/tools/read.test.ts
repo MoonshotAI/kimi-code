@@ -687,16 +687,15 @@ describe('ReadTool', () => {
     expect(readLines).toHaveBeenCalledWith('/home/test/notes/today.txt', { errors: 'strict' });
   });
 
-  it('exposes sensitive file access for approval before reading it', async () => {
-    const { fs, readBytes } = createSpiedFs('SECRET=value');
+  it('blocks sensitive files independently from workspace access', async () => {
+    const { fs, readText } = createSpiedFs('SECRET=value');
     const tool = createReadTool(fs, createTestEnv(), stubWorkspaceContext('/workspace'));
-    const execution = await tool.resolveExecution({ path: '/workspace/.env' });
-    expect(execution).toMatchObject({
-      accesses: [{ kind: 'file', operation: 'read', path: '/workspace/.env' }],
-    });
-    expect(readBytes).not.toHaveBeenCalled();
+
     const result = await execute(tool, { path: '/workspace/.env' });
-    expect(result.output).toContain('SECRET=value');
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('sensitive-file pattern');
+    expect(readText).not.toHaveBeenCalled();
   });
 
   it('rejects image files before text decoding', async () => {

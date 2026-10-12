@@ -125,6 +125,17 @@ describe('resolveCommandPath (posix)', () => {
     },
   );
 
+  it.skipIf(process.platform === 'win32')('does not treat an unset PATH as the workspace after trust', () => {
+    const cwd = makeTempDir('kimi-resolve-cwd-');
+    const tool = join(cwd, 'mytool');
+    writeFileSync(tool, '#!/bin/sh\nexit 0\n');
+    chmodSync(tool, 0o755);
+    delete process.env['PATH'];
+
+    expect(resolveCommandPath('mytool', cwd)).toBeUndefined();
+    expect(resolveCommandPath('mytool', cwd, { trusted: true })).toBeUndefined();
+  });
+
   it.skipIf(process.platform === 'win32')('treats dot-prefixed subdirectories as part of the workspace', () => {
     const cwd = makeTempDir('kimi-resolve-cwd-');
     const bin = join(cwd, '..tools');

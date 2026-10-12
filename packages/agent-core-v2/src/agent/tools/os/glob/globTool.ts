@@ -27,6 +27,8 @@ import {
   isWithinDirectory,
   resolvePathAccessPath,
   type PathClass,
+  isSensitiveFile,
+  SENSITIVE_DOT_VARIANT_SUFFIXES,
   type WorkspaceConfig,
 } from '#/tool/path-access';
 import { toInputJsonSchema } from '#/tool/input-schema';
@@ -41,6 +43,20 @@ import {
 } from './glob';
 
 const VCS_DIRECTORIES_TO_EXCLUDE = ['.git', '.svn', '.hg', '.bzr', '.jj', '.sl'] as const;
+
+const SENSITIVE_KEY_BASENAMES = ['id_rsa', 'id_ed25519', 'id_ecdsa'] as const;
+const SENSITIVE_GLOBS_TO_EXCLUDE: readonly string[] = [
+  '**/.env',
+  ...SENSITIVE_KEY_BASENAMES.flatMap((name) => [
+    `**/${name}`,
+    `**/${name}[-_]*`,
+    ...SENSITIVE_DOT_VARIANT_SUFFIXES.map((suffix) => `**/${name}${suffix}`),
+  ]),
+  '**/.aws/credentials',
+  '**/.aws/credentials/**',
+  '**/.gcp/credentials',
+  '**/.gcp/credentials/**',
+];
 
 export class GlobTool implements IGlobTool {
   declare readonly _serviceBrand: undefined;
@@ -80,6 +96,7 @@ export class GlobTool implements IGlobTool {
         env,
         workspace,
         operation: 'search',
+        policy: { guardMode: 'absolute-outside-allowed', checkSensitive: false },
       });
     }
     const searchRoots = [path ?? workspace.workspaceDir];
@@ -208,9 +225,19 @@ export class GlobTool implements IGlobTool {
       return { isError: true, output: 'Glob aborted' };
     }
 
-    const kept = splitCompletePaths(stdoutText, bufferTruncated || timedOut).map((p) =>
+    const rawPaths = splitCompletePaths(stdoutText, bufferTruncated || timedOut).map((p) =>
       resolve(searchRoot, p),
     );
+
+    const kept: string[] = [];
+    let filteredSensitive = 0;
+    for (const p of rawPaths) {
+      if (isSensitiveFile(p)) {
+        filteredSensitive++;
+      } else {
+        kept.push(p);
+      }
+    }
 
     const offset = args.offset ?? 0;
     const headLimit = args.head_limit ?? DEFAULT_HEAD_LIMIT;
@@ -249,6 +276,10 @@ export class GlobTool implements IGlobTool {
           );
         } else if (partial) {
           lines.push('No matches collected; search incomplete.');
+        } else if (filteredSensitive > 0) {
+          lines.push(
+            `No non-sensitive matches found (${String(filteredSensitive)} sensitive file(s) filtered).`,
+          );
         } else {
           lines.push('No matches found');
         }
@@ -264,6 +295,9 @@ export class GlobTool implements IGlobTool {
           `Continue with the same search arguments and offset=${String(offset + count)}.`,
         );
         if (!characterLimited) lines.push('To remove the match-count limit, omit offset and use head_limit=0.');
+      }
+      if (filteredSensitive > 0 && (kept.length > 0 || partial)) {
+        footer.push(`Filtered ${String(filteredSensitive)} sensitive file(s).`);
       }
       if (!truncated && !partial && offset === 0 && headLimit > 0 && count === headLimit) {
         footer.push(`Found ${String(count)} matches`);
@@ -328,6 +362,9 @@ function buildRgArgs(rgPath: string, args: GlobInput, singleThreaded = false): s
     cmd.push('--glob', `!${dir}`);
   }
   cmd.push('--glob', args.pattern);
+  for (const glob of SENSITIVE_GLOBS_TO_EXCLUDE) {
+    cmd.push('--glob', `!${glob}`);
+  }
   if (args.include_ignored) cmd.push('--no-ignore');
   cmd.push('.');
   return cmd;
