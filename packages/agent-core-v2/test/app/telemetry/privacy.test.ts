@@ -109,6 +109,56 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
     );
   });
 
+  it('redacts multiword Windows components after an extension-like prefix', () => {
+    expect(cleanTelemetryString(String.raw`C:\Users\alice\archive.txt files here\secret`)).toBe(REDACTED);
+    expect(cleanTelemetryString(String.raw`C:\Users\alice\archive.txt files here\secret.txt`)).toBe(REDACTED);
+  });
+
+  it('redacts consecutive Windows drive paths without consuming the next drive letter', () => {
+    expect(cleanTelemetryString(String.raw`C:\Users\alice\cache, see C:\Users\bob\log`)).toBe(
+      `${REDACTED}, see ${REDACTED}`,
+    );
+    expect(cleanTelemetryString(String.raw`C:\Users\alice\cache see D:\Users\bob\log`)).toBe(
+      `${REDACTED} ${REDACTED}`,
+    );
+    expect(cleanTelemetryString(String.raw`C:\Users\alice, smith\secret.txt`)).toBe(REDACTED);
+  });
+
+  it('redacts extensionless POSIX paths separated by prose', () => {
+    expect(cleanTelemetryString('open /home/alice/cache see /tmp/log')).toBe(`open ${REDACTED}`);
+    expect(cleanTelemetryString('open /home/alice/node_modules/pkg see /tmp/log')).toBe(`open ${REDACTED}`);
+  });
+
+  it('redacts POSIX components ending in spaces', () => {
+    expect(cleanTelemetryString('/home/alice/private /secret.txt')).toBe(REDACTED);
+    expect(cleanTelemetryString('/home/alice/private /cache')).toBe(REDACTED);
+  });
+
+  it('redacts UNC paths with forward-slash and mixed leading separators', () => {
+    expect(cleanTelemetryString(String.raw`//server\share\alice\secret.txt`)).toBe(REDACTED);
+    expect(cleanTelemetryString(String.raw`/\server\share\alice\cache`)).toBe(REDACTED);
+    expect(cleanTelemetryString(String.raw`\/server\share\alice\cache`)).toBe(REDACTED);
+    expect(cleanTelemetryString(String.raw`//server\share\alice\NODE_MODULES\pkg\index.js`)).toBe(
+      'NODE_MODULES/pkg/index.js',
+    );
+    expect(cleanTelemetryString('//home/alice/NODE_MODULES/private-project/secret.js')).toBe(REDACTED);
+  });
+
+  it('preserves diagnostics after backtick-delimited paths', () => {
+    expect(cleanTelemetryString('failed at `/home/alice/file.txt` could not be read')).toBe(
+      `failed at \`${REDACTED}\` could not be read`,
+    );
+    expect(cleanTelemetryString('failed at `C:\\Users\\alice\\cache` could not be read')).toBe(
+      `failed at \`${REDACTED}\` could not be read`,
+    );
+  });
+
+  it('redacts long whitespace components without excessive backtracking', () => {
+    const started = performance.now();
+    expect(cleanTelemetryString(String.raw`C:\Users\alice` + '/' + ' '.repeat(3000) + 'x')).toBe(REDACTED);
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
+
   it('preserves diagnostics after single-quoted extensionless POSIX paths', () => {
     expect(cleanTelemetryString(`failure at '/home/alice/cache' could not be read`)).toBe(
       `failure at '${REDACTED}' could not be read`,
