@@ -53,9 +53,13 @@ import {
 } from '#/features/interaction/index';
 import { createMcp, McpRef } from '#/features/mcp/index';
 import { createNodeOsHost } from '#/features/os/host/index';
+import { createPermission, PermissionRef } from '#/features/permission/index';
+import { createPlan, PlanRef } from '#/features/plan/index';
 import { createPlugin } from '#/features/plugin/index';
 import { createSkill } from '#/features/skill/index';
 import { createTask } from '#/features/task/index';
+import { tokenCounting } from '#/features/tokenCounting/index';
+import { usage } from '#/features/usage/index';
 import { createWorkspaces, WorkspaceRef } from '#/features/workspaces/index';
 
 const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
@@ -319,6 +323,292 @@ describe('feature-http facade routes', () => {
     const missing = await post(env, '/sessions/ses_unknown:archive');
     expect(missing.status).toBe(200);
     expect(await missing.json()).toMatchObject({ code: 40401 });
+  });
+
+  it('lists sessions with kap pagination, filters and has_more', async () => {
+    const env = await mountHttp([bindTestLlm(createMockRequester())]);
+    const seed = async (
+      id: string,
+      updatedAt: string,
+      metadata?: Record<string, unknown>,
+    ): Promise<void> => {
+      await env.space.create(id, { createdAt: updatedAt, updatedAt, metadata });
+    };
+    await seed('ses_a', '2026-01-01T00:00:00.000Z', { workspaceId: 'ws_1' });
+    await seed('ses_b', '2026-01-03T00:00:00.000Z', { workspaceId: 'ws_2' });
+    await seed('ses_c', '2026-01-02T00:00:00.000Z', {
+      archived: true,
+      archived_at: '2026-01-02T01:00:00.000Z',
+    });
+    const ids = (body: { data: { items: { id: string }[] } }): string[] =>
+      body.data.items.map((item) => item.id);
+
+    const all = await (await get(env, '/sessions')).json();
+    expect(ids(all)).toEqual(['ses_b', 'ses_a']);
+    expect(all.data.has_more).toBe(false);
+
+    const paged = await (await get(env, '/sessions?include_archive=true&page_size=2')).json();
+    expect(ids(paged)).toEqual(['ses_b', 'ses_c']);
+    expect(paged.data.has_more).toBe(true);
+
+    const before = await (
+      await get(env, '/sessions?include_archive=true&page_size=2&before_id=ses_c')
+    ).json();
+    expect(ids(before)).toEqual(['ses_a']);
+    expect(before.data.has_more).toBe(false);
+
+    const after = await (
+      await get(env, '/sessions?include_archive=true&page_size=1&after_id=ses_a')
+    ).json();
+    expect(ids(after)).toEqual(['ses_b']);
+    expect(after.data.has_more).toBe(true);
+
+    const unknownCursor = await (await get(env, '/sessions?before_id=ses_ghost')).json();
+    expect(unknownCursor.data).toMatchObject({ items: [], has_more: false });
+
+    const archived = await (await get(env, '/sessions?archived_only=true')).json();
+    expect(ids(archived)).toEqual(['ses_c']);
+    expect(archived.data.has_more).toBe(false);
+
+    const workspace = await (await get(env, '/sessions?include_archive=true&workspace_id=ws_1')).json();
+    expect(ids(workspace)).toEqual(['ses_a']);
+
+    const busyOnly = await (await get(env, '/sessions?busy=true')).json();
+    expect(busyOnly.data.items).toEqual([]);
+    const idleOnly = await (await get(env, '/sessions?busy=false')).json();
+    expect(ids(idleOnly)).toEqual(['ses_b', 'ses_a']);
+
+    const mutual = await get(env, '/sessions?before_id=ses_a&after_id=ses_b');
+    expect(await mutual.json()).toMatchObject({
+      code: 40001,
+      msg: 'before_id and after_id are mutually exclusive',
+    });
+    const archivedConflict = await get(env, '/sessions?archived_only=true&include_archive=true');
+    expect(await archivedConflict.json()).toMatchObject({
+      code: 40001,
+      msg: 'archived_only and include_archive are mutually exclusive',
+    });
+    for (const bad of ['page_size=0', 'page_size=101', 'page_size=abc']) {
+      const invalid = await get(env, `/sessions?${bad}`);
+      expect(await invalid.json()).toMatchObject({ code: 40001 });
+    }
+
+    const session = await openMain(env, 'ses_live_empty');
+    const withEmpty = await (await get(env, '/sessions?exclude_empty=true')).json();
+    expect(ids(withEmpty)).toEqual(['ses_b', 'ses_a']);
+    const withoutFilter = await (await get(env, '/sessions')).json();
+    expect(ids(withoutFilter)).toEqual(['ses_live_empty', 'ses_b', 'ses_a']);
+    queue = [{ text: 'hi' }];
+    await runTurn(session.get(MAIN_AGENT_ID) as AgentHandle);
+    const filled = await (await get(env, '/sessions?exclude_empty=true')).json();
+    expect(ids(filled)).toEqual(['ses_live_empty', 'ses_b', 'ses_a']);
+  });
+
+  it('projects the kap session view fields for live and cold sessions', async () => {
+    const env = await mountHttp([
+      interaction,
+      tokenCounting,
+      usage,
+      bindTestLlm(createMockRequester()),
+    ]);
+    const session = await openMain(env, 'ses_view');
+    queue = [{ text: 'hello' }];
+    await runTurn(session.get(MAIN_AGENT_ID) as AgentHandle);
+
+    const live = await (await get(env, '/sessions/ses_view')).json();
+    expect(live.data).toMatchObject({
+      id: 'ses_view',
+      title: '',
+      busy: false,
+      main_turn_active: false,
+      pending_interaction: 'none',
+      agent_config: { model: 'test-model' },
+      permission_rules: [],
+      agent_ids: [MAIN_AGENT_ID],
+    });
+    expect(Number.isNaN(Date.parse(live.data.created_at))).toBe(false);
+    expect(Number.isNaN(Date.parse(live.data.updated_at))).toBe(false);
+    expect(live.data.message_count).toBeGreaterThan(0);
+    expect(live.data.usage).toMatchObject({
+      input_tokens: 10,
+      output_tokens: 5,
+      cache_read_tokens: 0,
+      cache_creation_tokens: 0,
+      turn_count: 1,
+    });
+
+    session.resolve(InteractionRef).enqueue({
+      kind: 'approval',
+      payload: { toolCallId: 'call-1', toolName: 'Bash', action: 'Approve Bash', display: {} },
+      tags: { [INTERACTION_TAG_SESSION_ID]: 'ses_view', [INTERACTION_TAG_AGENT_ID]: MAIN_AGENT_ID },
+    });
+    const pending = await (await get(env, '/sessions/ses_view')).json();
+    expect(pending.data.pending_interaction).toBe('approval');
+
+    await env.space.create('ses_cold_view', { title: 'Cold' });
+    const cold = await (await get(env, '/sessions/ses_cold_view')).json();
+    expect(cold.data).toMatchObject({
+      id: 'ses_cold_view',
+      title: 'Cold',
+      busy: false,
+      main_turn_active: false,
+      pending_interaction: 'none',
+      agent_config: { model: '' },
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        total_cost_usd: 0,
+        context_tokens: 0,
+        context_limit: 0,
+        turn_count: 0,
+      },
+      message_count: 0,
+      agent_ids: [],
+    });
+    expect(cold.data.created_at).toBe(cold.data.updated_at);
+  });
+
+  it('creates sessions with a full agent_config and applies it to the main agent', async () => {
+    const env = await mountHttp([
+      interaction,
+      createConfig({ persist: fakePersist().persist }),
+      providerCatalog,
+      bindTestProvider(),
+      createPermission(),
+      createPlan(),
+      bindTestLlm(createMockRequester()),
+    ]);
+
+    const created = await post(env, '/sessions', {
+      session_id: 'ses_cfg',
+      title: 'Configured',
+      metadata: { cwd: '/project' },
+      agent_config: {
+        model: 'test/m1',
+        thinking: 'high',
+        permission_mode: 'yolo',
+        plan_mode: true,
+        system_prompt: 'ignored',
+        tools: ['Bash'],
+        mcp_servers: ['fs'],
+        swarm_mode: false,
+      },
+    });
+    expect(created.status).toBe(200);
+    const body = await created.json();
+    expect(body.data).toMatchObject({
+      id: 'ses_cfg',
+      title: 'Configured',
+      agent_config: { model: 'test/m1' },
+      agent_ids: [MAIN_AGENT_ID],
+    });
+    const main = env.app.get('ses_cfg')?.get(MAIN_AGENT_ID);
+    expect(main?.resolve(PermissionRef)?.mode()).toBe('yolo');
+    await expect(main?.resolve(PlanRef)?.status()).resolves.not.toBeNull();
+    const record = await env.space.get('ses_cfg');
+    expect(record?.metadata?.['defaultModel']).toBe('test/m1');
+    expect(record?.metadata?.['defaultThinking']).toBe('high');
+
+    const unknownModel = await post(env, '/sessions', {
+      session_id: 'ses_bad_model',
+      agent_config: { model: 'ghost/nope' },
+    });
+    expect(await unknownModel.json()).toMatchObject({ code: 40413 });
+
+    const invalidMode = await post(env, '/sessions', {
+      session_id: 'ses_bad_mode',
+      agent_config: { permission_mode: 'bogus' },
+    });
+    expect(await invalidMode.json()).toMatchObject({ code: 40001 });
+
+    const malformed = await post(env, '/sessions', { session_id: 'ses_bad_cfg', agent_config: 'nope' });
+    expect(await malformed.json()).toMatchObject({ code: 40001 });
+
+    const plain = await post(env, '/sessions', { session_id: 'ses_plain' });
+    expect((await plain.json()).data).toMatchObject({
+      id: 'ses_plain',
+      agent_ids: [],
+      agent_config: { model: '' },
+    });
+  });
+
+  it('reads and writes the kap session profile surface', async () => {
+    const env = await mountHttp([
+      interaction,
+      usage,
+      createConfig({ persist: fakePersist().persist }),
+      providerCatalog,
+      bindTestProvider(),
+      createPermission(),
+      createPlan(),
+      createGoal(),
+      bindTestLlm(createMockRequester()),
+    ]);
+    await env.space.create('ses_prof', { title: 'Original', metadata: { cwd: '/project' } });
+
+    const renamed = await post(env, '/sessions/ses_prof/profile', {
+      title: 'Renamed',
+      metadata: { cwd: '/p2', extra: 1 },
+    });
+    expect((await renamed.json()).data).toMatchObject({
+      id: 'ses_prof',
+      title: 'Renamed',
+      metadata: { cwd: '/p2', extra: 1 },
+      agent_ids: [],
+    });
+
+    const configured = await post(env, '/sessions/ses_prof/profile', {
+      agent_config: { model: 'test/m1', permission_mode: 'auto', plan_mode: true },
+    });
+    expect((await configured.json()).data).toMatchObject({
+      title: 'Renamed',
+      agent_config: { model: 'test/m1' },
+      agent_ids: [MAIN_AGENT_ID],
+    });
+    const main = env.app.get('ses_prof')?.get(MAIN_AGENT_ID);
+    expect(main?.resolve(PermissionRef)?.mode()).toBe('auto');
+    await expect(main?.resolve(PlanRef)?.status()).resolves.not.toBeNull();
+
+    const planOff = await post(env, '/sessions/ses_prof/profile', {
+      agent_config: { plan_mode: false },
+    });
+    expect(planOff.status).toBe(200);
+    await expect(main?.resolve(PlanRef)?.status()).resolves.toBeNull();
+
+    const goal = await post(env, '/sessions/ses_prof/profile', {
+      agent_config: { goal_objective: 'finish the migration' },
+    });
+    expect(goal.status).toBe(200);
+    expect(main?.resolve(GoalRef)?.getGoal().goal).not.toBeNull();
+
+    const duplicateGoal = await post(env, '/sessions/ses_prof/profile', {
+      agent_config: { goal_objective: 'again' },
+    });
+    expect(await duplicateGoal.json()).toMatchObject({ code: 40913 });
+
+    const cancelled = await post(env, '/sessions/ses_prof/profile', {
+      agent_config: { goal_control: 'cancel' },
+    });
+    expect(cancelled.status).toBe(200);
+    expect(main?.resolve(GoalRef)?.getGoal().goal).toBeNull();
+
+    const got = await get(env, '/sessions/ses_prof/profile');
+    expect((await got.json()).data).toMatchObject({
+      id: 'ses_prof',
+      title: 'Renamed',
+      agent_config: { model: 'test/m1' },
+    });
+
+    const missing = await post(env, '/sessions/ses_ghost/profile', { title: 'x' });
+    expect(await missing.json()).toMatchObject({ code: 40401 });
+    const emptyTitle = await post(env, '/sessions/ses_prof/profile', { title: '' });
+    expect(await emptyTitle.json()).toMatchObject({ code: 40001 });
+    const unknownModel = await post(env, '/sessions/ses_prof/profile', {
+      agent_config: { model: 'ghost/nope' },
+    });
+    expect(await unknownModel.json()).toMatchObject({ code: 40413 });
   });
 
   it('compacts a session and reports 40910 when compaction is unavailable', async () => {

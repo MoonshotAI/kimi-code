@@ -55,13 +55,12 @@ export function useStatusRoutes(prefix: string): void {
 export async function sessionStatusView(session: SessionHandle): Promise<SessionStatusView | undefined> {
   const main = session.get(MAIN_AGENT_ID);
   if (main === undefined) return undefined;
-  const engine = session.status();
   const model = main.config?.model.model ?? '';
   const maxTokens = main.config?.model.maxInputSize ?? main.config?.model.maxContextSize ?? 0;
   const tokens = main.resolve(TokenCountingRef)?.statusSize() ?? 0;
   const plan = main.resolve(PlanRef);
   return {
-    busy: engine.busy || sessionFeatureBusy(session),
+    busy: sessionBusy(session),
     model: model === '' ? undefined : model,
     thinking_level: model === '' ? '' : (main.config?.thinking?.effort ?? 'off'),
     permission: main.resolve(PermissionRef)?.mode() ?? 'manual',
@@ -72,6 +71,10 @@ export async function sessionStatusView(session: SessionHandle): Promise<Session
     context_usage: maxTokens > 0 ? Math.min(1, tokens / maxTokens) : undefined,
     pending_interaction: sessionPendingInteraction(session),
   };
+}
+
+export function sessionBusy(session: SessionHandle): boolean {
+  return session.status().busy || sessionFeatureBusy(session);
 }
 
 function sessionFeatureBusy(session: SessionHandle): boolean {
@@ -91,7 +94,7 @@ function sessionFeatureBusy(session: SessionHandle): boolean {
   return false;
 }
 
-function sessionPendingInteraction(session: SessionHandle): SessionPendingInteraction {
+export function sessionPendingInteraction(session: SessionHandle): SessionPendingInteraction {
   const interactions = session.resolve(InteractionRef);
   if (interactions === undefined) return 'none';
   const pending = interactions.findAll({

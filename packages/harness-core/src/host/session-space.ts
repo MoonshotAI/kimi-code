@@ -48,7 +48,8 @@ class FsSessionSpace implements SessionSpace {
       throw new SessionSpaceError('already-exists', `session '${sessionId}' already exists`);
     }
     await mkdir(this.dir(sessionId), { recursive: true });
-    await this.writeRecord(mergeSessionRecord(sessionId, undefined, record));
+    const now = new Date().toISOString();
+    await this.writeRecord(mergeSessionRecord(sessionId, undefined, { createdAt: now, updatedAt: now, ...record }));
     return new NodeBackend(this.dir(sessionId));
   }
 
@@ -65,7 +66,10 @@ class FsSessionSpace implements SessionSpace {
     if (!(await this.has(sessionId))) {
       throw new SessionSpaceError('not-found', `session '${sessionId}' does not exist`);
     }
-    const next = mergeSessionRecord(sessionId, await this.readRecord(sessionId), patch);
+    const next = mergeSessionRecord(sessionId, await this.readRecord(sessionId), {
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    });
     await this.writeRecord(next);
     return next;
   }
@@ -89,7 +93,10 @@ class FsSessionSpace implements SessionSpace {
     }
     await mkdir(this.root, { recursive: true });
     await cp(this.dir(sourceId), this.dir(targetId), { recursive: true });
-    await this.writeRecord(mergeSessionRecord(targetId, await this.readRecord(sourceId), undefined));
+    const now = new Date().toISOString();
+    await this.writeRecord(
+      mergeSessionRecord(targetId, await this.readRecord(sourceId), { createdAt: now, updatedAt: now }),
+    );
     return new NodeBackend(this.dir(targetId));
   }
 

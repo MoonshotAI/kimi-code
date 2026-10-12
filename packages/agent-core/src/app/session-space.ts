@@ -7,6 +7,8 @@ export interface SessionRecord {
   readonly id: string;
   readonly title?: string;
   readonly metadata?: Record<string, unknown>;
+  readonly createdAt?: string;
+  readonly updatedAt?: string;
 }
 
 export type SessionRecordDraft = Omit<SessionRecord, 'id'>;
@@ -62,6 +64,8 @@ export function mergeSessionRecord(
     id,
     ...(title !== undefined ? { title } : {}),
     ...(metadata !== undefined ? { metadata } : {}),
+    createdAt: patch?.createdAt ?? current?.createdAt,
+    updatedAt: patch?.updatedAt ?? current?.updatedAt,
   };
 }
 
@@ -87,7 +91,11 @@ class MemorySessionSpace implements SessionSpace {
       throw new SessionSpaceError('already-exists', `session '${sessionId}' already exists`);
     }
     const backend = new MemoryBackend();
-    this.entries.set(sessionId, { record: mergeSessionRecord(sessionId, undefined, record), backend });
+    const now = new Date().toISOString();
+    this.entries.set(sessionId, {
+      record: mergeSessionRecord(sessionId, undefined, { createdAt: now, updatedAt: now, ...record }),
+      backend,
+    });
     return backend;
   }
 
@@ -106,7 +114,10 @@ class MemorySessionSpace implements SessionSpace {
     if (entry === undefined) {
       throw new SessionSpaceError('not-found', `session '${sessionId}' does not exist`);
     }
-    entry.record = mergeSessionRecord(sessionId, entry.record, patch);
+    entry.record = mergeSessionRecord(sessionId, entry.record, {
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    });
     return entry.record;
   }
 
@@ -128,8 +139,9 @@ class MemorySessionSpace implements SessionSpace {
       throw new SessionSpaceError('already-exists', `session '${targetId}' already exists`);
     }
     const backend = cloneMemoryBackend(source.backend);
+    const now = new Date().toISOString();
     this.entries.set(targetId, {
-      record: mergeSessionRecord(targetId, source.record, undefined),
+      record: mergeSessionRecord(targetId, source.record, { createdAt: now, updatedAt: now }),
       backend,
     });
     return backend;
