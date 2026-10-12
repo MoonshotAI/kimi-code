@@ -59,6 +59,7 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
     expect(cleanTelemetryString('\\\\?\\UNC\\server\\Shared Files\\alice\\secret.txt')).toBe(
       REDACTED,
     );
+    expect(cleanTelemetryString('\\\\server/share\\alice\\secret.txt')).toBe(REDACTED);
     expect(cleanTelemetryString('\\\\fileserver\\alice')).toBe(REDACTED);
     expect(cleanTelemetryString('\\\\fileserver\\alice\\')).toBe(REDACTED);
     expect(cleanTelemetryString('\\\\server\\C$\\Users\\alice\\secret.txt')).toBe(REDACTED);

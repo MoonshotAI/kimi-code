@@ -22,7 +22,7 @@ const WINDOWS_GENERIC_TAIL = String.raw`(?:[\\/]${WINDOWS_COMPONENT})+[\\/]?(?=$
 const WINDOWS_TAIL = String.raw`(?:${WINDOWS_EXTENSION_TAIL}|${WINDOWS_GENERIC_TAIL})`;
 
 const WINDOWS_LONG_BASE = String.raw`\\\\\?\\(?:UNC\\[^\s\\/]+\\${WINDOWS_COMPONENT}|[A-Za-z]:)`;
-const WINDOWS_UNC_BASE = String.raw`\\\\[^\s\\/]+\\${WINDOWS_COMPONENT}`;
+const WINDOWS_UNC_BASE = String.raw`\\\\[^\s\\/]+[\\/]${WINDOWS_COMPONENT}`;
 const WINDOWS_UNC_OR_LONG = String.raw`(?:${WINDOWS_LONG_BASE}|${WINDOWS_UNC_BASE})(?:${WINDOWS_TAIL}|[\\/]?)`;
 const WINDOWS_DEVICE_DRIVE = String.raw`\\\\\.\\[A-Za-z]:${WINDOWS_TAIL}${PATH_BOUNDARY}`;
 const WINDOWS_DRIVE = String.raw`\b[A-Za-z]:${WINDOWS_TAIL}${PATH_BOUNDARY}`;
