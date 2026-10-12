@@ -3,6 +3,7 @@ import { useAuthRoutes } from './auth';
 import { useCapabilitiesRoutes } from './capabilities';
 import { useCompactionRoutes } from './compaction';
 import { useFileHistoryRoutes } from './fileHistory';
+import { useFilesRoutes } from './files';
 import { useFsRoutes } from './fs';
 import { useGoalRoutes } from './goal';
 import { useInteractionRoutes } from './interaction';
@@ -11,6 +12,7 @@ import { useModelsDevRoutes } from './models-dev';
 import { usePluginRoutes } from './plugin';
 import { useRemoteControlRoutes } from './remote-control';
 import { useSessionExportRoutes } from './sessionExport';
+import { useSessionMediaRoutes } from './sessionMedia';
 import { useSessionTitleRoutes } from './sessionTitle';
 import { useSkillRoutes } from './skill';
 import { useStatusRoutes } from './status';
@@ -37,10 +39,13 @@ export function useFeatureFacadeRoutes(prefix: string): void {
   useCapabilitiesRoutes(base);
   useAuthRoutes(base);
   useFileHistoryRoutes(base);
+  useFilesRoutes(base);
+  useSessionMediaRoutes(base);
 }
 
 export * from './sessionTitle';
 export * from './sessionExport';
+export * from './sessionMedia';
 export * from './status';
 export * from './goal';
 export * from './skill';
@@ -54,6 +59,7 @@ export * from './compaction';
 export * from './btw';
 export * from './workspaces';
 export * from './fs';
+export * from './files';
 export * from './capabilities';
 export * from './fileHistory';
 

@@ -13,6 +13,8 @@ import {
   ConfigRef,
   createConfig,
   createFeature,
+  createMemoryMediaStore,
+  createMemoryMediaUploadCache,
   createUserMessage,
   MAIN_AGENT_ID,
   memorySessionSpace,
@@ -42,8 +44,10 @@ import { createBtw } from '#/features/btw/index';
 import { createCapabilities, type CapabilityEntry } from '#/features/capabilities/index';
 import { createCompaction } from '#/features/compaction/index';
 import { createFileHistory } from '#/features/fileHistory/index';
+import { createFiles } from '#/features/files/index';
 import { createGoal, GoalRef } from '#/features/goal/index';
 import { createKimi } from '#/features/kimi/index';
+import { createMedia } from '#/features/media/index';
 import {
   interaction,
   InteractionRef,
@@ -3022,5 +3026,163 @@ describe('feature-http auth/oauth routes', () => {
         managed_provider: { name: 'managed:kimi-code', status: 'authenticated' },
       },
     });
+  });
+});
+
+describe('feature-http files and session media routes', () => {
+  const postForm = (env: HttpEnv, path: string, form: FormData): Promise<Response> =>
+    fetch(`${env.origin}/api/v1${path}`, { method: 'POST', body: form });
+
+  it('uploads a file over multipart and streams it back with kap headers', async () => {
+    const dir = await tempDir('files-lib-');
+    const env = await mountHttp([createFiles({ dir })]);
+    const bytes = Buffer.from('png-bytes-0123456789');
+    const form = new FormData();
+    form.append('file', new Blob([bytes], { type: 'image/png' }), 'pic.png');
+
+    const uploaded = await postForm(env, '/files', form);
+    expect(uploaded.status).toBe(200);
+    const body = await uploaded.json();
+    expect(body).toMatchObject({ code: 0, msg: 'success', request_id: '' });
+    const meta = body.data;
+    expect(meta.id).toMatch(/^f_/);
+    expect(meta.name).toBe('pic.png');
+    expect(meta.media_type).toBe('image/png');
+    expect(meta.size).toBe(bytes.length);
+    expect(Number.isNaN(Date.parse(meta.created_at))).toBe(false);
+    expect(meta.expires_at).toBeUndefined();
+    expect(await readFile(join(dir, meta.id))).toEqual(bytes);
+
+    const got = await get(env, `/files/${meta.id}`);
+    expect(got.status).toBe(200);
+    expect(got.headers.get('content-type')).toBe('image/png');
+    expect(got.headers.get('content-disposition')).toBe('inline; filename="pic.png"');
+    expect(got.headers.get('accept-ranges')).toBe('bytes');
+    expect(got.headers.get('etag')).toBe(`"${meta.id}-${bytes.length}"`);
+    expect(got.headers.get('content-length')).toBe(String(bytes.length));
+    expect(Buffer.from(await got.arrayBuffer())).toEqual(bytes);
+  });
+
+  it('honors the name override and expiry fields, and marks downloads as attachment for non-media types', async () => {
+    const dir = await tempDir('files-lib-');
+    const env = await mountHttp([createFiles({ dir })]);
+    const form = new FormData();
+    form.append('file', new Blob([Buffer.from('hello')], { type: 'text/plain' }), 'orig.bin');
+    form.append('name', 'renamed.txt');
+    form.append('expires_in_sec', '3600');
+
+    const uploaded = await postForm(env, '/files', form);
+    const meta = (await uploaded.json()).data;
+    expect(meta.name).toBe('renamed.txt');
+    expect(meta.media_type).toBe('text/plain');
+    expect(Date.parse(meta.expires_at)).toBeGreaterThan(Date.now());
+
+    const got = await get(env, `/files/${meta.id}`);
+    expect(got.headers.get('content-disposition')).toBe('attachment; filename="renamed.txt"');
+  });
+
+  it('rejects multipart posts without a file part and reports missing files with the kap code', async () => {
+    const dir = await tempDir('files-lib-');
+    const env = await mountHttp([createFiles({ dir })]);
+
+    const form = new FormData();
+    form.append('name', 'only-text');
+    const rejected = await postForm(env, '/files', form);
+    expect(rejected.status).toBe(200);
+    expect(await rejected.json()).toMatchObject({ code: 40001, msg: 'missing `file` field' });
+
+    const missing = await get(env, '/files/f_00000000-0000-0000-0000-000000000000');
+    expect(missing.status).toBe(200);
+    expect(await missing.json()).toMatchObject({ code: 40407, msg: 'file not found' });
+
+    const malformed = await get(env, '/files/not-a-file-id');
+    expect(await malformed.json()).toMatchObject({ code: 40407 });
+  });
+
+  it('serves byte ranges with 206 and kap range semantics', async () => {
+    const dir = await tempDir('files-lib-');
+    const env = await mountHttp([createFiles({ dir })]);
+    const bytes = Buffer.from('0123456789');
+    const form = new FormData();
+    form.append('file', new Blob([bytes], { type: 'application/octet-stream' }), 'range.bin');
+    const meta = (await (await postForm(env, '/files', form)).json()).data;
+
+    const ranged = await fetch(`${env.origin}/api/v1/files/${meta.id}`, {
+      headers: { range: 'bytes=2-5' },
+    });
+    expect(ranged.status).toBe(206);
+    expect(ranged.headers.get('content-range')).toBe(`bytes 2-5/${bytes.length}`);
+    expect(ranged.headers.get('content-length')).toBe('4');
+    expect(Buffer.from(await ranged.arrayBuffer())).toEqual(bytes.subarray(2, 6));
+
+    const suffix = await fetch(`${env.origin}/api/v1/files/${meta.id}`, {
+      headers: { range: 'bytes=-3' },
+    });
+    expect(suffix.status).toBe(206);
+    expect(suffix.headers.get('content-range')).toBe(`bytes 7-9/${bytes.length}`);
+    expect(Buffer.from(await suffix.arrayBuffer())).toEqual(bytes.subarray(7));
+
+    const open = await fetch(`${env.origin}/api/v1/files/${meta.id}`, {
+      headers: { range: 'bytes=4-' },
+    });
+    expect(open.status).toBe(206);
+    expect(Buffer.from(await open.arrayBuffer())).toEqual(bytes.subarray(4));
+  });
+
+  it('streams session media, falls back to the staged file library, and maps kap error codes', async () => {
+    const dir = await tempDir('files-lib-');
+    const store = createMemoryMediaStore();
+    const env = await mountHttp([
+      createFiles({ dir }),
+      createMedia({ workDir: dir, store, cache: createMemoryMediaUploadCache() }),
+    ]);
+    await env.app.open({ sessionId: 'ses_media' });
+
+    const bytes = Buffer.from('media-bytes-abcdef');
+    const ref = await store.put({ bytes, mimeType: 'image/png', filename: 'shot.png' });
+
+    const got = await get(env, `/sessions/ses_media/media/${ref}`);
+    expect(got.status).toBe(200);
+    expect(got.headers.get('content-type')).toBe('image/png');
+    expect(got.headers.get('content-disposition')).toBe('inline; filename="shot.png"');
+    expect(got.headers.get('accept-ranges')).toBe('bytes');
+    expect(got.headers.get('etag')).toBe(`"ses_media-${ref}-${bytes.length}"`);
+    expect(Buffer.from(await got.arrayBuffer())).toEqual(bytes);
+
+    const ranged = await fetch(`${env.origin}/api/v1/sessions/ses_media/media/${ref}`, {
+      headers: { range: 'bytes=1-3' },
+    });
+    expect(ranged.status).toBe(206);
+    expect(ranged.headers.get('content-range')).toBe(`bytes 1-3/${bytes.length}`);
+    expect(Buffer.from(await ranged.arrayBuffer())).toEqual(bytes.subarray(1, 4));
+
+    const stagedForm = new FormData();
+    stagedForm.append('file', new Blob([Buffer.from('staged')], { type: 'text/plain' }), 'staged.txt');
+    const stagedMeta = (await (await postForm(env, '/files', stagedForm)).json()).data;
+    const staged = await get(env, `/sessions/ses_media/media/${stagedMeta.id}`);
+    expect(staged.status).toBe(200);
+    expect(Buffer.from(await staged.arrayBuffer())).toEqual(Buffer.from('staged'));
+
+    const missingFile = await get(env, '/sessions/ses_media/media/f_00000000-0000-0000-0000-000000000000');
+    expect(await missingFile.json()).toMatchObject({ code: 40407, msg: 'file not found' });
+
+    const missingSession = await get(env, `/sessions/ses_ghost/media/${ref}`);
+    expect(await missingSession.json()).toMatchObject({ code: 40401, msg: 'session not found' });
+  });
+
+  it('reports unavailable codes when the files or media features are not installed', async () => {
+    const bare = await mountHttp([]);
+    await bare.app.open({ sessionId: 'ses_bare' });
+
+    const form = new FormData();
+    form.append('file', new Blob([Buffer.from('x')]), 'x.bin');
+    const uploaded = await postForm(bare, '/files', form);
+    expect(await uploaded.json()).toMatchObject({ code: 40951 });
+
+    const downloaded = await get(bare, '/files/f_00000000-0000-0000-0000-000000000000');
+    expect(await downloaded.json()).toMatchObject({ code: 40951 });
+
+    const media = await get(bare, '/sessions/ses_bare/media/abc123');
+    expect(await media.json()).toMatchObject({ code: 40950 });
   });
 });

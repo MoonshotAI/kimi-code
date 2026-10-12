@@ -42,7 +42,7 @@ import {
   type ToolMeta,
 } from '@moonshot-ai/agent-core';
 
-import { createMedia, IMAGE_CONFIG_SECTION, type ImageConfig } from '#/features/media/index';
+import { createMedia, IMAGE_CONFIG_SECTION, MediaLibraryRef, type ImageConfig } from '#/features/media/index';
 import { createNodeOsHost } from '#/features/os/host/index';
 
 const visionModel: LlmModel = {
@@ -284,6 +284,28 @@ function solidPngBytes(width: number, height: number): Promise<Buffer> {
 }
 
 describe('media feature', () => {
+  it('exposes a media library facade that reads stored media by id', async () => {
+    const started = await startApp({ script: () => ({ text: 'ok' }) });
+    try {
+      const bytes = new Uint8Array([10, 20, 30, 40, 50]);
+      const ref = await started.store.put({ bytes, mimeType: 'image/png', filename: 'pix.png' });
+      const face = started.app.resolve(MediaLibraryRef);
+
+      const file = await face.open(ref);
+      expect(file).toMatchObject({ name: 'pix.png', mediaType: 'image/png', size: bytes.length });
+      const whole: Uint8Array[] = [];
+      for await (const chunk of file!.stream()) whole.push(chunk);
+      expect(Buffer.concat(whole)).toEqual(Buffer.from(bytes));
+      const ranged: Uint8Array[] = [];
+      for await (const chunk of file!.stream({ start: 1, end: 3 })) ranged.push(chunk);
+      expect(Buffer.concat(ranged)).toEqual(Buffer.from(bytes.subarray(1, 4)));
+
+      expect(await face.open('missing-ref')).toBeUndefined();
+    } finally {
+      await started.dispose();
+    }
+  });
+
   it('registers ReadMediaFile and the image config section, and mounts without the config feature', async () => {
     const configured = await startApp({
       script: () => ({ text: 'ok' }),

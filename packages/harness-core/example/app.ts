@@ -21,6 +21,7 @@ import {
   createEdit,
   createExternalHooks,
   createFileHistory,
+  createFiles,
   createHttp,
   createMcp,
   createMedia,
@@ -82,6 +83,7 @@ export function mountExample(options?: { http?: boolean; acp?: boolean }): Examp
         version: '0.0.0',
         sessionDir: (sessionId) => join(dataRoot, sessionId),
       }),
+      createFiles({ dir: join(dataRoot, '..', 'files') }),
       createModelsDev({ userAgent: 'harness-example' }),
       createMedia({
         workDir: process.cwd(),

@@ -1,6 +1,7 @@
 import {
   ConfigRef,
   Providers,
+  createFacadeToken,
   createFeature,
   createMediaDegradeRecovery,
   useAgent,
@@ -15,7 +16,7 @@ import {
   type MediaStore,
   type MediaUploadCache,
 } from '@moonshot-ai/agent-core';
-import { useCollection } from '@moonshot-ai/agent-core/kernel/index';
+import { useCollection, useExpose } from '@moonshot-ai/agent-core/kernel/index';
 
 import type { OsHost } from '#/features/os/host/types';
 
@@ -37,10 +38,44 @@ export interface CreateMediaProps {
   readonly originalsDir?: string;
 }
 
+export interface MediaReadRange {
+  readonly start: number;
+  readonly end: number;
+}
+
+export interface MediaFile {
+  readonly name: string;
+  readonly mediaType: string;
+  readonly size: number;
+  stream(range?: MediaReadRange): AsyncIterable<Uint8Array>;
+}
+
+export interface MediaLibraryFace {
+  open(id: string): Promise<MediaFile | undefined>;
+}
+
+export const MediaLibraryRef = createFacadeToken<MediaLibraryFace>('mediaLibrary');
+
 export function createMedia(props: CreateMediaProps): FeatureSpec {
   return createFeature('media', {
     app() {
       useConfigSection(imageConfigSection);
+      useExpose(MediaLibraryRef, {
+        open: async (id) => {
+          const content = await props.store.get(id);
+          if (content === undefined) return undefined;
+          return {
+            name: content.filename ?? id,
+            mediaType: content.mimeType ?? 'application/octet-stream',
+            size: content.bytes.length,
+            stream: async function* (range) {
+              const start = range?.start ?? 0;
+              const end = range?.end ?? content.bytes.length - 1;
+              yield content.bytes.slice(start, end + 1);
+            },
+          };
+        },
+      });
     },
     agent() {
       const agent = useAgent();
