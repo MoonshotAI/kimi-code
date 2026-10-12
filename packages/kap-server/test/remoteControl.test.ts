@@ -447,6 +447,45 @@ describe('server-v2 /api/v1/remote-control', () => {
     await cloud.close();
   }, 8000);
 
+  it('cancels an in-flight start when the current device is deactivated', async () => {
+    await rm(remoteControlLockPath(home as string), { force: true });
+    const cloud = await startDeviceCloud({ tunnel: true, registerDelayMs: 1000 });
+    vi.stubEnv(
+      'KIMI_CODE_REMOTE_CONTROL_RELAY_URL',
+      `http://127.0.0.1:${cloud.port}/coding-relay/`,
+    );
+
+    const currentState = async (): Promise<string> => {
+      const res = await authedFetch(server as RunningServer, base, '/api/v1/remote-control');
+      return ((await res.json()) as Envelope<RemoteControlStatusWire>).data.state;
+    };
+    const lockExists = async (): Promise<boolean> =>
+      (await readFile(remoteControlLockPath(home as string), 'utf8').catch(() => undefined)) !==
+      undefined;
+
+    const enablePromise = postRemoteControl(true);
+    await waitFor(lockExists);
+    expect(await currentState()).toBe('starting');
+
+    const deviceId = createKimiDeviceId(home as string);
+    const startedAt = Date.now();
+    const res = await authedFetch(
+      server as RunningServer,
+      base,
+      `/api/v1/remote-control/devices/${deviceId}/deactivate`,
+      { method: 'POST' },
+    );
+    const elapsed = Date.now() - startedAt;
+
+    expect(((await res.json()) as Envelope<{ ok: true }>).data.ok).toBe(true);
+    expect(elapsed).toBeLessThan(900);
+    expect(await currentState()).toBe('off');
+
+    const enableBody = await enablePromise;
+    expect(enableBody.code).toBe(ErrorCode.INTERNAL_ERROR);
+    await cloud.close();
+  }, 8000);
+
   it('rejects blank and overlong device aliases before reaching the cloud', async () => {
     const cloud = await startDeviceCloud();
     vi.stubEnv(
@@ -614,8 +653,9 @@ describe('remote-control route telemetry', () => {
 describe('oauth logout remote-control cleanup', () => {
   function logoutHandler(
     remoteControl: RemoteControlManager,
-    remoteControlDevices: Pick<RemoteControlDeviceClient, 'clear'>,
+    remoteControlDevices: Pick<RemoteControlDeviceClient, 'clear' | 'deactivateDevice'>,
     logout: (provider?: string) => Promise<{ logged_out: true; provider: string }>,
+    homeDir = '/nonexistent-kimi-home',
   ): (body: { provider?: string }) => Promise<unknown> {
     let handler:
       | ((req: { id: string; body: { provider?: string } }, reply: { send(payload: unknown): unknown }) => Promise<void>)
@@ -632,7 +672,7 @@ describe('oauth logout remote-control cleanup', () => {
         get: (token: unknown) => (token === IOAuthService ? { logout } : undefined),
       },
     } as unknown as Scope;
-    registerOAuthRoutes(app as never, core, remoteControl, remoteControlDevices);
+    registerOAuthRoutes(app as never, core, remoteControl, remoteControlDevices, homeDir);
     return async (body) => {
       let payload: unknown;
       await handler!(
@@ -650,6 +690,7 @@ describe('oauth logout remote-control cleanup', () => {
   it('disables the tunnel and clears cloud sessions before clearing OAuth credentials', async () => {
     const events: string[] = [];
     const remoteControl = {
+      status: () => ({ enabled: true, state: 'on' }),
       disable: async () => {
         events.push('disable');
         return { enabled: false, state: 'off' };
@@ -659,6 +700,7 @@ describe('oauth logout remote-control cleanup', () => {
       clear: () => {
         events.push('clear');
       },
+      deactivateDevice: async () => {},
     };
     const post = logoutHandler(remoteControl, remoteControlDevices, async (provider) => {
       events.push('logout');
@@ -679,6 +721,7 @@ describe('oauth logout remote-control cleanup', () => {
     let clearCalled = false;
     let logoutCalled = false;
     const remoteControl = {
+      status: () => ({ enabled: true, state: 'on' }),
       disable: async () => {
         throw new Error('tunnel stop failed');
       },
@@ -687,6 +730,7 @@ describe('oauth logout remote-control cleanup', () => {
       clear: () => {
         clearCalled = true;
       },
+      deactivateDevice: async () => {},
     };
     const post = logoutHandler(remoteControl, remoteControlDevices, async (provider) => {
       logoutCalled = true;
@@ -699,6 +743,131 @@ describe('oauth logout remote-control cleanup', () => {
     expect(payload.msg).toBe('tunnel stop failed');
     expect(clearCalled).toBe(false);
     expect(logoutCalled).toBe(false);
+  });
+
+  it('skips remote-control cleanup when logging out an unrelated provider', async () => {
+    let statusCalled = false;
+    let clearCalled = false;
+    const remoteControl = {
+      status: () => {
+        statusCalled = true;
+        return { enabled: true, state: 'on' };
+      },
+      disable: async () => ({ enabled: false, state: 'off' }),
+    } as unknown as RemoteControlManager;
+    const remoteControlDevices = {
+      clear: () => {
+        clearCalled = true;
+      },
+      deactivateDevice: async () => {},
+    };
+    const post = logoutHandler(remoteControl, remoteControlDevices, async (provider) => ({
+      logged_out: true,
+      provider: provider ?? 'managed:kimi-code',
+    }));
+
+    const payload = (await post({ provider: 'managed:other' })) as Envelope<{
+      logged_out: true;
+      provider: string;
+    }>;
+
+    expect(payload.code).toBe(0);
+    expect(payload.data.provider).toBe('managed:other');
+    expect(statusCalled).toBe(false);
+    expect(clearCalled).toBe(false);
+  });
+
+  it('deactivates a lock held by another process before clearing OAuth credentials', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-logout-lock-'));
+    await mkdir(join(homeDir, 'server'), { recursive: true });
+    await writeFile(
+      remoteControlLockPath(homeDir),
+      JSON.stringify({
+        pid: process.pid,
+        nonce: 'cli-holder',
+        local_origin: 'http://127.0.0.1:58627',
+        device_id: 'cli-device',
+        url: 'https://code-rc.kimi.com/devices/cli-device/',
+        started_at: Date.now(),
+      }),
+    );
+    const events: string[] = [];
+    const remoteControl = {
+      status: () => ({ enabled: false, state: 'off' }),
+      disable: async () => {
+        events.push('disable');
+        return { enabled: false, state: 'off' };
+      },
+    } as unknown as RemoteControlManager;
+    const remoteControlDevices = {
+      clear: () => {
+        events.push('clear');
+      },
+      deactivateDevice: async (deviceId: string) => {
+        events.push(`deactivate:${deviceId}`);
+        await rm(remoteControlLockPath(homeDir), { force: true });
+      },
+    };
+    const post = logoutHandler(
+      remoteControl,
+      remoteControlDevices,
+      async (provider) => {
+        events.push('logout');
+        return { logged_out: true, provider: provider ?? 'managed:kimi-code' };
+      },
+      homeDir,
+    );
+
+    const payload = (await post({ provider: 'managed:kimi-code' })) as Envelope<{
+      logged_out: true;
+      provider: string;
+    }>;
+
+    expect(payload.code).toBe(0);
+    expect(events).toEqual(['deactivate:cli-device', 'clear', 'logout']);
+    await rm(homeDir, { recursive: true, force: true });
+  });
+
+  it('blocks logout when deactivating a foreign lock holder fails', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-logout-lock-'));
+    await mkdir(join(homeDir, 'server'), { recursive: true });
+    await writeFile(
+      remoteControlLockPath(homeDir),
+      JSON.stringify({
+        pid: process.pid,
+        nonce: 'cli-holder',
+        local_origin: 'http://127.0.0.1:58627',
+        device_id: 'cli-device',
+        url: 'https://code-rc.kimi.com/devices/cli-device/',
+        started_at: Date.now(),
+      }),
+    );
+    let logoutCalled = false;
+    const remoteControl = {
+      status: () => ({ enabled: false, state: 'off' }),
+    } as unknown as RemoteControlManager;
+    const remoteControlDevices = {
+      clear: () => {},
+      deactivateDevice: async () => {
+        throw new Error('cloud unavailable');
+      },
+    };
+    const post = logoutHandler(
+      remoteControl,
+      remoteControlDevices,
+      async (provider) => {
+        logoutCalled = true;
+        return { logged_out: true, provider: provider ?? 'managed:kimi-code' };
+      },
+      homeDir,
+    );
+
+    const payload = (await post({ provider: 'managed:kimi-code' })) as Envelope<null>;
+
+    expect(payload.code).toBe(ErrorCode.INTERNAL_ERROR);
+    expect(payload.msg).toBe('cloud unavailable');
+    expect(logoutCalled).toBe(false);
+    await rm(homeDir, { recursive: true, force: true });
   });
 });
 
@@ -772,7 +941,7 @@ async function startRegisterAckRelay(): Promise<{
 }
 
 async function startDeviceCloud(
-  options: { exchangeStatus?: number; tunnel?: boolean } = {},
+  options: { exchangeStatus?: number; tunnel?: boolean; registerDelayMs?: number } = {},
 ): Promise<{
   port: number;
   requests: Array<{
@@ -852,7 +1021,10 @@ async function startDeviceCloud(
       ws.on('message', (data) => {
         const message = JSON.parse(rawDataText(data)) as { type?: string };
         if (message.type === 'register') {
-          ws.send(JSON.stringify({ type: 'register_ack', payload: { success: true } }));
+          const ack = () =>
+            ws.send(JSON.stringify({ type: 'register_ack', payload: { success: true } }));
+          if (options.registerDelayMs !== undefined) setTimeout(ack, options.registerDelayMs);
+          else ack();
         }
       });
     });

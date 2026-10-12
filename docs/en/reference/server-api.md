@@ -237,6 +237,8 @@ On success, `data` is `{ cancelled, status }`: `cancelled` is `true` only when a
 
 Logs out the managed provider: discards the stored OAuth credential, aborts any pending login flow, and removes the managed provider from the configuration. OAuth-managed providers reject manual edit and delete (see `PUT` / `DELETE /api/v1/providers/{provider_id}` below), so log out first to remove one.
 
+For the default Kimi provider (`managed:kimi-code`), logout first takes Remote Control offline on this machine — disabling the local tunnel or, when another process on this machine hosts it, deactivating this machine's device in the cloud — and clears cached Remote Control cloud sessions; a cleanup failure aborts the logout. Logging out any other provider leaves Remote Control untouched.
+
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `provider` | body | string | Managed provider name. Default `managed:kimi-code` |
@@ -268,6 +270,53 @@ On success, `data` is `{ kind: "ok", userInfo }` or `{ kind: "error", message, s
 Resolves which Kimi region this client belongs to. The answer is derived locally, not probed over the network: an OAuth host pinned by environment or config wins first, then the configured OAuth key, then the region marker file in the home directory; the default is `mainland-cn`.
 
 On success, `data` is `{ region }` with `region` one of `mainland-cn` / `global`.
+
+### Remote Control
+
+These endpoints manage the machine-wide Remote Control tunnel (see the [Remote Control guide](../guides/remote-control.md)) and the account's device registry. The tunnel state is per machine; the device registry is per account and lives in the cloud, so device endpoints require a Kimi login and proxy the relay with a server-side session — OAuth credentials never reach the caller.
+
+#### `GET /api/v1/remote-control`
+
+Returns the current tunnel status. When the tunnel is off but another live process on this machine holds the single-instance lock, `data.conflict` carries that holder; the lock is re-inspected on every read, so a dead holder clears both `conflict` and the stored `error`.
+
+On success, `data` is `{ enabled, state, url?, device_id?, device_name?, error?, conflict? }` with `state` one of `off` / `starting` / `on` / `stopping` and `conflict` as `{ pid, local_origin, device_id, url, started_at }`.
+
+#### `POST /api/v1/remote-control`
+
+Starts or stops the tunnel.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `enabled` | body | boolean | `true` to start the tunnel, `false` to stop it |
+
+On success, `data` is the same status object as `GET /api/v1/remote-control`. Starting while another live process on this machine holds the single-instance lock fails with `REMOTE_CONTROL_ALREADY_RUNNING` (40928), with the lock holder in `details` in the same shape as `conflict`.
+
+#### `GET /api/v1/remote-control/devices`
+
+Lists the account's Remote Control devices from the cloud registry.
+
+On success, `data` is `{ devices, max_devices? }`. Each device is `{ device_id, alias, status, platform, client_version, local_base_url, created_at, updated_at, last_remote_access_at }` with `status` one of `online` / `offline`.
+
+#### `PATCH /api/v1/remote-control/devices/{device_id}`
+
+Renames a device.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `device_id` | path | string | Device identifier |
+| `alias` | body | string | New display name, trimmed; 1–50 characters |
+
+Blank or over-long aliases fail with `VALIDATION_FAILED` before reaching the cloud. On success, `data` is `{ ok: true }`.
+
+#### `POST /api/v1/remote-control/devices/{device_id}/deactivate`
+
+Takes a device offline in the cloud registry. Offline devices stay listed and do not consume the plan's device quota; a device comes back the next time it turns on Remote Control. When the target is this machine — including an enable that is still starting — the local tunnel is stopped (an in-flight start is cancelled) and the response waits briefly for the machine lock to release before returning.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `device_id` | path | string | Device identifier |
+
+On success, `data` is `{ ok: true }`.
 
 ### Config
 

@@ -111,6 +111,7 @@ export interface RemoteControlOptions {
   readonly onStatus?: (status: RemoteControlStatus) => void;
   readonly pingIntervalMs?: number;
   readonly silenceTimeoutMs?: number;
+  readonly signal?: AbortSignal;
 }
 
 export interface RemoteControlHandle {
@@ -315,11 +316,17 @@ export async function startRemoteControl(
     deviceId,
     refreshToken: token.refreshToken,
   });
+  const abortStart = () => {
+    void client.close();
+  };
+  options.signal?.addEventListener('abort', abortStart, { once: true });
   try {
     await client.start();
   } catch (error) {
     await lock.release();
     throw error;
+  } finally {
+    options.signal?.removeEventListener('abort', abortStart);
   }
   const closed = client.closed.then(async (reason) => {
     await lock.release();

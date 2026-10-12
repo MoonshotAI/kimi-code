@@ -239,14 +239,14 @@ export function registerRemoteControlRoutes(
     async (req, reply) => {
       await handleDeviceRoute(req, reply, async () => {
         await opts.devices.deactivateDevice(req.params.id);
-        if (opts.service.status().deviceId === req.params.id) {
+        const status = opts.service.status();
+        const holder = await inspectRemoteControlLock(opts.homeDir);
+        const isLocal = status.deviceId === req.params.id || holder?.deviceId === req.params.id;
+        if (!isLocal) return { ok: true };
+        if (status.state !== 'off') {
           await opts.service.disable();
-        } else {
-          const holder = await inspectRemoteControlLock(opts.homeDir);
-          if (holder !== undefined && holder.deviceId === req.params.id) {
-            await waitForLockRelease(opts.homeDir);
-          }
         }
+        await waitForLockRelease(opts.homeDir);
         return { ok: true };
       });
     },
@@ -261,7 +261,7 @@ export function registerRemoteControlRoutes(
 const LOCK_RELEASE_POLL_MS = 100;
 const LOCK_RELEASE_TIMEOUT_MS = 2000;
 
-async function waitForLockRelease(homeDir: string): Promise<void> {
+export async function waitForLockRelease(homeDir: string): Promise<void> {
   const deadline = Date.now() + LOCK_RELEASE_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if ((await inspectRemoteControlLock(homeDir)) === undefined) return;

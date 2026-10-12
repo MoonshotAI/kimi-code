@@ -8,7 +8,12 @@ import {
   oauthLogoutResponseSchema,
   oauthRegionResultSchema,
 } from '@moonshot-ai/agent-core-v2/app/auth/oauthProtocol';
-import type { RemoteControlDeviceClient, RemoteControlManager } from '@moonshot-ai/remote-control';
+import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
+import {
+  inspectRemoteControlLock,
+  type RemoteControlDeviceClient,
+  type RemoteControlManager,
+} from '@moonshot-ai/remote-control';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -20,6 +25,7 @@ import {
   oauthLoginStartRequestSchema,
   oauthLogoutRequestSchema,
 } from '../protocol/rest-oauth';
+import { waitForLockRelease } from './remoteControl';
 
 interface RouteHost {
   get(
@@ -57,7 +63,8 @@ export function registerOAuthRoutes(
   app: RouteHost,
   core: Scope,
   remoteControl: RemoteControlManager,
-  remoteControlDevices: Pick<RemoteControlDeviceClient, 'clear'>,
+  remoteControlDevices: Pick<RemoteControlDeviceClient, 'clear' | 'deactivateDevice'>,
+  homeDir: string,
 ): void {
   const loginStartRoute = defineRoute(
     {
@@ -137,20 +144,32 @@ export function registerOAuthRoutes(
       tags: ['auth'],
     },
     async (req, reply) => {
-      try {
-        await remoteControl.disable();
-      } catch (error) {
-        requestLog(req)?.error({ err: error }, 'remote-control disable before logout failed');
-        reply.send(
-          errEnvelope(
-            ErrorCode.INTERNAL_ERROR,
-            error instanceof Error ? error.message : String(error),
-            req.id,
-          ),
-        );
-        return;
+      const provider = req.body.provider ?? KIMI_CODE_PROVIDER_NAME;
+      if (provider === KIMI_CODE_PROVIDER_NAME) {
+        try {
+          const status = remoteControl.status();
+          if (status.state !== 'off') {
+            await remoteControl.disable();
+          } else {
+            const holder = await inspectRemoteControlLock(homeDir);
+            if (holder !== undefined) {
+              await remoteControlDevices.deactivateDevice(holder.deviceId);
+              await waitForLockRelease(homeDir);
+            }
+          }
+        } catch (error) {
+          requestLog(req)?.error({ err: error }, 'remote-control cleanup before logout failed');
+          reply.send(
+            errEnvelope(
+              ErrorCode.INTERNAL_ERROR,
+              error instanceof Error ? error.message : String(error),
+              req.id,
+            ),
+          );
+          return;
+        }
+        remoteControlDevices.clear();
       }
-      remoteControlDevices.clear();
       const result = await core.accessor.get(IOAuthService).logout(req.body.provider);
       requestLog(req)?.info({ provider: req.body.provider, action: 'logout' }, 'oauth logout');
       reply.send(okEnvelope(result, req.id));

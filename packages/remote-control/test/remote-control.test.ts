@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage } from 'node:http';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, chmodSync, mkdtempSync, rmSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -27,6 +27,7 @@ import {
 } from '../src/remote-control';
 import { RemoteControlDeviceClient } from '../src/device-client';
 import { remoteControlLockPath } from '../src/lock';
+import { createRemoteControlManager } from '../src/manager';
 
 const CLIENT_VERSION = 'kimi-code/test';
 
@@ -1165,6 +1166,135 @@ describe('Remote Control device client', () => {
     await expect(client.listDevices()).rejects.toThrow(
       'Remote Control session exchange failed: network offline',
     );
+  });
+
+  it('rejects malformed device list payloads instead of reporting an empty list', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    const payloads: unknown[] = [
+      {},
+      { devices: 'nope' },
+      { devices: [{ ...device, status: 'busy' }] },
+      { devices: [{ alias: 'missing fields' }] },
+    ];
+    let nextPayload = 0;
+    const server = createServer((request, response) => {
+      const pathname = new URL(request.url ?? '', 'http://relay.test').pathname;
+      if (pathname === '/auth/exchange') {
+        response.writeHead(204, { 'Set-Cookie': 'rc_session=one; Path=/' });
+        response.end();
+        return;
+      }
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify(payloads[nextPayload] ?? {}));
+      nextPayload += 1;
+    });
+    const port = await listen(server);
+    cleanups.push(() => closeServer(server));
+    const client = new RemoteControlDeviceClient({
+      homeDir,
+      relayOrigin: `http://127.0.0.1:${port}`,
+    });
+
+    for (let index = 0; index < payloads.length; index += 1) {
+      await expect(client.listDevices()).rejects.toThrow(
+        'Remote Control device list returned an unexpected response.',
+      );
+    }
+  });
+
+  it('aborts an in-flight device request when sessions are cleared', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    const server = createServer((request, response) => {
+      const pathname = new URL(request.url ?? '', 'http://relay.test').pathname;
+      if (pathname === '/auth/exchange') {
+        response.writeHead(204, { 'Set-Cookie': 'rc_session=one; Path=/' });
+        response.end();
+        return;
+      }
+    });
+    const port = await listen(server);
+    cleanups.push(() => closeServer(server));
+    const client = new RemoteControlDeviceClient({
+      homeDir,
+      relayOrigin: `http://127.0.0.1:${port}`,
+    });
+
+    const pending = client.listDevices();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    client.clear();
+
+    await expect(pending).rejects.toThrow('Remote Control device request failed');
+  });
+});
+
+describe('Remote Control manager', () => {
+  it('cancels an in-flight start on disable and releases the lock', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    const managementServer = new WebSocketServer({ noServer: true });
+    const relayServer = createServer();
+    managementServer.on('connection', (ws) => {
+      ws.on('error', () => {});
+    });
+    relayServer.on('upgrade', (request, socket, head) => {
+      managementServer.handleUpgrade(request, socket, head, (ws) => {
+        managementServer.emit('connection', ws, request);
+      });
+    });
+    const port = await listen(relayServer);
+    cleanups.push(() => closeServer(relayServer));
+    const manager = createRemoteControlManager({
+      homeDir,
+      localOrigin: () => 'http://127.0.0.1:58627',
+      localServerToken: () => 'local-server-token',
+      clientVersion: CLIENT_VERSION,
+      urlSource: 'kimi_code_cli',
+      relayOrigin: `http://127.0.0.1:${port}`,
+      stderr: { write: () => true },
+    });
+    cleanups.push(() => manager.close());
+
+    const enabling = manager.enable();
+    await waitFor(() => existsSync(remoteControlLockPath(homeDir)));
+    expect(manager.status().state).toBe('starting');
+
+    const startedAt = Date.now();
+    const status = await manager.disable();
+    expect(status.state).toBe('off');
+    expect(Date.now() - startedAt).toBeLessThan(1000);
+    await expect(enabling).rejects.toThrow('Remote Control was disabled while starting.');
+    await waitFor(() => !existsSync(remoteControlLockPath(homeDir)));
+  });
+
+  it('rejects disable when the tunnel close fails', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    const relay = await startAuthRelay();
+    const manager = createRemoteControlManager({
+      homeDir,
+      localOrigin: () => 'http://127.0.0.1:58627',
+      localServerToken: () => 'local-server-token',
+      clientVersion: CLIENT_VERSION,
+      urlSource: 'kimi_code_cli',
+      relayOrigin: `http://127.0.0.1:${relay.port}`,
+      stderr: { write: () => true },
+    });
+    cleanups.push(() => manager.close());
+    await manager.enable();
+
+    const lockPath = remoteControlLockPath(homeDir);
+    chmodSync(join(homeDir, 'server'), 0o555);
+    let error: unknown;
+    try {
+      error = await manager.disable().then(
+        () => undefined,
+        (disableError: unknown) => disableError,
+      );
+    } finally {
+      chmodSync(join(homeDir, 'server'), 0o755);
+    }
+
+    expect(error).toBeInstanceOf(Error);
+    expect(manager.status().state).toBe('off');
+    expect(manager.status().error).toBeTruthy();
   });
 });
 

@@ -48,13 +48,18 @@ interface RemoteControlDeviceContext {
   readonly auth: KimiRemoteControlAuth;
   readonly relayOrigin: string;
   readonly cacheKey: string;
+  readonly signal: AbortSignal;
 }
+
+const REQUEST_TIMEOUT_MS = 15_000;
+const UNEXPECTED_LIST_RESPONSE = 'Remote Control device list returned an unexpected response.';
 
 export class RemoteControlDeviceClient {
   private readonly cookies = new Map<string, string>();
   private readonly exchanges = new Map<string, Promise<string>>();
   private readonly fetchImpl: typeof fetch;
   private sessionGeneration = 0;
+  private abortController = new AbortController();
 
   constructor(private readonly options: RemoteControlDeviceClientOptions) {
     this.fetchImpl = options.fetchImpl ?? fetch;
@@ -64,6 +69,8 @@ export class RemoteControlDeviceClient {
     this.sessionGeneration += 1;
     this.cookies.clear();
     this.exchanges.clear();
+    this.abortController.abort();
+    this.abortController = new AbortController();
   }
 
   async listDevices(): Promise<RemoteControlDeviceList> {
@@ -74,13 +81,12 @@ export class RemoteControlDeviceClient {
     } catch {
       throw new RemoteControlDeviceClientError('Remote Control device list returned invalid JSON.');
     }
-    const record = isRecord(body) ? body : {};
+    if (!isRecord(body) || !Array.isArray(body['devices'])) {
+      throw new RemoteControlDeviceClientError(UNEXPECTED_LIST_RESPONSE);
+    }
     return {
-      devices: Array.isArray(record['devices'])
-        ? (record['devices'] as RemoteControlDevice[])
-        : [],
-      max_devices:
-        typeof record['max_devices'] === 'number' ? record['max_devices'] : undefined,
+      devices: body['devices'].map(parseDevice),
+      max_devices: typeof body['max_devices'] === 'number' ? body['max_devices'] : undefined,
     };
   }
 
@@ -112,6 +118,7 @@ export class RemoteControlDeviceClient {
       auth,
       relayOrigin,
       cacheKey: `${this.sessionGeneration}\0${relayOrigin}\0${auth.oauthKey}`,
+      signal: AbortSignal.any([AbortSignal.timeout(REQUEST_TIMEOUT_MS), this.abortController.signal]),
     };
   }
 
@@ -152,6 +159,7 @@ export class RemoteControlDeviceClient {
       method: init.method,
       headers,
       body: init.body,
+      signal: context.signal,
     });
   }
 
@@ -195,6 +203,7 @@ export class RemoteControlDeviceClient {
           refresh_token: token.refreshToken,
           expires_in: token.expiresIn,
         }),
+        signal: context.signal,
       });
     } catch (error) {
       throw new RemoteControlDeviceClientError(
@@ -216,6 +225,30 @@ export class RemoteControlDeviceClient {
     }
     return cookie;
   }
+}
+
+function parseDevice(value: unknown): RemoteControlDevice {
+  if (!isRecord(value)) {
+    throw new RemoteControlDeviceClientError(UNEXPECTED_LIST_RESPONSE);
+  }
+  for (const field of [
+    'device_id',
+    'alias',
+    'platform',
+    'client_version',
+    'local_base_url',
+    'created_at',
+    'updated_at',
+    'last_remote_access_at',
+  ]) {
+    if (typeof value[field] !== 'string') {
+      throw new RemoteControlDeviceClientError(UNEXPECTED_LIST_RESPONSE);
+    }
+  }
+  if (value['status'] !== 'online' && value['status'] !== 'offline') {
+    throw new RemoteControlDeviceClientError(UNEXPECTED_LIST_RESPONSE);
+  }
+  return value as unknown as RemoteControlDevice;
 }
 
 function relayHttpUrl(origin: string, path: string): string {

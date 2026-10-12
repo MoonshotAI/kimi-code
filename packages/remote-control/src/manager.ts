@@ -51,8 +51,8 @@ function createRemoteControlMachine(
       events: {} as RemoteControlMachineEvent,
     },
     actors: {
-      startTunnel: fromPromise<RemoteControlHandle, void>(async () => {
-        const handle = await startRemoteControl({
+      startTunnel: fromPromise<RemoteControlHandle, void>(async ({ signal }) => {
+        const started = startRemoteControl({
           homeDir: options.homeDir,
           localOrigin: options.localOrigin(),
           localServerToken: options.localServerToken,
@@ -62,7 +62,15 @@ function createRemoteControlMachine(
           configuredOAuthKey: options.configuredOAuthKey?.(),
           configuredOAuthHost: options.configuredOAuthHost?.(),
           stderr: options.stderr,
+          signal,
         });
+        signal.addEventListener('abort', () => {
+          void started.then(
+            (handle) => handle.close(),
+            () => undefined,
+          );
+        });
+        const handle = await started;
         onTunnelStarted(handle);
         return handle;
       }),
@@ -76,10 +84,13 @@ function createRemoteControlMachine(
     context: { handle: undefined, error: undefined },
     states: {
       off: {
-        on: { enable: 'starting', 'tunnel.exited': {} },
+        on: {
+          enable: { target: 'starting', actions: assign({ error: undefined }) },
+          'tunnel.exited': {},
+        },
       },
       starting: {
-        on: { enable: {} },
+        on: { enable: {}, disable: 'off' },
         invoke: {
           src: 'startTunnel',
           onDone: {
@@ -160,26 +171,20 @@ export function createRemoteControlManager(
     } else if (snap.value === 'starting') {
       const settled = await settle();
       if (settled.value === 'on') return status();
-      throw settled.context.error;
+      fail(settled.context.error ?? new Error('Remote Control was disabled while starting.'));
     }
     actor.send({ type: 'enable' });
     const settled = await settle();
     if (settled.value === 'on') return status();
-    throw settled.context.error;
+    fail(settled.context.error ?? new Error('Remote Control was disabled while starting.'));
   };
 
   const disable = async (): Promise<RemoteControlStatusInfo> => {
     const snap = actor.getSnapshot();
     if (snap.value === 'off') return status();
-    if (snap.value === 'starting') {
-      const settled = await settle();
-      if (settled.value === 'off') return status();
-    } else if (snap.value === 'stopping') {
-      await waitFor(actor, (s) => s.value === 'off');
-      return status();
-    }
     actor.send({ type: 'disable' });
-    await waitFor(actor, (s) => s.value === 'off');
+    const settled = await waitFor(actor, (s) => s.value === 'off');
+    if (settled.context.error !== undefined) fail(settled.context.error);
     return status();
   };
 
@@ -198,4 +203,8 @@ export function createRemoteControlManager(
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function fail(error: unknown): never {
+  throw error instanceof Error ? error : new Error(String(error));
 }

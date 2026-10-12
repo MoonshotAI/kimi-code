@@ -117,6 +117,7 @@ export async function registerApiV1Routes(
         core,
         opts.remoteControl.service,
         opts.remoteControl.devices,
+        opts.remoteControl.homeDir,
       );
       registerConfigRoutes(apiV1 as unknown as Parameters<typeof registerConfigRoutes>[0], core);
       registerModelCatalogRoutes(
