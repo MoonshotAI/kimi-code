@@ -1,4 +1,5 @@
 import { useApp, useCleanup, useOnApp } from '@moonshot-ai/agent-core';
+import { useExpose } from '@moonshot-ai/agent-core/kernel/index';
 
 import { WebSocketServer } from 'ws';
 
@@ -7,7 +8,7 @@ import type { WsRegistryStore } from '../ws-registry';
 
 import { WsV1Connection } from './connection';
 import { selectBearerProtocol } from './protocol';
-import { SessionBroadcaster } from './sessionState';
+import { SessionBroadcaster, WsV1BroadcasterRef } from './sessionState';
 
 const DEFAULT_MAX_BUFFER_SIZE = 1000;
 
@@ -22,6 +23,7 @@ export function useWsV1Endpoint(options: WsV1EndpointOptions): void {
   const http = useHttp();
   const path = `${options.prefix.replace(/\/+$/, '')}/ws`;
   const broadcaster = new SessionBroadcaster({ app, maxBufferSize: DEFAULT_MAX_BUFFER_SIZE });
+  useExpose(WsV1BroadcasterRef, broadcaster);
   const wss = new WebSocketServer({
     noServer: true,
     handleProtocols: (protocols) => selectBearerProtocol(protocols),

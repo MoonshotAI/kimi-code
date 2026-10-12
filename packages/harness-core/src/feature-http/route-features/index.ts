@@ -17,6 +17,7 @@ import { useSessionTitleRoutes } from './sessionTitle';
 import { useSkillRoutes } from './skill';
 import { useStatusRoutes } from './status';
 import { useTaskRoutes } from './task';
+import { useTranscriptRoutes } from './transcript';
 import { useWorkspaceRoutes } from './workspaces';
 
 export function useFeatureFacadeRoutes(prefix: string): void {
@@ -41,6 +42,7 @@ export function useFeatureFacadeRoutes(prefix: string): void {
   useFileHistoryRoutes(base);
   useFilesRoutes(base);
   useSessionMediaRoutes(base);
+  useTranscriptRoutes(base);
 }
 
 export * from './sessionTitle';
@@ -62,4 +64,5 @@ export * from './fs';
 export * from './files';
 export * from './capabilities';
 export * from './fileHistory';
+export * from './transcript';
 

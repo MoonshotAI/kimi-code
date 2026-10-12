@@ -1,4 +1,5 @@
 import {
+  createFacadeToken,
   MAIN_AGENT_ID,
   type AppCommands,
   type SessionHandle,
@@ -30,6 +31,7 @@ import {
   gradeFor,
   needsResetOnTransition,
   redactSnapshotForGrade,
+  type AgentTranscriptSnapshot,
   type TranscriptGrade,
   type TranscriptGradeSpec,
   type TranscriptOperation,
@@ -203,6 +205,8 @@ export interface SessionBroadcasterOptions {
   readonly maxBufferSize: number;
 }
 
+export const WsV1BroadcasterRef = createFacadeToken<SessionBroadcaster>('http.wsV1Broadcaster');
+
 export class SessionBroadcaster {
   private readonly sessions = new Map<string, SessionState>();
   private readonly globalTargets = new Set<BroadcastTarget>();
@@ -221,6 +225,18 @@ export class SessionBroadcaster {
 
   hasState(sessionId: string): boolean {
     return this.sessions.has(sessionId);
+  }
+
+  transcriptStreamState(
+    sessionId: string,
+    agentId: string,
+  ): { snapshot(): AgentTranscriptSnapshot; watermark: number } | undefined {
+    const stream = this.sessions.get(sessionId)?.transcripts.get(agentId);
+    if (stream === undefined) return undefined;
+    return {
+      snapshot: () => stream.transcript.snapshot(),
+      watermark: stream.ops.watermark,
+    };
   }
 
   async subscribe(
@@ -827,6 +843,10 @@ export class SessionBroadcaster {
     if (event['type'] === 'interaction.requested') {
       if (kind === 'approval') {
         const payload = interaction.payload as Record<string, unknown>;
+        const toolCallId =
+          typeof payload['toolCallId'] === 'string'
+            ? payload['toolCallId']
+            : interaction.tags['toolCallId'];
         this.dispatch(
           state,
           'event.approval.requested',
@@ -834,7 +854,7 @@ export class SessionBroadcaster {
             approval_id: interaction.id,
             session_id: state.sessionId,
             agent_id: ownerId,
-            tool_call_id: payload['toolCallId'],
+            tool_call_id: toolCallId,
             tool_name: payload['toolName'],
             action: payload['action'],
             display: payload['display'],

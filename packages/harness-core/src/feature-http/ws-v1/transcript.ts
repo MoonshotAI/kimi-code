@@ -268,8 +268,98 @@ export function projectPromptContent(parts: readonly ContentPart[]): unknown[] {
   return out;
 }
 
-export function snapshotToOps(snapshot: AgentTranscriptSnapshot): TranscriptOperation[] {
-  const ops: TranscriptOperation[] = [];
+export interface TurnPageQuery {
+  readonly beforeTurn?: string;
+  readonly afterTurn?: string;
+  readonly pageSize: number;
+}
+
+export interface TurnPage {
+  readonly items: readonly TranscriptItem[];
+  readonly hasMore: boolean;
+}
+
+export function paginateTurns(items: readonly TranscriptItem[], query: TurnPageQuery): TurnPage {
+  const pageSize = Math.max(1, query.pageSize);
+  const segments = splitSegments(items);
+  if (segments.length === 0) return { items: [], hasMore: false };
+
+  if (query.afterTurn !== undefined) {
+    const after = query.afterTurn;
+    return pageSegments(
+      segments.filter((seg) => seg.turnId !== undefined && compareTurnIds(seg.turnId, after) > 0),
+      pageSize,
+      'newer',
+    );
+  }
+  if (query.beforeTurn !== undefined) {
+    const before = query.beforeTurn;
+    const older = segments.filter(
+      (seg) => seg.turnId === undefined || compareTurnIds(seg.turnId, before) < 0,
+    );
+    return pageSegments(older, pageSize, 'older');
+  }
+  return pageSegments(segments, pageSize, 'older');
+}
+
+function compareTurnIds(a: string, b: string): number {
+  return turnOrdinal(a) - turnOrdinal(b);
+}
+
+function turnOrdinal(id: string): number {
+  const n = Number(id.slice(1));
+  return Number.isFinite(n) ? n : 0;
+}
+
+interface Segment {
+  readonly items: readonly TranscriptItem[];
+  readonly turnId?: string;
+}
+
+function splitSegments(items: readonly TranscriptItem[]): Segment[] {
+  const segments: Segment[] = [];
+  let current: TranscriptItem[] = [];
+  let currentTurn: string | undefined;
+  const flush = (): void => {
+    if (current.length > 0) segments.push({ items: current, turnId: currentTurn });
+    current = [];
+    currentTurn = undefined;
+  };
+  for (const item of items) {
+    if (item.kind === 'turn') {
+      flush();
+      current = [item];
+      currentTurn = item.turnId;
+    } else {
+      current.push(item);
+    }
+  }
+  flush();
+  return segments;
+}
+
+function pageSegments(
+  segments: readonly Segment[],
+  pageSize: number,
+  direction: 'older' | 'newer',
+): TurnPage {
+  const head = segments[0]?.turnId === undefined ? segments[0] : undefined;
+  const turnSegments = head !== undefined ? segments.slice(1) : segments;
+  if (direction === 'older') {
+    const selected = turnSegments.slice(-pageSize);
+    const reachesFirstTurn = selected.length === turnSegments.length;
+    const hasMore = turnSegments.length > selected.length && selected.length > 0;
+    return {
+      items: [...(reachesFirstTurn && head !== undefined ? head.items : []), ...selected.flatMap((seg) => seg.items)],
+      hasMore,
+    };
+  }
+  const selected = turnSegments.slice(0, pageSize);
+  const hasMore = turnSegments.length > selected.length && selected.length > 0;
+  return { items: selected.flatMap((seg) => seg.items), hasMore };
+}
+
+export function snapshotToOps(snapshot: AgentTranscriptSnapshot): TranscriptOperation[] {  const ops: TranscriptOperation[] = [];
   const pending: (TranscriptMarker | TranscriptTaskRef)[] = [];
   let lastTurnOrdinal: number | undefined;
   const flushPending = (beforeTurn?: number): void => {
@@ -349,6 +439,10 @@ export class AgentTranscript {
 
   getPrompt(promptId: string): TranscriptPrompt | undefined {
     return this.prompts.get(promptId);
+  }
+
+  getInteraction(interactionId: string): TranscriptInteraction | undefined {
+    return this.interactions.get(interactionId);
   }
 
   getTask(taskId: string): TranscriptTask | undefined {
@@ -1260,14 +1354,15 @@ export class AgentTranscriptProjector {
       id: string;
       kind: string;
       payload: unknown;
+      tags?: Record<string, string | number>;
       createdAt: number;
     };
     if (interaction.kind !== 'approval' && interaction.kind !== 'question') return [];
-    const toolCallId = (interaction.payload as { toolCallId?: unknown } | undefined)?.toolCallId;
+    const toolCallId = interactionToolCallId(interaction);
     const entity: TranscriptInteraction = {
       interactionId: interaction.id,
       interactionKind: interaction.kind,
-      toolCallId: typeof toolCallId === 'string' ? toolCallId : undefined,
+      toolCallId,
       state: 'pending',
       request: interaction.payload,
     };
@@ -1276,27 +1371,29 @@ export class AgentTranscriptProjector {
 
   private onInteractionResolved(event: { [key: string]: unknown }): TranscriptOperation[] {
     const id = event['id'] as string;
-    const interaction = event['interaction'] as { kind: string; payload: unknown } | undefined;
+    const interaction = event['interaction'] as
+      | { kind: string; payload: unknown; tags?: Record<string, string | number> }
+      | undefined;
     const response = event['response'];
     if (interaction === undefined) return [];
     if (interaction.kind !== 'approval' && interaction.kind !== 'question') return [];
     const state = mapInteractionEndState(interaction.kind, response);
+    const toolCallId = interactionToolCallId(interaction);
+    const prev = this.transcript.getInteraction(id);
     const ops: TranscriptOperation[] = [
       {
         op: 'interaction.upsert',
         interaction: {
           interactionId: id,
           interactionKind: interaction.kind,
-          toolCallId: (interaction.payload as { toolCallId?: unknown } | undefined)?.toolCallId as
-            | string
-            | undefined,
+          toolCallId: toolCallId ?? prev?.toolCallId,
           state,
+          request: prev?.request,
           response,
         },
       },
     ];
-    const toolCallId = (interaction.payload as { toolCallId?: unknown } | undefined)?.toolCallId;
-    if (typeof toolCallId === 'string') {
+    if (toolCallId !== undefined) {
       const hit = this.transcript.toolFrame(toolCallId);
       if (hit !== undefined) {
         ops.push({
@@ -1533,6 +1630,16 @@ function restOf(event: Record<string, unknown>): Record<string, unknown> {
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function interactionToolCallId(interaction: {
+  payload: unknown;
+  tags?: Record<string, string | number>;
+}): string | undefined {
+  const fromPayload = (interaction.payload as { toolCallId?: unknown } | undefined)?.toolCallId;
+  if (typeof fromPayload === 'string') return fromPayload;
+  const fromTags = interaction.tags?.['toolCallId'];
+  return typeof fromTags === 'string' ? fromTags : undefined;
 }
 
 function isTerminalPromptStatus(status: TranscriptPrompt['status']): boolean {

@@ -4125,6 +4125,295 @@ describe('feature-http cold session resume', () => {
   });
 });
 
+describe('feature-http transcript routes', () => {
+  function transcriptTurnTexts(body: unknown): { turnId: string; state: string; texts: string[] }[] {
+    const data = (body as { data: { items: Record<string, unknown>[] } }).data;
+    return data.items
+      .filter((item) => item['kind'] === 'turn')
+      .map((item) => ({
+        turnId: item['turnId'] as string,
+        state: item['state'] as string,
+        texts: ((item['steps'] as { frames: Record<string, unknown>[] }[] | undefined) ?? [])
+          .flatMap((step) => step.frames)
+          .filter((frame) => frame['kind'] === 'text')
+          .map((frame) => frame['text'] as string),
+      }));
+  }
+
+  function bindTestExitPlanTool(output: (toolCallId: string) => string): FeatureSpec {
+    const tool: ToolDefinition = {
+      name: 'ExitPlanMode',
+      description: 'test exit plan mode tool',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      execute: ({ toolCall }) =>
+        Promise.resolve({ content: [{ type: 'text' as const, text: output(toolCall.id) }] }),
+    };
+    return createFeature('test-exit-plan', {
+      agent() {
+        useAgentTools(tool);
+      },
+    });
+  }
+
+  function lastToolCallId(session: SessionHandle): string {
+    const history = session.stores.get(MAIN_AGENT_ID)?.getState().history ?? [];
+    const assistant = history.findLast(
+      (entry) =>
+        entry.message.role === 'assistant' &&
+        ((entry.message as { toolCalls?: unknown[] }).toolCalls?.length ?? 0) > 0,
+    );
+    const toolCalls = (assistant?.message as { toolCalls?: { id: string }[] } | undefined)?.toolCalls;
+    const id = toolCalls?.[0]?.id;
+    if (id === undefined) throw new Error('no tool call in history');
+    return id;
+  }
+
+  it('serves the baseline transcript page with kap wire shape and turn pagination', async () => {
+    const env = await mountHttp([bindTestLlm(createMockRequester())]);
+    const session = await openMain(env, 'ses_tr');
+    const agent = session.get(MAIN_AGENT_ID) as AgentHandle;
+    for (const text of ['turn one', 'turn two', 'turn three']) {
+      queue = [{ text }];
+      await runTurn(agent);
+    }
+
+    const full = await get(env, '/sessions/ses_tr/transcript?agent_id=main');
+    expect(full.status).toBe(200);
+    const body = await full.json();
+    expect(body.code).toBe(0);
+    expect(body.data.agent_id).toBe('main');
+    expect(body.data.has_more).toBe(false);
+    expect(body.data.agents).toEqual([{ agentId: 'main', type: 'main' }]);
+    expect(body.data.pending_interactions).toEqual([]);
+    expect(body.data.tasks).toEqual([]);
+    const turns = transcriptTurnTexts(body);
+    expect(turns.map((turn) => turn.turnId)).toEqual(['t0', 't1', 't2']);
+    expect(turns.every((turn) => turn.state === 'completed')).toBe(true);
+    expect(turns[2]?.texts.join('')).toContain('turn three');
+
+    const paged = await get(env, '/sessions/ses_tr/transcript?agent_id=main&page_size=2');
+    const pagedBody = await paged.json();
+    expect(pagedBody.data.has_more).toBe(true);
+    expect(transcriptTurnTexts(pagedBody).map((turn) => turn.turnId)).toEqual(['t1', 't2']);
+
+    const before = await get(env, '/sessions/ses_tr/transcript?agent_id=main&before_turn=t1');
+    const beforeBody = await before.json();
+    expect(beforeBody.data.has_more).toBe(false);
+    expect(transcriptTurnTexts(beforeBody).map((turn) => turn.turnId)).toEqual(['t0']);
+
+    const after = await get(env, '/sessions/ses_tr/transcript?agent_id=main&after_turn=t0&page_size=2');
+    const afterBody = await after.json();
+    expect(afterBody.data.has_more).toBe(false);
+    expect(transcriptTurnTexts(afterBody).map((turn) => turn.turnId)).toEqual(['t1', 't2']);
+  });
+
+  it('rejects invalid transcript queries with 40001 and unknown sessions with the kap message', async () => {
+    const env = await mountHttp([bindTestLlm(createMockRequester())]);
+    await openMain(env, 'ses_tr_query');
+
+    const missing = await get(env, '/sessions/ses_tr_query/transcript');
+    expect(await missing.json()).toMatchObject({ code: 40001, msg: 'agent_id is required' });
+
+    const both = await get(
+      env,
+      '/sessions/ses_tr_query/transcript?agent_id=main&before_turn=t1&after_turn=t0',
+    );
+    expect(await both.json()).toMatchObject({
+      code: 40001,
+      msg: 'before_turn and after_turn are mutually exclusive',
+    });
+
+    const small = await get(env, '/sessions/ses_tr_query/transcript?agent_id=main&page_size=0');
+    expect(await small.json()).toMatchObject({ code: 40001 });
+    const large = await get(env, '/sessions/ses_tr_query/transcript?agent_id=main&page_size=101');
+    expect(await large.json()).toMatchObject({ code: 40001 });
+
+    const separator = await get(env, '/sessions/ses_tr_query/transcript?agent_id=a%2Fb');
+    expect(await separator.json()).toMatchObject({ code: 40001 });
+
+    const ghost = await get(env, '/sessions/ses_tr_ghost/transcript?agent_id=main');
+    expect(await ghost.json()).toMatchObject({
+      code: 40401,
+      msg: 'session not found: ses_tr_ghost',
+    });
+  });
+
+  it('serves a cold session transcript from persisted history after resume', async () => {
+    const env = await mountHttp([bindTestLlm(createMockRequester())]);
+    const session = await openMain(env, 'ses_tr_cold');
+    const agent = session.get(MAIN_AGENT_ID) as AgentHandle;
+    queue = [{ text: 'cold baseline' }];
+    await runTurn(agent);
+    await env.app.close('ses_tr_cold');
+    expect(env.app.get('ses_tr_cold')).toBeUndefined();
+
+    const response = await get(env, '/sessions/ses_tr_cold/transcript?agent_id=main');
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.code).toBe(0);
+    const turns = transcriptTurnTexts(body);
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({ turnId: 't0', state: 'completed' });
+    expect(turns[0]?.texts.join('')).toContain('cold baseline');
+    expect(env.app.get('ses_tr_cold')).toBeDefined();
+  });
+
+  it('projects ExitPlanMode plans from tool output and from review interactions', async () => {
+    const env = await mountHttp([
+      interaction,
+      bindTestExitPlanTool(
+        () =>
+          'Exited plan mode. Plan mode deactivated. All tools are now available.\nPlan saved to: /tmp/plan-a.md\n\n## Approved Plan:\nShip the feature',
+      ),
+      bindTestLlm(createMockRequester()),
+    ]);
+    const session = await openMain(env, 'ses_tr_plan');
+    const agent = session.get(MAIN_AGENT_ID) as AgentHandle;
+
+    queue = [{ toolCall: { name: 'ExitPlanMode', arguments: '{}' } }, { text: 'done one' }];
+    await runTurn(agent);
+    const firstCallId = lastToolCallId(session);
+    queue = [{ toolCall: { name: 'ExitPlanMode', arguments: '{}' } }, { text: 'done two' }];
+    await runTurn(agent);
+    const secondCallId = lastToolCallId(session);
+
+    const interactions = session.resolve(InteractionRef);
+    expect(interactions).toBeDefined();
+    interactions!.enqueue({
+      kind: 'approval',
+      payload: {
+        plan: 'Choose wisely',
+        path: '/tmp/plan-b.md',
+        options: [{ label: 'Option A' }, { label: 'Option B', description: 'desc B' }],
+      },
+      tags: {
+        [INTERACTION_TAG_SESSION_ID]: 'ses_tr_plan',
+        [INTERACTION_TAG_AGENT_ID]: MAIN_AGENT_ID,
+        [INTERACTION_TAG_TOOL_CALL_ID]: secondCallId,
+      },
+    });
+
+    const listed = await get(env, '/sessions/ses_tr_plan/transcript/plan?agent_id=main');
+    expect(listed.status).toBe(200);
+    const body = await listed.json();
+    expect(body.code).toBe(0);
+    expect(body.data.agent_id).toBe('main');
+    expect(body.data.plans).toHaveLength(2);
+    expect(body.data.plans[0]).toMatchObject({
+      tool_call_id: firstCallId,
+      turn_id: 't0',
+      source: 'output',
+      plan: 'Ship the feature',
+      path: '/tmp/plan-a.md',
+    });
+    expect(body.data.plans[0]['review']).toBeUndefined();
+    expect(body.data.plans[1]).toMatchObject({
+      tool_call_id: secondCallId,
+      turn_id: 't1',
+      source: 'interaction',
+      plan: 'Choose wisely',
+      path: '/tmp/plan-b.md',
+      options: [{ label: 'Option A' }, { label: 'Option B', description: 'desc B' }],
+      review: { state: 'pending' },
+    });
+
+    const narrowed = await get(
+      env,
+      `/sessions/ses_tr_plan/transcript/plan?agent_id=main&tool_call_id=${firstCallId}`,
+    );
+    const narrowedBody = await narrowed.json();
+    expect(narrowedBody.data.plans).toHaveLength(1);
+    expect(narrowedBody.data.plans[0]['tool_call_id']).toBe(firstCallId);
+
+    const unknown = await get(
+      env,
+      '/sessions/ses_tr_plan/transcript/plan?agent_id=main&tool_call_id=call-nope',
+    );
+    expect(await unknown.json()).toMatchObject({
+      code: 40416,
+      msg: 'no ExitPlanMode tool call found for tool_call_id: call-nope',
+    });
+
+    const ghost = await get(env, '/sessions/ses_tr_ghost/transcript/plan?agent_id=main');
+    expect(await ghost.json()).toMatchObject({
+      code: 40401,
+      msg: 'session not found: ses_tr_ghost',
+    });
+  });
+
+  it('serves resolved plan reviews and the ops watermark once a transcript stream is attached', async () => {
+    const env = await mountHttp([
+      interaction,
+      bindTestExitPlanTool(() => 'Exited plan mode. ## Approved Plan:\nHidden plan'),
+      bindTestLlm(createMockRequester()),
+    ]);
+    const session = await openMain(env, 'ses_tr_review');
+    const agent = session.get(MAIN_AGENT_ID) as AgentHandle;
+
+    const client = await connectWsV1(env);
+    await client.next((frame) => frame['type'] === 'server_hello');
+    client.send({
+      type: 'subscribe_v2',
+      id: 's1',
+      payload: { session_id: 'ses_tr_review', transcript: { [MAIN_AGENT_ID]: 'delta' } },
+    });
+    await client.next((frame) => frame['type'] === 'ack' && frame['id'] === 's1');
+    await client.next((frame) => frame['type'] === 'transcript.reset');
+
+    queue = [{ toolCall: { name: 'ExitPlanMode', arguments: '{}' } }, { text: 'done' }];
+    await runTurn(agent);
+    const callId = lastToolCallId(session);
+
+    const interactions = session.resolve(InteractionRef);
+    const enqueued = interactions!.enqueue({
+      kind: 'approval',
+      payload: { plan: 'Reviewed plan', path: '/tmp/plan-c.md', options: [{ label: 'Option B' }] },
+      tags: {
+        [INTERACTION_TAG_SESSION_ID]: 'ses_tr_review',
+        [INTERACTION_TAG_AGENT_ID]: MAIN_AGENT_ID,
+        [INTERACTION_TAG_TOOL_CALL_ID]: callId,
+      },
+    });
+    await client.next((frame) => {
+      if (frame['type'] !== 'transcript.ops') return false;
+      const ops = ((frame['payload'] as Record<string, unknown>)['ops'] ?? []) as Record<string, unknown>[];
+      return ops.some((op) => op['op'] === 'interaction.upsert');
+    });
+    expect(interactions!.respond(enqueued.id, { decision: 'approved', selectedLabel: 'Option B' })).toBe(
+      true,
+    );
+    await client.next((frame) => {
+      if (frame['type'] !== 'transcript.ops') return false;
+      const ops = ((frame['payload'] as Record<string, unknown>)['ops'] ?? []) as Record<string, unknown>[];
+      return ops.some(
+        (op) =>
+          op['op'] === 'interaction.upsert' &&
+          (op['interaction'] as Record<string, unknown>)['state'] === 'approved',
+      );
+    });
+
+    const listed = await get(env, '/sessions/ses_tr_review/transcript/plan?agent_id=main');
+    const body = await listed.json();
+    expect(body.data.plans).toHaveLength(1);
+    expect(body.data.plans[0]).toMatchObject({
+      tool_call_id: callId,
+      source: 'interaction',
+      plan: 'Reviewed plan',
+      path: '/tmp/plan-c.md',
+      options: [{ label: 'Option B' }],
+      review: { state: 'approved', selected_option: 'Option B' },
+    });
+
+    const baseline = await get(env, '/sessions/ses_tr_review/transcript?agent_id=main');
+    const baselineBody = await baseline.json();
+    expect(typeof baselineBody.data.seq).toBe('number');
+    expect(baselineBody.data.seq).toBeGreaterThan(0);
+    expect(baselineBody.data.interactions).toHaveLength(1);
+    expect(baselineBody.data.pending_interactions).toEqual([]);
+    await client.close();
+  });
+});
+
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
