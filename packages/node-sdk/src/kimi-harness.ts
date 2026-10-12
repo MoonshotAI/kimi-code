@@ -138,7 +138,7 @@ export class KimiHarness {
   }
 
   async createSession(options: CreateSessionOptions): Promise<Session> {
-    const { planMode, sessionStartedProperties, ...coreOptions } = options;
+    const { planMode, sessionStartedProperties, ...coreOptions } = stripLegacyKaosOptions(options);
     const summary = await this.rpc.createSession(coreOptions);
     const session = new Session({
       id: summary.id,
@@ -166,7 +166,7 @@ export class KimiHarness {
     const {
       sessionStartedProperties: _sessionStartedProperties,
       ...resumeInput
-    } = input;
+    } = stripLegacyKaosOptions(input);
     // A session whose close is in flight (`isClosed` but not yet unmapped)
     // is not a valid resume target — fall through and re-resume fresh, which
     // the engine serializes behind that close.
@@ -196,7 +196,7 @@ export class KimiHarness {
   }
 
   private async doResumeSession(input: ResumeSessionInput, id: string): Promise<Session> {
-    const { sessionStartedProperties, ...resumeInput } = input;
+    const { sessionStartedProperties, ...resumeInput } = stripLegacyKaosOptions(input);
     const summary = await this.rpc.resumeSession({ ...resumeInput, id });
     const session = new Session({
       id: summary.id,
@@ -659,15 +659,20 @@ export class KimiHarness {
 const DEFAULT_SESSION_STARTED_UI_MODE = 'shell';
 
 function resumeCoalesceKey(id: string, input: ResumeSessionInput): string {
+  return JSON.stringify({ ...stripLegacyKaosOptions(input), id });
+}
+
+function stripLegacyKaosOptions<T extends object>(input: T): T {
   // JavaScript hosts may still pass the removed kaos options; keep them out of
-  // the serialized key — custom implementations can hold circular handles.
-  const { kaos, persistenceKaos, ...rest } = input as ResumeSessionInput & {
+  // forwarded RPC inputs and serialized keys — custom implementations can hold
+  // circular runtime handles.
+  const { kaos, persistenceKaos, ...rest } = input as T & {
     kaos?: unknown;
     persistenceKaos?: unknown;
   };
   void kaos;
   void persistenceKaos;
-  return JSON.stringify({ ...rest, id });
+  return rest as T;
 }
 
 function normalizeSessionId(value: string): string {
