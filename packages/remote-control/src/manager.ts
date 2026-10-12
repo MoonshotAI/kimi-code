@@ -44,6 +44,7 @@ type RemoteControlMachineEvent = { type: 'enable' } | { type: 'disable' } | { ty
 function createRemoteControlMachine(
   options: RemoteControlManagerOptions,
   onTunnelStarted: (handle: RemoteControlHandle) => void,
+  startTracker: { current?: Promise<void> },
 ) {
   return setup({
     types: {
@@ -64,15 +65,23 @@ function createRemoteControlMachine(
           stderr: options.stderr,
           signal,
         });
+        startTracker.current = started.then(
+          () => undefined,
+          () => undefined,
+        );
         signal.addEventListener('abort', () => {
           void started.then(
             (handle) => handle.close(),
             () => undefined,
           );
         });
-        const handle = await started;
-        onTunnelStarted(handle);
-        return handle;
+        try {
+          const handle = await started;
+          onTunnelStarted(handle);
+          return handle;
+        } finally {
+          startTracker.current = undefined;
+        }
       }),
       stopTunnel: fromPromise<void, RemoteControlHandle | undefined>(async ({ input }) => {
         await input?.close();
@@ -128,18 +137,23 @@ function createRemoteControlMachine(
 export function createRemoteControlManager(
   options: RemoteControlManagerOptions,
 ): RemoteControlManager {
+  const startTracker: { current?: Promise<void> } = {};
   const actor = createActor(
-    createRemoteControlMachine(options, (handle) => {
-      void handle.closed.then(
-        () => {
-          actor.send({ type: 'tunnel.exited' });
-        },
-        (error) => {
-          options.stderr?.write(`remote-control lock release failed: ${errorMessage(error)}\n`);
-          actor.send({ type: 'tunnel.exited' });
-        },
-      );
-    }),
+    createRemoteControlMachine(
+      options,
+      (handle) => {
+        void handle.closed.then(
+          () => {
+            actor.send({ type: 'tunnel.exited' });
+          },
+          (error) => {
+            options.stderr?.write(`remote-control lock release failed: ${errorMessage(error)}\n`);
+            actor.send({ type: 'tunnel.exited' });
+          },
+        );
+      },
+      startTracker,
+    ),
   );
   actor.start();
 
@@ -173,6 +187,7 @@ export function createRemoteControlManager(
       if (settled.value === 'on') return status();
       fail(settled.context.error ?? new Error('Remote Control was disabled while starting.'));
     }
+    await startTracker.current;
     actor.send({ type: 'enable' });
     const settled = await settle();
     if (settled.value === 'on') return status();
@@ -181,10 +196,14 @@ export function createRemoteControlManager(
 
   const disable = async (): Promise<RemoteControlStatusInfo> => {
     const snap = actor.getSnapshot();
-    if (snap.value === 'off') return status();
+    if (snap.value === 'off') {
+      await startTracker.current;
+      return status();
+    }
     actor.send({ type: 'disable' });
     const settled = await waitFor(actor, (s) => s.value === 'off');
     if (settled.context.error !== undefined) fail(settled.context.error);
+    await startTracker.current;
     return status();
   };
 

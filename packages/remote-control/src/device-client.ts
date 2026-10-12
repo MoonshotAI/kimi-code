@@ -5,6 +5,7 @@ import {
   resolveKimiRemoteControlAuth,
   resolveKimiTokenStorageName,
   type KimiRemoteControlAuth,
+  type TokenInfo,
 } from '@moonshot-ai/kimi-code-oauth';
 
 import { resolveRemoteControlRelayOrigin } from './remote-control';
@@ -49,6 +50,7 @@ interface RemoteControlDeviceContext {
   readonly relayOrigin: string;
   readonly cacheKey: string;
   readonly signal: AbortSignal;
+  readonly token: TokenInfo;
 }
 
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -84,6 +86,9 @@ export class RemoteControlDeviceClient {
     if (!isRecord(body) || !Array.isArray(body['devices'])) {
       throw new RemoteControlDeviceClientError(UNEXPECTED_LIST_RESPONSE);
     }
+    if ('max_devices' in body && typeof body['max_devices'] !== 'number') {
+      throw new RemoteControlDeviceClientError(UNEXPECTED_LIST_RESPONSE);
+    }
     return {
       devices: body['devices'].map(parseDevice),
       max_devices: typeof body['max_devices'] === 'number' ? body['max_devices'] : undefined,
@@ -104,7 +109,7 @@ export class RemoteControlDeviceClient {
     );
   }
 
-  private context(): RemoteControlDeviceContext {
+  private async context(): Promise<RemoteControlDeviceContext> {
     const auth = resolveKimiRemoteControlAuth({
       configuredOAuthHost: this.options.configuredOAuthHost?.(),
       configuredOAuthKey: this.options.configuredOAuthKey?.(),
@@ -114,11 +119,19 @@ export class RemoteControlDeviceClient {
       this.options.relayOrigin ??
       resolveRemoteControlRelayOrigin(process.env, auth.relayOrigin)
     ).replace(/\/+$/, '');
+    const storage = new FileTokenStorage(join(this.options.homeDir, 'credentials'));
+    const token = await storage.load(
+      resolveKimiTokenStorageName({ oauthKey: auth.oauthKey }),
+    );
+    if (token?.refreshToken === undefined || token.refreshToken.length === 0) {
+      throw new RemoteControlDeviceClientError('Remote Control requires a Kimi login.');
+    }
     return {
       auth,
       relayOrigin,
-      cacheKey: `${this.sessionGeneration}\0${relayOrigin}\0${auth.oauthKey}`,
+      cacheKey: `${this.sessionGeneration}\0${relayOrigin}\0${auth.oauthKey}\0${token.refreshToken}`,
       signal: AbortSignal.any([AbortSignal.timeout(REQUEST_TIMEOUT_MS), this.abortController.signal]),
+      token,
     };
   }
 
@@ -127,7 +140,7 @@ export class RemoteControlDeviceClient {
     init: { method: string; body?: string },
   ): Promise<Response> {
     try {
-      const context = this.context();
+      const context = await this.context();
       let cookie = await this.sessionCookie(context, false);
       let response = await this.send(context, path, init, cookie);
       if (response.status === 401) {
@@ -186,22 +199,15 @@ export class RemoteControlDeviceClient {
   }
 
   private async exchange(context: RemoteControlDeviceContext): Promise<string> {
-    const storage = new FileTokenStorage(join(this.options.homeDir, 'credentials'));
-    const token = await storage.load(
-      resolveKimiTokenStorageName({ oauthKey: context.auth.oauthKey }),
-    );
-    if (token?.refreshToken === undefined || token.refreshToken.length === 0) {
-      throw new RemoteControlDeviceClientError('Remote Control requires a Kimi login.');
-    }
     let response: Response;
     try {
       response = await this.fetchImpl(relayHttpUrl(context.relayOrigin, '/auth/exchange'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          access_token: token.accessToken,
-          refresh_token: token.refreshToken,
-          expires_in: token.expiresIn,
+          access_token: context.token.accessToken,
+          refresh_token: context.token.refreshToken,
+          expires_in: context.token.expiresIn,
         }),
         signal: context.signal,
       });

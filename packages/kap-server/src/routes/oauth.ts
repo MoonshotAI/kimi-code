@@ -155,12 +155,13 @@ export function registerOAuthRoutes(
           ),
         );
       };
-      const cleanupRemoteControl = async (): Promise<void> => {
+      const cleanupRemoteControl = async (includeCloud: boolean): Promise<void> => {
         const status = remoteControl.status();
         if (status.state !== 'off') {
           await remoteControl.disable();
           return;
         }
+        if (!includeCloud) return;
         const holder = await inspectRemoteControlLock(homeDir);
         if (holder !== undefined) {
           await remoteControlDevices.deactivateDevice(holder.deviceId);
@@ -169,7 +170,7 @@ export function registerOAuthRoutes(
       };
       if (provider === KIMI_CODE_PROVIDER_NAME) {
         try {
-          await cleanupRemoteControl();
+          await cleanupRemoteControl(true);
         } catch (error) {
           sendCleanupError(error);
           return;
@@ -180,7 +181,7 @@ export function registerOAuthRoutes(
       if (provider === KIMI_CODE_PROVIDER_NAME) {
         remoteControlDevices.clear();
         try {
-          await cleanupRemoteControl();
+          await cleanupRemoteControl(false);
         } catch (error) {
           sendCleanupError(error);
           return;

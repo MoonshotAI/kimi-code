@@ -309,6 +309,11 @@ export async function startRemoteControl(
     deviceId,
     url,
   });
+  const tokenAfterLock = await storage.load(resolveKimiTokenStorageName({ oauthKey: auth.oauthKey }));
+  if (tokenAfterLock?.refreshToken !== token.refreshToken) {
+    await lock.release();
+    throw new Error('Remote Control requires a Kimi login. Run `kimi login` first.');
+  }
   const client = new RemoteControlClient({
     ...options,
     localServerToken,

@@ -1175,6 +1175,7 @@ describe('Remote Control device client', () => {
       { devices: 'nope' },
       { devices: [{ ...device, status: 'busy' }] },
       { devices: [{ alias: 'missing fields' }] },
+      { devices: [], max_devices: 'three' },
     ];
     let nextPayload = 0;
     const server = createServer((request, response) => {
@@ -1200,6 +1201,42 @@ describe('Remote Control device client', () => {
         'Remote Control device list returned an unexpected response.',
       );
     }
+  });
+
+  it('re-exchanges when the stored credential changes under the same OAuth slot', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    let exchanges = 0;
+    const deviceCookies: Array<string | undefined> = [];
+    const server = createServer((request, response) => {
+      const pathname = new URL(request.url ?? '', 'http://relay.test').pathname;
+      if (pathname === '/auth/exchange') {
+        exchanges += 1;
+        response.writeHead(204, { 'Set-Cookie': `rc_session=${exchanges}; Path=/` });
+        response.end();
+        return;
+      }
+      deviceCookies.push(
+        Array.isArray(request.headers.cookie) ? request.headers.cookie[0] : request.headers.cookie,
+      );
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ devices: [] }));
+    });
+    const port = await listen(server);
+    cleanups.push(() => closeServer(server));
+    const client = new RemoteControlDeviceClient({
+      homeDir,
+      relayOrigin: `http://127.0.0.1:${port}`,
+    });
+
+    await client.listDevices();
+    await new FileTokenStorage(join(homeDir, 'credentials')).save(
+      resolveKimiTokenStorageName({ providerName: KIMI_CODE_PROVIDER_NAME }),
+      { ...TOKEN, refreshToken: 'second-account-refresh' },
+    );
+    await client.listDevices();
+
+    expect(exchanges).toBe(2);
+    expect(deviceCookies).toEqual(['rc_session=1', 'rc_session=2']);
   });
 
   it('aborts an in-flight device request when sessions are cleared', async () => {
@@ -1254,6 +1291,9 @@ describe('Remote Control manager', () => {
     cleanups.push(() => manager.close());
 
     const enabling = manager.enable();
+    const enablingSettled = expect(enabling).rejects.toThrow(
+      'Remote Control was disabled while starting.',
+    );
     await waitFor(() => existsSync(remoteControlLockPath(homeDir)));
     expect(manager.status().state).toBe('starting');
 
@@ -1261,8 +1301,88 @@ describe('Remote Control manager', () => {
     const status = await manager.disable();
     expect(status.state).toBe('off');
     expect(Date.now() - startedAt).toBeLessThan(1000);
-    await expect(enabling).rejects.toThrow('Remote Control was disabled while starting.');
-    await waitFor(() => !existsSync(remoteControlLockPath(homeDir)));
+    expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
+    await enablingSettled;
+  });
+
+  it('re-enables immediately after cancelling a start', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    const managementServer = new WebSocketServer({ noServer: true });
+    const relayServer = createServer();
+    managementServer.on('connection', (ws) => {
+      ws.on('error', () => {});
+      ws.on('message', (data) => {
+        const message = JSON.parse(rawDataText(data)) as { type?: string };
+        if (message.type === 'register') {
+          setTimeout(() => {
+            try {
+              ws.send(JSON.stringify({ type: 'register_ack', payload: { success: true } }));
+            } catch {}
+          }, 200);
+        }
+      });
+    });
+    relayServer.on('upgrade', (request, socket, head) => {
+      managementServer.handleUpgrade(request, socket, head, (ws) => {
+        managementServer.emit('connection', ws, request);
+      });
+    });
+    const port = await listen(relayServer);
+    cleanups.push(() => closeServer(relayServer));
+    const manager = createRemoteControlManager({
+      homeDir,
+      localOrigin: () => 'http://127.0.0.1:58627',
+      localServerToken: () => 'local-server-token',
+      clientVersion: CLIENT_VERSION,
+      urlSource: 'kimi_code_cli',
+      relayOrigin: `http://127.0.0.1:${port}`,
+      stderr: { write: () => true },
+    });
+    cleanups.push(() => manager.close());
+
+    const first = manager.enable();
+    const firstSettled = expect(first).rejects.toThrow(
+      'Remote Control was disabled while starting.',
+    );
+    await waitFor(() => existsSync(remoteControlLockPath(homeDir)));
+    await manager.disable();
+    await firstSettled;
+
+    const second = await manager.enable();
+    expect(second.state).toBe('on');
+    await manager.disable();
+  });
+
+  it('aborts the start when the credential disappears before registration', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    const relay = await startAuthRelay();
+    const original = FileTokenStorage.prototype.load;
+    let loads = 0;
+    vi.spyOn(FileTokenStorage.prototype, 'load').mockImplementation(function (
+      this: FileTokenStorage,
+      ...args: Parameters<FileTokenStorage['load']>
+    ) {
+      loads += 1;
+      if (loads === 2) return Promise.resolve(undefined);
+      return original.apply(this, args);
+    });
+
+    try {
+      await expect(
+        startRemoteControl({
+          homeDir,
+          localOrigin: 'http://127.0.0.1:58627',
+          localServerToken: 'local-server-token',
+          clientVersion: CLIENT_VERSION,
+          urlSource: 'kimi_code_cli',
+          relayOrigin: `http://127.0.0.1:${relay.port}`,
+          stderr: { write: () => true },
+        }),
+      ).rejects.toThrow('Remote Control requires a Kimi login');
+      expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it('rejects immediately when the start signal is already aborted', async () => {
