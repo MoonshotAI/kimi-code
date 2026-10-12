@@ -103,7 +103,13 @@ export const AppUnit = createUnit<AppUnitProps>('app', (props, ctx) => {
       return session;
     },
     open: (input) => openSession(commands, requireSpace(), input),
-    updateSession: (id, patch) => updateSession(commands, requireSpace(), id, patch),
+    updateSession: async (id, patch) => {
+      const record = await updateSession(commands, requireSpace(), id, patch);
+      if (commands.get(id) === undefined) {
+        ctx.node.fire({ type: 'session.meta_updated', sessionId: id, meta: record });
+      }
+      return record;
+    },
     ready: () => ctx.node.ready(),
     close: async (sessionId?: string) => {
       if (sessionId === undefined) {

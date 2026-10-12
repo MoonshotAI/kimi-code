@@ -84,6 +84,7 @@ describe('sessionIndex live write path', () => {
     expect(face.get('s1')).toEqual({
       id: 's1',
       workspaceId: 'ws-a',
+      cwd: null,
       title: 'first',
       createdAt: 10_000,
       updatedAt: 10_000,
@@ -152,6 +153,31 @@ describe('sessionIndex live write path', () => {
     expect(face.get('s1')).toBeUndefined();
     expect(face.get('s2')).toMatchObject({ id: 's2', createdAt: 11_000 });
     expect(face.list().total).toBe(1);
+  });
+
+  it('tracks cwd and cold-session meta updates through app.updateSession', async () => {
+    let now = 1_000;
+    const { app, face } = await mountSessionIndex({
+      space: memorySessionSpace(),
+      now: () => now,
+    });
+
+    await app.open({ sessionId: 's1', title: 'live', metadata: { workspaceId: 'ws-a', cwd: '/work/a' } });
+    expect(face.get('s1')).toMatchObject({ cwd: '/work/a' });
+
+    await app.close('s1');
+    now = 2_000;
+    await app.updateSession('s1', {
+      title: 'cold-renamed',
+      metadata: { archived: true, archived_at: '2026-01-02T03:04:05.000Z', cwd: '/work/b' },
+    });
+    expect(face.get('s1')).toMatchObject({
+      title: 'cold-renamed',
+      archived: true,
+      archivedAt: Date.parse('2026-01-02T03:04:05.000Z'),
+      cwd: '/work/b',
+      updatedAt: 2_000,
+    });
   });
 });
 
@@ -369,5 +395,15 @@ describe('sessionIndex query semantics', () => {
     const ascGroups = face.listByWorkspace({ archived: 'all', sort: 'updated_at_asc', groupPageSize: 1 });
     expect(ascGroups.groups.map((group) => group.workspaceId)).toEqual(['wb', null, 'wa']);
     expect(ascGroups.groups[2]?.sessions.map((row) => row.id)).toEqual(['s3']);
+
+    expect(face.listAll({ archived: 'all' }).map((row) => row.id)).toEqual([
+      's1', 's8', 's2', 's7', 's3', 's6', 's4', 's5',
+    ]);
+    expect(face.listAll({ workspaceIds: ['wb'], sort: 'updated_at_asc' }).map((row) => row.id)).toEqual([
+      's5', 's4',
+    ]);
+    expect(face.listAll({ archived: 'all', hasPrompt: false }).map((row) => row.id)).toEqual([
+      's8', 's2', 's5',
+    ]);
   });
 });

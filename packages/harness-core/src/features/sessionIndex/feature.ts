@@ -18,9 +18,11 @@ import { useExpose, useReady } from '@moonshot-ai/agent-core/kernel/index';
 import { sessionWorkspaceId } from '#/features/workspaces/index';
 
 import {
+  listAllSummaries,
   listSummaries,
   listWorkspaceGroups,
   type SessionGroupPage,
+  type SessionIndexFilterQuery,
   type SessionIndexGroupQuery,
   type SessionIndexQuery,
   type SessionSummaryPage,
@@ -43,6 +45,7 @@ export interface SessionIndexFace {
   get(id: string): SessionSummaryRow | undefined;
   list(query?: SessionIndexQuery): SessionSummaryPage;
   listByWorkspace(query?: SessionIndexGroupQuery): SessionGroupPage;
+  listAll(query?: SessionIndexFilterQuery): readonly SessionSummaryRow[];
 }
 
 export const SessionIndexRef = createFacadeToken<SessionIndexFace>('sessionIndex');
@@ -50,6 +53,7 @@ export const SessionIndexRef = createFacadeToken<SessionIndexFace>('sessionIndex
 interface CatalogFields {
   readonly id: string;
   readonly workspaceId: string | null;
+  readonly cwd: string | null;
   readonly title: string | null;
   readonly archived: number;
   readonly archivedAt: number | null;
@@ -75,20 +79,22 @@ export function createSessionIndex(props: CreateSessionIndexProps): FeatureSpec 
         'INSERT OR IGNORE INTO session_summary (id, created_at, updated_at) VALUES (?, ?, ?)',
       );
       const upsertCatalog = db.prepare(`
-        INSERT INTO session_summary (id, workspace_id, title, archived, archived_at, created_at, updated_at)
-        VALUES ($id, $workspaceId, $title, $archived, $archivedAt, $now, $now)
+        INSERT INTO session_summary (id, workspace_id, cwd, title, archived, archived_at, created_at, updated_at)
+        VALUES ($id, $workspaceId, $cwd, $title, $archived, $archivedAt, $now, $now)
         ON CONFLICT(id) DO UPDATE SET
           workspace_id = $workspaceId,
+          cwd = $cwd,
           title = $title,
           archived = $archived,
           archived_at = $archivedAt,
           updated_at = $now
       `);
       const upsertCatalogFields = db.prepare(`
-        INSERT INTO session_summary (id, workspace_id, title, archived, archived_at)
-        VALUES ($id, $workspaceId, $title, $archived, $archivedAt)
+        INSERT INTO session_summary (id, workspace_id, cwd, title, archived, archived_at)
+        VALUES ($id, $workspaceId, $cwd, $title, $archived, $archivedAt)
         ON CONFLICT(id) DO UPDATE SET
           workspace_id = $workspaceId,
+          cwd = $cwd,
           title = $title,
           archived = $archived,
           archived_at = $archivedAt
@@ -216,6 +222,7 @@ export function createSessionIndex(props: CreateSessionIndexProps): FeatureSpec 
         },
         list: (query) => listSummaries(db, query),
         listByWorkspace: (query) => listWorkspaceGroups(db, query),
+        listAll: (query) => listAllSummaries(db, query),
       };
       useExpose(SessionIndexRef, face);
     },
@@ -226,10 +233,16 @@ function catalogFieldsOf(record: SessionRecord): CatalogFields {
   return {
     id: record.id,
     workspaceId: sessionWorkspaceId(record) ?? null,
+    cwd: sessionCwd(record) ?? null,
     title: record.title ?? null,
     archived: record.metadata?.['archived'] === true ? 1 : 0,
     archivedAt: archivedAtMs(record.metadata?.['archived_at']),
   };
+}
+
+function sessionCwd(record: SessionRecord): string | undefined {
+  const value = record.metadata?.['cwd'];
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
 function archivedAtMs(value: unknown): number | null {

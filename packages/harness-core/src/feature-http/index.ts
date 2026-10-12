@@ -15,3 +15,4 @@ export type { WsRegistry, WsRegistryEntry } from './ws';
 export { ErrorCode } from './route/index';
 export * from './route-builtin/index';
 export * from './route-features/index';
+export * from './route-v2/index';

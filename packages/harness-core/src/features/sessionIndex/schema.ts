@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3';
 export interface SessionSummaryRow {
   readonly id: string;
   readonly workspaceId: string | null;
+  readonly cwd: string | null;
   readonly title: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;
@@ -16,6 +17,7 @@ export interface SessionSummaryRow {
 export interface RawSummaryRow {
   readonly id: string;
   readonly workspace_id: string | null;
+  readonly cwd: string | null;
   readonly title: string | null;
   readonly created_at: number | null;
   readonly updated_at: number | null;
@@ -31,6 +33,7 @@ export function migrateSessionIndex(db: Database.Database): void {
     CREATE TABLE IF NOT EXISTS session_summary (
       id TEXT PRIMARY KEY,
       workspace_id TEXT,
+      cwd TEXT,
       title TEXT,
       created_at INTEGER,
       updated_at INTEGER,
@@ -43,12 +46,19 @@ export function migrateSessionIndex(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS session_summary_updated_at ON session_summary (updated_at);
     CREATE INDEX IF NOT EXISTS session_summary_workspace_id ON session_summary (workspace_id);
   `);
+  const columns = db
+    .prepare<unknown[], { name: string }>('PRAGMA table_info(session_summary)')
+    .all();
+  if (!columns.some((column) => column.name === 'cwd')) {
+    db.exec('ALTER TABLE session_summary ADD COLUMN cwd TEXT');
+  }
 }
 
 export function toSummaryRow(row: RawSummaryRow): SessionSummaryRow {
   return {
     id: row.id,
     workspaceId: row.workspace_id,
+    cwd: row.cwd,
     title: row.title,
     createdAt: row.created_at ?? 0,
     updatedAt: row.updated_at ?? 0,

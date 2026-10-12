@@ -18,6 +18,7 @@ import { useGuiStoreRoutes } from './route-builtin/gui-store';
 import { useMetaRoutes } from './route-builtin/meta';
 import { useWebAssetRoutes } from './route-builtin/web-assets';
 import { useFeatureFacadeRoutes } from './route-features/index';
+import { useV2SessionRoutes, V2_HTTP_PREFIX } from './route-v2/index';
 import { createHttpServer, type Http, type HttpHandler, type HttpListen } from './server';
 import { useWsEndpoint } from './ws';
 
@@ -87,6 +88,7 @@ export function createHttp(options: CreateHttpOptions = {}): FeatureSpec {
       const prefix = options.prefix ?? DEFAULT_HTTP_PREFIX;
       useFacadeRoutes(prefix);
       useFeatureFacadeRoutes(prefix);
+      useV2SessionRoutes(V2_HTTP_PREFIX);
       useMetaRoutes(prefix, {
         version: options.version,
         serverId: randomUUID(),

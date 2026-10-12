@@ -478,6 +478,28 @@ describe('app-session-agent units', () => {
     await app.disposeAsync();
   });
 
+  it('fires session.meta_updated on the app node for cold sessions without double-firing live ones', async () => {
+    const space = memorySessionSpace();
+    const app = createHarness({ space });
+    const cold = await app.open({ title: 'cold' });
+    await app.close(cold.sessionId);
+    const live = await app.open({ title: 'live' });
+    const seen: Array<{ sessionId: string; title?: string }> = [];
+    app.on('session.meta_updated', (event) => {
+      const payload = event as unknown as { sessionId: string; meta?: { title?: string } };
+      seen.push({ sessionId: payload.sessionId, title: payload.meta?.title });
+    });
+    await app.updateSession(cold.sessionId, { title: 'cold-renamed' });
+    expect(seen).toEqual([{ sessionId: cold.sessionId, title: 'cold-renamed' }]);
+    expect((await space.get(cold.sessionId))?.title).toBe('cold-renamed');
+    await app.updateSession(live.sessionId, { title: 'live-renamed' });
+    expect(seen).toEqual([
+      { sessionId: cold.sessionId, title: 'cold-renamed' },
+      { sessionId: live.sessionId, title: 'live-renamed' },
+    ]);
+    await app.disposeAsync();
+  });
+
   it('fires agent.opened with reopened discrimination and agent.closed on the session node', async () => {
     const env = await testStores();
     const app = createHarness({ features: [] });

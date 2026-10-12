@@ -18,6 +18,8 @@ export interface SessionIndexQuery {
   readonly pageToken?: string;
 }
 
+export type SessionIndexFilterQuery = Omit<SessionIndexQuery, 'pageSize' | 'page' | 'pageToken'>;
+
 export interface SessionIndexGroupQuery extends SessionIndexQuery {
   readonly groupPageSize?: number;
 }
@@ -76,6 +78,21 @@ interface RepRow {
   readonly group_key: string;
   readonly sort_key: number;
   readonly group_total: number;
+}
+
+export function listAllSummaries(
+  db: Database.Database,
+  query: SessionIndexFilterQuery = {},
+): readonly SessionSummaryRow[] {
+  const sort = sortSpecOf(query.sort ?? 'updated_at_desc');
+  const dir = sort.ascending ? 'ASC' : 'DESC';
+  const where = filterWhere(query);
+  const rows = db
+    .prepare<unknown[], RawSummaryRow>(
+      `SELECT * FROM session_summary ${where.sql} ORDER BY ${sort.keyExpr} ${dir}, id ${dir}`,
+    )
+    .all(...where.params);
+  return rows.map(toSummaryRow);
 }
 
 export function listSummaries(db: Database.Database, query: SessionIndexQuery = {}): SessionSummaryPage {

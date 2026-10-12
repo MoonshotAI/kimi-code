@@ -15,6 +15,7 @@ import {
   createFeature,
   createMemoryMediaStore,
   createMemoryMediaUploadCache,
+  createUserEntry,
   createUserMessage,
   MAIN_AGENT_ID,
   memorySessionSpace,
@@ -48,6 +49,7 @@ import { createFiles } from '#/features/files/index';
 import { createGoal, GoalRef } from '#/features/goal/index';
 import { createKimi } from '#/features/kimi/index';
 import { createMedia } from '#/features/media/index';
+import { createSessionIndex } from '#/features/sessionIndex/index';
 import {
   interaction,
   InteractionRef,
@@ -1198,6 +1200,360 @@ describe('feature-http facade routes', () => {
     const missing = await get(env, '/sessions/ses_unknown/questions');
     expect(missing.status).toBe(200);
     expect(await missing.json()).toMatchObject({ code: 40401 });
+  });
+});
+
+describe('feature-http v2 session routes', () => {
+  const getV2 = (env: HttpEnv, path: string): Promise<Response> =>
+    fetch(`${env.origin}/api/v2${path}`);
+
+  const postV2 = (env: HttpEnv, path: string, body?: unknown): Promise<Response> =>
+    fetch(`${env.origin}/api/v2${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+
+  interface V2SeedEnv {
+    readonly env: HttpEnv;
+    tick(ms: number): number;
+  }
+
+  async function mountV2(features: readonly FeatureSpec[] = []): Promise<V2SeedEnv> {
+    let now = 10_000;
+    const env = await mountHttp([
+      bindTestLlm(createMockRequester()),
+      createSessionIndex({ dbPath: ':memory:', now: () => now }),
+      ...features,
+    ]);
+    return {
+      env,
+      tick(ms: number): number {
+        now = ms;
+        return now;
+      },
+    };
+  }
+
+  it('serves the flat session list with kap wire shape, filters and sorts', async () => {
+    const bg = new Map<string, BgHandle>();
+    const { env, tick } = await mountV2([bindTestBgTool(bg)]);
+
+    const a = await openMain(env, 'ses_a');
+    tick(11_000);
+    queue = [
+      { toolCall: { name: 'TestBg', arguments: JSON.stringify({ description: 'a bg' }) } },
+      { text: 'done' },
+    ];
+    await runTurn(a.get(MAIN_AGENT_ID) as AgentHandle, 'first task');
+    expect(bg.size).toBe(1);
+
+    tick(12_000);
+    await env.app.open({ sessionId: 'ses_b', title: 'b title', metadata: { workspaceId: 'wa' } });
+    await env.app.close('ses_b');
+
+    tick(14_000);
+    const c = await env.app.open({ sessionId: 'ses_c', title: 'c title', metadata: { workspaceId: 'wb' } });
+    tick(15_000);
+    c.node.fire({
+      type: 'message.appended',
+      agentId: MAIN_AGENT_ID,
+      message: createUserEntry({ role: 'user', content: [{ type: 'text', text: 'fix bug' }] }),
+    });
+    await env.app.close('ses_c');
+    tick(16_000);
+    await env.app.updateSession('ses_c', {
+      metadata: { archived: true, archived_at: '2026-04-01T00:00:00.000Z' },
+    });
+
+    tick(17_000);
+    const d = await env.app.open({ sessionId: 'ses_d' });
+    tick(18_000);
+    d.node.fire({
+      type: 'session.meta_updated',
+      meta: { lastTurn: { turnId: 1, outcome: 'failed' } },
+    });
+    await env.app.close('ses_d');
+
+    tick(19_000);
+    await env.app.updateSession('ses_b', { title: 'b renamed' });
+
+    const ids = (body: { data: { items: { id: string }[] } }): string[] =>
+      body.data.items.map((item) => item.id);
+
+    const base = await (await getV2(env, '/sessions')).json();
+    expect(ids(base)).toEqual(['ses_b', 'ses_d', 'ses_a']);
+    expect(base.data.total).toBe(3);
+    expect(base.data.has_more).toBe(false);
+    expect(base.data.next_page_token).toBeNull();
+    const liveA = base.data.items.find((item: { id: string }) => item.id === 'ses_a');
+    expect(liveA).toMatchObject({
+      id: 'ses_a',
+      workspace: { id: '', cwd: null },
+      meta: {
+        title: null,
+        last_prompt: 'first task',
+        created_at: 10_000,
+        archived: false,
+        archived_at: null,
+      },
+      activity: { status: 'running', model: 'test-model' },
+    });
+    const coldB = base.data.items.find((item: { id: string }) => item.id === 'ses_b');
+    expect(coldB).toMatchObject({
+      workspace: { id: 'wa', cwd: null },
+      meta: { title: 'b renamed', last_prompt: null, updated_at: 19_000 },
+      activity: { status: 'idle', model: null },
+    });
+
+    const all = await (await getV2(env, '/sessions?meta.archived=all')).json();
+    expect(ids(all)).toEqual(['ses_b', 'ses_d', 'ses_c', 'ses_a']);
+    expect(all.data.total).toBe(4);
+    const archivedC = all.data.items.find((item: { id: string }) => item.id === 'ses_c');
+    expect(archivedC.meta).toMatchObject({
+      archived: true,
+      archived_at: Date.parse('2026-04-01T00:00:00.000Z'),
+    });
+
+    const archivedOnly = await (await getV2(env, '/sessions?meta.archived=true')).json();
+    expect(ids(archivedOnly)).toEqual(['ses_c']);
+
+    const running = await (await getV2(env, '/sessions?activity.status=running')).json();
+    expect(ids(running)).toEqual(['ses_a']);
+    const failed = await (await getV2(env, '/sessions?activity.status=failed')).json();
+    expect(ids(failed)).toEqual(['ses_d']);
+    const idle = await (await getV2(env, '/sessions?activity.status=idle&meta.archived=all')).json();
+    expect(ids(idle)).toEqual(['ses_b', 'ses_c']);
+    const none = await (await getV2(env, '/sessions?activity.status=approval&activity.status=question')).json();
+    expect(none.data.items).toEqual([]);
+
+    const withPrompt = await (await getV2(env, '/sessions?meta.has_prompt=true&meta.archived=all')).json();
+    expect(ids(withPrompt)).toEqual(['ses_c', 'ses_a']);
+    const noPrompt = await (await getV2(env, '/sessions?meta.has_prompt=false&meta.archived=all')).json();
+    expect(ids(noPrompt)).toEqual(['ses_b', 'ses_d']);
+
+    const waOnly = await (await getV2(env, '/sessions?workspace.id=wa&meta.archived=all')).json();
+    expect(ids(waOnly)).toEqual(['ses_b']);
+    const multi = await (
+      await getV2(env, '/sessions?workspace.id=wa&workspace.id=wb&meta.archived=all')
+    ).json();
+    expect(ids(multi)).toEqual(['ses_b', 'ses_c']);
+
+    const after = await (await getV2(env, '/sessions?meta.archived=all&meta.updated_after=16000')).json();
+    expect(ids(after)).toEqual(['ses_b', 'ses_d', 'ses_c']);
+    const bounded = await (
+      await getV2(env, '/sessions?meta.archived=all&meta.updated_after=11000&meta.updated_before=16000')
+    ).json();
+    expect(ids(bounded)).toEqual(['ses_c', 'ses_a']);
+
+    const asc = await (await getV2(env, '/sessions?meta.archived=all&sort=meta.updated_at_asc')).json();
+    expect(ids(asc)).toEqual(['ses_a', 'ses_c', 'ses_d', 'ses_b']);
+    const created = await (await getV2(env, '/sessions?meta.archived=all&sort=meta.created_at_desc')).json();
+    expect(ids(created)).toEqual(['ses_d', 'ses_c', 'ses_b', 'ses_a']);
+  });
+
+  it('paginates with the fingerprint-bound page_token, page mode and the ids projection', async () => {
+    const { env, tick } = await mountV2();
+    for (const [index, id] of ['s1', 's2', 's3', 's4', 's5'].entries()) {
+      tick(20_000 + index * 1_000);
+      await env.app.open({ sessionId: id, title: id });
+      await env.app.close(id);
+    }
+
+    const page1 = await (await getV2(env, '/sessions?page_size=2')).json();
+    const idsOf = (body: { data: { items: { id: string }[] } }): string[] =>
+      body.data.items.map((item) => item.id);
+    expect(idsOf(page1)).toEqual(['s5', 's4']);
+    expect(page1.data).toMatchObject({ total: 5, has_more: true });
+    expect(page1.data.next_page_token).not.toBeNull();
+
+    const page2 = await (
+      await getV2(env, `/sessions?page_size=2&page_token=${encodeURIComponent(page1.data.next_page_token)}`)
+    ).json();
+    expect(idsOf(page2)).toEqual(['s3', 's2']);
+    expect(page2.data).toMatchObject({ total: 5, has_more: true });
+
+    const page3 = await (
+      await getV2(env, `/sessions?page_size=2&page_token=${encodeURIComponent(page2.data.next_page_token)}`)
+    ).json();
+    expect(idsOf(page3)).toEqual(['s1']);
+    expect(page3.data).toMatchObject({ total: 5, has_more: false, next_page_token: null });
+
+    const drifted = await getV2(
+      env,
+      `/sessions?page_size=3&page_token=${encodeURIComponent(page1.data.next_page_token)}`,
+    );
+    expect(await drifted.json()).toMatchObject({ code: 40922 });
+    const garbage = await getV2(env, '/sessions?page_token=not-a-token');
+    expect(await garbage.json()).toMatchObject({ code: 40922 });
+
+    const offset = await (await getV2(env, '/sessions?page_size=2&page=2')).json();
+    expect(idsOf(offset)).toEqual(['s3', 's2']);
+    expect(offset.data).toMatchObject({ total: 5, has_more: true, next_page_token: null });
+
+    const projection = await (
+      await getV2(env, '/sessions?fields=id,archived&page_size=5000&meta.archived=all')
+    ).json();
+    expect(projection.data.items).toEqual([
+      { id: 's5', archived: false },
+      { id: 's4', archived: false },
+      { id: 's3', archived: false },
+      { id: 's2', archived: false },
+      { id: 's1', archived: false },
+    ]);
+    expect(projection.data.items[0]).not.toHaveProperty('meta');
+
+    const git = await (await getV2(env, '/sessions?include=git&page_size=1')).json();
+    expect(git.data.items[0].git).toEqual({ branch: null, pull_request: null });
+
+    const caps = await getV2(env, '/sessions?page_size=101');
+    expect(await caps.json()).toMatchObject({
+      code: 40001,
+      msg: 'page_size: page_size must be at most 100 without the ids projection',
+    });
+    const mutual = await getV2(env, `/sessions?page=1&page_token=${encodeURIComponent(page1.data.next_page_token)}`);
+    expect(await mutual.json()).toMatchObject({ code: 40001, msg: 'page: page and page_token are mutually exclusive' });
+    const badStatus = await getV2(env, '/sessions?activity.status=bogus');
+    expect(await badStatus.json()).toMatchObject({ code: 40001 });
+    const badDomain = await getV2(env, '/sessions?include=foo');
+    expect(await badDomain.json()).toMatchObject({ code: 40001, msg: "include: unknown domain 'foo'" });
+    const gitProjection = await getV2(env, '/sessions?include=git&fields=id,archived');
+    expect(await gitProjection.json()).toMatchObject({
+      code: 40001,
+      msg: 'include: include=git is not available with the ids projection',
+    });
+    const badFields = await getV2(env, '/sessions?fields=id,title');
+    expect(await badFields.json()).toMatchObject({ code: 40001, msg: "fields: unknown field 'title'" });
+    const groupSizeOutOfView = await getV2(env, '/sessions?group.page_size=3');
+    const groupSizeBody = await groupSizeOutOfView.json();
+    expect(groupSizeBody).toMatchObject({ code: 40001, msg: "group.page_size: group.page_size requires view='by_workspace'" });
+    expect(Array.isArray(groupSizeBody.details)).toBe(true);
+  });
+
+  it('groups sessions by workspace with per-group totals and group pagination', async () => {
+    const home = await tempDir('v2-groups-');
+    const { env, tick } = await mountV2([createWorkspaces({ homeDir: home })]);
+    const workspaces = env.app.resolve(WorkspaceRef);
+    if (workspaces === undefined) throw new Error('workspaces feature missing');
+    const wa = await workspaces.createOrTouch('/work/wa');
+
+    tick(21_000);
+    await env.app.open({ sessionId: 'g_a2', title: 'a2', metadata: { workspaceId: wa.id, cwd: '/work/wa/sub' } });
+    await env.app.close('g_a2');
+    tick(22_000);
+    await env.app.open({ sessionId: 'g_a1', title: 'a1', metadata: { workspaceId: wa.id } });
+    await env.app.close('g_a1');
+    tick(23_000);
+    await env.app.open({ sessionId: 'g_raw', title: 'raw', metadata: { workspaceId: 'ws-unregistered' } });
+    await env.app.close('g_raw');
+    tick(24_000);
+    await env.app.open({ sessionId: 'g_free', title: 'free' });
+    await env.app.close('g_free');
+
+    const grouped = await (
+      await getV2(env, '/sessions?view=by_workspace&group.page_size=1')
+    ).json();
+    expect(grouped.data.total).toBe(3);
+    expect(grouped.data.has_more).toBe(false);
+    const byId = new Map(
+      grouped.data.groups.map((group: { workspace: { id: string } }) => [group.workspace.id, group]),
+    );
+    const groupWa = byId.get(wa.id) as { workspace: { cwd: string }; sessions: { id: string; workspace: { cwd: string } }[]; total: number };
+    expect(groupWa.workspace.cwd).toBe('/work/wa');
+    expect(groupWa.total).toBe(2);
+    expect(groupWa.sessions.map((session) => session.id)).toEqual(['g_a1']);
+    expect(groupWa.sessions[0]?.workspace).toEqual({ id: wa.id, cwd: '/work/wa' });
+    const groupRaw = byId.get('ws-unregistered') as { workspace: { cwd: string | null }; total: number };
+    expect(groupRaw.workspace.cwd).toBeNull();
+    expect(groupRaw.total).toBe(1);
+    const groupFree = byId.get('') as { total: number };
+    expect(groupFree.total).toBe(1);
+
+    const flat = await (await getV2(env, `/sessions?workspace.id=${encodeURIComponent(wa.id)}`)).json();
+    const itemA2 = flat.data.items.find((item: { id: string }) => item.id === 'g_a2');
+    expect(itemA2.workspace).toEqual({ id: wa.id, cwd: '/work/wa/sub' });
+
+    const walk = async (token: string | null): Promise<{ ids: string[]; next: string | null }> => {
+      const query = token === null ? '' : `&page_token=${encodeURIComponent(token)}`;
+      const body = await (
+        await getV2(env, `/sessions?view=by_workspace&page_size=2${query}`)
+      ).json();
+      return {
+        ids: body.data.groups.map((group: { workspace: { id: string } }) => group.workspace.id),
+        next: body.data.next_page_token,
+      };
+    };
+    const first = await walk(null);
+    expect(first.ids).toEqual(['', 'ws-unregistered']);
+    expect(first.next).not.toBeNull();
+    const second = await walk(first.next);
+    expect(second.ids).toEqual([wa.id]);
+    expect(second.next).toBeNull();
+  });
+
+  it('batch archives and restores sessions with kap per-item semantics', async () => {
+    const { env } = await mountV2();
+    await openMain(env, 'ses_live');
+    await env.app.open({ sessionId: 'ses_cold', title: 'cold' });
+    await env.app.close('ses_cold');
+
+    const archived = await (
+      await postV2(env, '/sessions:archive', { ids: ['ses_live', 'ses_cold', 'ses_missing', 'ses_cold'] })
+    ).json();
+    expect(archived.data.succeeded).toBe(2);
+    expect(archived.data.failed).toBe(1);
+    expect(archived.data.results).toHaveLength(3);
+    expect(archived.data.results[0]).toEqual({ id: 'ses_live', ok: true });
+    expect(archived.data.results[1]).toEqual({ id: 'ses_cold', ok: true });
+    expect(archived.data.results[2]).toEqual({
+      id: 'ses_missing',
+      ok: false,
+      error: { code: 40401, message: 'session ses_missing does not exist' },
+    });
+    expect(env.app.get('ses_live')).toBeUndefined();
+    expect((await env.space.get('ses_live'))?.metadata?.['archived']).toBe(true);
+    expect((await env.space.get('ses_cold'))?.metadata?.['archived']).toBe(true);
+
+    const listedArchived = await (await getV2(env, '/sessions?meta.archived=true')).json();
+    expect(listedArchived.data.items.map((item: { id: string }) => item.id)).toEqual(
+      expect.arrayContaining(['ses_live', 'ses_cold']),
+    );
+
+    const restored = await (await postV2(env, '/sessions:restore', { ids: ['ses_cold'] })).json();
+    expect(restored.data).toMatchObject({ succeeded: 1, failed: 0 });
+    expect((await env.space.get('ses_cold'))?.metadata?.['archived']).toBe(false);
+    const listedDefault = await (await getV2(env, '/sessions')).json();
+    expect(listedDefault.data.items.map((item: { id: string }) => item.id)).toEqual(['ses_cold']);
+    expect(listedDefault.data.items[0].meta.archived_at).toBeNull();
+
+    await openMain(env, 'ses_stay');
+    await postV2(env, '/sessions:archive', { ids: ['ses_stay'] });
+    const revived = await env.app.open({ sessionId: 'ses_stay' });
+    const restoredLive = await (await postV2(env, '/sessions:restore', { ids: ['ses_stay'] })).json();
+    expect(restoredLive.data).toMatchObject({ succeeded: 1, failed: 0 });
+    expect(env.app.get('ses_stay')).toBe(revived);
+    expect((await env.space.get('ses_stay'))?.metadata?.['archived']).toBe(false);
+
+    const empty = await postV2(env, '/sessions:archive', { ids: [] });
+    expect(await empty.json()).toMatchObject({ code: 40001 });
+    const blank = await postV2(env, '/sessions:archive', { ids: [''] });
+    expect(await blank.json()).toMatchObject({ code: 40001 });
+    const missingIds = await postV2(env, '/sessions:archive', {});
+    expect(await missingIds.json()).toMatchObject({ code: 40001 });
+    const tooMany = await postV2(env, '/sessions:archive', {
+      ids: Array.from({ length: 5001 }, (_, index) => `s${index}`),
+    });
+    expect(await tooMany.json()).toMatchObject({
+      code: 40001,
+      msg: 'ids: ids must contain at most 5000 unique entries',
+    });
+  });
+
+  it('reports 40952 when the session index feature is absent', async () => {
+    const env = await mountHttp([bindTestLlm(createMockRequester())]);
+    const response = await getV2(env, '/sessions');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ code: 40952 });
   });
 });
 

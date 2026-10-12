@@ -33,6 +33,7 @@ import {
   createShellCommand,
   createSessionExport,
   createSessionInit,
+  createSessionIndex,
   createSkill,
   createSpawn,
   createSummarize,
@@ -81,6 +82,10 @@ export function mountExample(options?: { http?: boolean; acp?: boolean }): Examp
       createExternalHooks({ workDir: process.cwd(), host: createNodeOsHost() }),
       createSessionExport({
         version: '0.0.0',
+        sessionDir: (sessionId) => join(dataRoot, sessionId),
+      }),
+      createSessionIndex({
+        dbPath: join(dataRoot, '..', 'session-index', 'sessions.db'),
         sessionDir: (sessionId) => join(dataRoot, sessionId),
       }),
       createFiles({ dir: join(dataRoot, '..', 'files') }),
