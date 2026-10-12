@@ -8,13 +8,14 @@ export function QuestionDialog() {
   const [showCustom, setShowCustom] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(1);
   const [questionIndex, setQuestionIndex] = useState(0);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [multiSelected, setMultiSelected] = useState<string[]>([]);
+  const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
 
   const questions = pendingQuestion?.questions ?? [];
   const question = questions[questionIndex];
   const isMultiSelect = question?.multi_select === true;
   const isLastQuestion = questionIndex + 1 >= questions.length;
+  const currentAnswer = question ? answers[question.question] : undefined;
+  const selectedValues = Array.isArray(currentAnswer) ? currentAnswer : typeof currentAnswer === "string" ? [currentAnswer] : [];
 
   useEffect(() => {
     if (pendingQuestion) {
@@ -23,14 +24,13 @@ export function QuestionDialog() {
       setSelectedIndex(1);
       setQuestionIndex(0);
       setAnswers({});
-      setMultiSelected([]);
     }
   }, [pendingQuestion?.id]);
 
   if (!pendingQuestion || !question) return null;
 
   // Step through the questions one by one; submit all answers after the last.
-  const handleAnswer = async (answer: string) => {
+  const handleAnswer = async (answer: string | string[]) => {
     const nextAnswers = { ...answers, [question.question]: answer };
     if (!isLastQuestion) {
       setAnswers(nextAnswers);
@@ -38,17 +38,32 @@ export function QuestionDialog() {
       setShowCustom(false);
       setCustomInput("");
       setSelectedIndex(1);
-      setMultiSelected([]);
     } else {
-      await respondQuestion(nextAnswers);
+      await respondQuestion(
+        Object.fromEntries(Object.entries(nextAnswers).map(([key, value]) => [key, Array.isArray(value) ? value.join(", ") : value])),
+      );
     }
+  };
+
+  const handleBack = () => {
+    setQuestionIndex(questionIndex - 1);
+    setShowCustom(false);
+    setCustomInput("");
+    setSelectedIndex(1);
   };
 
   const handleSelect = async (optionLabel: string) => {
     if (isMultiSelect) {
-      setMultiSelected((prev) =>
-        prev.includes(optionLabel) ? prev.filter((value) => value !== optionLabel) : [...prev, optionLabel],
-      );
+      setAnswers((currentAnswers) => {
+        const answer = currentAnswers[question.question];
+        const values = Array.isArray(answer) ? answer : [];
+        return {
+          ...currentAnswers,
+          [question.question]: values.includes(optionLabel)
+            ? values.filter((value) => value !== optionLabel)
+            : [...values, optionLabel],
+        };
+      });
       return;
     }
     await handleAnswer(optionLabel);
@@ -58,7 +73,7 @@ export function QuestionDialog() {
     const value = customInput.trim();
     if (!value) return;
     if (isMultiSelect) {
-      setMultiSelected((prev) => (prev.includes(value) ? prev : [...prev, value]));
+      if (!selectedValues.includes(value)) await handleSelect(value);
       setCustomInput("");
       setShowCustom(false);
       return;
@@ -68,14 +83,21 @@ export function QuestionDialog() {
 
   const options = question.options || [];
   const customIndex = options.length + 1;
-  const customValues = multiSelected.filter((value) => !options.some((option) => option.label === value));
+  const customValues = selectedValues.filter((value) => !options.some((option) => option.label === value));
 
   return (
     <div className={cn("mb-0.5 border border-blue-200 dark:border-blue-800 rounded-lg overflow-hidden bg-background flex flex-col shrink")}>
       <div className="p-2 space-y-2">
         {questions.length > 1 && (
-          <div className="text-[10px] text-muted-foreground">
-            Question {questionIndex + 1} of {questions.length}
+          <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+            <span>
+              Question {questionIndex + 1} of {questions.length}
+            </span>
+            {questionIndex > 0 && (
+              <button onClick={handleBack} className="cursor-pointer hover:text-foreground">
+                Back
+              </button>
+            )}
           </div>
         )}
         {question.header && <div className="text-[10px] text-muted-foreground uppercase tracking-wide">{question.header}</div>}
@@ -83,7 +105,7 @@ export function QuestionDialog() {
         {isMultiSelect && <div className="text-[10px] text-muted-foreground">Select all that apply</div>}
         <div className="space-y-1.5">
           {options.map((option, idx) => {
-            const isChecked = isMultiSelect && multiSelected.includes(option.label);
+            const isChecked = selectedValues.includes(option.label);
             const isHighlighted = selectedIndex === idx + 1;
             return (
               <button
@@ -165,12 +187,22 @@ export function QuestionDialog() {
               <span className="font-medium">Custom response…</span>
             </button>
           )}
+          {!isMultiSelect && !isLastQuestion && currentAnswer !== undefined && (
+            <button
+              onClick={() => {
+                void handleAnswer(currentAnswer);
+              }}
+              className="w-full px-2 py-1 rounded-md text-xs bg-blue-500 text-white cursor-pointer"
+            >
+              Next
+            </button>
+          )}
           {isMultiSelect && (
             <button
               onClick={() => {
-                void handleAnswer(multiSelected.join(", "));
+                void handleAnswer(selectedValues);
               }}
-              disabled={multiSelected.length === 0}
+              disabled={selectedValues.length === 0}
               className="w-full px-2 py-1 rounded-md text-xs bg-blue-500 text-white disabled:opacity-50 cursor-pointer"
             >
               {isLastQuestion ? "Submit" : "Next"}
