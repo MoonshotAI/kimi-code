@@ -75,6 +75,37 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
     expect(cleanTelemetryString(String.raw`\\.\C:\Users\alice\cache`)).toBe(REDACTED);
   });
 
+  it('redacts mixed-separator Windows device prefixes before UNC roots', () => {
+    for (const prefix of ['//.\\', '/\\.\\', '\\/.\\', '//./', '//?\\']) {
+      expect(cleanTelemetryString(prefix + String.raw`C:\Users\alice\secret.txt`)).toBe(REDACTED);
+      expect(cleanTelemetryString(prefix + String.raw`C:\Users\alice\cache`)).toBe(REDACTED);
+    }
+  });
+
+  it('splits shell-delimited drive paths without exposing the second path', () => {
+    for (const separator of ['&&', '&', '||', '|', ';']) {
+      expect(cleanTelemetryString(String.raw`C:\a\cache` + separator + String.raw`C:\Users\bob\private`)).toBe(
+        `${REDACTED}${separator}${REDACTED}`,
+      );
+      expect(cleanTelemetryString(String.raw`C:\a\node_modules\pkg` + separator + String.raw`D:\Users\bob\private`)).toBe(
+        `node_modules/pkg${separator}${REDACTED}`,
+      );
+    }
+    expect(cleanTelemetryString(String.raw`C:\Users\alice\a&&b\secret.txt`)).toBe(REDACTED);
+  });
+
+  it('splits shell-delimited POSIX paths before preserving dependency tails', () => {
+    for (const separator of [';', '&&', '&', '||', '|']) {
+      expect(cleanTelemetryString('/home/alice/node_modules/pkg' + separator + '/home/bob/private')).toBe(
+        `node_modules/pkg${separator}${REDACTED}`,
+      );
+      expect(cleanTelemetryString('/home/alice/cache' + separator + '/home/bob/private')).toBe(
+        `${REDACTED}${separator}${REDACTED}`,
+      );
+    }
+    expect(cleanTelemetryString('/home/alice/a;b&&c/secret.txt')).toBe(REDACTED);
+  });
+
   it('redacts POSIX paths with repeated separators', () => {
     expect(cleanTelemetryString('/home/alice//secret.txt')).toBe(REDACTED);
     expect(cleanTelemetryString('/home/alice/secret.txt//')).toBe(REDACTED);
@@ -214,6 +245,13 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
     expect(cleanTelemetryString('C:\\Users\\alice-node_modules\\private\\secret.txt')).toBe(
       REDACTED,
     );
+  });
+
+  it('redacts dependency tails containing another drive or parent traversal', () => {
+    expect(cleanTelemetryString(String.raw`/home/alice/node_modules/pkg\C:\Users\bob\private`)).toBe(REDACTED);
+    expect(cleanTelemetryString(String.raw`C:\Users\alice\node_modules\pkg\..\..\Users\bob\secret`)).toBe(REDACTED);
+    expect(cleanTelemetryString('/home/alice/node_modules/pkg/../../private')).toBe(REDACTED);
+    expect(cleanTelemetryString('/home/alice/node_modules/pkg/..cache/index.js')).toBe('node_modules/pkg/..cache/index.js');
   });
 
   it('does not swallow trailing diagnostic text after a spaced Windows path', () => {
