@@ -265,7 +265,9 @@ async function waitForLockRelease(homeDir: string): Promise<void> {
   const deadline = Date.now() + LOCK_RELEASE_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if ((await inspectRemoteControlLock(homeDir)) === undefined) return;
-    await new Promise((resolve) => setTimeout(resolve, LOCK_RELEASE_POLL_MS));
+    await new Promise((resolve) => {
+      setTimeout(resolve, LOCK_RELEASE_POLL_MS);
+    });
   }
 }
 
