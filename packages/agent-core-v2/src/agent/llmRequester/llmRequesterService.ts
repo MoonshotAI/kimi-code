@@ -424,6 +424,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       };
       this.logRequest(logInput);
       const recorded = this.recordRequest(logInput);
+      const contextRevision = this.context.prefixRevision();
       const startedAt = Date.now();
 
       let message: Message | undefined;
@@ -488,7 +489,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       if (request.source?.type === 'turn') {
         this.states.set(llmRequesterLastTurnRequestKey, {
           modelAlias: request.modelAlias,
-          contextRevision: this.context.prefixRevision(),
+          contextRevision,
           toolsHash: recorded.toolsHash,
           systemPromptHash: recorded.systemPromptHash,
           inputTokens: inputTotal(usage ?? emptyUsage()),
