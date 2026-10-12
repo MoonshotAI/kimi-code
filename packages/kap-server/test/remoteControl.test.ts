@@ -33,6 +33,7 @@ interface Envelope<T> {
   msg: string;
   data: T;
   request_id: string;
+  details?: unknown;
 }
 
 interface RemoteControlStatusWire {
@@ -202,6 +203,13 @@ describe('server-v2 /api/v1/remote-control', () => {
     const posted = await postRemoteControl(true);
     expect(posted.code).toBe(ErrorCode.REMOTE_CONTROL_ALREADY_RUNNING);
     expect(posted.msg).toContain('already running');
+    expect(posted.details).toMatchObject({
+      pid: process.pid,
+      local_origin: 'http://127.0.0.1:58627',
+      device_id: 'other-device',
+      url: 'https://code-rc.kimi.com/devices/other-device/',
+    });
+    expect(typeof (posted.details as { started_at?: unknown }).started_at).toBe('number');
   });
 
   it('proxies device list and management operations through the Node-side cloud session', async () => {

@@ -12,12 +12,14 @@ import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
+  remoteControlAlreadyRunningDetailsSchema,
   remoteControlDeviceListSchema,
   remoteControlDeviceMutationResponseSchema,
   remoteControlDeviceParamsSchema,
   remoteControlStatusSchema,
   renameRemoteControlDeviceRequestSchema,
   setRemoteControlRequestSchema,
+  type RemoteControlAlreadyRunningDetails,
   type RemoteControlStatusResponse,
 } from '../protocol/rest-remote-control';
 
@@ -85,7 +87,9 @@ export function registerRemoteControlRoutes(
       success: { data: remoteControlStatusSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
-        [ErrorCode.REMOTE_CONTROL_ALREADY_RUNNING]: {},
+        [ErrorCode.REMOTE_CONTROL_ALREADY_RUNNING]: {
+          detailsSchema: remoteControlAlreadyRunningDetailsSchema,
+        },
         [ErrorCode.INTERNAL_ERROR]: {},
       },
       description: 'Start or stop the Remote Control tunnel',
@@ -112,7 +116,13 @@ export function registerRemoteControlRoutes(
         if (error instanceof RemoteControlAlreadyRunningError) {
           opts.telemetry?.track2('remote_control_toggle', { enabled, outcome: 'already_running' });
           reply.send(
-            errEnvelope(ErrorCode.REMOTE_CONTROL_ALREADY_RUNNING, error.message, req.id),
+            errEnvelope(ErrorCode.REMOTE_CONTROL_ALREADY_RUNNING, error.message, req.id, undefined, {
+              pid: error.holder.pid,
+              local_origin: error.holder.localOrigin,
+              device_id: error.holder.deviceId,
+              url: error.holder.url,
+              started_at: error.holder.startedAt,
+            } satisfies RemoteControlAlreadyRunningDetails),
           );
           return;
         }

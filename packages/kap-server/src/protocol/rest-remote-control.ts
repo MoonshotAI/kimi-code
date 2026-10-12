@@ -52,3 +52,14 @@ export const remoteControlDeviceMutationResponseSchema = z.object({
 export type RemoteControlDeviceMutationResponse = z.infer<
   typeof remoteControlDeviceMutationResponseSchema
 >;
+
+export const remoteControlAlreadyRunningDetailsSchema = z.object({
+  pid: z.number().int(),
+  local_origin: z.string(),
+  device_id: z.string(),
+  url: z.string(),
+  started_at: z.number(),
+});
+export type RemoteControlAlreadyRunningDetails = z.infer<
+  typeof remoteControlAlreadyRunningDetailsSchema
+>;
