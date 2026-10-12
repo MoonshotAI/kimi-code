@@ -196,6 +196,19 @@ Deprecated — only stops a server started by a version before 0.28.0. Those ver
 
 Generate a new persistent bearer token (written to `~/.kimi-code/server.token`); the previous token stops working immediately. The token is shared by the whole home directory, so every running instance picks the new one up on its next auth check — no restart needed.
 
+### `kimi app`
+
+Open Kimi Code desktop and start a new chat in the current directory or a specified directory:
+
+```sh
+kimi app
+kimi app ~/project
+```
+
+This requires an installed desktop version that supports opening workspaces from the CLI. Relative paths are resolved from the current directory. An existing workspace opens a new draft instead of restoring its previous session.
+
+If the system reports that it cannot open the app, the command suggests `kimi install-desktop`, which opens the download page. This command does not download or install the desktop app automatically.
+
 ### `kimi install-desktop`
 
 Print the Kimi Code desktop app page and open it in the default browser, so you can download and install the desktop app without leaving the terminal. The URL follows the active region: `https://www.kimi.com/code` on the mainland region, `https://www.kimi.ai/code` on the global region.

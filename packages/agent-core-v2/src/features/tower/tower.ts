@@ -4,6 +4,7 @@ export const TOWER_TOOL_NAMES = [
   'TowerPlan',
   'TowerSpawn',
   'TowerMerge',
+  'TowerRebase',
   'TowerTeardown',
   'TowerSend',
   'TowerInbox',
@@ -35,7 +36,7 @@ export type TowerEnterFailure =
 
 export type TowerEnterResult = { readonly entered: true } | TowerEnterFailure;
 
-export type TowerExitReason = 'user' | 'takeover' | 'foreign-reconcile';
+export type TowerExitReason = 'user' | 'takeover' | 'foreign-reconcile' | 'mode-mutex';
 
 export function towerEnterFailureMessage(failure: TowerEnterFailure): string {
   switch (failure.reason) {
@@ -59,9 +60,10 @@ export interface IAgentTowerService {
   readonly _serviceBrand: undefined;
 
   readonly isActive: boolean;
-  readonly requestedBase: string | undefined;
   enter(base?: string): Promise<TowerEnterResult>;
   exit(reason?: TowerExitReason): Promise<void>;
+  isBranchLeased(branch: string): boolean;
+  withBranchLease<T>(branch: string, execute: () => Promise<T>): Promise<T>;
 }
 
 export const IAgentTowerService = createDecorator<IAgentTowerService>('agentTowerService');
