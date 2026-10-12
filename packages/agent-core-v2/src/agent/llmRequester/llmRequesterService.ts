@@ -106,6 +106,7 @@ interface ResolvedLLMRequest {
   readonly systemPrompt: string;
   readonly tools: readonly Tool[];
   readonly messages: Message[];
+  readonly contextRevision: number;
   readonly source: AgentLLMRequestSource | undefined;
   readonly logFields: AgentLLMRequestLogFields;
 }
@@ -424,7 +425,6 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       };
       this.logRequest(logInput);
       const recorded = this.recordRequest(logInput);
-      const contextRevision = this.context.prefixRevision();
       const startedAt = Date.now();
 
       let message: Message | undefined;
@@ -489,7 +489,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       if (request.source?.type === 'turn') {
         this.states.set(llmRequesterLastTurnRequestKey, {
           modelAlias: request.modelAlias,
-          contextRevision,
+          contextRevision: request.contextRevision,
           toolsHash: recorded.toolsHash,
           systemPromptHash: recorded.systemPromptHash,
           inputTokens: inputTotal(usage ?? emptyUsage()),
@@ -746,6 +746,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       systemPrompt: overrides.systemPrompt ?? turnConfig?.systemPrompt ?? this.profile.getSystemPrompt(),
       tools: [...(overrides.tools ?? this.defaultTools())],
       messages: [...messages],
+      contextRevision: this.context.prefixRevision(),
       source: overrides.source,
       logFields: logFieldsForSource(overrides.source),
     };
