@@ -2,7 +2,7 @@ import { useInject } from '@moonshot-ai/agent-core';
 
 import { useHttpRoute } from '../feature';
 import { sendOk } from '../route/http';
-import { WsRegistryRef } from '../ws';
+import { WsRegistryRef } from '../ws-registry';
 
 export function useConnectionsRoutes(prefix: string): void {
   useHttpRoute({
@@ -21,6 +21,8 @@ export function useConnectionsRoutes(prefix: string): void {
           connected_at: connection.connectedAt,
           subscriptions: [...connection.subscriptions],
           agents: connection.agents,
+          protocol: connection.protocol,
+          has_client_hello: connection.hasClientHello,
         }));
       sendOk(request, response, { items });
     },

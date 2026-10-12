@@ -608,7 +608,7 @@ async function sendSessionRecord(
   sendOk(request, response, sessionView(record, app.get(record.id)));
 }
 
-function sessionView(record: SessionRecord, live: SessionHandle | undefined): SessionView {
+export function sessionView(record: SessionRecord, live: SessionHandle | undefined): SessionView {
   const archivedAt = record.metadata?.['archived_at'];
   const main = live?.get(MAIN_AGENT_ID);
   return {

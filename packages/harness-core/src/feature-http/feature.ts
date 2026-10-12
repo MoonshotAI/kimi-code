@@ -21,6 +21,8 @@ import { useFeatureFacadeRoutes } from './route-features/index';
 import { useV2SessionRoutes, V2_HTTP_PREFIX } from './route-v2/index';
 import { createHttpServer, type Http, type HttpHandler, type HttpListen } from './server';
 import { useWsEndpoint } from './ws';
+import { createWsRegistry, WsRegistryRef } from './ws-registry';
+import { useWsV1Endpoint } from './ws-v1/index';
 
 export interface HttpRoute {
   readonly id: string;
@@ -38,6 +40,7 @@ export interface CreateHttpOptions {
   readonly webAssetsDir?: string;
   readonly openInApps?: MetaOpenInApps;
   readonly corsOrigins?: readonly string[];
+  readonly wsHeartbeatMs?: number;
 }
 
 export const HttpRoutes = createCollection<HttpRoute>('http.routes');
@@ -98,7 +101,10 @@ export function createHttp(options: CreateHttpOptions = {}): FeatureSpec {
         openInApps: options.openInApps,
       });
       useGuiStoreRoutes(prefix, { persistPath: options.guiStorePath });
-      useWsEndpoint({ prefix });
+      const wsRegistry = createWsRegistry();
+      useExpose(WsRegistryRef, wsRegistry);
+      useWsV1Endpoint({ prefix, registry: wsRegistry, heartbeatIntervalMs: options.wsHeartbeatMs });
+      useWsEndpoint({ prefix: V2_HTTP_PREFIX, registry: wsRegistry });
       if (options.webAssetsDir !== undefined) {
         useWebAssetRoutes({ assetsDir: options.webAssetsDir, prefix });
       }

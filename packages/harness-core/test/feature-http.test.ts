@@ -3099,15 +3099,20 @@ type WsFrame = Record<string, unknown>;
 
 interface WsTestClient {
   readonly frames: WsFrame[];
+  readonly closed: Promise<{ code: number; reason: string }>;
   send(frame: unknown): void;
   next(match: (frame: WsFrame) => boolean): Promise<WsFrame>;
   close(): Promise<void>;
 }
 
-async function connectWs(env: HttpEnv): Promise<WsTestClient> {
-  const socket = new WebSocket(`${env.origin.replace(/^http/, 'ws')}/api/v1/ws`);
+async function connectWsPath(env: HttpEnv, path: string): Promise<WsTestClient> {
+  const socket = new WebSocket(`${env.origin.replace(/^http/, 'ws')}${path}`);
   const frames: WsFrame[] = [];
   const waiters: { match: (frame: WsFrame) => boolean; resolve: (frame: WsFrame) => void }[] = [];
+  let resolveClosed: (event: { code: number; reason: string }) => void = () => {};
+  const closed = new Promise<{ code: number; reason: string }>((resolve) => {
+    resolveClosed = resolve;
+  });
   socket.on('message', (data: RawData) => {
     const frame = JSON.parse(data.toString()) as WsFrame;
     frames.push(frame);
@@ -3117,12 +3122,16 @@ async function connectWs(env: HttpEnv): Promise<WsTestClient> {
       waiter.resolve(frame);
     }
   });
+  socket.once('close', (code: number, reason: Buffer) => {
+    resolveClosed({ code, reason: reason.toString() });
+  });
   await new Promise<void>((resolve, reject) => {
     socket.once('open', () => resolve());
     socket.once('error', reject);
   });
   return {
     frames,
+    closed,
     send: (frame) => socket.send(JSON.stringify(frame)),
     next: (match) =>
       new Promise<WsFrame>((resolve) => {
@@ -3143,6 +3152,14 @@ async function connectWs(env: HttpEnv): Promise<WsTestClient> {
         socket.close();
       }),
   };
+}
+
+async function connectWs(env: HttpEnv): Promise<WsTestClient> {
+  return connectWsPath(env, '/api/v2/ws');
+}
+
+async function connectWsV1(env: HttpEnv): Promise<WsTestClient> {
+  return connectWsPath(env, '/api/v1/ws');
 }
 
 describe('feature-http capabilities routes', () => {
@@ -3513,6 +3530,460 @@ describe('feature-http ws endpoint', () => {
     expect(await env.space.get('ses_ws_del')).toBeUndefined();
     await subscribed.close();
     await bystander.close();
+  });
+});
+
+describe('feature-http ws v1 (kap-aligned) endpoint', () => {
+  const hello = (id: string, payload: Record<string, unknown>): WsFrame => ({
+    type: 'client_hello',
+    id,
+    payload: { client_id: 'test-client', ...payload },
+  });
+
+  const subscribe = (id: string, payload: Record<string, unknown>): WsFrame => ({
+    type: 'subscribe',
+    id,
+    payload,
+  });
+
+  const subscribeV2 = (id: string, payload: Record<string, unknown>): WsFrame => ({
+    type: 'subscribe_v2',
+    id,
+    payload,
+  });
+
+  const durableSeqs = (client: WsTestClient): number[] =>
+    client.frames
+      .filter((frame) => frame['volatile'] !== true && typeof frame['seq'] === 'number')
+      .map((frame) => frame['seq'] as number);
+
+  const collectOps = (client: WsTestClient): Record<string, unknown>[] =>
+    client.frames
+      .filter((frame) => frame['type'] === 'transcript.ops')
+      .flatMap(
+        (frame) => ((frame['payload'] as Record<string, unknown>)['ops'] ?? []) as Record<string, unknown>[],
+      );
+
+  function runTurnWithPrompt(agent: AgentHandle, promptId: string, text = 'go'): Promise<void> {
+    const done = new Promise<void>((resolve) => {
+      agent.on('turn.done', () => {
+        resolve();
+      });
+    });
+    agent.submit(createUserMessage(text), { promptId });
+    return done;
+  }
+
+  it('greets with server_hello and answers client_hello with an ack', async () => {
+    const env = await mountHttp([]);
+    const client = await connectWsV1(env);
+    const greeting = await client.next((frame) => frame['type'] === 'server_hello');
+    expect(greeting).toMatchObject({
+      type: 'server_hello',
+      payload: {
+        protocol_version: 2,
+        heartbeat_ms: 10_000,
+        max_event_buffer_size: 1000,
+        capabilities: { event_batching: false, compression: false },
+      },
+    });
+    expect(typeof (greeting['payload'] as Record<string, unknown>)['ws_connection_id']).toBe('string');
+    expect(typeof greeting['timestamp']).toBe('string');
+
+    client.send(hello('h1', { subscriptions: [], cursors: {} }));
+    const ack = await client.next((frame) => frame['type'] === 'ack' && frame['id'] === 'h1');
+    expect(ack).toMatchObject({
+      type: 'ack',
+      id: 'h1',
+      code: 0,
+      msg: 'success',
+      payload: { accepted_subscriptions: [], resync_required: [], cursors: {} },
+    });
+    await client.close();
+  });
+
+  it('streams kap-shaped session events with monotonic seq for a subscription', async () => {
+    const env = await mountHttp([bindTestLlm(createMockRequester())]);
+    const session = await openMain(env, 'ses_v1_stream');
+    const agent = session.get(MAIN_AGENT_ID) as AgentHandle;
+    const client = await connectWsV1(env);
+    await client.next((frame) => frame['type'] === 'server_hello');
+
+    client.send(hello('h1', { subscriptions: ['ses_v1_stream'], cursors: {} }));
+    const ack = await client.next((frame) => frame['type'] === 'ack' && frame['id'] === 'h1');
+    expect(ack).toMatchObject({
+      code: 0,
+      payload: { accepted_subscriptions: ['ses_v1_stream'], resync_required: [] },
+    });
+    const ackPayload = ack['payload'] as Record<string, unknown>;
+    const cursor = (ackPayload['cursors'] as Record<string, { seq: number; epoch: string }>)[
+      'ses_v1_stream'
+    ];
+    expect(typeof cursor.seq).toBe('number');
+    expect(typeof cursor.epoch).toBe('string');
+
+    queue = [{ text: 'hello kap' }];
+    await runTurnWithPrompt(agent, 'prompt-stream-1');
+
+    const submitted = await client.next((frame) => frame['type'] === 'prompt.submitted');
+    expect(submitted).toMatchObject({
+      session_id: 'ses_v1_stream',
+      payload: {
+        agentId: MAIN_AGENT_ID,
+        sessionId: 'ses_v1_stream',
+        promptId: 'prompt-stream-1',
+      },
+    });
+
+    const started = await client.next((frame) => frame['type'] === 'turn.started');
+    expect(started).toMatchObject({
+      session_id: 'ses_v1_stream',
+      payload: { turnId: 0, agentId: MAIN_AGENT_ID, sessionId: 'ses_v1_stream', prompt: 'go' },
+    });
+
+    const delta = await client.next((frame) => frame['type'] === 'assistant.delta');
+    expect(delta).toMatchObject({
+      session_id: 'ses_v1_stream',
+      volatile: true,
+      offset: 0,
+      payload: { turnId: 0, delta: 'hello kap', agentId: MAIN_AGENT_ID },
+    });
+
+    const stepCompleted = await client.next((frame) => frame['type'] === 'turn.step.completed');
+    expect(stepCompleted).toMatchObject({
+      payload: { turnId: 0, usage: { inputOther: 10, output: 5 } },
+    });
+
+    const ended = await client.next((frame) => frame['type'] === 'turn.ended');
+    expect(ended).toMatchObject({
+      payload: { turnId: 0, reason: 'completed', agentId: MAIN_AGENT_ID },
+    });
+
+    const promptCompleted = await client.next((frame) => frame['type'] === 'prompt.completed');
+    expect(promptCompleted).toMatchObject({
+      payload: { promptId: 'prompt-stream-1', reason: 'completed' },
+    });
+
+    const workChanged = await client.next((frame) => frame['type'] === 'event.session.work_changed');
+    expect(workChanged).toMatchObject({
+      session_id: 'ses_v1_stream',
+      payload: { busy: true, main_turn_active: true },
+    });
+
+    const seqs = durableSeqs(client);
+    expect(seqs.length).toBeGreaterThan(3);
+    expect([...seqs].sort((a, b) => a - b)).toEqual(seqs);
+
+    const listed = await get(env, '/connections');
+    const body = await listed.json();
+    const mine = body.data.items.find(
+      (item: Record<string, unknown>) => item['protocol'] === 'kap-v1',
+    );
+    expect(mine).toMatchObject({
+      protocol: 'kap-v1',
+      has_client_hello: true,
+      subscriptions: ['ses_v1_stream'],
+    });
+    await client.close();
+  });
+
+  it('broadcasts event.session.created to every connection', async () => {
+    const env = await mountHttp([bindTestLlm(createMockRequester())]);
+    const client = await connectWsV1(env);
+    client.send(hello('h1', { subscriptions: [] }));
+    await client.next((frame) => frame['type'] === 'ack' && frame['id'] === 'h1');
+
+    await openMain(env, 'ses_v1_created');
+    const created = await client.next((frame) => frame['type'] === 'event.session.created');
+    expect(created).toMatchObject({
+      session_id: 'ses_v1_created',
+      payload: { session: { id: 'ses_v1_created' } },
+    });
+    await client.close();
+  });
+
+  it('serves transcript.reset then live transcript.ops and suppresses raw projected frames', async () => {
+    const env = await mountHttp([bindTestLlm(createMockRequester())]);
+    const session = await openMain(env, 'ses_v1_transcript');
+    const agent = session.get(MAIN_AGENT_ID) as AgentHandle;
+    const client = await connectWsV1(env);
+    await client.next((frame) => frame['type'] === 'server_hello');
+    client.send(hello('h1', { subscriptions: [] }));
+    await client.next((frame) => frame['type'] === 'ack' && frame['id'] === 'h1');
+
+    client.send(subscribeV2('s1', { session_id: 'ses_v1_transcript', transcript: { [MAIN_AGENT_ID]: 'delta' } }));
+    const ack = await client.next((frame) => frame['type'] === 'ack' && frame['id'] === 's1');
+    expect(ack).toMatchObject({
+      code: 0,
+      payload: { accepted: ['ses_v1_transcript'], not_found: [], resync_required: [] },
+    });
+
+    const reset = await client.next((frame) => frame['type'] === 'transcript.reset');
+    expect(reset).toMatchObject({
+      session_id: 'ses_v1_transcript',
+      volatile: true,
+      payload: {
+        type: 'transcript.reset',
+        agent_id: MAIN_AGENT_ID,
+        has_more_older: false,
+        snapshot: { items: [], tasks: [], interactions: [], attachments: [], todos: [], prompts: [] },
+      },
+    });
+    expect(typeof (reset['payload'] as Record<string, unknown>)['seq']).toBe('number');
+
+    queue = [{ text: 'transcript live' }];
+    await runTurnWithPrompt(agent, 'prompt-transcript-1');
+
+    await vi.waitFor(() => {
+      const ops = collectOps(client);
+      const hasRunningTurn = ops.some(
+        (op) => op['op'] === 'turn.upsert' && (op['turn'] as Record<string, unknown>)['state'] === 'running',
+      );
+      const hasAppend = ops.some(
+        (op) => op['op'] === 'append' && typeof op['text'] === 'string' && (op['text'] as string).length > 0,
+      );
+      const hasCompletedTurn = ops.some(
+        (op) => op['op'] === 'turn.upsert' && (op['turn'] as Record<string, unknown>)['state'] === 'completed',
+      );
+      const hasCompletedPrompt = ops.some(
+        (op) =>
+          op['op'] === 'prompt.upsert' &&
+          (op['prompt'] as Record<string, unknown>)['promptId'] === 'prompt-transcript-1' &&
+          (op['prompt'] as Record<string, unknown>)['status'] === 'completed',
+      );
+      expect(hasRunningTurn).toBe(true);
+      expect(hasAppend).toBe(true);
+      expect(hasCompletedTurn).toBe(true);
+      expect(hasCompletedPrompt).toBe(true);
+    });
+    const appendText = collectOps(client)
+      .filter((op) => op['op'] === 'append')
+      .map((op) => op['text'])
+      .join('');
+    expect(appendText).toContain('transcript live');
+    const turnUpserts = collectOps(client).filter((op) => op['op'] === 'turn.upsert');
+    expect(turnUpserts.length).toBeGreaterThanOrEqual(2);
+    const runningTurn = turnUpserts.find(
+      (op) => (op['turn'] as Record<string, unknown>)['state'] === 'running',
+    );
+    expect((runningTurn?.['turn'] as Record<string, unknown> | undefined)?.['turnId']).toBe('t0');
+    const frameUpserts = collectOps(client).filter((op) => op['op'] === 'frame.upsert');
+    expect(
+      frameUpserts.some(
+        (op) =>
+          ((op['frame'] as Record<string, unknown>)['kind'] === 'text' ||
+            (op['frame'] as Record<string, unknown>)['kind'] === 'thinking') &&
+          (op['frame'] as Record<string, unknown>)['frameId'] === 't0.1.f1',
+      ),
+    ).toBe(true);
+    const opsSeqs = client.frames
+      .filter((frame) => frame['type'] === 'transcript.ops')
+      .map((frame) => (frame['payload'] as Record<string, unknown>)['seq'] as number);
+    expect([...opsSeqs].sort((a, b) => a - b)).toEqual(opsSeqs);
+
+    const rawProjected = client.frames.filter((frame) =>
+      ['turn.started', 'turn.ended', 'assistant.delta', 'prompt.submitted'].includes(
+        frame['type'] as string,
+      ),
+    );
+    expect(rawProjected).toEqual([]);
+
+    client.send({ type: 'unsubscribe_v2', id: 'u1', payload: { session_id: 'ses_v1_transcript' } });
+    const unsubAck = await client.next((frame) => frame['type'] === 'ack' && frame['id'] === 'u1');
+    expect(unsubAck).toMatchObject({ code: 0, payload: { accepted: ['ses_v1_transcript'] } });
+
+    const opsBefore = client.frames.filter((frame) => frame['type'] === 'transcript.ops').length;
+    queue = [{ text: 'after detach' }];
+    await runTurn(agent);
+    await client.next((frame) => frame['type'] === 'turn.started');
+    await client.next((frame) => frame['type'] === 'turn.ended');
+    expect(client.frames.filter((frame) => frame['type'] === 'transcript.ops')).toHaveLength(opsBefore);
+    await client.close();
+  });
+
+  it('replays journaled events from a cursor and echoes the server cursor', async () => {
+    const env = await mountHttp([bindTestLlm(createMockRequester())]);
+    const session = await openMain(env, 'ses_v1_replay');
+    const agent = session.get(MAIN_AGENT_ID) as AgentHandle;
+    queue = [{ text: 'replayed turn' }];
+    await runTurn(agent);
+
+    const client = await connectWsV1(env);
+    await client.next((frame) => frame['type'] === 'server_hello');
+    client.send(
+      hello('h1', { subscriptions: ['ses_v1_replay'], cursors: { ses_v1_replay: { seq: 0 } } }),
+    );
+    const ack = await client.next((frame) => frame['type'] === 'ack' && frame['id'] === 'h1');
+    expect(ack).toMatchObject({
+      code: 0,
+      payload: { accepted_subscriptions: ['ses_v1_replay'], resync_required: [] },
+    });
+
+    const replayed = await client.next(
+      (frame) => frame['type'] === 'turn.started' && (frame['payload'] as Record<string, unknown>)['turnId'] === 0,
+    );
+    expect(replayed).toMatchObject({ session_id: 'ses_v1_replay' });
+    await client.next((frame) => frame['type'] === 'turn.ended');
+    const cursor = (
+      (ack['payload'] as Record<string, unknown>)['cursors'] as Record<
+        string,
+        { seq: number; epoch: string }
+      >
+    )['ses_v1_replay'];
+    const maxSeq = Math.max(...durableSeqs(client));
+    expect(cursor.seq).toBe(maxSeq);
+
+    const second = await connectWsV1(env);
+    await second.next((frame) => frame['type'] === 'server_hello');
+    second.send(
+      hello('h2', { subscriptions: ['ses_v1_replay'], cursors: { ses_v1_replay: cursor } }),
+    );
+    const ack2 = await second.next((frame) => frame['type'] === 'ack' && frame['id'] === 'h2');
+    expect(ack2).toMatchObject({
+      code: 0,
+      payload: { accepted_subscriptions: ['ses_v1_replay'], resync_required: [] },
+    });
+    await vi.waitFor(() => {
+      const replays = second.frames.filter((frame) => frame['type'] === 'turn.started');
+      expect(replays).toEqual([]);
+    });
+    await client.close();
+    await second.close();
+  });
+
+  it('answers resync_required when the cursor epoch mismatches or runs ahead of the journal', async () => {
+    const env = await mountHttp([bindTestLlm(createMockRequester())]);
+    const session = await openMain(env, 'ses_v1_resync');
+    const agent = session.get(MAIN_AGENT_ID) as AgentHandle;
+    queue = [{ text: 'resync turn' }];
+    await runTurn(agent);
+
+    const client = await connectWsV1(env);
+    await client.next((frame) => frame['type'] === 'server_hello');
+    client.send(hello('h1', { subscriptions: ['ses_v1_resync'], cursors: {} }));
+    const ack = await client.next((frame) => frame['type'] === 'ack' && frame['id'] === 'h1');
+    const cursor = (
+      (ack['payload'] as Record<string, unknown>)['cursors'] as Record<
+        string,
+        { seq: number; epoch: string }
+      >
+    )['ses_v1_resync'];
+
+    client.send(
+      hello('h2', {
+        subscriptions: ['ses_v1_resync'],
+        cursors: { ses_v1_resync: { seq: cursor.seq, epoch: 'ep_bogus' } },
+      }),
+    );
+    const resync = await client.next((frame) => frame['type'] === 'resync_required');
+    expect(resync).toMatchObject({
+      payload: {
+        session_id: 'ses_v1_resync',
+        reason: 'epoch_changed',
+        current_seq: cursor.seq,
+        epoch: cursor.epoch,
+      },
+    });
+    const ack2 = await client.next((frame) => frame['type'] === 'ack' && frame['id'] === 'h2');
+    expect(ack2).toMatchObject({
+      code: 0,
+      payload: { accepted_subscriptions: ['ses_v1_resync'], resync_required: ['ses_v1_resync'] },
+    });
+
+    client.send(
+      hello('h3', {
+        subscriptions: ['ses_v1_resync'],
+        cursors: { ses_v1_resync: { seq: cursor.seq + 10_000, epoch: cursor.epoch } },
+      }),
+    );
+    const ahead = await client.next(
+      (frame) =>
+        frame['type'] === 'resync_required' &&
+        (frame['payload'] as Record<string, unknown>)['current_seq'] === cursor.seq &&
+        client.frames.filter((f) => f['type'] === 'resync_required').length >= 2,
+    );
+    expect(ahead).toMatchObject({ payload: { reason: 'epoch_changed' } });
+    await client.close();
+  });
+
+  it('answers ack errors for invalid subscribe_v2 payloads and not_found for unknown sessions', async () => {
+    const env = await mountHttp([bindTestLlm(createMockRequester())]);
+    const client = await connectWsV1(env);
+    await client.next((frame) => frame['type'] === 'server_hello');
+    client.send(hello('h1', { subscriptions: [] }));
+    await client.next((frame) => frame['type'] === 'ack' && frame['id'] === 'h1');
+
+    client.send(subscribeV2('s1', { session_id: 'ses_ghost', transcript: 'nope' }));
+    const invalid = await client.next((frame) => frame['type'] === 'ack' && frame['id'] === 's1');
+    expect(invalid).toMatchObject({ code: 1, msg: 'invalid subscribe_v2 payload' });
+
+    client.send(subscribe('s2', { session_ids: ['ses_ghost'] }));
+    const notFound = await client.next((frame) => frame['type'] === 'ack' && frame['id'] === 's2');
+    expect(notFound).toMatchObject({
+      code: 0,
+      payload: { accepted: [], not_found: ['ses_ghost'], resync_required: [] },
+    });
+
+    client.send('{"not closed":[');
+    client.send(subscribe('s3', { session_ids: ['ses_ghost'] }));
+    const after = await client.next((frame) => frame['type'] === 'ack' && frame['id'] === 's3');
+    expect(after).toMatchObject({ code: 0, payload: { not_found: ['ses_ghost'] } });
+    await client.close();
+  });
+
+  it('filters raw agent events by agent_filter', async () => {
+    const env = await mountHttp([bindTestLlm(createMockRequester())]);
+    const session = await openMain(env, 'ses_v1_filter');
+    const main = session.get(MAIN_AGENT_ID) as AgentHandle;
+    const sub = await session.create({ agentId: 'sub', systemPrompt: 'test' });
+    const client = await connectWsV1(env);
+    await client.next((frame) => frame['type'] === 'server_hello');
+    client.send(
+      subscribe('s1', {
+        session_ids: ['ses_v1_filter'],
+        agent_filter: { ses_v1_filter: [MAIN_AGENT_ID] },
+      }),
+    );
+    await client.next((frame) => frame['type'] === 'ack' && frame['id'] === 's1');
+
+    queue = [{ text: 'from sub' }];
+    await runTurn(sub as AgentHandle);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const subFrames = client.frames.filter(
+      (frame) =>
+        (frame['payload'] as Record<string, unknown> | undefined)?.['agentId'] === 'sub' &&
+        ['turn.started', 'turn.ended', 'assistant.delta'].includes(frame['type'] as string),
+    );
+    expect(subFrames).toEqual([]);
+
+    queue = [{ text: 'from main' }];
+    await runTurn(main);
+    const started = await client.next((frame) => frame['type'] === 'turn.started');
+    expect(started).toMatchObject({ payload: { agentId: MAIN_AGENT_ID } });
+    await client.close();
+  });
+
+  it('sends heartbeat pings with a nonce, accepts pong and closes silent clients', async () => {
+    const env = await mountHttp([], { wsHeartbeatMs: 50 });
+    const client = await connectWsV1(env);
+    await client.next((frame) => frame['type'] === 'server_hello');
+
+    const ping = await client.next((frame) => frame['type'] === 'ping');
+    const nonce = ((ping['payload'] as Record<string, unknown>)['nonce'] as string) ?? '';
+    expect(nonce.length).toBeGreaterThan(0);
+    client.send({ type: 'pong', payload: { nonce } });
+    const secondPing = await client.next(
+      (frame) =>
+        frame['type'] === 'ping' &&
+        (frame['payload'] as Record<string, unknown>)['nonce'] !== nonce,
+    );
+    expect(secondPing).toBeDefined();
+    await client.close();
+
+    const silent = await connectWsV1(env);
+    await silent.next((frame) => frame['type'] === 'server_hello');
+    const closed = await silent.closed;
+    expect(closed.code).toBe(1001);
   });
 });
 

@@ -1,6 +1,5 @@
-import { createFacadeToken, useApp, useCleanup, useOnApp, type AgentHandle } from '@moonshot-ai/agent-core';
+import { useApp, useCleanup, useOnApp, type AgentHandle } from '@moonshot-ai/agent-core';
 import {
-  useExpose,
   type Unsubscribe,
 } from '@moonshot-ai/agent-core/kernel/index';
 import { randomUUID } from 'node:crypto';
@@ -9,19 +8,7 @@ import { WebSocket, WebSocketServer, type RawData } from 'ws';
 
 import { useHttp } from './feature';
 import { ErrorCode } from './route/http';
-
-export interface WsRegistryEntry {
-  readonly id: string;
-  readonly connectedAt: string;
-  readonly subscriptions: readonly string[];
-  readonly agents: Record<string, Record<string, string>>;
-}
-
-export interface WsRegistry {
-  list(): readonly WsRegistryEntry[];
-}
-
-export const WsRegistryRef = createFacadeToken<WsRegistry>('http.wsRegistry');
+import type { WsRegistryStore } from './ws-registry';
 
 const WS_PING_INTERVAL_MS = 30_000;
 
@@ -87,7 +74,7 @@ interface Connection {
   readonly ping: ReturnType<typeof setInterval>;
 }
 
-export function useWsEndpoint(options: { prefix: string }): void {
+export function useWsEndpoint(options: { prefix: string; registry: WsRegistryStore }): void {
   const app = useApp();
   const http = useHttp();
   const path = `${options.prefix.replace(/\/+$/, '')}/ws`;
@@ -268,9 +255,25 @@ export function useWsEndpoint(options: { prefix: string }): void {
     };
     connection.ping.unref();
     connections.set(connection.id, connection);
+    const unregisterConnection = options.registry.add({
+      id: connection.id,
+      connectedAt: connection.connectedAt,
+      protocol: 'native',
+      subscriptions: () => [...connection.sessions.keys()],
+      agents: () =>
+        Object.fromEntries(
+          [...connection.sessions.entries()].map(([sessionId, session]) => [
+            sessionId,
+            Object.fromEntries([...session.agents.entries()].map(([agentId, agent]) => [agentId, agent.grade])),
+          ]),
+        ),
+    });
     socket.on('message', (data: RawData) => onMessage(connection, data));
     socket.on('error', () => socket.terminate());
-    socket.on('close', () => drop(connection));
+    socket.on('close', () => {
+      unregisterConnection();
+      drop(connection);
+    });
   });
 
   const unregister = http.upgrade((request, socket, head) => {
@@ -279,21 +282,6 @@ export function useWsEndpoint(options: { prefix: string }): void {
       wss.emit('connection', accepted, request);
     });
     return true;
-  });
-
-  useExpose(WsRegistryRef, {
-    list: () =>
-      [...connections.values()].map((connection) => ({
-        id: connection.id,
-        connectedAt: connection.connectedAt,
-        subscriptions: [...connection.sessions.keys()],
-        agents: Object.fromEntries(
-          [...connection.sessions.entries()].map(([sessionId, session]) => [
-            sessionId,
-            Object.fromEntries([...session.agents.entries()].map(([agentId, agent]) => [agentId, agent.grade])),
-          ]),
-        ),
-      })),
   });
 
   useCleanup(() => {
