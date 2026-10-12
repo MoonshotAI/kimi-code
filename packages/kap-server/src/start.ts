@@ -475,6 +475,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     remoteControl: {
       service: remoteControlManager,
       devices: remoteControlDevices,
+      homeDir,
       staticEnableError:
         exposureClass !== 'loopback'
           ? 'Remote Control requires a loopback host.'

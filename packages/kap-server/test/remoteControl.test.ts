@@ -230,6 +230,53 @@ describe('server-v2 /api/v1/remote-control', () => {
     });
   });
 
+  it('reports a live lock in status without an enable attempt and clears it once the holder is gone', async () => {
+    await rm(remoteControlLockPath(home as string), { force: true });
+    await mkdir(join(home as string, 'server'), { recursive: true });
+    await writeFile(
+      remoteControlLockPath(home as string),
+      JSON.stringify({
+        pid: process.pid,
+        nonce: 'live-holder',
+        local_origin: 'http://127.0.0.1:58627',
+        device_id: 'live-device',
+        url: 'https://code-rc.kimi.com/devices/live-device/',
+        started_at: Date.now(),
+      }),
+    );
+
+    const liveRes = await authedFetch(server as RunningServer, base, '/api/v1/remote-control');
+    const live = (await liveRes.json()) as Envelope<RemoteControlStatusWire>;
+    expect(live.data.state).toBe('off');
+    expect(live.data.conflict).toMatchObject({
+      pid: process.pid,
+      local_origin: 'http://127.0.0.1:58627',
+      device_id: 'live-device',
+      url: 'https://code-rc.kimi.com/devices/live-device/',
+    });
+
+    const posted = await postRemoteControl(true);
+    expect(posted.code).toBe(ErrorCode.REMOTE_CONTROL_ALREADY_RUNNING);
+
+    await writeFile(
+      remoteControlLockPath(home as string),
+      JSON.stringify({
+        pid: 999999,
+        nonce: 'dead-holder',
+        local_origin: 'http://127.0.0.1:58628',
+        device_id: 'dead-device',
+        url: 'https://code-rc.kimi.com/devices/dead-device/',
+        started_at: Date.now(),
+      }),
+    );
+    const staleRes = await authedFetch(server as RunningServer, base, '/api/v1/remote-control');
+    const stale = (await staleRes.json()) as Envelope<RemoteControlStatusWire>;
+    expect(stale.data.conflict).toBeUndefined();
+    expect(stale.data.error).toBeUndefined();
+
+    await rm(remoteControlLockPath(home as string), { force: true });
+  });
+
   it('proxies device list and management operations through the Node-side cloud session', async () => {
     const cloud = await startDeviceCloud();
     vi.stubEnv(
@@ -436,7 +483,7 @@ describe('remote-control route telemetry', () => {
   }
 
   function postHandler(
-    opts: Omit<RemoteControlRouteOptions, 'devices'>,
+    opts: Omit<RemoteControlRouteOptions, 'devices' | 'homeDir'>,
   ): (enabled: boolean) => Promise<void> {
     let handler: ((req: unknown, reply: unknown) => unknown) | undefined;
     const app = {
@@ -450,6 +497,7 @@ describe('remote-control route telemetry', () => {
     registerRemoteControlRoutes(app as never, {
       ...opts,
       devices: {} as RemoteControlDeviceClient,
+      homeDir: '/nonexistent',
     });
     return async (enabled) => {
       await handler!({ id: 'req-1', body: { enabled } }, { send: () => {} });

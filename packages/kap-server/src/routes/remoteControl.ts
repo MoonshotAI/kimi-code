@@ -1,4 +1,5 @@
 import {
+  inspectRemoteControlLock,
   RemoteControlAlreadyRunningError,
   type RemoteControlDeviceClient,
   type RemoteControlManager,
@@ -53,6 +54,7 @@ interface RemoteControlRouteHost {
 export interface RemoteControlRouteOptions {
   readonly service: RemoteControlManager;
   readonly devices: RemoteControlDeviceClient;
+  readonly homeDir: string;
   readonly staticEnableError?: string;
   readonly telemetry?: ITelemetryService;
 }
@@ -70,7 +72,24 @@ export function registerRemoteControlRoutes(
       tags: ['remote-control'],
     },
     async (req, reply) => {
-      reply.send(okEnvelope(toRemoteControlStatusResponse(opts.service.status()), req.id));
+      const status = opts.service.status();
+      let conflict = status.conflict;
+      let error = status.error;
+      if (status.state === 'off') {
+        const holder = await inspectRemoteControlLock(opts.homeDir);
+        if (holder !== undefined) {
+          conflict = holder;
+        } else if (conflict !== undefined) {
+          conflict = undefined;
+          error = undefined;
+        }
+      }
+      reply.send(
+        okEnvelope(
+          toRemoteControlStatusResponse({ ...status, error, conflict }),
+          req.id,
+        ),
+      );
     },
   );
   app.get(
