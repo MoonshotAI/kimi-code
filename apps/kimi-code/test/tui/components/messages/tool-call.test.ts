@@ -349,6 +349,28 @@ describe('ToolCallComponent', () => {
       expect(component.hasHiddenContent()).toBe(true);
     });
 
+    it('uses the title as the header and keeps the message behind ctrl+o', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_notify_titled',
+          name: 'NotifyUser',
+          args: { title: 'Root cause found', message },
+        },
+        { tool_call_id: 'call_notify_titled', output: 'Update shown to the user.', is_error: false },
+      );
+
+      const collapsed = component.render(100).map(strip).filter((line) => line.trim().length > 0);
+      expect(collapsed).toHaveLength(1);
+      expect(collapsed[0]).toContain('Sent you an update');
+      expect(collapsed[0]).toContain('Root cause found');
+      expect(collapsed[0]).not.toContain('Login module is clean.');
+
+      component.setExpanded(true);
+      const expanded = strip(component.render(100).join('\n'));
+      expect(expanded).toContain('Login module is clean.');
+      expect(expanded).toContain('session expiry');
+    });
+
     it('renders historical calls as ordinary tool records when disabled', () => {
       setExperimentalFeatures([]);
       const component = new ToolCallComponent(

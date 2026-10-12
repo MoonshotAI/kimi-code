@@ -817,6 +817,47 @@ describe('Remote Control single-instance lock', () => {
     expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
   });
 
+  it('reports a terminal status and close reason on user_requested only', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    const relay = await startAuthRelay();
+    const statuses: string[] = [];
+    let handle: RemoteControlHandle | undefined;
+    cleanups.push(async () => handle?.close());
+
+    handle = await startRemoteControl({
+      homeDir,
+      localOrigin: 'http://127.0.0.1:58627',
+      localServerToken: 'local-server-token',
+      clientVersion: CLIENT_VERSION,
+      relayOrigin: `http://127.0.0.1:${relay.port}`,
+      stderr: { write: () => true },
+      onStatus: (status) => statuses.push(status),
+    });
+
+    relay.managementSockets.at(-1)!.send(
+      JSON.stringify({ type: 'disconnect', payload: { reason: 'user_requested' } }),
+    );
+    await expect(handle.closed).resolves.toBe('user_requested');
+    expect(statuses).toEqual(['relay_connected', 'relay_terminated']);
+
+    const localStatuses: string[] = [];
+    let second: RemoteControlHandle | undefined;
+    cleanups.push(async () => second?.close());
+    second = await startRemoteControl({
+      homeDir,
+      localOrigin: 'http://127.0.0.1:58627',
+      localServerToken: 'local-server-token',
+      clientVersion: CLIENT_VERSION,
+      relayOrigin: `http://127.0.0.1:${relay.port}`,
+      stderr: { write: () => true },
+      onStatus: (status) => localStatuses.push(status),
+    });
+    const closing = second.close();
+    await expect(second.closed).resolves.toBe('local_close');
+    await closing;
+    expect(localStatuses).toEqual(['relay_connected', 'relay_disconnected']);
+  });
+
   it('does not remove a successor lock when closing', async () => {
     const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
     const relay = await startAuthRelay();
