@@ -114,6 +114,37 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
     expect(cleanTelemetryString(String.raw`C:\Users\alice\archive.txt files here\secret.txt`)).toBe(REDACTED);
   });
 
+  it('splits adjacent drive paths and keeps comma diagnostics on extensionless paths', () => {
+    expect(cleanTelemetryString(String.raw`C:\Users\alice\bin;C:\Users\bob\bin`)).toBe(
+      `${REDACTED};${REDACTED}`,
+    );
+    expect(cleanTelemetryString(String.raw`C:\Users\alice\bin; D:\Users\bob\bin`)).toBe(
+      `${REDACTED}; ${REDACTED}`,
+    );
+    expect(cleanTelemetryString(String.raw`C:\a\node_modules\pkg;C:\Users\bob\secret`)).toBe(
+      `node_modules/pkg;${REDACTED}`,
+    );
+    expect(cleanTelemetryString(String.raw`C:\Users\alice\file;name.txt`)).toBe(REDACTED);
+    expect(cleanTelemetryString(String.raw`failed at C:\Users\alice\cache, retrying now`)).toBe(
+      `failed at ${REDACTED}, retrying now`,
+    );
+    expect(
+      cleanTelemetryString(String.raw`failure at 'C:\Users\alice\bin;C:\Users\bob\bin' done`),
+    ).toBe(`failure at '${REDACTED};${REDACTED}' done`);
+  });
+
+  it('splits colon-delimited POSIX paths before preserving dependency tails', () => {
+    expect(cleanTelemetryString('/home/alice/app/node_modules/pkg:/home/bob/private')).toBe(
+      `node_modules/pkg:${REDACTED}`,
+    );
+    expect(cleanTelemetryString('/home/alice/cache:/home/bob/private')).toBe(`${REDACTED}:${REDACTED}`);
+    expect(cleanTelemetryString('/home/alice/node_modules/pkg,/tmp/log')).toBe(
+      `node_modules/pkg,${REDACTED}`,
+    );
+    expect(cleanTelemetryString('/home/alice/foo:bar/secret.txt')).toBe(REDACTED);
+    expect(cleanTelemetryString('/home/alice/a.txt:/home/bob/b.txt')).toBe(`${REDACTED}:${REDACTED}`);
+  });
+
   it('redacts consecutive Windows drive paths without consuming the next drive letter', () => {
     expect(cleanTelemetryString(String.raw`C:\Users\alice\cache, see C:\Users\bob\log`)).toBe(
       `${REDACTED}, see ${REDACTED}`,
