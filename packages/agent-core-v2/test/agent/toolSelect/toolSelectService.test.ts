@@ -1291,7 +1291,7 @@ describe('AgentToolSelectService consecutive failures', () => {
     expect(result.output).not.toContain('has already failed selection');
   });
 
-  it.each(['new', 'loaded', 'static', 'mixed'] as const)('resets both counters on %s success', (kind) => {
+  it.each(['new', 'loaded', 'static', 'mixed'] as const)('resets the call streak but preserves unrelated failures on %s success', (kind) => {
     const h = createHarness();
     registerMcp(h, new StubMcpTool(MCP_ALPHA));
     registerBuiltin(h, new EchoTool());
@@ -1301,10 +1301,21 @@ describe('AgentToolSelectService consecutive failures', () => {
     const names = kind === 'static' ? ['Echo'] : kind === 'mixed' ? [MCP_ALPHA, MCP_GONE] : [MCP_ALPHA];
     const success = h.sut.load(names);
     expect(success.consecutiveFailures).toBe(0);
-    expect(success.escalated).toEqual({});
+    expect(success.escalated).toEqual(kind === 'mixed' ? { [MCP_GONE]: 3 } : {});
     const next = h.sut.load([MCP_GONE]);
     expect(next.consecutiveFailures).toBe(1);
-    expect(next.escalated).toEqual({});
+    expect(next.escalated).toEqual({ [MCP_GONE]: kind === 'mixed' ? 4 : 3 });
+  });
+
+  it('clears only the successful name from case-insensitive failure history', () => {
+    const h = createHarness();
+    registerBuiltin(h, new EchoTool());
+    h.sut.load(['echo', MCP_GONE]);
+    expect(h.sut.load(['echo']).escalated).toEqual({ echo: 2 });
+    h.sut.load(['Echo']);
+    const next = h.sut.load(['echo', MCP_GONE]);
+    expect(next.consecutiveFailures).toBe(1);
+    expect(next.escalated).toEqual({ [MCP_GONE]: 2 });
   });
 
   it.each(['add', 'remove', 'policy', 'disclosure'] as const)('resets both counters when tools change: %s', (change) => {

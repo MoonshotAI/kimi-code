@@ -27,6 +27,7 @@ describe('AgentToolPolicyService', () => {
 
     expect(policy.isToolActive('Bash')).toBe(true);
     expect(policy.isToolActiveForProfile({}, 'Bash')).toBe(true);
+    expect(policy.isToolDenied('Bash')).toBe(false);
     expect(toolsSectionReads()).toBe(0);
 
     await config.replace(TOOLS_SECTION, { disabled: ['Bash'] }, ConfigTarget.Memory);
@@ -34,17 +35,21 @@ describe('AgentToolPolicyService', () => {
     expect(policy.isToolActive('Bash')).toBe(false);
     expect(policy.isToolActiveForProfile({}, 'Bash')).toBe(false);
     expect(policy.isToolActive('Read')).toBe(true);
+    expect(policy.isToolDenied('Bash')).toBe(true);
+    expect(policy.isToolDenied('Read')).toBe(false);
     expect(toolsSectionReads()).toBe(0);
 
     await config.replace(TOOLS_SECTION, { enabled: ['Read'] }, ConfigTarget.Memory);
     get.mockClear();
     expect(policy.isToolActive('Read')).toBe(true);
     expect(policy.isToolActive('Bash')).toBe(false);
+    expect(policy.isToolDenied('Bash')).toBe(false);
     expect(toolsSectionReads()).toBe(0);
 
     await config.replace(TOOLS_SECTION, null, ConfigTarget.Memory);
     get.mockClear();
     expect(policy.isToolActive('Bash')).toBe(true);
+    expect(policy.isToolDenied('Bash')).toBe(false);
     expect(toolsSectionReads()).toBe(0);
   });
 });

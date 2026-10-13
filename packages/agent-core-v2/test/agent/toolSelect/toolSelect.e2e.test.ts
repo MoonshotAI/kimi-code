@@ -281,7 +281,7 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(text).not.toContain(`Already available: ${MCP_ALPHA}`);
   });
 
-  it('warns across guessed names and recovers on a successful selection in the same turn', async () => {
+  it('resets the call streak on success but preserves unrelated name failures in the same turn', async () => {
     ctx.mockNextResponse(selectToolsCall('guess_1', ['Automation']));
     ctx.mockNextResponse(selectToolsCall('guess_2', ['AutomationList']));
     ctx.mockNextResponse(selectToolsCall('guess_3', ['mcp__example__automation']));
@@ -296,7 +296,7 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(text.match(/3 consecutive select_tools calls/g)).toHaveLength(1);
     expect(text).toContain(`Loaded: ${MCP_ALPHA}`);
     expect(text).not.toContain('4 consecutive select_tools calls');
-    expect(text).not.toContain('"Automation" has already failed selection 2 times');
+    expect(text).toContain('"Automation" has already failed selection 2 times');
   });
 
   it('escalates to stop-retry wording when the same unknown name is selected twice', async () => {

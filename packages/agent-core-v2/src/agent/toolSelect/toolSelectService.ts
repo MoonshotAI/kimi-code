@@ -150,22 +150,20 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     }
     const escalated: Record<string, number> = {};
     const succeeded = toLoad.length > 0 || alreadyAvailable.length > 0 || alreadyCallable.length > 0;
-    if (succeeded) {
-      this.consecutiveFailures = 0;
-      this.failedSelectionAttempts.clear();
-    } else {
-      this.consecutiveFailures += 1;
-      const attemptsByKey = new Map<string, number>();
-      for (const name of [...staleLoaded, ...policyDenied, ...unknown]) {
-        const key = name.toLowerCase();
-        let attempts = attemptsByKey.get(key);
-        if (attempts === undefined) {
-          attempts = (this.failedSelectionAttempts.get(key) ?? 0) + 1;
-          this.failedSelectionAttempts.set(key, attempts);
-          attemptsByKey.set(key, attempts);
-        }
-        if (attempts >= STOP_RETRY_THRESHOLD) escalated[name] = attempts;
+    this.consecutiveFailures = succeeded ? 0 : this.consecutiveFailures + 1;
+    for (const name of [...toLoad, ...alreadyAvailable, ...alreadyCallable]) {
+      this.failedSelectionAttempts.delete(name.toLowerCase());
+    }
+    const attemptsByKey = new Map<string, number>();
+    for (const name of [...staleLoaded, ...policyDenied, ...unknown]) {
+      const key = name.toLowerCase();
+      let attempts = attemptsByKey.get(key);
+      if (attempts === undefined) {
+        attempts = (this.failedSelectionAttempts.get(key) ?? 0) + 1;
+        this.failedSelectionAttempts.set(key, attempts);
+        attemptsByKey.set(key, attempts);
       }
+      if (attempts >= STOP_RETRY_THRESHOLD) escalated[name] = attempts;
     }
     const suggestions: Record<string, readonly string[]> = {};
     const suggestionPool = [...loadable];

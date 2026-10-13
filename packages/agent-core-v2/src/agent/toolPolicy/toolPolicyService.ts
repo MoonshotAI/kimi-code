@@ -64,7 +64,7 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
     return (
       deniedBy(this.toolPolicyGate.disabledTools) ||
       deniedBy(this.profile.data().disallowedTools) ||
-      deniedBy(this.config.get<ToolsConfig>(TOOLS_SECTION)?.disabled) ||
+      deniedBy(this.globalPolicy?.disabled) ||
       deniedBy(this.sessionToolPolicy.disabledTools())
     );
   }
