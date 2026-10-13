@@ -1462,11 +1462,9 @@ export class AgentTestContext {
         input: readonly KosongMessage[],
         output: readonly KosongMessage[],
         usage: TokenUsage,
-        envelopeHash?: string,
-      ) => service.measured(agent, input, output, usage, envelopeHash),
+      ) => service.measured(agent, input, output, usage),
       latestMeasured: () => service.latestMeasured(agent),
       statusSize: () => service.statusSize(agent),
-      calibration: () => service.calibration(agent),
       requestSize: (request: Parameters<ISessionTokenCountingService['requestSize']>[0]) =>
         service.requestSize(request),
       estimateText: (text: string) => service.estimateText(text),

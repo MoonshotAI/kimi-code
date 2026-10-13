@@ -26,11 +26,9 @@ export interface ISessionTokenCountingService {
     input: readonly Message[],
     output: readonly Message[],
     usage: TokenUsage,
-    envelopeHash?: string,
   ): void;
   latestMeasured(agent: AgentContext): number;
   statusSize(agent: AgentContext): number;
-  calibration(agent: AgentContext): number;
   recordTruncation(agent: AgentContext, cutIndex: number): void;
   rebase(agent: AgentContext, input: TokenCountingRebaseInput): void;
   requestSize(request: TokenCountingRequest): number;

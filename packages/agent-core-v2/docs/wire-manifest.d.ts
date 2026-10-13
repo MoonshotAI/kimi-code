@@ -703,8 +703,6 @@ interface TokenCountingMeasuredPayload {
   agentId: string;
   length: number;
   tokens: number;
-  inputTokens?: number;
-  envelopeHash?: string;
 }
 
 /**
@@ -716,8 +714,6 @@ interface TokenCountingRebasedPayload {
   agentId: string;
   length: number;
   tokens: number;
-  inputTokens?: number;
-  envelopeHash?: string;
   measured: boolean;
 }
 
@@ -730,8 +726,6 @@ interface TokenCountingTruncatedPayload {
   agentId: string;
   length: number;
   tokens: number;
-  inputTokens?: number;
-  envelopeHash?: string;
 }
 
 /**
@@ -743,8 +737,6 @@ interface TokenCountingTurnRecordedPayload {
   agentId: string;
   length: number;
   tokens: number;
-  inputTokens?: number;
-  envelopeHash?: string;
   turnId: number;
 }
 

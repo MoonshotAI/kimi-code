@@ -1088,7 +1088,6 @@ describe('truncation pipeline', () => {
     } as unknown as IAgentStateService);
     truncationContainer.stub(ISessionTokenCountingService, {
       get: () => ({ size: 0, measured: 0, estimated: 0 }),
-      calibration: () => 1,
     } as unknown as ISessionTokenCountingService);
     truncationContainer.stub(IEventBus, {
       subscribe: () => ({ dispose: () => {} }),

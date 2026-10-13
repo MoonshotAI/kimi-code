@@ -174,7 +174,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     this.states.contributeState(fullCompactionActiveTurnIdKey);
     this.strategy = new RuntimeCompactionStrategy(
       () => this.resolveModelContextWithEffectiveMax(),
-      (message) => this.tokenCounting.estimateMessage(message) * this.calibrationFactor(),
+      (message) => this.tokenCounting.estimateMessage(message),
     );
     this._register(
       this.dispatcher.hooks.onDidRestore.register('full-compaction', async (_ctx, next) => {
@@ -289,16 +289,11 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   }
 
   private requestTokens(messages: readonly Message[]): number {
-    const overhead = this.tokenCounting.requestSize({
+    return this.tokenCounting.requestSize({
       systemPrompt: this.profile.getSystemPrompt(),
       tools: this.defaultTools().filter((tool) => tool.deferred !== true),
-      messages: [],
+      messages,
     });
-    return overhead + this.tokenCounting.estimateMessages(messages) * this.calibrationFactor();
-  }
-
-  private calibrationFactor(): number {
-    return this.tokenCounting.calibration(agentContextOfScope(this.agent));
   }
 
   private defaultTools(): readonly Tool[] {
@@ -831,14 +826,13 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   ): readonly ContextMessage[] {
     const messageBudget = this.compactionMessageBudget(compactionMaxOutputSize);
     const estimatedMessagesTokens =
-      (this.tokenCounting.estimateMessages(history) +
-        this.tokenCounting.estimateMessage(createUserMessage(instruction))) *
-      this.calibrationFactor();
+      this.tokenCounting.estimateMessages(history) +
+      this.tokenCounting.estimateMessage(createUserMessage(instruction));
     if (messageBudget <= 0 || estimatedMessagesTokens <= messageBudget) return history;
     const preShrunk = takeRecentMessagesWithinTokenBudget(
       history,
       messageBudget,
-      (message) => this.tokenCounting.estimateMessage(message) * this.calibrationFactor(),
+      (message) => this.tokenCounting.estimateMessage(message),
     );
     return preShrunk.length === 0 ? history : preShrunk;
   }
@@ -866,14 +860,13 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       const truncated = truncateMessageToTokenBudget(
         only,
         this.singleMessageTruncationBudget(compactionMaxOutputSize),
-        (message) => this.tokenCounting.estimateMessage(message) * this.calibrationFactor(),
       );
       return truncated === undefined ? undefined : { history: [truncated], droppedCount: 0 };
     }
     const shrunk = shrinkCompactionHistoryAfterOverflow(
       messages,
       overflowShrinkCount,
-      (message) => this.tokenCounting.estimateMessage(message) * this.calibrationFactor(),
+      (message) => this.tokenCounting.estimateMessage(message),
     );
     if (shrunk.length > 0) {
       return { history: shrunk, droppedCount: messages.length - shrunk.length };
@@ -883,7 +876,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     const truncated = truncateMessageToTokenBudget(
       newest,
       this.singleMessageTruncationBudget(compactionMaxOutputSize),
-      (message) => this.tokenCounting.estimateMessage(message) * this.calibrationFactor(),
     );
     return truncated === undefined
       ? undefined

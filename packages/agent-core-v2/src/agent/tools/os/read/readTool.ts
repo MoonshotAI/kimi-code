@@ -240,7 +240,11 @@ export class ReadTool implements IReadTool {
           }
           const eventLog = this.resultTruncation.isWireJournalPath(path);
           const result = await this.execution(runtimeFileSource(lease.runtime.fs!, path), args, eventLog);
-          return { ...result, spillExempt: true };
+          return {
+            ...result,
+            spillExempt: true,
+            budgetExempt: this.resultTruncation.isSpillFilePath(path) ? true : undefined,
+          };
         } finally {
           lease.dispose();
         }

@@ -487,7 +487,6 @@ describe('SessionSubagentScopeCacheService', () => {
       estimateMessage: () => 0,
       estimateMessages: () => 0,
       recordTruncation: () => {},
-      calibration: () => 1,
     } as unknown as ISessionTokenCountingService);
     ix.stub(IProtocolAdapterRegistry, {
       _serviceBrand: undefined,

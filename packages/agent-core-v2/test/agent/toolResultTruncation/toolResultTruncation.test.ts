@@ -28,7 +28,6 @@ describe('ToolResultTruncationService', () => {
   let currentContextSize: number;
   let defaultModelRecord: { maxContextSize?: number; maxInputSize?: number } | undefined;
   let observedWindow: number | undefined;
-  let calibrationFactor: number;
 
   function stubBudgetServices(ix: TestInstantiationService): void {
     ix.stub(IModelCatalog, {
@@ -51,7 +50,6 @@ describe('ToolResultTruncationService', () => {
     } as unknown as IAgentStateService);
     ix.stub(ISessionTokenCountingService, {
       get: () => ({ size: currentContextSize, measured: 0, estimated: currentContextSize }),
-      calibration: () => calibrationFactor,
     } as unknown as ISessionTokenCountingService);
     ix.stub(IEventBus, {
       subscribe: () => ({ dispose: () => {} }),
@@ -65,7 +63,6 @@ describe('ToolResultTruncationService', () => {
     currentContextSize = 0;
     defaultModelRecord = { maxContextSize: 1_000_000 };
     observedWindow = undefined;
-    calibrationFactor = 1;
     const ix = disposables.add(new TestInstantiationService());
     ix.stub(IBootstrapService, stubBootstrap(homeDir));
     ix.stub(
@@ -451,21 +448,6 @@ describe('ToolResultTruncationService', () => {
     expect(third.truncated).toBe(true);
   });
 
-  it('keeps the conservative estimate when calibration drops below one', async () => {
-    defaultModelRecord = undefined;
-    currentContextSize = 100_000;
-    calibrationFactor = 0.5;
-    const exempt = { output: `${'z'.repeat(99)}\n`.repeat(2_500), spillExempt: true as const };
-
-    const result = await truncation.truncateForModel<ExecutableToolResult>({
-      toolName: 'Read',
-      toolCallId: 'call_low_calibration',
-      result: exempt,
-    });
-
-    expect(result.truncated).toBe(true);
-  });
-
   it('honors the observed provider window over the catalog window', async () => {
     observedWindow = 200_000;
     const exempt = { output: `${'z'.repeat(99)}\n`.repeat(2_500), spillExempt: true as const };
@@ -497,6 +479,24 @@ describe('ToolResultTruncationService', () => {
     expect(rendered).toContain('Tool output withheld to keep the context within the model window');
     expect(rendered.length).toBeLessThan(7_000);
     await expect(readFile(renderedOutputPath(rendered), 'utf8')).resolves.toBe(exempt.output);
+  });
+
+  it('keeps spill-file recovery reads inline even over budget', async () => {
+    defaultModelRecord = undefined;
+    currentContextSize = 180_000;
+    const exempt = {
+      output: `${'z'.repeat(99)}\n`.repeat(100),
+      spillExempt: true as const,
+      budgetExempt: true as const,
+    };
+
+    await expect(
+      truncation.truncateForModel<ExecutableToolResult>({
+        toolName: 'Read',
+        toolCallId: 'call_recovery',
+        result: exempt,
+      }),
+    ).resolves.toBe(exempt);
   });
 
   it('rebases reservations when the committed context shrinks after compaction', async () => {

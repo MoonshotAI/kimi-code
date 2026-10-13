@@ -69,10 +69,9 @@ export class SessionTokenCountingService extends Disposable implements ISessionT
     input: readonly Message[],
     output: readonly Message[],
     usage: TokenUsage,
-    envelopeHash?: string,
   ): void {
     void agentSpaceOf(agent).use(TokenCountingAgentModelDefinition, (model) =>
-      model.measured(input, output, usage, envelopeHash),
+      model.measured(input, output, usage),
     );
   }
 
@@ -85,12 +84,6 @@ export class SessionTokenCountingService extends Disposable implements ISessionT
   statusSize(agent: AgentContext): number {
     return agentSpaceOf(agent).use(TokenCountingAgentModelDefinition, (model) =>
       model.statusSize(this.strategy),
-    );
-  }
-
-  calibration(agent: AgentContext): number {
-    return agentSpaceOf(agent).use(TokenCountingAgentModelDefinition, (model) =>
-      model.calibrationFactor(),
     );
   }
 

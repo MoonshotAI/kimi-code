@@ -38,6 +38,7 @@ export interface ExecutableToolSuccessResult {
   readonly delivery?: ToolDelivery | undefined;
   readonly spill?: ToolResultSpill;
   readonly spillExempt?: true;
+  readonly budgetExempt?: true;
 }
 
 export interface ExecutableToolErrorResult {
@@ -50,6 +51,7 @@ export interface ExecutableToolErrorResult {
   readonly delivery?: ToolDelivery | undefined;
   readonly spill?: ToolResultSpill;
   readonly spillExempt?: true;
+  readonly budgetExempt?: true;
 }
 
 export type ExecutableToolResult = ExecutableToolSuccessResult | ExecutableToolErrorResult;

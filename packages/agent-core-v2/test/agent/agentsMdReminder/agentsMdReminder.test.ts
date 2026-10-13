@@ -139,7 +139,6 @@ function createHarness(
         } as unknown as IModelCatalog);
         reg.defineInstance(ISessionTokenCountingService, {
           get: () => ({ size: 0, measured: 0, estimated: 0 }),
-          calibration: () => 1,
         } as unknown as ISessionTokenCountingService);
         registerLogServices(reg);
       } else {

@@ -32,6 +32,7 @@ const TOOL_RESULT_PREVIEW_TAIL_CHARS = 1_024;
 const TOOL_RESULT_MAX_LINE_CHARS = 2_000;
 const TRUNCATION_MARKER = '[...truncated]';
 const FORCED_SPILL_CONTEXT_RATIO = 0.7;
+const FORCED_SPILL_PREVIEW_RESERVE_TOKENS = 4_096;
 
 const encoder = new TextEncoder();
 
@@ -49,6 +50,7 @@ export class ToolResultTruncationService extends Service implements IAgentToolRe
   private reservedInlineBaseline = 0;
   private reservedInlineTokens = 0;
   private lastCommittedSize = 0;
+  private turnModelAlias: string | undefined;
 
   constructor(
     @IBootstrapService private readonly bootstrap: IBootstrapService,
@@ -64,6 +66,9 @@ export class ToolResultTruncationService extends Service implements IAgentToolRe
     this._register(
       this.eventBus.subscribe(TurnStarted, () => {
         this.reservedInlineTokens = 0;
+        this.turnModelAlias = this.states.has(profileKey)
+          ? this.states.get(profileKey).modelAlias
+          : undefined;
       }),
     );
   }
@@ -73,7 +78,9 @@ export class ToolResultTruncationService extends Service implements IAgentToolRe
   ): Promise<T> {
     const { result } = input;
     const rawText = persistableToolResultText(result.output);
-    const forcedByBudget = result.spillExempt === true && this.exceedsContextBudget(result, rawText);
+    const forcedByBudget =
+      result.spillExempt === true &&
+      this.exceedsContextBudget(result, rawText, result.budgetExempt !== true);
     if (result.spillExempt === true && !forcedByBudget) return result;
     if (rawText.length <= DEFAULT_TOOL_RESULT_MAX_CHARS && !forcedByBudget) return result;
     const reason = forcedByBudget ? ('budget' as const) : ('size' as const);
@@ -147,11 +154,15 @@ export class ToolResultTruncationService extends Service implements IAgentToolRe
     return normalized === dir || normalized.startsWith(`${dir}/`);
   }
 
-  private exceedsContextBudget(result: ExecutableToolResult, rawText: string): boolean {
+  private exceedsContextBudget(
+    result: ExecutableToolResult,
+    rawText: string,
+    spillAllowed: boolean,
+  ): boolean {
     if (rawText.length === 0) return false;
-    const modelAlias = this.states.has(profileKey)
-      ? this.states.get(profileKey).modelAlias
-      : undefined;
+    const modelAlias =
+      this.turnModelAlias ??
+      (this.states.has(profileKey) ? this.states.get(profileKey).modelAlias : undefined);
     const observed =
       modelAlias === undefined || !this.states.has(fullCompactionObservedMaxContextTokensByModelKey)
         ? undefined
@@ -169,10 +180,11 @@ export class ToolResultTruncationService extends Service implements IAgentToolRe
     this.lastCommittedSize = committed;
     if (this.reservedInlineTokens === 0) this.reservedInlineBaseline = committed;
     const current = Math.max(committed, this.reservedInlineBaseline + this.reservedInlineTokens);
-    const incoming =
-      estimateTokensConservative(rawText) *
-      Math.max(1, this.tokenCounting.calibration(agentContext));
-    if (current + incoming > effectiveMax * FORCED_SPILL_CONTEXT_RATIO) return true;
+    const incoming = estimateTokensConservative(rawText);
+    if (current + incoming > effectiveMax * FORCED_SPILL_CONTEXT_RATIO) {
+      this.reservedInlineTokens += spillAllowed ? FORCED_SPILL_PREVIEW_RESERVE_TOKENS : incoming;
+      return spillAllowed;
+    }
     this.reservedInlineTokens += incoming;
     return false;
   }

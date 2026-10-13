@@ -24,11 +24,6 @@ function totalOf(usage: TokenUsage | undefined): number {
   return usage.inputOther + usage.output + usage.inputCacheRead + usage.inputCacheCreation;
 }
 
-function inputOf(usage: TokenUsage | undefined): number {
-  if (usage === undefined) return 0;
-  return usage.inputOther + usage.inputCacheRead + usage.inputCacheCreation;
-}
-
 function tokenCountingState(ctx: TestAgentContext) {
   return ctx.readModel(TokenCountingAgentModelDefinition, (model) => model._state());
 }
@@ -74,7 +69,7 @@ function referenceFold(events: readonly ReferenceEvent[]): TokenCountingState {
       tokens = clamped;
     }
   }
-  return { anchors, tokens, calibration: 1, modelAlias: 'mock-model' };
+  return { anchors, tokens };
 }
 
 async function dispatchReference(ctx: TestAgentContext, event: ReferenceEvent): Promise<void> {
@@ -148,18 +143,8 @@ describe('Agent token counting', () => {
     expect(context.get()).toHaveLength(2);
 
     expect(tokenCountingState(ctx)).toEqual({
-      anchors: [
-        {
-          length: context.get().length,
-          tokens: exchangeTotal,
-          measured: true,
-          inputTokens: inputOf(usage.status().total),
-          envelopeHash: expect.any(String),
-        },
-      ],
+      anchors: [{ length: context.get().length, tokens: exchangeTotal, measured: true }],
       tokens: exchangeTotal,
-      calibration: 1,
-      modelAlias: 'mock-model',
     });
 
     const size = tokenCounting.get();
@@ -189,8 +174,6 @@ describe('Agent token counting', () => {
       length: context.get().length,
       tokens: lastExchangeTotal,
       measured: true,
-      inputTokens: inputOf(usage.status().currentTurn),
-      envelopeHash: expect.any(String),
     });
     expect(tokenCounting.get().measured).toBe(lastExchangeTotal);
     expect((await ctx.rpc.getContext({})).tokenCount).toBe(lastExchangeTotal);
@@ -203,123 +186,6 @@ describe('Agent token counting', () => {
     expect(size.measured).toBe(0);
     expect(size.estimated).toBeGreaterThan(0);
     expect(size.size).toBe(size.estimated);
-  });
-
-  it('calibrates the estimate from the measured-versus-estimated ratio', () => {
-    ctx.appendTurnExchange('u1', 'a1', 1_000);
-    expect(tokenCounting.calibration()).toBe(1);
-
-    ctx.appendTurnExchange('u2', 'a2', 3_000);
-    expect(tokenCounting.calibration()).toBe(4);
-
-    ctx.appendTurnExchange('u3', 'a3', 3_012);
-    expect(tokenCounting.calibration()).toBe(3);
-
-    ctx.appendTurnExchange('u4', 'a4', 3_013);
-    expect(tokenCounting.calibration()).toBeCloseTo(1.5833, 3);
-  });
-
-  it('scales the unmeasured tail estimate by the calibration factor', () => {
-    ctx.appendTurnExchange('u1', 'a1', 1_000);
-    ctx.appendTurnExchange('u2', 'a2', 3_000);
-    expect(tokenCounting.calibration()).toBe(4);
-
-    ctx.appendUserMessage([{ type: 'text', text: 'unmeasured tail message' }]);
-    const rawTail = estimateTokensForMessages(context.get().slice(-1));
-    const size = tokenCounting.get();
-    expect(size.measured).toBe(3_000);
-    expect(size.estimated).toBe(rawTail * 4);
-    expect(size.size).toBe(3_000 + rawTail * 4);
-  });
-
-  it('rounds calibrated estimates to integers', () => {
-    ctx.appendTurnExchange('u1', 'a1', 1_000);
-    ctx.appendTurnExchange('u2', 'a2', 3_000);
-    ctx.appendTurnExchange('u3', 'a3', 3_012);
-    ctx.appendTurnExchange('u4', 'a4', 3_013);
-    expect(tokenCounting.calibration()).toBeCloseTo(19 / 12, 6);
-
-    ctx.appendUserMessage([{ type: 'text', text: 'unmeasured tail' }]);
-    const rawTail = estimateTokensForMessages(context.get().slice(-1));
-    const size = tokenCounting.get();
-    expect(Number.isInteger(size.estimated)).toBe(true);
-    expect(size.estimated).toBe(Math.round((rawTail * 19) / 12));
-  });
-
-  it('resets calibration when the active model changes', () => {
-    ctx.appendTurnExchange('u1', 'a1', 1_000);
-    ctx.appendTurnExchange('u2', 'a2', 3_000);
-    expect(tokenCounting.calibration()).toBe(4);
-
-    profile.update({ modelAlias: 'other-model' });
-    ctx.appendTurnExchange('u3', 'a3', 7_000);
-    expect(tokenCounting.calibration()).toBe(1);
-
-    ctx.appendTurnExchange('u4', 'a4', 9_000);
-    expect(tokenCounting.calibration()).toBe(4);
-  });
-
-  it('returns the default calibration immediately after a model switch', () => {
-    ctx.appendTurnExchange('u1', 'a1', 1_000);
-    ctx.appendTurnExchange('u2', 'a2', 3_000);
-    expect(tokenCounting.calibration()).toBe(4);
-
-    profile.update({ modelAlias: 'other-model' });
-    expect(tokenCounting.calibration()).toBe(1);
-  });
-
-  it('calibrates from input usage instead of completion totals', () => {
-    ctx.appendTurnExchange('u1', 'a1', 1_000);
-    ctx.appendTurnExchange('u2', 'a2', 3_000);
-    expect(tokenCounting.calibration()).toBe(4);
-
-    ctx.appendUserMessage([{ type: 'text', text: 'u3' }]);
-    ctx.context.append({
-      role: 'assistant',
-      content: [{ type: 'text', text: 'a3' }],
-      toolCalls: [],
-    });
-    tokenCounting.measured(context.get(), [], {
-      inputOther: 3_005,
-      output: 100_000,
-      inputCacheRead: 0,
-      inputCacheCreation: 0,
-    });
-    expect(tokenCounting.calibration()).toBe(2.5);
-  });
-
-  it('skips calibration when the request envelope changes between measurements', () => {
-    ctx.appendTurnExchange('u1', 'a1', 1_000);
-    ctx.appendTurnExchange('u2', 'a2', 3_000);
-    expect(tokenCounting.calibration()).toBe(4);
-
-    ctx.appendUserMessage([{ type: 'text', text: 'u3' }]);
-    ctx.context.append({
-      role: 'assistant',
-      content: [{ type: 'text', text: 'a3' }],
-      toolCalls: [],
-    });
-    tokenCounting.measured(
-      context.get(),
-      [],
-      { inputOther: 3_005, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
-      'envelope-a',
-    );
-    expect(tokenCounting.calibration()).toBe(2.5);
-
-    ctx.appendUserMessage([{ type: 'text', text: 'u4' }]);
-    ctx.context.append({
-      role: 'assistant',
-      content: [{ type: 'text', text: 'a4' }],
-      toolCalls: [],
-    });
-    tokenCounting.measured(
-      context.get(),
-      [],
-      { inputOther: 3_011, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
-      'envelope-b',
-    );
-    expect(tokenCounting.calibration()).toBe(2.5);
   });
 
   it('ignores a stored anchor that overshoots the live context', async () => {
@@ -494,13 +360,7 @@ describe('Agent token counting', () => {
         tokens: reported,
       });
       expect(tokenCountingState(live).anchors).toEqual([
-        {
-          length: 2,
-          tokens: reported,
-          measured: true,
-          inputTokens: inputOf(live.usage.status().total),
-          envelopeHash: expect.any(String),
-        },
+        { length: 2, tokens: reported, measured: true },
       ]);
     } finally {
       await live.dispose();
@@ -557,8 +417,6 @@ describe('Agent token counting', () => {
         { length: 4, tokens: 200, measured: true },
       ],
       tokens: 200,
-      calibration: 1,
-      modelAlias: 'mock-model',
     });
 
     await dispatchReference(ctx, { kind: 'turn', length: 6, tokens: 250 });
@@ -569,8 +427,6 @@ describe('Agent token counting', () => {
         { length: 6, tokens: 250, measured: false },
       ],
       tokens: 250,
-      calibration: 1,
-      modelAlias: 'mock-model',
     });
 
     const pinned = tokenCountingState(ctx);
@@ -585,8 +441,6 @@ describe('Agent token counting', () => {
         { length: 6, tokens: 250, measured: false },
       ],
       tokens: 260,
-      calibration: 1,
-      modelAlias: 'mock-model',
     });
 
     await dispatchReference(ctx, { kind: 'measured', length: 4, tokens: 300 });
@@ -596,16 +450,12 @@ describe('Agent token counting', () => {
         { length: 4, tokens: 300, measured: true },
       ],
       tokens: 300,
-      calibration: 1,
-      modelAlias: 'mock-model',
     });
 
     await dispatchReference(ctx, { kind: 'truncated', length: 3, tokens: 150 });
     expect(tokenCountingState(ctx)).toEqual({
       anchors: [{ length: 2, tokens: 100, measured: true }],
       tokens: 150,
-      calibration: 1,
-      modelAlias: 'mock-model',
     });
 
     const afterTruncate = tokenCountingState(ctx);
@@ -616,8 +466,6 @@ describe('Agent token counting', () => {
     expect(tokenCountingState(ctx)).toEqual({
       anchors: [{ length: 1, tokens: 50, measured: false }],
       tokens: 50,
-      calibration: 1,
-      modelAlias: 'mock-model',
     });
 
     await dispatchReference(ctx, { kind: 'measured', length: 3.9, tokens: -10 });
@@ -627,16 +475,12 @@ describe('Agent token counting', () => {
         { length: 3, tokens: 0, measured: true },
       ],
       tokens: 0,
-      calibration: 1,
-      modelAlias: 'mock-model',
     });
 
     await dispatchReference(ctx, { kind: 'measured', length: -5, tokens: 10 });
     expect(tokenCountingState(ctx)).toEqual({
       anchors: [{ length: 0, tokens: 10, measured: true }],
       tokens: 10,
-      calibration: 1,
-      modelAlias: 'mock-model',
     });
   });
 
