@@ -400,9 +400,9 @@ my-plugin/
       SKILL.md
 ```
 
-`sessionStart.skill` loads a plugin Skill into the main Agent at session start, making it suitable for initialization instructions, workflow rules, or mapping terminology from other tools to Kimi Code CLI. It only injects text; it does not execute code.
+`sessionStart.skill` loads a plugin Skill into the main Agent at session start, making it suitable for initialization instructions, workflow rules, or mapping terminology from other tools to Kimi Code CLI. It only injects text; it does not execute code. The value is the Skill's frontmatter name as declared inside the plugin, without the `<plugin-id>:` prefix.
 
-Plugin Skills are listed and invoked under the qualified name `<plugin-id>:<skill-name>` — for example `/skill:my-plugin:using-my-plugin` — mirroring [plugin slash commands](#plugin-slash-commands). This keeps same-named Skills from different plugins distinct, and a bare skill name never resolves to a plugin Skill.
+Plugin Skills are listed and invoked under the qualified name `<plugin-id>:<skill-name>` — for example `/skill:my-plugin:using-my-plugin` — mirroring [plugin slash commands](#plugin-slash-commands). This keeps same-named Skills from different plugins distinct, and a bare skill name never resolves to a plugin Skill. If a plugin command and a plugin Skill share the same name, `/plugin-id:name` runs the command; invoke the Skill with the explicit `/skill:plugin-id:name` form.
 
 Regardless of how a Skill is loaded (`sessionStart.skill`, `/skill:<name>`, or automatic model invocation), `skillInstructions` appears alongside that plugin's Skill.
 
