@@ -13,6 +13,7 @@ export interface TokenCountingState {
   readonly anchors: readonly TokenAnchor[];
   readonly tokens: number;
   readonly calibration: number;
+  readonly modelAlias?: string;
 }
 
 const sizeSchema = z.object({

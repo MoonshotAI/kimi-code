@@ -40,6 +40,7 @@ import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/
 import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { profileKey } from '#/agent/profile/profileOps';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { ReadTool } from '#/agent/tools/os/read/readTool';
 import type { IAgentProfileService } from '#/agent/profile/profile';
@@ -1082,7 +1083,8 @@ describe('truncation pipeline', () => {
       get: () => ({ maxContextSize: 100_000_000 }),
     } as unknown as IModelCatalog);
     truncationContainer.stub(IAgentStateService, {
-      get: () => ({ modelAlias: 'test-model' }),
+      has: () => true,
+      get: (key: unknown) => (key === profileKey ? { modelAlias: 'test-model' } : new Map()),
     } as unknown as IAgentStateService);
     truncationContainer.stub(ISessionTokenCountingService, {
       get: () => ({ size: 0, measured: 0, estimated: 0 }),

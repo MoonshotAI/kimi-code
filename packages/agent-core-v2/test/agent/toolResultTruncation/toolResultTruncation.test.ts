@@ -11,6 +11,7 @@ import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolRe
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { profileKey } from '#/agent/profile/profileOps';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IEventBus } from '#/app/event/eventBus';
 import type { ContentPart } from '#human/llm/message';
@@ -26,6 +27,8 @@ describe('ToolResultTruncationService', () => {
   let truncation: IAgentToolResultTruncationService;
   let currentContextSize: number;
   let defaultModelRecord: { maxContextSize?: number; maxInputSize?: number } | undefined;
+  let observedWindow: number | undefined;
+  let calibrationFactor: number;
 
   function stubBudgetServices(ix: TestInstantiationService): void {
     ix.stub(IModelCatalog, {
@@ -38,11 +41,17 @@ describe('ToolResultTruncationService', () => {
             },
     } as unknown as IModelCatalog);
     ix.stub(IAgentStateService, {
-      get: () => ({ modelAlias: defaultModelRecord === undefined ? undefined : 'test-model' }),
+      has: () => true,
+      get: (key: unknown) => {
+        if (key === profileKey) {
+          return { modelAlias: defaultModelRecord === undefined ? undefined : 'test-model' };
+        }
+        return new Map(observedWindow === undefined ? [] : [['test-model', observedWindow]]);
+      },
     } as unknown as IAgentStateService);
     ix.stub(ISessionTokenCountingService, {
       get: () => ({ size: currentContextSize, measured: 0, estimated: currentContextSize }),
-      calibration: () => 1,
+      calibration: () => calibrationFactor,
     } as unknown as ISessionTokenCountingService);
     ix.stub(IEventBus, {
       subscribe: () => ({ dispose: () => {} }),
@@ -55,6 +64,8 @@ describe('ToolResultTruncationService', () => {
     disposables = new DisposableStore();
     currentContextSize = 0;
     defaultModelRecord = { maxContextSize: 1_000_000 };
+    observedWindow = undefined;
+    calibrationFactor = 1;
     const ix = disposables.add(new TestInstantiationService());
     ix.stub(IBootstrapService, stubBootstrap(homeDir));
     ix.stub(
@@ -438,6 +449,34 @@ describe('ToolResultTruncationService', () => {
     expect(first.truncated).toBeUndefined();
     expect(second.truncated).toBeUndefined();
     expect(third.truncated).toBe(true);
+  });
+
+  it('keeps the conservative estimate when calibration drops below one', async () => {
+    defaultModelRecord = undefined;
+    currentContextSize = 100_000;
+    calibrationFactor = 0.5;
+    const exempt = { output: `${'z'.repeat(99)}\n`.repeat(2_500), spillExempt: true as const };
+
+    const result = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_low_calibration',
+      result: exempt,
+    });
+
+    expect(result.truncated).toBe(true);
+  });
+
+  it('honors the observed provider window over the catalog window', async () => {
+    observedWindow = 200_000;
+    const exempt = { output: `${'z'.repeat(99)}\n`.repeat(2_500), spillExempt: true as const };
+
+    const result = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_observed_window',
+      result: exempt,
+    });
+
+    expect(result.truncated).toBe(true);
   });
 
   it('identifies paths inside the agent spill directory', () => {

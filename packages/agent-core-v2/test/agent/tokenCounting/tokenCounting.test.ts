@@ -69,7 +69,7 @@ function referenceFold(events: readonly ReferenceEvent[]): TokenCountingState {
       tokens = clamped;
     }
   }
-  return { anchors, tokens, calibration: 1 };
+  return { anchors, tokens, calibration: 1, modelAlias: 'mock-model' };
 }
 
 async function dispatchReference(ctx: TestAgentContext, event: ReferenceEvent): Promise<void> {
@@ -146,6 +146,7 @@ describe('Agent token counting', () => {
       anchors: [{ length: context.get().length, tokens: exchangeTotal, measured: true }],
       tokens: exchangeTotal,
       calibration: 1,
+      modelAlias: 'mock-model',
     });
 
     const size = tokenCounting.get();
@@ -214,6 +215,33 @@ describe('Agent token counting', () => {
     expect(size.measured).toBe(3_000);
     expect(size.estimated).toBe(rawTail * 4);
     expect(size.size).toBe(3_000 + rawTail * 4);
+  });
+
+  it('rounds calibrated estimates to integers', () => {
+    ctx.appendTurnExchange('u1', 'a1', 1_000);
+    ctx.appendTurnExchange('u2', 'a2', 3_000);
+    ctx.appendTurnExchange('u3', 'a3', 3_012);
+    ctx.appendTurnExchange('u4', 'a4', 3_013);
+    expect(tokenCounting.calibration()).toBeCloseTo(19 / 12, 6);
+
+    ctx.appendUserMessage([{ type: 'text', text: 'unmeasured tail' }]);
+    const rawTail = estimateTokensForMessages(context.get().slice(-1));
+    const size = tokenCounting.get();
+    expect(Number.isInteger(size.estimated)).toBe(true);
+    expect(size.estimated).toBe(Math.round((rawTail * 19) / 12));
+  });
+
+  it('resets calibration when the active model changes', () => {
+    ctx.appendTurnExchange('u1', 'a1', 1_000);
+    ctx.appendTurnExchange('u2', 'a2', 3_000);
+    expect(tokenCounting.calibration()).toBe(4);
+
+    profile.update({ modelAlias: 'other-model' });
+    ctx.appendTurnExchange('u3', 'a3', 7_000);
+    expect(tokenCounting.calibration()).toBe(1);
+
+    ctx.appendTurnExchange('u4', 'a4', 9_000);
+    expect(tokenCounting.calibration()).toBe(4);
   });
 
   it('ignores a stored anchor that overshoots the live context', async () => {
@@ -446,6 +474,7 @@ describe('Agent token counting', () => {
       ],
       tokens: 200,
       calibration: 1,
+      modelAlias: 'mock-model',
     });
 
     await dispatchReference(ctx, { kind: 'turn', length: 6, tokens: 250 });
@@ -457,6 +486,7 @@ describe('Agent token counting', () => {
       ],
       tokens: 250,
       calibration: 1,
+      modelAlias: 'mock-model',
     });
 
     const pinned = tokenCountingState(ctx);
@@ -472,6 +502,7 @@ describe('Agent token counting', () => {
       ],
       tokens: 260,
       calibration: 1,
+      modelAlias: 'mock-model',
     });
 
     await dispatchReference(ctx, { kind: 'measured', length: 4, tokens: 300 });
@@ -482,6 +513,7 @@ describe('Agent token counting', () => {
       ],
       tokens: 300,
       calibration: 1,
+      modelAlias: 'mock-model',
     });
 
     await dispatchReference(ctx, { kind: 'truncated', length: 3, tokens: 150 });
@@ -489,6 +521,7 @@ describe('Agent token counting', () => {
       anchors: [{ length: 2, tokens: 100, measured: true }],
       tokens: 150,
       calibration: 1,
+      modelAlias: 'mock-model',
     });
 
     const afterTruncate = tokenCountingState(ctx);
@@ -500,6 +533,7 @@ describe('Agent token counting', () => {
       anchors: [{ length: 1, tokens: 50, measured: false }],
       tokens: 50,
       calibration: 1,
+      modelAlias: 'mock-model',
     });
 
     await dispatchReference(ctx, { kind: 'measured', length: 3.9, tokens: -10 });
@@ -510,6 +544,7 @@ describe('Agent token counting', () => {
       ],
       tokens: 0,
       calibration: 1,
+      modelAlias: 'mock-model',
     });
 
     await dispatchReference(ctx, { kind: 'measured', length: -5, tokens: 10 });
@@ -517,6 +552,7 @@ describe('Agent token counting', () => {
       anchors: [{ length: 0, tokens: 10, measured: true }],
       tokens: 10,
       calibration: 1,
+      modelAlias: 'mock-model',
     });
   });
 

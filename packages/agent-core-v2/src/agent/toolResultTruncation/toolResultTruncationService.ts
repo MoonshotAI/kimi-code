@@ -5,6 +5,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentScopeContext, agentContextOfScope } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { profileKey } from '#/agent/profile/profileOps';
+import { fullCompactionObservedMaxContextTokensByModelKey } from '#/agent/fullCompaction/fullCompactionService';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { resolveEffectiveMaxContextTokens } from '#/agent/fullCompaction/contextWindow';
 import { estimateTokensConservative } from '#/llm-adapter/contract/tokens';
@@ -144,22 +145,30 @@ export class ToolResultTruncationService extends Service implements IAgentToolRe
   private exceedsContextBudget(result: ExecutableToolResult): boolean {
     const rawText = persistableToolResultText(result.output);
     if (rawText.length <= DEFAULT_TOOL_RESULT_MAX_CHARS) return false;
+    const modelAlias = this.states.has(profileKey)
+      ? this.states.get(profileKey).modelAlias
+      : undefined;
+    const observed =
+      modelAlias === undefined || !this.states.has(fullCompactionObservedMaxContextTokensByModelKey)
+        ? undefined
+        : this.states.get(fullCompactionObservedMaxContextTokensByModelKey).get(modelAlias);
     const effectiveMax = resolveEffectiveMaxContextTokens({
-      configured: this.activeModelContextWindow(),
+      configured: this.configuredModelContextWindow(modelAlias),
+      observed,
     });
     const agentContext = agentContextOfScope(this.agent);
     const committed = this.tokenCounting.get(agentContext).size;
     if (this.reservedInlineTokens === 0) this.reservedInlineBaseline = committed;
     const current = Math.max(committed, this.reservedInlineBaseline + this.reservedInlineTokens);
     const incoming =
-      estimateTokensConservative(rawText) * this.tokenCounting.calibration(agentContext);
+      estimateTokensConservative(rawText) *
+      Math.max(1, this.tokenCounting.calibration(agentContext));
     if (current + incoming > effectiveMax * FORCED_SPILL_CONTEXT_RATIO) return true;
     this.reservedInlineTokens += incoming;
     return false;
   }
 
-  private activeModelContextWindow(): number | undefined {
-    const modelAlias = this.states.get(profileKey).modelAlias;
+  private configuredModelContextWindow(modelAlias: string | undefined): number | undefined {
     if (modelAlias === undefined) return undefined;
     const model = this.tryGetCatalogModel(modelAlias);
     return model?.maxInputSize ?? model?.maxContextSize;

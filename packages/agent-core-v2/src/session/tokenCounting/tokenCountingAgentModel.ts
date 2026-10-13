@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { contextMemoryKey } from '#/agent/contextMemory/contextOps';
+import { profileKey } from '#/agent/profile/profileOps';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { ContextSize, TokenCountingStrategy } from '#/agent/tokenCounting/tokenCounting';
 import {
@@ -40,18 +41,27 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
       const tokens = Math.max(0, event.tokens);
       const anchor: TokenAnchor = { length, tokens, measured: true };
       const committed = this._state();
-      const calibration = this.nextCalibration(committed, length, tokens);
+      const modelAlias = this.currentModelAlias();
+      const modelChanged =
+        modelAlias !== undefined &&
+        committed.modelAlias !== undefined &&
+        modelAlias !== committed.modelAlias;
+      const calibration = modelChanged
+        ? DEFAULT_ESTIMATE_CALIBRATION
+        : this.nextCalibration(committed, length, tokens);
       const anchors = [...committed.anchors.filter((a) => a.length < length), anchor];
       if (
         !(
           committed.tokens === tokens &&
           anchorsEqual(committed.anchors, anchors) &&
-          committed.calibration === calibration
+          committed.calibration === calibration &&
+          committed.modelAlias === (modelAlias ?? committed.modelAlias)
         )
       ) {
         this.state.anchors = anchors;
         this.state.tokens = tokens;
         this.state.calibration = calibration;
+        this.state.modelAlias = modelAlias ?? committed.modelAlias;
       }
       void this.emit(new AgentStatusUpdated({ agentId: event.agentId, contextTokens: tokens }));
     });
@@ -107,8 +117,9 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
       from === 0 && measuredEnd === anchor.length
         ? anchor.tokens
         : estimateTokensForMessages(context.slice(from, measuredEnd));
-    const estimated =
-      estimateTokensForMessages(context.slice(estimatedStart, to)) * this.calibrationFactor();
+    const estimated = Math.round(
+      estimateTokensForMessages(context.slice(estimatedStart, to)) * this.calibrationFactor(),
+    );
     return { size: measured + estimated, measured, estimated };
   }
 
@@ -139,7 +150,7 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
   statusSize(strategy: TokenCountingStrategy): number {
     if (strategy === 'measured') return this.latestMeasured();
     if (strategy === 'estimated') {
-      return estimateTokensForMessages(this.context()) * this.calibrationFactor();
+      return Math.round(estimateTokensForMessages(this.context()) * this.calibrationFactor());
     }
     return Math.max(this.get().size, this.latestMeasured());
   }
@@ -147,6 +158,10 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
   calibrationFactor(): number {
     const calibration = this._state().calibration;
     return calibration > 0 ? calibration : DEFAULT_ESTIMATE_CALIBRATION;
+  }
+
+  private currentModelAlias(): string | undefined {
+    return this.readLegacy(profileKey).modelAlias;
   }
 
   private nextCalibration(
