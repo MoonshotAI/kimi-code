@@ -974,7 +974,7 @@ describe('Remote Control device client', () => {
           response.end(JSON.stringify({ devices: [device], max_devices: 3 }));
           return;
         }
-        if (pathname === '/coding-relay/v1/remote/devices/device%2Fone' && request.method === 'PATCH') {
+        if (pathname === '/coding-relay/v1/remote/devices/device%2Fone' && (request.method === 'PATCH' || request.method === 'DELETE')) {
           response.writeHead(204);
           response.end();
           return;
@@ -995,8 +995,9 @@ describe('Remote Control device client', () => {
 
     await expect(client.listDevices()).resolves.toEqual({ devices: [device], max_devices: 3 });
     await client.renameDevice('device/one', 'Renamed');
+    await client.deleteDevice('device/one');
 
-    expect(requests).toHaveLength(3);
+    expect(requests).toHaveLength(4);
     expect(JSON.parse(requests[0]!.body)).toEqual({
       access_token: TOKEN.accessToken,
       refresh_token: TOKEN.refreshToken,
@@ -1005,8 +1006,11 @@ describe('Remote Control device client', () => {
     expect(requests.slice(1).map((request) => request.cookie)).toEqual([
       'rc_session=one; theme=dark',
       'rc_session=one; theme=dark',
+      'rc_session=one; theme=dark',
     ]);
     expect(JSON.parse(requests[2]!.body)).toEqual({ alias: 'Renamed' });
+    expect(requests[3]!.method).toBe('DELETE');
+    expect(requests[3]!.pathname).toBe('/coding-relay/v1/remote/devices/device%2Fone');
   });
 
   it('projects only the documented device fields from the relay payload', async () => {

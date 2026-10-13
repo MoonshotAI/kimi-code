@@ -109,6 +109,12 @@ export class RemoteControlDeviceClient {
     );
   }
 
+  async deleteDevice(deviceId: string): Promise<void> {
+    await this.request(`/v1/remote/devices/${encodeURIComponent(deviceId)}`, {
+      method: 'DELETE',
+    });
+  }
+
   private async context(): Promise<RemoteControlDeviceContext> {
     const auth = resolveKimiRemoteControlAuth({
       configuredOAuthHost: this.options.configuredOAuthHost?.(),

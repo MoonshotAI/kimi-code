@@ -318,6 +318,16 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 成功时 `data` 为 `{ ok: true }`。
 
+#### `DELETE /api/v1/remote-control/devices/{id}`
+
+把设备从云端注册表移除：设备从列表中消失，仍在连接的隧道会被断开。下线只是把设备置为离线并保留在列表中；删除则把它整个移除。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `id` | path | string | 设备标识 |
+
+成功时 `data` 为 `{ ok: true }`。
+
 ### 配置
 
 | 方法与路径 | 说明 |
