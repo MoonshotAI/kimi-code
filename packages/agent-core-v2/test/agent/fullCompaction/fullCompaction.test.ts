@@ -4517,7 +4517,8 @@ describe('FullCompaction pre-shrink', () => {
     expect(inputs).toHaveLength(2);
     expect(inputs[0]).toHaveLength(5);
     expect(inputs[1]).toHaveLength(2);
-    expect(inputs[1]![0]).toMatch(/^tool: /);
+    expect(inputs[1]!.some((entry) => entry.startsWith('tool: '))).toBe(false);
+    expect(inputs[1]![0]).toMatch(/^user: /);
     expect(inputs[1]![0]).toContain('content truncated to fit the model window');
     expect(inputs[1]![0]!.length).toBeLessThan(20_000);
     const events = ctx.newEvents();

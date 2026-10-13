@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { LifecycleScope } from '#/app/scopes';
+import { Service } from '#/_base/di/service';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentScopeContext, agentContextOfScope } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -8,6 +9,8 @@ import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { resolveEffectiveMaxContextTokens } from '#/agent/fullCompaction/contextWindow';
 import { estimateTokensConservative } from '#/llm-adapter/contract/tokens';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
+import { IEventBus } from '#/app/event/eventBus';
+import { TurnStarted } from '#/agent/loop/turnEvents';
 import {
   DEFAULT_TOOL_RESULT_MAX_CHARS,
   DEFAULT_TOOL_RESULT_MAX_RETAINED_CHARS,
@@ -37,10 +40,13 @@ interface ShapedOutput {
   readonly hasMedia: boolean;
 }
 
-export class ToolResultTruncationService implements IAgentToolResultTruncationService {
+export class ToolResultTruncationService extends Service implements IAgentToolResultTruncationService {
   declare readonly _serviceBrand: undefined;
 
   private readonly storageScope: string;
+
+  private reservedInlineBaseline = 0;
+  private reservedInlineTokens = 0;
 
   constructor(
     @IBootstrapService private readonly bootstrap: IBootstrapService,
@@ -49,8 +55,15 @@ export class ToolResultTruncationService implements IAgentToolResultTruncationSe
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
+    @IEventBus private readonly eventBus: IEventBus,
   ) {
+    super();
     this.storageScope = agent.scope('tool-results');
+    this._register(
+      this.eventBus.subscribe(TurnStarted, () => {
+        this.reservedInlineTokens = 0;
+      }),
+    );
   }
 
   async truncateForModel<T extends ExecutableToolResult>(
@@ -135,10 +148,14 @@ export class ToolResultTruncationService implements IAgentToolResultTruncationSe
       configured: this.activeModelContextWindow(),
     });
     const agentContext = agentContextOfScope(this.agent);
-    const current = this.tokenCounting.get(agentContext).size;
+    const committed = this.tokenCounting.get(agentContext).size;
+    if (this.reservedInlineTokens === 0) this.reservedInlineBaseline = committed;
+    const current = Math.max(committed, this.reservedInlineBaseline + this.reservedInlineTokens);
     const incoming =
       estimateTokensConservative(rawText) * this.tokenCounting.calibration(agentContext);
-    return current + incoming > effectiveMax * FORCED_SPILL_CONTEXT_RATIO;
+    if (current + incoming > effectiveMax * FORCED_SPILL_CONTEXT_RATIO) return true;
+    this.reservedInlineTokens += incoming;
+    return false;
   }
 
   private activeModelContextWindow(): number | undefined {

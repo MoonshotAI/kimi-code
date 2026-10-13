@@ -12,6 +12,7 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
+import { IEventBus } from '#/app/event/eventBus';
 import type { ContentPart } from '#human/llm/message';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -43,6 +44,10 @@ describe('ToolResultTruncationService', () => {
       get: () => ({ size: currentContextSize, measured: 0, estimated: currentContextSize }),
       calibration: () => 1,
     } as unknown as ISessionTokenCountingService);
+    ix.stub(IEventBus, {
+      subscribe: () => ({ dispose: () => {} }),
+      publish: () => {},
+    } as unknown as IEventBus);
   }
 
   beforeEach(async () => {
@@ -405,6 +410,34 @@ describe('ToolResultTruncationService', () => {
     expect(typeof rendered).toBe('string');
     if (typeof rendered !== 'string') throw new Error('expected string output');
     expect(rendered).toContain('Tool output exceeded 50000 characters');
+  });
+
+  it('reserves budget across concurrently finalized exempt results', async () => {
+    currentContextSize = 100_000;
+    const makeExempt = () => ({
+      output: `${'z'.repeat(99)}\n`.repeat(4_000),
+      spillExempt: true as const,
+    });
+
+    const first = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_r1',
+      result: makeExempt(),
+    });
+    const second = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_r2',
+      result: makeExempt(),
+    });
+    const third = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_r3',
+      result: makeExempt(),
+    });
+
+    expect(first.truncated).toBeUndefined();
+    expect(second.truncated).toBeUndefined();
+    expect(third.truncated).toBe(true);
   });
 
   it('identifies paths inside the agent spill directory', () => {

@@ -1079,7 +1079,7 @@ describe('truncation pipeline', () => {
     const storage = new FileStorageService(homeDir);
     truncationContainer.stub(IFileSystemStorageService, storage);
     truncationContainer.stub(IModelCatalog, {
-      get: () => ({ maxContextSize: 1_000_000 }),
+      get: () => ({ maxContextSize: 100_000_000 }),
     } as unknown as IModelCatalog);
     truncationContainer.stub(IAgentStateService, {
       get: () => ({ modelAlias: 'test-model' }),
@@ -1088,6 +1088,10 @@ describe('truncation pipeline', () => {
       get: () => ({ size: 0, measured: 0, estimated: 0 }),
       calibration: () => 1,
     } as unknown as ISessionTokenCountingService);
+    truncationContainer.stub(IEventBus, {
+      subscribe: () => ({ dispose: () => {} }),
+      publish: () => {},
+    } as unknown as IEventBus);
     attachmentStore = new SessionMediaStoreService(makeSessionContext({
       sessionId: 'session', workspaceId: 'workspace', cwd: homeDir,
       sessionDir: join(homeDir, 'sessions/workspace/session'),

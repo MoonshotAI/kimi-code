@@ -866,6 +866,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       const truncated = truncateMessageToTokenBudget(
         only,
         this.singleMessageTruncationBudget(compactionMaxOutputSize),
+        (message) => this.tokenCounting.estimateMessage(message) * this.calibrationFactor(),
       );
       return truncated === undefined ? undefined : { history: [truncated], droppedCount: 0 };
     }
@@ -882,6 +883,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     const truncated = truncateMessageToTokenBudget(
       newest,
       this.singleMessageTruncationBudget(compactionMaxOutputSize),
+      (message) => this.tokenCounting.estimateMessage(message) * this.calibrationFactor(),
     );
     return truncated === undefined
       ? undefined
@@ -987,8 +989,9 @@ function shrinkCompactionHistoryAfterOverflow<T extends Message>(
 function truncateMessageToTokenBudget<T extends Message>(
   message: T,
   tokenBudget: number,
+  estimateMessage: (message: T) => number = estimateTokensForMessage,
 ): T | undefined {
-  if (estimateTokensForMessage(message) <= tokenBudget) return undefined;
+  if (estimateMessage(message) <= tokenBudget) return message;
   const preservedParts = message.content.filter(
     (part) => part.type !== 'text' && part.type !== 'think',
   );
@@ -1012,7 +1015,11 @@ function truncateMessageToTokenBudget<T extends Message>(
   if (omittedChars <= 0) return undefined;
   const tail = tailChars > 0 ? fullText.slice(fullText.length - tailChars) : '';
   const truncatedText = `${fullText.slice(0, headChars)}\n${SINGLE_MESSAGE_TRUNCATION_MARKER} (${String(omittedChars)} chars omitted)\n${tail}`;
-  return { ...message, content: [...preservedParts, { type: 'text', text: truncatedText }] };
+  const content = [...preservedParts, { type: 'text' as const, text: truncatedText }];
+  if (message.role === 'tool') {
+    return { role: 'user', content, toolCalls: [] } as unknown as T;
+  }
+  return { ...message, content, toolCalls: [] };
 }
 
 function takeRecentMessagesWithinTokenBudget<T extends Message>(
