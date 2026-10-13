@@ -87,6 +87,12 @@ export class SessionTokenCountingService extends Disposable implements ISessionT
     );
   }
 
+  calibration(agent: AgentContext): number {
+    return agentSpaceOf(agent).use(TokenCountingAgentModelDefinition, (model) =>
+      model.calibrationFactor(),
+    );
+  }
+
   recordTruncation(agent: AgentContext, cutIndex: number): void {
     void agentSpaceOf(agent).use(TokenCountingAgentModelDefinition, (model) =>
       model.recordTruncation(cutIndex),

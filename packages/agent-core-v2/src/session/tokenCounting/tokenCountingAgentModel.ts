@@ -22,6 +22,15 @@ import { AgentModel, defineAgentModel, type AgentModelContext } from '#/state/ag
 import type { TokenCountingRebaseInput } from './sessionTokenCounting';
 
 const ZERO_ANCHOR: TokenAnchor = { length: 0, tokens: 0, measured: true };
+const DEFAULT_ESTIMATE_CALIBRATION = 1;
+const MIN_ESTIMATE_CALIBRATION = 0.5;
+const MAX_ESTIMATE_CALIBRATION = 4;
+const CALIBRATION_SMOOTHING = 0.5;
+
+function clampCalibration(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return DEFAULT_ESTIMATE_CALIBRATION;
+  return Math.min(MAX_ESTIMATE_CALIBRATION, Math.max(MIN_ESTIMATE_CALIBRATION, value));
+}
 
 export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
   constructor(context: AgentModelContext) {
@@ -31,10 +40,18 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
       const tokens = Math.max(0, event.tokens);
       const anchor: TokenAnchor = { length, tokens, measured: true };
       const committed = this._state();
+      const calibration = this.nextCalibration(committed, length, tokens);
       const anchors = [...committed.anchors.filter((a) => a.length < length), anchor];
-      if (!(committed.tokens === tokens && anchorsEqual(committed.anchors, anchors))) {
+      if (
+        !(
+          committed.tokens === tokens &&
+          anchorsEqual(committed.anchors, anchors) &&
+          committed.calibration === calibration
+        )
+      ) {
         this.state.anchors = anchors;
         this.state.tokens = tokens;
+        this.state.calibration = calibration;
       }
       void this.emit(new AgentStatusUpdated({ agentId: event.agentId, contextTokens: tokens }));
     });
@@ -90,7 +107,8 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
       from === 0 && measuredEnd === anchor.length
         ? anchor.tokens
         : estimateTokensForMessages(context.slice(from, measuredEnd));
-    const estimated = estimateTokensForMessages(context.slice(estimatedStart, to));
+    const estimated =
+      estimateTokensForMessages(context.slice(estimatedStart, to)) * this.calibrationFactor();
     return { size: measured + estimated, measured, estimated };
   }
 
@@ -120,8 +138,37 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
 
   statusSize(strategy: TokenCountingStrategy): number {
     if (strategy === 'measured') return this.latestMeasured();
-    if (strategy === 'estimated') return estimateTokensForMessages(this.context());
+    if (strategy === 'estimated') {
+      return estimateTokensForMessages(this.context()) * this.calibrationFactor();
+    }
     return Math.max(this.get().size, this.latestMeasured());
+  }
+
+  calibrationFactor(): number {
+    const calibration = this._state().calibration;
+    return calibration > 0 ? calibration : DEFAULT_ESTIMATE_CALIBRATION;
+  }
+
+  private nextCalibration(
+    committed: TokenCountingState,
+    length: number,
+    tokens: number,
+  ): number {
+    const current = committed.calibration > 0 ? committed.calibration : DEFAULT_ESTIMATE_CALIBRATION;
+    let previous: TokenAnchor | undefined;
+    for (let i = committed.anchors.length - 1; i >= 0; i--) {
+      const candidate = committed.anchors[i]!;
+      if (candidate.measured && candidate.length < length) {
+        previous = candidate;
+        break;
+      }
+    }
+    if (previous === undefined || tokens <= previous.tokens) return current;
+    const context = this.context();
+    const deltaEstimate = estimateTokensForMessages(context.slice(previous.length, length));
+    if (deltaEstimate <= 0) return current;
+    const ratio = (tokens - previous.tokens) / deltaEstimate;
+    return clampCalibration(current * (1 - CALIBRATION_SMOOTHING) + ratio * CALIBRATION_SMOOTHING);
   }
 
   recordTruncation(cutIndex: number): Promise<void> {
@@ -177,7 +224,7 @@ export const TokenCountingAgentModelDefinition = defineAgentModel({
   id: 'tokenCounting',
   model: TokenCountingAgentModel,
   state: {
-    initial: (): TokenCountingState => ({ anchors: [], tokens: 0 }),
+    initial: (): TokenCountingState => ({ anchors: [], tokens: 0, calibration: 1 }),
     schema: z.custom<TokenCountingState>(),
   },
   events: [

@@ -3,7 +3,11 @@ import { Service } from "#/_base/di/service";
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
-import { estimateTokensForMessage } from "#/llm-adapter/contract/tokens";
+import {
+  estimateTokens,
+  estimateTokensForContentParts,
+  estimateTokensForMessage,
+} from '#/llm-adapter/contract/tokens';
 import { buildCompactionSummaryText, isRealUserInput } from '#/agent/contextMemory/compactionHandoff';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -56,6 +60,7 @@ import {
   RuntimeCompactionStrategy,
   type CompactionStrategy,
 } from './strategy';
+import { resolveEffectiveMaxContextTokens } from './contextWindow';
 import {
   CompactionBlocked,
   CompactionCancelled,
@@ -79,6 +84,8 @@ const OVERFLOW_CONTEXT_SAFETY_RATIO = 0.85;
 const OVERFLOW_STATUS_RECOVERY_RATIO = 0.5;
 const MAX_COMPACTION_OVERFLOW_SHRINK_ATTEMPTS = 3;
 const COMPACTION_OVERFLOW_SHRINK_RATIOS = [0.7, 0.5, 0.35] as const;
+const SINGLE_MESSAGE_TRUNCATION_FLOOR_TOKENS = 4_096;
+const SINGLE_MESSAGE_TRUNCATION_MARKER = '[...content truncated to fit the model window...]';
 const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
   type: 'object',
   properties: {},
@@ -167,7 +174,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     this.states.contributeState(fullCompactionActiveTurnIdKey);
     this.strategy = new RuntimeCompactionStrategy(
       () => this.resolveModelContextWithEffectiveMax(),
-      (message) => this.tokenCounting.estimateMessage(message),
+      (message) => this.tokenCounting.estimateMessage(message) * this.calibrationFactor(),
     );
     this._register(
       this.dispatcher.hooks.onDidRestore.register('full-compaction', async (_ctx, next) => {
@@ -261,9 +268,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     const modelAlias = this.profile.data().modelAlias;
     const observed =
       modelAlias === undefined ? undefined : this.observedMaxContextTokensByModel.get(modelAlias);
-    if (observed === undefined) return configured;
-    if (configured <= 0) return observed;
-    return Math.min(configured, observed);
+    return resolveEffectiveMaxContextTokens({ configured, observed });
   }
 
   private resolveModelContextWithEffectiveMax(): ProfileModelContext {
@@ -284,11 +289,16 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   }
 
   private requestTokens(messages: readonly Message[]): number {
-    return this.tokenCounting.requestSize({
+    const overhead = this.tokenCounting.requestSize({
       systemPrompt: this.profile.getSystemPrompt(),
       tools: this.defaultTools().filter((tool) => tool.deferred !== true),
-      messages,
+      messages: [],
     });
+    return overhead + this.tokenCounting.estimateMessages(messages) * this.calibrationFactor();
+  }
+
+  private calibrationFactor(): number {
+    return this.tokenCounting.calibration(agentContextOfScope(this.agent));
   }
 
   private defaultTools(): readonly Tool[] {
@@ -696,19 +706,18 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             overflowShrinkCount += 1;
             if (
               overflowShrinkCount > MAX_COMPACTION_OVERFLOW_SHRINK_ATTEMPTS ||
-              requestAttempts >= maxAttempts ||
-              messagesToCompact.length <= 1
+              requestAttempts >= maxAttempts
             ) {
               throw error;
             }
-            const before = messagesToCompact.length;
-            historyForModel = shrinkCompactionHistoryAfterOverflow(
+            const shrunk = this.shrinkHistoryForOverflowRetry(
               messagesToCompact,
               overflowShrinkCount,
-              (message) => this.tokenCounting.estimateMessage(message),
+              compactionMaxOutputSize,
             );
-            if (historyForModel.length === 0) throw error;
-            droppedCount += before - historyForModel.length;
+            if (shrunk === undefined) throw error;
+            droppedCount += shrunk.droppedCount;
+            historyForModel = shrunk.history;
             retryCount = 0;
             continue;
           }
@@ -820,25 +829,70 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     instruction: string,
     compactionMaxOutputSize: number | undefined,
   ): readonly ContextMessage[] {
-    const effectiveMaxTokens = this.getEffectiveMaxContextTokens();
-    if (effectiveMaxTokens <= 0) return history;
-    const outputReserve =
-      compactionMaxOutputSize === undefined
-        ? Math.floor(effectiveMaxTokens / 8)
-        : Math.min(compactionMaxOutputSize, Math.floor(effectiveMaxTokens / 8));
-    const messageBudget =
-      Math.floor((effectiveMaxTokens - outputReserve) * OVERFLOW_CONTEXT_SAFETY_RATIO) -
-      this.requestTokens([]);
+    const messageBudget = this.compactionMessageBudget(compactionMaxOutputSize);
     const estimatedMessagesTokens =
-      this.tokenCounting.estimateMessages(history) +
-      this.tokenCounting.estimateMessage(createUserMessage(instruction));
+      (this.tokenCounting.estimateMessages(history) +
+        this.tokenCounting.estimateMessage(createUserMessage(instruction))) *
+      this.calibrationFactor();
     if (messageBudget <= 0 || estimatedMessagesTokens <= messageBudget) return history;
     const preShrunk = takeRecentMessagesWithinTokenBudget(
       history,
       messageBudget,
-      (message) => this.tokenCounting.estimateMessage(message),
+      (message) => this.tokenCounting.estimateMessage(message) * this.calibrationFactor(),
     );
     return preShrunk.length === 0 ? history : preShrunk;
+  }
+
+  private compactionMessageBudget(compactionMaxOutputSize: number | undefined): number {
+    const effectiveMaxTokens = this.getEffectiveMaxContextTokens();
+    const outputReserve =
+      compactionMaxOutputSize === undefined
+        ? Math.floor(effectiveMaxTokens / 8)
+        : Math.min(compactionMaxOutputSize, Math.floor(effectiveMaxTokens / 8));
+    return (
+      Math.floor((effectiveMaxTokens - outputReserve) * OVERFLOW_CONTEXT_SAFETY_RATIO) -
+      this.requestTokens([])
+    );
+  }
+
+  private shrinkHistoryForOverflowRetry(
+    messages: readonly ContextMessage[],
+    overflowShrinkCount: number,
+    compactionMaxOutputSize: number | undefined,
+  ): { readonly history: readonly ContextMessage[]; readonly droppedCount: number } | undefined {
+    if (messages.length <= 1) {
+      const only = messages[0];
+      if (only === undefined) return undefined;
+      const truncated = truncateMessageToTokenBudget(
+        only,
+        this.singleMessageTruncationBudget(compactionMaxOutputSize),
+      );
+      return truncated === undefined ? undefined : { history: [truncated], droppedCount: 0 };
+    }
+    const shrunk = shrinkCompactionHistoryAfterOverflow(
+      messages,
+      overflowShrinkCount,
+      (message) => this.tokenCounting.estimateMessage(message) * this.calibrationFactor(),
+    );
+    if (shrunk.length > 0) {
+      return { history: shrunk, droppedCount: messages.length - shrunk.length };
+    }
+    const newest = messages.at(-1);
+    if (newest === undefined) return undefined;
+    const truncated = truncateMessageToTokenBudget(
+      newest,
+      this.singleMessageTruncationBudget(compactionMaxOutputSize),
+    );
+    return truncated === undefined
+      ? undefined
+      : { history: [truncated], droppedCount: messages.length - 1 };
+  }
+
+  private singleMessageTruncationBudget(compactionMaxOutputSize: number | undefined): number {
+    return Math.max(
+      this.compactionMessageBudget(compactionMaxOutputSize),
+      SINGLE_MESSAGE_TRUNCATION_FLOOR_TOKENS,
+    );
   }
 
   private async postProcessSummary(summary: string): Promise<string> {
@@ -928,6 +982,37 @@ function shrinkCompactionHistoryAfterOverflow<T extends Message>(
   for (const message of messages) totalTokens += estimateMessage(message);
   const tokenBudget = Math.floor(totalTokens * ratio);
   return takeRecentMessagesWithinTokenBudget(messages, tokenBudget, estimateMessage);
+}
+
+function truncateMessageToTokenBudget<T extends Message>(
+  message: T,
+  tokenBudget: number,
+): T | undefined {
+  if (estimateTokensForMessage(message) <= tokenBudget) return undefined;
+  const preservedParts = message.content.filter(
+    (part) => part.type !== 'text' && part.type !== 'think',
+  );
+  let fixedTokens = estimateTokens(message.role) + estimateTokensForContentParts(preservedParts);
+  if (message.toolCalls !== undefined) {
+    for (const call of message.toolCalls) {
+      fixedTokens += estimateTokens(call.name) + estimateTokens(JSON.stringify(call.arguments));
+    }
+  }
+  const textParts = message.content.filter(
+    (part) => part.type === 'text' || part.type === 'think',
+  );
+  const fullText = textParts
+    .map((part) => (part.type === 'text' ? part.text : part.think))
+    .join('\n');
+  if (fullText.length === 0) return undefined;
+  const charBudget = Math.max(tokenBudget - fixedTokens, 0);
+  const headChars = Math.floor(charBudget * 0.75);
+  const tailChars = charBudget - headChars;
+  const omittedChars = fullText.length - headChars - tailChars;
+  if (omittedChars <= 0) return undefined;
+  const tail = tailChars > 0 ? fullText.slice(fullText.length - tailChars) : '';
+  const truncatedText = `${fullText.slice(0, headChars)}\n${SINGLE_MESSAGE_TRUNCATION_MARKER} (${String(omittedChars)} chars omitted)\n${tail}`;
+  return { ...message, content: [...preservedParts, { type: 'text', text: truncatedText }] };
 }
 
 function takeRecentMessagesWithinTokenBudget<T extends Message>(

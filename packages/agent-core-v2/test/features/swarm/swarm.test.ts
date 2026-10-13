@@ -292,6 +292,7 @@ describe('AgentSwarmService', () => {
       estimateMessage: () => 0,
       estimateMessages: () => 0,
       recordTruncation: () => {},
+      calibration: () => 1,
     } as unknown as ISessionTokenCountingService);
     ix.set(IAgentContextMemoryService, new SyncDescriptor(AgentContextMemoryService));
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());

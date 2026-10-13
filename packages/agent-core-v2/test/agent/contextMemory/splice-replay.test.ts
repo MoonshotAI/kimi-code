@@ -166,6 +166,7 @@ const noopTokenCounting: ISessionTokenCountingService = {
   estimateMessage: () => 0,
   estimateMessages: () => 0,
   estimateTools: () => 0,
+  calibration: () => 1,
 };
 
 function buildHost(key: string): Host {

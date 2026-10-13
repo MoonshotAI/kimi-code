@@ -1,7 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentScopeContext, agentContextOfScope } from '#/agent/scopeContext/scopeContext';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { profileKey } from '#/agent/profile/profileOps';
+import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { resolveEffectiveMaxContextTokens } from '#/agent/fullCompaction/contextWindow';
+import { estimateTokensConservative } from '#/llm-adapter/contract/tokens';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import {
   DEFAULT_TOOL_RESULT_MAX_CHARS,
   DEFAULT_TOOL_RESULT_MAX_RETAINED_CHARS,
@@ -21,6 +27,7 @@ const TOOL_RESULT_PREVIEW_HEAD_CHARS = 4_096;
 const TOOL_RESULT_PREVIEW_TAIL_CHARS = 1_024;
 const TOOL_RESULT_MAX_LINE_CHARS = 2_000;
 const TRUNCATION_MARKER = '[...truncated]';
+const FORCED_SPILL_CONTEXT_RATIO = 0.7;
 
 const encoder = new TextEncoder();
 
@@ -37,8 +44,11 @@ export class ToolResultTruncationService implements IAgentToolResultTruncationSe
 
   constructor(
     @IBootstrapService private readonly bootstrap: IBootstrapService,
-    @IAgentScopeContext agent: IAgentScopeContext,
+    @IAgentScopeContext private readonly agent: IAgentScopeContext,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
+    @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @IAgentStateService private readonly states: IAgentStateService,
+    @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
   ) {
     this.storageScope = agent.scope('tool-results');
   }
@@ -47,7 +57,7 @@ export class ToolResultTruncationService implements IAgentToolResultTruncationSe
     input: ToolResultTruncationInput<T>,
   ): Promise<T> {
     const { result } = input;
-    if (result.spillExempt === true) return result;
+    if (result.spillExempt === true && !this.exceedsContextBudget(result)) return result;
 
     const rawText = persistableToolResultText(result.output);
     if (rawText.length <= DEFAULT_TOOL_RESULT_MAX_CHARS) return result;
@@ -116,6 +126,34 @@ export class ToolResultTruncationService implements IAgentToolResultTruncationSe
     const dir = normalize(join(this.bootstrap.homeDir, this.storageScope));
     const normalized = normalize(path);
     return normalized === dir || normalized.startsWith(`${dir}/`);
+  }
+
+  private exceedsContextBudget(result: ExecutableToolResult): boolean {
+    const rawText = persistableToolResultText(result.output);
+    if (rawText.length <= DEFAULT_TOOL_RESULT_MAX_CHARS) return false;
+    const effectiveMax = resolveEffectiveMaxContextTokens({
+      configured: this.activeModelContextWindow(),
+    });
+    const agentContext = agentContextOfScope(this.agent);
+    const current = this.tokenCounting.get(agentContext).size;
+    const incoming =
+      estimateTokensConservative(rawText) * this.tokenCounting.calibration(agentContext);
+    return current + incoming > effectiveMax * FORCED_SPILL_CONTEXT_RATIO;
+  }
+
+  private activeModelContextWindow(): number | undefined {
+    const modelAlias = this.states.get(profileKey).modelAlias;
+    if (modelAlias === undefined) return undefined;
+    const model = this.tryGetCatalogModel(modelAlias);
+    return model?.maxInputSize ?? model?.maxContextSize;
+  }
+
+  private tryGetCatalogModel(alias: string): Model | undefined {
+    try {
+      return this.modelCatalog.get(alias);
+    } catch {
+      return undefined;
+    }
   }
 
   isWireJournalPath(path: string): boolean {
@@ -329,8 +367,8 @@ function dropInlineSuffixLines(suffix: string, shapedText: string): string {
 
 function safeToolResultFileStem(toolName: string, toolCallId: string): string {
   const label = `${toolName}-${toolCallId}`
-    .replace(/[^a-zA-Z0-9._-]+/g, '_')
-    .replace(/^_+|_+$/g, '')
+    .replaceAll(/[^a-zA-Z0-9._-]+/g, '_')
+    .replaceAll(/^_+|_+$/g, '')
     .slice(0, 80);
   return label || 'tool-result';
 }

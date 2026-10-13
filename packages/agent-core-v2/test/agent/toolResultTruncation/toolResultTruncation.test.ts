@@ -9,6 +9,9 @@ import type { ExecutableToolResult } from '#/tool/toolContract';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import type { ContentPart } from '#human/llm/message';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -20,10 +23,33 @@ describe('ToolResultTruncationService', () => {
   let disposables: DisposableStore;
   let homeDir: string;
   let truncation: IAgentToolResultTruncationService;
+  let currentContextSize: number;
+  let defaultModelRecord: { maxContextSize?: number; maxInputSize?: number } | undefined;
+
+  function stubBudgetServices(ix: TestInstantiationService): void {
+    ix.stub(IModelCatalog, {
+      get: () =>
+        defaultModelRecord === undefined
+          ? undefined
+          : {
+              maxContextSize: defaultModelRecord.maxContextSize ?? 0,
+              maxInputSize: defaultModelRecord.maxInputSize,
+            },
+    } as unknown as IModelCatalog);
+    ix.stub(IAgentStateService, {
+      get: () => ({ modelAlias: defaultModelRecord === undefined ? undefined : 'test-model' }),
+    } as unknown as IAgentStateService);
+    ix.stub(ISessionTokenCountingService, {
+      get: () => ({ size: currentContextSize, measured: 0, estimated: currentContextSize }),
+      calibration: () => 1,
+    } as unknown as ISessionTokenCountingService);
+  }
 
   beforeEach(async () => {
     homeDir = await mkdtemp(join(tmpdir(), 'tool-result-truncation-'));
     disposables = new DisposableStore();
+    currentContextSize = 0;
+    defaultModelRecord = { maxContextSize: 1_000_000 };
     const ix = disposables.add(new TestInstantiationService());
     ix.stub(IBootstrapService, stubBootstrap(homeDir));
     ix.stub(
@@ -34,6 +60,7 @@ describe('ToolResultTruncationService', () => {
       }),
     );
     ix.stub(IFileSystemStorageService, new FileStorageService(homeDir));
+    stubBudgetServices(ix);
     truncation = ix.createInstance(ToolResultTruncationService);
   });
 
@@ -332,6 +359,54 @@ describe('ToolResultTruncationService', () => {
     ).resolves.toBe(exempt);
   });
 
+  it('spills exempt results when the accumulated context would exceed the budget', async () => {
+    currentContextSize = 600_000;
+    const exempt = { output: `${'z'.repeat(99)}\n`.repeat(5_000), spillExempt: true as const };
+
+    const result = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_budget',
+      result: exempt,
+    });
+
+    expect(result.truncated).toBe(true);
+    const rendered = result.output;
+    expect(typeof rendered).toBe('string');
+    if (typeof rendered !== 'string') throw new Error('expected string output');
+    expect(rendered).toContain('Tool output exceeded 50000 characters');
+    await expect(readFile(renderedOutputPath(rendered), 'utf8')).resolves.toBe(exempt.output);
+  });
+
+  it('keeps exempt results inline while the accumulated context fits the budget', async () => {
+    currentContextSize = 100_000;
+    const exempt = { output: 'z'.repeat(400_000), spillExempt: true as const };
+
+    await expect(
+      truncation.truncateForModel({
+        toolName: 'Read',
+        toolCallId: 'call_fits',
+        result: exempt,
+      }),
+    ).resolves.toBe(exempt);
+  });
+
+  it('spills exempt results against the fallback window when the model window is unknown', async () => {
+    defaultModelRecord = undefined;
+    const exempt = { output: `${'z'.repeat(99)}\n`.repeat(3_000), spillExempt: true as const };
+
+    const result = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_unknown_window',
+      result: exempt,
+    });
+
+    expect(result.truncated).toBe(true);
+    const rendered = result.output;
+    expect(typeof rendered).toBe('string');
+    if (typeof rendered !== 'string') throw new Error('expected string output');
+    expect(rendered).toContain('Tool output exceeded 50000 characters');
+  });
+
   it('identifies paths inside the agent spill directory', () => {
     const dir = spillDir();
     expect(truncation.isSpillFilePath(join(dir, 'Bash-call-1.txt'))).toBe(true);
@@ -419,6 +494,7 @@ describe('ToolResultTruncationService', () => {
         throw new Error('disk full');
       },
     } as unknown as IFileSystemStorageService);
+    stubBudgetServices(ix);
     const failing = ix.createInstance(ToolResultTruncationService);
 
     const longLine = await failing.truncateForModel<ExecutableToolResult>({
