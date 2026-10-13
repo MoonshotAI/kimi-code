@@ -95,7 +95,10 @@ function replayAgentToWebviewEvents(
         const message = record.message;
         if (message.role === "user") {
           if (!isVisibleUserMessage(message.origin)) break;
-          const visibleContent = withoutUserPromptSubmitHookParts(message.content);
+          const visibleContent = stripBundledSkillParts(
+            withoutUserPromptSubmitHookParts(message.content),
+            message.origin,
+          );
           const imported = importedContextReplay(visibleContent);
           completeTurn();
           step = 0;
@@ -528,6 +531,38 @@ function toLegacyContent(content: readonly ContentPart[]): LegacyContentPart[] {
     }
   }
   return result;
+}
+
+function isSkillActivationPart(part: ContentPart): boolean {
+  return (
+    part.type === "text" &&
+    (part as { meta?: { source?: unknown } }).meta?.source === "skill activation"
+  );
+}
+
+function stripBundledSkillParts(
+  content: readonly ContentPart[],
+  origin: PromptOrigin | undefined,
+): ContentPart[] {
+  let remainingSkillParts =
+    origin?.kind === "user" &&
+    "skillActivations" in origin &&
+    Array.isArray(origin.skillActivations) &&
+    !content.some(isSkillActivationPart)
+      ? origin.skillActivations.length
+      : 0;
+  return content.filter((part) => {
+    if (isSkillActivationPart(part)) return false;
+    if (
+      remainingSkillParts > 0 &&
+      part.type === "text" &&
+      (part as { meta?: { source?: unknown } }).meta?.source === undefined
+    ) {
+      remainingSkillParts--;
+      return false;
+    }
+    return true;
+  });
 }
 
 function isVisibleUserMessage(origin: PromptOrigin | undefined): boolean {
