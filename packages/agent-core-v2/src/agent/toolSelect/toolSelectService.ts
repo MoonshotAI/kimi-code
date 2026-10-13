@@ -133,8 +133,8 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     for (const name of new Set(names)) {
       const info = registryInfos.find((entry) => entry.name === name);
       if (
-        this.toolPolicy.isToolDenied(name) ||
-        (info !== undefined && !this.toolPolicy.isToolActive(name, info.source))
+        this.toolPolicy.isToolDenied(name, info?.source) ||
+        (info !== undefined && !this.isToolActiveForSelection(info))
       ) {
         policyDenied.push(name);
       } else if (loadable.has(name)) {
@@ -230,8 +230,13 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     const removed = [...announced]
       .filter((name) => !loadableSet.has(name))
       .toSorted((a, b) => a.localeCompare(b));
-    if (added.length === 0 && removed.length === 0 && history.some(isLoadableToolsAnnouncement)) {
-      return undefined;
+    if (added.length === 0 && removed.length === 0) {
+      if (loadable.length > 0) return undefined;
+      const lastAnnouncement = history.findLast(isLoadableToolsAnnouncement);
+      const emptyAnnouncement = renderLoadableToolsAnnouncement([], [], false);
+      if (lastAnnouncement?.content.some((part) =>
+        part.type === 'text' && part.text.includes(emptyAnnouncement),
+      )) return undefined;
     }
     return renderLoadableToolsAnnouncement(added, removed, loadable.length > 0);
   }
@@ -316,7 +321,13 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   private isStaticCallable(name: string, registryInfos: readonly ToolInfo[]): boolean {
     const info = registryInfos.find((entry) => entry.name === name);
     if (info === undefined) return false;
-    return !this.isDynamicallyLoadable(info) && this.toolPolicy.isToolActive(name, info.source);
+    return !this.isDynamicallyLoadable(info) && this.isToolActiveForSelection(info);
+  }
+
+  private isToolActiveForSelection(info: ToolInfo): boolean {
+    return info.name === SELECT_TOOLS_TOOL_NAME
+      ? this.toolPolicy.isToolActiveForDisclosure(info.name, info.source)
+      : this.toolPolicy.isToolActive(info.name, info.source);
   }
 
   private shapeActiveHistory(messages: readonly ContextMessage[]): readonly ContextMessage[] {

@@ -241,6 +241,29 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(historyText(afterReload)).not.toContain('Loaded: mcp__srv__alpha');
   });
 
+  it('reports select_tools as callable despite a profile allowlist omission, but respects an explicit deny', async () => {
+    ctx.get(IAgentProfileService).update({ activeToolNames: ['Read'] });
+    ctx.mockNextResponse(selectToolsCall('call_select_self', ['select_tools']));
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'select the selection tool' }] });
+    await ctx.untilTurnEnd();
+
+    const text = historyText(ctx.get(IAgentContextMemoryService).get());
+    expect(text).toContain('"select_tools" is already available — call it directly;');
+    expect(text).not.toContain('disabled by the current tool policy');
+    expect(text).not.toContain('Unknown tool: select_tools');
+    expect(ctx.get(IAgentToolSelectService).load(['select_tools'])).toMatchObject({
+      alreadyCallable: ['select_tools'],
+      consecutiveFailures: 0,
+    });
+
+    ctx.get(IAgentProfileService).update({ disallowedTools: ['select_tools'] });
+    expect(ctx.get(IAgentToolSelectService).load(['select_tools'])).toMatchObject({
+      alreadyCallable: [],
+      policyDenied: ['select_tools'],
+    });
+  });
+
   it('answers not-available-in-this-session for a host-denied name', async () => {
     ctx.get(IAgentProfileService).update({ disallowedTools: ['Automation'] });
 
@@ -254,6 +277,24 @@ describe('progressive tool disclosure end-to-end', () => {
       '"Automation" is disabled by the current tool policy. select_tools cannot enable it. ' +
         'Do not retry unless the policy changes; use an available tool instead.',
     );
+  });
+
+  it('loads an announced user tool with an MCP-like name despite an MCP deny glob', async () => {
+    registration?.dispose();
+    registration = ctx.get(IAgentToolRegistryService).register(alpha, {
+      source: 'user',
+      disclosure: 'deferred',
+    });
+    ctx.get(IAgentProfileService).update({ disallowedTools: ['mcp__srv__*'] });
+    ctx.mockNextResponse(selectToolsCall('call_select_1', [MCP_ALPHA]));
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'load the announced tool' }] });
+    await ctx.untilTurnEnd();
+
+    const text = historyText(ctx.get(IAgentContextMemoryService).get());
+    expect(text).toContain(`<tools_added>\n${MCP_ALPHA}\n</tools_added>`);
+    expect(text).toContain(`Loaded: ${MCP_ALPHA}`);
+    expect(text).not.toContain('disabled by the current tool policy');
   });
 
   it('reports a loaded MCP tool as currently unavailable after its server disconnects', async () => {

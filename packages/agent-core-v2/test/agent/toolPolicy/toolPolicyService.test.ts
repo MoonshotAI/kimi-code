@@ -18,6 +18,20 @@ describe('AgentToolPolicyService', () => {
     await ctx.dispose();
   });
 
+  it('uses the known source for deny globs and infers it only when omitted', async () => {
+    const policy = ctx.get(IAgentToolPolicyService);
+    const config = ctx.get(IConfigService);
+    const name = 'mcp__example__search';
+    await config.replace(TOOLS_SECTION, { disabled: ['mcp__example__*'] }, ConfigTarget.Memory);
+    expect(policy.isToolDenied(name)).toBe(true);
+    expect(policy.isToolDenied(name, 'mcp')).toBe(true);
+    expect(policy.isToolDenied(name, 'user')).toBe(false);
+    expect(policy.isToolDenied(name, 'builtin')).toBe(false);
+
+    await config.replace(TOOLS_SECTION, { disabled: [name] }, ConfigTarget.Memory);
+    expect(policy.isToolDenied(name, 'user')).toBe(true);
+  });
+
   it('follows changes to the global tools policy without re-reading the tools section per check', async () => {
     const policy = ctx.get(IAgentToolPolicyService);
     const config = ctx.get(IConfigService);

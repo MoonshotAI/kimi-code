@@ -57,8 +57,7 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
     );
   }
 
-  isToolDenied(name: string): boolean {
-    const source: ToolSource = isMcpToolName(name) ? 'mcp' : 'builtin';
+  isToolDenied(name: string, source: ToolSource = isMcpToolName(name) ? 'mcp' : 'builtin'): boolean {
     const deniedBy = (list: readonly string[] | undefined): boolean =>
       list !== undefined && !isToolActive({ disallowedTools: list }, name, source);
     return (

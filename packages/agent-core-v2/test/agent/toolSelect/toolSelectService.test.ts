@@ -1544,6 +1544,22 @@ describe('AgentToolSelectService loadable-tools announcements', () => {
     expect(await announce(h)).toBeUndefined();
   });
 
+  it.each([false, true])('announces emptiness once after legacy removal, with earlier empty announcement: %s', async (earlierEmpty) => {
+    const h = createHarness();
+    if (earlierEmpty) await announce(h);
+    for (const tag of ['tools_added', 'tools_removed']) {
+      h.contextMemory.history.push({
+        role: 'user',
+        content: [{ type: 'text', text: `<${tag}>\n${MCP_ALPHA}\n</${tag}>` }],
+        toolCalls: [],
+        origin: { kind: 'system_trigger', name: LOADABLE_TOOLS_VARIANT },
+      });
+    }
+    h.eventBus.publish(new TurnStarted({ agentId: 'main', turnId: 99, origin: { kind: 'user' } }));
+    expect(await announce(h)).toContain('No tools are currently available for dynamic loading in this session.');
+    expect(await announce(h, 2)).toBeUndefined();
+  });
+
   it('announces additions after an empty set and emptiness after the last removal', async () => {
     const h = createHarness();
     await announce(h);
