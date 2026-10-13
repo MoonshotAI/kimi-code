@@ -1382,7 +1382,7 @@ describe('Remote Control manager', () => {
     await manager.disable();
   });
 
-  it('applies a disable queued behind an enable that follows a cancelled start', async () => {
+  it('applies the latest toggle intent queued behind a cancelled start', async () => {
     const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
     const managementServer = new WebSocketServer({ noServer: true });
     const relayServer = createServer();
@@ -1425,11 +1425,14 @@ describe('Remote Control manager', () => {
 
     const cancelling = manager.disable();
     const reenabled = manager.enable();
+    const reenabledSettled = expect(reenabled).rejects.toThrow(
+      'Remote Control was disabled while starting.',
+    );
     const finalDisable = manager.disable();
 
     await cancelling;
     await firstSettled;
-    expect((await reenabled).state).toBe('on');
+    await reenabledSettled;
     expect((await finalDisable).state).toBe('off');
     expect(manager.status().state).toBe('off');
     expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
@@ -1470,6 +1473,47 @@ describe('Remote Control manager', () => {
     expect(status.state).toBe('off');
     expect(Date.now() - startedAt).toBeLessThan(1000);
     await enablingSettled;
+    expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
+  });
+
+  it('cancels a queued enable when disable arrives before it starts', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    const relayServer = createServer();
+    const upgradeSockets: Duplex[] = [];
+    let upgrades = 0;
+    relayServer.on('upgrade', (request, socket) => {
+      upgrades += 1;
+      socket.on('error', () => {});
+      upgradeSockets.push(socket);
+    });
+    const port = await listen(relayServer);
+    cleanups.push(() => {
+      for (const socket of upgradeSockets) socket.destroy();
+      return closeServer(relayServer);
+    });
+    const manager = createRemoteControlManager({
+      homeDir,
+      localOrigin: () => 'http://127.0.0.1:58627',
+      localServerToken: () => 'local-server-token',
+      clientVersion: CLIENT_VERSION,
+      urlSource: 'kimi_code_cli',
+      relayOrigin: `http://127.0.0.1:${port}`,
+      stderr: { write: () => true },
+    });
+    cleanups.push(() => manager.close());
+
+    const enabling = manager.enable();
+    const enablingSettled = expect(enabling).rejects.toThrow(
+      'Remote Control was disabled while starting.',
+    );
+
+    const startedAt = Date.now();
+    const status = await manager.disable();
+    expect(status.state).toBe('off');
+    expect(Date.now() - startedAt).toBeLessThan(1000);
+    await enablingSettled;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(upgrades).toBe(0);
     expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
   });
 

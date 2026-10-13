@@ -189,6 +189,8 @@ export function createRemoteControlManager(
     return run;
   };
 
+  let disableRequested = false;
+
   const doEnable = async (): Promise<RemoteControlStatusInfo> => {
     const snap = actor.getSnapshot();
     if (snap.value === 'on') return status();
@@ -200,6 +202,7 @@ export function createRemoteControlManager(
       fail(settled.context.error ?? new Error('Remote Control was disabled while starting.'));
     }
     await startTracker.current;
+    if (disableRequested) fail(new Error('Remote Control was disabled while starting.'));
     actor.send({ type: 'enable' });
     const settled = await settle();
     if (settled.value === 'on') return status();
@@ -219,9 +222,13 @@ export function createRemoteControlManager(
     return status();
   };
 
-  const enable = (): Promise<RemoteControlStatusInfo> => enqueue(doEnable);
+  const enable = (): Promise<RemoteControlStatusInfo> => {
+    disableRequested = false;
+    return enqueue(doEnable);
+  };
 
   const disable = (): Promise<RemoteControlStatusInfo> => {
+    disableRequested = true;
     if (actor.getSnapshot().value === 'starting') {
       actor.send({ type: 'disable' });
     }
