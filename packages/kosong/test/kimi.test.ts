@@ -1445,6 +1445,45 @@ describe('KimiChatProvider', () => {
       expect(messages[0]).toEqual({ role: 'assistant', content: 'ok', reasoning: 'hmm' });
     });
 
+    it('detects an empty-only reasoning dialect and preserves later non-empty deltas', async () => {
+      const provider = createProvider(true);
+      const captured: Array<Record<string, unknown>> = [];
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation((params: unknown) => {
+          captured.push(params as Record<string, unknown>);
+          const resumeReasoning = captured.length > 1;
+          async function* chunks(): AsyncIterable<Record<string, unknown>> {
+            yield { id: 'chatcmpl-s', choices: [{ index: 0, delta: { reasoning: '' } }] };
+            if (resumeReasoning) {
+              yield { id: 'chatcmpl-s', choices: [{ index: 0, delta: { reasoning: 'hmm' } }] };
+              yield { id: 'chatcmpl-s', choices: [{ index: 0, delta: { reasoning: '' } }] };
+            }
+            yield {
+              id: 'chatcmpl-s',
+              choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: 'stop' }],
+            };
+          }
+          return mockCreateResult(chunks());
+        });
+
+      const first = await provider.generate('', [], []);
+      const firstParts = [];
+      for await (const part of first) firstParts.push(part);
+      expect(firstParts).toEqual([{ type: 'text', text: 'ok' }]);
+
+      const second = await provider.generate('', [], THINK_HISTORY);
+      const secondParts = [];
+      for await (const part of second) secondParts.push(part);
+      expect(secondParts).toEqual([
+        { type: 'think', think: 'hmm' },
+        { type: 'text', text: 'ok' },
+      ]);
+
+      const messages = captured[1]?.['messages'] as Array<Record<string, unknown>>;
+      expect(messages[0]).toEqual({ role: 'assistant', content: 'ok', reasoning: 'hmm' });
+    });
+
     it('defaults to reasoning_content before any detection', async () => {
       const provider = createProvider();
       let captured: Record<string, unknown> | undefined;
