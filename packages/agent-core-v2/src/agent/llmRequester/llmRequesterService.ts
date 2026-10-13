@@ -504,7 +504,13 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         request.source,
       );
       if (usage !== undefined) {
-        this.tokenCounting.measured(this.scopeContext.agentContext, request.messages, [message], usage);
+        this.tokenCounting.measured(
+          this.scopeContext.agentContext,
+          request.messages,
+          [message],
+          usage,
+          `${recorded.systemPromptHash}:${recorded.toolsHash}`,
+        );
       }
       this.logResponse(request.logFields, usage ?? emptyUsage(), timing);
 

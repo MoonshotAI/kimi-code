@@ -69,9 +69,10 @@ export class SessionTokenCountingService extends Disposable implements ISessionT
     input: readonly Message[],
     output: readonly Message[],
     usage: TokenUsage,
+    envelopeHash?: string,
   ): void {
     void agentSpaceOf(agent).use(TokenCountingAgentModelDefinition, (model) =>
-      model.measured(input, output, usage),
+      model.measured(input, output, usage, envelopeHash),
     );
   }
 

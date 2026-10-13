@@ -389,7 +389,7 @@ describe('ToolResultTruncationService', () => {
     const rendered = result.output;
     expect(typeof rendered).toBe('string');
     if (typeof rendered !== 'string') throw new Error('expected string output');
-    expect(rendered).toContain('Tool output exceeded 50000 characters');
+    expect(rendered).toContain('Tool output withheld to keep the context within the model window');
     await expect(readFile(renderedOutputPath(rendered), 'utf8')).resolves.toBe(exempt.output);
   });
 
@@ -420,7 +420,7 @@ describe('ToolResultTruncationService', () => {
     const rendered = result.output;
     expect(typeof rendered).toBe('string');
     if (typeof rendered !== 'string') throw new Error('expected string output');
-    expect(rendered).toContain('Tool output exceeded 50000 characters');
+    expect(rendered).toContain('Tool output withheld to keep the context within the model window');
   });
 
   it('reserves budget across concurrently finalized exempt results', async () => {
@@ -477,6 +477,54 @@ describe('ToolResultTruncationService', () => {
     });
 
     expect(result.truncated).toBe(true);
+  });
+
+  it('spills small exempt results when over the context budget', async () => {
+    defaultModelRecord = undefined;
+    currentContextSize = 180_000;
+    const exempt = { output: 'z'.repeat(10_000), spillExempt: true as const };
+
+    const result = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_small_forced',
+      result: exempt,
+    });
+
+    expect(result.truncated).toBe(true);
+    const rendered = result.output;
+    expect(typeof rendered).toBe('string');
+    if (typeof rendered !== 'string') throw new Error('expected string output');
+    expect(rendered).toContain('Tool output withheld to keep the context within the model window');
+    await expect(readFile(renderedOutputPath(rendered), 'utf8')).resolves.toBe(exempt.output);
+  });
+
+  it('rebases reservations when the committed context shrinks after compaction', async () => {
+    currentContextSize = 100_000;
+    const makeExempt = () => ({
+      output: `${'z'.repeat(99)}\n`.repeat(4_000),
+      spillExempt: true as const,
+    });
+
+    const first = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_c1',
+      result: makeExempt(),
+    });
+    const second = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_c2',
+      result: makeExempt(),
+    });
+    expect(first.truncated).toBeUndefined();
+    expect(second.truncated).toBeUndefined();
+
+    currentContextSize = 10_000;
+    const third = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_c3',
+      result: makeExempt(),
+    });
+    expect(third.truncated).toBeUndefined();
   });
 
   it('identifies paths inside the agent spill directory', () => {

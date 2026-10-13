@@ -154,6 +154,7 @@ describe('Agent token counting', () => {
           tokens: exchangeTotal,
           measured: true,
           inputTokens: inputOf(usage.status().total),
+          envelopeHash: expect.any(String),
         },
       ],
       tokens: exchangeTotal,
@@ -189,6 +190,7 @@ describe('Agent token counting', () => {
       tokens: lastExchangeTotal,
       measured: true,
       inputTokens: inputOf(usage.status().currentTurn),
+      envelopeHash: expect.any(String),
     });
     expect(tokenCounting.get().measured).toBe(lastExchangeTotal);
     expect((await ctx.rpc.getContext({})).tokenCount).toBe(lastExchangeTotal);
@@ -283,6 +285,40 @@ describe('Agent token counting', () => {
       inputCacheRead: 0,
       inputCacheCreation: 0,
     });
+    expect(tokenCounting.calibration()).toBe(2.5);
+  });
+
+  it('skips calibration when the request envelope changes between measurements', () => {
+    ctx.appendTurnExchange('u1', 'a1', 1_000);
+    ctx.appendTurnExchange('u2', 'a2', 3_000);
+    expect(tokenCounting.calibration()).toBe(4);
+
+    ctx.appendUserMessage([{ type: 'text', text: 'u3' }]);
+    ctx.context.append({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'a3' }],
+      toolCalls: [],
+    });
+    tokenCounting.measured(
+      context.get(),
+      [],
+      { inputOther: 3_005, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+      'envelope-a',
+    );
+    expect(tokenCounting.calibration()).toBe(2.5);
+
+    ctx.appendUserMessage([{ type: 'text', text: 'u4' }]);
+    ctx.context.append({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'a4' }],
+      toolCalls: [],
+    });
+    tokenCounting.measured(
+      context.get(),
+      [],
+      { inputOther: 3_011, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+      'envelope-b',
+    );
     expect(tokenCounting.calibration()).toBe(2.5);
   });
 
@@ -458,7 +494,13 @@ describe('Agent token counting', () => {
         tokens: reported,
       });
       expect(tokenCountingState(live).anchors).toEqual([
-        { length: 2, tokens: reported, measured: true, inputTokens: inputOf(live.usage.status().total) },
+        {
+          length: 2,
+          tokens: reported,
+          measured: true,
+          inputTokens: inputOf(live.usage.status().total),
+          envelopeHash: expect.any(String),
+        },
       ]);
     } finally {
       await live.dispose();

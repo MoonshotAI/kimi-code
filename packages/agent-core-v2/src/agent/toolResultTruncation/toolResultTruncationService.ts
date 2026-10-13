@@ -71,10 +71,11 @@ export class ToolResultTruncationService extends Service implements IAgentToolRe
     input: ToolResultTruncationInput<T>,
   ): Promise<T> {
     const { result } = input;
-    if (result.spillExempt === true && !this.exceedsContextBudget(result)) return result;
-
     const rawText = persistableToolResultText(result.output);
-    if (rawText.length <= DEFAULT_TOOL_RESULT_MAX_CHARS) return result;
+    const forcedByBudget = result.spillExempt === true && this.exceedsContextBudget(result, rawText);
+    if (result.spillExempt === true && !forcedByBudget) return result;
+    if (rawText.length <= DEFAULT_TOOL_RESULT_MAX_CHARS && !forcedByBudget) return result;
+    const reason = forcedByBudget ? ('budget' as const) : ('size' as const);
 
     const { spill, ...rest } = result;
     const retainedText =
@@ -97,6 +98,7 @@ export class ToolResultTruncationService extends Service implements IAgentToolRe
         totalChars,
         DEFAULT_TOOL_RESULT_MAX_CHARS,
         suffix,
+        reason,
       );
       return { ...rest, output: mergeSpillPointer(shaped.output, fallback), truncated: true } as T;
     }
@@ -113,6 +115,7 @@ export class ToolResultTruncationService extends Service implements IAgentToolRe
             totalChars,
             inlineSuffix,
             shaped.hasMedia,
+            reason,
           ),
         ),
         truncated: true,
@@ -128,6 +131,7 @@ export class ToolResultTruncationService extends Service implements IAgentToolRe
       DEFAULT_TOOL_RESULT_MAX_CHARS,
       suffix,
       shaped.hasMedia,
+      reason,
     );
     return {
       ...rest,
@@ -142,9 +146,8 @@ export class ToolResultTruncationService extends Service implements IAgentToolRe
     return normalized === dir || normalized.startsWith(`${dir}/`);
   }
 
-  private exceedsContextBudget(result: ExecutableToolResult): boolean {
-    const rawText = persistableToolResultText(result.output);
-    if (rawText.length <= DEFAULT_TOOL_RESULT_MAX_CHARS) return false;
+  private exceedsContextBudget(result: ExecutableToolResult, rawText: string): boolean {
+    if (rawText.length === 0) return false;
     const modelAlias = this.states.has(profileKey)
       ? this.states.get(profileKey).modelAlias
       : undefined;
@@ -158,6 +161,10 @@ export class ToolResultTruncationService extends Service implements IAgentToolRe
     });
     const agentContext = agentContextOfScope(this.agent);
     const committed = this.tokenCounting.get(agentContext).size;
+    if (committed < this.reservedInlineBaseline) {
+      this.reservedInlineBaseline = committed;
+      this.reservedInlineTokens = 0;
+    }
     if (this.reservedInlineTokens === 0) this.reservedInlineBaseline = committed;
     const current = Math.max(committed, this.reservedInlineBaseline + this.reservedInlineTokens);
     const incoming =
@@ -281,13 +288,16 @@ function renderAppendedSpillPointer(
   totalChars: number,
   suffix: string,
   hasMedia: boolean,
+  reason: 'size' | 'budget' = 'size',
 ): string {
   const firstLine =
-    totalChars > preservedChars
-      ? `[Per-line truncation occurred; only the first ${String(preservedChars)} characters (of ${String(totalChars)}) were saved to a file.`
-      : hasMedia
-        ? '[Per-line truncation occurred; the complete text output was saved to a file (media parts stay attached to this result).'
-        : '[Per-line truncation occurred; the complete output was saved to a file.';
+    reason === 'budget'
+      ? '[Tool output withheld to keep the context within the model window; the complete output was saved to a file.'
+      : totalChars > preservedChars
+        ? `[Per-line truncation occurred; only the first ${String(preservedChars)} characters (of ${String(totalChars)}) were saved to a file.`
+        : hasMedia
+          ? '[Per-line truncation occurred; the complete text output was saved to a file (media parts stay attached to this result).'
+          : '[Per-line truncation occurred; the complete output was saved to a file.';
   const lines = [
     firstLine,
     `output_path: ${outputPath}`,
@@ -324,14 +334,21 @@ function renderPersistedToolResult(
   maxChars: number,
   suffix: string,
   hasMedia: boolean,
+  reason: 'size' | 'budget' = 'size',
 ): string {
   const partial = preservedChars < totalChars;
+  const firstLine =
+    reason === 'budget'
+      ? partial
+        ? 'Tool output withheld to keep the context within the model window; the preserved prefix of the output was saved to a file.'
+        : 'Tool output withheld to keep the context within the model window; the full output was saved to a file.'
+      : partial
+        ? `Tool output exceeded ${String(maxChars)} characters; the first ${String(preservedChars)} characters (of ${String(totalChars)}) were saved to a file.`
+        : hasMedia
+          ? `Tool output exceeded ${String(maxChars)} characters; the full text output was saved to a file (media parts stay attached to this result).`
+          : `Tool output exceeded ${String(maxChars)} characters; the full output was saved to a file.`;
   const lines = [
-    partial
-      ? `Tool output exceeded ${String(maxChars)} characters; the first ${String(preservedChars)} characters (of ${String(totalChars)}) were saved to a file.`
-      : hasMedia
-        ? `Tool output exceeded ${String(maxChars)} characters; the full text output was saved to a file (media parts stay attached to this result).`
-        : `Tool output exceeded ${String(maxChars)} characters; the full output was saved to a file.`,
+    firstLine,
     `tool_name: ${toolName}`,
     `tool_call_id: ${toolCallId}`,
     partial
@@ -357,9 +374,12 @@ function renderUnpersistedToolResult(
   totalChars: number,
   maxChars: number,
   suffix: string,
+  reason: 'size' | 'budget' = 'size',
 ): string {
   const lines = [
-    `Tool output exceeded ${String(maxChars)} characters and could not be saved to a file; only this preview is available.`,
+    reason === 'budget'
+      ? 'Tool output withheld to keep the context within the model window and could not be saved to a file; only this preview is available.'
+      : `Tool output exceeded ${String(maxChars)} characters and could not be saved to a file; only this preview is available.`,
     `tool_name: ${toolName}`,
     `tool_call_id: ${toolCallId}`,
     `output_size_chars: ${String(totalChars)}`,

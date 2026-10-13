@@ -39,7 +39,13 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
     this.on(TokenCountingMeasured, (event) => {
       const length = normalizeAnchorLength(event.length);
       const tokens = Math.max(0, event.tokens);
-      const anchor: TokenAnchor = { length, tokens, measured: true, inputTokens: event.inputTokens };
+      const anchor: TokenAnchor = {
+        length,
+        tokens,
+        measured: true,
+        inputTokens: event.inputTokens,
+        envelopeHash: event.envelopeHash,
+      };
       const committed = this._state();
       const modelAlias = this.currentModelAlias();
       const modelChanged =
@@ -48,7 +54,7 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
         modelAlias !== committed.modelAlias;
       const calibration = modelChanged
         ? DEFAULT_ESTIMATE_CALIBRATION
-        : this.nextCalibration(committed, length, tokens, event.inputTokens);
+        : this.nextCalibration(committed, length, tokens, event.inputTokens, event.envelopeHash);
       const anchors = [...committed.anchors.filter((a) => a.length < length), anchor];
       if (
         !(
@@ -127,6 +133,7 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
     input: readonly Message[],
     _output: readonly Message[],
     usage: TokenUsage,
+    envelopeHash?: string,
   ): Promise<void> {
     const context = this.context();
     if (!matchesContext(input, context)) return Promise.resolve();
@@ -136,6 +143,7 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
         length: context.length,
         tokens: tokenUsageTotal(usage),
         inputTokens: inputTotal(usage),
+        envelopeHash,
       }),
     );
   }
@@ -178,6 +186,7 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
     length: number,
     tokens: number,
     inputTokens: number | undefined,
+    envelopeHash: string | undefined,
   ): number {
     const current = committed.calibration > 0 ? committed.calibration : DEFAULT_ESTIMATE_CALIBRATION;
     let previous: TokenAnchor | undefined;
@@ -189,6 +198,13 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
       }
     }
     if (previous === undefined || previous.inputTokens === undefined || inputTokens === undefined) {
+      return current;
+    }
+    if (
+      previous.envelopeHash !== undefined &&
+      envelopeHash !== undefined &&
+      previous.envelopeHash !== envelopeHash
+    ) {
       return current;
     }
     if (inputTokens <= previous.inputTokens) return current;

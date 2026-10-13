@@ -26,6 +26,7 @@ export interface ISessionTokenCountingService {
     input: readonly Message[],
     output: readonly Message[],
     usage: TokenUsage,
+    envelopeHash?: string,
   ): void;
   latestMeasured(agent: AgentContext): number;
   statusSize(agent: AgentContext): number;
