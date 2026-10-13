@@ -7,6 +7,7 @@ export interface IAgentToolPolicyService {
   readonly _serviceBrand: undefined;
 
   isToolActive(name: string, source?: ToolSource): boolean;
+  isToolDenied(name: string): boolean;
   isToolActiveForDisclosure(name: string, source?: ToolSource): boolean;
   isToolActiveForProfile(
     profile: ToolActivationPolicy,

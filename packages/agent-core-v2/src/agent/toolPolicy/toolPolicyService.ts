@@ -8,9 +8,9 @@ import { IConfigService } from '#/app/config/config';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
-import type { ToolSource } from '#/tool/toolContract';
+import { isMcpToolName, type ToolSource } from '#/tool/toolContract';
 
-import { isToolActiveComposed, type ToolActivationPolicy } from './evaluate';
+import { isToolActive, isToolActiveComposed, type ToolActivationPolicy } from './evaluate';
 import { IAgentToolPolicyService } from './toolPolicy';
 
 export class AgentToolPolicyService extends Disposable implements IAgentToolPolicyService {
@@ -54,6 +54,18 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
       },
       name,
       source,
+    );
+  }
+
+  isToolDenied(name: string): boolean {
+    const source: ToolSource = isMcpToolName(name) ? 'mcp' : 'builtin';
+    const deniedBy = (list: readonly string[] | undefined): boolean =>
+      list !== undefined && !isToolActive({ disallowedTools: list }, name, source);
+    return (
+      deniedBy(this.toolPolicyGate.disabledTools) ||
+      deniedBy(this.profile.data().disallowedTools) ||
+      deniedBy(this.config.get<ToolsConfig>(TOOLS_SECTION)?.disabled) ||
+      deniedBy(this.sessionToolPolicy.disabledTools())
     );
   }
 

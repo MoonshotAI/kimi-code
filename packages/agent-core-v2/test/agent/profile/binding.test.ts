@@ -543,6 +543,20 @@ describe('AgentToolPolicyService tool denylist', () => {
     expect(svc.isToolActive('Read')).toBe(true);
   });
 
+  it('distinguishes explicit denies from allowlist misses via isToolDenied', async () => {
+    const svc = await bindProfile('deny-over-allow');
+    expect(svc.isToolDenied('Bash')).toBe(true);
+    expect(svc.isToolDenied('Write')).toBe(false);
+    expect(svc.isToolDenied('Read')).toBe(false);
+  });
+
+  it('matches unregistered mcp names against deny globs via isToolDenied', async () => {
+    const svc = await bindProfile('deny-mcp');
+    expect(svc.isToolDenied('mcp__github__get_issue')).toBe(true);
+    expect(svc.isToolDenied('mcp__other__ping')).toBe(false);
+    expect(svc.isToolDenied('Read')).toBe(false);
+  });
+
   it('lists available profiles when binding an unknown profile', async () => {
     ctx = createTestAgent(hostEnvironmentServices(homeDir));
     await expect(
@@ -666,6 +680,14 @@ describe('AgentToolPolicyService global [tools] config', () => {
     expect(svc.isToolActive('Read')).toBe(true);
   });
 
+  it('marks globally disabled names as denied via isToolDenied', async () => {
+    const svc = await bindWithToolsConfig({ disabled: ['Bash', 'mcp__github__*'] });
+    expect(svc.isToolDenied('Bash')).toBe(true);
+    expect(svc.isToolDenied('mcp__github__create_pr')).toBe(true);
+    expect(svc.isToolDenied('mcp__other__ping')).toBe(false);
+    expect(svc.isToolDenied('Read')).toBe(false);
+  });
+
   it('intersects the global config with the profile policy instead of overriding it', async () => {
     const svc = await bindWithToolsConfig({ enabled: ['Read', 'Bash'] }, 'config-intersect');
     expect(svc.isToolActive('Read')).toBe(true);
@@ -719,6 +741,16 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
     await svc.setSessionDisabledTools(['Edit']);
     expect(svc.isToolActive('Bash')).toBe(true);
     expect(svc.isToolActive('Edit')).toBe(false);
+  });
+
+  it('marks session-disabled names as denied via isToolDenied', async () => {
+    const svc = await bind(DEFAULT_AGENT_PROFILE_NAME);
+
+    expect(svc.isToolDenied('Automation')).toBe(false);
+    await svc.setSessionDisabledTools(['Automation']);
+    expect(svc.isToolDenied('Automation')).toBe(true);
+    await svc.setSessionDisabledTools([]);
+    expect(svc.isToolDenied('Automation')).toBe(false);
   });
 
   it('keeps the profile own denylist across replacement calls', async () => {

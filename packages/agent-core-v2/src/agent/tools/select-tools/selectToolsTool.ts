@@ -13,6 +13,7 @@ const DESCRIPTION =
   'Load one or more tools by name so you can call them. ' +
   'The loadable names are listed in the <tools_added>/<tools_removed> announcements ' +
   'in the system context — fold them in order to get the current list. ' +
+  'If you have not seen a <tools_added> announcement in this session, no tools are currently loadable — do not call select_tools. ' +
   'Pass the exact tool name(s) you need — plugin, skill, or category names do not work. ' +
   'The full definitions become available immediately, so you can call them directly ' +
   'in your next tool call. ' +
@@ -40,8 +41,17 @@ export class SelectToolsTool implements ISelectToolsTool {
             isError: true,
           };
         }
-        const { toLoad, alreadyAvailable, alreadyCallable, unknown, suggestions, loadable } =
-          this.toolSelect.load(args.names);
+        const {
+          toLoad,
+          alreadyAvailable,
+          alreadyCallable,
+          staleLoaded,
+          notAvailable,
+          unknown,
+          escalated,
+          suggestions,
+          loadable,
+        } = this.toolSelect.load(args.names);
 
         const lines: string[] = [];
         if (toLoad.length > 0) lines.push(`Loaded: ${toLoad.join(', ')}`);
@@ -54,7 +64,34 @@ export class SelectToolsTool implements ISelectToolsTool {
               'select_tools is only for names in the <tools_added> announcements.',
           );
         }
+        for (const name of staleLoaded) {
+          const attempts = escalated[name];
+          if (attempts !== undefined) {
+            lines.push(stopRetryLine(name, attempts));
+            continue;
+          }
+          lines.push(
+            `"${name}" was loaded earlier but is not available right now — ` +
+              'it may be disconnected or disabled. Do not retry it; use the tools you already have.',
+          );
+        }
+        for (const name of notAvailable) {
+          const attempts = escalated[name];
+          if (attempts !== undefined) {
+            lines.push(stopRetryLine(name, attempts));
+            continue;
+          }
+          lines.push(
+            `"${name}" is not available in this session — selecting cannot load it. ` +
+              'Do not retry it; use the tools you already have.',
+          );
+        }
         for (const name of unknown) {
+          const attempts = escalated[name];
+          if (attempts !== undefined) {
+            lines.push(stopRetryLine(name, attempts));
+            continue;
+          }
           const candidates = suggestions[name];
           if (candidates !== undefined && candidates.length > 0) {
             lines.push(`Unknown tool: ${name}. Did you mean: ${candidates.join(', ')}?`);
@@ -75,6 +112,13 @@ export class SelectToolsTool implements ISelectToolsTool {
       },
     };
   }
+}
+
+function stopRetryLine(name: string, attempts: number): string {
+  return (
+    `"${name}" cannot be loaded in this session (already attempted ${attempts} times). ` +
+    'Stop retrying — complete the task with the tools you have, or tell the user what is missing.'
+  );
 }
 
 registerAgentToolService(ISelectToolsTool, SelectToolsTool, { name: SELECT_TOOLS_TOOL_NAME, domain: 'toolSelect' });

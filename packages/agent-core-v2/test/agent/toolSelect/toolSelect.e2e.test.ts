@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { IAgentProfileService } from '#/agent/profile/profile';
 import type { ExecutableTool, ToolExecution } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -238,5 +239,64 @@ describe('progressive tool disclosure end-to-end', () => {
     ).toBe(true);
     expect(historyText(afterReload)).toContain('Already available: mcp__srv__alpha');
     expect(historyText(afterReload)).not.toContain('Loaded: mcp__srv__alpha');
+  });
+
+  it('answers not-available-in-this-session for a host-denied name', async () => {
+    ctx.get(IAgentProfileService).update({ disallowedTools: ['Automation'] });
+
+    ctx.mockNextResponse(selectToolsCall('call_select_1', ['Automation']));
+    ctx.mockNextResponse({ type: 'text', text: 'ok' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'select automation' }] });
+    await ctx.untilTurnEnd();
+
+    const text = historyText(ctx.get(IAgentContextMemoryService).get());
+    expect(text).toContain(
+      '"Automation" is not available in this session — selecting cannot load it. ' +
+        'Do not retry it; use the tools you already have.',
+    );
+  });
+
+  it('reports a loaded MCP tool as currently unavailable after its server disconnects', async () => {
+    ctx.mockNextResponse(selectToolsCall('call_select_1', [MCP_ALPHA]));
+    ctx.mockNextResponse({ type: 'text', text: 'loaded' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'load alpha' }] });
+    await ctx.untilTurnEnd();
+    expect(historyText(ctx.get(IAgentContextMemoryService).get())).toContain(
+      `Loaded: ${MCP_ALPHA}`,
+    );
+
+    registration?.dispose();
+    registration = undefined;
+
+    ctx.mockNextResponse(selectToolsCall('call_select_2', [MCP_ALPHA]));
+    ctx.mockNextResponse({ type: 'text', text: 'ok' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'select alpha again' }] });
+    await ctx.untilTurnEnd();
+
+    const text = historyText(ctx.get(IAgentContextMemoryService).get());
+    expect(text).toContain(
+      `"${MCP_ALPHA}" was loaded earlier but is not available right now — ` +
+        'it may be disconnected or disabled. Do not retry it; use the tools you already have.',
+    );
+    expect(text).not.toContain(`Already available: ${MCP_ALPHA}`);
+  });
+
+  it('escalates to stop-retry wording when the same unknown name is selected twice', async () => {
+    ctx.mockNextResponse(selectToolsCall('call_select_1', ['mcp__srv__ghost']));
+    ctx.mockNextResponse({ type: 'text', text: 'ok' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'load ghost' }] });
+    await ctx.untilTurnEnd();
+    expect(historyText(ctx.get(IAgentContextMemoryService).get())).toContain(
+      'Unknown tool: mcp__srv__ghost.',
+    );
+
+    ctx.mockNextResponse(selectToolsCall('call_select_2', ['mcp__srv__ghost']));
+    ctx.mockNextResponse({ type: 'text', text: 'ok' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'load ghost again' }] });
+    await ctx.untilTurnEnd();
+    expect(historyText(ctx.get(IAgentContextMemoryService).get())).toContain(
+      '"mcp__srv__ghost" cannot be loaded in this session (already attempted 2 times). ' +
+        'Stop retrying — complete the task with the tools you have, or tell the user what is missing.',
+    );
   });
 });

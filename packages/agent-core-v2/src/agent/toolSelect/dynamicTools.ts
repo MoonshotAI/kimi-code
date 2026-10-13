@@ -84,6 +84,7 @@ function matchToolNameBlocks(text: string, pattern: RegExp): string[] {
 export function renderLoadableToolsAnnouncement(
   added: readonly string[],
   removed: readonly string[],
+  hasLoadableTools = true,
 ): string {
   const sections: string[] = [];
   if (added.length > 0) {
@@ -91,6 +92,14 @@ export function renderLoadableToolsAnnouncement(
   }
   if (removed.length > 0) {
     sections.push(`<tools_removed>\n${removed.join('\n')}\n</tools_removed>`);
+  }
+  if (!hasLoadableTools) {
+    sections.push(
+      'No tools are currently available for dynamic loading in this session. ' +
+        'Do not call select_tools or guess tool names; use the tools you already have. ' +
+        'Only a later <tools_added> announcement can make new tools loadable.',
+    );
+    return sections.join('\n\n');
   }
   sections.push(
     'Use the select_tools tool with exact names to load full definitions of the ' +

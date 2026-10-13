@@ -19,6 +19,7 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import {
   collectLoadedDynamicToolNames,
   foldAnnouncedToolNames,
+  isLoadableToolsAnnouncement,
   renderLoadableToolsAnnouncement,
   stripDynamicToolContext,
 } from './dynamicTools';
@@ -34,6 +35,8 @@ export const toolSelectPendingLoadedKey = defineState<Set<string>>(
   'toolSelect.pendingLoaded',
   () => new Set(),
 );
+
+const STOP_RETRY_THRESHOLD = 2;
 
 export class AgentToolSelectService extends Service implements IAgentToolSelectService {
   declare readonly _serviceBrand: undefined;
@@ -123,20 +126,37 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     const toLoad: string[] = [];
     const alreadyAvailable: string[] = [];
     const alreadyCallable: string[] = [];
+    const staleLoaded: string[] = [];
+    const notAvailable: string[] = [];
     const unknown: string[] = [];
     for (const name of new Set(names)) {
       if (loaded.has(name)) {
-        alreadyAvailable.push(name);
+        if (loadable.has(name)) {
+          alreadyAvailable.push(name);
+        } else {
+          staleLoaded.push(name);
+        }
       } else if (loadable.has(name)) {
         toLoad.push(name);
       } else if (this.isStaticCallable(name, registryInfos)) {
         alreadyCallable.push(name);
+      } else if (this.isToolKnownButUnavailable(name, registryInfos)) {
+        notAvailable.push(name);
       } else {
         unknown.push(name);
       }
     }
+    const escalated: Record<string, number> = {};
+    const counted = new Set<string>();
+    for (const name of [...staleLoaded, ...notAvailable, ...unknown]) {
+      const key = name.toLowerCase();
+      if (counted.has(key)) continue;
+      counted.add(key);
+      const attempts = this.noteFailedSelection(name);
+      if (attempts >= STOP_RETRY_THRESHOLD) escalated[name] = attempts;
+    }
     const suggestions: Record<string, readonly string[]> = {};
-    const suggestionPool = [...new Set([...loadable, ...loaded])];
+    const suggestionPool = [...loadable];
     for (const name of unknown) {
       const candidates = suggestToolNames(name, suggestionPool);
       if (candidates.length > 0) suggestions[name] = candidates;
@@ -148,10 +168,27 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
       toLoad,
       alreadyAvailable,
       alreadyCallable,
+      staleLoaded,
+      notAvailable,
       unknown,
+      escalated,
       suggestions,
       loadable: [...loadable].filter((name) => !loaded.has(name)),
     };
+  }
+
+  private readonly failedSelectionAttempts = new Map<string, number>();
+
+  private noteFailedSelection(name: string): number {
+    const key = name.toLowerCase();
+    const count = (this.failedSelectionAttempts.get(key) ?? 0) + 1;
+    this.failedSelectionAttempts.set(key, count);
+    return count;
+  }
+
+  private isToolKnownButUnavailable(name: string, registryInfos: readonly ToolInfo[]): boolean {
+    if (registryInfos.some((entry) => entry.name === name)) return true;
+    return this.toolPolicy.isToolDenied(name);
   }
 
   drainPendingToolSchemas(): readonly Tool[] | undefined {
@@ -171,13 +208,16 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     if (!this.enabled()) return undefined;
     const loadable = this.loadableToolNames();
     const loadableSet = new Set(loadable);
-    const announced = foldAnnouncedToolNames(this.context.get());
+    const history = this.context.get();
+    const announced = foldAnnouncedToolNames(history);
     const added = loadable.filter((name) => !announced.has(name));
     const removed = [...announced]
       .filter((name) => !loadableSet.has(name))
       .toSorted((a, b) => a.localeCompare(b));
-    if (added.length === 0 && removed.length === 0) return undefined;
-    return renderLoadableToolsAnnouncement(added, removed);
+    if (added.length === 0 && removed.length === 0 && history.some(isLoadableToolsAnnouncement)) {
+      return undefined;
+    }
+    return renderLoadableToolsAnnouncement(added, removed, loadable.length > 0);
   }
 
   private shouldIntercept(name: string): boolean {
