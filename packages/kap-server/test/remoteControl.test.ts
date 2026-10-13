@@ -493,6 +493,47 @@ describe('server-v2 /api/v1/remote-control', () => {
     await rm(homeDir, { recursive: true, force: true });
   });
 
+  it('treats the active tunnel registered id as local when it differs from the recomputed id', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-rc-legacy-'));
+    const events: string[] = [];
+    const service = {
+      status: () => ({ enabled: true, state: 'on', deviceId: 'legacy-id' }),
+      disable: async () => {
+        events.push('disable');
+        return { enabled: false, state: 'off' };
+      },
+    } as unknown as RemoteControlManager;
+    const devices = {
+      deactivateDevice: async (deviceId: string) => {
+        events.push(`deactivate:${deviceId}`);
+      },
+    } as unknown as RemoteControlDeviceClient;
+    let handler: ((req: unknown, reply: unknown) => unknown) | undefined;
+    const app = {
+      get: () => {},
+      post: (path: string, _options: unknown, next: unknown) => {
+        if (path === '/remote-control/devices/:id/deactivate') handler = next as typeof handler;
+      },
+      patch: () => {},
+    };
+    registerRemoteControlRoutes(app as never, { service, devices, homeDir });
+
+    let payload: unknown;
+    await handler!(
+      { id: 'req-1', params: { id: 'legacy-id' } },
+      {
+        send: (value: unknown) => {
+          payload = value;
+        },
+      },
+    );
+
+    expect(events).toEqual(['disable', 'deactivate:legacy-id']);
+    expect((payload as Envelope<{ ok: true }>).data.ok).toBe(true);
+    expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
+    await rm(homeDir, { recursive: true, force: true });
+  });
+
   it('blocks concurrent starts while the current device is being deactivated', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-rc-gated-'));
     const service = {
@@ -834,7 +875,7 @@ describe('oauth logout remote-control cleanup', () => {
       provider: string;
     }>;
 
-    expect(events).toEqual(['disable', 'clear', 'logout']);
+    expect(events).toEqual(['disable', 'clear', 'logout', 'clear']);
     expect(payload.code).toBe(0);
     expect(payload.data.logged_out).toBe(true);
     expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
@@ -878,7 +919,7 @@ describe('oauth logout remote-control cleanup', () => {
     }>;
 
     expect(payload.code).toBe(0);
-    expect(events).toEqual(['clear', 'logout']);
+    expect(events).toEqual(['clear', 'logout', 'clear']);
     expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
     await rm(homeDir, { recursive: true, force: true });
   });
@@ -990,7 +1031,7 @@ describe('oauth logout remote-control cleanup', () => {
     }>;
 
     expect(payload.code).toBe(0);
-    expect(events).toEqual(['deactivate:cli-device', 'clear', 'logout']);
+    expect(events).toEqual(['deactivate:cli-device', 'clear', 'logout', 'clear']);
     expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
     await rm(homeDir, { recursive: true, force: true });
   });

@@ -248,11 +248,17 @@ export function registerRemoteControlRoutes(
     },
     async (req, reply) => {
       await handleDeviceRoute(req, reply, async () => {
-        if (req.params.id !== createKimiDeviceId(opts.homeDir)) {
+        const status = opts.service.status();
+        const holder = await inspectRemoteControlLock(opts.homeDir);
+        const isLocal =
+          req.params.id === createKimiDeviceId(opts.homeDir) ||
+          status.deviceId === req.params.id ||
+          holder?.deviceId === req.params.id;
+        if (!isLocal) {
           await opts.devices.deactivateDevice(req.params.id);
           return { ok: true };
         }
-        if (opts.service.status().state !== 'off') {
+        if (status.state !== 'off') {
           await opts.service.disable();
         }
         const gate = await acquireRemoteControlStartGate(opts.homeDir, opts.devices);

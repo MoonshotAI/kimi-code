@@ -170,6 +170,7 @@ export function registerOAuthRoutes(
         try {
           remoteControlDevices.clear();
           const result = await core.accessor.get(IOAuthService).logout(req.body.provider);
+          remoteControlDevices.clear();
           await releaseGate();
           requestLog(req)?.info({ provider, action: 'logout' }, 'oauth logout');
           reply.send(okEnvelope(result, req.id));
