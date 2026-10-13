@@ -53,7 +53,6 @@ workspace_node_modules=(
   "docs:/workspace/kimi-code/docs/node_modules"
   "pkg_kap-server:/workspace/kimi-code/packages/kap-server/node_modules"
   "pkg_server-e2e:/workspace/kimi-code/packages/klient/node_modules"
-  "pkg_kaos:/workspace/kimi-code/packages/kaos/node_modules"
   "pkg_kosong:/workspace/kimi-code/packages/kosong/node_modules"
   "pkg_migration-legacy:/workspace/kimi-code/packages/migration-legacy/node_modules"
   "pkg_node-sdk:/workspace/kimi-code/packages/node-sdk/node_modules"

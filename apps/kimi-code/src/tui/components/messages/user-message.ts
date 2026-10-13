@@ -15,6 +15,7 @@ import { ImageThumbnail } from '#/tui/components/media/image-thumbnail';
 import { USER_MESSAGE_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import type { ImageAttachment } from '#/tui/utils/image-attachment-store';
+import { findInlineSkillTokens } from '#/tui/utils/inline-skill-tokens';
 import { markOsc133Zone } from '#/tui/utils/osc133';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
@@ -36,20 +37,55 @@ export function userMessageLineHeights(text: string, width: number, bullet?: str
 export class UserMessageComponent implements Component {
   private text: string;
   private readonly bullet?: string;
+  private readonly skillNames?: readonly string[];
   private spacerComponent: Spacer;
   private imageThumbnails: ImageThumbnail[];
 
   private renderCache: { width: number; lines: string[] } | undefined;
 
-  constructor(text: string, images?: ImageAttachment[], bullet?: string) {
+  constructor(
+    text: string,
+    images?: ImageAttachment[],
+    bullet?: string,
+    skillNames?: readonly string[],
+  ) {
     this.text = text;
     this.bullet = bullet;
+    this.skillNames = skillNames;
     this.spacerComponent = new Spacer(1);
     this.imageThumbnails = images?.map((img) => new ImageThumbnail(img)) ?? [];
   }
 
   private markRenderDirty(): void {
     this.renderCache = undefined;
+  }
+
+  colorText(text: string): string {
+    const names = this.skillNames;
+    if (names === undefined || names.length === 0) {
+      return currentTheme.boldFg('roleUser', text);
+    }
+    const known = new Set(names.map(normalizeSkillTokenName));
+    const tokens = findInlineSkillTokens(text, {
+      isKnownSkill: (commandName) => known.has(normalizeSkillTokenName(commandName)),
+      includeLeading: true,
+    });
+    if (tokens.length === 0) {
+      return currentTheme.boldFg('roleUser', text);
+    }
+    const segments: string[] = [];
+    let cursor = 0;
+    for (const token of tokens) {
+      if (token.start > cursor) {
+        segments.push(currentTheme.boldFg('roleUser', text.slice(cursor, token.start)));
+      }
+      segments.push(currentTheme.boldFg('primary', text.slice(token.start, token.end)));
+      cursor = token.end;
+    }
+    if (cursor < text.length) {
+      segments.push(currentTheme.boldFg('roleUser', text.slice(cursor)));
+    }
+    return segments.join('');
   }
 
   invalidate(): void {
@@ -83,10 +119,7 @@ export class UserMessageComponent implements Component {
       lines.push(line);
     }
 
-    // Text is re-dyed from the current theme; invalidate() (theme change) clears
-    // the render cache so the new colours are picked up on the next render.
-    const coloredText = currentTheme.boldFg('roleUser', this.text);
-    const textLines = new Text(coloredText, 0, 0).render(contentWidth);
+    const textLines = new Text(this.colorText(this.text), 0, 0).render(contentWidth);
     for (let i = 0; i < textLines.length; i++) {
       const prefix = i === 0 ? bullet : ' '.repeat(bulletWidth);
       lines.push(prefix + textLines[i]);
@@ -116,6 +149,10 @@ export class UserMessageComponent implements Component {
     }
     return rendered;
   }
+}
+
+function normalizeSkillTokenName(name: string): string {
+  return name.startsWith('skill:') ? name.slice('skill:'.length) : name;
 }
 
 function isImageLine(line: string): boolean {
