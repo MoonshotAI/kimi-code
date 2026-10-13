@@ -121,7 +121,10 @@ describe('Session.prompt events', () => {
                       type: 'function',
                       function: {
                         name: 'NotifyUser',
-                        arguments: JSON.stringify({ message: 'Checking the work.' }),
+                        arguments: JSON.stringify({
+                          title: 'Checking the work',
+                          message: 'Reviewing the changed files.',
+                        }),
                       },
                     },
                   ],

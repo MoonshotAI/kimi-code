@@ -14,7 +14,7 @@
  */
 
 import type { Component } from '@moonshot-ai/pi-tui';
-import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
+import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
 import { Markdown } from '#/tui/components/markdown/markdown';
@@ -31,6 +31,8 @@ export interface NotifyEntry {
   readonly agentId: string;
   readonly agentName?: string;
   readonly time: number;
+  /** One-line headline of the update; absent for updates posted without one. */
+  readonly title?: string;
   readonly text: string;
 }
 
@@ -214,14 +216,26 @@ export class NotifyPanelComponent implements Component {
     const innerWidth = Math.max(1, width - 6);
     const ch = this.activeChannel();
     const entry = ch.entries[Math.min(ch.page, ch.entries.length - 1)]!;
-    const bodyRows = new Markdown(
-      entry.text.trim(),
-      0,
-      0,
-      createMarkdownTheme(),
-      undefined,
-      createMarkdownOptions(),
-    ).render(innerWidth);
+    const titleRows =
+      entry.title === undefined
+        ? []
+        : [
+            ...wrapTextWithAnsi(entry.title, innerWidth).map((row) =>
+              chalk.hex(c.textStrong).bold(row),
+            ),
+            '',
+          ];
+    const bodyRows = [
+      ...titleRows,
+      ...new Markdown(
+        entry.text.trim(),
+        0,
+        0,
+        createMarkdownTheme(),
+        undefined,
+        createMarkdownOptions(),
+      ).render(innerWidth),
+    ];
 
     const padRow = (row: string): string => `   ${padToVisibleWidth(row, width - 6)}   `;
     const emptyRow = ' '.repeat(width);
@@ -293,11 +307,12 @@ export class NotifyPanelComponent implements Component {
     return ` ${marker} ${dim(`${String(total)} ${noun} · ctrl+n`)}`;
   }
 
-  /** First non-empty line of the current entry, stripped of list/bold markers. */
+  /** The current entry's title, else its first non-empty line stripped of list/bold markers. */
   private stubPreviewText(): string | undefined {
     const ch = this.activeChannel();
     const entry = ch.entries[Math.min(ch.page, ch.entries.length - 1)];
     if (entry === undefined) return undefined;
+    if (entry.title !== undefined) return entry.title;
     const firstLine = entry.text
       .trim()
       .split('\n')

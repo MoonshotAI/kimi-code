@@ -7,8 +7,11 @@ import {
 import { isExperimentalFlagEnabled } from './experimental-flags';
 import { parseSlashInput } from './parse';
 import type { TUIState } from '../tui-state';
+import type { InlineSkillActivation } from '../types';
+import { extractInlineSkillActivations, findInlineSkillTokens } from '../utils/inline-skill-tokens';
 import type {
   KimiSlashCommand,
+  ParsedSlashInput,
   SlashCommandBusyReason,
   SlashCommandInvalidReason,
 } from './types';
@@ -82,20 +85,19 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
     };
   }
 
-  const skillName = resolveSkillCommand(options.skillCommandMap, parsed.name);
-  if (skillName !== undefined) {
-    // Skill activations are never blocked by a busy session: the TUI queues
-    // them behind the running turn exactly like normal messages (see
-    // sendSkillActivation), and Ctrl-S steers them as real activations, so
-    // skill commands can be issued any time.
-    return {
-      kind: 'skill',
-      commandName: parsed.name,
-      skillName,
-      args: parsed.args.trim(),
-    };
+  // Skill activations are never blocked by a busy session: the TUI queues
+  // them behind the running turn exactly like normal messages (see
+  // sendSkillActivation), and Ctrl-S steers them as real activations, so
+  // skill commands can be issued any time.
+  const exactSkillName = options.skillCommandMap.get(parsed.name);
+  if (exactSkillName !== undefined) {
+    return skillCommandIntent(parsed, exactSkillName);
   }
 
+  // A plugin command wins over the skill shorthand for the same
+  // `<pluginId>:<name>` input: the skill stays reachable through its explicit
+  // `skill:<pluginId>:<name>` command, while the plugin command has no
+  // alternative form.
   if (options.pluginCommandMap.has(parsed.name)) {
     const busyReason = slashCommandBusyReason(options);
     if (busyReason !== undefined) {
@@ -116,10 +118,43 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
     };
   }
 
+  const shorthandSkillName = options.skillCommandMap.get(`skill:${parsed.name}`);
+  if (shorthandSkillName !== undefined) {
+    return skillCommandIntent(parsed, shorthandSkillName);
+  }
+
   return {
     kind: 'message',
     input: options.input,
   };
+}
+
+export function resolveUserInput(options: ResolveSlashCommandInput): {
+  readonly intent: SlashCommandIntent;
+  readonly activations: readonly InlineSkillActivation[];
+} {
+  const intent = resolveSlashCommandInput(options);
+  if (intent.kind !== 'skill' && intent.kind !== 'message' && intent.kind !== 'not-command') {
+    return { intent, activations: [] };
+  }
+  const text = options.input.trim();
+  const activations = extractInlineSkillActivations(text, options.skillCommandMap, {
+    includeLeading: true,
+  });
+  if (activations.length === 1) {
+    const tokens = findInlineSkillTokens(text, {
+      isKnownSkill: (name) => resolveSkillCommand(options.skillCommandMap, name) !== undefined,
+      includeLeading: true,
+    });
+    if (tokens.length === 1 && tokens[0]?.start === 0) {
+      if (intent.kind !== 'skill') return { intent, activations: [] };
+      return {
+        intent,
+        activations: [{ skillName: activations[0]!.skillName, args: text.slice(tokens[0].end).trim() }],
+      };
+    }
+  }
+  return { intent, activations };
 }
 
 export function resolveSkillCommand(
@@ -127,6 +162,15 @@ export function resolveSkillCommand(
   commandName: string,
 ): string | undefined {
   return skillCommandMap.get(commandName) ?? skillCommandMap.get(`skill:${commandName}`);
+}
+
+function skillCommandIntent(parsed: ParsedSlashInput, skillName: string): SlashCommandIntent {
+  return {
+    kind: 'skill',
+    commandName: parsed.name,
+    skillName,
+    args: parsed.args.trim(),
+  };
 }
 
 export function slashCommandBusyReason(

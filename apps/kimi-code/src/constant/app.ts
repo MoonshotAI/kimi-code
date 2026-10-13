@@ -8,6 +8,7 @@ export const PROCESS_NAME = 'kimi-code';
 
 // Used in telemetry app names and HTTP User-Agent headers.
 export const CLI_USER_AGENT_PRODUCT = 'kimi-code-cli';
+export const CLI_MSH_PLATFORM = 'kimi_code_cli';
 export const CLI_UI_MODE = 'shell';
 // UI surfaces the TUI renders; declared to the engine at bootstrap so features that need a
 // host-side surface (the NotifyUser update panel) are offered to this process only.

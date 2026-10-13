@@ -148,7 +148,7 @@ Kimi Code CLI 随包内置了一组 Skill，直接以 `/<name>` 形式出现在�
 
 例如，父 Skill 名为 `code-style`，其中子 Skill 的本地名称为 `review`，面板中显示为 `/code-style.review`。点分命令名由层级自动生成，子 Skill 的 `SKILL.md` 可以保留本地 `name`。
 
-为方便输入，外部 Skill 命令同时支持省略 `skill:` 前缀的简写形式 `/<name>`，前提是该名称未被系统斜杠命令占用——即 `/code-style` 会回退匹配到 `/skill:code-style`。
+为方便输入，外部 Skill 命令同时支持省略 `skill:` 前缀的简写形式 `/<name>`，前提是该名称未被系统斜杠命令或插件命令占用——即 `/code-style` 会回退匹配到 `/skill:code-style`。
 
 Kimi Code CLI 随包内置的 Skill 会直接以 `/<name>` 形式出现在斜杠命令面板中。例如，`/mcp-config` 用于配置 MCP server 和处理 MCP OAuth 登录，`/custom-theme [附加文本]` 用于进入自定义主题流程，创建或编辑 TUI 主题。
 
