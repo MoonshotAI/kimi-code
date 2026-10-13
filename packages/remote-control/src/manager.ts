@@ -1,6 +1,13 @@
 import { assign, createActor, fromPromise, setup, waitFor } from '@moonshot-ai/agent-core-v2/human/xstate2';
 
-import { RemoteControlAlreadyRunningError, type RemoteControlLockInfo } from './lock';
+import {
+  inspectRemoteControlLock,
+  releaseRemoteControlLockHeldBy,
+  REMOTE_CONTROL_LOGOUT_GATE_ORIGIN,
+  remoteControlLockPath,
+  RemoteControlAlreadyRunningError,
+  type RemoteControlLockInfo,
+} from './lock';
 import { startRemoteControl, type RemoteControlHandle } from './remote-control';
 
 export type RemoteControlState = 'off' | 'starting' | 'on' | 'stopping';
@@ -211,14 +218,32 @@ export function createRemoteControlManager(
 
   const doDisable = async (): Promise<RemoteControlStatusInfo> => {
     const snap = actor.getSnapshot();
-    if (snap.value === 'off') {
-      await startTracker.current;
-      return status();
+    if (snap.value !== 'off') {
+      actor.send({ type: 'disable' });
+      const settled = await waitFor(actor, (s) => s.value === 'off');
+      if (settled.context.error !== undefined) fail(settled.context.error);
     }
-    actor.send({ type: 'disable' });
-    const settled = await waitFor(actor, (s) => s.value === 'off');
-    if (settled.context.error !== undefined) fail(settled.context.error);
     await startTracker.current;
+    const leaked = await inspectRemoteControlLock(options.homeDir);
+    if (
+      leaked !== undefined &&
+      leaked.pid === process.pid &&
+      leaked.localOrigin !== REMOTE_CONTROL_LOGOUT_GATE_ORIGIN
+    ) {
+      await releaseRemoteControlLockHeldBy(options.homeDir, process.pid).catch(() => {});
+      const remaining = await inspectRemoteControlLock(options.homeDir);
+      if (
+        remaining !== undefined &&
+        remaining.pid === process.pid &&
+        remaining.localOrigin !== REMOTE_CONTROL_LOGOUT_GATE_ORIGIN
+      ) {
+        fail(
+          new Error(
+            `Remote Control could not release the machine lock at ${remoteControlLockPath(options.homeDir)}; remove it and try again.`,
+          ),
+        );
+      }
+    }
     return status();
   };
 

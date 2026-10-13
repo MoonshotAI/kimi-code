@@ -529,7 +529,7 @@ describe('server-v2 /api/v1/remote-control', () => {
       },
     );
 
-    expect(events).toEqual(['disable', 'deactivate:legacy-id']);
+    expect(events).toEqual(['disable', 'deactivate:legacy-id', 'disable']);
     expect((payload as Envelope<{ ok: true }>).data.ok).toBe(true);
     expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
     await rm(homeDir, { recursive: true, force: true });
@@ -539,6 +539,7 @@ describe('server-v2 /api/v1/remote-control', () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-rc-gated-'));
     const service = {
       status: () => ({ enabled: false, state: 'off' }),
+      disable: async () => ({ enabled: false, state: 'off' }),
     } as unknown as RemoteControlManager;
     const devices = {
       deactivateDevice: async () => {
@@ -625,6 +626,50 @@ describe('server-v2 /api/v1/remote-control', () => {
     expect(body.data.state).toBe('off');
     expect(body.data.conflict).toBeUndefined();
     await chmod(join(homeDir, 'server'), 0o755);
+    await rm(homeDir, { recursive: true, force: true });
+  });
+
+  it('rechecks the local manager before releasing the deactivation gate', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-rc-recheck-'));
+    let state = 'off';
+    const events: string[] = [];
+    const service = {
+      status: () => ({ enabled: state === 'on', state }),
+      disable: async () => {
+        events.push('disable');
+        state = 'off';
+        return { enabled: false, state: 'off' };
+      },
+    } as unknown as RemoteControlManager;
+    const devices = {
+      deactivateDevice: async () => {
+        events.push('deactivate');
+        state = 'starting';
+      },
+    } as unknown as RemoteControlDeviceClient;
+    let handler: ((req: unknown, reply: unknown) => unknown) | undefined;
+    const app = {
+      get: () => {},
+      post: (path: string, _options: unknown, next: unknown) => {
+        if (path === '/remote-control/devices/:id/deactivate') handler = next as typeof handler;
+      },
+      patch: () => {},
+    };
+    registerRemoteControlRoutes(app as never, { service, devices, homeDir });
+
+    let payload: unknown;
+    await handler!(
+      { id: 'req-1', params: { id: createKimiDeviceId(homeDir) } },
+      {
+        send: (value: unknown) => {
+          payload = value;
+        },
+      },
+    );
+
+    expect(events).toEqual(['deactivate', 'disable']);
+    expect((payload as Envelope<{ ok: true }>).data.ok).toBe(true);
+    expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
     await rm(homeDir, { recursive: true, force: true });
   });
 

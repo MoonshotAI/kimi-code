@@ -1,6 +1,7 @@
 import {
   acquireRemoteControlLock,
   inspectRemoteControlLock,
+  REMOTE_CONTROL_LOGOUT_GATE_ORIGIN,
   RemoteControlAlreadyRunningError,
   type RemoteControlDeviceClient,
   type RemoteControlLock,
@@ -268,6 +269,7 @@ export function registerRemoteControlRoutes(
         const gate = await acquireRemoteControlStartGate(opts.homeDir, opts.devices);
         try {
           await opts.devices.deactivateDevice(req.params.id);
+          await opts.service.disable();
         } finally {
           await gate.release();
         }
@@ -286,7 +288,7 @@ const LOCK_RELEASE_POLL_MS = 100;
 const LOCK_RELEASE_TIMEOUT_MS = 5000;
 const START_GATE_TIMEOUT_MS = 10000;
 
-export const REMOTE_CONTROL_LOGOUT_GATE_ORIGIN = 'logout in progress';
+export { REMOTE_CONTROL_LOGOUT_GATE_ORIGIN };
 
 export async function waitForLockRelease(homeDir: string): Promise<void> {
   const deadline = Date.now() + LOCK_RELEASE_TIMEOUT_MS;

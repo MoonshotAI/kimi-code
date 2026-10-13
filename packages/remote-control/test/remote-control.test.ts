@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage } from 'node:http';
 import { spawn } from 'node:child_process';
 import type { Duplex } from 'node:stream';
 import { existsSync, chmodSync, mkdtempSync, rmSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, chmod, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
@@ -1514,6 +1514,49 @@ describe('Remote Control manager', () => {
     await enablingSettled;
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(upgrades).toBe(0);
+    expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
+  });
+
+  it('surfaces a machine-lock release failure and remediates it on retry', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    const managementServer = new WebSocketServer({ noServer: true });
+    const relayServer = createServer();
+    managementServer.on('connection', (ws) => {
+      ws.on('error', () => {});
+    });
+    relayServer.on('upgrade', (request, socket, head) => {
+      managementServer.handleUpgrade(request, socket, head, (ws) => {
+        managementServer.emit('connection', ws, request);
+      });
+    });
+    const port = await listen(relayServer);
+    cleanups.push(() => closeServer(relayServer));
+    const manager = createRemoteControlManager({
+      homeDir,
+      localOrigin: () => 'http://127.0.0.1:58627',
+      localServerToken: () => 'local-server-token',
+      clientVersion: CLIENT_VERSION,
+      urlSource: 'kimi_code_cli',
+      relayOrigin: `http://127.0.0.1:${port}`,
+      stderr: { write: () => true },
+    });
+    cleanups.push(() => manager.close());
+
+    const enabling = manager.enable();
+    const enablingSettled = expect(enabling).rejects.toThrow(
+      'Remote Control was disabled while starting.',
+    );
+    await waitFor(() => existsSync(remoteControlLockPath(homeDir)));
+
+    const serverDir = join(homeDir, 'server');
+    await chmod(serverDir, 0o555);
+    await expect(manager.disable()).rejects.toThrow(/could not release the machine lock/);
+    expect(existsSync(remoteControlLockPath(homeDir))).toBe(true);
+    await enablingSettled;
+
+    await chmod(serverDir, 0o755);
+    const status = await manager.disable();
+    expect(status.state).toBe('off');
     expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
   });
 
