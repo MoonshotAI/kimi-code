@@ -1008,6 +1008,34 @@ describe('Remote Control device client', () => {
     expect(JSON.parse(requests[2]!.body)).toEqual({ alias: 'Renamed' });
   });
 
+  it('projects only the documented device fields from the relay payload', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    const server = createServer((request, response) => {
+      const pathname = new URL(request.url ?? '', 'http://relay.test').pathname;
+      if (pathname === '/coding-relay/auth/exchange') {
+        response.writeHead(204, { 'Set-Cookie': 'rc_session=one; Path=/' });
+        response.end();
+        return;
+      }
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(
+        JSON.stringify({
+          devices: [{ ...device, internal_note: 'cloud-only', session_debug: { trace: 'x' } }],
+        }),
+      );
+    });
+    const port = await listen(server);
+    cleanups.push(() => closeServer(server));
+    const client = new RemoteControlDeviceClient({
+      homeDir,
+      relayOrigin: `http://127.0.0.1:${port}/coding-relay/`,
+    });
+
+    const list = await client.listDevices();
+    expect(list.devices).toEqual([device]);
+    expect(Object.keys(list.devices[0]!).toSorted()).toEqual(Object.keys(device).toSorted());
+  });
+
   it('requires a fresh exchange after clearing cached cloud sessions', async () => {
     const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
     let exchanges = 0;

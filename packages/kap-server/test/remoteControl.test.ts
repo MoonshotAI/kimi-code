@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage } from 'node:http';
+import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -575,6 +576,58 @@ describe('server-v2 /api/v1/remote-control', () => {
     await rm(homeDir, { recursive: true, force: true });
   });
 
+  it('keeps the status readable when stale-lock cleanup fails', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-rc-stale-'));
+    await mkdir(join(homeDir, 'server'), { recursive: true });
+    const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
+    await new Promise((resolve) => child.once('exit', resolve));
+    await writeFile(
+      remoteControlLockPath(homeDir),
+      JSON.stringify({
+        pid: child.pid,
+        nonce: 'stale',
+        local_origin: 'http://127.0.0.1:58627',
+        device_id: 'stale-device',
+        url: 'https://code-rc.kimi.com/devices/x/',
+        started_at: Date.now(),
+      }),
+    );
+    await chmod(join(homeDir, 'server'), 0o555);
+    const service = {
+      status: () => ({ enabled: false, state: 'off' }),
+    } as unknown as RemoteControlManager;
+    let handler: ((req: unknown, reply: unknown) => unknown) | undefined;
+    const app = {
+      get: (path: string, _options: unknown, next: unknown) => {
+        if (path === '/remote-control') handler = next as typeof handler;
+      },
+      post: () => {},
+      patch: () => {},
+    };
+    registerRemoteControlRoutes(app as never, {
+      service,
+      devices: {} as RemoteControlDeviceClient,
+      homeDir,
+    });
+
+    let payload: unknown;
+    await handler!(
+      { id: 'req-1' },
+      {
+        send: (value: unknown) => {
+          payload = value;
+        },
+      },
+    );
+
+    const body = payload as Envelope<{ state: string; conflict?: unknown }>;
+    expect(body.code).toBe(0);
+    expect(body.data.state).toBe('off');
+    expect(body.data.conflict).toBeUndefined();
+    await chmod(join(homeDir, 'server'), 0o755);
+    await rm(homeDir, { recursive: true, force: true });
+  });
+
   it('cancels an in-flight start when the current device is deactivated', async () => {await rm(remoteControlLockPath(home as string), { force: true });
     const cloud = await startDeviceCloud({ tunnel: true, registerDelayMs: 1000 });
     vi.stubEnv(
@@ -982,6 +1035,46 @@ describe('oauth logout remote-control cleanup', () => {
     expect(payload.data.provider).toBe('managed:other');
     expect(statusCalled).toBe(false);
     expect(clearCalled).toBe(false);
+  });
+
+  it('serializes concurrent Kimi logouts so repeated logout stays idempotent', async () => {
+    const events: string[] = [];
+    const remoteControl = {
+      status: () => ({ enabled: false, state: 'off' }),
+    } as unknown as RemoteControlManager;
+    const remoteControlDevices = {
+      clear: () => {
+        events.push('clear');
+      },
+      deactivateDevice: async () => {},
+    };
+    let logouts = 0;
+    let resolveFirst!: () => void;
+    const post = await logoutHandler(remoteControl, remoteControlDevices, async (provider) => {
+      logouts += 1;
+      events.push(`logout:${logouts}`);
+      if (logouts === 1) {
+        await new Promise<void>((resolve) => {
+          resolveFirst = resolve;
+        });
+      }
+      return { logged_out: true, provider: provider ?? 'managed:kimi-code' };
+    });
+
+    const first = post({ provider: 'managed:kimi-code' }) as Promise<
+      Envelope<{ logged_out: true }>
+    >;
+    const second = post({ provider: 'managed:kimi-code' }) as Promise<
+      Envelope<{ logged_out: true }>
+    >;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(events).toEqual(['clear', 'logout:1']);
+    resolveFirst();
+    const [firstPayload, secondPayload] = await Promise.all([first, second]);
+
+    expect(firstPayload.code).toBe(0);
+    expect(secondPayload.code).toBe(0);
+    expect(events).toEqual(['clear', 'logout:1', 'clear', 'clear', 'logout:2', 'clear']);
   });
 
   it('deactivates a lock held by another process before clearing OAuth credentials', async () => {

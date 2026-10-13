@@ -254,7 +254,18 @@ function parseDevice(value: unknown): RemoteControlDevice {
   if (value['status'] !== 'online' && value['status'] !== 'offline') {
     throw new RemoteControlDeviceClientError(UNEXPECTED_LIST_RESPONSE);
   }
-  return value as unknown as RemoteControlDevice;
+  const device = value as unknown as RemoteControlDevice;
+  return {
+    device_id: device.device_id,
+    alias: device.alias,
+    status: device.status,
+    platform: device.platform,
+    client_version: device.client_version,
+    local_base_url: device.local_base_url,
+    created_at: device.created_at,
+    updated_at: device.updated_at,
+    last_remote_access_at: device.last_remote_access_at,
+  };
 }
 
 function relayHttpUrl(origin: string, path: string): string {

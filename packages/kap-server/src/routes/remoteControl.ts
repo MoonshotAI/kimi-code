@@ -79,12 +79,16 @@ export function registerRemoteControlRoutes(
       let conflict = status.conflict;
       let error = status.error;
       if (status.state === 'off') {
-        const holder = await inspectRemoteControlLock(opts.homeDir);
-        if (holder !== undefined) {
-          conflict = holder;
-        } else if (conflict !== undefined) {
-          conflict = undefined;
-          error = undefined;
+        try {
+          const holder = await inspectRemoteControlLock(opts.homeDir);
+          if (holder !== undefined) {
+            conflict = holder;
+          } else if (conflict !== undefined) {
+            conflict = undefined;
+            error = undefined;
+          }
+        } catch (inspectError) {
+          requestLog(req)?.error({ err: inspectError }, 'remote-control lock inspection failed');
         }
       }
       reply.send(
