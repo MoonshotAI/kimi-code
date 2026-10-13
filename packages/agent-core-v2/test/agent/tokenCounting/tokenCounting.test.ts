@@ -24,6 +24,11 @@ function totalOf(usage: TokenUsage | undefined): number {
   return usage.inputOther + usage.output + usage.inputCacheRead + usage.inputCacheCreation;
 }
 
+function inputOf(usage: TokenUsage | undefined): number {
+  if (usage === undefined) return 0;
+  return usage.inputOther + usage.inputCacheRead + usage.inputCacheCreation;
+}
+
 function tokenCountingState(ctx: TestAgentContext) {
   return ctx.readModel(TokenCountingAgentModelDefinition, (model) => model._state());
 }
@@ -143,7 +148,14 @@ describe('Agent token counting', () => {
     expect(context.get()).toHaveLength(2);
 
     expect(tokenCountingState(ctx)).toEqual({
-      anchors: [{ length: context.get().length, tokens: exchangeTotal, measured: true }],
+      anchors: [
+        {
+          length: context.get().length,
+          tokens: exchangeTotal,
+          measured: true,
+          inputTokens: inputOf(usage.status().total),
+        },
+      ],
       tokens: exchangeTotal,
       calibration: 1,
       modelAlias: 'mock-model',
@@ -176,6 +188,7 @@ describe('Agent token counting', () => {
       length: context.get().length,
       tokens: lastExchangeTotal,
       measured: true,
+      inputTokens: inputOf(usage.status().currentTurn),
     });
     expect(tokenCounting.get().measured).toBe(lastExchangeTotal);
     expect((await ctx.rpc.getContext({})).tokenCount).toBe(lastExchangeTotal);
@@ -242,6 +255,35 @@ describe('Agent token counting', () => {
 
     ctx.appendTurnExchange('u4', 'a4', 9_000);
     expect(tokenCounting.calibration()).toBe(4);
+  });
+
+  it('returns the default calibration immediately after a model switch', () => {
+    ctx.appendTurnExchange('u1', 'a1', 1_000);
+    ctx.appendTurnExchange('u2', 'a2', 3_000);
+    expect(tokenCounting.calibration()).toBe(4);
+
+    profile.update({ modelAlias: 'other-model' });
+    expect(tokenCounting.calibration()).toBe(1);
+  });
+
+  it('calibrates from input usage instead of completion totals', () => {
+    ctx.appendTurnExchange('u1', 'a1', 1_000);
+    ctx.appendTurnExchange('u2', 'a2', 3_000);
+    expect(tokenCounting.calibration()).toBe(4);
+
+    ctx.appendUserMessage([{ type: 'text', text: 'u3' }]);
+    ctx.context.append({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'a3' }],
+      toolCalls: [],
+    });
+    tokenCounting.measured(context.get(), [], {
+      inputOther: 3_005,
+      output: 100_000,
+      inputCacheRead: 0,
+      inputCacheCreation: 0,
+    });
+    expect(tokenCounting.calibration()).toBe(2.5);
   });
 
   it('ignores a stored anchor that overshoots the live context', async () => {
@@ -416,7 +458,7 @@ describe('Agent token counting', () => {
         tokens: reported,
       });
       expect(tokenCountingState(live).anchors).toEqual([
-        { length: 2, tokens: reported, measured: true },
+        { length: 2, tokens: reported, measured: true, inputTokens: inputOf(live.usage.status().total) },
       ]);
     } finally {
       await live.dispose();

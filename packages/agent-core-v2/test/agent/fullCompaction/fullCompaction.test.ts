@@ -1056,6 +1056,57 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('neutralizes an in-budget newest tool result before retrying', async () => {
+    let attempts = 0;
+    const inputs: string[][] = [];
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, history) => {
+      attempts += 1;
+      inputs.push(inputHistorySnapshot(history));
+      if (attempts === 1) {
+        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-fits-tool-overflow');
+      }
+      return textResult('Neutralized fits summary.');
+    });
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.context.append({
+      role: 'assistant',
+      content: [],
+      toolCalls: [{ type: 'function', id: 'call_big', name: 'Read', arguments: '{}' }],
+    });
+    ctx.context.append({
+      role: 'tool',
+      content: [{ type: 'text', text: 'd'.repeat(50_000) }],
+      toolCalls: [],
+      toolCallId: 'call_big',
+    });
+    const completed = ctx.once('compaction.completed');
+
+    await ctx.rpc.beginCompaction({});
+    await completed;
+
+    expect(attempts).toBe(2);
+    expect(inputs).toHaveLength(2);
+    expect(inputs[1]).toHaveLength(2);
+    expect(inputs[1]!.some((entry) => entry.startsWith('tool: '))).toBe(false);
+    expect(inputs[1]![0]).toMatch(/^user: /);
+    expect(inputs[1]![0]).toContain('d'.repeat(100));
+    const events = ctx.newEvents();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'compaction.completed',
+        args: expect.objectContaining({
+          result: expect.objectContaining({ droppedCount: 3 }),
+        }),
+      }),
+    );
+    await ctx.expectResumeMatches();
+  });
+
   it('waits before retrying compaction generation after a retryable failure', async () => {
     vi.useFakeTimers();
     const firstAttemptFailed = deferred<void>();

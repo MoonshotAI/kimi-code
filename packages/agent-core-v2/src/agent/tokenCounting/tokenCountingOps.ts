@@ -7,6 +7,7 @@ export interface TokenAnchor {
   readonly length: number;
   readonly tokens: number;
   readonly measured: boolean;
+  readonly inputTokens?: number;
 }
 
 export interface TokenCountingState {
@@ -20,6 +21,7 @@ const sizeSchema = z.object({
   agentId: z.string(),
   length: z.number(),
   tokens: z.number(),
+  inputTokens: z.number().optional(),
 });
 
 export class TokenCountingMeasured extends AgentEvent2<z.infer<typeof sizeSchema>> {
@@ -31,6 +33,7 @@ export interface TokenCountingMeasured {
   readonly agentId: string;
   readonly length: number;
   readonly tokens: number;
+  readonly inputTokens?: number;
 }
 
 export class TokenCountingTruncated extends AgentEvent2<z.infer<typeof sizeSchema>> {

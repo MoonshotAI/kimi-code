@@ -17,7 +17,7 @@ import {
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import type { Message } from '#/llm-adapter/contract/message';
 import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
-import type { TokenUsage } from '#human/llm/usage';
+import { inputTotal, type TokenUsage } from '#human/llm/usage';
 import { AgentModel, defineAgentModel, type AgentModelContext } from '#/state/agentModel';
 
 import type { TokenCountingRebaseInput } from './sessionTokenCounting';
@@ -39,7 +39,7 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
     this.on(TokenCountingMeasured, (event) => {
       const length = normalizeAnchorLength(event.length);
       const tokens = Math.max(0, event.tokens);
-      const anchor: TokenAnchor = { length, tokens, measured: true };
+      const anchor: TokenAnchor = { length, tokens, measured: true, inputTokens: event.inputTokens };
       const committed = this._state();
       const modelAlias = this.currentModelAlias();
       const modelChanged =
@@ -48,7 +48,7 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
         modelAlias !== committed.modelAlias;
       const calibration = modelChanged
         ? DEFAULT_ESTIMATE_CALIBRATION
-        : this.nextCalibration(committed, length, tokens);
+        : this.nextCalibration(committed, length, tokens, event.inputTokens);
       const anchors = [...committed.anchors.filter((a) => a.length < length), anchor];
       if (
         !(
@@ -135,6 +135,7 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
         agentId: this.agent.agentId,
         length: context.length,
         tokens: tokenUsageTotal(usage),
+        inputTokens: inputTotal(usage),
       }),
     );
   }
@@ -156,8 +157,16 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
   }
 
   calibrationFactor(): number {
-    const calibration = this._state().calibration;
-    return calibration > 0 ? calibration : DEFAULT_ESTIMATE_CALIBRATION;
+    const committed = this._state();
+    const modelAlias = this.currentModelAlias();
+    if (
+      modelAlias !== undefined &&
+      committed.modelAlias !== undefined &&
+      modelAlias !== committed.modelAlias
+    ) {
+      return DEFAULT_ESTIMATE_CALIBRATION;
+    }
+    return committed.calibration > 0 ? committed.calibration : DEFAULT_ESTIMATE_CALIBRATION;
   }
 
   private currentModelAlias(): string | undefined {
@@ -168,6 +177,7 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
     committed: TokenCountingState,
     length: number,
     tokens: number,
+    inputTokens: number | undefined,
   ): number {
     const current = committed.calibration > 0 ? committed.calibration : DEFAULT_ESTIMATE_CALIBRATION;
     let previous: TokenAnchor | undefined;
@@ -178,11 +188,14 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
         break;
       }
     }
-    if (previous === undefined || tokens <= previous.tokens) return current;
+    if (previous === undefined || previous.inputTokens === undefined || inputTokens === undefined) {
+      return current;
+    }
+    if (inputTokens <= previous.inputTokens) return current;
     const context = this.context();
     const deltaEstimate = estimateTokensForMessages(context.slice(previous.length, length));
     if (deltaEstimate <= 0) return current;
-    const ratio = (tokens - previous.tokens) / deltaEstimate;
+    const ratio = (inputTokens - previous.inputTokens) / deltaEstimate;
     return clampCalibration(current * (1 - CALIBRATION_SMOOTHING) + ratio * CALIBRATION_SMOOTHING);
   }
 

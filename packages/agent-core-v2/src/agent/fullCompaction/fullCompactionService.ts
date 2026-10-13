@@ -991,7 +991,7 @@ function truncateMessageToTokenBudget<T extends Message>(
   tokenBudget: number,
   estimateMessage: (message: T) => number = estimateTokensForMessage,
 ): T | undefined {
-  if (estimateMessage(message) <= tokenBudget) return message;
+  if (estimateMessage(message) <= tokenBudget) return neutralizeForStandalone(message);
   const preservedParts = message.content.filter(
     (part) => part.type !== 'text' && part.type !== 'think',
   );
@@ -1016,10 +1016,14 @@ function truncateMessageToTokenBudget<T extends Message>(
   const tail = tailChars > 0 ? fullText.slice(fullText.length - tailChars) : '';
   const truncatedText = `${fullText.slice(0, headChars)}\n${SINGLE_MESSAGE_TRUNCATION_MARKER} (${String(omittedChars)} chars omitted)\n${tail}`;
   const content = [...preservedParts, { type: 'text' as const, text: truncatedText }];
+  return neutralizeForStandalone(message, content);
+}
+
+function neutralizeForStandalone<T extends Message>(message: T, content?: T['content']): T {
   if (message.role === 'tool') {
-    return { role: 'user', content, toolCalls: [] } as unknown as T;
+    return { role: 'user', content: content ?? message.content, toolCalls: [] } as unknown as T;
   }
-  return { ...message, content, toolCalls: [] };
+  return { ...message, content: content ?? message.content, toolCalls: [] };
 }
 
 function takeRecentMessagesWithinTokenBudget<T extends Message>(
