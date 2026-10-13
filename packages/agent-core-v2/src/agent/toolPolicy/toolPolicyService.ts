@@ -69,6 +69,18 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
     );
   }
 
+  getPolicyFingerprint(): string {
+    const profile = this.profile.data();
+    return JSON.stringify([
+      this.toolPolicyGate.disabledTools,
+      profile.activeToolNames,
+      profile.disallowedTools,
+      this.globalPolicy?.enabled,
+      this.globalPolicy?.disabled,
+      this.sessionToolPolicy.disabledTools(),
+    ].map((names) => names === undefined ? null : [...new Set(names)].toSorted()));
+  }
+
   isToolActiveForDisclosure(name: string, source: ToolSource = 'builtin'): boolean {
     const profile = this.profile.data();
     return isToolActiveComposed(

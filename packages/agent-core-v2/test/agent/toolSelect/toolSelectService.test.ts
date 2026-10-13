@@ -62,6 +62,11 @@ const MCP_GAMMA = 'mcp__srv__gamma';
 const MCP_GONE = 'mcp__srv__gone';
 const USER_DEFERRED = 'dashboard_create';
 const USER_INLINE = 'echo_inline';
+const UNKNOWN_SELECTION_REASON =
+  'This name is not in the current loadable tool list. ' +
+  'select_tools only loads exact announced names; it cannot search for capabilities or install tools. ';
+const NO_ALIAS_GUIDANCE =
+  ' Do not guess aliases; use an available tool or tell the user what capability is missing.';
 const REQUIRED_PAYLOAD_PARAMETERS = {
   type: 'object',
   required: ['payload'],
@@ -348,6 +353,10 @@ function registerSharedServices(
   reg.definePartialInstance(IAgentToolPolicyService, {
     isToolActive: (name: string) => activeToolNames === undefined || activeToolNames.has(name),
     isToolDenied: (name: string) => deniedToolNames.has(name),
+    getPolicyFingerprint: () => JSON.stringify([
+      activeToolNames === undefined ? null : [...activeToolNames].toSorted(),
+      [...deniedToolNames].toSorted(),
+    ]),
     isToolActiveForDisclosure: () => disclosureToolActive,
   });
   reg.definePartialInstance(IFlagService, {
@@ -750,10 +759,11 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
       toLoad: [],
       alreadyAvailable: [],
       alreadyCallable: [],
-      staleLoaded: [],
-      notAvailable: [],
-      unknown: [USER_DEFERRED],
+      staleLoaded: [USER_DEFERRED],
+      policyDenied: [],
+      unknown: [],
       escalated: {},
+      consecutiveFailures: 1,
       suggestions: {},
       loadable: [],
     });
@@ -781,9 +791,10 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
       alreadyAvailable: [],
       alreadyCallable: [USER_DEFERRED],
       staleLoaded: [],
-      notAvailable: [],
+      policyDenied: [],
       unknown: [],
       escalated: {},
+      consecutiveFailures: 0,
       suggestions: {},
       loadable: [],
     });
@@ -822,9 +833,10 @@ describe('AgentToolSelectService.load', () => {
       alreadyAvailable: [],
       alreadyCallable: [],
       staleLoaded: [],
-      notAvailable: [],
+      policyDenied: [],
       unknown: [],
       escalated: {},
+      consecutiveFailures: 0,
       suggestions: {},
       loadable: [USER_DEFERRED],
     });
@@ -863,7 +875,7 @@ describe('AgentToolSelectService.load', () => {
 
     const result = h.sut.load([MCP_ALPHA, MCP_BETA]);
     expect(result.toLoad).toEqual([MCP_ALPHA]);
-    expect(result.notAvailable).toEqual([MCP_BETA]);
+    expect(result.policyDenied).toEqual([MCP_BETA]);
     expect(result.unknown).toEqual([]);
     const declared = await declareSchemas(h);
     expect(declared?.tools?.map((tool) => tool.name)).toEqual([MCP_ALPHA]);
@@ -968,7 +980,7 @@ describe('AgentToolSelectService.load', () => {
       output: [
         `Loaded: ${MCP_BETA}`,
         `Already available: ${MCP_ALPHA}`,
-        `Unknown tool: ${MCP_GONE}. Loadable tools: ${MCP_BETA}.`,
+        `Unknown tool: ${MCP_GONE}. ${UNKNOWN_SELECTION_REASON}Loadable tools: ${MCP_BETA}.${NO_ALIAS_GUIDANCE}`,
       ].join('\n'),
     });
   });
@@ -981,8 +993,8 @@ describe('AgentToolSelectService.load', () => {
     if (unknownOnly.isError === true) throw new Error('expected a runnable execution');
     expect(await unknownOnly.execute(ctx)).toEqual({
       output:
-        `Unknown tool: ${MCP_GONE}. No tools can be loaded in this session — ` +
-        'use the tools you already have.',
+        `Unknown tool: ${MCP_GONE}. ${UNKNOWN_SELECTION_REASON}` +
+        'No additional tools can be loaded right now; use the tools you already have.' + NO_ALIAS_GUIDANCE,
       isError: true,
     });
   });
@@ -996,7 +1008,7 @@ describe('AgentToolSelectService.load', () => {
     const unknownOnly = selectTools.resolveExecution({ names: [MCP_GONE] });
     if (unknownOnly.isError === true) throw new Error('expected a runnable execution');
     expect(await unknownOnly.execute(ctx)).toEqual({
-      output: `Unknown tool: ${MCP_GONE}. Loadable tools: ${MCP_ALPHA}, ${MCP_BETA}.`,
+      output: `Unknown tool: ${MCP_GONE}. ${UNKNOWN_SELECTION_REASON}Loadable tools: ${MCP_ALPHA}, ${MCP_BETA}.${NO_ALIAS_GUIDANCE}`,
       isError: true,
     });
   });
@@ -1017,7 +1029,7 @@ describe('AgentToolSelectService.load', () => {
     const unknownOnly = selectTools.resolveExecution({ names: [MCP_GONE] });
     if (unknownOnly.isError === true) throw new Error('expected a runnable execution');
     expect(await unknownOnly.execute(ctx)).toEqual({
-      output: `Unknown tool: ${MCP_GONE}. Pick from the latest announced tools list.`,
+      output: `Unknown tool: ${MCP_GONE}. ${UNKNOWN_SELECTION_REASON}Select only exact names from the current announcements.${NO_ALIAS_GUIDANCE}`,
       isError: true,
     });
   });
@@ -1030,8 +1042,8 @@ describe('AgentToolSelectService.load', () => {
     if (unknownOnly.isError === true) throw new Error('expected a runnable execution');
     expect(await unknownOnly.execute(ctx)).toEqual({
       output:
-        'Unknown tool: some_unavailable_tool. No tools can be loaded in this session — ' +
-        'use the tools you already have.',
+        `Unknown tool: some_unavailable_tool. ${UNKNOWN_SELECTION_REASON}` +
+        'No additional tools can be loaded right now; use the tools you already have.' + NO_ALIAS_GUIDANCE,
       isError: true,
     });
   });
@@ -1045,9 +1057,10 @@ describe('AgentToolSelectService.load', () => {
       alreadyAvailable: [],
       alreadyCallable: ['Echo'],
       staleLoaded: [],
-      notAvailable: [],
+      policyDenied: [],
       unknown: [],
       escalated: {},
+      consecutiveFailures: 0,
       suggestions: {},
       loadable: [],
     });
@@ -1063,9 +1076,10 @@ describe('AgentToolSelectService.load', () => {
       alreadyAvailable: [],
       alreadyCallable: [],
       staleLoaded: [],
-      notAvailable: [],
+      policyDenied: [],
       unknown: ['MCP__SRV__ALPHA'],
       escalated: {},
+      consecutiveFailures: 1,
       suggestions: { 'MCP__SRV__ALPHA': [MCP_ALPHA] },
       loadable: [MCP_ALPHA],
     });
@@ -1080,9 +1094,10 @@ describe('AgentToolSelectService.load', () => {
       alreadyAvailable: [],
       alreadyCallable: [],
       staleLoaded: [],
-      notAvailable: [],
+      policyDenied: [],
       unknown: ['mcp__alpha'],
       escalated: {},
+      consecutiveFailures: 1,
       suggestions: { 'mcp__alpha': [MCP_ALPHA] },
       loadable: [MCP_ALPHA],
     });
@@ -1097,9 +1112,10 @@ describe('AgentToolSelectService.load', () => {
       alreadyAvailable: [],
       alreadyCallable: [],
       staleLoaded: [],
-      notAvailable: [],
+      policyDenied: [],
       unknown: ['alpha_extra'],
       escalated: {},
+      consecutiveFailures: 1,
       suggestions: { 'alpha_extra': [MCP_ALPHA] },
       loadable: [MCP_ALPHA],
     });
@@ -1127,39 +1143,53 @@ describe('AgentToolSelectService.load', () => {
     const casingMiss = selectTools.resolveExecution({ names: ['MCP__SRV__ALPHA'] });
     if (casingMiss.isError === true) throw new Error('expected a runnable execution');
     expect(await casingMiss.execute(ctx)).toEqual({
-      output: `Unknown tool: MCP__SRV__ALPHA. Did you mean: ${MCP_ALPHA}?`,
+      output: `Unknown tool: MCP__SRV__ALPHA. ${UNKNOWN_SELECTION_REASON}Did you mean: ${MCP_ALPHA}? Use an exact listed name.`,
       isError: true,
     });
   });
 
-  it('classifies a host-denied name as not available in this session', () => {
+  it.each([
+    {
+      kind: 'policyDenied',
+      reason: `"${MCP_GONE}" is disabled by the current tool policy. select_tools cannot enable it. ` +
+        'Do not retry unless the policy changes; use an available tool instead.',
+    },
+    {
+      kind: 'staleLoaded',
+      reason: `"${MCP_GONE}" was previously selected or loaded but is no longer registered. ` +
+        'select_tools cannot restore it. Do not select it again unless a new <tools_added> announcement lists it.',
+    },
+    {
+      kind: 'unknown',
+      reason: `Unknown tool: ${MCP_GONE}. ${UNKNOWN_SELECTION_REASON}` +
+        'No additional tools can be loaded right now; use the tools you already have.' + NO_ALIAS_GUIDANCE,
+    },
+  ] as const)('classifies $kind and preserves its reason on repeated failure', async ({ kind, reason }) => {
     const h = createHarness();
-    deniedToolNames = new Set(['Automation']);
-
-    expect(h.sut.load(['Automation'])).toEqual({
+    if (kind === 'policyDenied') deniedToolNames = new Set([MCP_GONE]);
+    if (kind === 'staleLoaded') {
+      const registration = registerMcp(h, new StubMcpTool(MCP_GONE));
+      h.contextMemory.history.push(schemaMessage(MCP_GONE));
+      registration.dispose();
+    }
+    expect(h.sut.load([MCP_GONE])).toEqual({
       toLoad: [],
       alreadyAvailable: [],
       alreadyCallable: [],
-      staleLoaded: [],
-      notAvailable: ['Automation'],
-      unknown: [],
+      staleLoaded: kind === 'staleLoaded' ? [MCP_GONE] : [],
+      policyDenied: kind === 'policyDenied' ? [MCP_GONE] : [],
+      unknown: kind === 'unknown' ? [MCP_GONE] : [],
       escalated: {},
+      consecutiveFailures: 1,
       suggestions: {},
       loadable: [],
     });
-  });
-
-  it('renders the not-available wording in the select_tools output', async () => {
-    const h = createHarness();
-    deniedToolNames = new Set(['Automation']);
-    const selectTools = h.ix.createInstance(SelectToolsTool);
-    const ctx = { turnId: 1, toolCallId: 'call-1', signal: new AbortController().signal };
-    const denied = selectTools.resolveExecution({ names: ['Automation'] });
-    if (denied.isError === true) throw new Error('expected a runnable execution');
-    expect(await denied.execute(ctx)).toEqual({
-      output:
-        '"Automation" is not available in this session — selecting cannot load it. ' +
-        'Do not retry it; use the tools you already have.',
+    const tool = h.ix.createInstance(SelectToolsTool);
+    const execution = tool.resolveExecution({ names: [MCP_GONE] });
+    if (execution.isError === true) throw new Error('expected a runnable execution');
+    expect(await execution.execute({ turnId: 1, toolCallId: 'call', signal: new AbortController().signal })).toEqual({
+      output: `${reason}\n"${MCP_GONE}" has already failed selection 2 times. ` +
+        'Stop retrying this name until its availability changes.',
       isError: true,
     });
   });
@@ -1169,7 +1199,7 @@ describe('AgentToolSelectService.load', () => {
     deniedToolNames = new Set(['mcp__github__get_issue']);
 
     const result = h.sut.load(['mcp__github__get_issue']);
-    expect(result.notAvailable).toEqual(['mcp__github__get_issue']);
+    expect(result.policyDenied).toEqual(['mcp__github__get_issue']);
     expect(result.unknown).toEqual([]);
   });
 
@@ -1179,37 +1209,8 @@ describe('AgentToolSelectService.load', () => {
     activeToolNames = new Set(['Read']);
 
     const result = h.sut.load(['UpdateGoal']);
-    expect(result.notAvailable).toEqual(['UpdateGoal']);
+    expect(result.policyDenied).toEqual(['UpdateGoal']);
     expect(result.unknown).toEqual([]);
-  });
-
-  it('classifies a loaded MCP tool as stale after its registration is gone', () => {
-    const h = createHarness();
-    const registration = registerMcp(h, new StubMcpTool(MCP_ALPHA));
-    h.contextMemory.history.push(schemaMessage(MCP_ALPHA));
-    registration.dispose();
-
-    const result = h.sut.load([MCP_ALPHA]);
-    expect(result.staleLoaded).toEqual([MCP_ALPHA]);
-    expect(result.alreadyAvailable).toEqual([]);
-  });
-
-  it('renders the currently-unavailable wording for a stale loaded name', async () => {
-    const h = createHarness();
-    const registration = registerMcp(h, new StubMcpTool(MCP_ALPHA));
-    h.contextMemory.history.push(schemaMessage(MCP_ALPHA));
-    registration.dispose();
-
-    const selectTools = h.ix.createInstance(SelectToolsTool);
-    const ctx = { turnId: 1, toolCallId: 'call-1', signal: new AbortController().signal };
-    const stale = selectTools.resolveExecution({ names: [MCP_ALPHA] });
-    if (stale.isError === true) throw new Error('expected a runnable execution');
-    expect(await stale.execute(ctx)).toEqual({
-      output:
-        `"${MCP_ALPHA}" was loaded earlier but is not available right now — ` +
-        'it may be disconnected or disabled. Do not retry it; use the tools you already have.',
-      isError: true,
-    });
   });
 
   it('reports a pending selection as currently unavailable when the tool vanishes before landing', () => {
@@ -1237,51 +1238,7 @@ describe('AgentToolSelectService.load', () => {
     expect(result.loadable).toEqual([]);
   });
 
-  it('escalates to stop-retry wording on the second failed selection of the same name', async () => {
-    const h = createHarness();
-    const selectTools = h.ix.createInstance(SelectToolsTool);
-    const ctx = { turnId: 1, toolCallId: 'call-1', signal: new AbortController().signal };
-
-    const first = selectTools.resolveExecution({ names: [MCP_GONE] });
-    if (first.isError === true) throw new Error('expected a runnable execution');
-    expect(await first.execute(ctx)).toEqual({
-      output:
-        `Unknown tool: ${MCP_GONE}. No tools can be loaded in this session — ` +
-        'use the tools you already have.',
-      isError: true,
-    });
-
-    const second = selectTools.resolveExecution({ names: [MCP_GONE] });
-    if (second.isError === true) throw new Error('expected a runnable execution');
-    expect(await second.execute(ctx)).toEqual({
-      output:
-        `"${MCP_GONE}" cannot be loaded in this session (already attempted 2 times). ` +
-        'Stop retrying — complete the task with the tools you have, or tell the user what is missing.',
-      isError: true,
-    });
-  });
-
-  it('escalates repeated not-available selections too', async () => {
-    const h = createHarness();
-    deniedToolNames = new Set(['Automation']);
-    const selectTools = h.ix.createInstance(SelectToolsTool);
-    const ctx = { turnId: 1, toolCallId: 'call-1', signal: new AbortController().signal };
-
-    const first = selectTools.resolveExecution({ names: ['Automation'] });
-    if (first.isError === true) throw new Error('expected a runnable execution');
-    await first.execute(ctx);
-
-    const second = selectTools.resolveExecution({ names: ['Automation'] });
-    if (second.isError === true) throw new Error('expected a runnable execution');
-    expect(await second.execute(ctx)).toEqual({
-      output:
-        '"Automation" cannot be loaded in this session (already attempted 2 times). ' +
-        'Stop retrying — complete the task with the tools you have, or tell the user what is missing.',
-      isError: true,
-    });
-  });
-
-  it('counts case variants of the same name once within a single call', async () => {
+  it('counts case variants once per call and escalates every variant on the second call', async () => {
     const h = createHarness();
     registerMcp(h, new StubMcpTool(MCP_ALPHA));
     const selectTools = h.ix.createInstance(SelectToolsTool);
@@ -1292,9 +1249,130 @@ describe('AgentToolSelectService.load', () => {
     });
     if (variants.isError === true) throw new Error('expected a runnable execution');
     const result = await variants.execute(ctx);
-    expect(result.output).not.toContain('already attempted 2 times');
-    expect(result.output).toContain(`Unknown tool: mcp__Ghost__tool. Loadable tools: ${MCP_ALPHA}.`);
-    expect(result.output).toContain(`Unknown tool: mcp__ghost__tool. Loadable tools: ${MCP_ALPHA}.`);
+    expect(result.output).not.toContain('has already failed selection 2 times');
+    expect(result.output).toContain(`Unknown tool: mcp__Ghost__tool. ${UNKNOWN_SELECTION_REASON}Loadable tools: ${MCP_ALPHA}.${NO_ALIAS_GUIDANCE}`);
+    expect(result.output).toContain(`Unknown tool: mcp__ghost__tool. ${UNKNOWN_SELECTION_REASON}Loadable tools: ${MCP_ALPHA}.${NO_ALIAS_GUIDANCE}`);
+    const second = h.sut.load(['mcp__Ghost__tool', 'mcp__ghost__tool']);
+    expect(second.consecutiveFailures).toBe(2);
+    expect(second.escalated).toEqual({ mcp__Ghost__tool: 2, mcp__ghost__tool: 2 });
+  });
+});
+
+describe('AgentToolSelectService consecutive failures', () => {
+  beforeEach(() => {
+    flagEnabled = true;
+  });
+
+  it('counts failed calls across different names and turns, not names within a batch', () => {
+    const h = createHarness();
+    expect(h.sut.load(['Automation', 'automations', 'AutomationList']).consecutiveFailures).toBe(1);
+    h.eventBus.publish(new TurnStarted({ agentId: 'main', turnId: 99, origin: { kind: 'user' } }));
+    expect(h.sut.load(['mcp__example__automation']).consecutiveFailures).toBe(2);
+    expect(h.sut.load(['another_name']).consecutiveFailures).toBe(3);
+  });
+
+  it('appends one cross-name warning after three failures without replacing the reasons', async () => {
+    const h = createHarness();
+    h.contextMemory.history.push(schemaMessage(MCP_GONE));
+    deniedToolNames = new Set(['DisabledTool']);
+    h.sut.load(['first_guess']);
+    h.sut.load(['second_guess']);
+    const tool = h.ix.createInstance(SelectToolsTool);
+    const execution = tool.resolveExecution({ names: ['DisabledTool', MCP_GONE, 'third_guess'] });
+    if (execution.isError === true) throw new Error('expected a runnable execution');
+    const result = await execution.execute({ turnId: 1, toolCallId: 'call', signal: new AbortController().signal });
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('disabled by the current tool policy');
+    expect(result.output).toContain('no longer registered');
+    expect(result.output).toContain('Unknown tool: third_guess.');
+    if (typeof result.output !== 'string') throw new Error('expected text output');
+    expect(result.output.match(/3 consecutive select_tools calls/g)).toHaveLength(1);
+    expect(result.output).toContain('Stop guessing names or retrying unavailable tools.');
+    expect(result.output).not.toContain('has already failed selection');
+  });
+
+  it.each(['new', 'loaded', 'static', 'mixed'] as const)('resets both counters on %s success', (kind) => {
+    const h = createHarness();
+    registerMcp(h, new StubMcpTool(MCP_ALPHA));
+    registerBuiltin(h, new EchoTool());
+    if (kind === 'loaded') h.contextMemory.history.push(schemaMessage(MCP_ALPHA));
+    h.sut.load([MCP_GONE]);
+    expect(h.sut.load([MCP_GONE]).escalated[MCP_GONE]).toBe(2);
+    const names = kind === 'static' ? ['Echo'] : kind === 'mixed' ? [MCP_ALPHA, MCP_GONE] : [MCP_ALPHA];
+    const success = h.sut.load(names);
+    expect(success.consecutiveFailures).toBe(0);
+    expect(success.escalated).toEqual({});
+    const next = h.sut.load([MCP_GONE]);
+    expect(next.consecutiveFailures).toBe(1);
+    expect(next.escalated).toEqual({});
+  });
+
+  it.each(['add', 'remove', 'policy', 'disclosure'] as const)('resets both counters when tools change: %s', (change) => {
+    const h = createHarness();
+    const registration = registerMcp(h, new StubMcpTool(MCP_ALPHA));
+    h.sut.load([MCP_GONE]);
+    h.sut.load([MCP_GONE]);
+    if (change === 'add') registerMcp(h, new StubMcpTool(MCP_BETA));
+    if (change === 'remove') registration.dispose();
+    if (change === 'policy') deniedToolNames = new Set(['UnregisteredTool']);
+    if (change === 'disclosure') registerMcp(h, new StubMcpTool(MCP_ALPHA), 'inline');
+    const next = h.sut.load([MCP_GONE]);
+    expect(next.consecutiveFailures).toBe(1);
+    expect(next.escalated).toEqual({});
+  });
+
+  it('observes changes at announcement boundaries even if tools later revert', () => {
+    const h = createHarness();
+    h.sut.load([MCP_GONE]);
+    h.sut.load([MCP_GONE]);
+    const registration = registerMcp(h, new StubMcpTool(MCP_ALPHA));
+    h.sut.loadableToolsAnnouncement();
+    registration.dispose();
+    expect(h.sut.load([MCP_GONE]).consecutiveFailures).toBe(1);
+  });
+
+  it('does not reset for registry ordering, repeated announcements or compaction', () => {
+    const h = createHarness();
+    registerMcp(h, new StubMcpTool(MCP_ALPHA));
+    registerMcp(h, new StubMcpTool(MCP_BETA));
+    h.sut.load([MCP_GONE]);
+    registerMcp(h, new StubMcpTool(MCP_ALPHA));
+    h.sut.loadableToolsAnnouncement();
+    h.contextMemory.clear();
+    h.sut.loadableToolsAnnouncement();
+    const next = h.sut.load([MCP_GONE]);
+    expect(next.consecutiveFailures).toBe(2);
+    expect(next.escalated[MCP_GONE]).toBe(2);
+  });
+
+  it('does not share failure counters between agents', () => {
+    const first = createHarness();
+    const second = createHarness();
+    first.sut.load([MCP_GONE]);
+    first.sut.load([MCP_GONE]);
+    expect(second.sut.load([MCP_GONE]).consecutiveFailures).toBe(1);
+  });
+
+  it('prioritizes a policy denial over a missing historical registration', () => {
+    const h = createHarness();
+    h.contextMemory.history.push(schemaMessage(MCP_GONE));
+    deniedToolNames = new Set([MCP_GONE]);
+    const result = h.sut.load([MCP_GONE]);
+    expect(result.policyDenied).toEqual([MCP_GONE]);
+    expect(result.staleLoaded).toEqual([]);
+    expect(result.unknown).toEqual([]);
+  });
+
+  it('allows recovered tools after repeated failures', () => {
+    const h = createHarness();
+    h.sut.load([MCP_GONE]);
+    h.sut.load([MCP_GONE]);
+    h.sut.load([MCP_GONE]);
+    registerMcp(h, new StubMcpTool(MCP_GONE));
+    const result = h.sut.load([MCP_GONE]);
+    expect(result.toLoad).toEqual([MCP_GONE]);
+    expect(result.consecutiveFailures).toBe(0);
+    expect(result.escalated).toEqual({});
   });
 });
 

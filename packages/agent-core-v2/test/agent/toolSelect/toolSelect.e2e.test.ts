@@ -251,8 +251,8 @@ describe('progressive tool disclosure end-to-end', () => {
 
     const text = historyText(ctx.get(IAgentContextMemoryService).get());
     expect(text).toContain(
-      '"Automation" is not available in this session — selecting cannot load it. ' +
-        'Do not retry it; use the tools you already have.',
+      '"Automation" is disabled by the current tool policy. select_tools cannot enable it. ' +
+        'Do not retry unless the policy changes; use an available tool instead.',
     );
   });
 
@@ -275,10 +275,28 @@ describe('progressive tool disclosure end-to-end', () => {
 
     const text = historyText(ctx.get(IAgentContextMemoryService).get());
     expect(text).toContain(
-      `"${MCP_ALPHA}" was loaded earlier but is not available right now — ` +
-        'it may be disconnected or disabled. Do not retry it; use the tools you already have.',
+      `"${MCP_ALPHA}" was previously selected or loaded but is no longer registered. ` +
+        'select_tools cannot restore it. Do not select it again unless a new <tools_added> announcement lists it.',
     );
     expect(text).not.toContain(`Already available: ${MCP_ALPHA}`);
+  });
+
+  it('warns across guessed names and recovers on a successful selection in the same turn', async () => {
+    ctx.mockNextResponse(selectToolsCall('guess_1', ['Automation']));
+    ctx.mockNextResponse(selectToolsCall('guess_2', ['AutomationList']));
+    ctx.mockNextResponse(selectToolsCall('guess_3', ['mcp__example__automation']));
+    ctx.mockNextResponse(selectToolsCall('load_alpha', [MCP_ALPHA]));
+    ctx.mockNextResponse(selectToolsCall('guess_4', ['Automation']));
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'select a tool' }] });
+    await ctx.untilTurnEnd();
+
+    const text = historyText(ctx.get(IAgentContextMemoryService).get());
+    expect(text).toContain('Unknown tool: mcp__example__automation.');
+    expect(text.match(/3 consecutive select_tools calls/g)).toHaveLength(1);
+    expect(text).toContain(`Loaded: ${MCP_ALPHA}`);
+    expect(text).not.toContain('4 consecutive select_tools calls');
+    expect(text).not.toContain('"Automation" has already failed selection 2 times');
   });
 
   it('escalates to stop-retry wording when the same unknown name is selected twice', async () => {
@@ -295,8 +313,8 @@ describe('progressive tool disclosure end-to-end', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'load ghost again' }] });
     await ctx.untilTurnEnd();
     expect(historyText(ctx.get(IAgentContextMemoryService).get())).toContain(
-      '"mcp__srv__ghost" cannot be loaded in this session (already attempted 2 times). ' +
-        'Stop retrying — complete the task with the tools you have, or tell the user what is missing.',
+      '"mcp__srv__ghost" has already failed selection 2 times. ' +
+        'Stop retrying this name until its availability changes.',
     );
   });
 });

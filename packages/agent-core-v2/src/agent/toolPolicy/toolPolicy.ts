@@ -8,6 +8,7 @@ export interface IAgentToolPolicyService {
 
   isToolActive(name: string, source?: ToolSource): boolean;
   isToolDenied(name: string): boolean;
+  getPolicyFingerprint(): string;
   isToolActiveForDisclosure(name: string, source?: ToolSource): boolean;
   isToolActiveForProfile(
     profile: ToolActivationPolicy,

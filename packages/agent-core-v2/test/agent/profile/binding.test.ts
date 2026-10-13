@@ -673,6 +673,18 @@ describe('AgentToolPolicyService global [tools] config', () => {
     expect(svc.isToolActive('Read')).toBe(true);
   });
 
+  it('fingerprints live global allowlist and denylist changes', async () => {
+    const svc = await bindWithToolsConfig({});
+    const initial = svc.getPolicyFingerprint();
+    await ctx.get(IConfigService).replace(TOOLS_SECTION, { enabled: ['Read'] }, ConfigTarget.Memory);
+    const allowed = svc.getPolicyFingerprint();
+    expect(allowed).not.toBe(initial);
+    await ctx.get(IConfigService).replace(
+      TOOLS_SECTION, { enabled: ['Read'], disabled: ['UnregisteredTool'] }, ConfigTarget.Memory,
+    );
+    expect(svc.getPolicyFingerprint()).not.toBe(allowed);
+  });
+
   it('matches globally disabled mcp tools by glob', async () => {
     const svc = await bindWithToolsConfig({ disabled: ['mcp__github__*'] });
     expect(svc.isToolActive('mcp__github__create_pr', 'mcp')).toBe(false);
@@ -751,6 +763,24 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
     expect(svc.isToolDenied('Automation')).toBe(true);
     await svc.setSessionDisabledTools([]);
     expect(svc.isToolDenied('Automation')).toBe(false);
+  });
+
+  it('fingerprints policy changes but ignores name ordering and duplicates', async () => {
+    const svc = await bind(DEFAULT_AGENT_PROFILE_NAME);
+    const initial = svc.getPolicyFingerprint();
+    await svc.setSessionDisabledTools(['UnregisteredTool', 'AnotherTool']);
+    const disabled = svc.getPolicyFingerprint();
+    expect(disabled).not.toBe(initial);
+    await svc.setSessionDisabledTools(['AnotherTool', 'UnregisteredTool', 'AnotherTool']);
+    expect(svc.getPolicyFingerprint()).toBe(disabled);
+    await svc.setSessionDisabledTools([]);
+    expect(svc.getPolicyFingerprint()).toBe(initial);
+
+    ctx.get(IAgentProfileService).update({ disallowedTools: ['UnregisteredTool'] });
+    const profileDenied = svc.getPolicyFingerprint();
+    expect(profileDenied).not.toBe(initial);
+    ctx.get(IAgentProfileService).update({ activeToolNames: ['Read'] });
+    expect(svc.getPolicyFingerprint()).not.toBe(profileDenied);
   });
 
   it('keeps the profile own denylist across replacement calls', async () => {
@@ -1016,6 +1046,24 @@ describe('AgentToolPolicyService executor enforcement', () => {
       output: 'Tool "PolicyProbe" is disabled by the active tool policy',
     });
     expect(probe.calls).toBe(0);
+  });
+
+  it('fingerprints workspace tool-policy changes for unregistered names', async () => {
+    const gate = {
+      _serviceBrand: undefined,
+      disabledTools: [] as string[],
+      onDidChange: Event.None as Event<void>,
+    } satisfies ISessionToolPolicyGate;
+    ctx = createTestAgent(
+      hostEnvironmentServices(homeDir),
+      sessionService(ISessionToolPolicyGate, gate),
+    );
+    await ctx.get(IAgentProfileService).bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    const svc = ctx.get(IAgentToolPolicyService);
+    const initial = svc.getPolicyFingerprint();
+    gate.disabledTools = ['UnregisteredTool'];
+    expect(svc.getPolicyFingerprint()).not.toBe(initial);
+    expect(svc.isToolDenied('UnregisteredTool')).toBe(true);
   });
 
   it('applies the workspace gate in the prompt projection (skillActive)', async () => {

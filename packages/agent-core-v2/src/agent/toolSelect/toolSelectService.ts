@@ -121,39 +121,51 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
 
   load(names: readonly string[]): LoadToolsResult {
     const loadable = new Set(this.loadableToolNames());
-    const loaded = this.activeLoadedToolNames();
+    const loaded = this.loadedToolNames();
     const registryInfos = this.toolRegistry.list();
+    this.resetFailuresIfToolsChanged(registryInfos);
     const toLoad: string[] = [];
     const alreadyAvailable: string[] = [];
     const alreadyCallable: string[] = [];
     const staleLoaded: string[] = [];
-    const notAvailable: string[] = [];
+    const policyDenied: string[] = [];
     const unknown: string[] = [];
     for (const name of new Set(names)) {
-      if (loaded.has(name)) {
-        if (loadable.has(name)) {
-          alreadyAvailable.push(name);
-        } else {
-          staleLoaded.push(name);
-        }
+      const info = registryInfos.find((entry) => entry.name === name);
+      if (
+        this.toolPolicy.isToolDenied(name) ||
+        (info !== undefined && !this.toolPolicy.isToolActive(name, info.source))
+      ) {
+        policyDenied.push(name);
       } else if (loadable.has(name)) {
-        toLoad.push(name);
+        if (loaded.has(name)) alreadyAvailable.push(name);
+        else toLoad.push(name);
       } else if (this.isStaticCallable(name, registryInfos)) {
         alreadyCallable.push(name);
-      } else if (this.isToolKnownButUnavailable(name, registryInfos)) {
-        notAvailable.push(name);
+      } else if (loaded.has(name)) {
+        staleLoaded.push(name);
       } else {
         unknown.push(name);
       }
     }
     const escalated: Record<string, number> = {};
-    const counted = new Set<string>();
-    for (const name of [...staleLoaded, ...notAvailable, ...unknown]) {
-      const key = name.toLowerCase();
-      if (counted.has(key)) continue;
-      counted.add(key);
-      const attempts = this.noteFailedSelection(name);
-      if (attempts >= STOP_RETRY_THRESHOLD) escalated[name] = attempts;
+    const succeeded = toLoad.length > 0 || alreadyAvailable.length > 0 || alreadyCallable.length > 0;
+    if (succeeded) {
+      this.consecutiveFailures = 0;
+      this.failedSelectionAttempts.clear();
+    } else {
+      this.consecutiveFailures += 1;
+      const attemptsByKey = new Map<string, number>();
+      for (const name of [...staleLoaded, ...policyDenied, ...unknown]) {
+        const key = name.toLowerCase();
+        let attempts = attemptsByKey.get(key);
+        if (attempts === undefined) {
+          attempts = (this.failedSelectionAttempts.get(key) ?? 0) + 1;
+          this.failedSelectionAttempts.set(key, attempts);
+          attemptsByKey.set(key, attempts);
+        }
+        if (attempts >= STOP_RETRY_THRESHOLD) escalated[name] = attempts;
+      }
     }
     const suggestions: Record<string, readonly string[]> = {};
     const suggestionPool = [...loadable];
@@ -169,9 +181,10 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
       alreadyAvailable,
       alreadyCallable,
       staleLoaded,
-      notAvailable,
+      policyDenied,
       unknown,
       escalated,
+      consecutiveFailures: this.consecutiveFailures,
       suggestions,
       loadable: [...loadable].filter((name) => !loaded.has(name)),
     };
@@ -179,16 +192,20 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
 
   private readonly failedSelectionAttempts = new Map<string, number>();
 
-  private noteFailedSelection(name: string): number {
-    const key = name.toLowerCase();
-    const count = (this.failedSelectionAttempts.get(key) ?? 0) + 1;
-    this.failedSelectionAttempts.set(key, count);
-    return count;
-  }
+  private consecutiveFailures = 0;
+  private selectionEnvironment: string | undefined;
 
-  private isToolKnownButUnavailable(name: string, registryInfos: readonly ToolInfo[]): boolean {
-    if (registryInfos.some((entry) => entry.name === name)) return true;
-    return this.toolPolicy.isToolDenied(name);
+  private resetFailuresIfToolsChanged(registryInfos: readonly ToolInfo[]): void {
+    const environment = JSON.stringify([
+      this.toolPolicy.getPolicyFingerprint(),
+      registryInfos
+        .map((info) => [info.name, info.source, info.disclosure])
+        .toSorted((a, b) => a[0]!.localeCompare(b[0]!)),
+    ]);
+    if (environment === this.selectionEnvironment) return;
+    this.selectionEnvironment = environment;
+    this.consecutiveFailures = 0;
+    this.failedSelectionAttempts.clear();
   }
 
   drainPendingToolSchemas(): readonly Tool[] | undefined {
@@ -206,6 +223,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
 
   loadableToolsAnnouncement(): string | undefined {
     if (!this.enabled()) return undefined;
+    this.resetFailuresIfToolsChanged(this.toolRegistry.list());
     const loadable = this.loadableToolNames();
     const loadableSet = new Set(loadable);
     const history = this.context.get();
