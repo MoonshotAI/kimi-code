@@ -1207,6 +1207,114 @@ describe('oauth logout remote-control cleanup', () => {
     expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
     await rm(homeDir, { recursive: true, force: true });
   });
+
+  it('waits for a logout gate held by another server instead of deactivating it', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-logout-gate-'));
+    await mkdir(join(homeDir, 'server'), { recursive: true });
+    await writeFile(
+      remoteControlLockPath(homeDir),
+      JSON.stringify({
+        pid: process.pid,
+        nonce: 'gate',
+        local_origin: 'logout in progress',
+        device_id: createKimiDeviceId(homeDir),
+        url: '',
+        started_at: Date.now(),
+      }),
+    );
+    let deactivated = false;
+    const remoteControl = {
+      status: () => ({ enabled: false, state: 'off' }),
+    } as unknown as RemoteControlManager;
+    const remoteControlDevices = {
+      clear: () => {},
+      deactivateDevice: async () => {
+        deactivated = true;
+      },
+    };
+    const post = await logoutHandler(
+      remoteControl,
+      remoteControlDevices,
+      async (provider) => ({ logged_out: true, provider: provider ?? 'managed:kimi-code' }),
+      homeDir,
+    );
+
+    const startedAt = Date.now();
+    const [payload] = await Promise.all([
+      post({ provider: 'managed:kimi-code' }) as Promise<Envelope<{ logged_out: true }>>,
+      (async () => {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        await rm(remoteControlLockPath(homeDir), { force: true });
+      })(),
+    ]);
+
+    expect(payload.code).toBe(0);
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(150);
+    expect(deactivated).toBe(false);
+    expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
+    await rm(homeDir, { recursive: true, force: true });
+  });
+
+  it('waits out another server start gate without deactivating it', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-start-gate-'));
+    await mkdir(join(homeDir, 'server'), { recursive: true });
+    await writeFile(
+      remoteControlLockPath(homeDir),
+      JSON.stringify({
+        pid: process.pid,
+        nonce: 'gate',
+        local_origin: 'logout in progress',
+        device_id: createKimiDeviceId(homeDir),
+        url: '',
+        started_at: Date.now(),
+      }),
+    );
+    const releaser = setTimeout(() => {
+      void rm(remoteControlLockPath(homeDir), { force: true });
+    }, 200);
+    let deactivated = false;
+
+    const gate = await acquireRemoteControlStartGate(homeDir, {
+      deactivateDevice: async () => {
+        deactivated = true;
+      },
+    });
+    clearTimeout(releaser);
+
+    expect(deactivated).toBe(false);
+    await gate.release();
+    expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
+    await rm(homeDir, { recursive: true, force: true });
+  });
+
+  it('retries the delayed tunnel teardown after logout', async () => {
+    let disableAttempts = 0;
+    const remoteControl = {
+      status: () => ({ enabled: true, state: 'on' }),
+      disable: async () => {
+        disableAttempts += 1;
+        if (disableAttempts < 3) throw new Error('lock release failed');
+        return { enabled: false, state: 'off' };
+      },
+    } as unknown as RemoteControlManager;
+    const remoteControlDevices = {
+      clear: () => {},
+      deactivateDevice: async () => {},
+    };
+    const post = await logoutHandler(
+      remoteControl,
+      remoteControlDevices,
+      async (provider) => ({ logged_out: true, provider: provider ?? 'managed:kimi-code' }),
+    );
+
+    const payload = (await post({ provider: 'managed:kimi-code' })) as Envelope<{
+      logged_out: true;
+    }>;
+
+    expect(payload.code).toBe(0);
+    expect(disableAttempts).toBe(0);
+    await waitFor(async () => disableAttempts === 3, 10000);
+  });
 });
 
 function rawDataText(data: RawData): string {

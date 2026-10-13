@@ -25,7 +25,11 @@ import {
   oauthLoginStartRequestSchema,
   oauthLogoutRequestSchema,
 } from '../protocol/rest-oauth';
-import { acquireRemoteControlStartGate, waitForLockRelease } from './remoteControl';
+import {
+  acquireRemoteControlStartGate,
+  REMOTE_CONTROL_LOGOUT_GATE_ORIGIN,
+  waitForLockRelease,
+} from './remoteControl';
 
 interface RouteHost {
   get(
@@ -167,13 +171,26 @@ export function registerOAuthRoutes(
               await new Promise((resolve) => {
                 setTimeout(resolve, LOGOUT_TUNNEL_TEARDOWN_DELAY_MS);
               });
-              try {
-                await remoteControl.disable();
-              } catch (error) {
-                requestLog(req)?.error(
-                  { err: error },
-                  'remote-control teardown after logout failed',
-                );
+              for (let attempt = 0; ; attempt += 1) {
+                try {
+                  await remoteControl.disable();
+                  return;
+                } catch (error) {
+                  if (attempt >= 2) {
+                    requestLog(req)?.error(
+                      { err: error },
+                      'remote-control teardown after logout failed',
+                    );
+                    return;
+                  }
+                  requestLog(req)?.warn(
+                    { err: error },
+                    'remote-control teardown after logout failed; retrying',
+                  );
+                  await new Promise((resolve) => {
+                    setTimeout(resolve, 1000 * (attempt + 1));
+                  });
+                }
               }
             })();
             return;
@@ -183,7 +200,9 @@ export function registerOAuthRoutes(
           } else {
             const holder = await inspectRemoteControlLock(homeDir);
             if (holder !== undefined) {
-              await remoteControlDevices.deactivateDevice(holder.deviceId);
+              if (holder.localOrigin !== REMOTE_CONTROL_LOGOUT_GATE_ORIGIN) {
+                await remoteControlDevices.deactivateDevice(holder.deviceId);
+              }
               await waitForLockRelease(homeDir);
             }
           }

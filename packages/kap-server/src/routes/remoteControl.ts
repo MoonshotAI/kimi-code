@@ -286,6 +286,8 @@ const LOCK_RELEASE_POLL_MS = 100;
 const LOCK_RELEASE_TIMEOUT_MS = 5000;
 const START_GATE_TIMEOUT_MS = 10000;
 
+export const REMOTE_CONTROL_LOGOUT_GATE_ORIGIN = 'logout in progress';
+
 export async function waitForLockRelease(homeDir: string): Promise<void> {
   const deadline = Date.now() + LOCK_RELEASE_TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -307,7 +309,7 @@ export async function acquireRemoteControlStartGate(
   for (;;) {
     try {
       return await acquireRemoteControlLock(homeDir, {
-        localOrigin: 'logout in progress',
+        localOrigin: REMOTE_CONTROL_LOGOUT_GATE_ORIGIN,
         deviceId: createKimiDeviceId(homeDir),
         url: '',
       });
@@ -315,7 +317,9 @@ export async function acquireRemoteControlStartGate(
       if (!(error instanceof RemoteControlAlreadyRunningError) || Date.now() >= deadline) {
         throw error;
       }
-      await devices.deactivateDevice(error.holder.deviceId);
+      if (error.holder.localOrigin !== REMOTE_CONTROL_LOGOUT_GATE_ORIGIN) {
+        await devices.deactivateDevice(error.holder.deviceId);
+      }
       await waitForLockRelease(homeDir);
     }
   }
