@@ -13,6 +13,7 @@ import type {
 import type { MarkdownConfig, NotificationsConfig, StatusLineConfig, TuiMode, UpgradePreferences } from './config';
 import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
 import type { ColorToken, ThemeName } from './theme';
+import type { MediaAttachment, VideoAttachment } from './utils/image-attachment-store';
 
 export type BannerDisplay = 'always' | 'once' | 'cooldown';
 
@@ -242,6 +243,7 @@ export interface TranscriptEntry {
   cronData?: CronTranscriptData;
   goalData?: GoalTranscriptData;
   imageAttachmentIds?: readonly number[];
+  skillNames?: readonly string[];
   skillActivationId?: string;
   skillName?: string;
   skillArgs?: string;
@@ -266,12 +268,15 @@ export interface LivePaneState {
   pendingQuestion: PendingQuestion | null;
 }
 
+export interface PreparedSkillActivations {
+  skills: Array<{ name: string; args?: string }>;
+  mediaAttachmentIds: number[];
+  stagingPaths: string[];
+  cachedVideos: VideoAttachment[];
+}
+
 export interface InlineSkillActivation {
   readonly skillName: string;
-  /**
-   * Skill arguments. Only set for a leading `/skill:<name> args` command that
-   * is combined with further inline skills; inline tokens carry no args.
-   */
   readonly args?: string;
 }
 
@@ -281,15 +286,8 @@ export interface QueuedMessage {
   readonly parts?: readonly PromptPart[];
   readonly imageAttachmentIds?: readonly number[];
   readonly videoAttachmentIds?: readonly number[];
-  /** `bash` for a `!` shell command queued while another command is running;
-   *  `skill` for a slash-skill activation queued while the session is busy;
-   *  undefined (=`prompt`) for a normal message. */
-  readonly mode?: 'prompt' | 'bash' | 'skill';
-  /** Set when mode === 'skill': the skill to activate when the item drains.
-   *  `text` then holds the display/recall string (`/name args`). */
-  readonly skillName?: string;
-  /** Set when mode === 'skill': the raw (media-rewritten) args to activate with. */
-  readonly skillArgs?: string;
+  readonly mediaSnapshots?: readonly MediaAttachment[];
+  readonly mode?: 'prompt' | 'bash';
   /** Skills to activate together with this queued message's prompt. */
   readonly inlineSkillActivations?: readonly InlineSkillActivation[];
 }
@@ -305,6 +303,8 @@ export interface SteerInputItem {
   readonly parts?: readonly PromptPart[];
   readonly imageAttachmentIds?: readonly number[];
   readonly videoAttachmentIds?: readonly number[];
+  readonly mediaSnapshots?: readonly MediaAttachment[];
+  readonly inlineSkillActivations?: readonly InlineSkillActivation[];
 }
 
 export const INITIAL_LIVE_PANE: LivePaneState = {

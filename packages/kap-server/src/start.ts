@@ -17,6 +17,7 @@ import {
   ICapabilityService,
   IPluginService,
   IWorkspaceService,
+  NOTIFY_USER_UI_CAPABILITY,
   PluginChanged,
   logSeed,
   resolveConfigPath,
@@ -82,7 +83,10 @@ import { TranscriptService } from './services/transcript/transcriptService';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
-import { createRemoteControlManager } from '@moonshot-ai/remote-control';
+import {
+  createRemoteControlManager,
+  RemoteControlDeviceClient,
+} from '@moonshot-ai/remote-control';
 
 import { createAuthTokenService, type IAuthTokenService } from './services/auth/authTokenService';
 import { createCredentialValidator } from './services/auth/credentials';
@@ -206,6 +210,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
         skillDirs: opts.skillDirs,
         displayName: opts.hostIdentity.displayName,
         replyStyleGuide: opts.hostIdentity.replyStyleGuide,
+        uiCapabilities: [NOTIFY_USER_UI_CAPABILITY],
       },
     },
     [...logSeed(logging), ...(opts.seeds ?? [])],
@@ -220,7 +225,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     homeDir,
     localOrigin: () => `http://${localOriginHost}:${boundPort}`,
     localServerToken: () => authTokenService.getToken(),
-    clientVersion: `kimi-code/${serverVersion}`,
+    clientVersion: `${opts.hostIdentity.productName}/${opts.hostIdentity.version}`,
+    urlSource: opts.hostIdentity.platform,
     configuredOAuthKey: () => readManagedOAuth()?.key,
     configuredOAuthHost: () => readManagedOAuth()?.oauthHost,
     stderr: {
@@ -229,6 +235,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
         return true;
       },
     },
+  });
+  const remoteControlDevices = new RemoteControlDeviceClient({
+    homeDir,
+    configuredOAuthKey: () => readManagedOAuth()?.key,
+    configuredOAuthHost: () => readManagedOAuth()?.oauthHost,
   });
 
   let telemetry: ServerTelemetry = {};
@@ -461,6 +472,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
         process.env['KIMI_CODE_PLUGIN_MARKETPLACE_FROM_DEV_SERVER'] === '1'),
     remoteControl: {
       service: remoteControlManager,
+      devices: remoteControlDevices,
+      homeDir,
       staticEnableError:
         exposureClass !== 'loopback'
           ? 'Remote Control requires a loopback host.'
@@ -469,7 +482,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
             : undefined,
     },
     onShutdown: () => {
-      void close().catch((err: unknown) => logger.error({ err }, 'server close failed'));
+      void close().catch((error: unknown) => logger.error({ err: error }, 'server close failed'));
     },
     connectionRegistry,
     broadcaster,
