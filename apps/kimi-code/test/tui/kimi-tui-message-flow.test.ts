@@ -6514,6 +6514,72 @@ capabilities = ["image_in", "video_in"]
     expect(transcript).toContain('REPORT-TWO-FINAL');
   });
 
+  it('anchors the fold boundary by mounting a card when an abnormally terminated agent left none', async () => {
+    const { driver } = await makeDriver();
+    const emit = (event: Event) => driver.sessionEventHandler.handleEvent(event, () => {});
+    let entrySeq = 0;
+    const entry = (kind: 'user' | 'assistant', content: string, turnId?: string) => {
+      entrySeq += 1;
+      driver.appendTranscriptEntry({
+        id: `agent-lost-fold-${entrySeq}`,
+        kind,
+        turnId,
+        renderMode: kind === 'assistant' ? 'markdown' : 'plain',
+        content,
+      });
+    };
+
+    entry('user', 'what is the answer?');
+    emit({ type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event);
+    entry('assistant', 'working on it', '1');
+    entry('assistant', 'FINAL-ANSWER', '1');
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event);
+
+    expect(stripSgr(renderTranscript(driver))).toContain('FINAL-ANSWER');
+
+    // The agent timed out without any subagent lifecycle event, so no
+    // terminal card was ever mounted for it — agent-kind task terminations
+    // mount none of their own.
+    emit({
+      type: 'background.task.terminated',
+      agentId: 'main',
+      info: {
+        taskId: 'task-lost',
+        kind: 'agent',
+        agentId: 'agent-lost',
+        description: 'scout the fleet',
+        status: 'timed_out',
+        startedAt: 0,
+        endedAt: 1,
+      },
+    } as unknown as Event);
+    expect(
+      driver.state.transcriptEntries.filter(
+        (transcriptEntry) => transcriptEntry.backgroundAgentStatus !== undefined,
+      ),
+    ).toHaveLength(0);
+
+    // The notification turn anchors its fold boundary by mounting the missing
+    // terminal card at the turn's start.
+    emit({
+      type: 'turn.started',
+      agentId: 'main',
+      turnId: 2,
+      origin: { kind: 'task', taskId: 'task-lost', status: 'timed_out', notificationId: 'ntf-lost' },
+    } as Event);
+    entry('assistant', 'timeout report final', '2');
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 2, reason: 'completed' } as Event);
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('timeout report final');
+    expect(transcript).toContain('FINAL-ANSWER');
+    const terminalCards = driver.state.transcriptEntries.filter(
+      (transcriptEntry) => transcriptEntry.backgroundAgentStatus !== undefined,
+    );
+    expect(terminalCards).toHaveLength(1);
+    expect(terminalCards[0]!.backgroundAgentStatus?.phase).toBe('failed');
+  });
+
   it('coalesces assistant delta component updates', async () => {
     vi.useFakeTimers();
     try {

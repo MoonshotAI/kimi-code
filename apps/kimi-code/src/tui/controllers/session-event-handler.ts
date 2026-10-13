@@ -1272,7 +1272,9 @@ export class SessionEventHandler {
         }
       }
       if (!this.backgroundTaskTranscriptedTerminal.has(info.taskId)) {
-        this.backgroundTaskTerminalEntries.set(info.taskId, this.appendBackgroundTaskEntry(info));
+        if (info.kind === 'process' || info.kind === 'question') {
+          this.backgroundTaskTerminalEntries.set(info.taskId, this.appendBackgroundTaskEntry(info));
+        }
         this.backgroundTaskTranscriptedTerminal.add(info.taskId);
       }
       this.syncBackgroundTaskBadge();

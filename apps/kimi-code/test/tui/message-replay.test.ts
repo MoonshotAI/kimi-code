@@ -967,12 +967,14 @@ describe('KimiTUI resume message replay', () => {
     ).toBe(false);
     expect(driver.sessionEventHandler.backgroundTaskTranscriptedTerminal.has('task-bg-timeout'))
       .toBe(true);
-    const terminalCards = driver.state.transcriptEntries.filter(
-      (entry) => entry.backgroundAgentStatus !== undefined,
-    );
-    expect(terminalCards.map((entry) => entry.backgroundAgentStatus?.headline)).toEqual([
-      'agent task timed out',
-    ]);
+    // An agent-kind task termination mounts no transcript card on its own —
+    // the subagent lifecycle path owns agent terminal cards, and here it is
+    // suppressed because the task was already transcripted as timed out.
+    expect(
+      driver.state.transcriptEntries.some(
+        (entry) => entry.backgroundAgentStatus?.phase === 'failed',
+      ),
+    ).toBe(false);
   });
 
   it('renders replayed bash background notifications as bash tasks', async () => {

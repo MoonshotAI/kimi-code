@@ -18,6 +18,7 @@ function makeStreamingUIStub() {
     applyBackgroundTaskTerminalStatus: vi.fn(),
     markSubagentBackgrounded: vi.fn(),
     setTurnId: vi.fn(),
+    setStep: vi.fn(),
     flushNow: vi.fn(),
     setTodoList: vi.fn(),
     resetToolUi: vi.fn(),
@@ -214,12 +215,14 @@ function makeSessionEventHost() {
     showNotice: vi.fn(),
     track: vi.fn(),
     recordSessionActivity: vi.fn(),
+    updateActivityPane: vi.fn(),
     noteStepUsage: vi.fn(),
     noteCompactionFinished: vi.fn(),
     mountEditorReplacement: vi.fn(),
     restoreEditor: vi.fn(),
     restoreInputText: vi.fn(),
     appendTranscriptEntry: vi.fn(),
+    moveTranscriptEntryToEnd: vi.fn(() => true),
     sendNormalUserInput: vi.fn(),
     sendQueuedMessage: vi.fn(),
     shiftQueuedMessage: vi.fn(),
@@ -290,5 +293,93 @@ describe('SessionEventHandler — background.task.terminated', () => {
     );
 
     expect(store.get('agent-7')).toBeUndefined();
+  });
+});
+
+describe('SessionEventHandler — task-notification turn anchoring', () => {
+  interface SessionHostMocks {
+    appendTranscriptEntry: ReturnType<typeof vi.fn>;
+    moveTranscriptEntryToEnd: ReturnType<typeof vi.fn>;
+  }
+
+  function makeHost() {
+    // makeSessionEventHost returns `never`; recover the mock surface for assertions.
+    return makeSessionEventHost() as SessionHostMocks &
+      ConstructorParameters<typeof SessionEventHandler>[0];
+  }
+
+  function taskTerminatedEvent(taskId: string, kind: 'agent' | 'process', status: string): Event {
+    return {
+      sessionId: 's1',
+      agentId: 'main',
+      type: 'background.task.terminated',
+      info: {
+        taskId,
+        kind,
+        agentId: kind === 'agent' ? `${taskId}-agent` : undefined,
+        description: `task ${taskId}`,
+        status,
+        startedAt: 0,
+        endedAt: 1,
+      },
+    } as unknown as Event;
+  }
+
+  function taskNotificationTurnEvent(taskId: string, status: string): Event {
+    return {
+      sessionId: 's1',
+      agentId: 'main',
+      type: 'turn.started',
+      turnId: 2,
+      origin: { kind: 'task', taskId, status },
+    } as unknown as Event;
+  }
+
+  function appendedEntries(host: SessionHostMocks) {
+    return host.appendTranscriptEntry.mock.calls.map(
+      ([entry]) => entry as { content: string; backgroundAgentStatus?: { phase: string } },
+    );
+  }
+
+  it('mounts no transcript card when an agent-kind task terminates', () => {
+    const host = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    handler.handleEvent(taskTerminatedEvent('task-a1', 'agent', 'completed'), vi.fn());
+
+    // Agent terminal cards are owned by the subagent lifecycle path — the
+    // task event itself only records the terminal state.
+    expect(host.appendTranscriptEntry).not.toHaveBeenCalled();
+    expect(handler.backgroundTaskTranscriptedTerminal.has('task-a1')).toBe(true);
+  });
+
+  it('moves the mounted terminal card to the notification turn instead of mounting a new one', () => {
+    const host = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    handler.handleEvent(taskTerminatedEvent('task-p1', 'process', 'completed'), vi.fn());
+    expect(appendedEntries(host)).toHaveLength(1);
+
+    handler.handleEvent(taskNotificationTurnEvent('task-p1', 'completed'), vi.fn());
+
+    expect(host.moveTranscriptEntryToEnd).toHaveBeenCalledWith(appendedEntries(host)[0]);
+    expect(appendedEntries(host)).toHaveLength(1);
+  });
+
+  it('mounts a terminal card at the notification turn start when the agent left none', () => {
+    const host = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    // A timed-out agent that emitted no subagent lifecycle event has no
+    // terminal card to anchor — agent-kind terminations mount none.
+    handler.handleEvent(taskTerminatedEvent('task-a2', 'agent', 'timed_out'), vi.fn());
+    expect(host.appendTranscriptEntry).not.toHaveBeenCalled();
+
+    handler.handleEvent(taskNotificationTurnEvent('task-a2', 'timed_out'), vi.fn());
+
+    const appended = appendedEntries(host);
+    expect(appended).toHaveLength(1);
+    expect(appended[0]!.backgroundAgentStatus?.phase).toBe('failed');
+    expect(host.moveTranscriptEntryToEnd).not.toHaveBeenCalled();
   });
 });
