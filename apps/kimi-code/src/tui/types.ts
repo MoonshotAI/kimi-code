@@ -178,6 +178,10 @@ export interface BackgroundAgentStatusData {
   readonly phase: BackgroundAgentStatusPhase;
   readonly headline: string;
   readonly detail?: string;
+  /** Subagent behind a background-agent card; lets the task-notification
+   *  anchor reuse a terminal card that was mounted before its task id was
+   *  known (e.g. a tower worker that finished before `registerTask`). */
+  readonly agentId?: string;
 }
 
 export interface CompactionTranscriptData {

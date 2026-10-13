@@ -1318,9 +1318,31 @@ export class SessionEventHandler {
     if (mounted !== undefined && this.host.moveTranscriptEntryToEnd(mounted)) return;
     const task = this.backgroundTasks.get(taskId);
     if (task === undefined) return;
+    // An agent whose terminal lifecycle event landed before its task id was
+    // known (e.g. a tower worker that finished before registerTask) mounted
+    // its terminal card without registering it under the task id. Reuse that
+    // card instead of mounting a duplicate.
+    if (task.kind === 'agent') {
+      const orphaned = this.findTerminalBackgroundAgentCard(task.agentId);
+      if (orphaned !== undefined && this.host.moveTranscriptEntryToEnd(orphaned)) {
+        this.backgroundTaskTerminalEntries.set(taskId, orphaned);
+        return;
+      }
+    }
     const entry = this.appendBackgroundTaskEntry({ ...task, status });
     this.backgroundTaskTerminalEntries.set(taskId, entry);
     this.backgroundTaskTranscriptedTerminal.add(taskId);
+  }
+
+  /** The agent's latest mounted terminal (non-`started`) background card. */
+  private findTerminalBackgroundAgentCard(
+    agentId: string | undefined,
+  ): TranscriptEntry | undefined {
+    if (agentId === undefined) return undefined;
+    return this.host.state.transcriptEntries.findLast((entry) => {
+      const card = entry.backgroundAgentStatus;
+      return card?.agentId === agentId && card.phase !== 'started';
+    });
   }
 
   private syncBackgroundTaskBadge(): void {
