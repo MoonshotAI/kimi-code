@@ -895,7 +895,7 @@ describe('oauth logout remote-control cleanup', () => {
     };
   }
 
-  it('disables the tunnel and clears cloud sessions before clearing OAuth credentials', async () => {
+  it('clears cloud sessions around OAuth logout and tears down the local tunnel after responding', async () => {
     const events: string[] = [];
     let state = 'on';
     const remoteControl = {
@@ -928,9 +928,10 @@ describe('oauth logout remote-control cleanup', () => {
       provider: string;
     }>;
 
-    expect(events).toEqual(['disable', 'clear', 'logout', 'clear']);
+    expect(events).toEqual(['clear', 'logout', 'clear']);
     expect(payload.code).toBe(0);
     expect(payload.data.logged_out).toBe(true);
+    await waitFor(async () => events.includes('disable'));
     expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
     await rm(homeDir, { recursive: true, force: true });
   });
@@ -981,7 +982,7 @@ describe('oauth logout remote-control cleanup', () => {
     let clearCalled = false;
     let logoutCalled = false;
     const remoteControl = {
-      status: () => ({ enabled: true, state: 'on' }),
+      status: () => ({ enabled: false, state: 'starting' }),
       disable: async () => {
         throw new Error('tunnel stop failed');
       },

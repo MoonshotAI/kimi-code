@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage } from 'node:http';
 import { spawn } from 'node:child_process';
+import type { Duplex } from 'node:stream';
 import { existsSync, chmodSync, mkdtempSync, rmSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -1431,6 +1432,44 @@ describe('Remote Control manager', () => {
     expect((await reenabled).state).toBe('on');
     expect((await finalDisable).state).toBe('off');
     expect(manager.status().state).toBe('off');
+    expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
+  });
+
+  it('aborts a pending relay handshake on disable', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    const relayServer = createServer();
+    const upgradeSockets: Duplex[] = [];
+    let upgrades = 0;
+    relayServer.on('upgrade', (request, socket) => {
+      upgrades += 1;
+      socket.on('error', () => {});
+      upgradeSockets.push(socket);
+    });
+    const port = await listen(relayServer);
+    cleanups.push(() => {
+      for (const socket of upgradeSockets) socket.destroy();
+      return closeServer(relayServer);
+    });
+    const manager = createRemoteControlManager({
+      homeDir,
+      localOrigin: () => 'http://127.0.0.1:58627',
+      localServerToken: () => 'local-server-token',
+      clientVersion: CLIENT_VERSION,
+      urlSource: 'kimi_code_cli',
+      relayOrigin: `http://127.0.0.1:${port}`,
+      stderr: { write: () => true },
+    });
+    cleanups.push(() => manager.close());
+
+    const enabling = manager.enable();
+    const enablingSettled = expect(enabling).rejects.toThrow();
+    await waitFor(() => upgrades > 0);
+
+    const startedAt = Date.now();
+    const status = await manager.disable();
+    expect(status.state).toBe('off');
+    expect(Date.now() - startedAt).toBeLessThan(1000);
+    await enablingSettled;
     expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
   });
 

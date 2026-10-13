@@ -59,6 +59,8 @@ const oauthFlowSnapshotOrNullSchema = z.union([
   z.null(),
 ]);
 
+const LOGOUT_TUNNEL_TEARDOWN_DELAY_MS = 250;
+
 export function registerOAuthRoutes(
   app: RouteHost,
   core: Scope,
@@ -155,6 +157,27 @@ export function registerOAuthRoutes(
       const serialized = kimiLogoutQueue.then(async () => {
         try {
           const status = remoteControl.status();
+          if (status.state === 'on') {
+            remoteControlDevices.clear();
+            const result = await core.accessor.get(IOAuthService).logout(req.body.provider);
+            remoteControlDevices.clear();
+            requestLog(req)?.info({ provider, action: 'logout' }, 'oauth logout');
+            reply.send(okEnvelope(result, req.id));
+            void (async () => {
+              await new Promise((resolve) => {
+                setTimeout(resolve, LOGOUT_TUNNEL_TEARDOWN_DELAY_MS);
+              });
+              try {
+                await remoteControl.disable();
+              } catch (error) {
+                requestLog(req)?.error(
+                  { err: error },
+                  'remote-control teardown after logout failed',
+                );
+              }
+            })();
+            return;
+          }
           if (status.state !== 'off') {
             await remoteControl.disable();
           } else {

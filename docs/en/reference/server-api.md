@@ -237,7 +237,7 @@ On success, `data` is `{ cancelled, status }`: `cancelled` is `true` only when a
 
 Logs out the managed provider: discards the stored OAuth credential, aborts any pending login flow, and removes the managed provider from the configuration. OAuth-managed providers reject manual edit and delete (see `PUT` / `DELETE /api/v1/providers/{provider_id}` below), so log out first to remove one.
 
-For the default Kimi provider (`managed:kimi-code`), logout first takes Remote Control offline on this machine — disabling the local tunnel or, when another process on this machine hosts it, deactivating this machine's device in the cloud — then holds the machine lock so no process on this machine can start Remote Control again until the credential is discarded, and clears cached Remote Control cloud sessions; a cleanup failure aborts the logout. Logging out any other provider leaves Remote Control untouched.
+For the default Kimi provider (`managed:kimi-code`), logout also tears down this machine's Remote Control and clears cached Remote Control cloud sessions. When no tunnel is running or another process hosts it, logout first deactivates this machine's device and holds the machine lock so no process on this machine can start Remote Control again until the credential is discarded; a cleanup failure aborts the logout. When this server hosts the tunnel, the credential is discarded first and the tunnel is torn down right after the response is flushed, so a logout sent through the Remote Control link still receives its response. Logging out any other provider leaves Remote Control untouched.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |

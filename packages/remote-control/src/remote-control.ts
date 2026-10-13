@@ -362,6 +362,7 @@ class RemoteControlClient {
   private readonly onStatus: (status: RemoteControlStatus) => void;
   private readonly streams = new Map<string, ActiveStream>();
   private readonly pendingHttpRequests = new Map<string, PendingHttpRequest>();
+  private readonly pendingSockets = new Set<WebSocket>();
   private management: WebSocket | undefined;
   private reconnectAbort: AbortController | undefined;
   private http: WebSocket | undefined;
@@ -518,7 +519,14 @@ class RemoteControlClient {
   }
 
   private connectRelay(path: string): Promise<WebSocket> {
-    return connectWebSocket(relayWebSocketUrl(this.relayOrigin, path), this.refreshToken);
+    return connectWebSocket(
+      relayWebSocketUrl(this.relayOrigin, path),
+      this.refreshToken,
+      undefined,
+      undefined,
+      this.pendingSockets,
+      () => this.stopped,
+    );
   }
 
   private watchSocket(socket: WebSocket, label: string): void {
@@ -672,6 +680,8 @@ class RemoteControlClient {
         this.localServerToken(),
         relayHeaders(payload['headers']),
         earlyLocalFrames,
+        this.pendingSockets,
+        () => this.stopped,
       );
       tunnel = await this.connectRelay(`/v1/remote/stream/${encodeURIComponent(streamId)}`);
       if (this.stopped || this.management?.readyState !== WebSocket.OPEN) {
@@ -743,6 +753,8 @@ class RemoteControlClient {
     for (const streamId of this.streams.keys()) this.closeStream(streamId);
     this.pendingHttpRequests.clear();
     this.pendingHttpBytes = 0;
+    for (const socket of this.pendingSockets) socket.terminate();
+    this.pendingSockets.clear();
     this.management?.close();
     this.http?.close();
     if (this.relayOnline) {
@@ -777,12 +789,16 @@ async function connectWebSocket(
   token: string,
   headers: Record<string, string> = {},
   earlyFrames?: [RawData, boolean][],
+  pendingSockets?: Set<WebSocket>,
+  isStopped?: () => boolean,
 ): Promise<WebSocket> {
   const protocol = `kimi-code.bearer.${token}`;
   if (isWebSocketProtocolToken(protocol)) {
     try {
-      return await connectWebSocketAttempt(url, [protocol], headers, earlyFrames);
-    } catch {}
+      return await connectWebSocketAttempt(url, [protocol], headers, earlyFrames, pendingSockets);
+    } catch (error) {
+      if (isStopped?.() === true) throw error;
+    }
   }
   return connectWebSocketAttempt(
     url,
@@ -792,6 +808,7 @@ async function connectWebSocket(
       Authorization: `Bearer ${token}`,
     },
     earlyFrames,
+    pendingSockets,
   );
 }
 
@@ -800,12 +817,14 @@ function connectWebSocketAttempt(
   protocols: string[] | undefined,
   headers: Record<string, string>,
   earlyFrames?: [RawData, boolean][],
+  pendingSockets?: Set<WebSocket>,
 ): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(url, protocols, {
       headers,
       handshakeTimeout: REGISTER_TIMEOUT_MS,
     });
+    pendingSockets?.add(socket);
     if (earlyFrames !== undefined) {
       socket.on('message', (data, isBinary) => {
         earlyFrames.push([data, isBinary]);
@@ -821,6 +840,7 @@ function connectWebSocketAttempt(
       if (settled) return;
       settled = true;
       cleanup();
+      pendingSockets?.delete(socket);
       if (error === undefined) resolve(socket);
       else reject(error);
     };
