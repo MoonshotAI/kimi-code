@@ -39,8 +39,8 @@ function oversizedDeletionMessage(path: string, oldString: string, occurrenceCou
   const linesPerMatch = countEditLines(oldString);
   return (
     `Refusing a multi-line deletion in ${path}: new_string is empty (or whitespace-only) while ` +
-    `${String(occurrenceCount)} matched occurrence(s) of old_string cover ` +
-    `${String(linesPerMatch * occurrenceCount)} lines in total (${String(linesPerMatch)} per match). Read the file again, then either ` +
+    `${String(occurrenceCount)} matched occurrence(s) of old_string span ${String(linesPerMatch)} lines each ` +
+    `(${String(linesPerMatch * occurrenceCount)} lines summed across matches). Read the file again, then either ` +
     `replace with the intended new content, delete fewer lines at a time, or set allow_large_delete=true ` +
     `if you intentionally want to remove that entire span.`
   );

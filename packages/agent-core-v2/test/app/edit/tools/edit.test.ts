@@ -599,7 +599,7 @@ describe('EditTool', () => {
     expect(refused).toMatchObject({ isError: true });
     expect(refused.output).toContain('Refusing a multi-line deletion');
     expect(refused.output).toContain('allow_large_delete=true');
-    expect(refused.output).toContain('2 matched occurrence(s) of old_string cover 4 lines in total (2 per match)');
+    expect(refused.output).toContain('2 matched occurrence(s) of old_string span 2 lines each (4 lines summed across matches)');
     expect(refused.output).not.toContain('old_string spans 3+ lines');
     expect(writeText).not.toHaveBeenCalled();
 
@@ -612,6 +612,29 @@ describe('EditTool', () => {
     });
     expect(allowed.output).toContain('Replaced 2 occurrences');
     expect(writeText).toHaveBeenCalledWith('/tmp/skill.md', 'keep\n\nmid\n\ntail');
+  });
+
+  it('describes adjacent multi-line matches that share a source line as a per-match sum', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn().mockResolvedValue('a\nba\nb'),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const refused = await execute(tool, {
+      path: '/tmp/shared.txt',
+      old_string: 'a\nb',
+      new_string: '',
+      replace_all: true,
+    });
+
+    expect(refused).toMatchObject({ isError: true });
+    expect(refused.output).toContain(
+      '2 matched occurrence(s) of old_string span 2 lines each (4 lines summed across matches)',
+    );
+    expect(refused.output).not.toContain('lines in total');
+    expect(writeText).not.toHaveBeenCalled();
   });
 
   it('allows replace_all empty deletion of a single-line token that occurs many times', async () => {
@@ -690,7 +713,7 @@ describe('EditTool', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('3 lines in total (3 per match)');
+    expect(result.output).toContain('span 3 lines each (3 lines summed across matches)');
     expect(result.output).toContain('allow_large_delete=true');
     expect(writeText).not.toHaveBeenCalled();
   });
