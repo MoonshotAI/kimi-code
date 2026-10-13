@@ -306,7 +306,26 @@ export function registerRemoteControlRoutes(
     },
     async (req, reply) => {
       await handleDeviceRoute(req, reply, async () => {
-        await opts.devices.deleteDevice(req.params.id);
+        const status = opts.service.status();
+        const holder = await inspectRemoteControlLock(opts.homeDir);
+        const isLocal =
+          req.params.id === createKimiDeviceId(opts.homeDir) ||
+          status.deviceId === req.params.id ||
+          holder?.deviceId === req.params.id;
+        if (!isLocal) {
+          await opts.devices.deleteDevice(req.params.id);
+          return { ok: true };
+        }
+        if (status.state !== 'off') {
+          await opts.service.disable();
+        }
+        const gate = await acquireRemoteControlStartGate(opts.homeDir, opts.devices);
+        try {
+          await opts.devices.deleteDevice(req.params.id);
+          await opts.service.disable();
+        } finally {
+          await gate.release();
+        }
         return { ok: true };
       });
     },
