@@ -1331,6 +1331,33 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(secondTurn.steps[0]?.frames[0]).toMatchObject({ kind: 'text', text: 'second reply' });
   });
 
+  it('keeps assistant replies in the existing turn across a prompt-hook note', () => {
+    const hookText = '<hook_result hook_event="UserPromptSubmit">\ninjected\n</hook_result>';
+    const snapshot = groupMessagesIntoSnapshot([
+      { role: 'user', content: [{ type: 'text', text: 'real prompt' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'first reply' }], toolCalls: [] },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: hookText }],
+        toolCalls: [],
+        origin: { kind: 'hook_result', event: 'UserPromptSubmit' } as { kind: string },
+      },
+      { role: 'assistant', content: [{ type: 'text', text: 'continued reply' }], toolCalls: [] },
+    ]);
+
+    expect(snapshot.items.map((item) => item.kind)).toEqual(['turn', 'marker']);
+    const [turn, marker] = snapshot.items;
+    if (turn?.kind !== 'turn' || marker?.kind !== 'marker') throw new Error('expected turn and marker');
+    expect(turn.ordinal).toBe(0);
+    expect(turn.prompt).toBe('real prompt');
+    expect(turn.steps.map((step) => step.frames)).toEqual([
+      [{ kind: 'text', frameId: 't0.1.f1', role: 'assistant', text: 'first reply' }],
+      [{ kind: 'text', frameId: 't0.2.f1', role: 'assistant', text: 'continued reply' }],
+    ]);
+    expect(marker.marker).toBe('hook');
+    expect(marker.payload).toMatchObject({ text: hookText, origin: { kind: 'hook_result' } });
+  });
+
   it('keeps model-tool skill activations as markers even when their content matches a steer record', () => {
     const skillContent = [{ type: 'text', text: 'skill body' }];
     const snapshot = groupMessagesIntoSnapshot(
