@@ -236,7 +236,8 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
           candidates.push(
             nextTimed.then(
               (result): ToolExecutionStreamEvent => ({ type: 'timed', result }),
-              (error): ToolExecutionStreamEvent => ({ type: 'timedRejected', error }),
+              // oxlint-disable-next-line unicorn/catch-error-name
+              (reason): ToolExecutionStreamEvent => ({ type: 'timedRejected', reason }),
             ),
           );
         }
@@ -266,7 +267,8 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
             options,
           ).then(
             (value): SettledToolExecutionResult => ({ status: 'fulfilled', value }),
-            (error): SettledToolExecutionResult => ({ status: 'rejected', error }),
+            // oxlint-disable-next-line unicorn/catch-error-name
+            (reason): SettledToolExecutionResult => ({ status: 'rejected', reason }),
           );
           finalizations.add(finalization);
           nextTimed = timedResults.next();
@@ -484,7 +486,8 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         index,
         pendingResult.then(
           (value): SettledTimedToolResult => ({ status: 'fulfilled', value }),
-          (error): SettledTimedToolResult => ({ status: 'rejected', index, error }),
+          // oxlint-disable-next-line unicorn/catch-error-name
+          (reason): SettledTimedToolResult => ({ status: 'rejected', index, reason }),
         ),
       );
     }

@@ -461,31 +461,11 @@ describe('ToolResultTruncationService', () => {
     expect(result.truncated).toBe(true);
   });
 
-  it('spills small exempt results when over the context budget', async () => {
-    defaultModelRecord = undefined;
-    currentContextSize = 180_000;
-    const exempt = { output: `${'z'.repeat(99)}\n`.repeat(100), spillExempt: true as const };
-
-    const result = await truncation.truncateForModel<ExecutableToolResult>({
-      toolName: 'Read',
-      toolCallId: 'call_small_forced',
-      result: exempt,
-    });
-
-    expect(result.truncated).toBe(true);
-    const rendered = result.output;
-    expect(typeof rendered).toBe('string');
-    if (typeof rendered !== 'string') throw new Error('expected string output');
-    expect(rendered).toContain('Tool output withheld to keep the context within the model window');
-    expect(rendered.length).toBeLessThan(7_000);
-    await expect(readFile(renderedOutputPath(rendered), 'utf8')).resolves.toBe(exempt.output);
-  });
-
   it('keeps spill-file recovery reads inline even over budget', async () => {
     defaultModelRecord = undefined;
-    currentContextSize = 180_000;
+    currentContextSize = 100_000;
     const exempt = {
-      output: `${'z'.repeat(99)}\n`.repeat(100),
+      output: `${'z'.repeat(99)}\n`.repeat(5_000),
       spillExempt: true as const,
       budgetExempt: true as const,
     };

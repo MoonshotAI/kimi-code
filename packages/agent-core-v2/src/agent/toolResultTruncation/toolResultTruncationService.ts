@@ -159,7 +159,7 @@ export class ToolResultTruncationService extends Service implements IAgentToolRe
     rawText: string,
     spillAllowed: boolean,
   ): boolean {
-    if (rawText.length === 0) return false;
+    if (rawText.length <= DEFAULT_TOOL_RESULT_MAX_CHARS) return false;
     const modelAlias =
       this.turnModelAlias ??
       (this.states.has(profileKey) ? this.states.get(profileKey).modelAlias : undefined);
