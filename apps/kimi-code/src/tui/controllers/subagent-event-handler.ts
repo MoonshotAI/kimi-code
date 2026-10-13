@@ -308,11 +308,9 @@ export class SubAgentEventHandler {
     this.pruneForegroundOnlyRecord(event.subagentId);
     const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
     if (backgroundMeta !== undefined) {
-      const taskId = this.findAgentTaskId(
-        event.subagentId,
-        backgroundMeta,
-        this.deps.backgroundTasks,
-      );
+      const taskId =
+        backgroundMeta.taskId ??
+        this.findAgentTaskId(event.subagentId, backgroundMeta, this.deps.backgroundTasks);
       this.backgroundAgentMetadata.delete(event.subagentId);
       this.deps.syncBackgroundAgentBadge();
       if (taskId !== undefined && this.deps.backgroundTaskTranscriptedTerminal.has(taskId)) {
@@ -342,11 +340,9 @@ export class SubAgentEventHandler {
     this.pruneForegroundOnlyRecord(event.subagentId);
     const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
     if (backgroundMeta !== undefined) {
-      const taskId = this.findAgentTaskId(
-        event.subagentId,
-        backgroundMeta,
-        this.deps.backgroundTasks,
-      );
+      const taskId =
+        backgroundMeta.taskId ??
+        this.findAgentTaskId(event.subagentId, backgroundMeta, this.deps.backgroundTasks);
       const task = taskId === undefined ? undefined : this.deps.backgroundTasks.get(taskId);
       this.backgroundAgentMetadata.delete(event.subagentId);
       this.deps.syncBackgroundAgentBadge();
@@ -384,11 +380,9 @@ export class SubAgentEventHandler {
     this.pruneForegroundOnlyRecord(event.subagentId);
     const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
     if (backgroundMeta !== undefined) {
-      const taskId = this.findAgentTaskId(
-        event.subagentId,
-        backgroundMeta,
-        this.deps.backgroundTasks,
-      );
+      const taskId =
+        backgroundMeta.taskId ??
+        this.findAgentTaskId(event.subagentId, backgroundMeta, this.deps.backgroundTasks);
       this.backgroundAgentMetadata.delete(event.subagentId);
       this.deps.syncBackgroundAgentBadge();
       this.host.streamingUI.applyBackgroundTaskTerminalStatus({
@@ -469,6 +463,7 @@ export class SubAgentEventHandler {
       description: typeof description === 'string' ? description : undefined,
       model: this.spawnedModelDisplay(event),
       effort: this.subagentEffortDisplay(event.thinkingEffort),
+      taskId: event.taskId,
     };
   }
 

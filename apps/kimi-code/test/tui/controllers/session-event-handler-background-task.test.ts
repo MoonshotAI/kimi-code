@@ -228,6 +228,7 @@ function makeSessionEventHost() {
     shiftQueuedMessage: vi.fn(),
     btwPanelController: { routeEvent: vi.fn(() => false) },
     tasksBrowserController: { repaint: vi.fn(), refreshOutputViewer: vi.fn() },
+    surveyController: { notifySubagentSpawned: vi.fn() },
   };
   return host as never;
 }
@@ -381,5 +382,70 @@ describe('SessionEventHandler — task-notification turn anchoring', () => {
     expect(appended).toHaveLength(1);
     expect(appended[0]!.backgroundAgentStatus?.phase).toBe('failed');
     expect(host.moveTranscriptEntryToEnd).not.toHaveBeenCalled();
+  });
+
+  it('anchors the only terminal card when completion lands before the task syncs', () => {
+    const host = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    // Spawn-time background agent: the spawn event carries the task id.
+    handler.handleEvent(
+      {
+        sessionId: 's1',
+        agentId: 'main',
+        type: 'subagent.spawned',
+        subagentId: 'agent-1',
+        subagentName: 'explore',
+        parentToolCallId: 'tc-agent-1',
+        description: 'task agent-1',
+        runInBackground: true,
+        taskId: 'task-agent-1',
+      } as unknown as Event,
+      vi.fn(),
+    );
+    // Completion lands before background.task.started syncs the task table.
+    handler.handleEvent(
+      {
+        sessionId: 's1',
+        agentId: 'main',
+        type: 'subagent.completed',
+        subagentId: 'agent-1',
+        resultSummary: 'done',
+      } as unknown as Event,
+      vi.fn(),
+    );
+    handler.handleEvent(
+      {
+        sessionId: 's1',
+        agentId: 'main',
+        type: 'background.task.started',
+        info: {
+          taskId: 'task-agent-1',
+          kind: 'agent',
+          agentId: 'agent-1',
+          description: 'task agent-1',
+          status: 'running',
+          startedAt: 0,
+        },
+      } as unknown as Event,
+      vi.fn(),
+    );
+
+    const terminalCards = (): unknown[] =>
+      host.appendTranscriptEntry.mock.calls
+        .map(([entry]) => entry)
+        .filter(
+          (entry) =>
+            (entry as { backgroundAgentStatus?: { phase: string } }).backgroundAgentStatus
+              ?.phase === 'completed',
+        );
+    expect(terminalCards()).toHaveLength(1);
+
+    handler.handleEvent(taskNotificationTurnEvent('task-agent-1', 'completed'), vi.fn());
+
+    // The notification turn moves the mounted card to the turn start instead
+    // of mounting a second one.
+    expect(host.moveTranscriptEntryToEnd).toHaveBeenCalledWith(terminalCards()[0]);
+    expect(terminalCards()).toHaveLength(1);
   });
 });

@@ -163,6 +163,9 @@ export interface BackgroundAgentMetadata {
   readonly parentToolCallId: string;
   readonly agentName?: string;
   readonly description?: string;
+  /** Background task id carried on the spawn event (Agent tool only); lets the
+   *  terminal card register before `background.task.started` syncs. */
+  readonly taskId?: string;
   /** Display name of the model the agent is bound to (resolved at spawn). */
   readonly model?: string;
   /** Thinking effort, set only for concrete levels (boolean on/off hidden). */
