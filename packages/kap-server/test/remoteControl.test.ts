@@ -493,6 +493,47 @@ describe('server-v2 /api/v1/remote-control', () => {
     await rm(homeDir, { recursive: true, force: true });
   });
 
+  it('blocks concurrent starts while the current device is being deactivated', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-rc-gated-'));
+    const service = {
+      status: () => ({ enabled: false, state: 'off' }),
+    } as unknown as RemoteControlManager;
+    const devices = {
+      deactivateDevice: async () => {
+        await expect(
+          acquireRemoteControlLock(homeDir, {
+            localOrigin: 'http://127.0.0.1:58627',
+            deviceId: createKimiDeviceId(homeDir),
+            url: 'https://code-rc.kimi.com/devices/x/',
+          }),
+        ).rejects.toBeInstanceOf(RemoteControlAlreadyRunningError);
+      },
+    } as unknown as RemoteControlDeviceClient;
+    let handler: ((req: unknown, reply: unknown) => unknown) | undefined;
+    const app = {
+      get: () => {},
+      post: (path: string, _options: unknown, next: unknown) => {
+        if (path === '/remote-control/devices/:id/deactivate') handler = next as typeof handler;
+      },
+      patch: () => {},
+    };
+    registerRemoteControlRoutes(app as never, { service, devices, homeDir });
+
+    let payload: unknown;
+    await handler!(
+      { id: 'req-1', params: { id: createKimiDeviceId(homeDir) } },
+      {
+        send: (value: unknown) => {
+          payload = value;
+        },
+      },
+    );
+
+    expect((payload as Envelope<{ ok: true }>).data.ok).toBe(true);
+    expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
+    await rm(homeDir, { recursive: true, force: true });
+  });
+
   it('cancels an in-flight start when the current device is deactivated', async () => {await rm(remoteControlLockPath(home as string), { force: true });
     const cloud = await startDeviceCloud({ tunnel: true, registerDelayMs: 1000 });
     vi.stubEnv(

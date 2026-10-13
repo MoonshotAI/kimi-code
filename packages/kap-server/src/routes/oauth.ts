@@ -163,13 +163,19 @@ export function registerOAuthRoutes(
           }
         }
         const gate = await acquireRemoteControlStartGate(homeDir, remoteControlDevices);
+        const releaseGate = () =>
+          gate.release().catch((error: unknown) => {
+            requestLog(req)?.error({ err: error }, 'remote-control start gate release failed');
+          });
         try {
           remoteControlDevices.clear();
           const result = await core.accessor.get(IOAuthService).logout(req.body.provider);
+          await releaseGate();
           requestLog(req)?.info({ provider, action: 'logout' }, 'oauth logout');
           reply.send(okEnvelope(result, req.id));
-        } finally {
-          await gate.release();
+        } catch (error) {
+          await releaseGate();
+          throw error;
         }
       } catch (error) {
         requestLog(req)?.error({ err: error }, 'remote-control cleanup around logout failed');
