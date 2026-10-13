@@ -44,6 +44,7 @@ function makeSubagentHandler() {
   const handler = new SubAgentEventHandler(host as never, {
     backgroundTasks,
     backgroundTaskTranscriptedTerminal: transcriptedTerminal,
+    backgroundTaskTerminalEntries: new Map(),
     syncBackgroundAgentBadge: vi.fn(),
   });
   return { handler, backgroundTasks, host, transcriptedTerminal };

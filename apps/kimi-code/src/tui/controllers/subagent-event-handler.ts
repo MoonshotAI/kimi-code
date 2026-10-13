@@ -39,6 +39,7 @@ type SubagentLifecycleEventOf<Type extends SubagentLifecycleEvent['type']> =
 export interface SubAgentEventHandlerDependencies {
   readonly backgroundTasks: ReadonlyMap<string, BackgroundTaskInfo>;
   readonly backgroundTaskTranscriptedTerminal: Set<string>;
+  readonly backgroundTaskTerminalEntries: Map<string, TranscriptEntry>;
   readonly syncBackgroundAgentBadge: () => void;
 }
 
@@ -322,7 +323,10 @@ export class SubAgentEventHandler {
       }
       const extras =
         event.resultSummary === undefined ? undefined : { resultSummary: event.resultSummary };
-      this.appendBackgroundAgentEntry('completed', backgroundMeta, extras);
+      const entry = this.appendBackgroundAgentEntry('completed', backgroundMeta, extras);
+      if (taskId !== undefined) {
+        this.deps.backgroundTaskTerminalEntries.set(taskId, entry);
+      }
       return;
     }
 
@@ -361,7 +365,10 @@ export class SubAgentEventHandler {
       if (taskId !== undefined) {
         this.deps.backgroundTaskTranscriptedTerminal.add(taskId);
       }
-      this.appendBackgroundAgentEntry('failed', backgroundMeta, { error: event.error });
+      const entry = this.appendBackgroundAgentEntry('failed', backgroundMeta, { error: event.error });
+      if (taskId !== undefined) {
+        this.deps.backgroundTaskTerminalEntries.set(taskId, entry);
+      }
       return;
     }
 
@@ -395,7 +402,10 @@ export class SubAgentEventHandler {
       if (taskId !== undefined) {
         this.deps.backgroundTaskTranscriptedTerminal.add(taskId);
       }
-      this.appendBackgroundAgentEntry('killed', backgroundMeta);
+      const entry = this.appendBackgroundAgentEntry('killed', backgroundMeta);
+      if (taskId !== undefined) {
+        this.deps.backgroundTaskTerminalEntries.set(taskId, entry);
+      }
       return;
     }
 
@@ -466,7 +476,7 @@ export class SubAgentEventHandler {
     phase: BackgroundAgentStatusPhase,
     meta: BackgroundAgentMetadata,
     extras: { resultSummary?: string; error?: string } | undefined = undefined,
-  ): void {
+  ): TranscriptEntry {
     const status = formatBackgroundAgentTranscript(phase, meta, extras);
     const entry: TranscriptEntry = {
       id: nextTranscriptId(),
@@ -478,6 +488,7 @@ export class SubAgentEventHandler {
       backgroundAgentStatus: status,
     };
     this.host.appendTranscriptEntry(entry);
+    return entry;
   }
 
   private rememberSubagent(
