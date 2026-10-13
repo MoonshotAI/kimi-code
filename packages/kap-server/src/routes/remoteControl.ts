@@ -1,7 +1,9 @@
 import {
+  acquireRemoteControlLock,
   inspectRemoteControlLock,
   RemoteControlAlreadyRunningError,
   type RemoteControlDeviceClient,
+  type RemoteControlLock,
   type RemoteControlManager,
   type RemoteControlStatusInfo,
 } from '@moonshot-ai/remote-control';
@@ -271,6 +273,7 @@ export function registerRemoteControlRoutes(
 
 const LOCK_RELEASE_POLL_MS = 100;
 const LOCK_RELEASE_TIMEOUT_MS = 5000;
+const START_GATE_TIMEOUT_MS = 10000;
 
 export async function waitForLockRelease(homeDir: string): Promise<void> {
   const deadline = Date.now() + LOCK_RELEASE_TIMEOUT_MS;
@@ -283,6 +286,28 @@ export async function waitForLockRelease(homeDir: string): Promise<void> {
   throw new Error(
     'Remote Control is still running in another process on this machine and did not stop in time. Stop it there and try again.',
   );
+}
+
+export async function acquireRemoteControlStartGate(
+  homeDir: string,
+  devices: Pick<RemoteControlDeviceClient, 'deactivateDevice'>,
+): Promise<RemoteControlLock> {
+  const deadline = Date.now() + START_GATE_TIMEOUT_MS;
+  for (;;) {
+    try {
+      return await acquireRemoteControlLock(homeDir, {
+        localOrigin: 'logout in progress',
+        deviceId: createKimiDeviceId(homeDir),
+        url: '',
+      });
+    } catch (error) {
+      if (!(error instanceof RemoteControlAlreadyRunningError) || Date.now() >= deadline) {
+        throw error;
+      }
+      await devices.deactivateDevice(error.holder.deviceId);
+      await waitForLockRelease(homeDir);
+    }
+  }
 }
 
 function toRemoteControlStatusResponse(

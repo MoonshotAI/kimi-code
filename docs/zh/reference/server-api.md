@@ -237,7 +237,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 登出托管供应商：丢弃已存储的 OAuth 凭据、中止进行中的登录流程，并把托管供应商从配置中移除。OAuth 托管的供应商拒绝手动编辑与删除（见下文 `PUT` / `DELETE /api/v1/providers/{provider_id}`），因此要移除它需先登出。
 
-对默认 Kimi 供应商（`managed:kimi-code`），登出前会先把本机的远程控制下线——关闭本进程持有的隧道；若隧道由本机其他进程持有，则在云端把本机设备下线——并清除缓存的远程控制云端会话；清理失败会中止登出。登出其他供应商不影响远程控制。
+对默认 Kimi 供应商（`managed:kimi-code`），登出前会先把本机的远程控制下线——关闭本进程持有的隧道；若隧道由本机其他进程持有，则在云端把本机设备下线——随后持有本机锁，确保凭据被丢弃之前本机任何进程都无法再次开启远程控制，并清除缓存的远程控制云端会话；清理失败会中止登出。登出其他供应商不影响远程控制。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -297,24 +297,24 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 成功时 `data` 为 `{ devices, max_devices? }`。每个设备为 `{ device_id, alias, status, platform, client_version, local_base_url, created_at, updated_at, last_remote_access_at }`，其中 `status` 为 `online` / `offline` 之一。
 
-#### `PATCH /api/v1/remote-control/devices/{device_id}`
+#### `PATCH /api/v1/remote-control/devices/{id}`
 
 重命名设备。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `device_id` | path | string | 设备标识 |
+| `id` | path | string | 设备标识 |
 | `alias` | body | string | 新的显示名称，去除首尾空白；1–50 个字符 |
 
 名称为空或超长时，在到达云端之前即返回 `VALIDATION_FAILED`。成功时 `data` 为 `{ ok: true }`。
 
-#### `POST /api/v1/remote-control/devices/{device_id}/deactivate`
+#### `POST /api/v1/remote-control/devices/{id}/deactivate`
 
 在云端注册表把设备置为离线。离线设备保留在列表中，且不占用套餐的设备额度；该设备下次开启远程控制时恢复在线。当目标设备是本机时——包括仍在启动中的开启——本地隧道会被停止（启动中的开启会被取消），响应会等待本机锁释放后再返回；若持有者未在限定时间内停止，请求会以 `INTERNAL_ERROR` 失败，而不是报告成功。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `device_id` | path | string | 设备标识 |
+| `id` | path | string | 设备标识 |
 
 成功时 `data` 为 `{ ok: true }`。
 

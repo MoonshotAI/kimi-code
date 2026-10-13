@@ -65,23 +65,25 @@ function createRemoteControlMachine(
           stderr: options.stderr,
           signal,
         });
-        startTracker.current = started.then(
+        const tracked = started.then(
           () => undefined,
           () => undefined,
         );
+        startTracker.current = tracked;
+        void tracked.then(() => {
+          if (startTracker.current === tracked) {
+            startTracker.current = undefined;
+          }
+        });
         signal.addEventListener('abort', () => {
           void started.then(
             (handle) => handle.close(),
             () => undefined,
           );
         });
-        try {
-          const handle = await started;
-          onTunnelStarted(handle);
-          return handle;
-        } finally {
-          startTracker.current = undefined;
-        }
+        const handle = await started;
+        onTunnelStarted(handle);
+        return handle;
       }),
       stopTunnel: fromPromise<void, RemoteControlHandle | undefined>(async ({ input }) => {
         await input?.close();
@@ -177,7 +179,17 @@ export function createRemoteControlManager(
   const settle = () =>
     waitFor(actor, (snap) => snap.value === 'on' || snap.value === 'off');
 
-  const enable = async (): Promise<RemoteControlStatusInfo> => {
+  let queue: Promise<void> = Promise.resolve();
+  const enqueue = <T>(operation: () => Promise<T>): Promise<T> => {
+    const run = queue.then(operation);
+    queue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
+
+  const doEnable = async (): Promise<RemoteControlStatusInfo> => {
     const snap = actor.getSnapshot();
     if (snap.value === 'on') return status();
     if (snap.value === 'stopping') {
@@ -194,7 +206,7 @@ export function createRemoteControlManager(
     fail(settled.context.error ?? new Error('Remote Control was disabled while starting.'));
   };
 
-  const disable = async (): Promise<RemoteControlStatusInfo> => {
+  const doDisable = async (): Promise<RemoteControlStatusInfo> => {
     const snap = actor.getSnapshot();
     if (snap.value === 'off') {
       await startTracker.current;
@@ -205,6 +217,15 @@ export function createRemoteControlManager(
     if (settled.context.error !== undefined) fail(settled.context.error);
     await startTracker.current;
     return status();
+  };
+
+  const enable = (): Promise<RemoteControlStatusInfo> => enqueue(doEnable);
+
+  const disable = (): Promise<RemoteControlStatusInfo> => {
+    if (actor.getSnapshot().value === 'starting') {
+      actor.send({ type: 'disable' });
+    }
+    return enqueue(doDisable);
   };
 
   const close = async (): Promise<void> => {

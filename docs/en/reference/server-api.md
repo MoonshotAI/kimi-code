@@ -237,7 +237,7 @@ On success, `data` is `{ cancelled, status }`: `cancelled` is `true` only when a
 
 Logs out the managed provider: discards the stored OAuth credential, aborts any pending login flow, and removes the managed provider from the configuration. OAuth-managed providers reject manual edit and delete (see `PUT` / `DELETE /api/v1/providers/{provider_id}` below), so log out first to remove one.
 
-For the default Kimi provider (`managed:kimi-code`), logout first takes Remote Control offline on this machine — disabling the local tunnel or, when another process on this machine hosts it, deactivating this machine's device in the cloud — and clears cached Remote Control cloud sessions; a cleanup failure aborts the logout. Logging out any other provider leaves Remote Control untouched.
+For the default Kimi provider (`managed:kimi-code`), logout first takes Remote Control offline on this machine — disabling the local tunnel or, when another process on this machine hosts it, deactivating this machine's device in the cloud — then holds the machine lock so no process on this machine can start Remote Control again until the credential is discarded, and clears cached Remote Control cloud sessions; a cleanup failure aborts the logout. Logging out any other provider leaves Remote Control untouched.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -297,24 +297,24 @@ Lists the account's Remote Control devices from the cloud registry.
 
 On success, `data` is `{ devices, max_devices? }`. Each device is `{ device_id, alias, status, platform, client_version, local_base_url, created_at, updated_at, last_remote_access_at }` with `status` one of `online` / `offline`.
 
-#### `PATCH /api/v1/remote-control/devices/{device_id}`
+#### `PATCH /api/v1/remote-control/devices/{id}`
 
 Renames a device.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
-| `device_id` | path | string | Device identifier |
+| `id` | path | string | Device identifier |
 | `alias` | body | string | New display name, trimmed; 1–50 characters |
 
 Blank or over-long aliases fail with `VALIDATION_FAILED` before reaching the cloud. On success, `data` is `{ ok: true }`.
 
-#### `POST /api/v1/remote-control/devices/{device_id}/deactivate`
+#### `POST /api/v1/remote-control/devices/{id}/deactivate`
 
 Takes a device offline in the cloud registry. Offline devices stay listed and do not consume the plan's device quota; a device comes back the next time it turns on Remote Control. When the target is this machine — including an enable that is still starting — the local tunnel is stopped (an in-flight start is cancelled) and the response waits for the machine lock to release before returning; if the holder does not stop in time, the request fails with `INTERNAL_ERROR` instead of reporting success.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
-| `device_id` | path | string | Device identifier |
+| `id` | path | string | Device identifier |
 
 On success, `data` is `{ ok: true }`.
 

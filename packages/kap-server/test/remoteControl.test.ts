@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage } from 'node:http';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +13,7 @@ import {
   type TokenInfo,
 } from '@moonshot-ai/kimi-code-oauth';
 import {
+  acquireRemoteControlLock,
   remoteControlLockPath,
   RemoteControlAlreadyRunningError,
   type RemoteControlDeviceClient,
@@ -23,7 +25,11 @@ import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 
 import { ErrorCode } from '../src/protocol/error-codes';
 import { registerOAuthRoutes } from '../src/routes/oauth';
-import { registerRemoteControlRoutes, type RemoteControlRouteOptions } from '../src/routes/remoteControl';
+import {
+  acquireRemoteControlStartGate,
+  registerRemoteControlRoutes,
+  type RemoteControlRouteOptions,
+} from '../src/routes/remoteControl';
 import { writeServerToken } from '../src/services/auth/persistentToken';
 import { type RunningServer, startServer } from '../src/start';
 import { authedFetch } from './helpers/auth';
@@ -717,12 +723,12 @@ describe('remote-control route telemetry', () => {
 });
 
 describe('oauth logout remote-control cleanup', () => {
-  function logoutHandler(
+  async function logoutHandler(
     remoteControl: RemoteControlManager,
     remoteControlDevices: Pick<RemoteControlDeviceClient, 'clear' | 'deactivateDevice'>,
     logout: (provider?: string) => Promise<{ logged_out: true; provider: string }>,
-    homeDir = '/nonexistent-kimi-home',
-  ): (body: { provider?: string }) => Promise<unknown> {
+    homeDir?: string,
+  ): Promise<(body: { provider?: string }) => Promise<unknown>> {
     let handler:
       | ((req: { id: string; body: { provider?: string } }, reply: { send(payload: unknown): unknown }) => Promise<void>)
       | undefined;
@@ -738,7 +744,8 @@ describe('oauth logout remote-control cleanup', () => {
         get: (token: unknown) => (token === IOAuthService ? { logout } : undefined),
       },
     } as unknown as Scope;
-    registerOAuthRoutes(app as never, core, remoteControl, remoteControlDevices, homeDir);
+    const resolvedHomeDir = homeDir ?? (await mkdtemp(join(tmpdir(), 'kimi-server-v2-logout-')));
+    registerOAuthRoutes(app as never, core, remoteControl, remoteControlDevices, resolvedHomeDir);
     return async (body) => {
       let payload: unknown;
       await handler!(
@@ -770,31 +777,33 @@ describe('oauth logout remote-control cleanup', () => {
       },
       deactivateDevice: async () => {},
     };
-    const post = logoutHandler(remoteControl, remoteControlDevices, async (provider) => {
-      events.push('logout');
-      return { logged_out: true, provider: provider ?? 'managed:kimi-code' };
-    });
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-logout-'));
+    const post = await logoutHandler(
+      remoteControl,
+      remoteControlDevices,
+      async (provider) => {
+        events.push('logout');
+        return { logged_out: true, provider: provider ?? 'managed:kimi-code' };
+      },
+      homeDir,
+    );
 
     const payload = (await post({ provider: 'managed:kimi-code' })) as Envelope<{
       logged_out: true;
       provider: string;
     }>;
 
-    expect(events).toEqual(['disable', 'clear', 'logout', 'clear']);
+    expect(events).toEqual(['disable', 'clear', 'logout']);
     expect(payload.code).toBe(0);
     expect(payload.data.logged_out).toBe(true);
+    expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
+    await rm(homeDir, { recursive: true, force: true });
   });
 
-  it('runs the cleanup again after logout to catch a start that raced the first sweep', async () => {
+  it('holds the machine lock during logout so concurrent starts are rejected', async () => {
     const events: string[] = [];
-    let state = 'off';
     const remoteControl = {
-      status: () => ({ enabled: state === 'on', state }),
-      disable: async () => {
-        events.push('disable');
-        state = 'off';
-        return { enabled: false, state: 'off' };
-      },
+      status: () => ({ enabled: false, state: 'off' }),
     } as unknown as RemoteControlManager;
     const remoteControlDevices = {
       clear: () => {
@@ -802,47 +811,35 @@ describe('oauth logout remote-control cleanup', () => {
       },
       deactivateDevice: async () => {},
     };
-    const post = logoutHandler(remoteControl, remoteControlDevices, async (provider) => {
-      events.push('logout');
-      state = 'starting';
-      return { logged_out: true, provider: provider ?? 'managed:kimi-code' };
-    });
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-logout-'));
+    const post = await logoutHandler(
+      remoteControl,
+      remoteControlDevices,
+      async (provider) => {
+        events.push('logout');
+        const gateHolder = await readFile(remoteControlLockPath(homeDir), 'utf8');
+        expect(JSON.parse(gateHolder)).toMatchObject({ local_origin: 'logout in progress' });
+        await expect(
+          acquireRemoteControlLock(homeDir, {
+            localOrigin: 'http://127.0.0.1:58627',
+            deviceId: 'racing-device',
+            url: 'https://code-rc.kimi.com/devices/racing-device/',
+          }),
+        ).rejects.toBeInstanceOf(RemoteControlAlreadyRunningError);
+        return { logged_out: true, provider: provider ?? 'managed:kimi-code' };
+      },
+      homeDir,
+    );
 
     const payload = (await post({ provider: 'managed:kimi-code' })) as Envelope<{
       logged_out: true;
       provider: string;
     }>;
 
-    expect(events).toEqual(['clear', 'logout', 'clear', 'disable']);
     expect(payload.code).toBe(0);
-  });
-
-  it('reports a cleanup failure from the post-logout sweep instead of claiming success', async () => {
-    const events: string[] = [];
-    let state = 'off';
-    const remoteControl = {
-      status: () => ({ enabled: false, state }),
-      disable: async () => {
-        throw new Error('tunnel stop failed');
-      },
-    } as unknown as RemoteControlManager;
-    const remoteControlDevices = {
-      clear: () => {
-        events.push('clear');
-      },
-      deactivateDevice: async () => {},
-    };
-    const post = logoutHandler(remoteControl, remoteControlDevices, async (provider) => {
-      events.push('logout');
-      state = 'starting';
-      return { logged_out: true, provider: provider ?? 'managed:kimi-code' };
-    });
-
-    const payload = (await post({ provider: 'managed:kimi-code' })) as Envelope<null>;
-
-    expect(events).toEqual(['clear', 'logout', 'clear']);
-    expect(payload.code).toBe(ErrorCode.INTERNAL_ERROR);
-    expect(payload.msg).toBe('tunnel stop failed');
+    expect(events).toEqual(['clear', 'logout']);
+    expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
+    await rm(homeDir, { recursive: true, force: true });
   });
 
   it('does not clear cloud sessions or OAuth credentials when disabling the tunnel fails', async () => {
@@ -860,7 +857,7 @@ describe('oauth logout remote-control cleanup', () => {
       },
       deactivateDevice: async () => {},
     };
-    const post = logoutHandler(remoteControl, remoteControlDevices, async (provider) => {
+    const post = await logoutHandler(remoteControl, remoteControlDevices, async (provider) => {
       logoutCalled = true;
       return { logged_out: true, provider: provider ?? 'managed:kimi-code' };
     });
@@ -889,7 +886,7 @@ describe('oauth logout remote-control cleanup', () => {
       },
       deactivateDevice: async () => {},
     };
-    const post = logoutHandler(remoteControl, remoteControlDevices, async (provider) => ({
+    const post = await logoutHandler(remoteControl, remoteControlDevices, async (provider) => ({
       logged_out: true,
       provider: provider ?? 'managed:kimi-code',
     }));
@@ -936,7 +933,7 @@ describe('oauth logout remote-control cleanup', () => {
         await rm(remoteControlLockPath(homeDir), { force: true });
       },
     };
-    const post = logoutHandler(
+    const post = await logoutHandler(
       remoteControl,
       remoteControlDevices,
       async (provider) => {
@@ -952,7 +949,8 @@ describe('oauth logout remote-control cleanup', () => {
     }>;
 
     expect(payload.code).toBe(0);
-    expect(events).toEqual(['deactivate:cli-device', 'clear', 'logout', 'clear']);
+    expect(events).toEqual(['deactivate:cli-device', 'clear', 'logout']);
+    expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
     await rm(homeDir, { recursive: true, force: true });
   });
 
@@ -980,7 +978,7 @@ describe('oauth logout remote-control cleanup', () => {
         throw new Error('cloud unavailable');
       },
     };
-    const post = logoutHandler(
+    const post = await logoutHandler(
       remoteControl,
       remoteControlDevices,
       async (provider) => {
@@ -995,6 +993,42 @@ describe('oauth logout remote-control cleanup', () => {
     expect(payload.code).toBe(ErrorCode.INTERNAL_ERROR);
     expect(payload.msg).toBe('cloud unavailable');
     expect(logoutCalled).toBe(false);
+    await rm(homeDir, { recursive: true, force: true });
+  });
+
+  it('deactivates a foreign holder that races the start gate before acquiring it', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-start-gate-'));
+    await mkdir(join(homeDir, 'server'), { recursive: true });
+    await writeFile(
+      remoteControlLockPath(homeDir),
+      JSON.stringify({
+        pid: process.pid,
+        nonce: 'cli-holder',
+        local_origin: 'http://127.0.0.1:58627',
+        device_id: 'cli-device',
+        url: 'https://code-rc.kimi.com/devices/cli-device/',
+        started_at: Date.now(),
+      }),
+    );
+    const deactivated: string[] = [];
+    const devices = {
+      deactivateDevice: async (deviceId: string) => {
+        deactivated.push(deviceId);
+        await rm(remoteControlLockPath(homeDir), { force: true });
+      },
+    };
+
+    const gate = await acquireRemoteControlStartGate(homeDir, devices);
+
+    expect(deactivated).toEqual(['cli-device']);
+    const gateHolder = JSON.parse(await readFile(remoteControlLockPath(homeDir), 'utf8')) as {
+      local_origin?: string;
+      device_id?: string;
+    };
+    expect(gateHolder.local_origin).toBe('logout in progress');
+    expect(gateHolder.device_id).toBe(createKimiDeviceId(homeDir));
+    await gate.release();
+    expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
     await rm(homeDir, { recursive: true, force: true });
   });
 });

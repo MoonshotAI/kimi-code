@@ -1353,6 +1353,59 @@ describe('Remote Control manager', () => {
     await manager.disable();
   });
 
+  it('applies a disable queued behind an enable that follows a cancelled start', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    const managementServer = new WebSocketServer({ noServer: true });
+    const relayServer = createServer();
+    managementServer.on('connection', (ws) => {
+      ws.on('error', () => {});
+      ws.on('message', (data) => {
+        const message = JSON.parse(rawDataText(data)) as { type?: string };
+        if (message.type === 'register') {
+          setTimeout(() => {
+            try {
+              ws.send(JSON.stringify({ type: 'register_ack', payload: { success: true } }));
+            } catch {}
+          }, 200);
+        }
+      });
+    });
+    relayServer.on('upgrade', (request, socket, head) => {
+      managementServer.handleUpgrade(request, socket, head, (ws) => {
+        managementServer.emit('connection', ws, request);
+      });
+    });
+    const port = await listen(relayServer);
+    cleanups.push(() => closeServer(relayServer));
+    const manager = createRemoteControlManager({
+      homeDir,
+      localOrigin: () => 'http://127.0.0.1:58627',
+      localServerToken: () => 'local-server-token',
+      clientVersion: CLIENT_VERSION,
+      urlSource: 'kimi_code_cli',
+      relayOrigin: `http://127.0.0.1:${port}`,
+      stderr: { write: () => true },
+    });
+    cleanups.push(() => manager.close());
+
+    const first = manager.enable();
+    const firstSettled = expect(first).rejects.toThrow(
+      'Remote Control was disabled while starting.',
+    );
+    await waitFor(() => existsSync(remoteControlLockPath(homeDir)));
+
+    const cancelling = manager.disable();
+    const reenabled = manager.enable();
+    const finalDisable = manager.disable();
+
+    await cancelling;
+    await firstSettled;
+    expect((await reenabled).state).toBe('on');
+    expect((await finalDisable).state).toBe('off');
+    expect(manager.status().state).toBe('off');
+    expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
+  });
+
   it('aborts the start when the credential disappears before registration', async () => {
     const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
     const relay = await startAuthRelay();
