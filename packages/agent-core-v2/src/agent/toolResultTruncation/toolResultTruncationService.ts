@@ -48,6 +48,7 @@ export class ToolResultTruncationService extends Service implements IAgentToolRe
 
   private reservedInlineBaseline = 0;
   private reservedInlineTokens = 0;
+  private lastCommittedSize = 0;
 
   constructor(
     @IBootstrapService private readonly bootstrap: IBootstrapService,
@@ -103,7 +104,7 @@ export class ToolResultTruncationService extends Service implements IAgentToolRe
       return { ...rest, output: mergeSpillPointer(shaped.output, fallback), truncated: true } as T;
     }
 
-    if (shaped.textChars <= DEFAULT_TOOL_RESULT_MAX_CHARS) {
+    if (shaped.textChars <= DEFAULT_TOOL_RESULT_MAX_CHARS && !forcedByBudget) {
       const inlineSuffix = dropInlineSuffixLines(suffix, persistableToolResultText(shaped.output));
       return {
         ...rest,
@@ -161,10 +162,11 @@ export class ToolResultTruncationService extends Service implements IAgentToolRe
     });
     const agentContext = agentContextOfScope(this.agent);
     const committed = this.tokenCounting.get(agentContext).size;
-    if (committed < this.reservedInlineBaseline) {
+    if (committed < this.lastCommittedSize) {
       this.reservedInlineBaseline = committed;
       this.reservedInlineTokens = 0;
     }
+    this.lastCommittedSize = committed;
     if (this.reservedInlineTokens === 0) this.reservedInlineBaseline = committed;
     const current = Math.max(committed, this.reservedInlineBaseline + this.reservedInlineTokens);
     const incoming =

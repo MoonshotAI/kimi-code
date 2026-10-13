@@ -482,7 +482,7 @@ describe('ToolResultTruncationService', () => {
   it('spills small exempt results when over the context budget', async () => {
     defaultModelRecord = undefined;
     currentContextSize = 180_000;
-    const exempt = { output: 'z'.repeat(10_000), spillExempt: true as const };
+    const exempt = { output: `${'z'.repeat(99)}\n`.repeat(100), spillExempt: true as const };
 
     const result = await truncation.truncateForModel<ExecutableToolResult>({
       toolName: 'Read',
@@ -495,6 +495,7 @@ describe('ToolResultTruncationService', () => {
     expect(typeof rendered).toBe('string');
     if (typeof rendered !== 'string') throw new Error('expected string output');
     expect(rendered).toContain('Tool output withheld to keep the context within the model window');
+    expect(rendered.length).toBeLessThan(7_000);
     await expect(readFile(renderedOutputPath(rendered), 'utf8')).resolves.toBe(exempt.output);
   });
 
@@ -525,6 +526,41 @@ describe('ToolResultTruncationService', () => {
       result: makeExempt(),
     });
     expect(third.truncated).toBeUndefined();
+  });
+
+  it('rebases reservations on any committed shrink, not only below the baseline', async () => {
+    currentContextSize = 100_000;
+    const makeExempt = () => ({
+      output: `${'z'.repeat(99)}\n`.repeat(4_000),
+      spillExempt: true as const,
+    });
+
+    await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_d1',
+      result: makeExempt(),
+    });
+    await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_d2',
+      result: makeExempt(),
+    });
+
+    currentContextSize = 634_000;
+    const third = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_d3',
+      result: makeExempt(),
+    });
+    expect(third.truncated).toBe(true);
+
+    currentContextSize = 150_000;
+    const fourth = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_d4',
+      result: makeExempt(),
+    });
+    expect(fourth.truncated).toBeUndefined();
   });
 
   it('identifies paths inside the agent spill directory', () => {

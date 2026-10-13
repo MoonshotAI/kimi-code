@@ -509,7 +509,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           request.messages,
           [message],
           usage,
-          `${recorded.systemPromptHash}:${recorded.toolsHash}`,
+          `${recorded.systemPromptHash}:${recorded.toolsHash}:${recorded.projection ?? ''}`,
         );
       }
       this.logResponse(request.logFields, usage ?? emptyUsage(), timing);
