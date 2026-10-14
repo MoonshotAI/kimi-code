@@ -69,6 +69,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/release-trigger.mjs
 
+  vscode:
+    needs: candidate
+    if: needs.candidate.outputs.publish == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/vscode-publish.yml
+    secrets:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}
+
   release:
     needs: candidate
     if: needs.candidate.outputs.publish == 'true'
