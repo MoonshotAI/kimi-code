@@ -299,11 +299,54 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
     );
   });
 
-  it('bounds synchronous cleaning for oversized telemetry strings', () => {
+  it('bounds synchronous cleaning for oversized telemetry lines', () => {
     expect(cleanTelemetryString(`/home/${'a.'.repeat(30_000)}x`)).toBe(
-      '<REDACTED: oversized telemetry-string>',
+      '<REDACTED: oversized telemetry-line>',
     );
   });
+
+  it('keeps long multi-line values and only replaces the oversized line', () => {
+    const longLine = 'x'.repeat(9000);
+    expect(cleanTelemetryString(`start\n${longLine}\r\n/home/alice/file.txt done`)).toBe(
+      `start\n<REDACTED: oversized telemetry-line>\r\n${REDACTED} done`,
+    );
+    const manyLines = Array.from({ length: 2000 }, (_, i) => `line ${String(i)}`).join('\n');
+    expect(cleanTelemetryString(manyLines)).toBe(manyLines);
+  });
+
+  it('ends a Windows dependency path before a following POSIX or UNC entry', () => {
+    expect(cleanTelemetryString('C:\\Users\\alice\\node_modules\\pkg;/home/bob/private')).toBe(
+      `node_modules/pkg;${REDACTED}`,
+    );
+    expect(cleanTelemetryString('C:\\Users\\alice\\node_modules\\pkg,/home/bob/private')).toBe(
+      `node_modules/pkg,${REDACTED}`,
+    );
+    expect(
+      cleanTelemetryString('C:\\Users\\alice\\node_modules\\pkg&&\\\\srv\\share\\bob\\x.txt'),
+    ).toBe(`node_modules/pkg&&${REDACTED}`);
+  });
+
+  it('keeps POSIX dependency lookups case-sensitive even with backslashes in names', () => {
+    expect(
+      cleanTelemetryString('///home/alice/foo\\bar/NODE_MODULES/private-project/secret.js'),
+    ).toBe(REDACTED);
+    expect(cleanTelemetryString('//home/alice/foo\\bar/NODE_MODULES/x.js')).toBe(REDACTED);
+    expect(cleanTelemetryString('C:\\Users\\a\\NODE_MODULES\\pkg\\i.js')).toBe(
+      'NODE_MODULES/pkg/i.js',
+    );
+  });
+
+  it.each(['source.c++', 'my_file.tar_gz', 'notes.averyveryverylongextension'])(
+    'keeps the diagnostic after a punctuated or long extension (%s)',
+    (name) => {
+      expect(cleanTelemetryString(`/home/alice/${name} failed to compile`)).toBe(
+        `${REDACTED} failed to compile`,
+      );
+      expect(cleanTelemetryString(`C:\\Users\\alice\\${name} failed to compile`)).toBe(
+        `${REDACTED} failed to compile`,
+      );
+    },
+  );
 
   it('still redacts emails and URLs before paths', () => {
     expect(cleanTelemetryString('user@example.com')).toBe('<REDACTED: Email>');
