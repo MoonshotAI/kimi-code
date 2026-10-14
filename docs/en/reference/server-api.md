@@ -318,6 +318,16 @@ Takes a device offline in the cloud registry. Offline devices stay listed and do
 
 On success, `data` is `{ ok: true }`.
 
+#### `DELETE /api/v1/remote-control/devices/{id}`
+
+Removes a device from the cloud registry: it disappears from the device list and its tunnel, if still connected, is disconnected. Deactivating keeps an offline device listed; deleting removes it entirely. When the target is this machine, the local tunnel is stopped first and the machine lock is held while deleting, so the device cannot re-register behind a successful response.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `id` | path | string | Device identifier |
+
+On success, `data` is `{ ok: true }`.
+
 ### Config
 
 | Method and path | Description |

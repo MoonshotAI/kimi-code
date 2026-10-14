@@ -53,6 +53,14 @@ interface RemoteControlRouteHost {
       reply: { send(payload: unknown): unknown },
     ) => Promise<void> | void,
   ): unknown;
+  delete(
+    path: string,
+    options: { preHandler: unknown[]; schema?: Record<string, unknown> },
+    handler: (
+      req: { id: string; params: unknown },
+      reply: { send(payload: unknown): unknown },
+    ) => Promise<void> | void,
+  ): unknown;
 }
 
 export interface RemoteControlRouteOptions {
@@ -281,6 +289,51 @@ export function registerRemoteControlRoutes(
     deactivateDeviceRoute.path,
     deactivateDeviceRoute.options,
     deactivateDeviceRoute.handler as Parameters<RemoteControlRouteHost['post']>[2],
+  );
+
+  const deleteDeviceRoute = defineRoute(
+    {
+      method: 'DELETE',
+      path: '/remote-control/devices/{id}',
+      params: remoteControlDeviceParamsSchema,
+      success: { data: remoteControlDeviceMutationResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: {},
+        [ErrorCode.INTERNAL_ERROR]: {},
+      },
+      description: 'Delete a Remote Control device',
+      tags: ['remote-control'],
+    },
+    async (req, reply) => {
+      await handleDeviceRoute(req, reply, async () => {
+        const status = opts.service.status();
+        const holder = await inspectRemoteControlLock(opts.homeDir);
+        const isLocal =
+          req.params.id === createKimiDeviceId(opts.homeDir) ||
+          status.deviceId === req.params.id ||
+          holder?.deviceId === req.params.id;
+        if (!isLocal) {
+          await opts.devices.deleteDevice(req.params.id);
+          return { ok: true };
+        }
+        if (status.state !== 'off') {
+          await opts.service.disable();
+        }
+        const gate = await acquireRemoteControlStartGate(opts.homeDir, opts.devices);
+        try {
+          await opts.devices.deleteDevice(req.params.id);
+          await opts.service.disable();
+        } finally {
+          await gate.release();
+        }
+        return { ok: true };
+      });
+    },
+  );
+  app.delete(
+    deleteDeviceRoute.path,
+    deleteDeviceRoute.options,
+    deleteDeviceRoute.handler as Parameters<RemoteControlRouteHost['delete']>[2],
   );
 }
 
