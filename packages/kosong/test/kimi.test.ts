@@ -1250,7 +1250,7 @@ describe('KimiChatProvider', () => {
       ]);
     });
 
-    it('skips an empty reasoning_content field instead of journaling a no-op think part', async () => {
+    it('keeps the empty reasoning marker on a non-stream tool call', async () => {
       const provider = createProvider();
       (provider as any)._client.chat.completions.create = vi.fn().mockImplementation(() =>
         mockCreateResult({
@@ -1279,6 +1279,7 @@ describe('KimiChatProvider', () => {
       for await (const part of stream) parts.push(part);
 
       expect(parts).toEqual([
+        { type: 'think', think: '' },
         {
           type: 'function',
           id: 'call_1',
@@ -1654,6 +1655,46 @@ describe('KimiChatProvider', () => {
         { type: 'think', think: 'hmm' },
         { type: 'text', text: 'hi' },
       ]);
+    });
+
+    it('keeps one empty reasoning marker when a streamed tool call has only empty reasoning', async () => {
+      const provider = createProvider(true);
+      const chunks = [
+        {
+          id: 'chatcmpl-empty-tool',
+          choices: [{ index: 0, delta: { reasoning_content: '' }, finish_reason: null }],
+        },
+        {
+          id: 'chatcmpl-empty-tool',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                reasoning_content: '',
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call_1',
+                    type: 'function',
+                    function: { name: 'lookup', arguments: '{}' },
+                  },
+                ],
+              },
+              finish_reason: 'tool_calls',
+            },
+          ],
+        },
+      ];
+      (
+        provider as unknown as { _client: { chat: { completions: { create: unknown } } } }
+      )._client.chat.completions.create = vi.fn().mockImplementation(() => mockCreateResult(mockStream(chunks)));
+
+      const stream = await provider.generate('', [], []);
+      const parts = [];
+      for await (const part of stream) parts.push(part);
+
+      expect(parts.filter((p) => p.type === 'think')).toEqual([{ type: 'think', think: '' }]);
+      expect(parts.some((p) => p.type === 'function')).toBe(true);
     });
 
     it('buffers indexed argument deltas until the real tool name arrives', async () => {

@@ -1567,6 +1567,49 @@ describe('OpenAILegacyChatProvider', () => {
       ]);
     });
 
+    it('keeps one empty reasoning marker when a streamed tool call has only empty reasoning', async () => {
+      const provider = new OpenAILegacyChatProvider({
+        model: 'deepseek-reasoner',
+        apiKey: 'test-key',
+        stream: true,
+      });
+
+      async function* mockedStream(): AsyncIterable<Record<string, unknown>> {
+        yield { id: 'c1', choices: [{ index: 0, delta: { reasoning_content: '' } }] };
+        yield {
+          id: 'c1',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                reasoning_content: '',
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call_1',
+                    type: 'function',
+                    function: { name: 'lookup', arguments: '{}' },
+                  },
+                ],
+              },
+              finish_reason: 'tool_calls',
+            },
+          ],
+        };
+      }
+
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockResolvedValue(mockedStream());
+
+      const stream = await provider.generate('', [], []);
+      const parts: StreamedMessagePart[] = [];
+      for await (const part of stream) parts.push(part);
+
+      expect(parts.filter((p) => p.type === 'think')).toEqual([{ type: 'think', think: '' }]);
+      expect(parts.some((p) => p.type === 'function')).toBe(true);
+    });
+
     it('treats blank reasoning_key as unset so defaults still apply', async () => {
       // ModelAliasSchema accepts `reasoning_key = ""` (z.string().optional()).
       // A blank value must not route reads/writes through an empty property
@@ -1914,7 +1957,7 @@ describe('OpenAILegacyChatProvider — non-stream response parsing', () => {
     ]);
   });
 
-  it('skips an empty non-stream reasoning field instead of journaling a no-op think part', async () => {
+  it('keeps a single empty marker for an explicitly empty non-stream reasoning field', async () => {
     const provider = new OpenAILegacyChatProvider({
       model: 'deepseek-reasoner',
       apiKey: 'test-key',
@@ -1931,7 +1974,10 @@ describe('OpenAILegacyChatProvider — non-stream response parsing', () => {
       }),
     );
 
-    expect(parts).toEqual([{ type: 'text', text: 'hi' }]);
+    expect(parts).toEqual([
+      { type: 'think', think: '' },
+      { type: 'text', text: 'hi' },
+    ]);
   });
 
   it('non-stream response yields ToolCall parts when tool_calls present', async () => {
