@@ -229,3 +229,17 @@ test('completed public releases skip recovery without replacing assets', () => {
   assert.match(readFileSync(join(f.dir,'output'),'utf8'),/complete=true/);
   assert.equal(f.state().calls.slice(before).some(c=>c[0]==='npm'||c[2]==='upload'||c[2]==='download'||c[2]==='edit'),false);
 });
+
+test('extension publishes only its planned release version and rejects main or stale plans', () => {
+  const script=fileURLToPath(new URL('./vscode-release-plan.mjs',import.meta.url));
+  const vscode={name:'kimi-code',version:'0.8.2',path:'apps/vscode',private:true};
+  const invoke=(f,env={})=>spawnSync(process.execPath,[script],{cwd:f.dir,env:{...f.env,...env},encoding:'utf8'});
+  const unchanged=fixture();success(invoke(unchanged));
+  assert.match(readFileSync(join(unchanged.dir,'output'),'utf8'),/publish=false/);
+  const changed=fixture([cli,vscode]);success(invoke(changed));
+  assert.match(readFileSync(join(changed.dir,'output'),'utf8'),/publish=true\nversion=0.8.2/);
+  assert.notEqual(invoke(changed,{GITHUB_REF_NAME:'main',GITHUB_REF:'refs/heads/main'}).status,0);
+  assert.notEqual(invoke(changed,{GITHUB_REF_NAME:'release/other',GITHUB_REF:'refs/heads/release/other'}).status,0);
+  writeFileSync(join(changed.dir,'apps/vscode/package.json'),JSON.stringify({...vscode,version:'0.8.3'}));
+  assert.notEqual(invoke(changed).status,0);
+});
