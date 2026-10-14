@@ -235,6 +235,7 @@ extra_skill_dirs = []
 [mcp]
 # startup_timeout_ms: integer
 # tool_timeout_ms: integer
+# default_deferred: boolean
 
 # ##########################################################################
 # mergeAllAvailableSkills (config.toml: merge_all_available_skills)
