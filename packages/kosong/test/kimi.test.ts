@@ -1446,7 +1446,7 @@ describe('KimiChatProvider', () => {
       expect(messages[0]).toEqual({ role: 'assistant', content: 'ok', reasoning: 'hmm' });
     });
 
-    it('detects an empty-only reasoning dialect and preserves later non-empty deltas', async () => {
+    it('keeps one empty reasoning marker and preserves later non-empty deltas', async () => {
       const provider = createProvider(true);
       const captured: Array<Record<string, unknown>> = [];
       (provider as any)._client.chat.completions.create = vi
@@ -1471,12 +1471,16 @@ describe('KimiChatProvider', () => {
       const first = await provider.generate('', [], []);
       const firstParts = [];
       for await (const part of first) firstParts.push(part);
-      expect(firstParts).toEqual([{ type: 'text', text: 'ok' }]);
+      expect(firstParts).toEqual([
+        { type: 'think', think: '' },
+        { type: 'text', text: 'ok' },
+      ]);
 
       const second = await provider.generate('', [], THINK_HISTORY);
       const secondParts = [];
       for await (const part of second) secondParts.push(part);
       expect(secondParts).toEqual([
+        { type: 'think', think: '' },
         { type: 'think', think: 'hmm' },
         { type: 'text', text: 'ok' },
       ]);
