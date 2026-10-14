@@ -29,6 +29,7 @@ interface InternalEntry {
   readonly config: McpServerConfig;
   attemptId: number;
   status: McpServerStatus;
+  deferred: boolean;
   tools?: readonly Tool[];
   rawTools?: readonly MCPToolDefinition[];
   enabledNames?: ReadonlySet<string>;
@@ -139,9 +140,11 @@ export class McpConnectionManager implements McpConnectionView {
   }
 
   deferredOf(name: string): boolean {
-    const entry = this.entries.get(name);
-    if (entry === undefined) return false;
-    return entry.config.deferred ?? this.options.resolveDefaults?.().defaultDeferred ?? false;
+    return this.entries.get(name)?.deferred ?? false;
+  }
+
+  private resolveDeferred(config: McpServerConfig): boolean {
+    return config.deferred ?? this.options.resolveDefaults?.().defaultDeferred ?? false;
   }
 
   resolved(
@@ -169,7 +172,7 @@ export class McpConnectionManager implements McpConnectionView {
       tools: entry.tools,
       rawTools: entry.rawTools,
       enabledNames: entry.enabledNames ?? new Set(entry.tools.map((t) => t.name)),
-      deferred: this.deferredOf(name),
+      deferred: entry.deferred,
     };
   }
 
@@ -203,6 +206,7 @@ export class McpConnectionManager implements McpConnectionView {
       config,
       attemptId: 0,
       status: disabled ? 'disabled' : 'pending',
+      deferred: this.resolveDeferred(config),
     };
     this.entries.set(name, entry);
     this.emit(entry);
@@ -259,6 +263,7 @@ export class McpConnectionManager implements McpConnectionView {
         config,
         attemptId: 0,
         status: disabled ? 'disabled' : 'pending',
+        deferred: this.resolveDeferred(config),
       };
       this.entries.set(name, entry);
       this.emit(entry);
@@ -357,6 +362,7 @@ export class McpConnectionManager implements McpConnectionView {
   }
 
   private async connectOne(entry: InternalEntry, attemptId: number): Promise<void> {
+    entry.deferred = this.resolveDeferred(entry.config);
     const timeoutMs =
       entry.config.startupTimeoutMs ??
       this.options.resolveDefaults?.().startupTimeoutMs ??

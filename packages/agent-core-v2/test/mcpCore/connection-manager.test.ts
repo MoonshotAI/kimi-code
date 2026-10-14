@@ -251,6 +251,21 @@ describe('McpConnectionManager', () => {
     } finally {
       await defaulted.shutdown();
     }
+
+    let liveDefault = true;
+    const captured = createManager({
+      resolveDefaults: () => ({ defaultDeferred: liveDefault }),
+    });
+    try {
+      await captured.connectAll({ plain: stdioConfig() });
+      expect(captured.resolved('plain')?.deferred).toBe(true);
+      liveDefault = false;
+      expect(captured.resolved('plain')?.deferred).toBe(true);
+      await captured.reconnect('plain');
+      expect(captured.resolved('plain')?.deferred).toBe(false);
+    } finally {
+      await captured.shutdown();
+    }
   }, 15000);
 
   it('starts stdio servers in stdioCwd when config.cwd is omitted', async () => {

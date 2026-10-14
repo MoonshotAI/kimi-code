@@ -104,7 +104,7 @@ With both prerequisites met, set `deferred: true` on the server entry in `mcp.js
 
 Servers without `deferred` take the global default (`false` unless changed); when a prerequisite is missing, the field is ignored with the same result. The authentication tool exposed by an OAuth server before authorization completes follows the same field.
 
-To defer every server by default instead of marking them one by one, set `default_deferred = true` under `[mcp]` in `config.toml` — see [Configuration files](../configuration/config-files.md#mcp). A server can still opt out with `deferred: false`; the per-server field always wins over the global default.
+To defer every server by default instead of marking them one by one, set `default_deferred = true` under `[mcp]` in `config.toml` — see [Configuration files](../configuration/config-files.md#mcp). A server can still opt out with `deferred: false`; the per-server field always wins over the global default. The value is captured when a server connects, so changing it later does not reshape tools in a running session — reconnect the server or restart the process to apply it.
 
 ## Tool Naming and Permissions
 
