@@ -1,6 +1,9 @@
 name: Deploy Docs to GitHub Pages
 
 on:
+  push:
+    branches: [main]
+    paths: ['docs/**', '.changeset/release-plan.json']
   workflow_call:
   workflow_dispatch:
 

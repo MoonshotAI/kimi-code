@@ -43,3 +43,6 @@ handover.md
 *-mockup.html
 *-demo.html
 *-demos.html
+
+.release-inputs/
+release-inputs.tar.gz

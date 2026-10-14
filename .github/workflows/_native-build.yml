@@ -3,6 +3,11 @@ name: _native-build
 on:
   workflow_call:
     inputs:
+      release-inputs:
+        description: Reuse the saved inputs from the release commit
+        type: boolean
+        default: false
+        required: false
       upload-artifact-prefix:
         description: 'Prefix for uploaded artifact name'
         required: false
@@ -88,8 +93,14 @@ jobs:
           certificate-p12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
           certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
 
+      - name: Restore release catalog
+        if: inputs.release-inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/core-release.mjs catalog
+
       - name: Generate built-in catalog (release artifacts)
-        if: inputs.sign-macos
+        if: inputs.sign-macos && !inputs.release-inputs
         shell: bash
         run: |
           CATALOG_FILE="$RUNNER_TEMP/kimi-code-built-in-catalog.json"
@@ -141,7 +152,8 @@ jobs:
         with:
           name: ${{ inputs.upload-artifact-prefix }}-${{ matrix.target }}
           retention-days: ${{ inputs.retention-days }}
+          overwrite: true
           path: |
             apps/kimi-code/dist-native/artifacts/kimi-code-${{ matrix.target }}.zip
             apps/kimi-code/dist-native/artifacts/kimi-code-${{ matrix.target }}.zip.sha256
-          if-no-files-found: ignore
+          if-no-files-found: error

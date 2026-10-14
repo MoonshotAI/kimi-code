@@ -183,7 +183,7 @@ describe('native release artifacts', () => {
       );
       await writeFile(
         join(releaseDir, 'kimi-code-win32-x64.zip.sha256'),
-        `${'b'.repeat(64)}  kimi-code-win32-x64.zip\n`,
+        `${sha256(await readFile(join(releaseDir, 'kimi-code-win32-x64.zip')))}  kimi-code-win32-x64.zip\n`,
       );
 
       await execFileAsync(process.execPath, [manifestScript, releaseDir, 'v0.5.0']);
@@ -199,6 +199,18 @@ describe('native release artifacts', () => {
       expect(entry.filename).toBe('kimi-code-win32-x64.exe');
       expect(entry.checksum).toBe(sha256(binaryContent));
       expect(entry.compressed.filename).toBe('kimi-code-win32-x64.zst');
+    } finally {
+      rmSync(releaseDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a zip that does not match its checksum', async () => {
+    const releaseDir = await mkdtemp(join(tmpdir(), 'kimi-manifest-corrupt-'));
+    try {
+      await writeFile(join(releaseDir, 'kimi-code-linux-x64.zip'), 'corrupt archive');
+      await writeFile(join(releaseDir, 'kimi-code-linux-x64.zip.sha256'), `${'0'.repeat(64)}  kimi-code-linux-x64.zip\n`);
+      await expect(execFileAsync(process.execPath, [manifestScript, releaseDir, 'v0.5.0']))
+        .rejects.toThrow('Invalid archive checksum');
     } finally {
       rmSync(releaseDir, { recursive: true, force: true });
     }
