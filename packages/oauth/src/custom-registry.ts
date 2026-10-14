@@ -66,6 +66,12 @@ export type CustomRegistryProviderType =
   | 'openai_responses'
   | 'kimi';
 
+export interface CustomRegistryModelUpgrade {
+  readonly model: string;
+  readonly migration_markdown: string;
+  readonly retirement_at?: string | null;
+}
+
 export interface CustomRegistryModelEntry {
   readonly id: string;
   readonly name?: string;
@@ -78,6 +84,7 @@ export interface CustomRegistryModelEntry {
   };
   readonly support_efforts?: readonly string[];
   readonly default_effort?: string;
+  readonly upgrade?: CustomRegistryModelUpgrade;
 }
 
 export interface CustomRegistryProviderEntry {
@@ -163,6 +170,16 @@ function toStringArrayOrUndefined(value: unknown): readonly string[] | undefined
   return out;
 }
 
+const RFC3339_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/i;
+
+function isValidRetirementAt(value: unknown): value is string | null | undefined {
+  return (
+    value === undefined ||
+    value === null ||
+    (typeof value === 'string' && RFC3339_PATTERN.test(value) && Number.isFinite(Date.parse(value)))
+  );
+}
+
 function toModelEntry(value: unknown): CustomRegistryModelEntry | undefined {
   if (!isRecord(value)) return undefined;
   const id = value['id'];
@@ -177,6 +194,7 @@ function toModelEntry(value: unknown): CustomRegistryModelEntry | undefined {
     modalities?: { input?: readonly string[]; output?: readonly string[] };
     support_efforts?: readonly string[];
     default_effort?: string;
+    upgrade?: CustomRegistryModelUpgrade;
   } = { id };
 
   const name = value['name'];
@@ -218,6 +236,30 @@ function toModelEntry(value: unknown): CustomRegistryModelEntry | undefined {
         ...(output !== undefined ? { output } : {}),
       };
     }
+  }
+
+  const rawUpgrade = value['upgrade'];
+  if (rawUpgrade !== undefined && rawUpgrade !== null) {
+    if (!isRecord(rawUpgrade)) {
+      throw new Error(`Invalid upgrade for model "${id}": expected an object.`);
+    }
+    const targetModel = nonEmptyString(rawUpgrade['model']);
+    if (targetModel === undefined) {
+      throw new Error(`Invalid upgrade for model "${id}": expected a non-empty target model.`);
+    }
+    const migrationMarkdown = rawUpgrade['migration_markdown'];
+    if (typeof migrationMarkdown !== 'string') {
+      throw new TypeError(`Invalid upgrade for model "${id}": migration_markdown must be a string.`);
+    }
+    const retirementAt = rawUpgrade['retirement_at'];
+    if (!isValidRetirementAt(retirementAt)) {
+      throw new Error(`Invalid upgrade for model "${id}": retirement_at must be an RFC3339 timestamp or null.`);
+    }
+    entry.upgrade = {
+      model: targetModel,
+      migration_markdown: migrationMarkdown,
+      retirement_at: retirementAt,
+    };
   }
 
   return entry;
@@ -445,13 +487,21 @@ export function applyCustomRegistryProvider(
     }
   }
 
-  for (const [modelKey, model] of Object.entries(entry.models)) {
+  const modelEntries = Object.entries(entry.models);
+  for (const [modelKey, model] of modelEntries) {
     const aliasKey = `${providerKey}/${modelKey}`;
     const maxContextSize = resolveMaxContextSize(model);
     const capabilities = resolveCapabilities(model);
     const displayName =
       typeof model.name === 'string' && model.name.length > 0 ? model.name : model.id;
     const existing = isRecord(existingModels[aliasKey]) ? existingModels[aliasKey] : {};
+    const upgrade = model.upgrade;
+    const target =
+      upgrade === undefined
+        ? undefined
+        : modelEntries.find(([, candidate]) => candidate.id === upgrade.model);
+    const targetAlias =
+      target === undefined || target[1].id === model.id ? undefined : `${providerKey}/${target[0]}`;
 
     const remoteAlias: ManagedKimiModelAlias = {
       provider: providerKey,
@@ -461,6 +511,18 @@ export function applyCustomRegistryProvider(
       displayName,
       supportEfforts: model.support_efforts,
       defaultEffort: model.default_effort,
+      // `{model_from}` / `{model_to}` belong to the registry format, so store
+      // the final text: every client then renders the same explanation.
+      upgrade:
+        targetAlias === undefined || upgrade === undefined
+          ? undefined
+          : {
+              model: targetAlias,
+              migrationMarkdown: upgrade.migration_markdown
+                .replaceAll('{model_from}', model.id)
+                .replaceAll('{model_to}', upgrade.model),
+              retirementAt: upgrade.retirement_at ?? undefined,
+            },
     };
     existingModels[aliasKey] = mergeRefreshedModelAlias(
       existing,
@@ -502,6 +564,21 @@ export function removeCustomRegistryProvider(
 }
 
 /**
+ * The replacement alias that a stored model alias declared through registry
+ * `upgrade` metadata. Registries retire a model by dropping it after declaring
+ * this, so callers follow it when the alias it belongs to disappears.
+ */
+export function declaredUpgradeTarget(
+  config: ManagedKimiConfigShape,
+  alias: string | undefined,
+): string | undefined {
+  const model = alias === undefined ? undefined : config.models?.[alias];
+  return isRecord(model) && isRecord(model['upgrade'])
+    ? nonEmptyString(model['upgrade']['model'])
+    : undefined;
+}
+
+/**
  * Surfaces the credential env var each entry declares via its `env` field, as
  * `{ [entry.id]: varName }` — a hint only. The binding is never applied
  * automatically: the registry controls both the variable name and the endpoint
@@ -527,6 +604,7 @@ export function credentialEnvHints(
 export interface CustomRegistryRemoval {
   readonly prior: Readonly<Record<string, unknown>>;
   readonly previousDefault: string | undefined;
+  readonly previousDefaultUpgrade: string | undefined;
   readonly previousDefaultProvider: string | undefined;
 }
 
@@ -538,7 +616,8 @@ export interface CustomRegistryRemoval {
  * linger. The returned snapshot is captured BEFORE anything is removed — pass
  * it to `applyCustomRegistryEntries` so its provenance check can preserve
  * hand-edited `apiKeyEnv` declarations and its defaults restore still sees the
- * pre-removal `defaultModel`/`defaultProvider`.
+ * pre-removal `defaultModel` (with its declared `upgrade` target) and
+ * `defaultProvider`.
  */
 export function removeCustomRegistryEntries(
   config: ManagedKimiConfigShape,
@@ -549,6 +628,7 @@ export function removeCustomRegistryEntries(
   const removal: CustomRegistryRemoval = {
     prior: { ...config.providers },
     previousDefault: config.defaultModel,
+    previousDefaultUpgrade: declaredUpgradeTarget(config, config.defaultModel),
     previousDefaultProvider: config['defaultProvider'] as string | undefined,
   };
   for (const [providerId, provider] of Object.entries(config.providers)) {
@@ -615,7 +695,9 @@ export function customRegistryReplacementKeys(
  * provenance check is the single mechanism that preserves a hand-edited
  * `apiKeyEnv`. Defaults (`defaultModel`/`defaultProvider`) that still resolve
  * after the rebuild are restored from the snapshot; a `defaultModel` left
- * dangling is cleared (with `thinking`, mirroring the refresh path).
+ * dangling moves to the replacement it declared through `upgrade` when that
+ * still resolves, keeping `thinking`, and is cleared together with `thinking`
+ * otherwise (mirroring the refresh path).
  */
 export function applyCustomRegistryEntries(
   config: ManagedKimiConfigShape,
@@ -633,10 +715,9 @@ export function applyCustomRegistryEntries(
     applyCustomRegistryProvider(config, entry, source, r.prior);
   }
 
-  config.defaultModel =
-    r.previousDefault !== undefined && config.models?.[r.previousDefault] !== undefined
-      ? r.previousDefault
-      : undefined;
+  config.defaultModel = [r.previousDefault, r.previousDefaultUpgrade].find(
+    (alias) => alias !== undefined && config.models?.[alias] !== undefined,
+  );
   config['defaultProvider'] =
     r.previousDefaultProvider !== undefined &&
     config.providers[r.previousDefaultProvider] !== undefined
