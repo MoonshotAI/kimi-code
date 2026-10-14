@@ -127,7 +127,7 @@ function nativeArtifacts(f) {
 }
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
-test('npm success followed by native failure can rerun from saved inputs without republishing npm', () => {
+await test('npm success followed by native failure can rerun from saved inputs without republishing npm', () => {
   const f=fixture();prepare(f);success(run(f,'npm'));
   assert.notEqual(run(f,'finish').status,0);
   rmSync(join(f.dir,'.release-inputs'),{recursive:true});rmSync(join(f.dir,'release-inputs.tar.gz'));
@@ -142,14 +142,14 @@ test('npm success followed by native failure can rerun from saved inputs without
 
 
 
-test('registry conflicts, authentication failures and newer latest stop publishing', () => {
+await test('registry conflicts, authentication failures and newer latest stop publishing', () => {
   for(const state of [{npm:{[`${cli.name}@${cli.version}`]:'wrong'}},{registryError:'E403'},{latest:{[cli.name]:'9.0.0'}}]) {
     const f=fixture();prepare(f);f.update(state);assert.notEqual(run(f,'npm').status,0);
     assert.equal(f.state().calls.filter(c=>c[0]==='npm'&&c[1]==='publish').length,0);
   }
 });
 
-test('tag conflicts, failed CI, pending changesets, stale plans and main are rejected', () => {
+await test('tag conflicts, failed CI, pending changesets, stale plans and main are rejected', () => {
   const f=fixture();f.update({ci:'failure'});assert.notEqual(run(f,'check').status,0);
   f.update({tags:{[`${cli.name}@${cli.version}`]:'b'.repeat(40)}});assert.notEqual(run(f,'restore').status,0);
   assert.notEqual(run(f,'check',{GITHUB_REF_NAME:'main',GITHUB_REF:'refs/heads/main'}).status,0);
@@ -157,7 +157,7 @@ test('tag conflicts, failed CI, pending changesets, stale plans and main are rej
   rmSync(join(f.dir,'.changeset/fix.md'));writeFileSync(join(f.dir,cli.path,'package.json'),JSON.stringify({...cli,version:'9.0.0'}));assert.match(run(f,'restore').stderr,/Stale/);
 });
 
-test('missing or corrupt native assets never complete a release', () => {
+await test('missing or corrupt native assets never complete a release', () => {
   const f=fixture();prepare(f);success(run(f,'npm'));nativeArtifacts(f);
   writeFileSync(join(f.dir,'dist-native-release/kimi-code-win32-x64.zip'),'corrupt');
   assert.match(run(f,'finish').stderr,/checksum/);
@@ -166,7 +166,7 @@ test('missing or corrupt native assets never complete a release', () => {
   assert.match(run(f,'finish').stderr,/Incomplete/);
 });
 
-test('tampered saved inputs stop restoration and native catalog reuse', () => {
+await test('tampered saved inputs stop restoration and native catalog reuse', () => {
   const f=fixture();prepare(f);writeFileSync(join(f.dir,'remote/release-inputs.tar.gz'),'bad');
   assert.match(run(f,'restore').stderr,/checksum mismatch/);
   assert.match(run(f,'catalog').stderr,/checksum mismatch/);
@@ -174,7 +174,7 @@ test('tampered saved inputs stop restoration and native catalog reuse', () => {
 
 
 
-test('versioning records only newly changed packages, excluding previously published plans', () => {
+await test('versioning records only newly changed packages, excluding previously published plans', () => {
   const f=fixture();writeFileSync(join(f.dir,'.changeset/fix.md'),'fix');
   const result=spawnSync(process.execPath,[versionScript],{cwd:f.dir,env:f.env,encoding:'utf8'});success(result);
   const plan=JSON.parse(readFileSync(join(f.dir,'.changeset/release-plan.json')));
@@ -183,7 +183,7 @@ test('versioning records only newly changed packages, excluding previously publi
 
 
 
-test('interrupted native upload resumes while the release stays draft', () => {
+await test('interrupted native upload resumes while the release stays draft', () => {
   const f=fixture();prepare(f);success(run(f,'npm'));nativeArtifacts(f);
   f.update({failAsset:'kimi-code-linux-x64.zip'});assert.notEqual(run(f,'finish').status,0);
   assert.equal(f.state().releases[`${cli.name}@${cli.version}`].draft,true);
@@ -196,14 +196,14 @@ test('interrupted native upload resumes while the release stays draft', () => {
 
 
 
-test('a later npm release does not prevent repairing an already published older native version', () => {
+await test('a later npm release does not prevent repairing an already published older native version', () => {
   const f=fixture();prepare(f);success(run(f,'npm'));f.update({latest:{[cli.name]:'9.0.0'}});
   success(run(f,'restore'));success(run(f,'npm'));nativeArtifacts(f);success(run(f,'finish'));
   assert.equal(f.state().calls.filter(c=>c[0]==='npm'&&c[1]==='publish').length,1);
 });
 
 
-test('missing saved inputs after npm publication stop recovery before regeneration', () => {
+await test('missing saved inputs after npm publication stop recovery before regeneration', () => {
   const f=fixture();prepare(f);success(run(f,'npm'));
   const releases=f.state().releases;
   releases[`${cli.name}@${cli.version}`].assets=[];
@@ -214,14 +214,14 @@ test('missing saved inputs after npm publication stop recovery before regenerati
   assert.equal(f.state().calls.filter(c=>c[0]==='pnpm'&&c.includes('pack')).length,1);
 });
 
-test('non-CLI public plans are rejected before any external writes', () => {
+await test('non-CLI public plans are rejected before any external writes', () => {
   for (const packages of [[sdk], [{...sdk,private:true}], [cli,sdk]]) {
     const f=fixture(packages);assert.notEqual(run(f,'restore').status,0);
     assert.equal(f.state().calls.length,0);
   }
 });
 
-test('completed public releases skip recovery without replacing assets', () => {
+await test('completed public releases skip recovery without replacing assets', () => {
   const f=fixture();prepare(f);success(run(f,'npm'));nativeArtifacts(f);success(run(f,'finish'));
   const before=f.state().calls.length;
   rmSync(join(f.dir,'.release-inputs'),{recursive:true});
@@ -230,7 +230,7 @@ test('completed public releases skip recovery without replacing assets', () => {
   assert.equal(f.state().calls.slice(before).some(c=>c[0]==='npm'||c[2]==='upload'||c[2]==='download'||c[2]==='edit'),false);
 });
 
-test('extension publishes only its planned release version and rejects main or stale plans', () => {
+await test('extension publishes only its planned release version and rejects main or stale plans', () => {
   const script=fileURLToPath(new URL('./vscode-release-plan.mjs',import.meta.url));
   const vscode={name:'kimi-code',version:'0.8.2',path:'apps/vscode',private:true};
   const invoke=(f,env={})=>spawnSync(process.execPath,[script],{cwd:f.dir,env:{...f.env,...env},encoding:'utf8'});
