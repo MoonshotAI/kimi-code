@@ -18,7 +18,7 @@ import { resolveCommandPath } from '#/utils/process/resolve-command';
 const STATUS_TTL_MS = 30_000;
 const HEAD_POLL_INTERVAL_MS = 2_000;
 const PULL_REQUEST_TTL_MS = 60_000;
-const SPAWN_TIMEOUT_MS = 500;
+const SPAWN_TIMEOUT_MS = 2_000;
 const PR_SPAWN_TIMEOUT_MS = 5_000;
 const GIT_MAX_BUFFER = 4 * 1024 * 1024;
 

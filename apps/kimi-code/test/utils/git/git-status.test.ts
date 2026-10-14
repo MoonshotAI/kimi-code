@@ -266,7 +266,7 @@ describe('git status cache', () => {
     expect(mocks.execFile).toHaveBeenCalledWith(
       '/usr/bin/git',
       ['-C', '/tmp/repo', 'rev-parse', '--absolute-git-dir'],
-      expect.objectContaining({ timeout: 500 }),
+      expect.objectContaining({ timeout: 2_000 }),
       expect.any(Function),
     );
     expect(mocks.execFile).toHaveBeenCalledWith(
