@@ -422,7 +422,7 @@ These endpoints manage the two halves of model configuration — the [providers]
 
 Lists every configured model alias across all providers.
 
-On success, `data.items` is an array of `{ provider, model, display_name?, max_context_size, capabilities?, support_efforts?, default_effort? }`: `model` is the alias id (`provider_id/model` for provider-managed aliases, otherwise the bare key), `provider` the owning provider id, `max_context_size` the context window in tokens, and `capabilities` / `support_efforts` / `default_effort` describe capability flags and Thinking-mode effort support.
+On success, `data.items` is an array of `{ provider, model, display_name?, max_context_size, capabilities?, support_efforts?, default_effort?, upgrade? }`: `model` is the alias id (`provider_id/model` for provider-managed aliases, otherwise the bare key), `provider` the owning provider id, `max_context_size` the context window in tokens, and `capabilities` / `support_efforts` / `default_effort` describe capability flags and Thinking-mode effort support. For custom-registry models, `upgrade` may contain `{ model, migration_markdown, retirement_at? }` to guide users toward a replacement model; placeholders in `migration_markdown` are already replaced with the model ids.
 
 #### `POST /api/v1/models/{model_id}:set_default`
 
@@ -530,13 +530,13 @@ On success the server answers 204 with no body — the status line itself report
 
 #### `POST /api/v1/providers/{provider_id}:refresh`
 
-Re-discovers one provider's model metadata from its upstream source and rewrites the provider's aliases. Providers with a static model source are reported `unchanged` without any network call. When at least one provider's aliases change, the server broadcasts the global `event.model_catalog.changed` event.
+Re-discovers one provider's model metadata from its upstream source and rewrites the provider's aliases. Providers with a static model source are reported `unchanged` without any network call. When at least one provider's aliases or managed model metadata changes, the server broadcasts the global `event.model_catalog.changed` event.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `provider_id` | path | string | **Required.** Provider id |
 
-On success, `data` is a refresh report: `changed` is an array of `{ provider_id, provider_name, added, removed }` (added/removed alias counts), `unchanged` is an array of provider ids with no diff, and `failed` is an array of `{ provider, reason }`.
+On success, `data` is a refresh report: `changed` is an array of `{ provider_id, provider_name, added, removed }` (added/removed alias counts), `unchanged` is an array of provider ids with no diff, and `failed` is an array of `{ provider, reason }`. When a refresh finds that the registry dropped the current default model and that model had declared an `upgrade` replacement, `data` also carries an optional `retired_default`: `{ from, to, from_display_name }` — the default model has been redirected to `to`, open sessions still bound to `from` have been moved to `to` as well, and `from_display_name` is the dropped model's display name for notices. The same field appears on the `event.model_catalog.changed` event.
 
 - `40001`: malformed or unsupported action suffix in the path
 - `40412`: provider not found

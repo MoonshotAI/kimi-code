@@ -10,7 +10,7 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { ConfigRegistry } from '#/app/config/configService';
 import { IEventService } from '#/app/event/event';
-import { IProviderDiscoveryService } from '#/app/kosongConfig/discovery';
+import { IProviderDiscoveryService, type RetiredModel } from '#/app/kosongConfig/discovery';
 import '#/app/kosongConfig/discoveryService';
 import { MODEL_CATALOG_SECTION } from '#/app/kosongConfig/configSection';
 import { IKosongConfigService } from '#/app/kosongConfig/kosongConfig';
@@ -198,6 +198,190 @@ describe('refreshProviderModels modelSource short-circuit', () => {
     } finally {
       host.dispose();
     }
+  });
+
+  it('persists upgrade metadata and publishes an ordinary catalog change', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            acme: {
+              id: 'acme',
+              name: 'Acme',
+              api: 'https://acme.example.test/v1',
+              type: 'openai',
+              models: {
+                current: {
+                  id: 'current',
+                  upgrade: {
+                    model: 'next',
+                    migration_markdown: 'Use next',
+                    retirement_at: '2030-01-01T00:00:00Z',
+                  },
+                },
+                next: { id: 'next', default_effort: 'high' },
+              },
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { host, config, discovery, events, models } = await createHost({
+      providers: {
+        ...staticProviders,
+        acme: {
+          type: 'openai',
+          apiKey: 'sk-acme',
+          source: { kind: 'apiJson', url: 'https://registry.example.test/api.json', apiKey: 'sk-registry' },
+        },
+      },
+      models: {
+        ...staticModels,
+        'acme/current': {
+          provider: 'acme',
+          model: 'current',
+          maxContextSize: 131072,
+          capabilities: ['tool_use'],
+          displayName: 'current',
+        },
+        'acme/next': {
+          provider: 'acme',
+          model: 'next',
+          maxContextSize: 131072,
+          capabilities: ['tool_use'],
+          displayName: 'next',
+          defaultEffort: 'high',
+        },
+      },
+      defaultModel: 's1',
+      thinking: { enabled: true },
+    });
+    try {
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+      expect(result).toEqual({
+        changed: [{ provider_id: 'acme', provider_name: 'Acme', added: 0, removed: 0 }],
+        unchanged: [],
+        failed: [],
+      });
+      expect(models.list()['acme/current']?.upgrade).toEqual({
+        model: 'acme/next',
+        migrationMarkdown: 'Use next',
+        retirementAt: '2030-01-01T00:00:00Z',
+      });
+      expect(config.get<string>('defaultModel')).toBe('s1');
+      expect(events.published).toEqual([
+        expect.objectContaining({ type: 'event.model_catalog.changed', payload: result }),
+      ]);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  describe('when the registry drops the default model', () => {
+    function stubRegistryModels(models: Record<string, unknown>): void {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          async () =>
+            new Response(
+              JSON.stringify({
+                acme: {
+                  id: 'acme',
+                  name: 'Acme',
+                  api: 'https://acme.example.test/v1',
+                  type: 'openai',
+                  models,
+                },
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } },
+            ),
+        ),
+      );
+    }
+
+    const retiringSections: Record<string, unknown> = {
+      providers: {
+        ...staticProviders,
+        acme: {
+          type: 'openai',
+          apiKey: 'sk-acme',
+          source: { kind: 'apiJson', url: 'https://registry.example.test/api.json', apiKey: 'sk-registry' },
+        },
+      },
+      models: {
+        ...staticModels,
+        'acme/current': {
+          provider: 'acme',
+          model: 'current',
+          maxContextSize: 131072,
+          capabilities: ['tool_use'],
+          displayName: 'Current',
+          supportEfforts: ['low', 'high'],
+          defaultEffort: 'high',
+          upgrade: { model: 'acme/next', migrationMarkdown: 'Use next' },
+          overrides: { displayName: 'Pinned Current' },
+        },
+        'acme/next': {
+          provider: 'acme',
+          model: 'next',
+          maxContextSize: 131072,
+          capabilities: ['tool_use'],
+          displayName: 'next',
+          defaultEffort: 'high',
+        },
+      },
+      defaultModel: 'acme/current',
+      thinking: { enabled: true },
+    };
+
+    it('moves the default to the declared replacement and reports the retirement', async () => {
+      stubRegistryModels({ next: { id: 'next', default_effort: 'high' } });
+      const { host, config, discovery, events } = await createHost(retiringSections);
+      const retirements: RetiredModel[] = [];
+      discovery.onDidRetireModel((event) => retirements.push(event));
+      try {
+        const result = await discovery.refreshProviderModels({ scope: 'all' });
+        expect(result).toEqual({
+          changed: [{ provider_id: 'acme', provider_name: 'Acme', added: 0, removed: 1 }],
+          unchanged: [],
+          failed: [],
+          retired_default: {
+            from: 'acme/current',
+            to: 'acme/next',
+            from_display_name: 'Pinned Current',
+          },
+        });
+        expect(config.get<string>('defaultModel')).toBe('acme/next');
+        expect(config.get('thinking')).toEqual({ enabled: true });
+        expect(events.published).toEqual([
+          expect.objectContaining({ type: 'event.model_catalog.changed', payload: result }),
+        ]);
+        expect(retirements).toEqual([{ from: 'acme/current', to: 'acme/next' }]);
+        expect(discovery.retiredModelReplacement('acme/current')).toBe('acme/next');
+        expect(discovery.retiredModelReplacement('acme/next')).toBeUndefined();
+      } finally {
+        host.dispose();
+      }
+    });
+
+    it('clears the default without reporting a retirement when the replacement is gone too', async () => {
+      stubRegistryModels({ other: { id: 'other' } });
+      const { host, config, discovery } = await createHost(retiringSections);
+      const retirements: RetiredModel[] = [];
+      discovery.onDidRetireModel((event) => retirements.push(event));
+      try {
+        const result = await discovery.refreshProviderModels({ scope: 'all' });
+        expect(result.retired_default).toBeUndefined();
+        expect(retirements).toEqual([]);
+        expect(config.get<string>('defaultModel')).toBeUndefined();
+        expect(config.get('thinking')).toBeUndefined();
+        expect(discovery.retiredModelReplacement('acme/current')).toBeUndefined();
+      } finally {
+        host.dispose();
+      }
+    });
   });
 
   it('throws provider.not_found for an unknown scoped provider', async () => {
