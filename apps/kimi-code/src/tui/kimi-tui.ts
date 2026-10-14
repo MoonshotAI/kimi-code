@@ -1904,6 +1904,7 @@ export class KimiTUI {
   handleTurnEnded(event: TurnEndedEvent): void {
     this.staging.handleTurnEnded(event);
     this.surveyController.notifyTurnEnded(event.traceId);
+    this.state.footer.refreshGitStatus();
   }
 
   releaseStagingMedia(mediaAttachmentIds: readonly number[]): void {
