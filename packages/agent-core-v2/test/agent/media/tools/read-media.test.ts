@@ -719,8 +719,38 @@ describe('ReadMediaFileTool', () => {
     expect(videoUploader).toHaveBeenCalledOnce();
     expect(videoUploader).toHaveBeenCalledWith(
       expect.objectContaining({ mimeType: 'video/mp4', filename: 'clip.mp4' }),
+      { signal: expect.any(AbortSignal) },
     );
     expect(parts[1]).toEqual(uploadResult);
+  });
+
+  it('passes the execution abort signal to the video uploader', async () => {
+    const controller = new AbortController();
+    const videoUploader = vi.fn<VideoUploader>((_input, options) =>
+      new Promise((_resolve, reject) => {
+        options?.signal?.addEventListener('abort', () => {
+          reject(new Error('upload cancelled'));
+        }, {
+          once: true,
+        });
+      }),
+    );
+    const tool = makeTool(
+      { '/workspace/clip.mp4': { data: mp4Buffer() } },
+      capabilities(),
+      videoUploader,
+    );
+    const execution = await tool.resolveExecution({ path: '/workspace/clip.mp4' });
+    if (!('execute' in execution)) throw new Error('Expected an executable tool call');
+
+    const pending = execution.execute({ turnId: 1, toolCallId: 'call_media', signal: controller.signal });
+    await vi.waitFor(() => {
+      expect(videoUploader).toHaveBeenCalledOnce();
+    });
+    controller.abort();
+
+    expect(videoUploader.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+    await expect(pending).rejects.toThrow('upload cancelled');
   });
 
   it('falls back to an inline base64 video part when the upload fails', async () => {

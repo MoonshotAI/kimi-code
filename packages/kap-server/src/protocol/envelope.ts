@@ -28,6 +28,7 @@ export function errEnvelope(
   msg: string,
   requestId: string,
   stack?: string,
+  details?: unknown,
 ): Envelope<null> {
-  return { code, msg, data: null, request_id: requestId, stack };
+  return { code, msg, data: null, request_id: requestId, stack, details };
 }

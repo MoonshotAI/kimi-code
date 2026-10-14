@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 72 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 73 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -66,6 +66,7 @@
 //     llm.requestTrace                                src/agent/llmRequester/llmRequestOps.ts
 //     llmRequester.emittedThinkingEffortWarnings      src/agent/llmRequester/llmRequesterService.ts
 //     llmRequester.lastConfigLogSignature             src/agent/llmRequester/llmRequesterService.ts
+//     llmRequester.lastTurnRequest                    src/agent/llmRequester/llmRequesterService.ts
 //     llmRequester.mediaDegradedTurns                 src/agent/llmRequester/llmRequesterService.ts
 //     llmRequester.mediaStrippedTurns                 src/agent/llmRequester/llmRequesterService.ts
 //     llmRequester.turnConfigs                        src/agent/llmRequester/llmRequesterService.ts
@@ -972,6 +973,15 @@ export interface AgentStateSnapshot {
   // src/agent/llmRequester/llmRequesterService.ts
   'llmRequester.emittedThinkingEffortWarnings': Set<string>;
   'llmRequester.lastConfigLogSignature': string | undefined;
+  'llmRequester.lastTurnRequest': /* AgentLLMTurnRequestSnapshot — packages/agent-core-v2/src/agent/llmRequester/llmRequester.ts */ {
+    readonly modelAlias: string;
+    readonly contextRevision: number;
+    readonly toolsHash: string;
+    readonly systemPromptHash: string;
+    readonly inputTokens?: number;
+    readonly startedAt: number;
+    readonly finishedAt: number;
+  } | undefined;
   'llmRequester.mediaDegradedTurns': Set<number>;
   'llmRequester.mediaStrippedTurns': Map<number, /* MediaStripSnapshot — packages/agent-core-v2/src/agent/contextProjector/contextProjector.ts */ {
     readonly "__@mediaStripSnapshotBrand": undefined;
