@@ -5,6 +5,7 @@ import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IEventBus } from '#/app/event/eventBus';
+import { ILogService } from '#/_base/log/log';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { isToolActive } from '#/agent/toolPolicy/evaluate';
@@ -28,6 +29,7 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
     @ISessionToolPolicyGate private readonly toolPolicyGate: ISessionToolPolicyGate,
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @IEventBus eventBus: IEventBus,
+    @ILogService private readonly log: ILogService,
     @AgentToolContribution private readonly contributions: CollectionView<AgentToolContribution>,
   ) {
     super();
@@ -63,14 +65,35 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
         const { id, options } = record;
         const source = options.source ?? 'builtin';
         if (this.toolRegistry.resolve(options.name) !== undefined) continue;
-        if (!this.runtimeAllows(record)) continue;
-        if (!isToolActive(workspaceVeto, options.name, source)) continue;
+        if (!this.runtimeAllows(record)) {
+          this.log.debug('tool activation skipped: required runtime capability unavailable', {
+            tool: options.name,
+            required: record.options.requiredRuntimeCapabilities,
+          });
+          continue;
+        }
+        if (!isToolActive(workspaceVeto, options.name, source)) {
+          this.log.debug('tool activation skipped: disabled by workspace tool policy', {
+            tool: options.name,
+          });
+          continue;
+        }
         const activeByProfile =
           options.name === SELECT_TOOLS_TOOL_NAME
             ? isToolActive(disclosurePolicy, options.name, source)
             : isToolActive(policy, options.name, source);
-        if (!activeByProfile) continue;
-        if (options.when !== undefined && !options.when(accessor)) continue;
+        if (!activeByProfile) {
+          this.log.debug('tool activation skipped: inactive under agent profile tool policy', {
+            tool: options.name,
+          });
+          continue;
+        }
+        if (options.when !== undefined && !options.when(accessor)) {
+          this.log.debug('tool activation skipped: when() precondition not met', {
+            tool: options.name,
+          });
+          continue;
+        }
         const tool = accessor.get(id);
         const registration = this.toolRegistry.register(tool, {
           source: options.source,
@@ -97,6 +120,7 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
   private deactivateRecord(record: AgentToolContribution): void {
     const registration = this.registrations.get(record);
     if (registration === undefined) return;
+    this.log.debug('tool deactivated', { tool: record.options.name });
     this.registrations.delete(record);
     registration.dispose();
   }

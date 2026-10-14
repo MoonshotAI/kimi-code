@@ -51,6 +51,7 @@ import type { ISessionWorkspaceContext } from '#/session/workspaceContext/worksp
 import type { WorkspaceConfig } from '#/tool/path-access';
 import { sniffImageDimensions } from '#/agent/media/file-type';
 import { stubAgentContext } from '../../agentContext/stubs';
+import { stubLog } from '../../../_base/log/stubs';
 
 const WORKSPACE: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: [] };
 
@@ -925,6 +926,7 @@ describe('AgentMediaToolsRegistrar', () => {
       workspaceCtx,
       recordingTelemetry([]),
       new AgentStateService(),
+      stubLog(),
       undefined,
       attachmentStore,
     );
@@ -1064,7 +1066,7 @@ describe('AgentMediaToolsRegistrar', () => {
     expect(registry.resolve('ReadMediaFile')).toBe(first);
   });
 
-  it('survives an unconfigured bound alias and recovers when it resolves again', () => {
+  it('keeps the existing registration while the bound model capabilities are unknown', () => {
     const unexpected: unknown[] = [];
     setUnexpectedErrorHandler((err) => unexpected.push(err));
     try {
@@ -1077,6 +1079,16 @@ describe('AgentMediaToolsRegistrar', () => {
       healAlias('stale-model');
       bindModel('stale-model', capabilities({ image_in: true, video_in: true }));
       expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+      expect(unexpected).toHaveLength(0);
+
+      breakAlias('stale-model');
+      bindModel('stale-model', UNKNOWN_CAPABILITY);
+      expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+      expect(unexpected).toHaveLength(0);
+
+      healAlias('stale-model');
+      bindModel('stale-model', capabilities({ image_in: false, video_in: false }));
+      expect(registry.resolve('ReadMediaFile')).toBeUndefined();
       expect(unexpected).toHaveLength(0);
     } finally {
       resetUnexpectedErrorHandler();

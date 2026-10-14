@@ -24,6 +24,8 @@ import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import {
   ToolAccesses,
   isMcpToolName,
@@ -69,6 +71,7 @@ import {
   buildSubagentModelDescriptions,
   exposesSubagentModelChoice,
   formatSubagentTimeoutDescription,
+  injectSubagentTypeEnum,
   isSubagentModelForced,
   resolveSubagentModelPool,
   resolveSubagentTimeoutMs,
@@ -107,13 +110,22 @@ export class SubagentTool implements ISubagentTool {
   declare readonly _serviceBrand: undefined;
   readonly name: string = 'Agent';
 
+  private parametersCache: { readonly key: string; readonly value: Record<string, unknown> } | undefined;
+
   get parameters(): Record<string, unknown> {
-    const parameters = exposesSubagentModelChoice(this.config)
-      ? SUBAGENT_TOOL_PARAMETERS
-      : SUBAGENT_TOOL_PARAMETERS_NO_MODEL;
-    return this.flags.enabled(SUBAGENT_FORK_FLAG_ID)
-      ? parameters
-      : stripSubagentForkParameter(parameters);
+    const modelChoiceExposed = exposesSubagentModelChoice(this.config);
+    const forkEnabled = this.flags.enabled(SUBAGENT_FORK_FLAG_ID);
+    const subagentTypes = forkEnabled
+      ? []
+      : this.dispatchableProfiles().map((profile) => profile.name);
+    const key = [String(modelChoiceExposed), String(forkEnabled), ...subagentTypes].join('');
+    if (this.parametersCache?.key === key) return this.parametersCache.value;
+    const base = modelChoiceExposed ? SUBAGENT_TOOL_PARAMETERS : SUBAGENT_TOOL_PARAMETERS_NO_MODEL;
+    const value = forkEnabled
+      ? base
+      : injectSubagentTypeEnum(stripSubagentForkParameter(base), subagentTypes);
+    this.parametersCache = { key, value };
+    return value;
   }
 
   private readonly callerAgentId: string;
@@ -137,7 +149,9 @@ export class SubagentTool implements ISubagentTool {
     @IConfigService private readonly config: IConfigService,
     @IFlagService private readonly flags: IFlagService,
     @ISessionNotify private readonly notify: ISessionNotify,
+    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @AgentToolContribution private readonly contributions: CollectionView<AgentToolContribution>,
+    @ISessionMediaStore private readonly attachmentStore?: ISessionMediaStore,
   ) {
     this.callerAgentId = scopeContext.agentId;
     this.canRunInBackground = () =>
@@ -158,16 +172,13 @@ export class SubagentTool implements ISubagentTool {
       description += `\n\n${AGENT_FORK_DESCRIPTION}`;
     }
     const own = this.profile.data();
-    const catalogProfiles = this.catalogProfiles();
-    const allowlist = this.effectiveAllowlist(own, catalogProfiles);
-    const profiles =
-      allowlist === undefined
-        ? catalogProfiles
-        : catalogProfiles.filter((profile) => allowlist.includes(profile.name));
+    const profiles = this.dispatchableProfiles();
     const notifyAvailable = this.notify.enabled;
     const knownTools = this.knownToolReferences();
     const available = new Set(knownTools.map((ref) => ref.name));
-    const anyMediaModel = this.anyMediaCapableModel();
+    const mediaOfferable =
+      this.anyMediaCapableModel() &&
+      (this.runtime.isAvailable(['fs']) || this.attachmentStore !== undefined);
     const typeLines = buildProfileDescriptions(
       profiles.map((profile) => ({
         ...profile,
@@ -176,7 +187,7 @@ export class SubagentTool implements ISubagentTool {
             (name !== NOTIFY_USER_TOOL_NAME || notifyAvailable) &&
             (isToolNamePattern(name) ||
               (name === READ_MEDIA_FILE_TOOL_NAME
-                ? anyMediaModel && this.toolPolicy.isToolActiveForProfile(profile, name, 'builtin')
+                ? mediaOfferable && this.toolPolicy.isToolActiveForProfile(profile, name, 'builtin')
                 : available.has(name))),
         ),
       })),
@@ -189,12 +200,21 @@ export class SubagentTool implements ISubagentTool {
     }
     const modelLines = buildSubagentModelDescriptions(
       this.config,
-      this.profile.data().modelAlias,
+      own.modelAlias,
     );
     if (modelLines !== undefined) {
       description += `\n\n${modelLines}`;
     }
     return description;
+  }
+
+  private dispatchableProfiles(): readonly AgentProfile[] {
+    const own = this.profile.data();
+    const catalogProfiles = this.catalogProfiles();
+    const allowlist = this.effectiveAllowlist(own, catalogProfiles);
+    return allowlist === undefined
+      ? catalogProfiles
+      : catalogProfiles.filter((profile) => allowlist.includes(profile.name));
   }
 
   private catalogProfiles(): readonly AgentProfile[] {

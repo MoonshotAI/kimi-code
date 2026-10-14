@@ -16,6 +16,7 @@ import {
 import { createServices } from '#/_base/di/test';
 import { IEventBus } from '#/app/event/eventBus';
 import { Emitter, Event } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
@@ -39,6 +40,7 @@ import {
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import type { RuntimeCapability } from '#/runtime/runtime';
 import type { AgentTool, ToolExecution } from '#/tool/toolContract';
+import { stubLog } from '../../_base/log/stubs';
 import '#/agent/tools/agent/agentTool';
 import '#/agent/tools/ask-user-question/askUserQuestionTool';
 import '#/agent/tools/edit/editTool';
@@ -180,6 +182,7 @@ describe('AgentToolActivationService', () => {
           },
           onDidChange: Event.None as Event<void>,
         } satisfies ISessionToolPolicyGate);
+        reg.defineInstance(ILogService, stubLog());
         reg.define(IAgentToolRegistryService, AgentToolRegistryService);
         reg.define(IAgentToolActivationService, AgentToolActivationService);
         reg.define(IAlphaTool, AlphaTool);
@@ -473,6 +476,7 @@ describe('AgentToolActivationService', () => {
       return [
         [IAgentProfileService, { data: () => profileData as ProfileData }],
         [IEventBus, { subscribe: () => toDisposable(() => {}) }],
+        [ILogService, stubLog()],
         [
           IAgentRuntimeService,
           {

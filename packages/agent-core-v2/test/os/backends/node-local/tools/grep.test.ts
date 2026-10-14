@@ -24,6 +24,7 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
+import { ILogService } from '#/_base/log/log';
 import type { PathClass } from '#/_base/execEnv/environmentProbe';
 import {
   PathSecurityError,
@@ -48,6 +49,7 @@ import { FakeRuntime } from '#/runtime/fakeRuntime';
 import { ensureRgPath } from '#/os/backends/node-local/tools/rgLocator';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
 import { recordingTelemetry, type TelemetryRecord } from '../../../../app/telemetry/stubs';
+import { stubLog } from '../../../../_base/log/stubs';
 import { registerStateServices } from '../../../../state/stubs';
 
 vi.mock('#/os/backends/node-local/tools/rgLocator', () => ({
@@ -360,6 +362,7 @@ describe('GrepTool', () => {
           reg.define(IGrepTool, ProductionGrepTool);
           reg.define(IAgentToolRegistryService, AgentToolRegistryService);
           reg.define(IAgentToolActivationService, AgentToolActivationService);
+          reg.defineInstance(ILogService, stubLog());
           reg.defineInstance(ISessionToolPolicyGate, {
             _serviceBrand: undefined,
             disabledTools: [],

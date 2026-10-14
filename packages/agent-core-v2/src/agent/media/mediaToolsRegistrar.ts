@@ -8,6 +8,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { isUnknownCapability } from '#/llm-adapter/contract/capability';
 import { type ModelRequester } from '#/llm-adapter/model/model-requester';
 import { runWithCredentialRecovery } from '#/llm-adapter/model/credential-recovery';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
@@ -15,7 +16,9 @@ import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { ILogService } from '#/_base/log/log';
 import { extendWorkspaceWithSkillRoots } from '#/tool/path-access';
+import type { Runtime } from '#/runtime/runtime';
 
 import { IAgentMediaToolsRegistrar } from './mediaTools';
 import { createVideoUploader, registerMediaTools } from './registerMediaTools';
@@ -40,6 +43,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
+    @ILogService private readonly log: ILogService,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
     @ISessionMediaStore private readonly attachmentStore?: ISessionMediaStore,
   ) {
@@ -71,6 +75,12 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
   private refresh(): void {
     const capabilities = this.profile.getModelCapabilities();
     const modelAlias = this.profile.getModel();
+    if (isUnknownCapability(capabilities) && this.registration !== undefined) {
+      this.log.debug('media tools registration kept: bound model capabilities are unknown', {
+        model: modelAlias,
+      });
+      return;
+    }
     const hasRuntimeFs = this.runtime.isAvailable(['fs']);
     if (!hasRuntimeFs && this.attachmentStore === undefined) {
       const key = [
@@ -81,11 +91,27 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
       ].join('|');
       if (key === this.registeredKey) return;
       this.registeredKey = key;
+      if (this.registration !== undefined) {
+        this.log.debug('media tools unregistered: runtime unavailable and no attachment store', {
+          key,
+        });
+      }
       this.registration?.dispose();
       this.registration = undefined;
       return;
     }
-    const inspected = hasRuntimeFs ? this.runtime.inspect() : undefined;
+    let inspected: Runtime | undefined;
+    if (hasRuntimeFs) {
+      try {
+        inspected = this.runtime.inspect();
+      } catch (error) {
+        this.log.debug('media tools registration kept: runtime inspect failed', {
+          model: modelAlias,
+          error,
+        });
+        return;
+      }
+    }
     const identityKey = inspected === undefined ? 'session-attachments' : [
       inspected.identity.workspaceId,
       inspected.identity.runtimeId,
@@ -106,6 +132,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     if (key === this.registeredKey) return;
     this.registeredKey = key;
     this.registration?.dispose();
+    this.log.debug('media tools registration refreshed', { key });
     const workspaceCtx = this.workspaceCtx;
     const skillCatalog = this.skillCatalog;
     const runtime = this.runtime;
@@ -114,7 +141,11 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     if (model !== undefined) {
       try {
         requester = this.modelCatalog.getRequester(modelAlias);
-      } catch {
+      } catch (error) {
+        this.log.warn('media tools: failed to resolve model requester; video upload disabled', {
+          model: modelAlias,
+          error,
+        });
         requester = undefined;
       }
     }

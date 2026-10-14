@@ -391,6 +391,23 @@ export function stripSubagentForkParameter(
   return next;
 }
 
+export function injectSubagentTypeEnum(
+  parameters: Record<string, unknown>,
+  subagentTypes: readonly string[],
+): Record<string, unknown> {
+  const properties = parameters['properties'];
+  if (!isPlainObject(properties) || !('subagent_type' in properties)) return parameters;
+  const subagentType = properties['subagent_type'];
+  if (!isPlainObject(subagentType)) return parameters;
+  return {
+    ...parameters,
+    properties: {
+      ...properties,
+      subagent_type: { ...subagentType, enum: [...subagentTypes] },
+    },
+  };
+}
+
 export function wrapSubagentModelError(
   error: unknown,
   boundModel: string,
