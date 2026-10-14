@@ -1602,7 +1602,7 @@ describe('GlobalSearchService', () => {
       expect(page.items.some((h) => h.snippet.includes('resumed'))).toBe(true);
     });
 
-    it('paginates by keyset without duplicates or gaps after additive writes between pages', async () => {
+    it('paginates by keyset without duplicates or gaps under concurrent additive writes', async () => {
       const s1 = summary('s1', 'keyset', T1);
       const lines: string[] = [];
       for (let i = 0; i < 25; i++) lines.push(userLine(`苹果 doc ${i}`, T1 + i));
@@ -1620,8 +1620,6 @@ describe('GlobalSearchService', () => {
       expect(typeof decoded['g']).toBe('string');
       expect(decoded['g']).toMatch(/:\d+$/);
       expect(Array.isArray(decoded['b'])).toBe(true);
-
-      await settleSync(service);
 
       const more: string[] = [];
       for (let i = 25; i < 30; i++) more.push(`${userLine(`苹果 doc ${i}`, T1 + i)}\n`);
