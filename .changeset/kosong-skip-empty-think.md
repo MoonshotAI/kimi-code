@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Stop recording empty reasoning segments in conversations.
+Stop recording repeated empty reasoning segments in conversations.

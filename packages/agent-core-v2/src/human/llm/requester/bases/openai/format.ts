@@ -212,7 +212,7 @@ export function createOpenAIFormat(): OpenAIProtocolFormat {
     createStreamParser(options?: OpenAIStreamParserOptions) {
       const bufferedToolCalls = new Map<number | string, BufferedStreamToolCall>();
       let seenReasoningContent = false;
-      let emittedThink = false;
+      const emittedThinkKeys = new Set<string>();
 
       function convertStreamToolCall(
         toolCall: OpenAIRawStreamToolCallDelta,
@@ -304,8 +304,8 @@ export function createOpenAIFormat(): OpenAIProtocolFormat {
           if (reasoning.key === 'reasoning_content') {
             seenReasoningContent = true;
           }
-          if (reasoning.value || !emittedThink) {
-            emittedThink = true;
+          if (reasoning.value || !emittedThinkKeys.has(reasoning.key)) {
+            emittedThinkKeys.add(reasoning.key);
             sink.onDelta({
               type: 'think',
               think: reasoning.value,
