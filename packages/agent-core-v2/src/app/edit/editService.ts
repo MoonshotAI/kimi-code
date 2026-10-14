@@ -63,6 +63,9 @@ function notUniqueMessage(path: string, count: number): string {
 
 export class EditService {
   apply(model: TextModel, input: EditApplyInput): EditApplyResult {
+    if (input.old_string.length === 0) {
+      return { ok: false, error: 'old_string must not be empty.' };
+    }
     const count = model.countOccurrences(input.old_string);
     if (count === 0) return { ok: false, error: notFoundMessage(input.path) };
     if (!input.replace_all && count > 1) {

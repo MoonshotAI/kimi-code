@@ -879,4 +879,28 @@ describe('EditTool', () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it.each([false, true])(
+    'rejects an empty old_string at the service boundary (replace_all=%s)',
+    async (replaceAll) => {
+      const dir = await mkdtemp(join(tmpdir(), 'edit-empty-needle-'));
+      const file = join(dir, 'sample.txt');
+      await writeFile(file, 'alpha\nbeta\n');
+      try {
+        const service = new FileEditService(new HostFileSystem());
+        const result = await service.edit({
+          path: file,
+          displayPath: file,
+          old_string: '',
+          new_string: 'x',
+          replace_all: replaceAll,
+        });
+
+        expect(result.ok).toBe(false);
+        expect(await readFile(file, 'utf8')).toBe('alpha\nbeta\n');
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });
