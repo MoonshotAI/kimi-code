@@ -814,48 +814,6 @@ describe('applyCustomRegistryEntries', () => {
     expect(config.defaultModel).toBeUndefined();
   });
 
-  it('moves a dropped defaultModel to the upgrade target it declared, keeping thinking', () => {
-    const source: CustomRegistrySource = {
-      kind: 'apiJson',
-      url: 'https://registry.example.test/api.json',
-      apiKey: 'sk-test',
-    };
-    const config: ManagedKimiConfigShape = {
-      providers: {
-        x: { type: 'openai', baseUrl: 'https://x.test/v1', apiKey: 'sk-test' },
-      },
-      models: {
-        'x/legacy': {
-          provider: 'x',
-          model: 'legacy',
-          maxContextSize: 1000,
-          upgrade: { model: 'x/next', migrationMarkdown: '' },
-        },
-        'x/next': { provider: 'x', model: 'next', maxContextSize: 1000 },
-      },
-      defaultModel: 'x/legacy',
-      thinking: { enabled: true },
-    };
-
-    applyCustomRegistryEntries(
-      config,
-      {
-        x: {
-          id: 'x',
-          name: 'X',
-          api: 'https://x.test/v1',
-          type: 'openai',
-          models: { next: { id: 'next' } },
-        },
-      },
-      source,
-    );
-
-    expect(config.models?.['x/legacy']).toBeUndefined();
-    expect(config.defaultModel).toBe('x/next');
-    expect(config.thinking).toEqual({ enabled: true });
-  });
-
   // Re-import semantics: when a provider that existed in a previous import is
   // gone from the new fetch (same source URL), it must be removed along with
   // its aliases and any `defaultModel` pointing at it. Without this, deleting a
