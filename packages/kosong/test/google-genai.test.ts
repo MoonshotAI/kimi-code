@@ -941,6 +941,20 @@ describe('GoogleGenAIChatProvider', () => {
       });
     });
 
+    it('gemini-4 model uses thinkingLevel', async () => {
+      const provider = createProvider({ model: 'gemini-4-pro' }).withThinking('high');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      const config = body['config'] as Record<string, unknown>;
+      expect(config['thinkingConfig']).toEqual({
+        includeThoughts: true,
+        thinkingLevel: 'HIGH',
+      });
+    });
+
     it('thinking effort off for non-gemini-3 disables thinking', async () => {
       const provider = createProvider({ model: 'gemini-2.5-flash' }).withThinking('off');
       const history: Message[] = [

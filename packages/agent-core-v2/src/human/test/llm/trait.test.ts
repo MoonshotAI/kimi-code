@@ -1998,4 +1998,21 @@ describe('google genai base', () => {
     expect(finish).toEqual({ finishReason: 'completed', rawFinishReason: 'STOP' });
     expect(messageId).toBe('gemini-resp-1');
   });
+
+  it.each(['gemini-3-pro-preview', 'gemini-4-pro'])(
+    'encodes thinking as a level for %s',
+    async (modelName) => {
+      const client = stubGoogleClient([
+        { candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }] },
+      ]);
+      const requester = createGoogleGenAIRequester({ clientFactory: client.clientFactory });
+      await requester.generate(
+        { model: { ...model, model: modelName }, thinking: { effort: 'high' } },
+        { messages },
+        { signal: new AbortController().signal },
+      );
+      const config = client.body()['config'] as Record<string, unknown>;
+      expect(config['thinkingConfig']).toEqual({ includeThoughts: true, thinkingLevel: 'HIGH' });
+    },
+  );
 });
