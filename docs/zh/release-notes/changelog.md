@@ -10,7 +10,7 @@ outline: 2
 
 ### 新功能
 
-- 新增实验性的进度更新功能 NotifyUser（默认关闭）：新会话可展示 Agent 回合内的进度，支持可选的单行标题。可在 TUI 的 `/experiments` 面板或 web/Desktop 设置的 Lab 分区开启，也可设置 `[experimental] notify_user = true` 或 `KIMI_CODE_EXPERIMENTAL_NOTIFY_USER=1`。
+- 新增实验性的进度更新功能 NotifyUser（默认关闭）：新会话可展示 Agent 回合内的进度，支持可选的单行标题。可在 TUI 的 `/experiments` 面板开启。
 - 新增 `kimi app [path]` 命令，在当前或指定目录打开一个新的 Desktop 会话。
 - 全屏模式新增用户消息摘要条：用户消息滚出视口后保留一行摘要，点击即可跳回原始消息。全屏模式可在 `/settings` 的 TUI mode 设置中开启，或在 `~/.kimi-code/tui.toml` 中设置 `tui_mode = "fullscreen"`。
 - 新增 `KIMI_CODE_TRUST_WORKSPACE` 环境变量，可将工作区标记为受信任。
