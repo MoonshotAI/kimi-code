@@ -27,7 +27,7 @@
     "clean": "pnpm -r run clean",
     "changeset": "changeset",
     "version": "changeset version",
-    "version:release": "node scripts/version-release.mjs",
+    "version:release": "changeset version",
     "publish": "pnpm run typecheck && pnpm run lint && pnpm run sherif && pnpm run test && pnpm run build && pnpm run lint:pkg && changeset publish",
     "prepare": "node .husky/install.mjs"
   },
