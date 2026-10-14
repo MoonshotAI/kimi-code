@@ -23,7 +23,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -70,6 +70,8 @@ for (const sumFile of sumFiles.sort()) {
   // kimi-code-darwin-arm64.zip.sha256 → darwin-arm64
   const target = basename(sumFile, '.sha256').replace(/^kimi-code-/, '').replace(/\.zip$/, '');
   const zipName = `kimi-code-${target}.zip`;
+  const expected = (await readFile(resolve(inputDir, sumFile), 'utf8')).trim().split(/\s+/)[0];
+  if (await sha256File(resolve(inputDir, zipName)) !== expected) fail(`Invalid archive checksum: ${zipName}`);
   const exeName = target.startsWith('win32') ? 'kimi.exe' : 'kimi';
   // The CDN bare-binary layout carries the .exe suffix on Windows
   // (src/constant/app.ts); the updater's fallback downloads this filename.

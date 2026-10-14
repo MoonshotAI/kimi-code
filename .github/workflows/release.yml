@@ -2,95 +2,129 @@ name: Release
 
 on:
   push:
-    branches:
-      - main
+    branches: ['release/*']
+  workflow_dispatch:
 
-concurrency: ${{ github.workflow }}-${{ github.ref }}
+concurrency:
+  group: release-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
-  release:
-    name: Release
+  version:
+    if: github.repository_owner == 'MoonshotAI' && startsWith(github.ref, 'refs/heads/release/')
+    concurrency:
+      group: release-version-${{ github.ref }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'MoonshotAI'
-    outputs:
-      packages_published: ${{ steps.changesets.outputs.published }}
-      kimi_native_release: ${{ steps.kimi-release.outputs.should_publish }}
-      kimi_release_tag: ${{ steps.kimi-release.outputs.tag }}
     permissions:
       contents: write
       pull-requests: write
-      id-token: write # Required for NPM Trusted Publishing (OIDC)
+      actions: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
-          cache: "pnpm"
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Upgrade npm for Trusted Publishing
-        run: npm install -g npm@11
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Generate Kimi Code built-in catalog
-        shell: bash
-        run: |
-          CATALOG_FILE="$RUNNER_TEMP/kimi-code-built-in-catalog.json"
-          node apps/kimi-code/scripts/update-catalog.mjs --out "$CATALOG_FILE"
-          echo "KIMI_CODE_BUILT_IN_CATALOG_FILE=$CATALOG_FILE" >> "$GITHUB_ENV"
-
-      - name: Build packages
-        run: pnpm build
-
-      - name: Create Release Pull Request or Publish to npm
-        id: changesets
-        uses: changesets/action@v1
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: changesets/action@v1
+        id: version
         with:
-          publish: pnpm changeset publish
           version: pnpm run version:release
-          commit: "ci: release packages"
-          title: "ci: release packages"
+          commit: 'ci: release packages'
+          title: 'ci: release packages'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # NPM_TOKEN is not needed with Trusted Publishing (OIDC)
-
-      - name: Resolve Kimi Code native release
-        if: steps.changesets.outputs.published == 'true'
-        id: kimi-release
-        run: node apps/kimi-code/scripts/native/resolve-release.mjs
+      - name: Check version PR
+        if: steps.version.outputs.pullRequestNumber != ''
         env:
-          CHANGESETS_PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.publishedPackages }}
+          GH_TOKEN: ${{ github.token }}
+          VERSION_BRANCH: changeset-release/${{ github.ref_name }}
+        run: gh workflow run ci.yml --ref "$VERSION_BRANCH"
 
-  deploy-docs:
-    name: Deploy docs
-    needs: release
-    if: needs.release.outputs.packages_published == 'true'
-    uses: ./.github/workflows/docs-deploy.yml
+  candidate:
+    if: github.repository_owner == 'MoonshotAI' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
-      pages: write
+      pull-requests: read
+      actions: read
+      checks: read
+    outputs:
+      publish: ${{ steps.trigger.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - name: Wait for merged version commit CI
+        id: trigger
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release-trigger.mjs
+
+  release:
+    needs: candidate
+    if: needs.candidate.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: core-npm-publish
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      actions: read
       id-token: write
+    outputs:
+      native: ${{ steps.restore.outputs.native }}
+      complete: ${{ steps.restore.outputs.complete }}
+      tag: ${{ steps.restore.outputs.tag }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      KIMI_CODE_BUILT_IN_CATALOG_FILE: ${{ github.workspace }}/.release-inputs/catalog.json
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@11
+      - run: node scripts/core-release.mjs check
+      - id: restore
+        run: node scripts/core-release.mjs restore
+      - if: steps.restore.outputs.complete != 'true' && steps.restore.outputs.ready != 'true'
+        run: pnpm install --frozen-lockfile
+      - if: steps.restore.outputs.complete != 'true' && steps.restore.outputs.ready != 'true'
+        run: node apps/kimi-code/scripts/update-catalog.mjs --out "$KIMI_CODE_BUILT_IN_CATALOG_FILE"
+      - if: steps.restore.outputs.complete != 'true' && steps.restore.outputs.ready != 'true'
+        run: pnpm build
+      - if: steps.restore.outputs.complete != 'true' && steps.restore.outputs.ready != 'true'
+        run: node scripts/core-release.mjs snapshot
+      - if: steps.restore.outputs.complete != 'true'
+        run: node scripts/core-release.mjs npm
 
   native-artifacts:
-    name: Native release artifact
     needs: release
-    if: needs.release.outputs.kimi_native_release == 'true'
+    if: needs.release.outputs.native == 'true' && needs.release.outputs.complete != 'true'
+    permissions:
+      contents: read
     uses: ./.github/workflows/_native-build.yml
     with:
       upload-artifact-prefix: kimi-code-native
       retention-days: 7
       sign-macos: true
       sign-windows: true
+      release-inputs: true
     secrets:
       APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -102,33 +136,29 @@ jobs:
       AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
 
   publish-native-assets:
-    name: Publish native release assets
-    needs:
-      - release
-      - native-artifacts
-    if: needs.release.outputs.kimi_native_release == 'true'
+    needs: [release, native-artifacts]
+    if: always() && needs.release.result == 'success' && needs.release.outputs.complete != 'true' && (needs.native-artifacts.result == 'success' || needs.native-artifacts.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Download native artifacts
-        uses: actions/download-artifact@v8
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/download-artifact@v8
+        if: needs.release.outputs.native == 'true'
         with:
           pattern: kimi-code-native-*
           path: dist-native-release
           merge-multiple: true
-
-      - name: Produce manifest.json
+      - name: Produce native manifest
+        if: needs.release.outputs.native == 'true'
         env:
-          RELEASE_TAG: ${{ needs.release.outputs.kimi_release_tag }}
+          RELEASE_TAG: ${{ needs.release.outputs.tag }}
         run: node apps/kimi-code/scripts/native/produce-manifest.mjs dist-native-release "$RELEASE_TAG"
-
-      - name: Upload assets to GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.release.outputs.kimi_release_tag }}
-        run: gh release upload "$RELEASE_TAG" dist-native-release/* --clobber
+      - run: node scripts/core-release.mjs finish dist-native-release

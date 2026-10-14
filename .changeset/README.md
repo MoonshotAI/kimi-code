@@ -1,153 +1,48 @@
-# Changesets
+# Release workflow
 
-This repository uses [changesets](https://github.com/changesets/changesets) to manage npm package versions and releases.
+Main accumulates changesets. A `release/<cycle>` branch freezes the candidate source and maintains a `ci: release packages` PR with head `changeset-release/release/<cycle>`. Use the `gen-changesets` skill for user-facing entries; the actual package manifests determine which changed packages publish to npm. Private packages may receive version updates but are never published.
 
-## Package Publishing Strategy
+## Prepare and approve
 
-This repository uses an **independent, manually-selected publishing** strategy. When generating a changeset, only select the publishable packages that this change actually affects. The repository's `.changeset/config.json` already filters out internal workspace packages via `ignore`, so only the publishable packages listed below should appear in the `pnpm changeset` prompt.
+1. Create the release branch from the selected commit. Backport fixes individually; do not merge later main changes into the candidate. Changes to the embedded web assets must be synced from the corresponding code-app candidate and reviewed on this release branch.
+2. Release push maintains the version PR. Manual **Release** runs only prepare/refresh it; they never publish. The version command records package versions and consumed changesets in `.changeset/release-plan.json`.
+3. The workflow explicitly dispatches CI on the generated version branch because `GITHUB_TOKEN` pushes do not trigger normal PR checks. Present the latest version PR, CI result/link and pre-changelog for approval. Test native binaries with **Manual Native Bundle** before publishing.
+4. A maintainer merges the approved version PR. Its merge commit is fixed for the entire release. The release workflow identifies the merged PR by source/target repository and branch plus merge SHA, waits for that commit's push CI, and verifies the version plan. Failed or cancelled CI stops publication. Later release pushes do not cancel this CI.
 
-Current publishable packages:
+## Automatic publication
 
-| Package | Directory | Description |
-| --- | --- | --- |
-| `@moonshot-ai/kimi-code` | `apps/kimi-code` | CLI / TUI application — provides the `kimi` command after install |
-| `@moonshot-ai/kimi-code-sdk` | `packages/node-sdk` | Public TypeScript SDK |
+- Reserve package tags at the approved SHA and create the primary draft GitHub Release. A tag on a different commit is an error.
+- Generate the built-in catalog once, build packages and pack the changed public npm packages with pnpm. Save the exact tarballs, catalog, package plan and source SHA in `release-inputs.tar.gz` on the draft Release before any npm publish.
+- Check npm registry integrity for each planned package/version. Skip only matching tarballs; publish missing versions using npm Trusted Publishing. Authentication/network failures and conflicting contents stop the run. Never roll npm `latest` back behind a newer stable version.
+- If the CLI is in the plan, build all six signed native targets from the same SHA and saved catalog. Validate archive checksums, six-platform completeness and the native manifest before uploading to the draft Release.
+- Save a completion record, verify uploaded asset digests, create/update package release notes and expose the primary Release last. Completed public releases are verified, never overwritten. SDK-only public plans do not require CLI binaries; private-only plans do not publish.
+- CDN upload, `latest` / `latest.json` routing and announcements remain separately approved operations. No workflow in this process changes CDN routing.
 
-All other workspace packages are private internal packages, are not published to npm, and are excluded via `ignore` in `.changeset/config.json`:
+## Recover an interrupted release
 
-- `@moonshot-ai/kimi-code-oauth`
-- `@moonshot-ai/kimi-telemetry`
-- `@moonshot-ai/kosong`
-- `@moonshot-ai/migration-legacy`
-- `@moonshot-ai/vis`
-- `@moonshot-ai/vis-server`
-- `@moonshot-ai/vis-web`
+Use **Re-run failed jobs** on the original Release run when its artifacts are available. If artifacts expired or a wider retry is needed, use **Re-run all jobs** on that same run. Do not dispatch a new run from the moving branch tip.
 
-Version impact from internal dependencies must be judged manually. The published artifacts for CLI and SDK bundle internal workspace packages into the artifact itself; runtime `dependencies` of published packages must not include any `@moonshot-ai/*` internal workspace packages.
-
-The repository's `.changeset/config.json` sets `updateInternalDependencies: "patch"`. Because internal packages are not published, you still need to manually select all affected publishable packages in the changeset — do not rely solely on automatic dependency bumps to express user-visible changes.
-
-Example scenarios:
-
-| Change | Changeset selection |
+| Failure | Recovery |
 | --- | --- |
-| Only modifies TUI behavior in `@moonshot-ai/kimi-code` | Add `patch` / `minor` / `major` to `@moonshot-ai/kimi-code` |
-| Only modifies internal packages, no user-visible change in SDK / CLI | Usually no changeset needed |
-| Internal package fix changes the CLI user experience | Add a changeset to `@moonshot-ai/kimi-code` describing the user-visible fix |
-| Internal package adds a new capability exposed by the SDK | Add a changeset to `@moonshot-ai/kimi-code-sdk` |
-| SDK behavior change affects CLI user experience | Add changesets to both `@moonshot-ai/kimi-code-sdk` and `@moonshot-ai/kimi-code` |
-| Provider abstraction change affects SDK / CLI | Add changesets to the affected `@moonshot-ai/kimi-code-sdk` and/or `@moonshot-ai/kimi-code` |
-| Test-only, internal refactor, docs, or private debug tooling changes | Usually no changeset needed |
-| Bundled official plugin change under `plugins/` (e.g. `kimi-datasource`) | No changeset — the plugin is versioned via its own `kimi.plugin.json` / `plugins/marketplace.json` and shipped through the marketplace CDN, not the npm package |
+| Some npm packages published | Restore saved tarballs, verify registry integrity and publish only missing packages |
+| npm succeeded, a native target failed | Restore the same catalog and retry native builds; npm publication is not the gate for native builds |
+| Upload interrupted | Complete uploads while the Release is still a draft; publish only after all checks pass |
+| Actions artifacts expired | Rebuild from the original SHA and saved Release inputs |
+| Complete Release retried | Verify its completion record and asset digests; do not upload or publish again |
+| Saved inputs missing/corrupt, tag moved or registry contents conflict | Stop for investigation; never silently regenerate replacement npm contents |
 
-## Prerequisite: NPM Trusted Publishing (OIDC)
+Signed/recompressed native output need not be byte-identical when rebuilt. Draft assets may be replaced while recovering; completed public assets may not. Do not delete `release-inputs.tar.gz` or `release-complete.json`: recovery depends on them. Preserve draft Releases after failure.
 
-This repository uses npm's **Trusted Publishing** (OIDC-based) for publishing — no `NPM_TOKEN` is required.
+## Migration and synchronization
 
-### Configuration steps
+- Merge the main workflow change first to disable the legacy main npm publisher, then the matching release workflow change. These infrastructure PRs do not publish. Review and close the obsolete main version PR separately; do not retarget it or merge it for this cycle.
+- Once both changes are installed, refresh the release version PR and check its CI before approval. Only maintain one active npm release cycle at a time. npm publishes are serialized, but maintainers must not approve competing release cycles with conflicting versions.
+- After publishing, open a synchronization PR carrying version/lockfile changes, changelogs, the release plan and consumed changeset removals back to main. Preserve newer main changesets and fixes. Do not move the Desktop submodule pointer as part of this operation.
+- Main pushes never publish npm. Main docs changes or release-plan synchronization deploy documentation; release branches do not deploy Pages.
+- VSCode version synchronization matching `release-plan.json` skips automatic marketplace publication. Publish the extension separately using its existing manual workflow if desired. Independent main version changes retain their existing behavior.
 
-1. Open each publishable package's page on the npm website, e.g. `https://www.npmjs.com/package/@moonshot-ai/kimi-code`.
-2. Go to **Settings** -> **Publishing access**.
-3. Find **Automate publishing with GitHub Actions** or **Add trusted publisher**.
-4. Click **Add a new trusted publisher**.
+## Credentials and checks
 
-Fill in the following:
+Each public npm package must trust `MoonshotAI/kimi-code`, workflow `release.yml`, with no environment restriction. The workflow retains `id-token: write` and npm 11; no npm token is added. Repository Pages deployment and signing credentials keep their existing configuration. Live OIDC publishing and signing require a separately approved release; mocked tests do not validate those credentials.
 
-| Field | Value |
-| --- | --- |
-| GitHub Organization | `MoonshotAI` |
-| GitHub Repository | `kimi-code` |
-| GitHub Workflow | `release.yml` |
-| Environment | leave empty |
-
-Each publishable package needs its Trusted Publisher configured once. The current GitHub Actions workflow lives at `.github/workflows/release.yml` and already has `id-token: write` configured.
-
-## Development Workflow
-
-### 1. Implement the feature or fix
-
-Complete code, tests, and documentation changes as usual. A changeset is required when the change affects user-visible behavior, public API, dependency ranges, or release artifacts of a publishable package.
-
-### 2. Generate a changeset
-
-From the repository root:
-
-```sh
-pnpm changeset
-```
-
-Follow the prompts to choose:
-
-- Which publishable packages this change affects;
-- The version bump level:
-  - `patch`: bug fixes, small changes, follow-up dependency updates;
-  - `minor`: backward-compatible new features;
-  - `major`: breaking changes;
-- A user-facing description of the change.
-
-The command creates a `.changeset/*.md` file that must be committed alongside the code.
-
-### 3. Commit the changeset
-
-```sh
-git add .changeset/
-git commit -m "chore: add changeset for package release"
-git push
-```
-
-Commit messages must follow Conventional Commit style. Do not include any author/agent identity in the commit message.
-
-### 4. CI generates the release PR
-
-Once the changeset file is merged into `main`, `.github/workflows/release.yml` uses `changesets/action@v1` to create or update a release PR.
-
-The release PR runs:
-
-- `pnpm changeset version`: bumps publishable package versions and updates changelogs;
-- Deletes the consumed `.changeset/*.md` files;
-- Uses the title `[CI]: Release packages`.
-
-### 5. Merge the release PR
-
-Once the release PR is merged into `main`, the same workflow runs:
-
-- `pnpm install --frozen-lockfile`
-- `pnpm build`
-- `pnpm changeset publish`
-
-The packages are then published via npm Trusted Publishing, and a GitHub Release is created.
-
-## Manual Publishing (Not Recommended)
-
-Only publish manually when CI is unavailable. Before publishing manually, make sure you are logged into npm locally and using the Node.js and pnpm versions required by the repository.
-
-```sh
-pnpm run version
-pnpm run publish
-```
-
-The underlying changesets commands are:
-
-```sh
-pnpm changeset version
-pnpm changeset publish
-```
-
-The root-level `pnpm run publish` first runs typecheck, lint, sherif, test, build, and package lint, then runs `changeset publish`.
-
-## Notes
-
-- Every PR that affects publishable-package behavior or public API should include a corresponding changeset.
-- Changes under `plugins/` (the bundled official plugins such as `kimi-datasource`) do **not** need a changeset: each plugin carries its own version in `kimi.plugin.json` and `plugins/marketplace.json` and is distributed via the marketplace CDN, separately from the `@moonshot-ai/kimi-code` npm package.
-- Changeset files must be committed to the repository — release PRs are only triggered after they're merged.
-- Release PRs require human review and merge; they will not publish automatically.
-- Do not add release changesets for private internal packages; only select `@moonshot-ai/kimi-code` and `@moonshot-ai/kimi-code-sdk`.
-- If a change in an underlying internal package alters user-visible behavior or public API of a publishable package, add a changeset to the affected publishable package. For example, when a bug fixed in `@moonshot-ai/kosong` resolves an issue CLI users encounter, add a changeset to `@moonshot-ai/kimi-code` describing the user-visible fix.
-- `@moonshot-ai/kimi-code` is the official CLI package name; after a global install it provides the `kimi` command.
-- Make sure each publishable package on npm has a Trusted Publisher configured.
-
-## References
-
-- [Changesets documentation](https://github.com/changesets/changesets)
-- [Changesets GitHub Action](https://github.com/changesets/action)
-- [npm Trusted Publishing documentation](https://docs.npmjs.com/trusted-publishers)
+Run `node --test scripts/core-release.test.mjs scripts/release-trigger.test.mjs`. Native archive tests live in `apps/kimi-code/test/scripts/native/release-artifacts.test.ts`.
