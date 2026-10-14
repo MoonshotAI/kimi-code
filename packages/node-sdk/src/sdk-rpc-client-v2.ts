@@ -229,6 +229,8 @@ import {
   type Klient,
   type ImportCustomRegistryOptions,
   type ImportCustomRegistryResult,
+  type RefreshProviderModelsOptions,
+  type RefreshProviderModelsResponse,
 } from '@moonshot-ai/klient';
 import { RegistryImportError } from '#/catalog';
 import { createKlient } from '@moonshot-ai/klient/memory';
@@ -802,10 +804,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return this.getConfig();
   }
 
-  override supportsAtomicSectionReplace(): boolean {
-    return true;
-  }
-
   override async importCustomRegistry(
     options: ImportCustomRegistryOptions,
   ): Promise<ImportCustomRegistryResult> {
@@ -824,9 +822,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     }
   }
 
-  override async replaceConfigSections(sections: Record<string, unknown>): Promise<void> {
+  override async refreshProviderModels(
+    options?: RefreshProviderModelsOptions,
+  ): Promise<RefreshProviderModelsResponse> {
     await this.configReady;
-    await this.klient.global.config.replaceSections({ sections });
+    return this.klient.global.kosong.refreshProviders(options);
   }
 
   override async listPlugins(): Promise<readonly PluginSummary[]> {

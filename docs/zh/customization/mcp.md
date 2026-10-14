@@ -64,7 +64,7 @@ MCP server 配置写在 `mcp.json` 中，分两层：
 | `headers` | `Record<string, string>` | HTTP、SSE | 附加到每次请求的静态请求头 |
 | `bearerTokenEnvVar` | `string` | HTTP、SSE | 存放 bearer token 的环境变量名 |
 | `enabled` | `boolean` | 全部 | 设为 `false` 可禁用该 server |
-| `deferred` | `boolean` | 全部 | 实验功能：设为 `true` 时该 server 的工具由模型按需加载，默认 `false`（始终直接暴露）。前提与行为见 [按需加载工具](#按需加载工具) |
+| `deferred` | `boolean` | 全部 | 实验功能：设为 `true` 时该 server 的工具由模型按需加载，缺省时取全局 `default_deferred`（未设置则为 `false`）。前提与行为见 [按需加载工具](#按需加载工具) |
 | `startupTimeoutMs` | `number` | 全部 | 连接超时，取值范围为 `1` 到 `2147483647` 毫秒，默认 `30000` |
 | `toolTimeoutMs` | `number` | 全部 | 单次工具调用超时，取值范围为 `1` 到 `2147483647` 毫秒 |
 | `enabledTools` | `string[]` | 全部 | 工具白名单 |
@@ -102,7 +102,9 @@ Plugins 也可以在 manifest 中声明 MCP servers。Plugin 声明的 servers �
 }
 ```
 
-未设置 `deferred` 的 server 不受影响，工具始终直接暴露；前提不满足时该字段被忽略，行为相同。需要 OAuth 授权的 server 在完成授权前暴露的认证工具也遵循这个字段。
+未设置 `deferred` 的 server 取全局默认值（未改动时为 `false`）；前提不满足时该字段被忽略，行为相同。需要 OAuth 授权的 server 在完成授权前暴露的认证工具也遵循这个字段。
+
+如果不想逐个 server 标记，而是默认让所有 server 按需加载，可以在 `config.toml` 的 `[mcp]` 下设 `default_deferred = true`，见 [配置文件](../configuration/config-files.md#mcp)。单个 server 仍可用 `deferred: false` 排除；server 字段始终优先于全局默认。该值在 server 连接时固化，之后修改不会改动运行中会话的工具形态——重连该 server 或重启进程后才会应用。
 
 ## 工具命名与权限
 

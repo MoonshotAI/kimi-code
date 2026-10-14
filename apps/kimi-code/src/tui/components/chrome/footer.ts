@@ -228,6 +228,7 @@ export class FooterComponent implements Component {
 
   setState(state: AppState): void {
     if (state.workDir !== this.gitCacheWorkDir) {
+      this.gitCache.dispose();
       this.gitCacheWorkDir = state.workDir;
       this.gitCache = createGitStatusCache(state.workDir, {
         onChange: this.onRefresh,
@@ -297,6 +298,10 @@ export class FooterComponent implements Component {
   setBackgroundCounts(counts: { bashTasks: number; agentTasks: number }): void {
     this.backgroundBashTaskCount = Math.max(0, counts.bashTasks);
     this.backgroundAgentCount = Math.max(0, counts.agentTasks);
+  }
+
+  refreshGitStatus(): void {
+    this.gitCache.refresh();
   }
 
   invalidate(): void {}
@@ -543,6 +548,7 @@ export class FooterComponent implements Component {
   }
 
   dispose(): void {
+    this.gitCache.dispose();
     if (this.goalTimer !== null) {
       clearInterval(this.goalTimer);
       this.goalTimer = null;

@@ -18,6 +18,7 @@ import {
   KIMI_CODE_HOME_ENV,
   KIMI_CODE_INPUT_HISTORY_DIR_NAME,
   KIMI_CODE_LOG_DIR_NAME,
+  KIMI_CODE_MODEL_MIGRATION_STATE_FILE_NAME,
   KIMI_CODE_NATIVE_STAGED_STATE_FILE_NAME,
   KIMI_CODE_NATIVE_STAGING_DIR_NAME,
   KIMI_CODE_PLUGIN_UPDATE_NOTICE_STATE_FILE_NAME,
@@ -134,6 +135,10 @@ export function getSurveyStateFile(): string {
 
 export function getRecommendedEffortStateFile(): string {
   return join(getDataDir(), KIMI_CODE_RECOMMENDED_EFFORT_STATE_FILE_NAME);
+}
+
+export function getModelMigrationStateFile(): string {
+  return join(getDataDir(), KIMI_CODE_MODEL_MIGRATION_STATE_FILE_NAME);
 }
 
 /**

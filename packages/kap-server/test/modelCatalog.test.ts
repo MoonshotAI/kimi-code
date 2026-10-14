@@ -173,6 +173,21 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
     ]);
   });
 
+  it('returns model upgrade metadata from config', async () => {
+    await boot(
+      `${CATALOG_TOML}\n[models.k2.upgrade]\nmodel = "turbo"\nmigration_markdown = "Use {model_to}"\nretirement_at = "2030-01-01T00:00:00Z"\n`,
+    );
+    const { status, body } = await getJson<{
+      items: Array<{ model: string; upgrade?: unknown }>;
+    }>('/api/v1/models');
+    expect(status).toBe(200);
+    expect(body.data.items.find((item) => item.model === 'k2')?.upgrade).toEqual({
+      model: 'turbo',
+      migration_markdown: 'Use {model_to}',
+      retirement_at: '2030-01-01T00:00:00Z',
+    });
+  });
+
   it('lists models without refreshing providers', async () => {
     const refreshProviderModels = vi.fn(async () => ({
       changed: [],
@@ -315,7 +330,12 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
   function discoveryStub(
     refreshProviderModels: IProviderDiscoveryServiceType['refreshProviderModels'],
   ): IProviderDiscoveryServiceType {
-    return { _serviceBrand: undefined, refreshProviderModels };
+    return {
+      _serviceBrand: undefined,
+      onDidRetireModel: () => ({ dispose: () => {} }),
+      refreshProviderModels,
+      retiredModelReplacement: () => undefined,
+    };
   }
 
   function oauthStub(

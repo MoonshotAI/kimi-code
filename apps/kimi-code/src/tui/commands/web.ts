@@ -44,7 +44,7 @@ export async function handleWebCommand(host: SlashCommandHost): Promise<void> {
 }
 
 export async function handleRemoteControlCommand(host: SlashCommandHost): Promise<void> {
-  await host.waitForLazyCreation();
+  await host.waitForSessionAssembly();
   const session = host.session;
 
   const holder = await inspectRemoteControlLock(getDataDir());
