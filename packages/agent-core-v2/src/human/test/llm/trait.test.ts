@@ -1999,7 +1999,7 @@ describe('google genai base', () => {
     expect(messageId).toBe('gemini-resp-1');
   });
 
-  it.each(['gemini-3-pro-preview', 'gemini-4-pro'])(
+  it.each(['gemini-3-pro-preview', 'gemini-4-argon'])(
     'encodes thinking as a level for %s',
     async (modelName) => {
       const client = stubGoogleClient([

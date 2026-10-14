@@ -942,7 +942,7 @@ describe('GoogleGenAIChatProvider', () => {
     });
 
     it('gemini-4 model uses thinkingLevel', async () => {
-      const provider = createProvider({ model: 'gemini-4-pro' }).withThinking('high');
+      const provider = createProvider({ model: 'gemini-4-argon' }).withThinking('high');
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
       ];
