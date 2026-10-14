@@ -48,6 +48,7 @@ import {
 import {
   DEFAULT_PROFILE_NAME,
   FORK_CONTEXT_NOTICE,
+  LEGACY_SUBAGENT_TYPE_ALIASES,
   type SpawnSubagentOptions,
   type SpawnedSubagent,
   type SubagentSpawnPlan,
@@ -95,8 +96,15 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     const requested = input.profileName !== undefined && input.profileName.length > 0
       ? input.profileName
       : undefined;
+    const recognized =
+      !fork &&
+      requested !== undefined &&
+      LEGACY_SUBAGENT_TYPE_ALIASES.has(requested) &&
+      this.catalog.get(requested) === undefined
+        ? DEFAULT_PROFILE_NAME
+        : requested;
     const requestedProfileName =
-      requested ?? (fork ? (own.profileName ?? DEFAULT_PROFILE_NAME) : DEFAULT_PROFILE_NAME);
+      recognized ?? (fork ? (own.profileName ?? DEFAULT_PROFILE_NAME) : DEFAULT_PROFILE_NAME);
     const extras =
       input.callerAgentId === MAIN_AGENT_ID
         ? rootDelegationExtras(this.catalog, own, this.catalog.list())

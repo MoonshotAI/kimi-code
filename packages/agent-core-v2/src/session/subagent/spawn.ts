@@ -2,6 +2,11 @@ import { PRIMARY_SUBAGENT_MODEL_CHOICE, type SubagentModelSource } from './confi
 
 export const DEFAULT_PROFILE_NAME = 'coder';
 
+export const LEGACY_SUBAGENT_TYPE_ALIASES: ReadonlySet<string> = new Set([
+  'general',
+  'general-purpose',
+]);
+
 export const FORK_WITH_RESUME_UNAVAILABLE =
   'Cannot set resume when forking the current context. Fork creates a new agent; resume continues an existing one.';
 export const FORK_WITH_TYPE_UNAVAILABLE =

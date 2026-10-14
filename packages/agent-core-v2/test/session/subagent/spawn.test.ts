@@ -279,6 +279,56 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(error.message).toBe('Unknown agent type: "ghost"');
   });
 
+  it('maps the legacy alias "general" to the default profile', async () => {
+    const svc = service();
+
+    const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'general' });
+
+    expect(plan).toEqual({
+      profileName: 'coder',
+      model: 'main-model',
+      modelSource: 'inherited',
+      thinking: 'high',
+      fork: false,
+    });
+  });
+
+  it('maps the legacy alias "general-purpose" to the default profile', async () => {
+    const svc = service();
+
+    const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'general-purpose' });
+
+    expect(plan.profileName).toBe('coder');
+  });
+
+  it('does not remap a legacy alias when a profile with that name exists', async () => {
+    profiles = [
+      ...profiles,
+      normalizeAgentProfile({
+        name: 'general',
+        description: 'General',
+        systemPrompt: () => 'general',
+      }),
+    ];
+    const svc = service();
+
+    const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'general' });
+
+    expect(plan.profileName).toBe('general');
+  });
+
+  it('does not remap a legacy alias when forking', async () => {
+    const svc = service();
+
+    const plan = await svc.planSpawn({
+      callerAgentId: CALLER_ID,
+      profileName: 'general',
+      fork: true,
+    });
+
+    expect(plan.profileName).toBe('general');
+  });
+
   it('rejects a subagent type outside the caller allowlist', async () => {
     callerData = { ...callerData, subagents: ['explore'] };
     const svc = service();
