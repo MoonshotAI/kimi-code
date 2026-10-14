@@ -278,6 +278,27 @@ describe('notifyAgentsMdChanges', () => {
     expect(h.reminders).toHaveLength(2);
   });
 
+  it.fails('reminds when content is deleted from the end of an injected AGENTS.md', async () => {
+    const agentsMdPath = join(workDir, 'AGENTS.md');
+    await writeFile(agentsMdPath, 'line one\nline two\nline three');
+    const h = createHarness({
+      profile: makeProfileData({
+        profileName: 'default',
+        systemPrompt: agentsMdPrompt(agentsMdPath, 'line one\nline two\nline three'),
+        agentsMdPaths: [agentsMdPath],
+      }),
+    });
+
+    await h.notifier.notifyAgentsMdChanges();
+    expect(h.reminders).toHaveLength(0);
+
+    await writeFile(agentsMdPath, 'line one\nline two');
+    await h.notifier.notifyAgentsMdChanges();
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.variant).toBe('agents_md_change');
+    expect(h.reminders[0]?.content).toContain(agentsMdPath);
+  });
+
   it('reminds with (deleted) when an injected file is removed', async () => {
     const agentsMdPath = join(workDir, 'AGENTS.md');
     await writeFile(agentsMdPath, 'v1 content');
