@@ -50,14 +50,14 @@ else process.exit(2);
 }
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
-test('merged version PR waits for its push CI, not newer or PR runs', () => {
+await test('merged version PR waits for its push CI, not newer or PR runs', () => {
   const result = run();
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.output, 'publish=true\n');
   assert.deepEqual(result.calls.at(-1), ['run', 'watch', '7', '--repo', repo, '--exit-status', '--interval', '10']);
 });
 
-test('ordinary pushes, unmerged PRs, other branches and forks do not publish', () => {
+await test('ordinary pushes, unmerged PRs, other branches and forks do not publish', () => {
   for (const pulls of [[], [{ ...pr, merged_at: null }], [{ ...pr, merge_commit_sha: 'b'.repeat(40) }],
     [{ ...pr, base: { ...pr.base, ref: 'release/other' } }],
     [{ ...pr, head: { ...pr.head, ref: 'fix/bug' } }],
@@ -70,7 +70,7 @@ test('ordinary pushes, unmerged PRs, other branches and forks do not publish', (
   }
 });
 
-test('failed or cancelled CI and API failures never authorize publishing', () => {
+await test('failed or cancelled CI and API failures never authorize publishing', () => {
   for (const state of [{ watchStatus: 1 }, { watchStatus: 2 }, { apiError: true }]) {
     const result = run(state);
     assert.notEqual(result.status, 0);
@@ -78,7 +78,7 @@ test('failed or cancelled CI and API failures never authorize publishing', () =>
   }
 });
 
-test('manual runs, main and invalid SHA cannot authorize publishing', () => {
+await test('manual runs, main and invalid SHA cannot authorize publishing', () => {
   for (const env of [{ GITHUB_EVENT_NAME: 'workflow_dispatch' },
     { GITHUB_REF_NAME: 'main', GITHUB_REF: 'refs/heads/main' }, { GITHUB_SHA: 'abc' }]) {
     const result = run({}, env);
