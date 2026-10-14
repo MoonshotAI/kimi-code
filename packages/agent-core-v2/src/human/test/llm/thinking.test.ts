@@ -717,8 +717,21 @@ describe('openai requester thinking', () => {
       { type: 'text', text: 'hi' },
     ]);
     await expect(
+      collect(
+        chatCompletionChunks([
+          { reasoning_content: '' },
+          {
+            reasoning_content: '',
+            tool_calls: [
+              { index: 0, id: 'call_1', type: 'function', function: { name: 'f', arguments: '{}' } },
+            ],
+          },
+        ]),
+      ).then((content) => content.filter((part) => part.type === 'think')),
+    ).resolves.toEqual([{ type: 'think', think: '', reasoningKey: 'reasoning_content' }]);
+    await expect(
       collect(chatCompletionChunks([{ reasoning: '' }, { content: 'hi' }])),
-    ).resolves.toEqual([{ type: 'text', text: 'hi' }]);
+    ).resolves.toEqual([{ type: 'think', think: '', reasoningKey: 'reasoning' }, { type: 'text', text: 'hi' }]);
     await expect(
       collect(
         chatCompletionChunks([
@@ -726,10 +739,10 @@ describe('openai requester thinking', () => {
           { reasoning: '', content: 'lo' },
         ]),
       ),
-    ).resolves.toEqual([{ type: 'text', text: 'hello' }]);
+    ).resolves.toEqual([{ type: 'think', think: '', reasoningKey: 'reasoning' }, { type: 'text', text: 'hello' }]);
     await expect(
       collect(chatCompletionChunks([{ content: 'hi' }, { reasoning: '' }])),
-    ).resolves.toEqual([{ type: 'text', text: 'hi' }]);
+    ).resolves.toEqual([{ type: 'text', text: 'hi' }, { type: 'think', think: '', reasoningKey: 'reasoning' }]);
     await expect(
       collect(
         chatCompletionChunks([
@@ -741,6 +754,7 @@ describe('openai requester thinking', () => {
         ]),
       ),
     ).resolves.toEqual([
+      { type: 'think', think: '', reasoningKey: 'reasoning_content' },
       {
         type: 'think',
         think: 'hidden-summary',
