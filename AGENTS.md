@@ -76,7 +76,7 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 ## Release Workflow
 
 - `main` accumulates changesets; `release/*` maintains `ci: release packages` PRs. Merging the matching version PR authorizes publication after its merge-commit CI succeeds. Ordinary pushes do not publish.
-- Release retries use the original commit and saved npm tarballs/catalog. Never move a release tag or overwrite completed release assets. CDN upload and routing remain separately approved operations. See `.changeset/README.md` for migration, recovery, and main synchronization.
+- npm publishing and native artifacts retain the existing Changesets flow. CDN upload and routing remain separately approved operations. See `.changeset/README.md` for migration and main synchronization.
 
 ## Workflow Requirements
 
