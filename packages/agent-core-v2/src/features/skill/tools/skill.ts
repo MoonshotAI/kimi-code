@@ -31,7 +31,7 @@ export const SkillToolInputSchema: z.ZodType<SkillToolInput> = z.object({
   skill: z
     .string()
     .describe(
-      'The exact name of the skill to invoke, spelled as it appears in the current skill listing (e.g. "commit", "pdf").',
+      'The exact name of the skill to invoke, copied verbatim from the current skill listing.',
     ),
   args: z
     .string()

@@ -1655,6 +1655,30 @@ describe('SessionEventBroadcaster', () => {
       expect(globalView.deliveries).toEqual(['immediate']);
     });
 
+    it('forwards retired_default on event.model_catalog.changed', async () => {
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
+      const changed = [{ provider_id: 'acme', provider_name: 'Acme', added: 0, removed: 1 }];
+      const retiredDefault = {
+        from: 'acme/current',
+        to: 'acme/next',
+        from_display_name: 'Current',
+      };
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: { changed, unchanged: [], failed: [], retired_default: retiredDefault },
+      });
+
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+      expect(globalView.envelopes[0]).toMatchObject({
+        type: 'event.model_catalog.changed',
+        session_id: '__global__',
+        payload: { changed, unchanged: [], failed: [], retired_default: retiredDefault },
+      });
+      expect(globalView.deliveries).toEqual(['immediate']);
+    });
+
     it('drops malformed event.model_catalog.changed payloads', async () => {
       const globalView = collectingTarget();
       bc.addGlobalTarget(globalView.target);

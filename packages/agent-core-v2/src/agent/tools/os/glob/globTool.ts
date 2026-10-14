@@ -31,7 +31,6 @@ import {
   SENSITIVE_DOT_VARIANT_SUFFIXES,
   type WorkspaceConfig,
 } from '#/tool/path-access';
-import { checkRealPathWithinWorkspace } from '#/tool/realpath-access';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import globDescription from './glob.md?raw';
@@ -126,10 +125,6 @@ export class GlobTool implements IGlobTool {
         try {
           if (lease.runtime.identity.generation !== inspected.identity.generation) {
             return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
-          }
-          const accessError = await checkRealPathWithinWorkspace(lease.runtime.fs!, searchRoots[0]!, workspace, env.pathClass, { checkSensitive: false });
-          if (accessError !== undefined) {
-            return { isError: true, output: accessError.message };
           }
           return await this.execution(
             lease.runtime.fs!,

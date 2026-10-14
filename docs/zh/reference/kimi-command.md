@@ -196,6 +196,19 @@ kimi web --port 58628    # 指定绑定端口
 
 生成新的持久化 bearer token（写入 `~/.kimi-code/server.token`），旧 token 立即失效。token 是整个 home 目录共享的，所有运行中的实例会在下一次鉴权校验时自动换用新 token，无需重启。
 
+### `kimi app`
+
+打开 Kimi Code 桌面端，在当前目录或指定目录中开始新会话：
+
+```sh
+kimi app
+kimi app ~/project
+```
+
+需要先安装支持从 CLI 打开工作区的桌面端版本。相对路径以当前目录为基准解析。目标工作区已存在时，会打开新草稿，不恢复之前的会话。
+
+如果系统报告无法打开应用，命令会提示运行 `kimi install-desktop` 打开下载页面，不会自动下载或安装桌面端。
+
 ### `kimi install-desktop`
 
 打印 Kimi Code 桌面端页面地址并在默认浏览器中打开，无需离开终端即可下载并安装桌面端应用。页面地址随当前区域而定：国内区域为 `https://www.kimi.com/code`，全球区域为 `https://www.kimi.ai/code`。

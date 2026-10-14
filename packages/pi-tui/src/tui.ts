@@ -137,6 +137,8 @@ export interface Component {
 
 export type TuiInputListenerResult = { consume?: boolean; data?: string } | undefined;
 export type TuiInputListener = (data: string) => TuiInputListenerResult;
+/** Synchronous work after viewport layout and search reveal, before terminal output. */
+export type LayoutEffect = () => void;
 type PendingOsc11BackgroundQuery = {
 	settled: boolean;
 	resolve: ((rgb: RgbColor | undefined) => void) | undefined;
@@ -459,6 +461,11 @@ export const VIEWPORT_TUI = Symbol.for("@earendil-works/pi-tui/viewport");
 export interface ViewportTUI extends TUI {
 	readonly [VIEWPORT_TUI]: true;
 	setLayoutRoot(component: Component | undefined): void;
+	/**
+	 * Register an effect and return an unsubscribe function. requestRender() inside an effect
+	 * repeats layout before output; effects must converge within ten passes. No automatic invalidation.
+	 */
+	addLayoutEffect(effect: LayoutEffect): () => void;
 }
 
 export function isViewportTUI(tui: TUI): tui is ViewportTUI {

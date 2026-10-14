@@ -349,6 +349,28 @@ describe('ToolCallComponent', () => {
       expect(component.hasHiddenContent()).toBe(true);
     });
 
+    it('uses the title as the header and keeps the message behind ctrl+o', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_notify_titled',
+          name: 'NotifyUser',
+          args: { title: 'Root cause found', message },
+        },
+        { tool_call_id: 'call_notify_titled', output: 'Update shown to the user.', is_error: false },
+      );
+
+      const collapsed = component.render(100).map(strip).filter((line) => line.trim().length > 0);
+      expect(collapsed).toHaveLength(1);
+      expect(collapsed[0]).toContain('Sent you an update');
+      expect(collapsed[0]).toContain('Root cause found');
+      expect(collapsed[0]).not.toContain('Login module is clean.');
+
+      component.setExpanded(true);
+      const expanded = strip(component.render(100).join('\n'));
+      expect(expanded).toContain('Login module is clean.');
+      expect(expanded).toContain('session expiry');
+    });
+
     it('renders historical calls as ordinary tool records when disabled', () => {
       setExperimentalFeatures([]);
       const component = new ToolCallComponent(
@@ -2247,6 +2269,36 @@ describe('ToolCallComponent', () => {
       expect(strip(component.render(100).join('\n'))).toContain(
         'Wait timed out (question-80w0h7nw)',
       );
+    });
+
+    it('renders a wait ended by new input as interrupted', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_wait_interrupted',
+          name: 'WaitFor',
+          args: { task_id: 'bash-x', timeout: 60 },
+        },
+        {
+          tool_call_id: 'call_wait_interrupted',
+          output: [
+            'wait_status: interrupted',
+            'reason: steer',
+            'task_id: bash-x',
+            'waited_ms: 4000',
+            'timeout_ms: 60000',
+            '',
+            '[still_running]',
+            'active_background_tasks: 1',
+            'task_id: bash-x',
+            'description: slow build',
+          ].join('\n'),
+          is_error: false,
+        },
+      );
+
+      const out = strip(component.render(100).join('\n'));
+      expect(out).toContain('Wait interrupted by new input (bash-x)');
+      expect(out).toContain('1 background task still running: slow build');
     });
 
     it('renders errors with the failure tense', () => {

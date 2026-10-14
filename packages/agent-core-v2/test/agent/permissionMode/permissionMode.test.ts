@@ -16,6 +16,7 @@ import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IEventBus } from '#/app/event/eventBus';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -62,11 +63,21 @@ let dispatcher: IEventDispatcher;
 let svc: IAgentPermissionModeService;
 let reminderLive = false;
 let bootstrapEnv: NodeJS.ProcessEnv;
+let busEvents: { type: string; permission?: PermissionMode }[];
+
+const recordingEventBus: IEventBus = {
+  _serviceBrand: undefined,
+  publish: (event) => {
+    busEvents.push(event as { type: string; permission?: PermissionMode });
+  },
+  subscribe: () => ({ dispose: () => {} }),
+};
 
 beforeEach(() => {
   registeredInjection = undefined;
   reminderLive = false;
   bootstrapEnv = {};
+  busEvents = [];
   disposables = new DisposableStore();
   ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
@@ -76,7 +87,7 @@ beforeEach(() => {
   ix.set(IAgentStateService, new AgentStateService());
   ix.set(IAgentPermissionModeService, new SyncDescriptor(AgentPermissionModeService));
   log = ix.get(IAppendLogStore);
-  registerTestAgentWire(ix, testWireScope(SCOPE, KEY), { log });
+  registerTestAgentWire(ix, testWireScope(SCOPE, KEY), { log, eventBus: recordingEventBus });
   dispatcher = registerTestEventDispatcher(ix);
   svc = ix.get(IAgentPermissionModeService);
 });
@@ -146,6 +157,16 @@ describe('AgentPermissionModeService (wire-backed)', () => {
       },
     ]);
     expect('payload' in records[0]!).toBe(false);
+  });
+
+  it('publishes agent.status.updated with the permission slice on setMode', () => {
+    svc.setMode('auto');
+    svc.setMode('yolo');
+
+    expect(busEvents).toMatchObject([
+      { type: 'agent.status.updated', permission: 'auto' },
+      { type: 'agent.status.updated', permission: 'yolo' },
+    ]);
   });
 
   it('persists an explicitly configured manual mode when it matches the initial value', async () => {

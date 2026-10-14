@@ -65,6 +65,8 @@ function passingLongContext(
     cumulativeTokens: 0,
     virtualContextTokens: 0,
     mountRollConsumed: false,
+    mountSurveyShown: false,
+    msSinceGlobalLastShown: undefined,
     drawMountRoll: () => 0,
     ...overrides,
   };
@@ -212,6 +214,7 @@ describe('evaluateLongContextArm', () => {
 
   it.each<[Partial<LongContextArmGateInput>, string]>([
     [{ mountRollConsumed: true }, 'mount-roll-consumed'],
+    [{ mountSurveyShown: true }, 'mount-survey-shown'],
     [{ phase: 'open' }, 'survey-active'],
     [{ phase: 'pending' }, 'survey-active'],
     [{ phase: 'thanks' }, 'survey-active'],
@@ -229,8 +232,16 @@ describe('evaluateLongContextArm', () => {
     [{ telemetryDisabled: true }, 'telemetry-disabled'],
     [{ lastUserMessageStartsOrderedList: true }, 'ordered-list-ambiguity'],
     [{ virtualContextTokens: 199_999 }, 'below-threshold'],
+    [{ msSinceGlobalLastShown: 99_999_999 }, 'global-cooldown'],
   ])('skips with %j → %s', (overrides, reason) => {
     expect(arm(overrides)).toEqual({ show: false, reason });
+  });
+
+  it('checks the mount cap first: a shown survey reports mount-survey-shown, not later reasons', () => {
+    expect(arm({ mountSurveyShown: true, mountRollConsumed: true, phase: 'open' })).toEqual({
+      show: false,
+      reason: 'mount-survey-shown',
+    });
   });
 
   it('checks the mount latch first: a spent roll reports mount-roll-consumed, not later reasons', () => {
@@ -287,6 +298,23 @@ describe('evaluateLongContextArm', () => {
         reason: 'below-threshold',
       });
       expect(drawMountRoll).not.toHaveBeenCalled();
+    });
+
+    it('does not draw the dice inside the shared global cooldown, so the roll stays unspent', () => {
+      const drawMountRoll = vi.fn(() => 0);
+      expect(arm({ msSinceGlobalLastShown: 1000, drawMountRoll })).toEqual({
+        show: false,
+        reason: 'global-cooldown',
+      });
+      expect(drawMountRoll).not.toHaveBeenCalled();
+    });
+
+    it('shows once the shared global cooldown has elapsed', () => {
+      expect(arm({ msSinceGlobalLastShown: 100_000_000 })).toEqual({
+        show: true,
+        survey: 'long_context',
+        longContextRollConsumed: true,
+      });
     });
 
     it('does not draw the dice while transiently suppressed by an active prompt', () => {
@@ -412,14 +440,16 @@ describe('evaluateSurveyGate (arbitration)', () => {
     });
   });
 
-  it('shows the long-context survey inside the persisted cooldown that still gates the session arm', () => {
+  it('blocks both arms inside the shared persisted cooldown', () => {
     expect(
-      evaluateSurveyGate(gate({ msSinceGlobalLastShown: 1000 }, CONFIG, ELIGIBLE)),
-    ).toEqual({
-      show: true,
-      survey: 'long_context',
-      longContextRollConsumed: true,
-    });
+      evaluateSurveyGate(
+        gate(
+          { msSinceGlobalLastShown: 1000 },
+          CONFIG,
+          { ...ELIGIBLE, msSinceGlobalLastShown: 1000 },
+        ),
+      ),
+    ).toEqual({ show: false, reason: 'global-cooldown' });
   });
 
   it('shows nothing when the long-context arm is ineligible and the session arm is sampled out', () => {

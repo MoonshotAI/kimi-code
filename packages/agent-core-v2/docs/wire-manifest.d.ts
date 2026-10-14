@@ -37,7 +37,7 @@
 //   cron.delete                        (none)                                                src/features/cron/cronOps.ts
 //   file_history.checkpoint            fileHistory                                           src/features/fileHistory/fileHistoryOps.ts
 //   file_history.tracked               fileHistory                                           src/features/fileHistory/fileHistoryOps.ts
-//   forked                             (none)                                                src/features/goal/goalOps.ts
+//   forked                             (none)                                                src/session/agentLifecycle/forked.ts
 //   full_compaction.begin              fullCompaction                                        src/agent/fullCompaction/compactionOps.ts
 //   full_compaction.cancel             fullCompaction                                        src/agent/fullCompaction/compactionOps.ts
 //   full_compaction.complete           fullCompaction                                        src/agent/fullCompaction/compactionOps.ts
@@ -81,8 +81,8 @@
 //   tools.set_active_tools             profile.activeTools                                   src/agent/profile/profileOps.ts
 //   tools.unregister_user_tool         userTool                                              src/agent/userTool/userToolOps.ts
 //   tools.update_store                 (none)                                                src/features/todo/todoOps.ts
-//   tower_mode.enter                   tower, tower.base, tower.owner                        src/features/tower/towerOps.ts
-//   tower_mode.exit                    tower, tower.base, tower.owner                        src/features/tower/towerOps.ts
+//   tower_mode.enter                   tower, tower.owner                                    src/features/tower/towerOps.ts
+//   tower_mode.exit                    tower, tower.owner                                    src/features/tower/towerOps.ts
 //   turn.cancel                        turn                                                  src/agent/loop/turnOps.ts
 //   turn.ended                         turn                                                  src/agent/loop/turnOps.ts
 //   turn.prompt                        turn                                                  src/agent/loop/turnOps.ts
@@ -262,7 +262,7 @@ interface FileHistoryTrackedPayload {
 
 /**
  * states: (none)
- * owner: src/features/goal/goalOps.ts
+ * owner: src/session/agentLifecycle/forked.ts
  */
 interface ForkedPayload {
   _name: 'forked';
@@ -808,18 +808,17 @@ interface ToolsUpdateStorePayload {
 }
 
 /**
- * states: tower, tower.base, tower.owner
+ * states: tower, tower.owner
  * owner: src/features/tower/towerOps.ts
  */
 interface TowerModeEnterPayload {
   _name: 'tower_mode.enter';
   agentId: string;
   sessionId?: string;
-  base?: string;
 }
 
 /**
- * states: tower, tower.base, tower.owner
+ * states: tower, tower.owner
  * owner: src/features/tower/towerOps.ts
  */
 interface TowerModeExitPayload {

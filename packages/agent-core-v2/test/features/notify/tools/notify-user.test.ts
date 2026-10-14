@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { type HostUiCapability, IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
@@ -16,8 +17,13 @@ import {
 import {
   NOTIFY_USER_DELIVERED_OUTPUT,
   NOTIFY_USER_EMPTY_MESSAGE,
+  NOTIFY_USER_EMPTY_TITLE,
+  NOTIFY_USER_INVALID_TITLE,
+  NOTIFY_USER_MULTILINE_TITLE,
   NOTIFY_USER_SUPPRESSED_OUTPUT,
 } from '#/features/notify/tools/notify-user/notifyUserTool';
+import { NOTIFY_USER_NUDGE_VARIANT } from '#/features/notify/notifyUserNudge';
+import { recordingTelemetry, type TelemetryRecord } from '../../../app/telemetry/stubs';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 
 import { createTestAgent, type TestAgentContext } from '../../../harness';
@@ -26,9 +32,11 @@ const signal = new AbortController().signal;
 
 describe('NotifyUserTool', () => {
   let ctx: TestAgentContext;
+  let telemetry: TelemetryRecord[];
 
   beforeEach(async () => {
-    ctx = createTestAgent();
+    telemetry = [];
+    ctx = createTestAgent({ telemetry: recordingTelemetry(telemetry) });
     ctx.get(IFlagService).setConfigOverrides({ notify_user: true });
     Object.assign(ctx.get(IBootstrapService).args, { uiCapabilities: [NOTIFY_USER_UI_CAPABILITY] });
     await ctx.restorePersisted();
@@ -44,26 +52,46 @@ describe('NotifyUserTool', () => {
     expect(NOTIFY_USER_TOOL_NAME).toBe('NotifyUser');
     expect(tool.name).toBe(NOTIFY_USER_TOOL_NAME);
     expect(tool.description).toContain('When to use');
+    expect(
+      NotifyUserInputSchema.safeParse({
+        title: 'Reading the parser first',
+        message: 'The tokenizer is the likely culprit.',
+      }).success,
+    ).toBe(true);
     expect(NotifyUserInputSchema.safeParse({ message: 'Reading the parser first.' }).success).toBe(
       true,
     );
-    expect(NotifyUserInputSchema.safeParse({ message: '' }).success).toBe(false);
+    expect(NotifyUserInputSchema.safeParse({ title: 'Reading', message: '' }).success).toBe(false);
+    expect(NotifyUserInputSchema.safeParse({ title: '', message: 'Reading' }).success).toBe(false);
     expect(NotifyUserInputSchema.safeParse({}).success).toBe(false);
     expect(tool.parameters).toMatchObject({
       type: 'object',
       additionalProperties: false,
       required: ['message'],
       properties: {
+        title: { type: 'string' },
         message: { type: 'string' },
       },
     });
+    expect(Object.keys((tool.parameters as { properties: object }).properties)).toEqual([
+      'title',
+      'message',
+    ]);
   });
 
-  it('is an experimental, off-by-default flag that the default profile allows', () => {
+  it('is off by default, can be turned on, and the default profile allows it', () => {
     expect(ctx.get(IAgentToolPolicyService).isToolActive(NOTIFY_USER_TOOL_NAME)).toBe(true);
     expect(notifyUserFlag.id).toBe(NOTIFY_USER_FLAG_ID);
     expect(notifyUserFlag.env).toBe(NOTIFY_USER_FLAG_ENV);
     expect(notifyUserFlag.default).toBe(false);
+
+    const flags = ctx.get(IFlagService);
+    flags.setConfigOverrides({});
+    expect(flags.enabled(NOTIFY_USER_FLAG_ID)).toBe(false);
+    flags.setConfigOverrides({ notify_user: true });
+    expect(flags.enabled(NOTIFY_USER_FLAG_ID)).toBe(true);
+    flags.setConfigOverrides({ notify_user: false });
+    expect(flags.enabled(NOTIFY_USER_FLAG_ID)).toBe(false);
   });
 
   it('is offered only when the flag is on and the host renders the update panel', () => {
@@ -80,7 +108,8 @@ describe('NotifyUserTool', () => {
   it('acknowledges the update without touching any resource', async () => {
     const tool = ctx.get(INotifyUserTool);
     const execution = tool.resolveExecution({
-      message: 'Login module is clean; the bug is in session expiry.',
+      title: 'Login module is clean',
+      message: 'The bug is in session expiry.',
     });
 
     expect(execution).toMatchObject({
@@ -92,11 +121,72 @@ describe('NotifyUserTool', () => {
     const result = await executeTool(tool, {
       turnId: 1,
       toolCallId: 'call_1',
-      args: { message: 'Login module is clean; the bug is in session expiry.' },
+      args: { title: 'Login module is clean', message: 'The bug is in session expiry.' },
       signal,
     });
 
     expect(result).toEqual({ isError: false, output: NOTIFY_USER_DELIVERED_OUTPUT });
+  });
+
+  it('tracks each update with the silent stretch that preceded it', async () => {
+    const context = ctx.get(IAgentContextMemoryService);
+    context.append({
+      role: 'user',
+      content: [{ type: 'text', text: 'do the thing' }],
+      toolCalls: [],
+      origin: { kind: 'user' },
+    });
+    context.append({
+      role: 'assistant',
+      content: [],
+      toolCalls: [
+        { type: 'function', id: 'call_a', name: 'Bash', arguments: '{}' },
+        { type: 'function', id: 'call_b', name: 'Read', arguments: '{}' },
+      ],
+    });
+    context.append({
+      role: 'user',
+      content: [{ type: 'text', text: 'nudge' }],
+      toolCalls: [],
+      origin: { kind: 'injection', variant: NOTIFY_USER_NUDGE_VARIANT },
+    });
+    context.append({
+      role: 'assistant',
+      content: [],
+      toolCalls: [{ type: 'function', id: 'call_notify', name: NOTIFY_USER_TOOL_NAME, arguments: '{}' }],
+    });
+
+    await executeTool(ctx.get(INotifyUserTool), {
+      turnId: 3,
+      toolCallId: 'call_notify',
+      args: { title: 'Parser checked', message: 'No issues in the tokenizer.' },
+      signal,
+    });
+
+    const sent = telemetry.filter((record) => record.event === 'notify_user_sent');
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.properties).toMatchObject({
+      turn_id: 3,
+      rounds_since_notify: 1,
+      after_nudge: true,
+      title_chars: 'Parser checked'.length,
+      message_chars: 'No issues in the tokenizer.'.length,
+      displayed: true,
+    });
+  });
+
+  it('accepts a message-only call, matching the pre-title behavior', async () => {
+    const result = await executeTool(ctx.get(INotifyUserTool), {
+      turnId: 1,
+      toolCallId: 'call_1',
+      args: { message: 'Checking the work.' },
+      signal,
+    });
+
+    expect(result).toEqual({ isError: false, output: NOTIFY_USER_DELIVERED_OUTPUT });
+    expect(telemetry.find((record) => record.event === 'notify_user_sent')?.properties).toMatchObject({
+      title_chars: 0,
+    });
   });
 
   it('rejects a whitespace-only message before execution', async () => {
@@ -105,18 +195,60 @@ describe('NotifyUserTool', () => {
     const result = await executeTool(tool, {
       turnId: 1,
       toolCallId: 'call_1',
-      args: { message: '   \n' },
+      args: { title: 'Checking', message: '   \n' },
       signal,
     });
 
     expect(result).toEqual({ isError: true, output: NOTIFY_USER_EMPTY_MESSAGE });
   });
 
+  it('rejects a whitespace-only title before execution', async () => {
+    const tool = ctx.get(INotifyUserTool);
+
+    const result = await executeTool(tool, {
+      turnId: 1,
+      toolCallId: 'call_1',
+      args: { title: ' \n ', message: 'The parser is fine.' },
+      signal,
+    });
+
+    expect(result).toEqual({ isError: true, output: NOTIFY_USER_EMPTY_TITLE });
+    expect(telemetry.filter((record) => record.event === 'notify_user_sent')).toHaveLength(0);
+  });
+
+  it('rejects a multi-line title before execution', async () => {
+    const tool = ctx.get(INotifyUserTool);
+
+    const result = await executeTool(tool, {
+      turnId: 1,
+      toolCallId: 'call_1',
+      args: { title: 'First line\nSecond line', message: 'The parser is fine.' },
+      signal,
+    });
+
+    expect(result).toEqual({ isError: true, output: NOTIFY_USER_MULTILINE_TITLE });
+    expect(telemetry.filter((record) => record.event === 'notify_user_sent')).toHaveLength(0);
+  });
+
+  it('rejects a non-string title before execution', async () => {
+    const tool = ctx.get(INotifyUserTool);
+
+    const result = await executeTool(tool, {
+      turnId: 1,
+      toolCallId: 'call_1',
+      args: { title: 42 as unknown as string, message: 'The parser is fine.' },
+      signal,
+    });
+
+    expect(result).toEqual({ isError: true, output: NOTIFY_USER_INVALID_TITLE });
+    expect(telemetry.filter((record) => record.event === 'notify_user_sent')).toHaveLength(0);
+  });
+
   it('acknowledges without displaying after the feature is disabled', async () => {
     const tool = ctx.get(INotifyUserTool);
-    const execution = tool.resolveExecution({ message: 'Starting the checks.' });
+    const execution = tool.resolveExecution({ title: 'Starting', message: 'Starting the checks.' });
     ctx.get(IFlagService).setConfigOverrides({ notify_user: false });
-    const disabled = tool.resolveExecution({ message: 'Should not appear.' });
+    const disabled = tool.resolveExecution({ title: 'Hidden', message: 'Should not appear.' });
     if (!('execute' in disabled)) throw new Error('Expected executable tool');
     expect(await disabled.execute({ signal } as never)).toEqual({
       isError: false,
@@ -131,11 +263,16 @@ describe('NotifyUserTool', () => {
 
   it('acknowledges without displaying in a host without the panel', async () => {
     Object.assign(ctx.get(IBootstrapService).args, { uiCapabilities: [] });
-    const execution = ctx.get(INotifyUserTool).resolveExecution({ message: 'Should not appear.' });
+    const execution = ctx
+      .get(INotifyUserTool)
+      .resolveExecution({ title: 'Hidden', message: 'Should not appear.' });
     if (!('execute' in execution)) throw new Error('Expected executable tool');
     expect(await execution.execute({ signal } as never)).toEqual({
       isError: false,
       output: NOTIFY_USER_SUPPRESSED_OUTPUT,
+    });
+    expect(telemetry.find((record) => record.event === 'notify_user_sent')?.properties).toMatchObject({
+      displayed: false,
     });
   });
 });

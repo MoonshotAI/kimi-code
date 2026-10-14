@@ -23,6 +23,7 @@ import { AgentTaskService, taskNotificationDeliveryKey } from '#/agent/task/task
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage, TaskOrigin } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -34,6 +35,7 @@ import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStor
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import { type WaitForInput } from '#/agent/tools/task/task-wait/task-wait';
 import { WaitForTool } from '#/agent/tools/task/task-wait/taskWaitTool';
@@ -55,6 +57,7 @@ import { stubAgentWire } from '../../wire/stubs';
 import { stubContextMemory, type StubContextMemory } from '../contextMemory/stubs';
 import { stubLoopWithHooks, type StubLoop } from '../loop/stubs';
 import { stubFlag } from '../../app/flag/stubs';
+import { stubGoal } from '../../features/goal/stubs';
 import { executeTool } from '../../tools/fixtures/execute-tool';
 import type { TaskServiceTestManager } from './stubs';
 
@@ -131,7 +134,10 @@ describe('AgentTaskService', () => {
     ix.stub(ITelemetryService, { track2: () => {} });
     ix.stub(IAgentToolRegistryService, {
       register: () => toDisposable(() => {}),
+      resolve: () => undefined,
     });
+    ix.stub(IFlagService, stubFlag());
+    ix.stub(IAgentToolPolicyService, { isToolActive: () => false });
     ix.stub(IAgentLoopService, stubLoopWithHooks());
     ix.stub(IConfigRegistry, { registerSection: () => {} });
     ix.stub(IConfigService, {
@@ -416,8 +422,8 @@ describe('AgentTaskService', () => {
     const bytes = new InMemoryStorageService();
     const mainSvc = buildAgentIx('main', docs, bytes).get(IAgentTaskService);
     const childSvc = buildAgentIx('child-1', docs, bytes).get(IAgentTaskService);
-    const mainTool = new WaitForTool(mainSvc, noopTelemetryService, stubFlag(true));
-    const childTool = new WaitForTool(childSvc, noopTelemetryService, stubFlag(true));
+    const mainTool = new WaitForTool(mainSvc, noopTelemetryService, stubFlag(true), stubGoal(), makeAgentScopeContext({ agentId: 'main', agentScope: 'main' }));
+    const childTool = new WaitForTool(childSvc, noopTelemetryService, stubFlag(true), stubGoal(), makeAgentScopeContext({ agentId: 'child-1', agentScope: 'child-1' }));
 
     const leaf = pendingSubagentTask('agent-grandchild', 'leaf work');
     const taskC = childSvc.registerTask(leaf.task);
@@ -466,8 +472,8 @@ describe('AgentTaskService', () => {
     const bytes = new InMemoryStorageService();
     const mainSvc = buildAgentIx('main', docs, bytes).get(IAgentTaskService);
     const childSvc = buildAgentIx('child-1', docs, bytes).get(IAgentTaskService);
-    const mainTool = new WaitForTool(mainSvc, noopTelemetryService, stubFlag(true));
-    const childTool = new WaitForTool(childSvc, noopTelemetryService, stubFlag(true));
+    const mainTool = new WaitForTool(mainSvc, noopTelemetryService, stubFlag(true), stubGoal(), makeAgentScopeContext({ agentId: 'main', agentScope: 'main' }));
+    const childTool = new WaitForTool(childSvc, noopTelemetryService, stubFlag(true), stubGoal(), makeAgentScopeContext({ agentId: 'child-1', agentScope: 'child-1' }));
 
     const parent = pendingSubagentTask('agent-parent', 'parent work');
     const taskM = mainSvc.registerTask(parent.task);
@@ -758,6 +764,9 @@ describe('AgentTaskService', () => {
     bytes: IFileSystemStorageService,
   ): TestInstantiationService {
     const ix = disposables.add(new TestInstantiationService());
+    ix.stub(IFlagService, stubFlag());
+    ix.stub(IAgentToolRegistryService, { resolve: () => undefined });
+    ix.stub(IAgentToolPolicyService, { isToolActive: () => false });
     ix.stub(ILogService, stubLog());
     ix.stub(IAgentConversationUndoParticipantRegistry, {
       register: () => toDisposable(() => {}),
@@ -813,6 +822,9 @@ describe('AgentTaskService', () => {
     context: StubContextMemory,
   ): TestInstantiationService {
     const ix = disposables.add(new TestInstantiationService());
+    ix.stub(IFlagService, stubFlag());
+    ix.stub(IAgentToolRegistryService, { resolve: () => undefined });
+    ix.stub(IAgentToolPolicyService, { isToolActive: () => false });
     ix.stub(ILogService, stubLog());
     ix.stub(IAgentConversationUndoParticipantRegistry, {
       register: () => toDisposable(() => {}),

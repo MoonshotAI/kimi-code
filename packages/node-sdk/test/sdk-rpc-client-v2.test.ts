@@ -8,9 +8,11 @@
  * Wiring: real v2 engine bootstrapped on a temp KIMI_CODE_HOME; remote provider calls are stubbed.
  * Run: pnpm exec vitest run test/sdk-rpc-client-v2.test.ts
  */
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 
 import {
   FileTokenStorage,
@@ -27,11 +29,11 @@ import {
   isKimiError,
   KimiHarness,
   limitAgentReplayByTurns,
-  removeProviderFromConfig,
+  SDKRpcClientBase,
   SDKRpcClientV2,
+  Session,
   toKimiErrorPayload,
   type Event,
-  type KimiConfig,
 } from '#/index';
 import { foldAgentWireReplay } from '#/v2/resume-replay';
 import {
@@ -59,6 +61,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 
 import { McpOAuthService as McpOAuthServiceV2 } from '@moonshot-ai/agent-core-v2/mcpCore/oauth/service';
+import { TowerStore } from '@moonshot-ai/agent-core-v2/features/tower/protocol/store';
 
 import { TEST_IDENTITY } from './test-identity';
 import {
@@ -1083,26 +1086,6 @@ key = "${titleOAuthRef.key}"
     }
   });
 
-  it('replaces config sections atomically and clears undefined sections', async () => {
-    const { harness } = await makeHarness();
-    try {
-      expect(harness.supportsAtomicSectionReplace()).toBe(true);
-      await harness.setConfig({
-        providers: { a: { type: 'openai', baseUrl: 'https://a.example.test/v1', apiKey: 'sk-a' } },
-        models: { 'a/m1': { provider: 'a', model: 'm1', maxContextSize: 100 } },
-        defaultModel: 'a/m1',
-      });
-      await harness.replaceConfigSections({ defaultModel: undefined });
-      const next = await harness.getConfig({ reload: true });
-      expect(next.defaultModel).toBeUndefined();
-      // Sections absent from the write stay untouched.
-      expect(next.providers['a']).toBeDefined();
-      expect(next.models?.['a/m1']).toBeDefined();
-    } finally {
-      await harness.close();
-    }
-  });
-
   it('imports a registry through the harness without selecting a default when the caller defers selection', async () => {
     setModelsDevUpstreamForTest({
       fetchImpl: async () => Response.json({
@@ -1127,6 +1110,74 @@ key = "${titleOAuthRef.key}"
       expect(config.models?.['example/m1']).toMatchObject({ provider: 'example', model: 'm1' });
       expect(config.defaultModel).toBeUndefined();
     } finally {
+      await harness.close();
+    }
+  });
+
+  it('refreshes provider models through the harness and moves sessions off a retired default', async () => {
+    vi.stubGlobal('fetch', async () =>
+      Response.json({
+        acme: {
+          id: 'acme',
+          name: 'Acme',
+          type: 'openai',
+          api: 'https://acme.example.test/v1',
+          models: { next: { id: 'next', default_effort: 'high' } },
+        },
+      }),
+    );
+    const { harness } = await makeHarness();
+    try {
+      await harness.setConfig({
+        providers: {
+          acme: {
+            type: 'openai',
+            apiKey: 'sk-acme',
+            source: { kind: 'apiJson', url: 'https://registry.example.test/api.json', apiKey: 'sk-registry' },
+          },
+        },
+        models: {
+          'acme/current': {
+            provider: 'acme',
+            model: 'current',
+            maxContextSize: 131072,
+            capabilities: ['tool_use'],
+            displayName: 'Current',
+            supportEfforts: ['low', 'high'],
+            defaultEffort: 'high',
+            upgrade: { model: 'acme/next', migrationMarkdown: 'Use next' },
+          },
+          'acme/next': {
+            provider: 'acme',
+            model: 'next',
+            maxContextSize: 131072,
+            capabilities: ['tool_use'],
+            defaultEffort: 'high',
+          },
+        },
+        defaultModel: 'acme/current',
+        thinking: { enabled: true },
+      });
+      const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+      tempDirs.push(workDir);
+      const session = await harness.createSession({
+        id: 'ses_retired_default',
+        workDir,
+        model: 'acme/current',
+      });
+
+      const result = await harness.refreshProviderModels();
+      expect(result).toEqual({
+        changed: [{ provider_id: 'acme', provider_name: 'Acme', added: 0, removed: 1 }],
+        unchanged: [],
+        failed: [],
+        retired_default: { from: 'acme/current', to: 'acme/next', from_display_name: 'Current' },
+      });
+      const config = await harness.getConfig({ reload: true });
+      expect(config.defaultModel).toBe('acme/next');
+      expect((await session.getStatus()).model).toBe('acme/next');
+    } finally {
+      vi.unstubAllGlobals();
       await harness.close();
     }
   });
@@ -1248,7 +1299,7 @@ key = "${titleOAuthRef.key}"
             expect(
               agent.accessor
                 .get(INotifyUserTool)
-                .resolveExecution({ message: 'Checking this subtask.' }),
+                .resolveExecution({ title: 'Checking', message: 'Checking this subtask.' }),
             ).toMatchObject({ accesses: [], approvalRule: 'NotifyUser' });
           }
         }
@@ -1270,7 +1321,7 @@ key = "${titleOAuthRef.key}"
           if (enabled && panel) {
             const execution = currentMain.accessor
               .get(INotifyUserTool)
-              .resolveExecution({ message: 'Still working.' });
+              .resolveExecution({ title: 'Working', message: 'Still working.' });
             if (!('execute' in execution)) throw new Error('Expected executable notification');
             expect(
               await execution.execute({ signal: new AbortController().signal } as never),
@@ -1390,6 +1441,15 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('defaults getTowerStatus to not_implemented on backends without support', async () => {
+    const rpc = Object.create(SDKRpcClientBase.prototype) as SDKRpcClientBase;
+    const session = new Session({ id: 'ses_tower_unsupported', workDir: '/tmp/work', rpc });
+
+    await expect(session.getTowerStatus()).rejects.toMatchObject({
+      code: ErrorCodes.NOT_IMPLEMENTED,
+    });
+  });
+
   it('serves setTowerMode and getStatus towerMode through the agent scope tower service', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOWER', '1');
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
@@ -1455,7 +1515,7 @@ key = "${titleOAuthRef.key}"
     }
   });
 
-  it('exposes Session.setTowerMode and getStatus().towerMode on the v2 harness', async () => {
+  it('exposes Session tower mode and status APIs on the v2 harness', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOWER', '1');
     const { harness } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
@@ -1463,16 +1523,74 @@ key = "${titleOAuthRef.key}"
     try {
       const session = await harness.createSession({ workDir });
       expect((await session.getStatus()).towerMode).toBe(false);
+      expect(await session.getTowerStatus()).toBe('Tower mode: OFF');
 
       await expect(session.setTowerMode(true)).resolves.toBeUndefined();
       expect(typeof (await session.getStatus()).towerMode).toBe('boolean');
+      expect(await session.getTowerStatus()).toBe('Tower mode: ON\nTower is not initialized.');
 
       await expect(session.setTowerMode(false)).resolves.toBeUndefined();
       expect((await session.getStatus()).towerMode).toBe(false);
+      expect(await session.getTowerStatus()).toBe('Tower mode: OFF');
 
       await expect(session.setTowerMode('yes' as unknown as boolean)).rejects.toMatchObject({
         code: ErrorCodes.REQUEST_INVALID,
       });
+    } finally {
+      vi.unstubAllEnvs();
+      await harness.close();
+    }
+  });
+
+  it('serves the initialized tower status as an engine-rendered text summary', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOWER', '1');
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    try {
+      const exec = promisify(execFile);
+      await exec('git', ['init', '-b', 'main'], { cwd: workDir });
+      await exec(
+        'git',
+        [
+          '-c',
+          'user.email=tower-test@example.com',
+          '-c',
+          'user.name=Tower Test',
+          'commit',
+          '--allow-empty',
+          '-m',
+          'initial',
+        ],
+        { cwd: workDir },
+      );
+      const session = await harness.createSession({ id: 'ses_tower_status', workDir });
+      await session.setTowerMode(true);
+      const store = new TowerStore(workDir);
+      await store.init(session.id, 'main');
+      await store.plan([{ title: 'Build engine', scope: ['src/engine/**'] }]);
+
+      const status = await session.getTowerStatus();
+
+      const [headline, ...bodyLines] = status.split('\n');
+      expect(headline).toBe('Tower status — ON');
+      const body = bodyLines.join('\n');
+      expect(body).toContain('Base: main (mode: branch) · You are: tower');
+      expect(body).toContain('Missions:\n  M1 Build engine — planned · owner — · feat/build-engine');
+      expect(body).toContain('Roster:\n  (none)');
+      expect(body).toContain('Review gate:\n  M1 feat/build-engine — BLOCKED: not-completed');
+      expect(body).toContain('Inbox: 0 message(s)');
+      expect(body).toContain('Concurrency: budget: ');
+      expect(body).toContain('Recent activity:');
+      expect(body).toContain(' tower init');
+
+      await session.setTowerMode(false);
+      const inactiveStatus = await session.getTowerStatus();
+      const [inactiveHeadline, ...inactiveBodyLines] = inactiveStatus.split('\n');
+      expect(inactiveHeadline).toBe('Tower mode: OFF');
+      const inactiveBody = inactiveBodyLines.join('\n');
+      expect(inactiveBody).toContain(body);
+      expect(inactiveBody).toContain(' tower release session=ses_tower_status');
     } finally {
       vi.unstubAllEnvs();
       await harness.close();
@@ -1495,6 +1613,10 @@ describe('SDKRpcClientV2 workspace trust', () => {
             cwd: '/tmp/root',
             env: { SECRET: 'hidden' },
           },
+          'disabled-server': {
+            command: 'never-runs',
+            enabled: false,
+          },
           'http-server': {
             transport: 'http',
             url: 'https://example.test/mcp',
@@ -1515,14 +1637,34 @@ describe('SDKRpcClientV2 workspace trust', () => {
       const info = await harness.getWorkspaceTrustInfo(workDir);
       expect(info.trusted).toBe(false);
       expect(info.gatedMcpServers).toEqual([
-        { name: 'http-server', transport: 'http', url: 'https://example.test/mcp' },
-        { name: 'nested-server', transport: 'stdio', command: 'nested-cmd' },
-        { name: 'root-server', transport: 'stdio', command: 'root-cmd', args: ['--safe'], cwd: '/tmp/root' },
+        {
+          name: 'http-server',
+          transport: 'http',
+          url: 'https://example.test/mcp',
+          origin: await realpath(join(workDir, '.mcp.json')),
+        },
+        {
+          name: 'nested-server',
+          transport: 'stdio',
+          command: 'nested-cmd',
+          origin: await realpath(join(workDir, '.kimi-code', 'mcp.json')),
+        },
+        {
+          name: 'root-server',
+          transport: 'stdio',
+          command: 'root-cmd',
+          args: ['--safe'],
+          cwd: '/tmp/root',
+          origin: await realpath(join(workDir, '.mcp.json')),
+        },
       ]);
       const serialized = JSON.stringify(info);
+      // Environment variables and headers stay in the source configuration.
       expect(serialized).not.toContain('hidden');
       expect(serialized).not.toContain('SECRET');
       expect(serialized).not.toContain('TOKEN');
+      // Disabled servers never connect, so they are not part of the disclosure.
+      expect(serialized).not.toContain('disabled-server');
     } finally {
       await harness.close();
     }
@@ -1545,8 +1687,8 @@ describe('SDKRpcClientV2 workspace trust', () => {
       join(workDir, '.mcp.json'),
       JSON.stringify({
         mcpServers: {
-          github: { command: 'project-github', enabled: false },
-          toString: { transport: 'http', url: 'https://example.test/mcp', enabled: false },
+          github: { command: 'project-github' },
+          toString: { transport: 'http', url: 'https://example.test/mcp' },
         },
       }),
       'utf-8',
@@ -1561,22 +1703,138 @@ describe('SDKRpcClientV2 workspace trust', () => {
           command: 'project-github',
           args: undefined,
           cwd: workDir,
+          origin: await realpath(join(workDir, '.mcp.json')),
         },
-        { name: 'toString', transport: 'http', url: 'https://example.test/mcp' },
+        {
+          name: 'toString',
+          transport: 'http',
+          url: 'https://example.test/mcp',
+          origin: await realpath(join(workDir, '.mcp.json')),
+        },
       ]);
     } finally {
       await harness.close();
     }
   });
 
-  it('degrades the gated-server list to empty on an invalid project mcp.json', async () => {
+  it('reports failed configuration and instruction sources while retaining readable instructions', async () => {
     const { harness } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
     await writeFile(join(workDir, '.mcp.json'), '{not json', 'utf-8');
+    await writeFile(join(workDir, 'AGENTS.md'), '# Project instructions\n', 'utf-8');
+    await mkdir(join(workDir, '.kimi-code'));
+    await symlink(join(workDir, 'missing.md'), join(workDir, '.kimi-code', 'AGENTS.md'));
     try {
       const info = await harness.getWorkspaceTrustInfo(workDir);
-      expect(info).toEqual({ trusted: false, gatedMcpServers: [] });
+      expect(info).toEqual({
+        trusted: false,
+        gatedMcpServers: [],
+        gatedAdditionalDirs: [],
+        additionalDirSources: [],
+        warnings: expect.arrayContaining([
+          'Could not inspect MCP configuration.',
+          expect.stringContaining(join(workDir, '.kimi-code', 'AGENTS.md')),
+        ]),
+        instructionSources: {
+          agentsMdPaths: [await realpath(join(workDir, 'AGENTS.md'))],
+          skills: [], agentProfiles: [], paths: [await realpath(join(workDir, 'AGENTS.md'))],
+        },
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('discloses additional directories and instruction sources of an untrusted workspace', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    const outsideDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-outside-'));
+    tempDirs.push(workDir, outsideDir);
+    const insideDir = join(workDir, 'sub');
+    await mkdir(insideDir, { recursive: true });
+    await mkdir(join(workDir, '..cache'));
+    // linked-dir lexically sits inside the project but points outside it, so
+    // trusting would grant access to the target; inner-link points back into
+    // the project and grants nothing new.
+    await symlink(outsideDir, join(workDir, 'linked-dir'), 'dir');
+    await symlink(insideDir, join(workDir, 'inner-link'), 'dir');
+    await mkdir(join(workDir, '.kimi-code'), { recursive: true });
+    await writeFile(
+      join(workDir, '.kimi-code', 'local.toml'),
+      `[workspace]\nadditional_dir = [${JSON.stringify(outsideDir)}, ".", "sub", "..cache", "linked-dir", "inner-link"]\n`,
+      'utf-8',
+    );
+    await writeFile(join(outsideDir, 'AGENTS.md'), '# Demo\n', 'utf-8');
+    await symlink(join(outsideDir, 'AGENTS.md'), join(workDir, 'AGENTS.md'), 'file');
+    const outsideSkills = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-skills-'));
+    tempDirs.push(outsideSkills);
+    await mkdir(join(outsideSkills, 'demo-skill'), { recursive: true });
+    await writeFile(
+      join(outsideSkills, 'demo-skill', 'SKILL.md'),
+      '---\nname: demo-skill\ndescription: Demo skill\n---\n\nDo demo things.\n',
+      'utf-8',
+    );
+    await symlink(outsideSkills, join(workDir, '.kimi-code', 'skills'), 'dir');
+    await mkdir(join(workDir, '.kimi-code', 'agents'), { recursive: true });
+    await writeFile(
+      join(workDir, '.kimi-code', 'agents', 'demo-agent.md'),
+      '---\nname: demo-agent\ndescription: Demo agent\n---\n\nYou are demo-agent.\n',
+      'utf-8',
+    );
+    await writeFile(
+      join(workDir, '.kimi-code', 'agents', 'clash-agent.md'),
+      '---\nname: agent\ndescription: Clashes with the builtin default without override\n---\n\nYou are not loaded.\n',
+      'utf-8',
+    );
+    try {
+      const info = await harness.getWorkspaceTrustInfo(workDir);
+      expect(info.trusted).toBe(false);
+      expect(info.gatedAdditionalDirs).toEqual([
+        await realpath(outsideDir),
+        // The symlinked .kimi-code/skills grants access to its real target.
+        await realpath(outsideSkills),
+      ]);
+      // The project AGENTS.md is a symlink escaping the project, so its real
+      // target is disclosed instead of the lexical link path.
+      expect(info.instructionSources.agentsMdPaths).toEqual([
+        await realpath(join(outsideDir, 'AGENTS.md')),
+      ]);
+      expect(info.additionalDirSources).toEqual([
+        await realpath(join(workDir, '.kimi-code', 'local.toml')),
+        await realpath(outsideSkills),
+      ]);
+      expect(info.instructionSources.paths).toEqual([
+        await realpath(join(outsideDir, 'AGENTS.md')),
+        `${await realpath(outsideSkills)}/`,
+        `${await realpath(join(workDir, '.kimi-code', 'agents'))}/`,
+      ]);
+      expect(info.warnings).toEqual([]);
+      expect(info.instructionSources.skills).toEqual(['demo-skill']);
+      // The agent file clashing with the builtin default without override is
+      // suppressed by the session catalog, so it is not part of the disclosure.
+      expect(info.instructionSources.agentProfiles).toEqual(['demo-agent']);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('points to the scanned agent directory for an effective workspace profile', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    const outsideDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-agent-source-'));
+    tempDirs.push(workDir, outsideDir);
+    await mkdir(join(workDir, '.kimi-code', 'agents'), { recursive: true });
+    await writeFile(
+      join(outsideDir, 'override-agent.md'),
+      '---\nname: agent\noverride: true\ndescription: Replaces the builtin default\n---\n\nYou are the override.\n',
+      'utf-8',
+    );
+    await symlink(join(outsideDir, 'override-agent.md'), join(workDir, '.kimi-code', 'agents', 'override-agent.md'));
+    try {
+      const info = await harness.getWorkspaceTrustInfo(workDir);
+      expect(info.instructionSources.agentProfiles).toEqual(['agent']);
+      expect(info.instructionSources.paths).toEqual([`${await realpath(join(workDir, '.kimi-code', 'agents'))}/`]);
     } finally {
       await harness.close();
     }
@@ -1591,6 +1849,10 @@ describe('SDKRpcClientV2 workspace trust', () => {
       expect(await harness.getWorkspaceTrustInfo(workDir)).toEqual({
         trusted: true,
         gatedMcpServers: [],
+        gatedAdditionalDirs: [],
+        additionalDirSources: [],
+        warnings: [],
+        instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] },
       });
       // The trust marker lives in the kimi home, never in the checkout.
       const markers = await readdir(join(homeDir, 'workspace-trust'));
@@ -1651,7 +1913,7 @@ describe('foldAgentWireReplay', () => {
     await expect(foldAgentWireReplay(join(dir, 'missing.jsonl'))).resolves.toEqual(empty);
     const emptyFile = join(dir, 'empty.jsonl');
     await writeFile(emptyFile, '', 'utf-8');
-    await expect(foldAgentWireReplay(emptyFile)).resolves.toEqual(empty);
+    await expect(foldAgentWireReplay(emptyFile)).resolves.toEqual({ ...empty, userTurnCount: 0 });
     const corrupt = join(dir, 'corrupt.jsonl');
     await writeFile(
       corrupt,
@@ -1764,8 +2026,256 @@ describe('foldAgentWireReplay turn limiting', () => {
     return {
       replay: limitAgentReplayByTurns(full.replay, turnLimit),
       toolStore: full.toolStore,
+      userTurnCount: full.userTurnCount,
     };
   }
+
+  it('counts every started user turn independently of the replay window', async () => {
+    const records: Record<string, unknown>[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+    ];
+    for (let index = 0; index < 3; index++) {
+      records.push(
+        {
+          type: 'turn.prompt',
+          agentId: 'main',
+          turnId: index,
+          origin: { kind: 'user' },
+          input: [{ type: 'text', text: `prompt ${index}` }],
+          time: 100 + index * 10,
+        },
+        appendUser(`prompt ${index}`, 101 + index * 10, { kind: 'user' }),
+        ...stepRecords(`s${index}`, 102 + index * 10),
+      );
+    }
+    const wirePath = await writeWire(records);
+
+    for (const limit of [undefined, 0, 1, 11]) {
+      expect(await foldAgentWireReplay(wirePath, limit)).toMatchObject({ userTurnCount: 3 });
+    }
+  });
+
+  it('counts only user-origin prompts, not steers or automatic turns', async () => {
+    const origins = [
+      { kind: 'user' },
+      { kind: 'skill_activation', trigger: 'user-slash' },
+      { kind: 'plugin_command', trigger: 'user-slash' },
+      { kind: 'shell_command', phase: 'input' },
+      { kind: 'skill_activation', trigger: 'model' },
+      { kind: 'plugin_command', trigger: 'model' },
+      { kind: 'shell_command', phase: 'output' },
+      { kind: 'cron_job' },
+      { kind: 'cron_missed' },
+      { kind: 'system_trigger', name: 'goal_continuation' },
+      { kind: 'background_task' },
+      { kind: 'hook_result' },
+      { kind: 'compaction_summary' },
+      { kind: 'injection' },
+      { kind: 'retry' },
+    ];
+    const wirePath = await writeWire([
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      ...origins.map((origin, turnId) => ({ type: 'turn.prompt', agentId: 'main', origin, turnId })),
+      { type: 'turn.steer', agentId: 'main', origin: { kind: 'user' }, turnId: 0 },
+      { type: 'turn.queued', agentId: 'main', origin: { kind: 'user' } },
+    ]);
+
+    for (const limit of [undefined, 0, 1]) {
+      expect(await foldAgentWireReplay(wirePath, limit)).toMatchObject({ userTurnCount: 4 });
+    }
+  });
+
+  it('leaves the count unknown when historical user messages have no turn prompts', async () => {
+    const journals = [
+      [appendUser('legacy prompt', 2)],
+      [appendUser('legacy prompt', 2, { kind: 'user' })],
+      [
+        appendUser('legacy prompt', 2, { kind: 'user' }),
+        { type: 'turn.prompt', agentId: 'main', origin: { kind: 'user' }, turnId: 1, time: 3 },
+        appendUser('new prompt', 4, { kind: 'user' }),
+      ],
+    ];
+    for (const journal of journals) {
+      const wirePath = await writeWire([
+        { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+        ...journal,
+      ]);
+      for (const limit of [undefined, 0, 1]) {
+        expect(await foldAgentWireReplay(wirePath, limit)).toHaveProperty('userTurnCount', undefined);
+      }
+    }
+  });
+
+  it.each([null, { kind: 'skill_activation' }, { kind: 'plugin_command' }, { kind: 'shell_command' }])(
+    'preserves replay when a turn prompt has an invalid origin %j',
+    async (origin) => {
+      const wirePath = await writeWire([
+        { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+        { type: 'turn.prompt', agentId: 'main', origin, turnId: 0, time: 2 },
+        appendUser('kept question', 3, { kind: 'user' }),
+        ...stepRecords('kept', 4),
+      ]);
+
+      for (const limit of [undefined, 1]) {
+        const folded = await foldAgentWireReplay(wirePath, limit);
+        expect(folded.replay).toEqual([
+          {
+            type: 'message',
+            time: 3,
+            message: {
+              role: 'user',
+              content: [{ type: 'text', text: 'kept question' }],
+              toolCalls: [],
+              origin: { kind: 'user' },
+            },
+          },
+          {
+            type: 'message',
+            time: 4,
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'answer kept' }],
+              toolCalls: [],
+            },
+          },
+        ]);
+        expect(folded.userTurnCount).toBeUndefined();
+      }
+    },
+  );
+
+  it('does not treat standalone shell commands as missing user turns', async () => {
+    const wirePath = await writeWire([
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      appendUser('pwd', 2, { kind: 'shell_command', phase: 'input' }),
+      appendUser('/example', 3, { kind: 'shell_command', phase: 'output' }),
+      { type: 'turn.prompt', agentId: 'main', origin: { kind: 'user' }, turnId: 0, time: 4 },
+      appendUser('first question', 5, { kind: 'user' }),
+    ]);
+
+    for (const limit of [undefined, 0, 1]) {
+      expect(await foldAgentWireReplay(wirePath, limit)).toMatchObject({ userTurnCount: 1 });
+    }
+  });
+
+  it('reports zero for an empty journal instead of an unknown count', async () => {
+    const wirePath = await writeWire([]);
+    for (const limit of [undefined, 0, 1]) {
+      expect(await foldAgentWireReplay(wirePath, limit)).toMatchObject({ userTurnCount: 0 });
+    }
+  });
+
+  it('leaves the count unknown when a trailing turn prompt is truncated', async () => {
+    const wirePath = await writeWire([
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      { type: 'turn.prompt', agentId: 'main', origin: { kind: 'user' }, turnId: 0, time: 2 },
+      appendUser('kept question', 3, { kind: 'user' }),
+    ]);
+    await writeFile(
+      wirePath,
+      await readFile(wirePath, 'utf-8') + '{"type":"turn.prompt","origin":{"kind":"user"}',
+      'utf-8',
+    );
+
+    for (const limit of [undefined, 0, 1]) {
+      const folded = await foldAgentWireReplay(wirePath, limit);
+      expect(folded.userTurnCount).toBeUndefined();
+      expect(folded.replay).toHaveLength(limit === 0 ? 0 : 1);
+    }
+  });
+
+  it.each(['llm.request', 'context.append_message'])(
+    'keeps truncated %s tail counts consistent across replay windows',
+    async (type) => {
+      const wirePath = await writeWire([
+        { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+        { type: 'turn.prompt', agentId: 'main', origin: { kind: 'user' }, turnId: 0, time: 2 },
+        appendUser('kept question', 3, { kind: 'user' }),
+      ]);
+      await writeFile(wirePath, (await readFile(wirePath, 'utf-8')) + `{"type":"${type}","data":`);
+
+      for (const limit of [undefined, 0, 1]) {
+        const folded = await foldAgentWireReplay(wirePath, limit);
+        expect(folded.userTurnCount).toBeUndefined();
+        expect(folded.replay).toHaveLength(limit === 0 ? 0 : 1);
+      }
+    },
+  );
+
+  it('counts valid turn prompts with whitespace around JSON separators', async () => {
+    const wirePath = await writeWire([
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      { type: 'turn.prompt', agentId: 'main', origin: { kind: 'user' }, turnId: 0, time: 2 },
+      appendUser('first question', 3, { kind: 'user' }),
+      { type: 'turn.prompt', agentId: 'main', origin: { kind: 'user' }, turnId: 1, time: 4 },
+      appendUser('second question', 5, { kind: 'user' }),
+    ]);
+    await writeFile(wirePath, (await readFile(wirePath, 'utf-8')).replaceAll('":', '": '));
+
+    for (const limit of [undefined, 0, 1]) {
+      expect(await foldAgentWireReplay(wirePath, limit)).toMatchObject({ userTurnCount: 2 });
+    }
+  });
+
+  it('preserves the replay window when a noncanonical turn prompt is corrupt', async () => {
+    const wirePath = await writeWire([
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      { type: 'turn.prompt', agentId: 'main', origin: { kind: 'user' }, turnId: 0, time: 2 },
+      appendUser('first question', 3, { kind: 'user' }),
+      ...stepRecords('first', 4),
+    ]);
+    await writeFile(
+      wirePath,
+      (await readFile(wirePath, 'utf-8')) +
+        '{"time":10,"type":"turn.prompt","origin":null\n' +
+        JSON.stringify({ type: 'turn.prompt', agentId: 'main', origin: { kind: 'user' }, turnId: 1, time: 11 }) + '\n' +
+        JSON.stringify(appendUser('last question', 12, { kind: 'user' })) + '\n',
+      'utf-8',
+    );
+
+    const folded = await foldAgentWireReplay(wirePath, 1);
+    expect(folded.userTurnCount).toBeUndefined();
+    expect(folded.replay).toEqual([
+      {
+        type: 'message',
+        time: 12,
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'last question' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+    ]);
+  });
+
+  it('counts turn prompts whose type header crosses a scan chunk boundary', async () => {
+    const assistant = {
+      type: 'context.append_message',
+      message: { role: 'assistant', content: [{ type: 'text', text: '' }], toolCalls: [] },
+      time: 6,
+    };
+    const records = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      { type: 'turn.prompt', agentId: 'main', origin: { kind: 'user' }, turnId: 0, time: 2 },
+      appendUser('first question', 3, { kind: 'user' }),
+      { type: 'turn.prompt', agentId: 'main', origin: { kind: 'user' }, turnId: 1, time: 4 },
+      appendUser('second question', 5, { kind: 'user' }),
+      assistant,
+    ];
+    const promptStart = records
+      .slice(0, 3)
+      .map((record) => JSON.stringify(record) + '\n')
+      .join('').length;
+    const emptySize = records.map((record) => JSON.stringify(record) + '\n').join('').length;
+    const padding = 4 * 1024 * 1024 + promptStart + '{"type":"tur'.length - emptySize;
+    assistant.message.content[0]!.text = 'x'.repeat(padding);
+    const wirePath = await writeWire(records);
+
+    for (const limit of [undefined, 0, 1]) {
+      expect(await foldAgentWireReplay(wirePath, limit)).toMatchObject({ userTurnCount: 2 });
+    }
+  });
 
   it('matches the unlimited fold truncated to the last N turns on a rich journal', async () => {
     const records: Record<string, unknown>[] = [
@@ -1782,6 +2292,13 @@ describe('foldAgentWireReplay turn limiting', () => {
     ];
     let time = 100;
     for (let index = 0; index < 15; index++) {
+      records.push({
+        type: 'turn.prompt',
+        agentId: 'main',
+        origin: { kind: 'user' },
+        turnId: index,
+        time: time++,
+      });
       records.push(...turnRecords(index, time));
       time += 10;
       records.push({
@@ -1832,10 +2349,10 @@ describe('foldAgentWireReplay turn limiting', () => {
       time: time++,
     });
     const wirePath = await writeWire(records);
-    for (const limit of [1, 3, 11, 15, 16]) {
-      expect(await foldAgentWireReplay(wirePath, limit)).toEqual(
-        await referenceFold(wirePath, limit),
-      );
+    for (const limit of [undefined, 0, 1, 3, 11, 15, 16]) {
+      const folded = await foldAgentWireReplay(wirePath, limit);
+      expect(folded.userTurnCount).toBe(15);
+      if (limit !== undefined) expect(folded).toEqual(await referenceFold(wirePath, limit));
     }
   });
 
@@ -2120,122 +2637,6 @@ describe('SDKRpcClientV2 engine telemetry', () => {
     } finally {
       await client.close();
     }
-  });
-});
-
-describe('removeProviderFromConfig', () => {
-  it('drops the provider, its models and dangling default pointers without mutating the input', () => {
-    const config = {
-      providers: {
-        a: { type: 'openai', baseUrl: 'https://a.example.test/v1' },
-        b: { type: 'openai', baseUrl: 'https://b.example.test/v1' },
-      },
-      models: {
-        'a/m1': { provider: 'a', model: 'm1', maxContextSize: 100 },
-        'b/m1': { provider: 'b', model: 'm1', maxContextSize: 100 },
-        'my-b': { provider: 'b', model: 'm1', maxContextSize: 100 },
-      },
-      defaultModel: 'my-b',
-      defaultProvider: 'b',
-    } as unknown as KimiConfig;
-
-    const next = removeProviderFromConfig(config, 'b');
-
-    expect(Object.keys(next.providers)).toEqual(['a']);
-    expect(Object.keys(next.models ?? {})).toEqual(['a/m1']);
-    expect(next.defaultModel).toBeUndefined();
-    expect(next.defaultProvider).toBeUndefined();
-    // The input config is left untouched (the staging host threads the copy).
-    expect(config.providers['b']).toBeDefined();
-    expect(config.models?.['b/m1']).toBeDefined();
-    expect(config.defaultModel).toBe('my-b');
-  });
-
-  it('keeps the default pointers when they do not dangle', () => {
-    const config = {
-      providers: {
-        a: { type: 'openai' },
-        b: { type: 'openai' },
-      },
-      models: {
-        'a/m1': { provider: 'a', model: 'm1', maxContextSize: 100 },
-        'b/m1': { provider: 'b', model: 'm1', maxContextSize: 100 },
-      },
-      defaultModel: 'a/m1',
-      defaultProvider: 'a',
-    } as unknown as KimiConfig;
-
-    const next = removeProviderFromConfig(config, 'b');
-
-    expect(Object.keys(next.providers)).toEqual(['a']);
-    expect(Object.keys(next.models ?? {})).toEqual(['a/m1']);
-    expect(next.defaultModel).toBe('a/m1');
-    expect(next.defaultProvider).toBe('a');
-  });
-
-  it('leaves secondary_model pool entries alone when their model alias was removed', () => {
-    const config = {
-      providers: { a: { type: 'openai' }, b: { type: 'openai' } },
-      models: {
-        'a/m1': { provider: 'a', model: 'm1', maxContextSize: 100 },
-        'b/m1': { provider: 'b', model: 'm1', maxContextSize: 100 },
-      },
-      secondaryModel: {
-        defaultModel: 'a/m1',
-        models: { 'a/m1': 'fast', 'b/m1': 'smart' },
-      },
-    } as unknown as KimiConfig;
-
-    const next = removeProviderFromConfig(config, 'b');
-
-    expect(next.secondaryModel).toEqual({
-      defaultModel: 'a/m1',
-      models: { 'a/m1': 'fast', 'b/m1': 'smart' },
-    });
-  });
-
-  it('keeps the secondary_model section even when its default model dangles', () => {
-    const config = {
-      providers: { a: { type: 'openai' }, b: { type: 'openai' } },
-      models: {
-        'a/m1': { provider: 'a', model: 'm1', maxContextSize: 100 },
-        'b/m1': { provider: 'b', model: 'm1', maxContextSize: 100 },
-      },
-      secondaryModel: {
-        defaultModel: 'b/m1',
-        models: { 'a/m1': 'fast', 'b/m1': 'smart' },
-      },
-    } as unknown as KimiConfig;
-
-    expect(removeProviderFromConfig(config, 'b').secondaryModel).toEqual({
-      defaultModel: 'b/m1',
-      models: { 'a/m1': 'fast', 'b/m1': 'smart' },
-    });
-
-    // The legacy recipe's `model` key is left alone the same way.
-    const legacy = {
-      ...config,
-      secondaryModel: { model: 'b/m1', default_effort: 'low' },
-    } as unknown as KimiConfig;
-    expect(removeProviderFromConfig(legacy, 'b').secondaryModel).toEqual({
-      model: 'b/m1',
-      default_effort: 'low',
-    });
-  });
-
-  it('leaves the secondary_model section untouched when nothing dangles', () => {
-    const config = {
-      providers: { a: { type: 'openai' }, b: { type: 'openai' } },
-      models: {
-        'a/m1': { provider: 'a', model: 'm1', maxContextSize: 100 },
-        'b/m1': { provider: 'b', model: 'm1', maxContextSize: 100 },
-      },
-      secondaryModel: { defaultModel: 'a/m1' },
-    } as unknown as KimiConfig;
-
-    const next = removeProviderFromConfig(config, 'b');
-
-    expect(next.secondaryModel).toEqual({ defaultModel: 'a/m1' });
   });
 });
 

@@ -3,7 +3,6 @@ import type {
   ExportSessionManifest,
   ShellEnvironment,
 } from '@moonshot-ai/agent-core-v2/app/sessionExport/sessionExport';
-import type { Kaos } from '@moonshot-ai/kaos';
 import type { KimiHostIdentity, OAuthRefreshOutcome } from '@moonshot-ai/kimi-code-oauth';
 import type { ContentPart } from '@moonshot-ai/kosong';
 
@@ -20,6 +19,10 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: 
 export type JsonObject = { readonly [key: string]: JsonValue };
 
 export type { ImportCustomRegistryOptions, ImportCustomRegistryResult } from '@moonshot-ai/klient';
+export type {
+  RefreshProviderModelsOptions,
+  RefreshProviderModelsResponse,
+} from '@moonshot-ai/klient';
 
 export type Unsubscribe = () => void;
 
@@ -127,11 +130,7 @@ export type { AgentCommandInfo } from '@moonshot-ai/agent-core-v2/agent/command/
 
 export type { PermissionMode };
 
-/**
- * Trust state of a workspace directory. Only meaningful on the agent-core-v2
- * engine; the v1 engine has no workspace-trust concept and reports
- * `{ trusted: true, gatedMcpServers: [] }`.
- */
+/** One project-level MCP server that trusting would start. */
 export interface WorkspaceTrustMcpServerInfo {
   readonly name: string;
   readonly transport: 'stdio' | 'http' | 'sse';
@@ -139,12 +138,32 @@ export interface WorkspaceTrustMcpServerInfo {
   readonly args?: readonly string[];
   readonly cwd?: string;
   readonly url?: string;
+  /** Absolute path of the config file declaring this server. */
+  readonly origin: string;
 }
 
+/** Project-sourced instruction inputs that steer the agent once trusted (prompt-level, no code execution). */
+export interface WorkspaceTrustInstructionSources {
+  /** AGENTS.md files inside the project that will be injected into context (symlink-resolved). */
+  readonly agentsMdPaths: readonly string[];
+  /** Names of project-level skills that will load. */
+  readonly skills: readonly string[];
+  /** Names of project-level agent profiles that will load. */
+  readonly agentProfiles: readonly string[];
+  /** Files and configuration directories to inspect; directories end in a slash. */
+  readonly paths: readonly string[];
+}
+
+/** Trust state of a workspace directory, plus everything trusting it would activate. */
 export interface WorkspaceTrustInfo {
   readonly trusted: boolean;
-  /** Safe descriptions of project-level MCP servers that trusting would enable. */
+  /** Project-level MCP servers that trusting would start. */
   readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
+  /** Directories outside the project that trusting grants access to (symlink-resolved). */
+  readonly gatedAdditionalDirs: readonly string[];
+  readonly additionalDirSources: readonly string[];
+  readonly warnings: readonly string[];
+  readonly instructionSources: WorkspaceTrustInstructionSources;
 }
 
 /**
@@ -224,8 +243,6 @@ export interface CreateSessionOptions {
   readonly permission?: PermissionMode | undefined;
   readonly planMode?: boolean;
   readonly metadata?: JsonObject | undefined;
-  readonly kaos?: Kaos | undefined;
-  readonly persistenceKaos?: Kaos | undefined;
   readonly additionalDirs?: readonly string[];
   /**
    * Main-agent profile name (`--agent`): a builtin profile or one defined by
@@ -263,8 +280,6 @@ export interface GenerateSessionTitleInput {
 
 export interface ResumeSessionInput {
   readonly id: string;
-  readonly kaos?: Kaos | undefined;
-  readonly persistenceKaos?: Kaos | undefined;
   readonly additionalDirs?: readonly string[];
   /** Re-select the session's already-bound main profile; a different name fails. */
   readonly agentProfile?: string;

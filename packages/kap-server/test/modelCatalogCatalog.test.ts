@@ -129,7 +129,6 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-catalog-'));
     process.env['KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START'] = '0';
     process.env['KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS'] = '0';
-    process.env['KIMI_CODE_WATCH'] = '1';
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
@@ -160,7 +159,6 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     }
     delete process.env['KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START'];
     delete process.env['KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS'];
-    delete process.env['KIMI_CODE_WATCH'];
   });
 
   async function boot(toml?: string): Promise<void> {
@@ -193,15 +191,6 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
   async function readConfigToml(): Promise<Record<string, unknown>> {
     const text = await readFile(join(home as string, 'config.toml'), 'utf-8');
     return parseToml(text) as Record<string, unknown>;
-  }
-
-  async function waitForServerState(check: () => Promise<boolean>, timeoutMs = 10000): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      if (await check()) return;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    throw new Error('waitForServerState timed out');
   }
 
   it('lists pruned directory entries with import eligibility resolved', async () => {
@@ -371,10 +360,7 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     models['openai/retired'] = { provider: 'openai', model: 'retired', max_context_size: 1 };
     const { stringify: stringifyToml } = await import('smol-toml');
     await writeFile(join(home as string, 'config.toml'), stringifyToml(before), 'utf-8');
-    await waitForServerState(async () => {
-      const cfg = await getJson<{ models: Record<string, unknown> }>('/api/v1/config');
-      return 'openai/retired' in (cfg.body.data.models ?? {});
-    });
+    await (server as RunningServer).core.accessor.get(IConfigService).reload();
 
     const second = await postJson('/api/v1/providers:import_catalog', {
       catalog_id: 'openai',

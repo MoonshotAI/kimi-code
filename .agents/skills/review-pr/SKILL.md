@@ -1,36 +1,113 @@
 ---
 name: review-pr
-description: Use when reviewing a pull request in the kimi-code repository — translate the PR template sections into Chinese and evaluate the change against the template structure.
+description: 在 kimi-code 仓库里 review 一个 PR 时使用：按 PR 模板逐节核对描述与 diff，并单独做一轮"回归与用户影响"评审，给出影响等级与评审摘要，评审摘要用用户当前使用的语言。
 disable-model-invocation: true
 ---
 
 # Review PR
 
-Review a pull request by evaluating the description against the template and the actual diff, then write a structured review summary in Chinese.
+这个仓库过去的回归大多不是逻辑错误，而是"改动相对于自身意图是对的，但悄悄改掉了某个现有人群依赖的行为"：方言分支收窄、默认值翻转、删 system prompt 句子、重构或移植时丢掉旧路径的功能、修复引入启动时序变化。通用 review 会把这类"有意的功能变更"排除在 bug 之外，所以这里把它单列成一轮。
 
-## Workflow
+评审判据只有一条：**改动前能工作的任何输入（配置键、环境变量、命令行参数、provider 响应形态、旧版本写的会话数据、客户端请求、hook 载荷）改动后必须行为不变，除非 PR 明确声明了这个变化并给出了退路。**
 
-1. Fetch the PR description and metadata:
+## 工作流
+
+1. 拉 PR 元数据与描述：
 
    ```bash
    gh pr view <number> --json title,body,url,files,additions,deletions,baseRefName,headRefName
    ```
 
-2. Read the full diff:
+2. 读完整 diff（大 PR 按文件分批读）：
 
    ```bash
    gh pr diff <number>
    ```
 
-3. Read enough surrounding code to verify the claims in the PR description.
+3. 读足够的周边代码来验证描述里的每个断言。只看 diff 看不出"改动前谁走到这个分支"。
 
-4. Evaluate each section against the criteria below.
+4. **第一遍：定性。** 判断改动类型，决定第三遍的深度，见"第一遍：定性"。
 
-5. Write the review summary in Chinese.
+5. **第二遍：按模板逐节核对。** 见"模板逐节核对"。
 
-## Section Translation
+6. **第三遍：回归与用户影响。** 尽量用一个独立子 agent 跑：只给它 PR 号、base 与 head、两三句改动简介和 `surfaces.md` 的路径，不给它作者关于影响范围的结论，让它先从 diff 和代码独立列清单，回来后再与作者填的表对比。没有子 agent 能力时自己按同样顺序做：先列清单，再读作者的表。见"第三遍：回归与用户影响"。
 
-Use these translated names in the review summary:
+7. 用用户当前使用的语言写评审摘要，格式见"输出"。
+
+## 第一遍：定性
+
+| 改动类型 | 第三遍深度 |
+|---|---|
+| 纯内部重构、测试、文档、测试 CI | 只需给出"没有可观测变化"的证据：哪些分支、默认值、契约文件没动 |
+| 发布与打包：release、native 构建、VS Code 发布工作流，打包脚本，web 产物同步 | 全做，人群按安装方式与平台分：npm 包、各平台 native 二进制、VS Code 市场、内置 web 产物 |
+| 新增功能，不动既有路径 | 只查新分支是否抢走了既有输入：新增条件是否排在旧条件之前 |
+| 行为变更、默认值翻转、校验或权限收紧或放宽 | 全做 |
+| prompt 文本变更：system prompt、工具描述、提醒、overlay、内置 skill | 全做，且每一句改动单独成行 |
+| 移植、替换旧路径、大重构：v1 到 v2、runtime binding、协议替换 | 全做，并要求作者给出旧路径功能清单 |
+| 协议、磁盘格式、SDK 导出、hook 载荷、命令行契约变化 | 全做，并点名仓库外的消费方 |
+| 修复类改动改了启动顺序、生命周期、异步时序 | 全做，重点看谁依赖原来的顺序 |
+
+一个 PR 可以同时属于多类，按最重的那类处理。
+
+## 第三遍：回归与用户影响
+
+### 1. 行为变化清单
+
+列出 diff 改变的每一个可观测行为，包括作者说"不变"的和作者认为"内部"的。内部包会打进 CLI 发布包，"内部"不等于用户无感。
+
+每一行记录：行为、变化前、变化后、变化类型（新增 / 修改 / 删除 / 默认翻转 / 收紧 / 放宽）、证据（改动前后各一个 `file:line`，一侧不存在时给可达路径）。
+
+读法：
+
+- 对每个被删除或被收窄的分支、条件、默认值、句子，问"改动前谁走到这里，改动后他们去哪了"。
+- 对每个新增的分支或条件，问"哪些既有输入现在会先命中新分支"。#3492 的回归就是这样产生的：数组字段存在时不再读字符串字段，而 OpenRouter 形态的网关两者同时发。
+- 测试里"把旧断言改成新行为"的改动是行为变化的直接证据，逐条对应到清单。
+- 先看 diff 文件列表有没有命中 `surfaces.md` 的"触发线索"。命中的 surface 必须在清单里有对应行，否则就是漏项。
+
+### 2. 受影响人群
+
+每一行对应到 `surfaces.md` 里的具体人群，写出人群名字和"这个人群存在"的证据：文档页、issue、配置示例、provider 载荷形态。找不到人群的，不进 finding，进"待作者确认"。
+
+### 3. 影响等级
+
+等级只由改动的事实决定，不看 changeset、文档、测试这些补救状态。三步判定：
+
+1. 数据丢失、安全边界放宽、老数据不可读、某人群的功能整体不可用：直接 L3。
+2. 否则，可感知且有一键退路（config、env、flag）：L1；可感知且无退路，旧行为不可恢复：L2；无可观测变化：L0。
+3. 静默升级：用户提供的输入（配置、环境变量、数据、请求字段）被忽略或丢弃，且没有任何错误信号，用户无法自行发现：升一级，最高 L3。行为公开地变了、用户能在输出里看到的，不算静默。
+
+广度三档，必须写出人群名字：全体用户 / 某类配置或平台人群 / 边缘环境。
+
+每一行单独定级，PR 的等级取最高。静默升级的理由：没有信号就没有上报，回归会一直存活到有人偶然发现。
+
+### 4. 补救核对
+
+固定四问，逐条回答有 / 无 / 不适用，并给出证据：
+
+- 退路开关：有没有 config、env 或 flag 能恢复旧行为。
+- changeset：有没有点明用户**失去了什么**，而不只是新默认是什么；没有退路时是否明说旧行为不可恢复。
+- 老数据与老客户端：旧版本写的会话、迁移来的数据、上一版发布的客户端（desktop、web、VS Code、ACP）是否仍然可用；回滚到上一版是否安全。
+- guard 测试：有没有一条测试把**未被改动的人群**的旧行为钉住。
+
+再加一问：`docs/en` 与 `docs/zh` 里对这个 surface 的承诺是否同步更新。
+
+### 等级对应的处理要求
+
+- L3：建议阻塞。必须补 guard 测试，并提供退路、flag 门控或迁移，缺一不可合。
+- L2：需要维护者在 PR 里显式拍板；changeset 必须写明失去的行为；文档同步。
+- L1：核对 changeset 与文档即可。
+- L0：一句话说明为什么是 L0，给出证据。
+
+### finding 与"待作者确认"的界线
+
+- finding 必须同时有：改动前后各一处 `file:line` 证据，和一个具名人群及其存在证据。两者缺一，降级为"待作者确认"。新增整个文件或删除整段实现时一侧天然为空，这时给存在的那一侧加上受影响可达路径的 `file:line` 即可。
+- "待作者确认"最多 5 条，按可能的影响等级排序，多出来的只报数量。
+- 不要报：PR 之前就存在的问题（严重的单独一句"顺带发现"）、lint 和类型检查会抓的问题、风格问题。
+- 不要把这些当成"无影响"的证据：作者说"不变"、没有测试引用被删的句子、改动只在内部包。
+
+## 模板逐节核对
+
+输出为中文时节名用下表的译名，其他语言沿用模板原文的节名：
 
 | English | 中文 |
 |---------|------|
@@ -38,49 +115,78 @@ Use these translated names in the review summary:
 | Bug Reproduction Steps | Bug 复现步骤 |
 | Root Cause | 根本原因 |
 | Code Changes | 代码变更 |
-| Impact Scope | 影响范围 |
+| Behavior Changes and Affected Users | 行为变化与受影响人群 |
 | Checklist | 检查清单 |
 
-## Review Criteria
+旧 PR 若仍用 `Impact Scope` 这一节，按"行为变化与受影响人群"的标准核对。
 
 ### 需求或 Bug
 
-- Is the linked issue valid and relevant?
-- If no issue, is the requirement clearly stated in one or two sentences?
+- 关联的 issue 是否有效、相关？
+- 没有 issue 时，需求是否用一两句话说清楚了？
 
 ### Bug 复现步骤
 
-- For bug PRs: are the steps clear and reproducible?
-- Can you follow the steps to confirm the bug exists on the base branch?
+- bug 类 PR：步骤是否清晰、可复现？
+- 按步骤能否在 base 分支上确认 bug 存在？
 
 ### 根本原因
 
-- For bug PRs: is the root cause convincingly explained?
-- Does the stated root cause match what you see in the diff?
-- Is it clear whether this is a fundamental fix or a workaround?
+- bug 类 PR：根因解释是否令人信服？
+- 描述的根因与 diff 是否一致？
+- 是根本修复还是绕过，是否说清楚了？
 
 ### 代码变更
 
-- Does the description match the actual diff?
-- Are visual outlines (diff blocks, call trees, file trees) accurate and helpful?
-- Is the approach sound? Are there simpler alternatives?
-- Are there edge cases the author missed?
+- 描述与实际 diff 是否一致？
+- 可视化大纲（diff 块、调用树、文件树）是否准确、有帮助？
+- 方案是否合理？有没有更简单的替代？
+- 有没有作者漏掉的边界情况？
 
-### 影响范围
+### 行为变化与受影响人群
 
-- Are all affected modules identified? Cross-check with the diff file list.
-- Does test coverage match the claimed scope?
-- Are there untested paths that carry risk?
+- 把第三遍独立列出的清单与作者填的表逐行对比：作者漏列的行为就是 finding；作者写了但你没找到证据的，进"待作者确认"。
+- 人群是否具名，还是只写了"部分用户"？
+- 写了 `None` 的，证据是否成立？
+- 受影响模块与测试覆盖是否与 diff 文件列表一致？有没有带风险的未测路径？
 
 ### 检查清单
 
-- Are all applicable items checked?
-- For items marked as "not needed", do you agree?
+- 适用的项是否都勾了？
+- 标为"不需要"的项，你是否同意？
 
-## Output
+## 输出
 
-Write the review summary in Chinese. For each section:
+用用户当前使用的语言，按下面的顺序，示例为中文：
 
-- State whether it is adequately filled in.
-- Flag anything missing, inaccurate, or inconsistent with the diff.
-- If the PR is ready, say so. If changes are needed, list them as actionable items.
+```markdown
+## 结论
+一句话：可合 / 需修改 / 建议阻塞。附 PR 影响等级与改动类型。
+
+## 回归与用户影响
+- 改动类型：…
+- 影响等级：Lx（广度：…；是否静默：…）
+
+| 行为 | 变化前 | 变化后 | 受影响人群 | 证据 | 等级 | 退路 |
+|---|---|---|---|---|---|---|
+
+补救核对：
+- 退路开关：…
+- changeset 是否点明失去的行为：…
+- 老数据与老客户端：…
+- guard 测试：…
+- 文档：…
+
+待作者确认（最多 5 条）：
+1. …
+
+## 模板逐节核对
+逐节说明是否填写充分，指出缺失、不准确、与 diff 不一致之处。
+
+## 需要修改的项
+可执行的列表；没有则写"无"。
+```
+
+## 复盘回填
+
+每次线上回归复盘后，把新发现的人群或触发线索补进 `surfaces.md`，并在它的"历史案例"里加一行。清单不更新就会过时。

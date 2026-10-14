@@ -1,5 +1,13 @@
 # @moonshot-ai/kimi-code
 
+## 2.1.1
+
+### Patch Changes
+
+- [#4013](https://github.com/MoonshotAI/kimi-code/pull/4013) [`929403b`](https://github.com/MoonshotAI/kimi-code/commit/929403b6db219eae6099dd23eae2f0efa2bb2823) Thanks [@7Sageer](https://github.com/7Sageer)! - Roll back some of the overly defensive changes in 2.1.0
+
+- [#4015](https://github.com/MoonshotAI/kimi-code/pull/4015) [`c7dd841`](https://github.com/MoonshotAI/kimi-code/commit/c7dd84124a00d2dc1a68fbbc3e54b1095ee9ac23) Thanks [@sailist](https://github.com/sailist)! - Revert filesystem watchers for config and workspace files to on by default. Set `[watch] enabled` to `false` or `KIMI_CODE_WATCH=0` to keep them off.
+
 ## 2.1.0
 
 ### Minor Changes

@@ -7,12 +7,10 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
   IProjectLocalConfigService,
   type ProjectAdditionalDirsLoadResult,
-  type ProjectAdditionalDirsLocation,
 } from '#/app/projectLocalConfig/projectLocalConfig';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { StorageError, StorageErrors, toStorageIoError } from '#/persistence/interface/storage';
-import { isWithinDirectory } from '#/tool/path-access';
 
 const ProjectLocalTomlSchema = z.object({
   workspace: z
@@ -37,13 +35,9 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     @IHostFileSystem private readonly fs: IHostFileSystem,
   ) {}
 
-  async locateAdditionalDirsConfig(workDir: string): Promise<ProjectAdditionalDirsLocation> {
-    const projectRoot = await this.findProjectRoot(workDir);
-    return { projectRoot, configPath: this.getProjectLocalConfigPath(projectRoot) };
-  }
-
   async readAdditionalDirs(workDir: string): Promise<ProjectAdditionalDirsLoadResult> {
-    const { projectRoot, configPath } = await this.locateAdditionalDirsConfig(workDir);
+    const projectRoot = await this.findProjectRoot(workDir);
+    const configPath = this.getProjectLocalConfigPath(projectRoot);
     const file = await this.readProjectLocalToml(configPath);
 
     const additionalDirs = file?.parsed.workspace?.additional_dir;
@@ -71,10 +65,7 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     const additionalDir = await this.resolveAdditionalDir(workDir, inputPath);
     const file = (await this.readProjectLocalToml(configPath)) ?? { raw: {}, parsed: {} };
     const fileAdditionalDirs = file.parsed.workspace?.additional_dir ?? [];
-    const fileExistingDirs = await this.resolveExistingAdditionalDirs(
-      projectRoot,
-      fileAdditionalDirs,
-    );
+    const fileExistingDirs = this.resolveExistingAdditionalDirs(projectRoot, fileAdditionalDirs);
 
     if (this.hasSameAdditionalDir(fileExistingDirs, additionalDir)) {
       return { projectRoot, configPath, additionalDirs: fileExistingDirs };
@@ -162,14 +153,14 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     return resolvedDirs;
   }
 
-  private async resolveExistingAdditionalDirs(
+  private resolveExistingAdditionalDirs(
     projectRoot: string,
     additionalDirs: readonly string[],
-  ): Promise<string[]> {
+  ): string[] {
     const resolvedDirs: string[] = [];
 
     for (const additionalDir of normalizeAdditionalDirs(additionalDirs)) {
-      const resolvedDir = await this.resolvePath(projectRoot, additionalDir);
+      const resolvedDir = this.resolvePath(projectRoot, additionalDir);
       if (this.hasSameAdditionalDir(resolvedDirs, resolvedDir)) continue;
       resolvedDirs.push(resolvedDir);
     }
@@ -182,38 +173,14 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     additionalDir: string,
   ): Promise<string> {
     const normalizedInput = normalizeAdditionalDirInput(additionalDir);
-    const resolvedDir = await this.resolvePath(baseDir, normalizedInput);
+    const resolvedDir = this.resolvePath(baseDir, normalizedInput);
     await this.assertDirectory(resolvedDir);
     return resolvedDir;
   }
 
-  private async resolvePath(baseDir: string, additionalDir: string): Promise<string> {
+  private resolvePath(baseDir: string, additionalDir: string): string {
     const expanded = this.expandHome(additionalDir);
-    const resolvedDir = isAbsolute(expanded) ? normalize(expanded) : resolve(baseDir, expanded);
-    if (await this.isBroadScopeDir(resolvedDir)) {
-      throw new Error2(
-        ErrorCodes.CONFIG_INVALID,
-        'workspace.additional_dir must not be the user home directory or the filesystem root',
-      );
-    }
-    return resolvedDir;
-  }
-
-  private async isBroadScopeDir(resolvedDir: string): Promise<boolean> {
-    const homeDir = normalize(this.bootstrap.osHomeDir);
-    if (dirname(resolvedDir) === resolvedDir) return true;
-    const realDir = await this.realpathOrLexical(resolvedDir);
-    if (dirname(realDir) === realDir) return true;
-    const realHome = await this.realpathOrLexical(homeDir);
-    return isWithinDirectory(homeDir, resolvedDir) || isWithinDirectory(realHome, realDir);
-  }
-
-  private async realpathOrLexical(path: string): Promise<string> {
-    try {
-      return normalize(await this.fs.realpath(path));
-    } catch {
-      return path;
-    }
+    return isAbsolute(expanded) ? normalize(expanded) : resolve(baseDir, expanded);
   }
 
   private expandHome(value: string): string {

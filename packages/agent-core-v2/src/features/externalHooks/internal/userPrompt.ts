@@ -1,3 +1,6 @@
+import { userPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
+import type { TextPart } from '#human/llm/message';
+
 import type { HookResult } from './types';
 
 export function renderHookResult(event: string, message: string): string {
@@ -10,9 +13,15 @@ export interface RenderedHookResult {
   readonly text: string;
 }
 
+export interface RenderedUserPromptHookParts {
+  readonly event: string;
+  readonly messages: readonly string[];
+  readonly parts: readonly TextPart[];
+}
+
 export function renderUserPromptHookResult(
   results: readonly HookResult[] | undefined,
-): RenderedHookResult | undefined {
+): RenderedUserPromptHookParts | undefined {
   const messages =
     results
       ?.filter((result) => result.action !== 'block')
@@ -20,11 +29,12 @@ export function renderUserPromptHookResult(
       .filter(isNonEmptyString) ??
     [];
   if (messages.length === 0) return undefined;
-  const displayMessage = messages.join('\n\n');
   return {
     event: 'UserPromptSubmit',
-    message: displayMessage,
-    text: messages.map((message) => renderHookResult('UserPromptSubmit', message)).join('\n'),
+    messages,
+    parts: messages.map((message) =>
+      userPromptSubmitHookPart(renderHookResult('UserPromptSubmit', message)),
+    ),
   };
 }
 
@@ -57,6 +67,7 @@ function userPromptHookMessage(result: HookResult): string | undefined {
   }
   const message = result.message?.trim();
   if (message !== undefined && message.length > 0) return message;
+  if (result.structuredOutput === true) return undefined;
   const stdout = result.stdout?.trim();
   return stdout === undefined || stdout.length === 0 ? undefined : stdout;
 }

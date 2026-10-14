@@ -91,7 +91,7 @@ export type ScopedStreamCaller = (
 // ---------------------------------------------------------------------------
 
 export type RefreshProviderModelsResponse = Awaited<
-  ReturnType<IOAuthService['refreshOAuthProviderModels']>
+  ReturnType<IProviderDiscoveryService['refreshProviderModels']>
 >;
 export type OAuthFlowStart = Awaited<ReturnType<IOAuthService['startLogin']>>;
 export type OAuthFlowSnapshot = NonNullable<Awaited<ReturnType<IOAuthService['getFlow']>>>;

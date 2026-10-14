@@ -11,6 +11,8 @@ export interface TowerRosterEntry {
   readonly worktree?: string;
   readonly branch?: string;
   readonly spawnedAt: string;
+  readonly lastInboxReadAt?: string;
+  readonly inboxAckIds?: string[];
   readonly diedAt?: string;
   readonly deathStatus?: string;
   readonly deathReason?: string;
@@ -46,7 +48,11 @@ export interface TowerMission {
   readonly branch: string;
   readonly worktree: string;
   spawnBase?: string;
-  readonly deps: readonly string[];
+  deps: string[];
+  lastRebase?: {
+    readonly fromCommit: string;
+    readonly toCommit: string;
+  };
   status: TowerMissionStatus;
   owner?: string;
   context?: string;
@@ -60,7 +66,9 @@ export interface TowerState {
   readonly base: string;
   readonly mode: 'branch' | 'pr';
   readonly createdAt: string;
+  recoveredAt?: string;
   sessionId?: string;
+  inboxAckIds?: string[];
   roster: TowerRoster;
   missions: TowerMission[];
 }
@@ -86,6 +94,7 @@ export interface TowerReviewInfo {
 }
 
 export interface TowerInboxItem {
+  readonly messageId: string;
   readonly file: string;
   readonly from: string;
   readonly to: string;

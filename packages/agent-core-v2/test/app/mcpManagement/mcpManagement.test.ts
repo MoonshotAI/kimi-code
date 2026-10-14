@@ -110,7 +110,10 @@ describe('McpManagementService', () => {
     const ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IFileSystemStorageService, storage);
-        reg.definePartialInstance(IBootstrapService, { homeDir: home });
+        reg.definePartialInstance(IBootstrapService, {
+          homeDir: home,
+          getEnv: () => undefined,
+        });
         reg.define(IMcpConfigStore, McpConfigStore);
         reg.definePartialInstance(IPluginService, {
           mcpServerEntries: async () => {

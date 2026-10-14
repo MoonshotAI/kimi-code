@@ -9,6 +9,7 @@ import {
   COMPACT_USER_MESSAGE_HEAD_TOKENS,
   COMPACT_USER_MESSAGE_MAX_TOKENS,
   selectCompactionUserMessages,
+  selectRecentUserMessages,
   type TokenEstimate,
 } from '#/agent/contextMemory/compactionHandoff';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -775,6 +776,26 @@ describe('Agent context', () => {
       expect(zeroed.tail).toHaveLength(messages.length);
 
       expect(selectCompactionUserMessages(messages).elided).toBe(true);
+
+      const hooked: ContextMessage = {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: '<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>',
+            meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+          },
+          { type: 'text', text: 'x'.repeat(4000) },
+        ],
+        toolCalls: [],
+      };
+      const truncated = selectRecentUserMessages([hooked], 10);
+      expect(truncated[0]?.content[0]).toMatchObject({
+        type: 'text',
+        text: '<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>',
+        meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+      });
+      expect(truncated[0]?.content).toHaveLength(2);
     });
 
     it('falls back to a zero tokensAfter', () => {

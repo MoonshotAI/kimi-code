@@ -1,4 +1,5 @@
 import type { Message, ToolDescription } from '#/llm/message';
+import type { LlmModel } from '#/llm/model';
 import type { TraitContext } from '#/llm/protocol/base';
 import type { ThinkingStrategy } from '#/llm/protocol/thinking';
 import type { ToolCallIdPolicy, ToolMessageConversion } from '#/llm/requester/requester';
@@ -19,6 +20,11 @@ export interface OpenAITrait {
     maxCompletionTokens: number,
     ctx: TraitContext,
   ): Record<string, unknown> | undefined;
+
+  completionTokensWhenUnset?(input: {
+    readonly model: LlmModel;
+    readonly usedContextTokens?: number;
+  }): number | undefined;
 
   convertTool?(tool: ToolDescription, ctx: TraitContext): Record<string, unknown> | undefined;
 

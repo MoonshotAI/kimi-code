@@ -238,6 +238,10 @@ export class CacheHintController {
       dismissed: host.state.appState.cacheExpiryHint === false,
     });
     if (decision.kind === 'skip') return;
+    // Another dialog (e.g. the model migration prompt) already owns the editor
+    // area: never replace it under the user's keystrokes. The seeded baseline
+    // leaves this cycle to the idle-submit path, which hints on the first prompt.
+    if (host.state.editorReplacementMounted) return;
     this.resumedSessions.add(session.id);
     // The resume dialog also covers this idle cycle: the first submit right
     // after it must not be intercepted again.

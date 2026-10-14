@@ -53,6 +53,7 @@ export interface SkillActivationProjection {
   readonly activationId: string;
   readonly skillName: string;
   readonly skillArgs?: string;
+  readonly skillSource?: string;
   readonly trigger: SkillActivationTrigger;
   /** The activation rode a bundled prompt message, not a standalone one. */
   readonly bundled?: boolean;
@@ -239,6 +240,59 @@ export function contentPartsToText(content: readonly ContentPart[]): string {
   return content.map(contentPartToText).join('');
 }
 
+export function isUserPromptSubmitHookPart(
+  part: ContentPart,
+): part is Extract<ContentPart, { type: 'text' }> {
+  return (
+    part.type === 'text' &&
+    (part as { meta?: { source?: unknown } }).meta?.source === 'user prompt submit hook'
+  );
+}
+
+const SKILL_ACTIVATION_PART_SOURCE = 'skill activation';
+
+export function isSkillActivationPart(part: ContentPart): boolean {
+  return (
+    part.type === 'text' &&
+    (part as { meta?: { source?: unknown } }).meta?.source === SKILL_ACTIVATION_PART_SOURCE
+  );
+}
+
+function annotateBundledSkillParts(
+  content: readonly ContentPart[],
+  bundledActivations: readonly BundledSkillActivationRef[],
+): ContentPart[] {
+  if (bundledActivations.length === 0 || content.some(isSkillActivationPart)) {
+    return [...content];
+  }
+  let index = 0;
+  return content.map((part) => {
+    const activation = bundledActivations[index];
+    if (
+      activation !== undefined &&
+      part.type === 'text' &&
+      (part as { meta?: { source?: unknown } }).meta?.source === undefined
+    ) {
+      index += 1;
+      return {
+        ...part,
+        meta: { source: SKILL_ACTIVATION_PART_SOURCE, activationId: activation.activationId },
+      };
+    }
+    return part;
+  });
+}
+
+interface BundledSkillActivationRef {
+  readonly activationId: string;
+}
+
+export function withoutUserPromptSubmitHookParts(
+  content: readonly ContentPart[],
+): ContentPart[] {
+  return content.filter((part) => !isUserPromptSubmitHookPart(part));
+}
+
 /**
  * agent-core-v2's task domain persists the terminal notification under the
  * 'task' spelling (v1 used 'background_task'); both reach replay verbatim.
@@ -269,6 +323,7 @@ export function skillActivationFromOrigin(
     activationId: origin.activationId,
     skillName: origin.skillName,
     skillArgs: origin.skillArgs,
+    skillSource: origin.skillSource,
     trigger: origin.trigger,
   };
 }
@@ -306,13 +361,44 @@ export function bundledSkillsFromOrigin(
 }
 
 /**
- * Content parts the caller actually typed: the engine prepends one rendered
- * text part per bundled skill, so the caller's own parts start right after
- * them.
+ * Content parts the caller actually typed: skill blocks are meta-marked at
+ * construction; legacy wires carry no marks, so the leading unmarked parts
+ * (one per bundled activation) are annotated first, then filtered out.
  */
 export function stripBundledSkillParts(message: ContextMessage): readonly ContentPart[] {
-  const bundledCount = bundledSkillsFromOrigin(message.origin).length;
-  return bundledCount === 0 ? message.content : message.content.slice(bundledCount);
+  return annotateBundledSkillParts(
+    message.content,
+    bundledSkillsFromOrigin(message.origin),
+  ).filter((part) => !isSkillActivationPart(part));
+}
+
+export function userSlashSkillPromptText(
+  message: ContextMessage,
+  skill: SkillActivationProjection,
+): string {
+  const parts = withoutUserPromptSubmitHookParts(message.content);
+  const [first, ...rest] = parts;
+  const callerParts = first?.type === 'text' ? rest : parts;
+  const name = skill.skillSource === 'builtin' ? skill.skillName : `skill:${skill.skillName}`;
+  const args = skill.skillArgs ?? '';
+  const command = args.trim().length > 0 ? `/${name} ${args}` : `/${name}`;
+  // Media parts mean the caller content came from an external activation with
+  // attachments (e.g. kap-server), never from a typed command: keep the
+  // command identity and show the attachment rendering alongside it.
+  if (callerParts.some((part) => part.type !== 'text')) {
+    const attachmentText = contentPartsToText(callerParts).trim();
+    return attachmentText.length > 0 ? `${command} ${attachmentText}` : command;
+  }
+  const callerText = contentPartsToText(callerParts);
+  const trimmed = callerText.trim();
+  if (trimmed.length === 0) return command;
+  // Text-only caller content is ambiguous: a saved typed command always
+  // starts with the slash mention, while external text attachments (the
+  // kap-server activation API accepts text attachments) are arbitrary prose
+  // — prepend the reconstructed command for the latter so the activated
+  // skill stays identifiable.
+  if (trimmed.startsWith('/')) return callerText;
+  return `${command} ${trimmed}`;
 }
 
 export function pluginCommandFromOrigin(

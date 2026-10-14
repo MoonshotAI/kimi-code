@@ -58,6 +58,7 @@ export class StreamingUIController {
   private _activeThinkingComponent: ThinkingComponent | undefined = undefined;
   private _activeCompactionBlock: CompactionComponent | undefined = undefined;
   private _activeToolCalls = new Map<string, ToolCallBlockData>();
+  private _runningWaitForCalls = new Set<string>();
   private _streamingToolCallArguments = new Map<
     string,
     { name?: string; argumentsText: string; startedAtMs: number }
@@ -145,6 +146,21 @@ export class StreamingUIController {
 
   hasActiveToolCall(id: string): boolean {
     return this._activeToolCalls.has(id);
+  }
+
+  /** Marks a main-agent WaitFor call as actually waiting — its first
+   *  progress update arrives only once the wait began, never for calls that
+   *  were rejected, skipped, or had nothing to wait for. Returns whether the
+   *  call was newly marked. */
+  markWaitForRunning(toolCallId: string): boolean {
+    if (this._activeToolCalls.get(toolCallId)?.name !== 'WaitFor') return false;
+    if (this._runningWaitForCalls.has(toolCallId)) return false;
+    this._runningWaitForCalls.add(toolCallId);
+    return true;
+  }
+
+  isWaitForRunning(): boolean {
+    return this._runningWaitForCalls.size > 0;
   }
 
   setActiveToolCall(id: string, toolCall: ToolCallBlockData): void {
@@ -358,6 +374,7 @@ export class StreamingUIController {
       this.onToolCallEnd(toolCallId, result);
     }
     this._activeToolCalls.delete(toolCallId);
+    this._runningWaitForCalls.delete(toolCallId);
     this._streamingToolCallArguments.delete(toolCallId);
     return matchedCall;
   }
@@ -542,6 +559,7 @@ export class StreamingUIController {
 
   resetToolCallState(): void {
     this._activeToolCalls.clear();
+    this._runningWaitForCalls.clear();
   }
 
   finalizeLiveTextBuffers(nextMode: LivePaneState['mode'] = 'idle'): void {

@@ -6,6 +6,16 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 2.1.1（2026-09-24）
+
+### 优化
+
+- 配置文件与工作区文件的监听默认恢复为开启。如需保持关闭，可将 `[watch] enabled` 设为 `false` 或设置 `KIMI_CODE_WATCH=0`，详见 [`watch`](../configuration/config-files.md#watch)。
+
+### 修复
+
+- 回退 2.1.0 中部分过于严格的防御性改动。
+
 ## 2.1.0（2026-09-23）
 
 ### 新功能

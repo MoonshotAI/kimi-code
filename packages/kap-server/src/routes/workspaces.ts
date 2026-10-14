@@ -264,7 +264,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
       const trust = await resolveTrust(core, req.params.workspace_id, req.id, reply);
       if (trust === undefined) return;
       await trust.untrust();
-      reply.send(okEnvelope({ trusted: false }, req.id));
+      reply.send(okEnvelope({ trusted: await trust.get() }, req.id));
     },
   );
   app.post(

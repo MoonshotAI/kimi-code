@@ -11,7 +11,17 @@ import { BtwPanelComponent } from '../components/panes/btw-panel';
 import { formatErrorMessage } from '../utils/event-payload';
 import { formatHookResultPlain } from '../utils/hook-result-format';
 import { createMarkdownTheme } from '../theme/pi-tui-theme';
-import type { InlineSkillActivation } from '../types';
+import type { InlineSkillActivation, PreparedSkillActivations } from '../types';
+import { MEDIA_INGESTION_SUBMIT_WAIT_MS } from '../constant/media';
+import type { ImageAttachmentStore } from '../utils/image-attachment-store';
+import {
+  extractMediaAttachments,
+  originalsDirForSession,
+  pendingMediaIngestions,
+  resolveOriginalCaptions,
+  type ExtractionResult,
+} from '../utils/image-placeholder';
+import type { StagingLease, StagingLeaseTracker } from './staging-leases';
 import type { TUIState } from '../tui-state';
 
 const BTW_BUSY_NOTICE = 'Wait for /btw to finish before sending another question.';
@@ -22,6 +32,9 @@ export interface BtwPanelHost {
   readonly harness: KimiHarness;
 
   showError(msg: string): void;
+  validateMediaCapabilities(extraction: ExtractionResult): boolean;
+  prepareSkillActivations(activations: readonly InlineSkillActivation[]): PreparedSkillActivations;
+  releaseSkillArgumentMedia(prepared: PreparedSkillActivations): void;
 }
 
 export class BtwPanelController {
@@ -32,8 +45,13 @@ export class BtwPanelController {
       }
     | undefined;
   private readonly panelsByAgentId = new Map<string, BtwPanelComponent>();
+  private readonly cancelledAgentIds = new Set<string>();
 
-  constructor(private readonly host: BtwPanelHost) {}
+  constructor(
+    private readonly host: BtwPanelHost,
+    private readonly imageStore: ImageAttachmentStore,
+    private readonly staging: StagingLeaseTracker,
+  ) {}
 
   open(
     agentId: string,
@@ -84,6 +102,7 @@ export class BtwPanelController {
   cancelRunning(): boolean {
     const active = this.active;
     if (active === undefined || !active.panel.isRunning()) return false;
+    this.cancelledAgentIds.add(active.agentId);
     void this.cancelAgent(active.agentId);
     return true;
   }
@@ -109,6 +128,8 @@ export class BtwPanelController {
   }
 
   routeEvent(event: Event): boolean {
+    if (event.type === 'turn.started') this.staging.handleTurnStarted(event, event.agentId);
+    if (event.type === 'turn.ended') this.staging.handleTurnEnded(event, event.agentId);
     const panel = this.panelsByAgentId.get(event.agentId);
     if (panel === undefined) return false;
 
@@ -126,6 +147,7 @@ export class BtwPanelController {
         this.host.state.ui.requestRender();
         return true;
       case 'turn.ended':
+        this.cancelledAgentIds.delete(event.agentId);
         if (event.reason === 'completed') {
           panel.markDone();
         } else {
@@ -160,6 +182,7 @@ export class BtwPanelController {
     for (const [agentId, candidate] of this.panelsByAgentId) {
       if (candidate === panel) {
         this.panelsByAgentId.delete(agentId);
+        this.cancelledAgentIds.delete(agentId);
       }
     }
     if (this.active?.panel === panel) this.active = undefined;
@@ -188,19 +211,73 @@ export class BtwPanelController {
     }
     const send =
       inlineSkillActivations !== undefined && inlineSkillActivations.length > 0
-        ? () =>
-            session.promptWithSkills(
-              prompt,
-              inlineSkillActivations.map((activation) => ({
-                name: activation.skillName,
-                args: activation.args,
-              })),
-            )
+        ? () => this.promptWithSkills(agentId, session, prompt, panel, inlineSkillActivations)
         : () => session.prompt(prompt);
     void this.withInteractiveAgent(agentId, send).catch((error: unknown) => {
       panel.markFailed(`Failed to send /btw prompt: ${formatErrorMessage(error)}`);
       this.host.state.ui.requestRender();
     });
+  }
+
+  private async promptWithSkills(
+    agentId: string,
+    session: Session,
+    prompt: string,
+    panel: BtwPanelComponent,
+    activations: readonly InlineSkillActivation[],
+  ): Promise<void> {
+    let extraction: ExtractionResult | undefined;
+    let prepared: PreparedSkillActivations | undefined;
+    let lease: StagingLease | undefined;
+    try {
+      const ingestionWait = pendingMediaIngestions(
+        prompt, this.imageStore, MEDIA_INGESTION_SUBMIT_WAIT_MS,
+      );
+      if (ingestionWait !== undefined) await ingestionWait;
+      // Ctrl-C during the media wait: no child turn existed for cancel() to
+      // stop, so settle the question here instead of dispatching it anyway.
+      if (this.cancelledAgentIds.delete(agentId)) {
+        panel.markFailed('Interrupted by user');
+        return;
+      }
+      if (
+        this.host.session !== session ||
+        this.panelsByAgentId.get(agentId) !== panel ||
+        !panel.isRunning()
+      ) return;
+      extraction = extractMediaAttachments(prompt, this.imageStore);
+      if (!this.host.validateMediaCapabilities(extraction)) {
+        throw new Error('Current model does not support this media input.');
+      }
+      prepared = this.host.prepareSkillActivations(activations);
+      const input = extraction.hasMedia
+        ? resolveOriginalCaptions(
+            extraction.parts, extraction.imageAttachmentIds, this.imageStore,
+            originalsDirForSession(session),
+          )
+        : prompt;
+      lease = this.staging.create(
+        [
+          ...new Set([...extraction.imageAttachmentIds, ...extraction.videoAttachmentIds]),
+          ...prepared.mediaAttachmentIds,
+        ],
+        prepared.stagingPaths,
+        'user',
+        undefined,
+        agentId,
+      );
+      const request = session.promptWithSkills(input, prepared.skills);
+      this.staging.trackDispatch(lease, request, () => {});
+      await request;
+    } catch (error) {
+      if (lease === undefined) {
+        if (prepared !== undefined) this.host.releaseSkillArgumentMedia(prepared);
+        if (extraction !== undefined) {
+          this.staging.releaseMedia([...extraction.imageAttachmentIds, ...extraction.videoAttachmentIds], []);
+        }
+      }
+      throw error;
+    }
   }
 
   private async cancelAgent(agentId: string): Promise<void> {

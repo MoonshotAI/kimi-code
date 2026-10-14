@@ -2,15 +2,13 @@ import { execFile } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
-import { GIT_DIFF_ARGS, hardenedGitConfigArgs, type GitProbeResult } from '#/app/git/hardening';
-
 const GIT_TIMEOUT_MS = 60_000;
-const CONFIG_PROBE_TIMEOUT_MS = 5_000;
 
 export class GitError extends Error {
   constructor(
     readonly args: readonly string[],
     readonly stderr: string,
+    readonly exitCode?: number,
   ) {
     super(`git ${args.join(' ')} failed: ${stderr.trim() || 'unknown error'}`);
     this.name = 'GitError';
@@ -26,16 +24,10 @@ export async function git(
   args: readonly string[],
   options: GitOptions = {},
 ): Promise<string> {
-  const configArgs = await hardenedGitConfigArgs(cwd, (probeArgs) =>
-    probeGitConfig(cwd, probeArgs),
-  );
-  if (configArgs === null) {
-    throw new GitError(args, 'git config probe failed');
-  }
   return new Promise((resolve, reject) => {
     execFile(
       'git',
-      [...configArgs, ...args],
+      [...args],
       {
         cwd,
         timeout: GIT_TIMEOUT_MS,
@@ -44,31 +36,16 @@ export async function git(
       },
       (error, stdout, stderr) => {
         if (error !== null) {
-          reject(new GitError(args, stderr || error.message));
+          reject(
+            new GitError(
+              args,
+              stderr || error.message,
+              typeof error.code === 'number' ? error.code : undefined,
+            ),
+          );
           return;
         }
         resolve(stdout.trimEnd());
-      },
-    );
-  });
-}
-
-function probeGitConfig(cwd: string, args: readonly string[]): Promise<GitProbeResult> {
-  return new Promise((resolve) => {
-    execFile(
-      'git',
-      [...args],
-      { cwd, timeout: CONFIG_PROBE_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 },
-      (error, stdout) => {
-        if (error === null) {
-          resolve({ exitCode: 0, stdout });
-          return;
-        }
-        const code: unknown = (error as { code?: unknown }).code;
-        resolve({
-          exitCode: typeof code === 'number' ? code : -1,
-          stdout: typeof stdout === 'string' ? stdout : '',
-        });
       },
     );
   });
@@ -87,7 +64,7 @@ export async function isInsideRepo(cwd: string): Promise<boolean> {
 }
 
 export async function hasAnyCommit(cwd: string): Promise<boolean> {
-  return (await tryGit(cwd, ['rev-list', '-n', '1', '--all'])) !== null;
+  return (await git(cwd, ['rev-list', '-n', '1', '--all'])).length > 0;
 }
 
 export async function currentBranch(cwd: string): Promise<string> {
@@ -101,9 +78,13 @@ export async function branchTip(cwd: string, ref: string): Promise<string> {
 }
 
 export async function branchExists(cwd: string, branch: string): Promise<boolean> {
-  return (
-    (await tryGit(cwd, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`])) !== null
-  );
+  try {
+    await git(cwd, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`]);
+    return true;
+  } catch (error) {
+    if (error instanceof GitError && error.exitCode === 1) return false;
+    throw error;
+  }
 }
 
 const ADD_PATHS_CHUNK = 100;
@@ -149,7 +130,13 @@ export async function commitPaths(
 }
 
 export async function isAncestor(cwd: string, ancestor: string, ref: string): Promise<boolean> {
-  return (await tryGit(cwd, ['merge-base', '--is-ancestor', ancestor, ref])) !== null;
+  try {
+    await git(cwd, ['merge-base', '--is-ancestor', ancestor, ref]);
+    return true;
+  } catch (error) {
+    if (error instanceof GitError && error.exitCode === 1) return false;
+    throw error;
+  }
 }
 
 export async function worktreeAdd(cwd: string, path: string, branch: string): Promise<void> {
@@ -184,12 +171,72 @@ export async function isRegisteredWorktree(repoRoot: string, path: string): Prom
 }
 
 export async function isWorktreeDirty(path: string): Promise<boolean> {
-  const status = await tryGit(path, ['status', '--porcelain']);
-  return status !== null && status.trim().length > 0;
+  return (await git(path, ['status', '--porcelain'])).trim().length > 0;
 }
 
-export async function mergeNoFf(cwd: string, branch: string): Promise<string> {
-  await git(cwd, ['merge', '--no-ff', branch]);
+async function hasMergeHead(cwd: string): Promise<boolean> {
+  try {
+    await git(cwd, ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD']);
+    return true;
+  } catch (error) {
+    if (error instanceof GitError && error.exitCode === 1) return false;
+    throw error;
+  }
+}
+
+export async function mergeNoFf(cwd: string, revision: string, message?: string): Promise<string> {
+  if (await hasMergeHead(cwd)) {
+    throw new GitError(
+      ['merge', '--no-ff', revision],
+      'cannot start a tower merge while MERGE_HEAD already exists; finish or abort the existing merge first',
+    );
+  }
+  const headBefore = await branchTip(cwd, 'HEAD');
+  const statusBefore = await git(cwd, ['status', '--porcelain']);
+  try {
+    await git(cwd, [
+      'merge',
+      '--no-ff',
+      ...(message === undefined ? [] : ['-m', message]),
+      revision,
+    ]);
+  } catch (error) {
+    if (!(error instanceof GitError)) throw error;
+    let mergeLeftBehind: boolean;
+    try {
+      mergeLeftBehind = await hasMergeHead(cwd);
+    } catch (inspectionError) {
+      throw new GitError(
+        ['merge', '--abort'],
+        `recovery-required: could not inspect MERGE_HEAD after the merge failed: ${inspectionError instanceof Error ? inspectionError.message : String(inspectionError)}`,
+      );
+    }
+    if (mergeLeftBehind) {
+      try {
+        await git(cwd, ['merge', '--abort']);
+      } catch (abortError) {
+        throw new GitError(
+          ['merge', '--abort'],
+          `recovery-required: ${abortError instanceof Error ? abortError.message : String(abortError)}`,
+        );
+      }
+      const problems: string[] = [];
+      if (await hasMergeHead(cwd)) problems.push('MERGE_HEAD still exists');
+      if ((await branchTip(cwd, 'HEAD')) !== headBefore) {
+        problems.push('HEAD was not restored to the pre-merge commit');
+      }
+      if ((await git(cwd, ['status', '--porcelain'])) !== statusBefore) {
+        problems.push('the index or worktree differs from its pre-merge state');
+      }
+      if (problems.length > 0) {
+        throw new GitError(
+          ['merge', '--abort'],
+          `recovery-required: merge abort did not restore the checkout (${problems.join('; ')})`,
+        );
+      }
+    }
+    throw error;
+  }
   return branchTip(cwd, 'HEAD');
 }
 
@@ -198,6 +245,6 @@ export async function diffNameOnly(
   base: string,
   ref: string,
 ): Promise<readonly string[]> {
-  const out = await git(cwd, ['diff', ...GIT_DIFF_ARGS, '--name-only', `${base}...${ref}`]);
+  const out = await git(cwd, ['diff', '--name-only', `${base}...${ref}`]);
   return out.length === 0 ? [] : out.split('\n').filter((line) => line.trim().length > 0);
 }

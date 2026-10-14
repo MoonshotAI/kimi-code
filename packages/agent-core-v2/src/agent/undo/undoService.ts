@@ -18,6 +18,7 @@ import {
   isValidUndoCount,
 } from '#/agent/contextMemory/conversationTime';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
+import { isUserPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { turnKey } from '#/agent/loop/turnOps';
 import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
@@ -241,13 +242,13 @@ export class AgentConversationUndoService
     const pending = this.loop.snapshot().queue.filter((item) => item.meta?.tracked === true).at(-1);
     let lastPrompt = pending === undefined
       ? undefined
-      : promptMetadataTextFromContentParts(pending.message.content, (pending.meta?.origin as UserPromptOrigin | undefined)?.clientMetadata);
+      : promptMetadataTextFromContentParts(pending.message.content.filter((part) => !isUserPromptSubmitHookPart(part)), (pending.meta?.origin as UserPromptOrigin | undefined)?.clientMetadata);
     if (lastPrompt === undefined) {
       const history = this.context.get();
       for (let i = history.length - 1; i >= 0; i--) {
         const message = history[i]!;
         if (!isUndoAnchor(message)) continue;
-        lastPrompt = promptMetadataTextFromContentParts(message.content, message.origin?.kind === 'user' || message.origin?.kind === 'skill_activation' ? message.origin.clientMetadata : undefined);
+        lastPrompt = promptMetadataTextFromContentParts(message.content.filter((part) => !isUserPromptSubmitHookPart(part)), message.origin?.kind === 'user' || message.origin?.kind === 'skill_activation' ? message.origin.clientMetadata : undefined);
         if (lastPrompt !== undefined) break;
       }
     }

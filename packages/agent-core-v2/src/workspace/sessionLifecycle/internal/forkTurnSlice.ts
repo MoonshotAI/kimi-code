@@ -1,5 +1,11 @@
 import { Error2, ErrorCodes } from '#/errors';
 import { FILE_HISTORY_RECORD_PREFIX } from '#/features/fileHistory/fileHistoryOps';
+import { isUserPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
+import {
+  annotateBundledSkillParts,
+  isSkillActivationPart,
+  type BundledSkillActivation,
+} from '#human/agent/origin';
 import type { ContentPart } from '#human/llm/message';
 import {
   promptMetadataTextFromContentParts,
@@ -224,9 +230,14 @@ function promptMetadataFromTurnRecord(record: WireRecord): string | undefined {
   const content = message['content'];
   if (!Array.isArray(content)) return undefined;
   const activations = origin?.['skillActivations'];
-  const bundled = origin?.['kind'] === 'user' && Array.isArray(activations) ? activations.length : 0;
+  const bundled =
+    origin?.['kind'] === 'user' && Array.isArray(activations)
+      ? (activations as BundledSkillActivation[])
+      : [];
   return promptMetadataTextFromContentParts(
-    (bundled === 0 ? content : content.slice(bundled)) as readonly ContentPart[],
+    annotateBundledSkillParts(content as readonly ContentPart[], bundled).filter(
+      (part) => !isSkillActivationPart(part) && !isUserPromptSubmitHookPart(part),
+    ),
     origin?.['kind'] === 'user' ? origin['clientMetadata'] : undefined,
   );
 }

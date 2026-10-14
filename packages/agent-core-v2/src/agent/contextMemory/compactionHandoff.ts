@@ -1,6 +1,8 @@
 import { estimateTokens, estimateTokensForMessage, estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
+import { isSkillActivationPart } from '#human/agent/origin';
 import type { ContentPart } from '#human/llm/message';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
+import { isUserPromptSubmitHookPart } from './hookParts';
 import summaryPrefixTemplate from './compaction-summary-prefix.md?raw';
 import type { ContextMessage, PromptOrigin } from './types';
 
@@ -357,7 +359,12 @@ function truncateTextToTokensFromEnd(text: string, maxTokens: number): string {
 function replaceMessageText<T extends MessageLike>(message: T, text: string): T {
   return {
     ...message,
-    content: [{ type: 'text', text }],
+    content: [
+      ...message.content.filter(
+        (part) => isUserPromptSubmitHookPart(part) || isSkillActivationPart(part),
+      ),
+      { type: 'text', text },
+    ],
     toolCalls: [],
   } as unknown as T;
 }

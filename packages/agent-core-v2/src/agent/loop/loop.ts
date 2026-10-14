@@ -3,7 +3,7 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 import { Error2, isError2, type Error2Options } from '#/_base/errors/errors';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { FinishReason } from '#human/llm/finish-reason';
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart, TextPart } from '#human/llm/message';
 import type { TokenUsage } from '#human/llm/usage';
 import type { Hooks } from '#/hooks';
 import type { UserEntry } from '#human/agent/turn';
@@ -185,6 +185,7 @@ export interface PromptLaunchResult {
 export interface PromptSubmitContext {
   readonly promptMessage: ContextMessage;
   readonly isSteer: boolean;
+  readonly hookParts: TextPart[];
   block: boolean;
 }
 

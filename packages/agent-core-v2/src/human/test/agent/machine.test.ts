@@ -1236,7 +1236,7 @@ describe('agent machine input.steer', () => {
     });
     expect(steered).toEqual([['p1'], ['p2', 'p3']]);
     expect(actor.getSnapshot().context.notifications[1]?.message.content).toEqual([
-      { type: 'text', text: 'SKILLBLOCK' },
+      { type: 'text', text: 'SKILLBLOCK', meta: { source: 'skill activation', activationId: 'a1' } },
       { type: 'text', text: 'p2 body' },
       { type: 'text', text: 'third' },
     ]);

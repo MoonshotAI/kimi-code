@@ -45,7 +45,6 @@ describe('server-v2 /api/v1/workspaces', () => {
 
   beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-'));
-    process.env['KIMI_CODE_WATCH'] = '1';
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
@@ -65,7 +64,6 @@ describe('server-v2 /api/v1/workspaces', () => {
       await rm(home, { recursive: true, force: true });
       home = undefined;
     }
-    delete process.env['KIMI_CODE_WATCH'];
   });
 
   async function postJson<T>(
@@ -331,5 +329,26 @@ describe('server-v2 /api/v1/workspaces', () => {
 
     const { body } = await postJson<null>(`/api/v1/workspaces/${id}/add-dir`, {});
     expect(body.code).toBe(40001);
+  });
+
+  it('reports the effective trust state after untrust while KIMI_CODE_TRUST_WORKSPACE is set', async () => {
+    vi.stubEnv('KIMI_CODE_TRUST_WORKSPACE', '1');
+    const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-trust-env-'));
+    try {
+      const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
+      expect(created.body.code).toBe(0);
+      const id = created.body.data.id;
+
+      const revoked = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/untrust`);
+      expect(revoked.body.code).toBe(0);
+      expect(revoked.body.data.trusted).toBe(true);
+
+      const read = await getJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`);
+      expect(read.body.code).toBe(0);
+      expect(read.body.data.trusted).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

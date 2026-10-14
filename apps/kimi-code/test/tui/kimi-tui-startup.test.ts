@@ -4,15 +4,19 @@ import { join } from 'node:path';
 
 import { log, type GoalSnapshot } from '@moonshot-ai/kimi-code-sdk';
 import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
+import type { Component, Focusable } from '@moonshot-ai/pi-tui';
 import { describe, expect, it, vi } from 'vitest';
 
 import { BannerProvider } from '#/tui/banner/banner-provider';
 import { readBannerDisplayState } from '#/tui/banner/state';
 import { handleLoginCommand, handleLogoutCommand } from '#/tui/commands/auth';
 import { promptPlatformSelection, promptLogoutProviderSelection } from '#/tui/commands/prompts';
+import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
 import { BannerComponent } from '#/tui/components/chrome/banner';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
+import { maybeShowModelMigrationPrompt } from '#/tui/controllers/model-migration';
+import type { ApprovalPanelData, QuestionPanelData } from '#/tui/reverse-rpc/types';
 import { REPLAY_FETCH_TURN_LIMIT } from '#/tui/utils/message-replay';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { quoteShellArg } from '#/utils/shell-quote';
@@ -30,6 +34,13 @@ vi.mock('#/tui/commands/prompts', async (importOriginal) => {
 });
 vi.mock('#/utils/clipboard/clipboard-text', () => ({
   copyTextToClipboard: vi.fn(async () => {}),
+}));
+const modelMigrationState = vi.hoisted(() => ({ acknowledged: {} as Record<string, string> }));
+vi.mock('#/utils/model-migration-state', () => ({
+  readModelMigrationAcknowledgements: vi.fn(async () => ({ ...modelMigrationState.acknowledged })),
+  acknowledgeModelMigration: vi.fn(async (fromAlias: string, toModel: string) => {
+    modelMigrationState.acknowledged = { ...modelMigrationState.acknowledged, [fromAlias]: toModel };
+  }),
 }));
 
 const copyTextToClipboardMock = vi.mocked(copyTextToClipboard);
@@ -210,8 +221,8 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
     getExperimentalFeatures: vi.fn(async () => []),
-    getWorkspaceTrustInfo: vi.fn(async () => ({ trusted: true, gatedMcpServers: [] })),
-    supportsAtomicSectionReplace: vi.fn(() => false),
+    getWorkspaceTrustInfo: vi.fn(async () => ({ trusted: true, gatedMcpServers: [], gatedAdditionalDirs: [], additionalDirSources: [], warnings: [], instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] } })),
+    refreshProviderModels: vi.fn(async () => ({ changed: [], unchanged: [], failed: [] })),
     auth: {
       status: vi.fn(async () => ({ providers: [] })),
       login: vi.fn(async () => {}),
@@ -1882,9 +1893,9 @@ describe('KimiTUI startup', () => {
     const showStatus = vi.spyOn(driver as any, "showStatus").mockImplementation(() => {});
     vi.spyOn((driver as any).authFlow, "refreshProviderModels").mockResolvedValue({
       changed: [
-        { providerId: "new-models", providerName: "New Models", added: 2, removed: 0 },
-        { providerId: "removed-models", providerName: "Removed Models", added: 0, removed: 3 },
-        { providerId: "metadata-only", providerName: "Metadata Only", added: 0, removed: 0 },
+        { provider_id: "new-models", provider_name: "New Models", added: 2, removed: 0 },
+        { provider_id: "removed-models", provider_name: "Removed Models", added: 0, removed: 3 },
+        { provider_id: "metadata-only", provider_name: "Metadata Only", added: 0, removed: 0 },
       ],
       unchanged: [],
       failed: [],
@@ -1896,116 +1907,643 @@ describe('KimiTUI startup', () => {
     expect(showStatus).toHaveBeenCalledWith("New Models · +2 models.");
   });
 
-  it("stages provider-refresh removals and persists one atomic write on atomic-capable harnesses", async () => {
-    const registryUrl = "https://registry.example.test/v1/models/api.json";
-    const source = { kind: "apiJson", url: registryUrl, apiKey: "sk-test-token" };
-    const replaceConfigSections = vi.fn(async (_sections: Record<string, unknown>) => {});
-    const removeProvider = vi.fn(async () => ({}));
+  async function flushMigrationCheck(): Promise<void> {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+
+  function installMigrationModels(driver: StartupDriver): void {
+    modelMigrationState.acknowledged = {};
+    driver.state.appState.model = 'acme/current';
+    driver.state.appState.thinkingEffort = 'off';
+    driver.state.appState.availableProviders = {
+      acme: { type: 'openai' },
+    };
+    driver.state.appState.availableModels = {
+      'acme/current': {
+        provider: 'acme',
+        model: 'current',
+        maxContextSize: 100,
+        capabilities: ['tool_use'],
+        upgrade: {
+          model: 'acme/next',
+          migrationMarkdown: 'Use current to next',
+          retirementAt: undefined,
+        },
+      },
+      'acme/next': {
+        provider: 'acme',
+        model: 'next',
+        maxContextSize: 100,
+        capabilities: ['tool_use', 'thinking'],
+        supportEfforts: ['low', 'high'],
+        defaultEffort: 'high',
+      },
+    };
+  }
+
+  it.each(['off', 'high'])('persists the migration default effort when the live effort is %s', async (liveEffort) => {
+    const session = makeSession({
+      getStatus: vi.fn(async () => ({
+        model: 'acme/next',
+        thinkingEffort: 'high',
+        permission: 'manual',
+        planMode: false,
+        contextTokens: 10,
+        maxContextTokens: 100,
+        contextUsage: 0.1,
+      })),
+    });
     const setConfig = vi.fn(async () => ({}));
-    const harness = makeHarness(makeSession(), {
-      supportsAtomicSectionReplace: vi.fn(() => true),
-      replaceConfigSections,
-      removeProvider,
+    const harness = makeHarness(session, {
       setConfig,
       getConfig: vi.fn(async () => ({
-        providers: {
-          a: { type: "openai", baseUrl: "https://a.example.test/v1", apiKey: "sk-test-token", source },
-          b: { type: "openai", baseUrl: "https://b.example.test/v1", apiKey: "sk-test-token", source },
-        },
-        models: {
-          "a/m1": { provider: "a", model: "m1", maxContextSize: 100, capabilities: ["tool_use"] },
-          "b/m1": { provider: "b", model: "m1", maxContextSize: 100, capabilities: ["tool_use"] },
-        },
-        defaultModel: "b/m1",
-        thinking: { enabled: true },
+        defaultModel: 'acme/current',
+        thinking: { enabled: true, effort: 'low' },
       })),
     });
     const driver = makeDriver(harness, makeStartupInput());
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            a: {
-              id: "a",
-              name: "Provider A",
-              api: "https://a.example.test/v1",
-              type: "openai",
-              models: { m1: { id: "m1" } },
-            },
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        ),
-      ),
-    );
-    try {
-      const result = await (driver as any).authFlow.refreshProviderModels();
+    await driver.setSession(session);
+    installMigrationModels(driver);
+    driver.state.appState.thinkingEffort = liveEffort;
 
-      expect(result.failed).toEqual([]);
-      expect(result.changed).toContainEqual({ providerId: "b", providerName: "b", added: 0, removed: 1 });
-      expect(removeProvider).not.toHaveBeenCalled();
-      expect(setConfig).not.toHaveBeenCalled();
-      expect(replaceConfigSections).toHaveBeenCalledTimes(1);
-      const sections = replaceConfigSections.mock.calls[0]?.[0] as Record<string, unknown>;
-      expect(Object.keys(sections["providers"] as object)).toEqual(["a"]);
-      expect(sections["models"]).not.toHaveProperty("b/m1");
-      expect(sections["defaultModel"]).toBeUndefined();
-      expect(sections["thinking"]).toBeUndefined();
-    } finally {
-      vi.unstubAllGlobals();
+    const prompt = maybeShowModelMigrationPrompt(driver as any, {});
+    const picker = driver.state.editorContainer.children[0] as {
+      handleInput(data: string): void;
+      render(width: number): string[];
+    };
+    expect(picker.render(100).join('\n')).toContain('Use current to next');
+    picker.handleInput('\r');
+    await prompt;
+
+    expect(session.setModel).toHaveBeenCalledWith('acme/next');
+    if (liveEffort === 'high') {
+      expect(session.setThinking).not.toHaveBeenCalled();
+    } else {
+      expect(session.setThinking).toHaveBeenCalledWith('high');
     }
+    expect(setConfig).toHaveBeenCalledWith({
+      defaultModel: 'acme/next',
+      thinking: { enabled: true, effort: 'high' },
+    });
+    expect(modelMigrationState.acknowledged).toEqual({ 'acme/current': 'next' });
   });
 
-  it("keeps the two-phase removeProvider/setConfig host on harnesses without atomic replace", async () => {
-    const registryUrl = "https://registry.example.test/v1/models/api.json";
-    const source = { kind: "apiJson", url: registryUrl, apiKey: "sk-test-token" };
-    const replaceConfigSections = vi.fn(async () => {});
-    const removeProvider = vi.fn(async () => ({}));
-    const setConfig = vi.fn(async (patch: Record<string, unknown>) => patch);
-    const harness = makeHarness(makeSession(), {
-      replaceConfigSections,
-      removeProvider,
-      setConfig,
-      getConfig: vi.fn(async () => ({
-        providers: {
-          a: { type: "openai", baseUrl: "https://a.example.test/v1", apiKey: "sk-test-token", source },
-          b: { type: "openai", baseUrl: "https://b.example.test/v1", apiKey: "sk-test-token", source },
-        },
-        models: {
-          "a/m1": { provider: "a", model: "m1", maxContextSize: 100, capabilities: ["tool_use"] },
-          "b/m1": { provider: "b", model: "m1", maxContextSize: 100, capabilities: ["tool_use"] },
-        },
-        defaultModel: "b/m1",
+  it.each([
+    ['low', ['low', 'high'], 'low'],
+    ['off', ['low', 'high'], 'off'],
+    ['max', ['max'], 'high'],
+  ] as const)('resolves a live %s effort on a thinking source to the migration effort', async (liveEffort, sourceEfforts, expected) => {
+    const session = makeSession({
+      getStatus: vi.fn(async () => ({
+        model: 'acme/next',
+        thinkingEffort: expected,
+        permission: 'manual',
+        planMode: false,
+        contextTokens: 10,
+        maxContextTokens: 100,
+        contextUsage: 0.1,
       })),
     });
+    const setConfig = vi.fn(async () => ({}));
+    const harness = makeHarness(session, {
+      setConfig,
+      getConfig: vi.fn(async () => ({ defaultModel: 'acme/current', thinking: { enabled: true } })),
+    });
     const driver = makeDriver(harness, makeStartupInput());
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            a: {
-              id: "a",
-              name: "Provider A",
-              api: "https://a.example.test/v1",
-              type: "openai",
-              models: { m1: { id: "m1" } },
-            },
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        ),
-      ),
-    );
-    try {
-      const result = await (driver as any).authFlow.refreshProviderModels();
+    await driver.setSession(session);
+    installMigrationModels(driver);
+    Object.assign(driver.state.appState.availableModels['acme/current']!, {
+      capabilities: ['tool_use', 'thinking'],
+      supportEfforts: [...sourceEfforts],
+    });
+    driver.state.appState.thinkingEffort = liveEffort;
 
-      expect(result.failed).toEqual([]);
-      expect(removeProvider).toHaveBeenCalledWith("b");
-      expect(setConfig).toHaveBeenCalledTimes(1);
-      expect(replaceConfigSections).not.toHaveBeenCalled();
-    } finally {
-      vi.unstubAllGlobals();
+    const prompt = maybeShowModelMigrationPrompt(driver as any, {});
+    const picker = driver.state.editorContainer.children[0] as ChoicePickerComponent;
+    expect(picker.render(100).join('\n')).toContain(`thinking ${expected}`);
+    picker.handleInput('\r');
+    await prompt;
+
+    expect(session.setModel).toHaveBeenCalledWith('acme/next');
+    if (expected === liveEffort) {
+      expect(session.setThinking).not.toHaveBeenCalled();
+    } else {
+      expect(session.setThinking).toHaveBeenCalledWith(expected);
     }
+    expect(setConfig).toHaveBeenCalledWith({
+      defaultModel: 'acme/next',
+      thinking: expected === 'off' ? { enabled: false } : { enabled: true, effort: expected },
+    });
+  });
+
+  it.each(['draft', 'streaming', 'dialog', 'compaction', 'replay', 'external-editor', 'shutdown'])('defers the startup migration during %s', async (blockedBy) => {
+    const session = makeSession();
+    const setConfig = vi.fn();
+    const driver = makeDriver(makeHarness(session, { setConfig }), makeStartupInput());
+    installMigrationModels(driver);
+    const startup = driver as unknown as {
+      backgroundRefreshPromise: Promise<void>;
+      finishStartup(replay: boolean): Promise<void>;
+      setAppState(patch: Record<string, unknown>): void;
+      restoreEditor(): void;
+      setExternalEditorRunning(running: boolean): void;
+      aborted: boolean;
+    };
+    let completeRefresh!: () => void;
+    startup.backgroundRefreshPromise = new Promise((resolve) => { completeRefresh = resolve; });
+    await startup.finishStartup(false);
+    if (blockedBy === 'draft') driver.state.editor.setText('Please help');
+    if (blockedBy === 'streaming') startup.setAppState({ streamingPhase: 'waiting' });
+    if (blockedBy === 'dialog') driver.state.editorReplacementMounted = true;
+    if (blockedBy === 'compaction') startup.setAppState({ isCompacting: true });
+    if (blockedBy === 'replay') startup.setAppState({ isReplaying: true });
+    if (blockedBy === 'external-editor') startup.setExternalEditorRunning(true);
+    if (blockedBy === 'shutdown') startup.aborted = true;
+
+    completeRefresh();
+    await flushMigrationCheck();
+    expect(driver.state.editorContainer.children[0]).not.toBeInstanceOf(ChoicePickerComponent);
+    if (blockedBy === 'draft') {
+      driver.state.editor.handleInput(' ');
+      expect(driver.state.editor.getText()).toBe('Please help ');
+      driver.state.editor.setText('');
+    }
+    if (blockedBy === 'streaming') startup.setAppState({ streamingPhase: 'idle' });
+    if (blockedBy === 'dialog') startup.restoreEditor();
+    if (blockedBy === 'compaction') startup.setAppState({ isCompacting: false });
+    if (blockedBy === 'replay') startup.setAppState({ isReplaying: false });
+    if (blockedBy === 'external-editor') startup.setExternalEditorRunning(false);
+    await flushMigrationCheck();
+    expect(session.setModel).not.toHaveBeenCalled();
+    expect(setConfig).not.toHaveBeenCalled();
+    if (blockedBy === 'shutdown') {
+      expect(driver.state.editorReplacementMounted).toBe(false);
+      return;
+    }
+    const picker = driver.state.editorContainer.children[0] as ChoicePickerComponent;
+    expect(picker).toBeInstanceOf(ChoicePickerComponent);
+    picker.handleInput(' ');
+    expect(driver.state.editorReplacementMounted).toBe(true);
+    expect(modelMigrationState.acknowledged).toEqual({});
+    picker.handleInput('\u001B');
+    await flushMigrationCheck();
+    expect(driver.state.editorReplacementMounted).toBe(false);
+  });
+
+  it('does not mount a migration while a submitted draft is creating its first session', async () => {
+    const prompt = vi.fn(async () => {});
+    const session = makeSession({
+      prompt,
+      getStatus: vi.fn(async () => ({
+        model: 'acme/current', thinkingEffort: 'off', permission: 'manual', planMode: false,
+        contextTokens: 10, maxContextTokens: 100, contextUsage: 0.1,
+      })),
+    });
+    let completeCreation!: () => void;
+    const harness = makeHarness(session, {
+      createSession: vi.fn(async () => {
+        await new Promise<void>((resolve) => { completeCreation = resolve; });
+        return session;
+      }),
+    });
+    const driver = makeDriver(harness, makeStartupInput());
+    installMigrationModels(driver);
+    const startup = driver as unknown as {
+      backgroundRefreshPromise: Promise<void>;
+      finishStartup(replay: boolean): Promise<void>;
+      persistInputHistory(text: string): Promise<void>;
+      setAppState(patch: Record<string, unknown>): void;
+    };
+    vi.spyOn(startup, 'persistInputHistory').mockResolvedValue(undefined);
+    driver.state.editor.setText('First prompt');
+    startup.backgroundRefreshPromise = Promise.resolve();
+    await startup.finishStartup(false);
+    await flushMigrationCheck();
+
+    driver.state.editor.handleInput('\r');
+    await flushMigrationCheck();
+    expect(harness.createSession).toHaveBeenCalledTimes(1);
+    expect(driver.state.editorReplacementMounted).toBe(false);
+    expect(prompt).not.toHaveBeenCalled();
+    completeCreation();
+    await flushMigrationCheck();
+    expect(prompt).toHaveBeenCalled();
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+    expect(driver.state.editorReplacementMounted).toBe(false);
+
+    startup.setAppState({ streamingPhase: 'idle' });
+    await flushMigrationCheck();
+    const picker = driver.state.editorContainer.children[0] as ChoicePickerComponent;
+    expect(picker).toBeInstanceOf(ChoicePickerComponent);
+    picker.handleInput('\u001B');
+  });
+
+  it('does not mount a migration while /new is replacing the session', async () => {
+    const getStatus = vi.fn(async () => ({
+      model: 'acme/current', thinkingEffort: 'off', permission: 'manual', planMode: false,
+      contextTokens: 10, maxContextTokens: 100, contextUsage: 0.1,
+    }));
+    const oldSession = makeSession({ getStatus });
+    const newSession = makeSession({ id: 'ses-2', getStatus });
+    let completeCreation!: () => void;
+    const harness = makeHarness(newSession, {
+      createSession: vi.fn(async () => {
+        await new Promise<void>((resolve) => { completeCreation = resolve; });
+        return newSession;
+      }),
+    });
+    const driver = makeDriver(harness, makeStartupInput());
+    installMigrationModels(driver);
+    await driver.setSession(oldSession);
+    const startup = driver as unknown as {
+      modelMigration: { request(): void };
+      createNewSession(): Promise<void>;
+    };
+
+    startup.modelMigration.request();
+    const replacing = startup.createNewSession();
+    await flushMigrationCheck();
+    expect(harness.createSession).toHaveBeenCalledTimes(1);
+    expect(driver.state.editorReplacementMounted).toBe(false);
+    expect(newSession.setModel).not.toHaveBeenCalled();
+
+    completeCreation();
+    await replacing;
+    await flushMigrationCheck();
+    const picker = driver.state.editorContainer.children[0] as ChoicePickerComponent;
+    expect(picker).toBeInstanceOf(ChoicePickerComponent);
+    expect(picker.render(100).join('\n')).toContain('Model migration available');
+    picker.handleInput('\u001B');
+  });
+
+  it.each([true, false])('checks migrations after the startup session picker (refresh first: %s)', async (refreshFirst) => {
+    const session = makeSession({ getStatus: vi.fn(async () => ({
+      model: 'acme/current', thinkingEffort: 'off', permission: 'manual', planMode: false,
+      contextTokens: 10, maxContextTokens: 100, contextUsage: 0.1,
+    })) });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [{
+        id: session.id, title: 'Picked', workDir: '/tmp/proj-a', updatedAt: Date.now(),
+      }]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ session: '' }));
+    installMigrationModels(driver);
+    harness.getConfig.mockResolvedValue({ models: driver.state.appState.availableModels } as never);
+    const startup = driver as unknown as {
+      authFlow: { refreshProviderModels(): Promise<unknown> };
+      sessionReplay: { hydrateFromReplay(session: unknown): Promise<void> };
+      initMainTui(): Promise<boolean>;
+      finishStartup(replay: boolean): Promise<void>;
+    };
+    let completeRefresh!: () => void;
+    vi.spyOn(startup.authFlow, 'refreshProviderModels').mockImplementation(async () => {
+      await new Promise<void>((resolve) => { completeRefresh = resolve; });
+      return { changed: [], unchanged: [], failed: [] };
+    });
+    vi.spyOn(startup.sessionReplay, 'hydrateFromReplay').mockResolvedValue(undefined);
+    await startup.initMainTui();
+    await startup.finishStartup(false);
+    await flushMigrationCheck();
+    expect(driver.state.activeDialog).toBe('session-picker');
+    if (refreshFirst) {
+      completeRefresh();
+      await flushMigrationCheck();
+      expect(driver.state.activeDialog).toBe('session-picker');
+    }
+    const sessionPicker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    sessionPicker.handleInput('\r');
+    await flushMigrationCheck();
+    expect(harness.resumeSession).toHaveBeenCalled();
+    if (!refreshFirst) {
+      expect(driver.state.editorReplacementMounted).toBe(false);
+      completeRefresh();
+      await flushMigrationCheck();
+    }
+    const migrationPicker = driver.state.editorContainer.children[0] as ChoicePickerComponent;
+    expect(migrationPicker).toBeInstanceOf(ChoicePickerComponent);
+    expect(migrationPicker.render(100).join('\n')).toContain('Model migration available');
+    migrationPicker.handleInput('\u001B');
+  });
+
+  it('keeps the current model and acknowledges the migration', async () => {
+    const session = makeSession();
+    const driver = makeDriver(makeHarness(session), makeStartupInput());
+    await driver.setSession(session);
+    installMigrationModels(driver);
+
+    const prompt = maybeShowModelMigrationPrompt(driver as any, {});
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    picker.handleInput('\u001B[B');
+    picker.handleInput('\r');
+    await prompt;
+
+    expect(session.setModel).not.toHaveBeenCalled();
+    expect(session.setThinking).not.toHaveBeenCalled();
+    expect(driver.state.appState.model).toBe('acme/current');
+    expect(modelMigrationState.acknowledged).toEqual({ 'acme/current': 'next' });
+  });
+
+  it('renders provider migration Markdown', async () => {
+    const driver = makeDriver(makeHarness(), makeStartupInput());
+    installMigrationModels(driver);
+    driver.state.appState.availableModels['acme/current']!.upgrade!.migrationMarkdown =
+      '### Upgrade\n\nSwitch **current** to **next**.\n\n- Faster replies';
+
+    const prompt = maybeShowModelMigrationPrompt(driver as any, {});
+    const picker = driver.state.editorContainer.children[0] as ChoicePickerComponent;
+    const output = picker.render(100).join('\n');
+    expect(output).not.toContain('###');
+    expect(output).not.toContain('**');
+    expect(output).toContain('current');
+    expect(output).toContain('next');
+    picker.handleInput('\u001B');
+    await prompt;
+  });
+
+  it('strips terminal control sequences from registry-provided migration text', async () => {
+    const driver = makeDriver(makeHarness(), makeStartupInput());
+    installMigrationModels(driver);
+    driver.state.appState.availableModels['acme/current']!.upgrade!.migrationMarkdown =
+      'Move to next\u001B]0;pwned\u0007 soon\u001B[2J';
+    driver.state.appState.availableModels['acme/next']!.displayName =
+      'Next\u001B]8;;https://example.test\u0007';
+
+    const prompt = maybeShowModelMigrationPrompt(driver as any, {});
+    const picker = driver.state.editorContainer.children[0] as ChoicePickerComponent;
+    const output = picker.render(100).join('\n');
+    expect(output).toContain('Move to next soon');
+    expect(output).toContain('Switch to Next');
+    expect(output).not.toContain('pwned');
+    expect(output).not.toContain('\u001B[2J');
+    expect(output).not.toContain('example.test');
+    picker.handleInput('\u001B');
+    await prompt;
+  });
+
+  it.each([true, false])('warns about losing the prompt cache only when the conversation has history: %s', async (withHistory) => {
+    const driver = makeDriver(makeHarness(), makeStartupInput());
+    installMigrationModels(driver);
+    if (withHistory) {
+      driver.state.transcriptEntries.push({ id: 'u1', kind: 'user', renderMode: 'plain', content: 'hello' });
+    }
+
+    const prompt = maybeShowModelMigrationPrompt(driver as any, {});
+    const picker = driver.state.editorContainer.children[0] as ChoicePickerComponent;
+    const output = picker.render(200).join('\n');
+    if (withHistory) {
+      expect(output).toContain('Switching models invalidates the existing prompt cache');
+    } else {
+      expect(output).not.toContain('prompt cache');
+    }
+    picker.handleInput('\u001B');
+    await prompt;
+  });
+
+  it.each(['replace', 'restore'])('settles a displaced migration on editor %s without saving', async (action) => {
+    const setConfig = vi.fn();
+    const driver = makeDriver(makeHarness(makeSession(), { setConfig }), makeStartupInput());
+    installMigrationModels(driver);
+    const host = driver as unknown as KimiTUI;
+    const onDisplaced = vi.fn();
+    const settled = vi.fn();
+    const prompt = maybeShowModelMigrationPrompt(host, {}, onDisplaced).then(settled);
+    const oldPicker = driver.state.editorContainer.children[0] as ChoicePickerComponent;
+    const replacement = new ChoicePickerComponent({
+      title: 'Another dialog', options: [], onSelect: vi.fn(), onCancel: vi.fn(),
+    });
+
+    if (action === 'replace') host.mountEditorReplacement(replacement);
+    else host.restoreEditor();
+    await flushMigrationCheck();
+    expect(settled).toHaveBeenCalledOnce();
+    await prompt;
+    expect(onDisplaced).toHaveBeenCalledOnce();
+    oldPicker.handleInput('\r');
+    oldPicker.handleInput('\u001B');
+    expect(driver.state.editorContainer.children[0]).toBe(action === 'replace' ? replacement : driver.state.editor);
+    expect(setConfig).not.toHaveBeenCalled();
+    expect(modelMigrationState.acknowledged).toEqual({});
+    host.restoreEditor();
+    expect(onDisplaced).toHaveBeenCalledOnce();
+  });
+
+  it.each(['approval', 'question'])('requeues a migration displaced by a background %s', async (modal) => {
+    const session = makeSession();
+    const setConfig = vi.fn();
+    const driver = makeDriver(makeHarness(session, { setConfig }), makeStartupInput({}, {
+      notifications: { enabled: false, condition: 'unfocused' },
+    }));
+    installMigrationModels(driver);
+    const host = driver as unknown as {
+      modelMigration: { request(): void };
+      showApprovalPanel(data: ApprovalPanelData): void;
+      hideApprovalPanel(): void;
+      showQuestionDialog(data: QuestionPanelData): void;
+      hideQuestionDialog(): void;
+      setAppState(patch: Record<string, unknown>): void;
+      restoreEditor(): void;
+    };
+    host.modelMigration.request();
+    await flushMigrationCheck();
+    const oldPicker = driver.state.editorContainer.children[0] as ChoicePickerComponent;
+    expect(oldPicker).toBeInstanceOf(ChoicePickerComponent);
+
+    if (modal === 'approval') {
+      host.showApprovalPanel({
+        id: 'approval-1', tool_call_id: 'tool-1', tool_name: 'WriteFile',
+        action: 'Write file', description: '', display: [],
+        choices: [{ label: 'Approve once', response: 'approved' }],
+      });
+    } else {
+      host.showQuestionDialog({
+        id: 'question-1', tool_call_id: 'tool-1',
+        questions: [{ question: 'Choose a path', multi_select: false, options: [{ label: 'A' }] }],
+      });
+    }
+    const panel = driver.state.editorContainer.children[0] as Component & Focusable;
+    await flushMigrationCheck();
+    expect(panel).not.toBe(oldPicker);
+    expect(panel.focused).toBe(true);
+    oldPicker.handleInput('\r');
+    oldPicker.handleInput('\u001B');
+    expect(driver.state.editorContainer.children[0]).toBe(panel);
+    expect(panel.focused).toBe(true);
+    expect(session.setModel).not.toHaveBeenCalled();
+    expect(setConfig).not.toHaveBeenCalled();
+    expect(modelMigrationState.acknowledged).toEqual({});
+
+    host.setAppState({ streamingPhase: 'waiting' });
+    if (modal === 'approval') host.hideApprovalPanel();
+    else host.hideQuestionDialog();
+    await flushMigrationCheck();
+    expect(driver.state.editorReplacementMounted).toBe(false);
+    host.setAppState({ streamingPhase: 'idle' });
+    await flushMigrationCheck();
+    const retried = driver.state.editorContainer.children[0] as ChoicePickerComponent;
+    expect(retried).toBeInstanceOf(ChoicePickerComponent);
+    expect(retried).not.toBe(oldPicker);
+    retried.handleInput('\u001B');
+    host.restoreEditor();
+    await flushMigrationCheck();
+    expect(driver.state.editorReplacementMounted).toBe(false);
+    expect(modelMigrationState.acknowledged).toEqual({});
+  });
+
+  it('cancels a model migration without acknowledging it', async () => {
+    const session = makeSession();
+    const driver = makeDriver(makeHarness(session), makeStartupInput());
+    await driver.setSession(session);
+    installMigrationModels(driver);
+
+    const prompt = maybeShowModelMigrationPrompt(driver as any, {});
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    picker.handleInput('\u001B');
+    await prompt;
+
+    expect(session.setModel).not.toHaveBeenCalled();
+    expect(driver.state.editorReplacementMounted).toBe(false);
+    expect(modelMigrationState.acknowledged).toEqual({});
+  });
+
+  it('skips acknowledged migrations and targets outside the current provider', async () => {
+    const driver = makeDriver(makeHarness(), makeStartupInput());
+    installMigrationModels(driver);
+
+    await maybeShowModelMigrationPrompt(driver as any, { 'acme/current': 'next' });
+    expect(driver.state.editorReplacementMounted).toBe(false);
+
+    driver.state.appState.availableModels = {
+      'acme/current': driver.state.appState.availableModels['acme/current']!,
+      'other/next': {
+        provider: 'other',
+        model: 'next',
+        maxContextSize: 100,
+      },
+    };
+    await maybeShowModelMigrationPrompt(driver as any, {});
+    expect(driver.state.editorReplacementMounted).toBe(false);
+  });
+
+  it('skips a startup migration acknowledged in the state file', async () => {
+    const driver = makeDriver(makeHarness(), makeStartupInput());
+    installMigrationModels(driver);
+    modelMigrationState.acknowledged = { 'acme/current': 'next' };
+    const startup = driver as unknown as {
+      backgroundRefreshPromise: Promise<void>;
+      finishStartup(replay: boolean): Promise<void>;
+    };
+    startup.backgroundRefreshPromise = Promise.resolve();
+
+    await startup.finishStartup(false);
+    await flushMigrationCheck();
+
+    expect(driver.state.editorReplacementMounted).toBe(false);
+  });
+
+  describe('when a refresh finds the default model dropped by its registry', () => {
+    const retiredDefault = { from: 'acme/current', to: 'acme/next', from_display_name: 'Current' };
+
+    async function refreshDroppingDefault(options: {
+      readonly withSession: boolean;
+      readonly model: string;
+      readonly lazySessionThinking?: 'high';
+    }) {
+      const session = makeSession();
+      const setConfig = vi.fn(async () => ({}));
+      const harness = makeHarness(session, {
+        setConfig,
+        getConfig: vi.fn(async () => ({
+          providers: { acme: { type: 'openai' } },
+          models: { 'acme/next': { provider: 'acme', model: 'next', maxContextSize: 200 } },
+          defaultModel: 'acme/next',
+          thinking: { enabled: true, effort: 'medium' },
+        })),
+      });
+      const driver = makeDriver(harness, makeStartupInput());
+      if (options.withSession) await driver.setSession(session);
+      installMigrationModels(driver);
+      const remaining = { ...driver.state.appState.availableModels };
+      delete remaining['acme/current'];
+      driver.state.appState.model = options.model;
+      driver.state.appState.thinkingEffort = options.lazySessionThinking ?? 'low';
+      driver.state.appState.lazySessionThinking = options.lazySessionThinking;
+      const showStatus = vi.spyOn(driver as any, 'showStatus');
+      const startup = driver as unknown as {
+        authFlow: { refreshProviderModels(): Promise<unknown> };
+        refreshProviderModelsInBackground(): Promise<void>;
+        modelMigration: { retry(): void };
+      };
+      vi.spyOn(startup.authFlow, 'refreshProviderModels').mockImplementation(async () => {
+        driver.state.appState.availableModels = remaining;
+        return { changed: [], unchanged: [], failed: [], retired_default: retiredDefault };
+      });
+      driver.state.activeDialog = 'session-picker';
+      driver.state.editor.setText('draft');
+
+      await startup.refreshProviderModelsInBackground();
+      await flushMigrationCheck();
+      expect(showStatus).not.toHaveBeenCalled();
+      driver.state.activeDialog = null;
+      startup.modelMigration.retry();
+      await flushMigrationCheck();
+
+      expect(showStatus).toHaveBeenCalledWith(
+        'Current is no longer offered by its provider; the default model is now next.',
+        'warning',
+      );
+      return { driver, session, setConfig };
+    }
+
+    it('warns once the session picker closes and leaves the live session to the engine', async () => {
+      const { session, setConfig } = await refreshDroppingDefault({
+        withSession: true,
+        model: 'acme/current',
+      });
+
+      expect(session.setModel).not.toHaveBeenCalled();
+      expect(session.setThinking).not.toHaveBeenCalled();
+      expect(setConfig).not.toHaveBeenCalled();
+    });
+
+    it('moves a session-less selection onto the new default with the configured thinking', async () => {
+      const { driver, setConfig } = await refreshDroppingDefault({
+        withSession: false,
+        model: 'acme/current',
+      });
+
+      expect(driver.state.appState).toMatchObject({
+        model: 'acme/next',
+        maxContextTokens: 200,
+        thinkingEffort: 'medium',
+        lazySessionThinking: undefined,
+      });
+      expect(setConfig).not.toHaveBeenCalled();
+    });
+
+    it('keeps a session-only effort picked before the first prompt', async () => {
+      const { driver } = await refreshDroppingDefault({
+        withSession: false,
+        model: 'acme/current',
+        lazySessionThinking: 'high',
+      });
+
+      expect(driver.state.appState).toMatchObject({
+        model: 'acme/next',
+        thinkingEffort: 'high',
+        lazySessionThinking: 'high',
+      });
+    });
+
+    it('leaves a session-less selection on another model alone', async () => {
+      const { driver } = await refreshDroppingDefault({ withSession: false, model: 'acme/next' });
+
+      expect(driver.state.appState).toMatchObject({
+        model: 'acme/next',
+        thinkingEffort: 'low',
+        lazySessionThinking: undefined,
+      });
+    });
   });
 
   it('preserves fresh startup yolo and plan intent after OAuth login', async () => {
@@ -2428,7 +2966,9 @@ describe('KimiTUI startup', () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: true,
       gatedMcpServers: [],
-    }));
+      gatedAdditionalDirs: [], additionalDirSources: [], warnings: [],
+      instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] },
+      }));
     const harness = makeHarness(makeSession(), { getWorkspaceTrustInfo });
     const driver = makeDriver(harness, {
       ...makeStartupInput(),
@@ -2457,7 +2997,9 @@ describe('KimiTUI startup', () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: false,
       gatedMcpServers: [],
-    }));
+      gatedAdditionalDirs: [], additionalDirSources: [], warnings: [],
+      instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] },
+      }));
     const trustWorkspace = vi.fn(async () => {});
     const harness = makeHarness(makeSession(), { getWorkspaceTrustInfo, trustWorkspace });
     const driver = makeDriver(harness, {
@@ -2529,7 +3071,9 @@ describe('KimiTUI startup', () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: false,
       gatedMcpServers: [],
-    }));
+      gatedAdditionalDirs: [], additionalDirSources: [], warnings: [],
+      instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] },
+      }));
     const trustWorkspace = vi.fn(async (): Promise<void> => {
       throw new Error('disk full');
     });
