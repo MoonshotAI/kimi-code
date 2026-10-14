@@ -10,7 +10,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Features
 
-- Add an opt-in NotifyUser progress update feature (off by default): new sessions can show the agent's mid-turn progress with an optional one-line title. Enable it in the TUI `/experiments` panel.
+- Add an opt-in NotifyUser progress update feature (off by default): new sessions can show the agent's mid-turn progress updates. Enable it in the TUI `/experiments` panel.
 - Add `kimi app [path]` to open a new desktop chat in the current or specified directory.
 - Add sticky user message summaries in fullscreen mode: when a user message scrolls out of view, a one-line summary stays on screen, and clicking it jumps back to the original message. Fullscreen mode is enabled via the TUI mode setting in `/settings`, or `tui_mode = "fullscreen"` in `~/.kimi-code/tui.toml`.
 
