@@ -1323,7 +1323,7 @@ export class SessionEventHandler {
     // its terminal card without registering it under the task id. Reuse that
     // card instead of mounting a duplicate.
     if (task.kind === 'agent') {
-      const orphaned = this.findTerminalBackgroundAgentCard(task.agentId);
+      const orphaned = this.findTerminalBackgroundAgentCard(task.agentId, taskId);
       if (orphaned !== undefined && this.host.moveTranscriptEntryToEnd(orphaned)) {
         this.backgroundTaskTerminalEntries.set(taskId, orphaned);
         return;
@@ -1337,11 +1337,19 @@ export class SessionEventHandler {
   /** The agent's latest mounted terminal (non-`started`) background card. */
   private findTerminalBackgroundAgentCard(
     agentId: string | undefined,
+    taskId: string,
   ): TranscriptEntry | undefined {
     if (agentId === undefined) return undefined;
     return this.host.state.transcriptEntries.findLast((entry) => {
       const card = entry.backgroundAgentStatus;
-      return card?.agentId === agentId && card.phase !== 'started';
+      if (card?.agentId !== agentId || card.phase === 'started') return false;
+      // A resumed background agent keeps its previous agentId, so the latest
+      // matching card can belong to an earlier run. Never reuse a card that
+      // is already registered under another task — mount our own instead.
+      for (const [registeredTaskId, registered] of this.backgroundTaskTerminalEntries) {
+        if (registered === entry && registeredTaskId !== taskId) return false;
+      }
+      return true;
     });
   }
 

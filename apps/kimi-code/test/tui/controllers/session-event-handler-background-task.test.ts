@@ -538,4 +538,112 @@ describe('SessionEventHandler — task-notification turn anchoring', () => {
     expect(terminalCards()).toHaveLength(1);
     expect(host.appendTranscriptEntry).toHaveBeenCalledTimes(2);
   });
+
+  it('does not steal a previous run’s card when a resumed agent shares its agentId', () => {
+    const host = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    // First run: the background agent completes and its terminal card is
+    // registered under its own task id.
+    handler.handleEvent(
+      {
+        sessionId: 's1',
+        agentId: 'main',
+        type: 'subagent.spawned',
+        subagentId: 'agent-r1',
+        subagentName: 'explore',
+        parentToolCallId: 'tc-agent-r1',
+        description: 'task agent-r1',
+        runInBackground: true,
+        taskId: 'task-r1',
+      } as unknown as Event,
+      vi.fn(),
+    );
+    handler.handleEvent(
+      {
+        sessionId: 's1',
+        agentId: 'main',
+        type: 'background.task.started',
+        info: {
+          taskId: 'task-r1',
+          kind: 'agent',
+          agentId: 'agent-r1',
+          description: 'task agent-r1',
+          status: 'running',
+          startedAt: 0,
+        },
+      } as unknown as Event,
+      vi.fn(),
+    );
+    handler.handleEvent(
+      {
+        sessionId: 's1',
+        agentId: 'main',
+        type: 'subagent.completed',
+        subagentId: 'agent-r1',
+        resultSummary: 'done',
+      } as unknown as Event,
+      vi.fn(),
+    );
+
+    const terminalEntries = () =>
+      (
+        handler as unknown as {
+          backgroundTaskTerminalEntries: Map<string, unknown>;
+        }
+      ).backgroundTaskTerminalEntries;
+    const firstRunCard = appendedEntries(host).find(
+      (entry) => entry.backgroundAgentStatus?.phase === 'completed',
+    );
+    expect(firstRunCard).toBeDefined();
+    expect(terminalEntries().get('task-r1')).toBe(firstRunCard);
+
+    // The agent is resumed in the background: the new task shares the
+    // agentId, then times out without mounting a card of its own.
+    handler.handleEvent(
+      {
+        sessionId: 's1',
+        agentId: 'main',
+        type: 'background.task.started',
+        info: {
+          taskId: 'task-r2',
+          kind: 'agent',
+          agentId: 'agent-r1',
+          description: 'task agent-r1 (resumed)',
+          status: 'running',
+          startedAt: 1,
+        },
+      } as unknown as Event,
+      vi.fn(),
+    );
+    handler.handleEvent(
+      {
+        sessionId: 's1',
+        agentId: 'main',
+        type: 'background.task.terminated',
+        info: {
+          taskId: 'task-r2',
+          kind: 'agent',
+          agentId: 'agent-r1',
+          description: 'task agent-r1 (resumed)',
+          status: 'timed_out',
+          startedAt: 1,
+          endedAt: 2,
+        },
+      } as unknown as Event,
+      vi.fn(),
+    );
+
+    handler.handleEvent(taskNotificationTurnEvent('task-r2', 'timed_out'), vi.fn());
+
+    // The anchor must leave the first run's card registered and in place,
+    // and mount the resumed task's own terminal card instead.
+    expect(host.moveTranscriptEntryToEnd).not.toHaveBeenCalledWith(firstRunCard);
+    expect(terminalEntries().get('task-r1')).toBe(firstRunCard);
+    const appended = appendedEntries(host);
+    const resumedCard = appended.at(-1)!;
+    expect(resumedCard).not.toBe(firstRunCard);
+    expect(resumedCard.backgroundAgentStatus?.phase).toBe('failed');
+    expect(terminalEntries().get('task-r2')).toBe(resumedCard);
+  });
 });
