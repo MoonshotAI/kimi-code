@@ -1358,6 +1358,30 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(marker.payload).toMatchObject({ text: hookText, origin: { kind: 'hook_result' } });
   });
 
+  it('keeps a blocked prompt-hook response as assistant text in the existing turn', () => {
+    const hookText = '<hook_result hook_event="UserPromptSubmit">\nBlocked by hook\n</hook_result>';
+    const snapshot = groupMessagesIntoSnapshot([
+      { role: 'user', content: [{ type: 'text', text: 'real prompt' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'real reply' }], toolCalls: [] },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: hookText }],
+        toolCalls: [],
+        origin: { kind: 'hook_result', event: 'UserPromptSubmit', blocked: true } as { kind: string },
+      },
+    ]);
+
+    expect(snapshot.items.map((item) => item.kind)).toEqual(['turn']);
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.ordinal).toBe(0);
+    expect(turn.prompt).toBe('real prompt');
+    expect(turn.steps.map((step) => step.frames)).toEqual([
+      [{ kind: 'text', frameId: 't0.1.f1', role: 'assistant', text: 'real reply' }],
+      [{ kind: 'text', frameId: 't0.2.f1', role: 'assistant', text: hookText }],
+    ]);
+  });
+
   it('keeps model-tool skill activations as markers even when their content matches a steer record', () => {
     const skillContent = [{ type: 'text', text: 'skill body' }];
     const snapshot = groupMessagesIntoSnapshot(
