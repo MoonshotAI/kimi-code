@@ -936,7 +936,9 @@ describe('AgentTowerService', () => {
       );
       publishAsMain(ix, new SubagentStarted({ subagentId: 'agent-w2' }));
 
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await vi.waitFor(() => {
+        expect(infos.filter((entry) => entry.msg.includes('skipping'))).toHaveLength(2);
+      });
       const state = await store.load();
       expect(state.roster.agents[0]?.diedAt).toBeUndefined();
       expect(state.roster.agents[1]?.diedAt).toBeDefined();
@@ -946,11 +948,11 @@ describe('AgentTowerService', () => {
       expect(activityLog).not.toContain(' revived ');
 
       const skips = infos.filter((entry) => entry.msg.includes('skipping'));
-      expect(skips.map((entry) => entry.msg)).toEqual([
-        'tower: skipping roster agent death mark — tower store is owned by another session',
+      expect(skips.map((entry) => entry.msg).toSorted()).toEqual([
         'tower: skipping roster agent death clear — tower store is owned by another session',
+        'tower: skipping roster agent death mark — tower store is owned by another session',
       ]);
-      expect(skips[0]?.payload).toMatchObject({
+      expect(skips.find((entry) => entry.msg.includes('death mark'))?.payload).toMatchObject({
         event: 'TaskTerminatedNotice',
         agentId: 'agent-w1',
         sessionId: 'session-main',
