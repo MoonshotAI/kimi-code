@@ -1,36 +1,30 @@
 # Tower multi-agent collaboration
 
-Tower is an experimental coordination mode that helps complete larger coding objectives faster through asynchronous parallel development in a Git repository.
+Tower is an experimental multi-agent collaboration mode. It splits larger development tasks into missions (subtasks) that workers execute asynchronously in parallel within a Git repository, reducing the time spent waiting on sequential work.
 
-While workers develop independent missions in the background, you can check progress, send updates for the tower to relay, change direction or priorities, and stop an agent at any time. The main agent becomes the tower: it splits your objective into missions and coordinates the workers.
+Once enabled, the main agent becomes the tower and coordinates these workers. While workers run in the background, you can check progress, ask the tower to relay messages, redirect work or reprioritize, and stop any agent at any time.
 
-Independent review and merge checks support this parallel workflow. Each build mission has its own branch and git worktree (a separate checkout linked to the same repository). A worker implements one mission in that worktree and commits there; an independent reviewer then audits the branch read-only. The tower routes messages and completion reports, and merges only branches that pass its checks.
+The tower also arranges independent reviews of each worker's completed changes. Every mission has its own branch and Git worktree. Workers develop and commit in their respective worktrees, while reviewers inspect the corresponding branches read-only. The tower routes messages and completion reports, and merges only branches that pass its checks.
 
-Tower is therefore not just an ordinary subagent or an AgentSwarm task. It is a user-enabled, session-level coordination mode with explicit repository state, review gates, and cleanup commands.
+Tower is therefore neither an ordinary subagent call nor an AgentSwarm task. You must enable it explicitly. It persists repository state during collaboration and provides merge checks and cleanup commands. Tower's strengths are **responsiveness** and **parallel development**.
 
 ::: warning
-Tower is experimental, and its workflow and safety details may change. Tower can create branches, commits, and worktrees, and its workers and reviewers run unattended with Never Ask permissions. Use Tower only in a repository and on an objective you trust, and inspect the final diff yourself.
+Only the tower coordinator supports Ask When Needed. Workers and reviewers run automatically with Never Ask permissions and do not request approval for individual actions.
 :::
 
 ## When Tower fits
 
-Tower uses more tokens and repository machinery to move independent work forward asynchronously in parallel while keeping you in control.
+Use Tower when the work can run in parallel and you are comfortable with the extra token consumption and disk usage.
 
-Tower is a good fit when:
+Good candidates include:
 
-- The objective is large enough to split into mostly independent missions with clear verification, so asynchronous parallel development can shorten the wait compared with implementing them one by one.
-- You want to stay in control while they run: check progress, send updates for the tower to relay, adjust direction or priorities, and stop an agent at any time.
-- You want each change committed on its own branch, independently reviewed, and integrated into a local base branch.
-
-Tower is usually unnecessary when:
-
-- A quick edit, exploration, or single answer can be handled by the main agent or an [ordinary subagent](../customization/agents.md).
-- The work is tightly coupled around the same files, so parallel branches would create more integration work than useful parallelism.
-- You do not want extra branches, worktrees, unattended commands, or the token cost of multiple agents.
+- The task can be split into relatively independent missions with clear verification methods, so parallel work reduces waiting time.
+- Requirements are still evolving and you expect to provide new input, redirect work, or change priorities frequently.
+- You want every fix reviewed carefully, with its own branch and corresponding review.
 
 ## Enable Tower
 
-Tower is off by default. Enable the experiment in one of these ways, then make sure Kimi Code has been restarted before using `/tower`.
+Tower is off by default. Enable the experiment in one of the following ways.
 
 For a persistent setting, add this to `config.toml` (by default, `~/.kimi-code/config.toml`; see [Config files](../configuration/config-files.md)):
 
@@ -39,80 +33,88 @@ For a persistent setting, add this to `config.toml` (by default, `~/.kimi-code/c
 tower = true
 ```
 
-You can also open `/experiments`, enable **Tower mode**, and apply the change; this writes the same setting. Alternatively, enable Tower for one process by setting the environment variable before launch:
+You can also enable **Tower mode** in `/experiments` and apply the change for the same effect. To enable it only for the current process, set this environment variable before launch:
 
 ```sh
 KIMI_CODE_EXPERIMENTAL_TOWER=1 kimi
 ```
 
-The environment variable must be present at launch. If you change `/experiments` or `config.toml` while Kimi Code is running, restart it: Tower's tools and worker profile are assembled when the process starts. The `/tower` command appears only when the experiment is enabled.
+Set the environment variable before launch. If you modify `/experiments` or `config.toml` while Kimi Code is running, restart Kimi Code: Tower tools and the worker profile load only at process startup. `/tower` appears in the command list only after the experiment is enabled.
 
-Before starting, check out the local branch you want changes merged into and inspect the checkout:
+Before starting, check out the local branch that should receive the changes and inspect the worktree:
 
 ```sh
 cd /path/to/project
 git status
 ```
 
-Tower merges into a local branch, not a remote-tracking ref or tag. If the name passed to `/tower <base-branch>` does not exist, Tower creates that local branch from the current checkout. Using an existing branch in a clean checkout is the most predictable option.
+Tower can merge only into a local branch, not a remote-tracking ref or tag. If the branch passed to `/tower <base-branch>` does not exist, Tower creates it from the current checkout. Using an existing branch with a clean worktree is the safest option.
 
 ::: warning
-Uncommitted and untracked files can be snapshotted into worker branches; when Tower creates a new base branch, it can commit those changes onto that base. Initializing Tower in a directory that is not yet a Git repository can also run `git init` and create an initial commit containing the existing files. Check for secrets and large files first.
+Tower may snapshot uncommitted and untracked files into worker branches; when creating a new base branch, it may also commit those changes to that branch. In a directory that is not yet a Git repository, Tower initialization runs `git init` and creates an initial commit containing the existing files. Check for secrets and large files first.
 :::
 
 ## Run a workflow
 
-1. **Activate Tower and choose the base.** In Kimi Code, run `/tower feature/my-objective`. This enables Tower and sets the merge target; it does **not** send an objective. If Tower is already active, the same form re-anchors the workspace to another local base; only stale open missions then need a rebase. Use `/tower on` to enable Tower without changing the recorded base; on first initialization, that defaults to the current local branch, while a detached HEAD (no branch checked out) requires an explicit base.
+1. **Activate Tower.** In most cases, run `/tower on`. On first initialization, Tower uses the current local branch as the base; on later activations, it reuses the recorded base. This command only enables Tower and sends no objective.
 
-2. **Send the objective as a normal message.** For example: "Split the checkout documentation update into independent missions, test each one, and merge only branches that pass independent review." Include the desired verification and finish conditions. The tower initializes `.tower/`, plans missions, and starts dependency-unblocked workers in the background. Worker completions and inbox messages wake the tower, so you do not need to poll them.
+   If HEAD is detached (no branch is checked out), or you need to change the base, run `/tower <base-branch>` instead, for example `/tower feature/my-objective`.
 
-3. **Let implementation, review, and integration finish.** Workers commit on their mission branches. The tower assigns independent reviewers, rebases branches when needed, and merges approved missions in dependency order. Follow any approval prompts raised by your own permission mode, and answer questions about scope or priorities.
+2. **Send the development objective.** Enter the task as a normal chat message, for example: "Split the checkout documentation update into independent missions, test each one, and merge only branches that pass independent review." It is best to include how to verify the work and what completion means. Tower initializes `.tower/`, plans missions, and starts workers whose dependencies are satisfied in the background. When a worker finishes or Tower receives an inbox message, Tower resumes automatically, so you do not need to poll repeatedly.
 
-4. **Verify the integrated result.** Inspect `git status`, the base branch history, and the final diff, and run the acceptance checks that matter to you. Tower's merge gate is a safeguard, not a substitute for your own acceptance decision.
+3. **Let the work proceed in the background.** Workers commit changes on their branches. Tower assigns independent reviewers, rebases when needed, and merges approved missions in dependency order. Handle approval prompts and questions about scope or priority when they appear.
 
-5. **Clean up and exit.** After every mission is merged or abandoned, run `/tower teardown` to remove eligible mission worktrees, then `/tower off` to leave Tower mode. Read the differences between these actions in [Stop, teardown, and restart](#stop-teardown-and-restart).
+4. **Verify the merged result.** Inspect `git status`, the base branch history, and the final diff, and run the tests or acceptance checks you care about. These checks are only a baseline safeguard and do not replace human acceptance.
+
+5. **Clean up and exit.** After every mission is merged or abandoned, run `/tower teardown` to clean up removable mission worktrees, then `/tower off` to exit Tower. See [Stop, teardown, and restart](#stop-teardown-and-restart) for the differences between these actions.
 
 ## Check status and intervene
 
-You can supervise the tower without driving the worker protocol yourself.
+You do not need to understand the worker communication protocol to monitor and intervene in Tower.
 
-- **Read the dashboard:** `/tower` or `/tower status` reads and renders status directly, without starting a model turn. It shows the base, missions, roster, review gates, inbox count, concurrency, and recent activity.
-- **Redirect the coordinator:** send a normal message while Tower is active. Input is steered into the running coordinator turn, so you can add constraints, change priorities, or ask for a summary. When the tower routes an update to a running worker, the worker sees it at the next step boundary; the current tool call is not interrupted.
-- **Inspect or stop an agent:** open `/tasks` to view background agent progress and output, or stop one deliberately. Tower treats a user-stopped worker or reviewer as intentional and does not resume, reassign, or replace it unless you say otherwise.
-- **Change the base:** run `/tower <base-branch>` again. Existing open missions are evaluated against the new base; only stale branches need a rebase. The main checkout must be on the recorded base before a merge can proceed.
+- **Read the dashboard:** `/tower` or `/tower status` reads the current state directly without triggering a new model request. It shows the base, missions, roster, merge checks, inbox count, concurrency, and recent activity.
+- **Redirect work:** while Tower is active, send a normal message to add constraints, change priorities, or request a summary. After Tower relays a message to a worker, the worker sees it on the next step without interrupting the current tool call.
+- **Inspect or stop an agent:** open `/tasks` to view background agent progress and output, and stop one if needed. For a worker or reviewer you stop deliberately, Tower does not resume, reassign, or replace it unless you say otherwise.
+- **Change the base:** run `/tower <base-branch>` again. Tower re-evaluates existing missions against the new base, and only stale branches need a rebase. The main checkout must be on the recorded base before merging.
 
-One workspace has one tower coordinator. If a busy live session already owns it, another session cannot enable Tower there; continue in the owning session or close it first.
+Each workspace can have only one tower coordinator. If another session is already using Tower for this project, the current session cannot enable it. Close Tower in the original session first.
 
 ## Understand merges and rebases
 
-Workers are assigned to implement missions in their own worktrees rather than in the main checkout. Before merging a build mission, Tower checks that it is complete with no open tasks or blockers, its workers are idle, its dependencies are resolved (merged or abandoned), and its branch is current with the base. It also requires a qualifying clean review with merge approval — normally from an independent reviewer — plus changes inside the mission scope, the main checkout on the recorded base, and no conflicting uncommitted files.
+Before merging a mission, Tower confirms that it is complete and that its branch is up to date with the base. It also requires a valid clean review and merge approval, usually from an independent reviewer. Changes must stay within the mission scope, the main checkout must be on the recorded base, and there must be no conflicting uncommitted changes.
 
-If the base advances, Tower can rebase a mission branch inside that mission's worktree while its worker is idle and the worktree is clean. A conflict-free rebase preserves the existing clean review's binding; a conflicting rebase is aborted and the mission goes back to the worker for resolution. Follow the structured result instead of assuming that every rebase or merge succeeded.
+After the base advances, if the worker is idle and the worktree is clean, Tower can rebase the mission branch onto the new base in the corresponding worktree. If there are no conflicts, the existing clean review's binding is preserved. If a conflict occurs, the rebase is aborted and the worker resolves it.
 
-Let the tower perform Tower merges and rebases rather than running ad-hoc Git integration commands yourself. Do not hand-edit files under `.tower/comms/`: they are protocol records used by status, notification, and merge checks. Branches and worktrees remain available for your own read-only inspection.
+Let Tower handle merges and rebases; do not run additional Git integration commands yourself. Do not edit files under `.tower/comms/` directly: status, notifications, and merge checks depend on these records. You can inspect branches and worktrees read-only.
 
 ## Stop, teardown, and restart
 
-These actions have different cleanup boundaries:
+These actions clean up different things:
 
 | Action | What it does | What remains |
 | --- | --- | --- |
-| `/tower off` | Exits Tower mode in the current session. It does not stop already-running background agents or clean up files; stop agents through `/tasks` first if needed | `.tower/`, mission branches, and worktrees |
-| `/tower teardown` | Asks the agent to remove eligible mission worktrees and report the result. Dirty worktrees and worktrees with live agents are protected | Mission branches and `.tower/comms/` audit records; Tower mode stays on |
-| Exit Kimi Code or close the session | Stops background tasks by default; change [`background.keep_alive_on_exit`](../configuration/config-files.md#background) if your workflow requires otherwise | On-disk `.tower/` state, branches, and worktrees |
+| `/tower off` | Exits Tower mode in the current session without stopping background agents or cleaning up files | `.tower/`, mission branches, and worktrees |
+| `/tower teardown` | Asks the agent to remove eligible mission worktrees and report the result; worktrees with uncommitted changes or running agents are not removed | Mission branches and `.tower/comms/` audit records; Tower mode stays on |
+| Exit Kimi Code or close the session | Stops background tasks by default; change [`background.keep_alive_on_exit`](../configuration/config-files.md#background) if needed | On-disk `.tower/` state, branches, and worktrees |
 
-Resume the owning session after a restart when possible. If a different session adopts the workspace, roster entries from the previous session are retired, while missions and worktrees are preserved; the new coordinator must spawn fresh workers. Avoid driving the same workspace tower from two sessions.
+After Kimi Code restarts, if another session takes over the current project, the previous session's roster entries become inactive, but missions and worktrees are preserved. The new coordinator must spawn workers again. A project cannot have multiple tower coordinators at the same time.
 
-Tower is also mutually exclusive with Goal, Plan, and swarm modes. Entering Tower exits Plan or swarm mode and pauses an active goal. Activating a goal exits Tower, as does entering Plan or swarm mode. The on-disk Tower state remains, so you can return later with `/tower on`.
+## Mode exclusivity and secondary model
+
+Tower is mutually exclusive with Goal, Plan, and swarm modes. Entering Tower exits Plan or swarm and pauses the active goal; activating a goal or entering Plan or swarm also exits Tower. Tower state remains on disk, and you can return later with `/tower on`.
+
+Workers and reviewers follow different model-selection rules. Without `[secondary_model]`, both use Tower's current primary model. Once it is configured, newly spawned workers use `default_model`, while **reviewers continue to use the primary model**. `TowerSpawn` currently does not support selecting a model for an individual mission or spawn. See [Subagent model pool](../configuration/config-files.md#subagent-model-pool) for configuration details.
+
+To control token costs, you can assign workers a cheaper secondary model. Reviewers remain on the primary model, preserving budget for independent review.
 
 ## Safety and resource cost
 
-Worktree isolation coordinates writes; it is not a security sandbox. Workers can read repository content and run tools with your permissions, and their Never Ask mode does not interrupt you for approval. Tower workers do not have the `Agent` tool, so they cannot delegate nested subagents, but mission scopes and merge checks should still be treated as coordination safeguards rather than a trust boundary.
+Worktrees isolate writes, but they are not a security sandbox. Workers can read repository content and run tools with your permissions. In Never Ask mode, workers and reviewers do not request your approval for individual actions. Tower workers do not have the `Agent` tool and cannot spawn subagents. Mission scopes and merge checks are process constraints, not security boundaries.
 
-Every worker and reviewer has an independent model context and consumes tokens independently. Coordinator planning, routing, recovery, and merge turns add further usage, so a larger fleet can increase quota pressure as well as local CPU and disk use. Tower limits concurrent agent spawns, and `/tower status` shows the current budget and in-flight count without itself starting a model turn. Start with a small number of independent missions, and remove finished worktrees to reclaim disk space.
+Each worker and reviewer has an independent model context and consumes tokens separately. Tower's planning, message routing, recovery, and merge turns also consume tokens. More agents increase pressure on quota, CPU, and disk. Tower limits concurrently spawned agents; `/tower status` shows the current budget and running count without starting a model turn. Start with a small number of independent missions and remove finished worktrees to reclaim disk space.
 
 ## Next steps
 
-- [Slash commands](../reference/slash-commands.md#modes-run-control) — exact `/tower` command forms and availability
+- [Slash commands](../reference/slash-commands.md#modes-run-control) — `/tower` command forms
 - [Environment variables](../configuration/env-vars.md#runtime-switches) — `KIMI_CODE_EXPERIMENTAL_TOWER` and related runtime switches
-- [Agents and Sub-Agents](../customization/agents.md) — the simpler delegation model for focused subtasks
+- [Agents and Sub-Agents](../customization/agents.md) — simpler delegation for focused subtasks

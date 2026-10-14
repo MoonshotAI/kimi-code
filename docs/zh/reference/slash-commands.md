@@ -53,7 +53,7 @@
 | `/swarm on\|off` | — | 开启或关闭 swarm mode，但不发送提示词。 | 是 |
 | `/swarm <task>` | — | 先开启 swarm mode，再把 `<task>` 作为普通提示词发送。如果该轮次正常完成，swarm mode 会自动关闭。若当前是 `manual` 权限模式，启动前会提示是否切换到 "Ask When Needed" 或 "Never Ask" 模式。 | 否 |
 | `/tower` 或 `/tower status` | — | 查看 base、mission、roster、review 门槛、inbox、并发和近期活动，不启动模型轮次 | 是 |
-| `/tower on` | — | 开启 Tower 模式，不改变已记录的 base，也不发送提示词；首次初始化时默认采用当前本地 branch，detached HEAD（未检出任何 branch）需改用 `/tower <base-branch>` | 是 |
+| `/tower on` | — | 开启 Tower 模式，不改变已记录的 base，也不发送提示词；首次初始化时默认采用当前本地 branch | 是 |
 | `/tower off` | — | 退出 Tower 模式，不停止运行中的后台 Agent，也不删除 `.tower/` 状态 | 是 |
 | `/tower <base-branch>` | — | 开启 Tower，并设定或重新锚定 mission 要合并到的本地 base branch；不会发送任务目标 | 是 |
 | `/tower teardown` | — | 要求 Agent 移除符合条件的 mission worktree，同时保护有未提交改动或有存活 Agent 的 worktree；保留 branch 和 `.tower/comms/`，Tower 模式保持开启 | 是 |
