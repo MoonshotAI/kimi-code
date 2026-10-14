@@ -881,12 +881,12 @@ describe('reasoning', () => {
     expect(models[1]?.supportsDynamicTools).toBe(false);
   });
 
-  it('leaves supportsThinkingType undefined when reasoning is absent or its type is unknown', async () => {
+  it('maps absent reasoning to no and leaves unknown reasoning types undefined', async () => {
     const absent = await fetchManagedKimiCodeModels({
       accessToken: 'oauth-access-token',
       fetchImpl: vi.fn(async () => makeModelsResponse()) as unknown as typeof fetch,
     });
-    expect(absent[1]?.supportsThinkingType).toBeUndefined();
+    expect(absent[1]?.supportsThinkingType).toBe('no');
     expect(absent[1]?.supportsReasoning).toBe(false);
 
     const invalid = await fetchManagedKimiCodeModels({
@@ -1027,6 +1027,44 @@ describe('reasoning', () => {
     });
 
     expect(result.defaultModel).toBe('kimi-code/kimi-plain');
+    expect(result.defaultThinking).toBe(false);
+    expect(config.thinking?.enabled).toBe(false);
+  });
+
+  it('forces default thinking off when the preserved default omits reasoning', async () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        [KIMI_CODE_PROVIDER_NAME]: {
+          type: 'kimi',
+          apiKey: '',
+        },
+      },
+      defaultModel: 'kimi-code/kimi-k2.5',
+      thinking: { enabled: true },
+      models: {
+        'kimi-code/kimi-k2.5': {
+          provider: KIMI_CODE_PROVIDER_NAME,
+          model: 'kimi-k2.5',
+          maxContextSize: 250000,
+          capabilities: ['thinking'],
+        },
+      },
+    };
+
+    const result = await provisionManagedKimiCodeConfig({
+      accessToken: 'oauth-access-token',
+      fetchImpl: vi.fn(async () => makeModelsResponse()) as unknown as typeof fetch,
+      preserveDefaultModel: true,
+      adapter: {
+        read: () => config,
+        write: vi.fn(),
+        apply: applyManagedKimiCodeConfig,
+      },
+    });
+
+    // kimi-k2.5 has no reasoning object in the response — the stale
+    // thinking.enabled must not survive the refresh.
+    expect(result.defaultModel).toBe('kimi-code/kimi-k2.5');
     expect(result.defaultThinking).toBe(false);
     expect(config.thinking?.enabled).toBe(false);
   });

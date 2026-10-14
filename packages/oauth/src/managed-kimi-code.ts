@@ -459,9 +459,11 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
 /**
  * Parse the unified `reasoning` object from `/models`:
  *   { "type": "only", "effort": { "valid": ["low", "high", "max"], "default": "max" } }
- * A missing object and `type: "none"` both mean the model cannot think. The
- * effort block is absent on models without adjustable effort; a default that
- * is not listed in `valid` is dropped.
+ * A missing object and `type: "none"` both mean the model cannot think and map
+ * to the internal 'no' state so a stale thinking default gets cleared;
+ * `undefined` is reserved for a present object whose type is unrecognized.
+ * The effort block is absent on models without adjustable effort; a default
+ * that is not listed in `valid` is dropped.
  */
 function parseModelReasoning(value: unknown): {
   supportsReasoning: boolean;
@@ -472,7 +474,7 @@ function parseModelReasoning(value: unknown): {
   if (!isRecord(value)) {
     return {
       supportsReasoning: false,
-      supportsThinkingType: undefined,
+      supportsThinkingType: 'no',
       supportEfforts: undefined,
       defaultEffort: undefined,
     };
