@@ -9,7 +9,6 @@ import { fileURLToPath } from 'node:url';
 
 const script = fileURLToPath(new URL('./core-release.mjs', import.meta.url));
 const versionScript = fileURLToPath(new URL('./version-release.mjs', import.meta.url));
-const syncScript = fileURLToPath(new URL('./is-release-sync.mjs', import.meta.url));
 const sha = 'a'.repeat(40);
 const branch = 'release/test';
 const cli = { name: '@moonshot-ai/kimi-code', version: '1.1.0', path: 'apps/kimi-code', private: false };
@@ -17,7 +16,7 @@ const sdk = { name: '@example/sdk', version: '0.2.0', path: 'packages/sdk', priv
 const targets = ['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64', 'win32-arm64', 'win32-x64'];
 const dirs = [];
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
-function fixture(packages = [cli, sdk]) {
+function fixture(packages = [cli]) {
   const dir = mkdtempSync(join(tmpdir(), 'core-release-'));
   dirs.push(dir);
   mkdirSync(join(dir, '.changeset'));
@@ -133,22 +132,15 @@ test('npm success followed by native failure can rerun from saved inputs without
   assert.notEqual(run(f,'finish').status,0);
   rmSync(join(f.dir,'.release-inputs'),{recursive:true});rmSync(join(f.dir,'release-inputs.tar.gz'));
   success(run(f,'restore'));success(run(f,'npm'));
-  assert.equal(f.state().calls.filter(c=>c[0]==='npm'&&c[1]==='publish').length,2);
+  assert.equal(f.state().calls.filter(c=>c[0]==='npm'&&c[1]==='publish').length,1);
   assert.equal(readFileSync(join(f.dir,'.release-inputs/catalog.json'),'utf8'),'{"frozen":true}');
   nativeArtifacts(f);success(run(f,'finish'));
   assert.equal(f.state().releases[`${cli.name}@${cli.version}`].draft,false);
-  assert.equal(f.state().releases[`${sdk.name}@${sdk.version}`].draft,false);
   success(run(f,'restore'));success(run(f,'finish'));
   assert.match(readFileSync(join(f.dir,'output'),'utf8'),/complete=true/);
 });
 
-test('partially published npm packages are supplemented, not republished', () => {
-  const f=fixture();prepare(f);f.update({failPackage:sdk.name});assert.notEqual(run(f,'npm').status,0);
-  f.update({failPackage:null});success(run(f,'npm'));
-  const attempts=f.state().calls.filter(c=>c[0]==='npm'&&c[1]==='publish');
-  assert.equal(attempts.filter(c=>c[2].endsWith('package-0.tgz')).length,1);
-  assert.equal(attempts.filter(c=>c[2].endsWith('package-1.tgz')).length,2);
-});
+
 
 test('registry conflicts, authentication failures and newer latest stop publishing', () => {
   for(const state of [{npm:{[`${cli.name}@${cli.version}`]:'wrong'}},{registryError:'E403'},{latest:{[cli.name]:'9.0.0'}}]) {
@@ -180,12 +172,7 @@ test('tampered saved inputs stop restoration and native catalog reuse', () => {
   assert.match(run(f,'catalog').stderr,/checksum mismatch/);
 });
 
-test('internal-only release needs no CLI binary and private-only release is a no-op', () => {
-  const f=fixture([sdk]);prepare(f);success(run(f,'npm'));success(run(f,'finish'));
-  assert.equal(f.state().releases[`${sdk.name}@${sdk.version}`].draft,false);
-  const privateOnly=fixture([{...sdk,private:true}]);success(run(privateOnly,'restore'));
-  assert.equal(privateOnly.state().calls.length,0);
-});
+
 
 test('versioning records only newly changed packages, excluding previously published plans', () => {
   const f=fixture();writeFileSync(join(f.dir,'.changeset/fix.md'),'fix');
@@ -194,11 +181,7 @@ test('versioning records only newly changed packages, excluding previously publi
   assert.equal(plan.packages[0].version,'1.1.1');assert.equal(plan.packages.length,1);assert.deepEqual(plan.changesets,['fix.md']);
 });
 
-test('VSCode metadata synchronization is skipped but later independent versions are allowed', () => {
-  const vscode={name:'kimi-code',version:'0.1.0',path:'apps/vscode',private:true};const f=fixture([vscode]);
-  const invoke=()=>spawnSync(process.execPath,[syncScript],{cwd:f.dir,encoding:'utf8'});
-  success(invoke());writeFileSync(join(f.dir,'apps/vscode/package.json'),JSON.stringify({...vscode,version:'0.1.1'}));assert.equal(invoke().status,1);
-});
+
 
 test('interrupted native upload resumes while the release stays draft', () => {
   const f=fixture();prepare(f);success(run(f,'npm'));nativeArtifacts(f);
@@ -211,16 +194,12 @@ test('interrupted native upload resumes while the release stays draft', () => {
   assert.equal(f.state().calls.filter(c=>c[0]==='gh'&&c[1]==='release'&&c[2]==='upload').length,before);
 });
 
-test('published releases with missing or changed artifacts fail verification without overwriting', () => {
-  const f=fixture();prepare(f);success(run(f,'npm'));nativeArtifacts(f);success(run(f,'finish'));
-  const state=f.state();state.releases[`${cli.name}@${cli.version}`].assets.find(a=>a.name==='kimi-code-linux-x64.zip').digest='sha256:wrong';f.update(state);
-  assert.match(run(f,'restore').stderr,/Published asset does not match/);
-});
+
 
 test('a later npm release does not prevent repairing an already published older native version', () => {
-  const f=fixture();prepare(f);success(run(f,'npm'));f.update({latest:{[cli.name]:'9.0.0',[sdk.name]:'9.0.0'}});
+  const f=fixture();prepare(f);success(run(f,'npm'));f.update({latest:{[cli.name]:'9.0.0'}});
   success(run(f,'restore'));success(run(f,'npm'));nativeArtifacts(f);success(run(f,'finish'));
-  assert.equal(f.state().calls.filter(c=>c[0]==='npm'&&c[1]==='publish').length,2);
+  assert.equal(f.state().calls.filter(c=>c[0]==='npm'&&c[1]==='publish').length,1);
 });
 
 
@@ -232,5 +211,21 @@ test('missing saved inputs after npm publication stop recovery before regenerati
   const result=run(f,'restore');
   assert.notEqual(result.status,0);
   assert.match(result.stderr,/Published npm version has no saved inputs/);
-  assert.equal(f.state().calls.filter(c=>c[0]==='pnpm'&&c.includes('pack')).length,2);
+  assert.equal(f.state().calls.filter(c=>c[0]==='pnpm'&&c.includes('pack')).length,1);
+});
+
+test('non-CLI public plans are rejected before any external writes', () => {
+  for (const packages of [[sdk], [{...sdk,private:true}], [cli,sdk]]) {
+    const f=fixture(packages);assert.notEqual(run(f,'restore').status,0);
+    assert.equal(f.state().calls.length,0);
+  }
+});
+
+test('completed public releases skip recovery without replacing assets', () => {
+  const f=fixture();prepare(f);success(run(f,'npm'));nativeArtifacts(f);success(run(f,'finish'));
+  const before=f.state().calls.length;
+  rmSync(join(f.dir,'.release-inputs'),{recursive:true});
+  success(run(f,'restore'));success(run(f,'finish'));
+  assert.match(readFileSync(join(f.dir,'output'),'utf8'),/complete=true/);
+  assert.equal(f.state().calls.slice(before).some(c=>c[0]==='npm'||c[2]==='upload'||c[2]==='download'||c[2]==='edit'),false);
 });

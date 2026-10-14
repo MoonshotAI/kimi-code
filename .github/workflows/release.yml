@@ -81,7 +81,6 @@ jobs:
       actions: read
       id-token: write
     outputs:
-      native: ${{ steps.restore.outputs.native }}
       complete: ${{ steps.restore.outputs.complete }}
       tag: ${{ steps.restore.outputs.tag }}
     env:
@@ -115,7 +114,7 @@ jobs:
 
   native-artifacts:
     needs: release
-    if: needs.release.outputs.native == 'true' && needs.release.outputs.complete != 'true'
+    if: needs.release.outputs.complete != 'true'
     permissions:
       contents: read
     uses: ./.github/workflows/_native-build.yml
@@ -137,7 +136,7 @@ jobs:
 
   publish-native-assets:
     needs: [release, native-artifacts]
-    if: always() && needs.release.result == 'success' && needs.release.outputs.complete != 'true' && (needs.native-artifacts.result == 'success' || needs.native-artifacts.result == 'skipped')
+    if: always() && needs.release.result == 'success' && needs.release.outputs.complete != 'true' && needs.native-artifacts.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -151,14 +150,24 @@ jobs:
         with:
           node-version-file: .nvmrc
       - uses: actions/download-artifact@v8
-        if: needs.release.outputs.native == 'true'
         with:
           pattern: kimi-code-native-*
           path: dist-native-release
           merge-multiple: true
       - name: Produce native manifest
-        if: needs.release.outputs.native == 'true'
         env:
           RELEASE_TAG: ${{ needs.release.outputs.tag }}
         run: node apps/kimi-code/scripts/native/produce-manifest.mjs dist-native-release "$RELEASE_TAG"
       - run: node scripts/core-release.mjs finish dist-native-release
+
+  deploy-docs:
+    needs: publish-native-assets
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Deploy existing main documentation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run docs-deploy.yml --ref main

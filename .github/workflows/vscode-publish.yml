@@ -71,12 +71,6 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "extension version: ${version}"
 
-          if [ "${EVENT_NAME}" != "workflow_dispatch" ] && node scripts/is-release-sync.mjs; then
-            echo "release metadata sync — keep extension publication separate"
-            echo "should_publish=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
           if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
             echo "manual dispatch — skipping version-change check"
           else
