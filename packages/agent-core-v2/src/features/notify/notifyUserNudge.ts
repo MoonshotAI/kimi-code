@@ -80,5 +80,5 @@ export function shouldNudgeNotifyUser(
 }
 
 export function renderNotifyUserNudge(count: number): string {
-  return `You have gone through ${String(count)} rounds of tool calls without a NotifyUser update — the Updates panel has shown nothing new since. Send one now: a structured, chat-style update (a well structured paragraph with a few bullet points, under ~1000 characters) covering what you have concluded so far and what you will do next, batched with your next tool calls.`;
+  return `You have gone through ${String(count)} rounds of tool calls without a NotifyUser update — the user has seen no progress from you since. Send one now: a one-line title with what you have concluded so far, and a structured, chat-style message (a well structured paragraph with a few bullet points, under ~1000 characters) with the details and what you will do next, batched with your next tool calls.`;
 }

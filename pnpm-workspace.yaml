@@ -10,6 +10,4 @@ catalog:
 
 overrides:
   "kimi-code>@tailwindcss/vite": "4.1.18"
-  "ssh2@1.17.0>cpu-features": "-"
-  "ssh2@1.17.0>nan": "-"
   "kimi-code>tailwindcss": "4.1.18"

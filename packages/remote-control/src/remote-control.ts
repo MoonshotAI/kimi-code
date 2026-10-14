@@ -92,14 +92,18 @@ export interface ParsedRawHttpRequest {
 export type RemoteControlStatus =
   | 'relay_connected'
   | 'relay_disconnected'
+  | 'relay_terminated'
   | 'device_connected'
   | 'device_disconnected';
+
+export type RemoteControlCloseReason = 'local_close' | 'user_requested';
 
 export interface RemoteControlOptions {
   readonly homeDir: string;
   readonly localOrigin: string;
   readonly localServerToken: string | (() => string);
   readonly clientVersion: string;
+  readonly urlSource: string;
   readonly relayOrigin?: string;
   readonly configuredOAuthKey?: string;
   readonly configuredOAuthHost?: string;
@@ -107,6 +111,7 @@ export interface RemoteControlOptions {
   readonly onStatus?: (status: RemoteControlStatus) => void;
   readonly pingIntervalMs?: number;
   readonly silenceTimeoutMs?: number;
+  readonly signal?: AbortSignal;
 }
 
 export interface RemoteControlHandle {
@@ -114,7 +119,7 @@ export interface RemoteControlHandle {
   readonly deviceName: string;
   readonly url: string;
   readonly relayOrigin: string;
-  readonly closed: Promise<void>;
+  readonly closed: Promise<RemoteControlCloseReason>;
   close(): Promise<void>;
 }
 
@@ -129,6 +134,7 @@ export function buildRemoteControlUrl(
   deviceId: string,
   sessionId: string | undefined,
   relayOrigin: string,
+  from: string,
 ): string {
   const url = new URL(relayOrigin);
   const relayPath = url.pathname.replace(/\/+$/, '');
@@ -137,7 +143,7 @@ export function buildRemoteControlUrl(
     sessionId === undefined
       ? `${devicePath}/`
       : `${devicePath}/sessions/${encodeURIComponent(sessionId)}`;
-  url.search = new URLSearchParams({ rc: '1', from: 'kimi_code_cli' }).toString();
+  url.search = new URLSearchParams({ rc: '1', from }).toString();
   url.hash = '';
   return url.toString();
 }
@@ -261,13 +267,13 @@ function requestMatchesETag(
   headers: readonly [string, string][],
   etag: string,
 ): boolean {
-  const candidates = [etag, etag.replace(/^W\//, '')];
+  const candidates = new Set([etag, etag.replace(/^W\//, '')]);
   for (const [name, value] of headers) {
     if (name.toLowerCase() !== 'if-none-match') continue;
     for (const token of value.split(',')) {
       const candidate = token.trim();
       if (candidate === '*') return true;
-      if (candidates.includes(candidate)) return true;
+      if (candidates.has(candidate)) return true;
     }
   }
   return false;
@@ -297,12 +303,17 @@ export async function startRemoteControl(
     options.relayOrigin ?? resolveRemoteControlRelayOrigin(process.env, auth.relayOrigin);
   const deviceId = createKimiDeviceId(options.homeDir);
   const deviceName = hostname();
-  const url = buildRemoteControlUrl(deviceId, undefined, relayOrigin);
+  const url = buildRemoteControlUrl(deviceId, undefined, relayOrigin, options.urlSource);
   const lock = await acquireRemoteControlLock(options.homeDir, {
     localOrigin: options.localOrigin.replace(/\/+$/, ''),
     deviceId,
     url,
   });
+  const tokenAfterLock = await storage.load(resolveKimiTokenStorageName({ oauthKey: auth.oauthKey }));
+  if (tokenAfterLock?.refreshToken !== token.refreshToken) {
+    await lock.release();
+    throw new Error('Remote Control requires a Kimi login. Run `kimi login` first.');
+  }
   const client = new RemoteControlClient({
     ...options,
     localServerToken,
@@ -310,14 +321,22 @@ export async function startRemoteControl(
     deviceId,
     refreshToken: token.refreshToken,
   });
+  const abortStart = () => {
+    void client.close();
+  };
+  options.signal?.addEventListener('abort', abortStart, { once: true });
   try {
+    options.signal?.throwIfAborted();
     await client.start();
   } catch (error) {
     await lock.release();
     throw error;
+  } finally {
+    options.signal?.removeEventListener('abort', abortStart);
   }
-  const closed = client.closed.then(async () => {
+  const closed = client.closed.then(async (reason) => {
     await lock.release();
+    return reason;
   });
   return {
     deviceId,
@@ -343,6 +362,7 @@ class RemoteControlClient {
   private readonly onStatus: (status: RemoteControlStatus) => void;
   private readonly streams = new Map<string, ActiveStream>();
   private readonly pendingHttpRequests = new Map<string, PendingHttpRequest>();
+  private readonly pendingSockets = new Set<WebSocket>();
   private management: WebSocket | undefined;
   private reconnectAbort: AbortController | undefined;
   private http: WebSocket | undefined;
@@ -352,6 +372,7 @@ class RemoteControlClient {
   private readonly pingIntervalMs: number;
   private readonly silenceTimeoutMs: number;
   private stopped = false;
+  private userRequested = false;
   private connected = false;
   private relayOnline = false;
   private runPromise: Promise<void> | undefined;
@@ -387,8 +408,10 @@ class RemoteControlClient {
     await initial;
   }
 
-  get closed(): Promise<void> {
-    return this.runPromise ?? Promise.resolve();
+  get closed(): Promise<RemoteControlCloseReason> {
+    return (this.runPromise ?? Promise.resolve()).then(() =>
+      this.userRequested ? 'user_requested' : 'local_close',
+    );
   }
 
   async close(): Promise<void> {
@@ -496,7 +519,14 @@ class RemoteControlClient {
   }
 
   private connectRelay(path: string): Promise<WebSocket> {
-    return connectWebSocket(relayWebSocketUrl(this.relayOrigin, path), this.refreshToken);
+    return connectWebSocket(
+      relayWebSocketUrl(this.relayOrigin, path),
+      this.refreshToken,
+      undefined,
+      undefined,
+      this.pendingSockets,
+      () => this.stopped,
+    );
   }
 
   private watchSocket(socket: WebSocket, label: string): void {
@@ -550,7 +580,10 @@ class RemoteControlClient {
     }
     if (message.type === 'disconnect') {
       const reason = stringField(message.payload, 'reason');
-      if (reason === 'user_requested') this.stopped = true;
+      if (reason === 'user_requested') {
+        this.stopped = true;
+        this.userRequested = true;
+      }
       if (reason === 'server_shutting_down') this.reconnectImmediately = true;
       this.closeCycle();
     }
@@ -647,6 +680,8 @@ class RemoteControlClient {
         this.localServerToken(),
         relayHeaders(payload['headers']),
         earlyLocalFrames,
+        this.pendingSockets,
+        () => this.stopped,
       );
       tunnel = await this.connectRelay(`/v1/remote/stream/${encodeURIComponent(streamId)}`);
       if (this.stopped || this.management?.readyState !== WebSocket.OPEN) {
@@ -718,11 +753,13 @@ class RemoteControlClient {
     for (const streamId of this.streams.keys()) this.closeStream(streamId);
     this.pendingHttpRequests.clear();
     this.pendingHttpBytes = 0;
+    for (const socket of this.pendingSockets) socket.terminate();
+    this.pendingSockets.clear();
     this.management?.close();
     this.http?.close();
     if (this.relayOnline) {
       this.relayOnline = false;
-      this.onStatus('relay_disconnected');
+      this.onStatus(this.userRequested ? 'relay_terminated' : 'relay_disconnected');
     }
     this.management = undefined;
     this.http = undefined;
@@ -752,12 +789,16 @@ async function connectWebSocket(
   token: string,
   headers: Record<string, string> = {},
   earlyFrames?: [RawData, boolean][],
+  pendingSockets?: Set<WebSocket>,
+  isStopped?: () => boolean,
 ): Promise<WebSocket> {
   const protocol = `kimi-code.bearer.${token}`;
   if (isWebSocketProtocolToken(protocol)) {
     try {
-      return await connectWebSocketAttempt(url, [protocol], headers, earlyFrames);
-    } catch {}
+      return await connectWebSocketAttempt(url, [protocol], headers, earlyFrames, pendingSockets);
+    } catch (error) {
+      if (isStopped?.() === true) throw error;
+    }
   }
   return connectWebSocketAttempt(
     url,
@@ -767,6 +808,7 @@ async function connectWebSocket(
       Authorization: `Bearer ${token}`,
     },
     earlyFrames,
+    pendingSockets,
   );
 }
 
@@ -775,12 +817,14 @@ function connectWebSocketAttempt(
   protocols: string[] | undefined,
   headers: Record<string, string>,
   earlyFrames?: [RawData, boolean][],
+  pendingSockets?: Set<WebSocket>,
 ): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(url, protocols, {
       headers,
       handshakeTimeout: REGISTER_TIMEOUT_MS,
     });
+    pendingSockets?.add(socket);
     if (earlyFrames !== undefined) {
       socket.on('message', (data, isBinary) => {
         earlyFrames.push([data, isBinary]);
@@ -796,6 +840,7 @@ function connectWebSocketAttempt(
       if (settled) return;
       settled = true;
       cleanup();
+      pendingSockets?.delete(socket);
       if (error === undefined) resolve(socket);
       else reject(error);
     };
@@ -913,11 +958,11 @@ function requestLocalHttp(
               let varyCovers = false;
               for (let index = 0; index < headers.length; index += 2) {
                 if (headers[index]!.toLowerCase() !== 'vary') continue;
-                const tokens = headers[index + 1]!
+                const tokens = new Set(headers[index + 1]!
                   .toLowerCase()
                   .split(',')
-                  .map((token) => token.trim());
-                if (tokens.includes('*') || tokens.includes('accept-encoding')) varyCovers = true;
+                  .map((token) => token.trim()));
+                if (tokens.has('*') || tokens.has('accept-encoding')) varyCovers = true;
               }
               if (!varyCovers) headers.push('Vary', 'Accept-Encoding');
             }

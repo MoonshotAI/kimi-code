@@ -96,6 +96,10 @@ export interface PromptCacheProbeEvent {
   input_cache_read: number;
   input_cache_creation: number;
   output_tokens: number;
+  tools_match?: boolean;
+  system_prompt_match?: boolean;
+  parent_input_tokens?: number;
+  parent_request_gap_ms?: number;
 }
 
 export type ToolCallOutcome = 'success' | 'error' | 'cancelled';
@@ -399,6 +403,7 @@ export interface NotifyUserSentEvent {
   turn_id: number;
   rounds_since_notify: number;
   after_nudge: boolean;
+  title_chars: number;
   message_chars: number;
   displayed: boolean;
 }
@@ -671,7 +676,7 @@ export const telemetryEventDefinitions = {
   prompt_cache_probe: defineAgentTelemetryEvent<PromptCacheProbeEvent>({
     owner: 'kimi-code',
     comment:
-      'An agent whose first request is expected to hit the prompt cache reports that request\'s cache usage.',
+      'An agent whose first request is expected to hit the prompt cache reports that request\'s cache usage and how its prefix compares with the last turn request the parent agent completed before the fork.',
     properties: {
       source: 'Why a cache hit was expected for this request',
       turn_id: 'Per-agent turn index of the probed request',
@@ -681,6 +686,14 @@ export const telemetryEventDefinitions = {
       input_cache_read: 'Cache-read input tokens of the probed request',
       input_cache_creation: 'Cache-creation input tokens of the probed request',
       output_tokens: 'Output tokens of the probed request',
+      tools_match:
+        "Whether the provider-visible tool table hash equals the parent's; absent when the parent completed no turn request before the fork, or its context was rewritten (undo, compaction) after the last one",
+      system_prompt_match:
+        "Whether the system prompt hash equals the parent's; absent when the parent completed no turn request before the fork, or its context was rewritten (undo, compaction) after the last one",
+      parent_input_tokens:
+        "Total input tokens of the parent's last completed turn request before the fork, i.e. the prefix this request could read from the cache; absent when there is none, or the parent's context was rewritten (undo, compaction) after it",
+      parent_request_gap_ms:
+        "Milliseconds from the parent's last completed turn request finishing to the probed request starting; absent when the parent completed no turn request before the fork, or its context was rewritten (undo, compaction) after the last one",
     },
   }),
   tool_call: defineAgentTelemetryEvent<ToolCallEvent>({
@@ -1107,8 +1120,9 @@ export const telemetryEventDefinitions = {
       turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session',
       rounds_since_notify: 'Tool-call rounds (assistant steps with tool calls) before this update since the turn started or the previous NotifyUser call',
       after_nudge: 'Whether a NotifyUser reminder was injected since the turn started or the previous NotifyUser call',
+      title_chars: 'Length of the update title in UTF-16 code units; the title text itself is not recorded',
       message_chars: 'Length of the update message in UTF-16 code units; the message text itself is not recorded',
-      displayed: 'Whether the update was shown in the Updates panel; false when the feature was turned off mid-session',
+      displayed: 'Whether the update was shown to the user; false when the feature was turned off mid-session or the host cannot display updates',
     },
   }),
   grep_tool_rg_fallback: defineAgentTelemetryEvent<GrepToolRgFallbackEvent>({
