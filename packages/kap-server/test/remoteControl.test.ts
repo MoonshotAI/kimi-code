@@ -322,11 +322,20 @@ describe('server-v2 /api/v1/remote-control', () => {
     );
     expect(((await deactivatedRes.json()) as Envelope<{ ok: true }>).data.ok).toBe(true);
 
+    const deletedRes = await authedFetch(
+      server as RunningServer,
+      base,
+      '/api/v1/remote-control/devices/device-1',
+      { method: 'DELETE' },
+    );
+    expect(((await deletedRes.json()) as Envelope<{ ok: true }>).data.ok).toBe(true);
+
     expect(cloud.requests.map((request) => `${request.method} ${request.pathname}`)).toEqual([
       'POST /coding-relay/auth/exchange',
       'GET /coding-relay/v1/remote/devices',
       'PATCH /coding-relay/v1/remote/devices/device-1',
       'POST /coding-relay/v1/remote/devices/device-1/deactivate',
+      'DELETE /coding-relay/v1/remote/devices/device-1',
     ]);
     expect(JSON.parse(cloud.requests[2]!.body)).toEqual({ alias: 'Renamed device' });
     expect(cloud.requests.slice(1).every((request) => request.cookie === 'rc_session=one')).toBe(
@@ -369,6 +378,48 @@ describe('server-v2 /api/v1/remote-control', () => {
       { method: 'POST' },
     );
     expect(((await ownRes.json()) as Envelope<{ ok: true }>).data.ok).toBe(true);
+    expect(await currentState()).toBe('off');
+
+    await cloud.close();
+  });
+
+  it('stops the local tunnel when the current device is deleted', async () => {
+    await rm(remoteControlLockPath(home as string), { force: true });
+    const cloud = await startDeviceCloud({ tunnel: true });
+    vi.stubEnv(
+      'KIMI_CODE_REMOTE_CONTROL_RELAY_URL',
+      `http://127.0.0.1:${cloud.port}/coding-relay/`,
+    );
+
+    const currentState = async (): Promise<string> => {
+      const res = await authedFetch(server as RunningServer, base, '/api/v1/remote-control');
+      return ((await res.json()) as Envelope<RemoteControlStatusWire>).data.state;
+    };
+
+    const enabled = await postRemoteControl(true);
+    expect(enabled.data.state).toBe('on');
+    const currentId = enabled.data.device_id;
+    expect(currentId).toBeTruthy();
+
+    const otherRes = await authedFetch(
+      server as RunningServer,
+      base,
+      '/api/v1/remote-control/devices/other-device',
+      { method: 'DELETE' },
+    );
+    expect(((await otherRes.json()) as Envelope<{ ok: true }>).data.ok).toBe(true);
+    expect(await currentState()).toBe('on');
+
+    const ownRes = await authedFetch(
+      server as RunningServer,
+      base,
+      `/api/v1/remote-control/devices/${currentId}`,
+      { method: 'DELETE' },
+    );
+    expect(((await ownRes.json()) as Envelope<{ ok: true }>).data.ok).toBe(true);
+    expect(await currentState()).toBe('off');
+    await waitFor(async () => (await currentState()) === 'off');
+    await new Promise((resolve) => setTimeout(resolve, 300));
     expect(await currentState()).toBe('off');
 
     await cloud.close();
@@ -476,6 +527,7 @@ describe('server-v2 /api/v1/remote-control', () => {
         if (path === '/remote-control/devices/:id/deactivate') handler = next as typeof handler;
       },
       patch: () => {},
+      delete: () => {},
     };
     registerRemoteControlRoutes(app as never, { service, devices, homeDir });
 
@@ -516,6 +568,7 @@ describe('server-v2 /api/v1/remote-control', () => {
         if (path === '/remote-control/devices/:id/deactivate') handler = next as typeof handler;
       },
       patch: () => {},
+      delete: () => {},
     };
     registerRemoteControlRoutes(app as never, { service, devices, homeDir });
 
@@ -559,6 +612,7 @@ describe('server-v2 /api/v1/remote-control', () => {
         if (path === '/remote-control/devices/:id/deactivate') handler = next as typeof handler;
       },
       patch: () => {},
+      delete: () => {},
     };
     registerRemoteControlRoutes(app as never, { service, devices, homeDir });
 
@@ -604,6 +658,7 @@ describe('server-v2 /api/v1/remote-control', () => {
       },
       post: () => {},
       patch: () => {},
+      delete: () => {},
     };
     registerRemoteControlRoutes(app as never, {
       service,
@@ -654,6 +709,7 @@ describe('server-v2 /api/v1/remote-control', () => {
         if (path === '/remote-control/devices/:id/deactivate') handler = next as typeof handler;
       },
       patch: () => {},
+      delete: () => {},
     };
     registerRemoteControlRoutes(app as never, { service, devices, homeDir });
 

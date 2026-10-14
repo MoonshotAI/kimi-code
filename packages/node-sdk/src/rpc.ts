@@ -65,6 +65,8 @@ import type {
   RenameSessionInput,
   ResumeSessionInput,
   ResumedSessionSummary,
+  RefreshProviderModelsOptions,
+  RefreshProviderModelsResponse,
   SessionSummary,
   SessionSummaryPage,
   SkillSummary,
@@ -219,13 +221,13 @@ export abstract class SDKRpcClientBase {
 
   abstract removeProvider(providerId: string): Promise<KimiConfig>;
 
-  abstract supportsAtomicSectionReplace(): boolean;
-
   abstract importCustomRegistry(
     options: ImportCustomRegistryOptions,
   ): Promise<ImportCustomRegistryResult>;
 
-  abstract replaceConfigSections(sections: Record<string, unknown>): Promise<void>;
+  abstract refreshProviderModels(
+    options?: RefreshProviderModelsOptions,
+  ): Promise<RefreshProviderModelsResponse>;
 
   abstract uploadFile(data: Uint8Array, options: UploadFileOptions): Promise<FileMeta>;
 

@@ -1,8 +1,17 @@
+import { z } from 'zod';
+
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event, IWaitUntil } from '#/_base/event';
 
 import type { Protocol } from '../protocol/protocol';
 import type { OAuthRef } from '../provider/provider';
+
+export const modelUpgradeSchema = z.object({
+  model: z.string().min(1),
+  migrationMarkdown: z.string(),
+  retirementAt: z.string().optional(),
+});
+export type ModelUpgrade = z.infer<typeof modelUpgradeSchema>;
 
 export interface ModelOverride {
   maxContextSize?: number;
@@ -42,6 +51,7 @@ export interface ModelRecord {
   supportEfforts?: string[];
   defaultEffort?: string;
   offEffort?: string;
+  upgrade?: ModelUpgrade;
 
   overrides?: ModelOverride;
 

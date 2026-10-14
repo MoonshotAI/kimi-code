@@ -1,12 +1,12 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
 import {
   KIMI_CODE_PROVIDER_NAME,
   resolveKimiCodeOAuthKey,
   resolveKimiCodeOAuthRef,
-} from '@moonshot-ai/kimi-code-oauth';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-
-import { refreshAllProviderModels } from '../../../src/tui/utils/refresh-providers';
-import type { KimiConfig } from '@moonshot-ai/kimi-code-sdk';
+  type ManagedKimiConfigShape,
+} from '../src/managed-kimi-code';
+import { refreshProviderModels } from '../src/refreshProviderModels';
 
 type FetchMock = (
   input: Parameters<typeof fetch>[0],
@@ -19,10 +19,10 @@ function fetchInputUrl(input: Parameters<typeof fetch>[0]): string {
   return input.url;
 }
 
-function makeRefreshHost(initial: KimiConfig): {
-  current: () => KimiConfig;
-  removeProvider: ReturnType<typeof vi.fn<(providerId: string) => Promise<KimiConfig>>>;
-  setConfig: ReturnType<typeof vi.fn<(patch: Partial<KimiConfig>) => Promise<KimiConfig>>>;
+function makeRefreshHost(initial: ManagedKimiConfigShape): {
+  current: () => ManagedKimiConfigShape;
+  removeProvider: ReturnType<typeof vi.fn<(providerId: string) => Promise<ManagedKimiConfigShape>>>;
+  setConfig: ReturnType<typeof vi.fn<(patch: Partial<ManagedKimiConfigShape>) => Promise<ManagedKimiConfigShape>>>;
 } {
   let persisted = structuredClone(initial);
   const removeProvider = vi.fn(async (providerId: string) => {
@@ -39,7 +39,7 @@ function makeRefreshHost(initial: KimiConfig): {
     if (defaultRemoved) persisted = { ...persisted, defaultModel: undefined };
     return structuredClone(persisted);
   });
-  const setConfig = vi.fn(async (patch: Partial<KimiConfig>) => {
+  const setConfig = vi.fn(async (patch: Partial<ManagedKimiConfigShape>) => {
     persisted = { ...persisted, ...patch };
     return structuredClone(persisted);
   });
@@ -50,7 +50,7 @@ function makeRefreshHost(initial: KimiConfig): {
   };
 }
 
-describe('refreshAllProviderModels', () => {
+describe('refreshProviderModels', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
@@ -65,7 +65,7 @@ describe('refreshAllProviderModels', () => {
       oauthHost: envOauthHost,
       baseUrl: envBaseUrl,
     });
-    const config: KimiConfig = {
+    const config: ManagedKimiConfigShape = {
       providers: {
         [KIMI_CODE_PROVIDER_NAME]: {
           type: 'kimi',
@@ -113,7 +113,7 @@ describe('refreshAllProviderModels', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await refreshAllProviderModels({
+    const result = await refreshProviderModels({
       getConfig: async () => config,
       removeProvider: vi.fn(),
       setConfig: vi.fn(),
@@ -129,7 +129,7 @@ describe('refreshAllProviderModels', () => {
   it('can refresh only the managed OAuth provider without fetching third-party registries', async () => {
     const baseUrl = 'https://api.example.test/coding/v1';
     const registryUrl = 'https://registry.example.test/v1/models/api.json';
-    const config: KimiConfig = {
+    const config: ManagedKimiConfigShape = {
       providers: {
         [KIMI_CODE_PROVIDER_NAME]: {
           type: 'kimi',
@@ -187,7 +187,7 @@ describe('refreshAllProviderModels', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await refreshAllProviderModels(
+    const result = await refreshProviderModels(
       {
         getConfig: async () => host.current(),
         removeProvider: host.removeProvider,
@@ -261,7 +261,7 @@ describe('refreshAllProviderModels', () => {
       },
       defaultModel: modelAlias,
       telemetry: true,
-    } as unknown as KimiConfig);
+    } as unknown as ManagedKimiConfigShape);
 
     const fetchMock = vi.fn<FetchMock>(async (input, init) => {
       expect(fetchInputUrl(input)).toBe(registryUrl);
@@ -306,7 +306,7 @@ describe('refreshAllProviderModels', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await refreshAllProviderModels({
+    const result = await refreshProviderModels({
       getConfig: async () => host.current(),
       removeProvider: host.removeProvider,
       setConfig: host.setConfig,
@@ -347,6 +347,166 @@ describe('refreshAllProviderModels', () => {
     expect(host.current().models?.[userAlias]).toEqual(userAliasModel);
   });
 
+  it('persists upgrade metadata without changing the default model', async () => {
+    const registryUrl = 'https://registry.example.test/v1/models/api.json';
+    const providerId = 'example_chat-completions';
+    const currentAlias = `${providerId}/current`;
+    const host = makeRefreshHost({
+      providers: {
+        [providerId]: {
+          type: 'openai',
+          baseUrl: 'https://api.example.test/v1',
+          apiKey: 'sk-test-token',
+          source: { kind: 'apiJson', url: registryUrl, apiKey: 'sk-test-token' },
+        },
+      },
+      models: {
+        [currentAlias]: {
+          provider: providerId,
+          model: 'current',
+          maxContextSize: 131072,
+          capabilities: ['tool_use'],
+          displayName: 'current',
+        },
+        [`${providerId}/next`]: {
+          provider: providerId,
+          model: 'next',
+          maxContextSize: 131072,
+          capabilities: ['tool_use'],
+          displayName: 'next',
+          defaultEffort: 'high',
+        },
+      },
+      defaultModel: currentAlias,
+      telemetry: true,
+    } as unknown as ManagedKimiConfigShape);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<FetchMock>(async () => {
+        return new Response(
+          JSON.stringify({
+            [providerId]: {
+              id: providerId,
+              name: 'Example',
+              api: 'https://api.example.test/v1',
+              type: 'openai',
+              models: {
+                current: {
+                  id: 'current',
+                  upgrade: {
+                    model: 'next',
+                    migration_markdown: 'Use next',
+                    retirement_at: '2030-01-01T00:00:00Z',
+                  },
+                },
+                next: { id: 'next', default_effort: 'high' },
+              },
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }),
+    );
+
+    const result = await refreshProviderModels({
+      getConfig: async () => host.current(),
+      removeProvider: host.removeProvider,
+      setConfig: host.setConfig,
+      resolveOAuthToken: vi.fn(),
+    });
+
+    expect(result).toEqual({
+      changed: [{ providerId, providerName: 'Example', added: 0, removed: 0 }],
+      unchanged: [],
+      failed: [],
+    });
+    expect(host.current().models?.[currentAlias]).toMatchObject({
+      upgrade: {
+        model: `${providerId}/next`,
+        migrationMarkdown: 'Use next',
+        retirementAt: '2030-01-01T00:00:00Z',
+      },
+    });
+    expect(host.current().defaultModel).toBe(currentAlias);
+    expect(host.setConfig).toHaveBeenCalledTimes(1);
+  });
+
+  describe('when the registry drops the default model', () => {
+    const registryUrl = 'https://registry.example.test/v1/models/api.json';
+    const providerId = 'example_chat-completions';
+    const legacyAlias = `${providerId}/legacy`;
+    const nextAlias = `${providerId}/next`;
+
+    async function refreshWithRegistryModels(models: Record<string, unknown>) {
+      const host = makeRefreshHost({
+        providers: {
+          [providerId]: {
+            type: 'openai',
+            baseUrl: 'https://api.example.test/v1',
+            apiKey: 'sk-test-token',
+            source: { kind: 'apiJson', url: registryUrl, apiKey: 'sk-test-token' },
+          },
+        },
+        models: {
+          [legacyAlias]: {
+            provider: providerId,
+            model: 'legacy',
+            maxContextSize: 131072,
+            upgrade: { model: nextAlias, migrationMarkdown: 'Use next' },
+          },
+          [nextAlias]: { provider: providerId, model: 'next', maxContextSize: 131072 },
+        },
+        defaultModel: legacyAlias,
+        thinking: { enabled: true, effort: 'low' },
+      } as unknown as ManagedKimiConfigShape);
+      vi.stubGlobal(
+        'fetch',
+        vi.fn<FetchMock>(async () => {
+          return new Response(
+            JSON.stringify({
+              [providerId]: {
+                id: providerId,
+                name: 'Example',
+                api: 'https://api.example.test/v1',
+                type: 'openai',
+                models,
+              },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          );
+        }),
+      );
+      const result = await refreshProviderModels({
+        getConfig: async () => host.current(),
+        removeProvider: host.removeProvider,
+        setConfig: host.setConfig,
+        resolveOAuthToken: vi.fn(),
+      });
+      return { host, result };
+    }
+
+    it('moves the default to the upgrade target the dropped model declared, keeping thinking', async () => {
+      const { host, result } = await refreshWithRegistryModels({ next: { id: 'next' } });
+
+      expect(result.retiredDefault).toEqual({
+        from: legacyAlias,
+        to: nextAlias,
+        fromModel: expect.objectContaining({ model: 'legacy' }),
+      });
+      expect(host.current().models?.[legacyAlias]).toBeUndefined();
+      expect(host.current().defaultModel).toBe(nextAlias);
+      expect(host.current().thinking).toEqual({ enabled: true, effort: 'low' });
+    });
+
+    it('clears the default when the declared target is gone too', async () => {
+      const { host, result } = await refreshWithRegistryModels({ other: { id: 'other' } });
+
+      expect(result.retiredDefault).toBeUndefined();
+      expect(host.current().defaultModel).toBeUndefined();
+      expect(host.current().thinking).toBeUndefined();
+    });
+  });
+
   it('adds custom-registry providers that appear under an existing source URL', async () => {
     const registryUrl = 'https://registry.example.test/v1/models/api.json';
     const apiKey = 'sk-test-token';
@@ -370,7 +530,7 @@ describe('refreshAllProviderModels', () => {
         },
       },
       telemetry: true,
-    } as unknown as KimiConfig);
+    } as unknown as ManagedKimiConfigShape);
 
     const fetchMock = vi.fn<FetchMock>(async (input, init) => {
       expect(fetchInputUrl(input)).toBe(registryUrl);
@@ -397,7 +557,7 @@ describe('refreshAllProviderModels', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await refreshAllProviderModels({
+    const result = await refreshProviderModels({
       getConfig: async () => host.current(),
       removeProvider: host.removeProvider,
       setConfig: host.setConfig,
@@ -478,7 +638,7 @@ describe('refreshAllProviderModels', () => {
       defaultModel: 'my-b',
       thinking: { enabled: true },
       telemetry: true,
-    } as unknown as KimiConfig);
+    } as unknown as ManagedKimiConfigShape);
 
     const fetchMock = vi.fn<FetchMock>(async (input, init) => {
       expect(fetchInputUrl(input)).toBe(registryUrl);
@@ -498,7 +658,7 @@ describe('refreshAllProviderModels', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await refreshAllProviderModels({
+    const result = await refreshProviderModels({
       getConfig: async () => host.current(),
       removeProvider: host.removeProvider,
       setConfig: host.setConfig,
@@ -562,7 +722,7 @@ describe('refreshAllProviderModels', () => {
         },
       },
       telemetry: true,
-    } as unknown as KimiConfig);
+    } as unknown as ManagedKimiConfigShape);
 
     const fetchMock = vi.fn<FetchMock>(async (input, init) => {
       expect(fetchInputUrl(input)).toBe(registryUrl);
@@ -596,7 +756,7 @@ describe('refreshAllProviderModels', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await refreshAllProviderModels({
+    const result = await refreshProviderModels({
       getConfig: async () => host.current(),
       removeProvider: host.removeProvider,
       setConfig: host.setConfig,
@@ -617,8 +777,8 @@ describe('refreshAllProviderModels', () => {
     expect(host.removeProvider).toHaveBeenCalledWith('a');
     expect(host.removeProvider).toHaveBeenCalledWith('b');
     expect(host.setConfig).toHaveBeenCalledTimes(1);
-    expect(host.current().providers['a']?.source).toEqual(newSource);
-    expect(host.current().providers['b']?.source).toEqual(newSource);
+    expect(host.current().providers['a']?.['source']).toEqual(newSource);
+    expect(host.current().providers['b']?.['source']).toEqual(newSource);
     expect(host.current().providers['a']?.apiKey).toBe('sk-new-token');
     expect(host.current().providers['b']?.apiKey).toBe('sk-new-token');
     expect(host.current().models?.['b/m2']).toEqual({
@@ -666,7 +826,7 @@ describe('refreshAllProviderModels', () => {
       defaultModel: userAlias,
       thinking: { enabled: false },
       telemetry: true,
-    } as unknown as KimiConfig);
+    } as unknown as ManagedKimiConfigShape);
 
     const fetchMock = vi.fn<FetchMock>(async (input, init) => {
       expect(fetchInputUrl(input)).toBe(registryUrl);
@@ -695,7 +855,7 @@ describe('refreshAllProviderModels', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await refreshAllProviderModels({
+    const result = await refreshProviderModels({
       getConfig: async () => host.current(),
       removeProvider: host.removeProvider,
       setConfig: host.setConfig,
@@ -732,7 +892,7 @@ describe('refreshAllProviderModels', () => {
       defaultModel: 'kimi-code/kimi-deep-coder',
       thinking: { enabled: false },
       telemetry: true,
-    } as unknown as KimiConfig);
+    } as unknown as ManagedKimiConfigShape);
 
     const fetchMock = vi.fn<FetchMock>(
       async () =>
@@ -752,7 +912,7 @@ describe('refreshAllProviderModels', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await refreshAllProviderModels({
+    const result = await refreshProviderModels({
       getConfig: async () => host.current(),
       removeProvider: host.removeProvider,
       setConfig: host.setConfig,
@@ -805,7 +965,7 @@ describe('refreshAllProviderModels', () => {
       },
       defaultModel: 'my-kimi/kimi-for-coding',
       telemetry: true,
-    } as unknown as KimiConfig);
+    } as unknown as ManagedKimiConfigShape);
 
     const fetchMock = vi.fn<FetchMock>(async (input, init) => {
       expect(fetchInputUrl(input)).toBe(`${baseUrl}/models`);
@@ -827,7 +987,7 @@ describe('refreshAllProviderModels', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await refreshAllProviderModels({
+    const result = await refreshProviderModels({
       getConfig: async () => host.current(),
       removeProvider: host.removeProvider,
       setConfig: host.setConfig,
@@ -878,7 +1038,7 @@ describe('refreshAllProviderModels', () => {
         },
       },
       telemetry: true,
-    } as unknown as KimiConfig);
+    } as unknown as ManagedKimiConfigShape);
 
     const fetchMock = vi.fn<FetchMock>(async (input, init) => {
       expect(fetchInputUrl(input)).toBe(`${baseUrl}/models`);
@@ -892,7 +1052,7 @@ describe('refreshAllProviderModels', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await refreshAllProviderModels({
+    const result = await refreshProviderModels({
       getConfig: async () => host.current(),
       removeProvider: host.removeProvider,
       setConfig: host.setConfig,
@@ -916,7 +1076,7 @@ describe('refreshAllProviderModels', () => {
       },
       models: {},
       telemetry: true,
-    } as unknown as KimiConfig);
+    } as unknown as ManagedKimiConfigShape);
 
     const fetchMock = vi.fn<FetchMock>(async (input) => {
       expect(fetchInputUrl(input)).toBe('https://api.managed.example.test/coding/v1/models');
@@ -927,7 +1087,7 @@ describe('refreshAllProviderModels', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await refreshAllProviderModels({
+    const result = await refreshProviderModels({
       getConfig: async () => host.current(),
       removeProvider: host.removeProvider,
       setConfig: host.setConfig,
@@ -958,12 +1118,12 @@ describe('refreshAllProviderModels', () => {
       },
       models: {},
       telemetry: true,
-    } as unknown as KimiConfig);
+    } as unknown as ManagedKimiConfigShape);
 
     const fetchMock = vi.fn<FetchMock>();
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await refreshAllProviderModels({
+    const result = await refreshProviderModels({
       getConfig: async () => host.current(),
       removeProvider: host.removeProvider,
       setConfig: host.setConfig,
@@ -996,7 +1156,7 @@ describe('refreshAllProviderModels', () => {
       },
       defaultModel: 'kimi-code/kimi-for-coding',
       telemetry: true,
-    } as unknown as KimiConfig);
+    } as unknown as ManagedKimiConfigShape);
 
     const resolveOAuthToken = vi.fn(async () => 'oauth-access-token');
     const fetchMock = vi.fn<FetchMock>(async (input, init) => {
@@ -1018,7 +1178,7 @@ describe('refreshAllProviderModels', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await refreshAllProviderModels({
+    const result = await refreshProviderModels({
       getConfig: async () => host.current(),
       removeProvider: host.removeProvider,
       setConfig: host.setConfig,
@@ -1067,7 +1227,7 @@ describe('refreshAllProviderModels', () => {
         },
       },
       telemetry: true,
-    } as unknown as KimiConfig);
+    } as unknown as ManagedKimiConfigShape);
 
     const fetchMock = vi.fn<FetchMock>(
       async () =>
@@ -1078,7 +1238,7 @@ describe('refreshAllProviderModels', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await refreshAllProviderModels({
+    const result = await refreshProviderModels({
       getConfig: async () => host.current(),
       removeProvider: host.removeProvider,
       setConfig: host.setConfig,
@@ -1113,7 +1273,7 @@ describe('refreshAllProviderModels', () => {
         },
       },
       telemetry: true,
-    } as unknown as KimiConfig);
+    } as unknown as ManagedKimiConfigShape);
 
     const fetchMock = vi.fn<FetchMock>(
       async () =>
@@ -1124,7 +1284,7 @@ describe('refreshAllProviderModels', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await refreshAllProviderModels({
+    const result = await refreshProviderModels({
       getConfig: async () => host.current(),
       removeProvider: host.removeProvider,
       setConfig: host.setConfig,
@@ -1158,7 +1318,7 @@ describe('refreshAllProviderModels', () => {
       },
       defaultProvider: 'my-kimi',
       telemetry: true,
-    } as unknown as KimiConfig);
+    } as unknown as ManagedKimiConfigShape);
 
     const fetchMock = vi.fn<FetchMock>(
       async () =>
@@ -1178,7 +1338,7 @@ describe('refreshAllProviderModels', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await refreshAllProviderModels({
+    const result = await refreshProviderModels({
       getConfig: async () => host.current(),
       removeProvider: host.removeProvider,
       setConfig: host.setConfig,
@@ -1193,7 +1353,7 @@ describe('refreshAllProviderModels', () => {
     expect(host.setConfig).toHaveBeenCalledWith(
       expect.objectContaining({ defaultProvider: 'my-kimi' }),
     );
-    expect(host.current().defaultProvider).toBe('my-kimi');
+    expect(host.current()['defaultProvider']).toBe('my-kimi');
   });
 
   it('leaves registry-sourced providers at the managed base URL to the registry branch', async () => {
@@ -1219,7 +1379,7 @@ describe('refreshAllProviderModels', () => {
         },
       },
       telemetry: true,
-    } as unknown as KimiConfig);
+    } as unknown as ManagedKimiConfigShape);
 
     const fetchMock = vi.fn<FetchMock>(async (input) => {
       expect(fetchInputUrl(input)).toBe(registryUrl);
@@ -1238,7 +1398,7 @@ describe('refreshAllProviderModels', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await refreshAllProviderModels({
+    const result = await refreshProviderModels({
       getConfig: async () => host.current(),
       removeProvider: host.removeProvider,
       setConfig: host.setConfig,

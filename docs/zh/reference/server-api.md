@@ -318,6 +318,16 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 成功时 `data` 为 `{ ok: true }`。
 
+#### `DELETE /api/v1/remote-control/devices/{id}`
+
+把设备从云端注册表移除：设备从列表中消失，仍在连接的隧道会被断开。下线只是把设备置为离线并保留在列表中；删除则把它整个移除。当目标设备是本机时，先停止本地隧道并持有本机锁完成删除，确保设备无法在成功响应背后重新注册。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `id` | path | string | 设备标识 |
+
+成功时 `data` 为 `{ ok: true }`。
+
 ### 配置
 
 | 方法与路径 | 说明 |
@@ -412,7 +422,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 列出所有供应商下已配置的模型别名。
 
-成功时 `data.items` 为 `{ provider, model, display_name?, max_context_size, capabilities?, support_efforts?, default_effort? }` 数组：`model` 是别名 id（供应商管理的别名为 `provider_id/model`，否则为裸键），`provider` 是所属供应商 id，`max_context_size` 是以 token 计的上下文窗口，`capabilities` / `support_efforts` / `default_effort` 描述能力标志与 Thinking 模式的 effort 支持。
+成功时 `data.items` 为 `{ provider, model, display_name?, max_context_size, capabilities?, support_efforts?, default_effort?, upgrade? }` 数组：`model` 是别名 id（供应商管理的别名为 `provider_id/model`，否则为裸键），`provider` 是所属供应商 id，`max_context_size` 是以 token 计的上下文窗口，`capabilities` / `support_efforts` / `default_effort` 描述能力标志与 Thinking 模式的 effort 支持。对于自定义 registry 模型，`upgrade` 可以包含 `{ model, migration_markdown, retirement_at? }`，用于引导用户切换到替代模型；`migration_markdown` 中的占位符已替换为模型 ID。
 
 #### `POST /api/v1/models/{model_id}:set_default`
 
@@ -520,13 +530,13 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 #### `POST /api/v1/providers/{provider_id}:refresh`
 
-从上游来源重新发现单个供应商的模型元数据，并重写该供应商的别名。模型来源为静态的供应商不经任何网络调用直接报告 `unchanged`。至少一个供应商的别名发生变化时，服务会广播全局 `event.model_catalog.changed` 事件。
+从上游来源重新发现单个供应商的模型元数据，并重写该供应商的别名。模型来源为静态的供应商不经任何网络调用直接报告 `unchanged`。至少一个供应商的别名或托管模型元数据发生变化时，服务会广播全局 `event.model_catalog.changed` 事件。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `provider_id` | path | string | **必填。** 供应商 id |
 
-成功时 `data` 为刷新报告：`changed` 是 `{ provider_id, provider_name, added, removed }`（新增 / 移除的别名数）的数组，`unchanged` 是无差异的供应商 id 数组，`failed` 是 `{ provider, reason }` 的数组。
+成功时 `data` 为刷新报告：`changed` 是 `{ provider_id, provider_name, added, removed }`（新增 / 移除的别名数）的数组，`unchanged` 是无差异的供应商 id 数组，`failed` 是 `{ provider, reason }` 的数组。当刷新发现 registry 移除了当前默认模型、且该模型此前声明过 `upgrade` 替代模型时，`data` 还带可选的 `retired_default`：`{ from, to, from_display_name }`——默认模型已被重定向为 `to`，仍绑定 `from` 的已打开会话也已切换到 `to`，`from_display_name` 是被移除模型的显示名，供提示使用。同一字段也会出现在 `event.model_catalog.changed` 事件中。
 
 - `40001`：路径中的动作后缀非法或不支持
 - `40412`：供应商不存在
