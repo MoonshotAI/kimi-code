@@ -1,10 +1,11 @@
 /**
  * Cached git branch and working-tree status for the footer.
  *
- * getStatus() only reads the cache. A refresh runs asynchronously when the
- * cache is created, when refresh() is called, when the watched HEAD path
- * changes, and when a read finds the 30s status TTL expired. HEAD is polled
- * every 2 seconds. Pull request lookup stays async and never blocks a read.
+ * getStatus() only reads the cache. The first read, refresh(), a HEAD change,
+ * and a read past the 30s status TTL schedule a refresh. The git process
+ * starts on a later turn, not on the caller's stack, and not when the cache
+ * is constructed. HEAD is polled every 2 seconds. Pull request lookup stays
+ * async and never blocks a read.
  */
 
 import { execFile } from 'node:child_process';
@@ -97,6 +98,8 @@ export function createGitStatusCache(
   let isRepo = false;
   let inFlight = false;
   let pendingForce = false;
+  let refreshQueued = false;
+  let queuedForce = false;
   let headWatcher: FSWatcher | null = null;
   let status: StatusState = EMPTY_STATUS;
   let pullRequest: PullRequestState = {
@@ -128,6 +131,8 @@ export function createGitStatusCache(
       epoch += 1;
       inFlight = false;
       pendingForce = false;
+      refreshQueued = false;
+      queuedForce = false;
       const watcher = headWatcher;
       headWatcher = null;
       if (watcher !== null) {
@@ -136,11 +141,18 @@ export function createGitStatusCache(
     },
   };
 
-  requestRefresh(true);
   return cache;
 
   function requestRefresh(force: boolean): void {
-    void runRefresh(force);
+    if (force) queuedForce = true;
+    if (refreshQueued) return;
+    refreshQueued = true;
+    queueMicrotask(() => {
+      refreshQueued = false;
+      const runForce = queuedForce;
+      queuedForce = false;
+      void runRefresh(runForce);
+    });
   }
 
   async function runRefresh(force: boolean): Promise<void> {

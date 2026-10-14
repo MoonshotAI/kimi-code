@@ -143,7 +143,9 @@ describe('git status cache', () => {
     });
 
     const cache = createGitStatusCache('/tmp/repo');
+    expect(mocks.execFile).not.toHaveBeenCalled();
     expect(cache.getStatus()).toBeNull();
+    expect(mocks.execFile).not.toHaveBeenCalled();
 
     await drain();
 
@@ -183,6 +185,7 @@ describe('git status cache', () => {
     });
 
     const cache = createGitStatusCache('/tmp/repo', { onChange });
+    cache.getStatus();
     await drain();
 
     expect(cache.getStatus()).toEqual({
@@ -221,6 +224,7 @@ describe('git status cache', () => {
     });
 
     const cache = createGitStatusCache('/tmp/repo', { onChange });
+    cache.getStatus();
     await drain();
 
     expect(cache.getStatus()).toEqual({
@@ -253,6 +257,9 @@ describe('git status cache', () => {
     });
 
     const cache = createGitStatusCache('/tmp/repo');
+    expect(mocks.execFile).not.toHaveBeenCalled();
+    cache.getStatus();
+    expect(mocks.execFile).not.toHaveBeenCalled();
     await drain();
 
     expect(mocks.resolveCommandPath).toHaveBeenCalledWith('git', '/tmp/repo');
@@ -321,6 +328,7 @@ describe('git status cache', () => {
   it('parses an unborn branch and hides detached HEAD', async () => {
     installGit({ status: '## No commits yet on main\n' });
     const unborn = createGitStatusCache('/tmp/repo');
+    unborn.getStatus();
     await drain();
     expect(unborn.getStatus()?.branch).toBe('main');
     unborn.dispose();
@@ -328,6 +336,7 @@ describe('git status cache', () => {
     mocks.watchers.length = 0;
     installGit({ status: '## HEAD (no branch)\n' });
     const detached = createGitStatusCache('/tmp/repo');
+    detached.getStatus();
     await drain();
     expect(detached.getStatus()).toBeNull();
     expect(gitCalls('diff')).toHaveLength(0);
@@ -339,6 +348,7 @@ describe('git status cache', () => {
     vi.setSystemTime(new Date('2026-04-24T00:00:00Z'));
     installGit({ status: '## main\n', ghError: new Error('no pull request') });
     const cache = createGitStatusCache('/tmp/repo');
+    cache.getStatus();
     await drain();
     expect(gitCalls('status')).toHaveLength(1);
 
@@ -360,6 +370,7 @@ describe('git status cache', () => {
       ghError: new Error('no pull request'),
     });
     const cache = createGitStatusCache('/tmp/repo');
+    cache.getStatus();
     await drain();
 
     installGit({ status: null, ghError: new Error('no pull request') });
@@ -381,6 +392,7 @@ describe('git status cache', () => {
   it('coalesces a forced refresh that arrives while one is in flight', async () => {
     const held = installGit({ holdStatus: true, ghError: new Error('no pull request') });
     const cache = createGitStatusCache('/tmp/repo');
+    cache.getStatus();
     await drain();
     expect(gitCalls('status')).toHaveLength(1);
 
