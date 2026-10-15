@@ -1085,6 +1085,72 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
+  it('delivers a single subagents reminder when profiles and the model pool change together', async () => {
+    await server?.close();
+    server = undefined;
+    const configToml = [
+      'default_model = "stub"',
+      '',
+      '[providers.stub]',
+      'type = "openai"',
+      'base_url = "http://127.0.0.1:9999"',
+      'api_key = "stub"',
+      '',
+      '[models.stub]',
+      'provider = "stub"',
+      'model = "stub"',
+      'max_context_size = 1000',
+      '',
+    ].join('\n');
+    await writeFile(join(home as string, 'config.toml'), configToml, 'utf-8');
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      debugEndpoints: true,
+    });
+    base = `http://127.0.0.1:${server.port}`;
+
+    const cwd = await mkdtemp(join(tmpdir(), 'kimi-reload-pool-cwd-'));
+    await mkdir(join(cwd, '.git'));
+    try {
+      const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+      const id = created.body.data.id;
+      const bound = await postJson<SessionWire>(`/api/v1/sessions/${id}/profile`, {
+        agent_config: { model: 'stub' },
+      });
+      expect(bound.body.code).toBe(0);
+
+      await mkdir(join(home as string, 'agents'), { recursive: true });
+      await writeFile(
+        join(home as string, 'agents', 'deploy.md'),
+        '---\nname: deploy\ndescription: Deploys things.\n---\nYou deploy things.\n',
+        'utf-8',
+      );
+      await writeFile(
+        join(home as string, 'config.toml'),
+        `${configToml}[secondary_model.models]\n"stub" = "fast stub"\n`,
+        'utf-8',
+      );
+
+      const reloaded = await postJson<SessionWire>(`/api/v1/sessions/${id}:reload`);
+      expect(reloaded.body.code).toBe(0);
+
+      const after = await getJson<{ items: unknown[]; has_more: boolean }>(
+        `/api/v1/sessions/${id}/messages`,
+      );
+      const text = JSON.stringify(after.body.data.items);
+      expect(text.split('subagents_change').length - 1).toBe(1);
+      expect(text).toContain('Profiles added: deploy');
+      expect(text).toContain('Models added: stub');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+      await rm(join(home as string, 'agents'), { recursive: true, force: true });
+    }
+  });
+
   it('keeps failed journal cleanup retriable without publishing deletion', async () => {
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
     const id = created.body.data.id;

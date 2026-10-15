@@ -1052,6 +1052,7 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
         pool === undefined
           ? null
           : { defaultModel: pool.defaultModel, models: { ...pool.models } };
+      main.accessor.get(IAgentChangeNotifierService).mute();
     }
   }
   await core.accessor.get(IConfigService).reload();

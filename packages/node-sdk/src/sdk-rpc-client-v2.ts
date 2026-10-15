@@ -1613,6 +1613,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
             pool === undefined
               ? null
               : { defaultModel: pool.defaultModel, models: { ...pool.models } };
+          main.accessor.get(IAgentChangeNotifierService).mute();
         }
       }
       await this.configReady;

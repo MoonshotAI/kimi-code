@@ -21,6 +21,7 @@ export interface IAgentChangeNotifierService {
   notifySkillChanges(): Promise<void>;
   notifySubagentChanges(input?: SubagentChangesInput): Promise<void>;
   seedBeliefs(seed: BeliefsSeed): Promise<void>;
+  mute(): void;
 }
 
 export const IAgentChangeNotifierService: ServiceIdentifier<IAgentChangeNotifierService> =

@@ -779,13 +779,13 @@ describe('notifySubagentChanges', () => {
 });
 
 describe('mute', () => {
-  it.fails('suppresses every notification channel after mute', async () => {
+  it('suppresses every notification channel after mute', async () => {
     const agentsMdPath = join(workDir, 'AGENTS.md');
     await writeFile(agentsMdPath, 'v1 content');
     const h = createHarness({
       profile: makeProfileData({
         profileName: 'default',
-        systemPrompt: agentsMdPrompt(agentsMdPath, 'v1 content'),
+        systemPrompt: `${agentsMdPrompt(agentsMdPath, 'v1 content')}\n\n${LISTING_A}`,
         agentsMdPaths: [agentsMdPath],
       }),
     });

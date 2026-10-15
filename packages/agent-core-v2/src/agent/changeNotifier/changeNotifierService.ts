@@ -50,6 +50,8 @@ interface AgentsMdChanges {
 export class AgentChangeNotifierService extends Disposable implements IAgentChangeNotifierService {
   declare readonly _serviceBrand: undefined;
 
+  private muted = false;
+
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentProfileService private readonly profile: IAgentProfileService,
@@ -88,8 +90,12 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
     return this.states.get(changeNotifierSnapshotKey);
   }
 
+  mute(): void {
+    this.muted = true;
+  }
+
   async notifyAgentsMdChanges(): Promise<void> {
-    if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID || this.muted) return;
     try {
       const profileData = this.profile.data();
       if (profileData.profileName === undefined) return;
@@ -129,7 +135,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
   }
 
   async notifySkillChanges(): Promise<void> {
-    if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID || this.muted) return;
     try {
       const profileData = this.profile.data();
       if (profileData.profileName === undefined) return;
@@ -153,7 +159,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
   }
 
   async notifySubagentChanges(input?: SubagentChangesInput): Promise<void> {
-    if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID || this.muted) return;
     try {
       const profileData = this.profile.data();
       if (profileData.profileName === undefined) return;
