@@ -115,7 +115,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
       }
       const hash = hashText(`${fresh.paths.join('\n')}\n\n${fresh.content}`);
       const snapshot = this.snapshot;
-      if (snapshot.agentsMdHash === hash) return;
+      if (snapshot.agentsMdHash === hash || this.muted) return;
       const currentFiles = hashAgentsMdContents(contents);
       this.recordSnapshot({ agentsMdHash: hash, agentsMdFiles: currentFiles });
       const changes =
@@ -143,7 +143,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
       const listing = this.skillCatalog.catalog.getModelSkillListing();
       const hash = hashText(listing);
       const snapshot = this.snapshot;
-      if (snapshot.skillsHash === hash) return;
+      if (snapshot.skillsHash === hash || this.muted) return;
       this.recordSnapshot({ skillsHash: hash });
       if (snapshot.skillsHash === undefined) {
         if (listing === '') {
@@ -174,12 +174,15 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
       ) {
         return;
       }
+      if (this.muted) return;
       const baseProfiles =
         input?.previousSubagentNames ?? snapshot.subagentNames ?? currentProfiles;
       const basePool =
         input?.previousModelPool !== undefined
           ? input.previousModelPool
-          : (snapshot.modelPool ?? currentPool);
+          : snapshot.subagentNames !== undefined
+            ? (snapshot.modelPool ?? null)
+            : currentPool;
       const profilesAdded = difference(currentProfiles, baseProfiles);
       const profilesRemoved = difference(baseProfiles, currentProfiles);
       const modelsAdded = difference(poolAliases(currentPool), poolAliases(basePool));
@@ -236,6 +239,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
       }
       const pool = resolveSubagentModelPool(this.config);
       this.recordSnapshot({
+        agentsMdHash: undefined,
         agentsMdFiles: hashAgentsMdContents(contents),
         skillsHash: hashText(seed.skillsListing),
         subagentNames: this.agentCatalog.list().map((profile) => profile.name),

@@ -32,6 +32,7 @@ import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog
 import type { SecondaryModelConfig } from '#/session/subagent/configSection';
 import { IAgentChangeNotifierService } from '#/agent/changeNotifier/changeNotifier';
 import { AgentChangeNotifierService } from '#/agent/changeNotifier/changeNotifierService';
+import { event2FromRecord } from '#/app/event/event2';
 import {
   ChangeNotifierSnapshotEvent,
   changeNotifierSnapshotKey,
@@ -87,6 +88,7 @@ function makeProfileData(overrides: Partial<ProfileData>): ProfileData {
 function createHarness(options: {
   readonly agentId?: string;
   readonly profile: ProfileData;
+  readonly skillReady?: Promise<void>;
 }): Harness {
   const reminders: CapturedReminder[] = [];
   const instructionsChange = disposables.add(new Emitter<readonly WatchChange[]>());
@@ -124,7 +126,7 @@ function createHarness(options: {
       } satisfies ISessionInstructionsProvider);
       reg.defineInstance(ISessionSkillCatalog, {
         _serviceBrand: undefined,
-        ready: Promise.resolve(),
+        ready: options.skillReady ?? Promise.resolve(),
         onDidChange: skillCatalogChange.event,
         load: async () => {},
         reload: async () => {},
@@ -504,6 +506,29 @@ describe('seedBeliefs', () => {
     expect(h.reminders).toHaveLength(1);
     expect(h.reminders[0]?.content).toContain('Profiles added: deploy');
   });
+
+  it('re-detects content matching a stale overall hash after a reseed', async () => {
+    const agentsMdPath = join(workDir, 'AGENTS.md');
+    await writeFile(agentsMdPath, 'content A');
+    const h = createHarness({
+      profile: makeProfileData({
+        profileName: 'default',
+        systemPrompt: agentsMdPrompt(agentsMdPath, 'content A'),
+        agentsMdPaths: [agentsMdPath],
+      }),
+    });
+
+    await h.notifier.notifyAgentsMdChanges();
+    expect(h.reminders).toHaveLength(0);
+
+    await writeFile(agentsMdPath, 'content B');
+    await h.notifier.seedBeliefs({ agentsMdPaths: [agentsMdPath], skillsListing: '' });
+
+    await writeFile(agentsMdPath, 'content A');
+    await h.notifier.notifyAgentsMdChanges();
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.variant).toBe('agents_md_change');
+  });
 });
 
 const LISTING_A = 'DISREGARD any earlier skill listings. Current available skills:\n- skill-a: does A';
@@ -783,6 +808,38 @@ describe('notifySubagentChanges', () => {
     expect(h.reminders[0]?.content).toContain('Default model changed: k1 → k2');
   });
 
+  it('reports a pool appearing after a seeded no-pool baseline without previous input', async () => {
+    const h = createHarness({
+      profile: makeProfileData({ profileName: 'default' }),
+    });
+
+    await h.notifier.seedBeliefs({ agentsMdPaths: [], skillsListing: '' });
+    expect(h.reminders).toHaveLength(0);
+
+    h.secondaryModel.value = { defaultModel: 'k1', models: { k1: '' } };
+    await h.notifier.notifySubagentChanges();
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('Models added: k1');
+  });
+
+  it('reports the pool returning after it was removed past the seeded baseline', async () => {
+    const h = createHarness({
+      profile: makeProfileData({ profileName: 'default' }),
+    });
+    h.secondaryModel.value = { defaultModel: 'k1', models: { k1: '' } };
+
+    await h.notifier.seedBeliefs({ agentsMdPaths: [], skillsListing: '' });
+    h.secondaryModel.value = undefined;
+    await h.notifier.notifySubagentChanges();
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('Models removed: k1');
+
+    h.secondaryModel.value = { defaultModel: 'k2', models: { k2: '' } };
+    await h.notifier.notifySubagentChanges();
+    expect(h.reminders).toHaveLength(2);
+    expect(h.reminders[1]?.content).toContain('Models added: k2');
+  });
+
   it('ignores non-main agents and unbound profiles', async () => {
     const sub = createHarness({
       agentId: 'sub-1',
@@ -832,5 +889,50 @@ describe('mute', () => {
     h.agentCatalogChange.fire('workspace');
     await flushWatch();
     expect(h.reminders).toHaveLength(0);
+  });
+
+  it('suppresses an in-flight notification that started before mute', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = createHarness({
+      profile: makeProfileData({
+        profileName: 'default',
+        systemPrompt: `header\n\n${LISTING_A}\n\nfooter`,
+      }),
+      skillReady: gate,
+    });
+    h.skillListing.value = LISTING_AB;
+
+    const pending = h.notifier.notifySkillChanges();
+    h.notifier.mute();
+    release();
+    await pending;
+
+    expect(h.reminders).toHaveLength(0);
+  });
+});
+
+describe('snapshot schema evolution', () => {
+  it('parses a legacy record that predates the belief fields', () => {
+    const legacy = {
+      type: 'changeNotifier.snapshot',
+      agentId: 'main',
+      agentsMdHash: 'legacy-hash',
+      skillsHash: 'legacy-skills-hash',
+      subagentNames: ['default'],
+      modelPoolAliases: ['k1', 'k2'],
+      time: 123,
+    };
+
+    const event = event2FromRecord(ChangeNotifierSnapshotEvent, legacy);
+    expect(event).toBeDefined();
+    const payload = event as unknown as ChangeNotifierSnapshotEvent;
+    expect(payload.agentsMdHash).toBe('legacy-hash');
+    expect(payload.skillsHash).toBe('legacy-skills-hash');
+    expect(payload.subagentNames).toEqual(['default']);
+    expect(payload.agentsMdFiles).toBeUndefined();
+    expect(payload.modelPool).toBeUndefined();
   });
 });

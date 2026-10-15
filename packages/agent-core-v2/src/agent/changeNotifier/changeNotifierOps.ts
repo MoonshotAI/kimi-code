@@ -22,10 +22,10 @@ const subagentModelPoolSchema = z.object({
 const changeNotifierSnapshotSchema = z.object({
   agentId: z.string(),
   agentsMdHash: z.string().nullable(),
-  agentsMdFiles: z.record(z.string(), z.string()).nullable(),
+  agentsMdFiles: z.record(z.string(), z.string()).nullable().optional(),
   skillsHash: z.string().nullable(),
   subagentNames: z.array(z.string()).readonly().nullable(),
-  modelPool: subagentModelPoolSchema.nullable(),
+  modelPool: subagentModelPoolSchema.nullable().optional(),
 });
 
 export class ChangeNotifierSnapshotEvent extends AgentEvent2<
@@ -38,10 +38,10 @@ export class ChangeNotifierSnapshotEvent extends AgentEvent2<
 export interface ChangeNotifierSnapshotEvent {
   readonly agentId: string;
   readonly agentsMdHash: string | null;
-  readonly agentsMdFiles: Record<string, string> | null;
+  readonly agentsMdFiles?: Record<string, string> | null;
   readonly skillsHash: string | null;
   readonly subagentNames: readonly string[] | null;
-  readonly modelPool: SubagentModelPoolSnapshot | null;
+  readonly modelPool?: SubagentModelPoolSnapshot | null;
 }
 
 export const changeNotifierSnapshotKey = defineState(
