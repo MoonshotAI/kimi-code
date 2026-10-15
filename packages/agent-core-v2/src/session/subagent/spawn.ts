@@ -7,6 +7,20 @@ export const LEGACY_SUBAGENT_TYPE_ALIASES: ReadonlySet<string> = new Set([
   'general-purpose',
 ]);
 
+export function normalizeLegacySubagentType(
+  requested: string | undefined,
+  catalog: { get(name: string): unknown },
+): string | undefined {
+  if (
+    requested !== undefined &&
+    LEGACY_SUBAGENT_TYPE_ALIASES.has(requested) &&
+    catalog.get(requested) === undefined
+  ) {
+    return DEFAULT_PROFILE_NAME;
+  }
+  return requested;
+}
+
 export const FORK_WITH_RESUME_UNAVAILABLE =
   'Cannot set resume when forking the current context. Fork creates a new agent; resume continues an existing one.';
 export const FORK_WITH_TYPE_UNAVAILABLE =

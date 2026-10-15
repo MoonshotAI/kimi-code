@@ -63,7 +63,11 @@ import { type AgentMeta, ISessionMetadata } from '#/session/sessionMetadata/sess
 import { emitAgentRunSpawned, mirrorAgentRun, SubagentStarted } from '#/session/subagent/mirrorAgentRun';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
-import { FORK_EXPERIMENTAL_UNAVAILABLE, forkIncompatibility } from '#/session/subagent/spawn';
+import {
+  FORK_EXPERIMENTAL_UNAVAILABLE,
+  forkIncompatibility,
+  normalizeLegacySubagentType,
+} from '#/session/subagent/spawn';
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import {
   buildSubagentModelDescriptions,
@@ -273,12 +277,9 @@ export class SubagentTool implements ISubagentTool {
   async resolveExecution(args: SubagentToolInput): Promise<ToolExecution> {
     const requestedProfileName = args.subagent_type?.length ? args.subagent_type : undefined;
     const resumeAgentId = args.resume?.trim();
+    const isResume = resumeAgentId !== undefined && resumeAgentId.length > 0;
 
-    if (
-      resumeAgentId !== undefined &&
-      resumeAgentId.length > 0 &&
-      requestedProfileName !== undefined
-    ) {
+    if (isResume && requestedProfileName !== undefined) {
       return { output: RESUME_WITH_TYPE_UNAVAILABLE, isError: true };
     }
 
@@ -292,13 +293,20 @@ export class SubagentTool implements ISubagentTool {
       }
     }
 
-    const profileNameForDisplay =
-      resumeAgentId !== undefined && resumeAgentId.length > 0
-        ? (await this.resumeProfileName(resumeAgentId)) ?? RESUMED_LABEL
-        : (requestedProfileName ??
-            (args.fork === true
-              ? (this.profile.data().profileName ?? DEFAULT_PROFILE_NAME)
-              : DEFAULT_PROFILE_NAME));
+    const canonicalProfileName =
+      !isResume && args.fork !== true
+        ? normalizeLegacySubagentType(requestedProfileName, this.catalog)
+        : requestedProfileName;
+    const executionArgs =
+      canonicalProfileName !== undefined && canonicalProfileName !== requestedProfileName
+        ? { ...args, subagent_type: canonicalProfileName }
+        : args;
+    const profileNameForDisplay = isResume
+      ? ((await this.resumeProfileName(resumeAgentId)) ?? RESUMED_LABEL)
+      : (canonicalProfileName ??
+        (args.fork === true
+          ? (this.profile.data().profileName ?? DEFAULT_PROFILE_NAME)
+          : DEFAULT_PROFILE_NAME));
     const prefix = args.run_in_background === true ? 'Launching background' : 'Launching';
     return {
       description: `${prefix} ${profileNameForDisplay} agent: ${args.description}`,
@@ -311,7 +319,7 @@ export class SubagentTool implements ISubagentTool {
       },
       approvalRule: this.name,
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, profileNameForDisplay),
-      execute: (ctx) => this.execution(args, ctx),
+      execute: (ctx) => this.execution(executionArgs, ctx),
     };
   }
 

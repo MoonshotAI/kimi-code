@@ -1844,6 +1844,76 @@ describe('Agent tool execution contract', () => {
     expect(execution.matchesRule?.('coder')).toBe(false);
   });
 
+  it('matches approval rules against the canonical type when a legacy alias is requested', async () => {
+    const context = createAgentToolContext();
+
+    const execution = await agentTool(context).resolveExecution({
+      prompt: 'Investigate',
+      description: 'Find cause',
+      subagent_type: 'general',
+    });
+
+    if (execution.isError === true) throw new Error('expected runnable execution');
+    expect(execution.description).toBe('Launching coder agent: Find cause');
+    expect(execution.matchesRule?.('coder')).toBe(true);
+    expect(execution.matchesRule?.('general')).toBe(false);
+  });
+
+  it('matches approval rules against the canonical type for the general-purpose alias', async () => {
+    const context = createAgentToolContext();
+
+    const execution = await agentTool(context).resolveExecution({
+      prompt: 'Investigate',
+      description: 'Find cause',
+      subagent_type: 'general-purpose',
+    });
+
+    if (execution.isError === true) throw new Error('expected runnable execution');
+    expect(execution.description).toBe('Launching coder agent: Find cause');
+    expect(execution.matchesRule?.('coder')).toBe(true);
+    expect(execution.matchesRule?.('general-purpose')).toBe(false);
+  });
+
+  it('keeps the raw type for display and approval rules when a real profile has the alias name', async () => {
+    const general = normalizeAgentProfile({
+      name: 'general',
+      description: 'General',
+      systemPrompt: () => 'general',
+    });
+    const coder = normalizeAgentProfile({
+      name: 'coder',
+      description: 'Coder',
+      systemPrompt: () => 'coder',
+    });
+    const profiles: AgentProfile[] = [general, coder];
+    const catalog: ISessionAgentProfileCatalog = {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChange: Event.None as ISessionAgentProfileCatalog['onDidChange'],
+      get: (name) => profiles.find((profile) => profile.name === name),
+      getDefault: () => coder,
+      list: () => [...profiles],
+      inspect: () => undefined,
+      load: async () => {},
+      reload: async () => {},
+    };
+    const context = createAgentToolContext(
+      createAgentLifecycleStub(),
+      sessionService(ISessionAgentProfileCatalog, catalog),
+    );
+
+    const execution = await agentTool(context).resolveExecution({
+      prompt: 'Investigate',
+      description: 'Find cause',
+      subagent_type: 'general',
+    });
+
+    if (execution.isError === true) throw new Error('expected runnable execution');
+    expect(execution.description).toBe('Launching general agent: Find cause');
+    expect(execution.matchesRule?.('general')).toBe(true);
+    expect(execution.matchesRule?.('coder')).toBe(false);
+  });
+
   it('returns an error when resuming with a subagent type', async () => {
     const lifecycle = createAgentLifecycleStub();
     const context = createAgentToolContext(lifecycle);
