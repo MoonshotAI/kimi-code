@@ -191,7 +191,7 @@ import { startupTrace } from '#/utils/startup-trace';
 import { REPLAY_FETCH_TURN_LIMIT } from './utils/message-replay';
 import { hasPatchChanges } from './utils/object-patch';
 import { beginScreenTakeover, endScreenTakeover, type ScreenTakeover } from './utils/screen-takeover';
-import { markDefaultWorkspaceRows, sessionRowsForPicker } from './utils/session-picker-rows';
+import { sessionRowsForPicker } from './utils/session-picker-rows';
 import { formatStepRetryDetail, formatStepRetryLabel } from './utils/step-retry';
 import { formatBashOutputForDisplay } from './utils/shell-output';
 import { lazyModelSelection } from './utils/model-switch';
@@ -2742,7 +2742,6 @@ export class KimiTUI {
     this.state.sessionsScope = scope;
     this.state.sessionsNextCursor = undefined;
     this.state.sessionsLoadingMore = false;
-    this.refreshPickerDefaultWorkspace();
     try {
       const page = await this.harness.listSessionsPage({
         workDir: scope === 'all' ? undefined : this.state.appState.workDir,
@@ -2753,7 +2752,6 @@ export class KimiTUI {
         page.items,
         this.state.appState.sessionId,
         this.hasSessionContent(),
-        this.pickerDefaultWorkspacePath,
       );
     } catch (error) {
       // The picker must keep working (it renders the empty state), but a
@@ -2763,26 +2761,6 @@ export class KimiTUI {
     } finally {
       this.state.loadingSessions = false;
     }
-  }
-
-  private refreshPickerDefaultWorkspace(): void {
-    if (this.pickerDefaultWorkspaceLookup) return;
-    this.pickerDefaultWorkspaceLookup = true;
-    void this.harness
-      .getDefaultWorkspacePath()
-      .then(
-        (path) => {
-          if (path === this.pickerDefaultWorkspacePath) return;
-          this.pickerDefaultWorkspacePath = path;
-          this.state.sessions = markDefaultWorkspaceRows(this.state.sessions, path);
-          this.sessionPickerComponent?.replaceSessions(this.state.sessions);
-          this.state.ui.requestRender();
-        },
-        () => undefined,
-      )
-      .finally(() => {
-        this.pickerDefaultWorkspaceLookup = false;
-      });
   }
 
   /**
@@ -2828,7 +2806,6 @@ export class KimiTUI {
         page.items,
         this.state.appState.sessionId,
         this.hasSessionContent(),
-        this.pickerDefaultWorkspacePath,
       );
       this.state.sessions = [...this.state.sessions, ...rows];
       this.sessionPickerComponent?.appendSessions(rows);
@@ -2891,10 +2868,7 @@ export class KimiTUI {
 
   private async showResumeOtherWorkDirHint(session: SessionRow): Promise<void> {
     this.hideSessionPicker();
-    const command =
-      session.in_default_workspace === true
-        ? `kimi --default-workspace --resume ${quoteShellArg(session.id)}`
-        : `cd ${quoteShellArg(session.work_dir)} && kimi --resume ${quoteShellArg(session.id)}`;
+    const command = `cd ${quoteShellArg(session.work_dir)} && kimi --resume ${quoteShellArg(session.id)}`;
     const message = `Current session is in a different working directory.\n  To resume, run: ${command}`;
     try {
       await copyTextToClipboard(command);
@@ -4277,8 +4251,6 @@ export class KimiTUI {
   private sessionPickerScopeRequestToken = 0;
   private sessionPickerComponent: SessionPickerComponent | undefined;
   private sessionsPageFetchInFlight: Promise<boolean> | undefined;
-  private pickerDefaultWorkspacePath: string | undefined;
-  private pickerDefaultWorkspaceLookup = false;
 
   async showSessionPicker(): Promise<void> {
     await this.openSessionPicker({

@@ -189,13 +189,12 @@ export function registerSessionsRoutes(
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
-        [ErrorCode.FS_PERMISSION_DENIED]: {},
         [ErrorCode.DEFAULT_WORKSPACE_UNAVAILABLE]: {
           dataSchema: defaultWorkspaceUnavailableDataSchema,
         },
       },
       description:
-        'Create a new session. default_workspace=true places it in the default workspace (the configured custom location, or KimiCode/Default under the Documents folder) and must not carry workspace_id or metadata.cwd.',
+        'Create a new session. default_workspace=true places it in the default workspace (the configured custom location, or KimiCode/Default under the Documents folder) and cannot be combined with workspace_id or metadata.',
       tags: ['sessions'],
     },
     async (req, reply) => {
@@ -203,13 +202,13 @@ export function registerSessionsRoutes(
       const callerCwd = typeof body.metadata?.cwd === 'string' ? body.metadata.cwd : undefined;
       const workspaceId = body.workspace_id;
       const useDefault = body.default_workspace === true;
-      if (useDefault && (workspaceId !== undefined || callerCwd !== undefined)) {
+      if (useDefault && (workspaceId !== undefined || body.metadata !== undefined)) {
         reply.send(
           buildValidationEnvelope(
             [
               {
                 path: 'default_workspace',
-                message: 'default_workspace cannot be combined with workspace_id or metadata.cwd',
+                message: 'default_workspace cannot be combined with workspace_id or metadata',
               },
             ],
             req.id,
@@ -1235,9 +1234,6 @@ function sendMappedError(
         return;
       case ErrorCodes.FS_PATH_NOT_FOUND:
         reply.send(errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.OS_FS_PERMISSION_DENIED:
-        reply.send(errEnvelope(ErrorCode.FS_PERMISSION_DENIED, err.message, requestId, err.stack));
         return;
       case 'request.invalid':
       case 'validation.failed':

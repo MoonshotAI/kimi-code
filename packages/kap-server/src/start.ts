@@ -82,7 +82,6 @@ import {
 import { TranscriptService } from './services/transcript/transcriptService';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
-import { startDefaultWorkspacePublisher } from './services/defaultWorkspace/defaultWorkspacePublisher';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
 import {
   createRemoteControlManager,
@@ -329,7 +328,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       for (const client of wssDebug.clients) client.terminate();
     }
     configChangedPublisher.close();
-    defaultWorkspacePublisher.close();
     await remoteControlManager.close();
     await app.close();
     configWarningSubscription.dispose();
@@ -390,7 +388,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   };
   const configWarningSubscription = configService.onDidChangeDiagnostics(publishConfigWarnings);
   const configChangedPublisher = startConfigChangedPublisher(core);
-  const defaultWorkspacePublisher = startDefaultWorkspacePublisher(core, logger);
 
   const pluginService = core.accessor.get(IPluginService);
   const pluginChangeSubscription = pluginService.onDidReload(() => {

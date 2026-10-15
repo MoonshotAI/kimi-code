@@ -237,7 +237,7 @@ kimi doctor
 
 | Command | Description |
 | --- | --- |
-| `kimi doctor` | Validate the default `config.toml` and `tui.toml`, and check that the default workspace can be used |
+| `kimi doctor` | Validate the default `config.toml` and `tui.toml` |
 | `kimi doctor config [path]` | Validate only `config.toml`, using `path` instead of the default file when provided |
 | `kimi doctor tui [path]` | Validate only `tui.toml`, using `path` instead of the default file when provided |
 

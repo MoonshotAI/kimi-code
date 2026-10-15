@@ -397,17 +397,10 @@ describe('server-v2 /api/v1/sessions', () => {
         return root;
       },
     ): ScopeSeed {
-      const status = {
-        path: root,
-        customPath: undefined,
-        systemPath: root,
-        exists: true,
-        problem: undefined,
-      };
+      const status = { path: root, customPath: undefined, exists: true };
       const stub: IDefaultWorkspace = {
         _serviceBrand: undefined,
         ensure,
-        path: async () => root,
         isDefault: async (candidate) => candidate === root,
         status: async () => status,
         setCustomPath: async () => status,
@@ -439,7 +432,7 @@ describe('server-v2 /api/v1/sessions', () => {
 
     it.each([
       ['workspace_id', { workspace_id: 'wd_missing_000000000000' }],
-      ['metadata.cwd', { metadata: { cwd: '/x' } }],
+      ['metadata', { metadata: { cwd: '/x' } }],
     ])('rejects default_workspace combined with %s (40001)', async (_label, extra) => {
       const { body } = await postJson<null>('/api/v1/sessions', {
         default_workspace: true,

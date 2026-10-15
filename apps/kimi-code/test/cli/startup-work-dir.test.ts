@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { writeResumeHint } from '#/cli/prompt-render';
 import { resolveStartupWorkDir, resumeCommand } from '#/cli/startup-work-dir';
-import { quoteShellArg } from '#/utils/shell-quote';
 
 describe('resolveStartupWorkDir', () => {
   let launchDir: string;
@@ -54,26 +53,15 @@ describe('resolveStartupWorkDir', () => {
 });
 
 describe('resumeCommand', () => {
-  const workDir = '/Users/me/Documents/KimiCode/Default';
-
   it('repeats the flag so the session resumes from any directory', () => {
-    expect(resumeCommand({ defaultWorkspace: true }, 'ses_1', workDir, `${workDir}/`)).toBe(
+    expect(resumeCommand({ defaultWorkspace: true }, 'ses_1')).toBe(
       'kimi --default-workspace -r ses_1',
     );
-    expect(resumeCommand({}, 'ses_1', workDir, undefined)).toBe('kimi -r ses_1');
-  });
-
-  it('points at the session folder once the default workspace has moved', () => {
-    expect(resumeCommand({ defaultWorkspace: true }, 'ses_1', workDir, '/Users/me/Chats')).toBe(
-      `cd ${quoteShellArg(workDir)} && kimi -r ses_1`,
-    );
-    expect(resumeCommand({ defaultWorkspace: true }, 'ses_1', workDir, undefined)).toBe(
-      `cd ${quoteShellArg(workDir)} && kimi -r ses_1`,
-    );
+    expect(resumeCommand({}, 'ses_1')).toBe('kimi -r ses_1');
   });
 
   it('is what print mode tells the user in both output formats', () => {
-    const command = resumeCommand({ defaultWorkspace: true }, 'ses_1', workDir, workDir);
+    const command = resumeCommand({ defaultWorkspace: true }, 'ses_1');
     const text = { stdout: '', stderr: '' };
     writeResumeHint('ses_1', command, 'text', sink(text, 'stdout'), sink(text, 'stderr'));
     const json = { stdout: '', stderr: '' };

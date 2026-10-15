@@ -49,21 +49,6 @@ describe('sessionRowsForPicker', () => {
     expect(rows.map((row) => row.id)).toEqual(['ses_current']);
   });
 
-  it('flags sessions that live in the default workspace', () => {
-    const rows = sessionRowsForPicker(
-      [summary({ id: 'ses_a' })],
-      'ses_current',
-      false,
-      '/tmp/project/',
-    );
-
-    expect(rows[0]?.in_default_workspace).toBe(true);
-    expect(
-      sessionRowsForPicker([summary({ id: 'ses_a' })], 'ses_current', false, '/tmp/other')[0]
-        ?.in_default_workspace,
-    ).toBe(false);
-  });
-
   it('does not filter empty historical sessions', () => {
     const rows = sessionRowsForPicker(
       [

@@ -2,19 +2,11 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 
-import {
-  createKimiHarness,
-  DEFAULT_WORKSPACE_PROBLEM_MESSAGES,
-  resolveConfigPath,
-  type DefaultWorkspaceStatus,
-  type KimiConfigValidationIssue,
-} from '@moonshot-ai/kimi-code-sdk';
+import { resolveConfigPath, type KimiConfigValidationIssue } from '@moonshot-ai/kimi-code-sdk';
 import type { Command } from 'commander';
 import { z } from 'zod';
 
 import { getTuiConfigPath, parseTuiConfig } from '#/tui/config';
-
-import { createKimiCodeHostIdentity } from '../version';
 
 interface WritableLike {
   write(chunk: string): boolean;
@@ -32,7 +24,6 @@ export interface DoctorDeps {
   readonly fileExists?: (path: string) => boolean;
   readonly readTextFile?: (path: string) => Promise<string>;
   readonly validateConfigToml?: (text: string, path: string) => MaybePromise<string | void>;
-  readonly defaultWorkspaceStatus?: () => Promise<DefaultWorkspaceStatus>;
 }
 
 export interface DoctorOptions {
@@ -49,7 +40,7 @@ interface CheckSpec {
 }
 
 interface CheckResult {
-  readonly label: CheckSpec['label'] | 'workspace';
+  readonly label: CheckSpec['label'];
   readonly path: string;
   readonly status: 'OK' | 'SKIP' | 'ERROR';
   readonly message?: string;
@@ -65,7 +56,6 @@ interface ResolvedDoctorDeps {
   readonly fileExists: (path: string) => boolean;
   readonly readTextFile: (path: string) => Promise<string>;
   readonly validateConfigToml: (text: string, path: string) => MaybePromise<string | void>;
-  readonly defaultWorkspaceStatus: (() => Promise<DefaultWorkspaceStatus>) | undefined;
 }
 
 export async function handleDoctor(deps: DoctorDeps, options: DoctorOptions): Promise<number> {
@@ -73,9 +63,6 @@ export async function handleDoctor(deps: DoctorDeps, options: DoctorOptions): Pr
   const cwd = resolved.cwd();
   const specs = await buildCheckSpecs(resolved, options, cwd);
   const results = await Promise.all(specs.map((spec) => checkTomlFile(resolved, spec)));
-  if (options.target === undefined && resolved.defaultWorkspaceStatus !== undefined) {
-    results.push(await checkDefaultWorkspace(resolved.defaultWorkspaceStatus));
-  }
 
   const issueCount = results.filter((result) => result.status === 'ERROR').length;
   const text = issueCount === 0 ? formatSuccess(results) : formatFailure(results, issueCount);
@@ -117,57 +104,8 @@ async function runDoctorCommand(
   options: DoctorOptions,
 ): Promise<void> {
   const resolved = resolveDeps(deps);
-  const code = await handleDoctor(
-    {
-      ...resolved,
-      defaultWorkspaceStatus: resolved.defaultWorkspaceStatus ?? readDefaultWorkspaceStatus,
-    },
-    options,
-  );
+  const code = await handleDoctor(resolved, options);
   if (code !== 0) resolved.exit(code);
-}
-
-async function readDefaultWorkspaceStatus(): Promise<DefaultWorkspaceStatus> {
-  const harness = createKimiHarness({ identity: createKimiCodeHostIdentity() });
-  try {
-    return await harness.getDefaultWorkspaceStatus();
-  } finally {
-    await harness.close();
-  }
-}
-
-async function checkDefaultWorkspace(
-  readStatus: () => Promise<DefaultWorkspaceStatus>,
-): Promise<CheckResult> {
-  let status: DefaultWorkspaceStatus;
-  try {
-    status = await readStatus();
-  } catch (error) {
-    return {
-      label: 'workspace',
-      path: '-',
-      status: 'SKIP',
-      message: `Could not check the default workspace: ${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
-  const path = status.path ?? status.customPath ?? '-';
-  if (status.problem !== undefined) {
-    return {
-      label: 'workspace',
-      path,
-      status: 'ERROR',
-      message: [
-        `Default workspace cannot be used: ${DEFAULT_WORKSPACE_PROBLEM_MESSAGES[status.problem]}.`,
-        'Fix the folder, or set default_workspace.path in config.toml.',
-      ].join('\n'),
-    };
-  }
-  return {
-    label: 'workspace',
-    path,
-    status: 'OK',
-    message: status.exists ? 'Default workspace.' : 'Default workspace; created on first use.',
-  };
 }
 
 function resolveDeps(deps: Partial<DoctorDeps> | DoctorDeps | undefined): ResolvedDoctorDeps {
@@ -180,7 +118,6 @@ function resolveDeps(deps: Partial<DoctorDeps> | DoctorDeps | undefined): Resolv
     exit: deps?.exit ?? ((code) => process.exit(code)),
     fileExists: deps?.fileExists ?? existsSync,
     readTextFile: deps?.readTextFile ?? ((path) => readFile(path, 'utf-8')),
-    defaultWorkspaceStatus: deps?.defaultWorkspaceStatus,
     validateConfigToml:
       deps?.validateConfigToml ??
       (async (text, filePath) => {

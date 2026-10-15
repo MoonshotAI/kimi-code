@@ -40,7 +40,7 @@ export function registerDefaultWorkspaceRoutes(app: DefaultWorkspaceRouteHost, c
       method: 'GET',
       path: '/default-workspace',
       success: { data: defaultWorkspaceStatusSchema },
-      description: 'Get the default workspace location and its health',
+      description: 'Get the default workspace location',
       tags: ['workspaces'],
     },
     async (req, reply) => {
@@ -115,8 +115,6 @@ function toWireStatus(status: DefaultWorkspaceStatus): DefaultWorkspaceStatusWir
   return {
     path: status.path ?? null,
     custom_path: status.customPath ?? null,
-    system_path: status.systemPath ?? null,
     exists: status.exists,
-    problem: status.problem ?? null,
   };
 }

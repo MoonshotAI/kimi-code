@@ -664,13 +664,13 @@ Creates a session and returns it. The target directory comes from `workspace_id`
 | --- | --- | --- | --- |
 | `workspace_id` | body | string | **Required** when neither `metadata.cwd` nor `default_workspace` is given. Registered workspace id; the session is created at that workspace's root |
 | `metadata` | body | object | Custom metadata. `metadata.cwd` is the working directory and is **required** when neither `workspace_id` nor `default_workspace` is given; with both given, it must equal the workspace root |
-| `default_workspace` | body | boolean | When `true`, the session is created in the default workspace — `<Documents>/KimiCode/Default` unless [a custom location](#patch-api-v1-default-workspace) is set — which is created on demand and registered as an ordinary workspace. Must not be combined with `workspace_id` or `metadata.cwd` |
+| `default_workspace` | body | boolean | When `true`, the session is created in the default workspace — `<Documents>/KimiCode/Default` unless [a custom location](#patch-api-v1-default-workspace) is set — which is created on demand and registered as an ordinary workspace. Cannot be combined with `workspace_id` or `metadata` |
 | `title` | body | string | Initial title (at least 1 character); the session is untitled otherwise |
 | `agent_config` | body | object | Accepted by the schema but currently not applied — set the model and modes through `POST /api/v1/sessions/{session_id}/profile` |
 
 On success, `data` is [the session object](#the-session-object) of the new session.
 
-- `40001`: none of `workspace_id`, `metadata.cwd`, and `default_workspace` given, `default_workspace` combined with either of the others, or `metadata.cwd` does not match the workspace root (`details` lists the field)
+- `40001`: none of `workspace_id`, `metadata.cwd`, and `default_workspace` given, `default_workspace` combined with `workspace_id` or `metadata`, or `metadata.cwd` does not match the workspace root (`details` lists the field)
 - `40409`: the working directory does not exist or is not a directory
 - `40410`: no registered workspace with that `workspace_id`
 - `40930`: the default workspace folder cannot be created or used; `data` is `{ path, reason }` as described under [`PATCH /api/v1/default-workspace`](#patch-api-v1-default-workspace)
@@ -1628,7 +1628,7 @@ Workspaces are the registered project directories sessions live in. These endpoi
 | `POST /api/v1/workspaces/{workspace_id}/trust` | Grant trust |
 | `POST /api/v1/workspaces/{workspace_id}/untrust` | Revoke trust |
 | `POST /api/v1/workspaces/{workspace_id}/add-dir` | Add an additional directory |
-| `GET /api/v1/default-workspace` | Read the default workspace location and its health |
+| `GET /api/v1/default-workspace` | Read the default workspace location |
 | `PATCH /api/v1/default-workspace` | Set or clear a custom default workspace location |
 
 #### The workspace object
@@ -1745,7 +1745,7 @@ On success, `data` is `{ project_root, config_path, additional_dirs, persisted }
 
 #### `GET /api/v1/default-workspace`
 
-Reads where sessions created with `default_workspace` go. The location is `<Documents>/KimiCode/Default` unless `default_workspace.path` is set in `config.toml`. The folder is not created here. The setting is not part of `GET /api/v1/config`, and `POST /api/v1/config` rejects it with `40001`. Whenever the location changes, through `PATCH` or an edit to `config.toml`, every registered workspace broadcasts `event.workspace.updated` with its current `is_default`.
+Reads where sessions created with `default_workspace` go. The location is `<Documents>/KimiCode/Default` unless `default_workspace.path` is set in `config.toml`. The folder is not created here. Change the location through `PATCH`; `POST /api/v1/config` ignores this setting. Changing the location broadcasts no workspace events, so refetch `GET /api/v1/workspaces` to see the new `is_default`.
 
 On success, `data` is:
 
@@ -1753,13 +1753,11 @@ On success, `data` is:
 | --- | --- | --- |
 | `path` | string \| null | Effective absolute path; `null` when it cannot be resolved |
 | `custom_path` | string \| null | Custom location as saved (may start with `~`); `null` when unset |
-| `system_path` | string \| null | Location used when no custom path is set; `null` when the Documents folder cannot be located |
 | `exists` | boolean | Whether the folder exists |
-| `problem` | string \| null | Why the folder cannot be used, with the same values as `reason` below; `null` when nothing is known to be wrong |
 
 #### `PATCH /api/v1/default-workspace`
 
-Sets a custom default workspace location, or clears it with `null` (or an empty string) to return to the system location. The path must be absolute or start with `~/` (the home folder); it is checked for writability but not created. Existing files and workspaces are never moved.
+Sets a custom default workspace location, or clears it with `null` (or an empty string) to return to the system location. The path must be absolute or start with `~/` (the home folder); the folder is created if needed. Existing files and workspaces are never moved.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1768,7 +1766,7 @@ Sets a custom default workspace location, or clears it with `null` (or an empty 
 On success, `data` is the same object as `GET /api/v1/default-workspace`.
 
 - `40001`: validation failure (`details` lists each field)
-- `40930`: the location cannot be used, and the saved location is kept. `data` is `{ path, reason }`, where `reason` is one of `blocked_by_file` (a file sits where a folder is needed), `permission_denied`, `missing_parent` (a parent folder disappeared during the check), `no_space`, `read_only`, `invalid_path` (not absolute, or too long), `documents_unavailable` (the system Documents folder cannot be located), or `unknown`
+- `40930`: the location cannot be used, and the saved location is kept. `data` is `{ path, reason }`, where `reason` is one of `blocked_by_file` (a file sits where a folder is needed), `permission_denied`, `missing_parent` (a parent folder or drive is unavailable), `no_space`, `read_only`, `invalid_path` (not absolute, or too long), `documents_unavailable` (the system Documents folder cannot be located), or `unknown`
 
 ### File system
 

@@ -1,6 +1,4 @@
-import { randomUUID } from 'node:crypto';
-
-import { dirname, join } from 'pathe';
+import { isAbsolute, join } from 'pathe';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { workspaceRootKey } from '#/_base/utils/workdir-slug';
@@ -30,11 +28,6 @@ import {
 
 const WINDOWS_DOCUMENTS_TIMEOUT_MS = 15_000;
 
-interface PathProbe {
-  readonly exists: boolean;
-  readonly problem: DefaultWorkspaceUnavailableReason | undefined;
-}
-
 export class DefaultWorkspaceService implements IDefaultWorkspace {
   declare readonly _serviceBrand: undefined;
 
@@ -49,61 +42,45 @@ export class DefaultWorkspaceService implements IDefaultWorkspace {
 
   async ensure(): Promise<string> {
     const root = await this.root();
-    try {
-      await this.fs.mkdir(root, { recursive: true });
-    } catch (error) {
-      throw unavailable(root, reasonOf(error), error);
-    }
-    const problem = await this.writeProblem(root);
-    if (problem !== undefined) throw unavailable(root, problem);
+    await this.create(root);
     return root;
   }
 
-  async path(): Promise<string | undefined> {
-    return this.root().catch(() => undefined);
-  }
-
   async isDefault(root: string): Promise<boolean> {
-    const defaultRoot = await this.path();
+    const defaultRoot = await this.root().catch(() => undefined);
     return defaultRoot !== undefined && workspaceRootKey(root) === workspaceRootKey(defaultRoot);
   }
 
   async status(): Promise<DefaultWorkspaceStatus> {
     await this.config.ready;
-    const customPath = this.customPath();
-    const systemPath = await this.systemRoot().catch(() => undefined);
-    const path =
-      customPath === undefined
-        ? systemPath
-        : resolveCustomRoot(customPath, this.bootstrap.osHomeDir, this.bootstrap.platform);
-    if (path === undefined) {
-      const problem = customPath === undefined ? 'documents_unavailable' : 'invalid_path';
-      return { path, customPath, systemPath, exists: false, problem };
-    }
-    const { exists, problem } = await this.probe(path);
-    return { path, customPath, systemPath, exists, problem };
+    const path = await this.root().catch(() => undefined);
+    return {
+      path,
+      customPath: this.customPath(),
+      exists: path !== undefined && (await this.isDirectory(path)),
+    };
   }
 
   async setCustomPath(path: string | undefined): Promise<DefaultWorkspaceStatus> {
     await this.config.ready;
     const trimmed = path?.trim() ?? '';
     if (trimmed.length === 0) {
-      await this.assertUsable(await this.systemRoot());
-      await this.config.replace(DEFAULT_WORKSPACE_SECTION, {});
+      await this.config.replace(DEFAULT_WORKSPACE_SECTION, undefined);
       return this.status();
     }
     const root = resolveCustomRoot(trimmed, this.bootstrap.osHomeDir, this.bootstrap.platform);
-    if (root === undefined) {
-      throw unavailable(trimmed, 'invalid_path');
-    }
-    await this.assertUsable(root);
+    if (root === undefined) throw unavailable(trimmed, 'invalid_path');
+    await this.create(root);
     await this.config.set(DEFAULT_WORKSPACE_SECTION, { path: trimmed });
     return this.status();
   }
 
-  private async assertUsable(root: string): Promise<void> {
-    const { problem } = await this.probe(root);
-    if (problem !== undefined) throw unavailable(root, problem);
+  private async create(root: string): Promise<void> {
+    try {
+      await this.fs.mkdir(root, { recursive: true });
+    } catch (error) {
+      throw unavailable(root, reasonOf(error), error);
+    }
   }
 
   private customPath(): string | undefined {
@@ -132,67 +109,6 @@ export class DefaultWorkspaceService implements IDefaultWorkspace {
       });
     }
     return this.systemRootPromise;
-  }
-
-  private async probe(root: string): Promise<PathProbe> {
-    let existing = root;
-    for (;;) {
-      try {
-        const stat = await this.fs.stat(existing);
-        if (!stat.isDirectory) return { exists: false, problem: 'blocked_by_file' };
-        break;
-      } catch (error) {
-        if (!isNotFound(error)) return { exists: false, problem: reasonOf(error) };
-        if (await this.isDanglingLink(existing)) return { exists: false, problem: 'blocked_by_file' };
-        const parent = dirname(existing);
-        if (parent === existing) return { exists: false, problem: 'missing_parent' };
-        existing = parent;
-      }
-    }
-    const exists = existing === root;
-    return { exists, problem: await this.writeProblem(existing, exists ? 'file' : 'folder') };
-  }
-
-  private async isDanglingLink(path: string): Promise<boolean> {
-    try {
-      await this.fs.lstat(path);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  private async writeProblem(
-    dir: string,
-    entry: 'file' | 'folder' = 'file',
-  ): Promise<DefaultWorkspaceUnavailableReason | undefined> {
-    const probe = join(dir, `.kimi-code-write-test-${randomUUID()}`);
-    let problem: DefaultWorkspaceUnavailableReason | undefined;
-    try {
-      if (!(await this.createProbe(probe, entry))) return 'unknown';
-    } catch (error) {
-      problem = reasonOf(error);
-    }
-    try {
-      await this.fs.remove(probe);
-    } catch (error) {
-      if (!isNotFound(error)) problem ??= reasonOf(error);
-    }
-    return problem;
-  }
-
-  private async createProbe(probe: string, entry: 'file' | 'folder'): Promise<boolean> {
-    if (entry === 'file') return this.fs.createExclusive(probe, new Uint8Array());
-    try {
-      await this.fs.mkdir(probe);
-    } catch (error) {
-      if (error instanceof HostFsError && error.code === OsFsErrors.codes.OS_FS_ALREADY_EXISTS) {
-        return false;
-      }
-      throw error;
-    }
-    await this.fs.createExclusive(join(probe, 'probe'), new Uint8Array());
-    return true;
   }
 
   private async documentsDir(): Promise<string> {
@@ -245,8 +161,11 @@ export class DefaultWorkspaceService implements IDefaultWorkspace {
   }
 
   private async xdgDocumentsDir(): Promise<string | undefined> {
+    const xdgConfigHome = this.bootstrap.getEnv('XDG_CONFIG_HOME');
     const configHome =
-      this.bootstrap.getEnv('XDG_CONFIG_HOME') ?? join(this.bootstrap.osHomeDir, '.config');
+      xdgConfigHome !== undefined && isAbsolute(xdgConfigHome)
+        ? xdgConfigHome
+        : join(this.bootstrap.osHomeDir, '.config');
     try {
       const content = await this.fs.readText(join(configHome, 'user-dirs.dirs'));
       return parseXdgDocumentsDir(content, this.bootstrap.osHomeDir);
@@ -284,17 +203,12 @@ const REASON_BY_ERRNO: ReadonlyMap<unknown, DefaultWorkspaceUnavailableReason> =
 ]);
 
 function reasonOf(error: unknown): DefaultWorkspaceUnavailableReason {
-  if (error instanceof DefaultWorkspaceUnavailableError) return error.details.reason;
   if (!(error instanceof HostFsError)) return 'unknown';
   return (
     REASON_BY_FS_CODE.get(error.code) ??
     REASON_BY_ERRNO.get(error.details?.['errno']) ??
     'unknown'
   );
-}
-
-function isNotFound(error: unknown): boolean {
-  return error instanceof HostFsError && error.code === OsFsErrors.codes.OS_FS_NOT_FOUND;
 }
 
 async function collect(stream: AsyncIterable<Uint8Array | string>): Promise<string> {

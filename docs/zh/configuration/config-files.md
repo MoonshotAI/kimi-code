@@ -490,7 +490,7 @@ max_chars = 500000
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `path` | `string` | — | 绝对路径，或以 `~/` 表示的主目录下路径；Windows 上须带盘符（`D:\Chats`）或完整的网络共享路径（`\\server\share\Chats`）。首次使用时创建 |
+| `path` | `string` | — | 绝对路径，或以 `~/` 表示的主目录下路径。首次使用时创建 |
 
 ```toml
 [default_workspace]

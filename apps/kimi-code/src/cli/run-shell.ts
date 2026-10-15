@@ -168,13 +168,11 @@ export async function runShell(
   // never be resolved by name through PATH: a `.` or empty PATH segment would
   // let an untrusted checkout plant an `stty` executable and run it pre-trust.
   // resolveCommandPath returns an absolute path and refuses hits inside the
-  // cwd and the launch directory (they differ under --default-workspace);
-  // when it cannot resolve stty, skip the save/restore entirely — it is
+  // cwd; when it cannot resolve stty, skip the save/restore entirely — it is
   // best-effort terminal hygiene, not required for startup.
   // stty is also POSIX-only, so skip it on Windows instead of relying on the
   // catch below.
-  const sttyPath =
-    process.platform === 'win32' ? undefined : resolveCommandPath('stty', [process.cwd(), launchDir]);
+  const sttyPath = process.platform === 'win32' ? undefined : resolveCommandPath('stty');
   if (sttyPath !== undefined) {
     try {
       // stty operates on the terminal behind stdin, so stdin must be the TTY —
@@ -249,13 +247,7 @@ export async function runShell(
     process.stdout.write(`${gutter}Bye!\n`);
     const hints: string[] = [];
     if (sessionId !== '' && hasContent) {
-      const defaultWorkspacePath =
-        opts.defaultWorkspace === true
-          ? await harness.getDefaultWorkspacePath().catch(() => undefined)
-          : undefined;
-      hints.push(
-        `${gutter}To resume this session: ${resumeCommand(opts, sessionId, workDir, defaultWorkspacePath)}`,
-      );
+      hints.push(`${gutter}To resume this session: ${resumeCommand(opts, sessionId)}`);
     }
     if (tui.exitOpenUrl !== undefined) {
       hints.push(`${gutter}open ${toTerminalHyperlink(tui.exitOpenUrl, tui.exitOpenUrl)}`);

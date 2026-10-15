@@ -59,6 +59,5 @@ export const patchConfigRequestSchema = z.object({
   secondary_model: z.unknown().optional(),
   experimental: z.record(z.string(), z.boolean()).optional(),
   telemetry: z.boolean().optional(),
-  default_workspace: z.unknown().optional(),
 });
 export type PatchConfigRequest = z.infer<typeof patchConfigRequestSchema>;

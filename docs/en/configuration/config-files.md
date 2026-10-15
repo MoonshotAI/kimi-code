@@ -491,7 +491,7 @@ Both values must be positive integers. A call's `max_chars` overrides the defaul
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `path` | `string` | — | Absolute path, or a path under your home folder written as `~/...`; on Windows, include the drive letter (`D:\Chats`) or a full network share (`\\server\share\Chats`). Created on first use |
+| `path` | `string` | — | Absolute path, or a path under your home folder written as `~/...`. Created on first use |
 
 ```toml
 [default_workspace]

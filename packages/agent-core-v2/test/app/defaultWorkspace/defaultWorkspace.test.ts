@@ -1,6 +1,6 @@
 import { promises as fsp } from 'node:fs';
 import os from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -21,7 +21,6 @@ import {
 import { DefaultWorkspaceService } from '#/app/defaultWorkspace/defaultWorkspaceService';
 import { LifecycleScope } from '#/app/scopes';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
-import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 
@@ -62,10 +61,7 @@ describe('default workspace paths', () => {
     expect(resolveCustomRoot('C:\\Chats', 'C:\\Users\\alice', 'win32')).toBe('C:/Chats');
     expect(resolveCustomRoot('~\\Chats', 'C:\\Users\\alice', 'win32')).toBe('C:/Users/alice/Chats');
     expect(resolveCustomRoot('Chats', 'C:\\Users\\alice', 'win32')).toBeUndefined();
-    expect(resolveCustomRoot('\\Chats', 'C:\\Users\\alice', 'win32')).toBeUndefined();
-    expect(resolveCustomRoot('/Chats', 'C:\\Users\\alice', 'win32')).toBeUndefined();
     expect(resolveCustomRoot('C:Chats', 'C:\\Users\\alice', 'win32')).toBeUndefined();
-    expect(resolveCustomRoot('\\\\server', 'C:\\Users\\alice', 'win32')).toBeUndefined();
     expect(resolveCustomRoot('\\\\server\\share\\Chats', 'C:\\Users\\alice', 'win32')).toBe(
       '//server/share/Chats',
     );
@@ -103,7 +99,6 @@ describe('DefaultWorkspaceService', () => {
     env: NodeJS.ProcessEnv = {},
     windows?: { spawn: IHostProcessService['spawn'] },
     sections: Record<string, unknown> = {},
-    fs: IHostFileSystem = new HostFileSystem(),
   ): IDefaultWorkspace {
     const bootstrap = stubBootstrap('/tmp/kimi-home', env, {}, osHomeDir);
     currentHost?.dispose();
@@ -112,7 +107,7 @@ describe('DefaultWorkspaceService', () => {
         IBootstrapService,
         windows === undefined ? bootstrap : { ...bootstrap, platform: 'win32' },
       ),
-      stubPair(IHostFileSystem, fs),
+      stubPair(IHostFileSystem, new HostFileSystem()),
       stubPair(IHostProcessService, (windows ?? {}) as IHostProcessService),
       stubPair(IConfigService, memoryConfig(sections)),
     ]);
@@ -248,6 +243,22 @@ describe('DefaultWorkspaceService', () => {
     expect(root).toBe(join(osHomeDir, 'Dokumente', 'KimiCode', 'Default'));
   });
 
+  it.each([[''], ['relative/config']])(
+    'reads ~/.config when XDG_CONFIG_HOME is %j',
+    async (xdgConfigHome) => {
+      await fsp.mkdir(join(osHomeDir, '.config'), { recursive: true });
+      await fsp.writeFile(
+        join(osHomeDir, '.config', 'user-dirs.dirs'),
+        'XDG_DOCUMENTS_DIR="$HOME/Dokumente"\n',
+        'utf8',
+      );
+
+      const root = await build({ XDG_CONFIG_HOME: xdgConfigHome }).ensure();
+
+      expect(root).toBe(join(osHomeDir, 'Dokumente', 'KimiCode', 'Default'));
+    },
+  );
+
   it('recognizes the default root regardless of a trailing separator', async () => {
     const service = build();
     const root = join(osHomeDir, 'Documents', 'KimiCode', 'Default');
@@ -268,7 +279,7 @@ describe('DefaultWorkspaceService', () => {
     const service = build();
 
     await expect(service.ensure()).rejects.toMatchObject(unavailable('blocked_by_file'));
-    expect(await service.status()).toMatchObject({ exists: false, problem: 'blocked_by_file' });
+    expect(await service.status()).toMatchObject({ exists: false });
   });
 
   it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
@@ -279,23 +290,6 @@ describe('DefaultWorkspaceService', () => {
       await fsp.chmod(documents, 0o500);
 
       await expect(build().ensure()).rejects.toMatchObject(unavailable('permission_denied'));
-      expect(await build().status()).toMatchObject({ exists: false, problem: 'permission_denied' });
-    },
-  );
-
-  it.skipIf(process.platform === 'win32')(
-    'reports a dangling symlink in the path the same way creating the folder fails',
-    async () => {
-      const documents = join(osHomeDir, 'Documents');
-      await fsp.mkdir(documents, { recursive: true });
-      await fsp.symlink(join(osHomeDir, 'gone'), join(documents, 'KimiCode'));
-      const service = build();
-
-      expect(await service.status()).toMatchObject({ exists: false, problem: 'blocked_by_file' });
-      await expect(
-        service.setCustomPath(join(documents, 'KimiCode', 'Chats')),
-      ).rejects.toMatchObject(unavailable('blocked_by_file'));
-      await expect(service.ensure()).rejects.toMatchObject(unavailable('blocked_by_file'));
     },
   );
 
@@ -321,7 +315,7 @@ describe('DefaultWorkspaceService', () => {
       const service = build({}, undefined, { defaultWorkspace: { path: 'Chats' } });
 
       await expect(service.ensure()).rejects.toMatchObject(unavailable('invalid_path'));
-      expect(await service.status()).toMatchObject({ path: undefined, problem: 'invalid_path' });
+      expect(await service.status()).toEqual({ path: undefined, customPath: 'Chats', exists: false });
     });
 
     it('rejects a Windows drive path on a POSIX host', async () => {
@@ -334,21 +328,15 @@ describe('DefaultWorkspaceService', () => {
       expect(sections['defaultWorkspace']).toBeUndefined();
     });
 
-    it('saves the trimmed path and reports both locations', async () => {
+    it('creates the folder and saves the trimmed path', async () => {
       const sections: Record<string, unknown> = {};
       const service = build({}, undefined, sections);
 
       const status = await service.setCustomPath('  ~/Chats  ');
 
       expect(sections['defaultWorkspace']).toEqual({ path: '~/Chats' });
-      expect(status).toEqual({
-        path: join(osHomeDir, 'Chats'),
-        customPath: '~/Chats',
-        systemPath: join(osHomeDir, 'Documents', 'KimiCode', 'Default'),
-        exists: false,
-        problem: undefined,
-      });
-      await expect(fsp.stat(join(osHomeDir, 'Chats'))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(status).toEqual({ path: join(osHomeDir, 'Chats'), customPath: '~/Chats', exists: true });
+      expect((await fsp.stat(join(osHomeDir, 'Chats'))).isDirectory()).toBe(true);
     });
 
     it('returns to the system location when cleared', async () => {
@@ -357,33 +345,15 @@ describe('DefaultWorkspaceService', () => {
 
       const status = await service.setCustomPath('   ');
 
-      expect(sections['defaultWorkspace']).toEqual({});
-      expect(status.path).toBe(join(osHomeDir, 'Documents', 'KimiCode', 'Default'));
-      expect(status.customPath).toBeUndefined();
+      expect(sections['defaultWorkspace']).toBeUndefined();
+      expect(status).toEqual({
+        path: join(osHomeDir, 'Documents', 'KimiCode', 'Default'),
+        customPath: undefined,
+        exists: false,
+      });
     });
 
-    it('keeps the custom location when the system location is unusable', async () => {
-      await fsp.writeFile(join(osHomeDir, 'Documents'), 'not a folder', 'utf8');
-      const sections: Record<string, unknown> = { defaultWorkspace: { path: '~/Kept' } };
-      const service = build({}, undefined, sections);
-
-      await expect(service.setCustomPath(undefined)).rejects.toMatchObject(
-        unavailable('blocked_by_file'),
-      );
-      expect(sections['defaultWorkspace']).toEqual({ path: '~/Kept' });
-    });
-
-    it('keeps the custom location when the Windows documents folder cannot be located', async () => {
-      const sections: Record<string, unknown> = { defaultWorkspace: { path: 'C:\\Kept' } };
-      const service = build({}, { spawn: shellUnavailable }, sections);
-
-      await expect(service.setCustomPath(undefined)).rejects.toMatchObject(
-        unavailable('documents_unavailable'),
-      );
-      expect(sections['defaultWorkspace']).toEqual({ path: 'C:\\Kept' });
-    });
-
-    it('refuses an unusable folder and keeps the saved location', async () => {
+    it('refuses a folder it cannot create and keeps the saved location', async () => {
       await fsp.writeFile(join(osHomeDir, 'note.txt'), 'x', 'utf8');
       const sections: Record<string, unknown> = { defaultWorkspace: { path: '~/Kept' } };
       const service = build({}, undefined, sections);
@@ -398,12 +368,13 @@ describe('DefaultWorkspaceService', () => {
     });
 
     it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
-      'refuses a folder it cannot write to and leaves no probe file behind',
+      'reports a permission failure when creating the folder',
       async () => {
         const locked = join(osHomeDir, 'Locked');
         await fsp.mkdir(locked);
         await fsp.chmod(locked, 0o500);
-        const service = build();
+        const sections: Record<string, unknown> = {};
+        const service = build({}, undefined, sections);
 
         try {
           await expect(service.setCustomPath(join(locked, 'Chats'))).rejects.toMatchObject(
@@ -412,87 +383,9 @@ describe('DefaultWorkspaceService', () => {
         } finally {
           await fsp.chmod(locked, 0o755);
         }
-        await service.setCustomPath(locked);
-        expect(await fsp.readdir(locked)).toEqual([]);
+        expect(sections['defaultWorkspace']).toBeUndefined();
       },
     );
-
-    it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
-      'refuses to hand out a saved folder that is no longer writable',
-      async () => {
-        const custom = join(osHomeDir, 'Chats');
-        await fsp.mkdir(custom);
-        const service = build({}, undefined, { defaultWorkspace: { path: custom } });
-        await fsp.chmod(custom, 0o500);
-
-        try {
-          await expect(service.ensure()).rejects.toMatchObject(unavailable('permission_denied'));
-        } finally {
-          await fsp.chmod(custom, 0o755);
-        }
-        expect(await service.ensure()).toBe(custom);
-        expect(await fsp.readdir(custom)).toEqual([]);
-      },
-    );
-
-    it('reports a folder where files can be created but not removed', async () => {
-      const custom = join(osHomeDir, 'Chats');
-      await fsp.mkdir(custom);
-      class NoRemoveFileSystem extends HostFileSystem {
-        override async remove(): Promise<void> {
-          throw new HostFsError(OsFsErrors.codes.OS_FS_PERMISSION_DENIED, 'permission denied');
-        }
-      }
-      const service = build(
-        {},
-        undefined,
-        { defaultWorkspace: { path: custom } },
-        new NoRemoveFileSystem(),
-      );
-
-      await expect(service.ensure()).rejects.toMatchObject(unavailable('permission_denied'));
-      expect(await service.status()).toMatchObject({ problem: 'permission_denied' });
-    });
-
-    it('refuses to save a missing folder where files can be created but folders cannot', async () => {
-      class NoMkdirFileSystem extends HostFileSystem {
-        override async mkdir(): Promise<void> {
-          throw new HostFsError(OsFsErrors.codes.OS_FS_PERMISSION_DENIED, 'permission denied');
-        }
-      }
-      const sections: Record<string, unknown> = {};
-      const service = build({}, undefined, sections, new NoMkdirFileSystem());
-
-      await expect(service.setCustomPath(join(osHomeDir, 'Chats'))).rejects.toMatchObject(
-        unavailable('permission_denied'),
-      );
-      expect(sections['defaultWorkspace']).toBeUndefined();
-      expect(await fsp.readdir(osHomeDir)).toEqual([]);
-    });
-
-    it('refuses to save a missing folder whose new subfolders deny file creation', async () => {
-      class NoFilesInNewFoldersFileSystem extends HostFileSystem {
-        private readonly created = new Set<string>();
-        override async mkdir(path: string, options?: { readonly recursive?: boolean }) {
-          await super.mkdir(path, options);
-          this.created.add(path);
-        }
-        override async createExclusive(path: string, data: Uint8Array): Promise<boolean> {
-          if (this.created.has(dirname(path))) {
-            throw new HostFsError(OsFsErrors.codes.OS_FS_PERMISSION_DENIED, 'permission denied');
-          }
-          return super.createExclusive(path, data);
-        }
-      }
-      const sections: Record<string, unknown> = {};
-      const service = build({}, undefined, sections, new NoFilesInNewFoldersFileSystem());
-
-      await expect(service.setCustomPath(join(osHomeDir, 'Chats'))).rejects.toMatchObject(
-        unavailable('permission_denied'),
-      );
-      expect(sections['defaultWorkspace']).toBeUndefined();
-      expect(await fsp.readdir(osHomeDir)).toEqual([]);
-    });
 
     it('explains that an overlong path is too long', async () => {
       const service = build();
@@ -504,30 +397,5 @@ describe('DefaultWorkspaceService', () => {
         message: expect.stringContaining('too long'),
       });
     });
-  });
-
-  it('leaves an existing entry alone when the probe name is already taken', async () => {
-    const removed: string[] = [];
-    class TakenProbeFileSystem extends HostFileSystem {
-      override async createExclusive(): Promise<boolean> {
-        return false;
-      }
-      override async mkdir(path: string, options?: { readonly recursive?: boolean }) {
-        if (basename(path).startsWith('.kimi-code-write-test-')) {
-          throw new HostFsError(OsFsErrors.codes.OS_FS_ALREADY_EXISTS, 'already exists');
-        }
-        await super.mkdir(path, options);
-      }
-      override async remove(path: string): Promise<void> {
-        removed.push(path);
-      }
-    }
-    const service = build({}, undefined, {}, new TakenProbeFileSystem());
-
-    await expect(service.ensure()).rejects.toMatchObject(unavailable('unknown'));
-    await expect(service.setCustomPath(join(osHomeDir, 'Chats'))).rejects.toMatchObject(
-      unavailable('unknown'),
-    );
-    expect(removed).toEqual([]);
   });
 });

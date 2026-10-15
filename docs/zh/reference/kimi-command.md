@@ -237,7 +237,7 @@ kimi doctor
 
 | 命令 | 说明 |
 | --- | --- |
-| `kimi doctor` | 校验默认 `config.toml` 和 `tui.toml`，并检查默认工作区是否可用 |
+| `kimi doctor` | 校验默认 `config.toml` 和 `tui.toml` |
 | `kimi doctor config [path]` | 只校验 `config.toml`；传入 `path` 时使用该文件而不是默认文件 |
 | `kimi doctor tui [path]` | 只校验 `tui.toml`；传入 `path` 时使用该文件而不是默认文件 |
 

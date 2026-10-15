@@ -168,7 +168,6 @@ import {
   IBootstrapService,
   IConfigService,
   IDefaultWorkspace,
-  type DefaultWorkspaceStatus,
   IEventService,
   IFlagService,
   IHostEnvironment,
@@ -734,14 +733,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     } catch (error) {
       throw restateEngineError(error);
     }
-  }
-
-  override async getDefaultWorkspacePath(): Promise<string | undefined> {
-    return this.engineAccessor.get(IDefaultWorkspace).path();
-  }
-
-  override async getDefaultWorkspaceStatus(): Promise<DefaultWorkspaceStatus> {
-    return this.engineAccessor.get(IDefaultWorkspace).status();
   }
 
   /**

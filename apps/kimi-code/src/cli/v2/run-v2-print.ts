@@ -329,13 +329,9 @@ export async function runV2Print(
         stderr,
       );
     }
-    const defaultWorkspacePath =
-      opts.defaultWorkspace === true
-        ? await app.accessor.get(IDefaultWorkspace).path()
-        : undefined;
     writeResumeHint(
       resolved.session.id,
-      resumeCommand(opts, resolved.session.id, workDir, defaultWorkspacePath),
+      resumeCommand(opts, resolved.session.id),
       outputFormat,
       stdout,
       stderr,

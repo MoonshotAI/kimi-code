@@ -38,8 +38,6 @@ export function defaultDocumentsDir(osHomeDir: string): string {
   return join(osHomeDir, 'Documents');
 }
 
-const FULLY_QUALIFIED_WIN32_PATH = /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/]+[^\\/]+)/;
-
 export function resolveCustomRoot(
   raw: string,
   osHomeDir: string,
@@ -47,9 +45,7 @@ export function resolveCustomRoot(
 ): string | undefined {
   if (platform === 'win32') {
     const expanded = /^~(?=$|[\\/])/.test(raw) ? osHomeDir + raw.slice(1) : raw;
-    if (!FULLY_QUALIFIED_WIN32_PATH.test(expanded)) return undefined;
-    const resolved = win32.normalize(expanded);
-    return FULLY_QUALIFIED_WIN32_PATH.test(resolved) ? normalize(resolved) : undefined;
+    return win32.isAbsolute(expanded) ? normalize(win32.normalize(expanded)) : undefined;
   }
   const expanded = /^~(?=$|\/)/.test(raw) ? osHomeDir + raw.slice(1) : raw;
   return posix.isAbsolute(expanded) ? posix.normalize(expanded) : undefined;

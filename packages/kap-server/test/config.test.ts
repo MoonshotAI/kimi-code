@@ -118,37 +118,6 @@ describe('server-v2 /api/v1/config', () => {
     expect(after.auto_session_title).toBe(false);
   });
 
-  it('POST { default_workspace } is rejected and leaves the config untouched', async () => {
-    await boot('[default_workspace]\npath = "~/Kept"\n');
-    const res = await authedFetch(server as RunningServer, base, '/api/v1/config', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ auto_session_title: false, default_workspace: { path: '~/Other' } }),
-    });
-    const body = (await res.json()) as Envelope<unknown>;
-
-    expect(body.code).toBe(ErrorCode.VALIDATION_FAILED);
-    expect(body.msg).toContain('PATCH /api/v1/default-workspace');
-    const config = (server as RunningServer).core.accessor.get(IConfigService);
-    expect(config.get('defaultWorkspace')).toEqual({ path: '~/Kept' });
-    expect((await getConfig()).auto_session_title).toBeUndefined();
-  });
-
-  it('GET leaves out default_workspace so its snapshot can be posted back', async () => {
-    await boot('[default_workspace]\npath = "~/Kept"\n');
-    const snapshot = (await getConfig()) as ConfigResponse & Record<string, unknown>;
-    expect(snapshot).not.toHaveProperty('default_workspace');
-
-    const res = await authedFetch(server as RunningServer, base, '/api/v1/config', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(snapshot),
-    });
-    const body = (await res.json()) as Envelope<unknown>;
-
-    expect(body.code).toBe(0);
-  });
-
   it('GET omits auto_session_title when the field is absent from config.toml', async () => {
     await boot();
     const cfg = await getConfig();

@@ -664,13 +664,13 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | --- | --- | --- | --- |
 | `workspace_id` | body | string | 未提供 `metadata.cwd` 和 `default_workspace` 时**必填**。已注册的工作区 id；会话创建于该工作区的根目录 |
 | `metadata` | body | object | 自定义元数据。`metadata.cwd` 为工作目录，未提供 `workspace_id` 和 `default_workspace` 时**必填**；与 `workspace_id` 同时提供时必须等于工作区根目录 |
-| `default_workspace` | body | boolean | 为 `true` 时会话创建于默认工作区——未[自定义位置](#patch-api-v1-default-workspace)时为 `<文稿目录>/KimiCode/Default`——目录按需创建并注册为普通工作区。不能与 `workspace_id` 或 `metadata.cwd` 同时提供 |
+| `default_workspace` | body | boolean | 为 `true` 时会话创建于默认工作区——未[自定义位置](#patch-api-v1-default-workspace)时为 `<文稿目录>/KimiCode/Default`——目录按需创建并注册为普通工作区。不能与 `workspace_id` 或 `metadata` 同时提供 |
 | `title` | body | string | 初始标题（至少 1 个字符）；否则会话无标题 |
 | `agent_config` | body | object | schema 接受该字段但当前不会应用——模型与各模式请通过 `POST /api/v1/sessions/{session_id}/profile` 设置 |
 
 成功时，`data` 为新会话的 [session 对象](#session-对象)。
 
-- `40001`：`workspace_id`、`metadata.cwd`、`default_workspace` 都未提供，`default_workspace` 与另外两者之一同时提供，或 `metadata.cwd` 与工作区根目录不一致（`details` 会列出该字段）
+- `40001`：`workspace_id`、`metadata.cwd`、`default_workspace` 都未提供，`default_workspace` 与 `workspace_id` 或 `metadata` 同时提供，或 `metadata.cwd` 与工作区根目录不一致（`details` 会列出该字段）
 - `40409`：工作目录不存在或不是目录
 - `40410`：没有以该 `workspace_id` 注册的工作区
 - `40930`：默认工作区目录无法创建或使用；`data` 为 `{ path, reason }`，取值见 [`PATCH /api/v1/default-workspace`](#patch-api-v1-default-workspace)
@@ -1628,7 +1628,7 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 | `POST /api/v1/workspaces/{workspace_id}/trust` | 授予信任 |
 | `POST /api/v1/workspaces/{workspace_id}/untrust` | 撤销信任 |
 | `POST /api/v1/workspaces/{workspace_id}/add-dir` | 添加附加目录 |
-| `GET /api/v1/default-workspace` | 读取默认工作区位置及其状态 |
+| `GET /api/v1/default-workspace` | 读取默认工作区位置 |
 | `PATCH /api/v1/default-workspace` | 设置或清除自定义默认工作区位置 |
 
 #### workspace 对象
@@ -1745,7 +1745,7 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 
 #### `GET /api/v1/default-workspace`
 
-读取以 `default_workspace` 创建的会话所在位置。未在 `config.toml` 中设置 `default_workspace.path` 时为 `<文稿目录>/KimiCode/Default`。该接口不会创建目录。该设置不在 `GET /api/v1/config` 中返回，`POST /api/v1/config` 带上它会返回 `40001`。位置一旦变化（无论经 `PATCH` 还是直接编辑 `config.toml`），所有已注册工作区都会广播 `event.workspace.updated`，携带最新的 `is_default`。
+读取以 `default_workspace` 创建的会话所在位置。未在 `config.toml` 中设置 `default_workspace.path` 时为 `<文稿目录>/KimiCode/Default`。该接口不会创建目录。修改位置请用 `PATCH`，`POST /api/v1/config` 会忽略该设置。修改位置不会广播工作区事件，需重新请求 `GET /api/v1/workspaces` 获取最新的 `is_default`。
 
 成功时 `data` 为：
 
@@ -1753,13 +1753,11 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 | --- | --- | --- |
 | `path` | string \| null | 实际生效的绝对路径；无法解析时为 `null` |
 | `custom_path` | string \| null | 保存的自定义位置（可能以 `~` 开头）；未设置时为 `null` |
-| `system_path` | string \| null | 未设置自定义位置时使用的路径；无法定位文稿目录时为 `null` |
 | `exists` | boolean | 目录是否存在 |
-| `problem` | string \| null | 目录无法使用的原因，取值同下文 `reason`；未发现问题时为 `null` |
 
 #### `PATCH /api/v1/default-workspace`
 
-设置自定义默认工作区位置；传 `null`（或空字符串）清除，回到系统位置。路径须为绝对路径，或以 `~/` 开头表示主目录；会检查是否可写，但不会创建目录。已有文件和工作区不会被移动。
+设置自定义默认工作区位置；传 `null`（或空字符串）清除，回到系统位置。路径须为绝对路径，或以 `~/` 开头表示主目录；目录不存在时会自动创建。已有文件和工作区不会被移动。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -1768,7 +1766,7 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 成功时 `data` 与 `GET /api/v1/default-workspace` 相同。
 
 - `40001`：校验失败（`details` 逐字段说明）
-- `40930`：该位置无法使用，已保存的位置保持不变。`data` 为 `{ path, reason }`，`reason` 取值：`blocked_by_file`（需要目录的位置被文件占用）、`permission_denied`、`missing_parent`（检查期间父目录消失）、`no_space`、`read_only`、`invalid_path`（非绝对路径或过长）、`documents_unavailable`（无法定位系统文稿目录）、`unknown`
+- `40930`：该位置无法使用，已保存的位置保持不变。`data` 为 `{ path, reason }`，`reason` 取值：`blocked_by_file`（需要目录的位置被文件占用）、`permission_denied`、`missing_parent`（上级目录或盘符不可用）、`no_space`、`read_only`、`invalid_path`（非绝对路径或过长）、`documents_unavailable`（无法定位系统文稿目录）、`unknown`
 
 ### 文件系统
 

@@ -2,16 +2,9 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import {
-  IConfigService,
-  IEventService,
-  IWorkspaceService,
-  WorkspaceUpdated,
-  type Scope,
-} from '@moonshot-ai/agent-core-v2';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { IConfigService } from '@moonshot-ai/agent-core-v2';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { startDefaultWorkspacePublisher } from '../src/services/defaultWorkspace/defaultWorkspacePublisher';
 import { type RunningServer, startServer } from '../src/start';
 import { authHeaders } from './helpers/auth';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -26,9 +19,7 @@ interface Envelope<T> {
 interface StatusWire {
   path: string | null;
   custom_path: string | null;
-  system_path: string | null;
   exists: boolean;
-  problem: string | null;
 }
 
 interface WorkspaceWire {
@@ -76,7 +67,7 @@ describe('server-v2 /api/v1/default-workspace', () => {
     return (await res.json()) as Envelope<T>;
   }
 
-  it('stores a custom location in config.toml and reports it without creating the folder', async () => {
+  it('creates the custom location and stores it in config.toml', async () => {
     const target = join(scratch, 'Chats');
 
     const updated = await request<StatusWire>('PATCH', '/api/v1/default-workspace', {
@@ -84,12 +75,7 @@ describe('server-v2 /api/v1/default-workspace', () => {
     });
 
     expect(updated.code).toBe(0);
-    expect(updated.data).toMatchObject({
-      path: target,
-      custom_path: target,
-      exists: false,
-      problem: null,
-    });
+    expect(updated.data).toEqual({ path: target, custom_path: target, exists: true });
     expect(await readFile(join(home, 'config.toml'), 'utf8')).toContain('[default_workspace]');
 
     const fetched = await request<StatusWire>('GET', '/api/v1/default-workspace');
@@ -120,35 +106,13 @@ describe('server-v2 /api/v1/default-workspace', () => {
 
     const reset = await request<StatusWire>('PATCH', '/api/v1/default-workspace', { path: null });
     expect(reset.data.custom_path).toBeNull();
-    expect(reset.data.path).toBe(reset.data.system_path);
+    expect(reset.data.path).not.toBe(project);
+    expect(await readFile(join(home, 'config.toml'), 'utf8')).not.toContain('[default_workspace]');
+    await (server as RunningServer).core.accessor.get(IConfigService).reload();
+    const reloaded = await request<StatusWire>('GET', '/api/v1/default-workspace');
+    expect(reloaded.data.custom_path).toBeNull();
     const afterReset = await request<{ items: WorkspaceWire[] }>('GET', '/api/v1/workspaces');
     expect(afterReset.data.items.find((ws) => ws.id === created.data.id)?.is_default).toBe(false);
-  });
-
-  it('announces workspace updates when config.toml moves the default location', async () => {
-    const project = join(scratch, 'edited');
-    await mkdir(project, { recursive: true });
-    const created = await request<WorkspaceWire>('POST', '/api/v1/workspaces', { root: project });
-    const updated: string[] = [];
-    const subscription = (server as RunningServer).core.accessor
-      .get(IEventService)
-      .subscribe((event) => {
-        if (event instanceof WorkspaceUpdated) updated.push(event.payload.workspace.id);
-      });
-    try {
-      await writeFile(
-        join(home, 'config.toml'),
-        `[default_workspace]\npath = ${JSON.stringify(project)}\n`,
-        'utf8',
-      );
-      await (server as RunningServer).core.accessor.get(IConfigService).reload();
-
-      await vi.waitFor(() => expect(updated).toContain(created.data.id));
-      const listed = await request<{ items: WorkspaceWire[] }>('GET', '/api/v1/workspaces');
-      expect(listed.data.items.find((ws) => ws.id === created.data.id)?.is_default).toBe(true);
-    } finally {
-      subscription.dispose();
-    }
   });
 
   it.each([
@@ -169,41 +133,5 @@ describe('server-v2 /api/v1/default-workspace', () => {
     expect(rejected.data.reason).toBe(reason);
     const status = await request<StatusWire>('GET', '/api/v1/default-workspace');
     expect(status.data.custom_path).toBe(kept);
-  });
-});
-
-describe('default workspace publisher', () => {
-  it('logs a warning when workspace updates cannot be broadcast', async () => {
-    let onSectionChange: ((event: { domain: string }) => void) | undefined;
-    const services = new Map<unknown, unknown>([
-      [
-        IConfigService,
-        {
-          onDidSectionChange: (listener: (event: { domain: string }) => void) => {
-            onSectionChange = listener;
-            return { dispose: () => undefined };
-          },
-        },
-      ],
-      [
-        IWorkspaceService,
-        {
-          list: async () => {
-            throw new Error('catalog unavailable');
-          },
-        },
-      ],
-      [IEventService, { publish: vi.fn() }],
-    ]);
-    const core = { accessor: { get: (id: unknown) => services.get(id) } } as unknown as Scope;
-    const warn = vi.fn();
-    const publisher = startDefaultWorkspacePublisher(core, { warn });
-
-    onSectionChange?.({ domain: 'defaultWorkspace' });
-
-    await vi.waitFor(() => {
-      expect(warn).toHaveBeenCalledWith({ err: 'catalog unavailable' }, expect.any(String));
-    });
-    publisher.close();
   });
 });

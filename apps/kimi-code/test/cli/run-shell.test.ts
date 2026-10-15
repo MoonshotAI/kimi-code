@@ -1,7 +1,4 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 import type { createKimiDeviceId as createKimiDeviceIdFn } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -67,7 +64,6 @@ const mocks = vi.hoisted(() => {
     execFileSync: vi.fn(() => ''),
     spawnSync: vi.fn(),
     resolveCommandPath: vi.fn(() => '/bin/stty' as string | undefined),
-    harnessEnsureDefaultWorkspace: vi.fn(async () => '/tmp'),
     TuiConfigParseError,
   };
 });
@@ -83,7 +79,6 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
         getCachedAccessToken: mocks.harnessGetCachedAccessToken,
       },
       ensureConfigFile: mocks.harnessEnsureConfigFile,
-      ensureDefaultWorkspace: mocks.harnessEnsureDefaultWorkspace,
       getConfig: mocks.harnessGetConfig,
       getConfigDiagnostics: mocks.harnessGetConfigDiagnostics,
       close: mocks.harnessClose,
@@ -363,24 +358,8 @@ describe('runShell', () => {
     if (process.platform === 'win32') return;
     mocks.resolveCommandPath.mockReturnValue(undefined);
     await runShell(minimalCliOptions, '1.2.3-test');
-    expect(mocks.resolveCommandPath).toHaveBeenCalledWith('stty', [process.cwd(), process.cwd()]);
+    expect(mocks.resolveCommandPath).toHaveBeenCalledWith('stty');
     expect(execFileSync).not.toHaveBeenCalled();
-  });
-
-  it('keeps the launch directory excluded from the stty lookup under --default-workspace', async () => {
-    stubTuiStartup();
-    if (process.platform === 'win32') return;
-    const launchDir = process.cwd();
-    const workspace = realpathSync(mkdtempSync(join(tmpdir(), 'kimi-run-shell-default-')));
-    mocks.harnessEnsureDefaultWorkspace.mockResolvedValue(workspace);
-    vi.stubEnv('PWD', launchDir);
-    try {
-      await runShell({ ...minimalCliOptions, defaultWorkspace: true }, '1.2.3-test');
-      expect(mocks.resolveCommandPath).toHaveBeenCalledWith('stty', [workspace, launchDir]);
-    } finally {
-      process.chdir(launchDir);
-      rmSync(workspace, { recursive: true, force: true });
-    }
   });
 
   it('resolves the --agent profile into the TUI startup input', async () => {

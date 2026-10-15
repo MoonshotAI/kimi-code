@@ -101,29 +101,6 @@ describe('SessionPickerComponent', () => {
     expect(output).toContain('please redesign the picker UI');
   });
 
-  it('names the default workspace instead of printing its path', () => {
-    const component = new SessionPickerComponent({
-      sessions: [
-        {
-          id: 'ses_default',
-          title: 'Quick question',
-          work_dir: '/Users/someone/Documents/KimiCode/Default',
-          in_default_workspace: true,
-          updated_at: Date.now(),
-        },
-      ],
-      loading: false,
-      currentSessionId: 'ses_other',
-      onSelect: vi.fn(),
-      onCancel: vi.fn(),
-    });
-
-    const output = renderPlain(component);
-
-    expect(output).toContain('Default workspace');
-    expect(output).not.toContain('KimiCode/Default');
-  });
-
   it('omits the last-prompt row when last_prompt is missing', () => {
     const now = new Date('2026-05-11T12:00:00.000Z').getTime();
     vi.spyOn(Date, 'now').mockReturnValue(now);
