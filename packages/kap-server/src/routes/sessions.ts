@@ -1022,6 +1022,8 @@ async function deleteSessionAction(ctx: SessionActionCtx): Promise<void> {
 async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
   const { core, req, reply, id } = ctx;
   const live = getLiveSessionById(core.accessor, id);
+  const indexEntry =
+    live === undefined ? await core.accessor.get(ISessionIndex).get(id) : undefined;
   if (live !== undefined) {
     const agentLifecycle = live.accessor.get(IAgentLifecycleService);
     for (const agent of agentLifecycle.list()) {
@@ -1035,9 +1037,11 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
         );
       }
     }
-  } else if ((await core.accessor.get(ISessionIndex).get(id)) === undefined) {
+  } else if (indexEntry === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
   }
+  const workspaceId =
+    live?.accessor.get(ISessionContext).workspaceId ?? indexEntry?.workspaceId;
   let previousSubagentNames: readonly string[] | undefined;
   let previousModelPool: SubagentModelPoolSnapshot | null | undefined;
   let staleNotifier: IAgentChangeNotifierService | undefined;
@@ -1060,7 +1064,7 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
   try {
     await core.accessor.get(IConfigService).reload();
     await core.accessor.get(IPluginService).reloadPlugins();
-    await refreshWorkspaceCatalogs(core, id);
+    await refreshWorkspaceCatalogs(core, workspaceId, id);
   } catch (error) {
     staleNotifier?.unmute();
     throw error;
@@ -1091,25 +1095,27 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
   reply.send(okEnvelope(session, req.id));
 }
 
-async function refreshWorkspaceCatalogs(core: Scope, excludedSessionId: string): Promise<void> {
-  const workspaces = core.accessor.get(IWorkspaceInstanceManager);
+async function refreshWorkspaceCatalogs(
+  core: Scope,
+  workspaceId: string | undefined,
+  excludedSessionId: string,
+): Promise<void> {
+  if (workspaceId !== undefined) {
+    const target = core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
+    if (target !== undefined) {
+      await target.program.instructions.reload();
+      await target.program.skills.reload();
+      await target.program.agentProfiles.reload().catch(() => undefined);
+      await target.program.userAgentProfiles.reload().catch(() => undefined);
+    }
+  }
+  const sessions = core.accessor.get(ISessionManager).list();
   await Promise.all(
-    workspaces.list().map(async (handler) => {
-      await handler.program.skills.reload();
-      await handler.program.agentProfiles.reload().catch(() => undefined);
-      await handler.program.userAgentProfiles.reload().catch(() => undefined);
-      const sessions = core.accessor
-        .get(ISessionManager)
-        .list()
-        .filter((session) => session.accessor.get(ISessionContext).workspaceId === handler.id);
-      await Promise.all(
-        sessions.map(async (session) => {
-          if (session.id === excludedSessionId) return;
-          const main = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
-          if (main === undefined) return;
-          await main.accessor.get(IAgentPluginService).refreshSessionStart();
-        }),
-      );
+    sessions.map(async (session) => {
+      if (session.id === excludedSessionId) return;
+      const main = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
+      if (main === undefined) return;
+      await main.accessor.get(IAgentPluginService).refreshSessionStart();
     }),
   );
 }
