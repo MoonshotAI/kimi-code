@@ -721,9 +721,13 @@ export interface AgentStateSnapshot {
   // replayable · durable — folds: ChangeNotifierSnapshotEvent
   'changeNotifier.snapshot': /* ChangeNotifierSnapshotState — packages/agent-core-v2/src/agent/changeNotifier/changeNotifierOps.ts */ {
     readonly agentsMdHash?: string;
+    readonly agentsMdFiles?: Readonly<Record<string, string>>;
     readonly skillsHash?: string;
     readonly subagentNames?: readonly string[];
-    readonly modelPoolAliases?: readonly string[];
+    readonly modelPool?: /* SubagentModelPoolSnapshot — packages/agent-core-v2/src/agent/changeNotifier/changeNotifier.ts */ {
+      readonly defaultModel?: string;
+      readonly models: Readonly<Record<string, string>>;
+    };
   };
   // src/agent/contextMemory/contextOps.ts
   // replayable · durable · undoable — folds: ContextAppendMessage, ContextAppendLoopEvent, ContextClear, ContextApplyCompaction

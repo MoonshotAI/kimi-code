@@ -1374,6 +1374,7 @@ describe('change-notifier belief seeding', () => {
         notifySkillChanges: async () => {},
         notifySubagentChanges: async () => {},
         seedBeliefs,
+        mute: () => {},
       }),
     );
     return ctx.get(IAgentProfileService);

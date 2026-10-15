@@ -156,6 +156,7 @@ describe('AgentProfileService.applyProfile', () => {
         notifySkillChanges: async () => {},
         notifySubagentChanges: async () => {},
         seedBeliefs,
+        mute: () => {},
       }),
     );
 

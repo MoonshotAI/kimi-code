@@ -99,9 +99,10 @@ interface ChangeNotifierSnapshotPayload {
   _name: 'changeNotifier.snapshot';
   agentId: string;
   agentsMdHash: string | null;
+  agentsMdFiles: Record<string, string> | null;
   skillsHash: string | null;
   subagentNames: string[] | null;
-  modelPoolAliases: string[] | null;
+  modelPool: object | null;
 }
 
 /**
