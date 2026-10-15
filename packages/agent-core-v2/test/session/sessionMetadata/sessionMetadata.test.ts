@@ -7,7 +7,7 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
 import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { SessionMetadata } from '#/session/sessionMetadata/sessionMetadataService';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
@@ -670,5 +670,26 @@ describe('SessionMetadata', () => {
     await meta.setArchived(true);
     expect(mirror.recorded).toHaveLength(1);
     expect(mirror.recorded[0]?.archived).toBe(true);
+  });
+
+  it('re-reads state.json when the lock was re-acquired after an external write', async () => {
+    const meta = ix.get(ISessionMetadata);
+    const locks = ix.get(ISessionLockService);
+    const store = ix.get(IAtomicDocumentStore);
+    await meta.setTitle('mine');
+
+    locks.endRun('s1');
+    const current = await store.get<SessionMeta>(META_SCOPE, 'state.json');
+    await store.set(META_SCOPE, 'state.json', {
+      ...current!,
+      title: 'theirs',
+      updatedAt: Date.now(),
+    });
+
+    await meta.update({ lastPrompt: 'hello' });
+
+    const persisted = await store.get<SessionMeta>(META_SCOPE, 'state.json');
+    expect(persisted?.title).toBe('theirs');
+    expect(persisted?.lastPrompt).toBe('hello');
   });
 });

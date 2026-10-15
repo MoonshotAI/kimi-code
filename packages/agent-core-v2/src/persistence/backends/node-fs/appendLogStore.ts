@@ -288,6 +288,11 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
   private async settleRetiredState(scope: string, key: string, state: LogState): Promise<void> {
     try {
       await this.flushState(scope, key, state);
+      if (state.pending.length > 0) {
+        console.warn(
+          `[append-log] ${scope}/${key}: dropping ${state.pending.length} unflushed record(s) on close; session lock was unavailable`,
+        );
+      }
     } finally {
       const id = logId(scope, key);
       if (this.logs.get(id) === state) this.logs.delete(id);

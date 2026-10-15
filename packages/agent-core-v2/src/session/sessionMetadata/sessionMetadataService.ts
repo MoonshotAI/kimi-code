@@ -48,6 +48,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
   );
   private readonly scope: string;
   private updateQueue: Promise<void> = Promise.resolve();
+  private lastRefreshToken: string | undefined;
 
   constructor(
     @ISessionStateService private readonly states: ISessionStateService,
@@ -111,12 +112,14 @@ export class SessionMetadata extends Service implements ISessionMetadata {
   }
 
   private async ensureWriteOwnership(): Promise<void> {
-    if (this.sessionLocks.held(this.ctx.sessionId)) return;
     this.sessionLocks.beginRun(this.ctx.sessionId);
+    const token = this.sessionLocks.holdToken(this.ctx.sessionId);
+    if (token !== undefined && token === this.lastRefreshToken) return;
     const existing = await this.store.get<SessionMeta>(this.scope, META_KEY);
     if (existing !== undefined) {
       this.data = normalizeSessionMeta(existing, this.ctx.sessionId);
     }
+    this.lastRefreshToken = token;
   }
 
   private tryHoldForWrite(): boolean {

@@ -108,6 +108,10 @@ export class SessionLockService extends Disposable implements ISessionLockServic
     return this.heldLocks.has(sessionId);
   }
 
+  holdToken(sessionId: string): string | undefined {
+    return this.heldLocks.get(sessionId)?.token;
+  }
+
   override dispose(): void {
     this.releaseAll();
     super.dispose();

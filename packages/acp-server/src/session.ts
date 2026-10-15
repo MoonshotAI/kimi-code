@@ -131,12 +131,16 @@ export function mapPromptLaunchError(error: unknown, sessionId: string): Request
     log.warn('acp: prompt rejected because another turn is active', { sessionId });
     return RequestError.invalidRequest({ code }, message);
   }
-  if (code === SESSION_OCCUPIED_CODE || code === SESSION_STALE_CODE) {
-    log.warn('acp: prompt rejected due to a cross-client session conflict', {
-      sessionId,
-      conflict: code,
-    });
+  if (code === SESSION_OCCUPIED_CODE) {
+    log.warn('acp: prompt rejected because another client holds the session', { sessionId });
     return RequestError.invalidRequest({ code }, message);
+  }
+  if (code === SESSION_STALE_CODE) {
+    log.warn('acp: prompt rejected because the session was updated elsewhere', { sessionId });
+    return RequestError.invalidRequest(
+      { code },
+      'Session was updated by another client. Close and reopen the session, then retry.',
+    );
   }
   log.error('acp: prompt launch failed', {
     sessionId,

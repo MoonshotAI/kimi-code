@@ -2072,25 +2072,29 @@ export class KimiTUI {
       holder_client: holderClient,
       opener_client: CLI_MSH_PLATFORM,
     });
+    const cancelOccupied = (): void => {
+      this.track('occupied_choice', { choice: 'cancel', holder_client: holderClient });
+      this.staging.releaseRecalled([
+        ...(options?.imageAttachmentIds ?? []),
+        ...(options?.videoAttachmentIds ?? []),
+      ]);
+      this.restoreInputText(input);
+    };
     this.mountEditorReplacement(
       new SessionOccupiedDialogComponent({
         client,
         onSelect: (action) => {
-          if (action !== 'retry') return;
-          this.track('occupied_choice', { choice: 'retry', holder_client: holderClient });
-          this.restoreEditor();
-          this.state.queuedMessages.unshift(this.toQueuedMessage(input, options));
-          this.updateQueueDisplay();
-          this.drainQueueIfIdle();
+          if (action === 'retry') {
+            this.track('occupied_choice', { choice: 'retry', holder_client: holderClient });
+            this.restoreEditor();
+            this.state.queuedMessages.unshift(this.toQueuedMessage(input, options));
+            this.updateQueueDisplay();
+            this.drainQueueIfIdle();
+            return;
+          }
+          cancelOccupied();
         },
-        onCancel: () => {
-          this.track('occupied_choice', { choice: 'cancel', holder_client: holderClient });
-          this.staging.releaseRecalled([
-            ...(options?.imageAttachmentIds ?? []),
-            ...(options?.videoAttachmentIds ?? []),
-          ]);
-          this.restoreInputText(input);
-        },
+        onCancel: cancelOccupied,
       }),
     );
   }

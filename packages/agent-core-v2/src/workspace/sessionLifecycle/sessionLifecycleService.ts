@@ -431,23 +431,28 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   async archive(sessionId: string): Promise<void> {
     const handle = this.sessions.get(sessionId);
     if (handle === undefined) return;
-    const meta = handle.accessor.get(ISessionMetadata);
-    await meta.setArchived(true);
-    await this.drainAgents(handle);
-    await this.appendLogStore.drainRetirements();
-    this.event.publish(
-      new SessionArchived({
-        payload: { sessionId, workspaceId: this.workspaceContext.workspaceId },
-      }),
-    );
-    await this.announceWillClose({ sessionId, handle, reason: 'archive' });
-    this.sessions.delete(sessionId);
-    await drainSessionMetadataWrites();
-    await this.indexMirror.drain();
-    void handle.dispose();
-    await drainLogCloses();
-    this._onDidArchiveSession.fire({ sessionId });
-    this.telemetry.withContext({ session_id: sessionId }).track2('session_ended', { reason: 'archive' });
+    const lease = this.sessionLocks.acquire(sessionId);
+    try {
+      const meta = handle.accessor.get(ISessionMetadata);
+      await meta.setArchived(true);
+      await this.drainAgents(handle);
+      await this.appendLogStore.drainRetirements();
+      this.event.publish(
+        new SessionArchived({
+          payload: { sessionId, workspaceId: this.workspaceContext.workspaceId },
+        }),
+      );
+      await this.announceWillClose({ sessionId, handle, reason: 'archive' });
+      this.sessions.delete(sessionId);
+      await drainSessionMetadataWrites();
+      await this.indexMirror.drain();
+      void handle.dispose();
+      await drainLogCloses();
+      this._onDidArchiveSession.fire({ sessionId });
+      this.telemetry.withContext({ session_id: sessionId }).track2('session_ended', { reason: 'archive' });
+    } finally {
+      lease.release();
+    }
   }
 
   async restore(

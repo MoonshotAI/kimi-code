@@ -7,9 +7,12 @@ import {
 } from '#/persistence/interface/sessionLock';
 
 interface HeldState {
+  token: string;
   run: boolean;
   explicit: number;
 }
+
+let tokenSeq = 0;
 
 export class InMemorySessionLockService implements ISessionLockService {
   declare readonly _serviceBrand: undefined;
@@ -24,7 +27,7 @@ export class InMemorySessionLockService implements ISessionLockService {
       state.run = true;
       return;
     }
-    this.heldSessions.set(sessionId, { run: true, explicit: 0 });
+    this.heldSessions.set(sessionId, { token: `mem-${++tokenSeq}`, run: true, explicit: 0 });
     this.holdEmitter.fire({ sessionId });
   }
 
@@ -38,7 +41,7 @@ export class InMemorySessionLockService implements ISessionLockService {
   acquire(sessionId: string): SessionLockLease {
     let state = this.heldSessions.get(sessionId);
     if (state === undefined) {
-      state = { run: false, explicit: 0 };
+      state = { token: `mem-${++tokenSeq}`, run: false, explicit: 0 };
       this.heldSessions.set(sessionId, state);
       this.holdEmitter.fire({ sessionId });
     }
@@ -57,5 +60,9 @@ export class InMemorySessionLockService implements ISessionLockService {
 
   held(sessionId: string): boolean {
     return this.heldSessions.has(sessionId);
+  }
+
+  holdToken(sessionId: string): string | undefined {
+    return this.heldSessions.get(sessionId)?.token;
   }
 }

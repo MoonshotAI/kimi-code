@@ -33,6 +33,7 @@ export interface ISessionLockService {
   endRun(sessionId: string): void;
   acquire(sessionId: string): SessionLockLease;
   held(sessionId: string): boolean;
+  holdToken(sessionId: string): string | undefined;
 }
 
 export const ISessionLockService: ServiceIdentifier<ISessionLockService> =
