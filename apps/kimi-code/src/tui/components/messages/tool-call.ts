@@ -43,7 +43,6 @@ import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
 import { buildGoalToolHeader, parseGoalToolOutput } from './tool-renderers/goal';
 import { searchNoticeOnly } from './tool-renderers/grep-output';
 import { parseReadMediaOutput } from './tool-renderers/media';
-import { computeWriteStats } from './tool-renderers/chip';
 import { nonEmptyLines, outcomeLine, outcomeRows } from './tool-renderers/outcome';
 import { TruncatedOutputComponent } from './tool-renderers/truncated';
 import { isSpilledToolOutput } from './tool-renderers/types';
@@ -860,7 +859,9 @@ export class ToolCallComponent extends Container {
     if (result === undefined) return nonEmptyLines(this.liveOutput).length > 1;
     if (result.output.length === 0) return false;
     if (result.output.trimStart().startsWith('<system-reminder>')) return false;
-    if (result.is_error === true) return nonEmptyLines(result.output).length > RESULT_PREVIEW_LINES;
+    // Mirror the error preview's fold threshold: the hint row replaces the
+    // hidden rows, so a single hidden row leaves nothing for ctrl+o to gain.
+    if (result.is_error === true) return nonEmptyLines(result.output).length > RESULT_PREVIEW_LINES + 1;
     switch (name) {
       case 'ReadMediaFile':
         // A media envelope renders its body only when expanded; anything else
@@ -959,10 +960,15 @@ export class ToolCallComponent extends Container {
         });
         return capped.length !== full.length || capped.at(-1) !== full.at(-1);
       }
-      case 'Write':
-        // Mirror the buildCallPreview cap: the hint row replaces the hidden
-        // rows, so a single hidden row would leave nothing for ctrl+o to gain.
-        return computeWriteStats(args).lines > COMMAND_PREVIEW_LINES + 1;
+      case 'Write': {
+        // Mirror buildCallPreview's cap exactly: highlightLines keeps a
+        // trailing empty entry for a final newline (computeWriteStats strips
+        // it), and the hint row replaces the hidden rows, so a single hidden
+        // row would leave nothing for ctrl+o to gain.
+        const content = str(args['content']);
+        const filePath = str(args['file_path'] ?? args['path']);
+        return highlightLines(content, langFromPath(filePath)).length > COMMAND_PREVIEW_LINES + 1;
+      }
       default:
         return false;
     }

@@ -198,6 +198,45 @@ describe('ToolCallComponent', () => {
     expect(collapsed).toContain('… (2 more lines, ctrl+o to expand)');
   });
 
+  it('keeps a failing command fully visible when only one row would hide', () => {
+    const component = new ToolCallComponent(
+      {
+        id: 'call_shell_err_edge',
+        name: 'Bash',
+        args: { command: 'false' },
+      },
+      {
+        tool_call_id: 'call_shell_err_edge',
+        output: ['err1', 'err2', 'err3', 'err4'].join('\n'),
+        is_error: true,
+      },
+    );
+
+    const collapsed = strip(component.render(100).join('\n'));
+    expect(collapsed).toContain('err1');
+    expect(collapsed).toContain('err4');
+    expect(collapsed).not.toContain('more lines');
+    expect(component.hasHiddenContent()).toBe(false);
+  });
+
+  it('advertises ctrl+o for a failing command once folding saves a row', () => {
+    const component = new ToolCallComponent(
+      {
+        id: 'call_shell_err_fold',
+        name: 'Bash',
+        args: { command: 'false' },
+      },
+      {
+        tool_call_id: 'call_shell_err_fold',
+        output: ['err1', 'err2', 'err3', 'err4', 'err5'].join('\n'),
+        is_error: true,
+      },
+    );
+
+    component.render(100);
+    expect(component.hasHiddenContent()).toBe(true);
+  });
+
   it('renders live Bash output while the command is running', () => {
     const component = new ToolCallComponent(
       {
@@ -2040,6 +2079,25 @@ describe('ToolCallComponent', () => {
     expect(out).toContain('line1');
     expect(out).toContain('line10');
     expect(out).not.toContain('line11');
+    expect(out).toContain('… (2 more lines, 12 total, ctrl+o to expand)');
+    expect(component.hasHiddenContent()).toBe(true);
+  });
+
+  it('keeps the Write cap and the expand predicate consistent for a trailing newline', () => {
+    // highlightLines keeps a trailing empty entry for content ending in '\n',
+    // so the renderer counts 12 rows for 11 visible lines; the predicate must
+    // count the same way or ctrl+o is refused while the hint stays.
+    const lines: string[] = [];
+    for (let i = 1; i <= 11; i++) lines.push(`line${String(i)}`);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_write_trailing',
+        name: 'Write',
+        args: { file_path: 'noext', content: lines.join('\n') + '\n' },
+      },
+      undefined,
+    );
+    const out = strip(component.render(100).join('\n'));
     expect(out).toContain('… (2 more lines, 12 total, ctrl+o to expand)');
     expect(component.hasHiddenContent()).toBe(true);
   });
