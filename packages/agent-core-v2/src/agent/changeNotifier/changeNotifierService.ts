@@ -180,12 +180,12 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
       }
       if (this.muted) return;
       const baseProfiles =
-        input?.previousSubagentNames ?? snapshot.subagentNames ?? currentProfiles;
+        snapshot.subagentNames ?? input?.previousSubagentNames ?? currentProfiles;
       const basePool =
-        input?.previousModelPool !== undefined
-          ? input.previousModelPool
-          : snapshot.subagentNames !== undefined
-            ? (snapshot.modelPool ?? null)
+        snapshot.subagentNames !== undefined
+          ? (snapshot.modelPool ?? null)
+          : input?.previousModelPool !== undefined
+            ? input.previousModelPool
             : currentPool;
       const profilesAdded = difference(currentProfiles, baseProfiles);
       const profilesRemoved = difference(baseProfiles, currentProfiles);

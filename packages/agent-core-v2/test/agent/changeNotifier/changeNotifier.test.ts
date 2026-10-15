@@ -765,6 +765,37 @@ describe('notifySubagentChanges', () => {
     expect(h.reminders[0]?.content).toContain('Models added: k1, k2');
   });
 
+  it('diffs the pool against persisted beliefs when the pre-reload capture is already current', async () => {
+    const h = createHarness({
+      profile: makeProfileData({ profileName: 'default' }),
+    });
+    h.secondaryModel.value = { defaultModel: 'k1', models: { k1: '' } };
+    await h.notifier.notifySubagentChanges();
+    expect(h.reminders).toHaveLength(0);
+
+    h.secondaryModel.value = { defaultModel: 'k2', models: { k2: '' } };
+    await h.notifier.notifySubagentChanges({
+      previousModelPool: { defaultModel: 'k2', models: { k2: '' } },
+    });
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('Models added: k2');
+    expect(h.reminders[0]?.content).toContain('Models removed: k1');
+    expect(h.reminders[0]?.content).toContain('Default model changed: k1 → k2');
+  });
+
+  it('diffs profiles against persisted beliefs when the pre-reload capture is already current', async () => {
+    const h = createHarness({
+      profile: makeProfileData({ profileName: 'default' }),
+    });
+    await h.notifier.notifySubagentChanges();
+    expect(h.reminders).toHaveLength(0);
+
+    h.profileNames.value = ['default', 'deploy'];
+    await h.notifier.notifySubagentChanges({ previousSubagentNames: ['default', 'deploy'] });
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('Profiles added: deploy');
+  });
+
   it('reports model description updates in the pool', async () => {
     const h = createHarness({
       profile: makeProfileData({ profileName: 'default' }),
