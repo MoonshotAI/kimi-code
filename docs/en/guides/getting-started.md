@@ -168,6 +168,59 @@ npm install -g @moonshot-ai/kimi-code@latest
 npm uninstall -g @moonshot-ai/kimi-code
 ```
 
+## FAQ
+
+::: details Empty model list during /login
+If you see the error "No models available for the selected platform" when running the `/login` command, it may be due to:
+
+- **Invalid or expired API key**: Check whether the API key you entered is correct and still valid.
+- **Network connection issues**: Confirm you can access the API service addresses (such as `api.kimi.com` or `api.moonshot.cn`).
+
+**Note: Distinguish Platforms**
+
+Kimi Code membership benefits and the [Kimi Platform](https://platform.kimi.com) have different Base URLs. Please ensure your Base URL and API Key are matched correctly.
+
+| Platform | Base URL | Billing | Key Source |
+|----------|----------|---------|------------|
+| **Kimi Code** | Anthropic-compatible: `https://api.kimi.com/coding/` | Membership subscription (quota included) | [Kimi Code Console](https://www.kimi.com/code/console) |
+| **Kimi Open Platform** | `https://api.moonshot.cn/v1` | Pay-as-you-go | [Kimi Open Platform](https://platform.kimi.com) |
+:::
+
+::: details Invalid API key
+Possible reasons:
+
+- **Typo**: Check for extra spaces or missing characters.
+- **Expired or revoked**: Verify the key status in the console.
+:::
+
+::: details Membership expired or quota exhausted
+Use the `/usage` command to check your current quota and membership status. If your quota is exhausted or membership has expired, renew or upgrade at [Kimi Code](https://kimi.com/code).
+:::
+
+::: details Image paste fails
+If you see "Current model does not support image input" when pasting with `Ctrl-V`, the current model does not support image input.
+
+Solutions:
+
+- **Switch to a vision-capable model**: Use a model with `image_in` capability.
+- **Check clipboard content**: Make sure the clipboard contains actual image data, not just a file path.
+:::
+
+::: details Slow first launch on macOS
+macOS Gatekeeper performs a security check on new programs the first time they run, causing a slow startup. Solutions:
+
+- **Wait for the check to complete**: Be patient on first launch; subsequent startups will be normal.
+- **Add to Developer Tools**: Go to System Settings → Privacy & Security → Developer Tools and add your terminal app.
+:::
+
+::: details How to upgrade Kimi Code CLI
+Run `kimi upgrade` inside the CLI to automatically check for the latest version and be guided through the upgrade. You can also use the package manager directly:
+
+```sh
+npm install -g @moonshot-ai/kimi-code@latest
+```
+:::
+
 ## Next steps
 
 - [Interaction and input](./interaction.md) — input box operations, approval flow, Plan mode, and Ask When Needed mode explained
