@@ -22,7 +22,13 @@ import type {
   StreamParser,
   StreamParserOptions,
 } from '#/llm/protocol/format';
-import { type Message, type StreamedMessagePart, type ToolDescription } from '#/llm/message';
+import {
+  isVacuousContentPart,
+  type Message,
+  type StreamedMessagePart,
+  type ThinkPart,
+  type ToolDescription,
+} from '#/llm/message';
 import { toolResultToPlainText } from '#/llm/protocol/patterns';
 import { applyPatterns } from '#/llm/protocol/rewrite';
 import type { ToolMessageConversion } from '#/llm/requester/requester';
@@ -213,6 +219,18 @@ export function createOpenAIFormat(): OpenAIProtocolFormat {
       const bufferedToolCalls = new Map<number | string, BufferedStreamToolCall>();
       let seenReasoningContent = false;
       const emittedThinkKeys = new Set<string>();
+      let textPending = false;
+
+      const notePending = (part: StreamedMessagePart): void => {
+        if (part.type === 'text') {
+          textPending = true;
+          return;
+        }
+        if (part.type === 'think' && textPending && isVacuousContentPart(part)) {
+          return;
+        }
+        textPending = false;
+      };
 
       function convertStreamToolCall(
         toolCall: OpenAIRawStreamToolCallDelta,
@@ -298,32 +316,64 @@ export function createOpenAIFormat(): OpenAIProtocolFormat {
         if (!delta) {
           return;
         }
-        const reasoningDetails =
-          options?.reasoningKey === undefined ? extractReasoningDetails(delta) : undefined;
-        for (const reasoning of extractReasoningStrings(delta)) {
+        const emit = (part: StreamedMessagePart): void => {
+          notePending(part);
+          sink.onDelta(part);
+        };
+        const reasoningValues = extractReasoningStrings(delta);
+        for (const reasoning of reasoningValues) {
           if (reasoning.key === 'reasoning_content') {
             seenReasoningContent = true;
           }
-          if (reasoning.value || !emittedThinkKeys.has(reasoning.key)) {
-            emittedThinkKeys.add(reasoning.key);
-            sink.onDelta({
-              type: 'think',
-              think: reasoning.value,
-              reasoningKey: reasoning.key,
-            });
-          }
         }
-        if (reasoningDetails !== undefined) {
-          for (const part of convertReasoningDetails(reasoningDetails, seenReasoningContent)) {
-            sink.onDelta(part);
+        const reasoningDetails =
+          options?.reasoningKey === undefined ? extractReasoningDetails(delta) : undefined;
+        const detailParts =
+          reasoningDetails !== undefined
+            ? convertReasoningDetails(reasoningDetails, seenReasoningContent)
+            : [];
+        const chunkHasText = typeof delta.content === 'string' && delta.content.length > 0;
+        const discardedMarkers: ThinkPart[] = [];
+        for (const [index, reasoning] of reasoningValues.entries()) {
+          const part: ThinkPart = {
+            type: 'think',
+            think: reasoning.value,
+            reasoningKey: reasoning.key,
+          };
+          const vacuous = isVacuousContentPart(part);
+          if (vacuous && emittedThinkKeys.has(reasoning.key)) {
+            continue;
           }
+          const laterRetains =
+            reasoningValues.slice(index + 1).some((item) => item.value.trim().length > 0) ||
+            detailParts.length > 0;
+          if (vacuous && textPending && chunkHasText && !laterRetains) {
+            discardedMarkers.push(part);
+            continue;
+          }
+          emittedThinkKeys.add(reasoning.key);
+          emit(part);
+        }
+        for (const part of detailParts) {
+          emit(part);
         }
         if (typeof delta.content === 'string' && delta.content.length > 0) {
-          sink.onDelta({ type: 'text', text: delta.content });
+          emit({ type: 'text', text: delta.content });
         }
+        let replayedDiscardedMarker = false;
         for (const toolCall of delta.tool_calls ?? []) {
-          for (const part of convertStreamToolCall(toolCall)) {
-            sink.onDelta(part);
+          const parts = convertStreamToolCall(toolCall);
+          if (!replayedDiscardedMarker && parts.length > 0) {
+            replayedDiscardedMarker = true;
+            const survivor = discardedMarkers.at(-1);
+            const key = survivor?.reasoningKey;
+            if (survivor !== undefined && key !== undefined && !emittedThinkKeys.has(key)) {
+              emittedThinkKeys.add(key);
+              emit(survivor);
+            }
+          }
+          for (const part of parts) {
+            emit(part);
           }
         }
       };

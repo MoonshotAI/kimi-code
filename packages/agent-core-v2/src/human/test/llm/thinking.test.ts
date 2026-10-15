@@ -18,6 +18,7 @@ import {
 } from '#/llm/thinking';
 import { kimiConnection, kimiOpenAITrait } from '#/llm-kimi/trait';
 import { classifyKimiQuotaError } from '#/llm-kimi/errors';
+import { lowerMessage } from '#/llm/requester/bases/openai/lower';
 import { createOpenAIRequester } from '#/llm/requester/bases/openai/requester';
 import type { LlmClientContext, LlmRequestEvent } from '#/llm/requester/requester';
 
@@ -924,6 +925,61 @@ describe('openai requester thinking', () => {
     ).resolves.toEqual([
       { type: 'think', think: 'We', reasoningKey: 'reasoning' },
       { type: 'text', text: 'ok' },
+    ]);
+  });
+
+  it('keeps one empty reasoning marker when text clears the first and a tool call repeats it', async () => {
+    const client = stubOpenAIClient(
+      chatCompletionChunks([
+        { content: 'hello' },
+        { content: ' world', reasoning: '' },
+        {
+          reasoning: '',
+          tool_calls: [
+            {
+              index: 0,
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'lookup', arguments: '{}' },
+            },
+          ],
+        },
+      ]),
+    );
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
+    const accumulator = createMessageAccumulator();
+    await requester.generate(
+      { model },
+      { messages },
+      {
+        signal: new AbortController().signal,
+        onEvent: (event) => {
+          if (event.type === 'llm.streaming.part') accumulator.push(event.part);
+        },
+      },
+    );
+    const message = accumulator.finish();
+    expect(message.content).toEqual([
+      { type: 'text', text: 'hello world' },
+      { type: 'think', think: '', reasoningKey: 'reasoning' },
+    ]);
+    expect(message.toolCalls).toEqual([
+      expect.objectContaining({ name: 'lookup', arguments: '{}' }),
+    ]);
+    const [wire] = lowerMessage(message, {
+      reasoningKey: 'reasoning_content',
+      preserveThinking: false,
+      toolMessageConversion: undefined,
+    });
+    expect(wire).toMatchObject({
+      role: 'assistant',
+      content: 'hello world',
+      reasoning: '',
+    });
+    expect(wire.tool_calls).toEqual([
+      expect.objectContaining({
+        function: { name: 'lookup', arguments: '{}' },
+      }),
     ]);
   });
 });
