@@ -1171,11 +1171,11 @@ export const telemetryEventDefinitions = {
   }),
   todo_turn_ended: defineAgentTelemetryEvent<TodoTurnEndedEvent>({
     owner: 'kimi-code',
-    comment: 'A main-agent turn ended while the todo list was non-empty.',
+    comment: 'A main-agent turn ended while the todo list was non-empty or had changed during the turn.',
     properties: {
       turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session',
       reason: 'How the turn ended',
-      item_count: 'Number of items in the list when the turn ended',
+      item_count: 'Number of items in the list when the turn ended; 0 when the list was cleared during the turn',
       open_count: 'Number of items still pending or in_progress when the turn ended',
       updated_in_turn: 'Whether the list changed during this turn',
     },

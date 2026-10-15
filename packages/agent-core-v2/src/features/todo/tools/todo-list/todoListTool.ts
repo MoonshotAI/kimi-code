@@ -89,7 +89,7 @@ function nextStepHint(progress: TodoProgress): string | undefined {
     return 'Several items are in_progress. Keep only the one you are working on now in_progress.';
   }
   if (progress.open === 1) {
-    return `"${current.title}" is the last open item. Mark it done before you write your final message.`;
+    return `"${current.title}" is the last open item. Once it is finished, mark it done before you write your final message; if it stays blocked or unfinished, keep it in_progress and say what remains in your reply.`;
   }
   return `When "${current.title}" is finished, mark it done and set the next item in_progress; that update can go in the same response as your next tool call.`;
 }

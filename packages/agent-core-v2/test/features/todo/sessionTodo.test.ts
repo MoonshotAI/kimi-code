@@ -230,6 +230,11 @@ describe('AgentTodoService', () => {
       bus.publish(new TurnEnded({ agentId: 'main', turnId: 1, reason: 'completed' }));
       bus.publish(new TurnStarted({ agentId: 'main', turnId: 2, origin: { kind: 'user' } }));
       bus.publish(new TurnEnded({ agentId: 'main', turnId: 2, reason: 'cancelled' }));
+      bus.publish(new TurnStarted({ agentId: 'main', turnId: 3, origin: { kind: 'user' } }));
+      await todo.replace([]);
+      bus.publish(new TurnEnded({ agentId: 'main', turnId: 3, reason: 'completed' }));
+      bus.publish(new TurnStarted({ agentId: 'main', turnId: 4, origin: { kind: 'user' } }));
+      bus.publish(new TurnEnded({ agentId: 'main', turnId: 4, reason: 'completed' }));
 
       const propertiesOf = (event: string) =>
         records.filter((record) => record.event === event).map((record) => record.properties);
@@ -250,6 +255,13 @@ describe('AgentTodoService', () => {
           item_count: 2,
           open_count: 1,
           updated_in_turn: false,
+        }),
+        expect.objectContaining({
+          turn_id: 3,
+          reason: 'completed',
+          item_count: 0,
+          open_count: 0,
+          updated_in_turn: true,
         }),
       ]);
     } finally {

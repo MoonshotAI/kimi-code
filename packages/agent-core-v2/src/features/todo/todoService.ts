@@ -77,7 +77,7 @@ const todoReminder = fromCallback(({
   const started = bus.subscribe(TurnStarted, () => { updatedInTurn = false; });
   const ended = bus.subscribe(TurnEnded, (event) => {
     const progress = todoProgress(runtime.getState());
-    if (progress.total === 0) return;
+    if (progress.total === 0 && !updatedInTurn) return;
     telemetry.track2('todo_turn_ended', {
       turn_id: event.turnId,
       reason: event.reason,
