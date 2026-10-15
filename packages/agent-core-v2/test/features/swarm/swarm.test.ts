@@ -981,7 +981,7 @@ describe('AgentSwarmTool', () => {
     );
   });
 
-  it('canonicalizes a legacy alias in resolveArgs and keeps fork raw', async () => {
+  it('canonicalizes a legacy alias in resolveArgs only for item-based non-fork spawns', async () => {
     const tool = new AgentSwarmTool(mockSwarmHost().swarmService, makeAgentScopeContext({ agentId: 'main', agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig(), stubCallerProfile()), stubCallerProfile(), stubSwarmCatalog());
     expect(
       tool.resolveArgs({
@@ -1000,6 +1000,13 @@ describe('AgentSwarmTool', () => {
         fork: true,
       }),
     ).toMatchObject({ subagent_type: 'general', fork: true });
+    expect(
+      tool.resolveArgs({
+        description: 'Resume review',
+        resume_agent_ids: { 'agent-old-1': 'Continue previous review' },
+        subagent_type: 'general',
+      }),
+    ).toMatchObject({ subagent_type: 'general' });
   });
 
   it('does not remap when a literal alias profile vanishes after resolveArgs', async () => {

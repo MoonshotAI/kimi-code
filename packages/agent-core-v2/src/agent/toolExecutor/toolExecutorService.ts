@@ -791,9 +791,7 @@ function preflightToolCall(
   }
   const resolvedArgs = tool.resolveArgs?.(parsedArgs.data);
   const args = resolvedArgs ?? parsedArgs.data;
-  const originalArgs = resolvedArgs !== undefined && resolvedArgs !== parsedArgs.data
-    ? parsedArgs.data
-    : undefined;
+  const originalArgs = resolvedArgs !== undefined ? parsedArgs.data : undefined;
   return { kind: 'runnable', toolCall, toolName, tool, args, originalArgs };
 }
 

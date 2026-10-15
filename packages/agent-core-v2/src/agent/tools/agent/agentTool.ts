@@ -286,7 +286,8 @@ export class SubagentTool implements ISubagentTool {
     args: SubagentToolInput,
     originalInput?: SubagentToolInput,
   ): Promise<ToolExecution> {
-    const requestedArgs = originalInput ?? args;
+    const frozenAtPreflight = originalInput !== undefined;
+    const requestedArgs = frozenAtPreflight ? originalInput : args;
     const requestedProfileName = requestedArgs.subagent_type?.length
       ? requestedArgs.subagent_type
       : undefined;
@@ -307,12 +308,15 @@ export class SubagentTool implements ISubagentTool {
       }
     }
 
-    const canonicalProfileName =
-      !isResume && args.fork !== true
+    const canonicalProfileName = frozenAtPreflight
+      ? (args.subagent_type?.length ? args.subagent_type : undefined)
+      : !isResume && args.fork !== true
         ? normalizeLegacySubagentType(requestedProfileName, this.catalog)
         : requestedProfileName;
     const executionArgs =
-      canonicalProfileName !== undefined && canonicalProfileName !== requestedProfileName
+      !frozenAtPreflight &&
+      canonicalProfileName !== undefined &&
+      canonicalProfileName !== requestedProfileName
         ? { ...args, subagent_type: canonicalProfileName }
         : args;
     const profileNameForDisplay = isResume

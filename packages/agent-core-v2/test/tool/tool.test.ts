@@ -22,6 +22,7 @@ import { makeHookRunner } from '../features/externalHooks/runner-stub';
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionRule } from '#/agent/permissionRules/permissionRules';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ToolAccesses, type ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -4617,6 +4618,79 @@ describe('Agent tools', () => {
 
       expect(lifecycle.create).not.toHaveBeenCalled();
       expect(historyText()).toContain('was denied by permission rule');
+    });
+  });
+
+  describe('Agent legacy alias preflight freeze', () => {
+    it('fails loudly when a literal alias profile vanishes between preflight and execution', async () => {
+      const general = normalizeAgentProfile({
+        name: 'general',
+        description: 'General',
+        systemPrompt: () => 'general',
+      });
+      const coder = normalizeAgentProfile({
+        name: 'coder',
+        description: 'Coder',
+        systemPrompt: () => 'coder',
+      });
+      const profiles: AgentProfile[] = [coder, general];
+      const catalog: ISessionAgentProfileCatalog = {
+        _serviceBrand: undefined,
+        ready: Promise.resolve(),
+        onDidChange: Event.None as ISessionAgentProfileCatalog['onDidChange'],
+        get: (name) => profiles.find((profile) => profile.name === name),
+        getDefault: () => coder,
+        list: () => [...profiles],
+        inspect: () => undefined,
+        load: async () => {},
+        reload: async () => {},
+      };
+      const lifecycle = createAgentLifecycleStub({
+        createAgentIds: ['agent-child'],
+        runCompletion: async () => ({ summary: 'child result' }),
+      });
+      const resolved: Array<[string, string, string]> = [];
+      const hookEngine = makeHookRunner(
+        [
+          {
+            event: 'PreToolUse',
+            matcher: 'Agent',
+            command: hookSubagentTypeAssertCommand('general'),
+          },
+        ],
+        {
+          onResolved: (event, target, action) => {
+            resolved.push([event, target, action]);
+          },
+        },
+      );
+      ctx = createTestAgent(
+        execEnvServices({ processRunner: createCommandRunner('ok') }),
+        sessionService(ISessionAgentProfileCatalog, catalog),
+        sessionService(IAgentLifecycleService, lifecycle),
+        externalHookServices(hookEngine),
+      );
+      wireRealSubagentService(ctx, lifecycle);
+      ctx.get(IAgentToolExecutorService).onBeforeExecuteTool((event) => {
+        if (event.toolCall.name === 'Bash') {
+          profiles.splice(
+            profiles.findIndex((profile) => profile.name === 'general'),
+            1,
+          );
+        }
+      });
+      await ctx.rpc.setPermission({ mode: 'auto' });
+
+      ctx.mockNextResponse({ type: 'text', text: 'Delegating now.' }, bashCall(), aliasAgentCall());
+      ctx.mockNextResponse({ type: 'text', text: 'The launch failed.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run tools' }] });
+      await ctx.untilTurnEnd();
+
+      expect(resolved).toEqual([['PreToolUse', 'Agent', 'allow']]);
+      expect(lifecycle.create).not.toHaveBeenCalled();
+      expect(JSON.stringify(ctx.get(IAgentContextMemoryService).get())).toContain(
+        'subagent error: Unknown agent type:',
+      );
     });
   });
 

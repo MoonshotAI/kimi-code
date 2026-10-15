@@ -110,7 +110,8 @@ export class AgentSwarmTool implements IAgentSwarmTool {
 
   resolveArgs(args: unknown): unknown {
     const input = args as AgentSwarmToolInput;
-    if (input.fork === true) return args;
+    const hasItemSpawns = (input.items?.length ?? 0) > 0;
+    if (input.fork === true || !hasItemSpawns) return args;
     return normalizeLegacySubagentTypeArgs(input, this.catalog);
   }
 
