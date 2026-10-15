@@ -66,6 +66,7 @@ import { isToolActiveComposed, findInactiveToolPatterns, literalToolNames, type 
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { NOTIFY_USER_TOOL_NAME } from '#/features/notify/tools/notify-user/notify-user';
+import { TODO_LIST_TOOL_NAME } from '#/features/todo/todoItem';
 import {
   renderAgentProfilePrompt,
   rootDelegationExtras,
@@ -889,6 +890,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       notifyUserActive:
         this.notify.enabled &&
         this.isToolActiveForProfile(profile, NOTIFY_USER_TOOL_NAME),
+      todoListActive: this.isToolActiveForProfile(profile, TODO_LIST_TOOL_NAME),
     };
   }
 
