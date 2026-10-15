@@ -10767,6 +10767,98 @@ capabilities = ["image_in", "video_in"]
 
 });
 
+describe('auto session title', () => {
+  const flushAsync = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it('generates a session title after the first completed turn', async () => {
+    const generateSessionTitle = vi.fn(async () => 'Generated Title');
+    const { driver } = await makeDriver(makeSession(), { generateSessionTitle });
+
+    emitTurn(driver, 1);
+
+    await vi.waitFor(() => {
+      expect(generateSessionTitle).toHaveBeenCalledWith({ id: 'ses-1', source: 'first_turn' });
+    });
+  });
+
+  it('does not generate when autoSessionTitle is disabled', async () => {
+    const generateSessionTitle = vi.fn(async () => 'Generated Title');
+    const { driver } = await makeDriver(makeSession(), {
+      generateSessionTitle,
+      getConfig: vi.fn(async () => ({ models: {}, autoSessionTitle: false })),
+    });
+
+    emitTurn(driver, 1);
+    await flushAsync();
+
+    expect(generateSessionTitle).not.toHaveBeenCalled();
+  });
+
+  it('does not generate when the tui.toml auto_session_title toggle is off', async () => {
+    const generateSessionTitle = vi.fn(async () => 'Generated Title');
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      tuiConfig: { ...makeStartupInput().tuiConfig, autoSessionTitle: false },
+    };
+    const session = makeSession();
+    const { driver } = await makeDriver(session, { generateSessionTitle }, startupInput);
+    await driver.setSession(session);
+    await driver.syncRuntimeState(session);
+
+    emitTurn(driver, 1);
+    await flushAsync();
+
+    expect(generateSessionTitle).not.toHaveBeenCalled();
+  });
+
+  it('does not regenerate once a title was generated', async () => {
+    const generateSessionTitle = vi.fn(async () => 'Generated Title');
+    const { driver } = await makeDriver(makeSession(), { generateSessionTitle });
+
+    emitTurn(driver, 1);
+    await vi.waitFor(() => {
+      expect(generateSessionTitle).toHaveBeenCalledTimes(1);
+    });
+    await flushAsync();
+
+    emitTurn(driver, 2);
+    await flushAsync();
+
+    expect(generateSessionTitle).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops retrying after three failed attempts', async () => {
+    const generateSessionTitle = vi.fn(async (): Promise<string | undefined> => {
+      throw new Error('unavailable');
+    });
+    const { driver } = await makeDriver(makeSession(), { generateSessionTitle });
+
+    for (let turnId = 1; turnId <= 4; turnId += 1) {
+      emitTurn(driver, turnId);
+      await flushAsync();
+    }
+
+    expect(generateSessionTitle).toHaveBeenCalledTimes(3);
+  });
+
+  it('skips generation for turns that did not complete', async () => {
+    const generateSessionTitle = vi.fn(async () => 'Generated Title');
+    const { driver } = await makeDriver(makeSession(), { generateSessionTitle });
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event,
+      () => {},
+    );
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'cancelled' } as Event,
+      () => {},
+    );
+    await flushAsync();
+
+    expect(generateSessionTitle).not.toHaveBeenCalled();
+  });
+});
+
 describe('/model status displayName override', () => {
   it('shows the overridden display name in the switch status', async () => {
     const session = makeSession();
