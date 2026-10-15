@@ -15,7 +15,7 @@ import type {
   ToolCall,
   ToolDescription,
 } from '#/llm/message';
-import type { ThinkingEffort } from '#/llm/thinking';
+import { ThinkingConfigError, type ThinkingEffort } from '#/llm/thinking';
 import { mergeConsecutiveUsers } from '#/llm/protocol/patterns';
 import { applyPatterns } from '#/llm/protocol/rewrite';
 import type { ResponseFormat } from '#/llm/response-format';
@@ -149,7 +149,13 @@ export function encodeGoogleGenAIThinking(
   model: string,
   effort: ThinkingEffort,
 ): Record<string, unknown> {
-  if (model.includes('gemini-3')) {
+  if (model.includes('gemini-3') || model.includes('gemini-4')) {
+    if (effort === 'off' && model.includes('gemini-4')) {
+      throw new ThinkingConfigError(
+        'thinking-cannot-disable',
+        `Model '${model}' always reasons and thinking cannot be turned off. Choose a concrete thinking effort (low, medium, high) instead of 'off'.`,
+      );
+    }
     switch (effort) {
       case 'off':
         return { includeThoughts: false, thinkingLevel: 'MINIMAL' };
