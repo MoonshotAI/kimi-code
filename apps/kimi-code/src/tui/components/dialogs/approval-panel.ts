@@ -332,9 +332,13 @@ export class ApprovalPanelComponent extends Container implements Focusable {
     const indent = (s: string): string => `  ${s}`;
 
     const title = headerFor(data.tool_name);
+    const environment = data.environment;
     const lines: string[] = [
       horizontalBar,
-      indent(`${borderColorBold('▶')} ${borderColorBold(title)}`),
+      indent(
+        `${borderColorBold('▶')} ${borderColorBold(title)}` +
+          (environment === undefined ? '' : `  ${dim(environment)}`),
+      ),
     ];
 
     const dedupedBlocks = data.display.filter(

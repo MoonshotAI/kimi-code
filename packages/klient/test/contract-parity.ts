@@ -11,7 +11,7 @@ import type { z } from 'zod';
 
 import type { AgentContextData } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import type { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
-import type { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBinding';
+import type { IAgentEnvironmentBindingService } from '@moonshot-ai/agent-core-v2/agent/environmentBinding/environmentBinding';
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { SessionActivityState } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionActivity';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
@@ -185,7 +185,7 @@ import {
   promptWithSkillsResultSchema,
   runCommandPayloadSchema,
   runShellCommandPayloadSchema,
-  runtimeBindingSchema,
+  environmentBindingSchema,
   setModelPayloadSchema,
   setModelResultSchema,
   setPermissionPayloadSchema,
@@ -612,7 +612,7 @@ type ActivateSkillPayload = Parameters<IAgentSkillService['activate']>[0];
 type PromptWithSkillsPayload = Parameters<IAgentSkillService['promptWithSkills']>[0];
 type PromptSkillActivation = PromptWithSkillsPayload['skills'][number];
 type AgentCommandInfo = ReturnType<IAgentCommandService['list']>[number];
-type RuntimeBinding = ReturnType<IAgentRuntimeBindingService['get']>;
+type EnvironmentBinding = IAgentEnvironmentBindingService['current'];
 type RunShellCommandPayload = Parameters<IAgentShellCommandService['run']>[0];
 type ShellCommandResult = Awaited<ReturnType<IAgentShellCommandService['run']>>;
 type SetModelResult = Awaited<ReturnType<IAgentProfileService['setModel']>>;
@@ -675,7 +675,7 @@ const _usageStatus: AssertWire<typeof usageStatusSchema, UsageStatus> = true;
 // `Message`/`Tool`/`PromptOrigin` unions) mirrored as `unknown`.
 const _agentContextData: AssertEngineToWire<typeof agentContextDataSchema, AgentContextData> = true;
 const _agentCommandInfo: AssertWire<typeof agentCommandInfoSchema, AgentCommandInfo> = true;
-const _runtimeBinding: AssertWire<typeof runtimeBindingSchema, RuntimeBinding> = true;
+const _environmentBinding: AssertWire<typeof environmentBindingSchema, EnvironmentBinding> = true;
 const _runCommandPayload: AssertWire<typeof runCommandPayloadSchema, RunCommandPayload> = true;
 const _planData: AssertWire<typeof planDataSchema, PlanData> = true;
 const _cancelPlanPayload: AssertWire<typeof cancelPlanPayloadSchema, CancelPlanPayload> = true;

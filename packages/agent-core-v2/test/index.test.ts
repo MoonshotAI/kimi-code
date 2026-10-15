@@ -71,6 +71,7 @@ const V1_RECORD_TYPES: ReadonlySet<string> = new Set([
   'llm.tools_snapshot',
   'llm.request',
   'mcp.tools_discovered',
+  'runtime.set_binding',
 ]);
 const V2_ONLY_RECORD_TYPES: ReadonlySet<string> = new Set([
   'tools.reset_active_tools',
@@ -90,7 +91,7 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'file_history.checkpoint',
   'interruptionReminder.recorded',
   'plugin.session_start',
-  'runtime.set_binding',
+  'environment.set_binding',
   'turn.ended',
   'prompt.aborted',
   'prompt.completed',

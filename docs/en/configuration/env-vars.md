@@ -132,7 +132,7 @@ Complete variable list:
 
 If `KIMI_MODEL_NAME` is set but a required variable is missing, startup fails immediately with a clear error message.
 
-## Runtime switches
+## Environment switches
 
 Switches that control the behavior of subsystems such as telemetry, background tasks, and the plugin marketplace:
 

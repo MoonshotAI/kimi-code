@@ -48,6 +48,7 @@ export class SessionAgentProfileCatalogService
         if (change.workspaceKey !== undefined && change.workspaceKey !== this.seed.workspaceKey) {
           return;
         }
+        if (change.contextKey !== undefined && change.contextKey !== this.seed.contextKey) return;
         this.reproject();
         this.onDidChangeEmitter.fire(change.sourceId);
       }),
@@ -94,7 +95,10 @@ export class SessionAgentProfileCatalogService
     const key = this.seed.workspaceKey;
     return this.registry
       .entries()
-      .filter((e) => e.workspaceKey === undefined || e.workspaceKey === key);
+      .filter((e) =>
+        (e.workspaceKey === undefined || e.workspaceKey === key) &&
+        (e.contextKey === undefined || e.contextKey === this.seed.contextKey),
+      );
   }
 
   private reproject(): void {

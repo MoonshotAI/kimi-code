@@ -82,6 +82,22 @@ describe('TrustPromptComponent', () => {
     ])
       expect(text).not.toContain(hidden);
   });
+  it('discloses project environment launchers, origins and env keys without terminal control injection', () => {
+    const prompt = new TrustPromptComponent({
+      workDir, onSelect: vi.fn(), info: info({ gatedEnvironments: [{
+        id: 'dev\u001B[31m', launcher: 'example-launcher connect', defaultCwd: '/remote/project',
+        origin: `${workDir}/.kimi-code/environments.toml`, envKeys: ['TOKEN'],
+      }] }),
+    });
+    const text = render(prompt).join('\n');
+    expect(text).toContain('project remote environment declarations');
+    expect(text).toContain('example-launcher connect');
+    expect(text).toContain('.kimi-code/environments.toml');
+    expect(text).toContain('/remote/project');
+    expect(text).toContain('TOKEN');
+    expect(text).not.toContain('\u001B');
+  });
+
   it('distinguishes empty activation from unreadable configuration', () => {
     const empty = new TrustPromptComponent({ workDir, info: info(), onSelect: vi.fn() });
     expect(render(empty).join('\n')).toContain(

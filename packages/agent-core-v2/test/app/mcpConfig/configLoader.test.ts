@@ -353,6 +353,23 @@ describe('loadMcpServers', () => {
     });
   });
 
+  it('keeps the deprecated runtime_id field on stdio entries written by older versions', async () => {
+    const home = makeTempDir();
+    const cwd = makeTempDir();
+    await writeJson(join(home, 'mcp.json'), {
+      mcpServers: {
+        legacy: { command: 'npx', args: ['-y', 'some-mcp-server'], runtime_id: 'dev-box' },
+      },
+    });
+    const servers = await loadMcpServers({ fs, cwd, homeDir: home });
+    expect(servers['legacy']).toEqual({
+      transport: 'stdio',
+      command: 'npx',
+      args: ['-y', 'some-mcp-server'],
+      runtime_id: 'dev-box',
+    });
+  });
+
   it('loads explicit SSE server config', async () => {
     const home = makeTempDir();
     const cwd = makeTempDir();

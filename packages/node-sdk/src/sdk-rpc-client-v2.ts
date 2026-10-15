@@ -52,6 +52,12 @@
  *   the engine has no import capability of its own. `createSession`'s
  *   `model` / `thinking` / `permission` options are applied in this batch
  *   too (default-profile bind + permission mode).
+ * - `getEnvironment` uses the klient agent facade; `listEnvironments`
+ *   reads the workspace registry.
+ *   `createSession`'s `environmentId` / `environmentCwd` options ride the
+ *   engine's own `mainAgentBinding` + environment seed path. The constructor
+ *   attaches the `remote-exec` environment provider with the region CDN
+ *   artifact locator, mirroring the kap-server composition root.
  * - `prompt` / `steer` / `runShellCommand` / `cancelShellCommand` → the
  *   `klient.session(id).agent(id)` facade; `activatePluginCommand` →
  *   `IAgentPluginCommandService` through the agent scope; `activateSkill` →
@@ -126,6 +132,10 @@
  *   interaction bridge already relies on.
  */
 import { readdir } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { Readable } from 'node:stream';
+import { ISessionMediaStore } from '@moonshot-ai/agent-core-v2/agent/media/sessionMediaStore';
+import { buildDaemonFileUrl } from '@moonshot-ai/agent-core-v2/agent/media/mediaRef';
 import { join } from 'node:path';
 
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
@@ -134,6 +144,11 @@ import { ITowerRateLimitService } from '@moonshot-ai/agent-core-v2/features/towe
 import { readTowerStatusSummary } from '@moonshot-ai/agent-core-v2/features/tower/tools/status/statusReader';
 import { loadMcpServers } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
 import { fsSuggestRequestSchema } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
+import {
+  createEnvironmentFs,
+  type EnvironmentFsScope,
+} from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/environmentFs';
+import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
 import { IAppendLogStore } from '@moonshot-ai/agent-core-v2/persistence/interface/appendLogStore';
 import {
   bootstrap,
@@ -151,6 +166,7 @@ import {
   IAgentGoalService,
   IAgentPluginService,
   IAgentLifecycleService,
+  IAgentEnvironmentBindingService,
   IAgentLoopService,
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
@@ -191,11 +207,14 @@ import {
   IWorkspaceAliases,
   ISessionActivityView,
   IWorkspaceInstanceManager,
+  IEnvironmentService,
+  IEnvironmentDeclarationService,
   closeSessionById,
   followSessionLifecycles,
   getLiveSessionById,
   isError2,
   programForSession,
+  environmentEntryInfo,
   resumeSessionById,
   sessionDirOf,
   workspacePersistenceScope,
@@ -222,6 +241,7 @@ import {
   type Scope,
   type ServicesAccessor,
   type SessionSummary as V2SessionSummary,
+  type WorkspaceInstance,
 } from '@moonshot-ai/agent-core-v2';
 import {
   RPCError,
@@ -235,6 +255,7 @@ import {
 import { RegistryImportError } from '#/catalog';
 import { createKlient } from '@moonshot-ai/klient/memory';
 import { assertKimiHostIdentity, createKimiDefaultHeaders } from '@moonshot-ai/kimi-code-oauth';
+import { RemoteEnvironmentProviderFactory } from '@moonshot-ai/agent-core-v2/remote';
 
 import { KimiAuthFacade } from '#/auth';
 import { ensureConfigFile, HookDefSchema } from '#/config/index';
@@ -252,8 +273,8 @@ import {
   type ReconnectMcpServerRpcInput,
   type ReloadSessionRpcInput,
   type RunCommandRpcInput,
-  type SessionIdRpcInput,
   type SwitchSessionRuntimeRpcInput,
+  type SessionIdRpcInput,
   type SessionPromptRpcInput,
   type SessionPromptWithSkillsRpcInput,
   type SetSessionModelRpcInput,
@@ -269,6 +290,7 @@ import type {
   AddAdditionalDirInput,
   AddAdditionalDirResult,
   AgentCommandInfo,
+  AgentEnvironmentBinding,
   AgentRuntimeBinding,
   AppMcpServerInspection,
   BackgroundTaskInfo,
@@ -312,6 +334,7 @@ import type {
   SessionStatus,
   SessionSummary,
   SessionSummaryPage,
+  SessionEnvironmentsInfo,
   SessionTodoItem,
   SessionUsage,
   SkillSummary,
@@ -354,6 +377,8 @@ export interface SDKRpcClientV2Options {
    * source. Passed into the engine through `BootstrapInput.args.skillDirs`.
    */
   readonly skillDirs?: readonly string[];
+  readonly agentFiles?: readonly string[];
+  readonly nonInteractive?: boolean;
   readonly telemetry?: TelemetryClient;
   readonly onOAuthRefresh?: (outcome: OAuthRefreshOutcome) => void;
   readonly uiMode?: string;
@@ -377,6 +402,13 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   readonly klient: Klient;
 
   private readonly app: Scope;
+  /**
+   * The remote environment provider attach handle (`remote-exec` factory), held
+   * as a promise because the constructor is synchronous. Disposed in
+   * {@link close} before the app scope; an attach failure degrades to no
+   * remote environments instead of killing the client.
+   */
+  private readonly remoteEnvironmentProvider: Promise<{ dispose(): void | Promise<void> } | undefined>;
   /**
    * The engine's config reads (`get`/`getAll`/`inspect`/`diagnostics`) are
    * synchronous over state that only exists once the initial load settles;
@@ -458,12 +490,25 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
           // `--skills-dir` (v1 parity): explicit skill dirs replace default
           // user / project discovery for every session this client hosts.
           skillDirs: options.skillDirs,
+          agentFiles: options.agentFiles,
+          nonInteractive: options.nonInteractive,
           uiCapabilities: options.uiCapabilities,
         },
       },
       [...logSeed(resolveLoggingConfig({ homeDir: this.homeDir, env: process.env }))],
     );
     this.app = app;
+    this.remoteEnvironmentProvider = app.accessor
+      .get(IEnvironmentService)
+      .addProvider(
+        new RemoteEnvironmentProviderFactory({
+          clientVersion: identity.version,
+        }),
+      )
+      .catch((error) => {
+        app.accessor.get(ILogService).warn('remote environment provider attach failed', { error });
+        return undefined;
+      });
     this.klient = createKlient({ scope: app });
     this.configReady = app.accessor.get(IConfigService).ready;
     this.installEngineTelemetry(options.telemetry);
@@ -524,6 +569,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     // the accessor throws once the scope is disposed. shutdown() is
     // idempotent, so the ledger's own teardown turns into a no-op.
     await this.app.accessor.get(IMcpOAuthService).shutdown();
+    const remoteEnvironmentProvider = await this.remoteEnvironmentProvider;
+    await remoteEnvironmentProvider?.dispose();
     const appendLogStore = this.app.accessor.get(IAppendLogStore);
     this.app.dispose();
     await appendLogStore.drainRetirements();
@@ -625,8 +672,30 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     });
   }
 
+  override async attachFile(input: { sessionId: string; data: Uint8Array; options: Pick<UploadFileOptions, 'name' | 'mimeType'> }): Promise<string> {
+    const store = this.requireLiveSession(input.sessionId).accessor.get(ISessionMediaStore);
+    const mimeType = input.options.mimeType ?? 'application/octet-stream';
+    const fileId = `f_attachment_${createHash('sha256').update(mimeType).update('\0').update(input.data).digest('hex')}`;
+    await store.materialize({
+      fileId, size: input.data.length, name: input.options.name, mimeType,
+      stream: () => Readable.from([input.data]),
+    });
+    return buildDaemonFileUrl(fileId);
+  }
+
   override async deleteFile(fileId: string): Promise<void> {
     return this.klient.global.files.delete(fileId);
+  }
+
+  /**
+   * Session-less workspace handler resolution shared by the workspace query
+   * surfaces: normalize, reject a missing / non-directory root (the
+   * `POST /workspaces` rule), then create-or-get the handler.
+   */
+  private async workspaceHandlerFor(operation: string, workDir: string): Promise<WorkspaceInstance> {
+    const root = normalizeRequiredWorkDir(operation, workDir);
+    await assertUsableWorkDir(this.engineAccessor.get(IHostFileSystem), root);
+    return this.engineAccessor.get(IWorkspaceInstanceManager).getOrCreate({ root });
   }
 
   /**
@@ -637,19 +706,16 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * anyway.
    */
   override async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
-    const handler = await this.engineAccessor
-      .get(IWorkspaceInstanceManager)
-      .getOrCreate({ root: normalizeRequiredWorkDir('listWorkspaceSkills', workDir) });
+    const handler = await this.workspaceHandlerFor('listWorkspaceSkills', workDir);
     const catalog = handler.program.skills;
     await catalog.ready;
     return catalog.catalog.listSkills().map(summarizeSkill);
   }
 
   /**
-   * Through the workspace handler's `IWorkspaceFsService` — the same engine
-   * suggest the kap-server `fs:suggest` routes serve (fuzzy scoring,
-   * directories included, gitignore respected), so in-process hosts match
-   * the web client's @ mention results.
+   * The same engine suggest the kap-server `fs:suggest` routes serve (fuzzy
+   * scoring, directories included, gitignore respected), either through the
+   * workspace handler's local fs or an explicitly selected environment.
    */
   override async suggestFiles(workDir: string, input: SuggestFilesInput): Promise<SuggestFilesResult | undefined> {
     const parsed = fsSuggestRequestSchema.safeParse({
@@ -666,19 +732,35 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         `suggestFiles ${where}${issue?.message ?? 'invalid input'}`,
       );
     }
-    const handler = await this.engineAccessor
-      .get(IWorkspaceInstanceManager)
-      .getOrCreate({ root: normalizeRequiredWorkDir('suggestFiles', workDir) });
-    const result = await handler.program.fs.suggest(parsed.data);
-    return {
-      items: result.items.map((item) => ({
-        path: item.path,
-        name: item.name,
-        kind: item.kind,
-        matchPositions: item.match_positions,
-      })),
-      truncated: result.truncated,
-    };
+    const handler = await this.workspaceHandlerFor('suggestFiles', workDir);
+    let environmentFs: EnvironmentFsScope | undefined;
+    try {
+      const fs =
+        input.environment === undefined || input.environment.environmentId === 'local'
+          ? handler.program.fs
+          : (environmentFs = createEnvironmentFs(
+              this.engineAccessor,
+              handler.id,
+              {
+                workDir: input.environment.cwd ?? workDir,
+                additionalDirs: input.additionalDirs,
+              },
+              input.environment.environmentId,
+              ['fs'],
+            )).fs;
+      const result = await fs.suggest(parsed.data);
+      return {
+        items: result.items.map((item) => ({
+          path: item.path,
+          name: item.name,
+          kind: item.kind,
+          matchPositions: item.match_positions,
+        })),
+        truncated: result.truncated,
+      };
+    } finally {
+      environmentFs?.lease.dispose();
+    }
   }
 
   /**
@@ -688,9 +770,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * computed inside the engine by `WorkspaceTrustDisclosureService`.
    */
   override async getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo> {
-    const handler = await this.engineAccessor
-      .get(IWorkspaceInstanceManager)
-      .getOrCreate({ root: workDir });
+    const handler = await this.workspaceHandlerFor('getWorkspaceTrustInfo', workDir);
     const trusted = await handler.program.trust.get();
     if (trusted) {
       return {
@@ -706,6 +786,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return {
       trusted: false,
       gatedMcpServers: activation.mcpServers,
+      gatedEnvironments: activation.environments,
       gatedAdditionalDirs: activation.additionalDirs,
       additionalDirSources: activation.additionalDirSources,
       warnings: activation.warnings,
@@ -720,9 +801,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * servers connect live, no restart needed.
    */
   override async trustWorkspace(workDir: string): Promise<void> {
-    const handler = await this.engineAccessor
-      .get(IWorkspaceInstanceManager)
-      .getOrCreate({ root: workDir });
+    const handler = await this.workspaceHandlerFor('trustWorkspace', workDir);
     await handler.program.trust.trust();
   }
 
@@ -1341,6 +1420,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   private async doCreateSession(input: CreateSessionOptions): Promise<SessionSummary> {
     const workDir = normalizeRequiredWorkDir('createSession', input.workDir);
+    if (input.environmentCwd !== undefined && input.environmentId === undefined) {
+      throw new KimiError(ErrorCodes.REQUEST_INVALID, 'createSession environmentCwd requires environmentId');
+    }
     if (input.id !== undefined) {
       const existing =
         this.liveSession(input.id) ??
@@ -1356,6 +1438,15 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       sessionId: input.id,
       workDir,
       additionalDirs: input.additionalDirs,
+      environmentId: input.environmentId,
+      environmentCwd: input.environmentCwd,
+      mainAgentBinding: input.environmentId === undefined
+        ? undefined
+        : {
+            profile: DEFAULT_AGENT_PROFILE_NAME,
+            model: input.model,
+            thinking: input.thinking,
+          },
     });
     // Wired before the optional main-agent materialization so a profile-bind
     // warning (oversized AGENTS.md) reaches the listeners like v1's create.
@@ -1365,10 +1456,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       input.thinking !== undefined ||
       input.permission !== undefined
     ) {
-      const agent = await this.materializeMainAgent(handle, {
-        model: input.model,
-        thinking: input.thinking,
-      });
+      const agent = await this.materializeMainAgent(
+        handle,
+        input.environmentId === undefined
+          ? { model: input.model, thinking: input.thinking }
+          : undefined,
+      );
       if (input.permission !== undefined) {
         agent.accessor.get(IAgentPermissionModeService).setMode(input.permission);
       }
@@ -1844,13 +1937,58 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   override async getRuntime(input: SessionIdRpcInput): Promise<AgentRuntimeBinding> {
-    const agent = await this.agentFacade(input.sessionId);
-    return agent.getRuntime();
+    const agent = await this.agentScope(input.sessionId);
+    return {
+      workspaceId: agent.accessor.get(ISessionContext).workspaceId,
+      runtimeId: agent.accessor.get(IAgentEnvironmentBindingService).current.environmentId,
+    };
   }
 
   override async switchRuntime(input: SwitchSessionRuntimeRpcInput): Promise<AgentRuntimeBinding> {
+    const agent = await this.agentScope(input.sessionId);
+    const lease = await agent.accessor.get(IEnvironmentService).acquireWhenReady({ environmentId: input.runtimeId });
+    try {
+      const binding = agent.accessor.get(IAgentEnvironmentBindingService).bind(input.runtimeId);
+      return {
+        workspaceId: agent.accessor.get(ISessionContext).workspaceId,
+        runtimeId: binding.environmentId,
+      };
+    } finally {
+      lease.dispose();
+    }
+  }
+
+  override async resolveSessionEnvironment(options: Pick<CreateSessionOptions, 'workDir' | 'environmentId' | 'environmentCwd'>): Promise<AgentEnvironmentBinding> {
+    await this.configReady;
+    const binding = await this.engineAccessor.get(ISessionManager).resolveCreationEnvironment({
+      workDir: options.workDir,
+      environmentId: options.environmentId,
+      environmentCwd: options.environmentCwd,
+    });
+    return { environmentId: binding.environmentId ?? 'local', cwd: binding.environmentCwd };
+  }
+
+  override async getEnvironment(input: SessionIdRpcInput): Promise<AgentEnvironmentBinding> {
     const agent = await this.agentFacade(input.sessionId);
-    return agent.switchRuntime(input.runtimeId);
+    return agent.getEnvironment();
+  }
+
+  /**
+   * The app's environment registry snapshot (status) joined with the resolved
+   * declarations (type).
+   */
+  override async listEnvironments(input: SessionIdRpcInput): Promise<SessionEnvironmentsInfo> {
+    const session = this.requireLiveSession(input.sessionId);
+    const workspaceId = session.accessor.get(ISessionContext).workspaceId;
+    const declarationService = this.engineAccessor.get(IEnvironmentDeclarationService);
+    const declarations = await declarationService.declarations(workspaceId);
+    const entries = new Map((declarations?.entries ?? []).map((declaration) => [declaration.id, declaration.entry]));
+    return {
+      environments: this.engineAccessor.get(IEnvironmentService).snapshot().environments.filter((environment) => declarationService.isVisible(workspaceId, environment.environmentId)).map((environment) => {
+        const { defaultCwd: _defaultCwd, ...info } = environmentEntryInfo(environment, entries.get(environment.environmentId));
+        return info;
+      }),
+    };
   }
 
   /**
@@ -2709,9 +2847,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * Same `McpServerEntry`-as-`McpServerInfo` cast as listMcpServers.
    */
   override async listWorkspaceMcpServers(workDir: string): Promise<readonly McpServerInfo[]> {
-    const handler = await this.engineAccessor
-      .get(IWorkspaceInstanceManager)
-      .getOrCreate({ root: normalizeRequiredWorkDir('listWorkspaceMcpServers', workDir) });
+    const handler = await this.workspaceHandlerFor('listWorkspaceMcpServers', workDir);
     const mcp = handler.program.mcp;
     await mcp.ready;
     return mcp.connectionManager().list() as readonly McpServerInfo[];
@@ -2827,6 +2963,22 @@ function normalizeRequiredWorkDir(operation: string, workDir: string): string {
     throw new KimiError(ErrorCodes.REQUEST_WORK_DIR_REQUIRED, `${operation} requires workDir`);
   }
   return normalizeWorkDir(workDir);
+}
+
+/**
+ * The kap-server `POST /workspaces` rule applied to every SDK path that
+ * registers a workDir as a workspace: the local root must exist and be a
+ * directory — a missing root is rejected here instead of silently creating
+ * a workspace record the engine's `createOrTouch` would accept.
+ */
+async function assertUsableWorkDir(fs: IHostFileSystem, workDir: string): Promise<void> {
+  const stat = await fs.stat(workDir).catch(() => undefined);
+  if (stat === undefined) {
+    throw new KimiError(ErrorCodes.FS_PATH_NOT_FOUND, `workDir ${workDir} does not exist`);
+  }
+  if (!stat.isDirectory) {
+    throw new KimiError(ErrorCodes.FS_PATH_NOT_FOUND, `workDir ${workDir} is not a directory`);
+  }
 }
 
 /**

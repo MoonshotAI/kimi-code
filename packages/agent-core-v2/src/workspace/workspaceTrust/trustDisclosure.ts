@@ -18,11 +18,20 @@ export interface TrustGatedInstructionSources {
 }
 
 export interface TrustGatedActivation {
+  readonly environments?: readonly TrustGatedEnvironment[];
   readonly mcpServers: readonly TrustGatedMcpServer[];
   readonly additionalDirs: readonly string[];
   readonly additionalDirSources: readonly string[];
   readonly warnings: readonly string[];
   readonly instructionSources: TrustGatedInstructionSources;
+}
+
+export interface TrustGatedEnvironment {
+  readonly id: string;
+  readonly launcher: string;
+  readonly defaultCwd?: string;
+  readonly origin: string;
+  readonly envKeys: readonly string[];
 }
 
 export interface IWorkspaceTrustDisclosure {

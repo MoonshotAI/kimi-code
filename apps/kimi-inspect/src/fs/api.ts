@@ -23,7 +23,7 @@ export interface FetchFsSuggestOptions {
   readonly showHidden?: boolean;
   readonly includeGlobs?: readonly string[];
   readonly excludeGlobs?: readonly string[];
-  readonly runtimeId?: string;
+  readonly environmentId?: string;
   readonly fetchImpl?: typeof fetch;
 }
 
@@ -91,6 +91,6 @@ export async function fetchFsSuggest(opts: FetchFsSuggestOptions): Promise<FsSug
     show_hidden: opts.showHidden,
     include_globs: opts.includeGlobs,
     exclude_globs: opts.excludeGlobs,
-    runtime_id: opts.runtimeId,
+    environment_id: opts.environmentId,
   }, opts);
 }

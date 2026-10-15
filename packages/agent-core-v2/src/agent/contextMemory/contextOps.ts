@@ -1,3 +1,4 @@
+import { isDraft, original } from 'immer';
 import { z } from 'zod';
 
 import { ErrorCodes, Error2 } from '#/errors';
@@ -95,7 +96,7 @@ export const contextMemoryKey = defineState('contextMemory', (): ContextMessage[
       return resetFold(s.slice(0, cut.cutIndex)) as ContextMessage[];
     },
   })
-  .on(ContextAppendMessage, (s, e) => foldAppendMessage(s, e.message) as ContextMessage[])
+  .on(ContextAppendMessage, (s, e) => foldAppendMessage(dropSupersededReminders(s, e.message), e.message) as ContextMessage[])
   .on(ContextAppendLoopEvent, (s, e) => foldLoopEvent(s, e.event) as ContextMessage[])
   .on(ContextClear, (s) => (s.length === 0 ? undefined : (resetFold([]) as ContextMessage[])))
   .on(ContextApplyCompaction, (s, e) => {
@@ -105,6 +106,27 @@ export const contextMemoryKey = defineState('contextMemory', (): ContextMessage[
     );
     return resetFold([...result.messages]) as ContextMessage[];
   });
+
+const STATE_DERIVED_REMINDER_VARIANTS: ReadonlySet<string> = new Set([
+  'environment_binding',
+  'project_context',
+]);
+
+function dropSupersededReminders(
+  state: readonly ContextMessage[],
+  message: ContextMessage,
+): readonly ContextMessage[] {
+  const origin = message.origin;
+  if (origin?.kind !== 'injection' || !STATE_DERIVED_REMINDER_VARIANTS.has(origin.variant)) {
+    return state;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const source = (isDraft(state) ? original(state as any) : state) as readonly ContextMessage[];
+  return source.filter(
+    (existing) =>
+      existing.origin?.kind !== 'injection' || existing.origin.variant !== origin.variant,
+  );
+}
 
 export function popSwarmModeReminder(state: ContextMessage[]): ContextMessage[] {
   const last = state.at(-1);

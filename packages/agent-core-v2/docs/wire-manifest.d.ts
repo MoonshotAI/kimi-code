@@ -24,7 +24,7 @@
 // cross-reducers), blobs (the folding states whose blob codec offloads inline
 // media to blob storage), owner (the source file declaring the class).
 
-// Index (64 record types)
+// Index (65 record types)
 //   config.update                      profile                                               src/agent/profile/profileOps.ts
 //   context.append_loop_event          contextMemory, turn                                   src/agent/contextMemory/contextEvents.ts
 //   context.append_message             contextMemory, plan, task.notificationDelivery        src/agent/contextMemory/contextEvents.ts
@@ -34,6 +34,7 @@
 //   cron.add                           (none)                                                src/features/cron/cronOps.ts
 //   cron.cursor                        (none)                                                src/features/cron/cronOps.ts
 //   cron.delete                        (none)                                                src/features/cron/cronOps.ts
+//   environment.set_binding            environmentBinding                                    src/agent/environmentBinding/environmentBindingOps.ts
 //   file_history.checkpoint            fileHistory                                           src/features/fileHistory/fileHistoryOps.ts
 //   file_history.tracked               fileHistory                                           src/features/fileHistory/fileHistoryOps.ts
 //   forked                             (none)                                                src/session/agentLifecycle/forked.ts
@@ -60,7 +61,7 @@
 //   prompt.aborted                     (none)                                                src/agent/prompt/promptEvents.ts
 //   prompt.completed                   (none)                                                src/agent/prompt/promptEvents.ts
 //   prompt.steered                     (none)                                                src/agent/prompt/promptEvents.ts
-//   runtime.set_binding                runtimeBinding                                        src/agent/runtimeBinding/runtimeBindingOps.ts
+//   runtime.set_binding                environmentBinding                                    src/agent/environmentBinding/environmentBindingOps.ts
 //   subagent.cancelled                 (none)                                                src/session/subagent/mirrorAgentRun.ts
 //   subagent.completed                 (none)                                                src/session/subagent/mirrorAgentRun.ts
 //   subagent.failed                    (none)                                                src/session/subagent/mirrorAgentRun.ts
@@ -216,6 +217,17 @@ interface CronDeletePayload {
 }
 
 /**
+ * states: environmentBinding
+ * owner: src/agent/environmentBinding/environmentBindingOps.ts
+ */
+interface EnvironmentSetBindingPayload {
+  _name: 'environment.set_binding';
+  agentId: string;
+  environmentId: string;
+  cwd?: string;
+}
+
+/**
  * states: fileHistory
  * owner: src/features/fileHistory/fileHistoryOps.ts
  */
@@ -243,6 +255,7 @@ interface FileHistoryTrackedPayload {
     size?: number;
     oversize?: boolean;
     mtimeMs?: number;
+    environmentId?: string;
   };
 }
 
@@ -571,8 +584,8 @@ interface PromptSteeredPayload {
 }
 
 /**
- * states: runtimeBinding
- * owner: src/agent/runtimeBinding/runtimeBindingOps.ts
+ * states: environmentBinding
+ * owner: src/agent/environmentBinding/environmentBindingOps.ts
  */
 interface RuntimeSetBindingPayload {
   _name: 'runtime.set_binding';
@@ -968,6 +981,7 @@ interface WirePayloadMap {
   "cron.add": CronAddPayload;
   "cron.cursor": CronCursorPayload;
   "cron.delete": CronDeletePayload;
+  "environment.set_binding": EnvironmentSetBindingPayload;
   "file_history.checkpoint": FileHistoryCheckpointPayload;
   "file_history.tracked": FileHistoryTrackedPayload;
   "forked": ForkedPayload;

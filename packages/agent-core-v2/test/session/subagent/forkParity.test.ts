@@ -17,17 +17,16 @@ import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 import { IHostTerminalService } from '#/os/interface/terminal';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
-import { LocalRuntime } from '#/runtime/localRuntime';
+import { LocalEnvironment } from '#/environment/localEnvironment';
 import type {
-  Runtime,
-  RuntimeBinding,
-  RuntimeCapability,
-  RuntimeLease,
-} from '#/runtime/runtime';
+  Environment,
+  EnvironmentBinding,
+  EnvironmentCapability,
+  EnvironmentLease,
+} from '#/environment/environment';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { inputTotal } from '#human/llm/usage';
-import { IAgentRuntimeBindingSeed } from '#/agent/runtimeBinding/runtimeBinding';
 import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -49,11 +48,8 @@ import { FORK_CONTEXT_NOTICE } from '#/session/subagent/spawn';
 import { SUBAGENT_BACKGROUND_TASK_NOTICE } from '#/agent/task/taskService';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
-import {
-  IRuntimeResolver,
-  IWorkspaceInstanceManager,
-  type WorkspaceInstanceChange,
-} from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IWorkspaceInstanceManager, type WorkspaceInstanceChange } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
 import {
   appService,
@@ -117,9 +113,10 @@ class ScopedAppendLogStore implements IAppendLogStore {
   }
 }
 
-class TestRuntimeResolver implements IRuntimeResolver {
+class TestEnvironmentResolver implements EnvironmentResolver {
+  readonly onDidChange = () => ({ dispose: () => {} });
   declare readonly _serviceBrand: undefined;
-  private readonly runtime: LocalRuntime;
+  private readonly environment: LocalEnvironment;
 
   constructor(
     @IHostEnvironment environment: IHostEnvironment,
@@ -127,15 +124,19 @@ class TestRuntimeResolver implements IRuntimeResolver {
     @IHostProcessService processes: IHostProcessService,
     @IHostTerminalService terminal: IHostTerminalService,
   ) {
-    this.runtime = new LocalRuntime('test-workspace', environment, fs, processes, terminal);
+    this.environment = new LocalEnvironment(environment, fs, processes, terminal);
   }
 
-  inspect(_binding: RuntimeBinding): Runtime {
-    return this.runtime;
+  inspect(_binding: EnvironmentBinding): Environment {
+    return this.environment;
   }
 
-  acquire(_binding: RuntimeBinding, _required?: readonly RuntimeCapability[]): RuntimeLease {
-    return { runtime: this.runtime, track: (resource) => resource, dispose: () => {} };
+  acquire(_binding: EnvironmentBinding, _required?: readonly EnvironmentCapability[]): EnvironmentLease {
+    return { environment: this.environment, track: (resource) => resource, dispose: () => {} };
+  }
+
+  acquireWhenReady(_binding: EnvironmentBinding, _required?: readonly EnvironmentCapability[]): Promise<EnvironmentLease> {
+    return Promise.resolve({ environment: this.environment, track: (resource) => resource, dispose: () => {} });
   }
 }
 
@@ -171,7 +172,7 @@ describe('subagent task reminders and fork request parity', () => {
       appService(IFlagService, stubFlag((id) => id === SUBAGENT_FORK_FLAG_ID)),
       telemetryServices(recordingTelemetry(telemetry)),
       sessionServices((reg) => {
-        reg.defineDescriptor(IRuntimeResolver, new SyncDescriptor(TestRuntimeResolver));
+        reg.defineDescriptor(IEnvironmentService, new SyncDescriptor(TestEnvironmentResolver));
         reg.definePartialInstance(IWorkspaceInstanceManager, {
           onDidChange: Event.None as Event<WorkspaceInstanceChange>,
           get: () => undefined,
@@ -295,7 +296,7 @@ describe('subagent task reminders and fork request parity', () => {
       }),
       telemetryServices(recordingTelemetry(telemetry)),
       sessionServices((reg) => {
-        reg.defineDescriptor(IRuntimeResolver, new SyncDescriptor(TestRuntimeResolver));
+        reg.defineDescriptor(IEnvironmentService, new SyncDescriptor(TestEnvironmentResolver));
         reg.definePartialInstance(IWorkspaceInstanceManager, {
           onDidChange: Event.None as Event<WorkspaceInstanceChange>,
           get: () => undefined,
@@ -304,12 +305,6 @@ describe('subagent task reminders and fork request parity', () => {
           _serviceBrand: undefined,
           ready: Promise.resolve(),
           enabled: true,
-        });
-      }),
-      agentServices((reg) => {
-        reg.defineInstance(IAgentRuntimeBindingSeed, {
-          _serviceBrand: undefined,
-          binding: { workspaceId: 'test-workspace', runtimeId: 'local' },
         });
       }),
     );

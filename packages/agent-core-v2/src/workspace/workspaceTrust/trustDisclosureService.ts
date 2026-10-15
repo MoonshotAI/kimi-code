@@ -1,4 +1,4 @@
-import { isAbsolute, relative } from 'pathe';
+import { isAbsolute, relative, join } from 'pathe';
 
 import type { ILogService } from '#/_base/log/log';
 import type { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
@@ -19,6 +19,8 @@ import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
+import { loadProjectEnvironmentsSection, PROJECT_ENVIRONMENTS_FILE, toLauncherSpec } from '#/environment/environmentDeclarations';
+import { sectionEntries } from '#/environment/remoteEnvironmentDeclaration';
 
 import type {
   IWorkspaceTrustDisclosure,
@@ -60,13 +62,14 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     private readonly agentProfilesRegistry: IAgentProfileRegistry,
     private readonly instructions: IWorkspaceInstructionsService,
     private readonly log: ILogService,
+    private readonly environmentSource?: { readonly root: string; readonly fs: IHostFileSystem },
   ) {}
 
   async describeGatedActivation(): Promise<TrustGatedActivation> {
     await this.trust.ready;
     if (this.trust.isTrusted()) return EMPTY_ACTIVATION;
     const warnings: string[] = [];
-    const [mcpServers, configuredDirs, skillRoots, instructionSources] = await Promise.all([
+    const [mcpServers, configuredDirs, skillRoots, instructionSources, environments] = await Promise.all([
       this.describeGatedMcpServers().catch((error: unknown) => {
         this.log.warn(`trust disclosure: MCP scan failed: ${String(error)}`);
         warnings.push('Could not inspect MCP configuration.');
@@ -87,12 +90,32 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
         warnings.push('Could not inspect project instructions.');
         return EMPTY_INSTRUCTION_SOURCES;
       }),
+      this.describeGatedEnvironments().catch((error: unknown) => {
+        this.log.warn('trust disclosure: environment scan failed', { error });
+        warnings.push('Could not inspect project environment declarations.');
+        return [];
+      }),
     ]);
     const additionalDirs = [...configuredDirs.dirs, ...skillRoots].filter(
       (dir, index, all) => all.indexOf(dir) === index,
     );
     const additionalDirSources = [...new Set([...configuredDirs.sources, ...skillRoots])];
-    return { mcpServers, additionalDirs, additionalDirSources, instructionSources, warnings };
+    return { mcpServers, additionalDirs, additionalDirSources, instructionSources, warnings, environments };
+  }
+
+  private async describeGatedEnvironments() {
+    const root = this.environmentSource?.root ?? this.context.cwd;
+    const fs = this.environmentSource?.fs ?? this.fs;
+    const section = await loadProjectEnvironmentsSection(fs, root);
+    const origin = await realpathOrSelf(fs, join(root, PROJECT_ENVIRONMENTS_FILE));
+    return sectionEntries(section).map(({ id, entry }) => {
+      const { env: _env, ...launcher } = { env: undefined, ...toLauncherSpec(entry) };
+      return {
+        id, launcher: JSON.stringify(launcher), defaultCwd: entry.defaultCwd,
+        origin,
+        envKeys: 'command' in entry ? Object.keys(entry.env ?? {}).toSorted() : [],
+      };
+    });
   }
 
   private async describeGatedMcpServers(): Promise<readonly TrustGatedMcpServer[]> {

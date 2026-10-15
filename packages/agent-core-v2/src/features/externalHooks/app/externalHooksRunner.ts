@@ -10,10 +10,18 @@ export interface ExternalHooksRunnerTriggerArgs {
   readonly sessionId?: string;
 }
 
+export interface HookExecutionError {
+  readonly event: string;
+  readonly sessionId?: string;
+  readonly command?: string;
+  readonly message: string;
+}
+
 export interface IExternalHooksRunnerService {
   readonly _serviceBrand: undefined;
   readonly ready: Promise<void>;
   readonly onDidReload: Event<void>;
+  readonly onDidHookError: Event<HookExecutionError>;
   trigger(event: string, args?: ExternalHooksRunnerTriggerArgs): Promise<HookResult[]>;
   triggerBlock(
     event: string,

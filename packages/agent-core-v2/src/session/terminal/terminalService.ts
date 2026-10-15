@@ -17,10 +17,10 @@ import type {
 import { ErrorCodes, Error2 } from '#/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
-import type { RuntimeLease } from '#/runtime/runtime';
-import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
+import type { EnvironmentLease } from '#/environment/environment';
+import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
@@ -29,7 +29,7 @@ const DEFAULT_MAX_BUFFERED_FRAMES = 2000;
 interface TerminalRecord {
   terminal: Terminal;
   process: TerminalProcess;
-  lease: RuntimeLease;
+  lease: EnvironmentLease;
   sinks: Map<string, TerminalAttachSink>;
   buffer: TerminalFrame[];
   nextSeq: number;
@@ -64,7 +64,7 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
   private readonly records = new Map<string, TerminalRecord>();
 
   constructor(
-    @IRuntimeResolver private readonly runtimeResolver: IRuntimeResolver,
+    @IEnvironmentService private readonly environmentResolver: EnvironmentResolver,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @ISessionContext private readonly sessionContext: ISessionContext,
   ) {
@@ -74,17 +74,18 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
   async create(input: CreateTerminalRequest): Promise<Terminal> {
     const cols = input.cols ?? DEFAULT_COLS;
     const rows = input.rows ?? DEFAULT_ROWS;
-    const lease = this.runtimeResolver.acquire(
-      { workspaceId: this.sessionContext.workspaceId, runtimeId: input.runtime_id },
+    const lease = this.environmentResolver.acquire(
+      { environmentId: input.environment_id },
       ['terminal'],
     );
-    const view = new RuntimeWorkspaceView(lease.runtime, this.workspace);
+    const view = new EnvironmentWorkspaceView(lease.environment, this.workspace);
     const cwd = input.cwd === undefined ? view.workDir : view.assertAllowed(view.resolve(input.cwd));
-    const shell = input.shell ?? lease.runtime.environment.shellPath;
+    const shell = input.shell ?? view.host.shellPath;
     let process: TerminalProcess;
+    let killer: IDisposable;
     try {
-      process = await lease.runtime.terminal!.spawn({ cwd, shell, cols, rows });
-      lease.track({ dispose: () => process.kill() });
+      process = await lease.environment.terminal!.spawn({ cwd, shell, cols, rows });
+      killer = lease.track({ dispose: () => process.kill() }, this.sessionContext.sessionId);
     } catch (error) {
       lease.dispose();
       throw error;
@@ -106,7 +107,7 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
       sinks: new Map(),
       buffer: [],
       nextSeq: 0,
-      disposables: [],
+      disposables: [killer],
       closed: false,
     };
     record.disposables.push(

@@ -9,6 +9,7 @@ import type {
   AddAdditionalDirOptions,
   AddAdditionalDirResult,
   AgentCommandInfo,
+  AgentEnvironmentBinding,
   AgentRuntimeBinding,
   BackgroundTaskInfo,
   CapabilityStatus,
@@ -33,11 +34,13 @@ import type {
   SessionPlan,
   SessionStatus,
   SessionSummary,
+  SessionEnvironmentsInfo,
   SessionTodoItem,
   SessionUsage,
   SkillSummary,
   PluginCommandDef,
   ThinkingEffort,
+  UploadFileOptions,
   Unsubscribe,
 } from '#/types';
 
@@ -260,6 +263,25 @@ export class Session {
       ErrorCodes.REQUEST_INVALID,
     );
     return this.rpc.switchRuntime({ sessionId: this.id, runtimeId: normalized });
+  }
+
+  async attachFile(data: Uint8Array, options: Pick<UploadFileOptions, 'name' | 'mimeType'>): Promise<string> {
+    this.ensureOpen();
+    return this.rpc.attachFile({ sessionId: this.id, data, options });
+  }
+
+  async getEnvironment(): Promise<AgentEnvironmentBinding> {
+    this.ensureOpen();
+    return this.rpc.getEnvironment({ sessionId: this.id });
+  }
+
+  /**
+   * List the environments available to this session: `local` plus every
+   * declared environment, with its type and connection status.
+   */
+  async listEnvironments(): Promise<SessionEnvironmentsInfo> {
+    this.ensureOpen();
+    return this.rpc.listEnvironments({ sessionId: this.id });
   }
 
   async setThinking(effort: ThinkingEffort): Promise<void> {

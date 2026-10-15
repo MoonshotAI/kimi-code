@@ -4,6 +4,8 @@ import { join } from 'pathe';
 
 import type { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
+import { IEnvironmentService } from '#/app/environment/environment';
 import {
   createScopedChildHandle,
   type ISessionScopeHandle,
@@ -189,7 +191,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IWorkspaceMcpService private readonly workspaceMcp: IWorkspaceMcpService,
     @IModelService private readonly models: IModelService,
     @IProviderService private readonly providers: IProviderService,
+    private readonly environments: IEnvironmentService,
     onDispose?: () => void,
+    private readonly profileContextKey?: string,
+    private readonly environmentCwd?: string,
   ) {
     super();
     if (onDispose !== undefined) this._register({ dispose: onDispose });
@@ -210,14 +215,30 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       .catch(() => undefined);
     const handle = await this.materializeSession({ ...opts, sessionId });
     try {
+      if (opts.environmentProject === true) {
+        await handle.accessor.get(ISessionMetadata).update({
+          environmentId: opts.environmentId, environmentCwd: opts.environmentCwd,
+          environmentProject: opts.environmentProject,
+        }, { touchUpdatedAt: false });
+      }
       const agents = handle.accessor.get(IAgentLifecycleService);
       const main =
-        opts.mainAgentBinding === undefined
-          ? undefined
-          : await agents.create({
+        opts.mainAgentBinding !== undefined
+          ? await agents.create({
               agentId: MAIN_AGENT_ID,
               binding: opts.mainAgentBinding,
-            });
+              environmentId: opts.environmentId,
+              environmentCwd:
+                opts.environmentCwd ??
+                (opts.environmentId === undefined || opts.environmentId === LOCAL_ENVIRONMENT_ID ? undefined : opts.workDir),
+            })
+          : opts.ensureMainAgent === true
+            ? await agents.create({
+                agentId: MAIN_AGENT_ID,
+                environmentId: opts.environmentId,
+                environmentCwd: opts.environmentCwd,
+              })
+            : undefined;
       if (this.config.get<boolean>(DEFAULT_PLAN_MODE_SECTION) === true) {
         const planAgent = main ?? (await ensureMainAgent(handle));
         const planHandle = agents.handleOf(planAgent.agentId);
@@ -246,7 +267,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const metaScope = sessionScope;
     await Promise.all([this.config.ready, this.models.ready, this.providers.ready]);
     await this.workspaceDirs.ready;
-    await this.workspaceDirs.mergeAdditionalDirs(opts.workDir, opts.additionalDirs ?? []);
+    const additionalDirBase = this.environmentCwd ?? opts.workDir;
+    await this.workspaceDirs.mergeAdditionalDirs(additionalDirBase, opts.additionalDirs ?? []);
     const ctx: ISessionContext = {
       _serviceBrand: undefined,
       sessionId: opts.sessionId,
@@ -270,9 +292,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           seeds: [
             ...sessionContextSeed(ctx),
             [ITelemetryService, telemetryBinding.telemetry],
+            [IEnvironmentService, this.environments],
             ...sessionAgentProfileCatalogSeed({
               _serviceBrand: undefined,
               workspaceKey: workspaceId,
+              contextKey: this.profileContextKey,
             }),
             [ISessionSkillCatalogData, this.workspaceSkillCatalog.sessionData()],
             [ISessionInstructionsProvider, this.workspaceInstructions.sessionProvider()],
@@ -421,6 +445,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await drainSessionMetadataWrites();
     await this.indexMirror.drain();
     void handle.dispose();
+    await this.environments.drainSession(sessionId);
     await drainLogCloses();
     this._onDidCloseSession.fire({ sessionId });
     this.telemetry.withContext({ session_id: sessionId }).track2('session_ended', { reason: 'exit' });
@@ -443,6 +468,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await drainSessionMetadataWrites();
     await this.indexMirror.drain();
     void handle.dispose();
+    await this.environments.drainSession(sessionId);
     await drainLogCloses();
     this._onDidArchiveSession.fire({ sessionId });
     this.telemetry.withContext({ session_id: sessionId }).track2('session_ended', { reason: 'archive' });
@@ -649,6 +675,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         titleKind: opts.title !== undefined ? 'custom' : sourceMeta?.titleKind,
         forkedFrom: sourceId,
         agents,
+        environmentId: sourceMeta?.environmentId,
+        environmentCwd: sourceMeta?.environmentCwd,
+        environmentProject: sourceMeta?.environmentProject,
         custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
         lastPrompt: turnSlice === undefined ? sourceMeta?.lastPrompt : turnSlice.lastPrompt,
         lastTurnReason: sourceMeta?.lastTurnReason,

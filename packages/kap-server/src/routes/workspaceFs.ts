@@ -1,6 +1,5 @@
-import { createReadStream, type ReadStream } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
+import type { Readable } from 'node:stream';
 
 import {
   ErrorCodes,
@@ -9,6 +8,7 @@ import {
   HostFolderPermissionError,
   IHostFileSystem,
   IHostFolderBrowser,
+  IEnvironmentService,
   isError2,
   type HostFileStat,
   type Scope,
@@ -31,6 +31,8 @@ import { parseRangeHeader, pickHeader } from '../lib/httpRange';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
+import { createEnvironmentReadStream, type EnvironmentReadStreamSource } from './fs';
+import { sendEnvironmentError } from './environment';
 
 interface FsContentReply {
   type(mime: string): FsContentReply;
@@ -44,7 +46,11 @@ interface WorkspaceFsRouteHost {
     path: string,
     options: { preHandler: unknown[]; schema?: Record<string, unknown> } | undefined,
     handler: (
-      req: { id: string; query: { path?: string }; headers: Record<string, unknown> },
+      req: {
+        id: string;
+        query: { path?: string; environment_id?: string };
+        headers: Record<string, unknown>;
+      },
       reply: FsContentReply,
     ) => Promise<void> | void,
   ): unknown;
@@ -73,8 +79,8 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
       try {
         const data = await core.accessor.get(IHostFolderBrowser).browse(req.query.path);
         reply.send(okEnvelope(data, req.id));
-      } catch (err) {
-        sendMappedError(reply, req.id, err);
+      } catch (error) {
+        sendMappedError(reply, req.id, error);
       }
     },
   );
@@ -97,8 +103,8 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
       try {
         const data = await core.accessor.get(IHostFolderBrowser).home();
         reply.send(okEnvelope(data, req.id));
-      } catch (err) {
-        sendMappedError(reply, req.id, err);
+      } catch (error) {
+        sendMappedError(reply, req.id, error);
       }
     },
   );
@@ -122,9 +128,11 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
         [ErrorCode.FS_PERMISSION_DENIED]: {},
         [ErrorCode.FS_IS_DIRECTORY]: {},
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
       description:
-        'Serve the raw content of any file on the host filesystem by absolute path. Supports ETag caching and single-range requests.',
+        'Serve the raw content of any file on the host filesystem by absolute path. Supports ETag caching and single-range requests. `environment_id` selects the filesystem of a shared app-level environment; defaults to local.',
       tags: ['workspaces'],
       operationId: 'fsContent',
     },
@@ -149,14 +157,16 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
         [ErrorCode.FS_PERMISSION_DENIED]: {},
         [ErrorCode.FS_ALREADY_EXISTS]: {},
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
       description:
-        'Create a directory on the host filesystem by absolute path (folder-picker "new folder" backend). Non-recursive: the parent directory must already exist.',
+        'Create a directory on the host filesystem by absolute path (folder-picker "new folder" backend). Non-recursive: the parent directory must already exist. `environment_id` selects the filesystem of a shared app-level environment; defaults to local.',
       tags: ['workspaces'],
       operationId: 'fsMkdir',
     },
     async (req, reply) => {
-      return handleFsMkdir(req, reply);
+      return handleFsMkdir(core, req, reply);
     },
   );
   app.post(
@@ -168,12 +178,36 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
 
 const fsContentQuerySchema = z.object({
   path: z.string().min(1),
+  environment_id: z.string().min(1).optional(),
 });
 
 interface FsContentRequest {
   id: string;
-  query: { path: string };
+  query: { path: string; environment_id?: string };
   headers: Record<string, unknown>;
+}
+
+async function acquireFsSource(
+  core: Scope,
+  environmentId: string,
+): Promise<EnvironmentReadStreamSource> {
+  if (environmentId === 'local') {
+    return {
+      hostFs: core.accessor.get(IHostFileSystem),
+      lease: { track: (resource) => resource, dispose: () => {} },
+    };
+  }
+  const lease = core.accessor.get(IEnvironmentService).acquire({ environmentId }, ['fs']);
+  return { hostFs: lease.environment.fs!, lease };
+}
+
+function sendAcquireError(
+  reply: { send(payload: unknown): unknown },
+  requestId: string,
+  err: unknown,
+): void {
+  if (sendEnvironmentError(reply, requestId, err)) return;
+  throw err;
 }
 
 async function handleFsContent(
@@ -190,86 +224,102 @@ async function handleFsContent(
     return;
   }
 
-  const hostFs = core.accessor.get(IHostFileSystem);
-
-  let abs: string;
-  let st: HostFileStat;
+  let source: EnvironmentReadStreamSource;
   try {
-    abs = await hostFs.realpath(path);
-    st = await hostFs.stat(abs);
-  } catch (err) {
-    sendOsFsError(reply, requestId, err, path);
+    source = await acquireFsSource(core, req.query.environment_id ?? 'local');
+  } catch (error) {
+    sendAcquireError(reply, requestId, error);
     return;
   }
 
-  if (st.isDirectory) {
-    reply.send(
-      errEnvelope(ErrorCode.FS_IS_DIRECTORY, `path is a directory: ${path}`, requestId),
-    );
-    return;
-  }
-  if (!st.isFile) {
-    reply.send(
-      errEnvelope(
-        ErrorCode.VALIDATION_FAILED,
-        `path is not a regular file: ${path}`,
-        requestId,
-      ),
-    );
-    return;
-  }
-
-  let isBinary = false;
+  let streaming = false;
   try {
-    const sampleSize = Math.min(FS_BINARY_SAMPLE_BYTES, st.size);
-    const sample =
-      sampleSize === 0 ? new Uint8Array() : await hostFs.readBytes(abs, sampleSize);
-    const classification = classifyTextSample(sample);
-    isBinary = classification.isBinary || classification.encoding !== 'utf-8';
-  } catch (err) {
-    sendOsFsError(reply, requestId, err, path);
-    return;
-  }
+    const hostFs = source.hostFs;
 
-  const etag = buildEtag(st);
-  const ifNoneMatch = pickHeader(req.headers, 'if-none-match');
-  if (ifNoneMatch !== undefined && ifNoneMatch === etag) {
-    reply.code(304).header('etag', etag).send('');
-    return;
-  }
-
-  reply.header('etag', etag);
-  reply.header('last-modified', new Date(st.mtimeMs ?? 0).toUTCString());
-  reply.type(guessMime(abs, isBinary));
-
-  const log = requestLog(req);
-  const onStreamError = (stream: ReadStream) => (error: unknown) => {
-    log?.warn({ path, err: error }, 'fs content stream error');
+    let abs: string;
+    let st: HostFileStat;
     try {
-      stream.destroy();
-    } catch {
+      abs = await hostFs.realpath(path);
+      st = await hostFs.stat(abs);
+    } catch (error) {
+      sendOsFsError(reply, requestId, error, path);
+      return;
     }
-  };
 
-  const range = parseRangeHeader(pickHeader(req.headers, 'range'), st.size);
-  if (range !== null) {
-    reply
-      .code(206)
-      .header('content-length', String(range.length))
-      .header('content-range', `bytes ${range.start}-${range.end}/${st.size}`);
-    const stream = createReadStream(abs, { start: range.start, end: range.end });
+    if (st.isDirectory) {
+      reply.send(
+        errEnvelope(ErrorCode.FS_IS_DIRECTORY, `path is a directory: ${path}`, requestId),
+      );
+      return;
+    }
+    if (!st.isFile) {
+      reply.send(
+        errEnvelope(
+          ErrorCode.VALIDATION_FAILED,
+          `path is not a regular file: ${path}`,
+          requestId,
+        ),
+      );
+      return;
+    }
+
+    let isBinary = false;
+    try {
+      const sampleSize = Math.min(FS_BINARY_SAMPLE_BYTES, st.size);
+      const sample =
+        sampleSize === 0 ? new Uint8Array() : await hostFs.readBytes(abs, sampleSize);
+      const classification = classifyTextSample(sample);
+      isBinary = classification.isBinary || classification.encoding !== 'utf-8';
+    } catch (error) {
+      sendOsFsError(reply, requestId, error, path);
+      return;
+    }
+
+    const etag = buildEtag(st);
+    const ifNoneMatch = pickHeader(req.headers, 'if-none-match');
+    if (ifNoneMatch !== undefined && ifNoneMatch === etag) {
+      reply.code(304).header('etag', etag).send('');
+      return;
+    }
+
+    reply.header('etag', etag);
+    reply.header('last-modified', new Date(st.mtimeMs ?? 0).toUTCString());
+    reply.type(guessMime(abs, isBinary));
+
+    const log = requestLog(req);
+    const onStreamError = (stream: Readable) => (error: unknown) => {
+      log?.warn({ path, err: error }, 'fs content stream error');
+      try {
+        stream.destroy();
+      } catch {
+      }
+    };
+
+    const range = parseRangeHeader(pickHeader(req.headers, 'range'), st.size);
+    if (range !== null) {
+      reply
+        .code(206)
+        .header('content-length', String(range.length))
+        .header('content-range', `bytes ${range.start}-${range.end}/${st.size}`);
+      const stream = createEnvironmentReadStream(source, abs, range.start, range.length);
+      streaming = true;
+      stream.on('error', onStreamError(stream));
+      return reply.send(stream) as unknown as void;
+    }
+
+    reply.code(200).header('content-length', String(st.size));
+    const stream = createEnvironmentReadStream(source, abs, 0, st.size);
+    streaming = true;
     stream.on('error', onStreamError(stream));
     return reply.send(stream) as unknown as void;
+  } finally {
+    if (!streaming) source.lease.dispose();
   }
-
-  reply.code(200).header('content-length', String(st.size));
-  const stream = createReadStream(abs);
-  stream.on('error', onStreamError(stream));
-  return reply.send(stream) as unknown as void;
 }
 
 const fsMkdirBodySchema = z.object({
   path: z.string().min(1),
+  environment_id: z.string().min(1).optional(),
 });
 
 const fsMkdirResponseSchema = z.object({
@@ -278,10 +328,11 @@ const fsMkdirResponseSchema = z.object({
 
 interface FsMkdirRequest {
   id: string;
-  body: { path: string };
+  body: { path: string; environment_id?: string };
 }
 
 async function handleFsMkdir(
+  core: Scope,
   req: FsMkdirRequest,
   reply: { send(payload: unknown): unknown },
 ): Promise<void> {
@@ -294,30 +345,21 @@ async function handleFsMkdir(
     return;
   }
 
+  let source: EnvironmentReadStreamSource;
   try {
-    await mkdir(path);
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException | undefined)?.code;
-    switch (code) {
-      case 'EEXIST':
-        reply.send(
-          errEnvelope(ErrorCode.FS_ALREADY_EXISTS, `path already exists: ${path}`, requestId),
-        );
-        return;
-      case 'ENOENT':
-      case 'ENOTDIR':
-        reply.send(
-          errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, `parent path not found: ${path}`, requestId),
-        );
-        return;
-      case 'EACCES':
-      case 'EPERM':
-        reply.send(
-          errEnvelope(ErrorCode.FS_PERMISSION_DENIED, `permission denied: ${path}`, requestId),
-        );
-        return;
-    }
-    throw err;
+    source = await acquireFsSource(core, req.body.environment_id ?? 'local');
+  } catch (error) {
+    sendAcquireError(reply, requestId, error);
+    return;
+  }
+
+  try {
+    await source.hostFs.mkdir(path);
+  } catch (error) {
+    sendOsFsError(reply, requestId, error, path);
+    return;
+  } finally {
+    source.lease.dispose();
   }
 
   reply.send(okEnvelope({ path }, requestId));
@@ -335,6 +377,11 @@ function sendOsFsError(
       case ErrorCodes.OS_FS_NOT_DIRECTORY:
         reply.send(
           errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, `path not found: ${path}`, requestId),
+        );
+        return;
+      case ErrorCodes.OS_FS_ALREADY_EXISTS:
+        reply.send(
+          errEnvelope(ErrorCode.FS_ALREADY_EXISTS, `path already exists: ${path}`, requestId),
         );
         return;
       case ErrorCodes.OS_FS_PERMISSION_DENIED:

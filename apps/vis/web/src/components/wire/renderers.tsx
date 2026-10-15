@@ -1463,6 +1463,19 @@ export const WIRE_RENDERERS: RendererMap = {
     }),
   },
 
+  'environment.set_binding': {
+    tone: 'meta',
+    label: 'environment',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>{r.environmentId}</Mono>
+          {r.cwd === undefined ? null : <Dim className="truncate">{r.cwd}</Dim>}
+        </span>
+      ),
+    }),
+  },
+
   'runtime.set_binding': {
     tone: 'meta',
     label: 'runtime',
@@ -1470,7 +1483,7 @@ export const WIRE_RENDERERS: RendererMap = {
       main: (
         <span className="flex items-center gap-2 min-w-0">
           <Mono>{r.runtimeId}</Mono>
-          <Dim className="truncate">workspace {r.workspaceId}</Dim>
+          <Dim className="truncate">{r.workspaceId}</Dim>
         </span>
       ),
     }),

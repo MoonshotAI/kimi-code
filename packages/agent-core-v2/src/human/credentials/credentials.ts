@@ -1,4 +1,4 @@
-import { errorStatusCode } from '#/llm/errors';
+import { errorStatusCode } from '#/llm/errorStatus';
 import type { LlmModel } from '#/llm/model';
 import type { LlmRecovery } from '#/llm/requester/recovery';
 import {

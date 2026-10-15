@@ -18,7 +18,7 @@ async function enterPlan(
 ): Promise<string> {
   await plan.enter(id, false);
   const status = await plan.status();
-  if (status === null) {
+  if (status === null || status.path === null) {
     throw new Error('expected plan file path');
   }
   return status.path;

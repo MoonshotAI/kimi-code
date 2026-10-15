@@ -3,6 +3,8 @@ import type {
   ExportSessionManifest,
   ShellEnvironment,
 } from '@moonshot-ai/agent-core-v2/app/sessionExport/sessionExport';
+import type { EnvironmentStatus as SessionEnvironmentStatus } from '@moonshot-ai/agent-core-v2/environment/environment';
+import type { RemoteEnvironmentEntry } from '@moonshot-ai/agent-core-v2/environment/remoteEnvironmentDeclaration';
 import type { KimiHostIdentity, OAuthRefreshOutcome } from '@moonshot-ai/kimi-code-oauth';
 import type { ContentPart } from '@moonshot-ai/kosong';
 
@@ -30,6 +32,28 @@ export interface AgentRuntimeBinding {
   readonly workspaceId: string;
   readonly runtimeId: string;
 }
+
+export interface AgentEnvironmentBinding {
+  readonly environmentId: string;
+  readonly cwd?: string;
+}
+
+export type { EnvironmentStatus as SessionEnvironmentStatus } from '@moonshot-ai/agent-core-v2/environment/environment';
+
+export type SessionEnvironmentType = 'local' | 'ssh' | 'docker' | 'command';
+
+export interface SessionEnvironmentInfo {
+  readonly environmentId: string;
+  readonly type: SessionEnvironmentType;
+  readonly status: SessionEnvironmentStatus;
+  readonly connectError?: string;
+}
+
+export interface SessionEnvironmentsInfo {
+  readonly environments: readonly SessionEnvironmentInfo[];
+}
+
+export type { RemoteEnvironmentEntry };
 
 export type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
 
@@ -62,6 +86,7 @@ export type {
 export type {
   BackgroundConfig,
   ConfigDiagnostics,
+  EnvironmentsConfig,
   KimiConfig,
   KimiConfigPatch,
   LoopControl,
@@ -156,6 +181,13 @@ export interface WorkspaceTrustInstructionSources {
 
 /** Trust state of a workspace directory, plus everything trusting it would activate. */
 export interface WorkspaceTrustInfo {
+  readonly gatedEnvironments?: readonly {
+    readonly id: string;
+    readonly launcher: string;
+    readonly defaultCwd?: string;
+    readonly origin: string;
+    readonly envKeys: readonly string[];
+  }[];
   readonly trusted: boolean;
   /** Project-level MCP servers that trusting would start. */
   readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
@@ -174,6 +206,10 @@ export interface WorkspaceTrustInfo {
 export interface SuggestFilesInput {
   readonly query: string;
   readonly limit?: number;
+  /** Target environment; omit or use `local` for the workspace's local filesystem. */
+  readonly environment?: AgentEnvironmentBinding;
+  /** Additional roots used only when `environment` selects a non-local environment. */
+  readonly additionalDirs?: readonly string[];
 }
 
 export interface SuggestFilesItem {
@@ -263,6 +299,20 @@ export interface CreateSessionOptions {
    * interactive / SDK sessions.
    */
   readonly drainAgentTasksOnStop?: boolean;
+  /**
+   * Initial environment binding for the main agent. An id declared in
+   * `[environments]`, or one already registered in this process (a temporary
+   * `connect` environment). Omit to start on the local environment, or the
+   * configured default when one is set. A registered environment that is not
+   * declared requires `environmentCwd`.
+   */
+  readonly environmentId?: string;
+  /**
+   * Working directory on the target environment for the initial binding.
+   * For a declared environment, defaults to that entry's `defaultCwd`.
+   * Required when the id is registered in this process but not declared.
+   */
+  readonly environmentCwd?: string;
 }
 
 export interface RenameSessionInput {
@@ -391,7 +441,7 @@ export interface ReloadSessionOptions {
 export interface PlanInfo {
   readonly id: string;
   readonly content: string;
-  readonly path: string;
+  readonly path: string | null;
 }
 
 export type SessionPlan = PlanInfo | null;

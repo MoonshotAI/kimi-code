@@ -126,6 +126,17 @@ export class TrustPromptComponent implements Component, Focusable {
       warnings,
     } = this.opts.info;
     const lines: string[] = [];
+    const environments = this.opts.info.gatedEnvironments ?? [];
+    if (environments.length > 0) {
+      lines.push(...wrap(`Enable ${environments.length} project remote environment declarations`, 1, width, 'warning'));
+      for (const environment of environments) {
+        lines.push(...wrap(`${environment.id}: ${environment.launcher}`, 3, width, 'text'));
+        lines.push(...wrap(`Config: ${relativize(this.opts.workDir, environment.origin)}`, 3, width, 'textMuted'));
+        if (environment.defaultCwd !== undefined) lines.push(...wrap(`Working directory: ${environment.defaultCwd}`, 3, width, 'textMuted'));
+        if (environment.envKeys.length > 0) lines.push(...wrap(`Launcher environment keys: ${environment.envKeys.join(', ')}`, 3, width, 'textMuted'));
+      }
+      lines.push('');
+    }
     if (gatedMcpServers.length > 0) {
       lines.push(
         ...wrap(

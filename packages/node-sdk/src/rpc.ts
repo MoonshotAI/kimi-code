@@ -23,6 +23,7 @@ import type {
   AddAdditionalDirInput,
   AddAdditionalDirResult,
   AgentCommandInfo,
+  AgentEnvironmentBinding,
   AgentRuntimeBinding,
   AppMcpServerInspection,
   BackgroundTaskInfo,
@@ -69,6 +70,7 @@ import type {
   RefreshProviderModelsResponse,
   SessionSummary,
   SessionSummaryPage,
+  SessionEnvironmentsInfo,
   SkillSummary,
   PluginCommandDef,
   SuggestFilesInput,
@@ -232,6 +234,10 @@ export abstract class SDKRpcClientBase {
   abstract uploadFile(data: Uint8Array, options: UploadFileOptions): Promise<FileMeta>;
 
   abstract deleteFile(fileId: string): Promise<void>;
+
+  async attachFile(_input: { sessionId: string; data: Uint8Array; options: Pick<UploadFileOptions, 'name' | 'mimeType'> }): Promise<string> {
+    throw new Error('Session attachments are unavailable on this engine.');
+  }
 
   abstract listGlobalMcpServers(options?: {
     readonly cwd?: string;
@@ -459,6 +465,14 @@ export abstract class SDKRpcClientBase {
   abstract getRuntime(input: SessionIdRpcInput): Promise<AgentRuntimeBinding>;
 
   abstract switchRuntime(input: SwitchSessionRuntimeRpcInput): Promise<AgentRuntimeBinding>;
+
+  async resolveSessionEnvironment(options: Pick<CreateSessionOptions, 'workDir' | 'environmentId' | 'environmentCwd'>): Promise<AgentEnvironmentBinding> {
+    throw new Error(`Environment resolution is unavailable on this engine for ${options.workDir}.`);
+  }
+
+  abstract getEnvironment(input: SessionIdRpcInput): Promise<AgentEnvironmentBinding>;
+
+  abstract listEnvironments(input: SessionIdRpcInput): Promise<SessionEnvironmentsInfo>;
 
   onEvent(listener: (event: Event) => void): Unsubscribe {
     this.eventListeners.add(listener);

@@ -119,7 +119,7 @@ describe('WorkspaceTrustService', () => {
     await service.untrust();
     expect(states.get(workspaceTrustTrustedKey)).toBe(false);
     expect(service.isTrusted()).toBe(true);
-    expect(events).toEqual([{ trusted: true }, { trusted: false }]);
+    expect(events.map((event) => event.trusted)).toEqual([true, false]);
   });
 
   it('trust() flips the state, fires once, and stays idempotent', async () => {
@@ -132,7 +132,7 @@ describe('WorkspaceTrustService', () => {
 
     expect(service.isTrusted()).toBe(true);
     expect(await service.get()).toBe(true);
-    expect(events).toEqual([{ trusted: true }]);
+    expect(events.map((event) => event.trusted)).toEqual([true]);
   });
 
   it('untrust() revokes the state and both directions stay idempotent', async () => {
@@ -146,7 +146,7 @@ describe('WorkspaceTrustService', () => {
     await service.untrust();
 
     expect(service.isTrusted()).toBe(false);
-    expect(events).toEqual([{ trusted: true }, { trusted: false }]);
+    expect(events.map((event) => event.trusted)).toEqual([true, false]);
   });
 
   it('keeps the marker across a restart', async () => {

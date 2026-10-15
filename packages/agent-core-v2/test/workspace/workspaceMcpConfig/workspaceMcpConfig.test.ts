@@ -109,7 +109,7 @@ describe('WorkspaceMcpConfigService', () => {
         reg.definePartialInstance(IWorkspaceTrust, {
           ready: Promise.resolve(),
           isTrusted: () => trusted,
-          onDidChange: trustFlips.event,
+          onDidChange: trustFlips.event as IWorkspaceTrust['onDidChange'],
         });
         reg.definePartialInstance(IMcpConfigStore, { onDidWrite: storeWrites.event });
         reg.define(IWorkspaceMcpConfigService, WorkspaceMcpConfigService);

@@ -14,7 +14,8 @@ import type { IBuiltinSkillSource } from '#/features/skill/catalog/builtinSkillS
 import type { IUserFileSkillSource } from '#/features/skill/catalog/userFileSkillSource';
 import type { IAppStateService } from '#/app/state/appState';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { IEnvironmentService } from '#/app/environment/environment';
+import type { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
 import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
@@ -30,7 +31,9 @@ import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspac
 
 export interface ProgramSessionControllerInput {
   readonly context: IWorkspaceContext;
-  readonly fs: IHostFileSystem;
+  readonly profileContextKey: string;
+  readonly environmentCwd?: string;
+  readonly environments: IEnvironmentService;
   readonly workspaceAgentProfiles: IWorkspaceAgentProfileLoader;
   readonly extraAgentProfiles: IExtraAgentProfileLoader;
   readonly explicitAgentProfiles: IExplicitAgentProfileLoader;
@@ -44,6 +47,7 @@ export interface ProgramSessionControllerInput {
 }
 
 export interface ProgramDependencies {
+  readonly environmentDeclarations: IEnvironmentDeclarationService;
   readonly appState: IAppStateService;
   readonly bootstrap: IBootstrapService;
   readonly config: IConfigService;

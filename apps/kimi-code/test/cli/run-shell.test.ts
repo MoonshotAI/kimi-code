@@ -201,6 +201,7 @@ describe('runShell', () => {
     skillsDirs: [],
     agent: undefined,
     agentFiles: [],
+    environment: undefined,
   };
 
   function stubTuiStartup(): void {
@@ -263,6 +264,7 @@ describe('runShell', () => {
       skillsDirs: [],
       agent: undefined,
       agentFiles: [],
+      environment: undefined,
       addDirs: ['../shared', '/tmp/extra'],
     };
 
@@ -383,6 +385,7 @@ describe('runShell', () => {
         skillsDirs: [],
         agent: 'reviewer',
         agentFiles: [],
+        environment: undefined,
       },
       '1.2.3-test',
     );
@@ -426,6 +429,7 @@ describe('runShell', () => {
         skillsDirs: ['/skills'],
         agent: undefined,
         agentFiles: [],
+        environment: undefined,
       },
       '1.2.3-test',
     );
@@ -461,6 +465,7 @@ describe('runShell', () => {
         skillsDirs: [],
         agent: undefined,
         agentFiles: [],
+        environment: undefined,
       },
       '1.2.3-test',
     );
@@ -503,6 +508,7 @@ describe('runShell', () => {
         skillsDirs: [],
         agent: undefined,
         agentFiles: [],
+        environment: undefined,
       },
       '1.2.3-test',
     );
@@ -548,6 +554,7 @@ describe('runShell', () => {
         skillsDirs: [],
         agent: undefined,
         agentFiles: [],
+        environment: undefined,
       },
       '1.2.3-test',
     );
@@ -584,6 +591,7 @@ describe('runShell', () => {
         skillsDirs: [],
         agent: undefined,
         agentFiles: [],
+        environment: undefined,
       },
       '1.2.3-test',
     );
@@ -637,6 +645,7 @@ describe('runShell', () => {
         skillsDirs: [],
         agent: undefined,
         agentFiles: [],
+        environment: undefined,
       },
       '1.2.3-test',
     );
@@ -677,6 +686,7 @@ describe('runShell', () => {
         skillsDirs: [],
         agent: undefined,
         agentFiles: [],
+        environment: undefined,
       },
       '1.2.3-test',
     );
@@ -716,6 +726,7 @@ describe('runShell', () => {
           skillsDirs: [],
           agent: undefined,
           agentFiles: [],
+          environment: undefined,
         },
         '1.2.3-test',
       );
@@ -767,6 +778,7 @@ describe('runShell', () => {
           skillsDirs: [],
           agent: undefined,
           agentFiles: [],
+          environment: undefined,
         },
         '1.2.3-test',
       );
@@ -811,6 +823,7 @@ describe('runShell', () => {
           skillsDirs: [],
           agent: undefined,
           agentFiles: [],
+          environment: undefined,
         },
         '1.2.3-test',
       ),
@@ -853,6 +866,7 @@ describe('runShell', () => {
           skillsDirs: [],
           agent: undefined,
           agentFiles: [],
+          environment: undefined,
         },
         '1.2.3-test',
       );
@@ -910,6 +924,7 @@ describe('runShell', () => {
           skillsDirs: [],
           agent: undefined,
           agentFiles: [],
+          environment: undefined,
         },
         '1.2.3-test',
       );
@@ -958,6 +973,7 @@ describe('runShell', () => {
           skillsDirs: [],
           agent: undefined,
           agentFiles: [],
+          environment: undefined,
         },
         '1.2.3-test',
         { migrateOnly: true },

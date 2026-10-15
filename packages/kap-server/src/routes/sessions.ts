@@ -68,6 +68,7 @@ import { defineRoute } from '../middleware/defineRoute';
 import { readLegacyStatus } from '../services/legacyStatus/legacyStatus';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, dispatchAction } from './action-dispatch';
+import { sendEnvironmentError } from './environment';
 import { applySessionAgentConfig } from './sessionAgentConfig';
 import { updateSessionProfile } from './sessionProfile';
 
@@ -186,6 +187,8 @@ export function registerSessionsRoutes(
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
       description: 'Create a new session',
       tags: ['sessions'],
@@ -242,6 +245,9 @@ export function registerSessionsRoutes(
         const handle = await core.accessor.get(ISessionManager).create({
           workspaceId: touched.id,
           workDir,
+          environmentId: body.environment_id,
+          environmentCwd: body.environment_cwd,
+          ensureMainAgent: body.environment_id !== undefined && body.environment_id !== 'local',
         });
         if (typeof body.title === 'string') {
           await handle.accessor.get(ISessionMetadata).setTitle(body.title);
@@ -1162,6 +1168,7 @@ function sendMappedError(
 ): void {
   const requestId = req.id;
   const log = requestLog(req);
+  if (sendEnvironmentError(reply, requestId, err)) return;
   if (isError2(err)) {
     switch (err.code) {
       case 'session.not_found':

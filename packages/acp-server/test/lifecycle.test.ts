@@ -339,6 +339,30 @@ describe('acp-server session lifecycle', () => {
   );
 
   it(
+    'session/load succeeds after the host process restarts',
+    async () => {
+      const c = await boot();
+      const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
+        sessionId: string;
+      };
+      await c.close();
+      client = undefined;
+
+      const restarted = await createTestClient({ homeDir: homeDir! });
+      client = restarted;
+      await restarted.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
+
+      const loaded = (await restarted.send('session/load', {
+        sessionId: created.sessionId,
+        cwd: homeDir,
+        mcpServers: [],
+      })) as { configOptions?: unknown[] };
+      expect(Array.isArray(loaded.configOptions)).toBe(true);
+    },
+    30_000,
+  );
+
+  it(
     'session/new forwards additionalDirectories to the engine workspace dirs',
     async () => {
       const c = await boot();
