@@ -2,11 +2,12 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'pathe';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Emitter, Event } from '#/_base/event';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
+import { IAgentChangeNotifierService } from '#/agent/changeNotifier/changeNotifier';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { Runtime, RuntimeCapability, RuntimeStatus } from '#/runtime/runtime';
 import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
@@ -144,6 +145,23 @@ describe('AgentProfileService.applyProfile', () => {
     expect(svc.data().systemPrompt).toContain('project instructions');
     expect(svc.data().systemPrompt).toContain(`<!-- From: ${join(workDir, 'AGENTS.md')} -->`);
     expect(svc.getAgentsMdWarning()).toBeUndefined();
+  });
+
+  it('seeds change-notifier beliefs from the applied profile context', async () => {
+    const seedBeliefs = vi.fn<IAgentChangeNotifierService['seedBeliefs']>();
+    const { profile: svc } = buildContext(
+      agentService(IAgentChangeNotifierService, {
+        _serviceBrand: undefined,
+        notifyAgentsMdChanges: async () => {},
+        notifySkillChanges: async () => {},
+        notifySubagentChanges: async () => {},
+        seedBeliefs,
+      }),
+    );
+
+    await svc.applyProfile(profile);
+
+    expect(seedBeliefs).toHaveBeenCalledTimes(1);
   });
 
   it('renders the complete runtime context exactly', async () => {

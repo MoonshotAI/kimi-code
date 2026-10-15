@@ -25,6 +25,7 @@ import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 import {
   IAgentChangeNotifierService,
+  type BeliefsSeed,
   type SubagentChangesInput,
 } from './changeNotifier';
 import {
@@ -106,14 +107,19 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
         lease.dispose();
       }
       const hash = hashText(`${fresh.paths.join('\n')}\n\n${fresh.content}`);
-      if (this.snapshot.agentsMdHash === hash) return;
-      this.recordSnapshot({ agentsMdHash: hash });
-      const changes = classifyAgentsMdChanges(
-        profileData.systemPrompt,
-        profileData.agentsMdPaths ?? [],
-        fresh.paths,
-        contents,
-      );
+      const snapshot = this.snapshot;
+      if (snapshot.agentsMdHash === hash) return;
+      const currentFiles = hashAgentsMdContents(contents);
+      this.recordSnapshot({ agentsMdHash: hash, agentsMdFiles: currentFiles });
+      const changes =
+        snapshot.agentsMdFiles !== undefined
+          ? classifyAgainstBeliefs(snapshot.agentsMdFiles, fresh.paths, currentFiles)
+          : classifyAgentsMdChanges(
+              profileData.systemPrompt,
+              profileData.agentsMdPaths ?? [],
+              fresh.paths,
+              contents,
+            );
       if (changes.modified.length + changes.deleted.length + changes.added.length === 0) return;
       this.reminder.notify(agentsMdChangeText(changes), { variant: AGENTS_MD_CHANGE_VARIANT });
     } catch (error) {
@@ -129,12 +135,15 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
       await this.skillCatalog.ready;
       const listing = this.skillCatalog.catalog.getModelSkillListing();
       const hash = hashText(listing);
-      if (this.snapshot.skillsHash === hash) return;
+      const snapshot = this.snapshot;
+      if (snapshot.skillsHash === hash) return;
       this.recordSnapshot({ skillsHash: hash });
-      if (listing === '') {
-        if (!profileData.systemPrompt.includes(SKILL_LISTING_MARKER)) return;
-      } else if (profileData.systemPrompt.includes(listing)) {
-        return;
+      if (snapshot.skillsHash === undefined) {
+        if (listing === '') {
+          if (!profileData.systemPrompt.includes(SKILL_LISTING_MARKER)) return;
+        } else if (profileData.systemPrompt.includes(listing)) {
+          return;
+        }
       }
       this.reminder.notify(skillsChangeText(listing), { variant: SKILLS_CHANGE_VARIANT });
     } catch (error) {
@@ -189,12 +198,35 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
     }
   }
 
+  async seedBeliefs(seed: BeliefsSeed): Promise<void> {
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
+    try {
+      const lease = this.runtime.acquire(['fs']);
+      let contents: ReadonlyMap<string, string>;
+      try {
+        contents = await readAgentsMdFileContents(lease.runtime.fs!, seed.agentsMdPaths);
+      } finally {
+        lease.dispose();
+      }
+      const pool = resolveSubagentModelPool(this.config);
+      this.recordSnapshot({
+        agentsMdFiles: hashAgentsMdContents(contents),
+        skillsHash: hashText(seed.skillsListing),
+        subagentNames: this.agentCatalog.list().map((profile) => profile.name),
+        modelPoolAliases: pool === undefined ? undefined : Object.keys(pool.models),
+      });
+    } catch (error) {
+      this.log.warn('change notifier belief seeding failed', { error });
+    }
+  }
+
   private recordSnapshot(patch: Partial<ChangeNotifierSnapshotState>): void {
     const next = { ...this.snapshot, ...patch };
     void this.dispatcher.dispatch(
       new ChangeNotifierSnapshotEvent({
         agentId: this.scopeContext.agentId,
         agentsMdHash: next.agentsMdHash ?? null,
+        agentsMdFiles: next.agentsMdFiles !== undefined ? { ...next.agentsMdFiles } : null,
         skillsHash: next.skillsHash ?? null,
         subagentNames: next.subagentNames !== undefined ? [...next.subagentNames] : null,
         modelPoolAliases: next.modelPoolAliases !== undefined ? [...next.modelPoolAliases] : null,
@@ -227,6 +259,33 @@ async function readAgentsMdFileContents(
     } catch {}
   }
   return contents;
+}
+
+function hashAgentsMdContents(contents: ReadonlyMap<string, string>): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [path, content] of contents) {
+    result[path] = hashText(content);
+  }
+  return result;
+}
+
+function classifyAgainstBeliefs(
+  beliefs: Readonly<Record<string, string>>,
+  currentPaths: readonly string[],
+  currentFiles: Readonly<Record<string, string>>,
+): AgentsMdChanges {
+  const current = new Set(currentPaths.map(normalize));
+  const beliefPaths = new Set(Object.keys(beliefs));
+  const deleted = [...beliefPaths].filter((path) => !current.has(path));
+  const added = [...current].filter((path) => !beliefPaths.has(path));
+  const modified: string[] = [];
+  for (const path of current) {
+    if (!beliefPaths.has(path)) continue;
+    const currentHash = currentFiles[path];
+    if (currentHash === undefined) continue;
+    if (beliefs[path] !== currentHash) modified.push(path);
+  }
+  return { modified, deleted, added };
 }
 
 function classifyAgentsMdChanges(

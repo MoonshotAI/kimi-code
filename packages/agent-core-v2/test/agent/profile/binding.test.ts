@@ -20,6 +20,7 @@ import type { ToolCall } from '#human/llm/message';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
 import type { WatchChange } from '#human/utils/watch';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
+import { IAgentChangeNotifierService } from '#/agent/changeNotifier/changeNotifier';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -1333,5 +1334,88 @@ describe('agentsMdReminder seeding', () => {
     );
 
     expect(seedInjected).not.toHaveBeenCalled();
+  });
+});
+
+describe('change-notifier belief seeding', () => {
+  let ctx: TestAgentContext;
+  let homeDir: string;
+  let workDir: string;
+
+  beforeAll(() => {
+    registerAgentProfile({
+      name: 'belief-throws-on-prompt',
+      systemPrompt: () => {
+        throw new Error('prompt build boom');
+      },
+    });
+  });
+
+  beforeEach(async () => {
+    homeDir = await mkdtemp(join(tmpdir(), 'kimi-belief-home-'));
+    workDir = await mkdtemp(join(tmpdir(), 'kimi-belief-work-'));
+  });
+
+  afterEach(async () => {
+    await ctx?.dispose();
+    await rm(homeDir, { recursive: true, force: true });
+    await rm(workDir, { recursive: true, force: true });
+  });
+
+  function buildNotifierContext(
+    seedBeliefs: IAgentChangeNotifierService['seedBeliefs'],
+  ): IAgentProfileService {
+    ctx = createTestAgent(
+      { cwd: workDir },
+      hostEnvironmentServices(homeDir),
+      agentService(IAgentChangeNotifierService, {
+        _serviceBrand: undefined,
+        notifyAgentsMdChanges: async () => {},
+        notifySkillChanges: async () => {},
+        notifySubagentChanges: async () => {},
+        seedBeliefs,
+      }),
+    );
+    return ctx.get(IAgentProfileService);
+  }
+
+  it('seeds beliefs from the rendered prompt after a successful bind', async () => {
+    const seedBeliefs = vi.fn<IAgentChangeNotifierService['seedBeliefs']>();
+    const profile = buildNotifierContext(seedBeliefs);
+    await writeFile(join(workDir, 'AGENTS.md'), 'project instructions', 'utf-8');
+
+    await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+
+    expect(seedBeliefs).toHaveBeenCalledTimes(1);
+    expect(seedBeliefs).toHaveBeenCalledWith({
+      agentsMdPaths: [normalize(join(workDir, 'AGENTS.md'))],
+      skillsListing: expect.any(String),
+    });
+  });
+
+  it('does not seed when the prompt build fails before the bind commits', async () => {
+    const seedBeliefs = vi.fn<IAgentChangeNotifierService['seedBeliefs']>();
+    const profile = buildNotifierContext(seedBeliefs);
+
+    await expect(
+      profile.bind({ profile: 'belief-throws-on-prompt', model: MOCK_MODEL }),
+    ).rejects.toThrow('prompt build boom');
+
+    expect(seedBeliefs).not.toHaveBeenCalled();
+  });
+
+  it('does not reseed beliefs on binding snapshot restore', async () => {
+    const seedBeliefs = vi.fn<IAgentChangeNotifierService['seedBeliefs']>();
+    const profile = buildNotifierContext(seedBeliefs);
+    await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    seedBeliefs.mockClear();
+
+    profile.applyBindingSnapshot({
+      profileName: DEFAULT_AGENT_PROFILE_NAME,
+      thinkingLevel: 'off',
+      systemPrompt: 'restored prompt',
+    });
+
+    expect(seedBeliefs).not.toHaveBeenCalled();
   });
 });

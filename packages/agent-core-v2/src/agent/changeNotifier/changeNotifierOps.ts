@@ -6,6 +6,7 @@ import { defineState } from '#/state/state';
 
 export interface ChangeNotifierSnapshotState {
   readonly agentsMdHash?: string;
+  readonly agentsMdFiles?: Readonly<Record<string, string>>;
   readonly skillsHash?: string;
   readonly subagentNames?: readonly string[];
   readonly modelPoolAliases?: readonly string[];
@@ -14,6 +15,7 @@ export interface ChangeNotifierSnapshotState {
 const changeNotifierSnapshotSchema = z.object({
   agentId: z.string(),
   agentsMdHash: z.string().nullable(),
+  agentsMdFiles: z.record(z.string(), z.string()).nullable(),
   skillsHash: z.string().nullable(),
   subagentNames: z.array(z.string()).readonly().nullable(),
   modelPoolAliases: z.array(z.string()).readonly().nullable(),
@@ -29,6 +31,7 @@ export class ChangeNotifierSnapshotEvent extends AgentEvent2<
 export interface ChangeNotifierSnapshotEvent {
   readonly agentId: string;
   readonly agentsMdHash: string | null;
+  readonly agentsMdFiles: Record<string, string> | null;
   readonly skillsHash: string | null;
   readonly subagentNames: readonly string[] | null;
   readonly modelPoolAliases: readonly string[] | null;
@@ -41,6 +44,7 @@ export const changeNotifierSnapshotKey = defineState(
   .replayable({ schema: z.custom<ChangeNotifierSnapshotState>() })
   .on(ChangeNotifierSnapshotEvent, (_s, e) => ({
     agentsMdHash: e.agentsMdHash ?? undefined,
+    agentsMdFiles: e.agentsMdFiles ?? undefined,
     skillsHash: e.skillsHash ?? undefined,
     subagentNames: e.subagentNames ?? undefined,
     modelPoolAliases: e.modelPoolAliases ?? undefined,

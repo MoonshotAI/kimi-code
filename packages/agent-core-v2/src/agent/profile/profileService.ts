@@ -1,4 +1,5 @@
 import { Disposable } from '#/_base/di/lifecycle';
+import { IInstantiationService } from '#/_base/di/instantiation';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
@@ -42,6 +43,7 @@ import type { ResolvedAgentProfile, SystemPromptContext } from '#/agent/profile/
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
+import { IAgentChangeNotifierService } from '#/agent/changeNotifier/changeNotifier';
 
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -170,6 +172,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IAgentIdentity private readonly identity: IAgentIdentity,
     @IAgentAgentsMdReminderService private readonly agentsMdReminder: IAgentAgentsMdReminderService,
     @IProviderDiscoveryService private readonly discovery: IProviderDiscoveryService,
+    @IInstantiationService private readonly instantiation: IInstantiationService,
   ) {
     super();
     this.states.contributeState(profileKey);
@@ -375,6 +378,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       disallowedTools: profile.disallowedTools ?? [],
     });
     this.seedAgentsMdReminder(context);
+    await this.seedChangeNotifierBeliefs(context);
 
     this.publishAgentsMdWarning();
     this.publishToolPatternWarnings(profile);
@@ -446,6 +450,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     const context = await this.buildSystemPromptContext(profile, options);
     this.useProfile(profile, context);
     this.seedAgentsMdReminder(context);
+    await this.seedChangeNotifierBeliefs(context);
     this.cacheAgentsMdWarning(context);
     this.publishAgentsMdWarning();
     this.publishToolPatternWarnings(profile);
@@ -455,6 +460,15 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this.agentsMdReminder.seedInjected(
       context.agentsMdPaths ?? [],
       context.cwd ?? this.sessionContext.cwd,
+    );
+  }
+
+  private async seedChangeNotifierBeliefs(context: SystemPromptContext): Promise<void> {
+    await this.instantiation.invokeFunction((accessor) =>
+      accessor.get(IAgentChangeNotifierService).seedBeliefs({
+        agentsMdPaths: context.agentsMdPaths ?? [],
+        skillsListing: context.skills ?? '',
+      }),
     );
   }
 
