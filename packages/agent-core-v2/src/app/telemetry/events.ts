@@ -408,6 +408,29 @@ export interface NotifyUserSentEvent {
   displayed: boolean;
 }
 
+export interface TodoListWrittenEvent {
+  turn_id: number;
+  item_count: number;
+  open_count: number;
+  steps_since_write?: number;
+  after_reminder: boolean;
+}
+
+export interface TodoReminderShownEvent {
+  turn_id?: number;
+  steps_since_write: number;
+  item_count: number;
+  open_count: number;
+}
+
+export interface TodoTurnEndedEvent {
+  turn_id: number;
+  reason: 'completed' | 'cancelled' | 'failed' | 'blocked';
+  item_count: number;
+  open_count: number;
+  updated_in_turn: boolean;
+}
+
 export interface GrepToolRgFallbackEvent {
   source?: 'share-bin-cached' | 'vendor' | 'share-bin-downloaded';
   outcome: 'resolved' | 'failed';
@@ -1123,6 +1146,38 @@ export const telemetryEventDefinitions = {
       title_chars: 'Length of the update title in UTF-16 code units; the title text itself is not recorded',
       message_chars: 'Length of the update message in UTF-16 code units; the message text itself is not recorded',
       displayed: 'Whether the update was shown to the user; false when the feature was turned off mid-session or the host cannot display updates',
+    },
+  }),
+  todo_list_written: defineAgentTelemetryEvent<TodoListWrittenEvent>({
+    owner: 'kimi-code',
+    comment: 'The agent replaced or cleared its todo list through the TodoList tool.',
+    properties: {
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session',
+      item_count: 'Number of items in the list after the write; 0 when the list was cleared',
+      open_count: 'Number of items still pending or in_progress after the write',
+      steps_since_write: 'Assistant steps between the previous TodoList write in context and this one; omitted when no earlier write is in context',
+      after_reminder: 'Whether a stale todo list reminder was injected since the previous TodoList write',
+    },
+  }),
+  todo_reminder_shown: defineAgentTelemetryEvent<TodoReminderShownEvent>({
+    owner: 'kimi-code',
+    comment: 'A reminder that the todo list still has open items and has not been updated recently is queued for context injection.',
+    properties: {
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session; omitted when no turn is active',
+      steps_since_write: 'Assistant steps since the last TodoList write in context',
+      item_count: 'Number of items in the list',
+      open_count: 'Number of items still pending or in_progress',
+    },
+  }),
+  todo_turn_ended: defineAgentTelemetryEvent<TodoTurnEndedEvent>({
+    owner: 'kimi-code',
+    comment: 'A main-agent turn ended while the todo list was non-empty or had changed during the turn.',
+    properties: {
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session',
+      reason: 'How the turn ended',
+      item_count: 'Number of items in the list when the turn ended; 0 when the list was cleared during the turn',
+      open_count: 'Number of items still pending or in_progress when the turn ended',
+      updated_in_turn: 'Whether the list changed during this turn',
     },
   }),
   grep_tool_rg_fallback: defineAgentTelemetryEvent<GrepToolRgFallbackEvent>({

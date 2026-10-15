@@ -37,6 +37,7 @@ function makeSwarmHandler() {
   const handler = new SubAgentEventHandler(host as never, {
     backgroundTasks: new Map(),
     backgroundTaskTranscriptedTerminal: new Set(),
+    backgroundTaskTerminalEntries: new Map(),
     syncBackgroundAgentBadge: vi.fn(),
   });
   return { handler, host, requestRender, transcriptContainer, dockChild };

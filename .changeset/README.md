@@ -99,23 +99,27 @@ Commit messages must follow Conventional Commit style. Do not include any author
 
 ### 4. CI generates the release PR
 
-Once the changeset file is merged into `main`, `.github/workflows/release.yml` uses `changesets/action@v1` to create or update a release PR.
+Changesets accumulate on `main`. Create `release/<cycle>` from the selected commit; pushes to that branch use `changesets/action@v1` to create or update its release PR. Manual **Release** runs on a release branch only prepare the PR. The workflow explicitly dispatches CI for the generated version branch.
 
 The release PR runs:
 
 - `pnpm changeset version`: bumps publishable package versions and updates changelogs;
 - Deletes the consumed `.changeset/*.md` files;
-- Uses the title `[CI]: Release packages`.
+- Uses the title `ci: release packages`.
 
 ### 5. Merge the release PR
 
-Once the release PR is merged into `main`, the same workflow runs:
+Review the version PR, latest CI and CLI/extension pre-changelog together. Once the matching version PR is merged into `release/<cycle>`, publication waits for that exact commit’s push CI. Ordinary pushes do not publish. The existing publication steps then run:
 
 - `pnpm install --frozen-lockfile`
 - `pnpm build`
 - `pnpm changeset publish`
 
-The packages are then published via npm Trusted Publishing, and a GitHub Release is created.
+The packages are then published via npm Trusted Publishing, and a GitHub Release is created. CLI native builds still depend on Changesets reporting a newly published CLI package; npm-succeeded/native-failed whole-run recovery is not changed by this migration.
+
+VS Code uses the same approved release commit and CI gate, publishing only when the extension version changed in that push. It retains its existing build and marketplace checks. It no longer publishes on main pushes or through a standalone manual entry. The documentation workflow is dispatched on main after CLI artifacts are uploaded; its deployment result is tracked separately. CDN remains manual.
+
+Migration: merge the main infrastructure PR first to disable the old publisher, then the release infrastructure PR. These PRs do not publish. Close the obsolete main version PR separately. After the actual release, synchronize versions, changelogs, lockfile and consumed changeset removals back to main, preserving later main work. Main synchronization does not publish npm or VS Code. Do not change Desktop's submodule pointer as part of this step.
 
 ## Manual Publishing (Not Recommended)
 
@@ -140,7 +144,7 @@ The root-level `pnpm run publish` first runs typecheck, lint, sherif, test, buil
 - Every PR that affects publishable-package behavior or public API should include a corresponding changeset.
 - Changes under `plugins/` (the bundled official plugins such as `kimi-datasource`) do **not** need a changeset: each plugin carries its own version in `kimi.plugin.json` and `plugins/marketplace.json` and is distributed via the marketplace CDN, separately from the `@moonshot-ai/kimi-code` npm package.
 - Changeset files must be committed to the repository — release PRs are only triggered after they're merged.
-- Release PRs require human review and merge; they will not publish automatically.
+- Release PRs require human review and approval. They do not publish before merge; merging the approved PR automatically publishes after its commit passes CI.
 - Do not add release changesets for private internal packages; only select `@moonshot-ai/kimi-code` and `@moonshot-ai/kimi-code-sdk`.
 - If a change in an underlying internal package alters user-visible behavior or public API of a publishable package, add a changeset to the affected publishable package. For example, when a bug fixed in `@moonshot-ai/kosong` resolves an issue CLI users encounter, add a changeset to `@moonshot-ai/kimi-code` describing the user-visible fix.
 - `@moonshot-ai/kimi-code` is the official CLI package name; after a global install it provides the `kimi` command.

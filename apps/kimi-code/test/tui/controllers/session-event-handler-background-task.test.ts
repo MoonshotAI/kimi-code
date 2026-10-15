@@ -18,6 +18,7 @@ function makeStreamingUIStub() {
     applyBackgroundTaskTerminalStatus: vi.fn(),
     markSubagentBackgrounded: vi.fn(),
     setTurnId: vi.fn(),
+    setStep: vi.fn(),
     flushNow: vi.fn(),
     setTodoList: vi.fn(),
     resetToolUi: vi.fn(),
@@ -44,6 +45,7 @@ function makeSubagentHandler() {
   const handler = new SubAgentEventHandler(host as never, {
     backgroundTasks,
     backgroundTaskTranscriptedTerminal: transcriptedTerminal,
+    backgroundTaskTerminalEntries: new Map(),
     syncBackgroundAgentBadge: vi.fn(),
   });
   return { handler, backgroundTasks, host, transcriptedTerminal };
@@ -182,6 +184,7 @@ describe('SubAgentEventHandler — activity record pruning', () => {
 });
 
 function makeSessionEventHost() {
+  const transcriptEntries: unknown[] = [];
   const host = {
     state: {
       appState: {
@@ -196,6 +199,7 @@ function makeSessionEventHost() {
       toolOutputExpanded: false,
       todoPanel: { getTodos: vi.fn(() => []) },
       transcriptContainer: { addChild: vi.fn() },
+      transcriptEntries,
       tasksBrowser: undefined,
       footer: { setBackgroundCounts: vi.fn() },
       ui: { requestRender: vi.fn() },
@@ -213,17 +217,24 @@ function makeSessionEventHost() {
     showNotice: vi.fn(),
     track: vi.fn(),
     recordSessionActivity: vi.fn(),
+    updateActivityPane: vi.fn(),
     noteStepUsage: vi.fn(),
     noteCompactionFinished: vi.fn(),
     mountEditorReplacement: vi.fn(),
     restoreEditor: vi.fn(),
     restoreInputText: vi.fn(),
-    appendTranscriptEntry: vi.fn(),
+    appendTranscriptEntry: vi.fn((entry: unknown) => {
+      // Mirror the real host: appended entries are retrievable from the
+      // transcript window (the anchor scans it for orphaned agent cards).
+      transcriptEntries.push(entry);
+    }),
+    moveTranscriptEntryToEnd: vi.fn(() => true),
     sendNormalUserInput: vi.fn(),
     sendQueuedMessage: vi.fn(),
     shiftQueuedMessage: vi.fn(),
     btwPanelController: { routeEvent: vi.fn(() => false) },
     tasksBrowserController: { repaint: vi.fn(), refreshOutputViewer: vi.fn() },
+    surveyController: { notifySubagentSpawned: vi.fn() },
   };
   return host as never;
 }
@@ -289,5 +300,350 @@ describe('SessionEventHandler — background.task.terminated', () => {
     );
 
     expect(store.get('agent-7')).toBeUndefined();
+  });
+});
+
+describe('SessionEventHandler — task-notification turn anchoring', () => {
+  interface SessionHostMocks {
+    appendTranscriptEntry: ReturnType<typeof vi.fn>;
+    moveTranscriptEntryToEnd: ReturnType<typeof vi.fn>;
+  }
+
+  function makeHost() {
+    // makeSessionEventHost returns `never`; recover the mock surface for assertions.
+    return makeSessionEventHost() as SessionHostMocks &
+      ConstructorParameters<typeof SessionEventHandler>[0];
+  }
+
+  function taskTerminatedEvent(taskId: string, kind: 'agent' | 'process', status: string): Event {
+    return {
+      sessionId: 's1',
+      agentId: 'main',
+      type: 'background.task.terminated',
+      info: {
+        taskId,
+        kind,
+        agentId: kind === 'agent' ? `${taskId}-agent` : undefined,
+        description: `task ${taskId}`,
+        status,
+        startedAt: 0,
+        endedAt: 1,
+      },
+    } as unknown as Event;
+  }
+
+  function taskNotificationTurnEvent(taskId: string, status: string): Event {
+    return {
+      sessionId: 's1',
+      agentId: 'main',
+      type: 'turn.started',
+      turnId: 2,
+      origin: { kind: 'task', taskId, status },
+    } as unknown as Event;
+  }
+
+  function appendedEntries(host: SessionHostMocks) {
+    return host.appendTranscriptEntry.mock.calls.map(
+      ([entry]) => entry as { content: string; backgroundAgentStatus?: { phase: string } },
+    );
+  }
+
+  it('mounts no transcript card when an agent-kind task terminates', () => {
+    const host = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    handler.handleEvent(taskTerminatedEvent('task-a1', 'agent', 'completed'), vi.fn());
+
+    // Agent terminal cards are owned by the subagent lifecycle path — the
+    // task event itself only records the terminal state.
+    expect(host.appendTranscriptEntry).not.toHaveBeenCalled();
+    expect(handler.backgroundTaskTranscriptedTerminal.has('task-a1')).toBe(true);
+  });
+
+  it('moves the mounted terminal card to the notification turn instead of mounting a new one', () => {
+    const host = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    handler.handleEvent(taskTerminatedEvent('task-p1', 'process', 'completed'), vi.fn());
+    expect(appendedEntries(host)).toHaveLength(1);
+
+    handler.handleEvent(taskNotificationTurnEvent('task-p1', 'completed'), vi.fn());
+
+    expect(host.moveTranscriptEntryToEnd).toHaveBeenCalledWith(appendedEntries(host)[0]);
+    expect(appendedEntries(host)).toHaveLength(1);
+  });
+
+  it('mounts a terminal card at the notification turn start when the agent left none', () => {
+    const host = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    // A timed-out agent that emitted no subagent lifecycle event has no
+    // terminal card to anchor — agent-kind terminations mount none.
+    handler.handleEvent(taskTerminatedEvent('task-a2', 'agent', 'timed_out'), vi.fn());
+    expect(host.appendTranscriptEntry).not.toHaveBeenCalled();
+
+    handler.handleEvent(taskNotificationTurnEvent('task-a2', 'timed_out'), vi.fn());
+
+    const appended = appendedEntries(host);
+    expect(appended).toHaveLength(1);
+    expect(appended[0]!.backgroundAgentStatus?.phase).toBe('failed');
+    expect(host.moveTranscriptEntryToEnd).not.toHaveBeenCalled();
+  });
+
+  it('anchors the only terminal card when completion lands before the task syncs', () => {
+    const host = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    // Spawn-time background agent: the spawn event carries the task id.
+    handler.handleEvent(
+      {
+        sessionId: 's1',
+        agentId: 'main',
+        type: 'subagent.spawned',
+        subagentId: 'agent-1',
+        subagentName: 'explore',
+        parentToolCallId: 'tc-agent-1',
+        description: 'task agent-1',
+        runInBackground: true,
+        taskId: 'task-agent-1',
+      } as unknown as Event,
+      vi.fn(),
+    );
+    // Completion lands before background.task.started syncs the task table.
+    handler.handleEvent(
+      {
+        sessionId: 's1',
+        agentId: 'main',
+        type: 'subagent.completed',
+        subagentId: 'agent-1',
+        resultSummary: 'done',
+      } as unknown as Event,
+      vi.fn(),
+    );
+    handler.handleEvent(
+      {
+        sessionId: 's1',
+        agentId: 'main',
+        type: 'background.task.started',
+        info: {
+          taskId: 'task-agent-1',
+          kind: 'agent',
+          agentId: 'agent-1',
+          description: 'task agent-1',
+          status: 'running',
+          startedAt: 0,
+        },
+      } as unknown as Event,
+      vi.fn(),
+    );
+
+    const terminalCards = (): unknown[] =>
+      host.appendTranscriptEntry.mock.calls
+        .map(([entry]) => entry)
+        .filter(
+          (entry) =>
+            (entry as { backgroundAgentStatus?: { phase: string } }).backgroundAgentStatus
+              ?.phase === 'completed',
+        );
+    expect(terminalCards()).toHaveLength(1);
+
+    handler.handleEvent(taskNotificationTurnEvent('task-agent-1', 'completed'), vi.fn());
+
+    // The notification turn moves the mounted card to the turn start instead
+    // of mounting a second one.
+    expect(host.moveTranscriptEntryToEnd).toHaveBeenCalledWith(terminalCards()[0]);
+    expect(terminalCards()).toHaveLength(1);
+  });
+
+  it('anchors the orphaned terminal card of an agent that finished before its task registered', () => {
+    const host = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    // Tower-style spawn: the spawn event carries no task id — the task is
+    // registered only after launch() returns, and the worker can finish
+    // before that.
+    handler.handleEvent(
+      {
+        sessionId: 's1',
+        agentId: 'main',
+        type: 'subagent.spawned',
+        subagentId: 'agent-t1',
+        subagentName: 'explore',
+        parentToolCallId: 'tc-agent-t1',
+        description: 'task agent-t1',
+        runInBackground: true,
+      } as unknown as Event,
+      vi.fn(),
+    );
+    // The worker terminates before background.task.started syncs the task:
+    // its terminal card mounts with no task id to register under.
+    handler.handleEvent(
+      {
+        sessionId: 's1',
+        agentId: 'main',
+        type: 'subagent.completed',
+        subagentId: 'agent-t1',
+        resultSummary: 'done',
+      } as unknown as Event,
+      vi.fn(),
+    );
+    handler.handleEvent(
+      {
+        sessionId: 's1',
+        agentId: 'main',
+        type: 'background.task.started',
+        info: {
+          taskId: 'task-agent-t1',
+          kind: 'agent',
+          agentId: 'agent-t1',
+          description: 'task agent-t1',
+          status: 'running',
+          startedAt: 0,
+        },
+      } as unknown as Event,
+      vi.fn(),
+    );
+    handler.handleEvent(
+      {
+        sessionId: 's1',
+        agentId: 'main',
+        type: 'background.task.terminated',
+        info: {
+          taskId: 'task-agent-t1',
+          kind: 'agent',
+          agentId: 'agent-t1',
+          description: 'task agent-t1',
+          status: 'completed',
+          startedAt: 0,
+          endedAt: 1,
+        },
+      } as unknown as Event,
+      vi.fn(),
+    );
+
+    const terminalCards = (): unknown[] =>
+      host.appendTranscriptEntry.mock.calls
+        .map(([entry]) => entry)
+        .filter(
+          (entry) =>
+            (entry as { backgroundAgentStatus?: { phase: string } }).backgroundAgentStatus
+              ?.phase === 'completed',
+        );
+    expect(terminalCards()).toHaveLength(1);
+
+    handler.handleEvent(taskNotificationTurnEvent('task-agent-t1', 'completed'), vi.fn());
+
+    // The notification turn reuses the orphaned card — no duplicate mounts.
+    expect(host.moveTranscriptEntryToEnd).toHaveBeenCalledWith(terminalCards()[0]);
+    expect(terminalCards()).toHaveLength(1);
+    expect(host.appendTranscriptEntry).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not steal a previous run’s card when a resumed agent shares its agentId', () => {
+    const host = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    // First run: the background agent completes and its terminal card is
+    // registered under its own task id.
+    handler.handleEvent(
+      {
+        sessionId: 's1',
+        agentId: 'main',
+        type: 'subagent.spawned',
+        subagentId: 'agent-r1',
+        subagentName: 'explore',
+        parentToolCallId: 'tc-agent-r1',
+        description: 'task agent-r1',
+        runInBackground: true,
+        taskId: 'task-r1',
+      } as unknown as Event,
+      vi.fn(),
+    );
+    handler.handleEvent(
+      {
+        sessionId: 's1',
+        agentId: 'main',
+        type: 'background.task.started',
+        info: {
+          taskId: 'task-r1',
+          kind: 'agent',
+          agentId: 'agent-r1',
+          description: 'task agent-r1',
+          status: 'running',
+          startedAt: 0,
+        },
+      } as unknown as Event,
+      vi.fn(),
+    );
+    handler.handleEvent(
+      {
+        sessionId: 's1',
+        agentId: 'main',
+        type: 'subagent.completed',
+        subagentId: 'agent-r1',
+        resultSummary: 'done',
+      } as unknown as Event,
+      vi.fn(),
+    );
+
+    const terminalEntries = () =>
+      (
+        handler as unknown as {
+          backgroundTaskTerminalEntries: Map<string, unknown>;
+        }
+      ).backgroundTaskTerminalEntries;
+    const firstRunCard = appendedEntries(host).find(
+      (entry) => entry.backgroundAgentStatus?.phase === 'completed',
+    );
+    expect(firstRunCard).toBeDefined();
+    expect(terminalEntries().get('task-r1')).toBe(firstRunCard);
+
+    // The agent is resumed in the background: the new task shares the
+    // agentId, then times out without mounting a card of its own.
+    handler.handleEvent(
+      {
+        sessionId: 's1',
+        agentId: 'main',
+        type: 'background.task.started',
+        info: {
+          taskId: 'task-r2',
+          kind: 'agent',
+          agentId: 'agent-r1',
+          description: 'task agent-r1 (resumed)',
+          status: 'running',
+          startedAt: 1,
+        },
+      } as unknown as Event,
+      vi.fn(),
+    );
+    handler.handleEvent(
+      {
+        sessionId: 's1',
+        agentId: 'main',
+        type: 'background.task.terminated',
+        info: {
+          taskId: 'task-r2',
+          kind: 'agent',
+          agentId: 'agent-r1',
+          description: 'task agent-r1 (resumed)',
+          status: 'timed_out',
+          startedAt: 1,
+          endedAt: 2,
+        },
+      } as unknown as Event,
+      vi.fn(),
+    );
+
+    handler.handleEvent(taskNotificationTurnEvent('task-r2', 'timed_out'), vi.fn());
+
+    // The anchor must leave the first run's card registered and in place,
+    // and mount the resumed task's own terminal card instead.
+    expect(host.moveTranscriptEntryToEnd).not.toHaveBeenCalledWith(firstRunCard);
+    expect(terminalEntries().get('task-r1')).toBe(firstRunCard);
+    const appended = appendedEntries(host);
+    const resumedCard = appended.at(-1)!;
+    expect(resumedCard).not.toBe(firstRunCard);
+    expect(resumedCard.backgroundAgentStatus?.phase).toBe('failed');
+    expect(terminalEntries().get('task-r2')).toBe(resumedCard);
   });
 });

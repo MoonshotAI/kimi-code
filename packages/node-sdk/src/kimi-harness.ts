@@ -37,6 +37,8 @@ import type {
   RenameSessionInput,
   ResumeSessionInput,
   ReloadSessionInput,
+  RefreshProviderModelsOptions,
+  RefreshProviderModelsResponse,
   SessionSummary,
   SessionSummaryPage,
   SkillSummary,
@@ -460,28 +462,16 @@ export class KimiHarness {
     return this.rpc.removeProvider(providerId);
   }
 
-  /**
-   * Whether several config sections can be persisted as ONE atomic write
-   * (see {@link replaceConfigSections}). False on the v1 harness.
-   */
-  supportsAtomicSectionReplace(): boolean {
-    return this.rpc.supportsAtomicSectionReplace();
-  }
-
   async importCustomRegistry(
     options: ImportCustomRegistryOptions,
   ): Promise<ImportCustomRegistryResult> {
     return this.rpc.importCustomRegistry(options);
   }
 
-  /**
-   * Replace several top-level config sections in ONE atomic write: a section
-   * mapped to `undefined` is cleared, absent sections are left untouched.
-   * Replace semantics (unlike {@link setConfig}'s deep-merge), so staged
-   * removals are expressed by the written record itself.
-   */
-  async replaceConfigSections(sections: Record<string, unknown>): Promise<void> {
-    return this.rpc.replaceConfigSections(sections);
+  async refreshProviderModels(
+    options?: RefreshProviderModelsOptions,
+  ): Promise<RefreshProviderModelsResponse> {
+    return this.rpc.refreshProviderModels(options);
   }
 
   /**

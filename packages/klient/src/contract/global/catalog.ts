@@ -19,6 +19,13 @@ export const modelCatalogItemSchema = z.object({
   capabilities: z.array(z.string()).optional(),
   support_efforts: z.array(z.string()).optional(),
   default_effort: z.string().optional(),
+  upgrade: z
+    .object({
+      model: z.string(),
+      migration_markdown: z.string(),
+      retirement_at: z.string().optional(),
+    })
+    .optional(),
 });
 
 export const providerCatalogStatusSchema = z.enum(['connected', 'error', 'unconfigured']);

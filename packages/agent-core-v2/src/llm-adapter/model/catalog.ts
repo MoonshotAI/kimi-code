@@ -8,7 +8,7 @@ import type { TokenUsage } from '#human/llm/usage';
 import type { Protocol, ProtocolProviderOptions } from '../protocol/protocol';
 import type { ProviderConfig } from '../provider/provider';
 
-import type { ModelRecord } from './model';
+import type { ModelRecord, ModelUpgrade } from './model';
 import { effectiveModelConfig } from './model-auth';
 import type {
   ModelRequestEvent,
@@ -59,6 +59,13 @@ export const modelCatalogItemSchema = z.object({
   capabilities: z.array(z.string()).optional(),
   support_efforts: z.array(z.string()).optional(),
   default_effort: z.string().optional(),
+  upgrade: z
+    .object({
+      model: z.string().min(1),
+      migration_markdown: z.string(),
+      retirement_at: z.string().optional(),
+    })
+    .optional(),
 });
 export type ModelCatalogItem = z.infer<typeof modelCatalogItemSchema>;
 
@@ -93,6 +100,15 @@ export interface ProviderCredentialState {
   readonly hasCredentialConflict: boolean;
 }
 
+function toProtocolModelUpgrade(upgrade: ModelUpgrade | undefined) {
+  if (upgrade === undefined) return undefined;
+  return {
+    model: upgrade.model,
+    migration_markdown: upgrade.migrationMarkdown,
+    retirement_at: upgrade.retirementAt,
+  };
+}
+
 export function toProtocolModel(
   model: Model,
   record: ModelRecord,
@@ -106,6 +122,7 @@ export function toProtocolModel(
     capabilities: effectiveModelConfig(record, providerType ?? model.providerType).capabilities,
     support_efforts: model.supportEfforts === undefined ? undefined : [...model.supportEfforts],
     default_effort: model.defaultEffort,
+    upgrade: toProtocolModelUpgrade(record.upgrade),
   };
 }
 
@@ -123,6 +140,7 @@ export function toProtocolModelFallback(
     capabilities: effective.capabilities,
     support_efforts: effective.supportEfforts,
     default_effort: effective.defaultEffort,
+    upgrade: toProtocolModelUpgrade(record.upgrade),
   };
 }
 
