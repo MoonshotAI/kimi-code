@@ -297,6 +297,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     renderLatex: input.tuiConfig.renderLatex,
     cacheExpiryHint: input.tuiConfig.cacheExpiryHint,
     disableFeedbackSurvey: input.tuiConfig.disableFeedbackSurvey,
+    autoSessionTitle: input.tuiConfig.autoSessionTitle,
     notifications: input.tuiConfig.notifications,
     upgrade: input.tuiConfig.upgrade,
     statusLine: input.tuiConfig.statusLine,
@@ -1927,6 +1928,7 @@ export class KimiTUI {
   private async maybeAutoGenerateSessionTitle(): Promise<void> {
     const sessionId = this.state.appState.sessionId;
     if (sessionId.length === 0) return;
+    if (this.state.appState.autoSessionTitle === false) return;
     const record = this.autoTitleAttempts.get(sessionId);
     if (record !== undefined && (record.done || record.attempts >= MAX_AUTO_TITLE_ATTEMPTS)) {
       return;

@@ -74,6 +74,7 @@ export async function applyReloadedTuiConfig(
     renderLatex: config.renderLatex,
     cacheExpiryHint: config.cacheExpiryHint,
     disableFeedbackSurvey: config.disableFeedbackSurvey,
+    autoSessionTitle: config.autoSessionTitle,
     notifications: config.notifications,
     upgrade: config.upgrade,
     statusLine: config.statusLine,

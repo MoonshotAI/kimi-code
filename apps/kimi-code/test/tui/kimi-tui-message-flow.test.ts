@@ -10794,6 +10794,23 @@ describe('auto session title', () => {
     expect(generateSessionTitle).not.toHaveBeenCalled();
   });
 
+  it('does not generate when the tui.toml auto_session_title toggle is off', async () => {
+    const generateSessionTitle = vi.fn(async () => 'Generated Title');
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      tuiConfig: { ...makeStartupInput().tuiConfig, autoSessionTitle: false },
+    };
+    const session = makeSession();
+    const { driver } = await makeDriver(session, { generateSessionTitle }, startupInput);
+    await driver.setSession(session);
+    await driver.syncRuntimeState(session);
+
+    emitTurn(driver, 1);
+    await flushAsync();
+
+    expect(generateSessionTitle).not.toHaveBeenCalled();
+  });
+
   it('does not regenerate once a title was generated', async () => {
     const generateSessionTitle = vi.fn(async () => 'Generated Title');
     const { driver } = await makeDriver(makeSession(), { generateSessionTitle });
