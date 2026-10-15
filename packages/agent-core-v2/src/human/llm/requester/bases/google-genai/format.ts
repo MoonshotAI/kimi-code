@@ -152,7 +152,6 @@ export function encodeGoogleGenAIThinking(
   if (model.includes('gemini-3') || model.includes('gemini-4')) {
     switch (effort) {
       case 'off':
-        // Gemini 4 has no MINIMAL level; degrade to its lowest level LOW.
         return {
           includeThoughts: false,
           thinkingLevel: model.includes('gemini-4') ? 'LOW' : 'MINIMAL',
