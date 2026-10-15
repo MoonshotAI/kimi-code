@@ -1,13 +1,4 @@
-import { createRequire } from 'node:module';
-import { resolve } from 'node:path';
-
 import { defineConfig } from 'tsdown';
-
-import { rawTextPlugin } from '../../build/raw-text-plugin.mjs';
-
-const require = createRequire(import.meta.url);
-const pkg = require('./package.json') as { version: string };
-const root = import.meta.dirname;
 
 export default defineConfig({
   entry: ['./src/extension.ts'],
@@ -17,21 +8,6 @@ export default defineConfig({
   clean: true,
   dts: false,
   sourcemap: false,
-  plugins: [rawTextPlugin()],
-  alias: {
-    '@moonshot-ai/kimi-code-sdk': resolve(root, '../../packages/node-sdk/src/index.ts'),
-    '@moonshot-ai/kimi-telemetry': resolve(root, '../../packages/telemetry/src/index.ts'),
-    '@moonshot-ai/migration-legacy': resolve(root, '../../packages/migration-legacy/src/index.ts'),
-    '@moonshot-ai/kimi-code-oauth/provider-credential': resolve(
-      root,
-      '../../packages/oauth/src/provider-credential.ts',
-    ),
-    '@moonshot-ai/kimi-code-oauth': resolve(root, '../../packages/oauth/src/index.ts'),
-    '@moonshot-ai/kosong': resolve(root, '../../packages/kosong/src/index.ts'),
-  },
-  define: {
-    __EXTENSION_VERSION__: JSON.stringify(pkg.version),
-  },
   banner: {
     js: [
       "import { fileURLToPath as __cjsShimFileURLToPath } from 'node:url';",
@@ -42,7 +18,6 @@ export default defineConfig({
   },
   deps: {
     onlyBundle: false,
-    alwaysBundle: [/^@moonshot-ai\//, 'immer', 'zod'],
     neverBundle: ['vscode'],
   },
   outputOptions: {
