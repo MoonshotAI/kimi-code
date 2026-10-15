@@ -21,6 +21,10 @@ import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalo
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { loadAgentsMdForRoots, type LoadedAgentsMd } from '#/agent/profile/context';
 import { resolveSubagentModelPool, type SubagentModelPool } from '#/session/subagent/configSection';
+import { isToolActiveComposed } from '#/agent/toolPolicy/evaluate';
+import { TOOLS_SECTION, type ToolsConfig } from '#/agent/toolPolicy/configSection';
+import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
+import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 import {
@@ -63,6 +67,8 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
     @IConfigService private readonly config: IConfigService,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
+    @ISessionToolPolicy private readonly sessionToolPolicy: ISessionToolPolicy,
+    @ISessionToolPolicyGate private readonly toolPolicyGate: ISessionToolPolicyGate,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ILogService private readonly log: ILogService,
@@ -156,10 +162,26 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
           return;
         }
       }
+      if (!this.skillToolActive(profileData.profileName)) return;
       this.reminder.notify(skillsChangeText(listing), { variant: SKILLS_CHANGE_VARIANT });
     } catch (error) {
       this.log.warn('skill change notification failed', { error });
     }
+  }
+
+  private skillToolActive(profileName: string | undefined): boolean {
+    if (profileName === undefined) return false;
+    const profile = this.agentCatalog.get(profileName);
+    if (profile === undefined) return false;
+    return isToolActiveComposed(
+      {
+        workspaceDisabledTools: this.toolPolicyGate.disabledTools,
+        profile,
+        global: this.config.get<ToolsConfig>(TOOLS_SECTION),
+        sessionDisabledTools: this.sessionToolPolicy.disabledTools(),
+      },
+      'Skill',
+    );
   }
 
   async notifySubagentChanges(input?: SubagentChangesInput): Promise<void> {
@@ -385,8 +407,10 @@ function classifyAgentsMdChanges(
   for (const path of current) {
     if (!previous.has(path)) continue;
     const content = contents.get(path);
-    if (content === undefined || content === '') continue;
-    if (!systemPrompt.includes(`<!-- From: ${path} -->\n${content}`)) modified.push(path);
+    if (content === undefined) continue;
+    const injected = `<!-- From: ${path} -->\n${content}`;
+    if (systemPrompt.includes(`${injected}\n\n`) || systemPrompt.endsWith(injected)) continue;
+    modified.push(path);
   }
   return { modified, deleted, added };
 }

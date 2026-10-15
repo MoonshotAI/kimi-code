@@ -24,6 +24,8 @@ import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { createReminderStub } from '../../features/reminder/stubs';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
+import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
+import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import type { WatchChange } from '#human/utils/watch';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import type { SkillCatalog } from '#/features/skill/catalog/types';
@@ -74,6 +76,7 @@ interface Harness {
   readonly profileMeta: {
     value: Readonly<Record<string, { readonly description?: string; readonly whenToUse?: string }>>;
   };
+  readonly sessionDisabledTools: { value: readonly string[] };
   readonly secondaryModel: { value: SecondaryModelConfig | undefined };
 }
 
@@ -102,6 +105,7 @@ function createHarness(options: {
   const profileMeta = {
     value: {} as Readonly<Record<string, { readonly description?: string; readonly whenToUse?: string }>>,
   };
+  const sessionDisabledTools = { value: [] as readonly string[] };
   const secondaryModel = { value: undefined as SecondaryModelConfig | undefined };
   const hostFs = new HostFileSystem();
   const hostEnvironment = {
@@ -147,7 +151,7 @@ function createHarness(options: {
         onDidChange: agentCatalogChange.event,
         load: async () => {},
         reload: async () => {},
-        get: () => undefined,
+        get: (name: string) => ({ name, ...profileMeta.value[name] }) as unknown as AgentProfile,
         getDefault: () => ({ name: 'default' }) as unknown as AgentProfile,
         inspect: () => undefined,
         list: () =>
@@ -163,6 +167,14 @@ function createHarness(options: {
           },
         }),
       );
+      reg.defineInstance(ISessionToolPolicy, {
+        _serviceBrand: undefined,
+        disabledTools: () => sessionDisabledTools.value,
+      } as unknown as ISessionToolPolicy);
+      reg.defineInstance(ISessionToolPolicyGate, {
+        _serviceBrand: undefined,
+        disabledTools: [],
+      } as unknown as ISessionToolPolicyGate);
       reg.defineInstance(IAgentStateService, agentState);
       reg.defineInstance(IConfigService, {
         get: (domain: string) =>
@@ -247,6 +259,7 @@ function createHarness(options: {
     skillListing,
     profileNames,
     profileMeta,
+    sessionDisabledTools,
     secondaryModel,
   };
 }
@@ -309,6 +322,39 @@ describe('notifyAgentsMdChanges', () => {
     await h.notifier.notifyAgentsMdChanges();
     expect(h.reminders).toHaveLength(1);
     expect(h.reminders[0]?.variant).toBe('agents_md_change');
+    expect(h.reminders[0]?.content).toContain(agentsMdPath);
+  });
+
+  it('detects an AGENTS.md truncated before the first check of a legacy session', async () => {
+    const agentsMdPath = join(workDir, 'AGENTS.md');
+    await writeFile(agentsMdPath, 'line one\nline two');
+    const h = createHarness({
+      profile: makeProfileData({
+        profileName: 'default',
+        systemPrompt: agentsMdPrompt(agentsMdPath, 'line one\nline two\nline three'),
+        agentsMdPaths: [agentsMdPath],
+      }),
+    });
+
+    await h.notifier.notifyAgentsMdChanges();
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.variant).toBe('agents_md_change');
+    expect(h.reminders[0]?.content).toContain(agentsMdPath);
+  });
+
+  it('detects an AGENTS.md emptied before the first check of a legacy session', async () => {
+    const agentsMdPath = join(workDir, 'AGENTS.md');
+    await writeFile(agentsMdPath, '');
+    const h = createHarness({
+      profile: makeProfileData({
+        profileName: 'default',
+        systemPrompt: agentsMdPrompt(agentsMdPath, 'v1 content'),
+        agentsMdPaths: [agentsMdPath],
+      }),
+    });
+
+    await h.notifier.notifyAgentsMdChanges();
+    expect(h.reminders).toHaveLength(1);
     expect(h.reminders[0]?.content).toContain(agentsMdPath);
   });
 
@@ -684,6 +730,31 @@ describe('notifySkillChanges', () => {
     await h.notifier.notifySkillChanges();
     expect(h.reminders).toHaveLength(2);
     expect(h.reminders[1]?.variant).toBe('skills_change');
+  });
+
+  it('advances beliefs without reminding while the Skill tool is disabled', async () => {
+    const h = createHarness({
+      profile: makeProfileData({
+        profileName: 'default',
+        systemPrompt: `header\n\n${LISTING_A}\n\nfooter`,
+      }),
+    });
+    h.skillListing.value = LISTING_A;
+    await h.notifier.notifySkillChanges();
+
+    h.sessionDisabledTools.value = ['Skill'];
+    h.skillListing.value = LISTING_AB;
+    await h.notifier.notifySkillChanges();
+    expect(h.reminders).toHaveLength(0);
+
+    h.sessionDisabledTools.value = [];
+    await h.notifier.notifySkillChanges();
+    expect(h.reminders).toHaveLength(0);
+
+    h.skillListing.value = LISTING_A;
+    await h.notifier.notifySkillChanges();
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('skill-a');
   });
 });
 
