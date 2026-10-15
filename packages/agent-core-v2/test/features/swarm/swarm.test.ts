@@ -875,6 +875,113 @@ describe('AgentSwarmTool', () => {
     expect(host.swarmService.run).not.toHaveBeenCalled();
   });
 
+  it('maps a legacy subagent_type alias to the default profile for item spawns', async () => {
+    const host = mockSwarmHost({
+      run: vi.fn().mockResolvedValue([
+        {
+          task: {
+            kind: 'spawn',
+            data: {
+              kind: 'spawn',
+              index: 1,
+              item: 'src/a.ts',
+              prompt: 'Review src/a.ts',
+            },
+            profileName: 'coder',
+            parentToolCallId: 'call_swarm',
+            prompt: 'Review src/a.ts',
+            description: 'Review files #1 (coder)',
+            runInBackground: false,
+          },
+          agentId: 'agent-coder-1',
+          status: 'completed',
+          result: 'coder result a',
+        },
+        {
+          task: {
+            kind: 'spawn',
+            data: {
+              kind: 'spawn',
+              index: 2,
+              item: 'src/b.ts',
+              prompt: 'Review src/b.ts',
+            },
+            profileName: 'coder',
+            parentToolCallId: 'call_swarm',
+            prompt: 'Review src/b.ts',
+            description: 'Review files #2 (coder)',
+            runInBackground: false,
+          },
+          agentId: 'agent-coder-2',
+          status: 'completed',
+          result: 'coder result b',
+        },
+      ]),
+    });
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig(), stubCallerProfile()), stubCallerProfile());
+
+    const result = await executeTool(
+      tool,
+      context({
+        description: 'Review files',
+        prompt_template: 'Review {{item}}',
+        items: ['src/a.ts', 'src/b.ts'],
+        subagent_type: 'general',
+      }),
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(host.swarmService.run).toHaveBeenCalledWith(expect.objectContaining({ tasks: [
+      {
+        kind: 'spawn',
+        data: {
+          kind: 'spawn',
+          index: 1,
+          item: 'src/a.ts',
+          prompt: 'Review src/a.ts',
+        },
+        profileName: 'coder',
+        parentToolCallId: 'call_swarm',
+        prompt: 'Review src/a.ts',
+        description: 'Review files #1 (coder)',
+        swarmIndex: 1,
+        swarmItem: 'src/a.ts',
+        runInBackground: false,
+        signal,
+        timeout: DEFAULT_SWARM_TIMEOUT_MS,
+        plan: { profileName: 'coder', model: 'mock-model', modelSource: 'inherited', thinking: 'off', fork: false },
+      },
+      {
+        kind: 'spawn',
+        data: {
+          kind: 'spawn',
+          index: 2,
+          item: 'src/b.ts',
+          prompt: 'Review src/b.ts',
+        },
+        profileName: 'coder',
+        parentToolCallId: 'call_swarm',
+        prompt: 'Review src/b.ts',
+        description: 'Review files #2 (coder)',
+        swarmIndex: 2,
+        swarmItem: 'src/b.ts',
+        runInBackground: false,
+        signal,
+        timeout: DEFAULT_SWARM_TIMEOUT_MS,
+        plan: { profileName: 'coder', model: 'mock-model', modelSource: 'inherited', thinking: 'off', fork: false },
+      },
+    ] }));
+    expect(result.output).toBe(
+      [
+        '<agent_swarm_result>',
+        '<summary>completed: 2</summary>',
+        '<subagent agent_id="agent-coder-1" item="src/a.ts" outcome="completed">coder result a</subagent>',
+        '<subagent agent_id="agent-coder-2" item="src/b.ts" outcome="completed">coder result b</subagent>',
+        '</agent_swarm_result>',
+      ].join('\n'),
+    );
+  });
+
   it('rejects invalid launch shapes at execution time', async () => {
     const cases = [
       {
