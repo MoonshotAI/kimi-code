@@ -279,29 +279,28 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(error.message).toBe('Unknown agent type: "ghost"');
   });
 
-  it('maps the legacy alias "general" to the default profile', async () => {
+  it('rejects the legacy alias "general" at the planning layer', async () => {
     const svc = service();
 
-    const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'general' });
+    const error = await planSpawnError(svc, { callerAgentId: CALLER_ID, profileName: 'general' });
 
-    expect(plan).toEqual({
-      profileName: 'coder',
-      model: 'main-model',
-      modelSource: 'inherited',
-      thinking: 'high',
-      fork: false,
+    expect(error.code).toBe(ErrorCodes.PROFILE_UNKNOWN);
+    expect(error.message).toBe('Unknown agent type: "general"');
+  });
+
+  it('rejects the legacy alias "general-purpose" at the planning layer', async () => {
+    const svc = service();
+
+    const error = await planSpawnError(svc, {
+      callerAgentId: CALLER_ID,
+      profileName: 'general-purpose',
     });
+
+    expect(error.code).toBe(ErrorCodes.PROFILE_UNKNOWN);
+    expect(error.message).toBe('Unknown agent type: "general-purpose"');
   });
 
-  it('maps the legacy alias "general-purpose" to the default profile', async () => {
-    const svc = service();
-
-    const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'general-purpose' });
-
-    expect(plan.profileName).toBe('coder');
-  });
-
-  it('does not remap a legacy alias when a profile with that name exists', async () => {
+  it('resolves a catalog profile that shares its name with a legacy alias', async () => {
     profiles = [
       ...profiles,
       normalizeAgentProfile({
@@ -317,7 +316,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(plan.profileName).toBe('general');
   });
 
-  it('does not remap a legacy alias when forking', async () => {
+  it('keeps a legacy alias as-is when forking', async () => {
     const svc = service();
 
     const plan = await svc.planSpawn({

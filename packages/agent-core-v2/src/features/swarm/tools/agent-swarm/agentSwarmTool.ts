@@ -18,9 +18,11 @@ import {
   FORK_EXPERIMENTAL_UNAVAILABLE,
   FORK_WITH_RESUME_UNAVAILABLE,
   forkIncompatibility,
+  normalizeLegacySubagentType,
   type SubagentSpawnPlan,
 } from '#/session/subagent/spawn';
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import {
   buildSubagentModelSummary,
   exposesSubagentModelChoice,
@@ -92,6 +94,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
     @IFlagService private readonly flags: IFlagService,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
+    @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
   ) {
     this.callerAgentId = scopeContext.agentId;
   }
@@ -163,7 +166,9 @@ export class AgentSwarmTool implements IAgentSwarmTool {
       }
       plan = await this.subagents.planSpawn({
         callerAgentId: this.callerAgentId,
-        profileName: args.subagent_type,
+        profileName: fork
+          ? args.subagent_type
+          : normalizeLegacySubagentType(args.subagent_type, this.catalog),
         model: args.model,
         fork,
       });
