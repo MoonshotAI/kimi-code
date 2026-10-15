@@ -5,6 +5,73 @@ import { cleanTelemetryProperties, cleanTelemetryString } from '#/app/telemetry/
 const REDACTED = '<REDACTED: user-file-path>';
 
 describe('cleanTelemetryString (absolute path redaction)', () => {
+  it.each([
+    '\t',
+    '\n',
+    '\v',
+    '\f',
+    '\r',
+    ' ',
+    '\u00A0',
+    '\u1680',
+    '\u2000',
+    '\u2001',
+    '\u2002',
+    '\u2003',
+    '\u2004',
+    '\u2005',
+    '\u2006',
+    '\u2007',
+    '\u2008',
+    '\u2009',
+    '\u200A',
+    '\u2028',
+    '\u2029',
+    '\u202F',
+    '\u205F',
+    '\u3000',
+    '\uFEFF',
+  ])('redacts nested roots after whitespace %j', (space) => {
+    const result = cleanTelemetryString(`/home/a/node_modules/pkg${space}/home/bob/private`);
+    expect(result).not.toContain('/home/bob/private');
+    expect(result).toContain(REDACTED);
+  });
+
+  it.each(['branch feature/foo / status clean', 'branch café/foo / status clean'])(
+    'preserves relative paths in prose (%s)',
+    (text) => {
+      expect(cleanTelemetryString(text)).toBe(text);
+    },
+  );
+
+  it.each(['&&', '&', '||', '|', ';'])(
+    'preserves shell commands after file extensions (%s)',
+    (operator) => {
+      expect(cleanTelemetryString(`/home/a/file.txt${operator}echo retry`)).toBe(
+        `${REDACTED}${operator}echo retry`,
+      );
+    },
+  );
+
+  it('splits labeled Windows paths', () => {
+    expect(
+      cleanTelemetryString(String.raw`old=C:\Users\alice\cache,new=C:\Users\bob\private`),
+    ).toBe(`old=${REDACTED},new=${REDACTED}`);
+  });
+
+  it('splits labeled POSIX paths before preserving dependency tails', () => {
+    expect(cleanTelemetryString('old=/home/alice/node_modules/pkg,new=/home/bob/private')).toBe(
+      `old=node_modules/pkg,new=${REDACTED}`,
+    );
+  });
+
+  it.each([
+    ['/home/alice/file.txt. Permission denied', `${REDACTED}. Permission denied`],
+    ['[/home/alice/file.txt] Permission denied', `[${REDACTED}] Permission denied`],
+  ])('preserves punctuation and diagnostics (%s)', (text, expected) => {
+    expect(cleanTelemetryString(text)).toBe(expected);
+  });
+
   it('redacts ASCII POSIX and Windows paths', () => {
     expect(cleanTelemetryString('/home/alice/proj/x.txt')).toBe(REDACTED);
     expect(cleanTelemetryString('C:\\Users\\alice\\proj\\x.txt')).toBe(REDACTED);
