@@ -20,13 +20,14 @@ import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { loadAgentsMdForRoots, type LoadedAgentsMd } from '#/agent/profile/context';
-import { resolveSubagentModelPool } from '#/session/subagent/configSection';
+import { resolveSubagentModelPool, type SubagentModelPool } from '#/session/subagent/configSection';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 import {
   IAgentChangeNotifierService,
   type BeliefsSeed,
   type SubagentChangesInput,
+  type SubagentModelPoolSnapshot,
 } from './changeNotifier';
 import {
   ChangeNotifierSnapshotEvent,
@@ -158,39 +159,58 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
       if (profileData.profileName === undefined) return;
       await this.agentCatalog.ready;
       const currentProfiles = this.agentCatalog.list().map((profile) => profile.name);
-      const pool = resolveSubagentModelPool(this.config);
-      const currentAliases = pool === undefined ? undefined : Object.keys(pool.models);
+      const currentPool = snapshotModelPool(resolveSubagentModelPool(this.config));
       const snapshot = this.snapshot;
       if (
         snapshot.subagentNames !== undefined &&
         sameStringSet(currentProfiles, snapshot.subagentNames) &&
-        sameStringSet(currentAliases ?? [], snapshot.modelPoolAliases ?? [])
+        sameModelPool(currentPool, snapshot.modelPool)
       ) {
         return;
       }
       const baseProfiles =
         input?.previousSubagentNames ?? snapshot.subagentNames ?? currentProfiles;
-      const baseAliases =
-        input?.previousModelPoolAliases ?? snapshot.modelPoolAliases ?? currentAliases;
+      const basePool =
+        input?.previousModelPool !== undefined
+          ? input.previousModelPool
+          : (snapshot.modelPool ?? currentPool);
       const profilesAdded = difference(currentProfiles, baseProfiles);
       const profilesRemoved = difference(baseProfiles, currentProfiles);
-      const modelsAdded = difference(currentAliases ?? [], baseAliases ?? []);
-      const modelsRemoved = difference(baseAliases ?? [], currentAliases ?? []);
-      this.recordSnapshot({
-        subagentNames: currentProfiles,
-        modelPoolAliases: currentAliases,
-      });
+      const modelsAdded = difference(poolAliases(currentPool), poolAliases(basePool));
+      const modelsRemoved = difference(poolAliases(basePool), poolAliases(currentPool));
+      const modelsUpdated = poolAliases(currentPool).filter(
+        (alias) =>
+          basePool?.models[alias] !== undefined &&
+          basePool.models[alias] !== currentPool?.models[alias],
+      );
+      const defaultModelChange =
+        currentPool !== undefined &&
+        basePool !== null &&
+        basePool !== undefined &&
+        currentPool.defaultModel !== basePool.defaultModel
+          ? { from: basePool.defaultModel, to: currentPool.defaultModel }
+          : undefined;
+      this.recordSnapshot({ subagentNames: currentProfiles, modelPool: currentPool });
       if (
         profilesAdded.length +
           profilesRemoved.length +
           modelsAdded.length +
-          modelsRemoved.length ===
-        0
+          modelsRemoved.length +
+          modelsUpdated.length ===
+          0 &&
+        defaultModelChange === undefined
       ) {
         return;
       }
       this.reminder.notify(
-        subagentsChangeText({ profilesAdded, profilesRemoved, modelsAdded, modelsRemoved }),
+        subagentsChangeText({
+          profilesAdded,
+          profilesRemoved,
+          modelsAdded,
+          modelsRemoved,
+          modelsUpdated,
+          defaultModelChange,
+        }),
         { variant: SUBAGENTS_CHANGE_VARIANT },
       );
     } catch (error) {
@@ -213,7 +233,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
         agentsMdFiles: hashAgentsMdContents(contents),
         skillsHash: hashText(seed.skillsListing),
         subagentNames: this.agentCatalog.list().map((profile) => profile.name),
-        modelPoolAliases: pool === undefined ? undefined : Object.keys(pool.models),
+        modelPool: snapshotModelPool(pool),
       });
     } catch (error) {
       this.log.warn('change notifier belief seeding failed', { error });
@@ -229,7 +249,10 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
         agentsMdFiles: next.agentsMdFiles !== undefined ? { ...next.agentsMdFiles } : null,
         skillsHash: next.skillsHash ?? null,
         subagentNames: next.subagentNames !== undefined ? [...next.subagentNames] : null,
-        modelPoolAliases: next.modelPoolAliases !== undefined ? [...next.modelPoolAliases] : null,
+        modelPool:
+          next.modelPool !== undefined
+            ? { ...next.modelPool, models: { ...next.modelPool.models } }
+            : null,
       }),
     );
   }
@@ -246,6 +269,31 @@ function difference(left: readonly string[], right: readonly string[]): string[]
 
 function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((item) => right.includes(item));
+}
+
+function snapshotModelPool(pool: SubagentModelPool | undefined): SubagentModelPoolSnapshot | undefined {
+  if (pool === undefined) return undefined;
+  return { defaultModel: pool.defaultModel, models: { ...pool.models } };
+}
+
+function poolAliases(pool: SubagentModelPoolSnapshot | null | undefined): readonly string[] {
+  return pool === undefined || pool === null ? [] : Object.keys(pool.models);
+}
+
+function sameModelPool(
+  left: SubagentModelPoolSnapshot | null | undefined,
+  right: SubagentModelPoolSnapshot | null | undefined,
+): boolean {
+  if (left === undefined || left === null || right === undefined || right === null) {
+    return (left ?? null) === (right ?? null);
+  }
+  if (left.defaultModel !== right.defaultModel) return false;
+  const leftAliases = Object.keys(left.models);
+  const rightAliases = Object.keys(right.models);
+  return (
+    leftAliases.length === rightAliases.length &&
+    leftAliases.every((alias) => right.models[alias] === left.models[alias])
+  );
 }
 
 async function readAgentsMdFileContents(
@@ -342,6 +390,8 @@ function subagentsChangeText(diff: {
   readonly profilesRemoved: readonly string[];
   readonly modelsAdded: readonly string[];
   readonly modelsRemoved: readonly string[];
+  readonly modelsUpdated: readonly string[];
+  readonly defaultModelChange?: { readonly from?: string; readonly to?: string };
 }): string {
   const lines = ['The available subagent profiles and models changed:'];
   if (diff.profilesAdded.length > 0) lines.push(`- Profiles added: ${diff.profilesAdded.join(', ')}`);
@@ -350,6 +400,19 @@ function subagentsChangeText(diff: {
   }
   if (diff.modelsAdded.length > 0) lines.push(`- Models added: ${diff.modelsAdded.join(', ')}`);
   if (diff.modelsRemoved.length > 0) lines.push(`- Models removed: ${diff.modelsRemoved.join(', ')}`);
+  if (diff.modelsUpdated.length > 0) {
+    lines.push(`- Model descriptions updated: ${diff.modelsUpdated.join(', ')}`);
+  }
+  if (diff.defaultModelChange !== undefined) {
+    const { from, to } = diff.defaultModelChange;
+    if (from !== undefined && to !== undefined) {
+      lines.push(`- Default model changed: ${from} → ${to}`);
+    } else if (to !== undefined) {
+      lines.push(`- Default model set: ${to}`);
+    } else if (from !== undefined) {
+      lines.push(`- Default model cleared (was ${from})`);
+    }
+  }
   lines.push('You can use them right away — the Agent tool validates subagent_type against the live catalog.');
   return lines.join('\n');
 }

@@ -38,6 +38,7 @@ import {
   type ISessionScopeHandle,
   type Scope,
   type SessionSummary,
+  type SubagentModelPoolSnapshot,
 } from '@moonshot-ai/agent-core-v2';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
 import { ErrorCode } from '../protocol/error-codes';
@@ -1038,7 +1039,7 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
   }
   let previousSubagentNames: readonly string[] | undefined;
-  let previousModelPoolAliases: readonly string[] | undefined;
+  let previousModelPool: SubagentModelPoolSnapshot | null | undefined;
   if (live !== undefined) {
     const main = live.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
     if (main !== undefined) {
@@ -1047,7 +1048,10 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
         .list()
         .map((profile) => profile.name);
       const pool = resolveSubagentModelPool(main.accessor.get(IConfigService));
-      previousModelPoolAliases = pool === undefined ? [] : Object.keys(pool.models);
+      previousModelPool =
+        pool === undefined
+          ? null
+          : { defaultModel: pool.defaultModel, models: { ...pool.models } };
     }
   }
   await core.accessor.get(IConfigService).reload();
@@ -1066,7 +1070,7 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
     const notifier = main.accessor.get(IAgentChangeNotifierService);
     await notifier.notifyAgentsMdChanges();
     await notifier.notifySkillChanges();
-    await notifier.notifySubagentChanges({ previousSubagentNames, previousModelPoolAliases });
+    await notifier.notifySubagentChanges({ previousSubagentNames, previousModelPool });
   }
   const meta = await handle.accessor.get(ISessionMetadata).read();
   const sessionCtx = handle.accessor.get(ISessionContext);

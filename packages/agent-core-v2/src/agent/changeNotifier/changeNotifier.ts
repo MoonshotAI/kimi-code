@@ -1,8 +1,13 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
+export interface SubagentModelPoolSnapshot {
+  readonly defaultModel?: string;
+  readonly models: Readonly<Record<string, string>>;
+}
+
 export interface SubagentChangesInput {
   readonly previousSubagentNames?: readonly string[];
-  readonly previousModelPoolAliases?: readonly string[];
+  readonly previousModelPool?: SubagentModelPoolSnapshot | null;
 }
 
 export interface BeliefsSeed {

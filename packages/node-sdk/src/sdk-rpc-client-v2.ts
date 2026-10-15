@@ -225,6 +225,7 @@ import {
   type Scope,
   type ServicesAccessor,
   type SessionSummary as V2SessionSummary,
+  type SubagentModelPoolSnapshot,
 } from '@moonshot-ai/agent-core-v2';
 import {
   RPCError,
@@ -1599,7 +1600,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         throw SDKRpcClientV2.sessionNotFound(sessionId);
       }
       let previousSubagentNames: readonly string[] | undefined;
-      let previousModelPoolAliases: readonly string[] | undefined;
+      let previousModelPool: SubagentModelPoolSnapshot | null | undefined;
       if (live !== undefined) {
         const main = live.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
         if (main !== undefined) {
@@ -1608,7 +1609,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
             .list()
             .map((profile) => profile.name);
           const pool = resolveSubagentModelPool(main.accessor.get(IConfigService));
-          previousModelPoolAliases = pool === undefined ? [] : Object.keys(pool.models);
+          previousModelPool =
+            pool === undefined
+              ? null
+              : { defaultModel: pool.defaultModel, models: { ...pool.models } };
         }
       }
       await this.configReady;
@@ -1626,7 +1630,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         const notifier = main.accessor.get(IAgentChangeNotifierService);
         await notifier.notifyAgentsMdChanges();
         await notifier.notifySkillChanges();
-        await notifier.notifySubagentChanges({ previousSubagentNames, previousModelPoolAliases });
+        await notifier.notifySubagentChanges({ previousSubagentNames, previousModelPool });
       }
       this.wireSession(handle);
       return this.resumedSessionSummary(handle);

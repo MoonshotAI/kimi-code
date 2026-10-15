@@ -216,7 +216,7 @@ function createHarness(options: {
               agentsMdFiles: event.agentsMdFiles ?? undefined,
               skillsHash: event.skillsHash ?? undefined,
               subagentNames: event.subagentNames ?? undefined,
-              modelPoolAliases: event.modelPoolAliases ?? undefined,
+              modelPool: event.modelPool ?? undefined,
             });
           }
         },
@@ -660,12 +660,12 @@ describe('notifySubagentChanges', () => {
       models: { k1: '', k2: '' },
     };
 
-    await h.notifier.notifySubagentChanges({ previousModelPoolAliases: [] });
+    await h.notifier.notifySubagentChanges({ previousModelPool: null });
     expect(h.reminders).toHaveLength(1);
     expect(h.reminders[0]?.content).toContain('Models added: k1, k2');
   });
 
-  it.fails('reports model description updates in the pool', async () => {
+  it('reports model description updates in the pool', async () => {
     const h = createHarness({
       profile: makeProfileData({ profileName: 'default' }),
     });
@@ -685,7 +685,7 @@ describe('notifySubagentChanges', () => {
     expect(h.reminders[0]?.content).toContain('Model descriptions updated: k1');
   });
 
-  it.fails('reports default model changes in the pool', async () => {
+  it('reports default model changes in the pool', async () => {
     const h = createHarness({
       profile: makeProfileData({ profileName: 'default' }),
     });
@@ -702,6 +702,61 @@ describe('notifySubagentChanges', () => {
     };
     await h.notifier.notifySubagentChanges();
     expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('Default model changed: k1 → k2');
+  });
+
+  it('stays silent when the pool is identical including descriptions and default', async () => {
+    const h = createHarness({
+      profile: makeProfileData({ profileName: 'default' }),
+    });
+    h.secondaryModel.value = {
+      defaultModel: 'k1',
+      models: { k1: 'fast', k2: '' },
+    };
+    await h.notifier.notifySubagentChanges();
+    await h.notifier.notifySubagentChanges();
+    expect(h.reminders).toHaveLength(0);
+  });
+
+  it('reports default model set and cleared', async () => {
+    const h = createHarness({
+      profile: makeProfileData({ profileName: 'default' }),
+    });
+    h.secondaryModel.value = { models: { k1: '', k2: '' } };
+    await h.notifier.notifySubagentChanges();
+    expect(h.reminders).toHaveLength(0);
+
+    h.secondaryModel.value = { defaultModel: 'k2', models: { k1: '', k2: '' } };
+    await h.notifier.notifySubagentChanges();
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('Default model set: k2');
+
+    h.secondaryModel.value = { models: { k1: '', k2: '' } };
+    await h.notifier.notifySubagentChanges();
+    expect(h.reminders).toHaveLength(2);
+    expect(h.reminders[1]?.content).toContain('Default model cleared (was k2)');
+  });
+
+  it('combines alias, description, and default changes in one reminder', async () => {
+    const h = createHarness({
+      profile: makeProfileData({ profileName: 'default' }),
+    });
+    h.secondaryModel.value = {
+      defaultModel: 'k1',
+      models: { k1: 'fast', k2: 'old' },
+    };
+    await h.notifier.notifySubagentChanges();
+    expect(h.reminders).toHaveLength(0);
+
+    h.secondaryModel.value = {
+      defaultModel: 'k2',
+      models: { k2: 'new', k3: '' },
+    };
+    await h.notifier.notifySubagentChanges();
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('Models added: k3');
+    expect(h.reminders[0]?.content).toContain('Models removed: k1');
+    expect(h.reminders[0]?.content).toContain('Model descriptions updated: k2');
     expect(h.reminders[0]?.content).toContain('Default model changed: k1 → k2');
   });
 
