@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { type CollectionView } from '#/_base/di/collection';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { makeHookRunner } from '../features/externalHooks/runner-stub';
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
@@ -25,6 +26,11 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ToolAccesses, type ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
+import { ISessionNotify } from '#/features/notify/sessionNotify';
+import { SubagentTool } from '#/agent/tools/agent/agentTool';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { agentContextOf, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { createActor } from '#human/xstate2';
@@ -87,6 +93,7 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { createFakeProcessRunner } from '../tools/fixtures/fake-exec';
 import { StubConfigService } from '../stubs';
 import { stubFlag } from '../app/flag/stubs';
+import { stubLog } from '../_base/log/stubs';
 import {
   agentService,
   appService,
@@ -1511,6 +1518,103 @@ describe('Agent tool description', () => {
     const properties = agentParameters()['properties'] as Record<string, unknown>;
     expect(properties).not.toHaveProperty('model');
     expect(agentDescription()).not.toContain('Available models');
+  });
+});
+
+describe('Agent tool media description viability', () => {
+  function runtimeStub(inspectFails: boolean): IAgentRuntimeService {
+    return {
+      _serviceBrand: undefined,
+      onDidChange: Event.None as IAgentRuntimeService['onDidChange'],
+      isAvailable: (required: readonly string[] = []) =>
+        required.every((capability) => capability === 'fs'),
+      inspect: () => {
+        if (inspectFails) throw new Error('inspect failed');
+        return {} as never;
+      },
+      acquire: () => {
+        throw new Error('unavailable');
+      },
+    } as unknown as IAgentRuntimeService;
+  }
+
+  function descriptionWith(inspectFails: boolean, withStore: boolean): string {
+    const caller = normalizeAgentProfile({
+      name: 'agent',
+      description: 'Default agent',
+      subagents: ['coder'],
+      systemPrompt: () => 'agent',
+    });
+    const coder = normalizeAgentProfile({
+      name: 'coder',
+      description: 'Coder',
+      tools: ['Read', 'ReadMediaFile'],
+      systemPrompt: () => 'coder',
+    });
+    const profiles = [caller, coder];
+    const catalog: ISessionAgentProfileCatalog = {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChange: Event.None as ISessionAgentProfileCatalog['onDidChange'],
+      get: (name) => profiles.find((profile) => profile.name === name),
+      getDefault: () => caller,
+      list: () => [...profiles],
+      inspect: () => undefined,
+      load: async () => {},
+      reload: async () => {},
+    };
+    const profile = {
+      data: () => ({ profileName: 'agent', subagents: ['coder'], modelAlias: 'vision-model' }),
+      getModelCapabilities: () => ({
+        image_in: true,
+        video_in: false,
+        audio_in: false,
+        thinking: false,
+        tool_use: true,
+        max_context_tokens: 0,
+      }),
+    } as unknown as IAgentProfileService;
+    const tool = new SubagentTool(
+      {} as unknown as IAgentLifecycleService,
+      {} as unknown as ISessionSubagentService,
+      catalog,
+      { agentId: 'main' } as unknown as IAgentScopeContext,
+      {} as unknown as IAgentTaskService,
+      profile,
+      {} as unknown as IModelCatalog,
+      {
+        isToolActive: () => true,
+        isToolActiveForProfile: () => true,
+      } as unknown as IAgentToolPolicyService,
+      {
+        listReferences: () => [
+          { name: 'Read', source: 'builtin' },
+          { name: 'ReadMediaFile', source: 'builtin' },
+        ],
+      } as unknown as IAgentToolRegistryService,
+      {} as unknown as IAgentPermissionModeService,
+      {} as unknown as ISessionMetadata,
+      stubLog(),
+      { get: () => undefined } as unknown as IConfigService,
+      stubFlag(() => false),
+      { enabled: false } as unknown as ISessionNotify,
+      runtimeStub(inspectFails),
+      { items: [], onDidChange: Event.None } as unknown as CollectionView<AgentToolContribution>,
+      withStore ? ({} as unknown as ISessionMediaStore) : undefined,
+    );
+    return tool.description;
+  }
+
+  it('omits ReadMediaFile when runtime inspection fails and no attachment store exists', () => {
+    expect(descriptionWith(true, false)).not.toContain('ReadMediaFile');
+  });
+
+  it('lists ReadMediaFile when runtime inspection succeeds without an attachment store', () => {
+    expect(descriptionWith(false, false)).toContain('ReadMediaFile');
+  });
+
+  it('lists ReadMediaFile despite failed runtime inspection when an attachment store exists', () => {
+    expect(descriptionWith(true, true)).toContain('ReadMediaFile');
   });
 });
 

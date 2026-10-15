@@ -180,7 +180,7 @@ export class SubagentTool implements ISubagentTool {
     const available = new Set(knownTools.map((ref) => ref.name));
     const mediaOfferable =
       this.anyMediaCapableModel() &&
-      (this.runtime.isAvailable(['fs']) || this.attachmentStore !== undefined);
+      (this.attachmentStore !== undefined || this.runtimeFsViable());
     const typeLines = buildProfileDescriptions(
       profiles.map((profile) => ({
         ...profile,
@@ -212,6 +212,16 @@ export class SubagentTool implements ISubagentTool {
 
   private dispatchableProfiles(): readonly AgentProfile[] {
     return this.filterDispatchable(this.catalogProfiles());
+  }
+
+  private runtimeFsViable(): boolean {
+    try {
+      if (!this.runtime.isAvailable(['fs'])) return false;
+      this.runtime.inspect();
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private filterDispatchable(profiles: readonly AgentProfile[]): readonly AgentProfile[] {

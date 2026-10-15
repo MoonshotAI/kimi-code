@@ -1100,6 +1100,15 @@ describe('AgentMediaToolsRegistrar', () => {
     }
   });
 
+  it('does not keep the registration when an unknown-capability model replaces the applied alias', () => {
+    const { registry, bindModel } = createRegistrarHarness();
+    bindModel('vision-model', capabilities({ image_in: true, video_in: true }));
+    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+
+    bindModel('uncatalogued-model', UNKNOWN_CAPABILITY);
+    expect(registry.resolve('ReadMediaFile')).toBeUndefined();
+  });
+
   it('drops the registration when capabilities are unknown and the runtime is unavailable without an attachment store', () => {
     const { registry, bindModel, setRuntimeAvailable } = createRegistrarHarness();
     bindModel('vision-model', capabilities({ image_in: true, video_in: false }));
