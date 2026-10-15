@@ -9,6 +9,7 @@ import { TRUNCATION_ELLIPSIS } from '#/tui/constant/rendering';
 import { USER_MESSAGE_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import type { StickyUserMessageJudgment } from '#/tui/utils/sticky-user-message';
+import { UserMessageComponent } from './user-message';
 
 export class StickyUserMessageComponent implements Component {
   private judgment: StickyUserMessageJudgment | null = null;
@@ -33,12 +34,11 @@ export class StickyUserMessageComponent implements Component {
     const safeWidth = Math.max(0, width);
     if (this.judgment === null || safeWidth <= 0) return [];
 
-    const line = truncateToWidth(
-      USER_MESSAGE_BULLET + this.judgment.summary,
-      safeWidth,
-      TRUNCATION_ELLIPSIS,
-    );
-    return [currentTheme.boldFg('roleUser', line)];
+    const text = this.judgment.component instanceof UserMessageComponent
+      ? currentTheme.boldFg('roleUser', USER_MESSAGE_BULLET) +
+        this.judgment.component.colorText(this.judgment.summary)
+      : currentTheme.boldFg('roleUser', USER_MESSAGE_BULLET + this.judgment.summary);
+    return [truncateToWidth(text, safeWidth, TRUNCATION_ELLIPSIS)];
   }
 
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {

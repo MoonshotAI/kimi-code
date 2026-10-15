@@ -58,6 +58,27 @@ describe('StagingLeaseTracker', () => {
   });
 
   describe('turn claiming', () => {
+    it('keeps main and BTW leases separate when their turn ids match', async () => {
+      const { tracker, deleted, warn } = makeTracker();
+      const main = tracker.create([1], [], 'user');
+      const btw = tracker.create([2], [], 'user', undefined, 'agent-btw');
+      tracker.handleTurnStarted(turnStarted(1, 'user'));
+      expect(main?.turnId).toBe('1');
+      expect(btw?.turnId).toBeUndefined();
+      tracker.handleTurnStarted(turnStarted(1, 'user'), 'agent-btw');
+      expect(btw?.turnId).toBe('1');
+      expect(warn).not.toHaveBeenCalled();
+      tracker.handleTurnEnded(turnEnded(1));
+      await tracker.drain();
+      expect(deleted.fileIds).toEqual(['file-1']);
+      tracker.handleTurnEnded(turnEnded(1), 'agent-btw');
+      await tracker.drain();
+      expect(deleted.fileIds).toEqual(['file-1', 'file-2']);
+      tracker.releaseAll();
+      await tracker.drain();
+      expect(deleted.fileIds).toEqual(['file-1', 'file-2']);
+    });
+
     it('claims the earliest unbound lease of the matching origin', () => {
       const { tracker } = makeTracker();
       const first = tracker.create([], ['/cache/a'], 'user');

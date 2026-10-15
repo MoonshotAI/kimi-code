@@ -31,6 +31,7 @@ function makeHost(
 ) {
   const state = {
     activeDialog: null as string | null,
+    editorReplacementMounted: false,
     appState: {
       model: 'k2',
       availableModels: { k2: { model: 'kimi-k2', provider: 'managed:kimi-code' } },
@@ -787,5 +788,25 @@ describe('CacheHintController scenario 1 (resume)', () => {
       expect.objectContaining({ scene: 'idle' }),
     );
     vi.restoreAllMocks();
+  });
+
+  it('yields to a dialog that already owns the editor and hints on the first idle submit', async () => {
+    getMock.mockResolvedValue(CONFIG);
+    peekMock.mockReturnValue(CONFIG);
+    const session = resumeSession([Date.now() - 1200_000], 150000);
+    const { host, state } = makeHost({ session });
+    state.editorReplacementMounted = true;
+    const controller = new CacheHintController(host);
+
+    await controller.maybeShowOnResume();
+    expect(host.mountEditorReplacement).not.toHaveBeenCalled();
+
+    state.editorReplacementMounted = false;
+    expect(controller.maybeInterceptOnSubmit('hello')).toBe(true);
+    expect(host.mountEditorReplacement).toHaveBeenCalledOnce();
+    expect(host.track).toHaveBeenCalledWith(
+      'cache_hint_shown',
+      expect.objectContaining({ scene: 'idle' }),
+    );
   });
 });

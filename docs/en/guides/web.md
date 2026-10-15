@@ -50,7 +50,7 @@ The `#token=` fragment is the access credential — don't share it. Stop the ser
 | `/new` | Start a new session |
 | `/goal` | Enter Goal mode and keep working toward the same objective across turns |
 | `/compact` | Compact the current session's context |
-| `/tower` | Tower multi-agent collaboration (experimental); `/tower <base-branch>` sets the base branch |
+| `/tower` | [Tower multi-agent collaboration](./tower.md) (experimental); `/tower <base-branch>` sets the base branch without sending an objective |
 | `/export` | Export the session content and troubleshooting logs as a ZIP |
 | `/remote-control` | Enable remote control to access the local web session remotely |
 

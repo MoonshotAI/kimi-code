@@ -16,7 +16,7 @@ import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
 import chalk from 'chalk';
 import { type Command, Option } from 'commander';
 
-import { CLI_SHUTDOWN_TIMEOUT_MS, WEB_USER_AGENT_SUFFIX } from '#/constant/app';
+import { CLI_MSH_PLATFORM, CLI_SHUTDOWN_TIMEOUT_MS, CLI_USER_AGENT_PRODUCT, WEB_USER_AGENT_SUFFIX } from '#/constant/app';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
 import { darkColors } from '#/tui/theme/colors';
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
@@ -231,7 +231,8 @@ export async function handleWebCommand(
           homeDir: dataDir,
           localOrigin: origin,
           localServerToken: token,
-          clientVersion: `kimi-code/${getVersion()}`,
+          clientVersion: `${CLI_USER_AGENT_PRODUCT}/${getVersion()}`,
+          urlSource: CLI_MSH_PLATFORM,
           configuredOAuthKey: persisted?.key,
           configuredOAuthHost: persisted?.oauthHost,
           stderr: deps.stderr,

@@ -52,7 +52,14 @@
 | `/plan clear` | — | 清除当前 plan 方案 | 否 |
 | `/swarm on\|off` | — | 开启或关闭 swarm mode，但不发送提示词。 | 是 |
 | `/swarm <task>` | — | 先开启 swarm mode，再把 `<task>` 作为普通提示词发送。如果该轮次正常完成，swarm mode 会自动关闭。若当前是 `manual` 权限模式，启动前会提示是否切换到 "Ask When Needed" 或 "Never Ask" 模式。 | 否 |
+| `/tower` 或 `/tower status` | — | 查看 base、mission、roster、review 门槛、inbox、并发和近期活动，不启动模型轮次 | 是 |
+| `/tower on` | — | 开启 Tower 模式，不改变已记录的 base，也不发送提示词；首次初始化时默认采用当前本地 branch | 是 |
+| `/tower off` | — | 退出 Tower 模式，不停止运行中的后台 Agent，也不删除 `.tower/` 状态 | 是 |
+| `/tower <base-branch>` | — | 开启 Tower，并设定或重新锚定 mission 要合并到的本地 base branch；不会发送任务目标 | 是 |
+| `/tower teardown` | — | 要求 Agent 移除符合条件的 mission worktree，同时保护有未提交改动或有存活 Agent 的 worktree；保留 branch 和 `.tower/comms/`，Tower 模式保持开启 | 是 |
 | `/goal [...]` | — | 开始或管理目标模式 | 见下文 |
+
+Tower 是实验功能。开启方式、工作流程、安全边界和清理边界见 [Tower 多 Agent 协作](../guides/tower.md)。
 
 ::: warning 注意
 `/yolo` 会跳过普通工具调用的审批确认，使用前请确保了解可能的风险。Plan 模式的退出审批不会被 `/yolo` 跳过；Plan 模式下的 `Bash` 也按 `/yolo` 的普通放行规则处理。
@@ -148,7 +155,7 @@ Kimi Code CLI 随包内置了一组 Skill，直接以 `/<name>` 形式出现在�
 
 例如，父 Skill 名为 `code-style`，其中子 Skill 的本地名称为 `review`，面板中显示为 `/code-style.review`。点分命令名由层级自动生成，子 Skill 的 `SKILL.md` 可以保留本地 `name`。
 
-为方便输入，外部 Skill 命令同时支持省略 `skill:` 前缀的简写形式 `/<name>`，前提是该名称未被系统斜杠命令占用——即 `/code-style` 会回退匹配到 `/skill:code-style`。
+为方便输入，外部 Skill 命令同时支持省略 `skill:` 前缀的简写形式 `/<name>`，前提是该名称未被系统斜杠命令或插件命令占用——即 `/code-style` 会回退匹配到 `/skill:code-style`。
 
 Kimi Code CLI 随包内置的 Skill 会直接以 `/<name>` 形式出现在斜杠命令面板中。例如，`/mcp-config` 用于配置 MCP server 和处理 MCP OAuth 登录，`/custom-theme [附加文本]` 用于进入自定义主题流程，创建或编辑 TUI 主题。
 
