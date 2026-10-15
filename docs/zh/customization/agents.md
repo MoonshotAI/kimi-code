@@ -10,7 +10,7 @@ Kimi Code CLI 内置三种 subagent，开箱即用，分别面向不同任务形
 
 - **`coder`**：默认 subagent，通用软件工程助手，可以读写文件、执行命令、搜索代码并落地具体改动。
 - **`explore`**：代码库探索专用，只做只读操作，不修改任何文件。适合在不改动文件的前提下快速搜索、阅读和总结仓库。
-- **`plan`**：实现规划与架构设计专用，连 Shell 命令都不提供，专注于"想清楚怎么做"而不是"动手做"。
+- **`plan`**：实现规划与架构设计专用，连 Shell 命令都不提供，专注于“想清楚怎么做”而不是“动手做”。
 
 三种类型之外，使用 subagent 还有三条约定，分别关于工具边界、委派深度和完成时机：
 
@@ -26,7 +26,7 @@ Kimi Code CLI 内置三种 subagent，开箱即用，分别面向不同任务形
 
 subagent 由 main agent 自动调度：根据任务复杂度、上下文消耗和子任务的独立性，在适当时机派发，无需用户手动指定。
 
-每次派发都会在终端以审批请求的形式呈现，方便你审视任务描述，除非你已用 allow 规则放行或处于 YOLO 模式。你也可以在对话中直接指示 main agent 使用特定 subagent，例如"先用 explore 把相关文件梳理一遍再动手"。
+每次派发都会在终端以审批请求的形式呈现，方便你审视任务描述，除非你已用 allow 规则放行或处于 YOLO 模式。你也可以在对话中直接指示 main agent 使用特定 subagent，例如“先用 explore 把相关文件梳理一遍再动手”。
 
 subagent 支持在后台运行：完成后结果自动回到 main agent，无需手动轮询。也可以唤回已有的 subagent 实例继续推进同一任务。
 
@@ -45,7 +45,7 @@ subagent 支持在后台运行：完成后结果自动回到 main agent，无需
 
 ## 权限继承
 
-subagent 的权限规则继承自 main agent：main agent 通过 `/permission` 或在审批中接受的"始终允许"规则，会自动覆盖到它派发出的所有 subagent，subagent 不需要重新审批同类工具调用。`Agent` 工具本身默认放行，因此 main agent 可以在不打断用户的前提下完成多次委派。
+subagent 的权限规则继承自 main agent：main agent 通过 `/permission` 或在审批中接受的“始终允许”规则，会自动覆盖到它派发出的所有 subagent，subagent 不需要重新审批同类工具调用。`Agent` 工具本身默认放行，因此 main agent 可以在不打断用户的前提下完成多次委派。
 
 如果需要某类工具在 subagent 中始终不可用，应收紧 main agent 的权限规则。
 
@@ -134,10 +134,10 @@ disallowedTools:
 目录中发现的非法文件会被跳过并告警，不影响其他文件。通过 `--agent-file` 显式传入的文件必须合法，否则 CLI 会报错并退出。
 
 ::: warning 注意
-`tools` 与 `disallowedTools` 不仅决定模型能"看到"哪些工具，还会在执行前再次强制检查。`subagents` 同样双重生效：`Agent` 工具的类型列表只包含允许委派的 subagent，`Agent` 与 `AgentSwarm` 在实际派发前都会强制校验；唤回已有 subagent 不受此限制。权限规则仍是独立的控制层，用于决定哪些操作需要审批。
+`tools` 与 `disallowedTools` 不仅决定模型能“看到”哪些工具，还会在执行前再次强制检查。`subagents` 同样双重生效：`Agent` 工具的类型列表只包含允许委派的 subagent，`Agent` 与 `AgentSwarm` 在实际派发前都会强制校验；唤回已有 subagent 不受此限制。权限规则仍是独立的控制层，用于决定哪些操作需要审批。
 :::
 
-作为 subagent 委派的自定义 Agent 不会携带内置 subagent 的角色框架（"你的最后一条消息就是完整交付"）。如果编写的 Agent 用于委派，请在正文中说明：其最后一条消息应当是交付给调用方的完整、自包含的结果。
+作为 subagent 委派的自定义 Agent 不会携带内置 subagent 的角色框架（“你的最后一条消息就是完整交付”）。如果编写的 Agent 用于委派，请在正文中说明：其最后一条消息应当是交付给调用方的完整、自包含的结果。
 
 ### 选择 main agent
 
