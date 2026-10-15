@@ -19,6 +19,7 @@ import {
   FORK_WITH_RESUME_UNAVAILABLE,
   forkIncompatibility,
   normalizeLegacySubagentType,
+  normalizeLegacySubagentTypeArgs,
   type SubagentSpawnPlan,
 } from '#/session/subagent/spawn';
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
@@ -106,6 +107,12 @@ export class AgentSwarmTool implements IAgentSwarmTool {
     }
     const modelLines = buildSubagentModelSummary(this.config);
     return modelLines === undefined ? description : `${description}\n\n${modelLines}`;
+  }
+
+  resolveArgs(args: unknown): unknown {
+    const input = args as AgentSwarmToolInput;
+    if (input.fork === true) return args;
+    return normalizeLegacySubagentTypeArgs(input, this.catalog);
   }
 
   resolveExecution(args: AgentSwarmToolInput): ToolExecution {

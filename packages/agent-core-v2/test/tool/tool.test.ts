@@ -1891,6 +1891,36 @@ describe('Agent tool execution contract', () => {
     expect(execution.matchesRule?.('explore')).toBe(false);
   });
 
+  it('matches negated approval rules against the combined alias and canonical identity', async () => {
+    const context = createAgentToolContext();
+
+    const execution = await agentTool(context).resolveExecution({
+      prompt: 'Investigate',
+      description: 'Find cause',
+      subagent_type: 'general',
+    });
+
+    if (execution.isError === true) throw new Error('expected runnable execution');
+    expect(execution.matchesRule?.('!coder')).toBe(false);
+    expect(execution.matchesRule?.('!general')).toBe(false);
+    expect(execution.matchesRule?.('!explore')).toBe(true);
+  });
+
+  it('matches negated approval rules against the plain requested type', async () => {
+    const context = createAgentToolContext();
+
+    const execution = await agentTool(context).resolveExecution({
+      prompt: 'Investigate',
+      description: 'Find cause',
+      subagent_type: 'coder',
+    });
+
+    if (execution.isError === true) throw new Error('expected runnable execution');
+    expect(execution.matchesRule?.('!coder')).toBe(false);
+    expect(execution.matchesRule?.('!general')).toBe(true);
+    expect(execution.matchesRule?.('!explore')).toBe(true);
+  });
+
   it('keeps the raw type for display and approval rules when a real profile has the alias name', async () => {
     const general = normalizeAgentProfile({
       name: 'general',
@@ -4433,6 +4463,62 @@ describe('Agent tools', () => {
     });
   });
 
+  describe('Agent legacy alias hook visibility', () => {
+    let resolved: Array<[string, string, string]>;
+
+    beforeEach(async () => {
+      resolved = [];
+      const lifecycle = createAgentLifecycleStub({
+        createAgentIds: ['agent-child'],
+        runCompletion: async () => ({ summary: 'child result' }),
+      });
+      const hookEngine = makeHookRunner(
+        [
+          {
+            event: 'PreToolUse',
+            matcher: 'Agent',
+            command: hookSubagentTypeAssertCommand('coder'),
+          },
+        ],
+        {
+          onResolved: (event, target, action) => {
+            resolved.push([event, target, action]);
+          },
+        },
+      );
+      ctx = createTestAgent(
+        sessionService(IAgentLifecycleService, lifecycle),
+        externalHookServices(hookEngine),
+      );
+      wireRealSubagentService(ctx, lifecycle);
+      await ctx.rpc.setPermission({ mode: 'auto' });
+    });
+
+    it('exposes the canonical subagent_type to PreToolUse hooks for an alias call', async () => {
+      ctx.mockNextResponse(
+        { type: 'text', text: 'I will delegate.' },
+        {
+          type: 'function',
+          id: 'call_agent',
+          name: 'Agent',
+          arguments: JSON.stringify({
+            prompt: 'Investigate deeply',
+            description: 'Investigate deeply',
+            subagent_type: 'general',
+          }),
+        },
+      );
+      ctx.mockNextResponse({ type: 'text', text: 'Delegation finished.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Use an agent' }] });
+
+      await ctx.untilTurnEnd();
+
+      await vi.waitFor(() => {
+        expect(resolved).toEqual([['PreToolUse', 'Agent', 'allow']]);
+      });
+    });
+  });
+
   describe('Bash tool call start event', () => {
     beforeEach(async () => {
       ctx = createTestAgent(execEnvServices({ processRunner: createCommandRunner('ok') }));
@@ -4896,6 +4982,20 @@ function hookErrorMessageAssertCommand(expected: string): string {
     '  const payload = JSON.parse(input);',
     `  if (payload.error?.message === ${JSON.stringify(expected)}) process.exit(0);`,
     "  console.error(payload.error?.message ?? '<missing>');",
+    '  process.exit(2);',
+    '});',
+  ].join('');
+  return `node -e ${JSON.stringify(script)}`;
+}
+
+function hookSubagentTypeAssertCommand(expected: string): string {
+  const script = [
+    "let input = '';",
+    "process.stdin.on('data', (chunk) => { input += chunk; });",
+    "process.stdin.on('end', () => {",
+    '  const payload = JSON.parse(input);',
+    `  if (payload.tool_input?.subagent_type === ${JSON.stringify(expected)}) process.exit(0);`,
+    "  console.error(payload.tool_input?.subagent_type ?? '<missing>');",
     '  process.exit(2);',
     '});',
   ].join('');

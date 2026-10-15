@@ -137,6 +137,10 @@ export function matchesGlobRuleSubject(ruleArgs: string, subject: string): boole
   return matchRuleSubjects(ruleArgs, [subject], (pattern, value) => globMatch(value, pattern));
 }
 
+export function matchesGlobRuleSubjects(ruleArgs: string, subjects: readonly string[]): boolean {
+  return matchRuleSubjects(ruleArgs, subjects, (pattern, value) => globMatch(value, pattern));
+}
+
 export function matchesPathRuleSubject(
   ruleArgs: string,
   subject: string,

@@ -9,7 +9,7 @@ import { Error2, ErrorCodes, isError2 } from '#/errors';
 import { REPEAT_BREAKER_STOP_REASON } from '#/agent/toolDedupe/toolDedupe';
 import type { AgentTaskInfo } from '#/agent/task/types';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { matchesGlobRuleSubject } from '#/tool/rule-match';
+import { matchesGlobRuleSubjects } from '#/tool/rule-match';
 import {
   IAgentTaskService,
   type RegisterAgentTaskOptions,
@@ -67,6 +67,7 @@ import {
   FORK_EXPERIMENTAL_UNAVAILABLE,
   forkIncompatibility,
   normalizeLegacySubagentType,
+  normalizeLegacySubagentTypeArgs,
 } from '#/session/subagent/spawn';
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import {
@@ -274,6 +275,12 @@ export class SubagentTool implements ISubagentTool {
     return false;
   }
 
+  resolveArgs(args: unknown): unknown {
+    const input = args as SubagentToolInput;
+    if (input.fork === true || input.resume !== undefined) return args;
+    return normalizeLegacySubagentTypeArgs(input, this.catalog);
+  }
+
   async resolveExecution(args: SubagentToolInput): Promise<ToolExecution> {
     const requestedProfileName = args.subagent_type?.length ? args.subagent_type : undefined;
     const resumeAgentId = args.resume?.trim();
@@ -307,6 +314,10 @@ export class SubagentTool implements ISubagentTool {
         (args.fork === true
           ? (this.profile.data().profileName ?? DEFAULT_PROFILE_NAME)
           : DEFAULT_PROFILE_NAME));
+    const ruleSubjects =
+      requestedProfileName !== undefined && requestedProfileName !== profileNameForDisplay
+        ? [profileNameForDisplay, requestedProfileName]
+        : [profileNameForDisplay];
     const prefix = args.run_in_background === true ? 'Launching background' : 'Launching';
     return {
       description: `${prefix} ${profileNameForDisplay} agent: ${args.description}`,
@@ -318,11 +329,7 @@ export class SubagentTool implements ISubagentTool {
         background: args.run_in_background,
       },
       approvalRule: this.name,
-      matchesRule: (ruleArgs) =>
-        matchesGlobRuleSubject(ruleArgs, profileNameForDisplay) ||
-        (requestedProfileName !== undefined &&
-          requestedProfileName !== profileNameForDisplay &&
-          matchesGlobRuleSubject(ruleArgs, requestedProfileName)),
+      matchesRule: (ruleArgs) => matchesGlobRuleSubjects(ruleArgs, ruleSubjects),
       execute: (ctx) => this.execution(executionArgs, ctx),
     };
   }

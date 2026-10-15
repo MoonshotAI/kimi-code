@@ -983,6 +983,28 @@ describe('AgentSwarmTool', () => {
     );
   });
 
+  it('canonicalizes a legacy alias in resolveArgs and keeps fork raw', async () => {
+    const tool = new AgentSwarmTool(mockSwarmHost().swarmService, makeAgentScopeContext({ agentId: 'main', agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig(), stubCallerProfile()), stubCallerProfile(), stubSwarmCatalog());
+
+    expect(
+      tool.resolveArgs({
+        description: 'Review files',
+        prompt_template: 'Review {{item}}',
+        items: ['src/a.ts', 'src/b.ts'],
+        subagent_type: 'general',
+      }),
+    ).toMatchObject({ subagent_type: 'coder' });
+    expect(
+      tool.resolveArgs({
+        description: 'Review files',
+        prompt_template: 'Review {{item}}',
+        items: ['src/a.ts', 'src/b.ts'],
+        subagent_type: 'general',
+        fork: true,
+      }),
+    ).toMatchObject({ subagent_type: 'general', fork: true });
+  });
+
   it('rejects invalid launch shapes at execution time', async () => {
     const cases = [
       {

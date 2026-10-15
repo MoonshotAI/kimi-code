@@ -90,6 +90,7 @@ export interface RunnableToolExecution {
 export type ToolExecution = RunnableToolExecution | ExecutableToolErrorResult;
 
 export interface ExecutableTool<Input = unknown> extends Tool {
+  resolveArgs?(args: unknown): unknown;
   resolveExecution(input: Input): ToolExecution | Promise<ToolExecution>;
 }
 

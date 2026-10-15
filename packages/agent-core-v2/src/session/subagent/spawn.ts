@@ -21,6 +21,15 @@ export function normalizeLegacySubagentType(
   return requested;
 }
 
+export function normalizeLegacySubagentTypeArgs<T extends { readonly subagent_type?: string }>(
+  args: T,
+  catalog: { get(name: string): unknown },
+): T {
+  const requested = args.subagent_type;
+  const canonical = normalizeLegacySubagentType(requested, catalog);
+  return canonical === requested ? args : { ...args, subagent_type: canonical };
+}
+
 export const FORK_WITH_RESUME_UNAVAILABLE =
   'Cannot set resume when forking the current context. Fork creates a new agent; resume continues an existing one.';
 export const FORK_WITH_TYPE_UNAVAILABLE =
