@@ -12,6 +12,7 @@ const LABELED_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
 ];
 
 const MAX_TELEMETRY_LINE_LENGTH = 8192;
+const MAX_TELEMETRY_VALUE_LENGTH = 32_768;
 const OVERSIZED_LINE = '<REDACTED: oversized telemetry-line>';
 const FILE_EXTENSION = String.raw`\.[\p{L}\p{M}\p{N}_+#~@$%&=-]+`;
 
@@ -71,9 +72,14 @@ function cleanTelemetryLine(line: string): string {
 }
 
 export function cleanTelemetryString(value: string): string {
+  let budget = MAX_TELEMETRY_VALUE_LENGTH;
   return value
-    .split(/(\r\n|[\n\r])/)
-    .map((part, index) => (index % 2 === 1 ? part : cleanTelemetryLine(part)))
+    .split(/(\r\n|[\n\r\u2028\u2029])/)
+    .map((part, index) => {
+      if (index % 2 === 1) return part;
+      budget -= part.length;
+      return budget < 0 && part.length > 0 ? OVERSIZED_LINE : cleanTelemetryLine(part);
+    })
     .join('');
 }
 

@@ -314,6 +314,22 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
     expect(cleanTelemetryString(manyLines)).toBe(manyLines);
   });
 
+  it('caps total cleaning work across many long lines', () => {
+    const line = `/home/${'a.'.repeat(4090)}x`;
+    const parts = cleanTelemetryString(Array.from({ length: 25 }, () => line).join('\n')).split('\n');
+    expect(parts).toHaveLength(25);
+    expect(parts.at(-1)).toBe('<REDACTED: oversized telemetry-line>');
+  });
+
+  it('splits on Unicode line and paragraph separators', () => {
+    expect(cleanTelemetryString('/home/alice/cache\u2028permission denied')).toBe(
+      `${REDACTED}\u2028permission denied`,
+    );
+    expect(cleanTelemetryString('/home/alice/cache\u2029permission denied')).toBe(
+      `${REDACTED}\u2029permission denied`,
+    );
+  });
+
   it('ends a Windows dependency path before a following POSIX or UNC entry', () => {
     expect(cleanTelemetryString('C:\\Users\\alice\\node_modules\\pkg;/home/bob/private')).toBe(
       `node_modules/pkg;${REDACTED}`,
