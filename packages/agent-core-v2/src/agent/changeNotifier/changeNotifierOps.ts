@@ -49,6 +49,7 @@ export const changeNotifierSnapshotKey = defineState(
   (): ChangeNotifierSnapshotState => ({}),
 )
   .replayable({ schema: z.custom<ChangeNotifierSnapshotState>() })
+  .undoable()
   .on(ChangeNotifierSnapshotEvent, (_s, e) => ({
     agentsMdHash: e.agentsMdHash ?? undefined,
     agentsMdFiles: e.agentsMdFiles ?? undefined,

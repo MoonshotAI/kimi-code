@@ -718,7 +718,7 @@ export interface AgentStateSnapshot {
   'agentsMdReminder.known': Set<string>;
   'agentsMdReminder.seeded': boolean;
   // src/agent/changeNotifier/changeNotifierOps.ts
-  // replayable · durable — folds: ChangeNotifierSnapshotEvent
+  // replayable · durable · undoable — folds: ChangeNotifierSnapshotEvent
   'changeNotifier.snapshot': /* ChangeNotifierSnapshotState — packages/agent-core-v2/src/agent/changeNotifier/changeNotifierOps.ts */ {
     readonly agentsMdHash?: string;
     readonly agentsMdFiles?: Readonly<Record<string, string>>;
