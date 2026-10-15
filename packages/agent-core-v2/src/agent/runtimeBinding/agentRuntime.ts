@@ -33,6 +33,16 @@ export function inspectAgentRuntime(service: IAgentRuntimeService): Runtime {
   return service.inspect();
 }
 
+export function runtimeFsViable(service: IAgentRuntimeService): boolean {
+  try {
+    if (!service.isAvailable(['fs'])) return false;
+    service.inspect();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function snapshotAgentRuntimeBinding(
   bindingService: IAgentRuntimeBindingService,
   runtimeService: IAgentRuntimeService,

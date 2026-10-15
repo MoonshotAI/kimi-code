@@ -1109,6 +1109,65 @@ describe('AgentMediaToolsRegistrar', () => {
     expect(registry.resolve('ReadMediaFile')).toBeUndefined();
   });
 
+  it('does not keep the registration when capabilities are unknown and runtime inspection fails without an attachment store', () => {
+    const { registry, bindModel, failInspect } = createRegistrarHarness();
+    bindModel('vision-model', capabilities({ image_in: true, video_in: false }));
+    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+
+    bindModel('vision-model', UNKNOWN_CAPABILITY);
+    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+
+    failInspect(true);
+    expect(registry.resolve('ReadMediaFile')).toBeUndefined();
+  });
+
+  it('keeps the registration when capabilities are unknown and runtime inspection fails but an attachment store exists', () => {
+    const storage = new InMemoryStorageService();
+    const store = new SessionMediaStoreService(makeSessionContext({
+      sessionId: 'session', workspaceId: 'workspace', cwd: '/workspace',
+      sessionDir: '/session', sessionScope: 'session',
+    }), storage, new JsonAtomicDocumentStore(storage));
+    const { registry, bindModel, failInspect } = createRegistrarHarness({}, {}, store);
+    bindModel('vision-model', capabilities({ image_in: true, video_in: false }));
+    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+
+    bindModel('vision-model', UNKNOWN_CAPABILITY);
+    failInspect(true);
+    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+  });
+
+  it('rebuilds the registration on a same-alias provider change while runtime inspect fails', async () => {
+    const heic = Buffer.from([
+      0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63, 0x00, 0x00, 0x00, 0x00,
+      0x68, 0x65, 0x69, 0x63, 0x00, 0x00, 0x00, 0x00,
+    ]);
+    const providerTypes: Record<string, string> = {};
+    const storage = new InMemoryStorageService();
+    const store = new SessionMediaStoreService(makeSessionContext({
+      sessionId: 'session', workspaceId: 'workspace', cwd: '/workspace',
+      sessionDir: '/session', sessionScope: 'session',
+    }), storage, new JsonAtomicDocumentStore(storage));
+    await store.materialize({
+      fileId: 'f_photo',
+      name: 'photo.heic',
+      mimeType: 'image/heic',
+      size: heic.length,
+      stream: () => Readable.from([heic]),
+    });
+    const { registry, bindModel, failInspect } = createRegistrarHarness({}, providerTypes, store);
+    const read = async () => {
+      bindModel('vision', capabilities({ image_in: true, video_in: false }));
+      const tool = registry.resolve('ReadMediaFile') as ReadMediaFileTool;
+      return execute(tool, { path: 'kimi-file://f_photo' });
+    };
+
+    expect((await read()).isError).toBe(true);
+
+    failInspect(true);
+    providerTypes['vision'] = 'kimi';
+    expect((await read()).isError).toBeFalsy();
+  });
+
   it('drops the registration when capabilities are unknown and the runtime is unavailable without an attachment store', () => {
     const { registry, bindModel, setRuntimeAvailable } = createRegistrarHarness();
     bindModel('vision-model', capabilities({ image_in: true, video_in: false }));

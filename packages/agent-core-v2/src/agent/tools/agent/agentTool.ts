@@ -24,7 +24,7 @@ import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentRuntimeService, runtimeFsViable } from '#/agent/runtimeBinding/agentRuntime';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import {
   ToolAccesses,
@@ -180,7 +180,7 @@ export class SubagentTool implements ISubagentTool {
     const available = new Set(knownTools.map((ref) => ref.name));
     const mediaOfferable =
       this.anyMediaCapableModel() &&
-      (this.attachmentStore !== undefined || this.runtimeFsViable());
+      (this.attachmentStore !== undefined || runtimeFsViable(this.runtime));
     const typeLines = buildProfileDescriptions(
       profiles.map((profile) => ({
         ...profile,
@@ -212,16 +212,6 @@ export class SubagentTool implements ISubagentTool {
 
   private dispatchableProfiles(): readonly AgentProfile[] {
     return this.filterDispatchable(this.catalogProfiles());
-  }
-
-  private runtimeFsViable(): boolean {
-    try {
-      if (!this.runtime.isAvailable(['fs'])) return false;
-      this.runtime.inspect();
-      return true;
-    } catch {
-      return false;
-    }
   }
 
   private filterDispatchable(profiles: readonly AgentProfile[]): readonly AgentProfile[] {

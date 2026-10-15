@@ -11,7 +11,7 @@ import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { isUnknownCapability } from '#/llm-adapter/contract/capability';
 import { type ModelRequester } from '#/llm-adapter/model/model-requester';
 import { runWithCredentialRecovery } from '#/llm-adapter/model/credential-recovery';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentRuntimeService, runtimeFsViable } from '#/agent/runtimeBinding/agentRuntime';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -76,8 +76,11 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
   private refresh(): void {
     const capabilities = this.profile.getModelCapabilities();
     const modelAlias = this.profile.getModel();
+    const model = this.tryResolveModel(modelAlias);
     const modelKey = [
       modelAlias,
+      model?.providerType ?? '',
+      model?.protocol ?? '',
       String(capabilities.image_in),
       String(capabilities.video_in),
     ].join('|');
@@ -86,7 +89,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
       isUnknownCapability(capabilities) &&
       this.registration !== undefined &&
       modelAlias === this.appliedModel?.alias &&
-      (hasRuntimeFs || this.attachmentStore !== undefined)
+      (this.attachmentStore !== undefined || runtimeFsViable(this.runtime))
     ) {
       this.log.debug('media tools registration kept: bound model capabilities are unknown', {
         model: modelAlias,
@@ -141,7 +144,6 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
       inspected.identity.runtimeId,
       inspected.identity.generation,
     ].join('|');
-    const model = this.tryResolveModel(modelAlias);
     const key = [
       modelAlias,
       model?.providerType ?? '',
