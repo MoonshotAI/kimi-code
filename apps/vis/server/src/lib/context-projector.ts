@@ -541,6 +541,7 @@ export function projectContext(
       // are never part of context state:
       case 'metadata':
       case 'forked':
+      case 'changeNotifier.snapshot':
       case 'turn.prompt':
       case 'turn.steer':
       case 'turn.cancel':

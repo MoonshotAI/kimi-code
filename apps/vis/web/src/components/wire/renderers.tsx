@@ -347,6 +347,25 @@ export const WIRE_RENDERERS: RendererMap = {
     headline: () => ({ main: <Dim>session forked</Dim> }),
   },
 
+  'changeNotifier.snapshot': {
+    tone: 'meta',
+    label: 'notify',
+    headline: (r) => {
+      const parts: string[] = [];
+      if (r.agentsMdFiles !== null) parts.push(`${Object.keys(r.agentsMdFiles).length} agents.md`);
+      if (r.skillsHash !== null) parts.push('skills');
+      if (r.subagentNames !== null) parts.push(`${r.subagentNames.length} profiles`);
+      if (r.modelPool !== null) parts.push(`${Object.keys(r.modelPool).length} pool keys`);
+      return {
+        main: (
+          <span className="truncate text-fg-0">
+            {parts.length === 0 ? <Dim>(empty beliefs)</Dim> : parts.join(' · ')}
+          </span>
+        ),
+      };
+    },
+  },
+
   'config.update': {
     tone: 'config',
     label: 'config',
