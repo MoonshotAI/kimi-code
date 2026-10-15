@@ -18,6 +18,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { loadAgentsMdForRoots, type LoadedAgentsMd } from '#/agent/profile/context';
 import { resolveSubagentModelPool, type SubagentModelPool } from '#/session/subagent/configSection';
@@ -162,14 +163,14 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
           return;
         }
       }
-      if (!this.skillToolActive(profileData.profileName)) return;
+      if (!this.toolActiveForBoundProfile(profileData.profileName, 'Skill')) return;
       this.reminder.notify(skillsChangeText(listing), { variant: SKILLS_CHANGE_VARIANT });
     } catch (error) {
       this.log.warn('skill change notification failed', { error });
     }
   }
 
-  private skillToolActive(profileName: string | undefined): boolean {
+  private toolActiveForBoundProfile(profileName: string | undefined, name: string): boolean {
     if (profileName === undefined) return false;
     const profile = this.agentCatalog.get(profileName);
     if (profile === undefined) return false;
@@ -180,8 +181,15 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
         global: this.config.get<ToolsConfig>(TOOLS_SECTION),
         sessionDisabledTools: this.sessionToolPolicy.disabledTools(),
       },
-      'Skill',
+      name,
     );
+  }
+
+  private boundExplicitAllowlist(profileName: string | undefined): readonly string[] | undefined {
+    if (profileName === undefined || profileName === DEFAULT_AGENT_PROFILE_NAME) return undefined;
+    const declared = this.agentCatalog.get(profileName)?.subagents;
+    if (declared === undefined || (declared.length === 1 && declared[0] === '*')) return undefined;
+    return declared;
   }
 
   async notifySubagentChanges(input?: SubagentChangesInput): Promise<void> {
@@ -229,10 +237,19 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
         currentPool.defaultModel !== basePool.defaultModel
           ? { from: basePool.defaultModel, to: currentPool.defaultModel }
           : undefined;
+      const allowlist = this.boundExplicitAllowlist(profileData.profileName);
+      const visibleAdded =
+        allowlist === undefined
+          ? profilesAdded
+          : profilesAdded.filter((profile) => allowlist.includes(profile.name));
+      const visibleRemoved =
+        allowlist === undefined
+          ? profilesRemoved
+          : profilesRemoved.filter((name) => allowlist.includes(name));
       await this.recordSnapshot({ subagentNames: currentProfiles, modelPool: currentPool });
       if (
-        profilesAdded.length +
-          profilesRemoved.length +
+        visibleAdded.length +
+          visibleRemoved.length +
           modelsAdded.length +
           modelsRemoved.length +
           modelsUpdated.length ===
@@ -241,10 +258,16 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
       ) {
         return;
       }
+      if (
+        !this.toolActiveForBoundProfile(profileData.profileName, 'Agent') &&
+        !this.toolActiveForBoundProfile(profileData.profileName, 'AgentSwarm')
+      ) {
+        return;
+      }
       this.reminder.notify(
         subagentsChangeText({
-          profilesAdded,
-          profilesRemoved,
+          profilesAdded: visibleAdded,
+          profilesRemoved: visibleRemoved,
           modelsAdded,
           modelsRemoved,
           modelsUpdated,

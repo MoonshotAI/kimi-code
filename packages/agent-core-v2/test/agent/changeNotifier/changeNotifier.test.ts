@@ -74,7 +74,16 @@ interface Harness {
   readonly skillListing: { value: string };
   readonly profileNames: { value: readonly string[] };
   readonly profileMeta: {
-    value: Readonly<Record<string, { readonly description?: string; readonly whenToUse?: string }>>;
+    value: Readonly<
+      Record<
+        string,
+        {
+          readonly description?: string;
+          readonly whenToUse?: string;
+          readonly subagents?: readonly string[];
+        }
+      >
+    >;
   };
   readonly sessionDisabledTools: { value: readonly string[] };
   readonly secondaryModel: { value: SecondaryModelConfig | undefined };
@@ -103,7 +112,16 @@ function createHarness(options: {
   const skillListing = { value: '' };
   const profileNames = { value: ['default'] as readonly string[] };
   const profileMeta = {
-    value: {} as Readonly<Record<string, { readonly description?: string; readonly whenToUse?: string }>>,
+    value: {} as Readonly<
+      Record<
+        string,
+        {
+          readonly description?: string;
+          readonly whenToUse?: string;
+          readonly subagents?: readonly string[];
+        }
+      >
+    >,
   };
   const sessionDisabledTools = { value: [] as readonly string[] };
   const secondaryModel = { value: undefined as SecondaryModelConfig | undefined };
@@ -1038,6 +1056,56 @@ describe('notifySubagentChanges', () => {
     unbound.profileNames.value = ['default', 'deploy'];
     await unbound.notifier.notifySubagentChanges({ previousSubagentNames: ['default'] });
     expect(unbound.reminders).toHaveLength(0);
+  });
+
+  it('advances beliefs without reminding while the Agent tool is disabled', async () => {
+    const h = createHarness({
+      profile: makeProfileData({ profileName: 'default' }),
+    });
+    await h.notifier.notifySubagentChanges();
+
+    h.sessionDisabledTools.value = ['Agent', 'AgentSwarm'];
+    h.profileNames.value = ['default', 'deploy'];
+    await h.notifier.notifySubagentChanges();
+    expect(h.reminders).toHaveLength(0);
+
+    h.sessionDisabledTools.value = [];
+    await h.notifier.notifySubagentChanges();
+    expect(h.reminders).toHaveLength(0);
+
+    h.profileNames.value = ['default', 'deploy', 'reviewer'];
+    await h.notifier.notifySubagentChanges();
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('Profiles added: reviewer');
+  });
+
+  it('still reminds when only AgentSwarm remains available', async () => {
+    const h = createHarness({
+      profile: makeProfileData({ profileName: 'default' }),
+    });
+    await h.notifier.notifySubagentChanges();
+
+    h.sessionDisabledTools.value = ['Agent'];
+    h.profileNames.value = ['default', 'deploy'];
+    await h.notifier.notifySubagentChanges();
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('Profiles added: deploy');
+  });
+
+  it('filters reminders through the bound explicit subagent allowlist', async () => {
+    const h = createHarness({
+      profile: makeProfileData({ profileName: 'custom-main' }),
+    });
+    h.profileNames.value = ['default', 'custom-main'];
+    h.profileMeta.value = { 'custom-main': { subagents: ['coder'] } };
+    await h.notifier.notifySubagentChanges();
+
+    h.profileNames.value = ['default', 'custom-main', 'coder', 'deploy'];
+    h.agentCatalogChange.fire('workspace');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('Profiles added: coder');
+    expect(h.reminders[0]?.content).not.toContain('deploy');
   });
 });
 
