@@ -498,13 +498,15 @@ describe('seedBeliefs', () => {
     h.secondaryModel.value = { defaultModel: 'k1', models: { k1: '' } };
 
     await h.notifier.seedBeliefs({ agentsMd: '', agentsMdPaths: [], skillsListing: '' });
-    await h.notifier.notifySubagentChanges();
-    expect(h.reminders).toHaveLength(0);
 
     h.profileNames.value = ['default', 'deploy'];
-    await h.notifier.notifySubagentChanges();
+    h.agentCatalogChange.fire('workspace');
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(h.reminders).toHaveLength(1);
     expect(h.reminders[0]?.content).toContain('Profiles added: deploy');
+
+    await h.notifier.notifySubagentChanges();
+    expect(h.reminders).toHaveLength(1);
   });
 
   it('re-detects content matching a stale overall hash after a reseed', async () => {

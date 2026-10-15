@@ -1036,6 +1036,9 @@ describe('server-v2 /api/v1/sessions', () => {
         'model = "stub"',
         'max_context_size = 1000',
         '',
+        '[watch]',
+        'enabled = false',
+        '',
       ].join('\n'),
       'utf-8',
     );
@@ -1101,6 +1104,9 @@ describe('server-v2 /api/v1/sessions', () => {
       'model = "stub"',
       'max_context_size = 1000',
       '',
+      '[watch]',
+      'enabled = false',
+      '',
     ].join('\n');
     await writeFile(join(home as string, 'config.toml'), configToml, 'utf-8');
     server = await startServer({
@@ -1141,8 +1147,13 @@ describe('server-v2 /api/v1/sessions', () => {
       const after = await getJson<{ items: unknown[]; has_more: boolean }>(
         `/api/v1/sessions/${id}/messages`,
       );
-      const text = JSON.stringify(after.body.data.items);
-      expect(text.split('subagents_change').length - 1).toBe(1);
+      const subagentReminders = (
+        after.body.data.items as {
+          metadata?: { origin?: { kind?: string; variant?: string } };
+        }[]
+      ).filter((item) => item.metadata?.origin?.variant === 'subagents_change');
+      expect(subagentReminders).toHaveLength(1);
+      const text = JSON.stringify(subagentReminders[0]);
       expect(text).toContain('Profiles added: deploy');
       expect(text).toContain('Models added: stub');
     } finally {
