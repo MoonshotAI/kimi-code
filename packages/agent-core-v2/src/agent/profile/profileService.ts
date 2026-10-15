@@ -466,6 +466,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   private async seedChangeNotifierBeliefs(context: SystemPromptContext): Promise<void> {
     await this.instantiation.invokeFunction((accessor) =>
       accessor.get(IAgentChangeNotifierService).seedBeliefs({
+        agentsMd: context.agentsMd ?? '',
         agentsMdPaths: context.agentsMdPaths ?? [],
         skillsListing: context.skills ?? '',
       }),

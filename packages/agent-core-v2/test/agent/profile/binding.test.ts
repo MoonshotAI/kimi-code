@@ -1375,6 +1375,7 @@ describe('change-notifier belief seeding', () => {
         notifySubagentChanges: async () => {},
         seedBeliefs,
         mute: () => {},
+        unmute: () => {},
       }),
     );
     return ctx.get(IAgentProfileService);
@@ -1388,10 +1389,10 @@ describe('change-notifier belief seeding', () => {
     await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
 
     expect(seedBeliefs).toHaveBeenCalledTimes(1);
-    expect(seedBeliefs).toHaveBeenCalledWith({
-      agentsMdPaths: [normalize(join(workDir, 'AGENTS.md'))],
-      skillsListing: expect.any(String),
-    });
+    const seed = seedBeliefs.mock.calls[0]?.[0];
+    expect(seed?.agentsMdPaths).toEqual([normalize(join(workDir, 'AGENTS.md'))]);
+    expect(seed?.agentsMd).toContain('project instructions');
+    expect(seed?.skillsListing).toEqual(expect.any(String));
   });
 
   it('does not seed when the prompt build fails before the bind commits', async () => {

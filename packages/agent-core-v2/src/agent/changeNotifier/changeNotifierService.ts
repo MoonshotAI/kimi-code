@@ -234,17 +234,11 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
   async seedBeliefs(seed: BeliefsSeed): Promise<void> {
     if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
     try {
-      const lease = this.runtime.acquire(['fs']);
-      let contents: ReadonlyMap<string, string>;
-      try {
-        contents = await readAgentsMdFileContents(lease.runtime.fs!, seed.agentsMdPaths);
-      } finally {
-        lease.dispose();
-      }
+      const files = hashAgentsMdContents(splitAgentsMdFiles(seed.agentsMd, seed.agentsMdPaths));
       const pool = resolveSubagentModelPool(this.config);
       this.recordSnapshot({
         agentsMdHash: undefined,
-        agentsMdFiles: hashAgentsMdContents(contents),
+        agentsMdFiles: files,
         skillsHash: hashText(seed.skillsListing),
         subagentNames: this.agentCatalog.list().map((profile) => profile.name),
         modelPool: snapshotModelPool(pool),
@@ -329,6 +323,29 @@ function hashAgentsMdContents(contents: ReadonlyMap<string, string>): Record<str
     result[path] = hashText(content);
   }
   return result;
+}
+
+function splitAgentsMdFiles(
+  content: string,
+  paths: readonly string[],
+): ReadonlyMap<string, string> {
+  const wanted = new Set(paths.map(normalize));
+  const files = new Map<string, string>();
+  const markerRe = /^<!-- From: (.+) -->$/gm;
+  let prev: { key: string; bodyStart: number } | undefined;
+  const flush = (end: number): void => {
+    if (prev === undefined) return;
+    files.set(prev.key, content.slice(prev.bodyStart, end).trim());
+    prev = undefined;
+  };
+  for (const match of content.matchAll(markerRe)) {
+    const key = normalize(match[1]!);
+    if (!wanted.has(key)) continue;
+    flush(match.index);
+    prev = { key, bodyStart: match.index + match[0].length + 1 };
+  }
+  flush(content.length);
+  return files;
 }
 
 function classifyAgainstBeliefs(

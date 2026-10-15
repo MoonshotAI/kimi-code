@@ -11,6 +11,7 @@ export interface SubagentChangesInput {
 }
 
 export interface BeliefsSeed {
+  readonly agentsMd: string;
   readonly agentsMdPaths: readonly string[];
   readonly skillsListing: string;
 }

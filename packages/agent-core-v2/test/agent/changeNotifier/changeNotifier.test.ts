@@ -466,7 +466,7 @@ describe('seedBeliefs', () => {
       }),
     });
 
-    await h.notifier.seedBeliefs({ agentsMdPaths: [agentsMdPath], skillsListing: LISTING_A });
+    await h.notifier.seedBeliefs({ agentsMd: agentsMdPrompt(agentsMdPath, 'line one\nline two\nline three'), agentsMdPaths: [agentsMdPath], skillsListing: LISTING_A });
 
     await writeFile(agentsMdPath, 'line one\nline two');
     await h.notifier.notifyAgentsMdChanges();
@@ -481,7 +481,7 @@ describe('seedBeliefs', () => {
     });
     h.skillListing.value = LISTING_A;
 
-    await h.notifier.seedBeliefs({ agentsMdPaths: [], skillsListing: LISTING_A });
+    await h.notifier.seedBeliefs({ agentsMd: '', agentsMdPaths: [], skillsListing: LISTING_A });
     await h.notifier.notifySkillChanges();
     expect(h.reminders).toHaveLength(0);
 
@@ -497,7 +497,7 @@ describe('seedBeliefs', () => {
     });
     h.secondaryModel.value = { defaultModel: 'k1', models: { k1: '' } };
 
-    await h.notifier.seedBeliefs({ agentsMdPaths: [], skillsListing: '' });
+    await h.notifier.seedBeliefs({ agentsMd: '', agentsMdPaths: [], skillsListing: '' });
     await h.notifier.notifySubagentChanges();
     expect(h.reminders).toHaveLength(0);
 
@@ -522,12 +522,62 @@ describe('seedBeliefs', () => {
     expect(h.reminders).toHaveLength(0);
 
     await writeFile(agentsMdPath, 'content B');
-    await h.notifier.seedBeliefs({ agentsMdPaths: [agentsMdPath], skillsListing: '' });
+    await h.notifier.seedBeliefs({ agentsMd: agentsMdPrompt(agentsMdPath, 'content B'), agentsMdPaths: [agentsMdPath], skillsListing: '' });
 
     await writeFile(agentsMdPath, 'content A');
     await h.notifier.notifyAgentsMdChanges();
     expect(h.reminders).toHaveLength(1);
     expect(h.reminders[0]?.variant).toBe('agents_md_change');
+  });
+
+  it('anchors beliefs to the rendered snapshot rather than a reread of disk', async () => {
+    const agentsMdPath = join(workDir, 'AGENTS.md');
+    await writeFile(agentsMdPath, 'disk version B');
+    const h = createHarness({
+      profile: makeProfileData({
+        profileName: 'default',
+        systemPrompt: agentsMdPrompt(agentsMdPath, 'rendered version A'),
+        agentsMdPaths: [agentsMdPath],
+      }),
+    });
+
+    await h.notifier.seedBeliefs({
+      agentsMd: agentsMdPrompt(agentsMdPath, 'rendered version A'),
+      agentsMdPaths: [agentsMdPath],
+      skillsListing: '',
+    });
+
+    await h.notifier.notifyAgentsMdChanges();
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.variant).toBe('agents_md_change');
+    expect(h.reminders[0]?.content).toContain(agentsMdPath);
+  });
+
+  it('splits multi-file rendered content so only the changed file is reported', async () => {
+    const globalPath = join(homeDir, 'AGENTS.md');
+    const projectPath = join(workDir, 'AGENTS.md');
+    await writeFile(globalPath, 'global rules');
+    await writeFile(projectPath, 'project rules');
+    const rendered = `<!-- From: ${globalPath} -->\nglobal rules\n\n<!-- From: ${projectPath} -->\nproject rules`;
+    const h = createHarness({
+      profile: makeProfileData({
+        profileName: 'default',
+        systemPrompt: `intro\n\n${rendered}\n\noutro`,
+        agentsMdPaths: [globalPath, projectPath],
+      }),
+    });
+
+    await h.notifier.seedBeliefs({
+      agentsMd: rendered,
+      agentsMdPaths: [globalPath, projectPath],
+      skillsListing: '',
+    });
+
+    await writeFile(projectPath, 'project rules v2');
+    await h.notifier.notifyAgentsMdChanges();
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain(projectPath);
+    expect(h.reminders[0]?.content).not.toContain(globalPath);
   });
 });
 
@@ -813,7 +863,7 @@ describe('notifySubagentChanges', () => {
       profile: makeProfileData({ profileName: 'default' }),
     });
 
-    await h.notifier.seedBeliefs({ agentsMdPaths: [], skillsListing: '' });
+    await h.notifier.seedBeliefs({ agentsMd: '', agentsMdPaths: [], skillsListing: '' });
     expect(h.reminders).toHaveLength(0);
 
     h.secondaryModel.value = { defaultModel: 'k1', models: { k1: '' } };
@@ -828,7 +878,7 @@ describe('notifySubagentChanges', () => {
     });
     h.secondaryModel.value = { defaultModel: 'k1', models: { k1: '' } };
 
-    await h.notifier.seedBeliefs({ agentsMdPaths: [], skillsListing: '' });
+    await h.notifier.seedBeliefs({ agentsMd: '', agentsMdPaths: [], skillsListing: '' });
     h.secondaryModel.value = undefined;
     await h.notifier.notifySubagentChanges();
     expect(h.reminders).toHaveLength(1);
