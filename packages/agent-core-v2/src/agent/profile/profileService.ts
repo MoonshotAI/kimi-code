@@ -191,18 +191,13 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
             : this.discovery.retiredModelReplacement(this.modelAlias);
         if (replacement !== undefined) await this.setModel(replacement).catch(() => {});
         this.syncTelemetryModelContext(this.modelAlias);
-        if (this.scopeContext.agentId === MAIN_AGENT_ID && this.profileName !== undefined) {
-          await this.catalog.ready;
-          const snapshot = this.data();
-          const subagents = this.bindSubagents(snapshot.profileName, snapshot.subagents);
-          if (
-            subagents?.length !== snapshot.subagents?.length ||
-            subagents?.some((name, index) => name !== snapshot.subagents?.[index])
-          ) {
-            this.applyBindingSnapshot({ ...snapshot, subagents });
-          }
-        }
+        await this.refreshBoundSubagentAllowlist();
         await next();
+      }),
+    );
+    this._register(
+      this.catalog.onDidChange(() => {
+        void this.refreshBoundSubagentAllowlist().catch(() => {});
       }),
     );
     this._register(
@@ -313,6 +308,19 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     if (allowlist === undefined) return subagents;
     if (subagents !== undefined) return allowlist;
     return withoutDelegatingTargets(this.catalog, allowlist);
+  }
+
+  private async refreshBoundSubagentAllowlist(): Promise<void> {
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID || this.profileName === undefined) return;
+    await this.catalog.ready;
+    const snapshot = this.data();
+    const subagents = this.bindSubagents(snapshot.profileName, snapshot.subagents);
+    if (
+      subagents?.length !== snapshot.subagents?.length ||
+      subagents?.some((name, index) => name !== snapshot.subagents?.[index])
+    ) {
+      this.applyBindingSnapshot({ ...snapshot, subagents });
+    }
   }
 
   async bind(input: BindAgentInput): Promise<void> {

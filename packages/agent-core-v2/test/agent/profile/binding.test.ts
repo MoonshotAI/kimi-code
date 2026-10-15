@@ -148,6 +148,42 @@ describe('AgentProfileService.bind', () => {
     expect(svc.data().subagents).toEqual(['coder', 'explore', 'plan', 'code-reviewer']);
   });
 
+  it('recomputes the bound subagent allowlist when the catalog gains a profile after bind', async () => {
+    const persistence = new InMemoryWireRecordPersistence();
+    ctx = createTestAgent({ persistence }, hostEnvironmentServices(homeDir));
+    const svc = ctx.get(IAgentProfileService);
+
+    await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    expect(svc.data().subagents).toEqual(['coder', 'explore', 'plan']);
+
+    ctx.get(IAgentProfileRegistry).register({
+      sourceId: 'workspace',
+      priority: 30,
+      contribution: {
+        profiles: [
+          normalizeAgentProfile({
+            name: 'code-reviewer',
+            description: 'Reviews code',
+            tools: ['Read'],
+            systemPrompt: () => 'reviewer',
+          }),
+        ],
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await ctx.get(IWireService).flush();
+
+    expect(svc.data().subagents).toEqual(['coder', 'explore', 'plan', 'code-reviewer']);
+
+    const bindCount = persistence.records.filter((record) => record.type === 'profile.bind').length;
+    await ctx.get(ISessionAgentProfileCatalog).reload();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await ctx.get(IWireService).flush();
+    expect(persistence.records.filter((record) => record.type === 'profile.bind')).toHaveLength(
+      bindCount,
+    );
+  });
+
   it('honors the explicit subagents of a discovered profile bound as main', async () => {
     const { profile: svc } = buildContext();
     ctx.get(IAgentProfileRegistry).register({
@@ -283,6 +319,7 @@ describe('AgentProfileService.bind', () => {
     const emptyCatalog = {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
+      onDidChange: Event.None,
       get: () => undefined,
       getDefault: () => ({
         name: DEFAULT_AGENT_PROFILE_NAME,
@@ -601,6 +638,7 @@ describe('AgentToolPolicyService tool denylist', () => {
     const emptyCatalog = {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
+      onDidChange: Event.None,
       get: () => undefined,
       getDefault: () => ({
         name: DEFAULT_AGENT_PROFILE_NAME,
@@ -814,6 +852,7 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
     const emptyCatalog = {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
+      onDidChange: Event.None,
       get: () => undefined,
       getDefault: () => ({
         name: DEFAULT_AGENT_PROFILE_NAME,
