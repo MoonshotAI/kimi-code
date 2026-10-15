@@ -789,10 +789,29 @@ function preflightToolCall(
       output: `Invalid args for tool "${toolName}": ${validationError}`,
     };
   }
-  const resolvedArgs = tool.resolveArgs?.(parsedArgs.data);
-  const args = resolvedArgs ?? parsedArgs.data;
-  const originalArgs = resolvedArgs !== undefined ? parsedArgs.data : undefined;
-  return { kind: 'runnable', toolCall, toolName, tool, args, originalArgs };
+  if (tool.resolveArgs !== undefined) {
+    let resolvedArgs: unknown;
+    try {
+      resolvedArgs = tool.resolveArgs(parsedArgs.data);
+    } catch (error) {
+      return {
+        kind: 'rejected',
+        toolCall,
+        toolName,
+        args: parsedArgs.data,
+        output: `Tool "${toolName}" failed to resolve args: ${errorMessage(error)}`,
+      };
+    }
+    return {
+      kind: 'runnable',
+      toolCall,
+      toolName,
+      tool,
+      args: resolvedArgs ?? parsedArgs.data,
+      originalArgs: parsedArgs.data,
+    };
+  }
+  return { kind: 'runnable', toolCall, toolName, tool, args: parsedArgs.data };
 }
 
 function validateExecutableToolArgs(tool: ExecutableTool, args: unknown): string | null {

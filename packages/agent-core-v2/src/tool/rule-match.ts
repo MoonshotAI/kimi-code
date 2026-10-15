@@ -159,6 +159,7 @@ function matchRuleSubjects(
   if (ruleArgs.length === 0) return true;
   const negated = ruleArgs.startsWith('!');
   const positivePattern = negated ? ruleArgs.slice(1) : ruleArgs;
+  if (positivePattern.length === 0) return negated;
   const hit = subjects.some((subject) => matchesPositivePattern(positivePattern, subject));
   return negated ? !hit : hit;
 }

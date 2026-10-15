@@ -11,14 +11,12 @@ export function normalizeLegacySubagentType(
   requested: string | undefined,
   catalog: { get(name: string): unknown },
 ): string | undefined {
-  if (
-    requested !== undefined &&
-    LEGACY_SUBAGENT_TYPE_ALIASES.has(requested) &&
-    catalog.get(requested) === undefined
-  ) {
-    return DEFAULT_PROFILE_NAME;
+  if (requested === undefined || catalog.get(requested) !== undefined) {
+    return requested;
   }
-  return requested;
+  return LEGACY_SUBAGENT_TYPE_ALIASES.has(requested.toLowerCase())
+    ? DEFAULT_PROFILE_NAME
+    : requested;
 }
 
 export function normalizeLegacySubagentTypeArgs<T extends { readonly subagent_type?: string }>(

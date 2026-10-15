@@ -8,6 +8,7 @@ import {
 import type { PermissionRuleMatchExecution } from '#/agent/permissionRules/matchesRule';
 import {
   matchesGlobRuleSubject,
+  matchesGlobRuleSubjects,
   matchesPathRuleSubject,
 } from '#/tool/rule-match';
 
@@ -154,6 +155,18 @@ describe('permissionRules/matchPermissionRule', () => {
           cwd: '/repo',
           pathClass: 'posix',
         }),
+    })).toBe(true);
+  });
+
+  it('treats a bare negation as a defined match instead of throwing', () => {
+    expect(matches(rule('Agent(!)'), 'Agent', {
+      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, 'coder'),
+    })).toBe(true);
+    expect(matches(rule('Agent(!)'), 'Agent', {
+      matchesRule: (ruleArgs) => matchesGlobRuleSubjects(ruleArgs, ['coder', 'general']),
+    })).toBe(true);
+    expect(matches(rule('Bash(!)'), 'Bash', {
+      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, 'rm -rf /'),
     })).toBe(true);
   });
 });

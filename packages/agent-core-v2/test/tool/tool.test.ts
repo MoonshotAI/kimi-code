@@ -1907,6 +1907,7 @@ describe('Agent tool execution contract', () => {
     expect(execution.matchesRule?.('!coder')).toBe(false);
     expect(execution.matchesRule?.('!general')).toBe(false);
     expect(execution.matchesRule?.('!explore')).toBe(true);
+    expect(execution.matchesRule?.('!')).toBe(true);
   });
 
   it('matches negated approval rules against the plain requested type', async () => {
@@ -1922,6 +1923,7 @@ describe('Agent tool execution contract', () => {
     expect(execution.matchesRule?.('!coder')).toBe(false);
     expect(execution.matchesRule?.('!general')).toBe(true);
     expect(execution.matchesRule?.('!explore')).toBe(true);
+    expect(execution.matchesRule?.('!')).toBe(true);
   });
 
   it('canonicalizes a legacy alias in resolveArgs and keeps fork and resume raw', async () => {
@@ -1950,6 +1952,120 @@ describe('Agent tool execution contract', () => {
         resume: '  ',
       }),
     ).toMatchObject({ subagent_type: 'coder', resume: '  ' });
+  });
+
+  it('canonicalizes legacy aliases case-insensitively in resolveArgs', async () => {
+    const context = createAgentToolContext();
+    const tool = agentTool(context);
+
+    expect(
+      tool.resolveArgs?.({ prompt: 'Investigate', description: 'Find cause', subagent_type: 'General' }),
+    ).toMatchObject({ subagent_type: 'coder' });
+    expect(
+      tool.resolveArgs?.({ prompt: 'Investigate', description: 'Find cause', subagent_type: 'GENERAL' }),
+    ).toMatchObject({ subagent_type: 'coder' });
+    expect(
+      tool.resolveArgs?.({ prompt: 'Investigate', description: 'Find cause', subagent_type: 'General-Purpose' }),
+    ).toMatchObject({ subagent_type: 'coder' });
+  });
+
+  it('keeps an any-case alias spelling when a real profile has that exact name', async () => {
+    const general = normalizeAgentProfile({
+      name: 'General',
+      description: 'General',
+      systemPrompt: () => 'general',
+    });
+    const coder = normalizeAgentProfile({
+      name: 'coder',
+      description: 'Coder',
+      systemPrompt: () => 'coder',
+    });
+    const profiles: AgentProfile[] = [general, coder];
+    const catalog: ISessionAgentProfileCatalog = {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChange: Event.None as ISessionAgentProfileCatalog['onDidChange'],
+      get: (name) => profiles.find((profile) => profile.name === name),
+      getDefault: () => coder,
+      list: () => [...profiles],
+      inspect: () => undefined,
+      load: async () => {},
+      reload: async () => {},
+    };
+    const context = createAgentToolContext(
+      createAgentLifecycleStub(),
+      sessionService(ISessionAgentProfileCatalog, catalog),
+    );
+
+    expect(
+      agentTool(context).resolveArgs?.({
+        prompt: 'Investigate',
+        description: 'Find cause',
+        subagent_type: 'General',
+      }),
+    ).toMatchObject({ subagent_type: 'General' });
+  });
+
+  it('agrees with the direct branch when invoked through the preflight two-arg form', async () => {
+    const context = createAgentToolContext();
+    const tool = agentTool(context);
+    const original = {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      subagent_type: 'general',
+    };
+    const resolved = tool.resolveArgs?.(original) as SubagentToolInput;
+
+    const execution = await tool.resolveExecution(resolved, original);
+
+    if (execution.isError === true) throw new Error('expected runnable execution');
+    expect(execution.description).toBe('Launching coder agent: Find cause');
+    expect(execution.matchesRule?.('coder')).toBe(true);
+    expect(execution.matchesRule?.('general')).toBe(true);
+    expect(execution.matchesRule?.('!coder')).toBe(false);
+    expect(execution.matchesRule?.('!explore')).toBe(true);
+  });
+
+  it('rejects the call when resolveArgs throws instead of bypassing hook policy', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: async () => ({ summary: 'child result' }),
+    });
+    const coder = normalizeAgentProfile({
+      name: 'coder',
+      description: 'Coder',
+      systemPrompt: () => 'coder',
+    });
+    const catalog = {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChange: Event.None as ISessionAgentProfileCatalog['onDidChange'],
+      get: (name: string) => {
+        if (name === 'general') throw new Error('catalog exploded');
+        return name === 'coder' ? coder : undefined;
+      },
+      getDefault: () => coder,
+      list: () => [coder],
+      inspect: () => undefined,
+      load: async () => {},
+      reload: async () => {},
+    } as unknown as ISessionAgentProfileCatalog;
+    ctx = createTestAgent(
+      sessionService(ISessionAgentProfileCatalog, catalog),
+      sessionService(IAgentLifecycleService, lifecycle),
+    );
+    wireRealSubagentService(ctx, lifecycle);
+    await ctx.rpc.setPermission({ mode: 'auto' });
+
+    ctx.mockNextResponse({ type: 'text', text: 'I will delegate.' }, aliasAgentCall());
+    ctx.mockNextResponse({ type: 'text', text: 'The launch failed.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Use an agent' }] });
+    await ctx.untilTurnEnd();
+
+    expect(lifecycle.create).not.toHaveBeenCalled();
+    const history = JSON.stringify(ctx.get(IAgentContextMemoryService).get());
+    expect(history).toContain('failed to resolve args');
+    expect(history).toContain('catalog exploded');
   });
 
   it('keeps the raw type for display and approval rules when a real profile has the alias name', async () => {
