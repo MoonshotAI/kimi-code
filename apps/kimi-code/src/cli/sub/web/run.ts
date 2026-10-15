@@ -16,7 +16,7 @@ import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
 import chalk from 'chalk';
 import { type Command, Option } from 'commander';
 
-import { CLI_SHUTDOWN_TIMEOUT_MS, WEB_USER_AGENT_SUFFIX } from '#/constant/app';
+import { CLI_MSH_PLATFORM, CLI_SHUTDOWN_TIMEOUT_MS, CLI_USER_AGENT_PRODUCT, WEB_USER_AGENT_SUFFIX } from '#/constant/app';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
 import { darkColors } from '#/tui/theme/colors';
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
@@ -76,9 +76,14 @@ export interface WebCliOptions extends ServerCliOptions {
   remoteControl?: boolean;
 }
 
+export interface ForegroundControls {
+  /** Ask the foreground runner to shut the server down and exit (like SIGINT). */
+  requestShutdown(reason: string): void;
+}
+
 export interface StartForegroundHooks {
   /** Fires once the server is listening, before the foreground runner blocks. */
-  onReady?: (origin: string) => void | Promise<void>;
+  onReady?: (origin: string, controls?: ForegroundControls) => void | Promise<void>;
   onShutdown?: (reason: string) => void | Promise<void>;
 }
 
@@ -202,7 +207,7 @@ export async function handleWebCommand(
   const run = deps.startServerForeground ?? startServerForeground;
   let remoteControl: RemoteControlHandle | undefined;
   await run(parsed, {
-    onReady: async (origin) => {
+    onReady: async (origin, controls) => {
       // Resolve the persistent token only once the server is up: a fresh
       // server writes `server.token` on first boot, so reading it beforehand
       // would miss first-time starts and the browser would hit the auth gate.
@@ -226,12 +231,26 @@ export async function handleWebCommand(
           homeDir: dataDir,
           localOrigin: origin,
           localServerToken: token,
-          clientVersion: `kimi-code/${getVersion()}`,
+          clientVersion: `${CLI_USER_AGENT_PRODUCT}/${getVersion()}`,
+          urlSource: CLI_MSH_PLATFORM,
           configuredOAuthKey: persisted?.key,
           configuredOAuthHost: persisted?.oauthHost,
           stderr: deps.stderr,
           onStatus,
         });
+        void remoteControl.closed.then(
+          (reason) => {
+            if (reason === 'user_requested') {
+              controls?.requestShutdown('remote_control_user_requested');
+            }
+          },
+          (error) => {
+            deps.stderr.write(
+              `Remote Control lock release failed: ${error instanceof Error ? error.message : String(error)}\n`,
+            );
+            controls?.requestShutdown('remote_control_closed');
+          },
+        );
         const qrCode = await generateRemoteControlQr(remoteControl.url, dataDir);
         deps.stdout.write(
           formatRemoteControlOutput({
@@ -404,7 +423,9 @@ async function runServerInProcess(
   running.logger.info({ address: running.address }, 'server ready');
 
   try {
-    await hooks.onReady?.(running.address);
+    await hooks.onReady?.(running.address, {
+      requestShutdown: (reason) => void shutdown(reason),
+    });
   } catch (error) {
     try {
       await hooks.onShutdown?.('startup_failed');

@@ -8,6 +8,8 @@ import { Jimp } from 'jimp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { Emitter } from '#/_base/event';
+import { OrderedHookSlot } from '#/hooks';
+import type { IEventDispatcher } from '#/state/eventDispatcher';
 import {
   resetUnexpectedErrorHandler,
   setUnexpectedErrorHandler,
@@ -717,8 +719,38 @@ describe('ReadMediaFileTool', () => {
     expect(videoUploader).toHaveBeenCalledOnce();
     expect(videoUploader).toHaveBeenCalledWith(
       expect.objectContaining({ mimeType: 'video/mp4', filename: 'clip.mp4' }),
+      { signal: expect.any(AbortSignal) },
     );
     expect(parts[1]).toEqual(uploadResult);
+  });
+
+  it('passes the execution abort signal to the video uploader', async () => {
+    const controller = new AbortController();
+    const videoUploader = vi.fn<VideoUploader>((_input, options) =>
+      new Promise((_resolve, reject) => {
+        options?.signal?.addEventListener('abort', () => {
+          reject(new Error('upload cancelled'));
+        }, {
+          once: true,
+        });
+      }),
+    );
+    const tool = makeTool(
+      { '/workspace/clip.mp4': { data: mp4Buffer() } },
+      capabilities(),
+      videoUploader,
+    );
+    const execution = await tool.resolveExecution({ path: '/workspace/clip.mp4' });
+    if (!('execute' in execution)) throw new Error('Expected an executable tool call');
+
+    const pending = execution.execute({ turnId: 1, toolCallId: 'call_media', signal: controller.signal });
+    await vi.waitFor(() => {
+      expect(videoUploader).toHaveBeenCalledOnce();
+    });
+    controller.abort();
+
+    expect(videoUploader.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+    await expect(pending).rejects.toThrow('upload cancelled');
   });
 
   it('falls back to an inline base64 video part when the upload fails', async () => {
@@ -872,6 +904,8 @@ describe('AgentMediaToolsRegistrar', () => {
   ) {
     const registry = new AgentToolRegistryService();
     const eventBus = new EventBusService();
+    const onDidRestore = new OrderedHookSlot();
+    const dispatcher = { hooks: { onDidRestore } } as unknown as IEventDispatcher;
     const agentContext = stubAgentContext('main', 1);
     eventBus.activateAgent(agentContext);
     const state: ProfileState = {
@@ -921,6 +955,7 @@ describe('AgentMediaToolsRegistrar', () => {
       profile,
       modelCatalog,
       eventBus,
+      dispatcher,
       runtime,
       workspaceCtx,
       recordingTelemetry([]),
@@ -950,7 +985,7 @@ describe('AgentMediaToolsRegistrar', () => {
     const healAlias = (alias: string): void => {
       brokenAliases.delete(alias);
     };
-    return { registry, registrar, bindModel, setRuntimeAvailable, breakAlias, healAlias };
+    return { registry, registrar, state, onDidRestore, bindModel, setRuntimeAvailable, breakAlias, healAlias };
   }
 
   it('registers nothing until a media-capable model binds, then registers ReadMediaFile', () => {
@@ -961,6 +996,17 @@ describe('AgentMediaToolsRegistrar', () => {
     const tool = registry.resolve('ReadMediaFile');
     expect(tool).toBeInstanceOf(ReadMediaFileTool);
     expect((tool as ReadMediaFileTool).description).toContain('Video files are not supported');
+  });
+
+  it('registers ReadMediaFile after a silent profile restore', async () => {
+    const { registry, state, onDidRestore } = createRegistrarHarness();
+    state.alias = 'vision-model';
+    state.capabilities = capabilities({ image_in: true, video_in: false });
+    expect(registry.resolve('ReadMediaFile')).toBeUndefined();
+
+    await onDidRestore.run({});
+
+    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
   });
 
   it('hands the bound model provider type to ReadMediaFile', async () => {

@@ -7,23 +7,23 @@ import {
   type AgentActorRestoreEvent,
 } from '#/agent/actorService/agentActorService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
+import type { NotifyUserNudgeShownEvent } from '#/app/telemetry/events';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { notifyUserAvailable } from './notifyUserAvailability';
 import {
   NOTIFY_USER_NUDGE_VARIANT,
-  lastMidResponsePosition,
-  renderMidResponseHint,
+  notifyStreak,
   renderNotifyUserNudge,
-  shouldNudgeMidResponse,
   shouldNudgeNotifyUser,
-  toolCallsSinceLastNotify,
-  toolCallsSincePosition,
+  toolCallRoundsSincePosition,
 } from './notifyUserNudge';
 import { NOTIFY_USER_TOOL_NAME } from './tools/notify-user/notify-user';
 
@@ -50,14 +50,17 @@ const notifyUserNudgeReminders = fromCallback(({
         return undefined;
       }
       const history = runtime.get(IAgentContextMemoryService).get();
-      const streak = toolCallsSinceLastNotify(history);
-      const callsSinceLastNudge =
-        lastInjectedAt === null ? null : toolCallsSincePosition(history, lastInjectedAt);
-      if (shouldNudgeNotifyUser(streak, callsSinceLastNudge)) return renderNotifyUserNudge(streak);
-      if (shouldNudgeMidResponse(lastMidResponsePosition(history), lastInjectedAt)) {
-        return renderMidResponseHint();
-      }
-      return undefined;
+      const streak = notifyStreak(history);
+      const roundsSinceLastNudge =
+        lastInjectedAt === null ? null : toolCallRoundsSincePosition(history, lastInjectedAt);
+      if (!shouldNudgeNotifyUser(streak.rounds, roundsSinceLastNudge)) return undefined;
+      const properties: NotifyUserNudgeShownEvent = {
+        turn_id: runtime.get(IAgentLoopService).snapshot().activeTurnId,
+        rounds_since_notify: streak.rounds,
+        nudge_index: streak.nudges + 1,
+      };
+      runtime.get(ITelemetryService).track2('notify_user_nudge_shown', properties);
+      return renderNotifyUserNudge(streak.rounds);
     },
   );
   return () => {

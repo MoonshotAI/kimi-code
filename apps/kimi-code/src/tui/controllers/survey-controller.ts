@@ -8,7 +8,9 @@ import {
   getSurveyPopupConfig,
   peekSurveyPopupConfig,
   peekSurveyPopupConfigFresh,
+  resolveSurveyPopupConfig,
   type SurveyPopupConfig,
+  type SurveyPopupPayload,
 } from '#/utils/survey-popup-config';
 import { readSurveyLastShownTime, writeSurveyLastShownTime } from '#/utils/survey-state-store';
 import { currentKimiRegion } from '#/utils/region';
@@ -94,7 +96,7 @@ function joinModels(models: ReadonlySet<string>): string | undefined {
 }
 
 export interface SurveyControllerDeps {
-  readonly config?: () => SurveyPopupConfig;
+  readonly config?: () => SurveyPopupPayload;
   readonly monotonicNow?: () => number;
   readonly wallNow?: () => number;
   readonly random?: () => number;
@@ -140,12 +142,14 @@ export class SurveyController {
   private readonly view: SurveyPanelView = { phase: 'open' };
   private mounted = false;
   private mountedAt: number;
-  private userTurnCount = 0;
+  private userTurnsSinceMount = 0;
+  private initialUserTurnCount: number | undefined = 0;
   private lastShownAt: number | undefined;
   private userTurnsAtLastShown: number | undefined;
   private appearanceCount = 0;
   private globalLastShownAt: number | undefined;
-  private longContextRollConsumed = false;
+  private readonly longContextRollConsumedModels = new Set<string | undefined>();
+  private longContextShownThisMount = false;
   private generation = 0;
   private idleSince: number | undefined;
   private openedAt = 0;
@@ -192,11 +196,13 @@ export class SurveyController {
     this.applyClose();
     this.machine = SURVEY_MACHINE_CLOSED;
     this.mountedAt = this.now();
-    this.userTurnCount = 0;
+    this.userTurnsSinceMount = 0;
+    this.initialUserTurnCount = 0;
     this.lastShownAt = undefined;
     this.userTurnsAtLastShown = undefined;
     this.appearanceCount = 0;
-    this.longContextRollConsumed = false;
+    this.longContextRollConsumedModels.clear();
+    this.longContextShownThisMount = false;
     this.idleSince = undefined;
     this.stickySample = undefined;
     this.toolCallCount = 0;
@@ -240,7 +246,7 @@ export class SurveyController {
     this.clearIdleTimer();
     this.notifyDisplaced();
     if (userOrigin) {
-      this.userTurnCount += 1;
+      this.userTurnsSinceMount += 1;
       this.evaluationPending = false;
       this.pendingTraceId = undefined;
     }
@@ -298,6 +304,10 @@ export class SurveyController {
     }
     this.subagentCount += 1;
     recordModel(this.subagentModels, event.model);
+  }
+
+  seedUserTurnCount(count: number | undefined): void {
+    this.initialUserTurnCount = count;
   }
 
   seedFromResumedAgents(agents: Readonly<Record<string, ResumedAgentSeed>>): void {
@@ -444,6 +454,13 @@ export class SurveyController {
     return false;
   }
 
+  private currentConfig(): SurveyPopupConfig {
+    return resolveSurveyPopupConfig(
+      (this.deps.config ?? defaultDeps.config)(),
+      resolveKfcModelId(this.host.state.appState),
+    );
+  }
+
   private evaluate(): void {
     if (this.machine.phase !== 'closed') return;
     if (!this.configReady) return;
@@ -463,9 +480,12 @@ export class SurveyController {
     ) {
       return;
     }
-    const config = (this.deps.config ?? defaultDeps.config)();
-    const verdict = evaluateSurveyGate({ ...this.gateInputs(), config });
-    if (verdict.longContextRollConsumed === true) this.longContextRollConsumed = true;
+    const config = this.currentConfig();
+    const inputs = this.gateInputs();
+    const verdict = evaluateSurveyGate({ ...inputs, config });
+    if (verdict.longContextRollConsumed === true) {
+      this.longContextRollConsumedModels.add(inputs.longContext.kfcModelId);
+    }
     if (!verdict.show) return;
     this.open(verdict.survey, config);
   }
@@ -494,12 +514,12 @@ export class SurveyController {
       session: {
         ...shared,
         mountedForMs: now - this.mountedAt,
-        userTurnsSinceMount: this.userTurnCount,
+        userTurnsSinceMount: this.userTurnsSinceMount,
         msSinceLastShown: this.lastShownAt === undefined ? undefined : now - this.lastShownAt,
         userTurnsSinceLastShown:
           this.userTurnsAtLastShown === undefined
             ? undefined
-            : this.userTurnCount - this.userTurnsAtLastShown,
+            : this.userTurnsSinceMount - this.userTurnsAtLastShown,
         sample: this.currentSample(),
         msSinceGlobalLastShown:
           this.globalLastShownAt === undefined ? undefined : this.wallNow() - this.globalLastShownAt,
@@ -508,7 +528,12 @@ export class SurveyController {
         ...shared,
         cumulativeTokens: appState.cumulativeTokens ?? 0,
         virtualContextTokens: appState.contextTokens,
-        mountRollConsumed: this.longContextRollConsumed,
+        mountRollConsumed: this.longContextRollConsumedModels.has(shared.kfcModelId),
+        mountSurveyShown: this.longContextShownThisMount,
+        msSinceGlobalLastShown:
+          this.globalLastShownAt === undefined
+            ? undefined
+            : this.wallNow() - this.globalLastShownAt,
         drawMountRoll: () => (this.deps.random ?? defaultDeps.random)(),
       },
     };
@@ -537,9 +562,9 @@ export class SurveyController {
   }
 
   private currentSample(): number {
-    if (this.stickySample?.turnCount !== this.userTurnCount) {
+    if (this.stickySample?.turnCount !== this.userTurnsSinceMount) {
       this.stickySample = {
-        turnCount: this.userTurnCount,
+        turnCount: this.userTurnsSinceMount,
         value: (this.deps.random ?? defaultDeps.random)(),
       };
     }
@@ -563,8 +588,8 @@ export class SurveyController {
     this.openedAt = shownAt;
     this.openedEditorText = this.host.state.editor.getText();
     this.lastShownAt = shownAt;
-    this.userTurnsAtLastShown = this.userTurnCount;
-    if (survey !== 'session') return;
+    this.userTurnsAtLastShown = this.userTurnsSinceMount;
+    if (survey === 'long_context') this.longContextShownThisMount = true;
     this.globalLastShownAt = this.wallNow();
     try {
       (this.deps.writeGlobalLastShown ?? defaultDeps.writeGlobalLastShown)(
@@ -598,7 +623,7 @@ export class SurveyController {
             response: effect.response,
           },
           this.appearanceSnapshot?.fields ?? this.environmentFields(),
-          this.appearanceConfig ?? (this.deps.config ?? defaultDeps.config)(),
+          this.appearanceConfig ?? this.currentConfig(),
         );
         const sessionId = this.appearanceSnapshot?.sessionId ?? '';
         if (sessionId.length > 0) {
@@ -706,7 +731,10 @@ export class SurveyController {
     return {
       current_model: appState.model,
       kfc_model_id: resolveKfcModelId(appState),
-      user_turn_count: this.userTurnCount,
+      user_turn_count:
+        this.initialUserTurnCount === undefined
+          ? undefined
+          : this.initialUserTurnCount + this.userTurnsSinceMount,
       cumulative_tokens: appState.cumulativeTokens ?? 0,
       virtual_context_tokens: appState.contextTokens,
       tool_call_count: this.toolCallCount,

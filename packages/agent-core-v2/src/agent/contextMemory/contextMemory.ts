@@ -34,6 +34,8 @@ export interface IAgentContextMemoryService {
 
   get(): readonly ContextMessage[];
 
+  prefixRevision(): number;
+
   append(...messages: readonly ContextMessage[]): void;
 
   appendLoopEvent(event: LoopRecordedEvent): void;

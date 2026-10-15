@@ -1,5 +1,13 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.21.0
+
+### Minor Changes
+
+- [#4184](https://github.com/MoonshotAI/kimi-code/pull/4184) [`cbd7540`](https://github.com/MoonshotAI/kimi-code/commit/cbd754049a114ee36d1b27675c82819e4963c692) Thanks [@7Sageer](https://github.com/7Sageer)! - Remove the `kaos` / `persistenceKaos` session options and the `createSessionWithKaos` / `resumeSessionWithKaos` client methods, which were already ignored at runtime.
+
+- [#4156](https://github.com/MoonshotAI/kimi-code/pull/4156) [`e5b4b88`](https://github.com/MoonshotAI/kimi-code/commit/e5b4b88ba93d5a27aa9a36cf847eed4f1aa39c48) Thanks [@Grapedge](https://github.com/Grapedge)! - Add cumulative main-agent user-turn counts to session recovery snapshots.
+
 ## 0.20.0
 
 ### Minor Changes

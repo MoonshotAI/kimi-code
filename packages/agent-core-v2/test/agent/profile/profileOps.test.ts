@@ -15,6 +15,7 @@ import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMd
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { IProviderDiscoveryService } from '#/app/kosongConfig/discovery';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { IProtocolAdapterRegistry, type Protocol } from '#/llm-adapter/protocol/protocol';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -42,6 +43,7 @@ import {
   restoreTestEventDispatcher,
   testWireScope,
 } from '../../wire/stubs';
+import { stubProviderDiscovery, type StubProviderDiscovery } from '../../stubs';
 
 const SCOPE = 'wire';
 const KEY = 'profile-test';
@@ -183,6 +185,7 @@ let agentState: IAgentStateService;
 let svc: IAgentProfileService;
 let configValues: Record<string, unknown>;
 let modelCatalog: IModelCatalog;
+let discovery: StubProviderDiscovery;
 
 function buildHost(key: string): {
   ix: TestInstantiationService;
@@ -239,6 +242,7 @@ function buildHost(key: string): {
     disabledTools: () => [],
     setDisabledTools: () => Promise.resolve(),
   });
+  host.stub(IProviderDiscoveryService, discovery);
   host.set(IAgentStateService, new AgentStateService());
   host.set(IAgentProfileService, new SyncDescriptor(AgentProfileService));
   registerTestAgentWire(host, testWireScope(SCOPE, key), {
@@ -259,6 +263,7 @@ beforeEach(() => {
   disposables = new DisposableStore();
   configValues = {};
   modelCatalog = createModelCatalogStub();
+  discovery = stubProviderDiscovery();
   const host = buildHost(KEY);
   ix = host.ix;
   dispatcher = host.dispatcher;
@@ -493,6 +498,57 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     );
 
     expect(host.svc.getEffectiveThinkingLevel()).toBe('high');
+  });
+
+  describe('when a refresh retires the default model', () => {
+    beforeEach(() => {
+      modelCatalog = createModelCatalogStub({
+        'acme/next': createTestModel({ id: 'next' }),
+        'acme/other': createTestModel({ id: 'other' }),
+      });
+    });
+
+    it('moves an agent bound to it onto the declared replacement, keeping the effort', () => {
+      const host = buildHost('profile-retired-live');
+      host.svc.update({
+        profileName: DEFAULT_AGENT_PROFILE_NAME,
+        modelAlias: 'acme/current',
+        thinkingLevel: 'high',
+      });
+
+      discovery.retire({ from: 'acme/current', to: 'acme/next' });
+
+      expect(host.svc.getModel()).toBe('acme/next');
+      expect(modelOf(host.agentState).thinkingLevel).toBe('high');
+    });
+
+    it('leaves an agent bound to another model alone', () => {
+      const host = buildHost('profile-retired-other');
+      host.svc.update({ profileName: DEFAULT_AGENT_PROFILE_NAME, modelAlias: 'acme/other' });
+
+      discovery.retire({ from: 'acme/current', to: 'acme/next' });
+
+      expect(host.svc.getModel()).toBe('acme/other');
+    });
+
+    it('moves an agent restored onto it after the refresh', async () => {
+      discovery.retired['acme/current'] = 'acme/next';
+      const host = buildHost('profile-retired-restore');
+
+      await restoreTestEventDispatcher(
+        host.dispatcher,
+        host.log,
+        testWireScope(SCOPE, 'profile-retired-restore'),
+        [{
+          type: 'config.update',
+          profileName: DEFAULT_AGENT_PROFILE_NAME,
+          modelAlias: 'acme/current',
+          thinkingEffort: 'high',
+        }],
+      );
+
+      expect(host.svc.getModel()).toBe('acme/next');
+    });
   });
 
   it('rejects conflicting config.update thinking aliases during replay', async () => {

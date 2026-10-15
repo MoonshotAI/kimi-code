@@ -19,6 +19,10 @@ import { resetCapabilitiesCache, setCapabilities } from '@moonshot-ai/pi-tui';
 
 import { registerWebCommand } from '#/cli/sub/web';
 import type { LegacyKillDeps } from '#/cli/sub/web/legacy-kill';
+import type {
+  RemoteControlCloseReason,
+  RemoteControlStatus,
+} from '#/cli/sub/web/remote-control';
 import type { WebCommandDeps } from '#/cli/sub/web/run';
 import type { ParsedServerOptions } from '#/cli/sub/web/shared';
 import { darkColors } from '#/tui/theme/colors';
@@ -462,6 +466,100 @@ describe('`kimi web` opens the browser', () => {
         { startServerForeground: runner, openUrl: vi.fn(), stdout, stderr },
       ),
     ).rejects.toThrow('--remote-control requires a loopback host.');
+  });
+
+  it('requests foreground shutdown when the relay takes the device offline', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const home = mkdtempSync(join(tmpdir(), 'kimi-web-rc-'));
+    vi.stubEnv('KIMI_CODE_HOME', home);
+    const { stdout, stderr, readStdout } = makeIo();
+    const requestShutdown = vi.fn();
+    const runner: ForegroundRunner = async (_options, hooks) => {
+      await hooks?.onReady?.('http://127.0.0.1:58627', { requestShutdown });
+      return undefined as never;
+    };
+    let emitStatus: ((status: RemoteControlStatus) => void) | undefined;
+    let resolveClosed: ((reason: RemoteControlCloseReason) => void) | undefined;
+    const startRemoteControl: WebCommandDeps['startRemoteControl'] = async (options) => {
+      emitStatus = options.onStatus;
+      return {
+        deviceId: 'device-1',
+        deviceName: 'example-device',
+        url: 'https://example.test/devices/device-1/?rc=1&from=kimi_code_cli',
+        relayOrigin: 'https://example.test',
+        closed: new Promise<RemoteControlCloseReason>((resolve) => {
+          resolveClosed = resolve;
+        }),
+        close: async () => {},
+      };
+    };
+
+    try {
+      await handleWebCommand(
+        { remoteControl: true, open: false },
+        {
+          startServerForeground: runner,
+          startRemoteControl,
+          resolveToken: () => 'tok',
+          openUrl: vi.fn(),
+          stdout,
+          stderr,
+        },
+      );
+
+      emitStatus?.('relay_terminated');
+      resolveClosed?.('user_requested');
+      await vi.waitFor(() => {
+        expect(requestShutdown).toHaveBeenCalledWith('remote_control_user_requested');
+      });
+      expect(readStdout()).toContain('offline');
+      expect(readStdout()).not.toContain('reconnecting');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('does not request shutdown when the tunnel closes locally', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const home = mkdtempSync(join(tmpdir(), 'kimi-web-rc-'));
+    vi.stubEnv('KIMI_CODE_HOME', home);
+    const { stdout, stderr } = makeIo();
+    const requestShutdown = vi.fn();
+    const runner: ForegroundRunner = async (_options, hooks) => {
+      await hooks?.onReady?.('http://127.0.0.1:58627', { requestShutdown });
+      return undefined as never;
+    };
+    let resolveClosed: ((reason: RemoteControlCloseReason) => void) | undefined;
+    const startRemoteControl: WebCommandDeps['startRemoteControl'] = async () => ({
+      deviceId: 'device-1',
+      deviceName: 'example-device',
+      url: 'https://example.test/devices/device-1/?rc=1&from=kimi_code_cli',
+      relayOrigin: 'https://example.test',
+      closed: new Promise<RemoteControlCloseReason>((resolve) => {
+        resolveClosed = resolve;
+      }),
+      close: async () => {},
+    });
+
+    try {
+      await handleWebCommand(
+        { remoteControl: true, open: false },
+        {
+          startServerForeground: runner,
+          startRemoteControl,
+          resolveToken: () => 'tok',
+          openUrl: vi.fn(),
+          stdout,
+          stderr,
+        },
+      );
+
+      resolveClosed?.('local_close');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(requestShutdown).not.toHaveBeenCalled();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it('shows --remote-control in help', () => {

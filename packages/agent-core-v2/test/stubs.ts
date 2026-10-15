@@ -7,6 +7,7 @@ import {
   IConfigService,
   type ResolvedConfig,
 } from '#/app/config/config';
+import type { IProviderDiscoveryService, RetiredModel } from '#/app/kosongConfig/discovery';
 import type { IModelOAuthTokens } from '#/llm-adapter/model/model-oauth';
 
 export class StubConfigService implements IConfigService {
@@ -126,6 +127,27 @@ export function stubOAuthService(tokenProvider?: StubTokenProvider): IOAuthServi
     resolveTokenProvider: () => tokenProvider,
     getCachedAccessToken: () => Promise.resolve(undefined),
   } as unknown as IOAuthService;
+}
+
+export interface StubProviderDiscovery extends IProviderDiscoveryService {
+  readonly retired: Record<string, string>;
+  retire(event: RetiredModel): void;
+}
+
+export function stubProviderDiscovery(): StubProviderDiscovery {
+  const retirements = new Emitter<RetiredModel>();
+  const retired: Record<string, string> = {};
+  return {
+    _serviceBrand: undefined,
+    retired,
+    onDidRetireModel: retirements.event,
+    refreshProviderModels: () => Promise.reject(new Error('not implemented')),
+    retiredModelReplacement: (alias) => retired[alias],
+    retire: (event) => {
+      retired[event.from] = event.to;
+      retirements.fire(event);
+    },
+  };
 }
 
 export function stubModelOAuthTokens(

@@ -81,6 +81,19 @@ describe('foldAnnouncedToolNames', () => {
 });
 
 describe('renderLoadableToolsAnnouncement', () => {
+  it('states the empty current set without announcing placeholder tool names', () => {
+    const empty = renderLoadableToolsAnnouncement([], [], false);
+    expect(empty).toContain('No tools are currently available for dynamic loading in this session.');
+    expect(empty).toContain('Do not call select_tools or guess tool names');
+    expect(empty).toContain('Only a later <tools_added> announcement');
+    expect(empty).not.toContain('<tools_added>\n');
+    expect(empty).not.toContain('Use the select_tools tool');
+
+    const removed = renderLoadableToolsAnnouncement([], ['a'], false);
+    expect(removed).toContain('<tools_removed>\na\n</tools_removed>');
+    expect(removed).toContain(empty);
+  });
+
   it('emits only the non-empty blocks', () => {
     const addedOnly = renderLoadableToolsAnnouncement(['a'], []);
     expect(addedOnly).toContain('<tools_added>\na\n</tools_added>');

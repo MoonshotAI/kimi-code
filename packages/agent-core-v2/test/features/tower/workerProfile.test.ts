@@ -11,17 +11,18 @@ function builtinProfile(name: string) {
 }
 
 describe('tower-worker profile', () => {
-  it('gives tower-worker the coder tools (minus AgentSwarm) plus the six shared tower tools', () => {
+  it('gives tower-worker the coder tools (minus Agent and AgentSwarm) plus the seven shared tower tools', () => {
     const coder = builtinProfile('coder');
     const tools = TOWER_WORKER_PROFILE_DEF.tools ?? [];
 
     for (const name of coder.tools ?? []) {
-      if (name === 'AgentSwarm') continue;
+      if (name === 'Agent' || name === 'AgentSwarm') continue;
       expect(tools).toContain(name);
     }
+    expect(tools).not.toContain('Agent');
     expect(tools).not.toContain('AgentSwarm');
-    expect(TOWER_WORKER_PROFILE_DEF.subagents).toEqual(['explore', 'plan']);
     for (const name of [
+      'TowerComplete',
       'TowerSend',
       'TowerInbox',
       'TowerFinding',
@@ -31,7 +32,7 @@ describe('tower-worker profile', () => {
     ]) {
       expect(tools).toContain(name);
     }
-    for (const name of ['TowerInit', 'TowerPlan', 'TowerSpawn', 'TowerMerge', 'TowerTeardown']) {
+    for (const name of ['TowerInit', 'TowerPlan', 'TowerSpawn', 'TowerMerge', 'TowerRebase', 'TowerTeardown']) {
       expect(tools).not.toContain(name);
     }
   });

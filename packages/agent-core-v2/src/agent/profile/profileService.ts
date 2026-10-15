@@ -19,6 +19,7 @@ import {
   type ThinkingConfig,
 } from '#/llm-adapter/model/thinking';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
+import { IProviderDiscoveryService } from '#/app/kosongConfig/discovery';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { ErrorCodes, Error2 } from "#/errors";
@@ -65,7 +66,13 @@ import { isToolActiveComposed, findInactiveToolPatterns, literalToolNames, type 
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { NOTIFY_USER_TOOL_NAME } from '#/features/notify/tools/notify-user/notify-user';
-import { renderAgentProfilePrompt } from '#/app/agentProfileCatalog/profile-shared';
+import {
+  renderAgentProfilePrompt,
+  rootDelegationExtras,
+  subagentAllowlistFor,
+  withoutDelegatingTargets,
+} from '#/app/agentProfileCatalog/profile-shared';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { getAgentToolContributions } from '#/agent/toolRegistry/toolContribution';
 import {
   profileActiveToolsKey,
@@ -162,6 +169,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IPluginService private readonly plugins: IPluginService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
     @IAgentAgentsMdReminderService private readonly agentsMdReminder: IAgentAgentsMdReminderService,
+    @IProviderDiscoveryService private readonly discovery: IProviderDiscoveryService,
   ) {
     super();
     this.states.contributeState(profileKey);
@@ -174,7 +182,23 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this.configure({});
     this._register(
       this.dispatcher.hooks.onDidRestore.register('profile', async (_ctx, next) => {
+        const replacement =
+          this.modelAlias === undefined
+            ? undefined
+            : this.discovery.retiredModelReplacement(this.modelAlias);
+        if (replacement !== undefined) await this.setModel(replacement).catch(() => {});
         this.syncTelemetryModelContext(this.modelAlias);
+        if (this.scopeContext.agentId === MAIN_AGENT_ID && this.profileName !== undefined) {
+          await this.catalog.ready;
+          const snapshot = this.data();
+          const subagents = this.bindSubagents(snapshot.profileName, snapshot.subagents);
+          if (
+            subagents?.length !== snapshot.subagents?.length ||
+            subagents?.some((name, index) => name !== snapshot.subagents?.[index])
+          ) {
+            this.applyBindingSnapshot({ ...snapshot, subagents });
+          }
+        }
         await next();
       }),
     );
@@ -183,6 +207,11 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         if (domain === TOOLS_SECTION) {
           this.publishToolPatternWarnings();
         }
+      }),
+    );
+    this._register(
+      this.discovery.onDidRetireModel(({ from, to }) => {
+        if (this.modelAlias === from) void this.setModel(to).catch(() => {});
       }),
     );
   }
@@ -270,6 +299,19 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this.agentsMdReminder.seedInjected(agentsMdPaths, this.sessionContext.cwd);
   }
 
+  private bindSubagents(
+    profileName: string | undefined,
+    subagents: readonly string[] | undefined,
+  ): readonly string[] | undefined {
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID) return subagents;
+    const caller = { profileName, subagents };
+    const extras = rootDelegationExtras(this.catalog, caller, this.catalog.list());
+    const allowlist = subagentAllowlistFor(this.catalog, caller, extras);
+    if (allowlist === undefined) return subagents;
+    if (subagents !== undefined) return allowlist;
+    return withoutDelegatingTargets(this.catalog, allowlist);
+  }
+
   async bind(input: BindAgentInput): Promise<void> {
     await this.catalog.ready;
     await this.identity.resolved();
@@ -323,7 +365,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       agentsMdPaths: context.agentsMdPaths ?? [],
       activeToolNames: profile.tools,
       disallowedTools: profile.disallowedTools ?? [],
-      subagents: profile.subagents,
+      subagents: this.bindSubagents(profile.name, profile.subagents),
     }));
     this.afterConfigDispatch({
       modelAlias: alias,
