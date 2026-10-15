@@ -140,7 +140,7 @@ Two distinct platforms exist and must never be mixed:
 | Audience | Individual developers, subscription-based | Enterprise / product integration, pay-per-token |
 | OpenAI-compatible base URL | `https://api.kimi.com/coding/v1` (mainland China), `https://api.kimi.ai/coding/v1` (global) | `https://api.moonshot.cn/v1` (mainland China), `https://api.moonshot.ai/v1` (global) |
 | Anthropic-compatible base URL | `https://api.kimi.com/coding/` (mainland China), `https://api.kimi.ai/coding/` (global) | Not supported |
-| API key entry | [Kimi Code console](https://www.kimi.com/code/console) | [platform.kimi.com](https://platform.kimi.com) (mainland China), [platform.kimi.ai](https://platform.kimi.ai) (global) |
+| API key entry | [Kimi Code console](https://www.kimi.com/code/console) (mainland China), [Kimi Code console](https://www.kimi.ai/code/console) (global) | [platform.kimi.com](https://platform.kimi.com) (mainland China), [platform.kimi.ai](https://platform.kimi.ai) (global) |
 
 Rules:
 - For Kimi Code managed/OAuth examples in CLI or VS Code docs, use `api.kimi.com/coding/…` (mainland China) or `api.kimi.ai/coding/…` (global). Never use Open Platform hosts for those managed accounts.
