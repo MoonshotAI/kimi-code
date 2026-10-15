@@ -112,6 +112,9 @@ export const DEFAULT_REPLY_STYLE_GUIDE =
 export const NOTIFY_USER_GUIDANCE =
   'When `NotifyUser` is available, use it proactively to keep the end user informed while you work. For a multi-step task, send an early update describing your approach, then report meaningful findings, phase conclusions, long waits, and blockers. Give each update a one-line title the user can take in at a glance and put the details behind it in the message, both in the end user\'s language; avoid repeating unchanged status. The UI adds the source label automatically. If you are working as a subagent, report only your own subtask\'s progress, do not present its completion as completion of the whole task, and do not ask the end user questions or request decisions. Updates do not automatically reach your parent agent: include every important finding in your final handoff. Updates are progress notes, not the answer, so your final reply must still stand on its own.';
 
+export const TODO_LIST_GUIDANCE =
+  'When you track work in `TodoList`, keep it in step with what you have actually done: mark an item done as soon as it is finished, before you start the next one, and make sure the list matches what you did before you write your final message.';
+
 export function renderAgentProfilePrompt(
   profile: AgentProfile,
   context: AgentProfileContext,
@@ -148,6 +151,7 @@ export function systemPromptVars(
     product_name: context.productName ?? DEFAULT_PRODUCT_NAME,
     reply_style_guide: context.replyStyleGuide ?? DEFAULT_REPLY_STYLE_GUIDE,
     notify_user_guidance: context.notifyUserActive === true ? ` ${NOTIFY_USER_GUIDANCE}` : '',
+    todo_list_guidance: context.todoListActive === true ? `${TODO_LIST_GUIDANCE}\n\n` : '',
     os: context.osKind ?? '',
     windows_notes: context.osKind === 'Windows' ? `\n\n${WINDOWS_NOTES}\n\n` : '',
     shell: shellName.length > 0 ? `${shellName} (\`${shellPath}\`)` : '',
