@@ -111,8 +111,10 @@ export class ThinkingComponent implements Component {
 
     const contentWidth = Math.max(1, width - MESSAGE_INDENT.length);
     const contentLines = this.text.length > 0 ? this.textComponent.render(contentWidth) : [''];
+    // Collapsing swaps the hidden rows for a one-line hint, so a single
+    // hidden row would render at the same height as the full block.
     this.previewHidesLines =
-      this.mode === 'finalized' && contentLines.length > THINKING_PREVIEW_LINES;
+      this.mode === 'finalized' && contentLines.length > THINKING_PREVIEW_LINES + 1;
 
     let rendered: string[];
     if (this.mode === 'live') {
@@ -136,7 +138,7 @@ export class ThinkingComponent implements Component {
         lines.push(p + contentLines[i]);
       }
 
-      if (this.expanded || contentLines.length <= THINKING_PREVIEW_LINES) {
+      if (this.expanded || contentLines.length <= THINKING_PREVIEW_LINES + 1) {
         rendered = lines;
       } else {
         // Leading blank + first PREVIEW_LINES content lines + hint line.

@@ -2007,6 +2007,43 @@ describe('ToolCallComponent', () => {
     expect(after).toContain('ctrl+o to expand');
   });
 
+  it('shows a Write preview one row over the cap instead of swapping it for a same-height hint', () => {
+    const lines: string[] = [];
+    for (let i = 1; i <= 11; i++) lines.push(`line${String(i)}`);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_write_edge',
+        name: 'Write',
+        args: { file_path: 'edge.ts', content: lines.join('\n') },
+      },
+      undefined,
+    );
+    const out = strip(component.render(100).join('\n'));
+    expect(out).toContain('line1');
+    expect(out).toContain('line11');
+    expect(out).not.toContain('more lines');
+    expect(component.hasHiddenContent()).toBe(false);
+  });
+
+  it('caps the Write preview once folding saves at least one row', () => {
+    const lines: string[] = [];
+    for (let i = 1; i <= 12; i++) lines.push(`line${String(i)}`);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_write_edge_cap',
+        name: 'Write',
+        args: { file_path: 'edge2.ts', content: lines.join('\n') },
+      },
+      undefined,
+    );
+    const out = strip(component.render(100).join('\n'));
+    expect(out).toContain('line1');
+    expect(out).toContain('line10');
+    expect(out).not.toContain('line11');
+    expect(out).toContain('… (2 more lines, 12 total, ctrl+o to expand)');
+    expect(component.hasHiddenContent()).toBe(true);
+  });
+
   it('refreshes the header when file_path arrives in a later streaming delta', () => {
     // First delta: only an opening brace, no file_path yet.
     const component = new ToolCallComponent(

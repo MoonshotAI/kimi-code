@@ -960,7 +960,9 @@ export class ToolCallComponent extends Container {
         return capped.length !== full.length || capped.at(-1) !== full.at(-1);
       }
       case 'Write':
-        return computeWriteStats(args).lines > COMMAND_PREVIEW_LINES;
+        // Mirror the buildCallPreview cap: the hint row replaces the hidden
+        // rows, so a single hidden row would leave nothing for ctrl+o to gain.
+        return computeWriteStats(args).lines > COMMAND_PREVIEW_LINES + 1;
       default:
         return false;
     }
@@ -2325,8 +2327,10 @@ export class ToolCallComponent extends Container {
       // Cap as soon as args finalize, not just when result lands. Otherwise the
       // brief render tick between finalized args and result draws the full file,
       // and the snap back to the collapsed cap triggers pi-tui's full-redraw
-      // path which wipes the terminal scrollback (pre-TUI history).
-      const writeShouldCap = !this.expanded;
+      // path which wipes the terminal scrollback (pre-TUI history). The cap
+      // swaps the hidden rows for a one-line hint, so capping a single row
+      // would render at the same height as the full preview.
+      const writeShouldCap = !this.expanded && allLines.length > COMMAND_PREVIEW_LINES + 1;
       const shown = writeShouldCap ? allLines.slice(0, COMMAND_PREVIEW_LINES) : allLines;
       const remaining = allLines.length - shown.length;
       for (const [i, line] of shown.entries()) {
