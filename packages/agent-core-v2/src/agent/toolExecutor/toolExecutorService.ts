@@ -398,10 +398,11 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     }
 
     const displayFields = toolCallDisplayFieldsFromExecution(execution);
+    const historyArgs = call.originalArgs ?? call.args;
 
     if (options.signal.aborted) {
       return settleError(
-        call.args,
+        historyArgs,
         abortedToolOutput(call.toolName, options.signal.reason),
         'aborted',
         displayFields,
@@ -409,14 +410,14 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     }
 
     if (execution.isError === true) {
-      return settleSynthetic(call.args, execution, 'synthetic', displayFields);
+      return settleSynthetic(historyArgs, execution, 'synthetic', displayFields);
     }
 
     const beforeContext = buildBeforeExecuteContext(call, execution, allCalls, options);
     const decision = await this.beforeExecuteEmitter.fireBeforeExecute(beforeContext);
 
     if (decision?.veto !== undefined) {
-      return settleSynthetic(call.args, decision.veto, 'vetoed', displayFields);
+      return settleSynthetic(historyArgs, decision.veto, 'vetoed', displayFields);
     }
 
     const executionMetadata = decision?.executionMetadata;
@@ -431,7 +432,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       options.signal,
     );
 
-    this.dispatchToolCall(call, call.args, options, displayFields);
+    this.dispatchToolCall(call, historyArgs, options, displayFields);
 
     return {
       task: {

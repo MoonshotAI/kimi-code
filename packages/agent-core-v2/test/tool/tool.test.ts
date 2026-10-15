@@ -4664,6 +4664,27 @@ describe('Agent tools', () => {
         expect(resolved).toEqual([['PreToolUse', 'Agent', 'allow']]);
       });
     });
+
+    it('persists the original alias spelling in the recorded tool call', async () => {
+      ctx.mockNextResponse({ type: 'text', text: 'I will delegate.' }, aliasAgentCall());
+      ctx.mockNextResponse({ type: 'text', text: 'Delegation finished.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Use an agent' }] });
+
+      await ctx.untilTurnEnd();
+
+      await vi.waitFor(() => {
+        expect(resolved).toEqual([['PreToolUse', 'Agent', 'allow']]);
+      });
+      const persisted = ctx.allEvents.find(
+        (event) =>
+          event.type === '[wire]' &&
+          event.event === 'context.append_loop_event' &&
+          (event.args as { event?: { type?: string } } | undefined)?.event?.type === 'tool.call',
+      );
+      expect(persisted?.args).toMatchObject({
+        event: { name: 'Agent', args: { subagent_type: 'general' } },
+      });
+    });
   });
 
   describe('Agent legacy alias permission rules', () => {
