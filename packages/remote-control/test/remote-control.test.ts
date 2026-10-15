@@ -20,6 +20,7 @@ import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import {
   buildRemoteControlUrl,
   filterForwardRequestHeaders,
+  HttpTunnel,
   parseRawHttpRequest,
   resolveRemoteControlRelayOrigin,
   rewriteRemoteControlResponse,
@@ -104,13 +105,15 @@ describe('Remote Control URLs', () => {
 
 describe('Remote Control HTTP forwarding', () => {
   it('parses raw requests and replaces relay credentials with local bearer auth', () => {
-    const parsed = parseRawHttpRequest(
+    const parsed = parseRawHttpRequest([
       Buffer.from(
-        'POST /api/v1/messages?q=1 HTTP/1.1\r\nHost: relay.example\r\nAuthorization: Bearer relay\r\nCookie: sid=1\r\nOrigin: https://relay.example\r\nConnection: keep-alive, X-Hop\r\nX-Hop: remove\r\nX-Keep: yes\r\nContent-Length: 4\r\n\r\ndata',
+        'POST /api/v1/messages?q=1 HTTP/1.1\r\nHost: relay.example\r\nAuthorization: Bearer relay\r\nCookie: sid=1\r\nOrigin: https://relay.example\r\nConnection: keep-alive, X-Hop\r\nX-Hop: remove\r\nX-Keep: yes\r\nContent-Length: 4\r\n\r',
       ),
-    );
+      Buffer.from('\nda'),
+      Buffer.from('ta'),
+    ]);
     expect(parsed).toMatchObject({ method: 'POST', path: '/api/v1/messages?q=1' });
-    expect(parsed.body.toString()).toBe('data');
+    expect(parsed.body.map((chunk) => chunk.toString())).toEqual(['da', 'ta']);
     expect(filterForwardRequestHeaders(parsed.headers, 'local-token')).toEqual([
       'X-Keep',
       'yes',
@@ -123,9 +126,9 @@ describe('Remote Control HTTP forwarding', () => {
 
   it('rejects absolute-form and malformed request targets', () => {
     expect(() =>
-      parseRawHttpRequest(Buffer.from('GET https://example.test/ HTTP/1.1\r\n\r\n')),
+      parseRawHttpRequest([Buffer.from('GET https://example.test/ HTTP/1.1\r\n\r\n')]),
     ).toThrow(/request line/);
-    expect(() => parseRawHttpRequest(Buffer.from('GET //example.test/ HTTP/1.1\r\n\r\n'))).toThrow(
+    expect(() => parseRawHttpRequest([Buffer.from('GET //example.test/ HTTP/1.1\r\n\r\n')])).toThrow(
       /request line/,
     );
   });
@@ -317,12 +320,27 @@ describe('Remote Control tunnel', () => {
 
     let localHttpRequest: IncomingMessage | undefined;
     let localHttpBodyBytes = 0;
+    const uploadBodyBytes = new Map<string, number>();
     let localWsRequest: IncomingMessage | undefined;
     const localWsServer = new WebSocketServer({ noServer: true });
     const assetJs = `const boot = "/assets/boot.js";\n${'const chunk = "/assets/chunk.js";\n'.repeat(120)}`;
     const assetPng = Buffer.alloc(4096, 7);
     const assetSvg = `<svg xmlns="http://www.w3.org/2000/svg">${'<rect width="100" height="100"/>'.repeat(100)}</svg>`;
     const assetText = 'chunk of text\n'.repeat(160);
+    const bigPng = Buffer.alloc(11 * 1024 * 1024 + 123, 0x64);
+    const alignedResponseBytes = 15 * 1024 * 1024;
+    let alignedBodyBytes = alignedResponseBytes;
+    for (;;) {
+      const headBytes =
+        `HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nDate: Mon, 01 Jan 2024 00:00:00 GMT\r\nContent-Length: ${alignedBodyBytes}\r\n\r\n`
+          .length;
+      const next = alignedResponseBytes - headBytes;
+      if (next === alignedBodyBytes) break;
+      alignedBodyBytes = next;
+    }
+    const alignedPng = Buffer.alloc(alignedBodyBytes, 0x65);
+    const hangRequests: IncomingMessage[] = [];
+    let hangClosedCount = 0;
     const localServer = createServer((request, response) => {
       localHttpRequest = request;
       if (request.url === '/assets/index.js') {
@@ -351,12 +369,38 @@ describe('Remote Control tunnel', () => {
         response.end(assetText);
         return;
       }
+      if (request.url === '/assets/big.png') {
+        response.writeHead(200, {
+          'Content-Type': 'image/png',
+          Date: 'Mon, 01 Jan 2024 00:00:00 GMT',
+        });
+        response.end(bigPng);
+        return;
+      }
+      if (request.url === '/assets/aligned.png') {
+        response.writeHead(200, {
+          'Content-Type': 'image/png',
+          'Content-Length': String(alignedPng.length),
+          Date: 'Mon, 01 Jan 2024 00:00:00 GMT',
+        });
+        response.end(alignedPng);
+        return;
+      }
+      if (request.url === '/hang' || request.url === '/hang-upload') {
+        hangRequests.push(request);
+        request.on('data', () => {});
+        request.once('close', () => {
+          hangClosedCount += 1;
+        });
+        return;
+      }
       let bodyBytes = 0;
       request.on('data', (chunk: Buffer) => {
         bodyBytes += chunk.length;
       });
       request.on('end', () => {
         localHttpBodyBytes = bodyBytes;
+        uploadBodyBytes.set(request.url ?? '', bodyBytes);
         response.writeHead(200, {
           'Content-Type': 'text/html',
           'Cache-Control': 'public, max-age=31536000, immutable',
@@ -383,6 +427,7 @@ describe('Remote Control tunnel', () => {
     const registrations: unknown[] = [];
     const managementMessages: unknown[] = [];
     const streamMessages: string[] = [];
+    const httpCapabilities: Array<string | null> = [];
     let localWs: WebSocket | undefined;
 
     managementServer.on('connection', (ws) => {
@@ -406,7 +451,11 @@ describe('Remote Control tunnel', () => {
       ws.send('server-hello-frame');
     });
     relayServer.on('upgrade', (request, socket, head) => {
-      const pathname = new URL(request.url!, 'http://relay.test').pathname;
+      const upgradeUrl = new URL(request.url!, 'http://relay.test');
+      if (upgradeUrl.pathname.endsWith('/v1/remote/http')) {
+        httpCapabilities.push(upgradeUrl.searchParams.get('capabilities'));
+      }
+      const pathname = upgradeUrl.pathname;
       const target = pathname.endsWith('/v1/remote/create')
         ? managementServer
         : pathname.endsWith('/v1/remote/http')
@@ -431,6 +480,10 @@ describe('Remote Control tunnel', () => {
     });
 
     expect(registrations).toHaveLength(1);
+    expect(httpCapabilities).toEqual(['request_chunk,response_chunk,abort']);
+    expect(
+      (registrations[0] as { payload?: Record<string, unknown> }).payload,
+    ).not.toHaveProperty('capabilities');
     expect(handle.url).toContain('/coding-relay/devices/');
     expect(handle.url).toContain('?rc=1&from=kimi_code_cli');
 
@@ -644,6 +697,364 @@ describe('Remote Control tunnel', () => {
     const largeResponse = Buffer.from(largeResponseMessage['body_base64'] as string, 'base64').toString();
     expect(largeResponse).toContain('HTTP/1.1 200 OK');
     expect(localHttpBodyBytes).toBe(largeBody.length);
+    expect(largeResponseMessage['type']).toBe('response');
+    expect(largeResponseMessage['is_last']).toBe(true);
+
+    const uploadBody = Buffer.alloc(11 * 1024 * 1024, 0x63);
+    const uploadRequest = Buffer.concat([
+      Buffer.from(`POST /upload HTTP/1.1\r\nHost: relay.test\r\nContent-Length: ${uploadBody.length}\r\n\r\n`),
+      uploadBody,
+    ]);
+    const uploadResponsePromise = nextJsonMessage(httpConnections[0]!);
+    const uploadFrame = (offset: number, isLast: boolean): string =>
+      JSON.stringify({
+        request_id: 'request-9',
+        type: 'request',
+        is_last: isLast,
+        body_base64: uploadRequest.subarray(offset, offset + 5 * 1024 * 1024).toString('base64'),
+      });
+    httpConnections[0]!.send(uploadFrame(0, false));
+    httpConnections[0]!.send(uploadFrame(5 * 1024 * 1024, false));
+    httpConnections[0]!.send(uploadFrame(10 * 1024 * 1024, true));
+    const uploadResponse = Buffer.from(
+      (await uploadResponsePromise)['body_base64'] as string,
+      'base64',
+    ).toString();
+    expect(uploadResponse).toContain('HTTP/1.1 200 OK');
+    expect(localHttpBodyBytes).toBe(uploadBody.length);
+
+    const chunkedFramesPromise = collectJsonMessages(httpConnections[0]!, 3);
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-10',
+        type: 'request',
+        is_last: true,
+        body_base64: Buffer.from('GET /assets/big.png HTTP/1.1\r\nHost: relay.test\r\n\r\n').toString('base64'),
+      }),
+    );
+    const chunkedFrames = await chunkedFramesPromise;
+    expect(chunkedFrames.map((frame) => [frame['type'], frame['is_last']])).toEqual([
+      ['response_chunk', false],
+      ['response_chunk', false],
+      ['response_chunk', true],
+    ]);
+    const chunkedParts = chunkedFrames.map((frame) =>
+      Buffer.from(frame['body_base64'] as string, 'base64'),
+    );
+    expect(chunkedParts[0]!.length).toBe(5 * 1024 * 1024);
+    expect(chunkedParts[1]!.length).toBe(5 * 1024 * 1024);
+    const reassembled = Buffer.concat(chunkedParts);
+    const reassembledSeparator = reassembled.indexOf('\r\n\r\n');
+    expect(reassembledSeparator).toBeGreaterThan(0);
+    expect(reassembledSeparator).toBeLessThan(5 * 1024 * 1024);
+    expect(reassembled.subarray(0, reassembledSeparator).toString('latin1')).toContain(
+      'HTTP/1.1 200 OK',
+    );
+    expect(reassembled.subarray(reassembledSeparator + 4).equals(bigPng)).toBe(true);
+
+    const alignedFramesPromise = collectJsonMessages(httpConnections[0]!, 4);
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-11',
+        type: 'request',
+        is_last: true,
+        body_base64: Buffer.from('GET /assets/aligned.png HTTP/1.1\r\nHost: relay.test\r\n\r\n').toString('base64'),
+      }),
+    );
+    const alignedFrames = await alignedFramesPromise;
+    expect(alignedFrames.map((frame) => [frame['type'], frame['is_last']])).toEqual([
+      ['response_chunk', false],
+      ['response_chunk', false],
+      ['response_chunk', false],
+      ['response_chunk', true],
+    ]);
+    const alignedParts = alignedFrames.map((frame) =>
+      Buffer.from(frame['body_base64'] as string, 'base64'),
+    );
+    expect(alignedParts.map((part) => part.length)).toEqual([
+      5 * 1024 * 1024,
+      5 * 1024 * 1024,
+      5 * 1024 * 1024,
+      0,
+    ]);
+    const alignedReassembled = Buffer.concat(alignedParts);
+    expect(alignedReassembled.length).toBe(alignedResponseBytes);
+    expect(
+      alignedReassembled
+        .subarray(alignedReassembled.indexOf('\r\n\r\n') + 4)
+        .equals(alignedPng),
+    ).toBe(true);
+
+    const concurrentFramesPromise = collectJsonMessages(httpConnections[0]!, 4);
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-12',
+        type: 'request',
+        is_last: true,
+        body_base64: Buffer.from('GET /assets/big.png HTTP/1.1\r\nHost: relay.test\r\n\r\n').toString('base64'),
+      }),
+    );
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-13',
+        type: 'request',
+        is_last: true,
+        body_base64: Buffer.from('GET /assets/logo.png HTTP/1.1\r\nHost: relay.test\r\n\r\n').toString('base64'),
+      }),
+    );
+    const concurrentFrames = await concurrentFramesPromise;
+    const concurrentBig = concurrentFrames.filter((frame) => frame['request_id'] === 'request-12');
+    const concurrentSmall = concurrentFrames.filter((frame) => frame['request_id'] === 'request-13');
+    expect(concurrentBig.map((frame) => frame['is_last'])).toEqual([false, false, true]);
+    expect(concurrentSmall).toHaveLength(1);
+    expect(concurrentSmall[0]!['type']).toBe('response');
+    const concurrentReassembled = Buffer.concat(
+      concurrentBig.map((frame) => Buffer.from(frame['body_base64'] as string, 'base64')),
+    );
+    expect(
+      concurrentReassembled
+        .subarray(concurrentReassembled.indexOf('\r\n\r\n') + 4)
+        .equals(bigPng),
+    ).toBe(true);
+
+    const abortFrame = (requestId: string): string =>
+      JSON.stringify({
+        request_id: requestId,
+        type: 'abort',
+        is_last: true,
+        body_base64: '',
+        reason: 'browser_closed',
+      });
+    const MiB = 1024 * 1024;
+    const tunnelFrames: string[] = [];
+    const tunnelCallbacks: Array<(error?: Error | null) => void> = [];
+    let tunnelTerminated = false;
+    const tunnelSocket = {
+      readyState: 1,
+      send(frame: string, callback: (error?: Error | null) => void): void {
+        tunnelFrames.push(frame);
+        tunnelCallbacks.push(callback);
+      },
+      terminate(): void {
+        tunnelTerminated = true;
+      },
+    } as unknown as WebSocket;
+    const localCalls = new Map<
+      string,
+      {
+        signal: AbortSignal;
+        retain: (receivedBytes: number) => boolean;
+        respond: (response: Buffer[]) => void;
+      }
+    >();
+    const tunnel = new HttpTunnel(
+      tunnelSocket,
+      (request, signal, retain) =>
+        new Promise((respond) => {
+          localCalls.set(request.path, { signal, retain, respond });
+        }),
+      { write: () => true },
+    );
+    const tunnelRequest = (requestId: string, raw: string, isLast = true): void =>
+      tunnel.handleMessage(
+        Buffer.from(
+          JSON.stringify({
+            request_id: requestId,
+            type: 'request',
+            is_last: isLast,
+            body_base64: Buffer.from(raw).toString('base64'),
+          }),
+        ),
+      );
+    const tunnelSent = (): string[] =>
+      tunnelFrames.map((frame) => {
+        const parsed = JSON.parse(frame) as Record<string, unknown>;
+        return `${String(parsed['request_id'])}:${String(parsed['is_last'])}`;
+      });
+    const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+    tunnelRequest('a', 'GET /a HTTP/1.1\r\n\r\n');
+    tunnelRequest('b', 'GET /b HTTP/1.1\r\n\r\n');
+    localCalls.get('/a')!.respond([Buffer.alloc(3 * MiB, 1), Buffer.alloc(7 * MiB + 1, 2)]);
+    await flush();
+    expect(tunnelSent()).toEqual(['a:false']);
+    expect(
+      Buffer.from(
+        (JSON.parse(tunnelFrames[0]!) as { body_base64: string }).body_base64,
+        'base64',
+      ).equals(Buffer.concat([Buffer.alloc(3 * MiB, 1), Buffer.alloc(2 * MiB, 2)])),
+    ).toBe(true);
+    localCalls.get('/b')!.respond([Buffer.from('b')]);
+    await flush();
+    tunnelCallbacks.shift()!(null);
+    await flush();
+    expect(tunnelSent()).toEqual(['a:false', 'b:true']);
+    tunnelCallbacks.shift()!(null);
+    await flush();
+    expect(tunnelSent()).toEqual(['a:false', 'b:true', 'a:false']);
+    tunnel.handleMessage(Buffer.from(abortFrame('a')));
+    tunnelCallbacks.shift()!(null);
+    await flush();
+    expect(tunnelSent()).toHaveLength(3);
+    tunnelRequest('c', 'GET /c HTTP/1.1\r\n\r\n');
+    tunnelRequest('d', 'GET /d HTTP/1.1\r\n\r\n');
+    expect(localCalls.get('/c')!.retain(208 * MiB - 4096)).toBe(true);
+    expect(localCalls.get('/d')!.retain(4096)).toBe(false);
+    for (let index = 0; index < 4; index += 1) tunnelRequest('e', '', false);
+    await flush();
+    expect(tunnelSent()).toEqual(['a:false', 'b:true', 'a:false', 'e:true']);
+    expect(
+      Buffer.from(
+        (JSON.parse(tunnelFrames[3]!) as { body_base64: string }).body_base64,
+        'base64',
+      ).toString(),
+    ).toContain('HTTP/1.1 400');
+    tunnelCallbacks.shift()!(null);
+    tunnel.handleMessage(Buffer.from(abortFrame('c')));
+    expect(localCalls.get('/c')!.signal.aborted).toBe(true);
+    expect(localCalls.get('/d')!.retain(100 * MiB)).toBe(true);
+    tunnelRequest('f', 'GET /f HTTP/1.1\r\n\r\n');
+    localCalls.get('/d')!.respond([Buffer.from('d')]);
+    await flush();
+    expect(tunnelSent()).toHaveLength(5);
+    tunnelCallbacks.shift()!(new Error('write failed'));
+    await flush();
+    expect(tunnelTerminated).toBe(true);
+    expect(localCalls.get('/f')!.signal.aborted).toBe(true);
+    localCalls.get('/f')!.respond([Buffer.from('f')]);
+    await flush();
+    expect(tunnelSent()).toEqual(['a:false', 'b:true', 'a:false', 'e:true', 'd:true']);
+
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-14',
+        type: 'request',
+        is_last: false,
+        body_base64: Buffer.from(
+          'POST /upload HTTP/1.1\r\nHost: relay.test\r\nContent-Length: 20\r\n\r\n0123456789',
+        ).toString('base64'),
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    httpConnections[0]!.send(abortFrame('request-14'));
+    httpConnections[0]!.send(abortFrame('request-14'));
+    httpConnections[0]!.send(abortFrame('request-unknown'));
+    const postAbortPromise = nextJsonMessage(httpConnections[0]!);
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-15',
+        type: 'request',
+        is_last: true,
+        body_base64: Buffer.from('GET /assets/logo.png HTTP/1.1\r\nHost: relay.test\r\n\r\n').toString('base64'),
+      }),
+    );
+    expect((await postAbortPromise)['request_id']).toBe('request-15');
+
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-16',
+        type: 'request',
+        is_last: true,
+        body_base64: Buffer.from('GET /hang HTTP/1.1\r\nHost: relay.test\r\n\r\n').toString('base64'),
+      }),
+    );
+    await waitFor(() => hangRequests.length === 1);
+    httpConnections[0]!.send(abortFrame('request-16'));
+    await waitFor(() => hangClosedCount === 1);
+    const forwardAbortPromise = nextJsonMessage(httpConnections[0]!);
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-17',
+        type: 'request',
+        is_last: true,
+        body_base64: Buffer.from('GET /assets/logo.png HTTP/1.1\r\nHost: relay.test\r\n\r\n').toString('base64'),
+      }),
+    );
+    expect((await forwardAbortPromise)['request_id']).toBe('request-17');
+
+    const budgetBody = Buffer.alloc(100 * 1024 * 1024, 0x68);
+    const budgetRawRequest = Buffer.concat([
+      Buffer.from(
+        `POST /hang-upload HTTP/1.1\r\nHost: relay.test\r\nContent-Length: ${budgetBody.length}\r\n\r\n`,
+      ),
+      budgetBody,
+    ]);
+    const budgetChunk = 50 * 1024 * 1024;
+    const budgetFrame = (requestId: string, offset: number): string =>
+      JSON.stringify({
+        request_id: requestId,
+        type: 'request',
+        is_last: offset + budgetChunk >= budgetRawRequest.length,
+        body_base64: budgetRawRequest.subarray(offset, offset + budgetChunk).toString('base64'),
+      });
+    for (let offset = 0; offset < budgetRawRequest.length; offset += budgetChunk) {
+      httpConnections[0]!.send(budgetFrame('request-18a', offset));
+      httpConnections[0]!.send(budgetFrame('request-18b', offset));
+    }
+    await waitFor(() => hangRequests.length === 3, 15000);
+    const overflowBody = Buffer.alloc(9 * 1024 * 1024, 0x69);
+    const overflowRaw = Buffer.concat([
+      Buffer.from(
+        `POST /upload HTTP/1.1\r\nHost: relay.test\r\nContent-Length: ${overflowBody.length}\r\n\r\n`,
+      ),
+      overflowBody,
+    ]);
+    const overflowResponsePromise = nextJsonMessage(httpConnections[0]!);
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-18c',
+        type: 'request',
+        is_last: true,
+        body_base64: overflowRaw.toString('base64'),
+      }),
+    );
+    const overflowResponse = Buffer.from(
+      (await overflowResponsePromise)['body_base64'] as string,
+      'base64',
+    ).toString();
+    expect(overflowResponse).toContain('HTTP/1.1 400');
+    const deniedDownloadPromise = nextJsonMessage(httpConnections[0]!);
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-18d',
+        type: 'request',
+        is_last: true,
+        body_base64: Buffer.from('GET /assets/big.png HTTP/1.1\r\nHost: relay.test\r\n\r\n').toString('base64'),
+      }),
+    );
+    const deniedDownloadMessage = await deniedDownloadPromise;
+    expect(deniedDownloadMessage['request_id']).toBe('request-18d');
+    expect(
+      Buffer.from(deniedDownloadMessage['body_base64'] as string, 'base64').toString(),
+    ).toContain('HTTP/1.1 503');
+    const headResponsePromise = nextJsonMessage(httpConnections[0]!);
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-18e',
+        type: 'request',
+        is_last: true,
+        body_base64: Buffer.from('HEAD /assets/aligned.png HTTP/1.1\r\nHost: relay.test\r\n\r\n').toString('base64'),
+      }),
+    );
+    expect(
+      Buffer.from((await headResponsePromise)['body_base64'] as string, 'base64').toString(),
+    ).toContain('HTTP/1.1 200 OK');
+    const retryResponsePromise = nextJsonMessage(httpConnections[0]!);
+    httpConnections[0]!.send(abortFrame('request-18a'));
+    httpConnections[0]!.send(abortFrame('request-18b'));
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-19',
+        type: 'request',
+        is_last: true,
+        body_base64: overflowRaw.toString('base64'),
+      }),
+    );
+    const retryResponse = Buffer.from(
+      (await retryResponsePromise)['body_base64'] as string,
+      'base64',
+    ).toString();
+    expect(retryResponse).toContain('HTTP/1.1 200 OK');
+    expect(uploadBodyBytes.get('/upload')).toBe(overflowBody.length);
 
     managementConnections[0]!.send(
       JSON.stringify({
@@ -679,11 +1090,36 @@ describe('Remote Control tunnel', () => {
     localWs!.send('from-local');
     await expect(relayMessage).resolves.toBe('from-local');
 
-    streamConnections[0]!.terminate();
+    const burstFrames = ['burst-1', 'burst-2', 'burst-3'];
+    const receivedBurst: string[] = [];
+    localWs!.on('message', (data) => {
+      receivedBurst.push(rawDataText(data));
+    });
+    for (const frame of burstFrames) streamConnections[0]!.send(frame);
+    streamConnections[0]!.close();
     await waitFor(() => localWs?.readyState === 3);
+    expect(receivedBurst).toEqual(burstFrames);
 
     httpConnections[0]!.terminate();
     await waitFor(() => registrations.length === 2 && httpConnections.length === 2, 4000);
+    expect(httpCapabilities).toEqual([
+      'request_chunk,response_chunk,abort',
+      'request_chunk,response_chunk,abort',
+    ]);
+    const reconnectResponsePromise = nextJsonMessage(httpConnections[1]!);
+    httpConnections[1]!.send(
+      JSON.stringify({
+        request_id: 'request-20',
+        type: 'request',
+        is_last: true,
+        body_base64: rawRequest.toString('base64'),
+      }),
+    );
+    const reconnectResponse = Buffer.from(
+      (await reconnectResponsePromise)['body_base64'] as string,
+      'base64',
+    ).toString();
+    expect(reconnectResponse).toContain('HTTP/1.1 200 OK');
 
     await handle.close();
     await waitFor(() =>
@@ -1793,6 +2229,22 @@ function rawDataText(data: RawData): string {
 function nextJsonMessage(socket: WebSocket): Promise<Record<string, unknown>> {
   return new Promise((resolve) => {
     socket.once('message', (data) => resolve(JSON.parse(rawDataText(data)) as Record<string, unknown>));
+  });
+}
+
+function collectJsonMessages(
+  socket: WebSocket,
+  count: number,
+): Promise<Array<Record<string, unknown>>> {
+  return new Promise((resolve) => {
+    const messages: Array<Record<string, unknown>> = [];
+    const onMessage = (data: RawData): void => {
+      messages.push(JSON.parse(rawDataText(data)) as Record<string, unknown>);
+      if (messages.length < count) return;
+      socket.off('message', onMessage);
+      resolve(messages);
+    };
+    socket.on('message', onMessage);
   });
 }
 
