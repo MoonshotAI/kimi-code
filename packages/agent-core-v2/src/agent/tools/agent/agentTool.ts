@@ -118,7 +118,9 @@ export class SubagentTool implements ISubagentTool {
     const subagentTypes = forkEnabled
       ? []
       : this.filterDispatchable(this.catalog.list()).map((profile) => profile.name);
-    const key = [String(modelChoiceExposed), String(forkEnabled), ...subagentTypes].join('');
+    const key = [String(modelChoiceExposed), String(forkEnabled), JSON.stringify(subagentTypes)].join(
+      '',
+    );
     if (this.parametersCache?.key === key) return this.parametersCache.value;
     const base = modelChoiceExposed ? SUBAGENT_TOOL_PARAMETERS : SUBAGENT_TOOL_PARAMETERS_NO_MODEL;
     const value = forkEnabled

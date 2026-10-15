@@ -1026,6 +1026,59 @@ describe('Agent tool description', () => {
     expect(enumOf()).toEqual(['coder', 'reviewer']);
   });
 
+  it('rebuilds the schema when the dispatchable set changes but the concatenated names collide', () => {
+    const named = (name: string) =>
+      normalizeAgentProfile({ name, description: name, systemPrompt: () => name });
+    const caller = named('agent');
+    let listed = [caller, named('a'), named('bc')];
+    const catalog: ISessionAgentProfileCatalog = {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChange: Event.None as ISessionAgentProfileCatalog['onDidChange'],
+      get: (name) => listed.find((profile) => profile.name === name),
+      getDefault: () => caller,
+      list: () => [...listed],
+      inspect: () => undefined,
+      load: async () => {},
+      reload: async () => {},
+    };
+    ctx = createTestAgent(sessionService(ISessionAgentProfileCatalog, catalog));
+    ctx.get(IAgentProfileService).applyBindingSnapshot({
+      modelAlias: 'mock-model',
+      profileName: 'agent',
+      thinkingLevel: 'off',
+      systemPrompt: 'persisted prompt',
+      subagents: ['a', 'bc', 'ab', 'c', 'a b', 'b c'],
+    });
+
+    const schemaOf = (): Record<string, unknown> => {
+      const tool = ctx.toolsData().find((entry) => entry.name === 'Agent');
+      return tool!.parameters!;
+    };
+    const enumOf = (schema: Record<string, unknown>): string[] | undefined =>
+      (schema['properties'] as Record<string, { enum?: string[] }>)['subagent_type']?.enum;
+
+    const first = schemaOf();
+    expect(enumOf(first)).toEqual(['a', 'bc']);
+
+    listed = [caller, named('ab'), named('c')];
+    const second = schemaOf();
+    expect(second).not.toBe(first);
+    expect(enumOf(second)).toEqual(['ab', 'c']);
+    expect(schemaOf()).toBe(second);
+
+    listed = [caller, named('a b'), named('c')];
+    const third = schemaOf();
+    expect(third).not.toBe(second);
+    expect(enumOf(third)).toEqual(['a b', 'c']);
+
+    listed = [caller, named('a'), named('b c')];
+    const fourth = schemaOf();
+    expect(fourth).not.toBe(third);
+    expect(enumOf(fourth)).toEqual(['a', 'b c']);
+    expect(schemaOf()).toBe(fourth);
+  });
+
   it('does not offer the default agent type to the builtin default caller', () => {
     ctx = createTestAgent();
 
