@@ -91,7 +91,7 @@ export type ToolExecution = RunnableToolExecution | ExecutableToolErrorResult;
 
 export interface ExecutableTool<Input = unknown> extends Tool {
   resolveArgs?(args: unknown): unknown;
-  resolveExecution(input: Input): ToolExecution | Promise<ToolExecution>;
+  resolveExecution(input: Input, originalInput?: Input): ToolExecution | Promise<ToolExecution>;
 }
 
 export type ToolSource = 'builtin' | 'user' | 'mcp';

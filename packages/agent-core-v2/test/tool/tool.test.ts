@@ -21,6 +21,7 @@ import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTok
 import { makeHookRunner } from '../features/externalHooks/runner-stub';
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import type { PermissionRule } from '#/agent/permissionRules/permissionRules';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ToolAccesses, type ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -96,6 +97,7 @@ import {
   externalHookServices,
   homeDirServices,
   modelProviderServices,
+  permissionRulesServices,
   sessionService,
   swarmServices,
   type TestAgentContext,
@@ -1919,6 +1921,34 @@ describe('Agent tool execution contract', () => {
     expect(execution.matchesRule?.('!coder')).toBe(false);
     expect(execution.matchesRule?.('!general')).toBe(true);
     expect(execution.matchesRule?.('!explore')).toBe(true);
+  });
+
+  it('canonicalizes a legacy alias in resolveArgs and keeps fork and resume raw', async () => {
+    const context = createAgentToolContext();
+    const tool = agentTool(context);
+
+    expect(
+      tool.resolveArgs?.({ prompt: 'Investigate', description: 'Find cause', subagent_type: 'general' }),
+    ).toMatchObject({ subagent_type: 'coder' });
+    expect(
+      tool.resolveArgs?.({ prompt: 'Investigate', description: 'Find cause', subagent_type: 'general', fork: true }),
+    ).toMatchObject({ subagent_type: 'general', fork: true });
+    expect(
+      tool.resolveArgs?.({ prompt: 'Investigate', description: 'Find cause', subagent_type: 'general', resume: 'agent-old' }),
+    ).toMatchObject({ subagent_type: 'general', resume: 'agent-old' });
+  });
+
+  it('treats a blank resume id as a new spawn in resolveArgs', async () => {
+    const context = createAgentToolContext();
+
+    expect(
+      agentTool(context).resolveArgs?.({
+        prompt: 'Investigate',
+        description: 'Find cause',
+        subagent_type: 'general',
+        resume: '  ',
+      }),
+    ).toMatchObject({ subagent_type: 'coder', resume: '  ' });
   });
 
   it('keeps the raw type for display and approval rules when a real profile has the alias name', async () => {
@@ -4519,6 +4549,77 @@ describe('Agent tools', () => {
     });
   });
 
+  describe('Agent legacy alias permission rules', () => {
+    let lifecycle: AgentLifecycleStub;
+
+    function setup(rules: readonly PermissionRule[]): void {
+      lifecycle = createAgentLifecycleStub({
+        createAgentIds: ['agent-child'],
+        runCompletion: async () => ({ summary: 'child result' }),
+      });
+      ctx = createTestAgent(
+        sessionService(IAgentLifecycleService, lifecycle),
+        permissionRulesServices(rules),
+      );
+      wireRealSubagentService(ctx, lifecycle);
+    }
+
+    async function runAliasCall(): Promise<void> {
+      ctx.mockNextResponse({ type: 'text', text: 'I will delegate.' }, aliasAgentCall());
+      ctx.mockNextResponse({ type: 'text', text: 'Delegation finished.' });
+      await ctx.rpc.setPermission({ mode: 'auto' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Use an agent' }] });
+      await ctx.untilTurnEnd();
+    }
+
+    function historyText(): string {
+      return JSON.stringify(ctx.get(IAgentContextMemoryService).get());
+    }
+
+    it('denies an alias call when a deny rule names the legacy alias', async () => {
+      setup([{ decision: 'deny', scope: 'user', pattern: 'Agent(general)' }]);
+
+      await runAliasCall();
+
+      expect(lifecycle.create).not.toHaveBeenCalled();
+      expect(historyText()).toContain('was denied by permission rule');
+    });
+
+    it('denies an alias call when a deny rule names the canonical type', async () => {
+      setup([{ decision: 'deny', scope: 'user', pattern: 'Agent(coder)' }]);
+
+      await runAliasCall();
+
+      expect(lifecycle.create).not.toHaveBeenCalled();
+      expect(historyText()).toContain('was denied by permission rule');
+    });
+
+    it('allows an alias call when a deny rule names an unrelated type', async () => {
+      setup([{ decision: 'deny', scope: 'user', pattern: 'Agent(explore)' }]);
+
+      await runAliasCall();
+
+      expect(lifecycle.create).toHaveBeenCalled();
+    });
+
+    it('allows an alias call when a negated deny rule excludes the canonical type', async () => {
+      setup([{ decision: 'deny', scope: 'user', pattern: 'Agent(!coder)' }]);
+
+      await runAliasCall();
+
+      expect(lifecycle.create).toHaveBeenCalled();
+    });
+
+    it('denies an alias call when a negated deny rule excludes an unrelated type', async () => {
+      setup([{ decision: 'deny', scope: 'user', pattern: 'Agent(!explore)' }]);
+
+      await runAliasCall();
+
+      expect(lifecycle.create).not.toHaveBeenCalled();
+      expect(historyText()).toContain('was denied by permission rule');
+    });
+  });
+
   describe('Bash tool call start event', () => {
     beforeEach(async () => {
       ctx = createTestAgent(execEnvServices({ processRunner: createCommandRunner('ok') }));
@@ -4970,6 +5071,19 @@ function agentCall(): ToolCall {
       prompt: 'Investigate deeply',
       description: 'Investigate deeply',
       subagent_type: 'coder',
+    }),
+  };
+}
+
+function aliasAgentCall(): ToolCall {
+  return {
+    type: 'function',
+    id: 'call_agent',
+    name: 'Agent',
+    arguments: JSON.stringify({
+      prompt: 'Investigate deeply',
+      description: 'Investigate deeply',
+      subagent_type: 'general',
     }),
   };
 }

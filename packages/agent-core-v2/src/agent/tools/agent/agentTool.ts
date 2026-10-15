@@ -277,12 +277,19 @@ export class SubagentTool implements ISubagentTool {
 
   resolveArgs(args: unknown): unknown {
     const input = args as SubagentToolInput;
-    if (input.fork === true || input.resume !== undefined) return args;
+    const isResume = typeof input.resume === 'string' && input.resume.trim().length > 0;
+    if (input.fork === true || isResume) return args;
     return normalizeLegacySubagentTypeArgs(input, this.catalog);
   }
 
-  async resolveExecution(args: SubagentToolInput): Promise<ToolExecution> {
-    const requestedProfileName = args.subagent_type?.length ? args.subagent_type : undefined;
+  async resolveExecution(
+    args: SubagentToolInput,
+    originalInput?: SubagentToolInput,
+  ): Promise<ToolExecution> {
+    const requestedArgs = originalInput ?? args;
+    const requestedProfileName = requestedArgs.subagent_type?.length
+      ? requestedArgs.subagent_type
+      : undefined;
     const resumeAgentId = args.resume?.trim();
     const isResume = resumeAgentId !== undefined && resumeAgentId.length > 0;
 

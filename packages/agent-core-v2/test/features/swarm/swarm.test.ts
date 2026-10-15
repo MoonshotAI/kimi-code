@@ -920,16 +920,14 @@ describe('AgentSwarmTool', () => {
       ]),
     });
     const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig(), stubCallerProfile()), stubCallerProfile(), stubSwarmCatalog());
+    const input = {
+      description: 'Review files',
+      prompt_template: 'Review {{item}}',
+      items: ['src/a.ts', 'src/b.ts'],
+      subagent_type: 'general',
+    };
 
-    const result = await executeTool(
-      tool,
-      context({
-        description: 'Review files',
-        prompt_template: 'Review {{item}}',
-        items: ['src/a.ts', 'src/b.ts'],
-        subagent_type: 'general',
-      }),
-    );
+    const result = await executeTool(tool, context(tool.resolveArgs(input)));
 
     expect(result.isError).toBeUndefined();
     expect(host.swarmService.run).toHaveBeenCalledWith(expect.objectContaining({ tasks: [
@@ -985,7 +983,6 @@ describe('AgentSwarmTool', () => {
 
   it('canonicalizes a legacy alias in resolveArgs and keeps fork raw', async () => {
     const tool = new AgentSwarmTool(mockSwarmHost().swarmService, makeAgentScopeContext({ agentId: 'main', agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig(), stubCallerProfile()), stubCallerProfile(), stubSwarmCatalog());
-
     expect(
       tool.resolveArgs({
         description: 'Review files',
@@ -1003,6 +1000,41 @@ describe('AgentSwarmTool', () => {
         fork: true,
       }),
     ).toMatchObject({ subagent_type: 'general', fork: true });
+  });
+
+  it('does not remap when a literal alias profile vanishes after resolveArgs', async () => {
+    const general = normalizeAgentProfile({
+      name: 'general',
+      description: 'General',
+      systemPrompt: () => 'general',
+    });
+    const profiles: AgentProfile[] = [general, ...DEFAULT_SWARM_TARGET_PROFILES];
+    const catalog = {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      get: (name: string) => profiles.find((profile) => profile.name === name),
+      getDefault: () => profiles[0],
+      list: () => [...profiles],
+      inspect: () => undefined,
+    } as unknown as ISessionAgentProfileCatalog;
+    const host = mockSwarmHost();
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), realSubagents(catalog, stubConfig(), stubCallerProfile()), stubCallerProfile(), catalog);
+    const input = {
+      description: 'Review files',
+      prompt_template: 'Review {{item}}',
+      items: ['src/a.ts', 'src/b.ts'],
+      subagent_type: 'general',
+    };
+
+    const resolved = tool.resolveArgs(input);
+    expect(resolved).toMatchObject({ subagent_type: 'general' });
+    profiles.splice(0, 1);
+
+    const result = await executeTool(tool, context(resolved));
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('Unknown agent type: "general"');
+    expect(host.swarmService.run).not.toHaveBeenCalled();
   });
 
   it('rejects invalid launch shapes at execution time', async () => {

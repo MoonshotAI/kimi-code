@@ -18,7 +18,6 @@ import {
   FORK_EXPERIMENTAL_UNAVAILABLE,
   FORK_WITH_RESUME_UNAVAILABLE,
   forkIncompatibility,
-  normalizeLegacySubagentType,
   normalizeLegacySubagentTypeArgs,
   type SubagentSpawnPlan,
 } from '#/session/subagent/spawn';
@@ -173,9 +172,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
       }
       plan = await this.subagents.planSpawn({
         callerAgentId: this.callerAgentId,
-        profileName: fork
-          ? args.subagent_type
-          : normalizeLegacySubagentType(args.subagent_type, this.catalog),
+        profileName: args.subagent_type,
         model: args.model,
         fork,
       });

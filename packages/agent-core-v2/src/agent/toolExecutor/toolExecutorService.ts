@@ -236,7 +236,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
           candidates.push(
             nextTimed.then(
               (result): ToolExecutionStreamEvent => ({ type: 'timed', result }),
-              (error): ToolExecutionStreamEvent => ({ type: 'timedRejected', error }),
+              (error): ToolExecutionStreamEvent => ({ type: 'timedRejected', reason: error }),
             ),
           );
         }
@@ -266,7 +266,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
             options,
           ).then(
             (value): SettledToolExecutionResult => ({ status: 'fulfilled', value }),
-            (error): SettledToolExecutionResult => ({ status: 'rejected', error }),
+            (error): SettledToolExecutionResult => ({ status: 'rejected', reason: error }),
           );
           finalizations.add(finalization);
           nextTimed = timedResults.next();
@@ -388,7 +388,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
 
     let execution: ToolExecution;
     try {
-      execution = await call.tool.resolveExecution(call.args);
+      execution = await call.tool.resolveExecution(call.args, call.originalArgs);
     } catch (error) {
       const output =
         error instanceof PathSecurityError
@@ -484,7 +484,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         index,
         pendingResult.then(
           (value): SettledTimedToolResult => ({ status: 'fulfilled', value }),
-          (error): SettledTimedToolResult => ({ status: 'rejected', index, error }),
+          (error): SettledTimedToolResult => ({ status: 'rejected', index, reason: error }),
         ),
       );
     }
@@ -689,6 +689,7 @@ interface RunnableToolCall {
   readonly toolName: string;
   readonly tool: ExecutableTool;
   readonly args: unknown;
+  readonly originalArgs?: unknown;
 }
 
 interface RejectedToolCall {
@@ -788,8 +789,12 @@ function preflightToolCall(
       output: `Invalid args for tool "${toolName}": ${validationError}`,
     };
   }
-  const args = tool.resolveArgs?.(parsedArgs.data) ?? parsedArgs.data;
-  return { kind: 'runnable', toolCall, toolName, tool, args };
+  const resolvedArgs = tool.resolveArgs?.(parsedArgs.data);
+  const args = resolvedArgs ?? parsedArgs.data;
+  const originalArgs = resolvedArgs !== undefined && resolvedArgs !== parsedArgs.data
+    ? parsedArgs.data
+    : undefined;
+  return { kind: 'runnable', toolCall, toolName, tool, args, originalArgs };
 }
 
 function validateExecutableToolArgs(tool: ExecutableTool, args: unknown): string | null {
