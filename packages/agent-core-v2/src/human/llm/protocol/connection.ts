@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type { LlmModel } from '#/llm/model';
 
 export interface ConnectionContext {
@@ -36,4 +38,34 @@ export function resolveModelConnection(
     baseUrl: model.baseUrl ?? read(declaration.baseUrlEnv) ?? declaration.defaultBaseUrl,
     apiKey: model.apiKey ?? read(declaration.apiKeyEnv),
   };
+}
+
+const OPENCODE_SESSION_HEADER = 'x-opencode-session';
+const opencodeSessionIds = new Map<string, string>();
+
+export function withOpencodeSessionHeader(
+  baseUrl: string | undefined,
+  headers: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (baseUrl === undefined) {
+    return headers;
+  }
+  let hostname: string;
+  try {
+    hostname = new URL(baseUrl).hostname;
+  } catch {
+    return headers;
+  }
+  if (hostname !== 'opencode.ai' && !hostname.endsWith('.opencode.ai')) {
+    return headers;
+  }
+  if (headers !== undefined && OPENCODE_SESSION_HEADER in headers) {
+    return headers;
+  }
+  let sessionId = opencodeSessionIds.get(hostname);
+  if (sessionId === undefined) {
+    sessionId = randomUUID();
+    opencodeSessionIds.set(hostname, sessionId);
+  }
+  return { ...headers, [OPENCODE_SESSION_HEADER]: sessionId };
 }
