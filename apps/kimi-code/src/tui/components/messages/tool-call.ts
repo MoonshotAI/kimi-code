@@ -44,7 +44,7 @@ import { buildGoalToolHeader, parseGoalToolOutput } from './tool-renderers/goal'
 import { searchNoticeOnly } from './tool-renderers/grep-output';
 import { parseReadMediaOutput } from './tool-renderers/media';
 import { nonEmptyLines, outcomeLine, outcomeRows } from './tool-renderers/outcome';
-import { TruncatedOutputComponent } from './tool-renderers/truncated';
+import { TruncatedOutputComponent, trimTrailingEmptyLines } from './tool-renderers/truncated';
 import { isSpilledToolOutput } from './tool-renderers/types';
 import { isGenericToolResult, pickResultRenderer } from './tool-renderers/registry';
 import { buildWaitForHeader, parseWaitForOutput } from './tool-renderers/wait-for';
@@ -861,7 +861,10 @@ export class ToolCallComponent extends Container {
     if (result.output.trimStart().startsWith('<system-reminder>')) return false;
     // Mirror the error preview's fold threshold: the hint row replaces the
     // hidden rows, so a single hidden row leaves nothing for ctrl+o to gain.
-    if (result.is_error === true) return nonEmptyLines(result.output).length > RESULT_PREVIEW_LINES + 1;
+    // Count rows the way the preview does — internal blanks included, only
+    // trailing empties dropped (nonEmptyLines would skip interior blanks).
+    if (result.is_error === true)
+      return trimTrailingEmptyLines(result.output.split('\n')).length > RESULT_PREVIEW_LINES + 1;
     switch (name) {
       case 'ReadMediaFile':
         // A media envelope renders its body only when expanded; anything else

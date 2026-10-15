@@ -237,6 +237,27 @@ describe('ToolCallComponent', () => {
     expect(component.hasHiddenContent()).toBe(true);
   });
 
+  it('counts error rows like the preview does, interior blanks included', () => {
+    // Four non-empty rows plus an interior blank: the preview folds (five
+    // rendered rows > cap + 1), so the predicate must not count non-empty
+    // lines only.
+    const component = new ToolCallComponent(
+      {
+        id: 'call_shell_err_blank',
+        name: 'Bash',
+        args: { command: 'false' },
+      },
+      {
+        tool_call_id: 'call_shell_err_blank',
+        output: 'a\n\nb\nc\nd',
+        is_error: true,
+      },
+    );
+
+    component.render(100);
+    expect(component.hasHiddenContent()).toBe(true);
+  });
+
   it('renders live Bash output while the command is running', () => {
     const component = new ToolCallComponent(
       {
