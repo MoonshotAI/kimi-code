@@ -37,6 +37,8 @@ import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/
 import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
 import { IEventBus } from '#/app/event/eventBus';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -132,6 +134,12 @@ function createHarness(
           write: async () => {},
         });
         reg.define(IAgentToolResultTruncationService, ToolResultTruncationService);
+        reg.defineInstance(IModelCatalog, {
+          get: () => ({ maxContextSize: 1_000_000 }),
+        } as unknown as IModelCatalog);
+        reg.defineInstance(ISessionTokenCountingService, {
+          get: () => ({ size: 0, measured: 0, estimated: 0 }),
+        } as unknown as ISessionTokenCountingService);
         registerLogServices(reg);
       } else {
         reg.defineInstance(IAgentToolExecutorService, events.executor);

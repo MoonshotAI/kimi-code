@@ -9,6 +9,11 @@ import type { ExecutableToolResult } from '#/tool/toolContract';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { profileKey } from '#/agent/profile/profileOps';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
+import { IEventBus } from '#/app/event/eventBus';
 import type { ContentPart } from '#human/llm/message';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -20,10 +25,44 @@ describe('ToolResultTruncationService', () => {
   let disposables: DisposableStore;
   let homeDir: string;
   let truncation: IAgentToolResultTruncationService;
+  let currentContextSize: number;
+  let defaultModelRecord: { maxContextSize?: number; maxInputSize?: number } | undefined;
+  let observedWindow: number | undefined;
+
+  function stubBudgetServices(ix: TestInstantiationService): void {
+    ix.stub(IModelCatalog, {
+      get: () =>
+        defaultModelRecord === undefined
+          ? undefined
+          : {
+              maxContextSize: defaultModelRecord.maxContextSize ?? 0,
+              maxInputSize: defaultModelRecord.maxInputSize,
+            },
+    } as unknown as IModelCatalog);
+    ix.stub(IAgentStateService, {
+      has: () => true,
+      get: (key: unknown) => {
+        if (key === profileKey) {
+          return { modelAlias: defaultModelRecord === undefined ? undefined : 'test-model' };
+        }
+        return new Map(observedWindow === undefined ? [] : [['test-model', observedWindow]]);
+      },
+    } as unknown as IAgentStateService);
+    ix.stub(ISessionTokenCountingService, {
+      get: () => ({ size: currentContextSize, measured: 0, estimated: currentContextSize }),
+    } as unknown as ISessionTokenCountingService);
+    ix.stub(IEventBus, {
+      subscribe: () => ({ dispose: () => {} }),
+      publish: () => {},
+    } as unknown as IEventBus);
+  }
 
   beforeEach(async () => {
     homeDir = await mkdtemp(join(tmpdir(), 'tool-result-truncation-'));
     disposables = new DisposableStore();
+    currentContextSize = 0;
+    defaultModelRecord = { maxContextSize: 1_000_000 };
+    observedWindow = undefined;
     const ix = disposables.add(new TestInstantiationService());
     ix.stub(IBootstrapService, stubBootstrap(homeDir));
     ix.stub(
@@ -34,6 +73,7 @@ describe('ToolResultTruncationService', () => {
       }),
     );
     ix.stub(IFileSystemStorageService, new FileStorageService(homeDir));
+    stubBudgetServices(ix);
     truncation = ix.createInstance(ToolResultTruncationService);
   });
 
@@ -332,6 +372,177 @@ describe('ToolResultTruncationService', () => {
     ).resolves.toBe(exempt);
   });
 
+  it('spills exempt results when the accumulated context would exceed the budget', async () => {
+    currentContextSize = 600_000;
+    const exempt = { output: `${'z'.repeat(99)}\n`.repeat(5_000), spillExempt: true as const };
+
+    const result = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_budget',
+      result: exempt,
+    });
+
+    expect(result.truncated).toBe(true);
+    const rendered = result.output;
+    expect(typeof rendered).toBe('string');
+    if (typeof rendered !== 'string') throw new Error('expected string output');
+    expect(rendered).toContain('Tool output withheld to keep the context within the model window');
+    await expect(readFile(renderedOutputPath(rendered), 'utf8')).resolves.toBe(exempt.output);
+  });
+
+  it('keeps exempt results inline while the accumulated context fits the budget', async () => {
+    currentContextSize = 100_000;
+    const exempt = { output: 'z'.repeat(400_000), spillExempt: true as const };
+
+    await expect(
+      truncation.truncateForModel({
+        toolName: 'Read',
+        toolCallId: 'call_fits',
+        result: exempt,
+      }),
+    ).resolves.toBe(exempt);
+  });
+
+  it('spills exempt results against the fallback window when the model window is unknown', async () => {
+    defaultModelRecord = undefined;
+    const exempt = { output: `${'z'.repeat(99)}\n`.repeat(3_000), spillExempt: true as const };
+
+    const result = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_unknown_window',
+      result: exempt,
+    });
+
+    expect(result.truncated).toBe(true);
+    const rendered = result.output;
+    expect(typeof rendered).toBe('string');
+    if (typeof rendered !== 'string') throw new Error('expected string output');
+    expect(rendered).toContain('Tool output withheld to keep the context within the model window');
+  });
+
+  it('reserves budget across concurrently finalized exempt results', async () => {
+    currentContextSize = 100_000;
+    const makeExempt = () => ({
+      output: `${'z'.repeat(99)}\n`.repeat(4_000),
+      spillExempt: true as const,
+    });
+
+    const first = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_r1',
+      result: makeExempt(),
+    });
+    const second = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_r2',
+      result: makeExempt(),
+    });
+    const third = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_r3',
+      result: makeExempt(),
+    });
+
+    expect(first.truncated).toBeUndefined();
+    expect(second.truncated).toBeUndefined();
+    expect(third.truncated).toBe(true);
+  });
+
+  it('honors the observed provider window over the catalog window', async () => {
+    observedWindow = 200_000;
+    const exempt = { output: `${'z'.repeat(99)}\n`.repeat(2_500), spillExempt: true as const };
+
+    const result = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_observed_window',
+      result: exempt,
+    });
+
+    expect(result.truncated).toBe(true);
+  });
+
+  it('keeps spill-file recovery reads inline even over budget', async () => {
+    defaultModelRecord = undefined;
+    currentContextSize = 100_000;
+    const exempt = {
+      output: `${'z'.repeat(99)}\n`.repeat(5_000),
+      spillExempt: true as const,
+      budgetExempt: true as const,
+    };
+
+    await expect(
+      truncation.truncateForModel<ExecutableToolResult>({
+        toolName: 'Read',
+        toolCallId: 'call_recovery',
+        result: exempt,
+      }),
+    ).resolves.toBe(exempt);
+  });
+
+  it('rebases reservations when the committed context shrinks after compaction', async () => {
+    currentContextSize = 100_000;
+    const makeExempt = () => ({
+      output: `${'z'.repeat(99)}\n`.repeat(4_000),
+      spillExempt: true as const,
+    });
+
+    const first = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_c1',
+      result: makeExempt(),
+    });
+    const second = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_c2',
+      result: makeExempt(),
+    });
+    expect(first.truncated).toBeUndefined();
+    expect(second.truncated).toBeUndefined();
+
+    currentContextSize = 10_000;
+    const third = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_c3',
+      result: makeExempt(),
+    });
+    expect(third.truncated).toBeUndefined();
+  });
+
+  it('rebases reservations on any committed shrink, not only below the baseline', async () => {
+    currentContextSize = 100_000;
+    const makeExempt = () => ({
+      output: `${'z'.repeat(99)}\n`.repeat(4_000),
+      spillExempt: true as const,
+    });
+
+    await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_d1',
+      result: makeExempt(),
+    });
+    await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_d2',
+      result: makeExempt(),
+    });
+
+    currentContextSize = 634_000;
+    const third = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_d3',
+      result: makeExempt(),
+    });
+    expect(third.truncated).toBe(true);
+
+    currentContextSize = 150_000;
+    const fourth = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Read',
+      toolCallId: 'call_d4',
+      result: makeExempt(),
+    });
+    expect(fourth.truncated).toBeUndefined();
+  });
+
   it('identifies paths inside the agent spill directory', () => {
     const dir = spillDir();
     expect(truncation.isSpillFilePath(join(dir, 'Bash-call-1.txt'))).toBe(true);
@@ -419,6 +630,7 @@ describe('ToolResultTruncationService', () => {
         throw new Error('disk full');
       },
     } as unknown as IFileSystemStorageService);
+    stubBudgetServices(ix);
     const failing = ix.createInstance(ToolResultTruncationService);
 
     const longLine = await failing.truncateForModel<ExecutableToolResult>({

@@ -236,6 +236,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
           candidates.push(
             nextTimed.then(
               (result): ToolExecutionStreamEvent => ({ type: 'timed', result }),
+              // oxlint-disable-next-line unicorn/catch-error-name
               (reason): ToolExecutionStreamEvent => ({ type: 'timedRejected', reason }),
             ),
           );
@@ -266,6 +267,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
             options,
           ).then(
             (value): SettledToolExecutionResult => ({ status: 'fulfilled', value }),
+            // oxlint-disable-next-line unicorn/catch-error-name
             (reason): SettledToolExecutionResult => ({ status: 'rejected', reason }),
           );
           finalizations.add(finalization);
@@ -484,6 +486,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         index,
         pendingResult.then(
           (value): SettledTimedToolResult => ({ status: 'fulfilled', value }),
+          // oxlint-disable-next-line unicorn/catch-error-name
           (reason): SettledTimedToolResult => ({ status: 'rejected', index, reason }),
         ),
       );
@@ -891,11 +894,13 @@ function normalizeToolResult(result: ExecutableToolResult): ToolResult {
     note?: string;
     spill?: ToolResultSpill;
     spillExempt?: true;
+    budgetExempt?: true;
   } = {
     output,
     stopTurn: result.stopTurn,
     spill: result.spill,
     spillExempt: result.spillExempt,
+    budgetExempt: result.budgetExempt,
   };
   if (result.stopTurnReason !== undefined) base.stopTurnReason = result.stopTurnReason;
   if (result.truncated === true) base.truncated = true;

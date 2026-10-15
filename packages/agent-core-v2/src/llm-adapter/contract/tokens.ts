@@ -3,6 +3,14 @@ import type { ContentPart, Message, Tool } from './message';
 const messageTokenEstimateCache = new WeakMap<Message, number>();
 
 export function estimateTokens(text: string): number {
+  return countTokensWithAsciiRatio(text, 4);
+}
+
+export function estimateTokensConservative(text: string): number {
+  return countTokensWithAsciiRatio(text, 1.5);
+}
+
+function countTokensWithAsciiRatio(text: string, charsPerToken: number): number {
   let asciiCount = 0;
   let nonAsciiCount = 0;
   for (const char of text) {
@@ -12,7 +20,7 @@ export function estimateTokens(text: string): number {
       nonAsciiCount++;
     }
   }
-  return Math.ceil(asciiCount / 4) + nonAsciiCount;
+  return Math.ceil(asciiCount / charsPerToken) + nonAsciiCount;
 }
 
 export function estimateTokensForMessages(messages: readonly Message[]): number {
@@ -40,7 +48,10 @@ export function estimateTokensForMessage(message: Message): number {
   }
 
   let total = estimateTokens(message.role);
-  total += estimateTokensForContentParts(message.content);
+  const estimateText = message.role === 'tool' ? estimateTokensConservative : estimateTokens;
+  for (const part of message.content) {
+    total += estimateTokensForContentPart(part, estimateText);
+  }
   if (message.toolCalls !== undefined) {
     for (const call of message.toolCalls) {
       total += estimateTokens(call.name);
@@ -61,12 +72,15 @@ export function estimateTokensForContentParts(parts: readonly ContentPart[]): nu
 
 export const MEDIA_TOKEN_ESTIMATE = 2000;
 
-export function estimateTokensForContentPart(part: ContentPart): number {
+export function estimateTokensForContentPart(
+  part: ContentPart,
+  estimateText: (text: string) => number = estimateTokens,
+): number {
   switch (part.type) {
     case 'text':
-      return estimateTokens(part.text);
+      return estimateText(part.text);
     case 'think':
-      return estimateTokens(part.think);
+      return estimateText(part.think);
     case 'image_url':
     case 'audio_url':
     case 'video_url':

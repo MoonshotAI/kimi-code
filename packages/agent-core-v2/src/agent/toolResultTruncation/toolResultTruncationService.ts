@@ -1,7 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import { LifecycleScope } from '#/app/scopes';
+import { Service } from '#/_base/di/service';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentScopeContext, agentContextOfScope } from '#/agent/scopeContext/scopeContext';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { profileKey } from '#/agent/profile/profileOps';
+import { fullCompactionObservedMaxContextTokensByModelKey } from '#/agent/fullCompaction/fullCompactionService';
+import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { resolveEffectiveMaxContextTokens } from '#/agent/fullCompaction/contextWindow';
+import { estimateTokensConservative } from '#/llm-adapter/contract/tokens';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
+import { IEventBus } from '#/app/event/eventBus';
+import { TurnStarted } from '#/agent/loop/turnEvents';
 import {
   DEFAULT_TOOL_RESULT_MAX_CHARS,
   DEFAULT_TOOL_RESULT_MAX_RETAINED_CHARS,
@@ -21,6 +31,8 @@ const TOOL_RESULT_PREVIEW_HEAD_CHARS = 4_096;
 const TOOL_RESULT_PREVIEW_TAIL_CHARS = 1_024;
 const TOOL_RESULT_MAX_LINE_CHARS = 2_000;
 const TRUNCATION_MARKER = '[...truncated]';
+const FORCED_SPILL_CONTEXT_RATIO = 0.7;
+const FORCED_SPILL_PREVIEW_RESERVE_TOKENS = 4_096;
 
 const encoder = new TextEncoder();
 
@@ -30,27 +42,48 @@ interface ShapedOutput {
   readonly hasMedia: boolean;
 }
 
-export class ToolResultTruncationService implements IAgentToolResultTruncationService {
+export class ToolResultTruncationService extends Service implements IAgentToolResultTruncationService {
   declare readonly _serviceBrand: undefined;
 
   private readonly storageScope: string;
 
+  private reservedInlineBaseline = 0;
+  private reservedInlineTokens = 0;
+  private lastCommittedSize = 0;
+  private turnModelAlias: string | undefined;
+
   constructor(
     @IBootstrapService private readonly bootstrap: IBootstrapService,
-    @IAgentScopeContext agent: IAgentScopeContext,
+    @IAgentScopeContext private readonly agent: IAgentScopeContext,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
+    @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @IAgentStateService private readonly states: IAgentStateService,
+    @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
+    @IEventBus private readonly eventBus: IEventBus,
   ) {
+    super();
     this.storageScope = agent.scope('tool-results');
+    this._register(
+      this.eventBus.subscribe(TurnStarted, () => {
+        this.reservedInlineTokens = 0;
+        this.turnModelAlias = this.states.has(profileKey)
+          ? this.states.get(profileKey).modelAlias
+          : undefined;
+      }),
+    );
   }
 
   async truncateForModel<T extends ExecutableToolResult>(
     input: ToolResultTruncationInput<T>,
   ): Promise<T> {
     const { result } = input;
-    if (result.spillExempt === true) return result;
-
     const rawText = persistableToolResultText(result.output);
-    if (rawText.length <= DEFAULT_TOOL_RESULT_MAX_CHARS) return result;
+    const forcedByBudget =
+      result.spillExempt === true &&
+      this.exceedsContextBudget(result, rawText, result.budgetExempt !== true);
+    if (result.spillExempt === true && !forcedByBudget) return result;
+    if (rawText.length <= DEFAULT_TOOL_RESULT_MAX_CHARS && !forcedByBudget) return result;
+    const reason = forcedByBudget ? ('budget' as const) : ('size' as const);
 
     const { spill, ...rest } = result;
     const retainedText =
@@ -73,11 +106,12 @@ export class ToolResultTruncationService implements IAgentToolResultTruncationSe
         totalChars,
         DEFAULT_TOOL_RESULT_MAX_CHARS,
         suffix,
+        reason,
       );
       return { ...rest, output: mergeSpillPointer(shaped.output, fallback), truncated: true } as T;
     }
 
-    if (shaped.textChars <= DEFAULT_TOOL_RESULT_MAX_CHARS) {
+    if (shaped.textChars <= DEFAULT_TOOL_RESULT_MAX_CHARS && !forcedByBudget) {
       const inlineSuffix = dropInlineSuffixLines(suffix, persistableToolResultText(shaped.output));
       return {
         ...rest,
@@ -89,6 +123,7 @@ export class ToolResultTruncationService implements IAgentToolResultTruncationSe
             totalChars,
             inlineSuffix,
             shaped.hasMedia,
+            reason,
           ),
         ),
         truncated: true,
@@ -104,6 +139,7 @@ export class ToolResultTruncationService implements IAgentToolResultTruncationSe
       DEFAULT_TOOL_RESULT_MAX_CHARS,
       suffix,
       shaped.hasMedia,
+      reason,
     );
     return {
       ...rest,
@@ -116,6 +152,55 @@ export class ToolResultTruncationService implements IAgentToolResultTruncationSe
     const dir = normalize(join(this.bootstrap.homeDir, this.storageScope));
     const normalized = normalize(path);
     return normalized === dir || normalized.startsWith(`${dir}/`);
+  }
+
+  private exceedsContextBudget(
+    result: ExecutableToolResult,
+    rawText: string,
+    spillAllowed: boolean,
+  ): boolean {
+    if (rawText.length <= DEFAULT_TOOL_RESULT_MAX_CHARS) return false;
+    const modelAlias =
+      this.turnModelAlias ??
+      (this.states.has(profileKey) ? this.states.get(profileKey).modelAlias : undefined);
+    const observed =
+      modelAlias === undefined || !this.states.has(fullCompactionObservedMaxContextTokensByModelKey)
+        ? undefined
+        : this.states.get(fullCompactionObservedMaxContextTokensByModelKey).get(modelAlias);
+    const effectiveMax = resolveEffectiveMaxContextTokens({
+      configured: this.configuredModelContextWindow(modelAlias),
+      observed,
+    });
+    const agentContext = agentContextOfScope(this.agent);
+    const committed = this.tokenCounting.get(agentContext).size;
+    if (committed < this.lastCommittedSize) {
+      this.reservedInlineBaseline = committed;
+      this.reservedInlineTokens = 0;
+    }
+    this.lastCommittedSize = committed;
+    if (this.reservedInlineTokens === 0) this.reservedInlineBaseline = committed;
+    const current = Math.max(committed, this.reservedInlineBaseline + this.reservedInlineTokens);
+    const incoming = estimateTokensConservative(rawText);
+    if (current + incoming > effectiveMax * FORCED_SPILL_CONTEXT_RATIO) {
+      this.reservedInlineTokens += spillAllowed ? FORCED_SPILL_PREVIEW_RESERVE_TOKENS : incoming;
+      return spillAllowed;
+    }
+    this.reservedInlineTokens += incoming;
+    return false;
+  }
+
+  private configuredModelContextWindow(modelAlias: string | undefined): number | undefined {
+    if (modelAlias === undefined) return undefined;
+    const model = this.tryGetCatalogModel(modelAlias);
+    return model?.maxInputSize ?? model?.maxContextSize;
+  }
+
+  private tryGetCatalogModel(alias: string): Model | undefined {
+    try {
+      return this.modelCatalog.get(alias);
+    } catch {
+      return undefined;
+    }
   }
 
   isWireJournalPath(path: string): boolean {
@@ -217,13 +302,16 @@ function renderAppendedSpillPointer(
   totalChars: number,
   suffix: string,
   hasMedia: boolean,
+  reason: 'size' | 'budget' = 'size',
 ): string {
   const firstLine =
-    totalChars > preservedChars
-      ? `[Per-line truncation occurred; only the first ${String(preservedChars)} characters (of ${String(totalChars)}) were saved to a file.`
-      : hasMedia
-        ? '[Per-line truncation occurred; the complete text output was saved to a file (media parts stay attached to this result).'
-        : '[Per-line truncation occurred; the complete output was saved to a file.';
+    reason === 'budget'
+      ? '[Tool output withheld to keep the context within the model window; the complete output was saved to a file.'
+      : totalChars > preservedChars
+        ? `[Per-line truncation occurred; only the first ${String(preservedChars)} characters (of ${String(totalChars)}) were saved to a file.`
+        : hasMedia
+          ? '[Per-line truncation occurred; the complete text output was saved to a file (media parts stay attached to this result).'
+          : '[Per-line truncation occurred; the complete output was saved to a file.';
   const lines = [
     firstLine,
     `output_path: ${outputPath}`,
@@ -260,14 +348,21 @@ function renderPersistedToolResult(
   maxChars: number,
   suffix: string,
   hasMedia: boolean,
+  reason: 'size' | 'budget' = 'size',
 ): string {
   const partial = preservedChars < totalChars;
+  const firstLine =
+    reason === 'budget'
+      ? partial
+        ? 'Tool output withheld to keep the context within the model window; the preserved prefix of the output was saved to a file.'
+        : 'Tool output withheld to keep the context within the model window; the full output was saved to a file.'
+      : partial
+        ? `Tool output exceeded ${String(maxChars)} characters; the first ${String(preservedChars)} characters (of ${String(totalChars)}) were saved to a file.`
+        : hasMedia
+          ? `Tool output exceeded ${String(maxChars)} characters; the full text output was saved to a file (media parts stay attached to this result).`
+          : `Tool output exceeded ${String(maxChars)} characters; the full output was saved to a file.`;
   const lines = [
-    partial
-      ? `Tool output exceeded ${String(maxChars)} characters; the first ${String(preservedChars)} characters (of ${String(totalChars)}) were saved to a file.`
-      : hasMedia
-        ? `Tool output exceeded ${String(maxChars)} characters; the full text output was saved to a file (media parts stay attached to this result).`
-        : `Tool output exceeded ${String(maxChars)} characters; the full output was saved to a file.`,
+    firstLine,
     `tool_name: ${toolName}`,
     `tool_call_id: ${toolCallId}`,
     partial
@@ -293,9 +388,12 @@ function renderUnpersistedToolResult(
   totalChars: number,
   maxChars: number,
   suffix: string,
+  reason: 'size' | 'budget' = 'size',
 ): string {
   const lines = [
-    `Tool output exceeded ${String(maxChars)} characters and could not be saved to a file; only this preview is available.`,
+    reason === 'budget'
+      ? 'Tool output withheld to keep the context within the model window and could not be saved to a file; only this preview is available.'
+      : `Tool output exceeded ${String(maxChars)} characters and could not be saved to a file; only this preview is available.`,
     `tool_name: ${toolName}`,
     `tool_call_id: ${toolCallId}`,
     `output_size_chars: ${String(totalChars)}`,
@@ -329,8 +427,8 @@ function dropInlineSuffixLines(suffix: string, shapedText: string): string {
 
 function safeToolResultFileStem(toolName: string, toolCallId: string): string {
   const label = `${toolName}-${toolCallId}`
-    .replace(/[^a-zA-Z0-9._-]+/g, '_')
-    .replace(/^_+|_+$/g, '')
+    .replaceAll(/[^a-zA-Z0-9._-]+/g, '_')
+    .replaceAll(/^_+|_+$/g, '')
     .slice(0, 80);
   return label || 'tool-result';
 }

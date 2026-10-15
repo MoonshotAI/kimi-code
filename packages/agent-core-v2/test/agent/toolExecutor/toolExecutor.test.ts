@@ -38,6 +38,10 @@ import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorServi
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
+import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { profileKey } from '#/agent/profile/profileOps';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { ReadTool } from '#/agent/tools/os/read/readTool';
 import type { IAgentProfileService } from '#/agent/profile/profile';
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
@@ -1075,6 +1079,20 @@ describe('truncation pipeline', () => {
     );
     const storage = new FileStorageService(homeDir);
     truncationContainer.stub(IFileSystemStorageService, storage);
+    truncationContainer.stub(IModelCatalog, {
+      get: () => ({ maxContextSize: 100_000_000 }),
+    } as unknown as IModelCatalog);
+    truncationContainer.stub(IAgentStateService, {
+      has: () => true,
+      get: (key: unknown) => (key === profileKey ? { modelAlias: 'test-model' } : new Map()),
+    } as unknown as IAgentStateService);
+    truncationContainer.stub(ISessionTokenCountingService, {
+      get: () => ({ size: 0, measured: 0, estimated: 0 }),
+    } as unknown as ISessionTokenCountingService);
+    truncationContainer.stub(IEventBus, {
+      subscribe: () => ({ dispose: () => {} }),
+      publish: () => {},
+    } as unknown as IEventBus);
     attachmentStore = new SessionMediaStoreService(makeSessionContext({
       sessionId: 'session', workspaceId: 'workspace', cwd: homeDir,
       sessionDir: join(homeDir, 'sessions/workspace/session'),

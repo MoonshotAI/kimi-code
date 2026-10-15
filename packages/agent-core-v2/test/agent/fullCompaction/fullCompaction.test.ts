@@ -1019,10 +1019,12 @@ describe('FullCompaction', () => {
     ]);
   });
 
-  it('fails the compaction instead of compacting an empty history when overflow shrink drops everything', async () => {
+  it('truncates the newest oversized message when overflow shrink drops everything', async () => {
     let calls = 0;
-    const generate: GenerateFn = requesterFromGenerateFn(async () => {
+    const inputs: string[][] = [];
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, history) => {
       calls += 1;
+      inputs.push(inputHistorySnapshot(history));
       if (calls === 1) {
         throw new APIContextOverflowError(400, 'Context length exceeded', 'req-shrink-empty');
       }
@@ -1039,13 +1041,70 @@ describe('FullCompaction', () => {
       content: [{ type: 'text', text: 'X'.repeat(400_000) }],
       toolCalls: [],
     });
-    const failed = ctx.once('error');
+    const completed = ctx.once('compaction.completed');
 
     await ctx.rpc.beginCompaction({});
-    await failed;
+    await completed;
 
-    expect(calls).toBe(1);
-    expect(ctx.context.get()).toHaveLength(3);
+    expect(calls).toBe(2);
+    expect(inputs).toHaveLength(2);
+    expect(inputs[1]).toHaveLength(2);
+    expect(inputs[1]![0]).toContain('content truncated to fit the model window');
+    expect(
+      ctx.compactHistory().some((message) => message.text.includes('Groundless summary.')),
+    ).toBe(true);
+    await ctx.expectResumeMatches();
+  });
+
+  it('neutralizes an in-budget newest tool result before retrying', async () => {
+    let attempts = 0;
+    const inputs: string[][] = [];
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, history) => {
+      attempts += 1;
+      inputs.push(inputHistorySnapshot(history));
+      if (attempts === 1) {
+        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-fits-tool-overflow');
+      }
+      return textResult('Neutralized fits summary.');
+    });
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.context.append({
+      role: 'assistant',
+      content: [],
+      toolCalls: [{ type: 'function', id: 'call_big', name: 'Read', arguments: '{}' }],
+    });
+    ctx.context.append({
+      role: 'tool',
+      content: [{ type: 'text', text: 'd'.repeat(50_000) }],
+      toolCalls: [],
+      toolCallId: 'call_big',
+    });
+    const completed = ctx.once('compaction.completed');
+
+    await ctx.rpc.beginCompaction({});
+    await completed;
+
+    expect(attempts).toBe(2);
+    expect(inputs).toHaveLength(2);
+    expect(inputs[1]).toHaveLength(2);
+    expect(inputs[1]!.some((entry) => entry.startsWith('tool: '))).toBe(false);
+    expect(inputs[1]![0]).toMatch(/^user: /);
+    expect(inputs[1]![0]).toContain('d'.repeat(100));
+    const events = ctx.newEvents();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'compaction.completed',
+        args: expect.objectContaining({
+          result: expect.objectContaining({ droppedCount: 3 }),
+        }),
+      }),
+    );
+    await ctx.expectResumeMatches();
   });
 
   it('waits before retrying compaction generation after a retryable failure', async () => {
@@ -4176,11 +4235,15 @@ describe('FullCompaction pre-shrink', () => {
     max_context_tokens: PRE_SHRINK_WINDOW,
   } as const;
 
-  function appendPreShrinkHistory(ctx: TestAgentContext, tokenTotals?: readonly [number, number, number]): void {
-    const [oldTotal = 20, midTotal = 40, recentTotal = 80] = tokenTotals ?? [];
-    ctx.appendExchange(1, 'old user one', `old assistant one ${'a'.repeat(32_000)}`, oldTotal);
-    ctx.appendExchange(2, 'mid user two', `mid assistant two ${'b'.repeat(16_000)}`, midTotal);
-    ctx.appendExchange(3, 'recent user three', `recent assistant three ${'c'.repeat(1_000)}`, recentTotal);
+  function appendPreShrinkHistory(
+    ctx: TestAgentContext,
+    tokenTotals?: readonly [number, number, number],
+    paddings: readonly [number, number, number] = [32_000, 16_000, 1_000],
+  ): void {
+    const [oldTotal = 8_012, midTotal = 12_024, recentTotal = 12_289] = tokenTotals ?? [];
+    ctx.appendExchange(1, 'old user one', `old assistant one ${'a'.repeat(paddings[0])}`, oldTotal);
+    ctx.appendExchange(2, 'mid user two', `mid assistant two ${'b'.repeat(paddings[1])}`, midTotal);
+    ctx.appendExchange(3, 'recent user three', `recent assistant three ${'c'.repeat(paddings[2])}`, recentTotal);
   }
 
   it('pre-shrinks the summary request history to the effective window budget before the first request', async () => {
@@ -4371,7 +4434,7 @@ describe('FullCompaction pre-shrink', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: PRE_SHRINK_CAPABILITIES,
     });
-    appendPreShrinkHistory(ctx, [14_000, 20_000, 36_000]);
+    appendPreShrinkHistory(ctx, [26_012, 30_024, 34_039], [104_000, 16_000, 16_000]);
 
     ctx.mockNextResponse({ type: 'text', text: 'Auto pre-shrunk summary.' });
     ctx.mockNextResponse({ type: 'text', text: 'Answer after the pre-shrunk compaction.' });
@@ -4396,7 +4459,7 @@ describe('FullCompaction pre-shrink', () => {
     await ctx.expectResumeMatches();
   });
 
-  it('does not pre-shrink when the effective context window is unknown', async () => {
+  it('pre-shrinks against the fallback window when the effective context window is unknown', async () => {
     const ctx = testAgent();
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -4411,19 +4474,28 @@ describe('FullCompaction pre-shrink', () => {
       return resolved;
     };
     expect(ctx.get(IAgentProfileService).data().modelCapabilities.max_context_tokens).toBe(0);
-    appendPreShrinkHistory(ctx);
+    appendPreShrinkHistory(ctx, [125_012, 200_024, 225_039], [500_000, 300_000, 100_000]);
     const completed = ctx.once('compaction.completed');
 
-    ctx.mockNextResponse({ type: 'text', text: 'Unknown window summary.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Fallback-window summary.' });
     await ctx.rpc.beginCompaction({});
     await completed;
 
     expect(ctx.llmCalls).toHaveLength(1);
     const history = ctx.llmCalls[0]!.history;
-    expect(history).toHaveLength(7);
     const texts = history.map(messageText);
-    expect(texts.some((text) => text.includes('old user one'))).toBe(true);
-    expect(texts.some((text) => text.includes('recent assistant three'))).toBe(true);
+    expect(texts.some((text) => text.includes('old user one'))).toBe(false);
+    expect(texts.some((text) => text.includes('mid user two'))).toBe(true);
+    expect(texts.some((text) => text.includes('recent user three'))).toBe(true);
+    const events = ctx.newEvents();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'compaction.completed',
+        args: expect.objectContaining({
+          result: expect.objectContaining({ droppedCount: 2 }),
+        }),
+      }),
+    );
     await ctx.expectResumeMatches();
   });
 
@@ -4453,6 +4525,62 @@ describe('FullCompaction pre-shrink', () => {
         event: 'compaction.completed',
         args: expect.objectContaining({
           result: expect.objectContaining({ compactedCount: 4 }),
+        }),
+      }),
+    );
+    await ctx.expectResumeMatches();
+  });
+
+  it('truncates an oversized newest tool result instead of failing the compaction', async () => {
+    let attempts = 0;
+    const inputs: string[][] = [];
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, history) => {
+      attempts += 1;
+      inputs.push(inputHistorySnapshot(history));
+      if (attempts === 1) {
+        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-single-message-overflow');
+      }
+      return textResult('Truncated single-message summary.');
+    });
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: PRE_SHRINK_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.context.append({
+      role: 'assistant',
+      content: [],
+      toolCalls: [{ type: 'function', id: 'call_big', name: 'Read', arguments: '{}' }],
+    });
+    ctx.context.append({
+      role: 'tool',
+      content: [{ type: 'text', text: 'd'.repeat(200_000) }],
+      toolCalls: [],
+      toolCallId: 'call_big',
+    });
+    const completed = ctx.once('compaction.completed');
+
+    await ctx.rpc.beginCompaction({});
+    await completed;
+
+    expect(attempts).toBe(2);
+    expect(inputs).toHaveLength(2);
+    expect(inputs[0]).toHaveLength(5);
+    expect(inputs[1]).toHaveLength(2);
+    expect(inputs[1]!.some((entry) => entry.startsWith('tool: '))).toBe(false);
+    expect(inputs[1]![0]).toMatch(/^user: /);
+    expect(inputs[1]![0]).toContain('content truncated to fit the model window');
+    expect(inputs[1]![0]!.length).toBeLessThan(20_000);
+    const events = ctx.newEvents();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'compaction.completed',
+        args: expect.objectContaining({
+          result: expect.objectContaining({
+            summary: 'Truncated single-message summary.',
+            droppedCount: 3,
+          }),
         }),
       }),
     );
