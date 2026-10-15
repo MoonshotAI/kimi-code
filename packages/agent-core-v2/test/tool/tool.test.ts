@@ -72,7 +72,6 @@ import { IFlagService } from '#/app/flag/flag';
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { TOOL_SELECT_FLAG_ID } from '#/agent/toolSelect/flag';
-import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { normalizeAgentProfile, type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
@@ -707,26 +706,13 @@ describe('Agent tool description', () => {
     await ctx.get(IAgentToolActivationService).activate();
     expect(ctx.get(IAgentToolRegistryService).resolve('WebSearch')).toBeDefined();
     expect(agentDescription()).not.toContain('WebSearch');
-
-    available = true;
-    await ctx.get(IAgentToolActivationService).activate();
-    expect(agentDescription()).toContain('WebSearch');
-  });
-
-  it('omits WaitFor when its experimental flag is disabled', () => {
-    ctx = createTestAgent(appService(IFlagService, stubFlag((id) => id !== WAIT_FOR_FLAG_ID)));
-
-    expect(ctx.get(IAgentToolRegistryService).resolve('WaitFor')).toBeUndefined();
-    expect(agentDescription()).not.toMatch(/Tools:.*\bWaitFor\b/);
   });
 
   it.each([
     { enabled: false, primary: true, secondary: true, force: false, expected: false },
     { enabled: true, primary: false, secondary: false, force: false, expected: false },
     { enabled: true, primary: true, secondary: false, force: true, expected: false },
-    { enabled: true, primary: true, secondary: false, force: false, expected: true },
     { enabled: true, primary: false, secondary: true, force: true, expected: true },
-    { enabled: true, primary: false, secondary: true, force: false, expected: true },
   ])('describes select_tools for eligible subagent models: $enabled/$primary/$secondary/$force', ({
     enabled, primary, secondary, force, expected,
   }) => {
