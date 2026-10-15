@@ -88,6 +88,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     return {
       startupTimeoutMs: section?.startupTimeoutMs,
       toolTimeoutMs: section?.toolTimeoutMs,
+      defaultDeferred: section?.defaultDeferred,
     };
   }
 

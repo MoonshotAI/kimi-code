@@ -19,6 +19,7 @@ import {
   type ThinkingConfig,
 } from '#/llm-adapter/model/thinking';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
+import { IProviderDiscoveryService } from '#/app/kosongConfig/discovery';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { ErrorCodes, Error2 } from "#/errors";
@@ -65,6 +66,7 @@ import { isToolActiveComposed, findInactiveToolPatterns, literalToolNames, type 
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { NOTIFY_USER_TOOL_NAME } from '#/features/notify/tools/notify-user/notify-user';
+import { TODO_LIST_TOOL_NAME } from '#/features/todo/todoItem';
 import {
   renderAgentProfilePrompt,
   rootDelegationExtras,
@@ -168,6 +170,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IPluginService private readonly plugins: IPluginService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
     @IAgentAgentsMdReminderService private readonly agentsMdReminder: IAgentAgentsMdReminderService,
+    @IProviderDiscoveryService private readonly discovery: IProviderDiscoveryService,
   ) {
     super();
     this.states.contributeState(profileKey);
@@ -180,6 +183,11 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this.configure({});
     this._register(
       this.dispatcher.hooks.onDidRestore.register('profile', async (_ctx, next) => {
+        const replacement =
+          this.modelAlias === undefined
+            ? undefined
+            : this.discovery.retiredModelReplacement(this.modelAlias);
+        if (replacement !== undefined) await this.setModel(replacement).catch(() => {});
         this.syncTelemetryModelContext(this.modelAlias);
         if (this.scopeContext.agentId === MAIN_AGENT_ID && this.profileName !== undefined) {
           await this.catalog.ready;
@@ -200,6 +208,11 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         if (domain === TOOLS_SECTION) {
           this.publishToolPatternWarnings();
         }
+      }),
+    );
+    this._register(
+      this.discovery.onDidRetireModel(({ from, to }) => {
+        if (this.modelAlias === from) void this.setModel(to).catch(() => {});
       }),
     );
   }
@@ -877,6 +890,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       notifyUserActive:
         this.notify.enabled &&
         this.isToolActiveForProfile(profile, NOTIFY_USER_TOOL_NAME),
+      todoListActive: this.isToolActiveForProfile(profile, TODO_LIST_TOOL_NAME),
     };
   }
 

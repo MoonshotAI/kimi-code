@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createKimiConfigRpc } from '#/index';
-import { parseConfigString } from '#/config/index';
+import { configToTomlData, parseConfigString } from '#/config/index';
 
 const toPosix = (p: string): string => p.replaceAll('\\', '/');
 
@@ -68,5 +68,54 @@ api_key_env = "ACME_API_KEY"
 
     await expect(rpc.validateConfigToml({ text })).resolves.toBeUndefined();
     expect(parseConfigString(text).providers['acme']?.apiKeyEnv).toBe('ACME_API_KEY');
+  });
+
+  it('preserves and removes model upgrade metadata', () => {
+    const config = parseConfigString(`
+[models."acme/current"]
+provider = "acme"
+model = "current"
+max_context_size = 131072
+
+[models."acme/current".upgrade]
+model = "next"
+migration_markdown = "Use {model_to}"
+retirement_at = "2030-01-01T00:00:00Z"
+`);
+
+    expect(config.models?.['acme/current']?.upgrade).toEqual({
+      model: 'next',
+      migrationMarkdown: 'Use {model_to}',
+      retirementAt: '2030-01-01T00:00:00Z',
+    });
+
+    const rawModels = configToTomlData(config)['models'] as Record<
+      string,
+      { upgrade?: Record<string, unknown> }
+    >;
+    expect(rawModels['acme/current']?.upgrade).toEqual({
+      model: 'next',
+      migration_markdown: 'Use {model_to}',
+      retirement_at: '2030-01-01T00:00:00Z',
+    });
+
+    const current = config.models?.['acme/current'];
+    if (current === undefined) throw new Error('missing test model');
+    current.upgrade = { model: 'next', migrationMarkdown: 'Use {model_to}' };
+    const withoutRetirement = configToTomlData(config)['models'] as Record<
+      string,
+      { upgrade?: Record<string, unknown> }
+    >;
+    expect(withoutRetirement['acme/current']?.upgrade).toEqual({
+      model: 'next',
+      migration_markdown: 'Use {model_to}',
+    });
+
+    delete current.upgrade;
+    const withoutUpgrade = configToTomlData(config)['models'] as Record<
+      string,
+      { upgrade?: Record<string, unknown> }
+    >;
+    expect(withoutUpgrade['acme/current']).not.toHaveProperty('upgrade');
   });
 });

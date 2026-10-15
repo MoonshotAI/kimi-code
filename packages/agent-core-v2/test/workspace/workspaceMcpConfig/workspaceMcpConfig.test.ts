@@ -199,10 +199,10 @@ describe('WorkspaceMcpConfigService', () => {
   }, 20000);
 
   it('exposes the [mcp] section as tunables, resolved live', async () => {
-    const service = createService({ startupTimeoutMs: 1234, toolTimeoutMs: 5678 });
+    const service = createService({ startupTimeoutMs: 1234, toolTimeoutMs: 5678, defaultDeferred: true });
     await service.ready;
 
-    expect(service.tunables()).toEqual({ startupTimeoutMs: 1234, toolTimeoutMs: 5678 });
+    expect(service.tunables()).toEqual({ startupTimeoutMs: 1234, toolTimeoutMs: 5678, defaultDeferred: true });
   });
 
   it('publishes the diff when a watched config file changes', async () => {

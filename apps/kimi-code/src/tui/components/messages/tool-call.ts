@@ -469,7 +469,7 @@ export function extractKeyArgumentDetail(
     // Prefer the short `description` so the header preview never spills a
     // multi-line `prompt` into the TUI chrome.
     Agent: ['description', 'prompt'],
-    NotifyUser: ['message'],
+    NotifyUser: ['title', 'message'],
   };
 
   // Glob: concatenate multiple args into a single summary so the header
@@ -1738,7 +1738,8 @@ export class ToolCallComponent extends Container {
     if (toolCall.name === 'NotifyUser' && isExperimentalFlagEnabled('notify_user')) {
       // The update itself lives in the panel above the input box; the card
       // is the durable trace in the transcript, so the header carries the
-      // first line and ctrl+o shows the whole message.
+      // title (or the message's first line for updates without one) and
+      // ctrl+o shows the whole message.
       if (isTruncated) {
         // max_tokens cut the arguments short: the call never ran and the
         // panel entry was dropped, so the card must not read as in flight.

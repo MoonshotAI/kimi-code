@@ -23,6 +23,7 @@ export interface AgentProfileContext {
   readonly productName?: string;
   readonly replyStyleGuide?: string;
   readonly notifyUserActive?: boolean;
+  readonly todoListActive?: boolean;
   readonly [key: string]: unknown;
 }
 

@@ -149,23 +149,30 @@ export class AgentSkillService implements IAgentSkillService {
       void this.recordActivation(activation.origin);
     }
     const status = this.loop.snapshot();
-    const { id } = this.loop.submit({
-      message: {
-        role: 'user',
-        content: [...prepared.map((activation) => activation.part), ...input.input],
+    const steerable =
+      input.steerIfActive === true &&
+      status.state === 'running' &&
+      status.activePromptId !== undefined;
+    const { id } = this.loop.submit(
+      {
+        message: {
+          role: 'user',
+          content: [...prepared.map((activation) => activation.part), ...input.input],
+        },
+        meta: {
+          origin: {
+            kind: 'user',
+            skillActivations: prepared.map((activation) => activation.entry),
+            clientMetadata: input.clientMetadata,
+            attachments: input.attachments,
+          } as PromptOrigin,
+          tracked: true,
+        },
       },
-      meta: {
-        origin: {
-          kind: 'user',
-          skillActivations: prepared.map((activation) => activation.entry),
-          clientMetadata: input.clientMetadata,
-          attachments: input.attachments,
-        } as PromptOrigin,
-        tracked: true,
-      },
-    });
+      { steerIfActive: input.steerIfActive },
+    );
     const handle = this.loop.promptHandle(id)!;
-    if (status.state === 'running' || status.paused || status.queue.length > 0) {
+    if (!steerable && (status.state === 'running' || status.paused || status.queue.length > 0)) {
       return { prompt_id: id, created_at: handle.createdAt, state: 'queued' };
     }
     await Promise.race([handle.launched, handle.completion]);

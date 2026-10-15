@@ -61,8 +61,8 @@ function managedModelsResponse(): Response {
       data: [
         {
           id: 'kimi-for-coding',
-          context_length: 262144,
-          supports_reasoning: true,
+          limit: { context: 262144 },
+          reasoning: { type: 'both' },
         },
       ],
     }),
