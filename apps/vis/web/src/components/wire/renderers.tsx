@@ -352,10 +352,16 @@ export const WIRE_RENDERERS: RendererMap = {
     label: 'notify',
     headline: (r) => {
       const parts: string[] = [];
-      if (r.agentsMdFiles !== null) parts.push(`${Object.keys(r.agentsMdFiles).length} agents.md`);
-      if (r.skillsHash !== null) parts.push('skills');
-      if (r.subagentNames !== null) parts.push(`${r.subagentNames.length} profiles`);
-      if (r.modelPool !== null) parts.push(`${Object.keys(r.modelPool).length} pool keys`);
+      if (r.agentsMdFiles !== null && r.agentsMdFiles !== undefined) {
+        parts.push(`${Object.keys(r.agentsMdFiles).length} agents.md`);
+      }
+      if (r.skillsHash !== null && r.skillsHash !== undefined) parts.push('skills');
+      if (r.subagentNames !== null && r.subagentNames !== undefined) {
+        parts.push(`${r.subagentNames.length} profiles`);
+      }
+      if (r.modelPool !== null && r.modelPool !== undefined) {
+        parts.push(`${Object.keys(r.modelPool.models).length} pool models`);
+      }
       return {
         main: (
           <span className="truncate text-fg-0">
