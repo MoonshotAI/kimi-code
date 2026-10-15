@@ -36,6 +36,8 @@ interface LogState {
   ready: Promise<void>;
   retirement: Promise<void> | undefined;
   knownLength: number | undefined;
+  inFlightBytes: number;
+  rewriteInFlight: number | undefined;
   lockWarned: boolean;
   onError?: (error: unknown) => void;
 }
@@ -138,11 +140,14 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
     );
     const rewrite = priorSettled.then(async () => {
       try {
+        state.rewriteInFlight = encoded.length;
         await this.storage.write(scope, key, encoded, { atomic: true });
+        state.rewriteInFlight = undefined;
         state.storageFailure = undefined;
         state.knownLength = encoded.length;
         return true;
       } catch (error) {
+        state.rewriteInFlight = undefined;
         if (options?.onError !== undefined) {
           options.onError(error);
           return false;
@@ -187,7 +192,8 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
     if (known === undefined) return false;
     const disk = this.diskLength(scope, key);
     if (disk === undefined) return false;
-    return disk !== known;
+    if (state?.rewriteInFlight !== undefined && disk === state.rewriteInFlight) return false;
+    return disk !== known + (state?.inFlightBytes ?? 0);
   }
 
   bindSessionLock(scope: string, key: string, tryAcquire: () => boolean): IDisposable {
@@ -247,6 +253,8 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
         ready,
         retirement: undefined,
         knownLength: undefined,
+        inFlightBytes: 0,
+        rewriteInFlight: undefined,
         lockWarned: false,
       };
       this.logs.set(id, state);
@@ -357,11 +365,14 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
       const batch = state.pending.slice();
       const encoded = encodeBatch(batch);
       try {
+        state.inFlightBytes = encoded.length;
         await this.storage.append(scope, key, encoded, { durable: true });
+        state.inFlightBytes = 0;
         wrote = true;
         if (state.knownLength !== undefined) state.knownLength += encoded.length;
         if (wroteBox !== undefined) wroteBox.value = true;
       } catch (error) {
+        state.inFlightBytes = 0;
         const failure = (state.storageFailure ??= { error });
         throw failure.error;
       }

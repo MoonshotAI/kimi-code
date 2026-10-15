@@ -871,4 +871,63 @@ describe('AppendLogStore session lock integration', () => {
     binding.dispose();
     warn.mockRestore();
   });
+
+  it('does not report external modification while an own append is in flight', async () => {
+    const storage = new FileStorageService(homeDir);
+    const realAppend = storage.append.bind(storage);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    storage.append = async (scope, key, data, options) => {
+      await realAppend(scope, key, data, options);
+      await gate;
+    };
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    const gatedLog = ix.get(IAppendLogStore);
+
+    for await (const _ of gatedLog.read(SCOPE, KEY)) {
+      void _;
+    }
+    gatedLog.append<Rec>(SCOPE, KEY, { n: 1 });
+    const flushing = gatedLog.flush();
+    await vi.waitFor(() => {
+      expect(existsSync(join(homeDir, SCOPE, KEY))).toBe(true);
+    });
+    expect(gatedLog.externallyModified(SCOPE, KEY)).toBe(false);
+    release();
+    await flushing;
+    expect(gatedLog.externallyModified(SCOPE, KEY)).toBe(false);
+  });
+
+  it('does not report external modification while an own rewrite is in flight', async () => {
+    const storage = new FileStorageService(homeDir);
+    const realWrite = storage.write.bind(storage);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    storage.write = async (scope, key, data, options) => {
+      await realWrite(scope, key, data, options);
+      await gate;
+    };
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    const gatedLog = ix.get(IAppendLogStore);
+
+    for await (const _ of gatedLog.read(SCOPE, KEY)) {
+      void _;
+    }
+    const rewriting = gatedLog.rewrite<Rec>(SCOPE, KEY, [{ n: 1 }, { n: 2 }]);
+    await vi.waitFor(() => {
+      expect(existsSync(join(homeDir, SCOPE, KEY))).toBe(true);
+    });
+    expect(gatedLog.externallyModified(SCOPE, KEY)).toBe(false);
+    release();
+    await rewriting;
+    expect(gatedLog.externallyModified(SCOPE, KEY)).toBe(false);
+  });
 });
