@@ -81,6 +81,8 @@ export interface AppState {
   /** Mirrors the TUI config toggle; defaults to true when absent from older fixtures. */
   cacheExpiryHint?: boolean;
   disableFeedbackSurvey?: boolean;
+  /** Mirrors the TUI config toggle; defaults to true when absent from older fixtures. */
+  autoSessionTitle?: boolean;
   notifications: NotificationsConfig;
   upgrade: UpgradePreferences;
   /** Footer status line customization from tui.toml; absent means the default layout. */
