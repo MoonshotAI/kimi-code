@@ -121,7 +121,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
       const snapshot = this.snapshot;
       if (snapshot.agentsMdHash === hash || this.muted) return;
       const currentFiles = hashAgentsMdContents(contents);
-      this.recordSnapshot({ agentsMdHash: hash, agentsMdFiles: currentFiles });
+      await this.recordSnapshot({ agentsMdHash: hash, agentsMdFiles: currentFiles });
       const changes =
         snapshot.agentsMdFiles !== undefined
           ? classifyAgainstBeliefs(snapshot.agentsMdFiles, fresh.paths, currentFiles)
@@ -148,7 +148,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
       const hash = hashText(listing);
       const snapshot = this.snapshot;
       if (snapshot.skillsHash === hash || this.muted) return;
-      this.recordSnapshot({ skillsHash: hash });
+      await this.recordSnapshot({ skillsHash: hash });
       if (snapshot.skillsHash === undefined) {
         if (listing === '') {
           if (!profileData.systemPrompt.includes(SKILL_LISTING_MARKER)) return;
@@ -203,7 +203,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
         currentPool.defaultModel !== basePool.defaultModel
           ? { from: basePool.defaultModel, to: currentPool.defaultModel }
           : undefined;
-      this.recordSnapshot({ subagentNames: currentProfiles, modelPool: currentPool });
+      await this.recordSnapshot({ subagentNames: currentProfiles, modelPool: currentPool });
       if (
         profilesAdded.length +
           profilesRemoved.length +
@@ -236,7 +236,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
     try {
       const files = hashAgentsMdContents(splitAgentsMdFiles(seed.agentsMd, seed.agentsMdPaths));
       const pool = resolveSubagentModelPool(this.config);
-      this.recordSnapshot({
+      await this.recordSnapshot({
         agentsMdHash: undefined,
         agentsMdFiles: files,
         skillsHash: hashText(seed.skillsListing),
@@ -248,9 +248,9 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
     }
   }
 
-  private recordSnapshot(patch: Partial<ChangeNotifierSnapshotState>): void {
+  private async recordSnapshot(patch: Partial<ChangeNotifierSnapshotState>): Promise<void> {
     const next = { ...this.snapshot, ...patch };
-    void this.dispatcher.dispatch(
+    await this.dispatcher.dispatch(
       new ChangeNotifierSnapshotEvent({
         agentId: this.scopeContext.agentId,
         agentsMdHash: next.agentsMdHash ?? null,
