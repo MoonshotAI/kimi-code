@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 
 export function QuestionDialog() {
   const { pendingQuestion, respondQuestion } = useChatStore();
-  const [customInput, setCustomInput] = useState("");
+  const [customDrafts, setCustomDrafts] = useState<Record<number, string>>({});
   const [showCustom, setShowCustom] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(1);
   const [questionIndex, setQuestionIndex] = useState(0);
@@ -16,11 +16,12 @@ export function QuestionDialog() {
   const isLastQuestion = questionIndex + 1 >= questions.length;
   const currentAnswer = question ? answers[question.question] : undefined;
   const selectedValues = Array.isArray(currentAnswer) ? currentAnswer : typeof currentAnswer === "string" ? [currentAnswer] : [];
+  const customInput = customDrafts[questionIndex] ?? "";
 
   useEffect(() => {
     if (pendingQuestion) {
       setShowCustom(false);
-      setCustomInput("");
+      setCustomDrafts({});
       setSelectedIndex(1);
       setQuestionIndex(0);
       setAnswers({});
@@ -29,6 +30,10 @@ export function QuestionDialog() {
 
   if (!pendingQuestion || !question) return null;
 
+  const updateCustomInput = (value: string) => {
+    setCustomDrafts((currentDrafts) => ({ ...currentDrafts, [questionIndex]: value }));
+  };
+
   // Step through the questions one by one; submit all answers after the last.
   const handleAnswer = async (answer: string | string[]) => {
     const nextAnswers = { ...answers, [question.question]: answer };
@@ -36,7 +41,6 @@ export function QuestionDialog() {
       setAnswers(nextAnswers);
       setQuestionIndex(questionIndex + 1);
       setShowCustom(false);
-      setCustomInput("");
       setSelectedIndex(1);
     } else {
       await respondQuestion(
@@ -48,7 +52,6 @@ export function QuestionDialog() {
   const handleBack = () => {
     setQuestionIndex(questionIndex - 1);
     setShowCustom(false);
-    setCustomInput("");
     setSelectedIndex(1);
   };
 
@@ -74,11 +77,12 @@ export function QuestionDialog() {
     if (!value) return;
     if (isMultiSelect) {
       if (!selectedValues.includes(value)) await handleSelect(value);
-      setCustomInput("");
+      updateCustomInput("");
       setShowCustom(false);
       return;
     }
     await handleAnswer(value);
+    updateCustomInput("");
   };
 
   const options = question.options || [];
@@ -154,7 +158,9 @@ export function QuestionDialog() {
               <input
                 autoFocus
                 value={customInput}
-                onChange={(e) => setCustomInput(e.target.value)}
+                onChange={(e) => {
+                  updateCustomInput(e.target.value);
+                }}
                 onKeyDown={(e) => {
                   if (e.nativeEvent.isComposing) return;
                   if (e.key === "Enter") void handleCustomSubmit();

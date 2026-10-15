@@ -99,6 +99,31 @@ describe('QuestionDialog', () => {
     });
   });
 
+  it('preserves custom drafts per question when navigating backward and forward', () => {
+    renderQuestion([
+      makeQuestion('First question', ['Alpha']),
+      makeQuestion('Second question', ['Gamma']),
+    ]);
+
+    fireEvent.click(optionButton('Alpha'));
+    fireEvent.click(customResponseButton());
+    fireEvent.change(customInput(), { target: { value: 'Second draft' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    fireEvent.click(customResponseButton());
+    expect(customInput().value).toBe('');
+    fireEvent.change(customInput(), { target: { value: 'First draft' } });
+    fireEvent.keyDown(customInput(), { key: 'Escape' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    fireEvent.click(customResponseButton());
+    expect(customInput().value).toBe('Second draft');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    fireEvent.click(customResponseButton());
+    expect(customInput().value).toBe('First draft');
+  });
+
   it('replaces an earlier single-select answer after going back', async () => {
     renderQuestion([
       makeQuestion('First question', ['Alpha', 'Beta']),
@@ -250,13 +275,15 @@ describe('QuestionDialog', () => {
     });
   });
 
-  it('resets navigation and answers when a new question request arrives', async () => {
+  it('resets navigation, answers, and custom drafts when a new question request arrives', async () => {
     renderQuestion([
       makeQuestion('Old first', ['One']),
       makeQuestion('Old second', ['Two']),
     ], 'old-request');
     fireEvent.click(optionButton('One'));
     expect(screen.getByText('Old second')).toBeTruthy();
+    fireEvent.click(customResponseButton());
+    fireEvent.change(customInput(), { target: { value: 'Old draft' } });
 
     act(() => {
       setPendingQuestion([makeQuestion('New first', ['Three'])], 'new-request');
@@ -264,6 +291,9 @@ describe('QuestionDialog', () => {
     expect(screen.getByText('New first')).toBeTruthy();
     expect(screen.queryByText('Old second')).toBeNull();
     expect(screen.queryByText('Question 1 of 1')).toBeNull();
+    fireEvent.click(customResponseButton());
+    expect(customInput().value).toBe('');
+    fireEvent.keyDown(customInput(), { key: 'Escape' });
 
     fireEvent.click(optionButton('Three'));
     await waitFor(() => {
