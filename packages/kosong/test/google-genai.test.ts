@@ -1049,6 +1049,19 @@ describe('GoogleGenAIChatProvider', () => {
       expect(provider.thinkingEffort).toBe('high');
     });
 
+    it.each(['gemini-3-pro-preview', 'gemini-4-argon'])(
+      'thinkingEffort round-trips effort off for %s',
+      (modelName) => {
+        const provider = createProvider({ model: modelName }).withThinking('off');
+        expect(provider.thinkingEffort).toBe('off');
+      },
+    );
+
+    it('thinkingEffort reflects level for gemini-4', () => {
+      const provider = createProvider({ model: 'gemini-4-argon' }).withThinking('low');
+      expect(provider.thinkingEffort).toBe('low');
+    });
+
     it('withThinking returns a new instance', () => {
       const provider = createProvider();
       const newProvider = provider.withThinking('high');
