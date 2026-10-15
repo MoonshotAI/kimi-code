@@ -774,6 +774,23 @@ describe('notifySkillChanges', () => {
     expect(h.reminders).toHaveLength(1);
     expect(h.reminders[0]?.content).toContain('skill-a');
   });
+
+  it('gates the skill reminder with the persisted binding policy', async () => {
+    const profileData = makeProfileData({ profileName: 'default', activeToolNames: ['Read'] });
+    const h = createHarness({ profile: profileData });
+    h.skillListing.value = LISTING_A;
+    await h.notifier.notifySkillChanges();
+    expect(h.reminders).toHaveLength(0);
+
+    (profileData as { activeToolNames?: readonly string[] }).activeToolNames = ['Skill'];
+    await h.notifier.notifySkillChanges();
+    expect(h.reminders).toHaveLength(0);
+
+    h.skillListing.value = LISTING_AB;
+    await h.notifier.notifySkillChanges();
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.variant).toBe('skills_change');
+  });
 });
 
 describe('notifySubagentChanges', () => {
@@ -1094,10 +1111,9 @@ describe('notifySubagentChanges', () => {
 
   it('filters reminders through the bound explicit subagent allowlist', async () => {
     const h = createHarness({
-      profile: makeProfileData({ profileName: 'custom-main' }),
+      profile: makeProfileData({ profileName: 'custom-main', subagents: ['coder'] }),
     });
     h.profileNames.value = ['default', 'custom-main'];
-    h.profileMeta.value = { 'custom-main': { subagents: ['coder'] } };
     await h.notifier.notifySubagentChanges();
 
     h.profileNames.value = ['default', 'custom-main', 'coder', 'deploy'];

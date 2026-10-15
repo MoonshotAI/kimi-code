@@ -12,7 +12,7 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
@@ -163,21 +163,22 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
           return;
         }
       }
-      if (!this.toolActiveForBoundProfile(profileData.profileName, 'Skill')) return;
+      if (!this.toolActiveForBoundProfile(profileData, 'Skill')) return;
       this.reminder.notify(skillsChangeText(listing), { variant: SKILLS_CHANGE_VARIANT });
     } catch (error) {
       this.log.warn('skill change notification failed', { error });
     }
   }
 
-  private toolActiveForBoundProfile(profileName: string | undefined, name: string): boolean {
-    if (profileName === undefined) return false;
-    const profile = this.agentCatalog.get(profileName);
-    if (profile === undefined) return false;
+  private toolActiveForBoundProfile(profileData: ProfileData, name: string): boolean {
+    if (profileData.profileName === undefined) return false;
     return isToolActiveComposed(
       {
         workspaceDisabledTools: this.toolPolicyGate.disabledTools,
-        profile,
+        profile: {
+          tools: profileData.activeToolNames,
+          disallowedTools: profileData.disallowedTools,
+        },
         global: this.config.get<ToolsConfig>(TOOLS_SECTION),
         sessionDisabledTools: this.sessionToolPolicy.disabledTools(),
       },
@@ -185,9 +186,11 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
     );
   }
 
-  private boundExplicitAllowlist(profileName: string | undefined): readonly string[] | undefined {
-    if (profileName === undefined || profileName === DEFAULT_AGENT_PROFILE_NAME) return undefined;
-    const declared = this.agentCatalog.get(profileName)?.subagents;
+  private boundExplicitAllowlist(profileData: ProfileData): readonly string[] | undefined {
+    if (profileData.profileName === undefined || profileData.profileName === DEFAULT_AGENT_PROFILE_NAME) {
+      return undefined;
+    }
+    const declared = profileData.subagents;
     if (declared === undefined || (declared.length === 1 && declared[0] === '*')) return undefined;
     return declared;
   }
@@ -237,7 +240,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
         currentPool.defaultModel !== basePool.defaultModel
           ? { from: basePool.defaultModel, to: currentPool.defaultModel }
           : undefined;
-      const allowlist = this.boundExplicitAllowlist(profileData.profileName);
+      const allowlist = this.boundExplicitAllowlist(profileData);
       const visibleAdded =
         allowlist === undefined
           ? profilesAdded
@@ -259,8 +262,8 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
         return;
       }
       if (
-        !this.toolActiveForBoundProfile(profileData.profileName, 'Agent') &&
-        !this.toolActiveForBoundProfile(profileData.profileName, 'AgentSwarm')
+        !this.toolActiveForBoundProfile(profileData, 'Agent') &&
+        !this.toolActiveForBoundProfile(profileData, 'AgentSwarm')
       ) {
         return;
       }
