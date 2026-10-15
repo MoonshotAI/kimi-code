@@ -2098,6 +2098,53 @@ describe('Agent tool execution contract', () => {
     expect(execution.matchesRule?.('!explore')).toBe(true);
   });
 
+  it('keeps the preflight alias identity when a matching profile appears after freezing', async () => {
+    const coder = normalizeAgentProfile({
+      name: 'coder',
+      description: 'Coder',
+      systemPrompt: () => 'coder',
+    });
+    const profiles: AgentProfile[] = [coder];
+    const catalog: ISessionAgentProfileCatalog = {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChange: Event.None as ISessionAgentProfileCatalog['onDidChange'],
+      get: (name) => profiles.find((profile) => profile.name === name),
+      getDefault: () => coder,
+      list: () => [...profiles],
+      inspect: () => undefined,
+      load: async () => {},
+      reload: async () => {},
+    };
+    const context = createAgentToolContext(
+      createAgentLifecycleStub(),
+      sessionService(ISessionAgentProfileCatalog, catalog),
+    );
+    const tool = agentTool(context);
+    const original = {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      subagent_type: 'General',
+    };
+    const resolved = tool.resolveArgs?.(original) as SubagentToolInput;
+    expect(resolved).toMatchObject({ subagent_type: 'coder' });
+    profiles.push(
+      normalizeAgentProfile({
+        name: 'General',
+        description: 'General',
+        systemPrompt: () => 'general',
+      }),
+    );
+
+    const execution = await tool.resolveExecution(resolved, original);
+
+    if (execution.isError === true) throw new Error('expected runnable execution');
+    expect(execution.description).toBe('Launching coder agent: Find cause');
+    expect(execution.matchesRule?.('coder')).toBe(true);
+    expect(execution.matchesRule?.('general')).toBe(true);
+    expect(execution.matchesRule?.('General')).toBe(false);
+  });
+
   it('rejects the call when resolveArgs throws instead of bypassing hook policy', async () => {
     const lifecycle = createAgentLifecycleStub({
       createAgentIds: ['agent-child'],
@@ -4684,10 +4731,11 @@ describe('Agent tools', () => {
 
   describe('Agent legacy alias hook visibility', () => {
     let resolved: Array<[string, string, string]>;
+    let lifecycle: AgentLifecycleStub;
 
     beforeEach(async () => {
       resolved = [];
-      const lifecycle = createAgentLifecycleStub({
+      lifecycle = createAgentLifecycleStub({
         createAgentIds: ['agent-child'],
         runCompletion: async () => ({ summary: 'child result' }),
       });
@@ -4788,6 +4836,36 @@ describe('Agent tools', () => {
       );
       expect(persisted?.args).toMatchObject({
         event: { name: 'Agent', args: { subagent_type: 'General' } },
+      });
+    });
+
+    it('persists the original alias spelling for a call skipped after a batch stopper', async () => {
+      await ctx.rpc.createGoal({ objective: 'Ship the alias fix' });
+      ctx.mockNextResponse(
+        { type: 'text', text: 'Completing the goal and delegating.' },
+        {
+          type: 'function',
+          id: 'call_update_goal',
+          name: 'UpdateGoal',
+          arguments: JSON.stringify({ status: 'complete' }),
+        },
+        aliasAgentCall(),
+      );
+      ctx.mockNextResponse({ type: 'text', text: 'Done.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Complete and delegate' }] });
+
+      await ctx.untilTurnEnd();
+
+      expect(lifecycle.create).not.toHaveBeenCalled();
+      const persisted = ctx.allEvents.find(
+        (event) =>
+          event.type === '[wire]' &&
+          event.event === 'context.append_loop_event' &&
+          (event.args as { event?: { type?: string; name?: string } } | undefined)?.event?.type === 'tool.call' &&
+          (event.args as { event?: { name?: string } } | undefined)?.event?.name === 'Agent',
+      );
+      expect(persisted?.args).toMatchObject({
+        event: { name: 'Agent', args: { subagent_type: 'general' } },
       });
     });
   });

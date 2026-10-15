@@ -394,7 +394,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         error instanceof PathSecurityError
           ? error.message
           : `Tool "${call.toolName}" failed to resolve execution: ${errorMessage(error)}`;
-      return settleError(call.args, output, 'resolution-failed');
+      return settleError(call.originalArgs ?? call.args, output, 'resolution-failed');
     }
 
     const displayFields = toolCallDisplayFieldsFromExecution(execution);
@@ -450,9 +450,10 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     options: ToolExecutorExecuteOptions,
   ): { task: ToolExecutionTask } {
     const output = 'Tool skipped because a previous tool call stopped the turn.';
-    this.dispatchToolCall(call, call.args, options);
+    const historyArgs = call.kind === 'runnable' ? (call.originalArgs ?? call.args) : call.args;
+    this.dispatchToolCall(call, historyArgs, options);
     return {
-      task: makeResolvedTask(makeErrorToolResult(call, call.args, output), 'skipped'),
+      task: makeResolvedTask(makeErrorToolResult(call, historyArgs, output), 'skipped'),
     };
   }
 

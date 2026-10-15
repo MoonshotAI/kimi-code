@@ -30,6 +30,20 @@ export function legacyAliasIdentity(
   return LEGACY_SUBAGENT_TYPE_ALIASES.has(lowered) ? lowered : requested;
 }
 
+export function legacyAliasIdentityFromResolution(
+  requested: string | undefined,
+  resolved: string | undefined,
+): string | undefined {
+  if (requested === undefined) {
+    return undefined;
+  }
+  const lowered = requested.toLowerCase();
+  if (LEGACY_SUBAGENT_TYPE_ALIASES.has(lowered) && resolved === DEFAULT_PROFILE_NAME) {
+    return lowered;
+  }
+  return requested;
+}
+
 export function normalizeLegacySubagentTypeArgs<T extends { readonly subagent_type?: string }>(
   args: T,
   catalog: { get(name: string): unknown },

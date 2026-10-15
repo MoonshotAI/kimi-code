@@ -67,6 +67,7 @@ import {
   FORK_EXPERIMENTAL_UNAVAILABLE,
   forkIncompatibility,
   legacyAliasIdentity,
+  legacyAliasIdentityFromResolution,
   normalizeLegacySubagentType,
   normalizeLegacySubagentTypeArgs,
 } from '#/session/subagent/spawn';
@@ -326,7 +327,12 @@ export class SubagentTool implements ISubagentTool {
         (args.fork === true
           ? (this.profile.data().profileName ?? DEFAULT_PROFILE_NAME)
           : DEFAULT_PROFILE_NAME));
-    const ruleSubjectRaw = legacyAliasIdentity(requestedProfileName, this.catalog);
+    const ruleSubjectRaw = frozenAtPreflight
+      ? legacyAliasIdentityFromResolution(
+          requestedProfileName,
+          args.subagent_type?.length ? args.subagent_type : undefined,
+        )
+      : legacyAliasIdentity(requestedProfileName, this.catalog);
     const ruleSubjects =
       ruleSubjectRaw !== undefined && ruleSubjectRaw !== profileNameForDisplay
         ? [profileNameForDisplay, ruleSubjectRaw]
