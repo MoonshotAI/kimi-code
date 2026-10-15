@@ -341,7 +341,15 @@ export async function runV2Print(
         releaseQuiescence = await quiesceSessionAgents(reloaded.session, reloaded.agent);
       };
       flushWires = () => flushSessionWires(reloaded.session, reloaded.agent);
-      await runTurn(reloaded.session, reloaded.agent);
+      try {
+        await runTurn(reloaded.session, reloaded.agent);
+      } catch (retryError) {
+        if (isError2(retryError) && retryError.code === ErrorCodes.SESSION_OCCUPIED) {
+          reportSessionOccupied(retryError, reloaded.session.id, outputFormat, stdout, stderr);
+          return;
+        }
+        throw retryError;
+      }
     }
     writeResumeHint(resolved.session.id, outputFormat, stdout, stderr);
 
