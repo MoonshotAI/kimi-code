@@ -1049,13 +1049,15 @@ describe('GoogleGenAIChatProvider', () => {
       expect(provider.thinkingEffort).toBe('high');
     });
 
-    it.each(['gemini-3-pro-preview', 'gemini-4-argon'])(
-      'thinkingEffort round-trips effort off for %s',
-      (modelName) => {
-        const provider = createProvider({ model: modelName }).withThinking('off');
-        expect(provider.thinkingEffort).toBe('off');
-      },
-    );
+    it('thinkingEffort round-trips effort off for gemini-3', () => {
+      const provider = createProvider({ model: 'gemini-3-pro-preview' }).withThinking('off');
+      expect(provider.thinkingEffort).toBe('off');
+    });
+
+    it('thinkingEffort reports low for gemini-4 effort off (Gemini 4 has no true off)', () => {
+      const provider = createProvider({ model: 'gemini-4-argon' }).withThinking('off');
+      expect(provider.thinkingEffort).toBe('low');
+    });
 
     it('thinkingEffort reflects level for gemini-4', () => {
       const provider = createProvider({ model: 'gemini-4-argon' }).withThinking('low');
