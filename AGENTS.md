@@ -73,6 +73,11 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 - Project-map entries stay at 1–2 sentences; deep package docs live in the package's own `AGENTS.md`.
 - Keep instruction updates focused and supported by code facts.
 
+## Release Workflow
+
+- `main` accumulates changesets; `release/*` maintains `ci: release packages` PRs. Merging the matching version PR authorizes publication after its merge-commit CI succeeds. Ordinary pushes do not publish.
+- npm publishing and native artifacts retain the existing Changesets flow. CDN upload and routing remain separately approved operations. See `.changeset/README.md` for migration and main synchronization.
+
 ## Workflow Requirements
 
 - Prefer `rg` / `rg --files` when reading code.
