@@ -95,7 +95,7 @@ base 更新后，如果 worker 空闲且 worktree 干净，Tower 可以在对应
 | --- | --- | --- |
 | `/tower off` | 退出当前会话的 Tower 模式，不停止已在后台运行的 Agent，也不清理文件 | `.tower/`、mission branch 和 worktree |
 | `/tower teardown` | 让 Agent 移除符合条件的 mission worktree 并报告结果；有未提交改动或仍有 Agent 运行的 worktree 不会被删除 | mission branch 和 `.tower/comms/` 审计记录；Tower 模式保持开启 |
-| 退出 Kimi Code 或关闭会话 | 默认停止后台任务；如有需要，可修改 [`background.keep_alive_on_exit`](../configuration/config-files.md#background) | 磁盘上的 `.tower/` 状态、branch 和 worktree |
+| 退出 Kimi Code 或关闭会话 | 停止 Tower worker 和 reviewer，之后需要重新派发 | 磁盘上的 `.tower/` 状态、branch 和 worktree |
 
 kimi-code 重启后，如果改由另一个会话接管当前项目，原会话的 roster 条目会失效，但 mission 和 worktree 会保留；新的主控需要重新派发 worker。一个项目不能同时存在多个 Tower 主控。
 

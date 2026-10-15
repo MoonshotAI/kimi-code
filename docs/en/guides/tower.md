@@ -95,7 +95,7 @@ These actions clean up different things:
 | --- | --- | --- |
 | `/tower off` | Exits Tower mode in the current session without stopping background agents or cleaning up files | `.tower/`, mission branches, and worktrees |
 | `/tower teardown` | Asks the agent to remove eligible mission worktrees and report the result; worktrees with uncommitted changes or running agents are not removed | Mission branches and `.tower/comms/` audit records; Tower mode stays on |
-| Exit Kimi Code or close the session | Stops background tasks by default; change [`background.keep_alive_on_exit`](../configuration/config-files.md#background) if needed | On-disk `.tower/` state, branches, and worktrees |
+| Exit Kimi Code or close the session | Stops Tower workers and reviewers; they must be spawned again later | On-disk `.tower/` state, branches, and worktrees |
 
 After Kimi Code restarts, if another session takes over the current project, the previous session's roster entries become inactive, but missions and worktrees are preserved. The new coordinator must spawn workers again. A project cannot have multiple tower coordinators at the same time.
 
