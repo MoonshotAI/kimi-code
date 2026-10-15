@@ -555,6 +555,7 @@ describe('FullCompaction', () => {
         ],
         { cwd: dir },
       ),
+      cwd: dir,
     });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
