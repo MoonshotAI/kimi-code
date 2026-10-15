@@ -1601,6 +1601,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       }
       let previousSubagentNames: readonly string[] | undefined;
       let previousModelPool: SubagentModelPoolSnapshot | null | undefined;
+      let staleNotifier: IAgentChangeNotifierService | undefined;
       if (live !== undefined) {
         const main = live.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
         if (main !== undefined) {
@@ -1613,13 +1614,19 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
             pool === undefined
               ? null
               : { defaultModel: pool.defaultModel, models: { ...pool.models } };
-          main.accessor.get(IAgentChangeNotifierService).mute();
+          staleNotifier = main.accessor.get(IAgentChangeNotifierService);
+          staleNotifier.mute();
         }
       }
       await this.configReady;
-      await this.klient.global.config.reload();
-      await this.klient.global.plugins.reload();
-      await this.refreshPluginSessionStarts(sessionId);
+      try {
+        await this.klient.global.config.reload();
+        await this.klient.global.plugins.reload();
+        await this.refreshPluginSessionStarts(sessionId);
+      } catch (error) {
+        staleNotifier?.unmute();
+        throw error;
+      }
       if (live !== undefined) {
         await closeSessionById(this.engineAccessor, sessionId);
       }

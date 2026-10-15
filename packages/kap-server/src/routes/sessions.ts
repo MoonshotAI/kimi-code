@@ -1040,6 +1040,7 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
   }
   let previousSubagentNames: readonly string[] | undefined;
   let previousModelPool: SubagentModelPoolSnapshot | null | undefined;
+  let staleNotifier: IAgentChangeNotifierService | undefined;
   if (live !== undefined) {
     const main = live.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
     if (main !== undefined) {
@@ -1052,12 +1053,18 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
         pool === undefined
           ? null
           : { defaultModel: pool.defaultModel, models: { ...pool.models } };
-      main.accessor.get(IAgentChangeNotifierService).mute();
+      staleNotifier = main.accessor.get(IAgentChangeNotifierService);
+      staleNotifier.mute();
     }
   }
-  await core.accessor.get(IConfigService).reload();
-  await core.accessor.get(IPluginService).reloadPlugins();
-  await refreshWorkspaceCatalogs(core, id);
+  try {
+    await core.accessor.get(IConfigService).reload();
+    await core.accessor.get(IPluginService).reloadPlugins();
+    await refreshWorkspaceCatalogs(core, id);
+  } catch (error) {
+    staleNotifier?.unmute();
+    throw error;
+  }
   if (live !== undefined) {
     await closeSessionById(core.accessor, id);
   }

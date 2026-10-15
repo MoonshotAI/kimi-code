@@ -891,6 +891,28 @@ describe('mute', () => {
     expect(h.reminders).toHaveLength(0);
   });
 
+  it('resumes notifications after unmute', async () => {
+    const h = createHarness({
+      profile: makeProfileData({
+        profileName: 'default',
+        systemPrompt: `header\n\n${LISTING_A}\n\nfooter`,
+      }),
+    });
+    h.skillListing.value = LISTING_A;
+    await h.notifier.notifySkillChanges();
+    expect(h.reminders).toHaveLength(0);
+
+    h.notifier.mute();
+    h.skillListing.value = LISTING_AB;
+    await h.notifier.notifySkillChanges();
+    expect(h.reminders).toHaveLength(0);
+
+    h.notifier.unmute();
+    await h.notifier.notifySkillChanges();
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.variant).toBe('skills_change');
+  });
+
   it('suppresses an in-flight notification that started before mute', async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {

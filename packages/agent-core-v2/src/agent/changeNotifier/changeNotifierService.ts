@@ -94,6 +94,10 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
     this.muted = true;
   }
 
+  unmute(): void {
+    this.muted = false;
+  }
+
   async notifyAgentsMdChanges(): Promise<void> {
     if (this.scopeContext.agentId !== MAIN_AGENT_ID || this.muted) return;
     try {
