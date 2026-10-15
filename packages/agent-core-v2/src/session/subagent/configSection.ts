@@ -395,6 +395,7 @@ export function injectSubagentTypeEnum(
   parameters: Record<string, unknown>,
   subagentTypes: readonly string[],
 ): Record<string, unknown> {
+  if (subagentTypes.length === 0) return parameters;
   const properties = parameters['properties'];
   if (!isPlainObject(properties) || !('subagent_type' in properties)) return parameters;
   const subagentType = properties['subagent_type'];

@@ -8,6 +8,7 @@ import { type IAgentScopeHandle } from '#/_base/di/scope';
 import { Event, type Event as KimiEvent } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { toInputJsonSchema } from '#/tool/input-schema';
+import { compileToolArgsValidator, validateToolArgs } from '#/tool/args-validator';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { createHooks } from '#/hooks';
 import type { ToolCall } from '#human/llm/message';
@@ -903,6 +904,34 @@ describe('Agent tool description', () => {
     const second = ctx.toolsData().find((entry) => entry.name === 'Agent');
 
     expect(first!.parameters).toBe(second!.parameters);
+  });
+
+  it('omits the subagent_type enum when no subagent types are dispatchable', () => {
+    ctx = createTestAgent();
+    ctx.get(IAgentProfileService).applyBindingSnapshot({
+      modelAlias: 'mock-model',
+      profileName: 'orchestrator',
+      thinkingLevel: 'off',
+      systemPrompt: 'persisted prompt',
+      subagents: [],
+    });
+
+    const tool = ctx.toolsData().find((entry) => entry.name === 'Agent');
+    const properties = (
+      tool!.parameters as { properties: Record<string, { enum?: string[] }> }
+    ).properties;
+
+    expect(properties['subagent_type']).toBeDefined();
+    expect(properties['subagent_type']).not.toHaveProperty('enum');
+
+    const validator = compileToolArgsValidator(tool!.parameters!);
+    expect(
+      validateToolArgs(validator, {
+        prompt: 'Continue',
+        description: 'Continue work',
+        resume: 'agent-existing',
+      }),
+    ).toBeNull();
   });
 
   it('does not offer the default agent type to the builtin default caller', () => {

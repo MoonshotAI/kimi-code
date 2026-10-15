@@ -907,12 +907,13 @@ describe('AgentMediaToolsRegistrar', () => {
     const baseRuntime = runtimeFor(createTestFs(files));
     const runtimeChanges = new Emitter<void>();
     let runtimeAvailable = true;
+    let inspectFails = false;
     const runtime: IAgentRuntimeService = {
       _serviceBrand: undefined,
       onDidChange: runtimeChanges.event,
       isAvailable: (required = []) => runtimeAvailable && baseRuntime.isAvailable(required),
       inspect: () => {
-        if (!runtimeAvailable) throw new Error('runtime unavailable');
+        if (!runtimeAvailable || inspectFails) throw new Error('runtime unavailable');
         return baseRuntime.inspect();
       },
       acquire: (required = []) => baseRuntime.acquire(required),
@@ -946,13 +947,17 @@ describe('AgentMediaToolsRegistrar', () => {
       runtimeAvailable = available;
       runtimeChanges.fire();
     };
+    const failInspect = (fails: boolean): void => {
+      inspectFails = fails;
+      runtimeChanges.fire();
+    };
     const breakAlias = (alias: string): void => {
       brokenAliases.add(alias);
     };
     const healAlias = (alias: string): void => {
       brokenAliases.delete(alias);
     };
-    return { registry, registrar, bindModel, setRuntimeAvailable, breakAlias, healAlias };
+    return { registry, registrar, bindModel, setRuntimeAvailable, failInspect, breakAlias, healAlias };
   }
 
   it('registers nothing until a media-capable model binds, then registers ReadMediaFile', () => {
@@ -1093,6 +1098,56 @@ describe('AgentMediaToolsRegistrar', () => {
     } finally {
       resetUnexpectedErrorHandler();
     }
+  });
+
+  it('drops the registration when capabilities are unknown and the runtime is unavailable without an attachment store', () => {
+    const { registry, bindModel, setRuntimeAvailable } = createRegistrarHarness();
+    bindModel('vision-model', capabilities({ image_in: true, video_in: false }));
+    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+
+    bindModel('vision-model', UNKNOWN_CAPABILITY);
+    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+
+    setRuntimeAvailable(false);
+    expect(registry.resolve('ReadMediaFile')).toBeUndefined();
+  });
+
+  it('keeps the registration when capabilities are unknown and the runtime is unavailable but an attachment store exists', () => {
+    const storage = new InMemoryStorageService();
+    const store = new SessionMediaStoreService(makeSessionContext({
+      sessionId: 'session', workspaceId: 'workspace', cwd: '/workspace',
+      sessionDir: '/session', sessionScope: 'session',
+    }), storage, new JsonAtomicDocumentStore(storage));
+    const { registry, bindModel, setRuntimeAvailable } = createRegistrarHarness({}, {}, store);
+    bindModel('vision-model', capabilities({ image_in: true, video_in: false }));
+    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+
+    bindModel('vision-model', UNKNOWN_CAPABILITY);
+    setRuntimeAvailable(false);
+    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+  });
+
+  it('keeps the registration when runtime inspect fails but an attachment store exists', () => {
+    const storage = new InMemoryStorageService();
+    const store = new SessionMediaStoreService(makeSessionContext({
+      sessionId: 'session', workspaceId: 'workspace', cwd: '/workspace',
+      sessionDir: '/session', sessionScope: 'session',
+    }), storage, new JsonAtomicDocumentStore(storage));
+    const { registry, bindModel, failInspect } = createRegistrarHarness({}, {}, store);
+    bindModel('vision-model', capabilities({ image_in: true, video_in: false }));
+    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+
+    failInspect(true);
+    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+  });
+
+  it('drops the registration when runtime inspect fails without an attachment store', () => {
+    const { registry, bindModel, failInspect } = createRegistrarHarness();
+    bindModel('vision-model', capabilities({ image_in: true, video_in: false }));
+    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+
+    failInspect(true);
+    expect(registry.resolve('ReadMediaFile')).toBeUndefined();
   });
 
   it('unregisters on dispose', () => {

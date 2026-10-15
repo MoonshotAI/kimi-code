@@ -75,14 +75,38 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
   private refresh(): void {
     const capabilities = this.profile.getModelCapabilities();
     const modelAlias = this.profile.getModel();
-    if (isUnknownCapability(capabilities) && this.registration !== undefined) {
+    const hasRuntimeFs = this.runtime.isAvailable(['fs']);
+    if (
+      isUnknownCapability(capabilities) &&
+      this.registration !== undefined &&
+      (hasRuntimeFs || this.attachmentStore !== undefined)
+    ) {
       this.log.debug('media tools registration kept: bound model capabilities are unknown', {
         model: modelAlias,
       });
       return;
     }
-    const hasRuntimeFs = this.runtime.isAvailable(['fs']);
-    if (!hasRuntimeFs && this.attachmentStore === undefined) {
+    let inspected: Runtime | undefined;
+    let runtimeUsable = hasRuntimeFs;
+    if (hasRuntimeFs) {
+      try {
+        inspected = this.runtime.inspect();
+      } catch (error) {
+        runtimeUsable = false;
+        if (this.attachmentStore !== undefined && this.registration !== undefined) {
+          this.log.debug('media tools registration kept: runtime inspect failed', {
+            model: modelAlias,
+            error,
+          });
+          return;
+        }
+        this.log.debug('media tools: runtime inspect failed; treating the runtime as unavailable', {
+          model: modelAlias,
+          error,
+        });
+      }
+    }
+    if (!runtimeUsable && this.attachmentStore === undefined) {
       const key = [
         modelAlias,
         String(capabilities.image_in),
@@ -99,18 +123,6 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
       this.registration?.dispose();
       this.registration = undefined;
       return;
-    }
-    let inspected: Runtime | undefined;
-    if (hasRuntimeFs) {
-      try {
-        inspected = this.runtime.inspect();
-      } catch (error) {
-        this.log.debug('media tools registration kept: runtime inspect failed', {
-          model: modelAlias,
-          error,
-        });
-        return;
-      }
     }
     const identityKey = inspected === undefined ? 'session-attachments' : [
       inspected.identity.workspaceId,
