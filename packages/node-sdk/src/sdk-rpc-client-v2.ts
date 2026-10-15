@@ -1622,6 +1622,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       try {
         await this.klient.global.config.reload();
         await this.klient.global.plugins.reload();
+        await this.reloadWorkspaceCatalogs();
         await this.refreshPluginSessionStarts(sessionId);
       } catch (error) {
         staleNotifier?.unmute();
@@ -1645,13 +1646,21 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     });
   }
 
-  private async refreshPluginSessionStarts(excludedSessionId?: string): Promise<void> {
+  private async reloadWorkspaceCatalogs(): Promise<void> {
     const workspaces = this.engineAccessor.get(IWorkspaceInstanceManager);
     await Promise.all(
       workspaces.list().map(async (handler) => {
         await handler.program.skills.reload();
         await handler.program.agentProfiles.reload().catch(() => undefined);
         await handler.program.userAgentProfiles.reload().catch(() => undefined);
+      }),
+    );
+  }
+
+  private async refreshPluginSessionStarts(excludedSessionId?: string): Promise<void> {
+    const workspaces = this.engineAccessor.get(IWorkspaceInstanceManager);
+    await Promise.all(
+      workspaces.list().map(async (handler) => {
         const sessions = this.engineAccessor
           .get(ISessionManager)
           .list()
