@@ -19,6 +19,17 @@ export function normalizeLegacySubagentType(
     : requested;
 }
 
+export function legacyAliasIdentity(
+  requested: string | undefined,
+  catalog: { get(name: string): unknown },
+): string | undefined {
+  if (requested === undefined || catalog.get(requested) !== undefined) {
+    return requested;
+  }
+  const lowered = requested.toLowerCase();
+  return LEGACY_SUBAGENT_TYPE_ALIASES.has(lowered) ? lowered : requested;
+}
+
 export function normalizeLegacySubagentTypeArgs<T extends { readonly subagent_type?: string }>(
   args: T,
   catalog: { get(name: string): unknown },

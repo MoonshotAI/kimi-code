@@ -66,6 +66,7 @@ import { ISessionSubagentService } from '#/session/subagent/subagent';
 import {
   FORK_EXPERIMENTAL_UNAVAILABLE,
   forkIncompatibility,
+  legacyAliasIdentity,
   normalizeLegacySubagentType,
   normalizeLegacySubagentTypeArgs,
 } from '#/session/subagent/spawn';
@@ -325,9 +326,10 @@ export class SubagentTool implements ISubagentTool {
         (args.fork === true
           ? (this.profile.data().profileName ?? DEFAULT_PROFILE_NAME)
           : DEFAULT_PROFILE_NAME));
+    const ruleSubjectRaw = legacyAliasIdentity(requestedProfileName, this.catalog);
     const ruleSubjects =
-      requestedProfileName !== undefined && requestedProfileName !== profileNameForDisplay
-        ? [profileNameForDisplay, requestedProfileName]
+      ruleSubjectRaw !== undefined && ruleSubjectRaw !== profileNameForDisplay
+        ? [profileNameForDisplay, ruleSubjectRaw]
         : [profileNameForDisplay];
     const prefix = args.run_in_background === true ? 'Launching background' : 'Launching';
     return {

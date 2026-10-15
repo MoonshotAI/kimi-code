@@ -2006,6 +2006,78 @@ describe('Agent tool execution contract', () => {
     ).toMatchObject({ subagent_type: 'General' });
   });
 
+  it('matches approval rules against the lowercase alias identity for mixed-case requests', async () => {
+    const context = createAgentToolContext();
+
+    const execution = await agentTool(context).resolveExecution({
+      prompt: 'Investigate',
+      description: 'Find cause',
+      subagent_type: 'General',
+    });
+
+    if (execution.isError === true) throw new Error('expected runnable execution');
+    expect(execution.description).toBe('Launching coder agent: Find cause');
+    expect(execution.matchesRule?.('coder')).toBe(true);
+    expect(execution.matchesRule?.('general')).toBe(true);
+    expect(execution.matchesRule?.('General')).toBe(false);
+  });
+
+  it('matches the lowercase general-purpose identity for an uppercase request', async () => {
+    const context = createAgentToolContext();
+
+    const execution = await agentTool(context).resolveExecution({
+      prompt: 'Investigate',
+      description: 'Find cause',
+      subagent_type: 'GENERAL-PURPOSE',
+    });
+
+    if (execution.isError === true) throw new Error('expected runnable execution');
+    expect(execution.matchesRule?.('coder')).toBe(true);
+    expect(execution.matchesRule?.('general-purpose')).toBe(true);
+    expect(execution.matchesRule?.('GENERAL-PURPOSE')).toBe(false);
+  });
+
+  it('matches approval rules only against an exact any-case profile when it exists', async () => {
+    const general = normalizeAgentProfile({
+      name: 'General',
+      description: 'General',
+      systemPrompt: () => 'general',
+    });
+    const coder = normalizeAgentProfile({
+      name: 'coder',
+      description: 'Coder',
+      systemPrompt: () => 'coder',
+    });
+    const profiles: AgentProfile[] = [general, coder];
+    const catalog: ISessionAgentProfileCatalog = {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChange: Event.None as ISessionAgentProfileCatalog['onDidChange'],
+      get: (name) => profiles.find((profile) => profile.name === name),
+      getDefault: () => coder,
+      list: () => [...profiles],
+      inspect: () => undefined,
+      load: async () => {},
+      reload: async () => {},
+    };
+    const context = createAgentToolContext(
+      createAgentLifecycleStub(),
+      sessionService(ISessionAgentProfileCatalog, catalog),
+    );
+
+    const execution = await agentTool(context).resolveExecution({
+      prompt: 'Investigate',
+      description: 'Find cause',
+      subagent_type: 'General',
+    });
+
+    if (execution.isError === true) throw new Error('expected runnable execution');
+    expect(execution.description).toBe('Launching General agent: Find cause');
+    expect(execution.matchesRule?.('General')).toBe(true);
+    expect(execution.matchesRule?.('coder')).toBe(false);
+    expect(execution.matchesRule?.('general')).toBe(false);
+  });
+
   it('agrees with the direct branch when invoked through the preflight two-arg form', async () => {
     const context = createAgentToolContext();
     const tool = agentTool(context);
@@ -4683,6 +4755,39 @@ describe('Agent tools', () => {
       );
       expect(persisted?.args).toMatchObject({
         event: { name: 'Agent', args: { subagent_type: 'general' } },
+      });
+    });
+
+    it('persists the model exact mixed-case spelling in the recorded tool call', async () => {
+      ctx.mockNextResponse(
+        { type: 'text', text: 'I will delegate.' },
+        {
+          type: 'function',
+          id: 'call_agent',
+          name: 'Agent',
+          arguments: JSON.stringify({
+            prompt: 'Investigate deeply',
+            description: 'Investigate deeply',
+            subagent_type: 'General',
+          }),
+        },
+      );
+      ctx.mockNextResponse({ type: 'text', text: 'Delegation finished.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Use an agent' }] });
+
+      await ctx.untilTurnEnd();
+
+      await vi.waitFor(() => {
+        expect(resolved).toEqual([['PreToolUse', 'Agent', 'allow']]);
+      });
+      const persisted = ctx.allEvents.find(
+        (event) =>
+          event.type === '[wire]' &&
+          event.event === 'context.append_loop_event' &&
+          (event.args as { event?: { type?: string } } | undefined)?.event?.type === 'tool.call',
+      );
+      expect(persisted?.args).toMatchObject({
+        event: { name: 'Agent', args: { subagent_type: 'General' } },
       });
     });
   });
