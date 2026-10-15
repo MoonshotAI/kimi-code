@@ -22,7 +22,7 @@ Keep both locales in sync before release. Machine-assisted translation is fine; 
 
 Additional sourcing rules:
 
-- **Document only what the current released version does.** Code that exists but is feature-gated, unreleased, or internal-only must not appear in user docs. When release status is unclear, document the current released version.
+- **Document only what the current released version does.** Released opt-in experiments are in scope when the docs state their default and how to enable them; code that is unreleased or internal-only must not appear in user docs. When release status is unclear, document the current released version.
 - **One fact, one authoritative home.** When a mechanism is fully defined on one page, other pages state only what it is and how it relates to the current task, then link to the exact section. Never expand the same fact in two places.
 - **Confirm the source of truth before editing.** Know which locale owns the page (see above), edit the source, and sync the mirror in the same change. If the two locales fall out of sync, say so in the PR description — never silently drop or rewrite one side.
 
@@ -140,11 +140,11 @@ Two distinct platforms exist and must never be mixed:
 | Audience | Individual developers, subscription-based | Enterprise / product integration, pay-per-token |
 | OpenAI-compatible base URL | `https://api.kimi.com/coding/v1` (mainland China), `https://api.kimi.ai/coding/v1` (global) | `https://api.moonshot.cn/v1` (mainland China), `https://api.moonshot.ai/v1` (global) |
 | Anthropic-compatible base URL | `https://api.kimi.com/coding/` (mainland China), `https://api.kimi.ai/coding/` (global) | Not supported |
-| API key entry | [Kimi Code console](https://www.kimi.com/code/console) | [platform.kimi.com](https://platform.kimi.com) |
+| API key entry | [Kimi Code console](https://www.kimi.com/code/console) | [platform.kimi.com](https://platform.kimi.com) (mainland China), [platform.kimi.ai](https://platform.kimi.ai) (global) |
 
 Rules:
-- When documenting Kimi Code CLI or VS Code: always use `api.kimi.com/coding/…` (mainland China) or `api.kimi.ai/coding/…` (global). Never write `api.moonshot.cn` or `api.moonshot.ai` in this context.
-- When documenting Open Platform integration: use `api.moonshot.cn/v1` (mainland China) or `api.moonshot.ai/v1` (global). The Open Platform has no Anthropic-compatible endpoint.
+- For Kimi Code managed/OAuth examples in CLI or VS Code docs, use `api.kimi.com/coding/…` (mainland China) or `api.kimi.ai/coding/…` (global). Never use Open Platform hosts for those managed accounts.
+- When documenting Open Platform providers or third-party integrations, including direct API-key providers used from CLI or VS Code, use `api.moonshot.cn/v1` (mainland China) or `api.moonshot.ai/v1` (global). The Open Platform has no Anthropic-compatible endpoint.
 - Base URL tables always list both the mainland China and global addresses in both locales. Config examples give one concrete value matching the page's language: Chinese pages use the mainland China address, English pages use the global address.
 - Distinguish context explicitly: "in Kimi Code CLI / VS Code" vs "in third-party tools / your own product".
 - Product full names: **Kimi Code CLI** and **Kimi Code for VS Code**. Do not abbreviate to "Kimi CLI".
