@@ -65,7 +65,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       runtimeResolver: this.runtimeResolver,
       workspaceId: workspace.workspaceId,
       runtimeId: 'local',
-      resolveDefaultTimeouts: () => this.mcpConfig.tunables(),
+      resolveDefaults: () => this.mcpConfig.tunables(),
       resolveClientName: this.resolveClientName,
     });
     this._register({ dispose: () => void this.manager.shutdown() });
@@ -128,7 +128,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       workspaceId: this.workspaceId,
       runtimeId: 'local',
       requireStdioRuntimeId: true,
-      resolveDefaultTimeouts: () => this.mcpConfig.tunables(),
+      resolveDefaults: () => this.mcpConfig.tunables(),
       resolveClientName: this.resolveClientName,
     });
     const connect = Promise.all([this.mcpConfig.ready, this.identity.resolved()])

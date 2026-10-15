@@ -369,7 +369,7 @@ describe('WorkspaceSkillCatalogService', () => {
     expect(catalog.catalog.getSkill('from-explicit')?.description).toBe('from explicit');
     expect(catalog.catalog.getSkill('project-only')).toBeUndefined();
     expect(catalog.catalog.getSkill('extra-only')?.description).toBe('from extra');
-    expect(catalog.catalog.getSkill('plugin-only')?.description).toBe('from plugin');
+    expect(catalog.catalog.getSkill('demo:plugin-only')?.description).toBe('from plugin');
     host.dispose();
   });
 
@@ -519,7 +519,7 @@ describe('WorkspaceSkillCatalogService', () => {
     await catalog.load();
 
     expect(store.receivedRoots).toEqual([pluginRoot]);
-    expect(catalog.catalog.getSkill('demo-skill')?.plugin?.id).toBe('demo');
+    expect(catalog.catalog.getSkill('demo:demo-skill')?.plugin?.id).toBe('demo');
     expect(catalog.catalog.getPluginSkill('demo', 'demo-skill')).toBeDefined();
     host.dispose();
   });

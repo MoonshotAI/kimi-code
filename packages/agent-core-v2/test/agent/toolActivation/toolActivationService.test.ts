@@ -338,6 +338,33 @@ describe('AgentToolActivationService', () => {
     expect(registry.resolve('Beta')).toBeInstanceOf(BetaTool);
   });
 
+  it('keeps conditional tools registered when a runtime change preserves their requirements', async () => {
+    let available = true;
+    registerAgentToolService(IAlphaTool, AlphaTool, {
+      name: 'Alpha',
+      requiredRuntimeCapabilities: ['fs'],
+      when: () => available,
+    });
+    registerAgentToolService(IGammaTool, GammaTool, {
+      name: 'Gamma',
+      when: () => available,
+    });
+    const ix = createActivationHost();
+    const registry = ix.get(IAgentToolRegistryService);
+    await ix.get(IAgentToolActivationService).activate();
+    const alpha = registry.resolve('Alpha');
+    const gamma = registry.resolve('Gamma');
+    expect(alpha).toBeInstanceOf(AlphaTool);
+    expect(gamma).toBeInstanceOf(GammaTool);
+
+    available = false;
+    runtimeData.capabilities.delete('process');
+    runtimeChangeEmitter.fire();
+
+    expect(registry.resolve('Alpha')).toBe(alpha);
+    expect(registry.resolve('Gamma')).toBe(gamma);
+  });
+
   it('activates only the tools allowed by the profile allowlist', async () => {
     profileData.activeToolNames = ['Alpha'];
     registerAgentToolService(IAlphaTool, AlphaTool, { name: 'Alpha' });

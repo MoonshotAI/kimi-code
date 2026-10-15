@@ -1,5 +1,4 @@
 import {
-  resolveSkillCommand,
   resolveSlashCommandInput,
   setExperimentalFeatures,
   slashBusyMessage,
@@ -357,15 +356,68 @@ describe('goal command resolution', () => {
 });
 
 describe('slash command busy helpers', () => {
-  it('resolves skill command aliases with and without skill prefix', () => {
-    const map = new Map([
+  it('resolves skill commands by explicit prefixed name and by shorthand', () => {
+    const skillCommandMap = new Map([
       ['skill:review', 'review'],
       ['mcp-config', 'mcp-config'],
     ]);
 
-    expect(resolveSkillCommand(map, 'skill:review')).toBe('review');
-    expect(resolveSkillCommand(map, 'review')).toBe('review');
-    expect(resolveSkillCommand(map, 'mcp-config')).toBe('mcp-config');
+    expect(resolve('/skill:review', { skillCommandMap })).toMatchObject({
+      kind: 'skill',
+      skillName: 'review',
+    });
+    expect(resolve('/review', { skillCommandMap })).toMatchObject({
+      kind: 'skill',
+      skillName: 'review',
+    });
+    expect(resolve('/mcp-config', { skillCommandMap })).toMatchObject({
+      kind: 'skill',
+      skillName: 'mcp-config',
+    });
+  });
+
+  it('resolves a qualified plugin skill by shorthand when no plugin command takes the name', () => {
+    const skillCommandMap = new Map([['skill:my-plugin:deploy', 'my-plugin:deploy']]);
+    expect(resolve('/my-plugin:deploy', { skillCommandMap })).toEqual({
+      kind: 'skill',
+      commandName: 'my-plugin:deploy',
+      skillName: 'my-plugin:deploy',
+      args: '',
+    });
+  });
+
+  it('resolves a namespaced input to the plugin command when a same-named plugin skill exists', () => {
+    const skillCommandMap = new Map([['skill:my-plugin:deploy', 'my-plugin:deploy']]);
+    const pluginCommandMap = new Map([['my-plugin:deploy', 'Deploy $ARGUMENTS']]);
+    expect(resolve('/my-plugin:deploy prod', { skillCommandMap, pluginCommandMap })).toEqual({
+      kind: 'plugin-command',
+      commandName: 'deploy',
+      pluginId: 'my-plugin',
+      args: 'prod',
+    });
+  });
+
+  it('keeps the colliding plugin skill reachable through its explicit skill command', () => {
+    const skillCommandMap = new Map([['skill:my-plugin:deploy', 'my-plugin:deploy']]);
+    const pluginCommandMap = new Map([['my-plugin:deploy', 'Deploy']]);
+    expect(resolve('/skill:my-plugin:deploy', { skillCommandMap, pluginCommandMap })).toEqual({
+      kind: 'skill',
+      commandName: 'skill:my-plugin:deploy',
+      skillName: 'my-plugin:deploy',
+      args: '',
+    });
+  });
+
+  it('blocks a plugin command while streaming even when a same-named plugin skill exists', () => {
+    const skillCommandMap = new Map([['skill:my-plugin:deploy', 'my-plugin:deploy']]);
+    const pluginCommandMap = new Map([['my-plugin:deploy', 'Deploy']]);
+    expect(
+      resolve('/my-plugin:deploy', { skillCommandMap, pluginCommandMap, isStreaming: true }),
+    ).toEqual({
+      kind: 'blocked',
+      commandName: 'my-plugin:deploy',
+      reason: 'streaming',
+    });
   });
 
   it('formats busy messages', () => {

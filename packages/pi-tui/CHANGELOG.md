@@ -1,5 +1,11 @@
 # @moonshot-ai/pi-tui
 
+## 0.85.0
+
+### Minor Changes
+
+- [#4031](https://github.com/MoonshotAI/kimi-code/pull/4031) [`33e368a`](https://github.com/MoonshotAI/kimi-code/commit/33e368a1eff8d958856af8e2fb64f4db122b2247) Thanks [@Grapedge](https://github.com/Grapedge)! - Add fullscreen layout effects that settle render requests before terminal output.
+
 ## 0.84.5
 
 ### Patch Changes

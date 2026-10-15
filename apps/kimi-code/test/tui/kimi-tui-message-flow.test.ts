@@ -6310,6 +6310,276 @@ capabilities = ["image_in", "video_in"]
     expect(transcript).toContain('cron report final');
   });
 
+  it('keeps the previous turn’s final answer mounted when a task-notification turn completes', async () => {
+    const { driver } = await makeDriver();
+    const emit = (event: Event) => driver.sessionEventHandler.handleEvent(event, () => {});
+    let entrySeq = 0;
+    const entry = (kind: 'user' | 'assistant', content: string, turnId?: string) => {
+      entrySeq += 1;
+      driver.appendTranscriptEntry({
+        id: `task-fold-${entrySeq}`,
+        kind,
+        turnId,
+        renderMode: kind === 'assistant' ? 'markdown' : 'plain',
+        content,
+      });
+    };
+
+    entry('user', 'what is the answer?');
+    emit({ type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event);
+    entry('assistant', 'working on it', '1');
+    entry('assistant', 'FINAL-ANSWER', '1');
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event);
+
+    expect(stripSgr(renderTranscript(driver))).toContain('FINAL-ANSWER');
+
+    emit({
+      type: 'background.task.terminated',
+      agentId: 'main',
+      info: {
+        taskId: 'task-1',
+        kind: 'process',
+        description: 'nightly sync',
+        status: 'completed',
+        exitCode: 0,
+        startedAt: 0,
+        endedAt: 1,
+      },
+    } as unknown as Event);
+    const taskOrigin = {
+      kind: 'task',
+      taskId: 'task-1',
+      status: 'completed',
+      notificationId: 'ntf-1',
+    };
+    emit({ type: 'turn.started', agentId: 'main', turnId: 2, origin: taskOrigin } as Event);
+    entry('assistant', 'task report part one', '2');
+    entry('assistant', 'task report final', '2');
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 2, reason: 'completed' } as Event);
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('task report final');
+    expect(transcript).toContain('FINAL-ANSWER');
+  });
+
+  it('keeps the previous turn’s final answer mounted when a background-agent notification turn completes', async () => {
+    const { driver } = await makeDriver();
+    const emit = (event: Event) => driver.sessionEventHandler.handleEvent(event, () => {});
+    let entrySeq = 0;
+    const entry = (kind: 'user' | 'assistant', content: string, turnId?: string) => {
+      entrySeq += 1;
+      driver.appendTranscriptEntry({
+        id: `agent-task-fold-${entrySeq}`,
+        kind,
+        turnId,
+        renderMode: kind === 'assistant' ? 'markdown' : 'plain',
+        content,
+      });
+    };
+
+    entry('user', 'what is the answer?');
+    emit({ type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event);
+    entry('assistant', 'working on it', '1');
+    entry('assistant', 'FINAL-ANSWER', '1');
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event);
+
+    expect(stripSgr(renderTranscript(driver))).toContain('FINAL-ANSWER');
+
+    emit({
+      type: 'subagent.spawned',
+      agentId: 'main',
+      sessionId: 'ses-1',
+      subagentId: 'agent-9',
+      subagentName: 'explore',
+      parentToolCallId: 'tc-9',
+      description: 'scout the fleet',
+      runInBackground: true,
+    } as unknown as Event);
+    emit({
+      type: 'background.task.started',
+      agentId: 'main',
+      info: {
+        taskId: 'task-9',
+        kind: 'agent',
+        agentId: 'agent-9',
+        description: 'scout the fleet',
+        status: 'running',
+        startedAt: 0,
+      },
+    } as unknown as Event);
+    emit({
+      type: 'subagent.completed',
+      agentId: 'main',
+      sessionId: 'ses-1',
+      subagentId: 'agent-9',
+      parentToolCallId: 'tc-9',
+      resultSummary: 'fleet scouted',
+    } as unknown as Event);
+    emit({
+      type: 'background.task.terminated',
+      agentId: 'main',
+      info: {
+        taskId: 'task-9',
+        kind: 'agent',
+        agentId: 'agent-9',
+        description: 'scout the fleet',
+        status: 'completed',
+        startedAt: 0,
+        endedAt: 1,
+      },
+    } as unknown as Event);
+
+    const taskOrigin = {
+      kind: 'task',
+      taskId: 'task-9',
+      status: 'completed',
+      notificationId: 'ntf-9',
+    };
+    emit({ type: 'turn.started', agentId: 'main', turnId: 2, origin: taskOrigin } as Event);
+    entry('assistant', 'agent report part one', '2');
+    entry('assistant', 'agent report final', '2');
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 2, reason: 'completed' } as Event);
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('agent report final');
+    expect(transcript).toContain('FINAL-ANSWER');
+    const terminalCards = driver.state.transcriptEntries.filter(
+      (transcriptEntry) => transcriptEntry.backgroundAgentStatus?.phase === 'completed',
+    );
+    expect(terminalCards).toHaveLength(1);
+  });
+
+  it('anchors the fold boundary to the notification turn when another task terminates mid-turn', async () => {
+    const { driver } = await makeDriver();
+    const emit = (event: Event) => driver.sessionEventHandler.handleEvent(event, () => {});
+    let entrySeq = 0;
+    const entry = (kind: 'user' | 'assistant', content: string, turnId?: string) => {
+      entrySeq += 1;
+      driver.appendTranscriptEntry({
+        id: `task-anchor-${entrySeq}`,
+        kind,
+        turnId,
+        renderMode: kind === 'assistant' ? 'markdown' : 'plain',
+        content,
+      });
+    };
+    const terminate = (taskId: string) =>
+      emit({
+        type: 'background.task.terminated',
+        agentId: 'main',
+        info: {
+          taskId,
+          kind: 'process',
+          description: `task ${taskId}`,
+          status: 'completed',
+          exitCode: 0,
+          startedAt: 0,
+          endedAt: 1,
+        },
+      } as unknown as Event);
+    const taskOrigin = (taskId: string) => ({
+      kind: 'task',
+      taskId,
+      status: 'completed',
+      notificationId: `ntf-${taskId}`,
+    });
+
+    entry('user', 'first question');
+    emit({ type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event);
+    entry('assistant', 'working', '1');
+    entry('assistant', 'USER-FINAL', '1');
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event);
+
+    // task 1 terminates while idle; its notification turn opens and starts
+    // answering, then task 2 terminates mid-turn and its terminal card lands
+    // inside turn 2's output.
+    terminate('task-1');
+    emit({ type: 'turn.started', agentId: 'main', turnId: 2, origin: taskOrigin('task-1') } as Event);
+    entry('assistant', 'report one intro', '2');
+    terminate('task-2');
+    entry('assistant', 'REPORT-ONE-FINAL', '2');
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 2, reason: 'completed' } as Event);
+
+    // task 2's notification missed turn 2's last drain, so it opens its own
+    // turn. When that turn ends, the fold must start at this turn's boundary —
+    // not at task 2's card mounted mid-turn-2 — or REPORT-ONE-FINAL folds away.
+    emit({ type: 'turn.started', agentId: 'main', turnId: 3, origin: taskOrigin('task-2') } as Event);
+    entry('assistant', 'report two intro', '3');
+    entry('assistant', 'report two middle', '3');
+    entry('assistant', 'REPORT-TWO-FINAL', '3');
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 3, reason: 'completed' } as Event);
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('REPORT-ONE-FINAL');
+    expect(transcript).toContain('REPORT-TWO-FINAL');
+  });
+
+  it('anchors the fold boundary by mounting a card when an abnormally terminated agent left none', async () => {
+    const { driver } = await makeDriver();
+    const emit = (event: Event) => driver.sessionEventHandler.handleEvent(event, () => {});
+    let entrySeq = 0;
+    const entry = (kind: 'user' | 'assistant', content: string, turnId?: string) => {
+      entrySeq += 1;
+      driver.appendTranscriptEntry({
+        id: `agent-lost-fold-${entrySeq}`,
+        kind,
+        turnId,
+        renderMode: kind === 'assistant' ? 'markdown' : 'plain',
+        content,
+      });
+    };
+
+    entry('user', 'what is the answer?');
+    emit({ type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event);
+    entry('assistant', 'working on it', '1');
+    entry('assistant', 'FINAL-ANSWER', '1');
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event);
+
+    expect(stripSgr(renderTranscript(driver))).toContain('FINAL-ANSWER');
+
+    // The agent timed out without any subagent lifecycle event, so no
+    // terminal card was ever mounted for it — agent-kind task terminations
+    // mount none of their own.
+    emit({
+      type: 'background.task.terminated',
+      agentId: 'main',
+      info: {
+        taskId: 'task-lost',
+        kind: 'agent',
+        agentId: 'agent-lost',
+        description: 'scout the fleet',
+        status: 'timed_out',
+        startedAt: 0,
+        endedAt: 1,
+      },
+    } as unknown as Event);
+    expect(
+      driver.state.transcriptEntries.filter(
+        (transcriptEntry) => transcriptEntry.backgroundAgentStatus !== undefined,
+      ),
+    ).toHaveLength(0);
+
+    // The notification turn anchors its fold boundary by mounting the missing
+    // terminal card at the turn's start.
+    emit({
+      type: 'turn.started',
+      agentId: 'main',
+      turnId: 2,
+      origin: { kind: 'task', taskId: 'task-lost', status: 'timed_out', notificationId: 'ntf-lost' },
+    } as Event);
+    entry('assistant', 'timeout report final', '2');
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 2, reason: 'completed' } as Event);
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('timeout report final');
+    expect(transcript).toContain('FINAL-ANSWER');
+    const terminalCards = driver.state.transcriptEntries.filter(
+      (transcriptEntry) => transcriptEntry.backgroundAgentStatus !== undefined,
+    );
+    expect(terminalCards).toHaveLength(1);
+    expect(terminalCards[0]!.backgroundAgentStatus?.phase).toBe('failed');
+  });
+
   it('coalesces assistant delta component updates', async () => {
     vi.useFakeTimers();
     try {
@@ -10495,6 +10765,98 @@ capabilities = ["image_in", "video_in"]
     expect(transcript).not.toContain('<hook_result');
   });
 
+});
+
+describe('auto session title', () => {
+  const flushAsync = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it('generates a session title after the first completed turn', async () => {
+    const generateSessionTitle = vi.fn(async () => 'Generated Title');
+    const { driver } = await makeDriver(makeSession(), { generateSessionTitle });
+
+    emitTurn(driver, 1);
+
+    await vi.waitFor(() => {
+      expect(generateSessionTitle).toHaveBeenCalledWith({ id: 'ses-1', source: 'first_turn' });
+    });
+  });
+
+  it('does not generate when autoSessionTitle is disabled', async () => {
+    const generateSessionTitle = vi.fn(async () => 'Generated Title');
+    const { driver } = await makeDriver(makeSession(), {
+      generateSessionTitle,
+      getConfig: vi.fn(async () => ({ models: {}, autoSessionTitle: false })),
+    });
+
+    emitTurn(driver, 1);
+    await flushAsync();
+
+    expect(generateSessionTitle).not.toHaveBeenCalled();
+  });
+
+  it('does not generate when the tui.toml auto_session_title toggle is off', async () => {
+    const generateSessionTitle = vi.fn(async () => 'Generated Title');
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      tuiConfig: { ...makeStartupInput().tuiConfig, autoSessionTitle: false },
+    };
+    const session = makeSession();
+    const { driver } = await makeDriver(session, { generateSessionTitle }, startupInput);
+    await driver.setSession(session);
+    await driver.syncRuntimeState(session);
+
+    emitTurn(driver, 1);
+    await flushAsync();
+
+    expect(generateSessionTitle).not.toHaveBeenCalled();
+  });
+
+  it('does not regenerate once a title was generated', async () => {
+    const generateSessionTitle = vi.fn(async () => 'Generated Title');
+    const { driver } = await makeDriver(makeSession(), { generateSessionTitle });
+
+    emitTurn(driver, 1);
+    await vi.waitFor(() => {
+      expect(generateSessionTitle).toHaveBeenCalledTimes(1);
+    });
+    await flushAsync();
+
+    emitTurn(driver, 2);
+    await flushAsync();
+
+    expect(generateSessionTitle).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops retrying after three failed attempts', async () => {
+    const generateSessionTitle = vi.fn(async (): Promise<string | undefined> => {
+      throw new Error('unavailable');
+    });
+    const { driver } = await makeDriver(makeSession(), { generateSessionTitle });
+
+    for (let turnId = 1; turnId <= 4; turnId += 1) {
+      emitTurn(driver, turnId);
+      await flushAsync();
+    }
+
+    expect(generateSessionTitle).toHaveBeenCalledTimes(3);
+  });
+
+  it('skips generation for turns that did not complete', async () => {
+    const generateSessionTitle = vi.fn(async () => 'Generated Title');
+    const { driver } = await makeDriver(makeSession(), { generateSessionTitle });
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event,
+      () => {},
+    );
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'cancelled' } as Event,
+      () => {},
+    );
+    await flushAsync();
+
+    expect(generateSessionTitle).not.toHaveBeenCalled();
+  });
 });
 
 describe('/model status displayName override', () => {

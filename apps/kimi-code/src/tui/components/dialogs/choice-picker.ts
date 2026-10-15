@@ -18,6 +18,9 @@ import {
 } from '@moonshot-ai/pi-tui';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme, type ColorToken } from '#/tui/theme';
+import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
+import { createMarkdownOptions } from '#/tui/utils/markdown-options';
+import { Markdown } from '#/tui/components/markdown/markdown';
 import { printableChar } from '#/tui/utils/printable-key';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
@@ -39,14 +42,16 @@ export interface ChoicePickerOptions {
   readonly title: string;
   readonly hint?: string;
   readonly formatHint?: (text: string) => string;
-  readonly notice?: string;
-  /** Color tone for the notice line. Defaults to 'success'. */
+  /** Plain text shown in `noticeTone`, or Markdown rendered with the Markdown theme. */
+  readonly notice?: string | { readonly markdown: string };
+  /** Color tone for a plain-text notice. Defaults to 'success'. */
   readonly noticeTone?: 'success' | 'warning';
   readonly options: readonly ChoiceOption[];
   readonly currentValue?: string;
   readonly initialValue?: string;
   /** When true, typed characters filter the list (fuzzy) and a search line is shown. */
   readonly searchable?: boolean;
+  readonly spaceSelect?: boolean;
   /** Items per page. Lists longer than this paginate. */
   readonly pageSize?: number;
   readonly onSelect: (value: string) => void;
@@ -119,10 +124,12 @@ export class ChoicePickerComponent extends Container implements Focusable {
       this.list.pageDown();
       return;
     }
-    // Enter always selects. Space selects too — but only when the list is not
-    // searchable; in a searchable list a space must reach the query instead.
+    // Space confirmation is opt-out; searchable lists always route it to the query.
     const isSpace = matchesKey(data, Key.space) || printableChar(data) === ' ';
-    if (matchesKey(data, Key.enter) || (isSpace && this.opts.searchable !== true)) {
+    if (
+      matchesKey(data, Key.enter) ||
+      (isSpace && this.opts.searchable !== true && this.opts.spaceSelect !== false)
+    ) {
       const chosen = this.list.selected();
       if (chosen !== undefined) this.opts.onSelect(chosen.value);
       return;
@@ -157,10 +164,22 @@ export class ChoicePickerComponent extends Container implements Focusable {
           : this.opts.formatHint(` ${hintLine}`),
       );
     }
-    if (this.opts.notice !== undefined) {
+    const notice = this.opts.notice;
+    if (typeof notice === 'object') {
+      const markdown = new Markdown(
+        notice.markdown,
+        0,
+        0,
+        createMarkdownTheme(),
+        undefined,
+        createMarkdownOptions(),
+      );
+      lines.push('');
+      lines.push(...markdown.render(Math.max(1, width - 1)).map((line) => ` ${line}`));
+    } else if (notice !== undefined) {
       const tone = this.opts.noticeTone ?? 'success';
       const noticeWidth = Math.max(1, width - 1);
-      for (const noticeLine of this.opts.notice.split(/\r?\n/)) {
+      for (const noticeLine of notice.split(/\r?\n/)) {
         for (const wrapped of wrapDescription(noticeLine, noticeWidth)) {
           lines.push(currentTheme.fg(tone, ` ${wrapped}`));
         }

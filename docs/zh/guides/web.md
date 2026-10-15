@@ -50,7 +50,7 @@ Stop:    Ctrl+C
 | `/new` | 新开会话 |
 | `/goal` | 进入目标模式，跨轮次持续推进同一目标 |
 | `/compact` | 压缩当前会话上下文 |
-| `/tower` | Tower 多 Agent 协作（实验功能），`/tower <base-branch>` 指定基准分支 |
+| `/tower` | [Tower 多 Agent 协作](./tower.md)（实验功能）；`/tower <base-branch>` 指定基准分支，但不发送任务目标 |
 | `/export` | 导出会话内容与故障排查日志为 ZIP |
 | `/remote-control` | 开启远程控制，从远程访问本地 Web 会话 |
 
