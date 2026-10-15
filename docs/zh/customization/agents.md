@@ -41,6 +41,8 @@ subagent 支持在后台运行：完成后结果自动回到 main agent，无需
 
 每个 subagent 都会独立消耗模型 token。简单任务没有必要派发 subagent，由 main agent 直接处理更经济。
 
+如果较大的目标需要独立的实现 branch、独立 review 和带门槛的合并，见 [Tower 多 Agent 协作](../guides/tower.md)。Tower 是实验性的仓库级协调模式，不是普通 subagent 类型。
+
 ## 权限继承
 
 subagent 的权限规则继承自 main agent：main agent 通过 `/permission` 或在审批中接受的"始终允许"规则，会自动覆盖到它派发出的所有 subagent，subagent 不需要重新审批同类工具调用。`Agent` 工具本身默认放行，因此 main agent 可以在不打断用户的前提下完成多次委派。

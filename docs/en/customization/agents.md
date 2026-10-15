@@ -41,6 +41,8 @@ This isolation provides two benefits:
 
 Note that each sub-agent independently consumes model tokens. For simple tasks, there is no need to dispatch a sub-agent; the main Agent handles them more economically.
 
+For a larger objective that needs separate implementation branches, independent reviews, and gated merges, see [Tower multi-agent collaboration](../guides/tower.md). Tower is an experimental repository-level coordination mode, not an ordinary subagent type.
+
 ## Permission Inheritance
 
 Sub-agent permission rules are inherited from the main Agent: "always allow" rules that the main Agent has accepted via `/permission` or through an approval dialog automatically propagate to all sub-agents it dispatches, so sub-agents do not need to re-approve the same types of tool calls. The `Agent` tool itself is allowed by default, enabling the main Agent to delegate multiple times without interrupting the user.

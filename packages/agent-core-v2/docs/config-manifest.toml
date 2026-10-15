@@ -235,6 +235,7 @@ extra_skill_dirs = []
 [mcp]
 # startup_timeout_ms: integer
 # tool_timeout_ms: integer
+# default_deferred: boolean
 
 # ##########################################################################
 # mergeAllAvailableSkills (config.toml: merge_all_available_skills)
@@ -288,6 +289,10 @@ merge_all_available_skills = true
   # support_efforts: string[]
   # default_effort: string
   # off_effort: string
+  # upgrade: object
+    # model: string
+    # migration_markdown: string
+    # retirement_at: string
   # overrides: object
     # max_context_size: integer
     # max_input_size: integer

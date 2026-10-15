@@ -6,6 +6,27 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 2.2.0（2026-10-14）
+
+### 新功能
+
+- 新增实验性的进度更新功能 NotifyUser（默认关闭）：新会话可展示 Agent 回合内主动发布的进度更新。可在 TUI 的 `/experiments` 面板开启。
+- 新增 `kimi app [path]` 命令，在当前或指定目录打开一个新的 Desktop 会话。
+- 全屏模式新增用户消息摘要条：用户消息滚出视口后保留一行摘要，点击即可跳回原始消息。全屏模式可在 `/settings` 的 TUI mode 设置中开启，或在 `~/.kimi-code/tui.toml` 中设置 `tui_mode = "fullscreen"`。
+
+### 优化
+
+- 用户技能卡片改为高亮提示词展示，并支持按 Ctrl-S 发送技能提示词。
+- Tower 模式：Agent 运行中发送消息会中止当前 turn，并作为独立 turn 执行。
+- 退出时运行 shutdown hooks 期间显示「Shutting down」状态提示，此时按 Ctrl+C 可立即强制退出，无需等待 hook 超时。
+
+### 修复
+
+- 修复 UserPromptSubmit hook 注入文本时对话错位、回复丢失与渲染乱序的问题；不含「message」字段的 hook JSON 输出不再加入对话。
+- 移除 MCP stdio 服务器配置中从未实现的 `executor = "kaos"` 选项；仍在使用该选项的配置会在加载时校验失败。
+- 修复 fork 出的会话会重复触发源会话 cron 任务的问题。
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
 ## 2.1.1（2026-09-24）
 
 ### 优化

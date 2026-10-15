@@ -2,6 +2,7 @@ import chalk from 'chalk';
 
 import { splitTokenFragment } from '#/cli/sub/web/access-urls';
 import { getVersion } from '#/cli/version';
+import { CLI_MSH_PLATFORM, CLI_USER_AGENT_PRODUCT } from '#/constant/app';
 import {
   buildRemoteControlUrl,
   formatRemoteControlAlreadyRunning,
@@ -43,7 +44,7 @@ export async function handleWebCommand(host: SlashCommandHost): Promise<void> {
 }
 
 export async function handleRemoteControlCommand(host: SlashCommandHost): Promise<void> {
-  await host.waitForLazyCreation();
+  await host.waitForSessionAssembly();
   const session = host.session;
 
   const holder = await inspectRemoteControlLock(getDataDir());
@@ -73,7 +74,8 @@ export async function handleRemoteControlCommand(host: SlashCommandHost): Promis
             homeDir: dataDir,
             localOrigin: origin,
             localServerToken: token,
-            clientVersion: `kimi-code/${getVersion()}`,
+            clientVersion: `${CLI_USER_AGENT_PRODUCT}/${getVersion()}`,
+            urlSource: CLI_MSH_PLATFORM,
             configuredOAuthKey: persisted?.key,
             configuredOAuthHost: persisted?.oauthHost,
             onStatus,
@@ -95,6 +97,7 @@ export async function handleRemoteControlCommand(host: SlashCommandHost): Promis
             remoteControl.deviceId,
             session?.id,
             remoteControl.relayOrigin,
+            CLI_MSH_PLATFORM,
           );
           const qrCode = await generateRemoteControlQr(url, dataDir);
           process.stdout.write(

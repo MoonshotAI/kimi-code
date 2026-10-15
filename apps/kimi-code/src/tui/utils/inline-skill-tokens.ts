@@ -1,14 +1,5 @@
-/**
- * Scanner for inline skill `/tokens` inside a prompt.
- *
- * Dispatch, editor highlighting, and autocomplete share this so all three
- * agree on what counts as an inline skill reference: a `/name` token whose `/`
- * is preceded by whitespace (space, tab, or newline), with no internal `/`.
- * The leading slash-command area at the very start of the input is handled by
- * the regular slash-command path and is skipped here by default.
- */
-
 import type { InlineSkillActivation } from '../types';
+import { parseSlashInput } from '../commands/parse';
 
 export interface InlineSkillToken {
   readonly commandName: string;
@@ -52,7 +43,7 @@ export function findInlineSkillTokens(
     }
 
     const commandName = text.slice(i + 1, end);
-    if (commandName.includes('/')) continue;
+    if (commandName.includes('/') && (!isLeadingSlash || parseSlashInput(text.slice(i, end)) === null)) continue;
     if (commandName.length === 0 && options.allowEmpty !== true) continue;
     if (!options.isKnownSkill(commandName)) continue;
 
