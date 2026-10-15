@@ -318,7 +318,11 @@ export class SubagentTool implements ISubagentTool {
         background: args.run_in_background,
       },
       approvalRule: this.name,
-      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, profileNameForDisplay),
+      matchesRule: (ruleArgs) =>
+        matchesGlobRuleSubject(ruleArgs, profileNameForDisplay) ||
+        (requestedProfileName !== undefined &&
+          requestedProfileName !== profileNameForDisplay &&
+          matchesGlobRuleSubject(ruleArgs, requestedProfileName)),
       execute: (ctx) => this.execution(executionArgs, ctx),
     };
   }

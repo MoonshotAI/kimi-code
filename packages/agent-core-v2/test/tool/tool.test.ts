@@ -1844,7 +1844,7 @@ describe('Agent tool execution contract', () => {
     expect(execution.matchesRule?.('coder')).toBe(false);
   });
 
-  it('matches approval rules against the canonical type when a legacy alias is requested', async () => {
+  it('matches approval rules against both the alias and the canonical type', async () => {
     const context = createAgentToolContext();
 
     const execution = await agentTool(context).resolveExecution({
@@ -1856,10 +1856,11 @@ describe('Agent tool execution contract', () => {
     if (execution.isError === true) throw new Error('expected runnable execution');
     expect(execution.description).toBe('Launching coder agent: Find cause');
     expect(execution.matchesRule?.('coder')).toBe(true);
-    expect(execution.matchesRule?.('general')).toBe(false);
+    expect(execution.matchesRule?.('general')).toBe(true);
+    expect(execution.matchesRule?.('explore')).toBe(false);
   });
 
-  it('matches approval rules against the canonical type for the general-purpose alias', async () => {
+  it('matches approval rules against both the general-purpose alias and the canonical type', async () => {
     const context = createAgentToolContext();
 
     const execution = await agentTool(context).resolveExecution({
@@ -1871,7 +1872,23 @@ describe('Agent tool execution contract', () => {
     if (execution.isError === true) throw new Error('expected runnable execution');
     expect(execution.description).toBe('Launching coder agent: Find cause');
     expect(execution.matchesRule?.('coder')).toBe(true);
-    expect(execution.matchesRule?.('general-purpose')).toBe(false);
+    expect(execution.matchesRule?.('general-purpose')).toBe(true);
+  });
+
+  it('matches approval rules only against the requested type when no alias is involved', async () => {
+    const context = createAgentToolContext();
+
+    const execution = await agentTool(context).resolveExecution({
+      prompt: 'Investigate',
+      description: 'Find cause',
+      subagent_type: 'coder',
+    });
+
+    if (execution.isError === true) throw new Error('expected runnable execution');
+    expect(execution.description).toBe('Launching coder agent: Find cause');
+    expect(execution.matchesRule?.('coder')).toBe(true);
+    expect(execution.matchesRule?.('general')).toBe(false);
+    expect(execution.matchesRule?.('explore')).toBe(false);
   });
 
   it('keeps the raw type for display and approval rules when a real profile has the alias name', async () => {
