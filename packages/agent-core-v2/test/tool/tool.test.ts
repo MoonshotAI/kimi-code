@@ -906,7 +906,7 @@ describe('Agent tool description', () => {
     expect(first!.parameters).toBe(second!.parameters);
   });
 
-  it('omits the subagent_type enum when no subagent types are dispatchable', () => {
+  it('rejects any supplied subagent_type when no subagent types are dispatchable', () => {
     ctx = createTestAgent();
     ctx.get(IAgentProfileService).applyBindingSnapshot({
       modelAlias: 'mock-model',
@@ -918,11 +918,12 @@ describe('Agent tool description', () => {
 
     const tool = ctx.toolsData().find((entry) => entry.name === 'Agent');
     const properties = (
-      tool!.parameters as { properties: Record<string, { enum?: string[] }> }
+      tool!.parameters as { properties: Record<string, { enum?: string[]; not?: unknown }> }
     ).properties;
 
     expect(properties['subagent_type']).toBeDefined();
     expect(properties['subagent_type']).not.toHaveProperty('enum');
+    expect(properties['subagent_type']).toHaveProperty('not');
 
     const validator = compileToolArgsValidator(tool!.parameters!);
     expect(
@@ -932,6 +933,97 @@ describe('Agent tool description', () => {
         resume: 'agent-existing',
       }),
     ).toBeNull();
+    for (const supplied of ['coder', '', 'general']) {
+      expect(
+        validateToolArgs(validator, {
+          prompt: 'Investigate',
+          description: 'Find cause',
+          subagent_type: supplied,
+        }),
+      ).toBe('/subagent_type must NOT be valid');
+    }
+  });
+
+  it('rejects a supplied subagent_type through the executor when no types are dispatchable', async () => {
+    ctx = createTestAgent();
+    ctx.get(IAgentProfileService).applyBindingSnapshot({
+      modelAlias: 'mock-model',
+      profileName: 'orchestrator',
+      thinkingLevel: 'off',
+      systemPrompt: 'persisted prompt',
+      subagents: [],
+    });
+    await ctx.rpc.setPermission({ mode: 'auto' });
+
+    const call: ToolCall = {
+      type: 'function',
+      id: 'call_agent_rejected',
+      name: 'Agent',
+      arguments: '{"prompt":"Investigate","description":"Find cause","subagent_type":"coder"}',
+    };
+    ctx.mockNextResponse({ type: 'text', text: 'Delegating now.' }, call);
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Delegate this task' }] });
+    ctx.mockNextResponse({ type: 'text', text: 'The delegation was rejected.' });
+    await ctx.untilTurnEnd();
+
+    const toolResult = ctx.allEvents.find(
+      (entry) => entry.type === '[rpc]' && entry.event === 'tool.result',
+    );
+    expect(toolResult?.args).toMatchObject({
+      output: expect.stringContaining('Invalid args for tool "Agent"'),
+    });
+  });
+
+  it('refreshes the subagent_type enum when the catalog gains a profile after ready', async () => {
+    const caller = normalizeAgentProfile({
+      name: 'agent',
+      description: 'Default agent',
+      systemPrompt: () => 'agent',
+    });
+    const coder = normalizeAgentProfile({
+      name: 'coder',
+      description: 'Coder',
+      systemPrompt: () => 'coder',
+    });
+    const reviewer = normalizeAgentProfile({
+      name: 'reviewer',
+      description: 'Reviewer',
+      systemPrompt: () => 'reviewer',
+    });
+    const profiles = [caller, coder];
+    const catalog: ISessionAgentProfileCatalog = {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChange: Event.None as ISessionAgentProfileCatalog['onDidChange'],
+      get: (name) => profiles.find((profile) => profile.name === name),
+      getDefault: () => caller,
+      list: () => [...profiles],
+      inspect: () => undefined,
+      load: async () => {},
+      reload: async () => {},
+    };
+    ctx = createTestAgent(sessionService(ISessionAgentProfileCatalog, catalog));
+    ctx.get(IAgentProfileService).applyBindingSnapshot({
+      modelAlias: 'mock-model',
+      profileName: 'agent',
+      thinkingLevel: 'off',
+      systemPrompt: 'persisted prompt',
+      subagents: ['coder', 'reviewer'],
+    });
+
+    const enumOf = (): string[] | undefined => {
+      const tool = ctx.toolsData().find((entry) => entry.name === 'Agent');
+      return (
+        tool!.parameters as { properties: Record<string, { enum?: string[] }> }
+      ).properties['subagent_type']?.enum;
+    };
+
+    expect(enumOf()).toEqual(['coder']);
+    await ctx.get(ISessionAgentProfileCatalog).ready;
+
+    profiles.push(reviewer);
+
+    expect(enumOf()).toEqual(['coder', 'reviewer']);
   });
 
   it('does not offer the default agent type to the builtin default caller', () => {

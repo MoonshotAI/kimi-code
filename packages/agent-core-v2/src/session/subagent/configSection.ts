@@ -395,16 +395,17 @@ export function injectSubagentTypeEnum(
   parameters: Record<string, unknown>,
   subagentTypes: readonly string[],
 ): Record<string, unknown> {
-  if (subagentTypes.length === 0) return parameters;
   const properties = parameters['properties'];
   if (!isPlainObject(properties) || !('subagent_type' in properties)) return parameters;
   const subagentType = properties['subagent_type'];
   if (!isPlainObject(subagentType)) return parameters;
+  const constraint: Record<string, unknown> =
+    subagentTypes.length === 0 ? { not: {} } : { enum: [...subagentTypes] };
   return {
     ...parameters,
     properties: {
       ...properties,
-      subagent_type: { ...subagentType, enum: [...subagentTypes] },
+      subagent_type: { ...subagentType, ...constraint },
     },
   };
 }

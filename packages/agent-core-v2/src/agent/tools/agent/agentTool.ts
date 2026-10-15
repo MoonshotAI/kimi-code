@@ -117,7 +117,7 @@ export class SubagentTool implements ISubagentTool {
     const forkEnabled = this.flags.enabled(SUBAGENT_FORK_FLAG_ID);
     const subagentTypes = forkEnabled
       ? []
-      : this.dispatchableProfiles().map((profile) => profile.name);
+      : this.filterDispatchable(this.catalog.list()).map((profile) => profile.name);
     const key = [String(modelChoiceExposed), String(forkEnabled), ...subagentTypes].join('');
     if (this.parametersCache?.key === key) return this.parametersCache.value;
     const base = modelChoiceExposed ? SUBAGENT_TOOL_PARAMETERS : SUBAGENT_TOOL_PARAMETERS_NO_MODEL;
@@ -209,12 +209,14 @@ export class SubagentTool implements ISubagentTool {
   }
 
   private dispatchableProfiles(): readonly AgentProfile[] {
-    const own = this.profile.data();
-    const catalogProfiles = this.catalogProfiles();
-    const allowlist = this.effectiveAllowlist(own, catalogProfiles);
+    return this.filterDispatchable(this.catalogProfiles());
+  }
+
+  private filterDispatchable(profiles: readonly AgentProfile[]): readonly AgentProfile[] {
+    const allowlist = this.effectiveAllowlist(this.profile.data(), profiles);
     return allowlist === undefined
-      ? catalogProfiles
-      : catalogProfiles.filter((profile) => allowlist.includes(profile.name));
+      ? profiles
+      : profiles.filter((profile) => allowlist.includes(profile.name));
   }
 
   private catalogProfiles(): readonly AgentProfile[] {
