@@ -9,6 +9,7 @@ export function QuestionDialog() {
   const [selectedIndex, setSelectedIndex] = useState(1);
   const [questionIndex, setQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const questions = pendingQuestion?.questions ?? [];
   const question = questions[questionIndex];
@@ -25,6 +26,7 @@ export function QuestionDialog() {
       setSelectedIndex(1);
       setQuestionIndex(0);
       setAnswers({});
+      setIsSubmitting(false);
     }
   }, [pendingQuestion?.id]);
 
@@ -43,9 +45,14 @@ export function QuestionDialog() {
       setShowCustom(false);
       setSelectedIndex(1);
     } else {
-      await respondQuestion(
-        Object.fromEntries(Object.entries(nextAnswers).map(([key, value]) => [key, Array.isArray(value) ? value.join(", ") : value])),
-      );
+      setIsSubmitting(true);
+      try {
+        await respondQuestion(
+          Object.fromEntries(Object.entries(nextAnswers).map(([key, value]) => [key, Array.isArray(value) ? value.join(", ") : value])),
+        );
+      } finally {
+        setIsSubmitting(false);
+      }
     }
   };
 
@@ -98,7 +105,7 @@ export function QuestionDialog() {
               Question {questionIndex + 1} of {questions.length}
             </span>
             {questionIndex > 0 && (
-              <button onClick={handleBack} className="cursor-pointer hover:text-foreground">
+              <button onClick={handleBack} disabled={isSubmitting} className="cursor-pointer hover:text-foreground disabled:opacity-50">
                 Back
               </button>
             )}
@@ -118,9 +125,10 @@ export function QuestionDialog() {
                   void handleSelect(option.label);
                 }}
                 onMouseEnter={() => setSelectedIndex(idx + 1)}
+                disabled={isSubmitting}
                 className={cn(
                   "w-full text-left px-2 py-1 rounded-md text-xs transition-colors",
-                  "border cursor-pointer",
+                  "border cursor-pointer disabled:opacity-50",
                   isChecked
                     ? "bg-blue-500/15 border-blue-500"
                     : isHighlighted
@@ -144,9 +152,10 @@ export function QuestionDialog() {
               onClick={() => {
                 void handleSelect(value);
               }}
+              disabled={isSubmitting}
               className={cn(
                 "w-full text-left px-2 py-1 rounded-md text-xs transition-colors",
-                "border cursor-pointer bg-blue-500/15 border-blue-500",
+                "border cursor-pointer bg-blue-500/15 border-blue-500 disabled:opacity-50",
               )}
             >
               <span className="mr-2 text-muted-foreground">✓</span>
@@ -166,14 +175,15 @@ export function QuestionDialog() {
                   if (e.key === "Enter") void handleCustomSubmit();
                   if (e.key === "Escape") setShowCustom(false);
                 }}
+                disabled={isSubmitting}
                 placeholder="Enter your response…"
-                className="flex-1 px-2 py-1 rounded-md text-xs border border-border bg-background outline-none focus:border-blue-500"
+                className="flex-1 px-2 py-1 rounded-md text-xs border border-border bg-background outline-none focus:border-blue-500 disabled:opacity-50"
               />
               <button
                 onClick={() => {
                   void handleCustomSubmit();
                 }}
-                disabled={!customInput.trim()}
+                disabled={isSubmitting || !customInput.trim()}
                 className="px-2 py-1 rounded-md text-xs bg-blue-500 text-white disabled:opacity-50 cursor-pointer"
               >
                 Send
@@ -183,9 +193,10 @@ export function QuestionDialog() {
             <button
               onClick={() => setShowCustom(true)}
               onMouseEnter={() => setSelectedIndex(customIndex)}
+              disabled={isSubmitting}
               className={cn(
                 "w-full text-left px-2 py-1 rounded-md text-xs transition-colors",
-                "border border-border cursor-pointer",
+                "border border-border cursor-pointer disabled:opacity-50",
                 selectedIndex === customIndex ? "bg-blue-500 text-white border-blue-500" : "bg-background hover:bg-muted/50",
               )}
             >
@@ -198,7 +209,8 @@ export function QuestionDialog() {
               onClick={() => {
                 void handleAnswer(currentAnswer);
               }}
-              className="w-full px-2 py-1 rounded-md text-xs bg-blue-500 text-white cursor-pointer"
+              disabled={isSubmitting}
+              className="w-full px-2 py-1 rounded-md text-xs bg-blue-500 text-white disabled:opacity-50 cursor-pointer"
             >
               Next
             </button>
@@ -208,7 +220,7 @@ export function QuestionDialog() {
               onClick={() => {
                 void handleAnswer(selectedValues);
               }}
-              disabled={selectedValues.length === 0}
+              disabled={isSubmitting || selectedValues.length === 0}
               className="w-full px-2 py-1 rounded-md text-xs bg-blue-500 text-white disabled:opacity-50 cursor-pointer"
             >
               {isLastQuestion ? "Submit" : "Next"}

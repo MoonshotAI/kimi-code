@@ -33,11 +33,19 @@ function optionButton(label: string) {
 }
 
 function customResponseButton() {
-  return screen.getByRole('button', { name: /Custom response/ });
+  return screen.getByRole('button', { name: /Custom response/ }) as HTMLButtonElement;
 }
 
 function customInput() {
   return screen.getByPlaceholderText(/Enter your response/) as HTMLInputElement;
+}
+
+function createDeferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 describe('QuestionDialog', () => {
@@ -273,6 +281,73 @@ describe('QuestionDialog', () => {
     await waitFor(() => {
       expect(respondQuestion).toHaveBeenCalledWith({ Keyboard: 'Draft answer' });
     });
+  });
+
+  it('disables answers and Back while a final single-select submission is pending', async () => {
+    const response = createDeferred();
+    respondQuestion.mockReturnValue(response.promise);
+    renderQuestion([
+      makeQuestion('First question', ['Alpha']),
+      makeQuestion('Final question', ['Gamma', 'Delta']),
+    ]);
+
+    fireEvent.click(optionButton('Alpha'));
+    fireEvent.click(optionButton('Delta'));
+
+    const back = screen.getByRole('button', { name: 'Back' }) as HTMLButtonElement;
+    expect(back.disabled).toBe(true);
+    expect(optionButton('Gamma').disabled).toBe(true);
+    expect(optionButton('Delta').disabled).toBe(true);
+    expect(customResponseButton().disabled).toBe(true);
+
+    fireEvent.click(back);
+    fireEvent.click(optionButton('Gamma'));
+    expect(screen.getByText('Final question')).toBeTruthy();
+    expect(respondQuestion).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      response.resolve();
+    });
+    expect(back.disabled).toBe(false);
+    expect(optionButton('Gamma').disabled).toBe(false);
+    expect(customResponseButton().disabled).toBe(false);
+  });
+
+  it('disables multi-select and custom controls while a final submission is pending', async () => {
+    const response = createDeferred();
+    respondQuestion.mockReturnValue(response.promise);
+    renderQuestion([
+      makeQuestion('First question', ['One']),
+      makeQuestion('Final multi', ['Alpha', 'Beta'], true),
+    ]);
+
+    fireEvent.click(optionButton('One'));
+    fireEvent.click(optionButton('Alpha'));
+    fireEvent.click(customResponseButton());
+    fireEvent.change(customInput(), { target: { value: 'Draft' } });
+    const back = screen.getByRole('button', { name: 'Back' }) as HTMLButtonElement;
+    const send = screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement;
+    const submit = screen.getByRole('button', { name: 'Submit' }) as HTMLButtonElement;
+    fireEvent.click(submit);
+
+    expect(back.disabled).toBe(true);
+    expect(optionButton('Alpha').disabled).toBe(true);
+    expect(optionButton('Beta').disabled).toBe(true);
+    expect(customInput().disabled).toBe(true);
+    expect(send.disabled).toBe(true);
+    expect(submit.disabled).toBe(true);
+
+    fireEvent.click(submit);
+    expect(respondQuestion).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      response.resolve();
+    });
+    expect(back.disabled).toBe(false);
+    expect(optionButton('Alpha').disabled).toBe(false);
+    expect(customInput().disabled).toBe(false);
+    expect(send.disabled).toBe(false);
+    expect(submit.disabled).toBe(false);
   });
 
   it('resets navigation, answers, and custom drafts when a new question request arrives', async () => {
