@@ -947,7 +947,7 @@ describe('Agent tool description', () => {
           description: 'Find cause',
           subagent_type: supplied,
         }),
-      ).toBe('/subagent_type must NOT be valid');
+      ).toBe('/subagent_type must not be supplied');
     }
   });
 
@@ -1274,7 +1274,7 @@ describe('Agent tool description', () => {
     expect(description).not.toContain('- coder: Coder');
   });
 
-  it('freezes the subagent type list once the profile catalog is ready', async () => {
+  it('tracks the subagent type list when the profile catalog changes after ready', async () => {
     const caller: AgentProfile = normalizeAgentProfile({
       name: 'orchestrator',
       description: 'Orchestrator',
@@ -1303,16 +1303,25 @@ describe('Agent tool description', () => {
       reload: async () => {},
     };
     ctx = createTestAgent(sessionService(ISessionAgentProfileCatalog, catalog));
+    ctx.get(IAgentProfileService).applyBindingSnapshot({
+      modelAlias: 'mock-model',
+      profileName: 'orchestrator',
+      thinkingLevel: 'off',
+      systemPrompt: 'persisted prompt',
+      subagents: ['coder', 'explore'],
+    });
     expect(agentDescription()).toContain('- coder: Coder');
     await Promise.resolve();
 
-    const frozen = agentDescription();
-    expect(frozen).toContain('- coder: Coder');
+    const before = agentDescription();
+    expect(before).toContain('- coder: Coder');
+    expect(before).not.toContain('- explore: Explorer');
+    expect(agentDescription()).toBe(before);
 
     profiles.push(explore);
     const after = agentDescription();
-    expect(after).toBe(frozen);
-    expect(after).not.toContain('- explore: Explorer');
+    expect(after).not.toBe(before);
+    expect(after).toContain('- explore: Explorer');
   });
 
   it('reflects the current catalog list in the description before the catalog is ready', async () => {

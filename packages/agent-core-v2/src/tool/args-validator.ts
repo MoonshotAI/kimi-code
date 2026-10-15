@@ -81,6 +81,9 @@ function formatValidationError(error: ErrorObject): string {
   }
 
   const path = error.instancePath ? `${error.instancePath} ` : '';
+  if (error.keyword === 'not') {
+    return `${path}must not be supplied`;
+  }
   return `${path}${error.message ?? 'is invalid'}`;
 }
 

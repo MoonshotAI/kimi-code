@@ -127,9 +127,9 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
         String(capabilities.video_in),
         'runtime-unavailable',
       ].join('|');
+      this.appliedModel = { alias: modelAlias, key: modelKey };
       if (key === this.registeredKey) return;
       this.registeredKey = key;
-      this.appliedModel = { alias: modelAlias, key: modelKey };
       if (this.registration !== undefined) {
         this.log.debug('media tools unregistered: runtime unavailable and no attachment store', {
           key,

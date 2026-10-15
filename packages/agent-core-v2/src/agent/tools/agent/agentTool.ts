@@ -132,8 +132,6 @@ export class SubagentTool implements ISubagentTool {
 
   private readonly callerAgentId: string;
   private readonly canRunInBackground: () => boolean;
-  private catalogReady = false;
-  private frozenCatalogProfiles: readonly AgentProfile[] | undefined;
 
   constructor(
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
@@ -160,9 +158,6 @@ export class SubagentTool implements ISubagentTool {
       this.toolPolicy.isToolActive('TaskList') &&
       this.toolPolicy.isToolActive('TaskOutput') &&
       this.toolPolicy.isToolActive('TaskStop');
-    void this.catalog.ready.then(() => {
-      this.catalogReady = true;
-    });
   }
 
   get description(): string {
@@ -211,7 +206,7 @@ export class SubagentTool implements ISubagentTool {
   }
 
   private dispatchableProfiles(): readonly AgentProfile[] {
-    return this.filterDispatchable(this.catalogProfiles());
+    return this.filterDispatchable(this.catalog.list());
   }
 
   private filterDispatchable(profiles: readonly AgentProfile[]): readonly AgentProfile[] {
@@ -219,13 +214,6 @@ export class SubagentTool implements ISubagentTool {
     return allowlist === undefined
       ? profiles
       : profiles.filter((profile) => allowlist.includes(profile.name));
-  }
-
-  private catalogProfiles(): readonly AgentProfile[] {
-    if (this.frozenCatalogProfiles !== undefined) return this.frozenCatalogProfiles;
-    const profiles = this.catalog.list();
-    if (this.catalogReady) this.frozenCatalogProfiles = profiles;
-    return profiles;
   }
 
   private delegationExtras(
