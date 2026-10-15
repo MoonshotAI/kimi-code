@@ -71,6 +71,9 @@ interface Harness {
   readonly agentCatalogChange: Emitter<string>;
   readonly skillListing: { value: string };
   readonly profileNames: { value: readonly string[] };
+  readonly profileMeta: {
+    value: Readonly<Record<string, { readonly description?: string; readonly whenToUse?: string }>>;
+  };
   readonly secondaryModel: { value: SecondaryModelConfig | undefined };
 }
 
@@ -96,6 +99,9 @@ function createHarness(options: {
   const agentCatalogChange = disposables.add(new Emitter<string>());
   const skillListing = { value: '' };
   const profileNames = { value: ['default'] as readonly string[] };
+  const profileMeta = {
+    value: {} as Readonly<Record<string, { readonly description?: string; readonly whenToUse?: string }>>,
+  };
   const secondaryModel = { value: undefined as SecondaryModelConfig | undefined };
   const hostFs = new HostFileSystem();
   const hostEnvironment = {
@@ -144,7 +150,10 @@ function createHarness(options: {
         get: () => undefined,
         getDefault: () => ({ name: 'default' }) as unknown as AgentProfile,
         inspect: () => undefined,
-        list: () => profileNames.value.map((name) => ({ name }) as unknown as AgentProfile),
+        list: () =>
+          profileNames.value.map(
+            (name) => ({ name, ...profileMeta.value[name] }) as unknown as AgentProfile,
+          ),
       } as unknown as ISessionAgentProfileCatalog);
       reg.defineInstance(
         IAgentReminderService,
@@ -237,6 +246,7 @@ function createHarness(options: {
     agentCatalogChange,
     skillListing,
     profileNames,
+    profileMeta,
     secondaryModel,
   };
 }
@@ -794,6 +804,25 @@ describe('notifySubagentChanges', () => {
     await h.notifier.notifySubagentChanges({ previousSubagentNames: ['default', 'deploy'] });
     expect(h.reminders).toHaveLength(1);
     expect(h.reminders[0]?.content).toContain('Profiles added: deploy');
+  });
+
+  it('inlines description and whenToUse for added profiles when available', async () => {
+    const h = createHarness({
+      profile: makeProfileData({ profileName: 'default' }),
+    });
+    await h.notifier.notifySubagentChanges();
+
+    h.profileNames.value = ['default', 'deploy', 'reviewer', 'silent'];
+    h.profileMeta.value = {
+      deploy: { description: '部署服务', whenToUse: '发布到生产环境时' },
+      reviewer: { description: '只做代码评审' },
+    };
+    h.agentCatalogChange.fire('workspace');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain(
+      'Profiles added: deploy (部署服务; 发布到生产环境时), reviewer (只做代码评审), silent',
+    );
   });
 
   it('reports model description updates in the pool', async () => {

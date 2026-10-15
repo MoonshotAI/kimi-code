@@ -168,7 +168,8 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
       const profileData = this.profile.data();
       if (profileData.profileName === undefined) return;
       await this.agentCatalog.ready;
-      const currentProfiles = this.agentCatalog.list().map((profile) => profile.name);
+      const currentProfileList = this.agentCatalog.list();
+      const currentProfiles = currentProfileList.map((profile) => profile.name);
       const currentPool = snapshotModelPool(resolveSubagentModelPool(this.config));
       const snapshot = this.snapshot;
       if (
@@ -187,7 +188,10 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
           : input?.previousModelPool !== undefined
             ? input.previousModelPool
             : currentPool;
-      const profilesAdded = difference(currentProfiles, baseProfiles);
+      const profilesAdded = difference(currentProfiles, baseProfiles).map((name) => {
+        const profile = currentProfileList.find((candidate) => candidate.name === name);
+        return { name, description: profile?.description, whenToUse: profile?.whenToUse };
+      });
       const profilesRemoved = difference(baseProfiles, currentProfiles);
       const modelsAdded = difference(poolAliases(currentPool), poolAliases(basePool));
       const modelsRemoved = difference(poolAliases(basePool), poolAliases(currentPool));
@@ -416,8 +420,23 @@ function skillsChangeText(listing: string): string {
   return `The skill catalog changed since your system prompt was rendered; the listing below replaces it.\n\n${listing}`;
 }
 
+function addedProfileLabel(profile: {
+  readonly name: string;
+  readonly description?: string;
+  readonly whenToUse?: string;
+}): string {
+  const details = [profile.description, profile.whenToUse].filter(
+    (part): part is string => part !== undefined && part.length > 0,
+  );
+  return details.length === 0 ? profile.name : `${profile.name} (${details.join('; ')})`;
+}
+
 function subagentsChangeText(diff: {
-  readonly profilesAdded: readonly string[];
+  readonly profilesAdded: readonly {
+    readonly name: string;
+    readonly description?: string;
+    readonly whenToUse?: string;
+  }[];
   readonly profilesRemoved: readonly string[];
   readonly modelsAdded: readonly string[];
   readonly modelsRemoved: readonly string[];
@@ -425,7 +444,9 @@ function subagentsChangeText(diff: {
   readonly defaultModelChange?: { readonly from?: string; readonly to?: string };
 }): string {
   const lines = ['The available subagent profiles and models changed:'];
-  if (diff.profilesAdded.length > 0) lines.push(`- Profiles added: ${diff.profilesAdded.join(', ')}`);
+  if (diff.profilesAdded.length > 0) {
+    lines.push(`- Profiles added: ${diff.profilesAdded.map(addedProfileLabel).join(', ')}`);
+  }
   if (diff.profilesRemoved.length > 0) {
     lines.push(`- Profiles removed: ${diff.profilesRemoved.join(', ')}`);
   }
