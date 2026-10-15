@@ -171,17 +171,19 @@ npm uninstall -g @moonshot-ai/kimi-code
 ## FAQ
 
 ::: details Empty model list during /login
-If you see the error "No models available for the selected platform" when running the `/login` command, it may be due to:
+If the selected platform returns no usable models, the CLI reports "No models available for this platform." This usually means no model matches the platform's supported prefix. Check that the account and platform match first, then check whether any models are available there.
+
+If the CLI reports "Failed to verify API key", handle it as an API key or network issue:
 
 - **Invalid or expired API key**: Check whether the API key you entered is correct and still valid.
 - **Network connection issues**: Confirm you can access the API service addresses (such as `api.kimi.com` or `api.moonshot.cn`).
 
 **Note: Distinguish Platforms**
 
-Kimi Code membership benefits and the [Kimi Platform](https://platform.kimi.com) have different Base URLs. Please ensure your Base URL and API Key are matched correctly.
+Kimi Code membership benefits and the [Kimi Open Platform](https://platform.kimi.com) have different Base URLs. Please ensure your Base URL and API key are matched correctly.
 
-| Platform | Base URL | Billing | Key Source |
-|----------|----------|---------|------------|
+| Platform | Base URL | Billing | API key source |
+|----------|----------|---------|----------------|
 | **Kimi Code** | Anthropic-compatible: `https://api.kimi.com/coding/` | Membership subscription (quota included) | [Kimi Code Console](https://www.kimi.com/code/console) |
 | **Kimi Open Platform** | `https://api.moonshot.cn/v1` | Pay-as-you-go | [Kimi Open Platform](https://platform.kimi.com) |
 :::
@@ -194,11 +196,11 @@ Possible reasons:
 :::
 
 ::: details Membership expired or quota exhausted
-Use the `/usage` command to check your current quota and membership status. If your quota is exhausted or membership has expired, renew or upgrade at [Kimi Code](https://kimi.com/code).
+Use `/usage` to check your current quota and booster balance; check membership status in the account or membership page. If your quota is exhausted or membership has expired, renew or upgrade at [Kimi Code](https://kimi.com/code).
 :::
 
 ::: details Image paste fails
-If you see "Current model does not support image input" when pasting with `Ctrl-V`, the current model does not support image input.
+Use `Ctrl-V` on macOS / Linux or `Alt-V` on Windows to paste an image. If you see "Current model does not support image input", the current model does not support image input.
 
 Solutions:
 
@@ -214,7 +216,7 @@ macOS Gatekeeper performs a security check on new programs the first time they r
 :::
 
 ::: details How to upgrade Kimi Code CLI
-Run `kimi upgrade` inside the CLI to automatically check for the latest version and be guided through the upgrade. You can also use the package manager directly:
+Exit the TUI and run `kimi upgrade` in a terminal to check for the latest version and upgrade interactively. You can also use the package manager directly:
 
 ```sh
 npm install -g @moonshot-ai/kimi-code@latest

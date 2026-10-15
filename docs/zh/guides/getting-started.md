@@ -171,16 +171,18 @@ npm uninstall -g @moonshot-ai/kimi-code
 ## 常见问题
 
 ::: details /login 时模型列表为空
-如果在运行 `/login` 命令时看到 "No models available for the selected platform" 错误，可能是以下原因：
+如果所选平台返回的可用模型为空，会看到 "No models available for this platform." 错误，通常是该平台没有符合前缀规则的模型。先确认账号和平台是否匹配，再检查该平台是否有可用模型。
+
+如果看到 "Failed to verify API key"，则按 API 密钥或网络问题处理：
 
 - **API 密钥无效或过期**：检查你输入的 API 密钥是否正确，以及是否仍有效。
 - **网络连接问题**：确认能正常访问 API 服务地址（如 `api.kimi.com` 或 `api.moonshot.cn`）。
 
 **注意区分平台**
 
-Kimi Code 会员权益与 [Kimi 开放平台](https://platform.kimi.com) 有不同的 Base URL，配置时请注意 Base URL 与 API Key 的匹配是否正确。
+Kimi Code 会员权益与 [Kimi 开放平台](https://platform.kimi.com) 有不同的 Base URL，配置时请注意 Base URL 与 API 密钥的匹配是否正确。
 
-| 平台 | Base URL | 计费方式 | Key 创建入口 |
+| 平台 | Base URL | 计费方式 | API 密钥创建入口 |
 |------|---------|---------|-------------|
 | **Kimi Code** | Anthropic 兼容：`https://api.kimi.com/coding/` | Kimi 会员订阅（含额度） | [Kimi Code 控制台](https://www.kimi.com/code/console) |
 | **Kimi 开放平台** | `https://api.moonshot.cn/v1` | 按量付费 | [Kimi 开放平台官网](https://platform.kimi.com) |
@@ -194,11 +196,11 @@ API 密钥无效可能的原因：
 :::
 
 ::: details 会员过期或配额用尽
-如果你使用 Kimi Code 平台，可以通过 `/usage` 命令查看当前的配额和会员状态。如果配额用尽或会员过期，需要在 [Kimi Code](https://kimi.com/code) 续费或升级。
+可以通过 `/usage` 命令查看当前配额和加油包余额；会员状态请在账号或会员页面查看。如果配额用尽或会员过期，需要在 [Kimi Code](https://kimi.com/code) 续费或升级。
 :::
 
 ::: details 粘贴图片失败
-使用 `Ctrl-V` 粘贴图片时，如果提示 "Current model does not support image input"，说明当前模型不支持图片输入。
+macOS / Linux 使用 `Ctrl-V`，Windows 使用 `Alt-V` 粘贴图片。如果提示 "Current model does not support image input"，说明当前模型不支持图片输入。
 
 解决方法：
 
@@ -214,7 +216,7 @@ macOS 的 Gatekeeper 安全机制会在首次运行新程序时进行检查，�
 :::
 
 ::: details 如何升级 Kimi Code CLI
-在 CLI 内运行 `kimi upgrade`，会自动检查最新版本并引导升级。也可以直接用包管理器：
+退出 TUI 后在终端运行 `kimi upgrade`，会自动检查最新版本并引导升级。也可以直接用包管理器：
 
 ```sh
 npm install -g @moonshot-ai/kimi-code@latest
