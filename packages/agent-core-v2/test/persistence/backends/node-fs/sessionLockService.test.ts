@@ -213,6 +213,21 @@ describe('beginSessionRun', () => {
     expect(serviceA.held(SID)).toBe(false);
   });
 
+  it('checks staleness even when the lock was already acquired by another path', async () => {
+    await readAll();
+    serviceA.beginRun(SID);
+    writeExternally(`${JSON.stringify({ type: 'metadata', protocol_version: 1 })}\n`);
+    let caught: unknown;
+    try {
+      beginSessionRun(serviceA, log, SID, SCOPE, KEY);
+    } catch (error) {
+      caught = error;
+    }
+    expect(isError2(caught)).toBe(true);
+    expect((caught as { code: string }).code).toBe('session.stale');
+    expect(serviceA.held(SID)).toBe(false);
+  });
+
   it('passes after own appends are flushed', async () => {
     await readAll();
     beginSessionRun(serviceA, log, SID, SCOPE, KEY);

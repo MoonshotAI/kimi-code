@@ -63,9 +63,7 @@ export function beginSessionRun(
   wireScope: string,
   wireKey: string,
 ): void {
-  const alreadyHeld = locks.held(sessionId);
   locks.beginRun(sessionId);
-  if (alreadyHeld) return;
   if (!log.externallyModified(wireScope, wireKey)) return;
   locks.endRun(sessionId);
   throw sessionStaleError(sessionId);
