@@ -33,6 +33,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
   declare readonly _serviceBrand: undefined;
 
   private registration: IDisposable | undefined;
+  private appliedModelKey: string | undefined;
 
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
@@ -75,6 +76,11 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
   private refresh(): void {
     const capabilities = this.profile.getModelCapabilities();
     const modelAlias = this.profile.getModel();
+    const modelKey = [
+      modelAlias,
+      String(capabilities.image_in),
+      String(capabilities.video_in),
+    ].join('|');
     const hasRuntimeFs = this.runtime.isAvailable(['fs']);
     if (
       isUnknownCapability(capabilities) &&
@@ -93,7 +99,11 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
         inspected = this.runtime.inspect();
       } catch (error) {
         runtimeUsable = false;
-        if (this.attachmentStore !== undefined && this.registration !== undefined) {
+        if (
+          this.attachmentStore !== undefined &&
+          this.registration !== undefined &&
+          modelKey === this.appliedModelKey
+        ) {
           this.log.debug('media tools registration kept: runtime inspect failed', {
             model: modelAlias,
             error,
@@ -115,6 +125,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
       ].join('|');
       if (key === this.registeredKey) return;
       this.registeredKey = key;
+      this.appliedModelKey = modelKey;
       if (this.registration !== undefined) {
         this.log.debug('media tools unregistered: runtime unavailable and no attachment store', {
           key,
@@ -143,6 +154,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     ].join('|');
     if (key === this.registeredKey) return;
     this.registeredKey = key;
+    this.appliedModelKey = modelKey;
     this.registration?.dispose();
     this.log.debug('media tools registration refreshed', { key });
     const workspaceCtx = this.workspaceCtx;

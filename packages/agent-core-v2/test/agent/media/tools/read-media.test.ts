@@ -1150,6 +1150,38 @@ describe('AgentMediaToolsRegistrar', () => {
     expect(registry.resolve('ReadMediaFile')).toBeUndefined();
   });
 
+  it('drops the registration on a media-to-text model switch while runtime inspect fails', () => {
+    const storage = new InMemoryStorageService();
+    const store = new SessionMediaStoreService(makeSessionContext({
+      sessionId: 'session', workspaceId: 'workspace', cwd: '/workspace',
+      sessionDir: '/session', sessionScope: 'session',
+    }), storage, new JsonAtomicDocumentStore(storage));
+    const { registry, bindModel, failInspect } = createRegistrarHarness({}, {}, store);
+    bindModel('vision-model', capabilities({ image_in: true, video_in: false }));
+    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+
+    failInspect(true);
+    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+
+    bindModel('text-model', capabilities({ image_in: false, video_in: false }));
+    expect(registry.resolve('ReadMediaFile')).toBeUndefined();
+  });
+
+  it('registers on a text-to-media model switch while runtime inspect fails', () => {
+    const storage = new InMemoryStorageService();
+    const store = new SessionMediaStoreService(makeSessionContext({
+      sessionId: 'session', workspaceId: 'workspace', cwd: '/workspace',
+      sessionDir: '/session', sessionScope: 'session',
+    }), storage, new JsonAtomicDocumentStore(storage));
+    const { registry, bindModel, failInspect } = createRegistrarHarness({}, {}, store);
+    bindModel('text-model', capabilities({ image_in: false, video_in: false }));
+    expect(registry.resolve('ReadMediaFile')).toBeUndefined();
+
+    failInspect(true);
+    bindModel('vision-model', capabilities({ image_in: true, video_in: false }));
+    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+  });
+
   it('unregisters on dispose', () => {
     const { registry, registrar, bindModel } = createRegistrarHarness();
     bindModel('vision-model', capabilities({ image_in: true, video_in: true }));
