@@ -47,6 +47,7 @@ import { nonEmptyLines, outcomeLine, outcomeRows } from './tool-renderers/outcom
 import { TruncatedOutputComponent, trimTrailingEmptyLines } from './tool-renderers/truncated';
 import { isSpilledToolOutput } from './tool-renderers/types';
 import { isGenericToolResult, pickResultRenderer } from './tool-renderers/registry';
+import { sanitizeShellOutput } from '#/tui/utils/shell-output';
 import { buildWaitForHeader, parseWaitForOutput } from './tool-renderers/wait-for';
 
 const MAX_ARG_LENGTH = 60;
@@ -862,9 +863,13 @@ export class ToolCallComponent extends Container {
     // Mirror the error preview's fold threshold: the hint row replaces the
     // hidden rows, so a single hidden row leaves nothing for ctrl+o to gain.
     // Count rows the way the preview does — internal blanks included, only
-    // trailing empties dropped (nonEmptyLines would skip interior blanks).
-    if (result.is_error === true)
-      return trimTrailingEmptyLines(result.output.split('\n')).length > RESULT_PREVIEW_LINES + 1;
+    // trailing empties dropped (nonEmptyLines would skip interior blanks);
+    // Bash's preview renders sanitized output, so control-only rows (e.g. a
+    // trailing reset) must not count either.
+    if (result.is_error === true) {
+      const output = name === 'Bash' ? sanitizeShellOutput(result.output) : result.output;
+      return trimTrailingEmptyLines(output.split('\n')).length > RESULT_PREVIEW_LINES + 1;
+    }
     switch (name) {
       case 'ReadMediaFile':
         // A media envelope renders its body only when expanded; anything else

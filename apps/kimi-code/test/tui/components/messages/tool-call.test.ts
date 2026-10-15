@@ -258,6 +258,26 @@ describe('ToolCallComponent', () => {
     expect(component.hasHiddenContent()).toBe(true);
   });
 
+  it('does not count control-only rows the preview strips from Bash errors', () => {
+    // Four visible rows plus a trailing reset: the sanitized preview shows
+    // all four without folding, so ctrl+o must stay off.
+    const component = new ToolCallComponent(
+      {
+        id: 'call_shell_err_ansi',
+        name: 'Bash',
+        args: { command: 'false' },
+      },
+      {
+        tool_call_id: 'call_shell_err_ansi',
+        output: 'a\nb\nc\nd\n\u001B[0m',
+        is_error: true,
+      },
+    );
+
+    component.render(100);
+    expect(component.hasHiddenContent()).toBe(false);
+  });
+
   it('renders live Bash output while the command is running', () => {
     const component = new ToolCallComponent(
       {
