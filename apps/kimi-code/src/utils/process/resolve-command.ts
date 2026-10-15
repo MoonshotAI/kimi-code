@@ -55,10 +55,15 @@ function isInsideCwd(candidate: string, cwd: string, platform: NodeJS.Platform):
 /**
  * Resolve a bare command name to an absolute executable path by searching
  * PATH (PATHEXT-aware on Windows). Returns undefined when the command is not
- * found — or when the only hit lives inside `cwd`, since executing that would
- * run whatever a malicious workspace planted there.
+ * found — or when the only hit lives inside an excluded directory (the cwd by
+ * default), since executing that would run whatever a malicious workspace
+ * planted there.
  */
-export function resolveCommandPath(command: string, cwd: string = process.cwd()): string | undefined {
+export function resolveCommandPath(
+  command: string,
+  excluded: string | readonly string[] = process.cwd(),
+): string | undefined {
+  const excludedDirs = typeof excluded === 'string' ? [excluded] : excluded;
   const platform = process.platform;
   const env = process.env;
   const extensions = pathExtensions(platform, env);
@@ -72,7 +77,7 @@ export function resolveCommandPath(command: string, cwd: string = process.cwd())
     for (const name of names) {
       const candidate = join(dir, name);
       if (!isExecutableFile(candidate, platform)) continue;
-      if (isInsideCwd(candidate, cwd, platform)) continue;
+      if (excludedDirs.some((dir) => isInsideCwd(candidate, dir, platform))) continue;
       return resolve(candidate);
     }
   }

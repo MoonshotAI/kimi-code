@@ -31,6 +31,7 @@ import { resolveCommandPath } from '#/utils/process/resolve-command';
 
 import type { CLIOptions } from './options';
 import { resolveAgentProfileSelection } from './agent-selection';
+import { resolveStartupWorkDir, resumeCommand } from './startup-work-dir';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { createKimiCodeHostIdentity } from './version';
 
@@ -55,7 +56,7 @@ export async function runShell(
   const palette = await getColorPalette(tuiConfig.theme);
   currentTheme.setPalette(palette);
 
-  const workDir = process.cwd();
+  const launchDir = process.cwd();
   const telemetryBootstrap = createCliTelemetryBootstrap();
   const telemetryClient: TelemetryClient = {
     track,
@@ -84,6 +85,7 @@ export async function runShell(
   };
   const harness = createKimiHarness(harnessOptions);
   startupTrace('harness:created');
+  const workDir = await resolveStartupWorkDir(opts, () => harness.ensureDefaultWorkspace());
   log.info('kimi-code starting', {
     version,
     uiMode: CLI_UI_MODE,
@@ -93,7 +95,7 @@ export async function runShell(
   });
 
   await harness.ensureConfigFile();
-  const legacySource = resolveLegacySourceHome(process.env, homedir(), process.cwd());
+  const legacySource = resolveLegacySourceHome(process.env, homedir(), launchDir);
   const sourceIsTarget = sameLegacyPath(legacySource.sourceHome, harness.homeDir);
   if (sourceIsTarget) {
     process.stderr.write(
@@ -166,11 +168,13 @@ export async function runShell(
   // never be resolved by name through PATH: a `.` or empty PATH segment would
   // let an untrusted checkout plant an `stty` executable and run it pre-trust.
   // resolveCommandPath returns an absolute path and refuses hits inside the
-  // cwd; when it cannot resolve stty, skip the save/restore entirely — it is
+  // cwd and the launch directory (they differ under --default-workspace);
+  // when it cannot resolve stty, skip the save/restore entirely — it is
   // best-effort terminal hygiene, not required for startup.
   // stty is also POSIX-only, so skip it on Windows instead of relying on the
   // catch below.
-  const sttyPath = process.platform === 'win32' ? undefined : resolveCommandPath('stty');
+  const sttyPath =
+    process.platform === 'win32' ? undefined : resolveCommandPath('stty', [process.cwd(), launchDir]);
   if (sttyPath !== undefined) {
     try {
       // stty operates on the terminal behind stdin, so stdin must be the TTY —
@@ -245,7 +249,13 @@ export async function runShell(
     process.stdout.write(`${gutter}Bye!\n`);
     const hints: string[] = [];
     if (sessionId !== '' && hasContent) {
-      hints.push(`${gutter}To resume this session: kimi -r ${sessionId}`);
+      const defaultWorkspacePath =
+        opts.defaultWorkspace === true
+          ? await harness.getDefaultWorkspacePath().catch(() => undefined)
+          : undefined;
+      hints.push(
+        `${gutter}To resume this session: ${resumeCommand(opts, sessionId, workDir, defaultWorkspacePath)}`,
+      );
     }
     if (tui.exitOpenUrl !== undefined) {
       hints.push(`${gutter}open ${toTerminalHyperlink(tui.exitOpenUrl, tui.exitOpenUrl)}`);

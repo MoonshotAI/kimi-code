@@ -14,6 +14,7 @@ import { registerApprovalsRoutes } from './approvals';
 import { registerAuthRoute } from './auth';
 import { registerCapabilitiesRoutes } from './capabilities';
 import { registerConfigRoutes } from './config';
+import { registerDefaultWorkspaceRoutes } from './defaultWorkspace';
 import { registerConnectionsRoutes } from './connections';
 import { registerFileHistoryRoutes } from './fileHistory';
 import { registerFilesRoutes } from './files';
@@ -168,6 +169,10 @@ export async function registerApiV1Routes(
       );
       registerWorkspacesRoutes(
         apiV1 as unknown as Parameters<typeof registerWorkspacesRoutes>[0],
+        core,
+      );
+      registerDefaultWorkspaceRoutes(
+        apiV1 as unknown as Parameters<typeof registerDefaultWorkspaceRoutes>[0],
         core,
       );
       registerWorkspaceFsRoutes(

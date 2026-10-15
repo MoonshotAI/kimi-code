@@ -27,6 +27,7 @@ import {
   IAuthSummaryService,
   IBootstrapService,
   IConfigService,
+  IDefaultWorkspace,
   IEventBus,
   IEventDispatcher,
   IHostFileSystem,
@@ -116,6 +117,7 @@ import { createKimiCodeHostIdentity } from '../version';
 
 import { resolveOutputFormat } from '../options';
 import type { CLIOptions, PromptOutputFormat } from '../options';
+import { resolveStartupWorkDir, resumeCommand } from '../startup-work-dir';
 import {
   type PromptOutput,
   PromptJsonWriter,
@@ -147,7 +149,6 @@ export async function runV2Print(
   const stderr = io.stderr ?? process.stderr;
   const promptProcess = io.process ?? process;
   const outputFormat = resolveOutputFormat(opts);
-  const workDir = process.cwd();
 
   writeExperimentalVersion(version, outputFormat, stdout, stderr);
 
@@ -277,6 +278,10 @@ export async function runV2Print(
       });
     }
 
+    const workDir = await resolveStartupWorkDir(opts, () =>
+      app.accessor.get(IDefaultWorkspace).ensure(),
+    );
+
     // Print mode has no trust prompt, so the engine's workspace-trust gate
     // would silently drop project-level MCP servers — say so on stderr.
     try {
@@ -324,7 +329,17 @@ export async function runV2Print(
         stderr,
       );
     }
-    writeResumeHint(resolved.session.id, outputFormat, stdout, stderr);
+    const defaultWorkspacePath =
+      opts.defaultWorkspace === true
+        ? await app.accessor.get(IDefaultWorkspace).path()
+        : undefined;
+    writeResumeHint(
+      resolved.session.id,
+      resumeCommand(opts, resolved.session.id, workDir, defaultWorkspacePath),
+      outputFormat,
+      stdout,
+      stderr,
+    );
 
     telemetryService.withContext({ session_id: resolved.session.id }).track2('exit', {
       duration_ms: Date.now() - startedAt,

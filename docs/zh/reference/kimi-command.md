@@ -17,6 +17,7 @@ kimi <subcommand> [options]
 | `--help` | `-h` | 显示帮助信息并退出 |
 | `--session [id]` | `-S` | 恢复一个会话。带 ID 时直接打开指定会话；不带 ID 时进入交互式选择器 |
 | `--continue` | `-c` | 继续当前工作目录下最近一次的会话，无需手动指定 ID |
+| `--default-workspace` | | 在[默认工作区](../configuration/config-files.md#default-workspace)而不是当前目录中工作；目录不存在时自动创建。可与 `--continue`、`--session`、`--prompt` 组合使用 |
 | `--model <model>` | `-m` | 为本次启动指定模型别名。省略时新会话使用配置文件中的 `default_model` |
 | `--prompt <prompt>` | `-p` | 非交互执行单次 prompt，并把 Assistant 输出流式写到 stdout。该模式不会打开 TUI |
 | `--output-format <format>` | | 设置非交互输出格式，支持 `text` 与 `stream-json`。仅可与 `--prompt` 一起使用，默认 `text` |
@@ -82,6 +83,13 @@ kimi --auto
 
 ```sh
 kimi --plan
+```
+
+不进项目直接问个问题，之后在任意目录都能接着聊：
+
+```sh
+kimi --default-workspace
+kimi --default-workspace --continue
 ```
 
 ### 自定义 Skills 目录
@@ -229,7 +237,7 @@ kimi doctor
 
 | 命令 | 说明 |
 | --- | --- |
-| `kimi doctor` | 校验默认 `config.toml` 和 `tui.toml` |
+| `kimi doctor` | 校验默认 `config.toml` 和 `tui.toml`，并检查默认工作区是否可用 |
 | `kimi doctor config [path]` | 只校验 `config.toml`；传入 `path` 时使用该文件而不是默认文件 |
 | `kimi doctor tui [path]` | 只校验 `tui.toml`；传入 `path` 时使用该文件而不是默认文件 |
 

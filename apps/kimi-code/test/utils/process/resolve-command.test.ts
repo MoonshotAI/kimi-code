@@ -98,6 +98,18 @@ describe('resolveCommandPath (posix)', () => {
     expect(resolveCommandPath('mytool', cwd)).toBeUndefined();
   });
 
+  it.skipIf(process.platform === 'win32')('refuses a hit inside any of several excluded directories', () => {
+    const workDir = makeTempDir('kimi-resolve-work-');
+    const launchDir = makeTempDir('kimi-resolve-launch-');
+    const nested = join(launchDir, 'bin');
+    mkdirSync(nested);
+    writeFileSync(join(nested, 'mytool'), '#!/bin/sh\nexit 0\n');
+    chmodSync(join(nested, 'mytool'), 0o755);
+    process.env['PATH'] = nested;
+
+    expect(resolveCommandPath('mytool', [workDir, launchDir])).toBeUndefined();
+  });
+
   it.skipIf(process.platform === 'win32')('continues to a safe PATH hit after a workspace executable', () => {
     const cwd = makeTempDir('kimi-resolve-cwd-');
     const bin = makeTempDir('kimi-resolve-bin-');

@@ -37,6 +37,7 @@ export function resolveOutputFormat(
 export interface CLIOptions {
   session: string | undefined;
   continue: boolean;
+  defaultWorkspace?: boolean;
   yolo: boolean;
   auto: boolean;
   plan: boolean;

@@ -1,4 +1,4 @@
-import { IConfigService, type Scope } from '@moonshot-ai/agent-core-v2';
+import { DEFAULT_WORKSPACE_SECTION, IConfigService, type Scope } from '@moonshot-ai/agent-core-v2';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
@@ -58,6 +58,16 @@ export function registerConfigRoutes(app: ConfigRouteHost, core: Scope): void {
       tags: ['config'],
     },
     async (req, reply) => {
+      if (req.body.default_workspace !== undefined) {
+        reply.send(
+          errEnvelope(
+            ErrorCode.VALIDATION_FAILED,
+            'default_workspace cannot be changed here; use PATCH /api/v1/default-workspace',
+            req.id,
+          ),
+        );
+        return;
+      }
       try {
         const config = core.accessor.get(IConfigService);
         await config.ready;
@@ -86,6 +96,7 @@ export function registerConfigRoutes(app: ConfigRouteHost, core: Scope): void {
 export function toConfigResponse(resolved: Record<string, unknown>): ConfigResponse {
   const wire: Record<string, unknown> = {};
   for (const [domain, value] of Object.entries(resolved)) {
+    if (domain === DEFAULT_WORKSPACE_SECTION) continue;
     wire[camelToSnake(domain)] =
       domain === 'providers'
         ? toProviderResponses(value)

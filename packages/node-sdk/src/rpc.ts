@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
+import type { DefaultWorkspaceStatus } from '@moonshot-ai/agent-core-v2';
 import type { SwarmModeTrigger } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
 
 import type { AgentContextData } from '#/context';
@@ -204,6 +205,12 @@ export abstract class SDKRpcClientBase {
   abstract getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo>;
 
   abstract trustWorkspace(workDir: string): Promise<void>;
+
+  abstract ensureDefaultWorkspace(): Promise<string>;
+
+  abstract getDefaultWorkspacePath(): Promise<string | undefined>;
+
+  abstract getDefaultWorkspaceStatus(): Promise<DefaultWorkspaceStatus>;
 
   abstract renameSession(input: RenameSessionInput): Promise<void>;
 

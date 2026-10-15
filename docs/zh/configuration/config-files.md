@@ -484,6 +484,21 @@ max_chars = 500000
 
 `enabled` 可被环境变量 `KIMI_CODE_WATCH` 覆盖，优先级高于配置文件。
 
+## `default_workspace`
+
+`default_workspace` 设置未选择工作区时对话存放的位置，例如桌面端不选项目直接新建的对话，或 `kimi --default-workspace`。未设置时为 `<文稿目录>/KimiCode/Default`。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `path` | `string` | — | 绝对路径，或以 `~/` 表示的主目录下路径；Windows 上须带盘符（`D:\Chats`）或完整的网络共享路径（`\\server\share\Chats`）。首次使用时创建 |
+
+```toml
+[default_workspace]
+path = "~/Projects/Chats"
+```
+
+更改位置不会移动已有对话，原目录保留为普通工作区。桌面端可在设置中修改此项。
+
 <!--
 ## `experimental`
 

@@ -11,6 +11,7 @@ import { IReadTool, ReadInputSchema, type ReadInput } from '@moonshot-ai/agent-c
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import {
+  DefaultWorkspaceUnavailableError,
   Error2,
   ErrorCodes,
   IBootstrapService,
@@ -396,10 +397,20 @@ describe('server-v2 /api/v1/sessions', () => {
         return root;
       },
     ): ScopeSeed {
+      const status = {
+        path: root,
+        customPath: undefined,
+        systemPath: root,
+        exists: true,
+        problem: undefined,
+      };
       const stub: IDefaultWorkspace = {
         _serviceBrand: undefined,
         ensure,
+        path: async () => root,
         isDefault: async (candidate) => candidate === root,
+        status: async () => status,
+        setCustomPath: async () => status,
       };
       return [[IDefaultWorkspace, stub]];
     }
@@ -438,16 +449,22 @@ describe('server-v2 /api/v1/sessions', () => {
       expect(body.details?.[0]?.path).toBe('default_workspace');
     });
 
-    it('maps a permission failure on the default workspace to 40411', async () => {
+    it('reports an unusable default workspace as 40930 with path and reason', async () => {
       const root = join(tmpdir(), 'kimi-default-workspace-denied');
       await restartWithFreshHome(
         defaultWorkspaceStub(root, async () => {
-          throw new Error2(ErrorCodes.OS_FS_PERMISSION_DENIED, `permission denied: ${root}`);
+          throw new DefaultWorkspaceUnavailableError(
+            { path: root, reason: 'permission_denied' },
+            `default workspace ${root} is unavailable: permission denied`,
+          );
         }),
       );
 
-      const { body } = await postJson<null>('/api/v1/sessions', { default_workspace: true });
-      expect(body.code).toBe(40411);
+      const { body } = await postJson<{ path: string; reason: string }>('/api/v1/sessions', {
+        default_workspace: true,
+      });
+      expect(body.code).toBe(40930);
+      expect(body.data).toEqual({ path: root, reason: 'permission_denied' });
 
       const workspaces = await getJson<{ items: unknown[] }>('/api/v1/workspaces');
       expect(workspaces.body.data.items).toEqual([]);

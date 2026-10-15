@@ -53,6 +53,11 @@ export function createProgram(
     )
     .option('-c, --continue', 'Continue the previous session for the working directory.', false)
     .addOption(new Option('-C').hideHelp().default(false))
+    .option(
+      '--default-workspace',
+      'Work in the default workspace (<Documents>/KimiCode/Default unless configured) instead of the current directory.',
+      false,
+    )
     .option('-y, --yolo', 'Start in Ask When Needed mode: routine edits and commands run automatically; risky actions, questions, and plans still ask.', false)
     .option('--auto', 'Start in Never Ask mode: never interrupts you; everything runs and is decided automatically.', false)
     .addOption(
@@ -176,6 +181,7 @@ export function createProgram(
     const opts: CLIOptions = {
       session: sessionValue,
       continue: raw['continue'] === true || raw['C'] === true,
+      defaultWorkspace: raw['defaultWorkspace'] === true,
       yolo: yoloValue,
       auto: autoValue,
       plan: raw['plan'] as boolean,

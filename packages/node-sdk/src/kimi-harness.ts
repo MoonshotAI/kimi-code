@@ -1,3 +1,5 @@
+import type { DefaultWorkspaceStatus } from '@moonshot-ai/agent-core-v2';
+
 import { ErrorCodes, KimiError } from '#/errors';
 import type { ExperimentalFeatureState } from '#/flag';
 import type { ImageLimits } from '#/image';
@@ -421,6 +423,19 @@ export class KimiHarness {
   /** Mark `workDir` as trusted; project-level MCP servers connect live afterwards. */
   async trustWorkspace(workDir: string): Promise<void> {
     return this.rpc.trustWorkspace(workDir);
+  }
+
+  async ensureDefaultWorkspace(): Promise<string> {
+    return this.rpc.ensureDefaultWorkspace();
+  }
+
+  /** Resolved default workspace location without touching the disk; undefined when it cannot be resolved. */
+  async getDefaultWorkspacePath(): Promise<string | undefined> {
+    return this.rpc.getDefaultWorkspacePath();
+  }
+
+  async getDefaultWorkspaceStatus(): Promise<DefaultWorkspaceStatus> {
+    return this.rpc.getDefaultWorkspaceStatus();
   }
 
   async getConfig(options: GetConfigOptions = {}): Promise<KimiConfig> {

@@ -1,4 +1,6 @@
-import { isAbsolute, join } from 'pathe';
+import { posix, win32 } from 'node:path';
+
+import { isAbsolute, join, normalize } from 'pathe';
 
 export const DEFAULT_WORKSPACE_RELATIVE_ROOT = ['KimiCode', 'Default'] as const;
 
@@ -34,4 +36,21 @@ export function parseWindowsDocumentsOutput(output: string): string | undefined 
 
 export function defaultDocumentsDir(osHomeDir: string): string {
   return join(osHomeDir, 'Documents');
+}
+
+const FULLY_QUALIFIED_WIN32_PATH = /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/]+[^\\/]+)/;
+
+export function resolveCustomRoot(
+  raw: string,
+  osHomeDir: string,
+  platform: NodeJS.Platform,
+): string | undefined {
+  if (platform === 'win32') {
+    const expanded = /^~(?=$|[\\/])/.test(raw) ? osHomeDir + raw.slice(1) : raw;
+    if (!FULLY_QUALIFIED_WIN32_PATH.test(expanded)) return undefined;
+    const resolved = win32.normalize(expanded);
+    return FULLY_QUALIFIED_WIN32_PATH.test(resolved) ? normalize(resolved) : undefined;
+  }
+  const expanded = /^~(?=$|\/)/.test(raw) ? osHomeDir + raw.slice(1) : raw;
+  return posix.isAbsolute(expanded) ? posix.normalize(expanded) : undefined;
 }

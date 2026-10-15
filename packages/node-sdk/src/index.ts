@@ -63,7 +63,9 @@ export {
   redact,
   resolveGlobalLogPath,
 } from '#/logging/index';
-export { resolveKimiHome } from '@moonshot-ai/agent-core-v2';
+export { DEFAULT_WORKSPACE_PROBLEM_MESSAGES, resolveKimiHome } from '@moonshot-ai/agent-core-v2';
+export type { DefaultWorkspaceStatus } from '@moonshot-ai/agent-core-v2';
+export { workspaceRootKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 export type { LogContext, LogLevel, LogPayload, Logger } from '#/logging/index';
 
 export { effectiveModelAlias, loadRuntimeConfigSafe } from '#/config/index';

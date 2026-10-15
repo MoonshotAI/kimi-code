@@ -33,6 +33,7 @@ import {
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
+import { defaultWorkspaceUnavailableDataSchema } from '../protocol/default-workspace';
 import { ErrorCode } from '../protocol/error-codes';
 import { pageResponseSchema } from '../protocol/pagination';
 import { toProtocolMessage } from '../services/messages/messageProjection';
@@ -69,6 +70,7 @@ import { defineRoute } from '../middleware/defineRoute';
 import { readLegacyStatus } from '../services/legacyStatus/legacyStatus';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, dispatchAction } from './action-dispatch';
+import { defaultWorkspaceErrorEnvelope } from './defaultWorkspace';
 import { applySessionAgentConfig } from './sessionAgentConfig';
 import { updateSessionProfile } from './sessionProfile';
 
@@ -188,9 +190,12 @@ export function registerSessionsRoutes(
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
         [ErrorCode.FS_PERMISSION_DENIED]: {},
+        [ErrorCode.DEFAULT_WORKSPACE_UNAVAILABLE]: {
+          dataSchema: defaultWorkspaceUnavailableDataSchema,
+        },
       },
       description:
-        'Create a new session. default_workspace=true places it in the default workspace under the Documents folder and must not carry workspace_id or metadata.cwd.',
+        'Create a new session. default_workspace=true places it in the default workspace (the configured custom location, or KimiCode/Default under the Documents folder) and must not carry workspace_id or metadata.cwd.',
       tags: ['sessions'],
     },
     async (req, reply) => {
@@ -1181,6 +1186,11 @@ function sendMappedError(
 ): void {
   const requestId = req.id;
   const log = requestLog(req);
+  const defaultWorkspaceEnvelope = defaultWorkspaceErrorEnvelope(err, requestId);
+  if (defaultWorkspaceEnvelope !== undefined) {
+    reply.send(defaultWorkspaceEnvelope);
+    return;
+  }
   if (isError2(err)) {
     switch (err.code) {
       case 'session.not_found':

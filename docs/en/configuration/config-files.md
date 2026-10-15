@@ -485,6 +485,21 @@ Both values must be positive integers. A call's `max_chars` overrides the defaul
 
 `enabled` can be overridden by the `KIMI_CODE_WATCH` environment variable, which takes higher priority than `config.toml`.
 
+## `default_workspace`
+
+`default_workspace` sets where chats go when no workspace is chosen, such as new desktop chats without a project or `kimi --default-workspace`. Without it, the folder is `<Documents>/KimiCode/Default`.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `path` | `string` | — | Absolute path, or a path under your home folder written as `~/...`; on Windows, include the drive letter (`D:\Chats`) or a full network share (`\\server\share\Chats`). Created on first use |
+
+```toml
+[default_workspace]
+path = "~/Projects/Chats"
+```
+
+Changing the location does not move existing chats; the previous folder stays as an ordinary workspace. The desktop app edits this value from Settings.
+
 <!--
 ## `experimental`
 

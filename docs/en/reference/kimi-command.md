@@ -17,6 +17,7 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--help` | `-h` | Show help information and exit |
 | `--session [id]` | `-S` | Resume a session. With an ID, opens that session directly; without an ID, enters an interactive selector |
 | `--continue` | `-c` | Continue the most recent session in the current working directory, without specifying an ID manually |
+| `--default-workspace` | | Work in the [default workspace](../configuration/config-files.md#default-workspace) instead of the current directory; the folder is created if needed. Combines with `--continue`, `--session`, and `--prompt` |
 | `--model <model>` | `-m` | Specify a model alias for this launch. When omitted, new sessions use `default_model` from the config file |
 | `--prompt <prompt>` | `-p` | Run a single prompt non-interactively and stream the Assistant output to stdout. This mode does not open the TUI |
 | `--output-format <format>` | | Set the non-interactive output format; supports `text` and `stream-json`. Can only be used with `--prompt`; defaults to `text` |
@@ -82,6 +83,13 @@ Read the code and produce an implementation plan before making any file changes:
 
 ```sh
 kimi --plan
+```
+
+Ask a quick question without a project, then come back to it later from any directory:
+
+```sh
+kimi --default-workspace
+kimi --default-workspace --continue
 ```
 
 ### Custom Skills Directories
@@ -229,7 +237,7 @@ kimi doctor
 
 | Command | Description |
 | --- | --- |
-| `kimi doctor` | Validate the default `config.toml` and `tui.toml` |
+| `kimi doctor` | Validate the default `config.toml` and `tui.toml`, and check that the default workspace can be used |
 | `kimi doctor config [path]` | Validate only `config.toml`, using `path` instead of the default file when provided |
 | `kimi doctor tui [path]` | Validate only `tui.toml`, using `path` instead of the default file when provided |
 

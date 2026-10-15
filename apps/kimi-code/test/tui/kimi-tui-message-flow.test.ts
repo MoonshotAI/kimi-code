@@ -332,6 +332,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
       return interactiveAgentScope.run(agentId, fn);
     }),
     getExperimentalFeatures: vi.fn(async () => []),
+    getDefaultWorkspacePath: vi.fn(async () => '/tmp/default-workspace'),
     auth: {
       status: vi.fn(async () => ({
         providers: [{ providerName: 'managed:kimi-code', hasToken: true }],
@@ -2716,6 +2717,43 @@ command = "vim"
 
     expect(harness.auth.submitFeedback).not.toHaveBeenCalled();
     expect(harness.track).not.toHaveBeenCalledWith('feedback_submitted', undefined);
+  });
+
+  it('lists sessions without waiting for the default workspace lookup and labels them once it resolves', async () => {
+    let resolvePath: (path: string | undefined) => void = () => {};
+    const { driver } = await makeDriver(makeSession(), {
+      listSessions: vi.fn(async () => [
+        { id: 'ses-default', workDir: '/tmp/default-workspace', createdAt: 1, updatedAt: 2 },
+        { id: 'ses-project', workDir: '/tmp/project', createdAt: 1, updatedAt: 1 },
+      ]),
+      getDefaultWorkspacePath: vi.fn(
+        () =>
+          new Promise<string | undefined>((resolve) => {
+            resolvePath = resolve;
+          }),
+      ),
+    });
+    const labels = () => driver.state.sessions.map((row) => [row.id, row.in_default_workspace]);
+    const picker = () =>
+      (driver as unknown as { sessionPickerComponent: { render(width: number): string[] } })
+        .sessionPickerComponent.render(120)
+        .join('\n');
+
+    await (driver as unknown as KimiTUI).showSessionPicker();
+    expect(labels()).toEqual([
+      ['ses-default', false],
+      ['ses-project', false],
+    ]);
+    expect(picker()).not.toContain('Default workspace');
+
+    resolvePath('/tmp/default-workspace');
+    await vi.waitFor(() =>
+      expect(labels()).toEqual([
+        ['ses-default', true],
+        ['ses-project', false],
+      ]),
+    );
+    expect(picker()).toContain('Default workspace');
   });
 
   it('tracks blocked slash commands as invalid without counting them as executed commands', async () => {

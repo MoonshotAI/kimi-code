@@ -21,6 +21,7 @@ export interface SessionRow {
   readonly title: string | null;
   readonly last_prompt?: string | null;
   readonly work_dir: string;
+  readonly in_default_workspace?: boolean;
   readonly updated_at: number;
   readonly metadata?: Readonly<Record<string, unknown>> | undefined;
 }
@@ -167,6 +168,12 @@ export class SessionPickerComponent extends Container implements Focusable {
       this.visibleCount,
       Math.min(this.list.view().items.length, this.pageSize),
     );
+  }
+
+  /** Swaps in refreshed copies of the loaded rows, keeping the cursor and active query. */
+  replaceSessions(rows: SessionRow[]): void {
+    this.sessions = rows;
+    this.list.setItems(this.sessions);
   }
 
   /** Updates the backend-paging facts after an in-flight fetch settles. */
@@ -490,7 +497,8 @@ export class SessionPickerComponent extends Container implements Focusable {
     const metaGap = '   ';
     const metaGapWidth = visibleWidth(metaGap);
     const idLineWidth = indentWidth + idWidth;
-    const aliasedDir = homeAlias(session.work_dir);
+    const aliasedDir =
+      session.in_default_workspace === true ? 'Default workspace' : homeAlias(session.work_dir);
     const dirWidth = visibleWidth(aliasedDir);
 
     if (idLineWidth + metaGapWidth + dirWidth <= width) {
