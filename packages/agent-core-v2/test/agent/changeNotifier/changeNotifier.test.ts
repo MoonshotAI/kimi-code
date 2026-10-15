@@ -338,6 +338,29 @@ describe('notifyAgentsMdChanges', () => {
     expect(h.reminders[0]?.content).toContain('were not included in your system prompt');
   });
 
+  it('reports (deleted) when a previously announced new file is removed', async () => {
+    const h = createHarness({
+      profile: makeProfileData({
+        profileName: 'default',
+        systemPrompt: 'no instructions here',
+        agentsMdPaths: [],
+      }),
+    });
+
+    await h.notifier.notifyAgentsMdChanges();
+    expect(h.reminders).toHaveLength(0);
+
+    const agentsMdPath = join(workDir, 'AGENTS.md');
+    await writeFile(agentsMdPath, 'brand new rules');
+    await h.notifier.notifyAgentsMdChanges();
+    expect(h.reminders).toHaveLength(1);
+
+    await rm(agentsMdPath, { force: true });
+    await h.notifier.notifyAgentsMdChanges();
+    expect(h.reminders).toHaveLength(2);
+    expect(h.reminders[1]?.content).toContain(`${agentsMdPath} (deleted)`);
+  });
+
   it('ignores non-main agents', async () => {
     const agentsMdPath = join(workDir, 'AGENTS.md');
     await writeFile(agentsMdPath, 'v1 content');
