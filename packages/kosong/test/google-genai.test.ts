@@ -1062,6 +1062,13 @@ describe('GoogleGenAIChatProvider', () => {
       expect(provider.thinkingEffort).toBe('low');
     });
 
+    it('thinkingEffort preserves low for explicit LOW kwargs on gemini-3', () => {
+      const provider = createProvider({ model: 'gemini-3-pro-preview' }).withGenerationKwargs({
+        thinkingConfig: { thinkingLevel: 'LOW', includeThoughts: false },
+      });
+      expect(provider.thinkingEffort).toBe('low');
+    });
+
     it('withThinking returns a new instance', () => {
       const provider = createProvider();
       const newProvider = provider.withThinking('high');

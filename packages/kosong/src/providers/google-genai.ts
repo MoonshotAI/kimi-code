@@ -819,7 +819,9 @@ export class GoogleGenAIChatProvider implements ChatProvider {
           return thinkingConfig.includeThoughts === false ? 'off' : 'low';
         case 'LOW':
           // LOW + suppressed thoughts is how 'off' is encoded for Gemini 4.
-          return thinkingConfig.includeThoughts === false ? 'off' : 'low';
+          return thinkingConfig.includeThoughts === false && this._model.includes('gemini-4')
+            ? 'off'
+            : 'low';
         case 'MEDIUM':
           return 'medium';
         case 'HIGH':
