@@ -1583,6 +1583,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const sessionId = input.sessionId;
     return this.runSessionAccess(sessionId, async () => {
       const live = this.liveSession(sessionId);
+      const indexEntry =
+        live === undefined ? await this.engineAccessor.get(ISessionIndex).get(sessionId) : undefined;
       if (live !== undefined) {
         const agentLifecycle = live.accessor.get(IAgentLifecycleService);
         for (const agent of agentLifecycle.list()) {
@@ -1596,9 +1598,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
             );
           }
         }
-      } else if ((await this.engineAccessor.get(ISessionIndex).get(sessionId)) === undefined) {
+      } else if (indexEntry === undefined) {
         throw SDKRpcClientV2.sessionNotFound(sessionId);
       }
+      const workspaceId =
+        live?.accessor.get(ISessionContext).workspaceId ?? indexEntry?.workspaceId;
       let previousSubagentNames: readonly string[] | undefined;
       let previousModelPool: SubagentModelPoolSnapshot | null | undefined;
       let staleNotifier: IAgentChangeNotifierService | undefined;
@@ -1622,7 +1626,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       try {
         await this.klient.global.config.reload();
         await this.klient.global.plugins.reload();
-        await this.reloadWorkspaceCatalogs();
+        await this.reloadWorkspaceCatalogs(workspaceId);
         await this.refreshPluginSessionStarts(sessionId);
       } catch (error) {
         staleNotifier?.unmute();
@@ -1646,15 +1650,14 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     });
   }
 
-  private async reloadWorkspaceCatalogs(): Promise<void> {
-    const workspaces = this.engineAccessor.get(IWorkspaceInstanceManager);
-    await Promise.all(
-      workspaces.list().map(async (handler) => {
-        await handler.program.skills.reload();
-        await handler.program.agentProfiles.reload().catch(() => undefined);
-        await handler.program.userAgentProfiles.reload().catch(() => undefined);
-      }),
-    );
+  private async reloadWorkspaceCatalogs(workspaceId: string | undefined): Promise<void> {
+    if (workspaceId === undefined) return;
+    const target = this.engineAccessor.get(IWorkspaceInstanceManager).get(workspaceId);
+    if (target === undefined) return;
+    await target.program.instructions.reload();
+    await target.program.skills.reload();
+    await target.program.agentProfiles.reload().catch(() => undefined);
+    await target.program.userAgentProfiles.reload().catch(() => undefined);
   }
 
   private async refreshPluginSessionStarts(excludedSessionId?: string): Promise<void> {
