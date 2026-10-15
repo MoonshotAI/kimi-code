@@ -955,18 +955,11 @@ describe('GoogleGenAIChatProvider', () => {
       });
     });
 
-    it('gemini-4 model maps effort off to LOW (MINIMAL is unsupported)', async () => {
-      const provider = createProvider({ model: 'gemini-4-argon' }).withThinking('off');
-      const history: Message[] = [
-        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
-      ];
-      const body = await captureRequestBody(provider, '', [], history);
-
-      const config = body['config'] as Record<string, unknown>;
-      expect(config['thinkingConfig']).toEqual({
-        includeThoughts: false,
-        thinkingLevel: 'LOW',
-      });
+    it('gemini-4 model rejects effort off (thinking cannot be disabled)', () => {
+      const provider = createProvider({ model: 'gemini-4-argon' });
+      expect(() => provider.withThinking('off')).toThrow(
+        'thinking effort "off" is not supported for gemini-4 models: thinking cannot be disabled; use low/medium/high',
+      );
     });
 
     it('thinking effort off for non-gemini-3 disables thinking', async () => {
@@ -1052,11 +1045,6 @@ describe('GoogleGenAIChatProvider', () => {
     it('thinkingEffort round-trips effort off for gemini-3', () => {
       const provider = createProvider({ model: 'gemini-3-pro-preview' }).withThinking('off');
       expect(provider.thinkingEffort).toBe('off');
-    });
-
-    it('thinkingEffort reports low for gemini-4 effort off (Gemini 4 has no true off)', () => {
-      const provider = createProvider({ model: 'gemini-4-argon' }).withThinking('off');
-      expect(provider.thinkingEffort).toBe('low');
     });
 
     it('thinkingEffort reflects level for gemini-4', () => {

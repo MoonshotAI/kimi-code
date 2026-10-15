@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Fix Gemini 4 models rejecting requests when thinking effort is set to off.
+Report a clear error when thinking effort is set to off for Gemini 4 models.
