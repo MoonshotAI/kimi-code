@@ -68,6 +68,7 @@ import { defineRoute } from '../middleware/defineRoute';
 import { readLegacyStatus } from '../services/legacyStatus/legacyStatus';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, dispatchAction } from './action-dispatch';
+import { isSessionStale, reloadStaleSession } from './sessionReload';
 import { applySessionAgentConfig } from './sessionAgentConfig';
 import { updateSessionProfile } from './sessionProfile';
 
@@ -614,6 +615,8 @@ export function registerSessionsRoutes(
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.SESSION_BUSY]: {},
+        [ErrorCode.SESSION_OCCUPIED]: {},
+        [ErrorCode.SESSION_STALE]: {},
         [ErrorCode.COMPACTION_UNABLE]: {},
         [ErrorCode.SESSION_UNDO_UNAVAILABLE]: {},
       },
@@ -921,9 +924,14 @@ async function compactSessionAction(
 ): Promise<void> {
   const { core, req, reply, id, body } = ctx;
   const agent = await resolveMainAgent(core, id);
-  agent.accessor
-    .get(IAgentFullCompactionService)
-    .begin({ source: 'manual', instruction: normalizeOptional(body.instruction) });
+  try {
+    agent.accessor
+      .get(IAgentFullCompactionService)
+      .begin({ source: 'manual', instruction: normalizeOptional(body.instruction) });
+  } catch (error) {
+    if (isSessionStale(error)) await reloadStaleSession(core, id).catch(() => undefined);
+    throw error;
+  }
   requestLog(req)?.info({ session_id: id, action: 'compact' }, 'session action completed');
   reply.send(okEnvelope({}, req.id));
 }
@@ -933,7 +941,12 @@ async function undoSessionAction(
 ): Promise<void> {
   const { core, req, reply, id, body } = ctx;
   const agent = await resolveMainAgent(core, id);
-  await agent.accessor.get(IAgentConversationUndoService).undo(body.count);
+  try {
+    await agent.accessor.get(IAgentConversationUndoService).undo(body.count);
+  } catch (error) {
+    if (isSessionStale(error)) await reloadStaleSession(core, id).catch(() => undefined);
+    throw error;
+  }
   const history = agent.accessor.get(IAgentContextMemoryService).get();
   requestLog(req)?.info({ session_id: id, action: 'undo' }, 'session action completed');
   const legacy = core.accessor.get(ISessionLegacyService);
@@ -1171,6 +1184,16 @@ function sendMappedError(
       case 'session.fork_active_turn':
       case ErrorCodes.SESSION_BUSY:
         reply.send(errEnvelope(ErrorCode.SESSION_BUSY, err.message, requestId, err.stack));
+        return;
+      case 'session.occupied':
+        reply.send(
+          errEnvelope(ErrorCode.SESSION_OCCUPIED, err.message, requestId, err.stack, err.details),
+        );
+        return;
+      case 'session.stale':
+        reply.send(
+          errEnvelope(ErrorCode.SESSION_STALE, err.message, requestId, err.stack, err.details),
+        );
         return;
       case 'compaction.unable':
         reply.send(errEnvelope(ErrorCode.COMPACTION_UNABLE, err.message, requestId, err.stack));

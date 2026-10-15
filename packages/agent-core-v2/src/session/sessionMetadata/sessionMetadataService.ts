@@ -2,11 +2,14 @@ import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
+import { isError2 } from '#/_base/errors/errors';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
+import { SessionErrors } from '#/session/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
 
@@ -52,6 +55,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     @IAtomicDocumentStore private readonly store: IAtomicDocumentStore,
     @ILogService private readonly log: ILogService,
     @ISessionIndexMirror private readonly mirror: ISessionIndexMirror,
+    @ISessionLockService private readonly sessionLocks: ISessionLockService,
   ) {
     super();
     this._register({
@@ -93,6 +97,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
   ): Promise<boolean> {
     await this.ready;
     if (this.disposed) return false;
+    await this.ensureWriteOwnership();
     const updatedAt =
       patch.updatedAt ?? (opts?.touchUpdatedAt === false ? this.data.updatedAt : Date.now());
     this.data = { ...this.data, ...patch, updatedAt };
@@ -103,6 +108,24 @@ export class SessionMetadata extends Service implements ISessionMetadata {
       changed: Object.keys(patch) as (keyof SessionMeta)[],
     });
     return true;
+  }
+
+  private async ensureWriteOwnership(): Promise<void> {
+    if (this.sessionLocks.held(this.ctx.sessionId)) return;
+    this.sessionLocks.beginRun(this.ctx.sessionId);
+    const existing = await this.store.get<SessionMeta>(this.scope, META_KEY);
+    if (existing !== undefined) {
+      this.data = normalizeSessionMeta(existing, this.ctx.sessionId);
+    }
+  }
+
+  private tryHoldForWrite(): boolean {
+    try {
+      this.sessionLocks.beginRun(this.ctx.sessionId);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async setTitle(title: string): Promise<void> {
@@ -133,7 +156,18 @@ export class SessionMetadata extends Service implements ISessionMetadata {
       const existing = this.data.agents?.[agentId];
       if (existing !== undefined && agentMetaEquals(existing, meta)) return;
       const agents = { ...this.data.agents, [agentId]: meta };
-      await this.applyUpdate({ agents }, { touchUpdatedAt: false });
+      try {
+        await this.applyUpdate({ agents }, { touchUpdatedAt: false });
+      } catch (error) {
+        if (isError2(error) && error.code === SessionErrors.codes.SESSION_OCCUPIED) {
+          this.log.warn(
+            'session metadata agent registration skipped; session is in use by another client',
+            { sessionId: this.ctx.sessionId, agentId },
+          );
+          return;
+        }
+        throw error;
+      }
     });
   }
 
@@ -188,7 +222,9 @@ export class SessionMetadata extends Service implements ISessionMetadata {
           agents: this.data.agents ?? {},
           custom: this.data.custom ?? {},
         };
-        await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
+        if (this.tryHoldForWrite()) {
+          await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
+        }
       }
       return;
     }
@@ -203,7 +239,9 @@ export class SessionMetadata extends Service implements ISessionMetadata {
       agents: {},
       custom: {},
     };
-    await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
+    if (this.tryHoldForWrite()) {
+      await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
+    }
     this.mirrorToReadModel();
     this.log.debug('session metadata created', { sessionId: this.ctx.sessionId });
   }

@@ -45,6 +45,11 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2, isCodedError, isError2, toKimiErrorPayload, unwrapErrorCause } from "#/errors";
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
 import { IEventDispatcher } from '#/state/eventDispatcher';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { ISessionLockService, beginSessionRun } from '#/persistence/interface/sessionLock';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { AGENT_WIRE_RECORD_KEY } from '#/wire/record';
 import { renderCompactionInstruction } from './compactionInstruction';
 import { renderContextRecoveryPointer } from './contextRecovery';
 import {
@@ -156,6 +161,9 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     @IAgentLoopService private readonly loopService: IAgentLoopService,
     @IAgentStateService private readonly states: IAgentStateService,
     @IWireService private readonly wire: IWireService,
+    @ISessionContext private readonly sessionContext: ISessionContext,
+    @ISessionLockService private readonly sessionLocks: ISessionLockService,
+    @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
   ) {
     super();
     this.states.contributeState(fullCompactionKey);
@@ -333,6 +341,15 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   begin(input: FullCompactionInput): boolean {
     if (this._compacting) return false;
     const data: CompactionBeginData = { source: input.source, instruction: input.instruction };
+    if (data.source === 'manual') {
+      beginSessionRun(
+        this.sessionLocks,
+        this.appendLogStore,
+        this.sessionContext.sessionId,
+        this.sessionContext.scope(`agents/${MAIN_AGENT_ID}`),
+        AGENT_WIRE_RECORD_KEY,
+      );
+    }
     if (!this.reserveCompactionSlot(data.source)) return false;
 
     const tokenCount = this.validateCompactionStart(data.source);

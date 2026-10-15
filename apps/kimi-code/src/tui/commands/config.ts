@@ -27,6 +27,12 @@ import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
 import { NO_ACTIVE_SESSION_MESSAGE, TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
+import {
+  isSessionOccupiedError,
+  isSessionStaleError,
+  occupiedHolderLabel,
+  reloadSessionAfterStale,
+} from '../utils/session-lock-errors';
 import { setMarkdownMermaidMode, type MermaidRenderMode } from '../utils/markdown-options';
 import {
   effectiveModelForHost,
@@ -124,7 +130,25 @@ export async function handleCompactCommand(host: SlashCommandHost, args: string)
     return;
   }
   const customInstruction = args.trim() || undefined;
-  await session.compact({ instruction: customInstruction });
+  try {
+    await session.compact({ instruction: customInstruction });
+  } catch (error) {
+    if (isSessionOccupiedError(error)) {
+      host.showError(
+        `Session is in use by ${occupiedHolderLabel(error)}. Wait for it to finish, then retry.`,
+      );
+      return;
+    }
+    if (isSessionStaleError(error)) {
+      await reloadSessionAfterStale(
+        host,
+        session.id,
+        'Loaded updates from another client. Review and run /compact again.',
+      );
+      return;
+    }
+    throw error;
+  }
 }
 
 export async function handleEditorCommand(host: SlashCommandHost, args: string): Promise<void> {

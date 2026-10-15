@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
 import { log } from '@moonshot-ai/kimi-code-sdk';
+import { ErrorCodes, isKimiError } from '@moonshot-ai/kimi-code-sdk';
 import type {
   ApprovalRequest,
   ApprovalResponse,
@@ -83,6 +84,7 @@ import { CompactionComponent } from './components/dialogs/compaction';
 import { HelpPanelComponent } from './components/dialogs/help-panel';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
 import { SessionPickerComponent, type SessionRow } from './components/dialogs/session-picker';
+import { SessionOccupiedDialogComponent } from './components/dialogs/session-occupied-dialog';
 import { TrustPromptComponent, type TrustPromptChoice } from './components/dialogs/trust-prompt';
 import {
   FileMentionProvider,
@@ -192,6 +194,8 @@ import { REPLAY_FETCH_TURN_LIMIT } from './utils/message-replay';
 import { hasPatchChanges } from './utils/object-patch';
 import { beginScreenTakeover, endScreenTakeover, type ScreenTakeover } from './utils/screen-takeover';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
+import { reloadSessionAfterStale, occupiedHolderClientId, occupiedHolderLabel } from './utils/session-lock-errors';
+import { CLI_MSH_PLATFORM } from '#/constant/app';
 import { formatStepRetryDetail, formatStepRetryLabel } from './utils/step-retry';
 import { formatBashOutputForDisplay } from './utils/shell-output';
 import { lazyModelSelection } from './utils/model-switch';
@@ -1965,14 +1969,15 @@ export class KimiTUI {
       options?.imageAttachmentIds !== undefined && options.imageAttachmentIds.length > 0
         ? options.imageAttachmentIds
         : undefined;
-    this.appendTranscriptEntry({
+    const entry: TranscriptEntry = {
       id: nextTranscriptId(),
       kind: 'user',
       turnId: undefined,
       renderMode: 'plain',
       content: input,
       imageAttachmentIds,
-    });
+    };
+    this.appendTranscriptEntry(entry);
     // A goal-active steer is buffered into the running goal turn — no new
     // turn.started will fire for handleTurnStarted to claim the lease — so
     // bind it to that turn here. The turn context must be read BEFORE
@@ -2037,8 +2042,78 @@ export class KimiTUI {
       return;
     }
     this.staging.trackDispatch(stagingLease, session.prompt(sdkInput, { promptId: submissionId }), (error) => {
+      if (isKimiError(error) && error.code === ErrorCodes.SESSION_OCCUPIED) {
+        this.staging.defer(stagingLease);
+        this.handleSessionOccupied(session, input, options, entry, error);
+        return;
+      }
+      if (isKimiError(error) && error.code === ErrorCodes.SESSION_STALE) {
+        this.staging.defer(stagingLease);
+        void this.handleSessionStale(session, input, entry, options);
+        return;
+      }
       this.failSessionRequest(`Failed to send: ${formatErrorMessage(error)}`);
     });
+  }
+
+  private handleSessionOccupied(
+    session: Session,
+    input: string,
+    options: SendMessageOptions | undefined,
+    entry: TranscriptEntry,
+    error: unknown,
+  ): void {
+    this.setAppState({ streamingPhase: 'idle' });
+    this.resetLivePane();
+    this.removeTranscriptEntries([entry]);
+    const holderClient = occupiedHolderClientId(error);
+    const client = occupiedHolderLabel(error);
+    this.track('occupied_prompt_shown', {
+      holder_client: holderClient,
+      opener_client: CLI_MSH_PLATFORM,
+    });
+    this.mountEditorReplacement(
+      new SessionOccupiedDialogComponent({
+        client,
+        onSelect: (action) => {
+          if (action !== 'retry') return;
+          this.track('occupied_choice', { choice: 'retry', holder_client: holderClient });
+          this.restoreEditor();
+          this.state.queuedMessages.unshift(this.toQueuedMessage(input, options));
+          this.updateQueueDisplay();
+          this.drainQueueIfIdle();
+        },
+        onCancel: () => {
+          this.track('occupied_choice', { choice: 'cancel', holder_client: holderClient });
+          this.staging.releaseRecalled([
+            ...(options?.imageAttachmentIds ?? []),
+            ...(options?.videoAttachmentIds ?? []),
+          ]);
+          this.restoreInputText(input);
+        },
+      }),
+    );
+  }
+
+  private async handleSessionStale(
+    session: Session,
+    input: string,
+    entry: TranscriptEntry,
+    options: SendMessageOptions | undefined,
+  ): Promise<void> {
+    this.setAppState({ streamingPhase: 'idle' });
+    this.resetLivePane();
+    this.removeTranscriptEntries([entry]);
+    this.staging.releaseRecalled([
+      ...(options?.imageAttachmentIds ?? []),
+      ...(options?.videoAttachmentIds ?? []),
+    ]);
+    await reloadSessionAfterStale(
+      this,
+      session.id,
+      'Loaded updates from another client. Your message is back in the input.',
+    );
+    this.restoreInputText(input);
   }
 
   activatePluginCommand(

@@ -51,6 +51,7 @@ import {
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { isSessionStale, reloadStaleSession } from './sessionReload';
 import {
   assertPromptFileRefs,
   assertPromptPathRefs,
@@ -201,6 +202,8 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.FILE_NOT_FOUND]: {},
         [ErrorCode.PROMPT_ID_CONFLICT]: {},
+        [ErrorCode.SESSION_OCCUPIED]: {},
+        [ErrorCode.SESSION_STALE]: {},
       },
       description: 'Submit a prompt to a session',
       tags: ['prompts'],
@@ -360,6 +363,9 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         reply.send(okEnvelope(projectPromptHandle(handle), req.id));
       } catch (error) {
         if (!enqueued) await preparedMedia?.discard();
+        if (isSessionStale(error)) {
+          await reloadStaleSession(core, session_id).catch(() => undefined);
+        }
         sendMappedError(reply, req, error);
       } finally {
         reservation?.dispose();
@@ -624,6 +630,16 @@ function sendMappedError(
         return;
       case 'session.busy':
         reply.send(errEnvelope(ErrorCode.SESSION_BUSY, err.message, requestId, err.stack));
+        return;
+      case 'session.occupied':
+        reply.send(
+          errEnvelope(ErrorCode.SESSION_OCCUPIED, err.message, requestId, err.stack, err.details),
+        );
+        return;
+      case 'session.stale':
+        reply.send(
+          errEnvelope(ErrorCode.SESSION_STALE, err.message, requestId, err.stack, err.details),
+        );
         return;
       case 'request.invalid':
       case 'validation.failed':

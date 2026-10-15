@@ -1,4 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { mkdtempSync, rmSync, appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -6,6 +10,7 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { AppendLogCorruptedError, IAppendLogStore, type AppendLogTruncation } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
+import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 
 const enc = new TextEncoder();
@@ -790,5 +795,80 @@ describe('AppendLogStore', () => {
     record.append<Rec>(SCOPE, KEY, { n: 1 });
     await expect(record.flush()).rejects.toThrow('disk full');
     expect(events).toEqual([`${SCOPE}/${KEY}`]);
+  });
+});
+
+describe('AppendLogStore session lock integration', () => {
+  let homeDir: string;
+  let disposables: DisposableStore;
+  let log: IAppendLogStore;
+
+  beforeEach(() => {
+    homeDir = mkdtempSync(join(tmpdir(), 'append-log-lock-'));
+    mkdirSync(join(homeDir, SCOPE), { recursive: true });
+    disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(IFileSystemStorageService, new FileStorageService(homeDir));
+    ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    log = ix.get(IAppendLogStore);
+  });
+
+  afterEach(() => {
+    disposables.dispose();
+    rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  async function readAll(): Promise<void> {
+    for await (const _ of log.read(SCOPE, KEY)) {
+      void _;
+    }
+  }
+
+  it('tracks external modification via known length', async () => {
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+    await readAll();
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+
+    appendFileSync(join(homeDir, SCOPE, KEY), `${JSON.stringify({ n: 1 })}\n`);
+    expect(log.externallyModified(SCOPE, KEY)).toBe(true);
+
+    await readAll();
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+
+    log.append<Rec>(SCOPE, KEY, { n: 2 });
+    await log.flush();
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+  });
+
+  it('resets known length after rewrite', async () => {
+    log.append<Rec>(SCOPE, KEY, { n: 1 });
+    await log.flush();
+    await readAll();
+    appendFileSync(join(homeDir, SCOPE, KEY), `${JSON.stringify({ n: 2 })}\n`);
+    expect(log.externallyModified(SCOPE, KEY)).toBe(true);
+
+    await log.rewrite<Rec>(SCOPE, KEY, [{ n: 3 }]);
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+  });
+
+  it('keeps writes in memory while the session lock binding rejects, then flushes when released', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    let acquired = false;
+    const binding = log.bindSessionLock(SCOPE, KEY, () => acquired);
+
+    log.append<Rec>(SCOPE, KEY, { n: 1 });
+    await log.flush();
+    expect(existsSync(join(homeDir, SCOPE, KEY))).toBe(false);
+    expect(warn).toHaveBeenCalledOnce();
+
+    acquired = true;
+    await log.flush();
+    expect(existsSync(join(homeDir, SCOPE, KEY))).toBe(true);
+
+    const out: Rec[] = [];
+    for await (const r of log.read<Rec>(SCOPE, KEY)) out.push(r);
+    expect(out).toEqual([{ n: 1 }]);
+    binding.dispose();
+    warn.mockRestore();
   });
 });

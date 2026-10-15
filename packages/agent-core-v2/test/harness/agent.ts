@@ -128,6 +128,8 @@ import {
   AgentExternalHooksService,
   FileStorageService,
   InMemoryStorageService,
+  InMemorySessionLockService,
+  ISessionLockService,
   AgentFullCompactionService,
   IAppendLogStore,
   IFileSystemStorageService,
@@ -1022,6 +1024,13 @@ class PersistenceAppendLogStore implements IAppendLogStore {
     return Promise.resolve();
   }
 
+  externallyModified(): boolean {
+    return false;
+  }
+
+  bindSessionLock(): IDisposable {
+    return toDisposable(() => undefined);
+  }
   snapshot(): WireRecord[] {
     return this.persistence.records.map(cloneRecord);
   }
@@ -1138,6 +1147,7 @@ export class AgentTestContext {
           const memoryStorage = (): SyncDescriptor<IFileSystemStorageService> =>
             new SyncDescriptor(InMemoryStorageService, []);
           reg.defineDescriptor(IFileSystemStorageService, memoryStorage());
+          reg.defineInstance(ISessionLockService, new InMemorySessionLockService());
           reg.define(IBlobStore, BlobStoreService);
           reg.defineInstance(
             IConfigService,

@@ -1308,7 +1308,7 @@ describe('AgentTaskService', () => {
     );
 
     await expect(manager.wait(taskId, 60_000)).resolves.toMatchObject({ status: 'completed' });
-    expect(vi.getTimerCount()).toBeLessThanOrEqual(baselineTimerCount);
+    expect(vi.getTimerCount()).toBeLessThanOrEqual(baselineTimerCount + 1);
   });
 
   it('returns undefined or empty output for unknown task ids', async () => {

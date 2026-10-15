@@ -39,8 +39,11 @@ import {
   PRINT_WAIT_CEILING_S_DEFAULT,
   applyPrintModeConfigDefaults,
   bootstrap,
+  closeSessionById,
   createCloudAppender,
   ensureMainAgent,
+  ErrorCodes,
+  isError2,
   resumeSessionById,
   logSeed,
   parseAgentFileText,
@@ -50,6 +53,7 @@ import {
   resolveLoggingConfig,
   resolvePrintBackgroundMode,
   setClampedTimeout,
+  type Error2,
   type Event2,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
@@ -286,7 +290,7 @@ export async function runV2Print(
       // Best-effort: a broken mcp.json or trust store must not fail the run.
     }
 
-    const resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
+    let resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
     restorePermission = resolved.restorePermission;
     quiesceAgents = async () => {
       releaseQuiescence = await quiesceSessionAgents(resolved.session, resolved.agent);
@@ -302,27 +306,42 @@ export async function runV2Print(
     }
 
     const goalCreate = parseHeadlessGoalCreate(opts.prompt!);
-    if (goalCreate !== undefined) {
-      await runNativeGoal(
-        app,
-        resolved.session,
-        resolved.agent,
-        goalCreate,
-        resolved.goalModel,
-        outputFormat,
-        stdout,
-        stderr,
+    const runTurn = async (session: ISessionScopeHandle, agent: IAgentScopeHandle): Promise<void> => {
+      if (goalCreate !== undefined) {
+        await runNativeGoal(
+          app,
+          session,
+          agent,
+          goalCreate,
+          resolved.goalModel,
+          outputFormat,
+          stdout,
+          stderr,
+        );
+      } else {
+        await runNativeTurn(app, session, agent, opts.prompt!, outputFormat, stdout, stderr);
+      }
+    };
+    try {
+      await runTurn(resolved.session, resolved.agent);
+    } catch (error) {
+      if (isError2(error) && error.code === ErrorCodes.SESSION_OCCUPIED) {
+        reportSessionOccupied(error, resolved.session.id, outputFormat, stdout, stderr);
+        return;
+      }
+      if (!isError2(error) || error.code !== ErrorCodes.SESSION_STALE) throw error;
+      stderr.write(
+        `Session "${resolved.session.id}" was updated by another client; reloading.\n`,
       );
-    } else {
-      await runNativeTurn(
-        app,
-        resolved.session,
-        resolved.agent,
-        opts.prompt!,
-        outputFormat,
-        stdout,
-        stderr,
-      );
+      await closeSessionById(app.accessor, resolved.session.id);
+      const reloaded = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
+      resolved = reloaded;
+      restorePermission = reloaded.restorePermission;
+      quiesceAgents = async () => {
+        releaseQuiescence = await quiesceSessionAgents(reloaded.session, reloaded.agent);
+      };
+      flushWires = () => flushSessionWires(reloaded.session, reloaded.agent);
+      await runTurn(reloaded.session, reloaded.agent);
     }
     writeResumeHint(resolved.session.id, outputFormat, stdout, stderr);
 
@@ -635,6 +654,32 @@ async function runNativeTurn(
   } finally {
     subscription.dispose();
   }
+}
+
+const PRINT_EXIT_SESSION_OCCUPIED = 4;
+
+function reportSessionOccupied(
+  error: Error2,
+  sessionId: string,
+  outputFormat: PromptOutputFormat,
+  stdout: PromptOutput,
+  stderr: PromptOutput,
+): void {
+  const holder = error.details?.['holder'];
+  const clientIdentity =
+    holder !== null && typeof holder === 'object'
+      ? (holder as { clientIdentity?: unknown }).clientIdentity
+      : undefined;
+  const client = typeof clientIdentity === 'string' ? clientIdentity : 'another client';
+  const message = `Session "${sessionId}" is in use by ${client}. Wait for it to finish, then retry.`;
+  if (outputFormat === 'stream-json') {
+    stdout.write(
+      `${JSON.stringify({ type: 'error', code: 'session.occupied', message, details: error.details })}\n`,
+    );
+  } else {
+    stderr.write(`${message}\n`);
+  }
+  process.exitCode = PRINT_EXIT_SESSION_OCCUPIED;
 }
 
 async function runNativeGoal(
