@@ -931,13 +931,12 @@ export class GoogleGenAIChatProvider implements ChatProvider {
     const thinkingConfig: ThinkingConfig = { includeThoughts: true };
 
     if (this._model.includes('gemini-3') || this._model.includes('gemini-4')) {
-      // Gemini 3 and later models use thinkingLevel (MINIMAL/LOW/MEDIUM/HIGH).
-      // The SDK does not expose a "disabled" level, so 'off' maps to MINIMAL
-      // with thought output suppressed — the lowest thinking intensity
-      // available.
+      // Gemini 3 and later models use thinkingLevel. The SDK does not expose a
+      // "disabled" level, so 'off' maps to the lowest available level with
+      // thought output suppressed (MINIMAL on Gemini 3, LOW on Gemini 4).
       switch (effort) {
         case 'off':
-          thinkingConfig.thinkingLevel = 'MINIMAL';
+          thinkingConfig.thinkingLevel = this._model.includes('gemini-4') ? 'LOW' : 'MINIMAL';
           thinkingConfig.includeThoughts = false;
           break;
         case 'low':

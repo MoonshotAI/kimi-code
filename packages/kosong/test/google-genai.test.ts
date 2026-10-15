@@ -955,6 +955,20 @@ describe('GoogleGenAIChatProvider', () => {
       });
     });
 
+    it('gemini-4 model maps effort off to LOW (MINIMAL is unsupported)', async () => {
+      const provider = createProvider({ model: 'gemini-4-argon' }).withThinking('off');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      const config = body['config'] as Record<string, unknown>;
+      expect(config['thinkingConfig']).toEqual({
+        includeThoughts: false,
+        thinkingLevel: 'LOW',
+      });
+    });
+
     it('thinking effort off for non-gemini-3 disables thinking', async () => {
       const provider = createProvider({ model: 'gemini-2.5-flash' }).withThinking('off');
       const history: Message[] = [

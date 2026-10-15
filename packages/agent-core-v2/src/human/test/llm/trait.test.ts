@@ -2015,4 +2015,21 @@ describe('google genai base', () => {
       expect(config['thinkingConfig']).toEqual({ includeThoughts: true, thinkingLevel: 'HIGH' });
     },
   );
+
+  it.each([
+    ['gemini-3-pro-preview', 'MINIMAL'],
+    ['gemini-4-argon', 'LOW'],
+  ])('encodes effort off for %s as %s with thoughts hidden', async (modelName, level) => {
+    const client = stubGoogleClient([
+      { candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }] },
+    ]);
+    const requester = createGoogleGenAIRequester({ clientFactory: client.clientFactory });
+    await requester.generate(
+      { model: { ...model, model: modelName }, thinking: { effort: 'off' } },
+      { messages },
+      { signal: new AbortController().signal },
+    );
+    const config = client.body()['config'] as Record<string, unknown>;
+    expect(config['thinkingConfig']).toEqual({ includeThoughts: false, thinkingLevel: level });
+  });
 });
