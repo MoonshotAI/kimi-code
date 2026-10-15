@@ -103,9 +103,9 @@ After Kimi Code restarts, if another session takes over the current project, the
 
 Tower is mutually exclusive with Goal, Plan, and swarm modes. Entering Tower exits Plan or swarm and pauses the active goal; activating a goal or entering Plan or swarm also exits Tower. Tower state remains on disk, and you can return later with `/tower on`.
 
-Workers and reviewers follow different model-selection rules. Without `[secondary_model]`, both use Tower's current primary model. Once it is configured, newly spawned workers use `default_model`, while **reviewers continue to use the primary model**. `TowerSpawn` currently does not support selecting a model for an individual mission or spawn. See [Subagent model pool](../configuration/config-files.md#subagent-model-pool) for configuration details.
+Workers and reviewers follow different model-selection rules. Without `[secondary_model]`, both use Tower's current primary model. Once it is configured, newly spawned workers use `default_model`, while **reviewers continue to use the primary model**; however, when `[secondary_model].force = true`, reviewers also use `default_model`. `TowerSpawn` currently does not support selecting a model for an individual mission or spawn. See [Subagent model pool](../configuration/config-files.md#subagent-model-pool) for configuration details.
 
-To control token costs, you can assign workers a cheaper secondary model. Reviewers remain on the primary model, preserving budget for independent review.
+To control token costs, you can assign workers a cheaper secondary model. When `force = true` is not set, reviewers remain on the primary model, preserving budget for independent review.
 
 ## Safety and resource cost
 

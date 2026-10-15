@@ -103,9 +103,9 @@ kimi-code 重启后，如果改由另一个会话接管当前项目，原会话�
 
 Tower 与 Goal、Plan 和 swarm 模式互斥。进入 Tower 会退出 Plan 或 swarm，并暂停正在运行的 goal；启用 goal、Plan 或 swarm 也会退出 Tower。Tower 的状态会保留在磁盘上，之后可以用 `/tower on` 返回。
 
-worker 和 reviewer 的模型选择规则不同。未配置 `[secondary_model]` 时，二者都使用 Tower 当前的主模型。配置后，新派生的 worker 使用 `default_model`，**reviewer 仍使用主模型**。`TowerSpawn` 目前不支持为某个 mission 或某次派发单独选择模型。配置方式见 [subagent 模型池](../configuration/config-files.md#subagent-模型池)。
+worker 和 reviewer 的模型选择规则不同。未配置 `[secondary_model]` 时，二者都使用 Tower 当前的主模型。配置后，新派生的 worker 使用 `default_model`，**reviewer 仍使用主模型**；但如果 `[secondary_model].force = true`，reviewer 也会改用 `default_model`。`TowerSpawn` 目前不支持为某个 mission 或某次派发单独选择模型。配置方式见 [subagent 模型池](../configuration/config-files.md#subagent-模型池)。
 
-如果希望控制 token 开支，可以让 worker 使用成本较低的 secondary model。此时 reviewer 将保持 primary model（主模型），以保留独立审查的预算。
+如果希望控制 token 开支，可以让 worker 使用成本较低的 secondary model。未设置 `force = true` 时，reviewer 将保持 primary model（主模型），以保留独立审查的预算。
 
 ## 安全边界与资源开销
 
